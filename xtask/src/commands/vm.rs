@@ -1652,7 +1652,7 @@ mod tests {
         let temp = tempfile::tempdir()?;
         init_git_repo(temp.path())?;
 
-        let new_crate = temp.path().join("crate/nodes/sinex-process/Cargo.toml");
+        let new_crate = temp.path().join("crate/core/sinex-process/Cargo.toml");
         std::fs::create_dir_all(new_crate.parent().expect("new crate parent"))?;
         std::fs::write(&new_crate, "[package]\nname = \"sinex-process\"\n")?;
 
@@ -1665,7 +1665,7 @@ mod tests {
         assert!(input.flake_ref().starts_with("path:"));
         assert!(
             Path::new(&staged_root)
-                .join("crate/nodes/sinex-process/Cargo.toml")
+                .join("crate/core/sinex-process/Cargo.toml")
                 .is_file(),
             "staged checkout should include untracked crate files"
         );

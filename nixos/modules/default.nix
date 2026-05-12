@@ -65,7 +65,7 @@ in
     ./monitoring.nix
     ./preflight-verification.nix
     ./kitty-shell-integration.nix
-    ./node-services.nix
+    ./source-workers.nix
     ./source-bindings.nix
   ];
 

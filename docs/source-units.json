@@ -110,10 +110,14 @@
       "resource_profile": "continuous",
       "access_policy": "target_home_read:browser_history",
       "service_policy": "dedicated_instance:on-failure",
-      "runner_pack": "browser",
-      "package_impact": "no_new_output",
-      "implementation_mode": "rust_in_pack:browser",
-      "proof_obligations": [],
+      "runner_pack": "source-worker",
+      "package_impact": "browser_history_source_unit",
+      "implementation_mode": "rust_in_pack:source-worker",
+      "proof_obligations": [
+        "url_privacy_redaction",
+        "sqlite_row_anchor",
+        "dump_line_anchor"
+      ],
       "crate_impact": "0",
       "binary_impact": "0",
       "nix_output_impact": "0",
@@ -186,10 +190,14 @@
       "resource_profile": "on_demand",
       "access_policy": "target_home_read:activitywatch_sqlite",
       "service_policy": "invoked_on_demand",
-      "runner_pack": "desktop",
-      "package_impact": "no_new_output",
-      "implementation_mode": "rust_in_pack:desktop",
-      "proof_obligations": [],
+      "runner_pack": "source-worker",
+      "package_impact": "desktop_activitywatch",
+      "implementation_mode": "rust_in_pack:source-worker",
+      "proof_obligations": [
+        "anchor_sqlite_row",
+        "timestamp_intrinsic",
+        "window_title_redacted"
+      ],
       "crate_impact": "0",
       "binary_impact": "0",
       "nix_output_impact": "0",
@@ -203,8 +211,7 @@
       "domain": "desktop",
       "role": "source_adapter",
       "modes": [
-        "continuous",
-        "historical"
+        "continuous"
       ],
       "acquisition_shape": "live_observation",
       "material_policy": "source_material_provenance",
@@ -225,10 +232,13 @@
       "resource_profile": "continuous",
       "access_policy": "target_runtime_bridge:clipboard",
       "service_policy": "dedicated_instance:on-failure",
-      "runner_pack": "desktop",
-      "package_impact": "no_new_output",
-      "implementation_mode": "rust_in_pack:desktop",
-      "proof_obligations": [],
+      "runner_pack": "source-worker",
+      "package_impact": "desktop_clipboard",
+      "implementation_mode": "rust_in_pack:source-worker",
+      "proof_obligations": [
+        "anchor_stream_frame",
+        "clipboard_content_redacted"
+      ],
       "crate_impact": "0",
       "binary_impact": "0",
       "nix_output_impact": "0",
@@ -242,8 +252,7 @@
       "domain": "desktop",
       "role": "source_adapter",
       "modes": [
-        "continuous",
-        "historical"
+        "continuous"
       ],
       "acquisition_shape": "live_observation",
       "material_policy": "source_material_provenance",
@@ -292,10 +301,13 @@
       "resource_profile": "continuous",
       "access_policy": "target_runtime_bridge:window_manager",
       "service_policy": "dedicated_instance:on-failure",
-      "runner_pack": "desktop",
-      "package_impact": "no_new_output",
-      "implementation_mode": "rust_in_pack:desktop",
-      "proof_obligations": [],
+      "runner_pack": "source-worker",
+      "package_impact": "desktop_window_manager",
+      "implementation_mode": "rust_in_pack:source-worker",
+      "proof_obligations": [
+        "anchor_stream_frame",
+        "window_title_redacted"
+      ],
       "crate_impact": "0",
       "binary_impact": "0",
       "nix_output_impact": "0",
@@ -365,9 +377,9 @@
       "resource_profile": "on_demand",
       "access_policy": "configured_document_roots",
       "service_policy": "invoked_on_demand",
-      "runner_pack": "document",
+      "runner_pack": "source-worker",
       "package_impact": "no_new_output",
-      "implementation_mode": "rust_in_pack:document",
+      "implementation_mode": "rust_in_pack:source-worker",
       "proof_obligations": [],
       "crate_impact": "0",
       "binary_impact": "0",
@@ -514,9 +526,9 @@
       "resource_profile": "continuous",
       "access_policy": "configured_watch_roots",
       "service_policy": "dedicated_instance:on-failure",
-      "runner_pack": "fs",
+      "runner_pack": "source-worker",
       "package_impact": "no_new_output",
-      "implementation_mode": "rust_in_pack:fs",
+      "implementation_mode": "rust_in_pack:source-worker",
       "proof_obligations": [],
       "crate_impact": "0",
       "binary_impact": "0",
@@ -585,6 +597,35 @@
       "runner_pack": "process",
       "package_impact": "no_new_output",
       "implementation_mode": "rust_in_pack:process",
+      "proof_obligations": [],
+      "crate_impact": "0",
+      "binary_impact": "0",
+      "nix_output_impact": "0",
+      "derivation_impact": "0",
+      "sqlx_validation_impact": "0",
+      "dedicated_build_rationale": null
+    },
+    {
+      "subject": "source_unit:noop",
+      "id": "noop",
+      "domain": "sinex",
+      "role": "source_adapter",
+      "modes": [
+        "continuous"
+      ],
+      "acquisition_shape": "live_observation",
+      "material_policy": "source_material_provenance",
+      "checkpoint_policy": "live_observation_state",
+      "occurrence_policy": "uuid5:(source_unit)",
+      "output_event_types": [],
+      "privacy_context": "public",
+      "retention_policy": "forever",
+      "resource_profile": "continuous",
+      "access_policy": "none",
+      "service_policy": "dedicated_instance:on-failure",
+      "runner_pack": "source-worker",
+      "package_impact": "noop_source_unit",
+      "implementation_mode": "rust_in_pack:source-worker",
       "proof_obligations": [],
       "crate_impact": "0",
       "binary_impact": "0",
@@ -976,10 +1017,13 @@
       "resource_profile": "continuous",
       "access_policy": "system_bus_session_bus_read",
       "service_policy": "dedicated_instance:on-failure",
-      "runner_pack": "system",
-      "package_impact": "no_new_output",
-      "implementation_mode": "rust_in_pack:system",
-      "proof_obligations": [],
+      "runner_pack": "source-worker",
+      "package_impact": "system_dbus_source_unit",
+      "implementation_mode": "rust_in_pack:source-worker",
+      "proof_obligations": [
+        "dbus_interface_dispatch",
+        "privacy_notification_body"
+      ],
       "crate_impact": "0",
       "binary_impact": "0",
       "nix_output_impact": "0",
@@ -1015,44 +1059,14 @@
       "resource_profile": "continuous",
       "access_policy": "systemd_journal_read",
       "service_policy": "dedicated_instance:on-failure",
-      "runner_pack": "system",
-      "package_impact": "no_new_output",
-      "implementation_mode": "rust_in_pack:system",
-      "proof_obligations": [],
-      "crate_impact": "0",
-      "binary_impact": "0",
-      "nix_output_impact": "0",
-      "derivation_impact": "0",
-      "sqlx_validation_impact": "0",
-      "dedicated_build_rationale": null
-    },
-    {
-      "subject": "source_unit:system.monitor",
-      "id": "system.monitor",
-      "domain": "system",
-      "role": "source_adapter",
-      "modes": [
-        "continuous"
+      "runner_pack": "source-worker",
+      "package_impact": "system_journald_source_unit",
+      "implementation_mode": "rust_in_pack:source-worker",
+      "proof_obligations": [
+        "timestamp_intrinsic",
+        "cursor_anchor",
+        "privacy_journal_message"
       ],
-      "acquisition_shape": "live_observation",
-      "material_policy": "source_material_provenance",
-      "checkpoint_policy": "live_observation_state",
-      "occurrence_policy": "uuid5:(source_unit, run_id)",
-      "output_event_types": [
-        {
-          "source": "system",
-          "event_type": "monitoring.started"
-        }
-      ],
-      "privacy_context": "sensitive",
-      "retention_policy": "forever",
-      "resource_profile": "continuous",
-      "access_policy": "runtime_self_observation",
-      "service_policy": "dedicated_instance:on-failure",
-      "runner_pack": "system",
-      "package_impact": "no_new_output",
-      "implementation_mode": "rust_in_pack:system",
-      "proof_obligations": [],
       "crate_impact": "0",
       "binary_impact": "0",
       "nix_output_impact": "0",
@@ -1066,13 +1080,12 @@
       "domain": "system",
       "role": "source_adapter",
       "modes": [
-        "continuous",
-        "historical"
+        "continuous"
       ],
       "acquisition_shape": "journal",
       "material_policy": "source_material_provenance",
       "checkpoint_policy": "journal_cursor",
-      "occurrence_policy": "uuid5:(source_unit, journal_cursor)",
+      "occurrence_policy": "material_anchor",
       "output_event_types": [
         {
           "source": "systemd",
@@ -1100,10 +1113,13 @@
       "resource_profile": "continuous",
       "access_policy": "systemd_journal_read",
       "service_policy": "dedicated_instance:on-failure",
-      "runner_pack": "system",
-      "package_impact": "no_new_output",
-      "implementation_mode": "rust_in_pack:system",
-      "proof_obligations": [],
+      "runner_pack": "source-worker",
+      "package_impact": "system_systemd_source_unit",
+      "implementation_mode": "rust_in_pack:source-worker",
+      "proof_obligations": [
+        "unit_name_present",
+        "event_type_from_unit_result"
+      ],
       "crate_impact": "0",
       "binary_impact": "0",
       "nix_output_impact": "0",
@@ -1150,10 +1166,13 @@
       "resource_profile": "continuous",
       "access_policy": "udev_monitor_read",
       "service_policy": "dedicated_instance:on-failure",
-      "runner_pack": "system",
-      "package_impact": "no_new_output",
-      "implementation_mode": "rust_in_pack:system",
-      "proof_obligations": [],
+      "runner_pack": "source-worker",
+      "package_impact": "system_udev_source_unit",
+      "implementation_mode": "rust_in_pack:source-worker",
+      "proof_obligations": [
+        "udev_action_dispatch",
+        "privacy_device_path"
+      ],
       "crate_impact": "0",
       "binary_impact": "0",
       "nix_output_impact": "0",
@@ -1253,9 +1272,9 @@
       "resource_profile": "continuous",
       "access_policy": "target_home_read:.local/share/atuin/history.db",
       "service_policy": "dedicated_instance:on-failure",
-      "runner_pack": "terminal",
-      "package_impact": "no_new_output",
-      "implementation_mode": "rust_in_pack:terminal",
+      "runner_pack": "source-worker",
+      "package_impact": "atuin_history_source_unit",
+      "implementation_mode": "rust_in_pack:source-worker",
       "proof_obligations": [
         "obligation:source_unit.material_provenance",
         "obligation:source_unit.package_impact_rationale"
@@ -1291,9 +1310,9 @@
       "resource_profile": "continuous",
       "access_policy": "target_home_read:.bash_history",
       "service_policy": "dedicated_instance:on-failure",
-      "runner_pack": "terminal",
-      "package_impact": "no_new_output",
-      "implementation_mode": "rust_in_pack:terminal",
+      "runner_pack": "source-worker",
+      "package_impact": "bash_history_source_unit",
+      "implementation_mode": "rust_in_pack:source-worker",
       "proof_obligations": [
         "obligation:source_unit.material_provenance",
         "obligation:source_unit.package_impact_rationale"
@@ -1329,47 +1348,13 @@
       "resource_profile": "continuous",
       "access_policy": "target_home_read:.local/share/fish/fish_history",
       "service_policy": "dedicated_instance:on-failure",
-      "runner_pack": "terminal",
-      "package_impact": "no_new_output",
-      "implementation_mode": "rust_in_pack:terminal",
+      "runner_pack": "source-worker",
+      "package_impact": "fish_history_source_unit",
+      "implementation_mode": "rust_in_pack:source-worker",
       "proof_obligations": [
         "obligation:source_unit.material_provenance",
         "obligation:source_unit.package_impact_rationale"
       ],
-      "crate_impact": "0",
-      "binary_impact": "0",
-      "nix_output_impact": "0",
-      "derivation_impact": "0",
-      "sqlx_validation_impact": "0",
-      "dedicated_build_rationale": null
-    },
-    {
-      "subject": "source_unit:terminal.monitor",
-      "id": "terminal.monitor",
-      "domain": "terminal",
-      "role": "source_adapter",
-      "modes": [
-        "continuous"
-      ],
-      "acquisition_shape": "live_observation",
-      "material_policy": "source_material_provenance",
-      "checkpoint_policy": "live_observation_state",
-      "occurrence_policy": "uuid5:(source_unit, run_id)",
-      "output_event_types": [
-        {
-          "source": "terminal",
-          "event_type": "shell.terminal_monitoring_started"
-        }
-      ],
-      "privacy_context": "sensitive",
-      "retention_policy": "forever",
-      "resource_profile": "continuous",
-      "access_policy": "runtime_self_observation",
-      "service_policy": "dedicated_instance:on-failure",
-      "runner_pack": "terminal",
-      "package_impact": "no_new_output",
-      "implementation_mode": "rust_in_pack:terminal",
-      "proof_obligations": [],
       "crate_impact": "0",
       "binary_impact": "0",
       "nix_output_impact": "0",
@@ -1401,9 +1386,9 @@
       "resource_profile": "continuous",
       "access_policy": "target_home_read:shell_history_text",
       "service_policy": "dedicated_instance:on-failure",
-      "runner_pack": "terminal",
-      "package_impact": "no_new_output",
-      "implementation_mode": "rust_in_pack:terminal",
+      "runner_pack": "source-worker",
+      "package_impact": "text_history_source_unit",
+      "implementation_mode": "rust_in_pack:source-worker",
       "proof_obligations": [
         "obligation:source_unit.material_provenance",
         "obligation:source_unit.package_impact_rationale"
@@ -1439,12 +1424,99 @@
       "resource_profile": "continuous",
       "access_policy": "target_home_read:.zsh_history",
       "service_policy": "dedicated_instance:on-failure",
-      "runner_pack": "terminal",
-      "package_impact": "no_new_output",
-      "implementation_mode": "rust_in_pack:terminal",
+      "runner_pack": "source-worker",
+      "package_impact": "zsh_history_source_unit",
+      "implementation_mode": "rust_in_pack:source-worker",
       "proof_obligations": [
         "obligation:source_unit.material_provenance",
         "obligation:source_unit.package_impact_rationale"
+      ],
+      "crate_impact": "0",
+      "binary_impact": "0",
+      "nix_output_impact": "0",
+      "derivation_impact": "0",
+      "sqlx_validation_impact": "0",
+      "dedicated_build_rationale": null
+    },
+    {
+      "subject": "source_unit:weechat",
+      "id": "weechat",
+      "domain": "irc",
+      "role": "source_adapter",
+      "modes": [
+        "historical"
+      ],
+      "acquisition_shape": "append_stream",
+      "material_policy": "source_material_provenance",
+      "checkpoint_policy": "append_stream_cursor",
+      "occurrence_policy": "material_anchor",
+      "output_event_types": [
+        {
+          "source": "irc",
+          "event_type": "irc.join"
+        },
+        {
+          "source": "irc",
+          "event_type": "irc.part"
+        },
+        {
+          "source": "irc",
+          "event_type": "irc.server_notice"
+        },
+        {
+          "source": "irc",
+          "event_type": "irc.message"
+        }
+      ],
+      "privacy_context": "sensitive",
+      "retention_policy": "forever",
+      "resource_profile": "on_demand",
+      "access_policy": "personal_irc_logs",
+      "service_policy": "invoked_on_demand",
+      "runner_pack": "source-worker",
+      "package_impact": "weechat_source_unit",
+      "implementation_mode": "rust_in_pack:source-worker",
+      "proof_obligations": [
+        "timestamp_intrinsic",
+        "event_type_from_prefix",
+        "anchor_line",
+        "nick_extraction"
+      ],
+      "crate_impact": "0",
+      "binary_impact": "0",
+      "nix_output_impact": "0",
+      "derivation_impact": "0",
+      "sqlx_validation_impact": "0",
+      "dedicated_build_rationale": null
+    },
+    {
+      "subject": "source_unit:weechat.message",
+      "id": "weechat.message",
+      "domain": "irc",
+      "role": "source_adapter",
+      "modes": [
+        "historical"
+      ],
+      "acquisition_shape": "append_stream",
+      "material_policy": "source_material_provenance",
+      "checkpoint_policy": "append_stream_cursor",
+      "occurrence_policy": "material_anchor",
+      "output_event_types": [
+        {
+          "source": "irc",
+          "event_type": "irc.message"
+        }
+      ],
+      "privacy_context": "sensitive",
+      "retention_policy": "forever",
+      "resource_profile": "continuous",
+      "access_policy": "personal_irc_logs",
+      "service_policy": "dedicated_instance:on-failure",
+      "runner_pack": "",
+      "package_impact": "",
+      "implementation_mode": "",
+      "proof_obligations": [
+        "anchor_line"
       ],
       "crate_impact": "0",
       "binary_impact": "0",
@@ -1456,37 +1528,11 @@
   ],
   "runner_packs": [
     {
-      "id": "browser",
+      "id": "",
       "source_unit_ids": [
-        "browser.history"
+        "weechat.message"
       ],
-      "shared_binary": "sinex-browser-ingestor",
-      "source_unit_count": 1
-    },
-    {
-      "id": "desktop",
-      "source_unit_ids": [
-        "desktop.activitywatch",
-        "desktop.clipboard",
-        "desktop.window-manager"
-      ],
-      "shared_binary": "sinex-desktop-ingestor",
-      "source_unit_count": 3
-    },
-    {
-      "id": "document",
-      "source_unit_ids": [
-        "document.staging"
-      ],
-      "shared_binary": "sinex-document-ingestor",
-      "source_unit_count": 1
-    },
-    {
-      "id": "fs",
-      "source_unit_ids": [
-        "fs"
-      ],
-      "shared_binary": "sinex-fs-ingestor",
+      "shared_binary": "",
       "source_unit_count": 1
     },
     {
@@ -1523,29 +1569,28 @@
       "source_unit_count": 12
     },
     {
-      "id": "system",
+      "id": "source-worker",
       "source_unit_ids": [
+        "browser.history",
+        "desktop.activitywatch",
+        "desktop.clipboard",
+        "desktop.window-manager",
+        "document.staging",
+        "fs",
+        "noop",
         "system.dbus",
         "system.journald",
-        "system.monitor",
         "system.systemd",
-        "system.udev"
-      ],
-      "shared_binary": "sinex-system-ingestor",
-      "source_unit_count": 5
-    },
-    {
-      "id": "terminal",
-      "source_unit_ids": [
+        "system.udev",
         "terminal.atuin-history",
         "terminal.bash-history",
         "terminal.fish-history",
-        "terminal.monitor",
         "terminal.text-history",
-        "terminal.zsh-history"
+        "terminal.zsh-history",
+        "weechat"
       ],
-      "shared_binary": "sinex-terminal-ingestor",
-      "source_unit_count": 6
+      "shared_binary": "source-worker",
+      "source_unit_count": 17
     }
   ],
   "services": [
@@ -1570,8 +1615,8 @@
     {
       "source_unit_id": "browser.history",
       "service_name": "sinex-source@browser.history",
-      "runner_pack": "browser",
-      "binary": "sinex-browser-ingestor",
+      "runner_pack": "source-worker",
+      "binary": "source-worker",
       "checkpoint_identity": "browser.history",
       "control_identity": "browser.history",
       "host_identity": "runtime_hostname"
@@ -1588,8 +1633,8 @@
     {
       "source_unit_id": "desktop.activitywatch",
       "service_name": "sinex-source@desktop.activitywatch",
-      "runner_pack": "desktop",
-      "binary": "sinex-desktop-ingestor",
+      "runner_pack": "source-worker",
+      "binary": "source-worker",
       "checkpoint_identity": "desktop.activitywatch",
       "control_identity": "desktop.activitywatch",
       "host_identity": "runtime_hostname"
@@ -1597,8 +1642,8 @@
     {
       "source_unit_id": "desktop.clipboard",
       "service_name": "sinex-source@desktop.clipboard",
-      "runner_pack": "desktop",
-      "binary": "sinex-desktop-ingestor",
+      "runner_pack": "source-worker",
+      "binary": "source-worker",
       "checkpoint_identity": "desktop.clipboard",
       "control_identity": "desktop.clipboard",
       "host_identity": "runtime_hostname"
@@ -1606,8 +1651,8 @@
     {
       "source_unit_id": "desktop.window-manager",
       "service_name": "sinex-source@desktop.window-manager",
-      "runner_pack": "desktop",
-      "binary": "sinex-desktop-ingestor",
+      "runner_pack": "source-worker",
+      "binary": "source-worker",
       "checkpoint_identity": "desktop.window-manager",
       "control_identity": "desktop.window-manager",
       "host_identity": "runtime_hostname"
@@ -1624,8 +1669,8 @@
     {
       "source_unit_id": "document.staging",
       "service_name": "sinex-source@document.staging",
-      "runner_pack": "document",
-      "binary": "sinex-document-ingestor",
+      "runner_pack": "source-worker",
+      "binary": "source-worker",
       "checkpoint_identity": "document.staging",
       "control_identity": "document.staging",
       "host_identity": "runtime_hostname"
@@ -1660,8 +1705,8 @@
     {
       "source_unit_id": "fs",
       "service_name": "sinex-source@fs",
-      "runner_pack": "fs",
-      "binary": "sinex-fs-ingestor",
+      "runner_pack": "source-worker",
+      "binary": "source-worker",
       "checkpoint_identity": "fs",
       "control_identity": "fs",
       "host_identity": "runtime_hostname"
@@ -1682,6 +1727,15 @@
       "binary": "sinex-process",
       "checkpoint_identity": "hourly-summarizer",
       "control_identity": "hourly-summarizer",
+      "host_identity": "runtime_hostname"
+    },
+    {
+      "source_unit_id": "noop",
+      "service_name": "sinex-source@noop",
+      "runner_pack": "source-worker",
+      "binary": "source-worker",
+      "checkpoint_identity": "noop",
+      "control_identity": "noop",
       "host_identity": "runtime_hostname"
     },
     {
@@ -1759,8 +1813,8 @@
     {
       "source_unit_id": "system.dbus",
       "service_name": "sinex-source@system.dbus",
-      "runner_pack": "system",
-      "binary": "sinex-system-ingestor",
+      "runner_pack": "source-worker",
+      "binary": "source-worker",
       "checkpoint_identity": "system.dbus",
       "control_identity": "system.dbus",
       "host_identity": "runtime_hostname"
@@ -1768,26 +1822,17 @@
     {
       "source_unit_id": "system.journald",
       "service_name": "sinex-source@system.journald",
-      "runner_pack": "system",
-      "binary": "sinex-system-ingestor",
+      "runner_pack": "source-worker",
+      "binary": "source-worker",
       "checkpoint_identity": "system.journald",
       "control_identity": "system.journald",
       "host_identity": "runtime_hostname"
     },
     {
-      "source_unit_id": "system.monitor",
-      "service_name": "sinex-source@system.monitor",
-      "runner_pack": "system",
-      "binary": "sinex-system-ingestor",
-      "checkpoint_identity": "system.monitor",
-      "control_identity": "system.monitor",
-      "host_identity": "runtime_hostname"
-    },
-    {
       "source_unit_id": "system.systemd",
       "service_name": "sinex-source@system.systemd",
-      "runner_pack": "system",
-      "binary": "sinex-system-ingestor",
+      "runner_pack": "source-worker",
+      "binary": "source-worker",
       "checkpoint_identity": "system.systemd",
       "control_identity": "system.systemd",
       "host_identity": "runtime_hostname"
@@ -1795,8 +1840,8 @@
     {
       "source_unit_id": "system.udev",
       "service_name": "sinex-source@system.udev",
-      "runner_pack": "system",
-      "binary": "sinex-system-ingestor",
+      "runner_pack": "source-worker",
+      "binary": "source-worker",
       "checkpoint_identity": "system.udev",
       "control_identity": "system.udev",
       "host_identity": "runtime_hostname"
@@ -1822,8 +1867,8 @@
     {
       "source_unit_id": "terminal.atuin-history",
       "service_name": "sinex-source@terminal.atuin-history",
-      "runner_pack": "terminal",
-      "binary": "sinex-terminal-ingestor",
+      "runner_pack": "source-worker",
+      "binary": "source-worker",
       "checkpoint_identity": "terminal.atuin-history",
       "control_identity": "terminal.atuin-history",
       "host_identity": "runtime_hostname"
@@ -1831,8 +1876,8 @@
     {
       "source_unit_id": "terminal.bash-history",
       "service_name": "sinex-source@terminal.bash-history",
-      "runner_pack": "terminal",
-      "binary": "sinex-terminal-ingestor",
+      "runner_pack": "source-worker",
+      "binary": "source-worker",
       "checkpoint_identity": "terminal.bash-history",
       "control_identity": "terminal.bash-history",
       "host_identity": "runtime_hostname"
@@ -1840,26 +1885,17 @@
     {
       "source_unit_id": "terminal.fish-history",
       "service_name": "sinex-source@terminal.fish-history",
-      "runner_pack": "terminal",
-      "binary": "sinex-terminal-ingestor",
+      "runner_pack": "source-worker",
+      "binary": "source-worker",
       "checkpoint_identity": "terminal.fish-history",
       "control_identity": "terminal.fish-history",
       "host_identity": "runtime_hostname"
     },
     {
-      "source_unit_id": "terminal.monitor",
-      "service_name": "sinex-source@terminal.monitor",
-      "runner_pack": "terminal",
-      "binary": "sinex-terminal-ingestor",
-      "checkpoint_identity": "terminal.monitor",
-      "control_identity": "terminal.monitor",
-      "host_identity": "runtime_hostname"
-    },
-    {
       "source_unit_id": "terminal.text-history",
       "service_name": "sinex-source@terminal.text-history",
-      "runner_pack": "terminal",
-      "binary": "sinex-terminal-ingestor",
+      "runner_pack": "source-worker",
+      "binary": "source-worker",
       "checkpoint_identity": "terminal.text-history",
       "control_identity": "terminal.text-history",
       "host_identity": "runtime_hostname"
@@ -1867,20 +1903,38 @@
     {
       "source_unit_id": "terminal.zsh-history",
       "service_name": "sinex-source@terminal.zsh-history",
-      "runner_pack": "terminal",
-      "binary": "sinex-terminal-ingestor",
+      "runner_pack": "source-worker",
+      "binary": "source-worker",
       "checkpoint_identity": "terminal.zsh-history",
       "control_identity": "terminal.zsh-history",
+      "host_identity": "runtime_hostname"
+    },
+    {
+      "source_unit_id": "weechat",
+      "service_name": "sinex-source@weechat",
+      "runner_pack": "source-worker",
+      "binary": "source-worker",
+      "checkpoint_identity": "weechat",
+      "control_identity": "weechat",
+      "host_identity": "runtime_hostname"
+    },
+    {
+      "source_unit_id": "weechat.message",
+      "service_name": "sinex-source@weechat.message",
+      "runner_pack": "",
+      "binary": "",
+      "checkpoint_identity": "weechat.message",
+      "control_identity": "weechat.message",
       "host_identity": "runtime_hostname"
     }
   ],
   "package_impact": {
-    "total_source_units": 36,
-    "zero_crate_impact": 36,
-    "zero_binary_impact": 36,
-    "zero_nix_output_impact": 36,
-    "zero_derivation_impact": 36,
-    "zero_sqlx_validation_impact": 36,
+    "total_source_units": 37,
+    "zero_crate_impact": 37,
+    "zero_binary_impact": 37,
+    "zero_nix_output_impact": 37,
+    "zero_derivation_impact": 37,
+    "zero_sqlx_validation_impact": 37,
     "dedicated_build_rationales": []
   },
   "proof_obligations": [

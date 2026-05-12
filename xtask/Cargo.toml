@@ -81,7 +81,7 @@ sinex-node-sdk = { path = "../crate/lib/sinex-node-sdk" }
 # sinex-primitives. Post-Wave-B fold (#1081), every per-domain source unit is
 # registered from sinex-source-worker, so a single dep covers all of them.
 sinex-source-worker = { path = "../crate/core/sinex-source-worker" }
-sinex-process = { path = "../crate/nodes/sinex-process" }
+sinex-process = { path = "../crate/core/sinex-process" }
 url = { workspace = true }
 rand = { workspace = true }
 tokio-stream = "0.1"

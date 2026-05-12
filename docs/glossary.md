@@ -144,10 +144,39 @@ current privacy rules and schema validation, not the original ones.
 
 ## S
 
+### source binding
+An entry in the source-unit catalog (`SourceUnitBinding`, registered via
+`register_source_unit_binding!`) describing how a specific source unit is
+wired at deployment time: implementation crate, adapter, output event type,
+privacy context, material policy, checkpoint policy, runtime shape, and
+package impact. Bindings are the durable contract between a Rust source-unit
+implementation and its NixOS-side runtime configuration; the API-ext-G
+drift gate (`xtask verify source-worker`) checks them for consistency.
+
 ### source material
 A file or data source registered in `raw.source_material_registry` that serves
 as the provenance root for material events. Every material event references
 exactly one source material via `source_material_id` and an `anchor_byte` offset.
+
+### source record
+The unit yielded by an `InputShapeAdapter` and consumed by a `MaterialParser`:
+anchored bytes (`bytes`, `anchor: MaterialAnchor`) carved out of a source
+material, plus optional metadata. The adapter owns enumeration and cursor
+advancement; the parser owns semantic interpretation that produces a
+`ParsedEventIntent`.
+
+### source unit
+The stable identity (`SourceUnitId`, e.g. `terminal.atuin-history`,
+`browser.history`, `system.journald`) that groups a parser, its emitted event
+types, and its binding configuration. Source units are data declared via
+`register_source_unit!` against a `SourceUnitDescriptor`; the source-worker
+dispatch resolves the `--source-unit <id>` CLI argument by inventory lookup
+against this registry — no match arms. A source unit is NOT a process or
+deployment identity; multiple source-unit instances of the same kind can
+co-exist under one `sinex-source-worker` host (per `runner_pack` / systemd
+template). Post-Wave-B fold (#1081), all source units are hosted by the
+single `sinex-source-worker` binary; the per-domain ingestor crates that
+used to host them have been deleted.
 
 ### synthesis provenance
 One of the two provenance types: `source_material_id` is NULL, `source_event_ids`

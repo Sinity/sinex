@@ -176,12 +176,14 @@ impl ContextCommand {
     }
 }
 
-/// Strip common suffixes to produce a compact, human-readable source label.
-/// "sinex-fs-ingestor" → "filesystem"
-/// "sinex-terminal-ingestor" → "terminal"
-/// "sinex-desktop-ingestor" → "desktop"
-/// "sinex-system-ingestor" → "system"
-/// Anything else: strip leading "sinex-" and trailing "-ingestor"/"-automaton".
+/// Produce a compact, human-readable source label from an event-source name.
+///
+/// The mapping table is keyed by the `event_source` namespace values used
+/// inside `core.events` (e.g. `shell.atuin`, `wm.hyprland`, `fs-watcher`)
+/// — these strings are emitted by the source units now hosted in
+/// `sinex-source-worker` (per Wave-B fold, #1081). The legacy
+/// `sinex-{domain}-ingestor` package names are no longer relevant; the
+/// only ingestion binary is `sinex-source-worker`.
 fn display_source(source: &str) -> String {
     let friendly = match source {
         "shell.atuin" | "shell.asciinema" | "shell.kitty" | "shell.scrollback" => "terminal",

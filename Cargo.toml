@@ -19,8 +19,11 @@ members = [
   # unit now lives under `crate/core/sinex-source-worker/src/sources/`.
   "tests/e2e",
 
-  # Automaton crates (derived nodes — consolidated into sinex-process)
-  "crate/nodes/sinex-process",
+  # Automaton host (derived nodes consolidated into one binary).
+  # Moved next to sinex-source-worker in crate/core/ because both are
+  # service-binary hosts at the same conceptual level — crate/nodes/ no
+  # longer makes sense as a separate parent directory.
+  "crate/core/sinex-process",
 
   # Developer tooling
   "xtask",
