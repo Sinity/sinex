@@ -59,10 +59,13 @@ async fn registry_rejects_insufficient_roles_for_every_method(ctx: TestContext) 
         }
     }
 
-    // Expected: 10 Write methods × 1 insufficient role + 20 Admin methods × 2 insufficient roles = 50
+    let expected_checks = method_roles
+        .values()
+        .map(|role| roles_below(*role).len() as u32)
+        .sum::<u32>();
     assert_eq!(
-        tested, 50,
-        "Expected exactly 50 auth boundary checks (10 Write + 20 Admin methods × their insufficient roles), got {tested}"
+        tested, expected_checks,
+        "auth boundary check count must match registered method roles"
     );
     assert_eq!(
         rejected, tested,

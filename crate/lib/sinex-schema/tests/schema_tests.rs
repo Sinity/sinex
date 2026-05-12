@@ -149,6 +149,7 @@ mod table_creation_tests {
 
         // Insert test data
         let event_id = uuid::Uuid::now_v7();
+        let parent_event_id = uuid::Uuid::now_v7();
         sqlx::query!(
             "INSERT INTO core.events (id, source, event_type, host, payload, ts_orig, source_event_ids) VALUES ($1::uuid, $2, $3, $4, $5, $6, $7::uuid[])",
             event_id,
@@ -157,7 +158,7 @@ mod table_creation_tests {
             "test-host",
             serde_json::json!({"test": "data"}),
             *sinex_primitives::temporal::now(),
-            &[event_id][..]
+            &[parent_event_id][..]
         ).execute(pool).await.unwrap();
 
         // Query and verify the stored fields — proves the schema stores data without corruption,

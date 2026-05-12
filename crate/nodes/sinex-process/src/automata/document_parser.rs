@@ -533,7 +533,7 @@ mod tests {
     #[sinex_test]
     async fn test_overlong_chunk_split() -> TestResult<()> {
         let mut big = String::with_capacity(MAX_CHUNK_BYTES + 1000);
-        for _ in 0..((MAX_CHUNK_BYTES / 50) + 10) {
+        for _ in 0..((MAX_CHUNK_BYTES / 44) + 10) {
             big.push_str("This is a sentence that takes up some space. ");
         }
         let chunks = paragraph_split(&big);

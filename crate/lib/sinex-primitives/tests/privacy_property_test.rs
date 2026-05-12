@@ -278,15 +278,12 @@ sinex_proptest! {
 
 sinex_proptest! {
     fn json_processing_preserves_object_keys(
-        key1: String in "[a-z_]{1,10}",
-        key2: String in "[a-z_]{1,10}",
+        (key1, key2) in ("[a-z_]{1,10}", "[a-z_]{1,10}")
+            .prop_filter("object keys must be distinct", |(key1, key2)| key1 != key2),
         val1: String in "\\PC{0,50}",
         val2: String in "\\PC{0,50}",
         context: ProcessingContext in arb_context()
     ) -> Result<()> {
-        // When keys collide the JSON object collapses to one entry; skip that case
-        // to keep the two-key invariant meaningful.
-        prop_assume!(key1 != key2);
         let input = serde_json::json!({ &key1: val1, &key2: val2 });
         let output = engine().process_json(&input, context);
         prop_assert!(output.is_object(), "Output should remain an object");
