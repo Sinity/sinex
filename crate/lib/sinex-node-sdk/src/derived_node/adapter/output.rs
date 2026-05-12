@@ -12,6 +12,7 @@ use super::{
 use crate::derived_node::context::DerivedTriggerContext;
 use crate::derived_node::output::DerivedOutput;
 use crate::derived_node::traits::DerivedNodeImpl;
+use crate::ids::deterministic_event_id;
 use crate::runtime::stream::NodeRuntimeState;
 use crate::{NodeResult, SinexError};
 
@@ -19,7 +20,7 @@ use sinex_primitives::events::Event;
 use sinex_primitives::events::builder::Provenance;
 use sinex_primitives::non_empty::NonEmptyVec;
 use sinex_primitives::privacy;
-use sinex_primitives::{EventSource, EventType, HostName, Id, JsonValue, Uuid};
+use sinex_primitives::{EventSource, EventType, HostName, Id, JsonValue};
 
 use tracing::{debug, warn};
 
@@ -253,8 +254,29 @@ where
         // Extract before moving provenance into the event struct.
         let created_by_operation_id = provenance.operation_uuid();
 
+        let mut id_anchor = Vec::new();
+        id_anchor.extend_from_slice(self.node.name().as_bytes());
+        id_anchor.push(0);
+        id_anchor.extend_from_slice(resolved_event_type.as_bytes());
+        id_anchor.push(0);
+        id_anchor.extend_from_slice(filtered_payload.to_string().as_bytes());
+        if let Provenance::Synthesis {
+            source_event_ids, ..
+        } = &provenance
+        {
+            for source_event_id in source_event_ids.iter() {
+                id_anchor.push(0);
+                id_anchor.extend_from_slice(source_event_id.as_uuid().as_bytes());
+            }
+        }
+        let event_id = deterministic_event_id(
+            format!("derived:{}", self.node.output_event_source()),
+            id_anchor,
+            ts_orig,
+        );
+
         Ok(Event {
-            id: Some(Id::from_uuid(Uuid::now_v7())),
+            id: Some(Id::from_uuid(event_id)),
             source: EventSource::new(self.node.output_event_source())?,
             event_type: EventType::new(resolved_event_type)?,
             payload: filtered_payload,
