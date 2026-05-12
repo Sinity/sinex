@@ -469,7 +469,8 @@ impl PostgresManager {
     }
 
     fn pg_ctl_start_command(&self, log_path: &Path) -> Result<Command> {
-        let run_dir = utf8_path(&self.config.run_dir, "postgres run dir")?;
+        let abs_run_dir = absolute_path(&self.config.run_dir)?;
+        let run_dir = utf8_path(&abs_run_dir, "postgres run dir")?;
         let abs_log_path = absolute_path(log_path)?;
         let mut pg_ctl = self.pg_command("pg_ctl");
         pg_ctl
@@ -496,9 +497,11 @@ impl PostgresManager {
     }
 
     fn pg_isready_command(&self) -> Command {
+        let run_dir =
+            absolute_path(&self.config.run_dir).unwrap_or_else(|_| self.config.run_dir.clone());
         let mut cmd = self.pg_command("pg_isready");
         cmd.arg("-h")
-            .arg(&self.config.run_dir)
+            .arg(run_dir)
             .arg("-p")
             .arg(self.config.port.to_string())
             .stdout(Stdio::null())
@@ -507,9 +510,11 @@ impl PostgresManager {
     }
 
     fn psql_command(&self, user: &str, db: &str, sql: &str) -> Command {
+        let run_dir =
+            absolute_path(&self.config.run_dir).unwrap_or_else(|_| self.config.run_dir.clone());
         let mut cmd = self.pg_command("psql");
         cmd.arg("-h")
-            .arg(&self.config.run_dir)
+            .arg(run_dir)
             .arg("-p")
             .arg(self.config.port.to_string())
             .args(["-U", user])
