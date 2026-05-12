@@ -1,12 +1,11 @@
-//! Main binary for the filesystem ingestor.
+//! Stub binary — the fs ingestor lives in `sinex-source-worker`. This file
+//! is kept until the orchestrator's synchronized crate-deletion commit
+//! removes the crate entirely.
 
-#[cfg(not(target_env = "msvc"))]
-use mimalloc::MiMalloc;
-use sinex_fs_ingestor::FilesystemNode;
-use sinex_node_sdk::IngestorNodeAdapter;
-
-#[cfg(not(target_env = "msvc"))]
-#[global_allocator]
-static GLOBAL: MiMalloc = MiMalloc;
-
-sinex_node_sdk::node_entrypoint!(IngestorNodeAdapter<FilesystemNode>);
+fn main() {
+    eprintln!(
+        "sinex-fs-ingestor has been folded into sinex-source-worker. Use \
+         `sinex-source-worker --source-unit fs ...` instead."
+    );
+    std::process::exit(2);
+}

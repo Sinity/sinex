@@ -253,3 +253,13 @@ async fn _run_obligation(
         )),
     }
 }
+
+// ---------------------------------------------------------------------------
+// Per-domain test modules (Wave B)
+// ---------------------------------------------------------------------------
+
+#[path = "production_path/document.rs"]
+mod document;
+
+#[path = "production_path/fs.rs"]
+mod fs;

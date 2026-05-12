@@ -1,4 +1,4 @@
-#![doc = include_str!("../docs/unified_node.md")]
+#![doc = include_str!("./docs/unified_node.md")]
 
 //! Filesystem watcher node using JetStream-first acquisition.
 //!

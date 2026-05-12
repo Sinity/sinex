@@ -79,8 +79,26 @@ path = "../../lib/sinex-macros"
 [dependencies.sinex-node-sdk]
 path = "../../lib/sinex-node-sdk"
 
+[dependencies.sinex-document-ingestor]
+path = "../../nodes/sinex-document-ingestor"
+
+[dependencies.mime_guess]
+version = "2.0"
+
 [dependencies.sinex-primitives]
 path = "../../lib/sinex-primitives"
+
+[dependencies.notify]
+workspace = true
+
+[dependencies.validator]
+workspace = true
+
+[dependencies.async-stream]
+version = "0.3"
+
+[dependencies.tokio-util]
+version = "0.7"
 
 [dev-dependencies.color-eyre]
 workspace = true
