@@ -239,8 +239,16 @@ async fn supervised_panic_is_caught_and_health_updated() -> Result<(), Box<dyn s
         },
     );
 
-    // Wait for the panic cycle to complete and the restart to run.
-    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    // Wait for the panic cycle to complete and the configured restart backoff to elapse.
+    tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        loop {
+            if call_count.load(Ordering::SeqCst) >= 2 {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+        }
+    })
+    .await?;
 
     let last_error = health.read().last_error.clone();
     assert!(

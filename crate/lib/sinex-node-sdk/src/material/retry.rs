@@ -221,7 +221,7 @@ mod tests {
                 Box::pin(async move {
                     let n = a.fetch_add(1, Ordering::SeqCst) + 1;
                     if n < 2 {
-                        let err = SinexError::io("test error").with_context("transient", "true");
+                        let err = SinexError::io("test error").with_context("io_kind", "Interrupted");
                         Err(err)
                     } else {
                         Ok::<i32, SinexError>(42)
@@ -245,7 +245,7 @@ mod tests {
                 let a = attempts_clone.clone();
                 Box::pin(async move {
                     a.fetch_add(1, Ordering::SeqCst);
-                    let err = SinexError::io("persistent error").with_context("transient", "true");
+                    let err = SinexError::io("persistent error").with_context("io_kind", "Interrupted");
                     Err::<i32, _>(err)
                 })
             })
@@ -294,7 +294,7 @@ mod tests {
                     let n = a.fetch_add(1, Ordering::SeqCst) + 1;
                     if n < 3 {
                         let err =
-                            SinexError::io("test error").with_context("transient", "true");
+                            SinexError::io("test error").with_context("io_kind", "Interrupted");
                         Err(err)
                     } else {
                         Ok::<i32, SinexError>(42)
@@ -351,7 +351,7 @@ mod tests {
                 let a = attempts_clone.clone();
                 Box::pin(async move {
                     a.fetch_add(1, Ordering::SeqCst);
-                    let err = SinexError::io("error").with_context("transient", "true");
+                    let err = SinexError::io("error").with_context("io_kind", "Interrupted");
                     Err::<i32, _>(err)
                 })
             })
@@ -378,7 +378,7 @@ mod tests {
                 Box::pin(async move {
                     let n = a.fetch_add(1, Ordering::SeqCst) + 1;
                     if n <= 12 {
-                        let err = SinexError::io("error").with_context("transient", "true");
+                        let err = SinexError::io("error").with_context("io_kind", "Interrupted");
                         Err(err)
                     } else {
                         Ok::<i32, SinexError>(42)
