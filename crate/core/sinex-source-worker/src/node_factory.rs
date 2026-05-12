@@ -13,6 +13,7 @@
 //! The binary automatically discovers and dispatches to your factory.
 
 use futures::future::BoxFuture;
+use sinex_primitives::parser::SourceUnitId;
 use std::sync::LazyLock;
 use std::collections::HashMap;
 
@@ -47,15 +48,19 @@ static NODE_FACTORY_REGISTRY: LazyLock<HashMap<&'static str, NodeFactoryFn>> =
 
 /// Look up a node factory function by source-unit id.
 #[must_use]
-pub fn find_node_factory(source_unit_id: &str) -> Option<NodeFactoryFn> {
-    NODE_FACTORY_REGISTRY.get(source_unit_id).copied()
+pub fn find_node_factory(source_unit_id: &SourceUnitId) -> Option<NodeFactoryFn> {
+    NODE_FACTORY_REGISTRY.get(source_unit_id.as_str()).copied()
 }
 
 /// List all registered source-unit ids that have node factories.
 #[must_use]
-pub fn registered_node_factory_ids() -> Vec<&'static str> {
-    let mut ids: Vec<&'static str> = NODE_FACTORY_REGISTRY.keys().copied().collect();
-    ids.sort_unstable();
+pub fn registered_node_factory_ids() -> Vec<SourceUnitId> {
+    let mut ids: Vec<SourceUnitId> = NODE_FACTORY_REGISTRY
+        .keys()
+        .copied()
+        .map(SourceUnitId::from_static)
+        .collect();
+    ids.sort_unstable_by(|a, b| a.as_str().cmp(b.as_str()));
     ids
 }
 

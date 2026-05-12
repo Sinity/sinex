@@ -5,6 +5,7 @@
 //! a stable lookup surface. At link time, every crate that calls
 //! [`register_source_unit!`] contributes its descriptors to the inventory.
 
+use sinex_primitives::parser::SourceUnitId;
 use sinex_primitives::proof::{self, SourceUnitDescriptor};
 
 /// Registry of source-unit descriptors loaded from the compile-time inventory.
@@ -23,7 +24,7 @@ impl SourceUnitRegistry {
 
     /// Find a source-unit descriptor by its `id`.
     #[must_use]
-    pub fn find(&self, id: &str) -> Option<&'static SourceUnitDescriptor> {
+    pub fn find(&self, id: &SourceUnitId) -> Option<&'static SourceUnitDescriptor> {
         proof::find_source_unit(id)
     }
 
@@ -37,7 +38,7 @@ impl SourceUnitRegistry {
     /// Returns an error string if `id` is not found in the inventory.
     pub fn validate(
         &self,
-        id: &str,
+        id: &SourceUnitId,
     ) -> Result<&'static SourceUnitDescriptor, String> {
         self.find(id).ok_or_else(|| {
             let available = self.list_ids();

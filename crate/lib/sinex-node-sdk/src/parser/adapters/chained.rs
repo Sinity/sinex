@@ -53,6 +53,12 @@ pub const SECONDARY_PREFIX: &str = "secondary/";
 /// leg produced each record.
 pub struct ChainedAdapter<A, B>(pub A, pub B);
 
+impl<A: Default, B: Default> Default for ChainedAdapter<A, B> {
+    fn default() -> Self {
+        Self(A::default(), B::default())
+    }
+}
+
 /// Configuration for [`ChainedAdapter`].
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChainedConfig<A, B> {

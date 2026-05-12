@@ -978,8 +978,9 @@ pub fn all_source_units() -> impl Iterator<Item = &'static SourceUnitDescriptor>
 
 /// Find a source-unit descriptor by `id`.
 #[must_use]
-pub fn find_source_unit(id: &str) -> Option<&'static SourceUnitDescriptor> {
-    all_source_units().find(|descriptor| descriptor.id == id)
+pub fn find_source_unit(id: &crate::parser::SourceUnitId) -> Option<&'static SourceUnitDescriptor> {
+    let id_str = id.as_str();
+    all_source_units().find(|descriptor| descriptor.id == id_str)
 }
 
 /// Iterate over every registered per-source-unit privacy rule set in the binary.
@@ -990,9 +991,10 @@ pub fn all_source_unit_privacy_rules() -> impl Iterator<Item = &'static SourceUn
 /// Find per-source-unit extra privacy rules by `source_unit_id`.
 #[must_use]
 pub fn find_source_unit_privacy_rules(
-    source_unit_id: &str,
+    source_unit_id: &crate::parser::SourceUnitId,
 ) -> Option<&'static SourceUnitPrivacyRules> {
-    all_source_unit_privacy_rules().find(|r| r.source_unit_id == source_unit_id)
+    let id_str = source_unit_id.as_str();
+    all_source_unit_privacy_rules().find(|r| r.source_unit_id == id_str)
 }
 
 /// Re-exported `inventory` for consumers of [`register_source_unit!`].
@@ -1110,7 +1112,10 @@ mod tests {
         // Verify that find_source_unit_privacy_rules returns None for unknown IDs
         // (no such unit registered in the test binary).
         assert!(
-            find_source_unit_privacy_rules("nonexistent.source-unit").is_none(),
+            find_source_unit_privacy_rules(&crate::parser::SourceUnitId::from_static(
+                "nonexistent.source-unit"
+            ))
+            .is_none(),
             "unknown source unit should return None"
         );
 

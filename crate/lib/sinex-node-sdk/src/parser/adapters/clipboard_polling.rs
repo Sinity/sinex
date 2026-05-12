@@ -159,6 +159,12 @@ impl ClipboardPollingAdapter {
     }
 }
 
+impl Default for ClipboardPollingAdapter {
+    fn default() -> Self {
+        Self::new().expect("failed to initialize arboard clipboard backend")
+    }
+}
+
 #[async_trait]
 impl InputShapeAdapter for ClipboardPollingAdapter {
     type Config = ClipboardPollingConfig;
