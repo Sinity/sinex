@@ -2,10 +2,25 @@ use sinex_document_ingestor::{DocumentIngestorConfig, DocumentNode};
 use sinex_node_sdk::prelude::DbPoolExt;
 use sinex_node_sdk::runtime::stream::{Checkpoint, NodeInitContext, ScanArgs, TimeHorizon};
 use sinex_node_sdk::{ExplorationProvider, IngestorNodeAdapter, Node};
-use sinex_primitives::Id;
+use sinex_primitives::{Event, Id, JsonValue};
 use tempfile::{Builder, NamedTempFile, tempdir};
+use tokio::sync::mpsc;
 use tokio::time::{Duration, timeout};
 use xtask::sandbox::{node_runtime::TestRuntimeBuilder, sinex_test};
+
+async fn recv_document_ingested(
+    event_rx: &mut mpsc::Receiver<Event<JsonValue>>,
+    duration: Duration,
+) -> Option<Event<JsonValue>> {
+    let deadline = tokio::time::Instant::now() + duration;
+    loop {
+        let remaining = deadline.checked_duration_since(tokio::time::Instant::now())?;
+        let event = timeout(remaining, event_rx.recv()).await.ok().flatten()?;
+        if event.event_type.as_str() == "document.ingested" {
+            return Some(event);
+        }
+    }
+}
 
 #[sinex_test]
 async fn document_node_emits_events_for_targets(ctx: TestContext) -> TestResult<()> {
@@ -376,10 +391,8 @@ async fn document_node_skips_unchanged_roots_and_reingests_after_modification(
         .scan(Checkpoint::None, TimeHorizon::Snapshot, ScanArgs::default())
         .await?;
     assert_eq!(first_report.events_processed, 1);
-    timeout(Duration::from_secs(1), runtime.event_rx.recv())
+    recv_document_ingested(&mut runtime.event_rx, Duration::from_secs(1))
         .await
-        .ok()
-        .flatten()
         .expect("first scan should emit document.ingested");
 
     let second_report = node
@@ -395,9 +408,9 @@ async fn document_node_skips_unchanged_roots_and_reingests_after_modification(
         second_report.warnings
     );
     assert!(
-        timeout(Duration::from_millis(200), runtime.event_rx.recv())
+        recv_document_ingested(&mut runtime.event_rx, Duration::from_millis(200))
             .await
-            .is_err(),
+            .is_none(),
         "unchanged root scan must not emit a duplicate event"
     );
 
@@ -407,10 +420,8 @@ async fn document_node_skips_unchanged_roots_and_reingests_after_modification(
         .scan(Checkpoint::None, TimeHorizon::Snapshot, ScanArgs::default())
         .await?;
     assert_eq!(third_report.events_processed, 1);
-    timeout(Duration::from_secs(1), runtime.event_rx.recv())
+    recv_document_ingested(&mut runtime.event_rx, Duration::from_secs(1))
         .await
-        .ok()
-        .flatten()
         .expect("modified document should be re-ingested");
 
     Ok(())

@@ -178,6 +178,7 @@ pub fn build() -> HashMap<&'static str, FormatCapability> {
 
     // ── Audit ────────────────────────────────────────────────────────────────
     m.insert("audit", FormatCapability::single_shot(TABLE_JSON_YAML));
+    m.insert("annotate", FormatCapability::single_shot(TABLE_JSON_YAML));
 
     // ── Sources ──────────────────────────────────────────────────────────────
     m.insert(
@@ -194,6 +195,26 @@ pub fn build() -> HashMap<&'static str, FormatCapability> {
     );
     m.insert(
         "sources coverage",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
+    m.insert(
+        "sources annotate",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
+    m.insert(
+        "sources archive",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
+    m.insert(
+        "sources continuity",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
+    m.insert(
+        "sources explain-gap",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
+    m.insert(
+        "sources readiness",
         FormatCapability::single_shot(TABLE_JSON_YAML),
     );
 
@@ -319,6 +340,10 @@ pub fn build() -> HashMap<&'static str, FormatCapability> {
     );
     m.insert(
         "telemetry ingestd-validation",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
+    m.insert(
+        "throughput",
         FormatCapability::single_shot(TABLE_JSON_YAML),
     );
 

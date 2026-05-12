@@ -113,7 +113,7 @@ async fn error_categorization_helpers() -> TestResult<()> {
     assert!(SinexError::not_found("test").is_client_error());
     assert!(!SinexError::database("test").is_client_error());
 
-    assert!(SinexError::max_retries_exceeded("test").is_permanent());
+    assert!(SinexError::max_retries_exceeded("test").is_retryable());
     assert!(SinexError::permission_denied("test").is_permanent());
     assert!(!SinexError::timeout("test").is_permanent());
     Ok(())

@@ -43,7 +43,25 @@ async fn insert_event(
     Ok(())
 }
 
-async fn refresh_current_device_state(ctx: &TestContext) -> TestResult<()> {
+async fn refresh_telemetry_read_models(ctx: &TestContext) -> TestResult<()> {
+    for relation in [
+        "sinex_telemetry.current_window_focus",
+        "sinex_telemetry.command_frequency_hourly",
+        "sinex_telemetry.file_activity_summary",
+        "sinex_telemetry.current_system_state",
+        "sinex_telemetry.gateway_stats_1h",
+        "sinex_telemetry.stream_stats_1h",
+        "sinex_telemetry.assembly_stats_1h",
+        "sinex_telemetry.node_stats_1h",
+        "sinex_telemetry.metric_counters_1h",
+        "sinex_telemetry.ingestd_batch_stats_1h",
+    ] {
+        sqlx::query("CALL refresh_continuous_aggregate($1::regclass, NULL, NULL)")
+            .bind(relation)
+            .execute(ctx.pool())
+            .await?;
+    }
+
     sqlx::query("REFRESH MATERIALIZED VIEW sinex_telemetry.current_device_state")
         .execute(ctx.pool())
         .await?;
@@ -125,6 +143,7 @@ async fn telemetry_handlers_follow_current_read_model_schema(ctx: TestContext) -
         None,
     )
     .await?;
+    refresh_telemetry_read_models(&ctx).await?;
 
     let params = json!({ "from": from, "to": to, "limit": 10 });
 
@@ -330,18 +349,17 @@ async fn operator_telemetry_handlers_follow_read_model_schema(ctx: TestContext) 
     .await?;
     insert_event(
         &ctx,
-        "system-ingestor",
-        "systemd.unit_changed",
+        "systemd",
+        "systemd.unit.state_changed",
         json!({
             "unit_name": "sinex-gateway.service",
             "unit_type": "service",
-            "state": "active",
+            "active_state": "active",
             "sub_state": "running"
         }),
         None,
     )
     .await?;
-    refresh_current_device_state(&ctx).await?;
     insert_event(
         &ctx,
         "sinex.gateway.rpc",
@@ -440,6 +458,7 @@ async fn operator_telemetry_handlers_follow_read_model_schema(ctx: TestContext) 
         None,
     )
     .await?;
+    refresh_telemetry_read_models(&ctx).await?;
 
     let params = json!({ "from": from, "to": to, "limit": 10 });
 

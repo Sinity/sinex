@@ -685,6 +685,7 @@ async fn recreate_telemetry_read_models(pool: &PgPool) -> Result<(), ApplyError>
                 'file_activity_summary',
                 'command_frequency_hourly',
                 'current_window_focus',
+                'current_system_state',
                 'metric_counters_1h',
                 'node_stats_1h',
                 'assembly_stats_1h',
@@ -1800,6 +1801,28 @@ SELECT add_continuous_aggregate_policy('sinex_telemetry.file_activity_summary',
     start_offset => INTERVAL '3 days',
     end_offset => INTERVAL '1 hour',
     schedule_interval => INTERVAL '1 hour');
+
+CREATE MATERIALIZED VIEW IF NOT EXISTS sinex_telemetry.current_system_state
+WITH (timescaledb.continuous) AS
+SELECT
+    time_bucket('5 minutes', id) AS bucket,
+    AVG((payload->>'cpu_percent')::float8) AS avg_cpu_percent,
+    MAX((payload->>'cpu_percent')::float8) AS max_cpu_percent,
+    AVG((payload->>'memory_percent')::float8) AS avg_memory_percent,
+    MAX((payload->>'memory_percent')::float8) AS max_memory_percent,
+    AVG((payload->>'disk_percent')::float8) AS avg_disk_percent,
+    MAX((payload->>'active_units')::bigint) AS current_active_units,
+    COUNT(*) AS sample_count
+FROM core.events
+WHERE source = 'system-ingestor'
+  AND event_type IN ('system.resources', 'systemd.units_summary')
+GROUP BY time_bucket('5 minutes', id)
+WITH NO DATA;
+
+SELECT add_continuous_aggregate_policy('sinex_telemetry.current_system_state',
+    start_offset => INTERVAL '1 hour',
+    end_offset => INTERVAL '5 minutes',
+    schedule_interval => INTERVAL '5 minutes');
 ";
 
 const RECENT_ACTIVITY_SUMMARY_SQL: &str = r"
@@ -1814,18 +1837,30 @@ CREATE OR REPLACE VIEW sinex_telemetry.recent_activity_summary AS
  ORDER BY bucket DESC
  LIMIT 1)
 
-UNION ALL
+	UNION ALL
 
-(SELECT
-    'command_execution' AS activity_type,
-    shell AS context,
-    command AS detail,
-    bucket AS timestamp
- FROM sinex_telemetry.command_frequency_hourly
- WHERE bucket >= NOW() - INTERVAL '1 hour'
- ORDER BY total_executions DESC
- LIMIT 5);
-";
+	(SELECT
+	    'command_execution' AS activity_type,
+	    shell AS context,
+	    command AS detail,
+	    bucket AS timestamp
+	 FROM sinex_telemetry.command_frequency_hourly
+	 WHERE bucket >= NOW() - INTERVAL '1 hour'
+	 ORDER BY total_executions DESC
+	 LIMIT 5)
+
+	UNION ALL
+
+	(SELECT
+	    'system_load' AS activity_type,
+	    'cpu' AS context,
+	    avg_cpu_percent::text AS detail,
+	    bucket AS timestamp
+	 FROM sinex_telemetry.current_system_state
+	 WHERE bucket >= NOW() - INTERVAL '30 minutes'
+	 ORDER BY bucket DESC
+	 LIMIT 1);
+	";
 
 /// Unified read surface for event temporal provenance.
 ///
