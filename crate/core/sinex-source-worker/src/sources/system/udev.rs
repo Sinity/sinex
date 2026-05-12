@@ -282,6 +282,14 @@ crate::register_adapter_ingestor!(
     source_unit_id: "system.udev",
     adapter: FileDropAdapter,
     parser: UdevParser,
+    // /dev is where udev creates device-node files; FileDropAdapter
+    // watches it for create/remove events that the UdevParser
+    // classifies (`device.added`, `device.removed`). Nix binding may
+    // override to a sandboxed subset.
+    default_config: serde_json::json!({
+        "watch_paths": ["/dev"],
+        "recursive": false
+    }),
 );
 
 // ---------------------------------------------------------------------------
