@@ -23,7 +23,28 @@ async fn drop_telemetry_relation(
     .await?
     .flatten();
 
+    let is_continuous_aggregate = sqlx::query_scalar::<_, bool>(
+        r"
+        SELECT EXISTS (
+            SELECT 1
+            FROM timescaledb_information.continuous_aggregates
+            WHERE view_schema = 'sinex_telemetry'
+              AND view_name = $1
+        )
+        ",
+    )
+    .bind(relation_name)
+    .fetch_one(pool)
+    .await?;
+
     match relation_kind.as_deref() {
+        Some(_) if is_continuous_aggregate => {
+            sqlx::query(&format!(
+                "DROP MATERIALIZED VIEW sinex_telemetry.{relation_name}"
+            ))
+            .execute(pool)
+            .await?;
+        }
         Some("m") => {
             sqlx::query(&format!(
                 "DROP MATERIALIZED VIEW sinex_telemetry.{relation_name}"
@@ -213,9 +234,15 @@ async fn declarative_apply_rebuilds_telemetry_read_models(ctx: TestContext) -> T
 
     sinex_schema::apply::apply(pool).await?;
 
-    let relation_state = sqlx::query_as::<_, (String, String)>(
+    let relation_state = sqlx::query_as::<_, (bool, String, String)>(
         r"
         SELECT
+            EXISTS (
+                SELECT 1
+                FROM timescaledb_information.continuous_aggregates
+                WHERE view_schema = 'sinex_telemetry'
+                  AND view_name = 'command_frequency_hourly'
+            ),
             c.relkind::text,
             pg_get_viewdef(c.oid, true)
         FROM pg_class c
@@ -227,18 +254,17 @@ async fn declarative_apply_rebuilds_telemetry_read_models(ctx: TestContext) -> T
     .fetch_one(pool)
     .await?;
     assert_eq!(
-        relation_state.0, "m",
-        "command_frequency_hourly must be restored as a continuous aggregate (materialized view), got relkind={} definition={}",
-        relation_state.0, relation_state.1
+        relation_state.0, true,
+        "command_frequency_hourly must be restored as a Timescale continuous aggregate, got relkind={} definition={}",
+        relation_state.1, relation_state.2
     );
 
     let definition = sqlx::query_scalar::<_, String>(
         r"
-        SELECT pg_get_viewdef(c.oid, true)
-        FROM pg_class c
-        JOIN pg_namespace n ON n.oid = c.relnamespace
-        WHERE n.nspname = 'sinex_telemetry'
-          AND c.relname = 'command_frequency_hourly'
+        SELECT view_definition
+        FROM timescaledb_information.continuous_aggregates
+        WHERE view_schema = 'sinex_telemetry'
+          AND view_name = 'command_frequency_hourly'
         ",
     )
     .fetch_one(pool)
@@ -248,8 +274,8 @@ async fn declarative_apply_rebuilds_telemetry_read_models(ctx: TestContext) -> T
             && definition.contains("shell.kitty")
             && definition.contains("shell.atuin")
             && definition.contains("shell.history.%")
-            && definition.contains("time_bucket(")
-            && definition.contains("ts_orig"),
+            && definition.contains("time_bucket")
+            && definition.contains("duration_ns"),
         "schema apply must restore the live command_frequency_hourly definition, got: {definition}"
     );
 

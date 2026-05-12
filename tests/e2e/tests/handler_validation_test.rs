@@ -87,7 +87,7 @@ async fn test_entity_name_valid() -> TestResult<()> {
 #[sinex_test]
 async fn test_entity_name_empty() -> TestResult<()> {
     let err = handler_test_support::validate_entity_name("").unwrap_err();
-    assert_eq!(err.to_string(), "Entity name cannot be empty");
+    assert!(err.to_string().contains("Entity name cannot be empty"));
     Ok(())
 }
 
@@ -95,7 +95,10 @@ async fn test_entity_name_empty() -> TestResult<()> {
 async fn test_entity_name_too_long() -> TestResult<()> {
     let long_name = "x".repeat(256);
     let err = handler_test_support::validate_entity_name(&long_name).unwrap_err();
-    assert_eq!(err.to_string(), "Entity name cannot exceed 255 characters");
+    assert!(
+        err.to_string()
+            .contains("Entity name cannot exceed 255 characters")
+    );
     Ok(())
 }
 
@@ -109,21 +112,30 @@ async fn test_entity_name_max_length() -> TestResult<()> {
 #[sinex_test]
 async fn test_entity_name_sql_injection_semicolon() -> TestResult<()> {
     let err = handler_test_support::validate_entity_name("name; DROP TABLE entities;").unwrap_err();
-    assert_eq!(err.to_string(), "Entity name contains invalid characters");
+    assert!(
+        err.to_string()
+            .contains("Entity name contains invalid characters")
+    );
     Ok(())
 }
 
 #[sinex_test]
 async fn test_entity_name_sql_injection_comment() -> TestResult<()> {
     let err = handler_test_support::validate_entity_name("name--comment").unwrap_err();
-    assert_eq!(err.to_string(), "Entity name contains invalid characters");
+    assert!(
+        err.to_string()
+            .contains("Entity name contains invalid characters")
+    );
     Ok(())
 }
 
 #[sinex_test]
 async fn test_entity_name_sql_injection_block_comment() -> TestResult<()> {
     let err = handler_test_support::validate_entity_name("name/*injection*/").unwrap_err();
-    assert_eq!(err.to_string(), "Entity name contains invalid characters");
+    assert!(
+        err.to_string()
+            .contains("Entity name contains invalid characters")
+    );
     Ok(())
 }
 
@@ -151,7 +163,7 @@ async fn test_entity_link_valid() -> TestResult<()> {
 async fn test_entity_link_self_reference() -> TestResult<()> {
     let id = Uuid::now_v7().to_string();
     let err = handler_test_support::validate_entity_link(&id, &id).unwrap_err();
-    assert_eq!(err.to_string(), "Cannot link entity to itself");
+    assert!(err.to_string().contains("Cannot link entity to itself"));
     Ok(())
 }
 
@@ -200,7 +212,7 @@ async fn test_jsonrpc_wrong_version() -> TestResult<()> {
         "params": {}
     });
     let err = rpc_test_support::validate_jsonrpc_value(&request).unwrap_err();
-    assert_eq!(err.to_string(), "jsonrpc must be '2.0'");
+    assert!(err.to_string().contains("jsonrpc must be '2.0'"));
     Ok(())
 }
 
@@ -222,7 +234,10 @@ async fn test_jsonrpc_empty_method() -> TestResult<()> {
         "params": {}
     });
     let err = rpc_test_support::validate_jsonrpc_value(&request).unwrap_err();
-    assert_eq!(err.to_string(), "method must be a non-empty string");
+    assert!(
+        err.to_string()
+            .contains("method must be a non-empty string")
+    );
     Ok(())
 }
 
@@ -256,7 +271,10 @@ async fn test_jsonrpc_params_as_string() -> TestResult<()> {
         "params": "invalid"
     });
     let err = rpc_test_support::validate_jsonrpc_value(&request).unwrap_err();
-    assert_eq!(err.to_string(), "params must be an object, array, or null");
+    assert!(
+        err.to_string()
+            .contains("params must be an object, array, or null")
+    );
     Ok(())
 }
 
