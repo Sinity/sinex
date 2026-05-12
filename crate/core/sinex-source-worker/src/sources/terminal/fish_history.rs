@@ -200,4 +200,7 @@ register_adapter_ingestor!(
     source_unit_id: "terminal.fish-history",
     adapter: SqliteRowAdapter,
     parser: FishHistoryParser,
+    // fish_history table; SqliteRowAdapter expands to
+    // `SELECT rowid, * FROM fish_history`.
+    default_config: serde_json::json!({ "query": "fish_history" }),
 );

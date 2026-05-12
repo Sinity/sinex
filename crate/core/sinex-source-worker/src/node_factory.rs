@@ -123,6 +123,7 @@ macro_rules! register_node_factory {
 /// `Default`.
 #[macro_export]
 macro_rules! register_adapter_ingestor {
+    // Form 1: bare adapter + parser, no baseline config.
     (
         source_unit_id: $id:expr,
         adapter: $adapter:ty,
@@ -138,6 +139,35 @@ macro_rules! register_adapter_ingestor {
                 factory_fn: |args| {
                     Box::pin($crate::node_factory::run_adapter_ingestor::<$adapter, $parser>(
                         $id, args,
+                    ))
+                },
+            }
+        }
+    };
+
+    // Form 2: with `default_config` — a serde_json::json!{...}-shaped
+    // expression supplying baseline values for the adapter's mandatory
+    // fields. User-supplied `--node-config` JSON is merged OVER the
+    // baseline (user wins on conflicts), then the result is deserialized
+    // into the adapter's Config. Lets source units declare parser-specific
+    // adapter parameters (SQL query, D-Bus bus name, ChainedAdapter primary
+    // leg) without forcing every binding site to repeat them.
+    (
+        source_unit_id: $id:expr,
+        adapter: $adapter:ty,
+        parser: $parser:ty,
+        default_config: $default:expr $(,)?
+    ) => {
+        $crate::register_parser!($id, $parser);
+
+        ::inventory::submit! {
+            $crate::node_factory::NodeFactoryEntry {
+                source_unit_id: $id,
+                factory_fn: |args| {
+                    Box::pin($crate::node_factory::run_adapter_ingestor_with_default::<$adapter, $parser>(
+                        $id,
+                        args,
+                        || $default,
                     ))
                 },
             }
@@ -175,6 +205,44 @@ where
 
     let parsed = NodeCli::parse_from(args);
     let node = AdapterBackedIngestor::<A, P>::new(source_unit_id);
+    let adapter = IngestorNodeAdapter::new(node);
+    let mut runner = NodeCliRunner::new(adapter);
+    runner.run(parsed).await.map_err(std::convert::Into::into)
+}
+
+/// Same as `run_adapter_ingestor` but applies a baseline adapter config
+/// supplied at registration time. The user-supplied `--node-config` JSON is
+/// merged over this baseline before deserializing into `A::Config`.
+///
+/// Called by the `register_adapter_ingestor!` macro's `default_config:`
+/// form. The `default_fn` is a zero-arg function (so the macro can pass a
+/// `json!{...}` expression as a closure) that returns the baseline JSON.
+pub async fn run_adapter_ingestor_with_default<A, P>(
+    source_unit_id: &'static str,
+    args: Vec<std::ffi::OsString>,
+    default_fn: fn() -> serde_json::Value,
+) -> Result<(), Box<dyn std::error::Error>>
+where
+    A: sinex_node_sdk::parser::InputShapeAdapter + Default + Send + Sync + 'static,
+    P: sinex_node_sdk::parser::MaterialParser + Default + Send + Sync + 'static,
+    A::Config: Clone
+        + serde::Serialize
+        + serde::de::DeserializeOwned
+        + Send
+        + Sync,
+    A::Cursor: Clone
+        + serde::Serialize
+        + serde::de::DeserializeOwned
+        + Send
+        + Sync,
+{
+    use clap::Parser;
+    use sinex_node_sdk::IngestorNodeAdapter;
+    use sinex_node_sdk::node_cli::{NodeCli, NodeCliRunner};
+    use sinex_node_sdk::parser::AdapterBackedIngestor;
+
+    let parsed = NodeCli::parse_from(args);
+    let node = AdapterBackedIngestor::<A, P>::new(source_unit_id).with_default_config(default_fn());
     let adapter = IngestorNodeAdapter::new(node);
     let mut runner = NodeCliRunner::new(adapter);
     runner.run(parsed).await.map_err(std::convert::Into::into)
