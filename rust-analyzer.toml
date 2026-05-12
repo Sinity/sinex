@@ -8,11 +8,21 @@
 #
 # Investigation: .agent/scratch/ra-integration-investigation-2026-05-11.md
 #
-# Expected impact: cold-peak RSS ~4 GB, steady ~3 GB (down from 5.2 GB +
-# 3.5 GB swap = 8.7 GB residency).
+# Expected impact (cold session): ~3-4 GB peak, ~2-3 GB steady, capped
+# growth over long sessions via lru.capacity below. Observed pre-cap
+# growth was 7.8 GB after a 4 h Wave-B fold session.
 #
 # Verify after the next RA spawn:
 #   ps -o pid,rss,vsz,command -p $(pgrep -f 'rust-analyzer')
+
+# ── Worker threads ──
+# Top-level key (NOT a [numThreads] table). Default is CPU count
+# (24 on this host) which means concurrent indexing of all crates
+# at cold-start, each holding intermediate state. 6 is enough to
+# saturate I/O of cargo metadata + file reads without piling on
+# memory peaks. Tradeoff: cold-start ~2x slower; once warm, no
+# difference.
+numThreads = 6
 
 [cargo]
 # Don't analyze every target (dev-deps, examples, benchmarks); analyze
@@ -22,7 +32,7 @@
 allTargets = false
 
 # Default to the main check target. Setting this true would extend the
-# rebuild graph to all binaries on every save — punishing in a 19-member
+# rebuild graph to all binaries on every save — punishing in a 14-member
 # workspace.
 buildScripts.enable = true
 
@@ -59,6 +69,19 @@ excludeDirs = [
     "result-*",
 ]
 
+[lru]
+# Cap Salsa's per-crate memo table at 1024 entries. With RA's default
+# (unbounded) the table grows monotonically over the session — on a
+# 4 h Wave-B fold session this RA hit 7.8 GB RSS even though the
+# workspace itself shrank from 20 → 14 crates. Bounding the LRU caps
+# memo state at ~1-2 GB; combined with the crate graph + proc-macro
+# server the total stays under ~3-4 GB.
+#
+# Tradeoff: hover/completion on an LRU-evicted symbol triggers a
+# re-analysis → 200-500ms cold-cache delay. Acceptable for Claude
+# flows where hovers are infrequent and bursty.
+capacity = 1024
+
 [procMacro]
 # Keep proc-macro expansion ON (we need #[derive(EventPayload)],
 # #[derive(SourceRecord)], sqlx::query!, etc. to expand for type info).
@@ -66,6 +89,14 @@ excludeDirs = [
 # (e.g. #[tracing::instrument]).
 enable = true
 attributes.enable = false
+
+# Skip macros that add no type info but cost memo entries. These are
+# pure side-effect or telemetry wrappers — their expansion changes
+# nothing RA can use for completion or go-to-def. Tradeoff: hover on
+# a `#[tracing::instrument]`-wrapped fn shows the unwrapped signature
+# (which is what you wanted anyway).
+ignored.tracing = ["instrument"]
+ignored.tokio = ["main", "test"]
 
 [diagnostics]
 # Disable Cargo's slow type-checker for non-edited files; let RA's own
