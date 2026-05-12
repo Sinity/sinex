@@ -482,7 +482,7 @@ crate::register_adapter_ingestor!(
     // either way it gets the data it needs. Secondary leg defaults are
     // empty — `path` must come from Nix binding (the JSONL dump file).
     default_config: serde_json::json!({
-        "primary": { "query": "SELECT rowid, * FROM History" },
+        "primary": { "query": "SELECT rowid, * FROM History", "table": "History" },
         "secondary": { "skip_empty": true }
     }),
 );

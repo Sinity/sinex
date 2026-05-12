@@ -248,5 +248,5 @@ register_adapter_ingestor!(
     // command, cwd, session, hostname, deleted_at). SqliteRowAdapter
     // expands query="history" to `SELECT rowid, * FROM history`, which
     // provides every column AtuinHistoryParser reads.
-    default_config: serde_json::json!({ "query": "history" }),
+    default_config: serde_json::json!({ "query": "history", "table": "history" }),
 );

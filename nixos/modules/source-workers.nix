@@ -1113,9 +1113,18 @@ let
           ExecStartPre = lib.mkBefore [ "+${accessSetupScript}" ];
         };
       };
-      units = (mkSourceWorkerUnit (desktopUnitParams "desktop.window-manager" "Hyprland window manager (source-worker)"))
-        // (mkSourceWorkerUnit (desktopUnitParams "desktop.clipboard" "Clipboard polling (source-worker)"))
-        // (mkSourceWorkerUnit (desktopUnitParams "desktop.activitywatch" "ActivityWatch SQLite (source-worker)"));
+      # desktop.window-manager is gated until the Hyprland-socket bridge is
+      # wired through Nix (UnixSocketStreamConfig requires socket_path which
+      # is per-session and runs as the service user via target-user ACLs).
+      # Tracked in plan §2 of the ambitious Q2 plan.
+      #
+      # desktop.clipboard panics on startup without a Wayland display
+      # available to the service user (arboard/copypasta backend needs an
+      # active wl_display). Same gating story; reintroduce when bridged.
+      #
+      # desktop.activitywatch is adapter-backed (SqliteRowAdapter) and runs
+      # with the default_config from `sources/desktop/activitywatch.rs`.
+      units = mkSourceWorkerUnit (desktopUnitParams "desktop.activitywatch" "ActivityWatch SQLite (source-worker)");
       supportUnits = mkAccessSetupUnit {
         name = "sinex-desktop-target-access";
         description = "Prepare target-user access for the Sinex desktop node";
@@ -1420,11 +1429,19 @@ let
         };
       };
     in
+    # system.monitor is not a continuous source unit — it's emitted once at
+    # startup via `register_monitor_unit!` and doesn't appear in the
+    # node_factory registry. Creating a systemd unit for it crashes with
+    # "source unit 'system.monitor' not found in inventory". Track for
+    # plan §2 when monitor unit emission gets its own systemd shape.
+    #
+    # system.dbus is gated until DbusStreamAdapter::open is wired (today
+    # it returns an error and requires `open_with_backend`, which
+    # AdapterBackedIngestor doesn't call). Tracked in plan §5 (adapter
+    # substrate generalization).
     (mkSourceWorkerUnit (systemUnitParams "system.journald" "systemd journal (source-worker)"))
     // (mkSourceWorkerUnit (systemUnitParams "system.systemd" "systemd unit state (source-worker)"))
-    // (mkSourceWorkerUnit (systemUnitParams "system.dbus" "D-Bus signals (source-worker)"))
-    // (mkSourceWorkerUnit (systemUnitParams "system.udev" "udev events (source-worker)"))
-    // (mkSourceWorkerUnit (systemUnitParams "system.monitor" "System monitor lifecycle (source-worker)"));
+    // (mkSourceWorkerUnit (systemUnitParams "system.udev" "udev events (source-worker)"));
 
   mkDocumentUnits =
     let
