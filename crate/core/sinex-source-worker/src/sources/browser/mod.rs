@@ -1,1 +1,3 @@
-//! Browser source units (Wave B target).
+//! Browser source units.
+
+pub mod history;
