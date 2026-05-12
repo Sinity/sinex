@@ -8,10 +8,15 @@
 //! 4. The node factory registry has "noop" registered.
 //! 5. Grep probe: no source-unit match arms in dispatch.rs or main.rs.
 
+use sinex_primitives::parser::SourceUnitId;
 use sinex_source_worker::{
     dispatch::{default_parser_dispatch, find_parser_factory},
     node_factory::{find_node_factory, registered_node_factory_ids},
 };
+
+fn sui(s: &'static str) -> SourceUnitId {
+    SourceUnitId::from_static(s)
+}
 
 // ---------------------------------------------------------------------------
 // 1. WeeChat imperative parser — registry-driven dispatch round-trip
@@ -23,7 +28,7 @@ use sinex_source_worker::{
 async fn weechat_parser_registered_and_dispatches() {
     // Factory must be present.
     assert!(
-        find_parser_factory("weechat").is_some(),
+        find_parser_factory(&sui("weechat")).is_some(),
         "parser factory for 'weechat' must be registered"
     );
 
@@ -66,7 +71,7 @@ async fn weechat_join_line_produces_irc_join() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn weechat_message_declarative_registered() {
     assert!(
-        find_parser_factory("weechat.message").is_some(),
+        find_parser_factory(&sui("weechat.message")).is_some(),
         "declarative 'weechat.message' parser must be registered"
     );
 
@@ -107,13 +112,13 @@ fn unknown_source_produces_registry_error() {
 #[test]
 fn noop_node_factory_registered() {
     assert!(
-        find_node_factory("noop").is_some(),
+        find_node_factory(&sui("noop")).is_some(),
         "node factory for 'noop' must be registered"
     );
 
     let ids = registered_node_factory_ids();
     assert!(
-        ids.contains(&"noop"),
+        ids.iter().any(|id| id.as_str() == "noop"),
         "registered_node_factory_ids() must include 'noop', got: {ids:?}"
     );
 }
@@ -127,11 +132,11 @@ fn weechat_descriptor_registered() {
     use sinex_source_worker::SourceUnitRegistry;
     let registry = SourceUnitRegistry::from_inventory();
     assert!(
-        registry.find("weechat").is_some(),
+        registry.find(&sui("weechat")).is_some(),
         "SourceUnitDescriptor for 'weechat' must be registered"
     );
     assert!(
-        registry.find("weechat.message").is_some(),
+        registry.find(&sui("weechat.message")).is_some(),
         "SourceUnitDescriptor for 'weechat.message' must be registered"
     );
 }
