@@ -385,6 +385,17 @@ fn finalize_results(ctx: &BenchContext, results: &[ScenarioResult]) -> Result<()
         style(ctx.output_dir.display()).cyan()
     );
 
+    let failed_runs: usize = results
+        .iter()
+        .map(|result| result.runs.iter().filter(|run| !run.success).count())
+        .sum();
+    if failed_runs > 0 {
+        bail!(
+            "Benchmark completed with {failed_runs} failed run(s); results were written to {}",
+            ctx.output_dir.display()
+        );
+    }
+
     Ok(())
 }
 

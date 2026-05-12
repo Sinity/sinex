@@ -271,7 +271,6 @@ impl<'a> BenchRunner<'a> {
             let mut builder = ProcessBuilder::new(exe.to_string_lossy()).args([
                 "test",
                 "--ephemeral-postgres",
-                "--skip-preflight",
             ]);
             if self.ctx.config.target == "workspace" {
                 builder = builder.arg("--all");
@@ -323,6 +322,12 @@ impl<'a> BenchRunner<'a> {
 
         let success = output.success();
         let elapsed_ms = elapsed.as_secs_f64() * 1000.0;
+
+        if !success {
+            eprintln!("Scenario {} failed.", scenario.key());
+            emit_failure_stream("stdout", &output.stdout);
+            emit_failure_stream("stderr", &output.stderr);
+        }
 
         let status_icon = if success {
             style("✓").green()
@@ -422,4 +427,29 @@ pub(super) fn generate_scenarios(config: &BenchConfig) -> Vec<Scenario> {
             })
         })
         .collect()
+}
+
+fn emit_failure_stream(name: &str, content: &str) {
+    if content.trim().is_empty() {
+        return;
+    }
+
+    const MAX_CHARS: usize = 32_000;
+    let char_count = content.chars().count();
+    if char_count <= MAX_CHARS {
+        eprintln!("--- child {name} ---\n{content}");
+        return;
+    }
+
+    let tail: String = content
+        .chars()
+        .rev()
+        .take(MAX_CHARS)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect();
+    eprintln!(
+        "--- child {name} (last {MAX_CHARS} chars of {char_count}) ---\n{tail}"
+    );
 }
