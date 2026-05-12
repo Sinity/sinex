@@ -104,8 +104,8 @@ static PARSER_REGISTRY: LazyLock<HashMap<&'static str, ParserFactoryFn>> =
 
 /// Look up a parser factory function by source-unit id.
 #[must_use]
-pub fn find_parser_factory(source_unit_id: &str) -> Option<ParserFactoryFn> {
-    PARSER_REGISTRY.get(source_unit_id).copied()
+pub fn find_parser_factory(source_unit_id: &SourceUnitId) -> Option<ParserFactoryFn> {
+    PARSER_REGISTRY.get(source_unit_id.as_str()).copied()
 }
 
 // =============================================================================
@@ -144,7 +144,11 @@ macro_rules! register_parser {
 /// [`register_parser!`] is the only path.
 pub fn default_parser_dispatch() -> ParserDispatchFn {
     Arc::new(move |source_id: &str, material_bytes: &[u8], material_id: Option<Uuid>| {
-        let factory_fn = match find_parser_factory(source_id) {
+        // Validate the untrusted NATS-supplied source_id at the boundary.
+        let source_unit_id = SourceUnitId::new(source_id)
+            .map_err(|e| format!("invalid source_id '{source_id}': {e}"))?;
+
+        let factory_fn = match find_parser_factory(&source_unit_id) {
             Some(f) => f,
             None => {
                 let mut ids: Vec<&str> = PARSER_REGISTRY.keys().copied().collect();
@@ -168,9 +172,6 @@ pub fn default_parser_dispatch() -> ParserDispatchFn {
         let mat_id = material_id
             .map(Id::<SourceMaterial>::from_uuid)
             .unwrap_or_else(Id::new);
-
-        let source_unit_id = SourceUnitId::new(source_id)
-            .unwrap_or_else(|_| SourceUnitId::from_static("unknown"));
 
         let record = SourceRecord {
             material_id: mat_id,

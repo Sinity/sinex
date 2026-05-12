@@ -25,6 +25,7 @@ use mimalloc::MiMalloc;
 #[global_allocator]
 static GLOBAL: MiMalloc = MiMalloc;
 
+use sinex_primitives::parser::SourceUnitId;
 use sinex_source_worker::registry::SourceUnitRegistry;
 use sinex_source_worker::node_factory;
 
@@ -38,7 +39,7 @@ use sinex_source_worker::node_factory;
 /// already carried through NodeCli's `--source-unit` identity field.
 fn extract_source_unit(
     args: Vec<std::ffi::OsString>,
-) -> (String, Vec<std::ffi::OsString>) {
+) -> (SourceUnitId, Vec<std::ffi::OsString>) {
     // Read env as the fallback; CLI must override (standard CLI precedence).
     let env_val = std::env::var("SINEX_SOURCE_UNIT")
         .ok()
@@ -85,13 +86,8 @@ fn extract_source_unit(
     // operator `--source-unit` override on the command line.
     let source_unit = cli_value.or(env_val);
 
-    let name = source_unit.unwrap_or_else(|| {
-        let registered = node_factory::registered_node_factory_ids();
-        let list = if registered.is_empty() {
-            "(none registered)".to_string()
-        } else {
-            registered.join(", ")
-        };
+    let name_str = source_unit.unwrap_or_else(|| {
+        let list = registered_factory_ids_for_display();
         eprintln!(
             "error: --source-unit <name> is required (or set SINEX_SOURCE_UNIT).\n\
              Registered source units: {list}"
@@ -99,7 +95,26 @@ fn extract_source_unit(
         std::process::exit(1);
     });
 
+    let name = SourceUnitId::new(&name_str).unwrap_or_else(|e| {
+        eprintln!("error: invalid --source-unit value '{name_str}': {e}");
+        std::process::exit(1);
+    });
+
     (name, filtered)
+}
+
+/// Format the registered node-factory ids for display in CLI error messages.
+fn registered_factory_ids_for_display() -> String {
+    let registered = node_factory::registered_node_factory_ids();
+    if registered.is_empty() {
+        "(none registered)".to_string()
+    } else {
+        registered
+            .iter()
+            .map(|id| id.as_str())
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
 }
 
 #[tokio::main]
@@ -121,12 +136,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     match node_factory::find_node_factory(&source_unit_name) {
         Some(factory) => factory(filtered_args).await,
         None => {
-            let registered = node_factory::registered_node_factory_ids();
-            let list = if registered.is_empty() {
-                "(none registered)".to_string()
-            } else {
-                registered.join(", ")
-            };
+            let list = registered_factory_ids_for_display();
             eprintln!(
                 "error: source unit '{source_unit_name}' is in the descriptor registry \
                  but has no node factory registered.\n\
