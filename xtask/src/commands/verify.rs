@@ -98,8 +98,10 @@ pub enum VerifySubcommand {
         /// Failing if they still exist. Use repeatedly or comma-separated.
         #[arg(long, value_delimiter = ',')]
         expect_deleted: Vec<String>,
-        /// Expected workspace member count. Defaults to 20 (current baseline).
-        #[arg(long, default_value_t = 20)]
+        /// Expected workspace member count. Post-Wave-B (#1081) baseline is 14
+        /// (was 20: six legacy ingestor crates folded into sinex-source-worker
+        /// and deleted).
+        #[arg(long, default_value_t = 14)]
         expected_members: usize,
         /// Treat ingestor crates still present as warnings, not failures.
         #[arg(long)]
@@ -1349,7 +1351,17 @@ fn check_sw_ingestor_crates(
     expect_deleted: &[String],
     warn_ingestors: bool,
 ) -> SwCheck {
+    // Post-Wave-B (#1081) `crate/nodes/` was deleted entirely: the six
+    // per-domain ingestor crates were folded into `sinex-source-worker` and
+    // `sinex-process` moved to `crate/core/`. A missing directory is the
+    // expected success case.
     let nodes_dir = root.join("crate/nodes");
+    if !nodes_dir.exists() {
+        return SwCheck::pass(
+            "ingestor_crates",
+            "crate/nodes/ has been deleted (Wave-B fold complete)",
+        );
+    }
     let entries = match fs::read_dir(&nodes_dir) {
         Ok(e) => e,
         Err(err) => {
