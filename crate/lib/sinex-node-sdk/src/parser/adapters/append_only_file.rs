@@ -1,4 +1,11 @@
 //! Adapter for append-only (log-style) files.
+//!
+//! Detects inode rotation: when the file at `path` has a different inode
+//! from the one observed in the cursor, the adapter resets the byte/line
+//! offsets to 0 and marks the first post-rotation record's `metadata` with
+//! `{"rotation_detected": true, "previous_inode": ..., "current_inode": ...}`.
+//! Parsers that need to dedupe across a rotation can layer the
+//! [`crate::parser::dedup::ContentHashWindow`] helper on top.
 
 use async_trait::async_trait;
 use camino::Utf8Path;
@@ -33,12 +40,21 @@ pub struct AppendOnlyFileConfig {
     pub skip_empty: bool,
 }
 
-/// Cursor for [`AppendOnlyFileAdapter`] — tracks the last-read line number
-/// and byte offset.
+/// Cursor for [`AppendOnlyFileAdapter`] — tracks the last-read line number,
+/// byte offset, and (when available) the file's inode at the time of capture.
+///
+/// `inode` is an `Option<u64>` so cursors persisted before inode tracking
+/// existed continue to deserialize without breakage. On the first scan after
+/// upgrading, the adapter populates `inode` and rotation detection becomes
+/// active on subsequent scans.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AppendOnlyCursor {
     pub last_line: u64,
     pub last_byte_offset: u64,
+    /// Inode of the file when the cursor was last advanced. `None` for cursors
+    /// persisted before inode tracking was introduced.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inode: Option<u64>,
 }
 
 impl AppendOnlyCursor {
@@ -47,6 +63,7 @@ impl AppendOnlyCursor {
         Self {
             last_line: 0,
             last_byte_offset: 0,
+            inode: None,
         }
     }
 }
@@ -65,14 +82,41 @@ impl InputShapeAdapter for AppendOnlyFileAdapter {
     ) -> ParserResult<BoxStream<'static, ParserResult<SourceRecord>>> {
         let path = config.path.clone();
         let skip_empty = config.skip_empty;
-        let start_offset = cursor.as_ref().map_or(0, |c| c.last_byte_offset);
-        let start_line = cursor.as_ref().map_or(1, |c| c.last_line + 1);
+
+        // Detect rotation by comparing the cursor's stored inode with the
+        // file's current inode. If they differ, the file was rotated: the old
+        // log's bytes are gone (or have been moved aside), so we must start
+        // scanning at offset 0 instead of inheriting stale offsets.
+        let current_ino = current_inode(&path);
+        let (start_offset, start_line, rotation_marker) = match (
+            cursor.as_ref().and_then(|c| c.inode),
+            current_ino,
+        ) {
+            (Some(prev), Some(curr)) if prev != curr => {
+                // Rotation observed: reset to start-of-file, surface the
+                // transition on the first emitted record so parsers can react
+                // (emit a `parser.stream_rotation_detected` synthesis event,
+                // flush dedup window, etc.).
+                let marker = serde_json::json!({
+                    "rotation_detected": true,
+                    "previous_inode": prev,
+                    "current_inode": curr,
+                });
+                (0_u64, 1_u64, Some(marker))
+            }
+            _ => (
+                cursor.as_ref().map_or(0, |c| c.last_byte_offset),
+                cursor.as_ref().map_or(1, |c| c.last_line + 1),
+                None,
+            ),
+        };
 
         let content = std::fs::read_to_string(&path)?;
 
         let mut records = Vec::new();
         let mut line_num: u64 = 0;
         let mut byte_offset: u64 = 0;
+        let mut rotation_marker = rotation_marker;
 
         for line in content.lines() {
             line_num += 1;
@@ -94,6 +138,12 @@ impl InputShapeAdapter for AppendOnlyFileAdapter {
                 continue;
             }
 
+            // Embed the file's inode in every record so cursor_after() can
+            // round-trip it back into AppendOnlyCursor.inode without keeping
+            // adapter-side mutable state. The first post-rotation record also
+            // carries the rotation marker.
+            let metadata = build_record_metadata(current_ino, rotation_marker.take());
+
             records.push(SourceRecord {
                 material_id,
                 anchor: MaterialAnchor::Line {
@@ -103,7 +153,7 @@ impl InputShapeAdapter for AppendOnlyFileAdapter {
                 bytes: line_bytes,
                 logical_path: Some(Utf8Path::new(&path).to_owned().into()),
                 source_ts_hint: None,
-                metadata: serde_json::Value::Null,
+                metadata,
             });
 
             byte_offset += line_len + 1;
@@ -117,11 +167,56 @@ impl InputShapeAdapter for AppendOnlyFileAdapter {
             MaterialAnchor::Line { byte_start, line } => Ok(AppendOnlyCursor {
                 last_line: *line,
                 last_byte_offset: *byte_start,
+                inode: record
+                    .metadata
+                    .get(ADAPTER_INODE_KEY)
+                    .and_then(serde_json::Value::as_u64),
             }),
             other => Err(ParserError::Cursor(format!(
                 "expected Line anchor, got {other:?}"
             ))),
         }
+    }
+}
+
+/// Metadata key under which the adapter embeds the file's inode in every
+/// emitted record. Exposed for parsers that need to inspect it.
+pub const ADAPTER_INODE_KEY: &str = "_append_only_inode";
+
+/// Read the inode of `path` on Unix; returns `None` on other platforms or if
+/// the path is unreadable. The `None` case disables rotation detection but
+/// does not error out — the adapter still functions, just without rotation
+/// awareness (the prior behavior).
+#[cfg(unix)]
+fn current_inode(path: &str) -> Option<u64> {
+    use std::os::unix::fs::MetadataExt;
+    std::fs::metadata(path).ok().map(|m| m.ino())
+}
+
+#[cfg(not(unix))]
+fn current_inode(_path: &str) -> Option<u64> {
+    None
+}
+
+/// Build the per-record metadata value, merging the inode (when known) with
+/// an optional rotation marker. Always emits an object when either is set so
+/// `cursor_after` can read the inode back via `get()`.
+fn build_record_metadata(
+    inode: Option<u64>,
+    rotation: Option<serde_json::Value>,
+) -> serde_json::Value {
+    match (inode, rotation) {
+        (None, None) => serde_json::Value::Null,
+        (Some(ino), None) => serde_json::json!({ ADAPTER_INODE_KEY: ino }),
+        (None, Some(rot)) => rot,
+        (Some(ino), Some(serde_json::Value::Object(mut map))) => {
+            map.insert(ADAPTER_INODE_KEY.to_string(), ino.into());
+            serde_json::Value::Object(map)
+        }
+        (Some(ino), Some(other)) => serde_json::json!({
+            ADAPTER_INODE_KEY: ino,
+            "rotation": other,
+        }),
     }
 }
 
@@ -236,6 +331,81 @@ mod tests {
             skip_empty: false,
         };
         assert!(adapter.open(dummy_material_id(), &config, None).await.is_err());
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_append_only_records_carry_inode_when_unix() -> xtask::sandbox::TestResult<()> {
+        let mut f = NamedTempFile::new().unwrap();
+        writeln!(f, "x").unwrap();
+        let path = f.path().to_str().unwrap().to_string();
+
+        let adapter = AppendOnlyFileAdapter;
+        let config = AppendOnlyFileConfig { path, skip_empty: false };
+        let stream = adapter.open(dummy_material_id(), &config, None).await.unwrap();
+        let records: Vec<_> = stream.collect().await;
+
+        let rec = records[0].as_ref().unwrap();
+        if cfg!(unix) {
+            // Inode should be embedded in metadata on every record so
+            // cursor_after can round-trip it.
+            let ino = rec.metadata.get(ADAPTER_INODE_KEY).and_then(|v| v.as_u64());
+            assert!(ino.is_some(), "expected inode in metadata on unix");
+        }
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_append_only_rotation_resets_offsets() -> xtask::sandbox::TestResult<()> {
+        // Two distinct temp files act as "before rotation" and "after rotation".
+        // The cursor returned from scanning the first file carries the first
+        // file's inode; supplying it to a scan of the second file (different
+        // inode) MUST cause the adapter to reset to offset 0 and tag the first
+        // emitted record with rotation metadata.
+        let mut f1 = NamedTempFile::new().unwrap();
+        writeln!(f1, "old-line-1").unwrap();
+        writeln!(f1, "old-line-2").unwrap();
+        let path1 = f1.path().to_str().unwrap().to_string();
+
+        let mut f2 = NamedTempFile::new().unwrap();
+        writeln!(f2, "new-line-1").unwrap();
+        writeln!(f2, "new-line-2").unwrap();
+        let path2 = f2.path().to_str().unwrap().to_string();
+
+        let adapter = AppendOnlyFileAdapter;
+
+        // Scan f1 fully, capture cursor.
+        let cfg1 = AppendOnlyFileConfig { path: path1, skip_empty: false };
+        let stream1 = adapter.open(dummy_material_id(), &cfg1, None).await.unwrap();
+        let records1: Vec<_> = stream1.collect().await;
+        let cursor1 = adapter.cursor_after(records1.last().unwrap().as_ref().unwrap()).unwrap();
+        if cfg!(unix) {
+            assert!(cursor1.inode.is_some(), "f1 cursor must capture inode");
+        }
+
+        // Resume against f2 using f1's cursor (offsets non-zero, inode different).
+        let cfg2 = AppendOnlyFileConfig { path: path2, skip_empty: false };
+        let stream2 = adapter.open(dummy_material_id(), &cfg2, Some(cursor1.clone())).await.unwrap();
+        let records2: Vec<_> = stream2.collect().await;
+
+        // On unix the rotation is detected: both new lines are emitted from
+        // offset 0 with rotation metadata on the first. Without unix support
+        // (no inode), the adapter falls back to inheriting offsets — which
+        // would emit zero records because f2 is shorter than cursor1.offset.
+        if cfg!(unix) {
+            assert_eq!(records2.len(), 2, "rotation should reset and emit all of f2");
+            let first_meta = &records2[0].as_ref().unwrap().metadata;
+            assert_eq!(
+                first_meta.get("rotation_detected").and_then(|v| v.as_bool()),
+                Some(true),
+                "first post-rotation record must carry rotation_detected: true"
+            );
+            assert!(
+                first_meta.get("previous_inode").and_then(|v| v.as_u64()).is_some(),
+                "rotation marker must include previous_inode"
+            );
+        }
+
         Ok(())
     }
 

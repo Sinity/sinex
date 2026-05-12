@@ -21,6 +21,7 @@
 mod adapter_node;
 mod adapters;
 mod declarative;
+pub mod dedup;
 mod fingerprint;
 mod fixture;
 mod weechat;
