@@ -1,8 +1,11 @@
-#![doc = include_str!("../docs/README.md")]
-#![doc = include_str!("../../../lib/sinex-node-sdk/docs/overview.md")]
-
-//! Document ingestor that captures materials directly into `JetStream` via the
-//! `AcquisitionManager` (Stage-as-You-Go).
+//! Document ingestor that captures materials directly into `JetStream` via
+//! the `AcquisitionManager` (Stage-as-You-Go).
+//!
+//! Moved verbatim from the legacy `sinex-document-ingestor` crate during the
+//! Wave-B fold (#1081). The legacy crate had a single `IngestorNode` impl
+//! plus a handful of helpers; carrying them here lets the legacy crate
+//! disappear without requiring an SDK extension. The source-unit descriptor
+//! and binding live in `sources/document/staging.rs`, not in this file.
 
 use camino::{Utf8Path, Utf8PathBuf};
 use mime_guess::MimeGuess;
@@ -956,55 +959,3 @@ mod tests {
     }
 }
 
-// --- Source-unit descriptor (issue #690 / #734) ---
-
-use sinex_primitives::proof::{
-    CheckpointFamily as SuCheckpointFamily, Horizon as SuHorizon,
-    OccurrenceIdentity as SuOccurrenceIdentity, PrivacyTier as SuPrivacyTier,
-    RetentionPolicy as SuRetentionPolicy, RuntimeShape as SuRuntimeShape, SourceUnitBinding,
-    SourceUnitDescriptor, SubjectRef,
-};
-use sinex_primitives::{register_source_unit, register_source_unit_binding};
-
-// The document ingestor stages files as raw source material and emits a
-// `document.ingested` event per file. Until the parser/chunker train (#733)
-// lands the ingestor is a single-event, append-stream source.
-register_source_unit! {
-    SourceUnitDescriptor {
-        id: "document.staging",
-        namespace: "document",
-        event_types: &[
-            ("document-ingestor", "document.ingested"),
-        ],
-        // Document contents are arbitrary user files — secrets are routine.
-        privacy_tier: SuPrivacyTier::Secret,
-        horizons: &[SuHorizon::Continuous, SuHorizon::Historical],
-        retention: SuRetentionPolicy::Forever,
-        proof_obligations: &[],
-        occurrence_identity: SuOccurrenceIdentity::Anchor,
-        access_policy: "configured_document_roots",
-    }
-}
-
-register_source_unit_binding! {
-    SourceUnitBinding::builder(
-        SubjectRef::from_static("source_unit:document.staging"),
-        "document.staging",
-        "document",
-    )
-    .implementation("sinex-document-ingestor")
-    .adapter("IngestorNodeAdapter")
-    .output_event_type("document.ingested")
-    .privacy_context("document_body")
-    .material_policy("document_anchor")
-    .checkpoint_policy("append_stream")
-    .resource_shape("on_demand_batch")
-    .source_unit_id("document.staging")
-    .runner_pack("document")
-    .checkpoint_family(SuCheckpointFamily::AppendStream)
-    .runtime_shape(SuRuntimeShape::OnDemand)
-    .package_impact("no_new_output")
-    .implementation_mode("rust_in_pack:document")
-    .build_impact(sinex_primitives::proof::SourceUnitBuildImpact::ZERO)
-    .build()
-}

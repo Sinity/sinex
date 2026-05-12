@@ -216,8 +216,9 @@ impl MaterialParser for DocumentStagingParser {
 
 crate::register_parser!("document.staging", DocumentStagingParser);
 
-// The full node lifecycle uses DocumentNode from sinex-document-ingestor.
+// The full node lifecycle uses DocumentNode (moved verbatim from the legacy
+// `sinex-document-ingestor` crate during the Wave-B fold; see `super::node`).
 // It is an `IngestorNode` implementation that manages its own checkpoint state
 // (`manages_own_checkpoints: true`) and supports snapshot + historical scans
 // but not continuous mode.
-crate::register_node_factory!("document.staging", sinex_document_ingestor::DocumentNode);
+crate::register_node_factory!("document.staging", super::node::DocumentNode);

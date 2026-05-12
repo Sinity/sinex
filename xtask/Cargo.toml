@@ -78,14 +78,10 @@ sinex-node-sdk = { path = "../crate/lib/sinex-node-sdk" }
 
 # Source-unit inventory links. xtask source-unit/proof tooling must see the
 # descriptors declared by shipped node crates, not only descriptors hardcoded in
-# sinex-primitives.
-sinex-browser-ingestor = { path = "../crate/nodes/sinex-browser-ingestor" }
-sinex-desktop-ingestor = { path = "../crate/nodes/sinex-desktop-ingestor" }
-sinex-document-ingestor = { path = "../crate/nodes/sinex-document-ingestor" }
-sinex-fs-ingestor = { path = "../crate/nodes/sinex-fs-ingestor" }
+# sinex-primitives. Post-Wave-B fold (#1081), every per-domain source unit is
+# registered from sinex-source-worker, so a single dep covers all of them.
+sinex-source-worker = { path = "../crate/core/sinex-source-worker" }
 sinex-process = { path = "../crate/nodes/sinex-process" }
-sinex-system-ingestor = { path = "../crate/nodes/sinex-system-ingestor" }
-sinex-terminal-ingestor = { path = "../crate/nodes/sinex-terminal-ingestor" }
 url = { workspace = true }
 rand = { workspace = true }
 tokio-stream = "0.1"

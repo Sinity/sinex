@@ -14,12 +14,12 @@ mod tests {
 
     #[sinex_test]
     async fn document_staging_initial_ingestion(_ctx: TestContext) -> TestResult<()> {
-        let failures = crate::production_path::_run_case(
+        let failures = crate::_run_case(
             "document.staging",
-            crate::production_path::AdapterKind::FileDrop,
+            crate::AdapterKind::FileDrop,
             DOCUMENT_STAGING_FIXTURE,
             &["document.ingested"],
-            crate::production_path::ALL_OBLIGATIONS,
+            crate::ALL_OBLIGATIONS,
         )
         .await;
         assert!(failures.is_empty(), "document.staging obligations failed: {failures:#?}");

@@ -34,12 +34,12 @@ INSERT INTO visits VALUES ('https://chromium.org', 'Chromium', 13305000000000000
     async fn browser_history_qutebrowser_initial_ingestion(
         _ctx: TestContext,
     ) -> TestResult<()> {
-        let failures = crate::production_path::_run_case(
+        let failures = crate::_run_case(
             "browser.history",
-            crate::production_path::AdapterKind::SqliteRow,
+            crate::AdapterKind::SqliteRow,
             QUTEBROWSER_FIXTURE,
             &["page.visited"],
-            crate::production_path::ALL_OBLIGATIONS,
+            crate::ALL_OBLIGATIONS,
         )
         .await;
         assert!(
@@ -51,12 +51,12 @@ INSERT INTO visits VALUES ('https://chromium.org', 'Chromium', 13305000000000000
 
     #[sinex_test]
     async fn browser_history_chromium_initial_ingestion(_ctx: TestContext) -> TestResult<()> {
-        let failures = crate::production_path::_run_case(
+        let failures = crate::_run_case(
             "browser.history",
-            crate::production_path::AdapterKind::SqliteRow,
+            crate::AdapterKind::SqliteRow,
             CHROMIUM_FIXTURE,
             &["page.visited"],
-            crate::production_path::ALL_OBLIGATIONS,
+            crate::ALL_OBLIGATIONS,
         )
         .await;
         assert!(
@@ -68,12 +68,12 @@ INSERT INTO visits VALUES ('https://chromium.org', 'Chromium', 13305000000000000
 
     #[sinex_test]
     async fn browser_history_jsonl_dump_initial_ingestion(_ctx: TestContext) -> TestResult<()> {
-        let failures = crate::production_path::_run_case(
+        let failures = crate::_run_case(
             "browser.history",
-            crate::production_path::AdapterKind::AppendOnlyFile,
+            crate::AdapterKind::AppendOnlyFile,
             JSONL_DUMP_FIXTURE,
             &["page.visited"],
-            crate::production_path::ALL_OBLIGATIONS,
+            crate::ALL_OBLIGATIONS,
         )
         .await;
         assert!(
