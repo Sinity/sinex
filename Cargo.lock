@@ -5957,6 +5957,7 @@ name = "sinex-source-worker"
 version = "0.4.2"
 dependencies = [
  "async-nats",
+ "async-stream",
  "async-trait",
  "camino",
  "clap",
@@ -5966,10 +5967,13 @@ dependencies = [
  "human-panic",
  "inventory",
  "mimalloc",
+ "mime_guess",
+ "notify",
  "rusqlite",
  "serde",
  "serde_json",
  "sinex-db",
+ "sinex-document-ingestor",
  "sinex-macros",
  "sinex-node-sdk",
  "sinex-primitives",
@@ -5977,9 +5981,11 @@ dependencies = [
  "tempfile",
  "time",
  "tokio",
+ "tokio-util",
  "tracing",
  "tracing-subscriber",
  "uuid",
+ "validator",
  "xtask",
 ]
 
