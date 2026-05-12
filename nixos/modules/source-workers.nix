@@ -634,16 +634,37 @@ let
         mapAttrsToList
           (sourceUnitId: sources: { inherit sourceUnitId sources; })
           (groupBy (source: source.sourceUnitId) historySourcesWithUnits);
-      mkSourceUnitNodeConfig = group: builtins.toJSON {
-        history_sources = map
-          (source: {
+      # Post-Wave-B fold (#1081): each terminal source unit is an
+      # AdapterBackedIngestor over either SqliteRowAdapter (atuin, fish)
+      # or AppendOnlyFileAdapter (bash, zsh, text). Each adapter expects
+      # a different Config shape:
+      #   SqliteRowConfig:    { path, query, skip_empty?, max_rows? }
+      #   AppendOnlyFileConfig: { path, skip_empty? }
+      # The legacy ingestor's umbrella shape (history_sources +
+      # polling_interval_secs + max_capture_bytes) is no longer
+      # deserializable against the new adapters. Emit per-shell shapes.
+      mkSourceUnitNodeConfig = group:
+        let
+          source = builtins.head group.sources;
+          shell = toLower source.shell;
+        in
+        builtins.toJSON (
+          if shell == "atuin" then {
             path = source.path;
-            shell = source.shell;
-          })
-          group.sources;
-        polling_interval_secs = 5;
-        max_capture_bytes = 32768;
-      };
+            # "history" expands to `SELECT rowid, * FROM history` inside
+            # SqliteRowAdapter; provides every column the AtuinHistoryParser
+            # reads (command, timestamp, duration, exit, cwd, session, hostname).
+            query = "history";
+          } else if shell == "fish" then {
+            path = source.path;
+            # fish_history table with ROWID + columns (command, when).
+            query = "fish_history";
+          } else {
+            # bash, zsh, text — AppendOnlyFileConfig
+            path = source.path;
+            skip_empty = true;
+          }
+        );
       sqliteHistoryPaths =
         unique (
           map
@@ -1067,10 +1088,16 @@ let
             exit 1
           fi
         '';
-      units = mkSourceWorkerUnit {
-        sourceUnit = "desktop";
-        description = "Desktop node (source-worker)";
-        inherit instances resources;
+      # Post-Wave-B fold (#1081): the legacy single `desktop` source unit
+      # split into three typed source units. Spawn one source-worker
+      # instance per source unit; each gets the same env (union of
+      # Hyprland-socket, clipboard, activitywatch needs) and the same
+      # target-user ACL bridge. The Rust binary only touches what its
+      # source-unit-specific parser needs.
+      desktopUnitParams = sourceUnit: description: {
+        inherit sourceUnit description;
+        instances = 1;
+        inherit resources;
         afterUnits = runtimeRootUnits;
         wantsUnits = runtimeRootUnits;
         extraArgs = sat.extraArgs;
@@ -1086,6 +1113,9 @@ let
           ExecStartPre = lib.mkBefore [ "+${accessSetupScript}" ];
         };
       };
+      units = (mkSourceWorkerUnit (desktopUnitParams "desktop.window-manager" "Hyprland window manager (source-worker)"))
+        // (mkSourceWorkerUnit (desktopUnitParams "desktop.clipboard" "Clipboard polling (source-worker)"))
+        // (mkSourceWorkerUnit (desktopUnitParams "desktop.activitywatch" "ActivityWatch SQLite (source-worker)"));
       supportUnits = mkAccessSetupUnit {
         name = "sinex-desktop-target-access";
         description = "Prepare target-user access for the Sinex desktop node";
@@ -1283,7 +1313,7 @@ let
           fi
         '';
       units = mkSourceWorkerUnit {
-        sourceUnit = "browser";
+        sourceUnit = "browser.history";
         description = "Browser history node (source-worker)";
         inherit instances resources;
         extraArgs = [ "--node-config ${escapeShellArg nodeConfig}" ] ++ sat.extraArgs;
@@ -1368,16 +1398,28 @@ let
         };
       };
     in
-    mkSourceWorkerUnit {
-      sourceUnit = "system";
-      description = "System node (source-worker)";
-      inherit instances resources;
-      extraArgs = [ "--node-config ${escapeShellArg nodeConfig}" ] ++ sat.extraArgs;
-      env = [ "RUST_LOG=${nodesCfg.defaults.logLevel}" ] ++ toEnvList sat.env;
-      serviceConfig = {
-        SupplementaryGroups = [ "systemd-journal" ];
+    # Post-Wave-B fold (#1081): the legacy single `system` source unit
+    # split into five typed source units (journald, systemd, dbus, udev,
+    # monitor). Each gets a source-worker instance with the union of
+    # capabilities (journald supplementary group, system-bus env). Each
+    # parser only uses what its source-unit-specific code touches.
+    let
+      systemUnitParams = sourceUnit: description: {
+        inherit sourceUnit description;
+        instances = 1;
+        inherit resources;
+        extraArgs = [ "--node-config ${escapeShellArg nodeConfig}" ] ++ sat.extraArgs;
+        env = [ "RUST_LOG=${nodesCfg.defaults.logLevel}" ] ++ toEnvList sat.env;
+        serviceConfig = {
+          SupplementaryGroups = [ "systemd-journal" ];
+        };
       };
-    };
+    in
+    (mkSourceWorkerUnit (systemUnitParams "system.journald" "systemd journal (source-worker)"))
+    // (mkSourceWorkerUnit (systemUnitParams "system.systemd" "systemd unit state (source-worker)"))
+    // (mkSourceWorkerUnit (systemUnitParams "system.dbus" "D-Bus signals (source-worker)"))
+    // (mkSourceWorkerUnit (systemUnitParams "system.udev" "udev events (source-worker)"))
+    // (mkSourceWorkerUnit (systemUnitParams "system.monitor" "System monitor lifecycle (source-worker)"));
 
   mkDocumentUnits =
     let
