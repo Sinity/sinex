@@ -557,6 +557,28 @@ fn collect_runtime_binary_input_paths(
     workspace_root: &std::path::Path,
     package: &str,
 ) -> Result<Vec<PathBuf>> {
+    // The input set drives the binary-staleness check. It must be conservative
+    // enough to catch real changes but tight enough that unrelated workspace
+    // edits don't force a rebuild.
+    //
+    // Intentionally NOT included:
+    //   - workspace `Cargo.toml`: edited whenever ANY workspace member is added,
+    //     removed, or renamed — including changes unrelated to the runtime
+    //     binary's dependency closure.
+    //   - workspace `Cargo.lock`: touched by `cargo build` / `cargo update`
+    //     for any package in the workspace; a `cargo build -p sinex-db` run
+    //     bumps the lockfile mtime past the `sinex-ingestd` binary's mtime,
+    //     marking ingestd "stale" even though nothing in its dependency
+    //     closure changed.
+    //
+    // If a real dependency-graph change does happen, the per-crate
+    // `Cargo.toml` files in the dep closure (collected below via
+    // `workspace_dependency_roots`) capture it. Cargo's incremental compile
+    // is the second line of defence: if our cache check falsely concludes
+    // "fresh", cargo will rebuild whatever its own staleness check finds.
+    //
+    // See #1220 — pre-fix this stage ran 168 times/week consuming 55min/week
+    // largely because of the lockfile / workspace-Cargo.toml mtime tail.
     let mut paths = Vec::new();
     for root in workspace_dependency_roots(workspace_root, package)? {
         paths.push(root.join("Cargo.toml"));
@@ -568,14 +590,6 @@ fn collect_runtime_binary_input_paths(
         if src.exists() {
             collect_source_files(&src, &mut paths);
         }
-    }
-    let workspace_manifest = workspace_root.join("Cargo.toml");
-    if workspace_manifest.exists() {
-        paths.push(workspace_manifest);
-    }
-    let lockfile = workspace_root.join("Cargo.lock");
-    if lockfile.exists() {
-        paths.push(lockfile);
     }
     paths.sort();
     paths.dedup();
@@ -898,6 +912,32 @@ mod tests {
                 !relative.starts_with("xtask/src")
             }),
             "runtime binary inputs must not include xtask dev-dependency sources: {inputs:#?}"
+        );
+        Ok(())
+    }
+
+    /// Regression: workspace Cargo.toml and Cargo.lock must not appear in the
+    /// runtime-binary input set. Touching either (cargo update for an
+    /// unrelated package, adding a workspace member) used to mark every
+    /// runtime binary stale and trigger a full pre-test rebuild. See #1220.
+    #[sinex_test]
+    async fn runtime_binary_inputs_exclude_workspace_manifest_and_lockfile() -> TestResult<()> {
+        let workspace = find_workspace_root()?;
+        let inputs = collect_runtime_binary_input_paths(&workspace, "sinex-ingestd")?;
+        let workspace_manifest = workspace.join("Cargo.toml");
+        let lockfile = workspace.join("Cargo.lock");
+
+        assert!(
+            !inputs.iter().any(|path| path == &workspace_manifest),
+            "runtime binary inputs must NOT include workspace Cargo.toml; \
+             edits there (members/shared deps) over-invalidate every runtime binary (#1220)"
+        );
+        assert!(
+            !inputs.iter().any(|path| path == &lockfile),
+            "runtime binary inputs must NOT include workspace Cargo.lock; \
+             `cargo build -p <other>` bumps lockfile mtime and falsely marks \
+             this binary stale (#1220). cargo's own incremental compile remains \
+             the safety net for real dep-graph changes"
         );
         Ok(())
     }
