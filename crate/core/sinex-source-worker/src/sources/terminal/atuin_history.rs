@@ -234,6 +234,14 @@ impl MaterialParser for AtuinHistoryParser {
             synthesis_parents: None,
         }])
     }
+
+    fn baseline_adapter_config() -> serde_json::Value {
+        // Atuin's history table has columns (id, timestamp, duration, exit,
+        // command, cwd, session, hostname, deleted_at). SqliteRowAdapter
+        // expands query="history" to `SELECT rowid, * FROM history`, which
+        // provides every column AtuinHistoryParser reads.
+        serde_json::json!({ "query": "history", "table": "history" })
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -244,9 +252,4 @@ register_adapter_ingestor!(
     source_unit_id: "terminal.atuin-history",
     adapter: SqliteRowAdapter,
     parser: AtuinHistoryParser,
-    // Atuin's history table has columns (id, timestamp, duration, exit,
-    // command, cwd, session, hostname, deleted_at). SqliteRowAdapter
-    // expands query="history" to `SELECT rowid, * FROM history`, which
-    // provides every column AtuinHistoryParser reads.
-    default_config: serde_json::json!({ "query": "history", "table": "history" }),
 );
