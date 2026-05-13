@@ -7,6 +7,7 @@
 //! in a separate crate.
 
 mod event_payload;
+mod sinex_config;
 mod source_record;
 
 use proc_macro::TokenStream;
@@ -123,4 +124,39 @@ pub fn derive_event_payload(input: TokenStream) -> TokenStream {
 )]
 pub fn derive_source_record(input: TokenStream) -> TokenStream {
     source_record::derive_source_record_impl(input)
+}
+
+/// Derive `from_env()` for env-driven configuration structs.
+///
+/// Generates an `impl <Struct> { pub fn from_env() -> Self }` body that
+/// reads each non-`skip` field from an environment variable using the
+/// `sinex_primitives::env::*` helpers. Field types drive helper selection:
+/// `bool` → `bool_or`, `Option<PathBuf>` → `path_optional`,
+/// `Option<String>` → `var_optional`, `Option<T>` → `parse_optional`,
+/// `String` → `var_or`, other `T: FromStr` → `parse_or`.
+///
+/// # Required struct attributes
+///
+/// ```ignore
+/// #[derive(SinexConfig)]
+/// #[sinex_config(prefix = "SINEX_DB", context = "database pool")]
+/// pub struct PoolConfig { /* ... */ }
+/// ```
+///
+/// # Field attributes
+///
+/// - `#[sinex_config(env = "EXPLICIT_KEY")]` — override the env-key suffix
+///   (default: uppercased field name)
+/// - `#[sinex_config(default = LIT)]` — literal default for fields whose
+///   type doesn't otherwise have one (bool defaults to false, String to "")
+/// - `#[sinex_config(default_expr = "EXPR")]` — non-literal default
+///   (e.g. `"Seconds::from_secs(30)"`)
+/// - `#[sinex_config(parser = path::to::fn)]` — custom parser
+///   `fn(&str) -> Result<T, _>`; requires a default fallback
+/// - `#[sinex_config(skip)]` — leave the field at `Default::default()`
+///
+/// See `thoughtspace/crystal/decisions/sinex-config-derive.md` for design.
+#[proc_macro_derive(SinexConfig, attributes(sinex_config))]
+pub fn derive_sinex_config(input: TokenStream) -> TokenStream {
+    sinex_config::expand(input)
 }

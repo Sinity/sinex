@@ -267,12 +267,24 @@ where
                         Err(e.into())
                     }
                     Settlement::HaltNode { reason } => {
-                        error!(node = %self.node.name(), error = %e, reason = ?reason, "Halting node");
+                        // Halt requests clean drain so systemd records the
+                        // node as cleanly exited rather than restarting it
+                        // into a hot loop. The error still propagates so the
+                        // caller can record the failure.
+                        if let Some(drain) = self.shutdown_tx.as_ref() {
+                            drain.request_drain_and_warn(self.node.name());
+                        }
+                        error!(node = %self.node.name(), error = %e, reason = ?reason, "Halting node; runtime drain requested");
                         Err(SinexError::processing(format!(
                             "Node halted: {reason:?} — {e}"
                         )))
                     }
                     Settlement::DrainRuntimeUnit { reason } => {
+                        // Same shape as HaltNode — request drain, then return
+                        // the error so the in-flight batch unwinds.
+                        if let Some(drain) = self.shutdown_tx.as_ref() {
+                            drain.request_drain_and_warn(self.node.name());
+                        }
                         error!(node = %self.node.name(), error = %e, reason = %reason, "Draining runtime unit");
                         Err(SinexError::processing(format!(
                             "Runtime unit drained: {reason} — {e}"

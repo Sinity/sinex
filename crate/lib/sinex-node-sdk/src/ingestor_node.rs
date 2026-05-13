@@ -315,11 +315,32 @@ impl<I: IngestorNode> IngestorNodeAdapter<I> {
                 );
                 Err(error)
             }
+            Settlement::HaltNode { .. } | Settlement::DrainRuntimeUnit { .. } => {
+                // Halt/drain settlements request runtime drain (clean shutdown)
+                // rather than letting systemd restart a known-broken node into
+                // a hot loop. Distinguishing this from generic Err propagation
+                // preserves the Settlement→action mapping the policy intended.
+                if let Some(drain) = self.shutdown_tx.as_ref() {
+                    drain.request_drain_and_warn(self.ingestor.name());
+                }
+                warn!(
+                    node = %self.ingestor.name(),
+                    phase,
+                    error = %error,
+                    settlement = ?settlement,
+                    "Ingestor scan error settled as halt/drain; runtime drain requested"
+                );
+                Err(error)
+            }
             Settlement::SendToProcessingFailure
             | Settlement::Park { .. }
-            | Settlement::Quarantine { .. }
-            | Settlement::HaltNode { .. }
-            | Settlement::DrainRuntimeUnit { .. } => {
+            | Settlement::Quarantine { .. } => {
+                // SendToProcessingFailure/Park/Quarantine are scan-phase
+                // settlements the ingestor surface can't fully execute (no
+                // direct DLQ publisher here; downstream ingestd handles DLQ
+                // routing for per-event failures). Propagate the error so the
+                // caller's retry/abort logic runs; the DLQ wiring lives on
+                // ingestd's per-event path, not on ingestor scan errors.
                 warn!(
                     node = %self.ingestor.name(),
                     phase,
