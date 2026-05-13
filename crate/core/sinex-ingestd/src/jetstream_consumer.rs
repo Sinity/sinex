@@ -586,11 +586,10 @@ impl JetStreamConsumer {
         // Events stream - durable event log for automata replay.
         // Keep enough history for downstream catch-up, but bound the store so
         // the event bus does not become the primary archive.
-        let events_stream = self.topology.events_stream.clone();
         self.js
             .create_or_update_stream(jetstream::stream::Config {
-                name: events_stream.clone(),
-                subjects: vec![self.topology.events_subject.clone()],
+                name: self.topology.events_stream.to_string(),
+                subjects: vec![self.topology.events_subject.to_string()],
                 retention: jetstream::stream::RetentionPolicy::Limits,
                 max_messages: 2_000_000,
                 max_bytes: JETSTREAM_BOOTSTRAP_MAX_BYTES,
@@ -604,11 +603,10 @@ impl JetStreamConsumer {
 
         // Confirmations stream with compaction - only keep latest per event.
         // These are ephemeral operational state, not durable history.
-        let confirmations_stream = self.topology.confirmations_stream.clone();
         self.js
             .create_or_update_stream(jetstream::stream::Config {
-                name: confirmations_stream.clone(),
-                subjects: vec![self.topology.confirmations_subject.clone()],
+                name: self.topology.confirmations_stream.to_string(),
+                subjects: vec![self.topology.confirmations_subject.to_string()],
                 retention: jetstream::stream::RetentionPolicy::Limits,
                 max_messages_per_subject: 1, // Compaction: only keep latest confirmation
                 max_bytes: JETSTREAM_BOOTSTRAP_MAX_BYTES,
@@ -622,15 +620,14 @@ impl JetStreamConsumer {
                 SinexError::network("Failed to create confirmations stream").with_source(e)
             })?;
 
-        let confirmation_retry_stream = self.topology.confirmation_retry_stream.clone();
         // Cap the total backlog to prevent unbounded growth when confirmation publish failures
         // persist. DiscardPolicy::New combined with max_messages ensures the stream does not
         // grow beyond the cap even if many events are continuously failing confirmation.
         const CONFIRMATION_RETRY_MAX_MESSAGES: i64 = 50_000;
         self.js
             .create_or_update_stream(jetstream::stream::Config {
-                name: confirmation_retry_stream.clone(),
-                subjects: vec![self.topology.confirmation_retry_subject.clone()],
+                name: self.topology.confirmation_retry_stream.to_string(),
+                subjects: vec![self.topology.confirmation_retry_subject.to_string()],
                 retention: jetstream::stream::RetentionPolicy::Limits,
                 max_messages_per_subject: 1,
                 max_messages: CONFIRMATION_RETRY_MAX_MESSAGES,
@@ -645,11 +642,10 @@ impl JetStreamConsumer {
             })?;
 
         // DLQ stream
-        let dlq_stream = self.topology.dlq_stream.clone();
         self.js
             .create_or_update_stream(jetstream::stream::Config {
-                name: dlq_stream.clone(),
-                subjects: vec![self.topology.dlq_subject.clone()],
+                name: self.topology.dlq_stream.to_string(),
+                subjects: vec![self.topology.dlq_subject.to_string()],
                 retention: jetstream::stream::RetentionPolicy::Limits,
                 max_bytes: JETSTREAM_BOOTSTRAP_MAX_BYTES,
                 max_age: Duration::from_hours(168), // 7 days
@@ -662,11 +658,10 @@ impl JetStreamConsumer {
             .await
             .map_err(|e| SinexError::network("Failed to create DLQ stream").with_source(e))?;
 
-        let processing_failures_stream = self.topology.processing_failures_stream.clone();
         self.js
             .create_or_update_stream(jetstream::stream::Config {
-                name: processing_failures_stream.clone(),
-                subjects: vec![self.topology.processing_failures_subject.clone()],
+                name: self.topology.processing_failures_stream.to_string(),
+                subjects: vec![self.topology.processing_failures_subject.to_string()],
                 retention: jetstream::stream::RetentionPolicy::Limits,
                 max_bytes: JETSTREAM_BOOTSTRAP_MAX_BYTES,
                 max_age: Duration::from_hours(168), // 7 days
@@ -683,11 +678,10 @@ impl JetStreamConsumer {
 
         // Derived invalidation stream — scope invalidation signals for derived nodes.
         // Short retention since invalidations are only relevant for running automata.
-        let invalidation_stream = self.topology.invalidation_stream.clone();
         self.js
             .create_or_update_stream(jetstream::stream::Config {
-                name: invalidation_stream.clone(),
-                subjects: vec![self.topology.invalidation_subject.clone()],
+                name: self.topology.invalidation_stream.to_string(),
+                subjects: vec![self.topology.invalidation_subject.to_string()],
                 retention: jetstream::stream::RetentionPolicy::Limits,
                 max_age: Duration::from_hours(24), // 24h — running automata only
                 storage: jetstream::stream::StorageType::File,
@@ -722,10 +716,10 @@ impl JetStreamConsumer {
         self.bootstrap_streams().await?;
 
         // Get events stream and create durable consumer through shared kernel.
-        let stream_name = self.topology.events_stream.clone();
+        let stream_name = self.topology.events_stream.to_string();
         let mut consumer_spec =
             PullConsumerSpec::new(stream_name.clone(), self.topology.consumer_durable.clone());
-        consumer_spec.filter_subject = Some(self.topology.events_subject.clone());
+        consumer_spec.filter_subject = Some(self.topology.events_subject.to_string());
         consumer_spec.deliver_policy = jetstream::consumer::DeliverPolicy::All;
         consumer_spec.ack_wait = self.ack_wait;
         consumer_spec.max_ack_pending = self.max_ack_pending;
@@ -736,11 +730,11 @@ impl JetStreamConsumer {
             .map_err(|e| SinexError::network("Failed to create consumer").with_source(e))?;
         let mut lag_consumer = consumer.clone();
         let mut confirmation_retry_spec = PullConsumerSpec::new(
-            self.topology.confirmation_retry_stream.clone(),
+            self.topology.confirmation_retry_stream.to_string(),
             self.topology.confirmation_retry_consumer.clone(),
         );
         confirmation_retry_spec.filter_subject =
-            Some(self.topology.confirmation_retry_subject.clone());
+            Some(self.topology.confirmation_retry_subject.to_string());
         confirmation_retry_spec.deliver_policy = jetstream::consumer::DeliverPolicy::All;
         confirmation_retry_spec.ack_wait = self.ack_wait;
         confirmation_retry_spec.max_ack_pending = self.max_ack_pending;

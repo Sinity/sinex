@@ -56,8 +56,8 @@ async fn ingestd_processes_backlog_after_downtime(ctx: TestContext) -> TestResul
 
     // Create the JetStream stream directly (instead of starting+stopping ingestd just for this)
     let stream_config = async_nats::jetstream::stream::Config {
-        name: topology.events_stream.clone(),
-        subjects: vec![topology.events_subject.clone()],
+        name: topology.events_stream.to_string(),
+        subjects: vec![topology.events_subject.to_string()],
         ..Default::default()
     };
     js.get_or_create_stream(stream_config).await?;
