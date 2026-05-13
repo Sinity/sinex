@@ -5,6 +5,11 @@ permissions:
 
 on:
   workflow_dispatch:
+  pull_request:
+    paths:
+      - 'crate/lib/sinex-schema/**'
+      - 'crate/lib/sinex-db/**'
+      - '.github/workflows/schema-strict-diff.yml'
 
 # Why: declarative `xtask schema apply` reconciles missing tables/columns/named
 # constraints/indexes/triggers/views/CAs, but does NOT reconcile trigger
@@ -13,10 +18,10 @@ on:
 # catches drift in those categories.
 #
 # Per CLAUDE.md state docs: issues #578 / #579 already track real
-# source-vs-live drift the strict diff caught on fresh-apply state. Wiring this
-# as its own workflow gives the gate a green-history baseline and surfaces
-# fresh drift per PR rather than only when developers remember to run
-# `xtask ci postgres -- xtask ci schema-only` locally.
+# source-vs-live drift the strict diff caught on fresh-apply state. Wired to
+# PRs touching schema sources so drift surfaces on the changing PR, not weeks
+# later when a developer remembers to run `xtask ci postgres -- xtask ci
+# schema-only` locally (#1217).
 
 jobs:
   strict-diff:
