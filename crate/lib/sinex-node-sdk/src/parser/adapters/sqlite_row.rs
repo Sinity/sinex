@@ -80,10 +80,41 @@ pub struct SqliteRowConfig {
     /// Rowid column to use for ordering and cursor advancement.
     #[serde(default = "default_rowid_column")]
     pub rowid_column: String,
+
+    /// Open the SQLite database read-only.
+    ///
+    /// Browser-history and similar sources that share their DB with a
+    /// long-running writer (qutebrowser, chromium, atuin) must open
+    /// read-only to avoid `attempt to write a readonly database` errors
+    /// when the writer holds an exclusive lock. Cursor state lives in the
+    /// SDK's checkpoint store, not in the DB, so read-only is safe by
+    /// default.
+    #[serde(default = "default_read_only")]
+    pub read_only: bool,
+
+    /// Per-open row batch limit. The adapter appends `LIMIT <batch_size>`
+    /// to the inner cursor query so a single `open()` call returns at
+    /// most this many rows even when the underlying table is huge. The
+    /// SDK's continuous-poll loop re-opens the adapter each cycle, so
+    /// the next batch resumes from the last persisted rowid.
+    ///
+    /// Bounds peak memory: a desktop.activitywatch DB with millions of
+    /// rows previously loaded entire result sets (~5.8 GB heap); with
+    /// the default batch the per-cycle working set stays in tens of MB.
+    #[serde(default = "default_batch_size")]
+    pub batch_size: u32,
 }
 
 fn default_rowid_column() -> String {
     "rowid".into()
+}
+
+fn default_read_only() -> bool {
+    true
+}
+
+fn default_batch_size() -> u32 {
+    10_000
 }
 
 /// Cursor for [`SqliteRowAdapter`] — the last-seen rowid.
@@ -128,29 +159,48 @@ impl InputShapeAdapter for SqliteRowAdapter {
             format!("SELECT rowid, * FROM {}", config.query)
         };
 
-        // Open read-only, no mutex (single-threaded access).
-        let connection = rusqlite::Connection::open_with_flags(
-            &path,
-            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY
-                | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
-        )
+        // Open the database.
+        //
+        // For shared DBs (qutebrowser History, atuin history, etc.) we need
+        // `immutable=1` in the URI so SQLite skips WAL/-shm operations
+        // entirely. Without it, opening a WAL-mode DB from a user that can't
+        // write the -shm file fails with "attempt to write a readonly
+        // database" even with SQLITE_OPEN_READ_ONLY — the read-only flag
+        // permits no DB writes, but SQLite still tries to create the WAL
+        // companion files in the same directory. `immutable=1` tells SQLite
+        // "this file will not change while open" which skips WAL setup.
+        // Trade-off: data added by the writer after we open is not visible
+        // until the next adapter open() — acceptable because we re-open per
+        // scan/poll cycle.
+        let mut flags = rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX;
+        let connection = if config.read_only {
+            flags |= rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY
+                | rusqlite::OpenFlags::SQLITE_OPEN_URI;
+            let uri = format!("file:{path}?immutable=1&mode=ro");
+            rusqlite::Connection::open_with_flags(&uri, flags)
+        } else {
+            flags |= rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE
+                | rusqlite::OpenFlags::SQLITE_OPEN_CREATE;
+            rusqlite::Connection::open_with_flags(&path, flags)
+        }
         .map_err(|e| {
             ParserError::Adapter(format!(
                 "failed to open SQLite database {path}: {e}"
             ))
         })?;
 
+        let batch_size = config.batch_size;
         let (sql, bind_rowid) = if last_rowid > 0 {
             (
                 format!(
-                    "SELECT {rowid_col}, * FROM ({base_query}) WHERE {rowid_col} > ?1 ORDER BY {rowid_col} ASC"
+                    "SELECT {rowid_col}, * FROM ({base_query}) WHERE {rowid_col} > ?1 ORDER BY {rowid_col} ASC LIMIT {batch_size}"
                 ),
                 Some(last_rowid),
             )
         } else {
             (
                 format!(
-                    "SELECT {rowid_col}, * FROM ({base_query}) ORDER BY {rowid_col} ASC"
+                    "SELECT {rowid_col}, * FROM ({base_query}) ORDER BY {rowid_col} ASC LIMIT {batch_size}"
                 ),
                 None,
             )
