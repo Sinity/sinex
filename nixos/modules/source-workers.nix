@@ -1094,13 +1094,28 @@ let
       # Hyprland-socket, clipboard, activitywatch needs) and the same
       # target-user ACL bridge. The Rust binary only touches what its
       # source-unit-specific parser needs.
+      # Per-source-unit adapter Config JSON. desktop.activitywatch needs
+      # the path to ActivityWatch's SQLite DB; other desktop source
+      # units have their own shapes (handled as needed).
+      activitywatchDbPath =
+        if targetHome != null
+        then "${targetHome}/.local/share/activitywatch/aw-server-rust/sqlite.db"
+        else "";
+      desktopNodeConfigFor = sourceUnit:
+        if sourceUnit == "desktop.activitywatch" then
+          builtins.toJSON { path = activitywatchDbPath; }
+        else "";
       desktopUnitParams = sourceUnit: description: {
         inherit sourceUnit description;
         instances = 1;
         inherit resources;
         afterUnits = runtimeRootUnits;
         wantsUnits = runtimeRootUnits;
-        extraArgs = sat.extraArgs;
+        extraArgs =
+          (if (desktopNodeConfigFor sourceUnit) != ""
+            then [ "--node-config" (escapeShellArg (desktopNodeConfigFor sourceUnit)) ]
+            else [])
+          ++ sat.extraArgs;
         env = clipboardEnv ++ sessionEnv ++ [ "RUST_LOG=${nodesCfg.defaults.logLevel}" ] ++ toEnvList sat.env;
         path = [ pkgs.hyprland ];
         serviceConfig = {
