@@ -831,7 +831,31 @@ fn scoped_tree_fingerprint_in(cwd: &Path, command: &str, args: &[String]) -> Res
     refresh_git_index(cwd)?;
 
     let mut hasher = Sha256::new();
-    for pkg in &packages {
+
+    // Seed the hasher so a clean working tree (no diff, no untracked) still
+    // produces a fingerprint that's distinct per (HEAD, package-set). Before
+    // this seeding, every clean per-package run hashed zero bytes and
+    // collided on SHA256("") — 117 such collisions in 7d (#1212).
+    //
+    // Domain separator + version is intentional: changing the seeding format
+    // later should bump the version to invalidate old cache entries.
+    hasher.update(b"sinex-tree-fingerprint-v1\x00");
+    let head_oid = git_output(
+        cwd,
+        &["rev-parse", "HEAD"],
+        "rev-parse HEAD for fingerprint seeding",
+    )?;
+    hasher.update(&head_oid.stdout);
+    // packages was already pulled from CLI args; sort for deterministic
+    // fingerprint regardless of -p order.
+    let mut sorted_packages: Vec<&String> = packages.iter().collect();
+    sorted_packages.sort_unstable();
+    for pkg in &sorted_packages {
+        hasher.update(pkg.as_bytes());
+        hasher.update(b"\x00");
+    }
+
+    for pkg in &sorted_packages {
         let prefix = package_to_path(pkg);
         // Include tracked changes (staged + unstaged)
         let diff_out = git_output(
@@ -1726,6 +1750,93 @@ mod tests {
         let fingerprint = scoped_tree_fingerprint_in(dir.path(), "check", &args)?;
 
         assert!(!fingerprint.is_empty());
+        Ok(())
+    }
+
+    /// Regression: clean-tree per-package invocations across different packages
+    /// must NOT collide. Pre-#1212, all clean-tree fingerprints hashed zero bytes
+    /// and SHA256("")'d into one bucket — 117 collisions in 7d on master.
+    #[sinex_test]
+    async fn test_scoped_tree_fingerprint_clean_tree_distinguishes_packages()
+    -> TestResult<()> {
+        let dir = tempfile::tempdir()?;
+        run_git(&["init", "-q"], dir.path())?;
+        run_git(&["config", "user.name", "Sinex Test"], dir.path())?;
+        run_git(&["config", "user.email", "sinex@example.test"], dir.path())?;
+
+        std::fs::create_dir_all(dir.path().join("crate/lib/sinex-db/src"))?;
+        std::fs::write(
+            dir.path().join("crate/lib/sinex-db/src/lib.rs"),
+            "fn db() {}\n",
+        )?;
+        std::fs::create_dir_all(dir.path().join("crate/lib/sinex-primitives/src"))?;
+        std::fs::write(
+            dir.path().join("crate/lib/sinex-primitives/src/lib.rs"),
+            "fn p() {}\n",
+        )?;
+        run_git(
+            &[
+                "add",
+                "crate/lib/sinex-db/src/lib.rs",
+                "crate/lib/sinex-primitives/src/lib.rs",
+            ],
+            dir.path(),
+        )?;
+        run_git(&["commit", "-qm", "init"], dir.path())?;
+
+        let fp_db = scoped_tree_fingerprint_in(
+            dir.path(),
+            "check",
+            &["-p".into(), "sinex-db".into()],
+        )?;
+        let fp_primitives = scoped_tree_fingerprint_in(
+            dir.path(),
+            "check",
+            &["-p".into(), "sinex-primitives".into()],
+        )?;
+
+        assert_ne!(
+            fp_db, fp_primitives,
+            "Clean-tree fingerprints must distinguish packages (no SHA256(\"\") collision)"
+        );
+        assert_ne!(
+            fp_db, "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "Clean-tree fingerprint must not be SHA256(\"\")"
+        );
+        Ok(())
+    }
+
+    /// Regression: the same package against different HEAD commits must produce
+    /// different fingerprints, even with a clean working tree.
+    #[sinex_test]
+    async fn test_scoped_tree_fingerprint_clean_tree_distinguishes_head() -> TestResult<()> {
+        let dir = tempfile::tempdir()?;
+        run_git(&["init", "-q"], dir.path())?;
+        run_git(&["config", "user.name", "Sinex Test"], dir.path())?;
+        run_git(&["config", "user.email", "sinex@example.test"], dir.path())?;
+
+        std::fs::create_dir_all(dir.path().join("crate/lib/sinex-db/src"))?;
+        std::fs::write(
+            dir.path().join("crate/lib/sinex-db/src/lib.rs"),
+            "fn db() {}\n",
+        )?;
+        run_git(&["add", "crate/lib/sinex-db/src/lib.rs"], dir.path())?;
+        run_git(&["commit", "-qm", "first"], dir.path())?;
+        let args = vec!["-p".into(), "sinex-db".into()];
+        let fp_first = scoped_tree_fingerprint_in(dir.path(), "check", &args)?;
+
+        std::fs::write(
+            dir.path().join("crate/lib/sinex-db/src/lib.rs"),
+            "fn db() { /* v2 */ }\n",
+        )?;
+        run_git(&["add", "crate/lib/sinex-db/src/lib.rs"], dir.path())?;
+        run_git(&["commit", "-qm", "second"], dir.path())?;
+        let fp_second = scoped_tree_fingerprint_in(dir.path(), "check", &args)?;
+
+        assert_ne!(
+            fp_first, fp_second,
+            "Clean-tree fingerprints must distinguish HEAD commits"
+        );
         Ok(())
     }
 
