@@ -29,7 +29,14 @@ fn try_expand(input: &DeriveInput) -> syn::Result<TokenStream2> {
 
     let mut field_inits = Vec::with_capacity(fields.named.len());
     for field in &fields.named {
-        let name = field.ident.as_ref().expect("named field has identifier");
+        let Some(name) = field.ident.as_ref() else {
+            // syn already guarantees `ident` is `Some` for named fields, but
+            // give the macro a diagnostic instead of a panic if that ever drifts.
+            return Err(syn::Error::new_spanned(
+                field,
+                "SinexConfig: named field is missing identifier",
+            ));
+        };
         let attrs = parse_field_attrs(field)?;
         if attrs.skip {
             field_inits.push(quote! { #name: ::std::default::Default::default() });

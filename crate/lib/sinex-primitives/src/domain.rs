@@ -159,6 +159,12 @@ macro_rules! define_validated_string_type {
                 &self.0
             }
         }
+
+        impl From<$name> for String {
+            fn from(value: $name) -> Self {
+                value.0.into_owned()
+            }
+        }
     };
     // Default variant: generates from_static with non-empty + no-null check
     ($(#[$meta:meta])* $name:ident) => {
@@ -219,6 +225,12 @@ macro_rules! define_validated_string_type {
 
             fn deref(&self) -> &Self::Target {
                 &self.0
+            }
+        }
+
+        impl From<$name> for String {
+            fn from(value: $name) -> Self {
+                value.0.into_owned()
             }
         }
     };
@@ -1298,6 +1310,11 @@ define_validated_string_type!(
     #[doc = "NATS subjects"]
     NatsSubject,
     custom_from_static
+);
+
+define_validated_string_type!(
+    #[doc = "JetStream stream name (distinct from a subject; addresses a stream, not a publish/filter pattern)"]
+    StreamName
 );
 
 impl NatsSubject {

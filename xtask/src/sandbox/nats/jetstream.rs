@@ -90,8 +90,8 @@ impl JetStreamTestHelper {
         // Create streams before waiting
         let _ = js
             .get_or_create_stream(async_nats::jetstream::stream::Config {
-                name: topology.events_stream.clone(),
-                subjects: vec![topology.events_subject.clone()],
+                name: topology.events_stream.to_string(),
+                subjects: vec![topology.events_subject.to_string()],
                 ..Default::default()
             })
             .await
@@ -99,8 +99,8 @@ impl JetStreamTestHelper {
 
         let _ = js
             .get_or_create_stream(async_nats::jetstream::stream::Config {
-                name: topology.confirmations_stream.clone(),
-                subjects: vec![topology.confirmations_subject.clone()],
+                name: topology.confirmations_stream.to_string(),
+                subjects: vec![topology.confirmations_subject.to_string()],
                 ..Default::default()
             })
             .await
@@ -108,8 +108,8 @@ impl JetStreamTestHelper {
 
         let _ = js
             .get_or_create_stream(async_nats::jetstream::stream::Config {
-                name: topology.dlq_stream.clone(),
-                subjects: vec![topology.dlq_subject.clone()],
+                name: topology.dlq_stream.to_string(),
+                subjects: vec![topology.dlq_subject.to_string()],
                 ..Default::default()
             })
             .await
@@ -117,8 +117,8 @@ impl JetStreamTestHelper {
 
         let _ = js
             .get_or_create_stream(async_nats::jetstream::stream::Config {
-                name: topology.processing_failures_stream.clone(),
-                subjects: vec![topology.processing_failures_subject.clone()],
+                name: topology.processing_failures_stream.to_string(),
+                subjects: vec![topology.processing_failures_subject.to_string()],
                 ..Default::default()
             })
             .await

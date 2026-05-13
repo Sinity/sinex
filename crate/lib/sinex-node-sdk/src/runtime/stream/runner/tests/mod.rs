@@ -440,15 +440,15 @@ async fn ensure_default_bridge_streams(client: &async_nats::Client) -> TestResul
         None,
     );
     js.get_or_create_stream(jetstream::stream::Config {
-        name: topology.events_stream.clone(),
-        subjects: vec![topology.events_subject.clone()],
+        name: topology.events_stream.to_string(),
+        subjects: vec![topology.events_subject.to_string()],
         storage: jetstream::stream::StorageType::Memory,
         ..Default::default()
     })
     .await?;
     js.get_or_create_stream(jetstream::stream::Config {
-        name: topology.confirmations_stream,
-        subjects: vec![topology.confirmations_subject],
+        name: topology.confirmations_stream.into(),
+        subjects: vec![topology.confirmations_subject.into()],
         storage: jetstream::stream::StorageType::Memory,
         ..Default::default()
     })
