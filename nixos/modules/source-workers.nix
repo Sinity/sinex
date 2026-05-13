@@ -847,6 +847,13 @@ let
             (group: nameValuePair (sourceUnitServiceName group.sourceUnitId) (mkTerminalSourceUnit group))
             sourceUnitGroups
         );
+      monitorUnit = mkMonitorWorkerUnit {
+        sourceUnit = "terminal.monitor";
+        description = "Terminal monitoring lifecycle event (source-worker)";
+        inherit resources;
+        env = [ "RUST_LOG=${nodesCfg.defaults.logLevel}" ] ++ toEnvList sat.env;
+        serviceConfig = { };
+      };
       supportUnits = mkAccessSetupUnit {
         name = "sinex-terminal-target-access";
         description = "Prepare target-user access for the Sinex terminal node";
@@ -856,7 +863,8 @@ let
       };
     in
     {
-      inherit units supportUnits;
+      units = units // monitorUnit;
+      inherit supportUnits;
     };
 
   mkDesktopUnits =
@@ -1440,20 +1448,22 @@ let
           SupplementaryGroups = [ "systemd-journal" ];
         };
       };
+      monitorUnitParams = {
+        sourceUnit = "system.monitor";
+        description = "System monitoring lifecycle event (source-worker)";
+        inherit resources;
+        env = [ "RUST_LOG=${nodesCfg.defaults.logLevel}" ] ++ toEnvList sat.env;
+        serviceConfig = { };
+      };
     in
-    # system.monitor is not a continuous source unit — it's emitted once at
-    # startup via `register_monitor_unit!` and doesn't appear in the
-    # node_factory registry. Creating a systemd unit for it crashes with
-    # "source unit 'system.monitor' not found in inventory". Track for
-    # plan §2 when monitor unit emission gets its own systemd shape.
-    #
     # system.dbus is gated until DbusStreamAdapter::open is wired (today
     # it returns an error and requires `open_with_backend`, which
-    # AdapterBackedIngestor doesn't call). Tracked in plan §5 (adapter
-    # substrate generalization).
+    # AdapterBackedIngestor doesn't call). Tracked in #1234 + A.5 of the
+    # post-Wave-B plan.
     (mkSourceWorkerUnit (systemUnitParams "system.journald" "systemd journal (source-worker)"))
     // (mkSourceWorkerUnit (systemUnitParams "system.systemd" "systemd unit state (source-worker)"))
-    // (mkSourceWorkerUnit (systemUnitParams "system.udev" "udev events (source-worker)"));
+    // (mkSourceWorkerUnit (systemUnitParams "system.udev" "udev events (source-worker)"))
+    // (mkMonitorWorkerUnit monitorUnitParams);
 
   mkDocumentUnits =
     let
@@ -1679,6 +1689,25 @@ let
     in
     if instances <= 0 then { } else
     listToAttrs (map (idx: nameValuePair "sinex-source-worker-${params.sourceUnit}-${toString idx}" (mkUnit idx)) (range 1 instances));
+
+  # ── Oneshot monitor variant ───────────────────────────────────────────
+  # Wraps `mkSourceWorkerUnit` for `register_monitor_unit!` source units
+  # that fire one ServiceStart event and exit. Uses Type=oneshot so
+  # systemd records "active (exited)" on success rather than treating the
+  # clean exit as a fault. RemainAfterExit=true keeps the unit visible in
+  # `systemctl list-units` post-fire. Fires once per boot via
+  # WantedBy=sinex-runtime.target; reboot re-fires.
+  mkMonitorWorkerUnit = params:
+    mkSourceWorkerUnit (params // {
+      instances = 1;
+      serviceConfig = (params.serviceConfig or { }) // {
+        Type = lib.mkForce "oneshot";
+        RemainAfterExit = lib.mkForce true;
+        Restart = lib.mkForce "no";
+        WatchdogSec = lib.mkForce "0";
+        NotifyAccess = lib.mkForce "none";
+      };
+    });
 
   mkAutomataProfile = profileName:
     let

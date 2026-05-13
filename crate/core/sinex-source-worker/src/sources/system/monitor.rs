@@ -1,14 +1,21 @@
 //! `system.monitor` — fire-once startup event for the system source pack.
 //!
-//! Registers `system.monitor` with the node factory registry via
-//! [`register_monitor_unit!`]. On every source-worker boot this emits one
-//! [`SystemMonitoringStartedPayload`] anchored to a synthetic material.
+//! Registers `system.monitor` with the source-unit descriptor inventory and
+//! with the node factory registry via [`register_monitor_unit!`]. On every
+//! source-worker boot this emits one [`SystemMonitoringStartedPayload`]
+//! anchored to a synthetic material, then exits.
 //!
-//! The descriptor is already registered in `sinex-system-ingestor/src/lib.rs`
-//! via `register_source_unit!`; this module only wires the factory/emit path.
+//! Deployment shape: a `Type=oneshot` systemd unit that runs at boot under
+//! `sinex-runtime.target`.
 
 use futures::future::BoxFuture;
 use sinex_node_sdk::{NodeResult, runtime::stream::NodeRuntimeState};
+use sinex_primitives::proof::{
+    CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, RetentionPolicy,
+    RuntimeShape, SourceUnitBinding, SourceUnitBuildImpact, SourceUnitDescriptor,
+    SubjectRef,
+};
+use sinex_primitives::{register_source_unit, register_source_unit_binding};
 use sinex_primitives::{
     SinexError,
     events::{Event, EventPayload, SourceMaterial},
@@ -20,6 +27,49 @@ use sinex_primitives::{
 
 use crate::register_monitor_unit;
 use crate::monitor_node::MonitorPhase;
+
+// ---------------------------------------------------------------------------
+// Source-unit descriptor + binding
+// ---------------------------------------------------------------------------
+
+register_source_unit! {
+    SourceUnitDescriptor {
+        id: "system.monitor",
+        namespace: "system",
+        event_types: &[("system", "monitoring.started")],
+        privacy_tier: PrivacyTier::Public,
+        horizons: &[Horizon::Continuous],
+        retention: RetentionPolicy::Forever,
+        proof_obligations: &[
+            "obligation:source_unit.material_provenance",
+        ],
+        occurrence_identity: OccurrenceIdentity::Natural,
+        access_policy: "lifecycle_hook:none",
+    }
+}
+
+register_source_unit_binding! {
+    SourceUnitBinding::builder(
+        SubjectRef::from_static("source_unit:system.monitor"),
+        "system.monitor",
+        "system",
+    )
+    .implementation("sinex-source-worker")
+    .adapter("MonitorDriverNode")
+    .output_event_type("monitoring.started")
+    .privacy_context("Metadata")
+    .material_policy("synthetic_oneshot")
+    .checkpoint_policy("stateless")
+    .resource_shape("oneshot_bounded_memory")
+    .source_unit_id("system.monitor")
+    .runner_pack("source-worker")
+    .checkpoint_family(CheckpointFamily::LiveObservation)
+    .runtime_shape(RuntimeShape::OnDemand)
+    .package_impact("system_monitor_unit")
+    .implementation_mode("rust_in_pack:source-worker")
+    .build_impact(SourceUnitBuildImpact::ZERO)
+    .build()
+}
 
 // ---------------------------------------------------------------------------
 // Source-unit registration
