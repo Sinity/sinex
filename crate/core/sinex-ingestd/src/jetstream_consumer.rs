@@ -237,10 +237,21 @@ const ERROR_CLASS_CONFIRMATION_DURABILITY_GAP: &str = "confirmation_durability_g
 /// be partially committed if one sub-batch succeeds before a sibling fails.
 const BATCH_ATOMICITY_SCOPE: &str = "per_successful_persistence_attempt";
 /// Retry delay for deferred events whose source material isn't registered yet.
-/// Short delay (200ms) allows the `MaterialAssembler` to process the BEGIN message
-/// before `JetStream` redelivers the event. Used by both the proactive ready-set
-/// pre-filter and the reactive FK violation safety net.
-const FK_VIOLATION_RETRY_DELAY: Duration = Duration::from_millis(200);
+///
+/// Each NAK with this delay counts toward `max_deliver` (10), so the total race
+/// window the system tolerates is `delay * max_deliver` (= 50 s with 5 s delay).
+///
+/// The cross-stream race is the load-bearing case: events on
+/// `PROD_SINEX_RAW_EVENTS` and material lifecycle frames on `SOURCE_MATERIAL`
+/// flow through independent JetStream consumers with no cross-stream ordering.
+/// Under backlog, the SOURCE_MATERIAL consumer can lag behind the events
+/// consumer by tens of seconds; the previous 200 ms delay × 10 retries (= 2 s
+/// total window) was insufficient and DLQ'd every fresh self-observation
+/// material's first events (see issue #1241).
+///
+/// 5 s × 10 retries = 50 s is the practical upper bound a healthy assembler
+/// should clear; longer delays mainly hurt liveness under transient races.
+const FK_VIOLATION_RETRY_DELAY: Duration = Duration::from_secs(5);
 const STREAM_CAPACITY_WARNING_THRESHOLD: f64 = 0.8; // Alert at 80% capacity
 const STREAM_CAPACITY_CHECK_INTERVAL: Duration = Duration::from_mins(5); // Check every 5 minutes
 // Keep runtime-created stream caps aligned with the Nix bootstrap path. The current
