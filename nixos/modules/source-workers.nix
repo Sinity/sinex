@@ -1128,14 +1128,11 @@ let
           ExecStartPre = lib.mkBefore [ "+${accessSetupScript}" ];
         };
       };
-      # desktop.window-manager is gated until the Hyprland-socket bridge is
-      # wired through Nix (UnixSocketStreamConfig requires socket_path which
-      # is per-session and runs as the service user via target-user ACLs).
-      # Tracked in plan §2 of the ambitious Q2 plan.
-      #
-      # desktop.clipboard panics on startup without a Wayland display
-      # available to the service user (arboard/copypasta backend needs an
-      # active wl_display). Same gating story; reintroduce when bridged.
+      # desktop.window-manager and desktop.clipboard are gated until the
+      # per-session Wayland/Hyprland bridge is wired through Nix. The
+      # sinex service user (uid=991) cannot reach /run/user/1000/hypr/...
+      # or an active wl_display without an explicit ACL bridge. Tracked
+      # in https://github.com/Sinity/sinex/issues/1234.
       #
       # desktop.activitywatch is adapter-backed (SqliteRowAdapter) and runs
       # with the default_config from `sources/desktop/activitywatch.rs`.
