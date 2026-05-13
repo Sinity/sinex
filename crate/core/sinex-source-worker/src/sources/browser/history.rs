@@ -240,6 +240,19 @@ impl MaterialParser for BrowserHistoryParser {
             parse_sqlite_record(&record, ctx)
         }
     }
+
+    fn baseline_adapter_config() -> serde_json::Value {
+        // Primary leg query: qutebrowser's `History` table. Chromium-only
+        // deployments override via Nix to `SELECT rowid, * FROM visits JOIN
+        // urls ON visits.url = urls.id`. The parser discriminates rows by
+        // column presence (`atime` → qutebrowser, `visit_time` → chromium);
+        // either way it gets the data it needs. Secondary leg defaults are
+        // empty — `path` must come from Nix binding (the JSONL dump file).
+        serde_json::json!({
+            "primary": { "query": "SELECT rowid, * FROM History", "table": "History" },
+            "secondary": { "skip_empty": true }
+        })
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -475,14 +488,4 @@ crate::register_adapter_ingestor!(
     source_unit_id: "browser.history",
     adapter: BrowserHistoryAdapter,
     parser: BrowserHistoryParser,
-    // Primary leg query: qutebrowser's `History` table. Chromium-only
-    // deployments override via Nix to `SELECT rowid, * FROM visits JOIN
-    // urls ON visits.url = urls.id`. The parser discriminates rows by
-    // column presence (`atime` → qutebrowser, `visit_time` → chromium);
-    // either way it gets the data it needs. Secondary leg defaults are
-    // empty — `path` must come from Nix binding (the JSONL dump file).
-    default_config: serde_json::json!({
-        "primary": { "query": "SELECT rowid, * FROM History", "table": "History" },
-        "secondary": { "skip_empty": true }
-    }),
 );
