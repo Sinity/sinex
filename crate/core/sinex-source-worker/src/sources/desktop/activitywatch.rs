@@ -300,7 +300,14 @@ register_adapter_ingestor!(
     // Bucket-prefix classification (`aw-watcher-window`, `aw-watcher-afk`,
     // `aw-watcher-web`) happens inside the parser via `classify_bucket`.
     default_config: serde_json::json!({
-        "query": "SELECT id AS rowid, bucket_id, timestamp AS started_at, duration, datastr AS data FROM events ORDER BY id",
+        // Actual aw-server-rust schema:
+        //   events: id, bucketrow (FK → buckets.id), starttime, endtime, data
+        //   buckets: id (the human bucket name like "aw-watcher-window_<host>"), ...
+        // The parser reads `bucket_id` (the human name), `started_at`, `duration`
+        // (computed), and `data`. JOIN buckets to expose bucket name as
+        // `bucket_id`, alias starttime → started_at, compute duration from
+        // endtime - starttime (seconds).
+        "query": "SELECT events.id AS rowid, buckets.id AS bucket_id, events.starttime AS started_at, ((events.endtime - events.starttime) / 1000000000.0) AS duration, events.data AS data FROM events JOIN buckets ON events.bucketrow = buckets.id ORDER BY events.id",
         "table": "events"
     }),
 );
