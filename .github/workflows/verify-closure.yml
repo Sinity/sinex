@@ -2,7 +2,7 @@ name: Verify Issue Closure
 
 permissions:
   contents: read
-  issues: read
+  issues: write
 
 on:
   workflow_dispatch:
@@ -11,26 +11,74 @@ on:
         description: 'Issue number whose closure verification commands to run'
         required: true
         type: string
+  issues:
+    types: [closed]
 
 # Why: the 2026-05-11 audit cycle found fabricated "Status: done" closure
 # comments that survived for days because no one re-verified against master.
 # This workflow operationalises CONTRIBUTING.md's "Closure verification commands"
-# policy: every closure with verification commands in its body becomes runnable
-# on demand via `gh workflow run verify-closure.yml -f issue_number=N`.
+# policy. Two trigger paths:
+#   - `workflow_dispatch`: any reviewer can re-run on demand via
+#     `gh workflow run verify-closure.yml -f issue_number=N`.
+#   - `issues: closed`: every issue closure is auto-verified; failures post
+#     a comment so the closure cannot survive without re-verification (the
+#     #1081 / #987 fabrication failure mode this workflow exists to prevent).
 
 jobs:
   verify:
-    name: xtask verify closure ${{ inputs.issue_number }}
+    name: xtask verify closure
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
+      - name: Resolve issue number
+        id: issue
+        run: |
+          if [ -n "${{ inputs.issue_number }}" ]; then
+            echo "number=${{ inputs.issue_number }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "number=${{ github.event.issue.number }}" >> "$GITHUB_OUTPUT"
+          fi
+
       - uses: actions/checkout@v5
 
       - name: Install nix
         uses: cachix/install-nix-action@v27
 
       - name: Run xtask verify closure
+        id: verify
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          nix develop --command xtask verify closure ${{ inputs.issue_number }} --json
+          set +e
+          nix develop --command xtask verify closure "${{ steps.issue.outputs.number }}" --json > closure-result.json
+          status=$?
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+          cat closure-result.json
+          exit $status
+
+      - name: Post failure comment
+        if: failure() && github.event_name == 'issues'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Auto-trigger path: failed verification must leave a trace on the
+          # issue so the fabricated-closure failure mode doesn't survive.
+          # Manual-dispatch failures don't post (operator already sees them).
+          {
+            echo "## Closure verification failed"
+            echo ""
+            echo "\`xtask verify closure ${{ steps.issue.outputs.number }}\` returned a non-zero status when this issue was closed."
+            echo ""
+            echo "Workflow run: <${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}>"
+            echo ""
+            echo "Re-run locally with:"
+            echo ""
+            echo '```'
+            echo "xtask verify closure ${{ steps.issue.outputs.number }}"
+            echo '```'
+            echo ""
+            echo "Either add the missing verification commands to the closing comment / issue body, or re-open the issue if the closure was premature."
+          } > comment.md
+          gh issue comment "${{ steps.issue.outputs.number }}" \
+            --repo "${{ github.repository }}" \
+            --body-file comment.md
