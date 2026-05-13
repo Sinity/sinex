@@ -550,16 +550,25 @@ where
         self.acquisition_manager = Some(acq);
         self.binding_config = config.to_binding_config();
 
-        // Merge user-supplied JSON over the baseline default (if any was
-        // supplied via `with_default_config` at registration time). User keys
-        // win; default keys fill gaps. Lets source units declare mandatory
-        // adapter fields (parser-specific SQL query, static D-Bus bus name,
-        // ChainedAdapter primary leg) without forcing every Nix binding to
-        // know the adapter's internal shape.
-        let mut adapter_json = config.adapter;
+        // Merge user-supplied JSON over the parser's baseline (from
+        // `MaterialParser::baseline_adapter_config`) AND over any
+        // registration-time baseline (deprecated, supplied via
+        // `with_default_config`). User keys win; baseline fills gaps.
+        // Lets source units declare mandatory adapter fields (parser-
+        // specific SQL query, static D-Bus bus name, ChainedAdapter
+        // primary leg) without forcing every Nix binding to repeat them.
+        //
+        // Resolution order (lowest to highest precedence):
+        //   1. P::baseline_adapter_config()   — parser-owned baseline
+        //   2. self.default_adapter_config    — deprecated; kept for
+        //      backward-compat with `register_adapter_ingestor!` callers
+        //      that still pass `default_config:`
+        //   3. config.adapter                 — user --node-config JSON
+        let mut adapter_json = P::baseline_adapter_config();
         if let Some(default) = self.default_adapter_config.clone() {
-            adapter_json = merge_json_over(default, adapter_json);
+            adapter_json = merge_json_over(adapter_json, default);
         }
+        adapter_json = merge_json_over(adapter_json, config.adapter);
         let adapter_config: A::Config = serde_json::from_value(adapter_json).map_err(|e| {
             crate::SinexError::configuration(
                 "AdapterBackedIngestor: failed to deserialize adapter config",
