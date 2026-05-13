@@ -232,16 +232,6 @@ where
     /// Used to open/finalize a source material for each drain invocation.
     acquisition_manager: Option<AcquisitionManager>,
 
-    /// Baseline adapter config supplied at registration time via the
-    /// `register_adapter_ingestor!` macro's `default_config` parameter.
-    /// The user-supplied JSON (from `--node-config`) is merged OVER this
-    /// baseline before deserializing into `A::Config`. Lets source units
-    /// declare mandatory adapter fields that Nix bindings can omit
-    /// (e.g. a parser-specific SQL query, a static D-Bus bus name, the
-    /// primary leg of a ChainedAdapter) without forcing every binding
-    /// site to know the adapter's internal shape.
-    default_adapter_config: Option<JsonValue>,
-
     _phantom: PhantomData<()>,
 }
 
@@ -267,20 +257,8 @@ where
             binding_config: BindingConfig::default(),
             runtime: None,
             acquisition_manager: None,
-            default_adapter_config: None,
             _phantom: PhantomData,
         }
-    }
-
-    /// Builder-style: attach a baseline adapter config supplied at
-    /// registration time. The user-supplied `--node-config` JSON is merged
-    /// over this baseline (user keys win) before deserializing into
-    /// `A::Config`. Lets source units declare mandatory adapter fields
-    /// (e.g. a SQL query) so Nix bindings can omit them.
-    #[must_use]
-    pub fn with_default_config(mut self, default: JsonValue) -> Self {
-        self.default_adapter_config = Some(default);
-        self
     }
 
     /// Open the adapter, drain all records through the parser, emit each
@@ -550,25 +528,12 @@ where
         self.acquisition_manager = Some(acq);
         self.binding_config = config.to_binding_config();
 
-        // Merge user-supplied JSON over the parser's baseline (from
-        // `MaterialParser::baseline_adapter_config`) AND over any
-        // registration-time baseline (deprecated, supplied via
-        // `with_default_config`). User keys win; baseline fills gaps.
-        // Lets source units declare mandatory adapter fields (parser-
-        // specific SQL query, static D-Bus bus name, ChainedAdapter
-        // primary leg) without forcing every Nix binding to repeat them.
-        //
-        // Resolution order (lowest to highest precedence):
-        //   1. P::baseline_adapter_config()   — parser-owned baseline
-        //   2. self.default_adapter_config    — deprecated; kept for
-        //      backward-compat with `register_adapter_ingestor!` callers
-        //      that still pass `default_config:`
-        //   3. config.adapter                 — user --node-config JSON
-        let mut adapter_json = P::baseline_adapter_config();
-        if let Some(default) = self.default_adapter_config.clone() {
-            adapter_json = merge_json_over(adapter_json, default);
-        }
-        adapter_json = merge_json_over(adapter_json, config.adapter);
+        // Merge user-supplied JSON over the parser's baseline. The parser
+        // declares mandatory adapter fields (parser-specific SQL query,
+        // static D-Bus bus name, ChainedAdapter primary leg) via
+        // `MaterialParser::baseline_adapter_config`; the user's
+        // `--node-config` JSON overlays it (user keys win on conflict).
+        let adapter_json = merge_json_over(P::baseline_adapter_config(), config.adapter);
         let adapter_config: A::Config = serde_json::from_value(adapter_json).map_err(|e| {
             crate::SinexError::configuration(
                 "AdapterBackedIngestor: failed to deserialize adapter config",
@@ -715,7 +680,7 @@ where
 /// Object keys: if both sides have the key and both values are objects,
 /// merge recursively. Otherwise `over` wins. Non-object values: `over`
 /// wins unconditionally. Used to layer user-supplied node config over
-/// the source unit's baseline adapter config from `with_default_config`.
+/// the parser-declared baseline (`MaterialParser::baseline_adapter_config`).
 fn merge_json_over(base: JsonValue, over: JsonValue) -> JsonValue {
     match (base, over) {
         (JsonValue::Object(mut base_map), JsonValue::Object(over_map)) => {
