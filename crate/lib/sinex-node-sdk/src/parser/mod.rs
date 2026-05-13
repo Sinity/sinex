@@ -195,4 +195,18 @@ pub trait MaterialParser: Send + Sync {
         record: SourceRecord,
         ctx: &ParserContext,
     ) -> ParserResult<Vec<ParsedEventIntent>>;
+
+    /// Optional baseline adapter config supplied by the parser type itself.
+    ///
+    /// The user-supplied `--node-config` JSON is merged OVER this baseline
+    /// (user keys win) before deserializing into the adapter's `Config`.
+    /// Lets a parser declare adapter-mandatory fields it knows the right
+    /// value for (e.g. atuin's SqliteRowConfig.query = "history") without
+    /// forcing every Nix binding to repeat them. Default empty object.
+    fn baseline_adapter_config() -> serde_json::Value
+    where
+        Self: Sized,
+    {
+        serde_json::Value::Object(serde_json::Map::new())
+    }
 }
