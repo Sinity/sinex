@@ -350,6 +350,26 @@ async fn execute_workspace(
         .run_ok()?;
     ctx.finish_stage(stage, true);
 
+    // Heavy slice for sinex-primitives: runs the trybuild compile-failure
+    // tests (`proof_descriptor_compile_failures` + `id_type_mismatch_is_compile_error`)
+    // that the full-suite run skips. Gated to one package so unrelated heavy
+    // tests (e.g. `#[ignore = "external"]` in sinex-gateway) don't pull in
+    // infrastructure dependencies (#1215).
+    if ctx.is_human() {
+        println!("Running heavy slice (sinex-primitives trybuild)...");
+    }
+    let stage = ctx.start_stage("heavy_primitives_tests");
+    ProcessBuilder::new("xtask")
+        .args([
+            "test",
+            "--heavy",
+            "-p",
+            "sinex-primitives",
+            "--allow-contended-host",
+        ])
+        .run_ok()?;
+    ctx.finish_stage(stage, true);
+
     Ok(CommandResult::success()
         .with_message("Full workspace validation passed")
         .with_detail("Schema setup: ✓")

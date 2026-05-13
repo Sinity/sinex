@@ -20,7 +20,12 @@
 //! relies on cargo's own per-target locking — the same pattern
 //! `proof_compile_fail_test.rs` uses without issue.
 
+// Ignored by default because trybuild compile-failure tests spawn their own
+// rustc and dominate sinex-primitives wallclock (90–280 s each). Run via
+// `xtask test --heavy -p sinex-primitives`; CI workspace lane runs the
+// `--heavy` slice for this package explicitly so coverage isn't lost (#1215).
 #[test]
+#[ignore = "heavy: trybuild compile-failure (run via --heavy)"]
 fn id_type_mismatch_is_compile_error() {
     // Compiles `compile_errors/id_type_mismatch.rs` and asserts it produces
     // a type-mismatch error. The `.stderr` file (auto-generated on first run
