@@ -1,11 +1,26 @@
 //! NATS configuration and connection helpers.
 
 use crate::SinexError;
-use async_nats::{Client, ConnectOptions, jetstream};
+use async_nats::{Client, ConnectOptions, jetstream, subject::ToSubject};
 use bon::Builder;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use tracing::info;
+
+// Let `NatsSubject` flow into async-nats publish/subscribe APIs that take
+// `impl ToSubject` without forcing every callsite to `.to_string()`. The impl
+// lives in this feature-gated module because async_nats is itself feature-gated.
+impl ToSubject for crate::domain::NatsSubject {
+    fn to_subject(&self) -> async_nats::Subject {
+        self.as_str().to_string().into()
+    }
+}
+
+impl ToSubject for &crate::domain::NatsSubject {
+    fn to_subject(&self) -> async_nats::Subject {
+        self.as_str().to_string().into()
+    }
+}
 
 pub const NATS_TRAFFIC_CLASS_HEADER: &str = "Sinex-Traffic-Class";
 
@@ -429,25 +444,30 @@ mod tests {
 }
 
 /// Standard `JetStream` topology for Sinex ingestion pipelines.
+///
+/// Stream / subject identity is type-distinguished: `StreamName` addresses a
+/// JetStream stream, `NatsSubject` is a publish/filter pattern. Prefix and
+/// consumer-durable fields stay `String` (the former are partial subjects, not
+/// valid on their own; the latter are consumer identifiers, not subjects).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct JetStreamTopology {
-    pub events_stream: String,
-    pub events_subject: String,
-    pub confirmations_stream: String,
-    pub confirmations_subject: String,
+    pub events_stream: crate::domain::StreamName,
+    pub events_subject: crate::domain::NatsSubject,
+    pub confirmations_stream: crate::domain::StreamName,
+    pub confirmations_subject: crate::domain::NatsSubject,
     pub confirmations_prefix: String,
-    pub confirmation_retry_stream: String,
-    pub confirmation_retry_subject: String,
+    pub confirmation_retry_stream: crate::domain::StreamName,
+    pub confirmation_retry_subject: crate::domain::NatsSubject,
     pub confirmation_retry_prefix: String,
     pub confirmation_retry_consumer: String,
-    pub dlq_stream: String,
-    pub dlq_subject: String,
-    pub dlq_publish_subject: String,
-    pub processing_failures_stream: String,
-    pub processing_failures_subject: String,
+    pub dlq_stream: crate::domain::StreamName,
+    pub dlq_subject: crate::domain::NatsSubject,
+    pub dlq_publish_subject: crate::domain::NatsSubject,
+    pub processing_failures_stream: crate::domain::StreamName,
+    pub processing_failures_subject: crate::domain::NatsSubject,
     pub processing_failures_prefix: String,
-    pub invalidation_stream: String,
-    pub invalidation_subject: String,
+    pub invalidation_stream: crate::domain::StreamName,
+    pub invalidation_subject: crate::domain::NatsSubject,
     pub consumer_durable: String,
 }
 
@@ -459,34 +479,42 @@ impl JetStreamTopology {
         consumer_durable: String,
         namespace: Option<&str>,
     ) -> Self {
-        let confirmations_stream = format!("{base_stream}_CONFIRMATIONS");
-        let confirmation_retry_stream = format!("{base_stream}_CONFIRMATION_RETRIES");
-        let dlq_stream = format!("{base_stream}_DLQ");
-        let processing_failures_stream = format!("{base_stream}_PROCESSING_FAILURES");
-        let invalidation_stream = format!("{base_stream}_DERIVED_INVALIDATIONS");
+        use crate::domain::{NatsSubject, StreamName};
+
+        let confirmations_stream = StreamName::new(format!("{base_stream}_CONFIRMATIONS"));
+        let confirmation_retry_stream =
+            StreamName::new(format!("{base_stream}_CONFIRMATION_RETRIES"));
+        let dlq_stream = StreamName::new(format!("{base_stream}_DLQ"));
+        let processing_failures_stream =
+            StreamName::new(format!("{base_stream}_PROCESSING_FAILURES"));
+        let invalidation_stream = StreamName::new(format!("{base_stream}_DERIVED_INVALIDATIONS"));
         let namespaced = |subject: &str| env.nats_subject_with_namespace(namespace, subject);
         let confirmations_prefix = format!("{}.", namespaced("events.confirmations"));
         let confirmation_retry_prefix = format!("{}.", namespaced("events.confirmation_retries"));
         let processing_failures_prefix = format!("{}.", namespaced("events.processing_failures"));
 
         Self {
-            events_stream: base_stream,
-            events_subject: namespaced("events.raw.>"),
+            events_stream: StreamName::new(base_stream),
+            events_subject: NatsSubject::new(namespaced("events.raw.>")),
             confirmations_stream,
-            confirmations_subject: namespaced("events.confirmations.>"),
+            confirmations_subject: NatsSubject::new(namespaced("events.confirmations.>")),
             confirmations_prefix,
             confirmation_retry_stream,
-            confirmation_retry_subject: namespaced("events.confirmation_retries.>"),
+            confirmation_retry_subject: NatsSubject::new(namespaced(
+                "events.confirmation_retries.>",
+            )),
             confirmation_retry_prefix,
             confirmation_retry_consumer: format!("{consumer_durable}_confirm_retries"),
             dlq_stream,
-            dlq_subject: namespaced("events.dlq.>"),
-            dlq_publish_subject: namespaced("events.dlq.ingestd"),
+            dlq_subject: NatsSubject::new(namespaced("events.dlq.>")),
+            dlq_publish_subject: NatsSubject::new(namespaced("events.dlq.ingestd")),
             processing_failures_stream,
-            processing_failures_subject: namespaced("events.processing_failures.>"),
+            processing_failures_subject: NatsSubject::new(namespaced(
+                "events.processing_failures.>",
+            )),
             processing_failures_prefix,
             invalidation_stream,
-            invalidation_subject: namespaced("sinex.derived.invalidation"),
+            invalidation_subject: NatsSubject::new(namespaced("sinex.derived.invalidation")),
             consumer_durable,
         }
     }

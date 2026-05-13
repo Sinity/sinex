@@ -154,15 +154,15 @@ async fn ensure_preflight_streams(
     );
     let _ = js
         .get_or_create_stream(jetstream::stream::Config {
-            name: topology.events_stream.clone(),
-            subjects: vec![topology.events_subject.clone()],
+            name: topology.events_stream.to_string(),
+            subjects: vec![topology.events_subject.to_string()],
             ..Default::default()
         })
         .await?;
     let _ = js
         .get_or_create_stream(jetstream::stream::Config {
-            name: topology.confirmations_stream.clone(),
-            subjects: vec![topology.confirmations_subject.clone()],
+            name: topology.confirmations_stream.to_string(),
+            subjects: vec![topology.confirmations_subject.to_string()],
             ..Default::default()
         })
         .await?;
@@ -195,15 +195,15 @@ async fn ensure_preflight_event_streams_only(
     );
     let _ = js
         .get_or_create_stream(jetstream::stream::Config {
-            name: topology.events_stream.clone(),
-            subjects: vec![topology.events_subject.clone()],
+            name: topology.events_stream.to_string(),
+            subjects: vec![topology.events_subject.to_string()],
             ..Default::default()
         })
         .await?;
     let _ = js
         .get_or_create_stream(jetstream::stream::Config {
-            name: topology.confirmations_stream.clone(),
-            subjects: vec![topology.confirmations_subject.clone()],
+            name: topology.confirmations_stream.to_string(),
+            subjects: vec![topology.confirmations_subject.to_string()],
             ..Default::default()
         })
         .await?;
