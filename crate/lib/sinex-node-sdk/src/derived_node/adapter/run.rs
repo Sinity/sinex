@@ -424,7 +424,13 @@ where
                                 return Err(e.into());
                             }
                             Settlement::HaltNode { reason } => {
-                                error!(node = %self.node.name(), error = %e, reason = ?reason, "Halting node during historical replay");
+                                // Halt requests clean drain (see ingestor_node
+                                // / process.rs for the same shape) so systemd
+                                // records the unit as cleanly exited.
+                                if let Some(drain) = self.shutdown_tx.as_ref() {
+                                    drain.request_drain_and_warn(self.node.name());
+                                }
+                                error!(node = %self.node.name(), error = %e, reason = ?reason, "Halting node during historical replay; runtime drain requested");
                                 if let Err(cp_err) = self.save_state().await {
                                     error!(node = %self.node.name(), error = %cp_err, "Failed to save checkpoint after replay halt error");
                                 }
@@ -433,6 +439,9 @@ where
                                 )));
                             }
                             Settlement::DrainRuntimeUnit { reason } => {
+                                if let Some(drain) = self.shutdown_tx.as_ref() {
+                                    drain.request_drain_and_warn(self.node.name());
+                                }
                                 error!(node = %self.node.name(), error = %e, reason = %reason, "Draining runtime unit during historical replay");
                                 if let Err(cp_err) = self.save_state().await {
                                     error!(node = %self.node.name(), error = %cp_err, "Failed to save checkpoint after replay drain error");
