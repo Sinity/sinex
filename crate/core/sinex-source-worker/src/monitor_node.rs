@@ -457,19 +457,18 @@ macro_rules! register_monitor_unit {
         emit_at: $phase:expr,
         emit: $emit_fn:expr $(,)?
     ) => {
-        ::inventory::submit! {
-            $crate::node_factory::NodeFactoryEntry {
-                source_unit_id: $id,
-                factory_fn: |args| {
-                    Box::pin($crate::monitor_node::run_monitor_unit_delegated(
-                        $id,
-                        $phase,
-                        $emit_fn,
-                        args,
-                    ))
-                },
-            }
-        }
+        $crate::__submit_registry_entry!(
+            $crate::node_factory::NodeFactoryEntry,
+            $id,
+            |args| {
+                Box::pin($crate::monitor_node::run_monitor_unit_delegated(
+                    $id,
+                    $phase,
+                    $emit_fn,
+                    args,
+                ))
+            },
+        );
     };
 }
 

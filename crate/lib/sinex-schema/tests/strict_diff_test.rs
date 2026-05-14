@@ -910,3 +910,179 @@ async fn detects_manual_edit_to_execute_cascade_restore(ctx: TestContext) -> Tes
 
     Ok(())
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// #[derive(DbCheck)] integration (issue #1236)
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[sinex_test]
+async fn db_check_constraints_landed_after_apply(ctx: TestContext) -> TestResult<()> {
+    sinex_schema::apply::apply(&ctx.pool).await?;
+
+    // The `core.manifests.manifest_type_check_v1` constraint should now
+    // exist and reflect every `NodeType` Display rendering.
+    let def: Option<String> = sqlx::query_scalar(
+        r"
+        SELECT pg_get_constraintdef(c.oid)
+        FROM pg_constraint c
+        JOIN pg_class r ON c.conrelid = r.oid
+        JOIN pg_namespace n ON r.relnamespace = n.oid
+        WHERE n.nspname = 'core' AND r.relname = 'manifests'
+          AND c.conname = 'manifest_type_check_v1'
+        ",
+    )
+    .fetch_optional(&ctx.pool)
+    .await?;
+    let def = def.expect("manifest_type_check_v1 must exist after apply");
+    for value in &["ingestor", "automaton", "service"] {
+        assert!(
+            def.contains(&format!("'{value}'")),
+            "manifest_type_check_v1 missing value {value}: {def}"
+        );
+    }
+
+    // No `'source'` (legacy stale value pre-#1236) should be referenced.
+    assert!(
+        !def.contains("'source'"),
+        "manifest_type_check_v1 should not contain stale 'source' value: {def}"
+    );
+
+    // OperationStatus → result_status_check_v1.
+    let def: Option<String> = sqlx::query_scalar(
+        r"
+        SELECT pg_get_constraintdef(c.oid)
+        FROM pg_constraint c
+        JOIN pg_class r ON c.conrelid = r.oid
+        JOIN pg_namespace n ON r.relnamespace = n.oid
+        WHERE n.nspname = 'core' AND r.relname = 'operations_log'
+          AND c.conname = 'result_status_check_v1'
+        ",
+    )
+    .fetch_optional(&ctx.pool)
+    .await?;
+    let def = def.expect("result_status_check_v1 must exist after apply");
+    for value in &["running", "success", "failure", "cancelled", "pending"] {
+        assert!(
+            def.contains(&format!("'{value}'")),
+            "result_status_check_v1 missing value {value}: {def}"
+        );
+    }
+
+    Ok(())
+}
+
+#[sinex_test]
+async fn strict_diff_clean_after_apply_for_db_check(ctx: TestContext) -> TestResult<()> {
+    sinex_schema::apply::apply(&ctx.pool).await?;
+    let drifts = check_strict(&ctx.pool).await?;
+    let dbcheck_drifts: Vec<_> = drifts
+        .iter()
+        .filter(|d| d.location.contains("::NodeType")
+            || d.location.contains("::OperationStatus")
+            || d.location.contains("::DataTier")
+            || d.location.contains("::HealthStatus")
+            || d.location.contains("::PrivacyTier"))
+        .collect();
+    assert!(
+        dbcheck_drifts.is_empty(),
+        "DbCheck strict drift must be empty on fresh apply: {dbcheck_drifts:?}"
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn apply_replaces_legacy_unversioned_check_constraint(
+    ctx: TestContext,
+) -> TestResult<()> {
+    // Simulate the Wave-B production state: apply once, then drop the
+    // versioned constraint and re-install the legacy unversioned one with
+    // a stale variant set ('node' instead of 'ingestor').
+    sinex_schema::apply::apply(&ctx.pool).await?;
+
+    sqlx::query(
+        "ALTER TABLE core.manifests \
+         DROP CONSTRAINT IF EXISTS manifest_type_check_v1, \
+         ADD CONSTRAINT manifests_manifest_type_check \
+         CHECK (manifest_type IN ('node', 'automaton', 'service'))",
+    )
+    .execute(&ctx.pool)
+    .await?;
+
+    // diff() must surface the stale state.
+    let drifts = sinex_schema::apply::diff(&ctx.pool).await?;
+    assert!(
+        drifts.iter().any(|d| d.contains("manifest_type")
+            && d.contains("manifest_type_check_v1")),
+        "diff must report stale CHECK on manifest_type: {drifts:?}"
+    );
+
+    // Re-apply must drop the legacy constraint and add the versioned one.
+    sinex_schema::apply::apply(&ctx.pool).await?;
+
+    // Legacy is gone, versioned is back with the correct values.
+    let legacy_exists: bool = sqlx::query_scalar(
+        r"SELECT EXISTS (
+            SELECT 1 FROM pg_constraint c
+            JOIN pg_class r ON c.conrelid = r.oid
+            JOIN pg_namespace n ON r.relnamespace = n.oid
+            WHERE n.nspname = 'core' AND r.relname = 'manifests'
+              AND c.conname = 'manifests_manifest_type_check'
+        )",
+    )
+    .fetch_one(&ctx.pool)
+    .await?;
+    assert!(!legacy_exists, "legacy unversioned constraint should be dropped");
+
+    let def: String = sqlx::query_scalar(
+        r"SELECT pg_get_constraintdef(c.oid)
+          FROM pg_constraint c
+          JOIN pg_class r ON c.conrelid = r.oid
+          JOIN pg_namespace n ON r.relnamespace = n.oid
+          WHERE n.nspname = 'core' AND r.relname = 'manifests'
+            AND c.conname = 'manifest_type_check_v1'",
+    )
+    .fetch_one(&ctx.pool)
+    .await?;
+    assert!(def.contains("'ingestor'"), "renamed back to 'ingestor': {def}");
+    assert!(!def.contains("'node'"), "stale 'node' value must be gone: {def}");
+
+    Ok(())
+}
+
+#[sinex_test]
+async fn diff_detects_stale_versioned_check_constraint(ctx: TestContext) -> TestResult<()> {
+    sinex_schema::apply::apply(&ctx.pool).await?;
+
+    // Replace v1 with a constraint of the same name but a stale body
+    // (extra value 'misc'). The diff must surface it as stale.
+    sqlx::query(
+        "ALTER TABLE core.manifests \
+         DROP CONSTRAINT IF EXISTS manifest_type_check_v1, \
+         ADD CONSTRAINT manifest_type_check_v1 \
+         CHECK (manifest_type IN ('ingestor', 'automaton', 'service', 'misc'))",
+    )
+    .execute(&ctx.pool)
+    .await?;
+
+    let drifts = sinex_schema::apply::diff(&ctx.pool).await?;
+    assert!(
+        drifts.iter().any(|d| d.contains("manifest_type")),
+        "diff must surface stale-body drift on manifest_type: {drifts:?}"
+    );
+
+    // Re-apply heals it.
+    sinex_schema::apply::apply(&ctx.pool).await?;
+    let def: String = sqlx::query_scalar(
+        r"SELECT pg_get_constraintdef(c.oid)
+          FROM pg_constraint c
+          JOIN pg_class r ON c.conrelid = r.oid
+          JOIN pg_namespace n ON r.relnamespace = n.oid
+          WHERE n.nspname = 'core' AND r.relname = 'manifests'
+            AND c.conname = 'manifest_type_check_v1'",
+    )
+    .fetch_one(&ctx.pool)
+    .await?;
+    assert!(!def.contains("'misc'"), "stale 'misc' value must be cleared: {def}");
+
+    Ok(())
+}

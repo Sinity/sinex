@@ -124,12 +124,11 @@ pub fn find_parser_factory(source_unit_id: &SourceUnitId) -> Option<ParserFactor
 #[macro_export]
 macro_rules! register_parser {
     ($source_unit_id:expr, $parser_type:ty) => {
-        ::inventory::submit! {
-            $crate::dispatch::ParserRegistryEntry {
-                source_unit_id: $source_unit_id,
-                factory_fn: || Box::new(<$parser_type>::default()) as Box<dyn $crate::dispatch::ErasedParser>,
-            }
-        }
+        $crate::__submit_registry_entry!(
+            $crate::dispatch::ParserRegistryEntry,
+            $source_unit_id,
+            || Box::new(<$parser_type>::default()) as Box<dyn $crate::dispatch::ErasedParser>,
+        );
     };
 }
 

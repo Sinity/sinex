@@ -77,10 +77,28 @@ pub fn registered_node_factory_ids() -> Vec<SourceUnitId> {
 #[macro_export]
 macro_rules! register_node_factory {
     ($id:expr, $node_type:ty) => {
+        $crate::__submit_registry_entry!(
+            $crate::node_factory::NodeFactoryEntry,
+            $id,
+            |args| Box::pin($crate::node_factory::run_ingestor::<$node_type>(args)),
+        );
+    };
+}
+
+/// Shared `inventory::submit!` epilogue for `(source_unit_id, factory_fn)`-shaped
+/// registry entries. Used by `register_node_factory!`, `register_parser!`,
+/// `register_adapter_ingestor!`, and `register_monitor_unit!` — all four submit
+/// the same field shape to inventory, differing only in entry type and closure body.
+///
+/// Direct use is discouraged; reach for the named `register_*` macros instead.
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __submit_registry_entry {
+    ($entry_path:path, $id:expr, $factory_fn:expr $(,)?) => {
         ::inventory::submit! {
-            $crate::node_factory::NodeFactoryEntry {
+            $entry_path {
                 source_unit_id: $id,
-                factory_fn: |args| Box::pin($crate::node_factory::run_ingestor::<$node_type>(args)),
+                factory_fn: $factory_fn,
             }
         }
     };
@@ -133,16 +151,15 @@ macro_rules! register_adapter_ingestor {
         $crate::register_parser!($id, $parser);
 
         // 2. Register the node factory (continuous ingestion path).
-        ::inventory::submit! {
-            $crate::node_factory::NodeFactoryEntry {
-                source_unit_id: $id,
-                factory_fn: |args| {
-                    Box::pin($crate::node_factory::run_adapter_ingestor::<$adapter, $parser>(
-                        $id, args,
-                    ))
-                },
-            }
-        }
+        $crate::__submit_registry_entry!(
+            $crate::node_factory::NodeFactoryEntry,
+            $id,
+            |args| {
+                Box::pin($crate::node_factory::run_adapter_ingestor::<$adapter, $parser>(
+                    $id, args,
+                ))
+            },
+        );
     };
 }
 

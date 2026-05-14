@@ -26,6 +26,15 @@ pub mod proof;
 pub mod query;
 pub mod rpc;
 pub mod runtime_target;
+pub mod schema_constraints;
+
+/// Re-exports used by macros generated from `sinex-macros`.
+/// Not part of the stable public surface; do not depend on this from
+/// hand-written code.
+#[doc(hidden)]
+pub mod __sinex_macros_reexport {
+    pub use inventory;
+}
 pub mod settlement;
 pub mod sources;
 pub mod temporal;

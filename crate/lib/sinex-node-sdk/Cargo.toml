@@ -90,6 +90,10 @@ features = ["fs", "resource"]
 workspace = true
 [dependencies.notify]
 workspace = true
+[dependencies.zbus]
+workspace = true
+[dependencies.zvariant]
+workspace = true
 [dependencies.arboard]
 version = "3.4"
 [dependencies.async-stream]

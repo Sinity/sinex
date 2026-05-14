@@ -130,9 +130,96 @@ pub async fn check_strict(pool: &PgPool) -> Result<Vec<StrictDrift>, ApplyError>
     drifts.extend(check_column_defaults(pool).await?);
     drifts.extend(check_trigger_function_bodies(pool).await?);
     drifts.extend(check_inline_check_exprs(pool).await?);
+    drifts.extend(check_db_check_constraints(pool).await?);
     drifts.extend(check_foreign_key_actions(pool).await?);
     drifts.extend(check_hypertable_settings(pool).await?);
     drifts.extend(check_orphan_columns(pool).await?);
+    Ok(drifts)
+}
+
+/// Verify each `#[derive(DbCheck)]`-registered enum has its expected
+/// versioned CHECK constraint live in the database with the correct allowed
+/// values. Drifts here usually mean an enum variant was renamed without
+/// bumping `version`, or the column has not had `schema apply` re-run since
+/// the rename. See issue #1236.
+async fn check_db_check_constraints(pool: &PgPool) -> Result<Vec<StrictDrift>, ApplyError> {
+    let mut drifts = Vec::new();
+    for spec in sinex_primitives::schema_constraints::registered_specs() {
+        let qualified = spec.qualified_table();
+        // Column-existence probe parallels the apply engine's behavior:
+        // a not-yet-materialized column is not drift, it is forward-state.
+        let table_exists: bool = sqlx::query_scalar(
+            r"SELECT EXISTS (
+                SELECT 1 FROM information_schema.tables
+                WHERE table_schema = $1 AND table_name = $2
+            )",
+        )
+        .bind(spec.schema)
+        .bind(spec.table)
+        .fetch_one(pool)
+        .await?;
+        if !table_exists {
+            continue;
+        }
+        let col_exists: bool = sqlx::query_scalar(
+            r"SELECT EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_schema = $1 AND table_name = $2 AND column_name = $3
+            )",
+        )
+        .bind(spec.schema)
+        .bind(spec.table)
+        .bind(spec.column)
+        .fetch_one(pool)
+        .await?;
+        if !col_exists {
+            continue;
+        }
+
+        let definition: Option<String> = sqlx::query_scalar(
+            r"
+            SELECT pg_get_constraintdef(c.oid)
+            FROM pg_constraint c
+            JOIN pg_class r ON c.conrelid = r.oid
+            JOIN pg_namespace n ON r.relnamespace = n.oid
+            WHERE n.nspname = $1 AND r.relname = $2 AND c.conname = $3
+            ",
+        )
+        .bind(spec.schema)
+        .bind(spec.table)
+        .bind(spec.constraint_name())
+        .fetch_optional(pool)
+        .await?;
+
+        let observed = match definition {
+            None => "missing".to_string(),
+            Some(def) => {
+                let mut ok = true;
+                for value in spec.allowed_values {
+                    let needle = format!("'{}'", value.replace('\'', "''"));
+                    if !def.contains(&needle) {
+                        ok = false;
+                        break;
+                    }
+                }
+                if ok {
+                    continue;
+                }
+                def
+            }
+        };
+
+        drifts.push(StrictDrift {
+            category: DriftCategory::InlineCheckExpr,
+            location: format!("{qualified}.{}::{}", spec.column, spec.enum_name),
+            declared_summary: format!(
+                "CHECK {} (from #[derive(DbCheck)] on {})",
+                spec.check_clause(),
+                spec.enum_name
+            ),
+            observed_summary: observed,
+        });
+    }
     Ok(drifts)
 }
 

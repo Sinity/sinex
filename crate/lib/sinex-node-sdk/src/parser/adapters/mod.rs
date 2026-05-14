@@ -47,8 +47,8 @@ pub use clipboard_polling::{
     ClipboardPollingCursor, MockClipboardBackend,
 };
 pub use dbus_stream::{
-    DbusBus, DbusBackend, DbusMessage, DbusStreamAdapter, DbusStreamConfig, DbusStreamCursor,
-    MockDbusBackend,
+    DbusBackend, DbusBus, DbusMessage, DbusStreamAdapter, DbusStreamConfig, DbusStreamCursor,
+    MockDbusBackend, ParsedMatchRule, RealDbusBackend, default_match_rules, matches_any_rule,
 };
 pub use file_drop::{FileDropAdapter, FileDropConfig, FileDropCursor, FileDropEventKind};
 pub use journalctl_stream::{
