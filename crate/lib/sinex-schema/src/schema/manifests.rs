@@ -60,8 +60,12 @@ impl Manifests {
             .if_not_exists()
             .col(ColumnDef::new(Manifests::Id).integer().auto_increment().primary_key())
             .col(ColumnDef::new(Manifests::Name).text().not_null())
-            .col(ColumnDef::new(Manifests::ManifestType).text().not_null()
-                .check(Expr::cust("manifest_type IN ('ingestor', 'source', 'automaton', 'service')")))
+            // The CHECK constraint on manifest_type is converged by the
+            // schema-apply engine from the `NodeType` enum's
+            // `#[derive(DbCheck)]` spec (issue #1236). Do NOT add an inline
+            // `.check(...)` here — it would survive only on first table
+            // creation and prevent the apply engine from owning the rename.
+            .col(ColumnDef::new(Manifests::ManifestType).text().not_null())
             .col(ColumnDef::new(Manifests::Version).text().not_null())
             .col(ColumnDef::new(Manifests::CommitHash).text())
             .col(ColumnDef::new(Manifests::ParentManifestId).integer())

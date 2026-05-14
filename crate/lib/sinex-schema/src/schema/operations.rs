@@ -68,13 +68,15 @@ impl OperationsLog {
             .col(ColumnDef::new(OperationsLog::Operator).text().not_null())
             .col(ColumnDef::new(OperationsLog::Scope).json_binary()) // Parameters of the operation
             .col(ColumnDef::new(OperationsLog::ScopeWindow).custom(Alias::new("tstzrange")))
+            // The CHECK constraint on result_status is converged by the
+            // schema-apply engine from the `OperationStatus` enum's
+            // `#[derive(DbCheck)]` spec (issue #1236). Do NOT add an inline
+            // `.check(...)` here — it would survive only on first table
+            // creation and prevent the apply engine from owning the rename.
             .col(
                 ColumnDef::new(OperationsLog::ResultStatus)
                     .text()
-                    .not_null()
-                    .check(Expr::cust(
-                        "result_status IN ('success', 'failure', 'partial', 'running', 'cancelled')",
-                    )),
+                    .not_null(),
             )
             .col(ColumnDef::new(OperationsLog::ResultMessage).text())
             .col(ColumnDef::new(OperationsLog::PreviewSummary).json_binary()) // Output of replay planner

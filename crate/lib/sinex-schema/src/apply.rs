@@ -117,6 +117,7 @@ pub async fn apply(pool: &PgPool) -> Result<(), ApplyError> {
     crate::converge::converge_tables(pool, &convergible_tables).await?;
     converge_operations_log_constraints(pool).await?;
     converge_source_material_registry_constraints(pool).await?;
+    converge_db_check_constraints(pool).await?;
     create_indexes(pool).await?;
     create_triggers_and_functions(pool).await?;
     configure_timescaledb(pool).await?;
@@ -269,6 +270,24 @@ pub async fn diff(pool: &PgPool) -> Result<Vec<String>, ApplyError> {
             "stale raw.source_material_registry constraint source_material_registry_status_check"
                 .into(),
         );
+    }
+
+    for spec in sinex_primitives::schema_constraints::registered_specs() {
+        if !relation_exists(pool, &spec.qualified_table()).await? {
+            continue;
+        }
+        if !column_exists(pool, spec.schema, spec.table, spec.column).await? {
+            continue;
+        }
+        if !db_check_constraint_is_current(pool, spec).await? {
+            drifts.push(format!(
+                "stale {} CHECK on column {} (expected constraint {} from enum {})",
+                spec.qualified_table(),
+                spec.column,
+                spec.constraint_name(),
+                spec.enum_name,
+            ));
+        }
     }
 
     if relation_exists(pool, "raw.source_material_registry").await?
@@ -435,6 +454,216 @@ fn source_material_registry_timing_constraint_definition_is_current(definition: 
         && definition.contains("'declared'")
         && definition.contains("'atemporal'")
         && definition.contains("'staged_at'")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// DbCheck convergence (issue #1236)
+//
+// `#[derive(DbCheck)]` enums register their CHECK specs at static init.
+// At apply time we iterate them and reconcile each live constraint:
+//
+//   1. If the table or column does not exist, skip (forward-compatible:
+//      newly-added columns pick up the constraint on the next apply).
+//   2. If the current versioned constraint (`<column>_check_v<N>`) exists
+//      with the expected `IN (...)` body, do nothing.
+//   3. Otherwise drop every legacy unversioned constraint
+//      (`<table>_<column>_check`) and every older versioned constraint
+//      (`<column>_check_v*` whose version != N), then add the current one.
+// ─────────────────────────────────────────────────────────────────────────────
+
+async fn converge_db_check_constraints(pool: &PgPool) -> Result<(), ApplyError> {
+    for spec in sinex_primitives::schema_constraints::registered_specs() {
+        converge_one_db_check(pool, spec).await?;
+    }
+    Ok(())
+}
+
+async fn converge_one_db_check(
+    pool: &PgPool,
+    spec: &sinex_primitives::schema_constraints::DbCheckSpec,
+) -> Result<(), ApplyError> {
+    // Defense-in-depth: every identifier comes from a compile-time constant
+    // baked into the proc-macro, but validate before format!()-ing into DDL.
+    validate_pg_identifier(spec.schema, "schema")
+        .map_err(|e| ApplyError::Internal(format!("invalid DbCheck schema: {e}")))?;
+    validate_pg_identifier(spec.table, "table")
+        .map_err(|e| ApplyError::Internal(format!("invalid DbCheck table: {e}")))?;
+    validate_pg_identifier(spec.column, "column")
+        .map_err(|e| ApplyError::Internal(format!("invalid DbCheck column: {e}")))?;
+    for value in spec.allowed_values {
+        if value.contains(['\\', '\0']) {
+            return Err(ApplyError::Internal(format!(
+                "DbCheck allowed value for {}.{}.{} contains forbidden character: {:?}",
+                spec.schema, spec.table, spec.column, value
+            )));
+        }
+    }
+
+    if !relation_exists(pool, &spec.qualified_table()).await? {
+        return Ok(()); // Forward-compatible: table doesn't exist yet.
+    }
+    if !column_exists(pool, spec.schema, spec.table, spec.column).await? {
+        return Ok(()); // Forward-compatible: column doesn't exist yet.
+    }
+
+    if db_check_constraint_is_current(pool, spec).await? {
+        return Ok(());
+    }
+
+    // Collect stale constraint names to drop.
+    let stale = stale_db_check_constraint_names(pool, spec).await?;
+
+    let new_name = spec.constraint_name();
+    let check_clause = spec.check_clause();
+    let qualified = spec.qualified_table();
+
+    let mut alter = format!("ALTER TABLE {qualified}");
+    for name in &stale {
+        alter.push_str(&format!("\n    DROP CONSTRAINT IF EXISTS {name},"));
+    }
+    alter.push_str(&format!(
+        "\n    ADD CONSTRAINT {new_name} CHECK ({check_clause})"
+    ));
+
+    execute_sql(pool, &alter).await?;
+    Ok(())
+}
+
+async fn column_exists(
+    pool: &PgPool,
+    schema: &str,
+    table: &str,
+    column: &str,
+) -> Result<bool, ApplyError> {
+    let exists = sqlx::query_scalar::<_, bool>(
+        r"
+        SELECT EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = $1 AND table_name = $2 AND column_name = $3
+        )",
+    )
+    .bind(schema)
+    .bind(table)
+    .bind(column)
+    .fetch_one(pool)
+    .await?;
+    Ok(exists)
+}
+
+/// Whether the current versioned CHECK constraint exists and its body
+/// references each allowed value (and no stranger).
+async fn db_check_constraint_is_current(
+    pool: &PgPool,
+    spec: &sinex_primitives::schema_constraints::DbCheckSpec,
+) -> Result<bool, ApplyError> {
+    let definition: Option<String> = sqlx::query_scalar(
+        r"
+        SELECT pg_get_constraintdef(c.oid)
+        FROM pg_constraint c
+        JOIN pg_class r ON c.conrelid = r.oid
+        JOIN pg_namespace n ON r.relnamespace = n.oid
+        WHERE n.nspname = $1
+          AND r.relname = $2
+          AND c.conname = $3
+        ",
+    )
+    .bind(spec.schema)
+    .bind(spec.table)
+    .bind(spec.constraint_name())
+    .fetch_optional(pool)
+    .await?;
+    let Some(def) = definition else {
+        return Ok(false);
+    };
+    // Must mention every allowed value, and must not contain a quoted literal
+    // that's not in the allowed set. PostgreSQL renders `col IN ('a','b')` as
+    // `CHECK ((col = ANY (ARRAY['a'::text, 'b'::text])))` in many versions; we
+    // accept either form.
+    for value in spec.allowed_values {
+        let needle = format!("'{}'", value.replace('\'', "''"));
+        if !def.contains(&needle) {
+            return Ok(false);
+        }
+    }
+    // Reject if any extra single-quoted literals exist that aren't in the
+    // allowed set. This catches the rename case where an old variant still
+    // appears in the live constraint body.
+    let allowed_set: std::collections::HashSet<String> = spec
+        .allowed_values
+        .iter()
+        .map(|v| v.replace('\'', "''"))
+        .collect();
+    let mut chars = def.char_indices().peekable();
+    while let Some((i, c)) = chars.next() {
+        if c != '\'' {
+            continue;
+        }
+        // Find the matching close quote (escaped quote is '' inside).
+        let start = i + 1;
+        let mut end = start;
+        let bytes = def.as_bytes();
+        while end < bytes.len() {
+            if bytes[end] == b'\'' {
+                if end + 1 < bytes.len() && bytes[end + 1] == b'\'' {
+                    end += 2;
+                    continue;
+                }
+                break;
+            }
+            end += 1;
+        }
+        if end > def.len() {
+            break;
+        }
+        let literal = &def[start..end];
+        // Advance the iterator past the closing quote so we don't re-enter it.
+        while let Some(&(j, _)) = chars.peek() {
+            if j > end {
+                break;
+            }
+            chars.next();
+        }
+        if !allowed_set.contains(literal) {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+/// Names of all live constraints on this table that should be dropped:
+/// the legacy unversioned `<table>_<column>_check` and every versioned
+/// `<column>_check_v*` constraint whose version differs from `spec.version`.
+async fn stale_db_check_constraint_names(
+    pool: &PgPool,
+    spec: &sinex_primitives::schema_constraints::DbCheckSpec,
+) -> Result<Vec<String>, ApplyError> {
+    let legacy = spec.legacy_constraint_name();
+    let prefix = spec.constraint_name_prefix();
+    let current = spec.constraint_name();
+    let pattern = format!("{prefix}%");
+    let rows: Vec<(String,)> = sqlx::query_as(
+        r"
+        SELECT c.conname
+        FROM pg_constraint c
+        JOIN pg_class r ON c.conrelid = r.oid
+        JOIN pg_namespace n ON r.relnamespace = n.oid
+        WHERE n.nspname = $1
+          AND r.relname = $2
+          AND c.contype = 'c'
+          AND (c.conname = $3 OR c.conname LIKE $4)
+        ",
+    )
+    .bind(spec.schema)
+    .bind(spec.table)
+    .bind(&legacy)
+    .bind(&pattern)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(|(name,)| name)
+        .filter(|name| name != &current)
+        .collect())
 }
 
 async fn ensure_required_extensions(pool: &PgPool) -> Result<(), ApplyError> {
