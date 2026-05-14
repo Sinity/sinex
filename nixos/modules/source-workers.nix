@@ -1456,11 +1456,10 @@ let
         serviceConfig = { };
       };
     in
-    # system.dbus is gated until DbusStreamAdapter::open is wired (today
-    # it returns an error and requires `open_with_backend`, which
-    # AdapterBackedIngestor doesn't call). Tracked in #1234 + A.5 of the
-    # post-Wave-B plan.
-    (mkSourceWorkerUnit (systemUnitParams "system.journald" "systemd journal (source-worker)"))
+    # system.dbus emits a source-worker unit since #1235 wired
+    # `RealDbusBackend` into `DbusStreamAdapter::open` (zbus 5.x).
+    (mkSourceWorkerUnit (systemUnitParams "system.dbus" "D-Bus signal stream (source-worker)"))
+    // (mkSourceWorkerUnit (systemUnitParams "system.journald" "systemd journal (source-worker)"))
     // (mkSourceWorkerUnit (systemUnitParams "system.systemd" "systemd unit state (source-worker)"))
     // (mkSourceWorkerUnit (systemUnitParams "system.udev" "udev events (source-worker)"))
     // (mkMonitorWorkerUnit monitorUnitParams);
