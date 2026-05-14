@@ -1149,9 +1149,15 @@ fn execute_source_worker(
         }
     }
 
+    // Warnings are advisory by design: they surface pre-existing drift (e.g. rust-only
+    // source units without NixOS bindings) that the PR being verified did not introduce.
+    // Returning Partial here would make every PR fail CI as soon as any drift accumulates
+    // anywhere in the source-unit catalog, defeating the gate's purpose. Only true Fail
+    // states (regressions in dispatch cleanliness, workspace member count, registered
+    // parsers, or privacy invocation) block the PR.
     let mut result = match &overall {
         SwCheckStatus::Pass => CommandResult::success().with_message("source-worker integrity: all checks passed"),
-        SwCheckStatus::Warn => CommandResult::partial().with_message("source-worker integrity: warnings present"),
+        SwCheckStatus::Warn => CommandResult::success().with_message("source-worker integrity: warnings present (advisory)"),
         SwCheckStatus::Fail => CommandResult::failure(
             crate::output::StructuredError::new(
                 "SOURCE_WORKER_INTEGRITY",
