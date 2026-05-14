@@ -510,8 +510,13 @@ async fn converge_one_db_check(
         return Ok(());
     }
 
-    // Collect stale constraint names to drop.
-    let stale = stale_db_check_constraint_names(pool, spec).await?;
+    // Collect stale constraint names to drop. Always include the current
+    // versioned name too — if we got here, either the constraint is missing
+    // (drop is a no-op) or its body is wrong and must be replaced. Re-using
+    // the same name without dropping first triggers a "constraint already
+    // exists" error from PostgreSQL.
+    let mut stale = stale_db_check_constraint_names(pool, spec).await?;
+    stale.push(spec.constraint_name());
 
     let new_name = spec.constraint_name();
     let check_clause = spec.check_clause();
