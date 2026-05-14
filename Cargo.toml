@@ -244,6 +244,10 @@ base64 = "0.22"
 # File system watching
 notify = "8.2"
 
+# D-Bus (system.dbus source unit)
+zbus = { version = "5", default-features = false, features = ["tokio"] }
+zvariant = "5"
+
 # Testing
 proptest = "1"
 rstest = "0.25"
