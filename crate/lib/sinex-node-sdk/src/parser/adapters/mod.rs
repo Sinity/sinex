@@ -17,6 +17,7 @@
 //! | [`ClipboardPollingAdapter`] | `Polling` | `()` (anchor-only) | Clipboard change detection |
 //! | [`DirectoryWalkAdapter`] | `DirectoryWalk` | `BTreeMap<path, fingerprint>` | Recursive walk with fingerprint dedup |
 
+pub mod adapter_schemas;
 mod append_only_file;
 mod chained;
 mod clipboard_polling;
@@ -59,3 +60,5 @@ pub use journalctl_stream::{
 pub use unix_socket_stream::{
     UnixSocketStreamAdapter, UnixSocketStreamConfig, UnixSocketStreamCursor,
 };
+
+pub use adapter_schemas::{AdapterSchema, all_adapter_schemas};

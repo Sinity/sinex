@@ -11,6 +11,7 @@ use camino::{Utf8Path, Utf8PathBuf};
 use futures::StreamExt;
 use futures::stream::{self, BoxStream};
 use globset::{Glob, GlobSet, GlobSetBuilder};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use tokio::fs;
 
@@ -41,9 +42,10 @@ pub struct FileFingerprint {
 // =============================================================================
 
 /// Configuration for [`DirectoryWalkAdapter`].
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct DirectoryWalkConfig {
     /// Root directories to walk.
+    #[schemars(with = "Vec<String>")]
     pub roots: Vec<Utf8PathBuf>,
 
     /// Optional glob patterns (e.g. `"**/*.md"`, `"*.json"`).

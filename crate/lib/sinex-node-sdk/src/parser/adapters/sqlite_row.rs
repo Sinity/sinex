@@ -3,6 +3,7 @@
 use async_trait::async_trait;
 use camino::Utf8Path;
 use futures::stream::{self, BoxStream, StreamExt};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use sinex_primitives::events::SourceMaterial;
@@ -57,7 +58,7 @@ impl SqliteRowAdapter {
 }
 
 /// Configuration for [`SqliteRowAdapter`].
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema)]
 pub struct SqliteRowConfig {
     /// Path to the SQLite database file.
     ///
