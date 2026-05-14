@@ -321,23 +321,22 @@ impl DbusBackend for RealDbusBackend {
                 }
             };
 
-            // Install each match rule on the broker via the standard DBus
-            // proxy. We rely on string-shaped rules so callers can express
-            // anything the broker accepts; we don't reparse them on the way
-            // in.
-            let dbus_proxy = match zbus::fdo::DBusProxy::new(&conn).await {
-                Ok(p) => p,
-                Err(e) => {
-                    yield Err(ParserError::Adapter(format!(
-                        "failed to obtain DBusProxy: {e}"
-                    )));
-                    return;
-                }
-            };
+            // Install each match rule on the broker via a raw AddMatch
+            // method call. Using the raw method (rather than a typed
+            // MatchRule helper) accepts any string the broker accepts and
+            // avoids coupling to a specific typed-helper name across zbus
+            // versions.
             for rule in &match_rules {
-                if let Err(e) = dbus_proxy.add_match_rule(rule.as_str().try_into().map_err(|e: zbus::Error| {
-                    ParserError::Config(format!("invalid D-Bus match rule {rule:?}: {e}"))
-                })?).await {
+                let call: zbus::Result<zbus::Message> = conn
+                    .call_method(
+                        Some("org.freedesktop.DBus"),
+                        "/org/freedesktop/DBus",
+                        Some("org.freedesktop.DBus"),
+                        "AddMatch",
+                        &(rule.as_str(),),
+                    )
+                    .await;
+                if let Err(e) = call {
                     yield Err(ParserError::Adapter(format!(
                         "AddMatch failed for {rule:?}: {e}"
                     )));
@@ -408,22 +407,21 @@ impl DbusBackend for RealDbusBackend {
 }
 
 /// Decode a `zbus::message::Body` into a JSON value. D-Bus signals carry
-/// heterogeneous tuples; we deserialize to a `zvariant::OwnedValue` and walk
-/// it. On any failure we return `None` and the caller falls back to `Null`.
+/// heterogeneous tuples; we deserialize to a `zvariant::Structure` and walk
+/// the resulting field array. On any failure we return `None` and the
+/// caller falls back to `Null`.
 fn decode_body_to_json(body: zbus::message::Body) -> Option<serde_json::Value> {
-    // Empty body -> Null. zbus exposes `signature()` returning a Signature;
-    // a zero-length signature means there is nothing to decode.
-    let sig = body.signature();
-    if sig.to_string().is_empty() {
-        return Some(serde_json::Value::Null);
+    match body.deserialize::<zvariant::Structure<'_>>() {
+        Ok(value) => {
+            let fields = value.fields();
+            let mut arr = Vec::with_capacity(fields.len());
+            for f in fields {
+                arr.push(zvariant_value_to_json(f));
+            }
+            Some(serde_json::Value::Array(arr))
+        }
+        Err(_) => None,
     }
-    let value: zvariant::Structure<'_> = body.deserialize().ok()?;
-    let fields = value.fields();
-    let mut arr = Vec::with_capacity(fields.len());
-    for f in fields {
-        arr.push(zvariant_value_to_json(f));
-    }
-    Some(serde_json::Value::Array(arr))
 }
 
 fn zvariant_value_to_json(v: &zvariant::Value<'_>) -> serde_json::Value {
@@ -454,7 +452,7 @@ fn zvariant_value_to_json(v: &zvariant::Value<'_>) -> serde_json::Value {
                 let key = match k {
                     Z::Str(s) => s.as_str().to_string(),
                     Z::ObjectPath(p) => p.as_str().to_string(),
-                    _ => format!("{k:?}"),
+                    other => format!("{other:?}"),
                 };
                 map.insert(key, zvariant_value_to_json(val));
             }
@@ -464,9 +462,9 @@ fn zvariant_value_to_json(v: &zvariant::Value<'_>) -> serde_json::Value {
             let elems: Vec<_> = s.fields().iter().map(zvariant_value_to_json).collect();
             serde_json::Value::Array(elems)
         }
-        Z::Fd(_) => serde_json::Value::String("<fd>".into()),
-        #[allow(unreachable_patterns)]
-        _ => serde_json::Value::Null,
+        // File descriptors are not portable JSON; surface a placeholder.
+        // Any future zvariant variants fall into the catch-all below.
+        _ => serde_json::Value::String("<unsupported>".into()),
     }
 }
 
