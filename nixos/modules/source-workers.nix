@@ -150,6 +150,80 @@ let
   renderBindReadOnlyPaths = mounts:
     map (mount: "${mount.source}:${mount.destination}") mounts;
 
+  # Shared bash ACL helper functions injected into multiple writeShellScript calls.
+  # set_access_acl / set_default_acl / grant_parent_dirs are used by all ACL scripts.
+  commonBaseAclFunctions = ''
+    set_access_acl() {
+      local path="$1"
+      local acl_spec="$2"
+      local mask_spec=""
+      if [ "$#" -ge 3 ]; then
+        mask_spec="$3"
+      fi
+      if [ -n "$mask_spec" ]; then
+        "$SETFACL" -m "$acl_spec,m::$mask_spec" "$path" || record_acl_failure "$path"
+      else
+        "$SETFACL" --mask -m "$acl_spec" "$path" || record_acl_failure "$path"
+      fi
+    }
+
+    set_default_acl() {
+      local path="$1"
+      local acl_spec="$2"
+      local mask_spec=""
+      if [ "$#" -ge 3 ]; then
+        mask_spec="$3"
+      fi
+      if [ -n "$mask_spec" ]; then
+        "$SETFACL" -d -m "$acl_spec,m::$mask_spec" "$path" || record_acl_failure "$path"
+      else
+        "$SETFACL" -d --mask -m "$acl_spec" "$path" || record_acl_failure "$path"
+      fi
+    }
+
+    grant_parent_dirs() {
+      local path="$1"
+      local dir
+      dir="$path"
+      while [ "$dir" != "/" ] && [ "$dir" != "." ]; do
+        if [ -d "$dir" ]; then
+          set_access_acl "$dir" "u:$SERVICE_USER:--x" "--x"
+        fi
+        dir="$("$DIRNAME" "$dir")"
+      done
+    }
+  '';
+
+  # Additional read-access helpers used by terminal and browser ACL scripts.
+  commonReadAclFunctions = ''
+    grant_dir_read() {
+      local path="$1"
+      if [ -d "$path" ]; then
+        set_access_acl "$path" "u:$SERVICE_USER:r-x" "r-x"
+      fi
+    }
+
+    grant_dir_read_defaults() {
+      local path="$1"
+      if [ -d "$path" ]; then
+        set_default_acl "$path" "u:$SERVICE_USER:r-X" "r-X"
+      fi
+    }
+
+    grant_file_read() {
+      local path="$1"
+      if [ -f "$path" ]; then
+        set_access_acl "$path" "u:$SERVICE_USER:r--" "r--"
+      fi
+    }
+
+    grant_sqlite_sidecars() {
+      local path="$1"
+      grant_file_read "$path-wal"
+      grant_file_read "$path-shm"
+    }
+  '';
+
   baseEnv = optional cfg.database.enable "DATABASE_URL=${databaseUrl}" ++ [
     # Propagate environment name so service subjects match bootstrapped stream prefixes.
     # Must stay in sync with services.sinex.nats.environment.
@@ -180,9 +254,6 @@ let
       "SINEX_COORDINATION_TIMEOUT=${toString nodesCfg.coordination.leadershipTimeoutSec}"
       "SINEX_COORDINATION_HANDOFF=${toString nodesCfg.coordination.handoffTimeoutSec}"
     ] else [ ];
-
-  resolveBatch = nodeBatch:
-    if nodeBatch == null then nodesCfg.defaults.batch else nodeBatch;
 
   resolveResources = nodeResources:
     if nodeResources == null then nodesCfg.defaults.resources else nodeResources;
@@ -566,12 +637,15 @@ let
       };
     };
 
-  mkFilesystemUnits =
+  # ── Filesystem support glue ─────────────────────────────────────────────
+  # Service emission delegated to source-bindings-generated.nix.
+  # This function returns the generatedBindings attrs for the fs source unit.
+  mkFilesystemBindings =
     let
       sat = nodesCfg.filesystem;
       instances = resolveInstances sat.instances;
       resources = resolveResources sat.resources;
-      nodeConfig = builtins.toJSON {
+      nodeConfig = {
         watch_paths = sat.watchPaths;
         max_depth = 10;
         follow_symlinks = false;
@@ -580,45 +654,39 @@ let
         ignored_directory_names = sat.ignoredDirectoryNames;
         poll_interval_secs = sat.pollIntervalSec;
       };
-      derivedArgs = [ "--node-config ${escapeShellArg nodeConfig}" ];
     in
-    mkSourceWorkerUnit {
-      sourceUnit = "fs";
-      inherit instances resources;
-      description = "Filesystem watcher";
-      extraArgs = derivedArgs ++ sat.extraArgs;
-      env = [ "RUST_LOG=${nodesCfg.defaults.logLevel}" ] ++ toEnvList sat.env;
-      serviceConfig = {
-        ProtectHome = lib.mkForce "read-only";
+    {
+      "fs" = {
+        enable = sat.enable;
+        description = "Filesystem watcher (source-worker)";
+        adapterType = null;
+        adapterConfig = nodeConfig;
+        inherit instances resources;
+        extraArgs = sat.extraArgs;
+        extraEnv = { RUST_LOG = nodesCfg.defaults.logLevel; } // sat.env;
+        serviceConfigOverrides = {
+          ProtectHome = lib.mkForce "read-only";
+        };
       };
     };
 
-  mkTerminalUnits =
+  # ── Terminal support glue ───────────────────────────────────────────────
+  # Service emission delegated to source-bindings-generated.nix.
+  # Returns {bindings, supportUnits} where bindings feeds generatedBindings
+  # and supportUnits provides the ACL setup one-shot service.
+  mkTerminalGlue =
     let
       sat = nodesCfg.terminal;
       instances = resolveInstances sat.instances;
-      batch = resolveBatch sat.batch;
       resources = resolveResources sat.resources;
       effectiveHistorySources =
         if sat.historySources != [ ] then sat.historySources
         else if targetHome == null then [ ]
         else [
-          {
-            path = "${targetHome}/.bash_history";
-            shell = "bash";
-          }
-          {
-            path = "${targetHome}/.zsh_history";
-            shell = "zsh";
-          }
-          {
-            path = "${targetHome}/.local/share/atuin/history.db";
-            shell = "atuin";
-          }
-          {
-            path = "${targetHome}/.local/share/fish/fish_history";
-            shell = "fish";
-          }
+          { path = "${targetHome}/.bash_history"; shell = "bash"; }
+          { path = "${targetHome}/.zsh_history"; shell = "zsh"; }
+          { path = "${targetHome}/.local/share/atuin/history.db"; shell = "atuin"; }
+          { path = "${targetHome}/.local/share/fish/fish_history"; shell = "fish"; }
         ];
       historySourcesWithUnits =
         map
@@ -634,41 +702,24 @@ let
         mapAttrsToList
           (sourceUnitId: sources: { inherit sourceUnitId sources; })
           (groupBy (source: source.sourceUnitId) historySourcesWithUnits);
-      # Post-Wave-B fold (#1081): each terminal source unit is an
-      # AdapterBackedIngestor over either SqliteRowAdapter (atuin, fish)
-      # or AppendOnlyFileAdapter (bash, zsh, text). Each adapter expects
-      # a different Config shape:
-      #   SqliteRowConfig:    { path, query, skip_empty?, max_rows? }
-      #   AppendOnlyFileConfig: { path, skip_empty? }
-      # The legacy ingestor's umbrella shape (history_sources +
-      # polling_interval_secs + max_capture_bytes) is no longer
-      # deserializable against the new adapters. Emit per-shell shapes.
-      mkSourceUnitNodeConfig = group:
+      # Post-Wave-B fold (#1081): per-shell adapter Config shapes.
+      #   SqliteRowAdapter (atuin, fish): { path, query }
+      #   AppendOnlyFileAdapter (bash, zsh, text): { path, skip_empty }
+      mkSourceUnitAdapterConfig = group:
         let
           source = builtins.head group.sources;
           shell = toLower source.shell;
         in
-        builtins.toJSON (
-          if shell == "atuin" then {
-            path = source.path;
-            # "history" expands to `SELECT rowid, * FROM history` inside
-            # SqliteRowAdapter; provides every column the AtuinHistoryParser
-            # reads (command, timestamp, duration, exit, cwd, session, hostname).
-            query = "history";
-          } else if shell == "fish" then {
-            path = source.path;
-            # fish_history table with ROWID + columns (command, when).
-            query = "fish_history";
-          } else {
-            # bash, zsh, text — AppendOnlyFileConfig
-            path = source.path;
-            skip_empty = true;
-          }
-        );
+        if shell == "atuin" then { path = source.path; query = "history"; table = "history"; }
+        else if shell == "fish" then { path = source.path; query = "fish_history"; table = "fish_history"; }
+        else { path = source.path; skip_empty = true; };
+      mkSourceUnitAdapterType = group:
+        let shell = toLower (builtins.head group.sources).shell;
+        in if elem shell [ "atuin" "fish" ] then "SqliteRowAdapter"
+           else "AppendOnlyFileAdapter";
       sqliteHistoryPaths =
         unique (
-          map
-            (source: source.path)
+          map (source: source.path)
             (filter (source: elem (toLower source.shell) [ "atuin" "fish" ]) effectiveHistorySources)
         );
       sqliteHistoryDirs = unique (map builtins.dirOf sqliteHistoryPaths);
@@ -687,49 +738,6 @@ let
             "${targetHome}/.local/share/fish"
           ]
         );
-      sourceUnitServiceName = sourceUnitId: "sinex-source@${sourceUnitId}";
-      mkTerminalSourceUnit = group:
-        let
-          sourceUnitId = group.sourceUnitId;
-          serviceName = sourceUnitServiceName sourceUnitId;
-          nodeConfig = mkSourceUnitNodeConfig group;
-          execArgs = concatStringsSep " " (
-            [
-              "--service-name ${escapeShellArg serviceName}"
-              "--source-unit ${escapeShellArg sourceUnitId}"
-              "--runner-pack terminal"
-              "--node-config ${escapeShellArg nodeConfig}"
-            ] ++ sat.extraArgs ++ [ "service" ]
-          );
-          env = mkServiceEnv ([ "RUST_LOG=${nodesCfg.defaults.logLevel}" ] ++ toEnvList sat.env);
-          afterUnits = schemaApplyUnits ++ optionals coreEnabled [ "sinex-ingestd.service" ];
-          requireUnits = schemaApplyUnits;
-          wantsUnits = optionals coreEnabled [ "sinex-ingestd.service" ];
-        in
-        {
-          description = "Terminal source unit ${sourceUnitId}";
-          wantedBy = lib.optional cfg.runtime.target.attachToMultiUser "multi-user.target";
-          restartIfChanged = cfg.runtime.restartOnSwitch;
-          after = afterUnits;
-          requires = requireUnits;
-          wants = wantsUnits;
-          unitConfig = restartRateLimits // { PartOf = [ "sinex-runtime.target" ]; } // existingPathAssertions (databaseSecretAssertPaths ++ natsSecretAssertPaths);
-          serviceConfig = mkBaseServiceConfig resources env ({
-            ExecStart = mkDatabasePasswordExec {
-              name = sourceUnitId;
-              command = "${sinexPackage}/bin/sinex-source-worker ${execArgs}";
-              passwordFile = if cfg.database.enable then effectiveDatabasePasswordFile else null;
-            };
-            WorkingDirectory = stateRoot;
-            # The terminal ingestor needs read access to the target user's shell history.
-            ProtectHome = lib.mkForce "read-only";
-            ReadWritePaths = readWritePaths ++ accessWritePaths;
-          } // optionalAttrs (sat.access.bindReadOnlyPaths != [ ] && accessSetupScript == null) {
-            BindReadOnlyPaths = renderBindReadOnlyPaths sat.access.bindReadOnlyPaths;
-          } // optionalAttrs (accessSetupScript != null) {
-            ExecStartPre = lib.mkBefore [ "+${accessSetupScript}" ];
-          });
-        };
       accessSetupScript =
         if accessAclPaths == [ ] then null else
         pkgs.writeShellScript "sinex-terminal-target-access" ''
@@ -746,73 +754,8 @@ let
             acl_failures=$((acl_failures + 1))
           }
 
-          set_access_acl() {
-            local path="$1"
-            local acl_spec="$2"
-            local mask_spec=""
-            if [ "$#" -ge 3 ]; then
-              mask_spec="$3"
-            fi
-            if [ -n "$mask_spec" ]; then
-              "$SETFACL" -m "$acl_spec,m::$mask_spec" "$path" || record_acl_failure "$path"
-            else
-              "$SETFACL" --mask -m "$acl_spec" "$path" || record_acl_failure "$path"
-            fi
-          }
-
-          set_default_acl() {
-            local path="$1"
-            local acl_spec="$2"
-            local mask_spec=""
-            if [ "$#" -ge 3 ]; then
-              mask_spec="$3"
-            fi
-            if [ -n "$mask_spec" ]; then
-              "$SETFACL" -d -m "$acl_spec,m::$mask_spec" "$path" || record_acl_failure "$path"
-            else
-              "$SETFACL" -d --mask -m "$acl_spec" "$path" || record_acl_failure "$path"
-            fi
-          }
-
-          grant_parent_dirs() {
-            local path="$1"
-            local dir
-            dir="$path"
-            while [ "$dir" != "/" ] && [ "$dir" != "." ]; do
-              if [ -d "$dir" ]; then
-                set_access_acl "$dir" "u:$SERVICE_USER:--x" "--x"
-              fi
-              dir="$("$DIRNAME" "$dir")"
-            done
-          }
-
-          grant_dir_read() {
-            local path="$1"
-            if [ -d "$path" ]; then
-              set_access_acl "$path" "u:$SERVICE_USER:r-x" "r-x"
-            fi
-          }
-
-          grant_dir_read_defaults() {
-            local path="$1"
-            if [ -d "$path" ]; then
-              set_default_acl "$path" "u:$SERVICE_USER:r-X" "r-X"
-            fi
-          }
-
-          grant_file_read() {
-            local path="$1"
-            if [ -f "$path" ]; then
-              set_access_acl "$path" "u:$SERVICE_USER:r--" "r--"
-            fi
-          }
-
-          grant_sqlite_sidecars() {
-            local path="$1"
-            grant_file_read "$path-wal"
-            grant_file_read "$path-shm"
-          }
-
+          ${commonBaseAclFunctions}
+          ${commonReadAclFunctions}
           # ACL ordering matters: grant_parent_dirs sets `--x` (traverse-only) on
           # every directory between `/` and the path. When a path is a file, that
           # includes the file's containing directory. If we later call
@@ -840,40 +783,70 @@ let
             exit 1
           fi
         '';
-      units =
-        if instances <= 0 then { } else
-        listToAttrs (
-          map
-            (group: nameValuePair (sourceUnitServiceName group.sourceUnitId) (mkTerminalSourceUnit group))
-            sourceUnitGroups
-        );
-      monitorUnit = mkMonitorWorkerUnit {
-        sourceUnit = "terminal.monitor";
-        description = "Terminal monitoring lifecycle event (source-worker)";
-        inherit resources;
-        env = [ "RUST_LOG=${nodesCfg.defaults.logLevel}" ] ++ toEnvList sat.env;
-        serviceConfig = { };
+      # Per-source-unit generatedBindings entries (service emission delegated).
+      serviceConfigOverrides = {
+        ProtectHome = lib.mkForce "read-only";
+        ReadWritePaths = readWritePaths ++ accessWritePaths;
+      } // optionalAttrs (sat.access.bindReadOnlyPaths != [ ] && accessSetupScript == null) {
+        BindReadOnlyPaths = renderBindReadOnlyPaths sat.access.bindReadOnlyPaths;
+      } // optionalAttrs (accessSetupScript != null) {
+        ExecStartPre = lib.mkBefore [ "+${accessSetupScript}" ];
       };
+      terminalBindings =
+        if instances <= 0 then { }
+        else
+          listToAttrs (
+            map
+              (group: nameValuePair group.sourceUnitId {
+                enable = true;
+                description = "Terminal history (${group.sourceUnitId})";
+                adapterType = mkSourceUnitAdapterType group;
+                adapterConfig = mkSourceUnitAdapterConfig group;
+                inherit instances resources serviceConfigOverrides;
+                extraArgs = sat.extraArgs;
+                extraEnv = { RUST_LOG = nodesCfg.defaults.logLevel; } // sat.env;
+              })
+              sourceUnitGroups
+          );
+      monitorBinding = {
+        "terminal.monitor" = {
+          enable = true;
+          description = "Terminal monitoring lifecycle event (source-worker)";
+          adapterType = null;
+          adapterConfig = { };
+          instances = 1;
+          inherit resources;
+          extraEnv = { RUST_LOG = nodesCfg.defaults.logLevel; } // sat.env;
+          serviceConfigOverrides = { };
+          extraArgs = [ ];
+        };
+      };
+      # generatedUnitNames used for beforeUnits in access setup unit.
+      generatedUnitNames =
+        map
+          (group: "sinex-source-worker-${group.sourceUnitId}-1.service")
+          sourceUnitGroups;
       supportUnits = mkAccessSetupUnit {
         name = "sinex-terminal-target-access";
         description = "Prepare target-user access for the Sinex terminal node";
         script = accessSetupScript;
         writePaths = accessWritePaths;
-        beforeUnits = [ "sinex-preflight.service" ] ++ map (unit: "${unit}.service") (attrNames units);
+        beforeUnits = [ "sinex-preflight.service" ] ++ generatedUnitNames;
       };
     in
     {
-      units = units // monitorUnit;
+      bindings = terminalBindings // monitorBinding;
       inherit supportUnits;
     };
 
-  mkDesktopUnits =
+  # ── Desktop support glue ────────────────────────────────────────────────
+  # Service emission delegated to source-bindings-generated.nix.
+  # Returns {bindings, supportUnits, paths}.
+  mkDesktopGlue =
     let
       sat = nodesCfg.desktop;
-      instances = resolveInstances sat.instances;
-      batch = resolveBatch sat.batch;
       resources = resolveResources sat.resources;
-      clipboardEnv = if sat.clipboard.enable then [ "SINEX_CLIPBOARD=1" ] else [ "SINEX_CLIPBOARD=0" ];
+      clipboardEnv = if sat.clipboard.enable then { SINEX_CLIPBOARD = "1"; } else { SINEX_CLIPBOARD = "0"; };
       bridgeEnvFile = "${runtimeDir}/desktop-target.env";
       defaultRuntimeRoot =
         if targetUid != null then "/run/user/${toString targetUid}" else null;
@@ -886,13 +859,25 @@ let
           "user-runtime-dir@${toString targetUid}.service"
         ];
       sessionEnv =
-        optional (sat.session.runtimeDir != null) "SINEX_HYPRLAND_RUNTIME_DIR=${sat.session.runtimeDir}"
-        ++ optional (sat.session.runtimeDir != null) "XDG_RUNTIME_DIR=${sat.session.runtimeDir}"
-        ++ optional (sat.session.waylandDisplay != null) "WAYLAND_DISPLAY=${sat.session.waylandDisplay}"
-        ++ optional (sat.session.hyprlandInstanceSignature != null) "SINEX_HYPRLAND_INSTANCE_SIGNATURE=${sat.session.hyprlandInstanceSignature}"
-        ++ optional (sat.session.hyprlandEventSocket != null) "SINEX_HYPRLAND_EVENT_SOCKET=${sat.session.hyprlandEventSocket}"
-        ++ optional (sat.session.hyprlandCommandSocket != null) "SINEX_HYPRLAND_COMMAND_SOCKET=${sat.session.hyprlandCommandSocket}"
-        ++ optional (sat.history.activitywatchDbPath != null) "SINEX_ACTIVITYWATCH_DB_PATH=${sat.history.activitywatchDbPath}";
+        optionalAttrs (sat.session.runtimeDir != null) {
+          SINEX_HYPRLAND_RUNTIME_DIR = sat.session.runtimeDir;
+          XDG_RUNTIME_DIR = sat.session.runtimeDir;
+        }
+        // optionalAttrs (sat.session.waylandDisplay != null) {
+          WAYLAND_DISPLAY = sat.session.waylandDisplay;
+        }
+        // optionalAttrs (sat.session.hyprlandInstanceSignature != null) {
+          SINEX_HYPRLAND_INSTANCE_SIGNATURE = sat.session.hyprlandInstanceSignature;
+        }
+        // optionalAttrs (sat.session.hyprlandEventSocket != null) {
+          SINEX_HYPRLAND_EVENT_SOCKET = sat.session.hyprlandEventSocket;
+        }
+        // optionalAttrs (sat.session.hyprlandCommandSocket != null) {
+          SINEX_HYPRLAND_COMMAND_SOCKET = sat.session.hyprlandCommandSocket;
+        }
+        // optionalAttrs (sat.history.activitywatchDbPath != null) {
+          SINEX_ACTIVITYWATCH_DB_PATH = sat.history.activitywatchDbPath;
+        };
       accessWritePaths =
         unique (
           optionals (runtimeRoot != null) [
@@ -937,46 +922,7 @@ let
             acl_failures=$((acl_failures + 1))
           }
 
-          set_access_acl() {
-            local path="$1"
-            local acl_spec="$2"
-            local mask_spec=""
-            if [ "$#" -ge 3 ]; then
-              mask_spec="$3"
-            fi
-            if [ -n "$mask_spec" ]; then
-              "$SETFACL" -m "$acl_spec,m::$mask_spec" "$path" || record_acl_failure "$path"
-            else
-              "$SETFACL" --mask -m "$acl_spec" "$path" || record_acl_failure "$path"
-            fi
-          }
-
-          set_default_acl() {
-            local path="$1"
-            local acl_spec="$2"
-            local mask_spec=""
-            if [ "$#" -ge 3 ]; then
-              mask_spec="$3"
-            fi
-            if [ -n "$mask_spec" ]; then
-              "$SETFACL" -d -m "$acl_spec,m::$mask_spec" "$path" || record_acl_failure "$path"
-            else
-              "$SETFACL" -d --mask -m "$acl_spec" "$path" || record_acl_failure "$path"
-            fi
-          }
-
-          grant_parent_dirs() {
-            local path="$1"
-            local dir
-            dir="$path"
-            while [ "$dir" != "/" ] && [ "$dir" != "." ]; do
-              if [ -d "$dir" ]; then
-                set_access_acl "$dir" "u:$SERVICE_USER:--x" "--x"
-              fi
-              dir="$("$DIRNAME" "$dir")"
-            done
-          }
-
+          ${commonBaseAclFunctions}
           grant_dir_defaults() {
             local path="$1"
             if [ -d "$path" ]; then
@@ -1096,55 +1042,27 @@ let
             exit 1
           fi
         '';
-      # Post-Wave-B fold (#1081): the legacy single `desktop` source unit
-      # split into three typed source units. Spawn one source-worker
-      # instance per source unit; each gets the same env (union of
-      # Hyprland-socket, clipboard, activitywatch needs) and the same
-      # target-user ACL bridge. The Rust binary only touches what its
-      # source-unit-specific parser needs.
-      # Per-source-unit adapter Config JSON. desktop.activitywatch needs
-      # the path to ActivityWatch's SQLite DB; other desktop source
-      # units have their own shapes (handled as needed).
+      # Post-Wave-B fold (#1081): desktop source units.
+      # desktop.activitywatch is adapter-backed (SqliteRowAdapter).
+      # desktop.window-manager and desktop.clipboard are gated (#1234).
       activitywatchDbPath =
         if targetHome != null
         then "${targetHome}/.local/share/activitywatch/aw-server-rust/sqlite.db"
         else "";
-      desktopNodeConfigFor = sourceUnit:
-        if sourceUnit == "desktop.activitywatch" then
-          builtins.toJSON { path = activitywatchDbPath; }
-        else "";
-      desktopUnitParams = sourceUnit: description: {
-        inherit sourceUnit description;
-        instances = 1;
-        inherit resources;
-        afterUnits = runtimeRootUnits;
-        wantsUnits = runtimeRootUnits;
-        extraArgs =
-          (if (desktopNodeConfigFor sourceUnit) != ""
-            then [ "--node-config" (escapeShellArg (desktopNodeConfigFor sourceUnit)) ]
-            else [])
-          ++ sat.extraArgs;
-        env = clipboardEnv ++ sessionEnv ++ [ "RUST_LOG=${nodesCfg.defaults.logLevel}" ] ++ toEnvList sat.env;
-        path = [ pkgs.hyprland ];
-        serviceConfig = {
-          ProtectHome = lib.mkForce "read-only";
-          ReadWritePaths = readWritePaths ++ accessWritePaths;
-        } // optionalAttrs (sat.access.bindReadOnlyPaths != [ ] && accessSetupScript == null) {
-          BindReadOnlyPaths = renderBindReadOnlyPaths sat.access.bindReadOnlyPaths;
-        } // optionalAttrs (accessSetupScript != null) {
-          EnvironmentFile = [ "-${bridgeEnvFile}" ];
-          ExecStartPre = lib.mkBefore [ "+${accessSetupScript}" ];
-        };
+      desktopServiceConfigOverrides = {
+        ProtectHome = lib.mkForce "read-only";
+        ReadWritePaths = readWritePaths ++ accessWritePaths;
+      } // optionalAttrs (sat.access.bindReadOnlyPaths != [ ] && accessSetupScript == null) {
+        BindReadOnlyPaths = renderBindReadOnlyPaths sat.access.bindReadOnlyPaths;
+      } // optionalAttrs (accessSetupScript != null) {
+        EnvironmentFile = [ "-${bridgeEnvFile}" ];
+        ExecStartPre = lib.mkBefore [ "+${accessSetupScript}" ];
       };
-      # desktop.window-manager and desktop.clipboard are gated until the
-      # per-session Wayland/Hyprland bridge is wired through Nix. The
-      # sinex service user (uid=991) cannot reach /run/user/1000/hypr/...
-      # or an active wl_display without an explicit ACL bridge. Tracked
-      # in https://github.com/Sinity/sinex/issues/1234.
-      #
-      # desktop.activitywatch is adapter-backed (SqliteRowAdapter) and runs
-      # with the default_config from `sources/desktop/activitywatch.rs`.
-      units = mkSourceWorkerUnit (desktopUnitParams "desktop.activitywatch" "ActivityWatch SQLite (source-worker)");
+      desktopExtraEnv =
+        clipboardEnv
+        // sessionEnv
+        // { RUST_LOG = nodesCfg.defaults.logLevel; }
+        // sat.env;
       supportUnits = mkAccessSetupUnit {
         name = "sinex-desktop-target-access";
         description = "Prepare target-user access for the Sinex desktop node";
@@ -1152,7 +1070,7 @@ let
         writePaths = accessWritePaths;
         afterUnits = runtimeRootUnits;
         wantsUnits = runtimeRootUnits;
-        beforeUnits = [ "sinex-preflight.service" ] ++ map (unit: "${unit}.service") (attrNames units);
+        beforeUnits = [ "sinex-preflight.service" "sinex-source-worker-desktop.activitywatch-1.service" ];
       };
       # Hyprland rotates instance signature directories under
       # /run/user/UID/hypr/<sig> on every compositor restart.  The oneshot
@@ -1194,46 +1112,56 @@ let
             description = "Watch Hyprland instance rotation to re-apply Sinex desktop ACLs";
             wantedBy = [ "multi-user.target" ];
             pathConfig = {
-              # PathChanged fires when sub-entries are created/removed.
-              # Hyprland creates a fresh instance dir under hypr/ on each
-              # restart; we re-run the ACL grant in response.
               PathChanged = "/run/user/${toString targetUid}/hypr";
-              # MakeDirectory ensures the watch path itself can be created
-              # on first compositor start, otherwise the path unit would
-              # stay inactive until the directory exists.
               MakeDirectory = true;
             };
           };
         };
+      # Shared fields for all desktop source units.
+      mkDesktopBinding = description: adapterConfig: gated: {
+        enable = sat.enable;
+        inherit description;
+        adapterType = null;
+        adapterConfig = adapterConfig;
+        instances = 1;
+        inherit resources;
+        afterUnits = runtimeRootUnits;
+        wantsUnits = runtimeRootUnits;
+        extraArgs = sat.extraArgs;
+        extraEnv = desktopExtraEnv;
+        unitPath = [ pkgs.hyprland ];
+        serviceConfigOverrides = desktopServiceConfigOverrides;
+      } // (if gated then { gated = true; } else { });
+      # desktop.activitywatch only supplies `path`; query/table come from
+      # the Rust source unit's default_config (schema validation skipped).
+      # desktop.window-manager and desktop.clipboard are gated (#1234).
+      desktopBindings = {
+        "desktop.activitywatch" = mkDesktopBinding "ActivityWatch SQLite (source-worker)" { path = activitywatchDbPath; } false;
+        "desktop.window-manager" = mkDesktopBinding "Desktop window manager (source-worker, gated)" { } true;
+        "desktop.clipboard" = mkDesktopBinding "Desktop clipboard (source-worker, gated)" { } true;
+      };
     in
     {
-      inherit units;
+      bindings = desktopBindings;
       supportUnits = supportUnits // aclRefreshUnits;
       paths = aclRefreshPaths;
     };
 
-  mkBrowserUnits =
+  # ── Browser support glue ─────────────────────────────────────────────────
+  # Service emission delegated to source-bindings-generated.nix.
+  mkBrowserGlue =
     let
       sat = nodesCfg.browser;
       instances = resolveInstances sat.instances;
-      batch = resolveBatch sat.batch;
       resources = resolveResources sat.resources;
       # Post-Wave-B fold (#1081): browser.history uses
       # ChainedAdapter<SqliteRowAdapter, AppendOnlyFileAdapter>. The
       # ChainedConfig shape is `{primary, secondary, interleaved}` where
       # primary is SqliteRowConfig and secondary is AppendOnlyFileConfig.
-      # The default `query` comes from the source unit's `default_config`
-      # in `browser/history.rs`; here we only fill in deployment-specific
-      # paths. If multiple sqliteSources or dumpSources are configured we
-      # take the first; multi-source-per-domain support is plan §2.
       primarySqlitePath =
         if sat.sqliteSources != [ ] then (builtins.head sat.sqliteSources).path else "";
       secondaryDumpPath =
         if sat.dumpSources != [ ] then (builtins.head sat.dumpSources).path or "" else "";
-      nodeConfig = builtins.toJSON {
-        primary = { path = primarySqlitePath; };
-        secondary = { path = secondaryDumpPath; };
-      };
       sqlitePaths = unique (map (source: source.path) sat.sqliteSources);
       sqliteDirs = unique (map builtins.dirOf sqlitePaths);
       accessWritePaths =
@@ -1263,73 +1191,8 @@ let
             acl_failures=$((acl_failures + 1))
           }
 
-          set_access_acl() {
-            local path="$1"
-            local acl_spec="$2"
-            local mask_spec=""
-            if [ "$#" -ge 3 ]; then
-              mask_spec="$3"
-            fi
-            if [ -n "$mask_spec" ]; then
-              "$SETFACL" -m "$acl_spec,m::$mask_spec" "$path" || record_acl_failure "$path"
-            else
-              "$SETFACL" --mask -m "$acl_spec" "$path" || record_acl_failure "$path"
-            fi
-          }
-
-          set_default_acl() {
-            local path="$1"
-            local acl_spec="$2"
-            local mask_spec=""
-            if [ "$#" -ge 3 ]; then
-              mask_spec="$3"
-            fi
-            if [ -n "$mask_spec" ]; then
-              "$SETFACL" -d -m "$acl_spec,m::$mask_spec" "$path" || record_acl_failure "$path"
-            else
-              "$SETFACL" -d --mask -m "$acl_spec" "$path" || record_acl_failure "$path"
-            fi
-          }
-
-          grant_parent_dirs() {
-            local path="$1"
-            local dir
-            dir="$path"
-            while [ "$dir" != "/" ] && [ "$dir" != "." ]; do
-              if [ -d "$dir" ]; then
-                set_access_acl "$dir" "u:$SERVICE_USER:--x" "--x"
-              fi
-              dir="$("$DIRNAME" "$dir")"
-            done
-          }
-
-          grant_dir_read() {
-            local path="$1"
-            if [ -d "$path" ]; then
-              set_access_acl "$path" "u:$SERVICE_USER:r-x" "r-x"
-            fi
-          }
-
-          grant_dir_read_defaults() {
-            local path="$1"
-            if [ -d "$path" ]; then
-              set_default_acl "$path" "u:$SERVICE_USER:r-X" "r-X"
-            fi
-          }
-
-          grant_file_read() {
-            local path="$1"
-            if [ -f "$path" ]; then
-              set_access_acl "$path" "u:$SERVICE_USER:r--" "r--"
-            fi
-          }
-
-          grant_sqlite_sidecars() {
-            local path="$1"
-            grant_file_read "$path-wal"
-            grant_file_read "$path-shm"
-          }
-
+          ${commonBaseAclFunctions}
+          ${commonReadAclFunctions}
           ${concatStringsSep "\n" (map (path: ''
             grant_parent_dirs ${escapeShellArg path}
             grant_file_read ${escapeShellArg path}
@@ -1346,40 +1209,51 @@ let
             exit 1
           fi
         '';
-      units = mkSourceWorkerUnit {
-        sourceUnit = "browser.history";
-        description = "Browser history node (source-worker)";
-        inherit instances resources;
-        extraArgs = [ "--node-config ${escapeShellArg nodeConfig}" ] ++ sat.extraArgs;
-        env = [ "RUST_LOG=${nodesCfg.defaults.logLevel}" ] ++ toEnvList sat.env;
-        serviceConfig = {
-          ProtectHome = lib.mkForce "read-only";
-          ReadWritePaths = readWritePaths ++ accessWritePaths;
-        } // optionalAttrs (sat.access.bindReadOnlyPaths != [ ] && accessSetupScript == null) {
-          BindReadOnlyPaths = renderBindReadOnlyPaths sat.access.bindReadOnlyPaths;
-        } // optionalAttrs (accessSetupScript != null) {
-          ExecStartPre = lib.mkBefore [ "+${accessSetupScript}" ];
-        };
+      browserServiceConfigOverrides = {
+        ProtectHome = lib.mkForce "read-only";
+        ReadWritePaths = readWritePaths ++ accessWritePaths;
+      } // optionalAttrs (sat.access.bindReadOnlyPaths != [ ] && accessSetupScript == null) {
+        BindReadOnlyPaths = renderBindReadOnlyPaths sat.access.bindReadOnlyPaths;
+      } // optionalAttrs (accessSetupScript != null) {
+        ExecStartPre = lib.mkBefore [ "+${accessSetupScript}" ];
       };
       supportUnits = mkAccessSetupUnit {
         name = "sinex-browser-target-access";
         description = "Prepare target-user access for the Sinex browser node";
         script = accessSetupScript;
         writePaths = accessWritePaths;
-        beforeUnits = [ "sinex-preflight.service" ] ++ map (unit: "${unit}.service") (attrNames units);
+        beforeUnits = [ "sinex-preflight.service" "sinex-source-worker-browser.history-1.service" ];
       };
     in
     {
-      inherit units supportUnits;
+      bindings = {
+        "browser.history" = {
+          enable = sat.enable;
+          description = "Browser history (source-worker)";
+          adapterType = "ChainedAdapter";
+          # ChainedConfig: primary=SqliteRowConfig, secondary=AppendOnlyFileConfig.
+          adapterConfig = {
+            primary = { path = primarySqlitePath; };
+            secondary = { path = secondaryDumpPath; };
+          };
+          inherit instances resources;
+          extraArgs = sat.extraArgs;
+          extraEnv = { RUST_LOG = nodesCfg.defaults.logLevel; } // sat.env;
+          serviceConfigOverrides = browserServiceConfigOverrides;
+        };
+      };
+      inherit supportUnits;
     };
 
-  mkSystemUnits =
+  # ── System support glue ──────────────────────────────────────────────────
+  # Service emission delegated to source-bindings-generated.nix.
+  mkSystemGlue =
     let
       sat = nodesCfg.system;
-      instances = resolveInstances sat.instances;
-      batch = resolveBatch sat.batch;
       resources = resolveResources sat.resources;
-      nodeConfig = builtins.toJSON {
+      # Post-Wave-B fold (#1081): system source units share this config blob.
+      # Each parser only reads what its source-unit-specific code touches.
+      nodeConfig = {
         dbus_enabled = true;
         journal_enabled = true;
         udev_enabled = true;
@@ -1431,38 +1305,40 @@ let
           cursor_flush_interval_secs = 10;
         };
       };
-    in
-    # Post-Wave-B fold (#1081): the legacy single `system` source unit
-    # split into five typed source units (journald, systemd, dbus, udev,
-    # monitor). Each gets a source-worker instance with the union of
-    # capabilities (journald supplementary group, system-bus env). Each
-    # parser only uses what its source-unit-specific code touches.
-    let
-      systemUnitParams = sourceUnit: description: {
-        inherit sourceUnit description;
+      systemServiceConfig = {
+        SupplementaryGroups = [ "systemd-journal" ];
+      };
+      mkSystemBinding = id: description: {
+        enable = sat.enable;
+        inherit description;
+        adapterType = null;
+        adapterConfig = nodeConfig;
         instances = 1;
         inherit resources;
-        extraArgs = [ "--node-config ${escapeShellArg nodeConfig}" ] ++ sat.extraArgs;
-        env = [ "RUST_LOG=${nodesCfg.defaults.logLevel}" ] ++ toEnvList sat.env;
-        serviceConfig = {
-          SupplementaryGroups = [ "systemd-journal" ];
-        };
-      };
-      monitorUnitParams = {
-        sourceUnit = "system.monitor";
-        description = "System monitoring lifecycle event (source-worker)";
-        inherit resources;
-        env = [ "RUST_LOG=${nodesCfg.defaults.logLevel}" ] ++ toEnvList sat.env;
-        serviceConfig = { };
+        extraArgs = sat.extraArgs;
+        extraEnv = { RUST_LOG = nodesCfg.defaults.logLevel; } // sat.env;
+        serviceConfigOverrides = systemServiceConfig;
       };
     in
     # system.dbus emits a source-worker unit since #1235 wired
     # `RealDbusBackend` into `DbusStreamAdapter::open` (zbus 5.x).
-    (mkSourceWorkerUnit (systemUnitParams "system.dbus" "D-Bus signal stream (source-worker)"))
-    // (mkSourceWorkerUnit (systemUnitParams "system.journald" "systemd journal (source-worker)"))
-    // (mkSourceWorkerUnit (systemUnitParams "system.systemd" "systemd unit state (source-worker)"))
-    // (mkSourceWorkerUnit (systemUnitParams "system.udev" "udev events (source-worker)"))
-    // (mkMonitorWorkerUnit monitorUnitParams);
+    {
+      "system.journald" = mkSystemBinding "system.journald" "systemd journal (source-worker)";
+      "system.systemd" = mkSystemBinding "system.systemd" "systemd unit state (source-worker)";
+      "system.udev" = mkSystemBinding "system.udev" "udev events (source-worker)";
+      "system.dbus" = mkSystemBinding "system.dbus" "D-Bus signal stream (source-worker)";
+      "system.monitor" = {
+        enable = sat.enable;
+        description = "System monitoring lifecycle event (source-worker)";
+        adapterType = null;
+        adapterConfig = { };
+        instances = 1;
+        inherit resources;
+        extraEnv = { RUST_LOG = nodesCfg.defaults.logLevel; } // sat.env;
+        serviceConfigOverrides = { };
+        extraArgs = [ ];
+      };
+    };
 
   mkDocumentUnits =
     let
@@ -1521,46 +1397,7 @@ let
             acl_failures=$((acl_failures + 1))
           }
 
-          set_access_acl() {
-            local path="$1"
-            local acl_spec="$2"
-            local mask_spec=""
-            if [ "$#" -ge 3 ]; then
-              mask_spec="$3"
-            fi
-            if [ -n "$mask_spec" ]; then
-              "$SETFACL" -m "$acl_spec,m::$mask_spec" "$path" || record_acl_failure "$path"
-            else
-              "$SETFACL" --mask -m "$acl_spec" "$path" || record_acl_failure "$path"
-            fi
-          }
-
-          set_default_acl() {
-            local path="$1"
-            local acl_spec="$2"
-            local mask_spec=""
-            if [ "$#" -ge 3 ]; then
-              mask_spec="$3"
-            fi
-            if [ -n "$mask_spec" ]; then
-              "$SETFACL" -d -m "$acl_spec,m::$mask_spec" "$path" || record_acl_failure "$path"
-            else
-              "$SETFACL" -d --mask -m "$acl_spec" "$path" || record_acl_failure "$path"
-            fi
-          }
-
-          grant_parent_dirs() {
-            local path="$1"
-            local dir
-            dir="$path"
-            while [ "$dir" != "/" ] && [ "$dir" != "." ]; do
-              if [ -d "$dir" ]; then
-                set_access_acl "$dir" "u:$SERVICE_USER:--x" "--x"
-              fi
-              dir="$("$DIRNAME" "$dir")"
-            done
-          }
-
+          ${commonBaseAclFunctions}
           grant_recursive_document_access() {
             local path="$1"
 
@@ -1637,77 +1474,6 @@ let
       inherit units supportUnits;
     };
 
-  # ── Source-worker host template (#1081) ────────────────────────────────
-  # Creates a systemd unit that runs a source unit through the consolidated
-  # sinex-source-worker binary instead of the legacy per-domain ingestor binary.
-  #
-  # Pattern:
-  #   mkSourceWorkerUnit {
-  #     sourceUnit = "fs";
-  #     description = "Filesystem watcher (source-worker)";
-  #     instances = resolveInstances nodesCfg.filesystem.instances;
-  #     resources = ...;
-  #     extraArgs = ...;
-  #   }
-  mkSourceWorkerUnit = params:
-    let
-      instances = params.instances or 1;
-      resources = params.resources or { };
-      extraArgs = params.extraArgs or [ ];
-      envExtras = params.env or [ ];
-      unitPath = params.path or [ ];
-      serviceConfigOverrides = params.serviceConfig or { };
-      additionalAfterUnits = params.afterUnits or [ ];
-      additionalRequireUnits = params.requiresUnits or [ ];
-      additionalWantsUnits = params.wantsUnits or [ ];
-      afterUnits = schemaApplyUnits ++ optionals coreEnabled [ "sinex-ingestd.service" ] ++ additionalAfterUnits;
-      requireUnits = schemaApplyUnits ++ additionalRequireUnits;
-      wantsUnits = optionals coreEnabled [ "sinex-ingestd.service" ] ++ additionalWantsUnits;
-      execArgs = concatStringsSep " " (
-        [ "--source-unit ${params.sourceUnit}" ] ++ extraArgs ++ [ "service" ]
-      );
-      env = mkServiceEnv envExtras;
-      mkUnit = instance: {
-        description = "${params.description} (instance ${toString instance})";
-        wantedBy = lib.optional cfg.runtime.target.attachToMultiUser "multi-user.target";
-        restartIfChanged = cfg.runtime.restartOnSwitch;
-        after = afterUnits;
-        requires = requireUnits;
-        wants = wantsUnits;
-        unitConfig = restartRateLimits // { PartOf = [ "sinex-runtime.target" ]; } // existingPathAssertions (databaseSecretAssertPaths ++ natsSecretAssertPaths);
-        path = unitPath;
-        serviceConfig = mkBaseServiceConfig resources env ({
-          ExecStart = mkDatabasePasswordExec {
-            name = "source-worker-${params.sourceUnit}-${toString instance}";
-            command = "${sinexPackage}/bin/sinex-source-worker ${execArgs}";
-            passwordFile = if cfg.database.enable then effectiveDatabasePasswordFile else null;
-          };
-          WorkingDirectory = stateRoot;
-        } // serviceConfigOverrides);
-      };
-    in
-    if instances <= 0 then { } else
-    listToAttrs (map (idx: nameValuePair "sinex-source-worker-${params.sourceUnit}-${toString idx}" (mkUnit idx)) (range 1 instances));
-
-  # ── Oneshot monitor variant ───────────────────────────────────────────
-  # Wraps `mkSourceWorkerUnit` for `register_monitor_unit!` source units
-  # that fire one ServiceStart event and exit. Uses Type=oneshot so
-  # systemd records "active (exited)" on success rather than treating the
-  # clean exit as a fault. RemainAfterExit=true keeps the unit visible in
-  # `systemctl list-units` post-fire. Fires once per boot via
-  # WantedBy=sinex-runtime.target; reboot re-fires.
-  mkMonitorWorkerUnit = params:
-    mkSourceWorkerUnit (params // {
-      instances = 1;
-      serviceConfig = (params.serviceConfig or { }) // {
-        Type = lib.mkForce "oneshot";
-        RemainAfterExit = lib.mkForce true;
-        Restart = lib.mkForce "no";
-        WatchdogSec = lib.mkForce "0";
-        NotifyAccess = lib.mkForce "none";
-      };
-    });
-
   mkAutomataProfile = profileName:
     let
       profiles = nodesCfg.automata.profiles;
@@ -1764,40 +1530,54 @@ let
       )
       (listToAttrs (map (spec: nameValuePair spec.serviceName spec) automataLib.specs));
 
-  nodeservices =
-    if !nodesEnabled then { units = { }; supportUnits = { }; } else
-    let
-      filesystemUnits = if nodesCfg.filesystem.enable then mkFilesystemUnits else { };
-      terminalUnits =
-        if nodesCfg.terminal.enable then mkTerminalUnits else { units = { }; supportUnits = { }; };
-      browserUnits =
-        if nodesCfg.browser.enable then mkBrowserUnits else { units = { }; supportUnits = { }; };
-      desktopUnits =
-        if nodesCfg.desktop.enable then mkDesktopUnits else { units = { }; supportUnits = { }; paths = { }; };
-      systemUnits = if nodesCfg.system.enable then mkSystemUnits else { };
-    in
-    {
-      units =
-        filesystemUnits
-        // terminalUnits.units
-        // browserUnits.units
-        // desktopUnits.units
-        // systemUnits;
-      supportUnits =
-        terminalUnits.supportUnits
-        // browserUnits.supportUnits
-        // desktopUnits.supportUnits;
-      paths = desktopUnits.paths or { };
-    };
+  # ── Support-glue assembly ────────────────────────────────────────────────
+  # Service emission is delegated to source-bindings-generated.nix.
+  # This assembles only the ACL/env bridge support units and paths.
+  terminalGlue = if nodesEnabled && nodesCfg.terminal.enable then mkTerminalGlue else { bindings = { }; supportUnits = { }; };
+  desktopGlue = if nodesEnabled && nodesCfg.desktop.enable then mkDesktopGlue else { bindings = { }; supportUnits = { }; paths = { }; };
+  browserGlue = if nodesEnabled && nodesCfg.browser.enable then mkBrowserGlue else { bindings = { }; supportUnits = { }; };
+  systemGlue = if nodesEnabled && nodesCfg.system.enable then mkSystemGlue else { };
+  filesystemBindings = if nodesEnabled && nodesCfg.filesystem.enable then mkFilesystemBindings else { };
+
+  # All domain-specific generatedBindings attrs merged together.
+  allDomainBindings =
+    filesystemBindings
+    // terminalGlue.bindings
+    // browserGlue.bindings
+    // desktopGlue.bindings
+    // systemGlue;
+
+  # Support units (ACL/env bridges) that generate their own systemd services.
+  nodesSupportUnits =
+    terminalGlue.supportUnits
+    // browserGlue.supportUnits
+    // desktopGlue.supportUnits;
 
   documentScanService =
     if !(nodesEnabled && nodesCfg.document.enable) then { units = { }; supportUnits = { }; } else mkDocumentUnits;
 
   coreServices = mkCoreServices;
 
-  accessSupportServices = nodeservices.supportUnits // documentScanService.supportUnits;
+  # generatedUnits: used by preflight to know what units to expect.
+  # With the generated module taking over, the unit names follow the
+  # sinex-source-worker-<id>-<idx> pattern from source-bindings-generated.nix.
+  generatedSourceWorkerUnitNames =
+    if !nodesEnabled then [ ]
+    else
+      concatMap
+        (id:
+          let
+            binding = allDomainBindings.${id} or { enable = false; gated = false; instances = 1; };
+          in
+          if binding.enable or false && !(binding.gated or false)
+          then
+            map (idx: "sinex-source-worker-${id}-${toString idx}")
+              (range 1 (binding.instances or 1))
+          else [ ]
+        )
+        (attrNames allDomainBindings);
 
-  generatedUnits = attrNames nodeservices.units ++ attrNames automataServices;
+  generatedUnits = generatedSourceWorkerUnitNames ++ attrNames automataServices;
 in
 {
   # Internal option declared here to break the evaluation cycle.
@@ -1816,15 +1596,19 @@ in
 
   config = mkMerge [
     (mkIf sinexEnabled {
+      # Per-domain generated bindings — service emission is handled by
+      # source-bindings-generated.nix which reads these opts.
+      services.sinex.generatedBindings = mkIf nodesEnabled allDomainBindings;
+
       systemd.services = mkMerge [
         coreServices
-        nodeservices.units
-        nodeservices.supportUnits
+        # ACL/env bridge support units (not source-worker services).
+        nodesSupportUnits
         documentScanService.units
         documentScanService.supportUnits
         automataServices
       ];
-      systemd.paths = nodeservices.paths or { };
+      systemd.paths = desktopGlue.paths or { };
       systemd.timers = mkMerge [
         (optionalAttrs (nodesEnabled && nodesCfg.document.enable && nodesCfg.document.schedule != null) {
           "sinex-document-scan" = {

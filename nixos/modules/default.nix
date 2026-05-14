@@ -67,6 +67,7 @@ in
     ./kitty-shell-integration.nix
     ./source-workers.nix
     ./source-bindings.nix
+    ./source-bindings-generated.nix
   ];
 
   options.services.sinex = with types; let
