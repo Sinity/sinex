@@ -34,6 +34,7 @@ pub mod health;
 pub mod integration;
 pub mod knowledge;
 pub mod library;
+pub mod messaging;
 pub mod metrics;
 pub mod music;
 pub mod process;
@@ -62,7 +63,12 @@ pub use gateway::*;
 pub use health::*;
 pub use integration::*;
 pub use knowledge::*;
+<<<<<<< HEAD
 pub use library::*;
+||||||| parent of 26d711b07 (feat(source): Facebook Messenger GDPR thread parser (#1090))
+=======
+pub use messaging::*;
+>>>>>>> 26d711b07 (feat(source): Facebook Messenger GDPR thread parser (#1090))
 pub use metrics::*;
 pub use music::*;
 pub use process::*;

@@ -15,6 +15,7 @@ pub mod git;
 pub mod health;
 pub mod knowledgebase;
 pub mod library;
+pub mod messaging;
 pub mod music;
 pub mod polylogue;
 pub mod social;
