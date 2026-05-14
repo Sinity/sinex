@@ -860,8 +860,22 @@ pub enum CheckpointFamily {
 }
 
 /// Privacy classification of the source's payloads.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+///
+/// The schema-apply engine reconciles a CHECK constraint on the
+/// `privacy_tier` column of `raw.source_material_registry` when that
+/// column exists. See issue #1236; the spec is forward-declared and
+/// skipped at apply time when the column is absent.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize,
+    sinex_macros::DbCheck,
+)]
 #[serde(rename_all = "snake_case")]
+#[db_check(
+    schema = "raw",
+    table = "source_material_registry",
+    column = "privacy_tier",
+    version = 1,
+)]
 pub enum PrivacyTier {
     Public,
     Sensitive,
