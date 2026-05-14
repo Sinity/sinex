@@ -29,6 +29,7 @@
 
 use async_trait::async_trait;
 use futures::stream::BoxStream;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
@@ -54,7 +55,7 @@ use crate::parser::{InputShapeAdapter, ParserError, ParserResult};
 pub struct JournalctlStreamAdapter;
 
 /// Configuration for [`JournalctlStreamAdapter`].
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct JournalctlStreamConfig {
     /// Systemd units to filter (maps to `--unit=<unit>` args).
     /// Empty = no unit filter (all units).
