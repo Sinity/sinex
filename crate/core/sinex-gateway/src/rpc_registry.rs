@@ -382,7 +382,7 @@ pub fn list_all_methods() -> Vec<(String, crate::auth::Role)> {
 
 fn build_registry_impl() -> RpcRegistry {
     use crate::handlers::{
-        handle_audit_get, handle_automata_status, handle_coordination_get_leader,
+        handle_audit_get, handle_automata_status, handle_ingestors_status, handle_coordination_get_leader,
         handle_coordination_instance_health, handle_coordination_list_instances,
         handle_create_entities, handle_create_note, handle_dlq_list, handle_dlq_peek,
         handle_dlq_purge, handle_dlq_requeue, handle_documents_get, handle_documents_get_chunks,
@@ -547,6 +547,11 @@ fn build_registry_impl() -> RpcRegistry {
             methods::AUTOMATA_STATUS,
             Role::ReadOnly,
             boxed!(handle_automata_status),
+        )
+        .pool_rpc(
+            methods::INGESTORS_STATUS,
+            Role::ReadOnly,
+            boxed!(handle_ingestors_status),
         )
         // Source material inventory (ReadOnly)
         .pool_rpc(

@@ -8,6 +8,7 @@ use serde_json::Value;
 pub mod audit;
 pub mod automata;
 pub mod content;
+pub mod ingestors;
 pub mod coordination;
 pub mod dlq;
 pub mod documents;
@@ -36,6 +37,7 @@ pub use rpc_handlers::*;
 // Re-export new domain-specific handler functions
 pub use audit::handle_audit_get;
 pub use automata::handle_automata_status;
+pub use ingestors::handle_ingestors_status;
 pub use dlq::{handle_dlq_list, handle_dlq_peek, handle_dlq_purge, handle_dlq_requeue};
 pub use lifecycle::{
     handle_lifecycle_archive,
