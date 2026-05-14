@@ -5,6 +5,17 @@ permissions:
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - master
+    paths:
+      - 'crate/lib/sinex-db/**'
+      - 'crate/lib/sinex-node-sdk/**'
+      - 'crate/core/sinex-ingestd/**'
+      - 'crate/core/sinex-source-worker/**'
+      - 'crate/core/sinex-gateway/**'
+      - 'xtask/config/perf-contracts.toml'
+      - '.github/workflows/verify-perf.yml'
 
 env:
   CARGO_TERM_COLOR: always
