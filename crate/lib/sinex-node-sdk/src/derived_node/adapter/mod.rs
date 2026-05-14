@@ -392,6 +392,22 @@ where
                         Arc::clone(&observer),
                         thresholds,
                     )));
+
+                    // Prime the materializer BEFORE storing the observer so
+                    // that the source-material BEGIN frame is committed to
+                    // JetStream before any telemetry event can reference the
+                    // material_id.  A prime failure is non-fatal: the 5s
+                    // retry window added in prong 1 (PR #1243) is a safety
+                    // net, but the goal here is to eliminate the race
+                    // entirely rather than depend on the retry window.
+                    if let Err(prime_error) = observer.prime().await {
+                        warn!(
+                            node = %self.node.name(),
+                            error = %prime_error,
+                            "Failed to prime self-observation materializer; \
+                             telemetry events may be deferred by ingestd retry"
+                        );
+                    }
                     self.self_observer = Some(observer);
 
                     info!(node = %self.node.name(), "Health monitoring auto-enabled");
