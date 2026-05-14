@@ -30,6 +30,8 @@ mod weechat;
 pub use adapter_node::{AdapterBackedIngestor, AdapterNodeConfig, AdapterNodeState};
 
 pub use adapters::{
+    // Adapter JSON Schema export (#1238).
+    AdapterSchema, all_adapter_schemas,
     // Existing adapters.
     AppendOnlyCursor, AppendOnlyFileAdapter, AppendOnlyFileConfig,
     SqliteRowAdapter, SqliteRowConfig, SqliteRowCursor,

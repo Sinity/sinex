@@ -3,6 +3,7 @@
 use async_trait::async_trait;
 use camino::Utf8Path;
 use futures::stream::{self, BoxStream, StreamExt};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use sinex_primitives::events::SourceMaterial;
@@ -23,7 +24,7 @@ use crate::parser::{InputShapeAdapter, ParserError, ParserResult};
 pub struct StaticFileAdapter;
 
 /// Configuration for [`StaticFileAdapter`].
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct StaticFileConfig {
     /// Path to the file on disk.
     pub path: String,

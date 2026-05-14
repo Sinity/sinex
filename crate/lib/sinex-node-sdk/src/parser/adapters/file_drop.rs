@@ -11,6 +11,7 @@ use async_trait::async_trait;
 use camino::Utf8PathBuf;
 use futures::stream::BoxStream;
 use notify::{Event, EventKind, RecursiveMode, Watcher};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 
@@ -25,7 +26,7 @@ use crate::parser::{InputShapeAdapter, ParserError, ParserResult};
 // =============================================================================
 
 /// Which filesystem events the adapter should yield.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum FileDropEventKind {
     Created,
@@ -48,9 +49,10 @@ pub enum FileDropEventKind {
 pub struct FileDropAdapter;
 
 /// Configuration for [`FileDropAdapter`].
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct FileDropConfig {
     /// Paths to watch (files or directories).
+    #[schemars(with = "Vec<String>")]
     pub watch_paths: Vec<Utf8PathBuf>,
 
     /// Whether to watch directories recursively.

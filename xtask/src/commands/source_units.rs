@@ -10,6 +10,7 @@ use crate::config::workspace_root;
 use crate::output::StructuredError;
 use color_eyre::eyre::{Context, Result};
 use serde::Serialize;
+use sinex_node_sdk::parser::all_adapter_schemas;
 use sinex_primitives::events::schema_registry::get_all_payloads;
 use sinex_primitives::proof::{
     self, CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, ProofObligation,
@@ -85,6 +86,20 @@ struct SourceUnitManifest {
     descriptor_contract: DescriptorContract,
     /// Future-state bindings: registered with `proposed: true`, not yet a live deployment.
     proposed_bindings: Vec<ProposedBindingManifest>,
+    /// JSON Schema per adapter Config type (#1238).
+    ///
+    /// Key: canonical adapter name (e.g. `"SqliteRowAdapter"`).
+    /// Value: `{ "schema": {…JSON Schema…}, "required": ["field", …] }`.
+    adapters: BTreeMap<String, AdapterManifest>,
+}
+
+/// Per-adapter schema record emitted into the source-unit manifest.
+#[derive(Debug, Clone, Serialize)]
+struct AdapterManifest {
+    /// Full JSON Schema for the adapter's Config struct.
+    schema: serde_json::Value,
+    /// Fields that are required (not `serde(default)`-supplied).
+    required: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -295,6 +310,17 @@ fn build_source_unit_manifest() -> SourceUnitManifest {
         .collect::<Vec<_>>();
     proposed_bindings.sort_by(|left, right| left.subject.cmp(&right.subject));
 
+    let adapters = all_adapter_schemas()
+        .into_iter()
+        .map(|(name, adapter_schema)| {
+            let manifest = AdapterManifest {
+                schema: adapter_schema.schema,
+                required: adapter_schema.required,
+            };
+            (name, manifest)
+        })
+        .collect::<BTreeMap<_, _>>();
+
     SourceUnitManifest {
         schema_version: proof::PROOF_CATALOG_SCHEMA_VERSION,
         issue_refs: vec!["issue:518", "issue:486", "issue:369"],
@@ -317,6 +343,7 @@ fn build_source_unit_manifest() -> SourceUnitManifest {
             normal_source_unit_physical_impact: "crate_impact=0, binary_impact=0, nix_output_impact=0, derivation_impact=0, sqlx_validation_impact=0",
         },
         source_units,
+        adapters,
     }
 }
 
@@ -920,6 +947,125 @@ fn write_if_changed(path: &Path, content: &str) -> Result<bool> {
 mod tests {
     use super::*;
     use crate::sandbox::prelude::*;
+
+    #[sinex_test]
+    async fn adapter_schema_export_covers_all_nine_adapters() -> TestResult<()> {
+        let manifest = build_source_unit_manifest();
+
+        // All 9 adapter types must appear in the adapters block.
+        let expected_adapters = [
+            "AppendOnlyFileAdapter",
+            "ChainedAdapter",
+            "ClipboardPollingAdapter",
+            "DbusStreamAdapter",
+            "DirectoryWalkAdapter",
+            "FileDropAdapter",
+            "JournalctlStreamAdapter",
+            "SqliteRowAdapter",
+            "StaticFileAdapter",
+            "UnixSocketStreamAdapter",
+        ];
+
+        for name in &expected_adapters {
+            assert!(
+                manifest.adapters.contains_key(*name),
+                "adapters block must include {name}"
+            );
+        }
+
+        assert_eq!(
+            manifest.adapters.len(),
+            expected_adapters.len(),
+            "adapters block should have exactly {} entries",
+            expected_adapters.len()
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn adapter_schema_export_distinguishes_required_vs_default_fields() -> TestResult<()> {
+        let manifest = build_source_unit_manifest();
+
+        // StaticFileConfig { path: String } — path is required (no default).
+        let static_file = manifest
+            .adapters
+            .get("StaticFileAdapter")
+            .expect("StaticFileAdapter must be in adapters block");
+        assert!(
+            static_file.required.contains(&"path".to_string()),
+            "StaticFileAdapter.path should be required, got: {:?}",
+            static_file.required
+        );
+
+        // AppendOnlyFileConfig { path: String, skip_empty: bool (default) }
+        let append_only = manifest
+            .adapters
+            .get("AppendOnlyFileAdapter")
+            .expect("AppendOnlyFileAdapter must be in adapters block");
+        assert!(
+            append_only.required.contains(&"path".to_string()),
+            "AppendOnlyFileAdapter.path should be required"
+        );
+        assert!(
+            !append_only.required.contains(&"skip_empty".to_string()),
+            "AppendOnlyFileAdapter.skip_empty has serde(default) so must NOT be required"
+        );
+
+        // SqliteRowConfig has required fields: query, table
+        let sqlite = manifest
+            .adapters
+            .get("SqliteRowAdapter")
+            .expect("SqliteRowAdapter must be in adapters block");
+        assert!(
+            sqlite.required.contains(&"query".to_string()),
+            "SqliteRowConfig.query is required (no default)"
+        );
+        assert!(
+            sqlite.required.contains(&"table".to_string()),
+            "SqliteRowConfig.table is required (no default)"
+        );
+        // path has serde(default) so must not be required
+        assert!(
+            !sqlite.required.contains(&"path".to_string()),
+            "SqliteRowConfig.path has serde(default) so must NOT be required"
+        );
+
+        // DbusStreamAdapter — hand-authored schema, both fields required
+        let dbus = manifest
+            .adapters
+            .get("DbusStreamAdapter")
+            .expect("DbusStreamAdapter must be in adapters block");
+        assert!(
+            dbus.required.contains(&"bus".to_string()),
+            "DbusStreamConfig.bus is required"
+        );
+        assert!(
+            dbus.required.contains(&"match_rules".to_string()),
+            "DbusStreamConfig.match_rules is required"
+        );
+
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn adapter_schema_export_shape_is_json_schema_objects() -> TestResult<()> {
+        let manifest = build_source_unit_manifest();
+
+        for (name, adapter) in &manifest.adapters {
+            // Every adapter schema must be a JSON object.
+            assert!(
+                adapter.schema.is_object(),
+                "adapter {name} schema must be a JSON object, got: {}",
+                adapter.schema
+            );
+            // required must be a list (possibly empty).
+            assert!(
+                adapter.required.iter().all(|f| !f.is_empty()),
+                "adapter {name} required fields must all be non-empty strings"
+            );
+        }
+        Ok(())
+    }
 
     #[sinex_test]
     async fn source_unit_manifest_groups_terminal_runner_pack() -> TestResult<()> {
