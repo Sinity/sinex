@@ -15,6 +15,7 @@
 use async_trait::async_trait;
 use camino::Utf8PathBuf;
 use futures::stream::BoxStream;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::net::UnixStream;
@@ -39,9 +40,10 @@ use crate::parser::{InputShapeAdapter, ParserError, ParserResult};
 pub struct UnixSocketStreamAdapter;
 
 /// Configuration for [`UnixSocketStreamAdapter`].
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct UnixSocketStreamConfig {
     /// Path to the Unix domain socket.
+    #[schemars(with = "String")]
     pub socket_path: Utf8PathBuf,
 
     /// If true, reconnect when the server closes the connection.

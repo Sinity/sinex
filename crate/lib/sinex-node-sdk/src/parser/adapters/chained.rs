@@ -22,6 +22,7 @@
 
 use async_trait::async_trait;
 use futures::stream::{BoxStream, StreamExt};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use sinex_primitives::events::SourceMaterial;
@@ -60,7 +61,7 @@ impl<A: Default, B: Default> Default for ChainedAdapter<A, B> {
 }
 
 /// Configuration for [`ChainedAdapter`].
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ChainedConfig<A, B> {
     /// Configuration for the primary (first) adapter.
     pub primary: A,

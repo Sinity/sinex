@@ -17,6 +17,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use futures::stream::BoxStream;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 
@@ -97,7 +98,7 @@ impl ClipboardBackend for MockClipboardBackend {
 // =============================================================================
 
 /// Configuration for [`ClipboardPollingAdapter`].
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ClipboardPollingConfig {
     /// Poll interval in milliseconds.
     #[serde(default = "default_poll_interval_ms")]

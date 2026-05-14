@@ -1075,6 +1075,42 @@
       "dedicated_build_rationale": null
     },
     {
+      "subject": "source_unit:system.monitor",
+      "id": "system.monitor",
+      "domain": "system",
+      "role": "source_adapter",
+      "modes": [
+        "continuous"
+      ],
+      "acquisition_shape": "live_observation",
+      "material_policy": "source_material_provenance",
+      "checkpoint_policy": "live_observation_state",
+      "occurrence_policy": "natural_key",
+      "output_event_types": [
+        {
+          "source": "system",
+          "event_type": "monitoring.started"
+        }
+      ],
+      "privacy_context": "public",
+      "retention_policy": "forever",
+      "resource_profile": "on_demand",
+      "access_policy": "lifecycle_hook:none",
+      "service_policy": "invoked_on_demand",
+      "runner_pack": "source-worker",
+      "package_impact": "system_monitor_unit",
+      "implementation_mode": "rust_in_pack:source-worker",
+      "proof_obligations": [
+        "obligation:source_unit.material_provenance"
+      ],
+      "crate_impact": "0",
+      "binary_impact": "0",
+      "nix_output_impact": "0",
+      "derivation_impact": "0",
+      "sqlx_validation_impact": "0",
+      "dedicated_build_rationale": null
+    },
+    {
       "subject": "source_unit:system.systemd",
       "id": "system.systemd",
       "domain": "system",
@@ -1363,6 +1399,42 @@
       "dedicated_build_rationale": null
     },
     {
+      "subject": "source_unit:terminal.monitor",
+      "id": "terminal.monitor",
+      "domain": "terminal",
+      "role": "source_adapter",
+      "modes": [
+        "continuous"
+      ],
+      "acquisition_shape": "live_observation",
+      "material_policy": "source_material_provenance",
+      "checkpoint_policy": "live_observation_state",
+      "occurrence_policy": "natural_key",
+      "output_event_types": [
+        {
+          "source": "terminal",
+          "event_type": "shell.terminal_monitoring_started"
+        }
+      ],
+      "privacy_context": "public",
+      "retention_policy": "forever",
+      "resource_profile": "on_demand",
+      "access_policy": "lifecycle_hook:none",
+      "service_policy": "invoked_on_demand",
+      "runner_pack": "source-worker",
+      "package_impact": "terminal_monitor_unit",
+      "implementation_mode": "rust_in_pack:source-worker",
+      "proof_obligations": [
+        "obligation:source_unit.material_provenance"
+      ],
+      "crate_impact": "0",
+      "binary_impact": "0",
+      "nix_output_impact": "0",
+      "derivation_impact": "0",
+      "sqlx_validation_impact": "0",
+      "dedicated_build_rationale": null
+    },
+    {
       "subject": "source_unit:terminal.text-history",
       "id": "terminal.text-history",
       "domain": "terminal",
@@ -1580,17 +1652,19 @@
         "noop",
         "system.dbus",
         "system.journald",
+        "system.monitor",
         "system.systemd",
         "system.udev",
         "terminal.atuin-history",
         "terminal.bash-history",
         "terminal.fish-history",
+        "terminal.monitor",
         "terminal.text-history",
         "terminal.zsh-history",
         "weechat"
       ],
       "shared_binary": "source-worker",
-      "source_unit_count": 17
+      "source_unit_count": 19
     }
   ],
   "services": [
@@ -1829,6 +1903,15 @@
       "host_identity": "runtime_hostname"
     },
     {
+      "source_unit_id": "system.monitor",
+      "service_name": "sinex-source@system.monitor",
+      "runner_pack": "source-worker",
+      "binary": "source-worker",
+      "checkpoint_identity": "system.monitor",
+      "control_identity": "system.monitor",
+      "host_identity": "runtime_hostname"
+    },
+    {
       "source_unit_id": "system.systemd",
       "service_name": "sinex-source@system.systemd",
       "runner_pack": "source-worker",
@@ -1892,6 +1975,15 @@
       "host_identity": "runtime_hostname"
     },
     {
+      "source_unit_id": "terminal.monitor",
+      "service_name": "sinex-source@terminal.monitor",
+      "runner_pack": "source-worker",
+      "binary": "source-worker",
+      "checkpoint_identity": "terminal.monitor",
+      "control_identity": "terminal.monitor",
+      "host_identity": "runtime_hostname"
+    },
+    {
       "source_unit_id": "terminal.text-history",
       "service_name": "sinex-source@terminal.text-history",
       "runner_pack": "source-worker",
@@ -1929,12 +2021,12 @@
     }
   ],
   "package_impact": {
-    "total_source_units": 37,
-    "zero_crate_impact": 37,
-    "zero_binary_impact": 37,
-    "zero_nix_output_impact": 37,
-    "zero_derivation_impact": 37,
-    "zero_sqlx_validation_impact": 37,
+    "total_source_units": 39,
+    "zero_crate_impact": 39,
+    "zero_binary_impact": 39,
+    "zero_nix_output_impact": 39,
+    "zero_derivation_impact": 39,
+    "zero_sqlx_validation_impact": 39,
     "dedicated_build_rationales": []
   },
   "proof_obligations": [
@@ -2025,5 +2117,401 @@
       "adapter": "EmbeddedEmitter",
       "output_event_type": "process.started"
     }
-  ]
+  ],
+  "adapters": {
+    "AppendOnlyFileAdapter": {
+      "schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Configuration for [`AppendOnlyFileAdapter`].",
+        "properties": {
+          "path": {
+            "description": "Path to the file on disk.",
+            "type": "string"
+          },
+          "skip_empty": {
+            "default": false,
+            "description": "If true, skip empty lines.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "title": "AppendOnlyFileConfig",
+        "type": "object"
+      },
+      "required": [
+        "path"
+      ]
+    },
+    "ChainedAdapter": {
+      "schema": {
+        "$defs": {
+          "SqliteRowConfig": {
+            "description": "Configuration for [`SqliteRowAdapter`].",
+            "properties": {
+              "batch_size": {
+                "default": 10000,
+                "description": "Per-open row batch limit. The adapter appends `LIMIT <batch_size>`\nto the inner cursor query so a single `open()` call returns at\nmost this many rows even when the underlying table is huge. The\nSDK's continuous-poll loop re-opens the adapter each cycle, so\nthe next batch resumes from the last persisted rowid.\n\nBounds peak memory: a desktop.activitywatch DB with millions of\nrows previously loaded entire result sets (~5.8 GB heap); with\nthe default batch the per-cycle working set stays in tens of MB.",
+                "format": "uint32",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "path": {
+                "default": "",
+                "description": "Path to the SQLite database file.\n\nWhen non-empty, overrides the path supplied to [`SqliteRowAdapter::new`].\nRequired when using the adapter via `register_adapter_ingestor!` (where\nthe adapter is constructed via `Default` and the path must come from\nthe node config JSON).",
+                "type": "string"
+              },
+              "query": {
+                "description": "SQL query or table name to read from.\n\nIf the query does not contain `SELECT`, it is treated as a table\nname and wrapped as `SELECT rowid, * FROM <table>`.",
+                "type": "string"
+              },
+              "read_only": {
+                "default": true,
+                "description": "Open the SQLite database read-only.\n\nBrowser-history and similar sources that share their DB with a\nlong-running writer (qutebrowser, chromium, atuin) must open\nread-only to avoid `attempt to write a readonly database` errors\nwhen the writer holds an exclusive lock. Cursor state lives in the\nSDK's checkpoint store, not in the DB, so read-only is safe by\ndefault.",
+                "type": "boolean"
+              },
+              "rowid_column": {
+                "default": "rowid",
+                "description": "Rowid column to use for ordering and cursor advancement.",
+                "type": "string"
+              },
+              "table": {
+                "description": "Table name for anchor purposes.",
+                "type": "string"
+              }
+            },
+            "required": [
+              "query",
+              "table"
+            ],
+            "type": "object"
+          },
+          "StaticFileConfig": {
+            "description": "Configuration for [`StaticFileAdapter`].",
+            "properties": {
+              "path": {
+                "description": "Path to the file on disk.",
+                "type": "string"
+              }
+            },
+            "required": [
+              "path"
+            ],
+            "type": "object"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Configuration for [`ChainedAdapter`].",
+        "properties": {
+          "interleaved": {
+            "default": false,
+            "description": "If `true`, interleave records from both adapters concurrently using\n`futures::stream::select` (fair interleaving, not biased toward\neither leg). If `false` (default), drain primary entirely before\nstarting secondary.",
+            "type": "boolean"
+          },
+          "primary": {
+            "$ref": "#/$defs/SqliteRowConfig",
+            "description": "Configuration for the primary (first) adapter."
+          },
+          "secondary": {
+            "$ref": "#/$defs/StaticFileConfig",
+            "description": "Configuration for the secondary (second) adapter."
+          }
+        },
+        "required": [
+          "primary",
+          "secondary"
+        ],
+        "title": "ChainedConfig",
+        "type": "object"
+      },
+      "required": [
+        "primary",
+        "secondary"
+      ]
+    },
+    "ClipboardPollingAdapter": {
+      "schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Configuration for [`ClipboardPollingAdapter`].",
+        "properties": {
+          "max_content_bytes": {
+            "default": 1048576,
+            "description": "Maximum content size to emit (bytes). Larger content is silently dropped.",
+            "format": "uint",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "poll_interval_ms": {
+            "default": 500,
+            "description": "Poll interval in milliseconds.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "title": "ClipboardPollingConfig",
+        "type": "object"
+      },
+      "required": []
+    },
+    "DbusStreamAdapter": {
+      "schema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "additionalProperties": false,
+        "properties": {
+          "bus": {
+            "description": "Which D-Bus bus to connect to.",
+            "enum": [
+              "session",
+              "system"
+            ],
+            "type": "string"
+          },
+          "match_rules": {
+            "description": "D-Bus match rules (e.g. \"type='signal',interface='org.freedesktop.DBus.Properties'\").",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "bus",
+          "match_rules"
+        ],
+        "title": "DbusStreamConfig",
+        "type": "object"
+      },
+      "required": [
+        "bus",
+        "match_rules"
+      ]
+    },
+    "DirectoryWalkAdapter": {
+      "schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Configuration for [`DirectoryWalkAdapter`].",
+        "properties": {
+          "follow_symlinks": {
+            "default": false,
+            "description": "Whether to follow symbolic links during the walk.",
+            "type": "boolean"
+          },
+          "globs": {
+            "default": [],
+            "description": "Optional glob patterns (e.g. `\"**/*.md\"`, `\"*.json\"`).\n\nWhen non-empty, only paths matching at least one pattern are emitted.\nPatterns are evaluated against the full path of each file.\nWhen empty, all files are emitted.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "max_depth": {
+            "default": null,
+            "description": "Maximum recursion depth relative to each root.\n\n`None` means unbounded.",
+            "format": "uint",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "roots": {
+            "description": "Root directories to walk.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "roots"
+        ],
+        "title": "DirectoryWalkConfig",
+        "type": "object"
+      },
+      "required": [
+        "roots"
+      ]
+    },
+    "FileDropAdapter": {
+      "schema": {
+        "$defs": {
+          "FileDropEventKind": {
+            "description": "Which filesystem events the adapter should yield.",
+            "enum": [
+              "created",
+              "modified",
+              "deleted",
+              "moved"
+            ],
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Configuration for [`FileDropAdapter`].",
+        "properties": {
+          "events": {
+            "default": [],
+            "description": "Which event kinds to report. If empty, all kinds are reported.",
+            "items": {
+              "$ref": "#/$defs/FileDropEventKind"
+            },
+            "type": "array"
+          },
+          "recursive": {
+            "default": false,
+            "description": "Whether to watch directories recursively.",
+            "type": "boolean"
+          },
+          "watch_paths": {
+            "description": "Paths to watch (files or directories).",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "watch_paths"
+        ],
+        "title": "FileDropConfig",
+        "type": "object"
+      },
+      "required": [
+        "watch_paths"
+      ]
+    },
+    "JournalctlStreamAdapter": {
+      "schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Configuration for [`JournalctlStreamAdapter`].",
+        "properties": {
+          "from_cursor": {
+            "default": null,
+            "description": "If provided, pass `--cursor=<cursor>` to resume from a checkpoint.\nTypically passed via the `cursor` argument to `open()` rather than\ndirectly in config; this field is for completeness.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "priority": {
+            "default": null,
+            "description": "Maximum priority to include (0=emerg … 7=debug).\nMaps to `--priority=<p>`. `None` = no filter.",
+            "format": "uint8",
+            "maximum": 255,
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "units": {
+            "default": [],
+            "description": "Systemd units to filter (maps to `--unit=<unit>` args).\nEmpty = no unit filter (all units).",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "title": "JournalctlStreamConfig",
+        "type": "object"
+      },
+      "required": []
+    },
+    "SqliteRowAdapter": {
+      "schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Configuration for [`SqliteRowAdapter`].",
+        "properties": {
+          "batch_size": {
+            "default": 10000,
+            "description": "Per-open row batch limit. The adapter appends `LIMIT <batch_size>`\nto the inner cursor query so a single `open()` call returns at\nmost this many rows even when the underlying table is huge. The\nSDK's continuous-poll loop re-opens the adapter each cycle, so\nthe next batch resumes from the last persisted rowid.\n\nBounds peak memory: a desktop.activitywatch DB with millions of\nrows previously loaded entire result sets (~5.8 GB heap); with\nthe default batch the per-cycle working set stays in tens of MB.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "path": {
+            "default": "",
+            "description": "Path to the SQLite database file.\n\nWhen non-empty, overrides the path supplied to [`SqliteRowAdapter::new`].\nRequired when using the adapter via `register_adapter_ingestor!` (where\nthe adapter is constructed via `Default` and the path must come from\nthe node config JSON).",
+            "type": "string"
+          },
+          "query": {
+            "description": "SQL query or table name to read from.\n\nIf the query does not contain `SELECT`, it is treated as a table\nname and wrapped as `SELECT rowid, * FROM <table>`.",
+            "type": "string"
+          },
+          "read_only": {
+            "default": true,
+            "description": "Open the SQLite database read-only.\n\nBrowser-history and similar sources that share their DB with a\nlong-running writer (qutebrowser, chromium, atuin) must open\nread-only to avoid `attempt to write a readonly database` errors\nwhen the writer holds an exclusive lock. Cursor state lives in the\nSDK's checkpoint store, not in the DB, so read-only is safe by\ndefault.",
+            "type": "boolean"
+          },
+          "rowid_column": {
+            "default": "rowid",
+            "description": "Rowid column to use for ordering and cursor advancement.",
+            "type": "string"
+          },
+          "table": {
+            "description": "Table name for anchor purposes.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "query",
+          "table"
+        ],
+        "title": "SqliteRowConfig",
+        "type": "object"
+      },
+      "required": [
+        "query",
+        "table"
+      ]
+    },
+    "StaticFileAdapter": {
+      "schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Configuration for [`StaticFileAdapter`].",
+        "properties": {
+          "path": {
+            "description": "Path to the file on disk.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "title": "StaticFileConfig",
+        "type": "object"
+      },
+      "required": [
+        "path"
+      ]
+    },
+    "UnixSocketStreamAdapter": {
+      "schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Configuration for [`UnixSocketStreamAdapter`].",
+        "properties": {
+          "reconnect_on_eof": {
+            "default": false,
+            "description": "If true, reconnect when the server closes the connection.",
+            "type": "boolean"
+          },
+          "socket_path": {
+            "description": "Path to the Unix domain socket.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "socket_path"
+        ],
+        "title": "UnixSocketStreamConfig",
+        "type": "object"
+      },
+      "required": [
+        "socket_path"
+      ]
+    }
+  }
 }
