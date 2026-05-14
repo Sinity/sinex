@@ -6,6 +6,7 @@
 //! This crate intentionally stays small: Rust requires procedural macros to live
 //! in a separate crate.
 
+mod db_check;
 mod event_payload;
 mod sinex_config;
 mod source_record;
@@ -159,4 +160,45 @@ pub fn derive_source_record(input: TokenStream) -> TokenStream {
 #[proc_macro_derive(SinexConfig, attributes(sinex_config))]
 pub fn derive_sinex_config(input: TokenStream) -> TokenStream {
     sinex_config::expand(input)
+}
+
+/// Derive a DB CHECK constraint specification for an enum whose `Display`
+/// rendering is stored as a text column.
+///
+/// Generates `impl <Enum> { const DB_CHECK: DbCheckSpec = ... }` and registers
+/// the spec in the global `inventory` so the schema-apply engine can iterate
+/// every `DbCheck`-derived enum at runtime.
+///
+/// # Required struct attribute
+///
+/// ```ignore
+/// #[derive(DbCheck)]
+/// #[db_check(table = "manifests", column = "manifest_type", version = 1)]
+/// pub enum NodeType {
+///     Ingestor,
+///     Automaton,
+///     Service,
+/// }
+/// ```
+///
+/// Optional `schema = "core"` (default `"core"`).
+///
+/// # Variant rename
+///
+/// ```ignore
+/// #[db_check(rename = "failure")]
+/// Failed,
+/// ```
+///
+/// The default rendering converts PascalCase variant idents to snake_case,
+/// matching `serde(rename_all = "snake_case")`. Override when the
+/// `Display` impl emits something else (e.g. `OperationStatus::Failed` →
+/// `"failure"`).
+///
+/// See `crate/lib/sinex-primitives/src/schema_constraints.rs` for the
+/// generated spec type and `crate/lib/sinex-schema/src/apply.rs` for the
+/// schema-apply convergence integration.
+#[proc_macro_derive(DbCheck, attributes(db_check))]
+pub fn derive_db_check(input: TokenStream) -> TokenStream {
+    db_check::expand(input)
 }

@@ -1946,14 +1946,29 @@ impl std::str::FromStr for NodeState {
 /// Result status of an operation in the operations log.
 ///
 /// Matches the values stored in `core.operations_log.result_status`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+///
+/// The `Display` rendering is the on-disk representation. The
+/// `#[derive(DbCheck)]` declaration below makes the schema-apply engine the
+/// source of truth for the DB `CHECK` constraint: bumping `version` ships a
+/// rename without a manual migration. See issue #1236.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize,
+    sinex_macros::DbCheck,
+)]
 #[serde(rename_all = "snake_case")]
+#[db_check(
+    schema = "core",
+    table = "operations_log",
+    column = "result_status",
+    version = 1,
+)]
 pub enum OperationStatus {
     /// Operation is actively running
     Running,
     /// Operation completed successfully
     Success,
     /// Operation failed
+    #[db_check(rename = "failure")]
     Failed,
     /// Operation was cancelled before completion
     Cancelled,
@@ -2106,8 +2121,20 @@ impl std::str::FromStr for OperationStatus {
 /// Three-tier data lifecycle: Live ↔ Archive → Tombstone.
 ///
 /// Matches the values stored as tier names in lifecycle status responses.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+///
+/// The schema-apply engine reconciles a CHECK constraint on the
+/// `data_tier` column wherever it exists. See issue #1236.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize,
+    sinex_macros::DbCheck,
+)]
 #[serde(rename_all = "snake_case")]
+#[db_check(
+    schema = "core",
+    table = "events",
+    column = "data_tier",
+    version = 1,
+)]
 pub enum DataTier {
     /// Events available for real-time queries
     Live,
@@ -2143,8 +2170,22 @@ impl std::str::FromStr for DataTier {
 /// Health status of a component or the overall system.
 ///
 /// Matches the values used in system health RPC responses.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+///
+/// The schema-apply engine reconciles a CHECK constraint on the
+/// `status` column of a future `core.health_reports` table. See issue
+/// #1236; the spec is forward-declared and skipped at apply time when the
+/// table/column does not yet exist.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize,
+    sinex_macros::DbCheck,
+)]
 #[serde(rename_all = "snake_case")]
+#[db_check(
+    schema = "core",
+    table = "health_reports",
+    column = "status",
+    version = 1,
+)]
 pub enum HealthStatus {
     /// All subsystems operating normally
     Healthy,
@@ -2178,8 +2219,22 @@ impl std::str::FromStr for HealthStatus {
 }
 
 /// Type of node in the system
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+///
+/// `Display` rendering maps to `core.manifests.manifest_type`. The
+/// `#[derive(DbCheck)]` declaration below is the source of truth for the
+/// DB `CHECK` constraint: bumping `version` ships a rename without manual
+/// migration. See issue #1236.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema,
+    sinex_macros::DbCheck,
+)]
 #[serde(rename_all = "snake_case")]
+#[db_check(
+    schema = "core",
+    table = "manifests",
+    column = "manifest_type",
+    version = 1,
+)]
 pub enum NodeType {
     /// Ingestor node (captures events from external sources)
     Ingestor,
