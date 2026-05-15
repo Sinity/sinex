@@ -251,6 +251,11 @@ pub struct EventEmitter {
     default_created_by_operation_id: Option<Uuid>,
     #[cfg(feature = "messaging")]
     validator: Option<Arc<crate::schema_validator::NodeSchemaValidator>>,
+    /// Optional emit tracker installed by `HealthReporter::enable_emit_stall_detection`.
+    /// Bumped on every successful `emit()` so the reporter can detect emit-rate stalls.
+    /// Slot is `Arc<parking_lot::RwLock<...>>` because `EventEmitter` is constructed by
+    /// the runtime before the `IngestorNodeAdapter::initialize` hook installs the tracker.
+    emit_tracker: Arc<parking_lot::RwLock<Option<Arc<crate::health_reporter::EmitTracker>>>>,
 }
 
 impl EventEmitter {
@@ -263,6 +268,7 @@ impl EventEmitter {
             default_created_by_operation_id: None,
             #[cfg(feature = "messaging")]
             validator: None,
+            emit_tracker: Arc::new(parking_lot::RwLock::new(None)),
         }
     }
 
@@ -280,7 +286,21 @@ impl EventEmitter {
             default_source_run_id: None,
             default_created_by_operation_id: None,
             validator: Some(validator),
+            emit_tracker: Arc::new(parking_lot::RwLock::new(None)),
         }
+    }
+
+    /// Install an emit tracker so that every successful `emit()` bumps it.
+    ///
+    /// Called by the adapter after `HealthReporter` is constructed. The tracker
+    /// slot is shared across `EventEmitter` clones (via `Arc<RwLock<_>>`), so
+    /// installation propagates to all downstream sites that already hold the
+    /// emitter.
+    pub fn register_emit_tracker(
+        &self,
+        tracker: Arc<crate::health_reporter::EmitTracker>,
+    ) {
+        *self.emit_tracker.write() = Some(tracker);
     }
 
     #[must_use]
@@ -315,6 +335,7 @@ impl EventEmitter {
             default_created_by_operation_id: self.default_created_by_operation_id,
             #[cfg(feature = "messaging")]
             validator: self.validator.clone(),
+            emit_tracker: Arc::clone(&self.emit_tracker),
         }
     }
 
@@ -358,7 +379,15 @@ impl EventEmitter {
         self.sender
             .send(event)
             .await
-            .map_err(|_| SinexError::processing("Event channel closed".to_string()))
+            .map_err(|_| SinexError::processing("Event channel closed".to_string()))?;
+
+        // Notify the optional emit tracker — used by HealthReporter to detect
+        // emit-rate stalls (issue #992).
+        if let Some(tracker) = self.emit_tracker.read().as_ref() {
+            tracker.notify_emit(1);
+        }
+
+        Ok(())
     }
 }
 

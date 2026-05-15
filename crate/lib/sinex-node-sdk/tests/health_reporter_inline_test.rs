@@ -46,6 +46,7 @@ async fn test_health_metrics_error_rate(ctx: TestContext) -> TestResult<()> {
             error_rate_degraded: 0.4,
             error_rate_failed: 0.75,
             window_seconds: 1,
+            emit_stall_seconds: 0,
         },
         Arc::clone(&clock) as Arc<dyn HealthClock>,
     );
@@ -72,6 +73,7 @@ async fn test_health_thresholds_defaults() -> TestResult<()> {
     assert_eq!(thresholds.error_rate_degraded, 0.05);
     assert_eq!(thresholds.error_rate_failed, 0.20);
     assert_eq!(thresholds.window_seconds, 300);
+    assert_eq!(thresholds.emit_stall_seconds, 600);
     Ok(())
 }
 
@@ -91,6 +93,7 @@ async fn test_process_status_calculation(ctx: TestContext) -> TestResult<()> {
         error_rate_degraded: 0.05,
         error_rate_failed: 0.20,
         window_seconds: 5,
+        emit_stall_seconds: 0,
     };
     let reporter = HealthReporter::new(
         "health-thresholds".to_string(),
