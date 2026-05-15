@@ -51,6 +51,8 @@ const CHAOS_TESTS: &[&str] = &[
     "chaos-clock-skew",
     "xtask-concurrency",
 ];
+/// End-to-end production-shape proof (#1135): real source-worker → NATS → ingestd → DB → gateway.
+const PRODUCTION_SHAPE_TESTS: &[&str] = &["production-shape"];
 
 /// Default timeout per test in seconds (15 minutes).
 pub const DEFAULT_TIMEOUT_SECS: u64 = 900;
@@ -78,6 +80,7 @@ fn all_tests() -> Vec<&'static str> {
     tests.extend_from_slice(INTEGRATION_TESTS);
     tests.extend_from_slice(PERFORMANCE_TESTS);
     tests.extend_from_slice(CHAOS_TESTS);
+    tests.extend_from_slice(PRODUCTION_SHAPE_TESTS);
     tests.sort_unstable();
     tests.dedup();
     tests
@@ -92,7 +95,7 @@ fn all_tests() -> Vec<&'static str> {
 pub enum VmSubcommand {
     /// Run exported NixOS VM flake checks
     Test {
-        /// Test category: smoke, integration, performance, chaos, all
+        /// Test category: smoke, integration, performance, chaos, production-shape, all
         #[arg(long, short)]
         category: Option<String>,
         /// Timeout per test in seconds (default: 900, closure-heavy scenarios: 3600)
@@ -840,6 +843,7 @@ async fn execute_test(
             ("integration", INTEGRATION_TESTS),
             ("performance", PERFORMANCE_TESTS),
             ("chaos", CHAOS_TESTS),
+            ("production-shape", PRODUCTION_SHAPE_TESTS),
         ];
 
         println!("\n{}", style("Exported VM checks:").bold());
@@ -873,9 +877,10 @@ async fn execute_test(
             Some("integration") => INTEGRATION_TESTS.to_vec(),
             Some("performance") => PERFORMANCE_TESTS.to_vec(),
             Some("chaos") => CHAOS_TESTS.to_vec(),
+            Some("production-shape") => PRODUCTION_SHAPE_TESTS.to_vec(),
             Some("all") => all_tests(),
             Some(unknown) => bail!(
-                "Unknown category: '{unknown}'\nValid: smoke, integration, performance, chaos, all"
+                "Unknown category: '{unknown}'\nValid: smoke, integration, performance, chaos, production-shape, all"
             ),
             None => SMOKE_TESTS.to_vec(), // default: smoke
         };

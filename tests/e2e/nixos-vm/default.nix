@@ -90,4 +90,10 @@
     inherit pkgs sinex-ingestd sinex-gateway pg_jsonschema sinex sinexCli;
   };
 
+  # ─── Production-shape proof (#1135) ──────────────────────────────────────
+
+  "production-shape" = import ./test-scenarios/production-shape.nix {
+    inherit pkgs sinex-ingestd sinex-gateway pg_jsonschema sinex sinexCli;
+  };
+
 }
