@@ -3,6 +3,7 @@
 //! This library provides the core logic for the `sinexctl` command-line tool.
 //! It handles RPC communication with the Sinex gateway and formatting of output.
 
+pub mod admin;
 pub mod auth;
 pub mod client;
 pub mod commands;
@@ -14,6 +15,7 @@ pub mod parse;
 pub mod prompt;
 pub mod validation;
 
+pub use admin::AdminCommands;
 pub use client::GatewayClient;
 pub use color_eyre::Result;
 pub use config::{Config, default_rpc_url};
