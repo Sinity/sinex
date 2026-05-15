@@ -1251,10 +1251,11 @@ let
       browserServiceConfigOverrides = {
         # qutebrowser's history.sqlite is WAL-mode. SQLite needs write access
         # to the DB + sidecars even for SELECT queries (#1325) to apply
-        # pending WAL frames during open. Allow write to the SQLite directories
-        # only; the rest of /home stays read-only.
+        # pending WAL frames during open. `accessWritePaths` already includes
+        # the SQLite directories (assembled from sqliteSources path dirs
+        # above) so the namespace allows write to them; the rest of /home
+        # stays read-only.
         ProtectHome = lib.mkForce "read-only";
-        ReadWritePaths = sqliteDirs;
         ReadWritePaths = readWritePaths ++ accessWritePaths;
       } // optionalAttrs (sat.access.bindReadOnlyPaths != [ ] && accessSetupScript == null) {
         BindReadOnlyPaths = renderBindReadOnlyPaths sat.access.bindReadOnlyPaths;
