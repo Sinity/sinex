@@ -8,6 +8,7 @@ pub mod browser;
 pub mod desktop;
 pub mod document;
 pub mod fs;
+pub mod library;
 pub mod system;
 pub mod terminal;
 pub mod weechat;
