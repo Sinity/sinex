@@ -121,3 +121,8 @@ pub const LIFECYCLE_TOMBSTONE_APPROVE: &str = "lifecycle.tombstone.approve";
 pub const LIFECYCLE_TOMBSTONE_CANCEL: &str = "lifecycle.tombstone.cancel";
 pub const LIFECYCLE_TOMBSTONE_LIST: &str = "lifecycle.tombstone.list";
 pub const LIFECYCLE_TOMBSTONE_STATUS: &str = "lifecycle.tombstone.status";
+
+// Documents (A2 — #332 part 2)
+pub const DOCUMENTS_SEARCH: &str = "documents.search";
+pub const DOCUMENTS_GET: &str = "documents.get";
+pub const DOCUMENTS_GET_CHUNKS: &str = "documents.get_chunks";
