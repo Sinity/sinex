@@ -57,6 +57,11 @@ const TEMPORAL_LEDGER_REQUIRED_INDEXES: &[&str] = &[
     "ix_tl_material_offsets",
     "ix_tl_ts_and_source_type",
 ];
+const DOCUMENT_CHUNKS_REQUIRED_INDEXES: &[&str] = &[
+    "ix_document_chunks_chunked_event_id",
+    "ix_document_chunks_text_fts",
+    "ix_document_chunks_text_trgm",
+];
 const TELEMETRY_VIEW_RELATIONS: &[&str] = &["current_health", "recent_activity_summary"];
 const TELEMETRY_MATERIALIZED_VIEW_RELATIONS: &[&str] = &["current_device_state"];
 const TELEMETRY_CONTINUOUS_AGGREGATES: &[&str] = &[
@@ -205,6 +210,14 @@ pub async fn diff(pool: &PgPool) -> Result<Vec<String>, ApplyError> {
         for index in TEMPORAL_LEDGER_REQUIRED_INDEXES {
             if !index_exists(pool, "raw", "temporal_ledger", index).await? {
                 drifts.push(format!("missing raw.temporal_ledger index {index}"));
+            }
+        }
+    }
+
+    if relation_exists(pool, "core.document_chunks").await? {
+        for index in DOCUMENT_CHUNKS_REQUIRED_INDEXES {
+            if !index_exists(pool, "core", "document_chunks", index).await? {
+                drifts.push(format!("missing core.document_chunks index {index}"));
             }
         }
     }
@@ -799,6 +812,7 @@ async fn create_indexes(pool: &PgPool) -> Result<(), ApplyError> {
     index_sql.extend(render_indexes(EventReplacements::create_indexes()));
     index_sql.extend(render_indexes(Documents::create_indexes()));
     index_sql.extend(render_indexes(DocumentChunks::create_indexes()));
+    index_sql.extend(DocumentChunks::create_fts_indexes_sql());
     index_sql.extend(render_indexes(OperationsLog::create_indexes()));
     index_sql.extend(OperationsLog::create_gin_indexes_sql());
 
