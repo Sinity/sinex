@@ -1249,11 +1249,21 @@ let
           description = "Browser history (source-worker)";
           adapterType = "ChainedAdapter";
           # ChainedConfig: primary=SqliteRowConfig, secondary=AppendOnlyFileConfig.
-          # immutable=false lets us open the qutebrowser DB while qutebrowser
-          # holds an exclusive lock on it (same fix as ActivityWatch — DB has a
-          # live writer with WAL open; immutable=1 returns SQLITE_CANTOPEN).
+          # qutebrowser's history.sqlite is in WAL mode with a live writer:
+          #   - immutable=true (default) returns SQLITE_CANTOPEN (live writer
+          #     holds exclusive lock)
+          #   - immutable=false + read_only=true (default) opens the DB but
+          #     query prep fails with "attempt to write a readonly database"
+          #     when SQLite needs to journal/recover for the connection
+          # Setting read_only=false lets SQLite manage WAL recovery for its
+          # own connection without touching qutebrowser's data. We only ever
+          # SELECT — no INSERT/UPDATE/DELETE.
           adapterConfig = {
-            primary = { path = primarySqlitePath; immutable = false; };
+            primary = {
+              path = primarySqlitePath;
+              immutable = false;
+              read_only = false;
+            };
             secondary = { path = secondaryDumpPath; };
           };
           inherit instances resources;
