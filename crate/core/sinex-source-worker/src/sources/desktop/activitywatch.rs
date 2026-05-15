@@ -214,6 +214,16 @@ impl MaterialParser for ActivityWatchParser {
                 .unwrap_or_else(|| title.to_string())
         };
 
+        // Schema payloads (ActivityWatchWindowActivePayload, AfkChangedPayload,
+        // BrowserTabActivePayload) require `duration_ms: u64` (not the
+        // `duration_secs` we computed in the SQL query). Convert here. Also
+        // BrowserTabActivePayload requires `browser` — extract from the
+        // bucket name suffix (`aw-watcher-web-firefox` → "firefox").
+        let duration_ms: u64 = row
+            .get("duration")
+            .and_then(|v| v.as_f64())
+            .map_or(0, |secs| (secs * 1000.0).max(0.0) as u64);
+
         let (event_type, payload) = match kind {
             BucketKind::Window => {
                 let title = data.get("title").and_then(|v| v.as_str()).unwrap_or("");
@@ -224,8 +234,7 @@ impl MaterialParser for ActivityWatchParser {
                         "bucket_id": bucket_id,
                         "app": app,
                         "title": redact_title(title),
-                        "started_at": started_at,
-                        "duration_secs": row.get("duration").and_then(|v| v.as_f64()),
+                        "duration_ms": duration_ms,
                     }),
                 )
             }
@@ -236,8 +245,7 @@ impl MaterialParser for ActivityWatchParser {
                     serde_json::json!({
                         "bucket_id": bucket_id,
                         "status": status,
-                        "started_at": started_at,
-                        "duration_secs": row.get("duration").and_then(|v| v.as_f64()),
+                        "duration_ms": duration_ms,
                     }),
                 )
             }
@@ -246,14 +254,20 @@ impl MaterialParser for ActivityWatchParser {
                 let title = data.get("title").and_then(|v| v.as_str()).unwrap_or("");
                 // URLs are highly sensitive — redact via WindowTitle context (closest available).
                 let redacted_url = redact_title(url);
+                // Bucket name pattern: `aw-watcher-web-<browser>` (e.g.
+                // `aw-watcher-web-firefox`, `aw-watcher-web-chrome`).
+                let browser = bucket_id
+                    .strip_prefix("aw-watcher-web-")
+                    .unwrap_or("")
+                    .to_string();
                 (
                     "browser.tab.active",
                     serde_json::json!({
                         "bucket_id": bucket_id,
+                        "browser": browser,
                         "url": redacted_url,
                         "title": redact_title(title),
-                        "started_at": started_at,
-                        "duration_secs": row.get("duration").and_then(|v| v.as_f64()),
+                        "duration_ms": duration_ms,
                     }),
                 )
             }
