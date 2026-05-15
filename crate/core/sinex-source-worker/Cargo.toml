@@ -67,6 +67,9 @@ workspace = true
 [dependencies.sinex-db]
 path = "../../lib/sinex-db"
 
+[dependencies.csv]
+workspace = true
+
 [dependencies.async-trait]
 workspace = true
 
