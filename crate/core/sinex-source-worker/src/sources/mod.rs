@@ -5,6 +5,7 @@
 //! registries via `inventory::submit!`.
 
 pub mod ai_session;
+pub mod bookmark;
 pub mod browser;
 pub mod desktop;
 pub mod document;

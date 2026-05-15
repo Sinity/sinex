@@ -22,6 +22,7 @@ macro_rules! define_event_payload {
 pub mod ai_session;
 pub mod automaton;
 pub mod blob;
+pub mod bookmark;
 pub mod clipboard;
 pub mod desktop;
 pub mod document;
@@ -50,6 +51,7 @@ pub mod testing;
 pub use ai_session::*;
 pub use automaton::*;
 pub use blob::*;
+pub use bookmark::*;
 pub use clipboard::*;
 pub use desktop::*;
 pub use document::*;
