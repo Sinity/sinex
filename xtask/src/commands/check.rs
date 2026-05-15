@@ -6,6 +6,8 @@
 //!   --fmt       run cargo fmt --check (~1s extra)
 //!   --forbidden run forbidden pattern scan (~1s extra)
 //!   --full      shorthand for --fmt --lint --forbidden (~25s warm)
+//!   --changed-strict  API drift guard: check only packages that own changed Rust
+//!                     files in HEAD vs merge-base. Opt-in, does not run by default.
 //!
 //! Compiler diagnostics are captured and stored in the history database for
 //! later analysis via `xtask history diagnostics`.
@@ -14,6 +16,7 @@ use color_eyre::eyre::{Result, eyre};
 
 use crate::cargo_diagnostics::{DiagnosticSummary, estimate_package_count};
 use crate::command::{CommandContext, CommandMetadata, CommandResult, WorkloadScope, XtaskCommand};
+use crate::output::StructuredError;
 use crate::preflight;
 use crate::process::ProcessBuilder;
 use crate::resources;
@@ -66,6 +69,14 @@ pub struct CheckCommand {
     /// Allow broad checks to start even when host PSI is already severe.
     #[arg(long)]
     pub allow_contended_host: bool,
+
+    /// API drift guard: check only packages that own Rust files changed between
+    /// HEAD and the merge-base of the given ref (default `origin/master`).
+    /// Emits a JSON report of changed files, affected packages, and per-package
+    /// results. Non-zero exit if any per-package check fails.
+    /// This flag is opt-in and does not alter the default check behaviour.
+    #[arg(long, value_name = "BASE_REF")]
+    pub changed_strict: Option<Option<String>>,
 }
 
 impl CheckCommand {
@@ -326,6 +337,15 @@ impl XtaskCommand for CheckCommand {
 
         // Ensure infrastructure is ready (DB needed for sqlx compile-time checks)
         preflight::ensure_ready(ctx)?;
+
+        // --changed-strict: API drift guard.  Runs before the normal check
+        // pipeline and short-circuits it when set.
+        if let Some(ref base_opt) = this.changed_strict {
+            let base_ref = base_opt
+                .as_deref()
+                .unwrap_or("origin/master");
+            return run_changed_strict_command(base_ref, ctx, &this);
+        }
 
         // Resource warning before heavy operation.  Captured regardless of output
         // mode so that machine-facing callers (agents, CI) can surface the
@@ -751,6 +771,104 @@ fn extract_packages_from_actions(actions: &[crate::planner::PlannedAction]) -> V
     packages.into_iter().collect()
 }
 
+/// Execute the `--changed-strict` drift-guard path.
+///
+/// Discovers Rust files changed between `HEAD` and the merge-base of `base_ref`,
+/// maps each file to its owning Cargo package, then runs `xtask check -p <pkg>`
+/// for each affected package. Aggregates results and emits a JSON report.
+///
+/// Returns a [`CommandResult`] containing the [`crate::strict_changed::ChangedStrictReport`]
+/// as structured JSON data. The result is a failure if any per-package check fails.
+async fn run_changed_strict_command(
+    base_ref: &str,
+    ctx: &CommandContext,
+    this: &CheckCommand,
+) -> Result<CommandResult> {
+    if ctx.is_human() {
+        println!("API drift guard: checking packages changed relative to {base_ref}...");
+    }
+
+    let workspace_root = crate::config::workspace_root();
+
+    // Resolve the xtask binary: use the currently-running executable so we
+    // don't accidentally pick up a different version.
+    let xtask_bin = std::env::current_exe()
+        .unwrap_or_else(|_| std::path::PathBuf::from("xtask"));
+
+    // Forward check modifier flags to the per-package invocations.
+    let mut extra_args: Vec<String> = vec![];
+    if this.lint {
+        extra_args.push("--lint".to_string());
+    }
+    if this.fmt {
+        extra_args.push("--fmt".to_string());
+    }
+    if this.forbidden {
+        extra_args.push("--forbidden".to_string());
+    }
+    if this.skip_tests {
+        extra_args.push("--skip-tests".to_string());
+    }
+
+    let report =
+        crate::strict_changed::run_changed_strict(base_ref, &workspace_root, &xtask_bin, &extra_args)?;
+
+    if ctx.is_human() {
+        let n_files = report.changed_files.len();
+        let n_pkgs = report.affected_packages.len();
+        println!(
+            "  {} changed Rust file{}, {} affected package{}",
+            n_files,
+            if n_files == 1 { "" } else { "s" },
+            n_pkgs,
+            if n_pkgs == 1 { "" } else { "s" },
+        );
+        for pr in &report.package_results {
+            let mark = if pr.success { "✓" } else { "✗" };
+            println!("  {mark} {}", pr.package);
+            if let Some(ref excerpt) = pr.output_excerpt {
+                for line in excerpt.lines().take(5) {
+                    println!("    {line}");
+                }
+            }
+        }
+    }
+
+    let report_json = serde_json::to_value(&report)?;
+
+    if report.success {
+        Ok(CommandResult::success()
+            .with_detail(format!(
+                "changed-strict: {} package{} checked, all passed",
+                report.affected_packages.len(),
+                if report.affected_packages.len() == 1 { "" } else { "s" }
+            ))
+            .with_data(report_json)
+            .with_duration(ctx.elapsed()))
+    } else {
+        let failed: Vec<String> = report
+            .package_results
+            .iter()
+            .filter(|r| !r.success)
+            .map(|r| r.package.clone())
+            .collect();
+        let msg = format!("changed-strict: check failed for: {}", failed.join(", "));
+        let mut result = CommandResult::failure(StructuredError {
+            code: "CHANGED_STRICT_FAILED".to_string(),
+            message: msg.clone(),
+            location: Some("check --changed-strict".to_string()),
+            suggestion: Some(format!(
+                "Run `xtask check -p {}` and inspect diagnostics",
+                failed.join(" -p ")
+            )),
+        })
+        .with_detail(msg)
+        .with_data(report_json);
+        result.warnings = vec![];
+        Ok(result.with_duration(ctx.elapsed()))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -785,6 +903,7 @@ mod tests {
             nix: false,
             plan: false,
             allow_contended_host: false,
+            changed_strict: None,
         }
     }
 
