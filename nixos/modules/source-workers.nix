@@ -1149,7 +1149,11 @@ let
       # the Rust source unit's default_config (schema validation skipped).
       # desktop.window-manager and desktop.clipboard are gated (#1234).
       desktopBindings = {
-        "desktop.activitywatch" = mkDesktopBinding "ActivityWatch SQLite (source-worker)" { path = activitywatchDbPath; } false;
+        # immutable=false: aw-server-rust holds the WAL active while writing,
+        # which makes SQLite's immutable=1 path fail SQLITE_CANTOPEN. Without
+        # this override the worker spams "unable to open database file" every
+        # 30 s. The rest of the SqliteRow defaults stay (read_only=true, etc.).
+        "desktop.activitywatch" = mkDesktopBinding "ActivityWatch SQLite (source-worker)" { path = activitywatchDbPath; immutable = false; } false;
         "desktop.window-manager" = mkDesktopBinding "Desktop window manager (source-worker, gated)" { } true;
         "desktop.clipboard" = mkDesktopBinding "Desktop clipboard (source-worker, gated)" { } true;
       };
@@ -1366,6 +1370,13 @@ let
       scanCommand = concatStringsSep " " (
         [
           "${sinexPackage}/bin/sinex-source-worker"
+          # --source-unit selects which source-unit factory runs. Without it,
+          # the binary refuses to start with "required argument missing".
+          # document.staging is the source-unit ID that owns the document
+          # parse-and-stage flow (per the parser inventory; verify with
+          # `sinex-source-worker --list-source-units`).
+          "--source-unit"
+          "document.staging"
           "--service-name"
           "sinex-document-scan"
           "--node-config"

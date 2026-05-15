@@ -93,6 +93,24 @@ pub struct SqliteRowConfig {
     #[serde(default = "default_read_only")]
     pub read_only: bool,
 
+    /// When `read_only` is true, also pass `immutable=1` in the open URI.
+    ///
+    /// `immutable=1` tells SQLite the file will not change while open,
+    /// which lets it skip WAL/-shm setup entirely. That's ideal for
+    /// rarely-mutated source DBs (qutebrowser History between sessions,
+    /// Atuin history sync intervals). But it FAILS to open the DB when a
+    /// concurrent writer holds the WAL active — observed on
+    /// `aw-server-rust` where the ActivityWatch server keeps a live WAL
+    /// open and `immutable=1` opens return `SQLITE_CANTOPEN`.
+    ///
+    /// For sources that share their DB with a continuously-writing
+    /// service, set `immutable = false`. SQLite then opens normally
+    /// read-only and reads through WAL.
+    ///
+    /// Default `true` preserves prior behavior for atuin / qutebrowser.
+    #[serde(default = "default_immutable")]
+    pub immutable: bool,
+
     /// Per-open row batch limit. The adapter appends `LIMIT <batch_size>`
     /// to the inner cursor query so a single `open()` call returns at
     /// most this many rows even when the underlying table is huge. The
@@ -108,6 +126,10 @@ pub struct SqliteRowConfig {
 
 fn default_rowid_column() -> String {
     "rowid".into()
+}
+
+fn default_immutable() -> bool {
+    true
 }
 
 fn default_read_only() -> bool {
@@ -177,7 +199,13 @@ impl InputShapeAdapter for SqliteRowAdapter {
         let connection = if config.read_only {
             flags |= rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY
                 | rusqlite::OpenFlags::SQLITE_OPEN_URI;
-            let uri = format!("file:{path}?immutable=1&mode=ro");
+            let uri = if config.immutable {
+                format!("file:{path}?immutable=1&mode=ro")
+            } else {
+                // Sources with concurrent writers (e.g. aw-server-rust) must
+                // open without immutable=1 so SQLite can read through WAL.
+                format!("file:{path}?mode=ro")
+            };
             rusqlite::Connection::open_with_flags(&uri, flags)
         } else {
             flags |= rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE
