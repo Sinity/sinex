@@ -26,6 +26,7 @@ mod directory_walk;
 mod file_drop;
 mod journalctl_stream;
 mod sqlite_row;
+mod sqlite_snapshot;
 mod static_file;
 mod unix_socket_stream;
 
@@ -39,6 +40,9 @@ pub use chained::{
 };
 pub use directory_walk::{DirectoryWalkAdapter, DirectoryWalkConfig, DirectoryWalkCursor, FileFingerprint};
 pub use sqlite_row::{SqliteRowAdapter, SqliteRowConfig, SqliteRowCursor};
+pub use sqlite_snapshot::{
+    DEFAULT_SNAPSHOT_INTERVAL, SnapshotLaneSpec, SqliteSnapshotConfig, SqliteSnapshotLane,
+};
 pub use static_file::{StaticFileCursor, StaticFileAdapter, StaticFileConfig};
 
 // New adapters.
