@@ -27,7 +27,7 @@ pub enum Component {
 }
 
 impl Component {
-    fn name(&self) -> &'static str {
+    pub fn name(&self) -> &'static str {
         match self {
             Self::Postgres => "postgres",
             Self::Nats => "nats",
@@ -36,7 +36,7 @@ impl Component {
         }
     }
 
-    fn all() -> Vec<Self> {
+    pub fn all() -> Vec<Self> {
         vec![Self::Postgres, Self::Nats, Self::Cas, Self::State]
     }
 
