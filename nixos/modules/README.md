@@ -199,6 +199,51 @@ disabled (e.g. staging migrations).
   remote access and have matching firewall/TLS controls.
 - `observability.alerts.enable` adds the provided rule files to Prometheus.
 
+### Runtime gating and deferred start
+
+By default, `services.sinex.runtime.target.attachToMultiUser = true` makes
+every Sinex unit start at boot via `multi-user.target`. The aggregate
+`sinex-runtime.target` exists as a stop boundary: `systemctl stop
+sinex-runtime.target` brings the whole runtime down without per-unit
+orchestration.
+
+To defer the runtime past boot (workstation pattern: let the desktop settle,
+then start capture), set:
+
+```nix
+services.sinex = {
+  runtime.target.attachToMultiUser = false;
+  runtime.target.includeDatabase = true;       # pull postgresql into the gate
+  runtime.target.extraAfter = [ "network-online.target" ];
+  runtime.deferredStart = {
+    enable = true;
+    delay = "5min";
+  };
+};
+```
+
+The module then:
+
+- strips `wantedBy = [ "multi-user.target" ]` from every Sinex-owned
+  long-running service, every bootstrap one-shot (`sinex-schema-apply`,
+  `sinex-tls-init`, `sinex-blob-init`, `sinex-nats-bootstrap`,
+  `sinex-kitty-setup`, `sinex-preflight`, `sinex-document-scan`, the managed
+  `nats.service`), and every generated source-worker / automaton unit;
+- when `includeDatabase = true`, also strips it from `postgresql.service`,
+  `postgresql-setup.service`, and `postgresql.target`;
+- populates `sinex-runtime.target.wants` with the union, so pulling the target
+  brings the full runtime online;
+- emits `sinex-runtime.timer` with `OnActiveSec = delay` when
+  `deferredStart.enable = true`.
+
+The `sinex-runtime.target.extraAfter` list is appended to `After=` for hosts
+that need ordering against units the module itself cannot reference (e.g.
+`network-online.target`).
+
+When the database password file is materialized late at boot (agenix,
+sops-nix), use `services.sinex.database.setupWaitForPaths` to gate
+`postgresql-setup.service` on its readability via `ConditionPathIsReadable=`.
+
 ### Lifecycle
 - The module separates runtime, admin, and operator package surfaces:
   `services.sinex.package` supplies service binaries, `adminPackage` supplies
