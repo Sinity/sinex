@@ -12,6 +12,7 @@ pub mod finance;
 pub mod fs;
 pub mod knowledgebase;
 pub mod library;
+pub mod social;
 pub mod system;
 pub mod terminal;
 pub mod weechat;
