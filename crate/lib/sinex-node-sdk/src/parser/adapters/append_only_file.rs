@@ -84,6 +84,18 @@ impl InputShapeAdapter for AppendOnlyFileAdapter {
         let path = config.path.clone();
         let skip_empty = config.skip_empty;
 
+        // Graceful empty / missing path: when the binding wires this leg
+        // optionally (e.g. ChainedAdapter's secondary slot for browser.history
+        // dump exports that the deployer hasn't configured), an unset path
+        // arrives as the empty string. Treat that as "no records yet" rather
+        // than a hard adapter error. Same for paths that don't exist on disk
+        // — the file may appear later (e.g. browser export drop directory).
+        if path.is_empty() || std::fs::metadata(&path).is_err() {
+            let empty: BoxStream<'static, ParserResult<SourceRecord>> =
+                Box::pin(stream::empty());
+            return Ok(empty);
+        }
+
         // Detect rotation by comparing the cursor's stored inode with the
         // file's current inode. If they differ, the file was rotated: the old
         // log's bytes are gone (or have been moved aside), so we must start
