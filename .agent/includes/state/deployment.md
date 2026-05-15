@@ -2,6 +2,8 @@
 
 **Current state:** `sinex.enable = true; provisionDatabase = true` deployed on `sinnix-prime`.
 All ingestors, automata (via `sinex-process` per #944), ingestd, and gateway are live under systemd.
+Source-worker host (#1054/#1081/#1223) provides the unified per-source-unit dispatch path; legacy
+per-ingestor crates were removed in Wave-B fold.
 
 ### Current Live Surface
 
@@ -9,13 +11,15 @@ All ingestors, automata (via `sinex-process` per #944), ingestd, and gateway are
 |-----------|--------|-------|
 | Gateway | active | JSON-RPC + SSE. Auth via token-suffix RBAC (no revocation — token rotation only). |
 | ingestd | active | Batch writes, COPY protocol for ≥50-event batches, validation. |
-| Filesystem node | active | Metadata-only observations use SDK buffered append streams. |
-| System node | active | Bounded historical import; deterministic UUIDv7 journal IDs. |
-| Terminal node | active | Continuous watchers bootstrap from live tail. |
-| Desktop node | active | Target-user bridge proven under systemd hardening. No watcher recovery loop (#992). |
-| Browser node | active | Startup replay removed from snapshot mode. |
+| Source-worker host | active | Per-source-unit dispatch; 14 workspace members post-fold. |
 | sinex-process | active | 6 automata via per-automaton systemd services. Telemetry wired via DerivedNodeAdapter. |
 | Schema apply | active/exited | Declarative convergence via `sinex-schema apply`. |
+| Backup (#945) | wired | WAL archiving + pg_basebackup hooks landed; operator supplies `walArchiveCommand`. |
+| CAS GC (#987) | wired | Delete-on-tombstone landed; size limits enforced. |
+| NixOS hardening (#990) | wired | `RestrictSUIDSGID`, `PrivateIPC`, pool-size, restart rate-limiting. |
+| Ingestor health (#1009) | wired | Periodic health emission in `IngestorNodeAdapter::run_continuous`. |
+| Settlement (#1010) | wired | `FailurePolicy::settle()` in production error path. |
+| Derived-node telemetry | active | Prongs 1+2 landed (#1243, #1250). #1241 awaits live DLQ verification. |
 
 ### Service User Permission Model
 
@@ -34,9 +38,8 @@ The sinex service user (uid=991) runs all services. The target user (sinity, uid
 
 | Gap | Tracking |
 |-----|----------|
-| Operator-visible derived-node telemetry not yet in `sinexctl`/status surfaces | #334 |
-| Publish intent/DLQ/failure-routing/drain semantics not finalized | #326, #327 |
-| VM coverage lags runtime-target model | #318 |
-| No backup tooling (no WAL archiving, no pg_basebackup) | #945 |
-| NixOS service hardening: `RestrictSUIDSGID` + `PrivateIPC` added to all service configs; git-annex gated behind `legacyAnnexData` | #990 |
-| Local CAS has zero GC — disk fill guaranteed over time | #987, #848 |
+| Wayland/Hyprland bridge for desktop source units | #1234 |
+| Real DbusBackend (currently returns Err) | #1235 |
+| Native-adapter fs fold pending SDK extension | #1224 |
+| Live deploy-side verification of derived-node telemetry | #1241 |
+| Production-shaped VM proof suite | #1135, #1132 |
