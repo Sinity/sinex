@@ -287,14 +287,18 @@ impl MaterialParser for ActivityWatchParser {
 
     fn baseline_adapter_config() -> serde_json::Value {
         // Actual aw-server-rust schema:
-        //   events: id, bucketrow (FK → buckets.id), starttime, endtime, data
-        //   buckets: id (the human bucket name like "aw-watcher-window_<host>"), ...
-        // The parser reads `bucket_id` (the human name), `started_at`, `duration`
-        // (computed), and `data`. JOIN buckets to expose bucket name as
-        // `bucket_id`, alias starttime → started_at, compute duration from
-        // endtime - starttime (seconds).
+        //   events:  id, bucketrow (FK → buckets.id), starttime, endtime, data
+        //   buckets: id INTEGER PRIMARY KEY, name TEXT UNIQUE NOT NULL,
+        //            type, client, hostname, created, data, metadata
+        // The parser reads `bucket_id` (the *human name* like
+        // `aw-watcher-window_<host>`), `started_at`, `duration` (computed),
+        // and `data`. JOIN buckets and expose `buckets.name AS bucket_id` —
+        // not `buckets.id` (the integer primary key). The earlier shape
+        // selected `buckets.id` so every row classified as
+        // `BucketKind::Unknown` (the prefix `aw-watcher-*` never matched
+        // integer "1","2",...) and silently dropped 4.8M events.
         serde_json::json!({
-            "query": "SELECT events.id AS rowid, buckets.id AS bucket_id, events.starttime AS started_at, ((events.endtime - events.starttime) / 1000000000.0) AS duration, events.data AS data FROM events JOIN buckets ON events.bucketrow = buckets.id ORDER BY events.id",
+            "query": "SELECT events.id AS rowid, buckets.name AS bucket_id, events.starttime AS started_at, ((events.endtime - events.starttime) / 1000000000.0) AS duration, events.data AS data FROM events JOIN buckets ON events.bucketrow = buckets.id ORDER BY events.id",
             "table": "events"
         })
     }
