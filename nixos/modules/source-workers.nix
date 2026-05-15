@@ -362,6 +362,19 @@ let
         after = afterUnits;
         wants = wantsUnits;
         before = beforeUnits;
+        # `before = beforeUnits` only ORDERS this unit — it does not pull
+        # the unit in. Without `requiredBy`, the workers in `beforeUnits`
+        # start without ever triggering the access setup, so `setfacl`
+        # never runs. The workers then fail with permission errors on
+        # target-user paths — e.g. the ActivityWatch SQLite open returns
+        # "unable to open database file" because the sinex service user
+        # can't traverse into /home/<target>.
+        #
+        # `requiredBy = beforeUnits` is the inverse of `Requires=` on the
+        # workers: when those workers start, systemd pulls this unit in
+        # AND waits for it to succeed. Combined with `before = beforeUnits`
+        # this gives both ordering AND activation.
+        requiredBy = beforeUnits;
         serviceConfig =
           {
             ExecStart = script;
