@@ -1233,14 +1233,25 @@ let
             fi
           }
 
+          # IMPORTANT: do all `grant_parent_dirs` walks BEFORE any
+          # `grant_dir_readwrite`. Otherwise a later parent-walk that passes
+          # through an earlier-granted dir downgrades its mask back to `--x`,
+          # which is exactly what happened on the qutebrowser deploy under
+          # #1325. grant_dir_readwrite runs strictly second so its `rwx` is
+          # the final mask.
           ${concatStringsSep "\n" (map (path: ''
             grant_parent_dirs ${escapeShellArg path}
+          '') sqlitePaths)}
+          ${concatStringsSep "\n" (map (path: ''
+            grant_parent_dirs ${escapeShellArg path}
+          '') sqliteDirs)}
+
+          ${concatStringsSep "\n" (map (path: ''
             grant_file_readwrite ${escapeShellArg path}
             grant_sqlite_sidecars_rw ${escapeShellArg path}
           '') sqlitePaths)}
 
           ${concatStringsSep "\n" (map (path: ''
-            grant_parent_dirs ${escapeShellArg path}
             grant_dir_readwrite ${escapeShellArg path}
           '') sqliteDirs)}
 
