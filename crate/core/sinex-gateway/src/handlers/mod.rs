@@ -10,6 +10,7 @@ pub mod automata;
 pub mod content;
 pub mod coordination;
 pub mod dlq;
+pub mod documents;
 pub mod lifecycle;
 pub mod node_registry;
 pub mod nodes;
@@ -55,6 +56,7 @@ pub use ops::{handle_ops_cancel, handle_ops_get, handle_ops_list, handle_ops_sta
 pub use shadow::{handle_shadow_create, handle_shadow_delete, handle_shadow_list};
 
 pub use content::{handle_retrieve_blob, handle_store_blob};
+pub use documents::{handle_documents_get, handle_documents_get_chunks, handle_documents_search};
 pub use coordination::{
     handle_coordination_get_leader, handle_coordination_instance_health,
     handle_coordination_list_instances,

@@ -62,6 +62,20 @@ pub struct DocumentsGetRequest {
     pub id: Uuid,
 }
 
+/// A single document record returned by `documents.get`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DocumentsGetResponse {
+    pub id: Uuid,
+    pub kind: String,
+    pub natural_key: String,
+    pub extraction_version: i32,
+    pub chunk_count: i32,
+    pub text_byte_len: i64,
+    pub side_data: JsonValue,
+    pub created_at: Timestamp,
+    pub updated_at: Timestamp,
+}
+
 /// Request for `documents.get_chunks`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DocumentsGetChunksRequest {
@@ -70,4 +84,25 @@ pub struct DocumentsGetChunksRequest {
     pub limit: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub offset: Option<u64>,
+}
+
+/// A single chunk record returned within `documents.get_chunks`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DocumentsChunkEntry {
+    pub document_id: Uuid,
+    pub chunk_index: i32,
+    pub text: String,
+    pub byte_offset_start: i64,
+    pub byte_offset_end: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_anchor_start: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_anchor_end: Option<i64>,
+}
+
+/// Response for `documents.get_chunks`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DocumentsGetChunksResponse {
+    pub document_id: Uuid,
+    pub chunks: Vec<DocumentsChunkEntry>,
 }
