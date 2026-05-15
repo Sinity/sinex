@@ -91,8 +91,13 @@ disabled (e.g. staging migrations).
 - Blob repository lives at `storage.blob.repositoryPath` (default:
   `${stateRoot}/blob-repository`). `autoInit = true` creates the content-store
   root on boot.
-- `storage.blob.maintenance` controls GC/fsck timers. Enable health checks to log
-  repository size warnings.
+- `storage.blob.maintenance` controls legacy git-annex GC/fsck timers (active only
+  when `legacyAnnexData = true`). Enable health checks to log repository size
+  warnings.
+- `storage.blob.cas.maintenance` controls the local BLAKE3 CAS timers (active only
+  when `legacyAnnexData = false`). `sweep` runs `sinexctl blob sweep-orphans`
+  (default weekly, with `--apply`); `fsck` runs `sinexctl blob fsck` (default
+  monthly, dry-run — set `cas.maintenance.fsck.apply = true` to reclaim).
 - `nats.bootstrapStreams.enable` bootstraps standard JetStream streams via the `nats`
   CLI (requires `pkgs.natscli`). Existing streams are reconciled with the
   declared `retention` / `maxAge` / `maxMsgs` / `maxBytes` policy on boot, so
