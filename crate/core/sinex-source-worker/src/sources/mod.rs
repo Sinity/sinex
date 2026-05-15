@@ -10,6 +10,7 @@ pub mod desktop;
 pub mod document;
 pub mod finance;
 pub mod fs;
+pub mod knowledgebase;
 pub mod library;
 pub mod system;
 pub mod terminal;
