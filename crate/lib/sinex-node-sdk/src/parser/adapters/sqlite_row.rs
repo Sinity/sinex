@@ -10,6 +10,7 @@ use sinex_primitives::events::SourceMaterial;
 use sinex_primitives::ids::Id;
 use sinex_primitives::parser::{InputShapeKind, MaterialAnchor, SourceRecord};
 
+#[cfg(feature = "messaging")]
 use crate::parser::adapters::{SnapshotLaneSpec, SqliteSnapshotConfig};
 use crate::parser::{InputShapeAdapter, ParserError, ParserResult};
 
@@ -138,7 +139,12 @@ pub struct SqliteRowConfig {
     /// at the configured cadence; per-row events continue to flow through
     /// the normal drain loop unaffected.
     ///
+    /// Only present when the `messaging` feature is enabled — the snapshot
+    /// lane publishes source materials via the acquisition manager, which is
+    /// itself behind `messaging`.
+    ///
     /// [`AdapterBackedIngestor`]: crate::parser::adapter_node::AdapterBackedIngestor
+    #[cfg(feature = "messaging")]
     #[serde(default)]
     pub snapshot: SqliteSnapshotConfig,
 }
@@ -153,6 +159,7 @@ impl Default for SqliteRowConfig {
             read_only: default_read_only(),
             immutable: default_immutable(),
             batch_size: default_batch_size(),
+            #[cfg(feature = "messaging")]
             snapshot: SqliteSnapshotConfig::default(),
         }
     }
@@ -353,6 +360,7 @@ impl InputShapeAdapter for SqliteRowAdapter {
         }
     }
 
+    #[cfg(feature = "messaging")]
     fn snapshot_lane(
         &self,
         source_unit_id: &str,
