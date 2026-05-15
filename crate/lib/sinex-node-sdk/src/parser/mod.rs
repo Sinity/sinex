@@ -180,6 +180,7 @@ pub trait InputShapeAdapter: Send + Sync {
     ///
     /// [`AdapterBackedIngestor`]: crate::parser::adapter_node::AdapterBackedIngestor
     /// [`SnapshotLaneSpec`]: crate::parser::adapters::SnapshotLaneSpec
+    #[cfg(feature = "messaging")]
     fn snapshot_lane(
         &self,
         _source_unit_id: &str,
