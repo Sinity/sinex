@@ -718,13 +718,31 @@ let
       # Post-Wave-B fold (#1081): per-shell adapter Config shapes.
       #   SqliteRowAdapter (atuin, fish): { path, query }
       #   AppendOnlyFileAdapter (bash, zsh, text): { path, skip_empty }
+      # `immutable = false` + `read_only = false` because both atuin and fish
+      # have a live daemon writing to their DBs (atuin shell hook, fish_history
+      # background sync). `immutable=true` (the SqliteRow default) returns
+      # SQLITE_CANTOPEN against an active WAL writer; `read_only=true` blocks
+      # SQLite's own WAL recovery on open. Same pattern as ActivityWatch (#1299)
+      # and qutebrowser (#1325). sinex only issues SELECTs.
       mkSourceUnitAdapterConfig = group:
         let
           source = builtins.head group.sources;
           shell = toLower source.shell;
         in
-        if shell == "atuin" then { path = source.path; query = "history"; table = "history"; }
-        else if shell == "fish" then { path = source.path; query = "fish_history"; table = "fish_history"; }
+        if shell == "atuin" then {
+          path = source.path;
+          query = "history";
+          table = "history";
+          immutable = false;
+          read_only = false;
+        }
+        else if shell == "fish" then {
+          path = source.path;
+          query = "fish_history";
+          table = "fish_history";
+          immutable = false;
+          read_only = false;
+        }
         else { path = source.path; skip_empty = true; };
       mkSourceUnitAdapterType = group:
         let shell = toLower (builtins.head group.sources).shell;
@@ -769,26 +787,58 @@ let
 
           ${commonBaseAclFunctions}
           ${commonReadAclFunctions}
-          # ACL ordering matters: grant_parent_dirs sets `--x` (traverse-only) on
-          # every directory between `/` and the path. When a path is a file, that
-          # includes the file's containing directory. If we later call
-          # grant_dir_read on that same directory, we upgrade `--x` → `r-x`. So
-          # any block that needs read on a directory MUST run last; otherwise a
-          # subsequent grant_parent_dirs traversing through it will downgrade
-          # the ACL back to `--x` and SQLite will fail to open WAL/SHM siblings.
+
+          # Atuin/fish SQLite DBs need RW (SQLite WAL recovery writes -wal/-shm
+          # on every open, even for SELECT). bash/zsh/text histories are
+          # append-only files where read is sufficient. See #1325 for the
+          # equivalent qutebrowser fix; matches the pattern used in the
+          # browser ACL script.
+          grant_file_readwrite() {
+            local path="$1"
+            if [ -f "$path" ]; then
+              set_access_acl "$path" "u:$SERVICE_USER:rw-" "rw-"
+            fi
+          }
+          grant_sqlite_sidecars_rw() {
+            local path="$1"
+            grant_file_readwrite "$path-wal"
+            grant_file_readwrite "$path-shm"
+          }
+          grant_dir_readwrite() {
+            local path="$1"
+            if [ -d "$path" ]; then
+              set_access_acl "$path" "u:$SERVICE_USER:rwx" "rwx"
+            fi
+          }
+
+          # Ordering matters (see #1329): all `grant_parent_dirs` first, then
+          # the leaf grants. Otherwise a later parent-walk that passes through
+          # an earlier-granted dir downgrades its mask back to `--x`.
           ${concatStringsSep "\n" (map (path: ''
             grant_parent_dirs ${escapeShellArg path}
+          '') accessAclPaths)}
+          ${concatStringsSep "\n" (map (path: ''
+            grant_parent_dirs ${escapeShellArg path}
+          '') sqliteHistoryPaths)}
+          ${concatStringsSep "\n" (map (path: ''
+            grant_parent_dirs ${escapeShellArg path}
+          '') sqliteHistoryDirs)}
+
+          # accessAclPaths includes atuin DB explicitly; grant RW there too so
+          # SQLite WAL recovery succeeds. Non-SQLite paths in accessAclPaths
+          # are append-only files where r-- is what we want; we filter in a
+          # second pass that overlays RW on SQLite paths.
+          ${concatStringsSep "\n" (map (path: ''
             grant_file_read ${escapeShellArg path}
           '') accessAclPaths)}
 
+          # SQLite DBs: RW on file + -wal + -shm, RWX on containing dir.
           ${concatStringsSep "\n" (map (path: ''
-            grant_parent_dirs ${escapeShellArg path}
-            grant_sqlite_sidecars ${escapeShellArg path}
+            grant_file_readwrite ${escapeShellArg path}
+            grant_sqlite_sidecars_rw ${escapeShellArg path}
           '') sqliteHistoryPaths)}
-
           ${concatStringsSep "\n" (map (path: ''
-            grant_parent_dirs ${escapeShellArg path}
-            grant_dir_read ${escapeShellArg path}
+            grant_dir_readwrite ${escapeShellArg path}
             grant_dir_read_defaults ${escapeShellArg path}
           '') sqliteHistoryDirs)}
 
