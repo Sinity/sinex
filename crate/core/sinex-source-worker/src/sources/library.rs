@@ -286,10 +286,9 @@ impl MaterialParser for DocsLibraryParser {
                 (path.clone(), content_hash.clone())
             }
             other => {
-                return Err(ParserError::validation(
-                    "docs-library-index: expected DirectoryEntry anchor",
-                )
-                .with_context("anchor_kind", format!("{other:?}")));
+                return Err(ParserError::InvalidInput(format!(
+                    "docs-library-index: expected DirectoryEntry anchor (anchor_kind={other:?})"
+                )));
             }
         };
 
