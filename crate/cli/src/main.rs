@@ -11,6 +11,7 @@ use sinexctl::commands::{
     RecentCommand, ReplayCommands, ReportCommands, SourcesCommand, StatusCommand,
     TelemetryCommands, ThroughputCommand, TraceCommand, TuiCommand, VerifyCommand, WatchCommand,
 };
+use sinexctl::AdminCommands;
 use sinexctl::model::OutputFormat;
 use sinexctl::{Config, default_rpc_url, render_format_matrix_terminal, validate_format};
 use std::path::PathBuf;
@@ -219,6 +220,12 @@ enum Commands {
 
     /// Generate shell completions
     Completions(CompletionsCommand),
+
+    /// Administrative operations (backup, maintenance)
+    Admin {
+        #[command(subcommand)]
+        cmd: AdminCommands,
+    },
 }
 
 #[tokio::main]
@@ -300,6 +307,8 @@ async fn main() -> color_eyre::Result<()> {
         }
         Commands::Demo(cmd) => cmd.execute().await?,
         Commands::Blob { cmd } => cmd.execute(format).await?,
+        // `sinexctl admin` commands are local operations — no gateway needed.
+        Commands::Admin { cmd } => cmd.execute(format)?,
         // `sinexctl verify --source-units` (alone) is a static descriptor /
         // payload coverage check that does not need a gateway connection
         // or auth token. Short-circuit so it can be run in CI without
@@ -347,6 +356,7 @@ async fn main() -> color_eyre::Result<()> {
                 Commands::Throughput(cmd) => cmd.execute(&client, format).await?,
                 Commands::Annotate(cmd) => cmd.execute(&client, format).await?,
                 Commands::Completions(_) => unreachable!("Completions command handled above"),
+                Commands::Admin { .. } => unreachable!("Admin command handled above"),
             }
         }
     }
@@ -492,6 +502,12 @@ fn command_path(cmd: &Commands) -> String {
         Commands::Throughput(_) => "throughput".to_string(),
         Commands::Annotate(_) => "annotate".to_string(),
         Commands::Completions(_) => "completions".to_string(),
+        Commands::Admin { cmd } => {
+            use sinexctl::admin::AdminCommands;
+            match cmd {
+                AdminCommands::Snapshot(_) => "admin snapshot".to_string(),
+            }
+        }
     }
 }
 

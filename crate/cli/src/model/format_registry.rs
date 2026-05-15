@@ -438,6 +438,13 @@ pub fn build() -> HashMap<&'static str, FormatCapability> {
             .with_note("emits shell completion script; --format is not applicable"),
     );
 
+    // ── Admin ─────────────────────────────────────────────────────────────────
+    m.insert(
+        "admin snapshot",
+        FormatCapability::single_shot(TABLE_JSON_YAML)
+            .with_note("quiesce-mode snapshot of postgres + NATS + CAS + state"),
+    );
+
     m
 }
 
