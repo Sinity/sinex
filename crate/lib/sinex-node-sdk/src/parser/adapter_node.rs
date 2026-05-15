@@ -352,11 +352,20 @@ where
             )
         })?;
 
-        let runtime = self.runtime.as_ref().ok_or_else(|| {
-            crate::SinexError::lifecycle(
-                "AdapterBackedIngestor: runtime not available (initialize not called)",
-            )
-        })?;
+        // Clone the event emitter out of runtime so we don't hold an
+        // immutable borrow of self across the later mutable
+        // `ensure_stream_acquirer()` call (Slice A introduced the &mut self
+        // path). EventEmitter is Clone (cheap — it's an Arc-shaped handle).
+        let event_emitter = self
+            .runtime
+            .as_ref()
+            .ok_or_else(|| {
+                crate::SinexError::lifecycle(
+                    "AdapterBackedIngestor: runtime not available (initialize not called)",
+                )
+            })?
+            .event_emitter()
+            .clone();
 
         let source_unit_id = sinex_primitives::parser::SourceUnitId::new(self.source_unit_id)
             .map_err(|e| {
@@ -426,10 +435,15 @@ where
             // transparently — `raw.source_material_registry` grows at
             // O(rotation_count) across all drain cycles rather than O(poll_count).
             let record_bytes = record.bytes.as_slice();
+            // Pre-load source_unit_id into a local: ensure_stream_acquirer
+            // takes &mut self, so we can't simultaneously hold &self.source_unit_id
+            // as an argument to append_with_anchor. Copy now (it's a &'static str
+            // so Copy semantics apply).
+            let source_unit_id_for_anchor = self.source_unit_id;
             let anchor = match self
                 .ensure_stream_acquirer()
                 .await?
-                .append_with_anchor(record_bytes, self.source_unit_id)
+                .append_with_anchor(record_bytes, source_unit_id_for_anchor)
                 .await
             {
                 Ok(a) => a,
@@ -479,7 +493,7 @@ where
                 // correctly references its position in the long-lived material.
                 match intent_to_event_with_anchor(intent, material_id, anchor.offset_start) {
                     Ok(event) => {
-                        if let Err(e) = runtime.event_emitter().emit(event).await {
+                        if let Err(e) = event_emitter.emit(event).await {
                             warn!(
                                 source_unit = self.source_unit_id,
                                 error = %e,
