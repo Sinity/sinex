@@ -344,7 +344,7 @@ impl XtaskCommand for CheckCommand {
             let base_ref = base_opt
                 .as_deref()
                 .unwrap_or("origin/master");
-            return run_changed_strict_command(base_ref, ctx, &this);
+            return run_changed_strict_command(base_ref, ctx, &this).await;
         }
 
         // Resource warning before heavy operation.  Captured regardless of output
