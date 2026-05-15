@@ -33,7 +33,7 @@ pub async fn handle_ingestors_status(pool: &PgPool, params: Value) -> Result<Val
             node_name: row.node_name,
             version: row.version,
             description: row.description,
-            manifest_status: row.manifest_status,
+            manifest_status: row.manifest_status.unwrap_or_default(),
             live: row.live,
             service_name: row.service_name,
             instance_id: row.instance_id,
