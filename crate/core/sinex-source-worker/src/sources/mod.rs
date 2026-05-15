@@ -4,6 +4,7 @@
 //! source-specific parser and registering it with the dispatch + node factory
 //! registries via `inventory::submit!`.
 
+pub mod ai_session;
 pub mod browser;
 pub mod desktop;
 pub mod document;
