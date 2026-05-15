@@ -545,6 +545,97 @@ in
                   default = { };
                   description = "Blob repository health monitoring.";
                 };
+                cas = mkOption {
+                  type = submodule {
+                    options = {
+                      maintenance = mkOption {
+                        type = submodule {
+                          options = {
+                            sweep = mkOption {
+                              type = submodule {
+                                options = {
+                                  enable = mkOption {
+                                    type = bool;
+                                    default = true;
+                                    description = ''
+                                      Enable periodic `sinexctl blob sweep-orphans` timer
+                                      against the local BLAKE3 CAS. Runs only when blob
+                                      storage is enabled and legacy git-annex mode is
+                                      disabled.
+                                    '';
+                                  };
+                                  schedule = mkOption {
+                                    type = str;
+                                    default = "weekly";
+                                    description = "OnCalendar schedule for the CAS orphan sweep.";
+                                  };
+                                  apply = mkOption {
+                                    type = bool;
+                                    default = true;
+                                    description = ''
+                                      Pass `--apply` (actually drop orphaned CAS keys).
+                                      Set false for a dry-run-only timer (logs orphans
+                                      without removing them).
+                                    '';
+                                  };
+                                };
+                              };
+                              default = { };
+                              description = ''
+                                Local CAS orphan sweep configuration. Runs `sinexctl blob
+                                sweep-orphans` periodically to reclaim content-store keys
+                                that no longer have a matching `core.blobs` row.
+                              '';
+                            };
+                            fsck = mkOption {
+                              type = submodule {
+                                options = {
+                                  enable = mkOption {
+                                    type = bool;
+                                    default = true;
+                                    description = ''
+                                      Enable periodic `sinexctl blob fsck` timer against
+                                      the local BLAKE3 CAS. Runs only when blob storage
+                                      is enabled and legacy git-annex mode is disabled.
+                                    '';
+                                  };
+                                  schedule = mkOption {
+                                    type = str;
+                                    default = "monthly";
+                                    description = "OnCalendar schedule for the CAS fsck pass.";
+                                  };
+                                  apply = mkOption {
+                                    type = bool;
+                                    default = false;
+                                    description = ''
+                                      Pass `--apply` (actually remove orphaned CAS files
+                                      found during fsck). Default false: dry-run only,
+                                      logs the fsck report. Set true for full reclaim.
+                                    '';
+                                  };
+                                };
+                              };
+                              default = { };
+                              description = ''
+                                Local CAS filesystem-integrity check configuration. Runs
+                                `sinexctl blob fsck` to cross-reference CAS files against
+                                `core.blobs` rows and report missing/corrupt entries.
+                              '';
+                            };
+                          };
+                        };
+                        default = { };
+                        description = ''
+                          Local BLAKE3 CAS maintenance timers. Distinct from
+                          `blob.maintenance.{gc,fsck}` which target the legacy
+                          git-annex backend.
+                        '';
+                      };
+                    };
+                  };
+                  default = { };
+                  description = "Local BLAKE3 content-store configuration.";
+                };
               };
             };
             default = { };
