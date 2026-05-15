@@ -4,12 +4,12 @@ use sinex_node_sdk::service_runtime;
 use sinex_primitives::RuntimeTargetDescriptor;
 use sinexctl::client::{ClientConfig, GatewayClient};
 use sinexctl::commands::{
-    AuditCommand, AutomataCommand, BlobCommands, CompletionsCommand, ConfigCommands,
-    ContextCommand, CoreCommands, DemoCommand, DlqCommands, DocumentsCommand, ErrorsCommand,
-    ExplainCommand, GatewayCommands, GitOpsCommands, LifecycleCommands, NodeCommands, NodesCommand,
-    NowCommand, OpsCommands, QueryCommand, RecentCommand, ReplayCommands, ReportCommands,
-    SourcesCommand, AnnotateCommand, StatusCommand, TelemetryCommands, ThroughputCommand,
-    TraceCommand, TuiCommand, VerifyCommand, WatchCommand,
+    AnnotateCommand, AuditCommand, AutomataCommand, BlobCommands, CompletionsCommand,
+    ConfigCommands, ContextCommand, CoreCommands, DemoCommand, DlqCommands, DocumentsCommand,
+    ErrorsCommand, ExplainCommand, GatewayCommands, GitOpsCommands, IngestorsCommand,
+    LifecycleCommands, NodeCommands, NodesCommand, NowCommand, OpsCommands, QueryCommand,
+    RecentCommand, ReplayCommands, ReportCommands, SourcesCommand, StatusCommand,
+    TelemetryCommands, ThroughputCommand, TraceCommand, TuiCommand, VerifyCommand, WatchCommand,
 };
 use sinexctl::model::OutputFormat;
 use sinexctl::{Config, default_rpc_url, render_format_matrix_terminal, validate_format};
@@ -110,6 +110,9 @@ enum Commands {
 
     /// Derived-node and automata status
     Automata(AutomataCommand),
+
+    /// Ingestor runtime status (run, health, recent emissions)
+    Ingestors(IngestorsCommand),
 
     /// Replay operations
     Replay {
@@ -313,6 +316,7 @@ async fn main() -> color_eyre::Result<()> {
                 Commands::Core { cmd } => cmd.execute(&client, format).await?,
                 Commands::Node { cmd } => cmd.execute(&client, format).await?,
                 Commands::Automata(cmd) => cmd.execute(&client, format).await?,
+                Commands::Ingestors(cmd) => cmd.execute(&client, format).await?,
                 Commands::Replay { cmd } => cmd.execute(&client, format).await?,
                 Commands::Dlq { cmd } => cmd.execute(&client, format).await?,
                 Commands::Query(cmd) => cmd.execute(&client, format).await?,
@@ -372,6 +376,7 @@ fn command_path(cmd: &Commands) -> String {
             NodeCommands::SetHorizon { .. } => "node set-horizon".to_string(),
         },
         Commands::Automata(_) => "automata".to_string(),
+        Commands::Ingestors(_) => "ingestors".to_string(),
         Commands::Replay { cmd } => match cmd {
             ReplayCommands::Plan { .. } => "replay plan".to_string(),
             ReplayCommands::Preview { .. } => "replay preview".to_string(),
@@ -610,6 +615,17 @@ mod tests {
         assert!(
             matches!(cli.command, Some(Commands::Automata(_))),
             "automata command must remain exposed as a top-level operator surface"
+        );
+        Ok(())
+    }
+
+    #[sinex_serial_test]
+    async fn ingestors_command_is_registered() -> TestResult<()> {
+        let (_matches, cli) = parse_cli(&["sinexctl", "ingestors"])?;
+
+        assert!(
+            matches!(cli.command, Some(Commands::Ingestors(_))),
+            "ingestors command must remain exposed as a top-level operator surface"
         );
         Ok(())
     }
