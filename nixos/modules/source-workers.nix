@@ -222,6 +222,30 @@ let
       grant_file_read "$path-wal"
       grant_file_read "$path-shm"
     }
+
+    # RW helpers used by sources whose SQLite DBs are in WAL mode with a live
+    # writer (atuin, fish, qutebrowser, ActivityWatch). SQLite checkpoints
+    # the WAL on open, which requires write access to the DB + sidecars +
+    # the containing directory. See #1325.
+    grant_file_readwrite() {
+      local path="$1"
+      if [ -f "$path" ]; then
+        set_access_acl "$path" "u:$SERVICE_USER:rw-" "rw-"
+      fi
+    }
+
+    grant_sqlite_sidecars_rw() {
+      local path="$1"
+      grant_file_readwrite "$path-wal"
+      grant_file_readwrite "$path-shm"
+    }
+
+    grant_dir_readwrite() {
+      local path="$1"
+      if [ -d "$path" ]; then
+        set_access_acl "$path" "u:$SERVICE_USER:rwx" "rwx"
+      fi
+    }
   '';
 
   baseEnv = optional cfg.database.enable "DATABASE_URL=${databaseUrl}" ++ [
@@ -986,6 +1010,20 @@ let
           }
 
           ${commonBaseAclFunctions}
+          ${commonReadAclFunctions}
+          # The desktop script previously defined a local `grant_file_read`
+          # that also walked parent dirs; the commonReadAclFunctions version
+          # only sets ACL on the file itself. Re-introduce the dir-walking
+          # variant as a separate name so callers that need both behaviors
+          # can pick.
+          grant_file_read_with_parents() {
+            local path="$1"
+            if [ -f "$path" ]; then
+              grant_parent_dirs "$path"
+              set_access_acl "$path" "u:$SERVICE_USER:r--" "r--"
+            fi
+          }
+
           grant_dir_defaults() {
             local path="$1"
             if [ -d "$path" ]; then
@@ -998,14 +1036,6 @@ let
             if [ -S "$path" ]; then
               grant_parent_dirs "$("$DIRNAME" "$path")"
               set_access_acl "$path" "u:$SERVICE_USER:rw-" "rw-"
-            fi
-          }
-
-          grant_file_read() {
-            local path="$1"
-            if [ -f "$path" ]; then
-              grant_parent_dirs "$path"
-              set_access_acl "$path" "u:$SERVICE_USER:r--" "r--"
             fi
           }
 
@@ -1096,7 +1126,15 @@ let
               echo "SINEX_HYPRLAND_INSTANCE_SIGNATURE=$HYPRLAND_SIGNATURE"
             fi
             if [ -n "$CONFIGURED_ACTIVITYWATCH_DB" ]; then
-              grant_file_read "$CONFIGURED_ACTIVITYWATCH_DB"
+              # ActivityWatch sqlite.db is WAL-mode with aw-server-rust as the
+              # live writer. SQLite WAL recovery on open requires write access
+              # to the DB + sidecars + the dir. See #1325 (qutebrowser fix)
+              # and #1330 (atuin fix) for the same pattern.
+              ACTIVITYWATCH_DIR="$("$DIRNAME" "$CONFIGURED_ACTIVITYWATCH_DB")"
+              grant_parent_dirs "$CONFIGURED_ACTIVITYWATCH_DB"
+              grant_dir_readwrite "$ACTIVITYWATCH_DIR"
+              grant_file_readwrite "$CONFIGURED_ACTIVITYWATCH_DB"
+              grant_sqlite_sidecars_rw "$CONFIGURED_ACTIVITYWATCH_DB"
               echo "SINEX_ACTIVITYWATCH_DB_PATH=$CONFIGURED_ACTIVITYWATCH_DB"
             fi
           } > "$ENV_FILE"
