@@ -1074,6 +1074,15 @@ impl AppendStreamAcquirer {
         Ok(())
     }
 
+    /// Return the material ID of the currently active in-flight material, if any.
+    ///
+    /// Used in tests and by [`AdapterBackedIngestor`] to verify that multiple drain
+    /// cycles share the same material across drain calls.
+    #[must_use]
+    pub fn current_material_id(&self) -> Option<Uuid> {
+        self.current_handle.as_ref().map(|h| h.material_id)
+    }
+
     /// Finalize current material
     pub async fn finalize(&mut self, reason: &str) -> NodeResult<()> {
         if let Some(handle) = self.current_handle.take() {
