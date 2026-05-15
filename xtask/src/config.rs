@@ -72,11 +72,13 @@ impl Config {
     pub(crate) fn from_env() -> Self {
         let workspace_root = workspace_root();
         let repo_state_root = workspace_root.join(".sinex");
-        let state_dir = env::var("SINEX_STATE_DIR")
-            .map_or_else(|_| repo_state_root.join("state"), PathBuf::from);
+        let state_dir = workspace_pinned_env_path("SINEX_STATE_DIR", &workspace_root, || {
+            repo_state_root.join("state")
+        });
 
-        let cache_dir = env::var("SINEX_CACHE_DIR")
-            .map_or_else(|_| workspace_cache_root_for(&workspace_root), PathBuf::from);
+        let cache_dir = workspace_pinned_env_path("SINEX_CACHE_DIR", &workspace_root, || {
+            workspace_cache_root_for(&workspace_root)
+        });
 
         let hostname = gethostname::gethostname().to_string_lossy().into_owned();
 
@@ -93,8 +95,11 @@ impl Config {
                 }),
             state_dir,
             cache_dir,
-            test_results_dir: env::var("SINEX_TEST_RESULTS_DIR").map(PathBuf::from).ok(),
-            test_tmp_dir: env::var("SINEX_TEST_TMPDIR").map(PathBuf::from).ok(),
+            test_results_dir: workspace_pinned_env_path_opt(
+                "SINEX_TEST_RESULTS_DIR",
+                &workspace_root,
+            ),
+            test_tmp_dir: workspace_pinned_env_path_opt("SINEX_TEST_TMPDIR", &workspace_root),
             hostname,
             toolchain: env::var("SINEX_DEV_TOOLCHAIN")
                 .ok()
@@ -173,11 +178,15 @@ pub fn workspace_target_dir_for(workspace_root: &Path) -> PathBuf {
 }
 
 /// Cache root for checkout-local build/runtime artifacts.
+///
+/// Honors `SINEX_DEV_CACHE_ROOT` only when the configured path does not point
+/// inside a different sinex checkout — see [`workspace_pinned_env_path`] for
+/// the worktree-isolation rationale.
 #[must_use]
 pub fn workspace_cache_root_for(workspace_root: &Path) -> PathBuf {
-    env::var("SINEX_DEV_CACHE_ROOT")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| workspace_root.join(".sinex/cache"))
+    workspace_pinned_env_path("SINEX_DEV_CACHE_ROOT", workspace_root, || {
+        workspace_root.join(".sinex/cache")
+    })
 }
 
 /// Checkout-scoped tmpfs directory when a sticky, writable `/dev/shm` has enough headroom.
@@ -312,15 +321,21 @@ pub fn is_nextest_run() -> bool {
 
 /// Determine the workspace root directory.
 ///
-/// Prefer the Sinex checkout containing the current working directory. This
-/// keeps a globally installed or previously built `xtask` binary bound to the
-/// active worktree instead of the checkout where the binary was compiled.
-///
-/// If the current directory is outside a Sinex checkout, fall back to
-/// `xtask`'s compile-time `CARGO_MANIFEST_DIR`. Avoid runtime
-/// `CARGO_MANIFEST_DIR`: under nextest it points at the test crate's manifest
-/// and can scatter `.sinex/` state into crate subdirectories.
+/// Resolution order:
+/// 1. `git rev-parse --show-toplevel` — authoritative for worktrees. Catches
+///    the case where the current directory is the worktree root but the
+///    inherited environment from the parent shell was set up for a different
+///    checkout.
+/// 2. Walk upward from the current working directory looking for the sinex
+///    workspace markers (`Cargo.toml` + `xtask/Cargo.toml`).
+/// 3. `xtask`'s compile-time `CARGO_MANIFEST_DIR` parent. Avoid runtime
+///    `CARGO_MANIFEST_DIR`: under nextest it points at the test crate's
+///    manifest and can scatter `.sinex/` state into crate subdirectories.
 pub fn workspace_root() -> PathBuf {
+    if let Some(root) = git_worktree_workspace_root() {
+        return root;
+    }
+
     if let Ok(cwd) = env::current_dir()
         && let Some(root) = workspace_root_from_current_dir(&cwd)
     {
@@ -347,6 +362,80 @@ fn workspace_root_from_current_dir(start: &Path) -> Option<PathBuf> {
             None
         }
     })
+}
+
+/// Ask git for the active worktree's top-level directory.
+///
+/// Returns `None` if git is unavailable, the cwd is not inside a git
+/// repository, or the resolved path lacks the sinex workspace markers
+/// (`Cargo.toml` + `xtask/Cargo.toml`). The marker check guards against
+/// returning the toplevel of an unrelated git repository when `xtask` is
+/// invoked from outside a sinex checkout but happens to share an ancestor
+/// directory.
+fn git_worktree_workspace_root() -> Option<PathBuf> {
+    let output = std::process::Command::new("git")
+        .args(["rev-parse", "--show-toplevel"])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let stdout = String::from_utf8(output.stdout).ok()?;
+    let path = PathBuf::from(stdout.trim());
+    if path.as_os_str().is_empty() {
+        return None;
+    }
+    if path.join("Cargo.toml").is_file() && path.join("xtask/Cargo.toml").is_file() {
+        Some(path)
+    } else {
+        None
+    }
+}
+
+/// Return `true` if `path` resolves inside a sinex checkout that is **not**
+/// the active `workspace_root`.
+///
+/// Used to detect environment variables inherited from a parent shell that
+/// was set up for a different checkout. Such env vars must be ignored — they
+/// would otherwise route state writes from a worktree back into the main
+/// checkout's `.sinex/`, defeating worktree isolation.
+fn path_belongs_to_other_checkout(path: &Path, workspace_root: &Path) -> bool {
+    let Some(other_root) = workspace_root_from_current_dir(path) else {
+        return false;
+    };
+    other_root != workspace_root
+}
+
+/// Read a path-valued env var, ignoring values that point inside a different
+/// sinex checkout. Falls back to `fallback()` when the env var is unset or
+/// belongs to another checkout.
+fn workspace_pinned_env_path<F>(var: &str, workspace_root: &Path, fallback: F) -> PathBuf
+where
+    F: FnOnce() -> PathBuf,
+{
+    match env::var(var) {
+        Ok(raw) => {
+            let candidate = PathBuf::from(raw);
+            if path_belongs_to_other_checkout(&candidate, workspace_root) {
+                fallback()
+            } else {
+                candidate
+            }
+        }
+        Err(_) => fallback(),
+    }
+}
+
+/// Optional variant of [`workspace_pinned_env_path`] — returns `None` when the
+/// env var is unset, while still rejecting cross-checkout values.
+fn workspace_pinned_env_path_opt(var: &str, workspace_root: &Path) -> Option<PathBuf> {
+    let raw = env::var(var).ok()?;
+    let candidate = PathBuf::from(raw);
+    if path_belongs_to_other_checkout(&candidate, workspace_root) {
+        None
+    } else {
+        Some(candidate)
+    }
 }
 
 /// Path to the repo-local ast-grep config root.
@@ -486,15 +575,105 @@ mod tests {
         Ok(())
     }
 
+    /// Mint a synthetic sinex checkout layout (Cargo.toml + xtask/Cargo.toml)
+    /// under `root` so the workspace markers resolve there.
+    fn write_synthetic_checkout(root: &Path) -> std::io::Result<()> {
+        std::fs::write(root.join("Cargo.toml"), "[workspace]\n")?;
+        std::fs::create_dir_all(root.join("xtask/src"))?;
+        std::fs::write(
+            root.join("xtask/Cargo.toml"),
+            "[package]\nname = \"xtask\"\nversion = \"0.0.0\"\nedition = \"2024\"\n",
+        )
+    }
+
+    #[sinex_test]
+    async fn test_path_belongs_to_other_checkout_detects_cross_checkout() -> TestResult<()> {
+        let active = tempfile::tempdir()?;
+        let other = tempfile::tempdir()?;
+        write_synthetic_checkout(active.path())?;
+        write_synthetic_checkout(other.path())?;
+        let other_inner = other.path().join("crate/foo");
+        std::fs::create_dir_all(&other_inner)?;
+
+        assert!(path_belongs_to_other_checkout(
+            &other_inner,
+            active.path()
+        ));
+        assert!(!path_belongs_to_other_checkout(
+            &active.path().join("crate/foo"),
+            active.path()
+        ));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_workspace_pinned_env_path_ignores_cross_checkout_value() -> TestResult<()> {
+        let active = tempfile::tempdir()?;
+        let other = tempfile::tempdir()?;
+        write_synthetic_checkout(active.path())?;
+        write_synthetic_checkout(other.path())?;
+        let cross = other.path().join(".sinex/state");
+
+        let mut env = EnvGuard::with_keys(&["SINEX_TEST_PINNED_PATH"]);
+        env.set("SINEX_TEST_PINNED_PATH", &cross);
+        let fallback = active.path().join("fallback");
+        let resolved = workspace_pinned_env_path(
+            "SINEX_TEST_PINNED_PATH",
+            active.path(),
+            || fallback.clone(),
+        );
+        assert_eq!(
+            resolved, fallback,
+            "cross-checkout env value must fall back to the workspace-local default"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_workspace_pinned_env_path_honors_local_value() -> TestResult<()> {
+        let active = tempfile::tempdir()?;
+        write_synthetic_checkout(active.path())?;
+        let inside = active.path().join(".sinex/state");
+
+        let mut env = EnvGuard::with_keys(&["SINEX_TEST_PINNED_PATH"]);
+        env.set("SINEX_TEST_PINNED_PATH", &inside);
+        let resolved = workspace_pinned_env_path(
+            "SINEX_TEST_PINNED_PATH",
+            active.path(),
+            || active.path().join("fallback"),
+        );
+        assert_eq!(resolved, inside);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_workspace_pinned_env_path_honors_external_value() -> TestResult<()> {
+        // /dev/shm and /tmp paths are legitimate explicit overrides — not in
+        // any sinex checkout, so they must be honored.
+        let active = tempfile::tempdir()?;
+        write_synthetic_checkout(active.path())?;
+        let external = tempfile::tempdir_in("/tmp")?;
+        // No write_synthetic_checkout — `external` is not a sinex checkout.
+
+        let mut env = EnvGuard::with_keys(&["SINEX_TEST_PINNED_PATH"]);
+        env.set("SINEX_TEST_PINNED_PATH", external.path());
+        let resolved = workspace_pinned_env_path(
+            "SINEX_TEST_PINNED_PATH",
+            active.path(),
+            || active.path().join("fallback"),
+        );
+        assert_eq!(
+            resolved,
+            external.path(),
+            "paths outside any sinex checkout must be honored"
+        );
+        Ok(())
+    }
+
     #[sinex_test]
     async fn test_workspace_root_discovery_prefers_enclosing_checkout() -> TestResult<()> {
         let checkout = tempfile::tempdir()?;
-        std::fs::write(checkout.path().join("Cargo.toml"), "[workspace]\n")?;
-        std::fs::create_dir_all(checkout.path().join("xtask/src"))?;
-        std::fs::write(
-            checkout.path().join("xtask/Cargo.toml"),
-            "[package]\nname = \"xtask\"\nversion = \"0.0.0\"\nedition = \"2024\"\n",
-        )?;
+        write_synthetic_checkout(checkout.path())?;
         std::fs::create_dir_all(checkout.path().join("crate/lib/sinex-primitives"))?;
 
         let nested = checkout.path().join("crate/lib/sinex-primitives");
