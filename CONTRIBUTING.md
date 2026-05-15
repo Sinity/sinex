@@ -15,6 +15,28 @@ If you are not using `direnv`, enter the same environment manually:
 nix develop
 ```
 
+### Pre-push drift guard
+
+The repo carries a pre-push hook at `.githooks/pre-push` that runs
+`xtask check --changed-strict` against `origin/master` before allowing a
+push. It catches the class of regression where a PR's diff compiles in
+isolation but references APIs that changed on master (the failure mode
+behind PR #1268 and several others).
+
+The devshell auto-installs this hook on first entry. To install manually:
+
+```bash
+git config core.hooksPath .githooks
+```
+
+Emergency bypass (force-push during recovery, etc.):
+
+```bash
+SINEX_SKIP_DRIFT_GUARD=1 git push ...
+```
+
+Document each bypass in the PR body.
+
 ## Workflow Surface
 
 `xtask` is the default automation entrypoint for local development. Use:

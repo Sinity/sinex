@@ -27,6 +27,10 @@ Actions are manual-only for this repository's no-spend posture, so local
 verification recorded here is the default review gate unless a workflow is
 explicitly invoked.
 
+- [ ] `xtask check --changed-strict origin/master` (drift guard — required for any PR
+      touching Rust source unless `WIP:` in the title; auto-runs via the
+      `.githooks/pre-push` hook installed by the devshell)
+
 ```bash
 # commands here
 ```
