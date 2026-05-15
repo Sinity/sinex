@@ -145,6 +145,17 @@ impl NodeRuntimeState {
         self.event_emitter().emit(event).await
     }
 
+    /// Install an emit tracker on the runtime's `EventEmitter` so that every
+    /// successful emission feeds the `HealthReporter`'s emit-stall detector.
+    ///
+    /// Idempotent: subsequent calls overwrite the tracker.
+    pub fn register_emit_tracker(
+        &self,
+        tracker: Arc<crate::health_reporter::EmitTracker>,
+    ) {
+        self.event_emitter().register_emit_tracker(tracker);
+    }
+
     pub fn acquisition_manager(
         &self,
         rotation_policy: RotationPolicy,
