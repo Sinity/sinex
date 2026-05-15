@@ -739,6 +739,19 @@
                   export SINEX_GATEWAY_TLS_KEY="$PWD/.sinex/tls/server-key.pem"
                   export SINEX_GATEWAY_TLS_CLIENT_CA="$PWD/.sinex/tls/ca.pem"
                 fi
+
+                # Auto-install the pre-push drift guard (.githooks/pre-push)
+                # on first devshell entry per checkout. Idempotent — silently
+                # skipped if core.hooksPath already points at .githooks.
+                if [ -d .git ] || [ -f .git ]; then
+                  _current_hooks_path="$(git config --local core.hooksPath 2>/dev/null || true)"
+                  if [ "$_current_hooks_path" != ".githooks" ]; then
+                    if [ -f .githooks/pre-push ]; then
+                      git config --local core.hooksPath .githooks
+                      echo "[devshell] installed .githooks (pre-push drift guard)" >&2
+                    fi
+                  fi
+                fi
                 if [ -t 1 ]; then
                   # Keep shell entry cheap by default. Heavy dev conveniences are
                   # opt-in so direnv, one-shot commands, and fresh shells do not
