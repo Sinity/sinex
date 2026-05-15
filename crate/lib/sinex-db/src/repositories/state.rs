@@ -1357,15 +1357,16 @@ impl StateRepository<'_> {
                 nm.name::text as "node_name!: NodeName",
                 nm.version as "version!",
                 nm.description,
-                nr.status as "manifest_status!",
-                (
+                nr.status as "manifest_status?",
+                COALESCE(
                     (nr.id IS NOT NULL
                         AND nr.status = 'running'
                         AND nr.last_heartbeat_at > NOW() - make_interval(secs => $1::float8))
                     OR
                     (nr.id IS NULL
                         AND nr.status = 'active'
-                        AND nr.last_heartbeat_at > NOW() - make_interval(secs => $1::float8))
+                        AND nr.last_heartbeat_at > NOW() - make_interval(secs => $1::float8)),
+                    false
                 ) as "live!",
                 nr.service_name,
                 nr.instance_id,
@@ -1554,15 +1555,16 @@ impl StateRepository<'_> {
                 nm.name::text as "node_name!: NodeName",
                 nm.version as "version!",
                 nm.description,
-                nr.status as "manifest_status!",
-                (
+                nr.status as "manifest_status?",
+                COALESCE(
                     (nr.id IS NOT NULL
                         AND nr.status = 'running'
                         AND nr.last_heartbeat_at > NOW() - make_interval(secs => $1::float8))
                     OR
                     (nr.id IS NULL
                         AND nr.status = 'active'
-                        AND nr.last_heartbeat_at > NOW() - make_interval(secs => $1::float8))
+                        AND nr.last_heartbeat_at > NOW() - make_interval(secs => $1::float8)),
+                    false
                 ) as "live!",
                 nr.service_name,
                 nr.instance_id,
@@ -1852,7 +1854,9 @@ pub struct AutomataStatusRow {
     pub node_name: NodeName,
     pub version: String,
     pub description: Option<String>,
-    pub manifest_status: String,
+    /// Status of the latest run for this manifest. `None` when no run row
+    /// exists yet (manifest registered but never started).
+    pub manifest_status: Option<String>,
     pub live: bool,
     pub service_name: Option<String>,
     pub instance_id: Option<String>,
@@ -1883,7 +1887,9 @@ pub struct IngestorsStatusRow {
     pub node_name: NodeName,
     pub version: String,
     pub description: Option<String>,
-    pub manifest_status: String,
+    /// Status of the latest run for this manifest. `None` when no run row
+    /// exists yet (manifest registered but never started).
+    pub manifest_status: Option<String>,
     pub live: bool,
     pub service_name: Option<String>,
     pub instance_id: Option<String>,

@@ -267,13 +267,27 @@ fn parse_sqlite_record(
         serde_json::from_slice(&record.bytes)
             .map_err(|e| ParserError::Parse(format!("browser SQLite row JSON parse failed: {e}")))?;
 
-    if obj.contains_key("visit_time") {
-        build_intent(parse_chromium_row(&obj)?, record, ctx)
+    // Carry the DB file path through to `source_file` — `PageVisitedPayload`
+    // requires it (#1321). The row parsers leave it empty; we backfill from
+    // the record's logical path here. Empty when path is missing for the
+    // primary leg (e.g. test fixtures with raw bytes); `build_intent` skips
+    // empty source_file but per #1321 we always populate when we have a path.
+    let source_file = record
+        .logical_path
+        .as_deref()
+        .map(camino::Utf8Path::as_str)
+        .unwrap_or("")
+        .to_string();
+
+    let mut visit = if obj.contains_key("visit_time") {
+        parse_chromium_row(&obj)?
     } else if obj.contains_key("atime") {
-        build_intent(parse_qutebrowser_row(&obj)?, record, ctx)
+        parse_qutebrowser_row(&obj)?
     } else {
-        Ok(vec![])
-    }
+        return Ok(vec![]);
+    };
+    visit.source_file = source_file;
+    build_intent(visit, record, ctx)
 }
 
 fn parse_qutebrowser_row(obj: &serde_json::Map<String, serde_json::Value>) -> ParserResult<VisitData> {
@@ -430,9 +444,9 @@ fn build_intent(
     if let Some(ms) = visit.visit_duration_ms {
         payload.insert("visit_duration_ms".into(), serde_json::json!(ms));
     }
-    if !source_file.is_empty() {
-        payload.insert("source_file".into(), serde_json::json!(source_file));
-    }
+    // `PageVisitedPayload.source_file` is a required field — always insert,
+    // even if empty (preserves the contract for schema validation). #1321.
+    payload.insert("source_file".into(), serde_json::json!(source_file));
     if let Some(ln) = visit.line_number {
         payload.insert("line_number".into(), serde_json::json!(ln));
     }
