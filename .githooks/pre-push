@@ -1,0 +1,56 @@
+#!/usr/bin/env bash
+# Pre-push drift guard for sinex.
+#
+# Runs `xtask check --changed-strict` before allowing a push. Catches
+# regressions in changed-file surfaces that compile-clean in isolation
+# but reference APIs that have since changed on the target branch — the
+# class of bug PR #1268 (and several others) shipped under because the
+# author's local check ran against a stale dependency graph.
+#
+# Skip in two cases:
+#   1. Pushing a branch with no commits ahead of origin/master (just
+#      catching up). We have nothing to drift-check against.
+#   2. The `SINEX_SKIP_DRIFT_GUARD` env var is set — emergency hatch
+#      for force-pushes during recovery operations. Document each use.
+#
+# Install (per-repo, not committed):
+#   git config core.hooksPath .githooks
+
+set -euo pipefail
+
+if [[ "${SINEX_SKIP_DRIFT_GUARD:-}" == "1" ]]; then
+  echo "[pre-push] SINEX_SKIP_DRIFT_GUARD=1 — drift guard bypassed." >&2
+  exit 0
+fi
+
+# Determine the upstream / base to diff against. Default to origin/master
+# when the local branch tracks something else (feature branches).
+BASE_REF="origin/master"
+if ! git rev-parse --verify "$BASE_REF" >/dev/null 2>&1; then
+  echo "[pre-push] $BASE_REF not found locally; skipping drift guard." >&2
+  exit 0
+fi
+
+# If HEAD == BASE_REF, nothing to check.
+if [[ "$(git rev-parse HEAD)" == "$(git rev-parse "$BASE_REF")" ]]; then
+  echo "[pre-push] HEAD == $BASE_REF; skipping drift guard." >&2
+  exit 0
+fi
+
+# If no Rust changes between BASE and HEAD, skip — the drift guard only
+# matters for Rust source changes.
+if [[ -z "$(git diff --name-only "$BASE_REF" HEAD -- '*.rs' 2>/dev/null)" ]]; then
+  echo "[pre-push] No .rs changes vs $BASE_REF; skipping drift guard." >&2
+  exit 0
+fi
+
+echo "[pre-push] Running xtask check --changed-strict --base $BASE_REF ..." >&2
+if ! xtask check --changed-strict "$BASE_REF" >&2; then
+  echo "" >&2
+  echo "[pre-push] DRIFT GUARD FAILED." >&2
+  echo "Your changes introduce diagnostics on affected packages that didn't exist on $BASE_REF." >&2
+  echo "Fix them, or bypass with SINEX_SKIP_DRIFT_GUARD=1 and explain in the PR body why." >&2
+  exit 1
+fi
+
+echo "[pre-push] Drift guard passed." >&2
