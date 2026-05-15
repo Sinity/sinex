@@ -367,6 +367,20 @@ pub fn build() -> HashMap<&'static str, FormatCapability> {
         FormatCapability::single_shot(TABLE_JSON_YAML),
     );
 
+    // ── Documents ────────────────────────────────────────────────────────────
+    m.insert(
+        "documents search",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
+    m.insert(
+        "documents get",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
+    m.insert(
+        "documents chunks",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
+
     // ── Shortcuts ────────────────────────────────────────────────────────────
     m.insert("status", FormatCapability::single_shot(TABLE_JSON_YAML));
     m.insert("recent", FormatCapability::single_shot(TABLE_JSON_YAML));

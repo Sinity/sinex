@@ -5,11 +5,11 @@ use sinex_primitives::RuntimeTargetDescriptor;
 use sinexctl::client::{ClientConfig, GatewayClient};
 use sinexctl::commands::{
     AuditCommand, AutomataCommand, BlobCommands, CompletionsCommand, ConfigCommands,
-    ContextCommand, CoreCommands, DemoCommand, DlqCommands, ErrorsCommand, ExplainCommand,
-    GatewayCommands, GitOpsCommands, LifecycleCommands, NodeCommands, NodesCommand, NowCommand,
-    OpsCommands, QueryCommand, RecentCommand, ReplayCommands, ReportCommands, SourcesCommand,
-    AnnotateCommand, StatusCommand, TelemetryCommands, ThroughputCommand, TraceCommand,
-    TuiCommand, VerifyCommand, WatchCommand,
+    ContextCommand, CoreCommands, DemoCommand, DlqCommands, DocumentsCommand, ErrorsCommand,
+    ExplainCommand, GatewayCommands, GitOpsCommands, LifecycleCommands, NodeCommands, NodesCommand,
+    NowCommand, OpsCommands, QueryCommand, RecentCommand, ReplayCommands, ReportCommands,
+    SourcesCommand, AnnotateCommand, StatusCommand, TelemetryCommands, ThroughputCommand,
+    TraceCommand, TuiCommand, VerifyCommand, WatchCommand,
 };
 use sinexctl::model::OutputFormat;
 use sinexctl::{Config, default_rpc_url, render_format_matrix_terminal, validate_format};
@@ -152,6 +152,9 @@ enum Commands {
 
     /// Source material inventory and staging
     Sources(SourcesCommand),
+
+    /// Document search, retrieval, and chunk browsing
+    Documents(DocumentsCommand),
 
     /// Data lifecycle management (archive, restore, tombstone)
     Lifecycle {
@@ -320,6 +323,7 @@ async fn main() -> color_eyre::Result<()> {
                 Commands::Config { .. } => unreachable!("Config command handled above"),
                 Commands::Demo(_) => unreachable!("Demo command handled above"),
                 Commands::Sources(cmd) => cmd.execute(&client, format).await?,
+                Commands::Documents(cmd) => cmd.execute(&client, format).await?,
                 Commands::Lifecycle { cmd } => cmd.execute(&client, format).await?,
                 Commands::GitOps { cmd } => cmd.execute(&client, format).await?,
                 Commands::Telemetry { cmd } => cmd.execute(&client, format).await?,
@@ -403,6 +407,14 @@ fn command_path(cmd: &Commands) -> String {
             ConfigCommands::Edit => "config edit".to_string(),
         },
         Commands::Demo(_) => "demo".to_string(),
+        Commands::Documents(cmd) => {
+            use sinexctl::commands::documents::DocumentsSubcommand;
+            match cmd.subcommand() {
+                DocumentsSubcommand::Search(_) => "documents search".to_string(),
+                DocumentsSubcommand::Get(_) => "documents get".to_string(),
+                DocumentsSubcommand::Chunks(_) => "documents chunks".to_string(),
+            }
+        }
         Commands::Sources(cmd) => {
             use sinexctl::commands::sources::SourcesSubcommand;
             match cmd.subcommand() {
