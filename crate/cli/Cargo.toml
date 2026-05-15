@@ -23,6 +23,8 @@ workspace = true
 
 [dependencies]
 rand                = { workspace = true }
+blake3              = { workspace = true }
+libc                = "0.2"
 clap_complete       = "4"
 serde_yml = "0.0.12"
 tabled              = "0.17"
