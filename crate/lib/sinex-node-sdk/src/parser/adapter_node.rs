@@ -93,6 +93,7 @@ use sinex_primitives::temporal::Timestamp;
 
 use crate::acquisition_manager::{AcquisitionManager, AppendStreamAcquirer, RotationPolicy};
 use crate::ingestor_node::IngestorNode;
+use crate::parser::adapters::SqliteSnapshotLane;
 use crate::parser::{BindingConfig, InputShapeAdapter, MaterialParser};
 use crate::runtime::stream::{
     Checkpoint, ContinuousStart, NodeCapabilities, NodeRuntimeState, ScanArgs, ScanReport,
@@ -247,6 +248,17 @@ where
     /// Rotation policy applied to the stream acquirer.
     rotation_policy: RotationPolicy,
 
+    /// Optional parallel snapshot-lane task. Spawned in `initialize` when the
+    /// adapter returns a [`SnapshotLaneSpec`]. The lane runs an independent
+    /// timer that captures the underlying substrate (currently only the
+    /// SQLite DB file) into a separate source-material lineage. Per-row
+    /// drain is unaffected.
+    snapshot_task: Option<tokio::task::JoinHandle<NodeResult<()>>>,
+
+    /// Sender that shuts down the snapshot-lane task. Held alongside
+    /// `snapshot_task`; both are `Some` together or both are `None`.
+    snapshot_shutdown: Option<tokio::sync::watch::Sender<bool>>,
+
     _phantom: PhantomData<()>,
 }
 
@@ -274,6 +286,8 @@ where
             stream_acquirer: None,
             acquisition_manager: None,
             rotation_policy: RotationPolicy::default(),
+            snapshot_task: None,
+            snapshot_shutdown: None,
             _phantom: PhantomData,
         }
     }
@@ -529,6 +543,26 @@ where
     }
 }
 
+impl<A, P> Drop for AdapterBackedIngestor<A, P>
+where
+    A: InputShapeAdapter + Default,
+    P: MaterialParser + Default,
+    A::Config: Clone + Serialize + DeserializeOwned,
+    A::Cursor: Clone + Serialize + DeserializeOwned,
+{
+    fn drop(&mut self) {
+        // Best-effort: signal the snapshot lane to exit and abort if still
+        // running. Drop runs on synchronous teardown paths (panic, scope
+        // exit) so we cannot await; aborting is the only safe option.
+        if let Some(tx) = self.snapshot_shutdown.take() {
+            let _ = tx.send(true);
+        }
+        if let Some(task) = self.snapshot_task.take() {
+            task.abort();
+        }
+    }
+}
+
 impl<A, P> Default for AdapterBackedIngestor<A, P>
 where
     A: InputShapeAdapter + Default,
@@ -608,12 +642,41 @@ where
             .with_context("source_unit_id", self.source_unit_id)
             .with_std_error(&e)
         })?;
+        // Opt-in parallel snapshot lane.  The adapter declares whether it
+        // wants one by returning `Some(spec)` from `snapshot_lane`; we spawn
+        // an independent tokio task that captures the substrate on its own
+        // timer.  Per-record drain (above) is untouched.
+        if let Some(spec) = self.adapter.snapshot_lane(self.source_unit_id, &adapter_config) {
+            let manager = Arc::clone(
+                self.acquisition_manager
+                    .as_ref()
+                    .expect("acquisition_manager set above"),
+            );
+            let (tx, rx) = tokio::sync::watch::channel(false);
+            let lane = SqliteSnapshotLane::new(spec, manager);
+            let unit_id = self.source_unit_id;
+            let handle = tokio::spawn(async move {
+                let result = lane.run(rx).await;
+                if let Err(ref e) = result {
+                    warn!(
+                        source_unit = unit_id,
+                        error = %e,
+                        "snapshot lane exited with error",
+                    );
+                }
+                result
+            });
+            self.snapshot_task = Some(handle);
+            self.snapshot_shutdown = Some(tx);
+        }
+
         self.config = Some(adapter_config);
         self.runtime = Some(runtime.clone());
 
         info!(
             source_unit = self.source_unit_id,
             adapter_kind = A::KIND.as_str(),
+            snapshot_lane = self.snapshot_task.is_some(),
             "AdapterBackedIngestor initialized"
         );
         Ok(())
@@ -730,6 +793,28 @@ where
                     error = %e,
                     "Failed to finalize stream material on shutdown — in-flight material may be incomplete"
                 );
+            }
+        }
+
+        // Signal the snapshot lane (if any) to exit and wait briefly for it.
+        if let Some(tx) = self.snapshot_shutdown.take() {
+            let _ = tx.send(true);
+        }
+        if let Some(task) = self.snapshot_task.take() {
+            // Bounded wait so a misbehaving snapshot capture cannot block
+            // shutdown indefinitely.  The lane finalises its own in-flight
+            // material on shutdown; if the join times out we abort.
+            match tokio::time::timeout(Duration::from_secs(5), task).await {
+                Ok(Ok(_)) => {}
+                Ok(Err(e)) => warn!(
+                    source_unit = self.source_unit_id,
+                    error = %e,
+                    "snapshot lane task returned error on shutdown",
+                ),
+                Err(_) => warn!(
+                    source_unit = self.source_unit_id,
+                    "snapshot lane did not exit within timeout; aborting",
+                ),
             }
         }
 
