@@ -149,6 +149,31 @@ in
         };
       };
     };
+
+    polylogue = {
+      enable = mkOption {
+        type = types.bool;
+        default = false;
+        description = ''
+          Enable the Polylogue bridge consumer (integration.polylogue source family).
+
+          The Polylogue daemon is an external producer: it publishes
+          metadata-only conversation-indexed events directly to NATS JetStream
+          without depending on the sinex Rust SDK. ingestd accepts these events
+          on the standard {env}.sinex.events.raw.> stream.
+
+          Setting this to true signals that the Polylogue daemon is expected to
+          be running and publishing events. This flag gates no sinex-side
+          systemd service — the Polylogue publisher is the unblocker (see
+          https://github.com/sinity/polylogue for the companion PR).
+
+          The sinex-side source unit descriptor (integration.polylogue) and
+          typed payload schema (PolylogueConversationIndexedPayload) land
+          unconditionally; only the Polylogue daemon's runtime activation is
+          gated here.
+        '';
+      };
+    };
   };
 
   config = {
