@@ -214,9 +214,19 @@ fn is_isolatable_batch_persistence_failure(err: &SinexError) -> bool {
 const DEFAULT_BATCH_FETCH_MAX_MESSAGES: usize = 100;
 const DEFAULT_BATCH_FETCH_TIMEOUT: Duration = Duration::from_secs(1);
 const DEFAULT_MAX_ACK_PENDING: i64 = 100;
-const MAIN_CONSUMER_JETSTREAM_MAX_DELIVER: i64 = 10;
+/// NATS-side max_deliver on the events consumer. Must be >= the highest
+/// application-side terminal threshold below so app-level DLQ routing fires
+/// before NATS silently stops redelivery. Sized for the source-material
+/// cross-stream-lag scenario (#1310/#1311).
+const MAIN_CONSUMER_JETSTREAM_MAX_DELIVER: i64 = 32;
 const MAIN_CONSUMER_TERMINAL_DLQ_THRESHOLD: i64 = 10;
-const SOURCE_MATERIAL_READY_DLQ_THRESHOLD: i64 = MAIN_CONSUMER_TERMINAL_DLQ_THRESHOLD;
+/// Source-material-not-found is a soft cross-stream-lag condition, not a hard
+/// error: the material's BEGIN message is being processed on a separate consumer
+/// path. Give it generous retry budget. With FK_VIOLATION_RETRY_DELAY = 5s,
+/// threshold = 30 means up to ~150s wall-clock for the BEGIN to catch up before
+/// we give up and DLQ. The earlier value of 10 (50s) routed many events to DLQ
+/// during normal backlog drains. See #1310 / #1311.
+const SOURCE_MATERIAL_READY_DLQ_THRESHOLD: i64 = 30;
 const DLQ_PUBLISH_MAX_ATTEMPTS: usize = 3;
 const DLQ_PUBLISH_BACKOFF_BASE: Duration = Duration::from_millis(200);
 const DLQ_PUBLISH_BACKOFF_MAX: Duration = Duration::from_secs(2);
