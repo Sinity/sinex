@@ -1,5 +1,6 @@
 pub mod audit;
 pub mod automata;
+pub mod documents;
 pub mod blob;
 pub mod completions;
 pub mod config;
@@ -29,6 +30,7 @@ pub mod verify;
 
 pub use audit::AuditCommand;
 pub use automata::AutomataCommand;
+pub use documents::DocumentsCommand;
 pub use blob::BlobCommands;
 pub use completions::CompletionsCommand;
 pub use config::ConfigCommands;
