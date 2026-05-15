@@ -1210,16 +1210,38 @@ let
 
           ${commonBaseAclFunctions}
           ${commonReadAclFunctions}
+
+          # qutebrowser's history.sqlite is WAL-mode with an active writer.
+          # SQLite WAL recovery needs WRITE access to the main DB + sidecars
+          # even for read-only connections (otherwise prepare fails with
+          # "attempt to write a readonly database"). See #1325.
+          grant_file_readwrite() {
+            local path="$1"
+            if [ -f "$path" ]; then
+              set_access_acl "$path" "u:$SERVICE_USER:rw-" "rw-"
+            fi
+          }
+          grant_sqlite_sidecars_rw() {
+            local path="$1"
+            grant_file_readwrite "$path-wal"
+            grant_file_readwrite "$path-shm"
+          }
+          grant_dir_readwrite() {
+            local path="$1"
+            if [ -d "$path" ]; then
+              set_access_acl "$path" "u:$SERVICE_USER:rwx" "rwx"
+            fi
+          }
+
           ${concatStringsSep "\n" (map (path: ''
             grant_parent_dirs ${escapeShellArg path}
-            grant_file_read ${escapeShellArg path}
-            grant_sqlite_sidecars ${escapeShellArg path}
+            grant_file_readwrite ${escapeShellArg path}
+            grant_sqlite_sidecars_rw ${escapeShellArg path}
           '') sqlitePaths)}
 
           ${concatStringsSep "\n" (map (path: ''
             grant_parent_dirs ${escapeShellArg path}
-            grant_dir_read ${escapeShellArg path}
-            grant_dir_read_defaults ${escapeShellArg path}
+            grant_dir_readwrite ${escapeShellArg path}
           '') sqliteDirs)}
 
           if [ "$acl_failures" -ne 0 ]; then
@@ -1227,7 +1249,12 @@ let
           fi
         '';
       browserServiceConfigOverrides = {
+        # qutebrowser's history.sqlite is WAL-mode. SQLite needs write access
+        # to the DB + sidecars even for SELECT queries (#1325) to apply
+        # pending WAL frames during open. Allow write to the SQLite directories
+        # only; the rest of /home stays read-only.
         ProtectHome = lib.mkForce "read-only";
+        ReadWritePaths = sqliteDirs;
         ReadWritePaths = readWritePaths ++ accessWritePaths;
       } // optionalAttrs (sat.access.bindReadOnlyPaths != [ ] && accessSetupScript == null) {
         BindReadOnlyPaths = renderBindReadOnlyPaths sat.access.bindReadOnlyPaths;
