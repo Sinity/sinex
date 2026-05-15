@@ -10,6 +10,7 @@ use sinex_primitives::events::SourceMaterial;
 use sinex_primitives::ids::Id;
 use sinex_primitives::parser::{InputShapeKind, MaterialAnchor, SourceRecord};
 
+use crate::parser::adapters::{SnapshotLaneSpec, SqliteSnapshotConfig};
 use crate::parser::{InputShapeAdapter, ParserError, ParserResult};
 
 // =============================================================================
@@ -58,7 +59,12 @@ impl SqliteRowAdapter {
 }
 
 /// Configuration for [`SqliteRowAdapter`].
-#[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema)]
+///
+/// `Default` is hand-rolled to match the serde-default values: `read_only`
+/// and `immutable` are `true`, `batch_size` is `10_000`, etc. Deriving
+/// `Default` instead silently gives `batch_size = 0` / `read_only = false`
+/// — a regression that masked an adapter that returns zero rows.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct SqliteRowConfig {
     /// Path to the SQLite database file.
     ///
@@ -122,6 +128,34 @@ pub struct SqliteRowConfig {
     /// the default batch the per-cycle working set stays in tens of MB.
     #[serde(default = "default_batch_size")]
     pub batch_size: u32,
+
+    /// Optional parallel **file-snapshot lane**: periodically capture the
+    /// SQLite DB file itself as a single source material, separately from
+    /// the per-row stream.  Disabled by default (`interval_seconds: 0`).
+    ///
+    /// See [`SqliteSnapshotConfig`] for tunables. When enabled, the hosting
+    /// [`AdapterBackedIngestor`] spawns a tokio task that captures the file
+    /// at the configured cadence; per-row events continue to flow through
+    /// the normal drain loop unaffected.
+    ///
+    /// [`AdapterBackedIngestor`]: crate::parser::adapter_node::AdapterBackedIngestor
+    #[serde(default)]
+    pub snapshot: SqliteSnapshotConfig,
+}
+
+impl Default for SqliteRowConfig {
+    fn default() -> Self {
+        Self {
+            path: String::new(),
+            query: String::new(),
+            table: String::new(),
+            rowid_column: default_rowid_column(),
+            read_only: default_read_only(),
+            immutable: default_immutable(),
+            batch_size: default_batch_size(),
+            snapshot: SqliteSnapshotConfig::default(),
+        }
+    }
 }
 
 fn default_rowid_column() -> String {
@@ -317,6 +351,25 @@ impl InputShapeAdapter for SqliteRowAdapter {
                 "expected SqliteRow anchor, got {other:?}"
             ))),
         }
+    }
+
+    fn snapshot_lane(
+        &self,
+        source_unit_id: &str,
+        config: &Self::Config,
+    ) -> Option<SnapshotLaneSpec> {
+        // Resolve the effective path the same way `open()` does — config wins
+        // over constructor — and feed it to the snapshot-lane builder.  The
+        // lane is omitted whenever snapshot config is disabled or the path is
+        // unresolved.
+        let path = if !config.path.is_empty() {
+            config.path.as_str()
+        } else if !self.path.is_empty() {
+            self.path.as_str()
+        } else {
+            return None;
+        };
+        SnapshotLaneSpec::from_sqlite_config(path, source_unit_id, &config.snapshot)
     }
 }
 
