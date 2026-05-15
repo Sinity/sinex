@@ -253,6 +253,36 @@ impl DocumentChunks {
         ]
     }
 
+    /// Generates raw SQL for expression GIN indexes on the `text` column.
+    ///
+    /// - `ix_document_chunks_text_fts` — `to_tsvector('english', text)` for
+    ///   `websearch_to_tsquery`-based full-text search (primary retrieval path).
+    /// - `ix_document_chunks_text_trgm` — `text gin_trgm_ops` for
+    ///   `similarity()`-based fuzzy matching (typo-tolerance fallback, requires
+    ///   `pg_trgm` which is already a required extension in `apply.rs`).
+    ///
+    /// Expression indexes cannot be expressed via sea-query's `Index::create()`,
+    /// so they live here as raw SQL following the same pattern as
+    /// `Entities::create_gin_indexes_sql()` and
+    /// `Entities::create_trigram_indexes_sql()`.
+    #[must_use]
+    pub fn create_fts_indexes_sql() -> Vec<String> {
+        vec![
+            format!(
+                "CREATE INDEX IF NOT EXISTS ix_document_chunks_text_fts \
+                 ON {}.{} USING GIN (to_tsvector('english', text))",
+                Self::schema_name(),
+                Self::table_name()
+            ),
+            format!(
+                "CREATE INDEX IF NOT EXISTS ix_document_chunks_text_trgm \
+                 ON {}.{} USING GIN (text gin_trgm_ops)",
+                Self::schema_name(),
+                Self::table_name()
+            ),
+        ]
+    }
+
     /// AFTER INSERT trigger on `core.events` that projects `document.parsed`
     /// and `document.chunked` events into the relational projection tables.
     ///
