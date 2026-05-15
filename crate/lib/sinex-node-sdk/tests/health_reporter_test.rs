@@ -38,6 +38,7 @@ async fn create_test_reporter(
         error_rate_degraded: 0.05, // 5%
         error_rate_failed: 0.20,   // 20%
         window_seconds: 5,         // 5 second window for tests
+        emit_stall_seconds: 0,     // disabled for these error-rate tests
     };
 
     Ok((
@@ -257,6 +258,7 @@ async fn health_reporter_with_custom_thresholds(ctx: TestContext) -> TestResult<
         error_rate_degraded: 0.01, // 1%
         error_rate_failed: 0.02,   // 2%
         window_seconds: 5,
+        emit_stall_seconds: 0,
     };
 
     let reporter = create_reporter_with_clock("test-strict", observer, thresholds, clock);
@@ -274,6 +276,96 @@ async fn health_reporter_with_custom_thresholds(ctx: TestContext) -> TestResult<
     ctx.assert("failed with stricter threshold")
         .eq(&status, &ProcessStatus::Failed)?;
 
+    Ok(())
+}
+
+/// Emit-stall detection — the core Slice-3 behaviour (issue #992).
+///
+/// Without an installed `EmitTracker` the stall check is a no-op even with
+/// `emit_stall_seconds > 0`. Once we enable detection and let the clock advance
+/// past the threshold without any `notify_emit`, status must degrade.
+#[sinex_test]
+async fn health_reporter_emit_stall_degrades(ctx: TestContext) -> TestResult<()> {
+    let observer = Arc::new(SelfObserver::disabled());
+    let clock = Arc::new(ManualHealthClock::default());
+
+    let thresholds = HealthThresholds {
+        error_rate_degraded: 0.05,
+        error_rate_failed: 0.20,
+        window_seconds: 60,
+        emit_stall_seconds: 300, // 5 minutes
+    };
+    let reporter = create_reporter_with_clock("stall-test", observer, thresholds, clock.clone());
+
+    // Pre-enable: status is Healthy because tracker is not installed; stall check
+    // is a no-op.
+    clock.advance(Duration::from_secs(600));
+    ctx.assert("no tracker -> healthy regardless of uptime")
+        .eq(&reporter.current_status(), &ProcessStatus::Healthy)?;
+
+    let tracker = reporter.enable_emit_stall_detection();
+    // Tracker is now installed but no emit has been recorded; uptime already
+    // > threshold -> stalled -> Degraded.
+    ctx.assert("tracker installed, no emit, uptime past threshold -> degraded")
+        .eq(&reporter.current_status(), &ProcessStatus::Degraded)?;
+
+    // Recording an emit returns us to Healthy.
+    tracker.notify_emit(5);
+    ctx.assert("emit observed -> healthy again")
+        .eq(&reporter.current_status(), &ProcessStatus::Healthy)?;
+
+    // Advance past the stall threshold again without further emits.
+    clock.advance(Duration::from_secs(301));
+    ctx.assert("stall recurs after threshold elapses without emits")
+        .eq(&reporter.current_status(), &ProcessStatus::Degraded)?;
+    Ok(())
+}
+
+/// Disabling the stall check (threshold = 0) makes the check a no-op regardless of
+/// tracker state.
+#[sinex_test]
+async fn health_reporter_emit_stall_disabled(ctx: TestContext) -> TestResult<()> {
+    let observer = Arc::new(SelfObserver::disabled());
+    let clock = Arc::new(ManualHealthClock::default());
+
+    let thresholds = HealthThresholds {
+        error_rate_degraded: 0.05,
+        error_rate_failed: 0.20,
+        window_seconds: 60,
+        emit_stall_seconds: 0,
+    };
+    let reporter = create_reporter_with_clock("stall-disabled", observer, thresholds, clock.clone());
+    let _tracker = reporter.enable_emit_stall_detection();
+    clock.advance(Duration::from_secs(86_400));
+    ctx.assert("stall disabled -> healthy after a day without emits")
+        .eq(&reporter.current_status(), &ProcessStatus::Healthy)?;
+    Ok(())
+}
+
+/// Until uptime crosses the threshold, a freshly-started node with no emits
+/// stays Healthy. We don't want to fire on every startup before the source had
+/// a chance to produce its first event.
+#[sinex_test]
+async fn health_reporter_emit_stall_grace_period(ctx: TestContext) -> TestResult<()> {
+    let observer = Arc::new(SelfObserver::disabled());
+    let clock = Arc::new(ManualHealthClock::default());
+
+    let thresholds = HealthThresholds {
+        error_rate_degraded: 0.05,
+        error_rate_failed: 0.20,
+        window_seconds: 60,
+        emit_stall_seconds: 600,
+    };
+    let reporter = create_reporter_with_clock("stall-grace", observer, thresholds, clock.clone());
+    let _tracker = reporter.enable_emit_stall_detection();
+
+    clock.advance(Duration::from_secs(60));
+    ctx.assert("within grace -> healthy")
+        .eq(&reporter.current_status(), &ProcessStatus::Healthy)?;
+
+    clock.advance(Duration::from_secs(540)); // total: 600s, exactly at boundary
+    ctx.assert("at boundary -> degraded")
+        .eq(&reporter.current_status(), &ProcessStatus::Degraded)?;
     Ok(())
 }
 

@@ -53,6 +53,59 @@ struct OutcomeSample {
     is_error: bool,
 }
 
+/// Emission tracker shared with `EventEmitter` to record real upstream emissions.
+///
+/// Unlike `HealthMetrics::events_processed` (bumped on every adapter tick, including
+/// idle keepalives), this tracker is incremented **only when a node actually pushes
+/// an event** through the runtime's `EventEmitter::emit`. The monotonic last-emit
+/// seconds drives the emit-stall detector in `HealthReporter::calculate_status`.
+#[derive(Debug)]
+pub struct EmitTracker {
+    /// Monotonic seconds since `clock` epoch when the most recent emission occurred.
+    /// `0` indicates "no emission observed yet".
+    last_emit_monotonic_secs: AtomicU64,
+    /// Lifetime count of emissions observed through this tracker.
+    total_emits: AtomicU64,
+    clock: Arc<dyn HealthClock>,
+}
+
+impl EmitTracker {
+    fn new(clock: Arc<dyn HealthClock>) -> Self {
+        Self {
+            last_emit_monotonic_secs: AtomicU64::new(0),
+            total_emits: AtomicU64::new(0),
+            clock,
+        }
+    }
+
+    /// Record `count` real emissions. Called by `EventEmitter::emit` (or any other
+    /// publish chokepoint) on successful delivery.
+    pub fn notify_emit(&self, count: u64) {
+        if count == 0 {
+            return;
+        }
+        let now_secs = self.clock.now().as_secs().max(1); // avoid 0 (= "never")
+        self.last_emit_monotonic_secs
+            .store(now_secs, Ordering::Relaxed);
+        self.total_emits.fetch_add(count, Ordering::Relaxed);
+    }
+
+    /// Read the monotonic seconds of the last observed emission, or `None`.
+    #[must_use]
+    pub fn last_emit_monotonic(&self) -> Option<u64> {
+        match self.last_emit_monotonic_secs.load(Ordering::Relaxed) {
+            0 => None,
+            secs => Some(secs),
+        }
+    }
+
+    /// Lifetime emission count observed by this tracker.
+    #[must_use]
+    pub fn total_emits(&self) -> u64 {
+        self.total_emits.load(Ordering::Relaxed)
+    }
+}
+
 /// Atomic counters for health metrics
 #[derive(Debug)]
 pub struct HealthMetrics {
@@ -63,6 +116,11 @@ pub struct HealthMetrics {
     pub last_error_monotonic: AtomicU64, // Seconds since process start (monotonic)
     recent_outcomes: Mutex<VecDeque<OutcomeSample>>,
     clock: Arc<dyn HealthClock>,
+    /// Monotonic time the reporter was created — anchor for uptime in emit-stall checks.
+    started_at_secs: u64,
+    /// Optional shared emit tracker. When `Some`, the reporter consults this for emit-stall
+    /// detection; when `None`, emit-stall detection is disabled.
+    emit_tracker: RwLock<Option<Arc<EmitTracker>>>,
 }
 
 impl Default for HealthMetrics {
@@ -73,6 +131,7 @@ impl Default for HealthMetrics {
 
 impl HealthMetrics {
     fn with_clock(clock: Arc<dyn HealthClock>) -> Self {
+        let started_at_secs = clock.now().as_secs();
         Self {
             events_processed: AtomicU64::default(),
             errors: AtomicU64::default(),
@@ -81,7 +140,43 @@ impl HealthMetrics {
             last_error_monotonic: AtomicU64::default(),
             recent_outcomes: Mutex::new(VecDeque::new()),
             clock,
+            started_at_secs,
+            emit_tracker: RwLock::new(None),
         }
+    }
+
+    fn install_emit_tracker(&self, tracker: Arc<EmitTracker>) {
+        *self.emit_tracker.write() = Some(tracker);
+    }
+
+    /// Seconds since the metrics were created (uptime relative to the configured clock).
+    pub fn uptime_secs(&self) -> u64 {
+        self.clock
+            .now()
+            .as_secs()
+            .saturating_sub(self.started_at_secs)
+    }
+
+    /// Seconds since the most recent observed emission, or `None` if no emission seen yet
+    /// or no tracker has been installed.
+    pub fn seconds_since_last_emit(&self) -> Option<u64> {
+        let tracker_guard = self.emit_tracker.read();
+        let tracker = tracker_guard.as_ref()?;
+        let last = tracker.last_emit_monotonic()?;
+        let now = self.clock.now().as_secs();
+        Some(now.saturating_sub(last))
+    }
+
+    /// Whether an emit tracker has been installed.
+    #[must_use]
+    pub fn has_emit_tracker(&self) -> bool {
+        self.emit_tracker.read().is_some()
+    }
+
+    /// Clone the installed emit tracker, if any.
+    #[must_use]
+    pub fn emit_tracker(&self) -> Option<Arc<EmitTracker>> {
+        self.emit_tracker.read().clone()
     }
 
     fn prune_recent_outcomes(
@@ -136,6 +231,12 @@ pub struct HealthThresholds {
     pub error_rate_failed: f64,
     /// Sliding window for error rate calculation (in seconds)
     pub window_seconds: u64,
+    /// Seconds without any real emission, *after* the node has been up at least this
+    /// long, before degrading to `Degraded`. Defaults to 600s (10 min). Set to `0`
+    /// to disable emit-stall detection entirely. Only meaningful when an
+    /// `EmitTracker` has been wired into the reporter (otherwise the check is a
+    /// no-op).
+    pub emit_stall_seconds: u64,
 }
 
 impl Default for HealthThresholds {
@@ -144,6 +245,7 @@ impl Default for HealthThresholds {
             error_rate_degraded: 0.05, // 5%
             error_rate_failed: 0.20,   // 20%
             window_seconds: 300,       // 5 minutes
+            emit_stall_seconds: 600,   // 10 minutes — conservative; some sources legitimately quiet
         }
     }
 }
@@ -198,8 +300,16 @@ impl HealthThresholds {
                 .unwrap_or(0.20),
             window_seconds: shared_env::strict_parsed("SINEX_HEALTH_WINDOW_SECONDS")?
                 .unwrap_or(300),
+            emit_stall_seconds: shared_env::strict_parsed("SINEX_HEALTH_EMIT_STALL_SECS")?
+                .unwrap_or(600),
         }
         .validate()
+    }
+
+    /// Whether emit-stall detection is enabled (i.e. `emit_stall_seconds > 0`).
+    #[must_use]
+    pub fn emit_stall_enabled(&self) -> bool {
+        self.emit_stall_seconds > 0
     }
 }
 
@@ -214,6 +324,7 @@ pub struct HealthReporter {
     metrics: Arc<HealthMetrics>,
     last_status: Arc<RwLock<ProcessStatus>>,
     thresholds: HealthThresholds,
+    clock: Arc<dyn HealthClock>,
 }
 
 impl HealthReporter {
@@ -243,10 +354,28 @@ impl HealthReporter {
         Self {
             component_name,
             observer,
-            metrics: Arc::new(HealthMetrics::with_clock(clock)),
+            metrics: Arc::new(HealthMetrics::with_clock(Arc::clone(&clock))),
             last_status: Arc::new(RwLock::new(ProcessStatus::Healthy)),
             thresholds,
+            clock,
         }
+    }
+
+    /// Enable emit-stall detection on this reporter, returning a shared
+    /// `EmitTracker` handle. Callers should install the returned handle into
+    /// the `EventEmitter` (or any other publish chokepoint) so that
+    /// `notify_emit` is invoked on every real emission.
+    ///
+    /// Idempotent semantics: if a tracker was already installed, this returns
+    /// a clone of the existing handle so all emitters share the same counters.
+    #[must_use]
+    pub fn enable_emit_stall_detection(&self) -> Arc<EmitTracker> {
+        if let Some(existing) = self.metrics.emit_tracker() {
+            return existing;
+        }
+        let tracker = Arc::new(EmitTracker::new(Arc::clone(&self.clock)));
+        self.metrics.install_emit_tracker(Arc::clone(&tracker));
+        tracker
     }
 
     /// Record a successful event processing
@@ -288,16 +417,66 @@ impl HealthReporter {
         self.metrics.warnings.fetch_add(1, Ordering::Relaxed);
     }
 
-    /// Calculate current health status based on error rate
+    /// Notify the reporter that `count` real events were emitted upstream.
+    ///
+    /// Distinct from `record_success`, which is bumped by adapter-level keepalive
+    /// ticks (e.g. the 30s "alive but idle" pulse in `IngestorNodeAdapter`).
+    /// `notify_emit` is the signal that the node is *actually doing work*, and
+    /// is what feeds emit-stall detection.
+    pub fn notify_emit(&self, count: u64) {
+        if count == 0 {
+            return;
+        }
+        if let Some(tracker) = self.metrics.emit_tracker() {
+            tracker.notify_emit(count);
+        }
+    }
+
+    /// Whether the node's emit rate has stalled past the configured threshold.
+    ///
+    /// Returns `false` (i.e. healthy) when stall detection is disabled, when no
+    /// tracker has been installed, or when the node has not yet been up long
+    /// enough to be considered overdue. Once both `uptime` and "seconds since
+    /// last emit" cross the threshold, this returns `true`. If no emit has been
+    /// observed yet, uptime alone gates the verdict — a node that runs for
+    /// > `emit_stall_seconds` without ever emitting is degraded.
+    fn emit_stalled(&self) -> bool {
+        if !self.thresholds.emit_stall_enabled() {
+            return false;
+        }
+        let threshold = self.thresholds.emit_stall_seconds;
+        let uptime = self.metrics.uptime_secs();
+        if uptime < threshold {
+            return false;
+        }
+        match self.metrics.seconds_since_last_emit() {
+            Some(elapsed) => elapsed >= threshold,
+            None => {
+                // Tracker may be absent (stall detection not wired) — in which case
+                // we cannot reason about emit rate; treat as healthy.
+                // Or tracker exists but has never recorded an emit — uptime gate
+                // already passed, so we are stalled.
+                self.metrics.has_emit_tracker()
+            }
+        }
+    }
+
+    /// Calculate current health status based on error rate and emit-stall signal.
     fn calculate_status(&self) -> ProcessStatus {
         let error_rate = self.metrics.error_rate(self.thresholds.window_seconds);
 
-        if error_rate >= self.thresholds.error_rate_failed {
+        let base = if error_rate >= self.thresholds.error_rate_failed {
             ProcessStatus::Failed
         } else if error_rate >= self.thresholds.error_rate_degraded {
             ProcessStatus::Degraded
         } else {
             ProcessStatus::Healthy
+        };
+
+        if matches!(base, ProcessStatus::Healthy) && self.emit_stalled() {
+            ProcessStatus::Degraded
+        } else {
+            base
         }
     }
 
@@ -331,13 +510,23 @@ impl HealthReporter {
                 (false, old_status, String::new())
             } else {
                 let error_rate = self.metrics.error_rate(self.thresholds.window_seconds);
+                let stall_note = match self.metrics.seconds_since_last_emit() {
+                    Some(elapsed) if self.emit_stalled() => {
+                        format!(", emit-stalled: last emit {elapsed}s ago")
+                    }
+                    None if self.emit_stalled() => {
+                        format!(", emit-stalled: never emitted (uptime {}s)", self.metrics.uptime_secs())
+                    }
+                    _ => String::new(),
+                };
                 let reason = format!(
-                    "Status changed from {} to {} (error rate: {:.2}%, events: {}, errors: {})",
+                    "Status changed from {} to {} (error rate: {:.2}%, events: {}, errors: {}{})",
                     old_status,
                     new_status,
                     error_rate * 100.0,
                     self.metrics.events_processed.load(Ordering::Relaxed),
                     self.metrics.errors.load(Ordering::Relaxed),
+                    stall_note,
                 );
                 (true, old_status, reason)
             }
