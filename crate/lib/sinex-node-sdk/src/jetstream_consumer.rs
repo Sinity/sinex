@@ -458,6 +458,180 @@ impl JetStreamEventConsumer {
             }
         };
 
+        if confirmation.source.is_empty() || confirmation.event_type.is_empty() {
+            // Legacy per-event-id confirmation (pre-#1306). Match by event_id
+            // directly. Should not occur after upgrade but supported for mixed
+            // deploys.
+            return Self::handle_legacy_per_event_confirmation(
+                msg,
+                confirmation,
+                buffer,
+                confirmed_handler,
+                provisional_handler,
+                accept_unbuffered_confirmations,
+            )
+            .await;
+        }
+
+        // Per-kind watermark path (#1306).
+        let confirmed_events = buffer
+            .confirm_kind_up_to(
+                &confirmation.source,
+                &confirmation.event_type,
+                confirmation.event_id,
+            )
+            .await;
+
+        if !confirmed_events.is_empty() {
+            if !confirmation.persisted {
+                warn!(
+                    source = %confirmation.source,
+                    event_type = %confirmation.event_type,
+                    watermark = %confirmation.event_id,
+                    rollback_count = confirmed_events.len(),
+                    "Confirmation watermark marked kind as not persisted; rolling back provisional effects for all events of kind <= watermark"
+                );
+                if let Some(handler) = provisional_handler {
+                    for event in &confirmed_events {
+                        if let Err(e) = handler.rollback_provisional(event.event_id).await {
+                            error!(
+                                event_id = %event.event_id,
+                                error = %e,
+                                "Failed to rollback provisional event after non-persisted confirmation"
+                            );
+                        }
+                    }
+                }
+                msg.ack().await.map_err(|error| {
+                    Self::message_settlement_error(
+                        "failed to ack non-persisted kind confirmation",
+                        &msg,
+                        Some(confirmation.event_id),
+                        error,
+                    )
+                })?;
+                return Ok(());
+            }
+
+            let mut handler_success = true;
+            for event in &confirmed_events {
+                if let Err(e) = confirmed_handler.handle_confirmed(event).await {
+                    error!(event_id = %event.event_id, error = %e, "Confirmed handler failed");
+                    handler_success = false;
+                }
+            }
+
+            if handler_success {
+                msg.ack().await.map_err(|error| {
+                    Self::message_settlement_error(
+                        "failed to ack kind confirmation",
+                        &msg,
+                        Some(confirmation.event_id),
+                        error,
+                    )
+                })?;
+            } else {
+                msg.ack_with(async_nats::jetstream::AckKind::Nak(Some(
+                    Duration::from_secs(5),
+                )))
+                .await
+                .map_err(|error| {
+                    Self::message_settlement_error(
+                        "failed to NAK confirmed handler failure",
+                        &msg,
+                        Some(confirmation.event_id),
+                        error,
+                    )
+                })?;
+            }
+            return Ok(());
+        }
+
+        // Zero matching events in buffer. Either:
+        // (a) consumer joined late and never buffered events of this kind, or
+        // (b) all events of this kind already confirmed by an earlier watermark
+        //     observation. The watermark itself was advanced inside
+        //     `confirm_kind_up_to`, so future late-arriving provisional events
+        //     <= watermark will short-circuit via `try_implicit_confirm_on_add`.
+        // In either case it is safe to ack.
+        if accept_unbuffered_confirmations {
+            if !confirmation.persisted {
+                msg.ack().await.map_err(|error| {
+                    Self::message_settlement_error(
+                        "failed to ack unbuffered non-persisted kind confirmation",
+                        &msg,
+                        Some(confirmation.event_id),
+                        error,
+                    )
+                })?;
+                return Ok(());
+            }
+            let synthetic = Self::event_from_unbuffered_confirmation(&confirmation);
+            let handler_success = match confirmed_handler.handle_confirmed(&synthetic).await {
+                Ok(()) => true,
+                Err(e) => {
+                    error!("Confirmed handler failed on unbuffered kind watermark: {e}");
+                    false
+                }
+            };
+            if handler_success {
+                msg.ack().await.map_err(|error| {
+                    Self::message_settlement_error(
+                        "failed to ack unbuffered kind confirmation",
+                        &msg,
+                        Some(confirmation.event_id),
+                        error,
+                    )
+                })?;
+            } else {
+                msg.ack_with(async_nats::jetstream::AckKind::Nak(Some(
+                    Duration::from_secs(5),
+                )))
+                .await
+                .map_err(|error| {
+                    Self::message_settlement_error(
+                        "failed to NAK unbuffered kind confirmed handler failure",
+                        &msg,
+                        Some(confirmation.event_id),
+                        error,
+                    )
+                })?;
+            }
+            return Ok(());
+        }
+
+        // No matching pending events, no unbuffered mode. Ack — the watermark
+        // is recorded in the buffer so future provisionals of this kind <=
+        // watermark short-circuit confirm at add time.
+        debug!(
+            source = %confirmation.source,
+            event_type = %confirmation.event_type,
+            watermark = %confirmation.event_id,
+            "Watermark advanced with no pending events of kind; ACKing"
+        );
+        msg.ack().await.map_err(|error| {
+            Self::message_settlement_error(
+                "failed to ack empty kind watermark",
+                &msg,
+                Some(confirmation.event_id),
+                error,
+            )
+        })?;
+        Ok(())
+    }
+
+    /// Legacy per-event-id confirmation handling — preserved for mixed-deploy
+    /// scenarios where ingestd pre-#1306 publishes per-event-id confirmations.
+    /// New deploys publish per-kind watermarks; this branch is exercised only
+    /// when `source`/`event_type` fields are absent on the confirmation payload.
+    async fn handle_legacy_per_event_confirmation(
+        msg: jetstream::Message,
+        confirmation: EventConfirmation,
+        buffer: &ConfirmationBuffer,
+        confirmed_handler: &dyn ConfirmedEventHandler,
+        provisional_handler: Option<&Arc<dyn ProvisionalEventHandler>>,
+        accept_unbuffered_confirmations: bool,
+    ) -> NodeResult<()> {
         if let Some(event) = buffer.confirm(confirmation.event_id).await {
             if !confirmation.persisted {
                 warn!(
@@ -629,10 +803,25 @@ impl JetStreamEventConsumer {
     }
 
     fn event_from_unbuffered_confirmation(confirmation: &EventConfirmation) -> ProvisionalEvent {
+        // Per #1306: synthesize a stand-in event using the real kind from the
+        // watermark when present. Falls back to the legacy `confirmed`/`confirmed.event`
+        // marker when the payload predates #1306.
+        let source = if confirmation.source.is_empty() {
+            EventSource::from_static("confirmed")
+        } else {
+            EventSource::new(&confirmation.source)
+                .unwrap_or_else(|_| EventSource::from_static("confirmed"))
+        };
+        let event_type = if confirmation.event_type.is_empty() {
+            EventType::from_static("confirmed.event")
+        } else {
+            EventType::new(&confirmation.event_type)
+                .unwrap_or_else(|_| EventType::from_static("confirmed.event"))
+        };
         ProvisionalEvent {
             event_id: confirmation.event_id,
-            source: EventSource::from_static("confirmed"),
-            event_type: EventType::from_static("confirmed.event"),
+            source,
+            event_type,
             payload: serde_json::Value::Null,
             ts_orig: confirmation.ts_ingest,
             received_at: Timestamp::now(),
@@ -699,8 +888,17 @@ impl JetStreamEventConsumer {
             SinexError::processing(format!("Invalid ts_ingest '{ts_ingest_str}': {e}"))
         })?;
 
+        // #1306 per-kind fields; absent on legacy per-event-id payloads.
+        let source = payload["source"].as_str().unwrap_or_default().to_string();
+        let event_type = payload["event_type"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string();
+
         Ok(EventConfirmation {
             event_id,
+            source,
+            event_type,
             persisted,
             ts_ingest,
         })
@@ -767,6 +965,8 @@ mod tests {
         let ts_ingest = sinex_primitives::temporal::now();
         let confirmation = EventConfirmation {
             event_id,
+            source: String::new(),
+            event_type: String::new(),
             persisted: true,
             ts_ingest,
         };

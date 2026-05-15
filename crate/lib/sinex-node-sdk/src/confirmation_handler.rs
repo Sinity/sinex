@@ -41,10 +41,21 @@ struct PendingEntry {
     timed_out_at: Option<sinex_primitives::temporal::Timestamp>,
 }
 
-/// Event confirmation from ingestd
+/// Per-kind confirmation watermark from ingestd. Per #1306: a single message
+/// per `(source, event_type)` tells downstream "events of this kind with
+/// id ≤ `event_id` are confirmed". Subjects use the kind as the leaf
+/// (`<prefix>.<source>.<event_type>`), so `max_messages_per_subject = 1` on the
+/// stream actually compacts.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EventConfirmation {
+    /// High-watermark event id for this kind.
     pub event_id: EventId,
+    /// Source of the kind (matches `event.source`).
+    #[serde(default)]
+    pub source: String,
+    /// Event type of the kind (matches `event.event_type`).
+    #[serde(default)]
+    pub event_type: String,
     pub persisted: bool,
     pub ts_ingest: sinex_primitives::temporal::Timestamp,
 }
@@ -87,6 +98,12 @@ pub trait ConfirmedEventHandler: Send + Sync {
 pub struct ConfirmationBuffer {
     /// Provisional events indexed by `event_id`
     pending: Arc<RwLock<HashMap<EventId, PendingEntry>>>,
+    /// Per-kind confirmation high-watermark seen on the confirmations stream.
+    /// Per #1306: when a provisional event is added whose `(source, event_type)`
+    /// already has a watermark `>=` its `event_id`, it is implicitly confirmed
+    /// immediately (the confirmation message arrived before the provisional —
+    /// would otherwise sit in the buffer until timeout).
+    kind_watermarks: Arc<RwLock<HashMap<(String, String), EventId>>>,
     /// Maximum time to wait for confirmation before treating as failure
     timeout: std::time::Duration,
     /// Additional grace period to retain timed-out events so delayed confirmations
@@ -119,6 +136,7 @@ impl ConfirmationBuffer {
             pending: Arc::new(RwLock::new(HashMap::with_capacity(
                 max_capacity.min(1000), // Pre-allocate reasonably
             ))),
+            kind_watermarks: Arc::new(RwLock::new(HashMap::new())),
             timeout,
             grace_period,
             max_capacity,
@@ -130,6 +148,11 @@ impl ConfirmationBuffer {
     ///
     /// Returns `false` if the buffer is at capacity and the event was rejected.
     /// Callers should handle this by applying backpressure or logging.
+    ///
+    /// Per #1306: callers that want to handle the late-confirmation race
+    /// (confirmation watermark arrived before the provisional event was added)
+    /// should call `try_implicit_confirm_on_add` BEFORE `add_provisional` and
+    /// dispatch the confirmed handler synchronously when it returns true.
     #[tracing::instrument(skip(self, event), fields(event_id = %event.event_id, buffer_size))]
     pub async fn add_provisional(&self, event: ProvisionalEvent) -> bool {
         let acquire_start = std::time::Instant::now();
@@ -197,6 +220,88 @@ impl ConfirmationBuffer {
         }
         tracing::Span::current().record("buffer_size", pending.len());
         result.map(|entry| entry.event)
+    }
+
+    /// Returns Some(event) iff the provisional event's kind already has a
+    /// watermark `>=` its event_id — i.e. ingestd already confirmed it but the
+    /// confirmation arrived before this provisional was buffered. Caller should
+    /// treat the returned event as already confirmed.
+    pub async fn try_implicit_confirm_on_add(
+        &self,
+        event: &ProvisionalEvent,
+    ) -> bool {
+        let watermarks = self.kind_watermarks.read().await;
+        let key = (
+            event.source.as_str().to_string(),
+            event.event_type.as_str().to_string(),
+        );
+        watermarks
+            .get(&key)
+            .is_some_and(|wm| wm.as_uuid() >= event.event_id.as_uuid())
+    }
+
+    /// Per-kind watermark confirm. Per #1306: remove and return every pending
+    /// event of `(source, event_type)` whose `event_id <= watermark`. This is
+    /// the consumer side of ingestd's per-kind watermark compaction — one
+    /// message on `events.confirmations.<source>.<event_type>` implicitly
+    /// confirms every prior event of that kind. Also advances the per-kind
+    /// watermark so future late-arriving provisional events with `event_id ≤
+    /// watermark` are recognized as already-confirmed at add time.
+    #[tracing::instrument(skip(self), fields(buffer_size, kind_source = %source, kind_event_type = %event_type, confirmed))]
+    pub async fn confirm_kind_up_to(
+        &self,
+        source: &str,
+        event_type: &str,
+        watermark: EventId,
+    ) -> Vec<ProvisionalEvent> {
+        // Advance the per-kind watermark first so late-arriving provisional
+        // events of the same kind with id <= watermark are recognized as
+        // already-confirmed by `try_implicit_confirm_on_add`.
+        {
+            let mut watermarks = self.kind_watermarks.write().await;
+            let key = (source.to_string(), event_type.to_string());
+            let advance = watermarks
+                .get(&key)
+                .is_none_or(|prev| watermark.as_uuid() > prev.as_uuid());
+            if advance {
+                watermarks.insert(key, watermark);
+            }
+        }
+        let acquire_start = std::time::Instant::now();
+        let mut pending = self.pending.write().await;
+        let acquire_ms = acquire_start.elapsed().as_millis() as u64;
+        if acquire_ms > 10 {
+            tracing::warn!(acquire_ms, "Slow lock acquisition in confirm_kind_up_to");
+        }
+        let matching_ids: Vec<EventId> = pending
+            .iter()
+            .filter_map(|(event_id, entry)| {
+                if event_id.as_uuid() <= watermark.as_uuid()
+                    && entry.event.source.as_str() == source
+                    && entry.event.event_type.as_str() == event_type
+                {
+                    Some(*event_id)
+                } else {
+                    None
+                }
+            })
+            .collect();
+        let confirmed: Vec<ProvisionalEvent> = matching_ids
+            .into_iter()
+            .filter_map(|id| pending.remove(&id))
+            .map(|entry| {
+                if entry.timed_out_at.is_some() {
+                    tracing::warn!(
+                        event_id = %entry.event.event_id,
+                        "Late confirmation arrived after provisional timeout; accepting during grace period"
+                    );
+                }
+                entry.event
+            })
+            .collect();
+        tracing::Span::current().record("buffer_size", pending.len());
+        tracing::Span::current().record("confirmed", confirmed.len());
+        confirmed
     }
 
     /// Identify newly timed-out events and retain them for the grace window.
