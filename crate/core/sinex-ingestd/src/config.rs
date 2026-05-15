@@ -1045,16 +1045,23 @@ fn default_max_buffered_slices() -> usize {
 }
 
 fn default_slice_timeout_secs() -> u64 {
+    // 300s was too aggressive: any source-worker that legitimately idled
+    // between slices (atuin between commands, udev between hot-plugs,
+    // SelfObserver between metric bursts) had its long-lived material
+    // flagged as orphan and routed to DLQ. Live forensic (#1320) showed
+    // these accumulating at ~50/hour even on a healthy stack. The mechanism
+    // exists to detect *crashed* workers that never followed up after BEGIN;
+    // 1h is still short enough for that purpose without false-positive churn.
     match shared_env::strict_parsed("SINEX_INGESTD_SLICE_TIMEOUT_SECS") {
         Ok(Some(value)) => value,
-        Ok(None) => 300,
+        Ok(None) => 3_600,
         Err(error) => {
             error!(
                 env = "SINEX_INGESTD_SLICE_TIMEOUT_SECS",
                 %error,
                 "Invalid env override for slice timeout; using default"
             );
-            300
+            3_600
         }
     }
 }
