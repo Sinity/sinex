@@ -1630,15 +1630,22 @@ in
                   default = {
                     light = {
                       batch = { size = 50; timeoutSec = 2; };
-                      resources = { memoryHigh = "2G"; };
+                      # memoryMax is 1.5x memoryHigh — soft pressure throttles
+                      # the process; hard cap kills it before a runaway leak
+                      # can saturate the host. 2026-05-15 forensic observed
+                      # sinex-relation-extractor at 4.5G RSS leaking ~70MB/min
+                      # past the (memoryHigh-only) 4G threshold. Root cause
+                      # was the heartbeat collision in #1284; the absence of
+                      # a hard cap turned a per-node leak into a host risk.
+                      resources = { memoryHigh = "2G"; memoryMax = "3G"; };
                     };
                     standard = {
                       batch = { size = 100; timeoutSec = 5; };
-                      resources = { memoryHigh = "4G"; };
+                      resources = { memoryHigh = "4G"; memoryMax = "6G"; };
                     };
                     heavy = {
                       batch = { size = 500; timeoutSec = 5; };
-                      resources = { memoryHigh = "8G"; };
+                      resources = { memoryHigh = "8G"; memoryMax = "12G"; };
                     };
                   };
                   description = "Named automata performance profiles.";
