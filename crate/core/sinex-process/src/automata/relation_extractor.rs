@@ -29,8 +29,32 @@ use sinex_primitives::privacy::ProcessingContext;
 use sinex_primitives::temporal::{Duration, Timestamp};
 
 /// Co-occurrence window configuration constants.
-const MAX_WINDOW_ENTITIES: usize = 2000;
+///
+/// `MAX_WINDOW_ENTITIES` was 2000 historically. At that size a single
+/// capacity-bound close emits N*(N-1)/2 = ~2M relation events. Each event
+/// also cloned the full Vec of `source_event_ids` (one per window entry).
+/// Memory cost: 2M outputs × 2000 × 16-byte UUIDs = 64 GB allocated per
+/// close, with the kernel's MemoryHigh pressure throttling it down to a
+/// "mere" 4 GB RSS leak before OOM. That's the bug fixed here.
+///
+/// 50 entries gives 50*49/2 = 1225 pairs per close — manageable. Combined
+/// with the trimmed `source_event_ids` (only the 2 contributing entries
+/// per pair, not the whole window), per-close emission cost drops from
+/// ~64 GB to ~60 KB.
+const MAX_WINDOW_ENTITIES: usize = 50;
+
+/// Inter-event gap that triggers a window close. 300 s = "5 minutes of
+/// quiet" — natural-rest boundary in the user's activity stream.
 const WINDOW_GAP_SECS: i64 = 300;
+
+/// Force-emit interval. Even under continuous activity (no 300 s gap),
+/// the window closes periodically so accumulated co-occurrences flow
+/// downstream. Without this, only `MAX_WINDOW_ENTITIES` triggers
+/// emission — works, but produces large bursts at irregular intervals.
+/// 60 s gives steady downstream pressure and bounds in-memory window
+/// growth to ~60 s of arrivals at typical activity rates.
+const WINDOW_FORCE_EMIT_SECS: i64 = 60;
+
 const CO_OCCURRENCE_CONFIDENCE: f64 = 0.5;
 
 /// Persistent window state: the current co-occurrence window.
@@ -41,6 +65,11 @@ pub struct RelationExtractorState {
 
     /// Time of the most recent entity added to the window.
     pub last_seen: Option<Timestamp>,
+
+    /// Time the current window was opened (first entry's arrival time).
+    /// Used together with `WINDOW_FORCE_EMIT_SECS` to bound window age
+    /// even when arrivals are continuous (no 300 s inter-event gap).
+    pub window_started_at: Option<Timestamp>,
 
     /// Total relations emitted (for observability).
     pub relations_emitted: u64,
@@ -110,81 +139,31 @@ impl ScopeReconcilerNode for RelationExtractor {
         let now = context.require_ts_orig()?;
         let trigger_uuid = context.trigger_uuid();
 
-        // ── Gap detection: close window if gap > 300s ────────────────────
-        let should_close = state.last_seen.is_some_and(|last| {
-            let gap = now - last;
-            gap >= Duration::seconds(WINDOW_GAP_SECS)
+        // ── Window-close detection ───────────────────────────────────────
+        // Three independent triggers, any of which closes the window:
+        //   1. Gap: 300 s since the last arrival (natural quiescence).
+        //   2. Age: 60 s since the window opened (force-emit even under
+        //      continuous activity so co-occurrences flow steadily).
+        //   3. Capacity: MAX_WINDOW_ENTITIES (defensive bound on burst).
+        let gap_triggered = state.last_seen.is_some_and(|last| {
+            now - last >= Duration::seconds(WINDOW_GAP_SECS)
         });
+        let age_triggered = state.window_started_at.is_some_and(|opened| {
+            now - opened >= Duration::seconds(WINDOW_FORCE_EMIT_SECS)
+        });
+        let capacity_triggered = state.window.len() >= MAX_WINDOW_ENTITIES;
+        let should_close = (gap_triggered || age_triggered || capacity_triggered)
+            && state.window.len() >= 2;
 
         let mut outputs = Vec::new();
-
-        if should_close && state.window.len() >= 2 {
-            // ── Emit pairwise relations ──────────────────────────────────
-            let entries = std::mem::take(&mut state.window);
-            let source_event_ids: Vec<Uuid> = entries.iter().map(|e| e.trigger_uuid).collect();
-            let ts_orig = entries.last().map(|e| e.arrived_at).unwrap_or(now);
-
-            for i in 0..entries.len() {
-                for j in (i + 1)..entries.len() {
-                    let payload = EntityRelatedPayload {
-                        source_entity_id: entries[i].entity_id,
-                        target_entity_id: entries[j].entity_id,
-                        relation_type: RelationType::new("co_occurs_with"),
-                        confidence: CO_OCCURRENCE_CONFIDENCE,
-                    };
-
-                    let output = DerivedOutput::reconciled(
-                        payload,
-                        ts_orig,
-                        source_event_ids.clone(),
-                        CO_OCCURRENCE_SCOPE.to_string(),
-                    )
-                    .with_temporal_policy(SyntheticTemporalPolicy::WindowBoundary)
-                    .with_semantics_version("1.0.0")
-                    .with_equivalence_key(format!(
-                        "relation:{}:{}:co_occurs_with",
-                        entries[i].entity_id, entries[j].entity_id
-                    ));
-
-                    outputs.push(output);
-                    state.relations_emitted += 1;
-                }
-            }
-        } else if state.window.len() >= MAX_WINDOW_ENTITIES {
-            // ── Capacity-bound close ─────────────────────────────────────
-            let entries = std::mem::take(&mut state.window);
-            let source_event_ids: Vec<Uuid> = entries.iter().map(|e| e.trigger_uuid).collect();
-            let ts_orig = entries.last().map(|e| e.arrived_at).unwrap_or(now);
-
-            for i in 0..entries.len() {
-                for j in (i + 1)..entries.len() {
-                    let payload = EntityRelatedPayload {
-                        source_entity_id: entries[i].entity_id,
-                        target_entity_id: entries[j].entity_id,
-                        relation_type: RelationType::new("co_occurs_with"),
-                        confidence: CO_OCCURRENCE_CONFIDENCE,
-                    };
-
-                    let output = DerivedOutput::reconciled(
-                        payload,
-                        ts_orig,
-                        source_event_ids.clone(),
-                        CO_OCCURRENCE_SCOPE.to_string(),
-                    )
-                    .with_temporal_policy(SyntheticTemporalPolicy::WindowBoundary)
-                    .with_semantics_version("1.0.0")
-                    .with_equivalence_key(format!(
-                        "relation:{}:{}:co_occurs_with",
-                        entries[i].entity_id, entries[j].entity_id
-                    ));
-
-                    outputs.push(output);
-                    state.relations_emitted += 1;
-                }
-            }
+        if should_close {
+            outputs = drain_and_emit_pairs(state, now);
         }
 
         // ── Add current entity to window ─────────────────────────────────
+        if state.window.is_empty() {
+            state.window_started_at = Some(now);
+        }
         state.window.push(WindowEntry {
             entity_id: input.entity_id,
             canonical_name: input.canonical_name,
@@ -196,6 +175,50 @@ impl ScopeReconcilerNode for RelationExtractor {
 
         Ok(outputs)
     }
+}
+
+/// Drain the current window and produce one `entity.related` event per
+/// pair. Each emitted event's `source_event_ids` carries ONLY the two
+/// contributing entries' trigger UUIDs — not the whole window. That
+/// trim is the load-bearing memory fix: with the full window cloned per
+/// pair, a window of N produced O(N²) outputs × N source IDs each =
+/// O(N³) memory. With the trim it's O(N²) outputs × 2 source IDs = O(N²).
+fn drain_and_emit_pairs(
+    state: &mut RelationExtractorState,
+    now: Timestamp,
+) -> Vec<DerivedOutput<EntityRelatedPayload>> {
+    let entries = std::mem::take(&mut state.window);
+    state.window_started_at = None;
+    let ts_orig = entries.last().map(|e| e.arrived_at).unwrap_or(now);
+
+    let mut outputs = Vec::with_capacity(entries.len() * (entries.len().saturating_sub(1)) / 2);
+    for i in 0..entries.len() {
+        for j in (i + 1)..entries.len() {
+            let payload = EntityRelatedPayload {
+                source_entity_id: entries[i].entity_id,
+                target_entity_id: entries[j].entity_id,
+                relation_type: RelationType::new("co_occurs_with"),
+                confidence: CO_OCCURRENCE_CONFIDENCE,
+            };
+            // Only the two contributing entries' triggers — see drain_and_emit_pairs doc.
+            let source_event_ids = vec![entries[i].trigger_uuid, entries[j].trigger_uuid];
+            let output = DerivedOutput::reconciled(
+                payload,
+                ts_orig,
+                source_event_ids,
+                CO_OCCURRENCE_SCOPE.to_string(),
+            )
+            .with_temporal_policy(SyntheticTemporalPolicy::WindowBoundary)
+            .with_semantics_version("1.0.0")
+            .with_equivalence_key(format!(
+                "relation:{}:{}:co_occurs_with",
+                entries[i].entity_id, entries[j].entity_id
+            ));
+            outputs.push(output);
+            state.relations_emitted += 1;
+        }
+    }
+    outputs
 }
 
 /// Node type alias for use with `node_entrypoint!`.
