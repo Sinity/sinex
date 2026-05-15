@@ -910,9 +910,23 @@ impl StateRepository<'_> {
         .map_err(|e| db_error(e, "get nodes by type"))
     }
 
-    /// Update a specific node manifest heartbeat timestamp and set status to 'active'.
+    /// Refresh the heartbeat timestamp on the most recent live run for a
+    /// `(node_name, version)` pair.
     ///
-    /// Returns whether a matching manifest row was updated.
+    /// Status is intentionally NOT modified by this path. `start_run` inserts
+    /// rows with `status = 'running'`; lifecycle transitions to terminal
+    /// states go through `update_node_run_status`. Previously this method
+    /// wrote `status = 'active'`, which collided with
+    /// `update_node_run_heartbeat`'s `WHERE status = 'running'` filter and
+    /// silently disabled per-run heartbeats for every node — see
+    /// the regression test `heartbeat_paths_do_not_collide_on_status` and
+    /// the production symptom "Heartbeat did not persist because the node
+    /// run row is missing".
+    ///
+    /// Returns whether a matching manifest row was updated. The query
+    /// targets only non-terminal rows so a re-launched node after a crash
+    /// will create a fresh row via `start_run` rather than refresh a
+    /// `failed`/`stopped` one.
     pub async fn update_node_heartbeat_for_version(
         &self,
         node_name: &NodeName,
@@ -921,12 +935,12 @@ impl StateRepository<'_> {
         let result = sqlx::query!(
             r#"
             UPDATE core.runs
-            SET last_heartbeat_at = NOW(),
-                status = 'active'
+            SET last_heartbeat_at = NOW()
             WHERE id IN (
                 SELECT r.id FROM core.runs r
                 JOIN core.manifests m ON m.id = r.manifest_id
                 WHERE m.name = $1 AND m.version = $2
+                  AND r.status NOT IN ('failed', 'stopped')
                 ORDER BY r.id DESC
                 LIMIT 1
             )
@@ -1081,15 +1095,21 @@ impl StateRepository<'_> {
         .map_err(|e| db_error(e, "start node run"))
     }
 
-    /// Refresh the heartbeat timestamp for a node run and keep it in `running`.
+    /// Refresh the heartbeat timestamp for a node run that is still alive.
+    ///
+    /// Filters on `status NOT IN ('failed', 'stopped')` rather than the
+    /// narrower `status = 'running'` so this path tolerates rows that the
+    /// manifest-keyed heartbeat (or any other future bookkeeping path)
+    /// might have left in a non-terminal-but-non-'running' state. Terminal
+    /// rows are still excluded so a crashed run does not silently
+    /// resurrect via heartbeats.
     pub async fn update_node_run_heartbeat(&self, source_run_id: Id<NodeRun>) -> DbResult<bool> {
         let result = sqlx::query!(
             r#"
             UPDATE core.runs
-            SET last_heartbeat_at = NOW(),
-                status = 'running'
+            SET last_heartbeat_at = NOW()
             WHERE id = $1::uuid
-              AND status = 'running'
+              AND status NOT IN ('failed', 'stopped')
             "#,
             source_run_id.as_uuid(),
         )

@@ -590,6 +590,77 @@ async fn node_run_lifecycle_persists_status_and_config(ctx: TestContext) -> Test
     Ok(())
 }
 
+/// Regression for the production "node run row is missing" symptom observed
+/// on sinnix-prime 2026-05-15: the two heartbeat paths called sequentially
+/// from a single node's heartbeat tick must not collide on `core.runs.status`.
+///
+/// Mechanism: `start_run` inserts with `status = 'running'`.
+/// `update_node_heartbeat_for_version` (manifest-keyed) previously
+/// flipped the row to `status = 'active'`. The next call,
+/// `update_node_run_heartbeat` (id-keyed), filtered on `WHERE status =
+/// 'running'` and matched zero rows, logging "Heartbeat did not persist
+/// because the node run row is missing" every tick for every node.
+///
+/// Five automatons on sinnix-prime were silently stuck in this loop:
+/// `relation-extractor` (also leaking 4.5 GB), `entity-extractor`,
+/// `entity-resolver`, `tag-applier`, `activitywatch` source-worker.
+#[sinex_test]
+async fn heartbeat_paths_do_not_collide_on_status(ctx: TestContext) -> TestResult<()> {
+    let repo = ctx.pool.state();
+    let node_name = NodeName::new("heartbeat-collision-regression");
+
+    let manifest = repo
+        .register_node(&node_name, NodeType::Automaton, "1.0.0", None)
+        .await?;
+    let run = repo
+        .start_node_run(
+            manifest.id,
+            "sinex-relation-extractor",
+            "instance-1",
+            "test-host",
+            None,
+            None,
+        )
+        .await?;
+    assert_eq!(run.status, "running", "start_run sets status='running'");
+
+    // Manifest-keyed heartbeat path — must NOT mutate status away from
+    // 'running'. (Previously this flipped status to 'active'.)
+    assert!(
+        repo.update_node_heartbeat_for_version(&node_name, "1.0.0")
+            .await?,
+        "manifest-keyed heartbeat must find and update the live run row"
+    );
+
+    // Id-keyed heartbeat path — must succeed because the row is still alive.
+    // Previously this returned `Ok(false)` because the manifest path had
+    // mutated status away from 'running', and the production heartbeat
+    // emitter logged "node run row is missing".
+    assert!(
+        repo.update_node_run_heartbeat(run.id).await?,
+        "id-keyed heartbeat must find the run regardless of which other \
+         heartbeat path ran first"
+    );
+
+    // Run stays alive after both heartbeats.
+    let refreshed = sqlx::query!(
+        r#"SELECT status FROM core.runs WHERE id = $1::uuid"#,
+        run.id.as_uuid()
+    )
+    .fetch_one(ctx.pool())
+    .await?;
+    assert_ne!(
+        refreshed.status, "failed",
+        "heartbeat path must not transition the run to a terminal state"
+    );
+    assert_ne!(
+        refreshed.status, "stopped",
+        "heartbeat path must not transition the run to a terminal state"
+    );
+
+    Ok(())
+}
+
 #[sinex_test]
 async fn node_run_heartbeat_does_not_revive_terminal_runs(ctx: TestContext) -> TestResult<()> {
     let repo = ctx.pool.state();
