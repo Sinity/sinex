@@ -7,6 +7,7 @@
 pub mod browser;
 pub mod desktop;
 pub mod document;
+pub mod finance;
 pub mod fs;
 pub mod system;
 pub mod terminal;
