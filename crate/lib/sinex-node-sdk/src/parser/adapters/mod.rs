@@ -26,6 +26,7 @@ mod directory_walk;
 mod file_drop;
 mod journalctl_stream;
 mod sqlite_row;
+#[cfg(feature = "messaging")]
 mod sqlite_snapshot;
 mod static_file;
 mod unix_socket_stream;
@@ -40,6 +41,7 @@ pub use chained::{
 };
 pub use directory_walk::{DirectoryWalkAdapter, DirectoryWalkConfig, DirectoryWalkCursor, FileFingerprint};
 pub use sqlite_row::{SqliteRowAdapter, SqliteRowConfig, SqliteRowCursor};
+#[cfg(feature = "messaging")]
 pub use sqlite_snapshot::{
     DEFAULT_SNAPSHOT_INTERVAL, SnapshotLaneSpec, SqliteSnapshotConfig, SqliteSnapshotLane,
 };
