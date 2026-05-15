@@ -9,6 +9,7 @@ use serde_json::json;
 use sinex_primitives::query::{
     EventQuery, EventQueryResult, PayloadFilter, SortDirection, SubscriptionFilter, TimeRange,
 };
+use sinex_primitives::rpc::ingestors::EmitStallThresholds;
 use sinex_primitives::temporal::Timestamp;
 use sinex_primitives::{RuntimeTargetDescriptor, RuntimeTargetKind};
 
@@ -216,6 +217,52 @@ impl StatusCommand {
             }
         }
 
+        // Emit-rate stall detection for source units (issue #992).
+        //
+        // Heartbeats prove liveness, not productivity. Surface units that are
+        // alive and past the uptime gate but have not emitted in `quiet_secs`.
+        let thresholds = EmitStallThresholds::from_env_or_default();
+        // Use the recent-event window to size the freshness check so the
+        // classifier inspects the same window as the underlying RPC.
+        let recent_window_secs = thresholds.quiet_secs.max(60);
+        let stale_after_secs = thresholds.quiet_secs.max(60);
+        let stalled_units = match client
+            .ingestors_status(stale_after_secs, recent_window_secs)
+            .await
+        {
+            Ok(resp) => {
+                let now = resp.generated_at;
+                resp.ingestors
+                    .into_iter()
+                    .filter_map(|ing| {
+                        let verdict = ing.classify_emit_stall(thresholds, now);
+                        verdict.is_degraded().then_some((ing, verdict))
+                    })
+                    .collect::<Vec<_>>()
+            }
+            Err(e) => {
+                warnings.push(RuntimeStatusWarning {
+                    source: "ingestors.status".to_string(),
+                    message: format!("emit-rate stall check unavailable: {e}"),
+                });
+                Vec::new()
+            }
+        };
+
+        if !stalled_units.is_empty() {
+            signals.push(RuntimeStatusSignal {
+                name: "emit-rate".to_string(),
+                status: RuntimeStatusSignalStatus::Degraded,
+                source: "ingestors.status emit-stall classifier".to_string(),
+                message: Some(format!(
+                    "{} stalled source unit(s) (quiet ≥ {}s, uptime ≥ {}s)",
+                    stalled_units.len(),
+                    thresholds.quiet_secs,
+                    thresholds.uptime_gate_secs,
+                )),
+            });
+        }
+
         let snapshot = RuntimeStatusSnapshot {
             target,
             signals,
@@ -270,6 +317,30 @@ impl StatusCommand {
 
                 for warning in &snapshot.warnings {
                     println!("Warning [{}]: {}", warning.source, warning.message);
+                }
+
+                if !stalled_units.is_empty() {
+                    println!();
+                    println!("{}", style("Stalled source units").bold().yellow());
+                    println!("{}", style("─".repeat(50)).dim());
+                    for (ing, verdict) in &stalled_units {
+                        let last = ing
+                            .last_output_at
+                            .map(|t| t.to_string())
+                            .unwrap_or_else(|| "never".to_string());
+                        let uptime = ing
+                            .started_at
+                            .map(|s| format!("{}s", (Timestamp::now() - s).whole_seconds()))
+                            .unwrap_or_else(|| "?".to_string());
+                        println!(
+                            "  {} {}  ({}, uptime {}, last_output {})",
+                            style("●").yellow(),
+                            ing.node_name,
+                            verdict.label(),
+                            uptime,
+                            last,
+                        );
+                    }
                 }
             }
         }

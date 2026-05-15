@@ -149,7 +149,7 @@ pub use file_tailer::{
     TailError, poll_utf8_lines,
 };
 #[cfg(feature = "messaging")]
-pub use health_reporter::{HealthMetrics, HealthReporter, HealthThresholds};
+pub use health_reporter::{EmitTracker, HealthMetrics, HealthReporter, HealthThresholds};
 #[cfg(feature = "messaging")]
 pub use heartbeat::{HeartbeatCounterHandle, HeartbeatEmitter, HeartbeatLogSink, HeartbeatMetrics};
 pub use ids::{deterministic_event_id, deterministic_material_event_id};

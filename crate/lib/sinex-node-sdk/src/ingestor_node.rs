@@ -508,14 +508,24 @@ impl<I: IngestorNode> Node for IngestorNodeAdapter<I> {
                     HealthThresholds::default()
                 });
 
-                self.health_reporter = Some(Arc::new(HealthReporter::new(
+                let reporter = Arc::new(HealthReporter::new(
                     self.ingestor.name().to_string(),
                     Arc::clone(&observer),
                     thresholds,
-                )));
+                ));
+
+                // Wire emit-stall detection: install a shared `EmitTracker` into both
+                // the reporter and the runtime's `EventEmitter`. Every event the
+                // ingestor pushes through the runtime now feeds the stall detector.
+                // See issue #992 (silent watcher death) — emit-rate stall is the
+                // companion signal to watcher-process death.
+                let tracker = reporter.enable_emit_stall_detection();
+                runtime.register_emit_tracker(tracker);
+
+                self.health_reporter = Some(reporter);
                 self.self_observer = Some(observer);
 
-                info!(node = %self.ingestor.name(), "Health monitoring auto-enabled");
+                info!(node = %self.ingestor.name(), "Health monitoring auto-enabled (with emit-stall detection)");
             }
         }
 
@@ -577,13 +587,19 @@ impl<I: IngestorNode> Node for IngestorNodeAdapter<I> {
 
                 // Emit health at 30s intervals during continuous operation.
                 // If no health reporter is configured, this future never resolves.
+                //
+                // NOTE: This tick used to call `reporter.record_success()` every 30s,
+                // which masked emit-rate stalls — a stalled watcher kept ticking
+                // "success" while emitting zero events (issue #992). The tick now
+                // only consults current status (no synthetic success), so health
+                // is driven by real `EventEmitter::emit` calls (via the wired
+                // `EmitTracker`) plus error reports from `settle_scan_error`.
                 let health_fut = async {
                     if let Some(reporter) = health_reporter {
                         let mut interval =
                             tokio::time::interval(std::time::Duration::from_secs(30));
                         loop {
                             interval.tick().await;
-                            reporter.record_success();
                             if let Err(e) = reporter.check_and_emit().await {
                                 warn!(
                                     node = %node_name,
@@ -615,7 +631,14 @@ impl<I: IngestorNode> Node for IngestorNodeAdapter<I> {
         self.save_state(false).await?;
 
         if let Some(reporter) = self.health_reporter.as_ref() {
-            reporter.record_success();
+            // Only count this as a `record_success` if real work happened; an
+            // empty scan with no successes and no errors is silent (it neither
+            // proves health nor degrades it). Emit-rate stall takes over in
+            // continuous mode via `EventEmitter`-driven `EmitTracker`.
+            if report.events_processed > 0 {
+                reporter.record_success();
+                reporter.notify_emit(report.events_processed);
+            }
             for (_target, error_msg) in &report.failed_targets {
                 reporter.record_error(&SinexError::processing(error_msg));
             }
