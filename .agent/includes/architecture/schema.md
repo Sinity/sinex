@@ -10,30 +10,32 @@
 | `raw` | `source_material_registry`, `temporal_ledger` | Provenance roots + observation timestamps |
 | `audit` | `archived_events` | Immutable archive of deleted/superseded events (replay target) |
 | `sinex_schemas` | `event_payload_schemas`, `validation_cache`, `dlq_events` | JSON schema registry + DLQ |
-| `sinex_telemetry` | 12 views + 1 materialized view | Self-observation and activity read models (see below) |
+| `sinex_telemetry` | 9 continuous aggregates + 2 views + 1 materialized view | Self-observation and activity read models (see below) |
 | `metrics` | (empty) | Reserved for future operational metrics |
 
 ### Telemetry Surface
 
-There are no continuous aggregates currently — all rollups live as ordinary
-views or, for `current_device_state`, a single materialized view. The bucket
-column below describes the time grain of each rollup, not a TimescaleDB
-refresh policy.
+Per issue #952 (closed), hot-path 1h/5m rollups bucketed on UUIDv7 `id` are
+TimescaleDB continuous aggregates with hourly (or 5-minute for 5m buckets)
+refresh policies. `current_health` and `recent_activity_summary` remain
+ordinary views (one is a point-in-time aggregate over health events, the other
+unions across CAs); `current_device_state` remains a regular materialized view
+(latest-observation lookup, refreshed explicitly).
 
 | Relation | Type | Bucket | What it tracks |
 |----------|------|--------|----------------|
-| `ingestd_batch_stats_1h` | View | 1h | Batch size, latency, deferred/failed counts |
-| `gateway_stats_1h` | View | 1h | Request stats, latency, rate limits |
-| `node_stats_1h` | View | 1h | Events processed, latency, queue depth per node |
-| `stream_stats_1h` | View | 1h | JetStream fill %, message counts |
-| `metric_counters_1h` | View | 1h | Named metric counter totals |
-| `assembly_stats_1h` | View | 1h | Material assembler state-machine activity |
+| `ingestd_batch_stats_1h` | Continuous aggregate | 1h | Batch size, latency, deferred/failed counts |
+| `gateway_stats_1h` | Continuous aggregate | 1h | Request stats, latency, rate limits |
+| `node_stats_1h` | Continuous aggregate | 1h | Events processed, latency, queue depth per node |
+| `stream_stats_1h` | Continuous aggregate | 1h | JetStream fill %, message counts |
+| `metric_counters_1h` | Continuous aggregate | 1h | Named metric counter totals |
+| `assembly_stats_1h` | Continuous aggregate | 1h | Material assembler state-machine activity |
+| `command_frequency_hourly` | Continuous aggregate | 1h | Shell command execution frequency by UUIDv7 bucket |
+| `file_activity_summary` | Continuous aggregate | 1h | Filesystem event counts by directory |
+| `current_window_focus` | Continuous aggregate | 5m | Desktop window focus tracking |
+| `current_system_state` | Continuous aggregate | 5m | CPU, memory, disk, systemd units |
 | `current_health` | View | now | Latest health-aggregated reports per component |
-| `command_frequency_hourly` | View | 1h | Shell command execution frequency by `ts_orig` |
-| `file_activity_summary` | View | 1h | Filesystem event counts by directory by `ts_orig` |
-| `current_window_focus` | View | 5m | Desktop window focus tracking by `ts_orig` |
-| `current_system_state` | View | 5m | CPU, memory, disk, systemd units by `ts_orig` |
-| `recent_activity_summary` | View | now | Cross-source activity rollup by `ts_orig` |
+| `recent_activity_summary` | View | now | Cross-source activity rollup (depends on CAs above) |
 | `current_device_state` | Materialized view | now | Latest device state observation |
 
 Source of truth: `TELEMETRY_VIEW_RELATIONS`,
