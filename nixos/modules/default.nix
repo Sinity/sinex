@@ -2452,6 +2452,11 @@ in
           { path = spoolBase; mode = "0755"; }
           { path = nodesSpool; mode = "0755"; }
           { path = ingestSpool; mode = "0755"; }
+          # ingestd writes its working directory under ${stateRoot}/ingestd/work
+          # (see SINEX_INGESTD_WORK_DIR). Pre-create so ingestd does not need
+          # write access to stateRoot itself.
+          { path = "${stateRoot}/ingestd"; mode = "0750"; }
+          { path = "${stateRoot}/ingestd/work"; mode = "0750"; }
           { path = logDir; mode = "0755"; }
         ]
         ++ optionals (cfg.storage.blob.enable) [{ path = blobDir; mode = "0750"; }]
