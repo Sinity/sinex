@@ -347,6 +347,20 @@ in
             '';
           };
 
+          setupWaitForPaths = mkOption {
+            type = with types; listOf path;
+            default = [ ];
+            example = literalExpression ''[ "/run/agenix/sinex-local-db" ]'';
+            description = ''
+              Paths whose readability gates the start of postgresql-setup.service.
+              Each entry becomes a ConditionPathIsReadable= entry on the unit.
+
+              Use when a secret materializer (e.g. agenix, sops-nix) provides the
+              database password file late in the boot sequence and
+              postgresql-setup must wait for it.
+            '';
+          };
+
           package = mkOption {
             type = package;
             default = pkgs.postgresql_18;
@@ -1906,10 +1920,89 @@ in
                     Has no effect when attachToMultiUser = true.
                   '';
                 };
+                includeDatabase = mkOption {
+                  type = bool;
+                  default = false;
+                  description = ''
+                    When true, postgresql + postgresql-setup are pulled into
+                    sinex-runtime.target's dependency graph and their
+                    multi-user.target attachment is honored by
+                    attachToMultiUser. Use this on hosts where Postgres exists
+                    solely to serve Sinex and should not start at boot
+                    independently of the Sinex runtime. The module does not
+                    define postgresql itself; this only adjusts unit gating.
+                  '';
+                };
+                extraAfter = mkOption {
+                  type = with types; listOf str;
+                  default = [ ];
+                  example = [ "network-online.target" ];
+                  description = ''
+                    Additional units appended to sinex-runtime.target's After=
+                    list. Use for ordering against host-specific resources
+                    (e.g. network-online.target on hosts that defer the
+                    runtime until networking is up).
+                  '';
+                };
               };
             };
             default = { };
             description = "How runtime services are wired into systemd targets.";
+          };
+
+          deferredStart = mkOption {
+            type = submodule {
+              options = {
+                enable = mkOption {
+                  type = bool;
+                  default = false;
+                  description = ''
+                    When true, define sinex-runtime.timer with OnActiveSec=
+                    set to delay. The timer pulls sinex-runtime.target after
+                    boot when autoStart = true; when autoStart = false the
+                    timer is defined but not installed into timers.target
+                    (introspectable but inert).
+
+                    Use this with attachToMultiUser = false on hosts that
+                    bring the runtime up automatically but only after the
+                    desktop is settled.
+                  '';
+                };
+                autoStart = mkOption {
+                  type = bool;
+                  default = true;
+                  description = ''
+                    When true (default) and enable = true, install the
+                    deferred-start timer into timers.target so it fires
+                    automatically at boot. When false, the timer is defined
+                    but inert; operators can start it manually with
+                    systemctl start sinex-runtime.timer.
+                  '';
+                };
+                delay = mkOption {
+                  type = str;
+                  default = "5min";
+                  example = "2min";
+                  description = ''
+                    OnActiveSec= value for sinex-runtime.timer. Time after
+                    boot/timer activation before sinex-runtime.target is
+                    pulled.
+                  '';
+                };
+                accuracy = mkOption {
+                  type = str;
+                  default = "15s";
+                  description = "AccuracySec= for the deferred-start timer.";
+                };
+              };
+            };
+            default = { };
+            description = ''
+              Optional timer that automatically pulls sinex-runtime.target
+              after a delay. Mutually compatible with
+              attachToMultiUser = false; mutually exclusive with
+              attachToMultiUser = true (which makes the timer redundant).
+            '';
           };
 
           restartOnSwitch = mkOption {
@@ -2351,7 +2444,10 @@ in
 
       directoryRules =
         [
-          { path = stateRoot; mode = "0755"; }
+          # stateRoot is owned by root so child entries with their own
+          # ownership (service-account homes, postgres data dirs, NATS state)
+          # can coexist without a single uid dominating the namespace.
+          { path = stateRoot; mode = "0755"; user = "root"; group = "root"; }
           { path = runtimeDir; mode = "0755"; }
           { path = spoolBase; mode = "0755"; }
           { path = nodesSpool; mode = "0755"; }
@@ -2369,6 +2465,74 @@ in
           group = rule.group or sinexUser;
         in
         "d ${rule.path} ${rule.mode} ${owner} ${group} -";
+
+      # Auxiliary sinex-owned units that should be gated alongside the
+      # long-running runtime services. Long-running services
+      # (sinex-ingestd, sinex-gateway, source workers, automata) already wire
+      # their own wantedBy from cfg.runtime.target.attachToMultiUser and
+      # publish their service names via config.sinex._generatedUnits. The
+      # auxiliary list here covers the one-shots, the standalone
+      # sinex-document-scan and its timer, NATS, and the bootstrap helpers
+      # that the long-running services depend on.
+      coreAuxUnitNames =
+        lib.optionals (cfg.enable && cfg.core.enable) [
+          "sinex-ingestd"
+        ]
+        ++ lib.optionals (cfg.enable && cfg.core.enable && cfg.core.gateway.enable) [
+          "sinex-gateway"
+        ];
+      generatedRuntimeUnitNames =
+        lib.optionals cfg.enable (config.sinex._generatedUnits or [ ]);
+      bootstrapAuxUnitNames =
+        lib.optionals (cfg.database.enable && cfg.database.autoSetup) [
+          "sinex-schema-apply"
+        ]
+        ++ lib.optionals (cfg.nats.enable || cfg.nats.autoSetup) [
+          "nats"
+        ]
+        ++ lib.optionals (
+          (cfg.nats.enable || cfg.nats.autoSetup)
+          && cfg.nats.bootstrapStreams.enable
+        ) [ "sinex-nats-bootstrap" ]
+        ++ lib.optionals (cfg.core.enable && cfg.core.gateway.enable && cfg.core.gateway.autoGenerateTls) [
+          "sinex-tls-init"
+        ]
+        ++ lib.optionals (cfg.storage.blob.enable && cfg.storage.blob.legacyAnnexData && cfg.storage.blob.autoInit) [
+          "sinex-blob-init"
+        ]
+        ++ lib.optionals (cfg.enable && cfg.shell.kitty.enable && cfg.shell.kitty.autoConfigure && targetUser != null) [
+          "sinex-kitty-setup"
+        ]
+        ++ lib.optionals (cfg.enable && cfg.lifecycle.preflight.enable) [
+          "sinex-preflight"
+        ]
+        ++ lib.optionals (cfg.enable && cfg.nodes.enable && cfg.nodes.document.enable) [
+          "sinex-document-scan"
+        ];
+      # Auxiliary units = bootstrap + standalone oneshots + the long-running
+      # core/automata/source-worker services. The runtime target wants the
+      # whole graph so that pulling the target reliably brings the runtime
+      # online (and stopping it tears the runtime down cleanly).
+      runtimeAuxiliaryUnitNames = lib.unique (
+        coreAuxUnitNames
+        ++ generatedRuntimeUnitNames
+        ++ bootstrapAuxUnitNames
+      );
+      runtimeAuxiliaryUnits = map (n: "${n}.service") runtimeAuxiliaryUnitNames;
+      runtimeAuxiliaryTimerNames =
+        lib.optionals (
+          cfg.enable
+          && cfg.nodes.enable
+          && cfg.nodes.document.enable
+          && cfg.nodes.document.schedule != null
+        ) [ "sinex-document-scan" ];
+      runtimeDatabaseUnits =
+        lib.optionals cfg.runtime.target.includeDatabase [
+          "postgresql.service"
+        ]
+        ++ lib.optionals (
+          cfg.runtime.target.includeDatabase && cfg.database.enable && cfg.database.autoSetup
+        ) [ "postgresql-setup.service" ];
     in
     mkMerge [
       (mkIf cfg.enable {
@@ -2458,10 +2622,74 @@ in
         systemd.targets.sinex-runtime = {
           description = "Sinex runtime services aggregate target";
           wantedBy = lib.optional cfg.runtime.target.attachToMultiUser "multi-user.target";
+          # Pull every sinex-owned auxiliary unit (and optionally postgresql)
+          # into the runtime target's dependency graph. When
+          # attachToMultiUser=false, this is the only thing that brings them
+          # online; when true, it makes the target a coherent stop boundary.
+          wants = runtimeAuxiliaryUnits ++ runtimeDatabaseUnits;
+          after = cfg.runtime.target.extraAfter;
           unitConfig = lib.optionalAttrs
             (cfg.runtime.target.manualStartOnly && !cfg.runtime.target.attachToMultiUser)
             { X-OnlyManualStart = true; };
         };
+      })
+
+      # When attachToMultiUser=false, strip the sinex-owned auxiliary one-shots,
+      # timers, and (if includeDatabase) postgresql/postgresql-setup off
+      # multi-user.target. The runtime target's wants graph above keeps them
+      # reachable; this just prevents them from starting at boot independently.
+      (mkIf (cfg.enable && !cfg.runtime.target.attachToMultiUser) {
+        systemd.services = lib.genAttrs runtimeAuxiliaryUnitNames (_: {
+          wantedBy = lib.mkForce [ ];
+          unitConfig.PartOf = [ "sinex-runtime.target" ];
+          restartIfChanged = cfg.runtime.restartOnSwitch;
+        }) // lib.optionalAttrs cfg.runtime.target.includeDatabase {
+          postgresql = {
+            wantedBy = lib.mkForce [ ];
+            unitConfig = {
+              PartOf = lib.mkAfter [ "sinex-runtime.target" ];
+            };
+            restartIfChanged = cfg.runtime.restartOnSwitch;
+          };
+          postgresql-setup = {
+            wantedBy = lib.mkForce [ ];
+            unitConfig = {
+              PartOf = [ "sinex-runtime.target" ];
+            };
+            restartIfChanged = cfg.runtime.restartOnSwitch;
+          };
+        };
+        systemd.timers = lib.genAttrs runtimeAuxiliaryTimerNames (_: {
+          wantedBy = lib.mkForce (lib.optionals cfg.runtime.target.attachToMultiUser [ "timers.target" ]);
+          unitConfig.PartOf = [ "sinex-runtime.target" ];
+        });
+        # postgresql.target leaks into multi-user even with the runtime
+        # service's wantedBy stripped; suppress it alongside.
+        systemd.targets = lib.optionalAttrs cfg.runtime.target.includeDatabase {
+          postgresql.wantedBy = lib.mkForce [ ];
+        };
+      })
+
+      # Deferred-start timer: pulls sinex-runtime.target after a delay.
+      # The timer is always defined when configured so its shape is
+      # introspectable (tests, status probes); wantedBy is gated separately
+      # so deployers can keep the timer defined but inert.
+      (mkIf (cfg.enable && cfg.runtime.deferredStart.enable) {
+        systemd.timers.sinex-runtime = {
+          description = "Delay Sinex runtime startup until after boot";
+          wantedBy = lib.optionals cfg.runtime.deferredStart.autoStart [ "timers.target" ];
+          timerConfig = {
+            OnActiveSec = cfg.runtime.deferredStart.delay;
+            AccuracySec = cfg.runtime.deferredStart.accuracy;
+            Unit = "sinex-runtime.target";
+          };
+        };
+      })
+
+      # Postgres-setup waits for declared secret materializer paths.
+      (mkIf (cfg.database.enable && cfg.database.autoSetup && cfg.database.setupWaitForPaths != [ ]) {
+        systemd.services.postgresql-setup.unitConfig.ConditionPathIsReadable =
+          cfg.database.setupWaitForPaths;
       })
 
       (mkIf (cfg.cliPackage != null) {
@@ -2474,7 +2702,11 @@ in
           isSystemUser = true;
           group = dbUser;
           description = "Sinex database account";
-          home = stateRoot;
+          # Service accounts get their own home under ${stateRoot}/home so the
+          # stateRoot itself can stay traversable (0755) for sibling tmpfiles
+          # entries (postgres data dir, NATS jetstream, blob repo).
+          home = "${stateRoot}/home/${dbUser}";
+          homeMode = "0711";
           createHome = true;
         };
       })
@@ -2485,7 +2717,8 @@ in
           isSystemUser = true;
           group = sinexUser;
           description = "Sinex service account";
-          home = stateRoot;
+          home = "${stateRoot}/home/${sinexUser}";
+          homeMode = "0711";
           createHome = true;
         };
       })
