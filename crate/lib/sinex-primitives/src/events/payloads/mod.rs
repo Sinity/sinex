@@ -36,6 +36,7 @@ pub mod process;
 pub mod shell;
 pub mod social;
 pub mod system;
+pub mod vcs;
 pub mod web;
 pub mod window;
 
@@ -60,6 +61,7 @@ pub use process::*;
 pub use shell::*;
 pub use social::*;
 pub use system::*;
+pub use vcs::*;
 pub use web::*;
 pub use window::*;
 
