@@ -1249,8 +1249,11 @@ let
           description = "Browser history (source-worker)";
           adapterType = "ChainedAdapter";
           # ChainedConfig: primary=SqliteRowConfig, secondary=AppendOnlyFileConfig.
+          # immutable=false lets us open the qutebrowser DB while qutebrowser
+          # holds an exclusive lock on it (same fix as ActivityWatch — DB has a
+          # live writer with WAL open; immutable=1 returns SQLITE_CANTOPEN).
           adapterConfig = {
-            primary = { path = primarySqlitePath; };
+            primary = { path = primarySqlitePath; immutable = false; };
             secondary = { path = secondaryDumpPath; };
           };
           inherit instances resources;
