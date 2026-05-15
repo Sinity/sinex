@@ -604,7 +604,7 @@ impl JetStreamConsumer {
                 retention: jetstream::stream::RetentionPolicy::Limits,
                 max_messages: 2_000_000,
                 max_bytes: JETSTREAM_BOOTSTRAP_MAX_BYTES,
-                max_age: Duration::from_hours(336), // 14 days
+                max_age: Duration::from_hours(72), // 3 days
                 storage: jetstream::stream::StorageType::File,
                 discard: DiscardPolicy::New,
                 ..Default::default()
@@ -659,7 +659,7 @@ impl JetStreamConsumer {
                 subjects: vec![self.topology.dlq_subject.to_string()],
                 retention: jetstream::stream::RetentionPolicy::Limits,
                 max_bytes: JETSTREAM_BOOTSTRAP_MAX_BYTES,
-                max_age: Duration::from_hours(168), // 7 days
+                max_age: Duration::from_hours(72), // 3 days
                 storage: jetstream::stream::StorageType::File,
                 duplicate_window: DLQ_DUPLICATE_WINDOW,
                 allow_direct: true,
@@ -675,7 +675,7 @@ impl JetStreamConsumer {
                 subjects: vec![self.topology.processing_failures_subject.to_string()],
                 retention: jetstream::stream::RetentionPolicy::Limits,
                 max_bytes: JETSTREAM_BOOTSTRAP_MAX_BYTES,
-                max_age: Duration::from_hours(168), // 7 days
+                max_age: Duration::from_hours(72), // 3 days
                 storage: jetstream::stream::StorageType::File,
                 duplicate_window: DLQ_DUPLICATE_WINDOW,
                 allow_direct: true,
