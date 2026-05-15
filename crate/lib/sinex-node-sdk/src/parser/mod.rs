@@ -165,6 +165,28 @@ pub trait InputShapeAdapter: Send + Sync {
     /// This is called by the runtime after each record is successfully
     /// parsed, so that checkpoints can be persisted.
     fn cursor_after(&self, record: &SourceRecord) -> ParserResult<Self::Cursor>;
+
+    /// Describe an optional **parallel snapshot lane** for this adapter.
+    ///
+    /// Adapters that have a meaningful "whole substrate" snapshot — currently
+    /// only `SqliteRowAdapter`, which can snapshot the underlying database
+    /// file — return `Some(SnapshotLaneSpec)` to opt in. The
+    /// [`AdapterBackedIngestor`] hosting the adapter spawns a tokio task that
+    /// captures the substrate on a periodic timer, into a separate source
+    /// material lineage from the per-record stream.
+    ///
+    /// Returns `None` by default. Snapshot lanes are independent of per-record
+    /// drain: events stay anchored in their record materials.
+    ///
+    /// [`AdapterBackedIngestor`]: crate::parser::adapter_node::AdapterBackedIngestor
+    /// [`SnapshotLaneSpec`]: crate::parser::adapters::SnapshotLaneSpec
+    fn snapshot_lane(
+        &self,
+        _source_unit_id: &str,
+        _config: &Self::Config,
+    ) -> Option<crate::parser::adapters::SnapshotLaneSpec> {
+        None
+    }
 }
 
 // =============================================================================
