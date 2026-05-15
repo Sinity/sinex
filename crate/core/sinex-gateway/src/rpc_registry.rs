@@ -385,7 +385,8 @@ fn build_registry_impl() -> RpcRegistry {
         handle_audit_get, handle_automata_status, handle_coordination_get_leader,
         handle_coordination_instance_health, handle_coordination_list_instances,
         handle_create_entities, handle_create_note, handle_dlq_list, handle_dlq_peek,
-        handle_dlq_purge, handle_dlq_requeue, handle_events_annotate, handle_events_lineage,
+        handle_dlq_purge, handle_dlq_requeue, handle_documents_get, handle_documents_get_chunks,
+        handle_documents_search, handle_events_annotate, handle_events_lineage,
         handle_events_query,
         handle_lifecycle_archive, handle_lifecycle_restore,
         handle_lifecycle_status, handle_link_entities, handle_nodes_drain, handle_nodes_health,
@@ -470,6 +471,22 @@ fn build_registry_impl() -> RpcRegistry {
         )
         // Audit trail methods (ReadOnly)
         .pool_rpc(methods::AUDIT_GET, Role::ReadOnly, boxed!(handle_audit_get))
+        // Document search methods (ReadOnly)
+        .pool_rpc(
+            methods::DOCUMENTS_SEARCH,
+            Role::ReadOnly,
+            boxed!(handle_documents_search),
+        )
+        .pool_rpc(
+            methods::DOCUMENTS_GET,
+            Role::ReadOnly,
+            boxed!(handle_documents_get),
+        )
+        .pool_rpc(
+            methods::DOCUMENTS_GET_CHUNKS,
+            Role::ReadOnly,
+            boxed!(handle_documents_get_chunks),
+        )
         // Operations log read methods (ReadOnly)
         .pool_auth_rpc(
             methods::OPS_LIST,
