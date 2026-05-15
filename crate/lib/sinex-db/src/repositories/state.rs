@@ -1513,6 +1513,100 @@ impl StateRepository<'_> {
         .map_err(|e| db_error(e, "list automata status"))
     }
 
+    /// List registered ingestor manifests with run + health + recent-output stats.
+    ///
+    /// Sibling to [`list_automata_status`](Self::list_automata_status), filtered on
+    /// `manifest_type = 'ingestor'`. Ingestors emit on-change `health.status` events
+    /// (not continuous `metric.gauge` like derived nodes), so per-node telemetry is
+    /// narrower: latest current_status + reason + recent output count by source-run-id.
+    pub async fn list_ingestors_status(
+        &self,
+        stale_after: Duration,
+        recent_window: Duration,
+    ) -> DbResult<Vec<IngestorsStatusRow>> {
+        let stale_secs = stale_after.as_secs() as f64;
+        let recent_secs = recent_window.as_secs() as f64;
+
+        sqlx::query_as!(
+            IngestorsStatusRow,
+            r#"
+            SELECT
+                nm.name::text as "node_name!: NodeName",
+                nm.version as "version!",
+                nm.description,
+                nr.status as "manifest_status!",
+                (
+                    (nr.id IS NOT NULL
+                        AND nr.status = 'running'
+                        AND nr.last_heartbeat_at > NOW() - make_interval(secs => $1::float8))
+                    OR
+                    (nr.id IS NULL
+                        AND nr.status = 'active'
+                        AND nr.last_heartbeat_at > NOW() - make_interval(secs => $1::float8))
+                ) as "live!",
+                nr.service_name,
+                nr.instance_id,
+                nr.id as "source_run_id: uuid::Uuid",
+                nr.host,
+                nr.status as run_status,
+                nr.started_at as "started_at: sinex_primitives::temporal::Timestamp",
+                nr.last_heartbeat_at as "last_heartbeat_at: sinex_primitives::temporal::Timestamp",
+                health.current_status as "current_health?",
+                health.changed_at
+                    as "health_changed_at?: sinex_primitives::temporal::Timestamp",
+                health.reason as "health_reason?",
+                COALESCE(outputs.recent_output_count, 0)::bigint as "recent_output_count!",
+                outputs.last_output_at as "last_output_at?: sinex_primitives::temporal::Timestamp"
+            FROM core.manifests nm
+            LEFT JOIN LATERAL (
+                SELECT
+                    nr.id,
+                    nr.service_name,
+                    nr.instance_id,
+                    nr.host,
+                    nr.status,
+                    nr.started_at,
+                    nr.last_heartbeat_at
+                FROM core.runs nr
+                WHERE nr.manifest_id = nm.id
+                ORDER BY (CASE WHEN nr.status IN ('running', 'draining', 'paused') THEN 1 ELSE 0 END) DESC,
+                         nr.started_at DESC
+                LIMIT 1
+            ) nr ON true
+            LEFT JOIN LATERAL (
+                SELECT
+                    e.payload->>'current_status' AS current_status,
+                    e.ts_coided AS changed_at,
+                    e.payload->>'reason' AS reason
+                FROM core.events e
+                WHERE e.source = 'sinex'
+                  AND e.event_type = 'health.status'
+                  AND e.payload->>'component' = nm.name::text
+                ORDER BY e.id DESC
+                LIMIT 1
+            ) health ON true
+            LEFT JOIN LATERAL (
+                SELECT
+                    COUNT(*) FILTER (
+                        WHERE e.ts_coided > NOW() - make_interval(secs => $2::float8)
+                    ) AS recent_output_count,
+                    MAX(e.ts_coided) AS last_output_at
+                FROM core.events e
+                WHERE nr.id IS NOT NULL
+                  AND e.source_run_id = nr.id
+                  AND e.source_material_id IS NOT NULL
+            ) outputs ON true
+            WHERE nm.manifest_type = 'ingestor'
+            ORDER BY nm.name, nm.version
+            "#,
+            stale_secs,
+            recent_secs
+        )
+        .fetch_all(self.pool)
+        .await
+        .map_err(|e| db_error(e, "list ingestors status"))
+    }
+
     // ========== System Verification Methods ==========
 
     /// Test UUID generation functionality
@@ -1761,6 +1855,28 @@ pub struct AutomataStatusRow {
     pub recent_output_count: i64,
     pub last_output_at: Option<Timestamp>,
     pub last_replay_at: Option<Timestamp>,
+}
+
+/// Operator-facing ingestor status row.
+#[derive(Debug, sqlx::FromRow)]
+pub struct IngestorsStatusRow {
+    pub node_name: NodeName,
+    pub version: String,
+    pub description: Option<String>,
+    pub manifest_status: String,
+    pub live: bool,
+    pub service_name: Option<String>,
+    pub instance_id: Option<String>,
+    pub source_run_id: Option<Uuid>,
+    pub host: Option<String>,
+    pub run_status: Option<String>,
+    pub started_at: Option<Timestamp>,
+    pub last_heartbeat_at: Option<Timestamp>,
+    pub current_health: Option<String>,
+    pub health_changed_at: Option<Timestamp>,
+    pub health_reason: Option<String>,
+    pub recent_output_count: i64,
+    pub last_output_at: Option<Timestamp>,
 }
 
 /// Operation statistics

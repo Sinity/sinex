@@ -50,6 +50,9 @@ pub const NODES_SET_HORIZON: &str = "nodes.set_horizon";
 // Automata
 pub const AUTOMATA_STATUS: &str = "automata.status";
 
+// Ingestors
+pub const INGESTORS_STATUS: &str = "ingestors.status";
+
 // Ops
 pub const OPS_START: &str = "ops.start";
 pub const OPS_LIST: &str = "ops.list";

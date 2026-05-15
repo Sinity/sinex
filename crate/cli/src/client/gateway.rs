@@ -9,6 +9,7 @@ use sinex_primitives::domain::{EventSource, NodeType};
 use sinex_primitives::rpc::{
     JsonRpcError,
     automata::{AutomataStatusRequest, AutomataStatusResponse},
+    ingestors::{IngestorsStatusRequest, IngestorsStatusResponse},
     coordination::{
         InstanceHealthRequest, InstanceHealthResponse, InstanceInfo, ListInstancesRequest,
         ListInstancesResponse,
@@ -477,6 +478,22 @@ impl GatewayClient {
         };
         let result = self
             .call_rpc(methods::AUTOMATA_STATUS, serde_json::to_value(&req)?)
+            .await?;
+        serde_json::from_value(result).map_err(Into::into)
+    }
+
+    /// List ingestor status (manifest, run, latest health.status, recent emissions).
+    pub async fn ingestors_status(
+        &self,
+        stale_after_secs: u64,
+        recent_window_secs: u64,
+    ) -> Result<IngestorsStatusResponse> {
+        let req = IngestorsStatusRequest {
+            stale_after_secs,
+            recent_window_secs,
+        };
+        let result = self
+            .call_rpc(methods::INGESTORS_STATUS, serde_json::to_value(&req)?)
             .await?;
         serde_json::from_value(result).map_err(Into::into)
     }
