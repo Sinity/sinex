@@ -8,6 +8,7 @@ pub mod ai_session;
 pub mod browser;
 pub mod desktop;
 pub mod document;
+pub mod finance;
 pub mod fs;
 pub mod library;
 pub mod system;
