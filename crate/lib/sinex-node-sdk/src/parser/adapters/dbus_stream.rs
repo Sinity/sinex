@@ -482,8 +482,7 @@ fn zvariant_value_to_json(v: &zvariant::Value<'_>) -> serde_json::Value {
 /// invocation from the adapter config. The injected backend slot is only
 /// consulted by `open_with_backend`, which tests use to bypass the live bus.
 pub struct DbusStreamAdapter {
-    injected_backend:
-        std::sync::Mutex<Option<Box<dyn DbusBackend + Send + Sync>>>,
+    injected_backend: std::sync::Mutex<Option<Box<dyn DbusBackend + Send + Sync>>>,
 }
 
 impl DbusStreamAdapter {

@@ -378,8 +378,8 @@ impl XtaskCommand for DoctorCommand {
             }
             match crate::cache_hygiene::reclaim(&target_dir) {
                 Ok(report) => {
-                    let total_reclaimed = report.cargo_sweep_reclaimed_bytes
-                        + report.incremental_bytes_reclaimed;
+                    let total_reclaimed =
+                        report.cargo_sweep_reclaimed_bytes + report.incremental_bytes_reclaimed;
                     if ctx.is_human() {
                         println!(
                             "Reclaimed {:.2} GB (cargo-sweep: {:.2} GB; incremental keep-3: {} dirs / {:.2} GB).",
@@ -485,10 +485,8 @@ async fn execute_test_db_check(_ctx: &CommandContext) -> Result<TestDbDoctorRepo
     let footprint = crate::sandbox::db::pool::inspect_test_database_footprint()
         .await
         .map_err(|error| eyre!("failed to inspect test database footprint: {error:#}"))?;
-    let dev_shm = crate::process::shm_usage_mb().map(|(used_mb, free_mb)| DevShmSnapshot {
-        used_mb,
-        free_mb,
-    });
+    let dev_shm = crate::process::shm_usage_mb()
+        .map(|(used_mb, free_mb)| DevShmSnapshot { used_mb, free_mb });
     Ok(TestDbDoctorReport { footprint, dev_shm })
 }
 
@@ -540,10 +538,7 @@ fn collect_rust_analyzer_processes() -> Result<Vec<RustAnalyzerProcess>> {
 
     for entry in entries.flatten() {
         let file_name = entry.file_name();
-        let Some(pid) = file_name
-            .to_str()
-            .and_then(|name| name.parse::<u32>().ok())
-        else {
+        let Some(pid) = file_name.to_str().and_then(|name| name.parse::<u32>().ok()) else {
             continue;
         };
         let proc_dir = entry.path();
@@ -898,8 +893,7 @@ fn print_test_db_report(report: &TestDbDoctorReport) {
     );
     println!(
         "  Process-local pool:  {} initialized slots, {} open conns",
-        report.footprint.process_pool_slots,
-        report.footprint.process_pool_stats.total_connections,
+        report.footprint.process_pool_slots, report.footprint.process_pool_stats.total_connections,
     );
     if let Some(shm) = &report.dev_shm {
         println!(

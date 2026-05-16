@@ -122,9 +122,8 @@ impl MaterialParser for MessengerThreadParser {
         record: SourceRecord,
         ctx: &ParserContext,
     ) -> ParserResult<Vec<ParsedEventIntent>> {
-        let thread: MessengerThread = serde_json::from_slice(&record.bytes).map_err(|e| {
-            ParserError::Parse(format!("invalid Messenger thread JSON: {e}"))
-        })?;
+        let thread: MessengerThread = serde_json::from_slice(&record.bytes)
+            .map_err(|e| ParserError::Parse(format!("invalid Messenger thread JSON: {e}")))?;
 
         let mut intents = Vec::with_capacity(thread.messages.len());
         for (index, msg) in thread.messages.into_iter().enumerate() {
@@ -161,13 +160,7 @@ fn parse_message(
     let media_count = msg.media.len() as u32;
     let reaction_count = msg.reactions.len() as u32;
 
-    let text_hint: String = msg
-        .text
-        .as_deref()
-        .unwrap_or("")
-        .chars()
-        .take(64)
-        .collect();
+    let text_hint: String = msg.text.as_deref().unwrap_or("").chars().take(64).collect();
     let occurrence_key = OccurrenceKey {
         source_unit_id: SourceUnitId::from_static("facebook-messenger-thread"),
         fields: vec![
@@ -275,10 +268,10 @@ crate::register_adapter_ingestor!(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sinex_primitives::ids::Id;
     use sinex_primitives::Uuid;
-    use xtask::sandbox::prelude::sinex_test;
+    use sinex_primitives::ids::Id;
     use xtask::sandbox::TestResult;
+    use xtask::sandbox::prelude::sinex_test;
 
     fn test_ctx() -> ParserContext {
         ParserContext {

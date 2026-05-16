@@ -12,8 +12,8 @@
 //! - The subject unit's error is captured and reported independently.
 
 use crate::AdapterKind;
-use sinex_source_worker::dispatch::default_parser_dispatch;
 use sinex_primitives::Uuid;
+use sinex_source_worker::dispatch::default_parser_dispatch;
 
 /// Run the isolation obligation for a source unit.
 ///
@@ -43,13 +43,12 @@ pub async fn run(
 
     // The peer must succeed with a valid payload.
     let peer_material = Uuid::now_v7();
-    let peer_outcome = dispatch(PEER_UNIT, PEER_FIXTURE, Some(peer_material))
-        .map_err(|e| {
-            format!(
-                "isolation: error in subject unit '{source_unit_id}' may have corrupted registry — \
+    let peer_outcome = dispatch(PEER_UNIT, PEER_FIXTURE, Some(peer_material)).map_err(|e| {
+        format!(
+            "isolation: error in subject unit '{source_unit_id}' may have corrupted registry — \
                  peer '{PEER_UNIT}' dispatch failed: {e}"
-            )
-        })?;
+        )
+    })?;
 
     if peer_outcome.events.is_empty() {
         return Err(format!(
@@ -60,11 +59,7 @@ pub async fn run(
     // Second peer call to confirm registry is not poisoned.
     let peer_material_2 = Uuid::now_v7();
     let peer_outcome_2 = dispatch(PEER_UNIT, PEER_FIXTURE, Some(peer_material_2))
-        .map_err(|e| {
-            format!(
-                "isolation: second peer dispatch for '{PEER_UNIT}' failed: {e}"
-            )
-        })?;
+        .map_err(|e| format!("isolation: second peer dispatch for '{PEER_UNIT}' failed: {e}"))?;
 
     if peer_outcome_2.events.is_empty() {
         return Err(format!(

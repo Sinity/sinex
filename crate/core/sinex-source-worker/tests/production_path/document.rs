@@ -22,7 +22,10 @@ mod tests {
             crate::ALL_OBLIGATIONS,
         )
         .await;
-        assert!(failures.is_empty(), "document.staging obligations failed: {failures:#?}");
+        assert!(
+            failures.is_empty(),
+            "document.staging obligations failed: {failures:#?}"
+        );
         Ok(())
     }
 }

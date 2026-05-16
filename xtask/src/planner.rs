@@ -106,7 +106,11 @@ fn check_active_jobs() -> Result<Option<Vec<PlannedAction>>> {
         }
     }
 
-    if actions.is_empty() { Ok(None) } else { Ok(Some(actions)) }
+    if actions.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(actions))
+    }
 }
 
 fn check_dirty_files() -> Result<Option<Vec<PlannedAction>>> {

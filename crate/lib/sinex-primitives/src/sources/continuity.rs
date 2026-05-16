@@ -432,8 +432,7 @@ impl Replayability {
         }
         if any_recovered {
             weak_points.push(
-                "material status=recovered_partial; replay covers the recovered subset only"
-                    .into(),
+                "material status=recovered_partial; replay covers the recovered subset only".into(),
             );
         }
         weak_points.push(
@@ -589,7 +588,8 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn declared_coverage_contract_kind_strings_match_check_set() -> xtask::sandbox::TestResult<()> {
+    async fn declared_coverage_contract_kind_strings_match_check_set()
+    -> xtask::sandbox::TestResult<()> {
         for kind in [
             DeclaredCoverageContractKind::Continuous,
             DeclaredCoverageContractKind::PeriodicDump,
@@ -609,7 +609,8 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn declared_coverage_contract_serializes_kind_pascal_case() -> xtask::sandbox::TestResult<()> {
+    async fn declared_coverage_contract_serializes_kind_pascal_case()
+    -> xtask::sandbox::TestResult<()> {
         let c = DeclaredCoverageContract {
             kind: DeclaredCoverageContractKind::PeriodicDump,
             ..Default::default()
@@ -641,7 +642,8 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn privacy_class_is_private_excludes_public_and_unknown() -> xtask::sandbox::TestResult<()> {
+    async fn privacy_class_is_private_excludes_public_and_unknown() -> xtask::sandbox::TestResult<()>
+    {
         assert!(!PrivacyClass::Public.is_private());
         assert!(!PrivacyClass::Unknown.is_private());
         assert!(PrivacyClass::Personal.is_private());

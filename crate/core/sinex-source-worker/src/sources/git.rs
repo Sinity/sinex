@@ -63,8 +63,7 @@ const RECORD_SEP: &str = "\x1e"; // ASCII record separator (RS)
 ///   7: parent SHAs (space-separated, may be empty)
 ///   8: subject
 ///   9: body (may span multiple lines; trimmed)
-const GIT_FORMAT: &str =
-    "%H\x1f%aN\x1f%aE\x1f%cN\x1f%cE\x1f%at\x1f%P\x1f%s\x1f%b";
+const GIT_FORMAT: &str = "%H\x1f%aN\x1f%aE\x1f%cN\x1f%cE\x1f%at\x1f%P\x1f%s\x1f%b";
 
 // ---------------------------------------------------------------------------
 // Raw parsed commit
@@ -170,7 +169,11 @@ impl MaterialParser for GitCommitHistoryParser {
             .logical_path
             .as_ref()
             .map(|p| p.as_str().to_owned())
-            .ok_or_else(|| ParserError::Parse("git parser requires logical_path on SourceRecord (repository root)".into()))?;
+            .ok_or_else(|| {
+                ParserError::Parse(
+                    "git parser requires logical_path on SourceRecord (repository root)".into(),
+                )
+            })?;
 
         let commits = run_git_log(&repo_path).await?;
         let stats_map = run_git_log_stats(&repo_path, &commits).await?;
@@ -218,7 +221,9 @@ async fn run_git_log(repo_path: &str) -> ParserResult<Vec<RawCommit>> {
     }
 
     let raw = String::from_utf8(output.stdout).map_err(|e| {
-        ParserError::Parse(format!("git log output is not valid UTF-8 in '{repo_path}': {e}"))
+        ParserError::Parse(format!(
+            "git log output is not valid UTF-8 in '{repo_path}': {e}"
+        ))
     })?;
 
     parse_git_log_output(&raw)
@@ -272,7 +277,11 @@ fn parse_commit_chunk(chunk: &str) -> ParserResult<RawCommit> {
 
     let body = if parts.len() > 8 {
         let b = parts[8].trim();
-        if b.is_empty() { None } else { Some(b.to_owned()) }
+        if b.is_empty() {
+            None
+        } else {
+            Some(b.to_owned())
+        }
     } else {
         None
     };
@@ -308,14 +317,23 @@ async fn run_git_log_stats(
     }
 
     let output = Command::new("git")
-        .args(["-C", repo_path, "log", "--topo-order", "--shortstat", "--format=COMMIT:%H"])
+        .args([
+            "-C",
+            repo_path,
+            "log",
+            "--topo-order",
+            "--shortstat",
+            "--format=COMMIT:%H",
+        ])
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .output()
         .await
         .map_err(|e| {
-            ParserError::Parse(format!("failed to run git log --shortstat in '{repo_path}': {e}"))
+            ParserError::Parse(format!(
+                "failed to run git log --shortstat in '{repo_path}': {e}"
+            ))
         })?;
 
     if !output.status.success() {
@@ -332,7 +350,11 @@ async fn run_git_log_stats(
             current_sha = Some(sha.trim().to_owned());
         } else if let Some(sha) = &current_sha {
             let trimmed = line.trim();
-            if trimmed.contains("file") && (trimmed.contains("insertion") || trimmed.contains("deletion") || trimmed.contains("changed")) {
+            if trimmed.contains("file")
+                && (trimmed.contains("insertion")
+                    || trimmed.contains("deletion")
+                    || trimmed.contains("changed"))
+            {
                 map.insert(sha.clone(), parse_stats_line(trimmed));
             }
         }
@@ -396,7 +418,10 @@ fn build_intent(
             field: "author_date".into(),
             confidence: TimingConfidence::Intrinsic,
         },
-        anchor: MaterialAnchor::ByteRange { start: index, len: 1 },
+        anchor: MaterialAnchor::ByteRange {
+            start: index,
+            len: 1,
+        },
         occurrence_key: Some(occurrence_key),
         privacy_context: ProcessingContext::Document,
         field_privacy_log: None,
@@ -463,8 +488,8 @@ crate::register_adapter_ingestor!(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sinex_primitives::ids::Id;
     use sinex_primitives::Uuid;
+    use sinex_primitives::ids::Id;
     use xtask::sandbox::prelude::*;
 
     fn test_ctx() -> ParserContext {
@@ -531,10 +556,7 @@ mod tests {
         let commits = parse_git_log_output(THREE_COMMITS).unwrap();
         let merge = &commits[0];
         assert_eq!(merge.parent_count(), 2);
-        assert_eq!(
-            merge.subject,
-            "Merge branch 'feature'"
-        );
+        assert_eq!(merge.subject, "Merge branch 'feature'");
         Ok(())
     }
 
@@ -580,10 +602,7 @@ mod tests {
         .unwrap();
         let key = intent.occurrence_key.as_ref().unwrap();
         assert_eq!(key.fields[0].0, "commit_sha");
-        assert_eq!(
-            key.fields[0].1,
-            "abc1234def5678901234567890123456789012345"
-        );
+        assert_eq!(key.fields[0].1, "abc1234def5678901234567890123456789012345");
         assert_eq!(key.fields[1].0, "repo_path");
         assert_eq!(key.fields[1].1, "/realm/project/sinex");
         Ok(())
@@ -640,7 +659,10 @@ mod tests {
         let bad = "\x1edeadbeef00000000000000000000000000000000\x1fAuthor\x1femail@example.com\x1fCommitter\x1fcmt@example.com\x1fnot-a-number\x1f\x1fsubject\x1f";
         // parse_commit_chunk rejects a non-numeric timestamp eagerly.
         let result = parse_git_log_output(bad);
-        assert!(result.is_err(), "expected Err for non-numeric timestamp, got Ok");
+        assert!(
+            result.is_err(),
+            "expected Err for non-numeric timestamp, got Ok"
+        );
         let msg = result.unwrap_err().to_string();
         assert!(
             msg.contains("invalid author timestamp"),

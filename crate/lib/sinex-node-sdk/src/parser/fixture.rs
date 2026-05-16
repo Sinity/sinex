@@ -28,14 +28,14 @@ use camino::Utf8PathBuf;
 use serde::{Deserialize, Serialize};
 use tempfile::TempDir;
 
+use sinex_primitives::Uuid;
+use sinex_primitives::events::SourceMaterial;
 use sinex_primitives::ids::Id;
 use sinex_primitives::parser::{
     InputShapeKind, MaterialAnchor, ParsedEventIntent, ParserContext, ParserManifest,
     TimingEvidence,
 };
 use sinex_primitives::temporal::Timestamp;
-use sinex_primitives::Uuid;
-use sinex_primitives::events::SourceMaterial;
 
 use super::{InputShapeAdapter, MaterialParser};
 
@@ -86,9 +86,7 @@ impl ParserTestContext {
     #[must_use]
     pub fn parser_context(&self, record_anchor: MaterialAnchor) -> ParserContext {
         ParserContext {
-            source_unit_id: sinex_primitives::parser::SourceUnitId::from_static(
-                "test-source-unit"
-            ),
+            source_unit_id: sinex_primitives::parser::SourceUnitId::from_static("test-source-unit"),
             source_material_id: self.source_material_id,
             record_anchor,
             operation_id: self.operation_id,
@@ -193,19 +191,13 @@ pub struct FixtureExpectation {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum FixtureAssertion {
     /// Assert that `ts_orig` equals a specific value.
-    Timestamp {
-        value: Timestamp,
-    },
+    Timestamp { value: Timestamp },
 
     /// Assert that the event type field equals a specific value.
-    EventType {
-        expected: String,
-    },
+    EventType { expected: String },
 
     /// Assert that the event source equals a specific value.
-    EventSource {
-        expected: String,
-    },
+    EventSource { expected: String },
 
     /// Assert that a JSON path in the payload equals a value.
     PayloadField {
@@ -216,14 +208,10 @@ pub enum FixtureAssertion {
     },
 
     /// Assert that the anchor matches.
-    Anchor {
-        expected: MaterialAnchor,
-    },
+    Anchor { expected: MaterialAnchor },
 
     /// Assert that the timing evidence matches.
-    Timing {
-        expected: TimingEvidence,
-    },
+    Timing { expected: TimingEvidence },
 
     /// Assert that an occurrence key is present with specific fields.
     OccurrenceKey {
@@ -240,14 +228,10 @@ pub enum FixtureAssertion {
     },
 
     /// Assert that a specific JSON path is present (non-null).
-    FieldPresent {
-        path: String,
-    },
+    FieldPresent { path: String },
 
     /// Assert that a specific JSON path is absent or null.
-    FieldAbsent {
-        path: String,
-    },
+    FieldAbsent { path: String },
 }
 
 // =============================================================================
@@ -355,10 +339,7 @@ impl ParserFixtureHarness {
     /// Load a golden artifact from disk and return the expected JSON value.
     ///
     /// Golden artifacts are cached in memory after first load.
-    pub fn load_golden(
-        &mut self,
-        path: &Utf8PathBuf,
-    ) -> Result<serde_json::Value, String> {
+    pub fn load_golden(&mut self, path: &Utf8PathBuf) -> Result<serde_json::Value, String> {
         if let Some(cached) = self.golden_cache.get(path) {
             return Ok(cached.clone());
         }
@@ -402,13 +383,11 @@ impl ParserFixtureHarness {
         let mut intents: Vec<ParsedEventIntent> = Vec::new();
 
         // Validate manifest matches expectation.
-        if let Some(exp) = spec
-            .expectations
-            .iter()
-            .find(|e| {
-                e.assertions.iter().any(|a| matches!(a, FixtureAssertion::ParserMetadata { .. }))
-            })
-        {
+        if let Some(exp) = spec.expectations.iter().find(|e| {
+            e.assertions
+                .iter()
+                .any(|a| matches!(a, FixtureAssertion::ParserMetadata { .. }))
+        }) {
             for assertion in &exp.assertions {
                 if let FixtureAssertion::ParserMetadata {
                     parser_id,
@@ -555,10 +534,7 @@ impl ParserFixtureHarness {
                     failures.push(FixtureFailure {
                         intent_index: Some(expectation.index),
                         expected: format!("intent at index {}", expectation.index),
-                        found: format!(
-                            "only {} intent(s) produced",
-                            intents.len()
-                        ),
+                        found: format!("only {} intent(s) produced", intents.len()),
                     });
                     continue;
                 };
@@ -574,9 +550,7 @@ impl ParserFixtureHarness {
                                     expected: format!(
                                         "intent matching golden artifact {golden_path}"
                                     ),
-                                    found: format!(
-                                        "golden mismatch (expected != actual)"
-                                    ),
+                                    found: format!("golden mismatch (expected != actual)"),
                                 });
                             }
                         }
@@ -654,9 +628,7 @@ impl ParserFixtureHarness {
                                             expected: format!(
                                                 "occurrence_key fields={expected_fields:?}"
                                             ),
-                                            found: format!(
-                                                "occurrence_key fields={actual:?}"
-                                            ),
+                                            found: format!("occurrence_key fields={actual:?}"),
                                         });
                                     }
                                 }

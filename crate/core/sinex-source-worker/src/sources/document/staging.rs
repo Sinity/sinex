@@ -20,6 +20,7 @@
 
 use async_trait::async_trait;
 use mime_guess::MimeGuess;
+use serde::{Deserialize, Serialize};
 use sinex_node_sdk::parser::{MaterialParser, ParserError, ParserResult};
 use sinex_node_sdk::tags;
 use sinex_primitives::{
@@ -28,21 +29,19 @@ use sinex_primitives::{
         EventPayload,
         payloads::{KnowledgeTagAppliedPayload, document::DocumentIngestedPayload},
     },
-    parser::{
-        InputShapeKind, MaterialAnchor, ParsedEventIntent, ParserId, ParserContext,
-        ParserManifest, SourceRecord, SourceUnitId, TimingEvidence,
-    },
     ids::Id,
+    parser::{
+        InputShapeKind, MaterialAnchor, ParsedEventIntent, ParserContext, ParserId, ParserManifest,
+        SourceRecord, SourceUnitId, TimingEvidence,
+    },
     privacy::{self, ProcessingContext},
     proof::{
-        CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, RetentionPolicy,
-        RuntimeShape, SourceUnitBinding, SourceUnitBuildImpact, SourceUnitDescriptor,
-        SubjectRef,
+        CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, RetentionPolicy, RuntimeShape,
+        SourceUnitBinding, SourceUnitBuildImpact, SourceUnitDescriptor, SubjectRef,
     },
     temporal::Timestamp,
 };
 use sinex_primitives::{register_source_unit, register_source_unit_binding};
-use serde::{Deserialize, Serialize};
 
 // ---------------------------------------------------------------------------
 // Source unit descriptor — "document.staging"
@@ -132,7 +131,9 @@ impl MaterialParser for DocumentStagingParser {
             ],
             privacy_contexts: vec![ProcessingContext::Metadata],
             proof_obligations: vec![],
-            description: "Stages document files and emits document.ingested + auto-tag synthesis events".into(),
+            description:
+                "Stages document files and emits document.ingested + auto-tag synthesis events"
+                    .into(),
         }
     }
 
@@ -157,9 +158,7 @@ impl MaterialParser for DocumentStagingParser {
             .unwrap_or("application/octet-stream")
             .to_string();
 
-        let file_size = std::fs::metadata(&path)
-            .map(|m| m.len())
-            .unwrap_or(0);
+        let file_size = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
 
         let redacted_path = privacy::process(&path, ProcessingContext::Metadata)
             .map(|r| r.text.into_owned())
@@ -182,8 +181,9 @@ impl MaterialParser for DocumentStagingParser {
             parser_version: "1.0.0".into(),
             event_type: payload.event_type(),
             event_source: payload.event_source(),
-            payload: serde_json::to_value(&payload)
-                .map_err(|e| ParserError::Parse(format!("failed to serialize DocumentIngestedPayload: {e}")))?,
+            payload: serde_json::to_value(&payload).map_err(|e| {
+                ParserError::Parse(format!("failed to serialize DocumentIngestedPayload: {e}"))
+            })?,
             ts_orig: Timestamp::now(),
             timing: TimingEvidence::StagedAtFallback,
             anchor: record.anchor.clone(),

@@ -5,9 +5,9 @@
 
 use crate::error_helpers::unix_timestamp_secs_with_warning;
 use crate::self_observation::SelfObserver;
+use futures::future::BoxFuture;
 use parking_lot::Mutex;
 use parking_lot::RwLock;
-use futures::future::BoxFuture;
 use sinex_primitives::env as shared_env;
 use sinex_primitives::{Result, SinexError, events::payloads::process::ProcessStatus};
 use std::collections::VecDeque;
@@ -566,7 +566,10 @@ impl HealthReporter {
                         format!(", emit-stalled: last emit {elapsed}s ago")
                     }
                     None if self.emit_stalled() => {
-                        format!(", emit-stalled: never emitted (uptime {}s)", self.metrics.uptime_secs())
+                        format!(
+                            ", emit-stalled: never emitted (uptime {}s)",
+                            self.metrics.uptime_secs()
+                        )
                     }
                     _ => String::new(),
                 };

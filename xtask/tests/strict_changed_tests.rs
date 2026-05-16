@@ -66,8 +66,8 @@ async fn test_owning_package_finds_direct_parent() -> ::xtask::sandbox::TestResu
     let tmp = scaffold_workspace();
     let root = tmp.path();
 
-    let pkg = owning_package(Path::new("crate/alpha/src/lib.rs"), root)
-        .expect("should resolve to alpha");
+    let pkg =
+        owning_package(Path::new("crate/alpha/src/lib.rs"), root).expect("should resolve to alpha");
     assert_eq!(pkg, "alpha");
     Ok(())
 }
@@ -96,8 +96,8 @@ async fn test_owning_package_finds_nested_file() -> ::xtask::sandbox::TestResult
 // ============================================================================
 
 #[sinex_test]
-async fn test_owning_package_returns_none_for_workspace_root_file() -> ::xtask::sandbox::TestResult<()>
-{
+async fn test_owning_package_returns_none_for_workspace_root_file()
+-> ::xtask::sandbox::TestResult<()> {
     let tmp = scaffold_workspace();
     let root = tmp.path();
 
@@ -116,8 +116,7 @@ async fn test_owning_package_returns_none_for_workspace_root_file() -> ::xtask::
 // ============================================================================
 
 #[sinex_test]
-async fn test_owning_package_ignores_workspace_only_manifest() -> ::xtask::sandbox::TestResult<()>
-{
+async fn test_owning_package_ignores_workspace_only_manifest() -> ::xtask::sandbox::TestResult<()> {
     let tmp = scaffold_workspace();
     let root = tmp.path();
 
@@ -176,10 +175,7 @@ async fn test_changed_strict_deduplicates_packages() -> ::xtask::sandbox::TestRe
     let root = tmp.path();
 
     // Two files in alpha — should collapse to one package entry.
-    fs::write(
-        root.join("crate/alpha/src/extra.rs"),
-        "// extra\n",
-    )?;
+    fs::write(root.join("crate/alpha/src/extra.rs"), "// extra\n")?;
 
     let changed = [
         Path::new("crate/alpha/src/lib.rs"),
@@ -193,7 +189,11 @@ async fn test_changed_strict_deduplicates_packages() -> ::xtask::sandbox::TestRe
         }
     }
 
-    assert_eq!(pkgs.len(), 1, "two alpha files should collapse to one entry");
+    assert_eq!(
+        pkgs.len(),
+        1,
+        "two alpha files should collapse to one entry"
+    );
     assert!(pkgs.contains("alpha"));
     Ok(())
 }

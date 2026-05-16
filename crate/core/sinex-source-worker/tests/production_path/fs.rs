@@ -36,7 +36,12 @@ async fn test_fs_descriptor_registered(_ctx: TestContext) -> TestResult<()> {
     assert_eq!(d.namespace, "filesystem");
 
     let event_types: Vec<&str> = d.event_types.iter().map(|(_, t)| *t).collect();
-    for et in &["file.created", "file.modified", "file.deleted", "file.moved"] {
+    for et in &[
+        "file.created",
+        "file.modified",
+        "file.deleted",
+        "file.moved",
+    ] {
         assert!(
             event_types.contains(et),
             "fs must declare {et} in event_types; got {event_types:?}"

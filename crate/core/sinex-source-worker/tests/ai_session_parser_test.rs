@@ -3,14 +3,14 @@
 //! These tests exercise the parser logic end-to-end using synthetic JSON
 //! payloads that mirror the real GDPR/data-export formats.
 
+use sinex_node_sdk::parser::{MaterialParser, ParserError};
 use sinex_primitives::{
+    Uuid,
     ids::Id,
     parser::{MaterialAnchor, ParserContext, SourceRecord, SourceUnitId},
     temporal::Timestamp,
-    Uuid,
 };
 use sinex_source_worker::sources::ai_session::{ChatGptSessionParser, ClaudeSessionParser};
-use sinex_node_sdk::parser::{MaterialParser, ParserError};
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -99,7 +99,11 @@ async fn claude_parses_two_conversations_into_correct_intent_count() {
         .parse_record(record_for(&bytes), &ctx)
         .await
         .unwrap();
-    assert_eq!(intents.len(), 3, "expected 3 intents across 2 conversations");
+    assert_eq!(
+        intents.len(),
+        3,
+        "expected 3 intents across 2 conversations"
+    );
     assert_eq!(intents[0].event_source.as_static_str(), "claude");
     assert_eq!(intents[0].event_type.as_static_str(), "ai.message");
 }
@@ -159,9 +163,21 @@ async fn claude_anchor_encodes_conv_and_msg_index() {
         .parse_record(record_for(&bytes), &ctx)
         .await
         .unwrap();
-    assert_eq!(intents[0].anchor, MaterialAnchor::ByteRange { start: 0, len: 1 });
-    assert_eq!(intents[1].anchor, MaterialAnchor::ByteRange { start: 1, len: 1 });
-    assert_eq!(intents[2].anchor, MaterialAnchor::ByteRange { start: 1_000_000, len: 1 });
+    assert_eq!(
+        intents[0].anchor,
+        MaterialAnchor::ByteRange { start: 0, len: 1 }
+    );
+    assert_eq!(
+        intents[1].anchor,
+        MaterialAnchor::ByteRange { start: 1, len: 1 }
+    );
+    assert_eq!(
+        intents[2].anchor,
+        MaterialAnchor::ByteRange {
+            start: 1_000_000,
+            len: 1
+        }
+    );
 }
 
 /// Occurrence key fields: [session_id, message_id] in order.

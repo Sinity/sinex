@@ -17,7 +17,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::privacy::{ProcessingContext, Processed, Strategy};
+use crate::privacy::{Processed, ProcessingContext, Strategy};
 
 // Note: not deriving `JsonSchema` because `Strategy` doesn't implement it.
 // `FieldPrivacyDecision` is consumed via `serde_json` not via JSON schema
@@ -82,10 +82,7 @@ impl FieldPrivacyDecision {
     /// Build a decision for a field dropped via `#[suppress_if]` (parser-level
     /// suppression, not engine-level).
     #[must_use]
-    pub fn suppressed_by_predicate(
-        field: impl Into<String>,
-        context: ProcessingContext,
-    ) -> Self {
+    pub fn suppressed_by_predicate(field: impl Into<String>, context: ProcessingContext) -> Self {
         Self {
             field: field.into(),
             context,
@@ -150,10 +147,8 @@ mod tests {
 
     #[sinex_test]
     async fn suppressed_by_predicate_records_suppression() -> xtask::sandbox::TestResult<()> {
-        let d = FieldPrivacyDecision::suppressed_by_predicate(
-            "command",
-            ProcessingContext::Command,
-        );
+        let d =
+            FieldPrivacyDecision::suppressed_by_predicate("command", ProcessingContext::Command);
         assert!(d.suppressed);
         assert!(!d.redacted);
         assert!(!d.whole_event_suppressed);
@@ -164,11 +159,9 @@ mod tests {
 
     #[sinex_test]
     async fn into_whole_event_suppressor_propagates() -> xtask::sandbox::TestResult<()> {
-        let d = FieldPrivacyDecision::suppressed_by_predicate(
-            "command",
-            ProcessingContext::Command,
-        )
-        .into_whole_event_suppressor();
+        let d =
+            FieldPrivacyDecision::suppressed_by_predicate("command", ProcessingContext::Command)
+                .into_whole_event_suppressor();
         assert!(d.whole_event_suppressed);
         assert!(d.suppressed);
         Ok(())
@@ -185,13 +178,13 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn parser_field_privacy_records_redaction_when_engine_fires() -> xtask::sandbox::TestResult<()> {
+    async fn parser_field_privacy_records_redaction_when_engine_fires()
+    -> xtask::sandbox::TestResult<()> {
         // Use a known catalog pattern (GitHub PAT) under the Command context
         // so the engine matches and returns a redacted Cow.
         let token = "ghp_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
         let (processed, decision) =
-            parser_field_privacy("cmd", token, ProcessingContext::Command)
-                .expect("engine init");
+            parser_field_privacy("cmd", token, ProcessingContext::Command).expect("engine init");
         assert!(
             !processed.matched_rules.is_empty(),
             "github_token rule should fire on a ghp_… pattern"
@@ -206,15 +199,13 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn parser_field_privacy_records_no_redaction_when_engine_passes() -> xtask::sandbox::TestResult<()> {
+    async fn parser_field_privacy_records_no_redaction_when_engine_passes()
+    -> xtask::sandbox::TestResult<()> {
         // A plain string with no secret should produce a decision with
         // empty matched_rules and redacted=false.
-        let (processed, decision) = parser_field_privacy(
-            "label",
-            "ordinary text",
-            ProcessingContext::Metadata,
-        )
-        .expect("engine init");
+        let (processed, decision) =
+            parser_field_privacy("label", "ordinary text", ProcessingContext::Metadata)
+                .expect("engine init");
         assert!(processed.matched_rules.is_empty());
         assert!(!decision.redacted);
         assert!(!decision.suppressed);
@@ -223,7 +214,8 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn from_processed_redacted_only_when_rules_matched_and_not_suppressed() -> xtask::sandbox::TestResult<()> {
+    async fn from_processed_redacted_only_when_rules_matched_and_not_suppressed()
+    -> xtask::sandbox::TestResult<()> {
         // The redacted flag is `!matched_rules.is_empty() && !suppressed`.
         // This pins that contract directly without going through the engine.
         let processed = Processed {
@@ -231,11 +223,7 @@ mod tests {
             matched_rules: vec!["github_token".to_string()],
             suppressed: false,
         };
-        let d = FieldPrivacyDecision::from_processed(
-            "f",
-            ProcessingContext::Command,
-            &processed,
-        );
+        let d = FieldPrivacyDecision::from_processed("f", ProcessingContext::Command, &processed);
         assert!(d.redacted);
         assert!(!d.suppressed);
 
@@ -245,11 +233,7 @@ mod tests {
             matched_rules: vec!["github_token".to_string()],
             suppressed: true,
         };
-        let d2 = FieldPrivacyDecision::from_processed(
-            "f",
-            ProcessingContext::Command,
-            &suppressed,
-        );
+        let d2 = FieldPrivacyDecision::from_processed("f", ProcessingContext::Command, &suppressed);
         assert!(d2.suppressed);
         assert!(!d2.redacted, "suppression must override redacted flag");
         Ok(())

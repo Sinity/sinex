@@ -9,7 +9,7 @@
 #![cfg(feature = "messaging")]
 
 use sinex_node_sdk::{
-    AcquisitionManager, SelfObserver, SelfObserverConfig, SOURCE_MATERIAL_STREAM,
+    AcquisitionManager, SOURCE_MATERIAL_STREAM, SelfObserver, SelfObserverConfig,
 };
 use sinex_primitives::environment::environment;
 use std::sync::Arc;
@@ -76,9 +76,10 @@ async fn telemetry_material_registered_before_gauge_event(ctx: TestContext) -> T
     // prime() must commit the source-material BEGIN frame to JetStream and
     // return before any event referencing that material_id is published.
     // This is the structural fix for the DLQ race.
-    observer.prime().await.map_err(|e| {
-        color_eyre::eyre::eyre!("SelfObserver::prime() failed: {e}")
-    })?;
+    observer
+        .prime()
+        .await
+        .map_err(|e| color_eyre::eyre::eyre!("SelfObserver::prime() failed: {e}"))?;
 
     // Now emit a metric.gauge — this event carries the same source_material_id
     // whose BEGIN frame was committed by prime().
@@ -122,8 +123,8 @@ async fn telemetry_material_registered_before_gauge_event(ctx: TestContext) -> T
     // may not exist at all if nothing was ever DLQ'd — treat a missing stream
     // as 0 messages (same semantics as an empty stream).
     let js = nats.jetstream_with_client(ctx.nats_client());
-    let dlq_stream_name = environment()
-        .nats_stream_name_with_namespace(Some(&namespace), "SINEX_RAW_EVENTS_DLQ");
+    let dlq_stream_name =
+        environment().nats_stream_name_with_namespace(Some(&namespace), "SINEX_RAW_EVENTS_DLQ");
     let dlq_messages = js
         .get_stream(&dlq_stream_name)
         .await

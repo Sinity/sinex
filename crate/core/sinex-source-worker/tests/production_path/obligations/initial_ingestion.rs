@@ -26,8 +26,8 @@
 //! conflict detection.
 
 use crate::AdapterKind;
-use sinex_source_worker::dispatch::default_parser_dispatch;
 use sinex_primitives::Uuid;
+use sinex_source_worker::dispatch::default_parser_dispatch;
 
 /// Run the initial ingestion obligation for a source unit.
 ///
@@ -51,8 +51,8 @@ pub async fn run(
     // Verify registry entry exists before dispatching.
     let validated_id = sinex_primitives::parser::SourceUnitId::new(source_unit_id)
         .map_err(|e| format!("invalid source unit id '{source_unit_id}': {e}"))?;
-    let factory = sinex_source_worker::dispatch::find_parser_factory(&validated_id)
-        .ok_or_else(|| {
+    let factory =
+        sinex_source_worker::dispatch::find_parser_factory(&validated_id).ok_or_else(|| {
             format!(
                 "source unit '{source_unit_id}' has no parser registered. \
                  Register it with register_parser!(\"{source_unit_id}\", YourParser) \

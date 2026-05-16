@@ -16,7 +16,6 @@ pub mod schema_registry;
 
 pub use admission::*;
 pub use builder::*;
-pub use occurrence::*;
 pub use payload::*;
 pub use payloads::*;
 

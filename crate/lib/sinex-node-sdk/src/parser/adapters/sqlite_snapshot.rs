@@ -54,8 +54,8 @@ use tracing::{debug, info, warn};
 
 use sinex_primitives::SinexError;
 
-use crate::acquisition_manager::AcquisitionManager;
 use crate::NodeResult;
+use crate::acquisition_manager::AcquisitionManager;
 
 /// Maximum NATS frame payload — must match
 /// `AcquisitionManager::MAX_NATS_PAYLOAD_BYTES`. Slices larger than this are
@@ -437,13 +437,10 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn capture_emits_new_material_when_content_changes(
-        ctx: TestContext,
-    ) -> TestResult<()> {
+    async fn capture_emits_new_material_when_content_changes(ctx: TestContext) -> TestResult<()> {
         let ctx = ctx.with_nats().shared().await?;
         let work_dir = tempfile::tempdir()?;
-        let manager =
-            make_acquisition_manager(work_dir.path(), ctx.nats_client(), "snap-changes");
+        let manager = make_acquisition_manager(work_dir.path(), ctx.nats_client(), "snap-changes");
 
         // Reuse the same path across two distinct DBs by writing through the
         // same NamedTempFile (path stable). We rebuild the DB to mutate

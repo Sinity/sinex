@@ -329,7 +329,7 @@ mod tests {
         DeploymentReadinessMode, DeploymentSecrets, DeploymentTarget,
     };
     use std::env;
-    use xtask::sandbox::{TestResult, sinex_test};
+    use xtask::sandbox::sinex_test;
 
     #[sinex_test]
     async fn configured_path_treats_empty_override_as_disabled() -> TestResult<()> {

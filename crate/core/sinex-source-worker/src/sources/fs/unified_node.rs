@@ -3493,11 +3493,14 @@ mod tests {
                             ResolvedReplayMaterial {
                                 source_material_id: Uuid::now_v7(),
                                 material_kind: "annex".to_string(),
-                                source_identifier: SourceIdentifier::new(
-                                    file_a.display().to_string(),
-                                    sinex_primitives::Id::<sinex_primitives::events::SourceMaterial>::new(),
-                                )
-                                .to_wire(),
+                                source_identifier:
+                                    SourceIdentifier::new(
+                                        file_a.display().to_string(),
+                                        sinex_primitives::Id::<
+                                            sinex_primitives::events::SourceMaterial,
+                                        >::new(),
+                                    )
+                                    .to_wire(),
                                 material_metadata: serde_json::json!({
                                     "logical_source_identifier": file_a.display().to_string()
                                 }),
@@ -3507,11 +3510,14 @@ mod tests {
                             ResolvedReplayMaterial {
                                 source_material_id: Uuid::now_v7(),
                                 material_kind: "annex".to_string(),
-                                source_identifier: SourceIdentifier::new(
-                                    file_b.display().to_string(),
-                                    sinex_primitives::Id::<sinex_primitives::events::SourceMaterial>::new(),
-                                )
-                                .to_wire(),
+                                source_identifier:
+                                    SourceIdentifier::new(
+                                        file_b.display().to_string(),
+                                        sinex_primitives::Id::<
+                                            sinex_primitives::events::SourceMaterial,
+                                        >::new(),
+                                    )
+                                    .to_wire(),
                                 material_metadata: serde_json::json!({
                                     "logical_source_identifier": file_b.display().to_string()
                                 }),

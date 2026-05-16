@@ -7,54 +7,41 @@
 
 #[cfg(feature = "messaging")]
 use super::control_protocol::{ControlCommandKind, NodeDrainComplete, control_command_kind};
-use super::control_protocol::{
-    MAX_CONTROL_MESSAGE_BYTES, encode_control_message, ensure_control_payload_fits,
-};
 use super::listener::{
-    CONFIRMED_EVENT_CHANNEL_CAPACITY, LISTENER_RETRY_DELAY, LISTENER_STARTUP_GRACE_PERIOD,
-    RunnerConfirmedEventHandler, TASK_SHUTDOWN_GRACE_PERIOD, create_checkpoint_kv,
-    maybe_start_schema_listener, run_resubscribing_listener,
+    CONFIRMED_EVENT_CHANNEL_CAPACITY, LISTENER_RETRY_DELAY, RunnerConfirmedEventHandler,
+    TASK_SHUTDOWN_GRACE_PERIOD, create_checkpoint_kv, maybe_start_schema_listener,
+    run_resubscribing_listener,
 };
 use super::{
-    Checkpoint, ContinuousStart, EventEmitter, EventSender, EventStream, MaterialReplayContext,
-    Node, NodeCapabilities, NodeHandles, NodeInitContext, NodeRuntimeState, NodeScanAck,
-    NodeScanCommand, NodeScanProgress, NodeType, ProcessingStats, ResolvedReplayMaterial,
-    RunnerLifecycle, RuntimeDrainController, ScanArgs, ScanEstimate, ScanReport,
-    SchemaBroadcastCache, SchemaBroadcastEntry, ServiceInfo, TimeHorizon,
+    Checkpoint, EventEmitter, Node, NodeCapabilities, NodeHandles, NodeInitContext,
+    NodeRuntimeState, NodeScanAck, NodeScanCommand, NodeScanProgress, NodeType, RunnerLifecycle,
+    RuntimeDrainController, ScanArgs, ScanEstimate, ScanReport, ServiceInfo, TimeHorizon,
 };
 use crate::{
     NodeResult, SinexError,
     checkpoint::CheckpointManager,
-    confirmation_handler::{ConfirmedEventHandler, ProcessingModel, ProvisionalEvent},
+    confirmation_handler::{ProcessingModel, ProvisionalEvent},
     event_node::{EventBatcherConfig, EventTransport, spawn_event_batcher},
     jetstream_consumer::{JetStreamEventConsumer, JetStreamEventConsumerConfig},
     systemd_notify,
 };
-use async_nats::jetstream::kv;
 use camino::Utf8PathBuf;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 #[cfg(feature = "db")]
 use sinex_db::DbPool as PgPool;
-use sinex_db::SourceMaterialRecord;
 use sinex_db::models::SourceMaterial;
 use sinex_db::repositories::DbPoolExt;
 use sinex_primitives::events::Event;
 use sinex_primitives::events::builder::{EventId, Provenance};
-use sinex_primitives::nats::{
-    NatsTrafficClass, create_or_open_kv_store, insert_traffic_class_header,
-};
 use sinex_primitives::{
     EventSource, EventType, HostName, Id, JsonValue, OffsetKind, Timestamp, Uuid,
-    domain::{NodeName, NodeState},
-    non_empty::NonEmptyVec,
+    domain::NodeState, non_empty::NonEmptyVec,
 };
-use std::collections::{BTreeMap, HashMap};
-use std::future::Future;
+use std::collections::HashMap;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
-use std::time::Duration;
 use tokio::sync::mpsc;
-use tokio::sync::{RwLock, oneshot, watch};
+use tokio::sync::watch;
 use tokio_stream::StreamExt;
 use tracing::{debug, error, info, warn};
 

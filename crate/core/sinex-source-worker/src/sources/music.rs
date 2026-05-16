@@ -138,9 +138,8 @@ impl MaterialParser for SpotifyHistoryParser {
         record: SourceRecord,
         ctx: &ParserContext,
     ) -> ParserResult<Vec<ParsedEventIntent>> {
-        let rows: Vec<SpotifyExportRow> = serde_json::from_slice(&record.bytes).map_err(|e| {
-            ParserError::Parse(format!("invalid Spotify export JSON array: {e}"))
-        })?;
+        let rows: Vec<SpotifyExportRow> = serde_json::from_slice(&record.bytes)
+            .map_err(|e| ParserError::Parse(format!("invalid Spotify export JSON array: {e}")))?;
 
         let mut intents = Vec::with_capacity(rows.len());
 
@@ -309,11 +308,11 @@ crate::register_adapter_ingestor!(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sinex_primitives::Uuid;
     use sinex_primitives::ids::Id;
     use sinex_primitives::parser::MaterialAnchor;
-    use sinex_primitives::Uuid;
-    use xtask::sandbox::prelude::sinex_test;
     use xtask::sandbox::TestResult;
+    use xtask::sandbox::prelude::sinex_test;
 
     fn test_ctx() -> ParserContext {
         ParserContext {
@@ -462,8 +461,14 @@ mod tests {
             .await
             .unwrap();
         let key = intents[0].occurrence_key.as_ref().unwrap();
-        assert_eq!(key.fields[0], ("track_name".to_string(), "Track".to_string()));
-        assert_eq!(key.fields[1], ("artist_name".to_string(), "Artist".to_string()));
+        assert_eq!(
+            key.fields[0],
+            ("track_name".to_string(), "Track".to_string())
+        );
+        assert_eq!(
+            key.fields[1],
+            ("artist_name".to_string(), "Artist".to_string())
+        );
         Ok(())
     }
 
@@ -513,7 +518,10 @@ mod tests {
             .unwrap();
 
         let payload = &intents[0].payload;
-        assert!(payload.get("ip_addr").is_none(), "ip_addr must not be carried");
+        assert!(
+            payload.get("ip_addr").is_none(),
+            "ip_addr must not be carried"
+        );
         assert!(
             payload.get("user_agent_decrypted").is_none(),
             "user_agent_decrypted must not be carried"

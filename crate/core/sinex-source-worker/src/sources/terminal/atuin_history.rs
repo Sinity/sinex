@@ -15,23 +15,20 @@
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
-use sinex_node_sdk::parser::{
-    MaterialParser, ParserError, ParserResult, SqliteRowAdapter,
-};
+use sinex_node_sdk::parser::{MaterialParser, ParserError, ParserResult, SqliteRowAdapter};
 use sinex_primitives::domain::{EventSource, EventType};
 use sinex_primitives::events::payloads::shell::AtuinCommandExecutedPayload;
 use sinex_primitives::parser::{
-    InputShapeKind, ParsedEventIntent, ParserContext, ParserId, ParserManifest,
-    SourceUnitId, TimingConfidence, TimingEvidence,
+    InputShapeKind, ParsedEventIntent, ParserContext, ParserId, ParserManifest, SourceUnitId,
+    TimingConfidence, TimingEvidence,
 };
 use sinex_primitives::privacy::ProcessingContext;
 use sinex_primitives::proof::{
-    CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, RetentionPolicy,
-    RuntimeShape, SourceUnitBinding, SourceUnitBuildImpact, SourceUnitDescriptor,
-    SubjectRef,
+    CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, RetentionPolicy, RuntimeShape,
+    SourceUnitBinding, SourceUnitBuildImpact, SourceUnitDescriptor, SubjectRef,
 };
-use sinex_primitives::{register_source_unit, register_source_unit_binding};
 use sinex_primitives::temporal::Timestamp;
+use sinex_primitives::{register_source_unit, register_source_unit_binding};
 
 use crate::register_adapter_ingestor;
 
@@ -159,18 +156,9 @@ impl MaterialParser for AtuinHistoryParser {
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string();
-        let timestamp_ns = row
-            .get("timestamp")
-            .and_then(|v| v.as_i64())
-            .unwrap_or(0);
-        let duration_ns = row
-            .get("duration")
-            .and_then(|v| v.as_i64())
-            .unwrap_or(0);
-        let exit_code = row
-            .get("exit")
-            .and_then(|v| v.as_i64())
-            .unwrap_or(0);
+        let timestamp_ns = row.get("timestamp").and_then(|v| v.as_i64()).unwrap_or(0);
+        let duration_ns = row.get("duration").and_then(|v| v.as_i64()).unwrap_or(0);
+        let exit_code = row.get("exit").and_then(|v| v.as_i64()).unwrap_or(0);
 
         // Apply privacy processing.
         let command_processed = {

@@ -192,7 +192,10 @@ async fn unknown_type_falls_back_to_document_category() -> TestResult<()> {
         .reconcile(&mut state, &scope, payload, &make_context(t0))
         .await?;
 
-    assert_eq!(outputs[0].payload.refined_category, EntityCategory::Document);
+    assert_eq!(
+        outputs[0].payload.refined_category,
+        EntityCategory::Document
+    );
     Ok(())
 }
 

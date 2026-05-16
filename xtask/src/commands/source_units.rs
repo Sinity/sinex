@@ -433,9 +433,7 @@ fn canonical_source_unit_descriptor(
         nix_output_impact: build_impact.nix_output_impact.to_string(),
         derivation_impact: build_impact.derivation_impact.to_string(),
         sqlx_validation_impact: build_impact.sqlx_validation_impact.to_string(),
-        dedicated_build_rationale: build_impact
-            .dedicated_build_rationale
-            .map(str::to_string),
+        dedicated_build_rationale: build_impact.dedicated_build_rationale.map(str::to_string),
     }
 }
 
@@ -689,13 +687,7 @@ fn validate_source_units(
         .filter_map(|binding| {
             (!binding.source_unit_id.is_empty()
                 && !registered_descriptor_ids.contains(binding.source_unit_id))
-            .then(|| {
-                format!(
-                    "{}->{}",
-                    binding.subject.as_str(),
-                    binding.source_unit_id
-                )
-            })
+            .then(|| format!("{}->{}", binding.subject.as_str(), binding.source_unit_id))
         })
         .collect::<Vec<_>>();
     unresolved_binding_source_unit_ids.sort();

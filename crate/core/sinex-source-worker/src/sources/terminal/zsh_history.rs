@@ -11,22 +11,21 @@
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
-use sinex_node_sdk::parser::{AppendOnlyFileAdapter, MaterialParser, ParserError, ParserResult};
 use sinex_node_sdk::parser::dedup::ContentHashWindow;
+use sinex_node_sdk::parser::{AppendOnlyFileAdapter, MaterialParser, ParserError, ParserResult};
 use sinex_primitives::domain::{EventSource, EventType};
 use sinex_primitives::events::payloads::shell::HistoryCommandImportedPayload;
 use sinex_primitives::parser::{
-    InputShapeKind, ParsedEventIntent, ParserContext, ParserId, ParserManifest,
-    SourceUnitId, TimingConfidence, TimingEvidence,
+    InputShapeKind, ParsedEventIntent, ParserContext, ParserId, ParserManifest, SourceUnitId,
+    TimingConfidence, TimingEvidence,
 };
 use sinex_primitives::privacy::ProcessingContext;
 use sinex_primitives::proof::{
-    CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, RetentionPolicy,
-    RuntimeShape, SourceUnitBinding, SourceUnitBuildImpact, SourceUnitDescriptor,
-    SubjectRef,
+    CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, RetentionPolicy, RuntimeShape,
+    SourceUnitBinding, SourceUnitBuildImpact, SourceUnitDescriptor, SubjectRef,
 };
-use sinex_primitives::{register_source_unit, register_source_unit_binding};
 use sinex_primitives::temporal::Timestamp;
+use sinex_primitives::{register_source_unit, register_source_unit_binding};
 
 use crate::register_adapter_ingestor;
 

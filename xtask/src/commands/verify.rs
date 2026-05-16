@@ -1071,15 +1071,30 @@ enum SwCheckStatus {
 
 impl SwCheck {
     fn pass(name: &'static str, detail: impl Into<String>) -> Self {
-        Self { name, status: SwCheckStatus::Pass, detail: detail.into(), items: Vec::new() }
+        Self {
+            name,
+            status: SwCheckStatus::Pass,
+            detail: detail.into(),
+            items: Vec::new(),
+        }
     }
 
     fn warn(name: &'static str, detail: impl Into<String>, items: Vec<String>) -> Self {
-        Self { name, status: SwCheckStatus::Warn, detail: detail.into(), items }
+        Self {
+            name,
+            status: SwCheckStatus::Warn,
+            detail: detail.into(),
+            items,
+        }
     }
 
     fn fail(name: &'static str, detail: impl Into<String>, items: Vec<String>) -> Self {
-        Self { name, status: SwCheckStatus::Fail, detail: detail.into(), items }
+        Self {
+            name,
+            status: SwCheckStatus::Fail,
+            detail: detail.into(),
+            items,
+        }
     }
 
     fn is_fail(&self) -> bool {
@@ -1111,7 +1126,11 @@ fn execute_source_worker(
     checks.push(check_sw_binding_drift(&root, bindings_json));
 
     // A3.1.3 — Ingestor crates gone (or warn)
-    checks.push(check_sw_ingestor_crates(&root, expect_deleted, warn_ingestors));
+    checks.push(check_sw_ingestor_crates(
+        &root,
+        expect_deleted,
+        warn_ingestors,
+    ));
 
     // A3.1.4 — Workspace member count
     checks.push(check_sw_member_count(&root, expected_members));
@@ -1131,7 +1150,10 @@ fn execute_source_worker(
         SwCheckStatus::Pass
     };
 
-    let report = SourceWorkerReport { overall: overall.clone(), checks: checks.clone() };
+    let report = SourceWorkerReport {
+        overall: overall.clone(),
+        checks: checks.clone(),
+    };
 
     if json {
         println!("{}", serde_json::to_string_pretty(&report)?);
@@ -1156,20 +1178,31 @@ fn execute_source_worker(
     // states (regressions in dispatch cleanliness, workspace member count, registered
     // parsers, or privacy invocation) block the PR.
     let mut result = match &overall {
-        SwCheckStatus::Pass => CommandResult::success().with_message("source-worker integrity: all checks passed"),
-        SwCheckStatus::Warn => CommandResult::success().with_message("source-worker integrity: warnings present (advisory)"),
-        SwCheckStatus::Fail => CommandResult::failure(
-            crate::output::StructuredError::new(
-                "SOURCE_WORKER_INTEGRITY",
-                "source-worker integrity: one or more checks failed",
-            )
-        ).with_message("source-worker integrity: FAILED"),
+        SwCheckStatus::Pass => {
+            CommandResult::success().with_message("source-worker integrity: all checks passed")
+        }
+        SwCheckStatus::Warn => CommandResult::success()
+            .with_message("source-worker integrity: warnings present (advisory)"),
+        SwCheckStatus::Fail => CommandResult::failure(crate::output::StructuredError::new(
+            "SOURCE_WORKER_INTEGRITY",
+            "source-worker integrity: one or more checks failed",
+        ))
+        .with_message("source-worker integrity: FAILED"),
     };
 
     result = result
         .with_detail(format!("checks={}", checks.len()))
-        .with_detail(format!("failed={}", checks.iter().filter(|c| c.is_fail()).count()))
-        .with_detail(format!("warned={}", checks.iter().filter(|c| c.status == SwCheckStatus::Warn).count()))
+        .with_detail(format!(
+            "failed={}",
+            checks.iter().filter(|c| c.is_fail()).count()
+        ))
+        .with_detail(format!(
+            "warned={}",
+            checks
+                .iter()
+                .filter(|c| c.status == SwCheckStatus::Warn)
+                .count()
+        ))
         .with_data(serde_json::to_value(&report)?)
         .with_duration(ctx.elapsed());
 
@@ -1185,8 +1218,8 @@ fn check_sw_no_match_arms(root: &Path) -> SwCheck {
 
     // Pattern: a quoted source-unit name followed by `=>` (match arm).
     // Legitimate dispatch is registry-driven and has none of these.
-    let arm_pattern = regex::Regex::new(r#""[a-z_][a-z0-9_.-]*"\s*=>"#)
-        .expect("static regex is valid");
+    let arm_pattern =
+        regex::Regex::new(r#""[a-z_][a-z0-9_.-]*"\s*=>"#).expect("static regex is valid");
 
     let mut hits: Vec<String> = Vec::new();
     for path in &targets {
@@ -1211,11 +1244,17 @@ fn check_sw_no_match_arms(root: &Path) -> SwCheck {
     }
 
     if hits.is_empty() {
-        SwCheck::pass("no_match_arms", "no source-unit match arms in dispatch/main")
+        SwCheck::pass(
+            "no_match_arms",
+            "no source-unit match arms in dispatch/main",
+        )
     } else {
         SwCheck::fail(
             "no_match_arms",
-            format!("{} match arm(s) found — dispatch must be registry-driven", hits.len()),
+            format!(
+                "{} match arm(s) found — dispatch must be registry-driven",
+                hits.len()
+            ),
             hits,
         )
     }
@@ -1253,7 +1292,7 @@ fn check_sw_binding_drift(root: &Path, bindings_json: Option<&Path>) -> SwCheck 
                     "binding_drift",
                     format!("cannot read bindings JSON {}: {e}", json_path.display()),
                     Vec::new(),
-                )
+                );
             }
         };
         let parsed: serde_json::Value = match serde_json::from_str(&json_src) {
@@ -1263,7 +1302,7 @@ fn check_sw_binding_drift(root: &Path, bindings_json: Option<&Path>) -> SwCheck 
                     "binding_drift",
                     format!("cannot parse bindings JSON {}: {e}", json_path.display()),
                     Vec::new(),
-                )
+                );
             }
         };
         // Shape: { "bindings": [{ "sourceUnitId": "..." | null, ... }] }
@@ -1286,11 +1325,11 @@ fn check_sw_binding_drift(root: &Path, bindings_json: Option<&Path>) -> SwCheck 
                     "binding_drift",
                     format!("cannot read {}: {e}", bindings_nix.display()),
                     Vec::new(),
-                )
+                );
             }
         };
-        let value_pattern = regex::Regex::new(r#"sourceUnitId\s*=\s*"([^"]+)""#)
-            .expect("static regex is valid");
+        let value_pattern =
+            regex::Regex::new(r#"sourceUnitId\s*=\s*"([^"]+)""#).expect("static regex is valid");
         let ids: BTreeSet<String> = value_pattern
             .captures_iter(&nix_source)
             .map(|cap| cap[1].to_string())
@@ -1340,7 +1379,12 @@ fn check_sw_binding_drift(root: &Path, bindings_json: Option<&Path>) -> SwCheck 
         // Static mode (or live mode with no rust-only): warn-only.
         SwCheck::warn(
             "binding_drift",
-            format!("{} nix-only, {} rust-only ({})", nix_only.len(), rust_only.len(), mode_label),
+            format!(
+                "{} nix-only, {} rust-only ({})",
+                nix_only.len(),
+                rust_only.len(),
+                mode_label
+            ),
             items,
         )
     }
@@ -1375,7 +1419,7 @@ fn check_sw_ingestor_crates(
                 "ingestor_crates",
                 format!("cannot read {}: {err}", nodes_dir.display()),
                 Vec::new(),
-            )
+            );
         }
     };
 
@@ -1383,7 +1427,11 @@ fn check_sw_ingestor_crates(
         .filter_map(|e| e.ok())
         .filter_map(|e| {
             let name = e.file_name().to_string_lossy().into_owned();
-            if name.ends_with("-ingestor") { Some(name) } else { None }
+            if name.ends_with("-ingestor") {
+                Some(name)
+            } else {
+                None
+            }
         })
         .collect();
     present.sort();
@@ -1398,16 +1446,25 @@ fn check_sw_ingestor_crates(
     if !hard_fail.is_empty() {
         return SwCheck::fail(
             "ingestor_crates",
-            format!("{} crate(s) declared --expect-deleted are still present", hard_fail.len()),
+            format!(
+                "{} crate(s) declared --expect-deleted are still present",
+                hard_fail.len()
+            ),
             hard_fail,
         );
     }
 
     if present.is_empty() {
-        return SwCheck::pass("ingestor_crates", "no ingestor crates remain in crate/nodes/");
+        return SwCheck::pass(
+            "ingestor_crates",
+            "no ingestor crates remain in crate/nodes/",
+        );
     }
 
-    let detail = format!("{} ingestor crate(s) still present in crate/nodes/", present.len());
+    let detail = format!(
+        "{} ingestor crate(s) still present in crate/nodes/",
+        present.len()
+    );
     if warn_ingestors {
         SwCheck::warn("ingestor_crates", detail, present)
     } else {
@@ -1429,7 +1486,7 @@ fn check_sw_member_count(root: &Path, expected: usize) -> SwCheck {
                 "member_count",
                 format!("cannot read Cargo.toml: {e}"),
                 Vec::new(),
-            )
+            );
         }
     };
 
@@ -1501,18 +1558,16 @@ fn check_sw_registered_parsers(root: &Path) -> SwCheck {
 
 /// Walk `.rs` files under `dir`, extract capture group 1 and 2 from `pattern`
 /// as `"source_unit_id -> TypeName"` strings, push to `out`.
-fn scan_rs_files_for_pattern(
-    dir: &Path,
-    pattern: &regex::Regex,
-    out: &mut Vec<String>,
-) {
+fn scan_rs_files_for_pattern(dir: &Path, pattern: &regex::Regex, out: &mut Vec<String>) {
     let Ok(rd) = fs::read_dir(dir) else { return };
     for entry in rd.filter_map(|e| e.ok()) {
         let path = entry.path();
         if path.is_dir() {
             scan_rs_files_for_pattern(&path, pattern, out);
         } else if path.extension().is_some_and(|e| e == "rs") {
-            let Ok(contents) = fs::read_to_string(&path) else { continue };
+            let Ok(contents) = fs::read_to_string(&path) else {
+                continue;
+            };
             for cap in pattern.captures_iter(&contents) {
                 let source_unit_id = &cap[1];
                 let parser_type = &cap[2];
@@ -1559,7 +1614,12 @@ fn check_sw_privacy_invocation(root: &Path) -> SwCheck {
     let mut violations: Vec<String> = Vec::new();
 
     for search_root in &search_roots {
-        collect_privacy_violations(search_root, NON_PUBLIC_TIERS, PRIVACY_INDICATORS, &mut violations);
+        collect_privacy_violations(
+            search_root,
+            NON_PUBLIC_TIERS,
+            PRIVACY_INDICATORS,
+            &mut violations,
+        );
     }
 
     if violations.is_empty() {
@@ -1597,7 +1657,9 @@ fn collect_privacy_violations(
         if path.is_dir() {
             collect_privacy_violations(&path, non_public_tiers, privacy_indicators, out);
         } else if path.extension().is_some_and(|e| e == "rs") {
-            let Ok(contents) = fs::read_to_string(&path) else { continue };
+            let Ok(contents) = fs::read_to_string(&path) else {
+                continue;
+            };
 
             // Only examine files that register a source unit.
             if !contents.contains("register_source_unit!") {
@@ -1622,14 +1684,10 @@ fn collect_privacy_violations(
                 .and_then(|parent| fs::read_dir(parent).ok())
                 .map(|rd| {
                     rd.filter_map(|e| e.ok())
-                        .filter(|e| {
-                            e.path().extension().is_some_and(|ext| ext == "rs")
-                        })
+                        .filter(|e| e.path().extension().is_some_and(|ext| ext == "rs"))
                         .any(|e| {
                             fs::read_to_string(e.path())
-                                .map(|c| {
-                                    privacy_indicators.iter().any(|ind| c.contains(ind))
-                                })
+                                .map(|c| privacy_indicators.iter().any(|ind| c.contains(ind)))
                                 .unwrap_or(false)
                         })
                 })
@@ -1736,7 +1794,10 @@ async fn execute_closure(
     }
 
     if ctx.is_human() && !json {
-        println!("Issue #{issue}: {} verification command(s) found", commands.len());
+        println!(
+            "Issue #{issue}: {} verification command(s) found",
+            commands.len()
+        );
         if dry_run {
             println!("Dry-run mode — printing commands without executing:");
             for cmd in &commands {
@@ -1816,7 +1877,15 @@ async fn execute_closure(
 /// Fetch the body of a GitHub issue via the `gh` CLI.
 fn fetch_issue_body(issue: u64) -> Result<String> {
     let output = Command::new("gh")
-        .args(["issue", "view", &issue.to_string(), "--json", "body", "--jq", ".body"])
+        .args([
+            "issue",
+            "view",
+            &issue.to_string(),
+            "--json",
+            "body",
+            "--jq",
+            ".body",
+        ])
         .output();
 
     match output {
@@ -1832,8 +1901,8 @@ fn fetch_issue_body(issue: u64) -> Result<String> {
             bail!("gh issue view #{issue} failed: {stderr}")
         }
         Ok(out) => {
-            let body = String::from_utf8(out.stdout)
-                .with_context(|| "gh output is not valid UTF-8")?;
+            let body =
+                String::from_utf8(out.stdout).with_context(|| "gh output is not valid UTF-8")?;
             Ok(body.trim().to_string())
         }
     }
@@ -1859,7 +1928,8 @@ fn extract_closure_commands(body: &str) -> Vec<String> {
         // Detect section headings that indicate verification context.
         if trimmed.starts_with('#') {
             let heading_lower = trimmed.to_lowercase();
-            in_verify_section = heading_lower.contains("verif") || heading_lower.contains("closure");
+            in_verify_section =
+                heading_lower.contains("verif") || heading_lower.contains("closure");
         }
 
         // Code block start/end.
@@ -1901,9 +1971,7 @@ fn extract_closure_commands(body: &str) -> Vec<String> {
 
 /// Run a single shell command and capture its outcome.
 fn run_shell_command(cmd: &str) -> ClosureCommandResult {
-    let result = Command::new("sh")
-        .args(["-c", cmd])
-        .output();
+    let result = Command::new("sh").args(["-c", cmd]).output();
 
     match result {
         Err(e) => ClosureCommandResult {
@@ -2089,8 +2157,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn extract_closure_commands_strips_dollar_prompt()
-    -> ::xtask::sandbox::TestResult<()> {
+    async fn extract_closure_commands_strips_dollar_prompt() -> ::xtask::sandbox::TestResult<()> {
         let body = "## Verification\n\n```bash\n$ git show HEAD --stat\n```\n";
         let cmds = extract_closure_commands(body);
         assert_eq!(cmds.len(), 1);
@@ -2099,8 +2166,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn extract_closure_commands_ignores_comment_lines()
-    -> ::xtask::sandbox::TestResult<()> {
+    async fn extract_closure_commands_ignores_comment_lines() -> ::xtask::sandbox::TestResult<()> {
         let body = "## Verification\n\n```bash\n# this is a comment\nxtask check\n```\n";
         let cmds = extract_closure_commands(body);
         assert_eq!(cmds.len(), 1);
@@ -2112,7 +2178,11 @@ mod tests {
     async fn preview_output_truncates_long_text() -> ::xtask::sandbox::TestResult<()> {
         let long = "a".repeat(300);
         let preview = preview_output(long.as_bytes(), 200);
-        assert!(preview.chars().count() <= 210, "preview too long: {}", preview.chars().count());
+        assert!(
+            preview.chars().count() <= 210,
+            "preview too long: {}",
+            preview.chars().count()
+        );
         assert!(preview.ends_with('…'), "should end with ellipsis");
         Ok(())
     }
@@ -2141,7 +2211,11 @@ mod tests {
         let root = crate::config::workspace_root();
         // Current real member count is 20. Asking for 5 should be a mismatch.
         let check = check_sw_member_count(&root, 5);
-        assert!(check.is_fail(), "wrong expected count should fail: {:?}", check.detail);
+        assert!(
+            check.is_fail(),
+            "wrong expected count should fail: {:?}",
+            check.detail
+        );
         Ok(())
     }
 

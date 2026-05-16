@@ -28,8 +28,8 @@ pub type SqliteRow<'a> = &'a [(&'a str, &'a str)];
 /// Returns an error if the DB cannot be created or populated.
 pub fn build(table_ddl: &str, rows: &[&[(&str, &str)]]) -> Result<FixtureHandle, String> {
     // Create the temp file first so it has a path; rusqlite opens by path.
-    let tmp = NamedTempFile::new()
-        .map_err(|e| format!("failed to create sqlite temp file: {e}"))?;
+    let tmp =
+        NamedTempFile::new().map_err(|e| format!("failed to create sqlite temp file: {e}"))?;
     let path: PathBuf = tmp.path().to_owned();
 
     {
@@ -52,10 +52,8 @@ pub fn build(table_ddl: &str, rows: &[&[(&str, &str)]]) -> Result<FixtureHandle,
                 cols = cols.join(", "),
                 placeholders = placeholders.join(", "),
             );
-            let values: Vec<&dyn rusqlite::ToSql> = row
-                .iter()
-                .map(|(_, v)| v as &dyn rusqlite::ToSql)
-                .collect();
+            let values: Vec<&dyn rusqlite::ToSql> =
+                row.iter().map(|(_, v)| v as &dyn rusqlite::ToSql).collect();
             conn.execute(&sql, rusqlite::params_from_iter(values.iter()))
                 .map_err(|e| format!("failed to insert sqlite fixture row: {e}"))?;
         }
@@ -63,7 +61,10 @@ pub fn build(table_ddl: &str, rows: &[&[(&str, &str)]]) -> Result<FixtureHandle,
 
     // Keep the NamedTempFile alive via TempPath so it isn't deleted before the test completes.
     let temp_path: TempPath = tmp.into_temp_path();
-    Ok(FixtureHandle::with_resource(FixtureBinding::FilePath(path), temp_path))
+    Ok(FixtureHandle::with_resource(
+        FixtureBinding::FilePath(path),
+        temp_path,
+    ))
 }
 
 /// Build a SQLite fixture from raw INSERT statements embedded in `data` bytes.
@@ -83,8 +84,8 @@ pub fn build_from_bytes(data: &[u8]) -> Result<FixtureHandle, String> {
         return Err("sqlite fixture data is empty".to_string());
     }
 
-    let tmp = NamedTempFile::new()
-        .map_err(|e| format!("failed to create sqlite temp file: {e}"))?;
+    let tmp =
+        NamedTempFile::new().map_err(|e| format!("failed to create sqlite temp file: {e}"))?;
     let path: PathBuf = tmp.path().to_owned();
     {
         let conn = rusqlite::Connection::open(&path)
@@ -95,7 +96,10 @@ pub fn build_from_bytes(data: &[u8]) -> Result<FixtureHandle, String> {
         }
     }
     let temp_path: TempPath = tmp.into_temp_path();
-    Ok(FixtureHandle::with_resource(FixtureBinding::FilePath(path), temp_path))
+    Ok(FixtureHandle::with_resource(
+        FixtureBinding::FilePath(path),
+        temp_path,
+    ))
 }
 
 fn extract_table_name(ddl: &str) -> Result<String, String> {

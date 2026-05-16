@@ -618,10 +618,7 @@ impl SelfObserver {
     ) -> Result<(), SelfObservationError> {
         // Cap the recorded token prefix at 8 chars defensively even if a
         // caller passed a longer string.
-        let prefix = token_prefix
-            .chars()
-            .take(8)
-            .collect::<String>();
+        let prefix = token_prefix.chars().take(8).collect::<String>();
         self.publish(GatewayRpcCallPayload {
             method: method.to_string(),
             role: role.to_string(),

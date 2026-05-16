@@ -351,8 +351,8 @@ impl Drop for ActiveWorkGuard<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use xtask::sandbox::prelude::sinex_test;
     use std::time::Duration;
+    use xtask::sandbox::prelude::sinex_test;
 
     #[sinex_test]
     async fn test_drain_phases_transition_in_order() -> xtask::sandbox::TestResult<()> {
@@ -363,19 +363,36 @@ mod tests {
         assert_eq!(controller.current_phase().await, DrainPhase::StoppingAccept);
 
         controller.finish_active_work("test-unit").await;
-        assert_eq!(controller.current_phase().await, DrainPhase::FinishingActive);
+        assert_eq!(
+            controller.current_phase().await,
+            DrainPhase::FinishingActive
+        );
 
         controller.flush_intents("test-unit").await;
-        assert_eq!(controller.current_phase().await, DrainPhase::FlushingIntents);
+        assert_eq!(
+            controller.current_phase().await,
+            DrainPhase::FlushingIntents
+        );
 
-        controller.wait_confirmations("test-unit", Duration::from_millis(10)).await;
-        assert_eq!(controller.current_phase().await, DrainPhase::WaitingConfirmations);
+        controller
+            .wait_confirmations("test-unit", Duration::from_millis(10))
+            .await;
+        assert_eq!(
+            controller.current_phase().await,
+            DrainPhase::WaitingConfirmations
+        );
 
         controller.finalize_materials("test-unit").await;
-        assert_eq!(controller.current_phase().await, DrainPhase::FinalizingMaterials);
+        assert_eq!(
+            controller.current_phase().await,
+            DrainPhase::FinalizingMaterials
+        );
 
         controller.save_checkpoint("test-unit").await;
-        assert_eq!(controller.current_phase().await, DrainPhase::SavingCheckpoint);
+        assert_eq!(
+            controller.current_phase().await,
+            DrainPhase::SavingCheckpoint
+        );
 
         controller.mark_drained("test-unit").await;
         assert_eq!(controller.current_phase().await, DrainPhase::Drained);
@@ -405,14 +422,18 @@ mod tests {
         assert_eq!(controller.active_work_count(), 1);
 
         // With active work, wait should time out
-        let completed = controller.wait_for_active_work(Duration::from_millis(10)).await;
+        let completed = controller
+            .wait_for_active_work(Duration::from_millis(10))
+            .await;
         assert!(!completed, "should not complete with active work");
 
         controller.exit_work();
         assert_eq!(controller.active_work_count(), 0);
 
         // Without active work, wait should complete
-        let completed = controller.wait_for_active_work(Duration::from_millis(10)).await;
+        let completed = controller
+            .wait_for_active_work(Duration::from_millis(10))
+            .await;
         assert!(completed, "should complete when no active work");
         Ok(())
     }
@@ -437,7 +458,10 @@ mod tests {
         // Simulate crash mid-drain
         let evidence = controller.record_gap_evidence("test-unit").await;
         assert_eq!(evidence.unit_id, "test-unit");
-        assert_eq!(evidence.drain_phase_at_crash, Some(DrainPhase::StoppingAccept));
+        assert_eq!(
+            evidence.drain_phase_at_crash,
+            Some(DrainPhase::StoppingAccept)
+        );
         assert_eq!(evidence.in_flight_count, 0);
         Ok(())
     }

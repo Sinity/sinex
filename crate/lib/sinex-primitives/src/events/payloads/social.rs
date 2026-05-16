@@ -125,10 +125,7 @@ mod tests {
 
     #[test]
     fn reddit_comment_declares_source_and_event_type() {
-        assert_eq!(
-            RedditCommentPayload::SOURCE.as_static_str(),
-            "reddit"
-        );
+        assert_eq!(RedditCommentPayload::SOURCE.as_static_str(), "reddit");
         assert_eq!(
             RedditCommentPayload::EVENT_TYPE.as_static_str(),
             "social.comment.posted"
@@ -155,10 +152,7 @@ mod tests {
 
     #[test]
     fn wykop_entry_comment_declares_source_and_event_type() {
-        assert_eq!(
-            WykopEntryCommentPayload::SOURCE.as_static_str(),
-            "wykop"
-        );
+        assert_eq!(WykopEntryCommentPayload::SOURCE.as_static_str(), "wykop");
         assert_eq!(
             WykopEntryCommentPayload::EVENT_TYPE.as_static_str(),
             "social.entry_comment.posted"

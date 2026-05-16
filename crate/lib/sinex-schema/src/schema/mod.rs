@@ -11,11 +11,11 @@ use sea_query::Alias;
 // domain of the database.
 pub mod annotations;
 pub mod blobs;
-pub mod manifests;
 pub mod documents;
 pub mod embeddings;
 pub mod entities;
 pub mod events;
+pub mod manifests;
 pub mod operations;
 pub mod sinex_schemas;
 pub mod source_materials;
@@ -25,10 +25,10 @@ pub mod temporal_ledger;
 pub use annotations::*;
 pub use blobs::*;
 pub use documents::*;
-pub use manifests::*;
 pub use embeddings::*;
 pub use entities::*;
 pub use events::*;
+pub use manifests::*;
 pub use operations::*;
 pub use sinex_schemas::*;
 pub use source_materials::*;
@@ -38,11 +38,11 @@ pub use temporal_ledger::*;
 pub mod records {
     pub use super::annotations::{EventAnnotationRecord, TagRecord};
     pub use super::blobs::BlobRecord;
-    pub use super::manifests::ManifestRecord;
     pub use super::documents::{DocumentChunkRecord, DocumentRecord};
     pub use super::embeddings::EmbeddingModelRecord;
     pub use super::entities::EntityRecord;
     pub use super::events::{EventRecord, EventReplacementRecord};
+    pub use super::manifests::ManifestRecord;
     pub use super::source_materials::{SourceMaterialLinkRecord, SourceMaterialRecord};
     pub use super::temporal_ledger::TemporalLedgerRecord;
 }

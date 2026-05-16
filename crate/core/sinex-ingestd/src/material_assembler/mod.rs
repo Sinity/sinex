@@ -493,14 +493,11 @@ impl MaterialAssembler {
 
         if let Some(ref observer) = self.observer {
             let observer = observer.clone();
-            self.spawn_observer_emit(
-                "sinex_assembly_commit_outcome_unknown_total",
-                async move {
-                    observer
-                        .emit_counter("sinex_assembly_commit_outcome_unknown_total", 1, None)
-                        .await
-                },
-            );
+            self.spawn_observer_emit("sinex_assembly_commit_outcome_unknown_total", async move {
+                observer
+                    .emit_counter("sinex_assembly_commit_outcome_unknown_total", 1, None)
+                    .await
+            });
         }
     }
 

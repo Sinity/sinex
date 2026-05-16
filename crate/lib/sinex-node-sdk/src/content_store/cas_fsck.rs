@@ -13,7 +13,6 @@
 
 use crate::{NodeResult, SinexError};
 use serde::{Deserialize, Serialize};
-use sinex_db::DbPoolExt;
 use sqlx::PgPool;
 use std::collections::HashSet;
 

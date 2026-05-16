@@ -1376,7 +1376,8 @@ pub fn ensure_ready(ctx: &crate::command::CommandContext) -> Result<()> {
                             eprintln!(
                                 "   Reclaimed {:.2} GB. Disk now {:.1}% used ({:.0} GB free).",
                                 (report.cargo_sweep_reclaimed_bytes
-                                    + report.incremental_bytes_reclaimed) as f64
+                                    + report.incremental_bytes_reclaimed)
+                                    as f64
                                     / 1e9,
                                 after.percent_used,
                                 after.free_gb

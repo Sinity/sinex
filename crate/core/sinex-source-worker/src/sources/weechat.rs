@@ -20,6 +20,7 @@
 //! Both registrations are performed at link time via `inventory::submit!`.
 //! No match arms.
 
+use crate::register_parser;
 use sinex_macros::SourceRecord;
 use sinex_node_sdk::parser::{AppendOnlyFileAdapter, WeeChatLogParser};
 use sinex_primitives::proof::{
@@ -27,7 +28,6 @@ use sinex_primitives::proof::{
     SourceUnitBinding, SourceUnitBuildImpact, SourceUnitDescriptor, SubjectRef,
 };
 use sinex_primitives::{register_source_unit, register_source_unit_binding};
-use crate::register_parser;
 
 // ---------------------------------------------------------------------------
 // Source unit descriptor — "weechat"

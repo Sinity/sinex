@@ -35,17 +35,16 @@ mod unix_socket_stream;
 pub use append_only_file::{AppendOnlyCursor, AppendOnlyFileAdapter, AppendOnlyFileConfig};
 pub use chained::{
     ChainedAdapter, ChainedConfig, ChainedCursor, ChainedLeg,
+    PRIMARY_PREFIX as CHAINED_PRIMARY_PREFIX, SECONDARY_PREFIX as CHAINED_SECONDARY_PREFIX,
     classify_record as chained_classify_record,
-    PRIMARY_PREFIX as CHAINED_PRIMARY_PREFIX,
-    SECONDARY_PREFIX as CHAINED_SECONDARY_PREFIX,
 };
-pub use directory_walk::{DirectoryWalkAdapter, DirectoryWalkConfig, DirectoryWalkCursor, FileFingerprint};
+pub use directory_walk::{
+    DirectoryWalkAdapter, DirectoryWalkConfig, DirectoryWalkCursor, FileFingerprint,
+};
 pub use sqlite_row::{SqliteRowAdapter, SqliteRowConfig, SqliteRowCursor};
 #[cfg(feature = "messaging")]
-pub use sqlite_snapshot::{
-    DEFAULT_SNAPSHOT_INTERVAL, SnapshotLaneSpec, SqliteSnapshotConfig, SqliteSnapshotLane,
-};
-pub use static_file::{StaticFileCursor, StaticFileAdapter, StaticFileConfig};
+pub use sqlite_snapshot::{SnapshotLaneSpec, SqliteSnapshotConfig, SqliteSnapshotLane};
+pub use static_file::{StaticFileAdapter, StaticFileConfig, StaticFileCursor};
 
 // New adapters.
 pub use clipboard_polling::{
@@ -54,13 +53,12 @@ pub use clipboard_polling::{
 };
 pub use dbus_stream::{
     DbusBackend, DbusBus, DbusMessage, DbusStreamAdapter, DbusStreamConfig, DbusStreamCursor,
-    MockDbusBackend, ParsedMatchRule, RealDbusBackend, default_match_rules, matches_any_rule,
+    MockDbusBackend,
 };
 pub use file_drop::{FileDropAdapter, FileDropConfig, FileDropCursor, FileDropEventKind};
 pub use journalctl_stream::{
-    JournalctlCursor, JournalctlStreamAdapter, JournalctlStreamConfig,
-    JournalctlSubscriber, SharedJournalctlStream,
-    BROADCAST_CAPACITY as JOURNALCTL_BROADCAST_CAPACITY,
+    BROADCAST_CAPACITY as JOURNALCTL_BROADCAST_CAPACITY, JournalctlCursor, JournalctlStreamAdapter,
+    JournalctlStreamConfig, JournalctlSubscriber, SharedJournalctlStream,
     records_from_journal_lines,
 };
 pub use unix_socket_stream::{

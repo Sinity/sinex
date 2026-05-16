@@ -37,9 +37,7 @@ pub use api_fetch::{
 pub use incremental_dump::{
     IncrementalDumpCheckpoint, IncrementalDumpError, IncrementalDumpRecordSource,
 };
-pub use ipc_stream::{
-    IpcStreamCheckpoint, IpcStreamError, IpcStreamRecord, IpcStreamRecordSource,
-};
+pub use ipc_stream::{IpcStreamCheckpoint, IpcStreamError, IpcStreamRecord, IpcStreamRecordSource};
 pub use one_time_dump::{
     OneTimeDumpCheckpoint, OneTimeDumpError, OneTimeDumpRecord, OneTimeDumpRecordSource,
 };
@@ -561,14 +559,7 @@ impl RecordSources {
     ) -> IncrementalDumpRecordSource<Record, K, Load, LoadFut, LoadError, Key>
     where
         Record: Send + Sync + 'static,
-        K: Clone
-            + Ord
-            + std::hash::Hash
-            + Serialize
-            + DeserializeOwned
-            + Send
-            + Sync
-            + 'static,
+        K: Clone + Ord + std::hash::Hash + Serialize + DeserializeOwned + Send + Sync + 'static,
         Load: Fn() -> LoadFut + Send + Sync,
         LoadFut: Future<Output = Result<Vec<Record>, LoadError>> + Send,
         LoadError: Error + Send + Sync + 'static,
@@ -580,10 +571,7 @@ impl RecordSources {
     /// Drive a paginated API client through the [`RecordSource`] trait.
     /// See [`api_fetch`] for semantics.
     #[must_use]
-    pub fn api_fetch<C>(
-        source_identifier: impl Into<String>,
-        client: C,
-    ) -> ApiFetchRecordSource<C>
+    pub fn api_fetch<C>(source_identifier: impl Into<String>, client: C) -> ApiFetchRecordSource<C>
     where
         C: ApiClient + 'static,
     {

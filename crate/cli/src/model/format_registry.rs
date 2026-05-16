@@ -342,10 +342,7 @@ pub fn build() -> HashMap<&'static str, FormatCapability> {
         "telemetry ingestd-validation",
         FormatCapability::single_shot(TABLE_JSON_YAML),
     );
-    m.insert(
-        "throughput",
-        FormatCapability::single_shot(TABLE_JSON_YAML),
-    );
+    m.insert("throughput", FormatCapability::single_shot(TABLE_JSON_YAML));
 
     // ── Report ───────────────────────────────────────────────────────────────
     m.insert(
@@ -557,7 +554,8 @@ mod tests {
     use xtask::sandbox::prelude::sinex_test;
 
     #[sinex_test]
-    async fn all_registry_entries_have_at_least_one_format_or_note() -> xtask::sandbox::TestResult<()> {
+    async fn all_registry_entries_have_at_least_one_format_or_note()
+    -> xtask::sandbox::TestResult<()> {
         for (cmd, cap) in build() {
             assert!(
                 !cap.supported.is_empty() || cap.note.is_some(),

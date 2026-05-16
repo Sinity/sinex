@@ -185,7 +185,9 @@ fn build_transaction(
     // Header format: `YYYY-MM-DD[=YYYY-MM-DD][ *|!] Description [; comment]`
     // We parse: date, optional status marker, then description+comment.
     let (date_str, rest) = header.split_once(' ').ok_or_else(|| {
-        ParserError::Parse(format!("transaction header has no space after date: {header:?}"))
+        ParserError::Parse(format!(
+            "transaction header has no space after date: {header:?}"
+        ))
     })?;
 
     // Strip an optional auxiliary date `=YYYY-MM-DD` (effective date).
@@ -219,7 +221,10 @@ fn build_transaction(
         date,
         description,
         narration,
-        comment: comment.map(str::trim).filter(|s| !s.is_empty()).map(str::to_string),
+        comment: comment
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string),
         postings,
     })
 }
@@ -257,14 +262,26 @@ fn parse_postings(lines: &[String]) -> ParserResult<Vec<LedgerPosting>> {
             // Amount may start with `=` (balance assertion) — skip those.
             if amount_str.starts_with('=') {
                 // Balance assertion — treat as implicit amount.
-                LedgerPosting { account, amount: None, currency: None }
+                LedgerPosting {
+                    account,
+                    amount: None,
+                    currency: None,
+                }
             } else {
                 let (amount, currency) = parse_amount(amount_str)?;
-                LedgerPosting { account, amount: Some(amount), currency: Some(currency) }
+                LedgerPosting {
+                    account,
+                    amount: Some(amount),
+                    currency: Some(currency),
+                }
             }
         } else {
             // No two-space separator → implicit amount.
-            LedgerPosting { account: body.to_string(), amount: None, currency: None }
+            LedgerPosting {
+                account: body.to_string(),
+                amount: None,
+                currency: None,
+            }
         };
         postings.push(posting);
     }
@@ -328,9 +345,8 @@ fn parse_date(s: &str) -> ParserResult<Timestamp> {
     use time::{Date, PrimitiveDateTime, Time, format_description};
     let fmt = format_description::parse("[year]-[month]-[day]")
         .map_err(|e| ParserError::Parse(format!("internal date format error: {e}")))?;
-    let date = Date::parse(s, &fmt).map_err(|e| {
-        ParserError::Parse(format!("invalid journal date {s:?}: {e}"))
-    })?;
+    let date = Date::parse(s, &fmt)
+        .map_err(|e| ParserError::Parse(format!("invalid journal date {s:?}: {e}")))?;
     let dt = PrimitiveDateTime::new(date, Time::MIDNIGHT).assume_utc();
     Ok(Timestamp::new(dt))
 }
@@ -464,10 +480,10 @@ crate::register_adapter_ingestor!(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sinex_primitives::ids::Id;
     use sinex_primitives::Uuid;
-    use xtask::sandbox::prelude::sinex_test;
+    use sinex_primitives::ids::Id;
     use xtask::sandbox::TestResult;
+    use xtask::sandbox::prelude::sinex_test;
 
     // ---------------------------------------------------------------------------
     // Fixture data — representative subset of real journal entries.

@@ -1502,7 +1502,10 @@ async fn run_demo_walkthrough(client: &GatewayClient, format: OutputFormat) -> R
         record_demo_step(
             "throughput",
             "telemetry.throughput: per-source EPS",
-            client.telemetry_throughput().await.map(|r| r.per_source.len() as i64),
+            client
+                .telemetry_throughput()
+                .await
+                .map(|r| r.per_source.len() as i64),
         )
         .with_expectation_min(1),
     );
@@ -1531,7 +1534,10 @@ async fn run_demo_walkthrough(client: &GatewayClient, format: OutputFormat) -> R
         DEMO_DATASET_PATH,
         format!("{}\n", serde_json::to_string_pretty(&dataset)?),
     )?;
-    fs::write(DEMO_WALKTHROUGH_PATH, render_demo_markdown(&walkthrough_steps, seeded_now))?;
+    fs::write(
+        DEMO_WALKTHROUGH_PATH,
+        render_demo_markdown(&walkthrough_steps, seeded_now),
+    )?;
 
     if table_mode {
         println!();

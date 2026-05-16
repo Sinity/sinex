@@ -54,7 +54,11 @@ async fn test_parse_command_round_trip_via_nats(ctx: TestContext) -> TestResult<
     let recorded = calls.lock().unwrap();
     assert_eq!(recorded.len(), 1, "dispatch should be called once");
     assert_eq!(recorded[0].0, source_id, "dispatch source_id should match");
-    assert_eq!(recorded[0].2, Some(material_id), "dispatch material_id should match");
+    assert_eq!(
+        recorded[0].2,
+        Some(material_id),
+        "dispatch material_id should match"
+    );
 
     Ok(())
 }
@@ -91,9 +95,16 @@ async fn test_parse_command_rejected_for_mismatched_source(ctx: TestContext) -> 
 
     let ack: SourceParseAck = serde_json::from_slice(&response.payload)?;
 
-    assert!(!ack.accepted, "parse should be rejected for mismatched source");
+    assert!(
+        !ack.accepted,
+        "parse should be rejected for mismatched source"
+    );
     assert!(ack.error.is_some(), "should have error");
-    assert_eq!(calls.lock().unwrap().len(), 0, "dispatch should not be called");
+    assert_eq!(
+        calls.lock().unwrap().len(),
+        0,
+        "dispatch should not be called"
+    );
 
     Ok(())
 }
@@ -135,12 +146,10 @@ async fn test_concurrent_parse_commands(ctx: TestContext) -> TestResult<()> {
         client.request(subject.clone(), serde_json::to_vec(&cmd2)?.into()),
     );
 
-    let ack1: SourceParseAck = serde_json::from_slice(
-        &r1.map_err(|e| eyre!("request 1 failed: {e}"))?.payload,
-    )?;
-    let ack2: SourceParseAck = serde_json::from_slice(
-        &r2.map_err(|e| eyre!("request 2 failed: {e}"))?.payload,
-    )?;
+    let ack1: SourceParseAck =
+        serde_json::from_slice(&r1.map_err(|e| eyre!("request 1 failed: {e}"))?.payload)?;
+    let ack2: SourceParseAck =
+        serde_json::from_slice(&r2.map_err(|e| eyre!("request 2 failed: {e}"))?.payload)?;
 
     assert!(ack1.accepted, "ack1 should be accepted");
     assert!(ack2.accepted, "ack2 should be accepted");

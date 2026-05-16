@@ -1087,8 +1087,12 @@ impl JetStreamConsumer {
                     val_stats.invalid,
                     val_stats.coverage_pct(),
                     suspicious_future_ts_orig,
-                    self.stats.telemetry_publish_failures.load(Ordering::Relaxed),
-                    self.stats.confirmation_durability_gaps.load(Ordering::Relaxed),
+                    self.stats
+                        .telemetry_publish_failures
+                        .load(Ordering::Relaxed),
+                    self.stats
+                        .confirmation_durability_gaps
+                        .load(Ordering::Relaxed),
                 )
                 .await
             {
@@ -1100,10 +1104,7 @@ impl JetStreamConsumer {
     }
 
     #[instrument(skip(self, msg))]
-    async fn prepare_events(
-        &self,
-        msg: jetstream::Message,
-    ) -> IngestdResult<Vec<PreparedEvent>> {
+    async fn prepare_events(&self, msg: jetstream::Message) -> IngestdResult<Vec<PreparedEvent>> {
         let decisions = self.admission.admit_intent_bytes(&msg.payload).await?;
         let mut prepared = Vec::with_capacity(decisions.len());
 
@@ -1264,11 +1265,10 @@ impl JetStreamConsumer {
                         .map(|(kind, preps)| {
                             let sem = Arc::clone(&self.confirmation_semaphore);
                             let watermark = Arc::clone(&self.confirmation_watermark);
-                            let max_event_id = preps
-                                .iter()
-                                .map(|p| p.parsed_id)
-                                .max()
-                                .expect("by_kind grouping guarantees at least one event per kind");
+                            let max_event_id =
+                                preps.iter().map(|p| p.parsed_id).max().expect(
+                                    "by_kind grouping guarantees at least one event per kind",
+                                );
                             let (source, event_type) = (kind.0.clone(), kind.1.clone());
                             let key = kind;
                             async move {
@@ -1338,11 +1338,7 @@ impl JetStreamConsumer {
                                 // implicitly confirms every event of the kind with
                                 // id <= watermark.
                                 match self
-                                    .enqueue_confirmation_retry(
-                                        max_event_id,
-                                        source,
-                                        event_type,
-                                    )
+                                    .enqueue_confirmation_retry(max_event_id, source, event_type)
                                     .await
                                 {
                                     Ok(()) => {
@@ -2171,7 +2167,10 @@ impl JetStreamConsumer {
         let mut last_error: Option<SinexError> = None;
 
         for attempt in 1..=CONFIRM_PUBLISH_MAX_ATTEMPTS {
-            match self.publish_confirmation(event_id, source, event_type).await {
+            match self
+                .publish_confirmation(event_id, source, event_type)
+                .await
+            {
                 Ok(()) => return Ok(()),
                 Err(err) => {
                     warn!(

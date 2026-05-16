@@ -19,7 +19,10 @@ use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskComman
 use crate::history::{HistoryDb, InvocationStatus, JobLifecycleStatus};
 
 #[derive(Parser, Clone, Debug)]
-#[command(hide = true, about = "Internal: detached process watchdog (not for human use)")]
+#[command(
+    hide = true,
+    about = "Internal: detached process watchdog (not for human use)"
+)]
 pub struct ReapCommand {
     /// PID of the background job process to monitor.
     #[arg(long)]
@@ -246,8 +249,8 @@ pub fn spawn_reaper(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sandbox::sinex_test;
     use crate::sandbox::prelude::*;
+    use crate::sandbox::sinex_test;
 
     /// CLI argument parsing round-trips correctly.
     #[sinex_test]
@@ -274,7 +277,10 @@ mod tests {
         assert_eq!(args.max_secs, 1800);
         assert_eq!(args.invocation_id, 42);
         assert_eq!(args.job_id, 7);
-        assert_eq!(args.db_path, std::path::PathBuf::from("/tmp/xtask-history.db"));
+        assert_eq!(
+            args.db_path,
+            std::path::PathBuf::from("/tmp/xtask-history.db")
+        );
         assert_eq!(args.job_dir, std::path::PathBuf::from("/tmp/jobs/7"));
         Ok(())
     }

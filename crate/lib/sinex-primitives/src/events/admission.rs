@@ -75,8 +75,10 @@ impl OccurrenceAnchorKind {
             "cursor_token" => Ok(OccurrenceAnchorKind::CursorToken),
             "git_oid" => Ok(OccurrenceAnchorKind::GitOid),
             "stream_frame" => Ok(OccurrenceAnchorKind::StreamFrame),
-            _ => Err(crate::SinexError::validation("invalid occurrence anchor kind")
-                .with_context("anchor_kind", s.to_string())),
+            _ => Err(
+                crate::SinexError::validation("invalid occurrence anchor kind")
+                    .with_context("anchor_kind", s.to_string()),
+            ),
         }
     }
 }
@@ -212,8 +214,8 @@ mod tests {
     use super::*;
     use crate::events::builder::Provenance;
     use crate::{Id, Uuid};
+
     use xtask::sandbox::sinex_test;
-    use xtask::sandbox::prelude::TestResult;
 
     #[sinex_test]
     async fn envelope_validation_rejects_empty_version() -> TestResult<()> {

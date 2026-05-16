@@ -189,14 +189,16 @@ fn parse_row(
 fn parse_iso8601(raw: &str) -> ParserResult<Timestamp> {
     use time::OffsetDateTime;
     use time::format_description::well_known::Rfc3339;
-    let dt = OffsetDateTime::parse(raw, &Rfc3339).map_err(|e| {
-        ParserError::Parse(format!("invalid Raindrop timestamp '{raw}': {e}"))
-    })?;
+    let dt = OffsetDateTime::parse(raw, &Rfc3339)
+        .map_err(|e| ParserError::Parse(format!("invalid Raindrop timestamp '{raw}': {e}")))?;
     Ok(Timestamp::new(dt))
 }
 
 fn parse_bool(raw: &str) -> bool {
-    matches!(raw.trim().to_ascii_lowercase().as_str(), "true" | "1" | "yes")
+    matches!(
+        raw.trim().to_ascii_lowercase().as_str(),
+        "true" | "1" | "yes"
+    )
 }
 
 fn non_empty(s: &str) -> Option<&str> {
@@ -265,11 +267,11 @@ crate::register_adapter_ingestor!(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sinex_primitives::Uuid;
     use sinex_primitives::ids::Id;
     use sinex_primitives::parser::MaterialAnchor;
-    use sinex_primitives::Uuid;
-    use xtask::sandbox::prelude::sinex_test;
     use xtask::sandbox::TestResult;
+    use xtask::sandbox::prelude::sinex_test;
 
     fn test_ctx() -> ParserContext {
         ParserContext {

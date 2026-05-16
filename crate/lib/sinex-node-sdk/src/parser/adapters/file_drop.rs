@@ -181,11 +181,11 @@ fn map_notify_kind(kind: &EventKind) -> Option<FileDropEventKind> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use xtask::sandbox::prelude::sinex_test;
     use futures::StreamExt;
     use std::io::Write;
     use tempfile::TempDir;
     use tokio::time::{Duration, sleep};
+    use xtask::sandbox::prelude::sinex_test;
 
     fn dummy_material_id() -> Id<SourceMaterial> {
         Id::from_uuid(uuid::Uuid::new_v4())
@@ -201,7 +201,10 @@ mod tests {
             events: vec![FileDropEventKind::Created],
         };
 
-        let mut stream = adapter.open(dummy_material_id(), &config, None).await.unwrap();
+        let mut stream = adapter
+            .open(dummy_material_id(), &config, None)
+            .await
+            .unwrap();
 
         // Give the watcher time to install. inotify install is async at the
         // kernel level; under load (CI, sandbox) 50ms is too short.
@@ -277,11 +280,18 @@ mod tests {
     async fn test_file_drop_invalid_path_errors() -> xtask::sandbox::TestResult<()> {
         let adapter = FileDropAdapter;
         let config = FileDropConfig {
-            watch_paths: vec![Utf8PathBuf::from("/nonexistent/directory/that/does/not/exist")],
+            watch_paths: vec![Utf8PathBuf::from(
+                "/nonexistent/directory/that/does/not/exist",
+            )],
             recursive: false,
             events: vec![],
         };
-        assert!(adapter.open(dummy_material_id(), &config, None).await.is_err());
+        assert!(
+            adapter
+                .open(dummy_material_id(), &config, None)
+                .await
+                .is_err()
+        );
         Ok(())
     }
 
@@ -313,7 +323,10 @@ mod tests {
             events: vec![FileDropEventKind::Created],
         };
 
-        let mut stream = adapter.open(dummy_material_id(), &config, None).await.unwrap();
+        let mut stream = adapter
+            .open(dummy_material_id(), &config, None)
+            .await
+            .unwrap();
         sleep(Duration::from_millis(50)).await;
 
         std::fs::write(dir.path().join("meta.txt"), b"x").unwrap();
@@ -337,7 +350,10 @@ mod tests {
             events: vec![FileDropEventKind::Created],
         };
 
-        let mut stream = adapter.open(dummy_material_id(), &config, None).await.unwrap();
+        let mut stream = adapter
+            .open(dummy_material_id(), &config, None)
+            .await
+            .unwrap();
         sleep(Duration::from_millis(50)).await;
 
         // Create and then modify a file — only the Create should come through.

@@ -387,11 +387,15 @@ fn reset_test_tmp(verbose: bool) -> Result<bool> {
     if !test_tmp.exists() {
         return Ok(false);
     }
-    normalize_tree_permissions(&test_tmp)
-        .with_context(|| format!("make stale test temp tree removable at {}", test_tmp.display()))?;
+    normalize_tree_permissions(&test_tmp).with_context(|| {
+        format!(
+            "make stale test temp tree removable at {}",
+            test_tmp.display()
+        )
+    })?;
     let mut removed_any = false;
-    for entry in std::fs::read_dir(&test_tmp)
-        .with_context(|| format!("read {}", test_tmp.display()))?
+    for entry in
+        std::fs::read_dir(&test_tmp).with_context(|| format!("read {}", test_tmp.display()))?
     {
         let entry = entry.with_context(|| format!("read entry under {}", test_tmp.display()))?;
         let path = entry.path();
@@ -414,8 +418,8 @@ fn reset_test_tmp(verbose: bool) -> Result<bool> {
 }
 
 fn normalize_tree_permissions(path: &Path) -> Result<()> {
-    let metadata = std::fs::symlink_metadata(path)
-        .with_context(|| format!("stat {}", path.display()))?;
+    let metadata =
+        std::fs::symlink_metadata(path).with_context(|| format!("stat {}", path.display()))?;
     if metadata.file_type().is_symlink() {
         return Ok(());
     }
@@ -568,7 +572,9 @@ mod tests {
             workspace.path().join("xtask/Cargo.toml"),
             "[package]\nname = \"xtask\"\nversion = \"0.0.0\"\nedition = \"2024\"\n",
         )?;
-        let stale_dir = workspace.path().join(".sinex/test-tmp/stale/.git/annex/objects");
+        let stale_dir = workspace
+            .path()
+            .join(".sinex/test-tmp/stale/.git/annex/objects");
         std::fs::create_dir_all(&stale_dir)?;
         let readonly_file = stale_dir.join("readonly.tmp");
         std::fs::write(&readonly_file, "stale")?;

@@ -226,10 +226,7 @@ impl ConfirmationBuffer {
     /// watermark `>=` its event_id — i.e. ingestd already confirmed it but the
     /// confirmation arrived before this provisional was buffered. Caller should
     /// treat the returned event as already confirmed.
-    pub async fn try_implicit_confirm_on_add(
-        &self,
-        event: &ProvisionalEvent,
-    ) -> bool {
+    pub async fn try_implicit_confirm_on_add(&self, event: &ProvisionalEvent) -> bool {
         let watermarks = self.kind_watermarks.read().await;
         let key = (
             event.source.as_str().to_string(),

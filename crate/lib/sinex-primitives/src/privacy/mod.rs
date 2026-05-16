@@ -513,7 +513,10 @@ impl MaterialCaptureClass {
     /// Whether bytes content may be stored (in any form).
     #[must_use]
     pub fn allows_byte_storage(&self) -> bool {
-        matches!(self, Self::AllowedPlaintext | Self::EncryptedMaterial | Self::LocalQuarantine)
+        matches!(
+            self,
+            Self::AllowedPlaintext | Self::EncryptedMaterial | Self::LocalQuarantine
+        )
     }
 
     /// Whether the material is rejected entirely (nothing stored).
@@ -651,7 +654,10 @@ mod tests {
         let engine = engine_for_source_unit(&crate::parser::SourceUnitId::from_static(
             "nonexistent.source-unit",
         ))?;
-        let result = engine.process("export TOKEN=ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghij", ProcessingContext::Command);
+        let result = engine.process(
+            "export TOKEN=ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghij",
+            ProcessingContext::Command,
+        );
         assert!(result.any_matched(), "global rules should still fire");
         Ok(())
     }
@@ -681,13 +687,26 @@ mod tests {
         let engine = PrivacyEngine::new(config)?;
 
         // Global rule fires.
-        let result = engine.process("export TOKEN=ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghij", ProcessingContext::Command);
-        assert!(result.any_matched(), "global rule should fire in merged engine");
+        let result = engine.process(
+            "export TOKEN=ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghij",
+            ProcessingContext::Command,
+        );
+        assert!(
+            result.any_matched(),
+            "global rule should fire in merged engine"
+        );
 
         // Scoped rule fires.
         let result2 = engine.process("SCOPED_SENTINEL_XYZ", ProcessingContext::Command);
-        assert!(result2.any_matched(), "scoped rule should fire in merged engine");
-        assert!(result2.text.contains("<SCOPED_RULE>"), "got: {}", result2.text);
+        assert!(
+            result2.any_matched(),
+            "scoped rule should fire in merged engine"
+        );
+        assert!(
+            result2.text.contains("<SCOPED_RULE>"),
+            "got: {}",
+            result2.text
+        );
         Ok(())
     }
 }

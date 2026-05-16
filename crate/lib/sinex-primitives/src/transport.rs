@@ -286,7 +286,7 @@ pub fn has_transport_class_headers(headers: &async_nats::HeaderMap) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use xtask::sandbox::{TestResult, sinex_test};
+    use xtask::sandbox::sinex_test;
 
     #[sinex_test]
     async fn transport_headers_include_wire_and_semantic_classes() -> TestResult<()> {

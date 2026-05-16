@@ -419,9 +419,10 @@ impl AcquisitionManager {
             started_at: started_at.format_rfc3339(),
         };
 
-        let subject = self
-            .env
-            .nats_subject_with_namespace(self.namespace.as_deref(), SOURCE_MATERIAL_BEGIN_SUBJECT.as_str());
+        let subject = self.env.nats_subject_with_namespace(
+            self.namespace.as_deref(),
+            SOURCE_MATERIAL_BEGIN_SUBJECT.as_str(),
+        );
         let payload = serde_json::to_vec(&msg)?;
         let mut headers = async_nats::HeaderMap::new();
         transport::insert_transport_class_headers(&mut headers, transport::Class::SourceMaterial);
@@ -764,9 +765,10 @@ impl AcquisitionManager {
             metadata,
         };
 
-        let subject = self
-            .env
-            .nats_subject_with_namespace(self.namespace.as_deref(), SOURCE_MATERIAL_END_SUBJECT.as_str());
+        let subject = self.env.nats_subject_with_namespace(
+            self.namespace.as_deref(),
+            SOURCE_MATERIAL_END_SUBJECT.as_str(),
+        );
         let payload = serde_json::to_vec(&msg)?;
         let mut headers = async_nats::HeaderMap::new();
         transport::insert_transport_class_headers(&mut headers, transport::Class::SourceMaterial);

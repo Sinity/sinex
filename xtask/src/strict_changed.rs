@@ -28,9 +28,7 @@ fn merge_base(base: &str) -> Result<String> {
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(eyre!(
-            "git merge-base {base} HEAD failed: {stderr}"
-        ));
+        return Err(eyre!("git merge-base {base} HEAD failed: {stderr}"));
     }
 
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
@@ -228,7 +226,11 @@ pub fn run_changed_strict(
             );
             let lines: Vec<&str> = combined.lines().collect();
             let excerpt = if lines.len() > 20 {
-                format!("{}\n[... {} more lines]", lines[..20].join("\n"), lines.len() - 20)
+                format!(
+                    "{}\n[... {} more lines]",
+                    lines[..20].join("\n"),
+                    lines.len() - 20
+                )
             } else {
                 lines.join("\n")
             };
@@ -254,4 +256,3 @@ pub fn run_changed_strict(
         success: all_ok,
     })
 }
-

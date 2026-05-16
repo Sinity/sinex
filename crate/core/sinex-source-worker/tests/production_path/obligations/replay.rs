@@ -18,8 +18,8 @@
 //! launcher substrate gap noted in `initial_ingestion::substrate_gaps()`.
 
 use crate::AdapterKind;
-use sinex_source_worker::dispatch::default_parser_dispatch;
 use sinex_primitives::Uuid;
+use sinex_source_worker::dispatch::default_parser_dispatch;
 
 /// Run the replay obligation for a source unit.
 ///
@@ -51,8 +51,16 @@ pub async fn run(
     );
 
     // Event types must match — parser is deterministic.
-    let types_1: Vec<&str> = outcome_1.events.iter().map(|e| e.event_type.as_str()).collect();
-    let types_2: Vec<&str> = outcome_2.events.iter().map(|e| e.event_type.as_str()).collect();
+    let types_1: Vec<&str> = outcome_1
+        .events
+        .iter()
+        .map(|e| e.event_type.as_str())
+        .collect();
+    let types_2: Vec<&str> = outcome_2
+        .events
+        .iter()
+        .map(|e| e.event_type.as_str())
+        .collect();
     if types_1 != types_2 {
         return Err(format!(
             "replay for '{source_unit_id}': event types differ between runs. \

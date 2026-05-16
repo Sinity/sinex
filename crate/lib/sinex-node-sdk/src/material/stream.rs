@@ -19,12 +19,12 @@
 //! ```
 
 use crate::NodeResult;
-use sinex_primitives::{Id, JsonValue, Uuid};
 use sinex_db::models::SourceMaterial;
 use sinex_primitives::SinexError;
+use sinex_primitives::{Id, JsonValue, Uuid};
 use std::fmt;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use tokio::sync::Mutex;
 use tracing::{debug, warn};
 
@@ -49,7 +49,10 @@ impl fmt::Debug for StreamHandle {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("StreamHandle")
             .field("material_id", &self.inner.material_id)
-            .field("event_count", &self.inner.event_count.load(Ordering::SeqCst))
+            .field(
+                "event_count",
+                &self.inner.event_count.load(Ordering::SeqCst),
+            )
             .field("finalized", &self.inner.finalized.load(Ordering::SeqCst))
             .finish()
     }
@@ -108,7 +111,10 @@ impl StreamHandle {
             .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
             .is_err()
         {
-            debug!("Stream already finalized (material_id={})", self.inner.material_id);
+            debug!(
+                "Stream already finalized (material_id={})",
+                self.inner.material_id
+            );
             return Ok(());
         }
 
@@ -176,7 +182,10 @@ impl StreamMaterialContext {
 
         let material_id = Id::from_uuid(Uuid::now_v7());
 
-        debug!(stream_counter = id_val, "Beginning new stream (material_id={})", material_id);
+        debug!(
+            stream_counter = id_val,
+            "Beginning new stream (material_id={})", material_id
+        );
 
         Ok(StreamHandle {
             inner: Arc::new(StreamHandleInner {
@@ -302,7 +311,9 @@ mod tests {
         let _ = handle.append_event(serde_json::json!({"id": 1})).await;
         assert_eq!(handle_clone.event_count(), 1);
 
-        let _ = handle_clone.append_event(serde_json::json!({"id": 2})).await;
+        let _ = handle_clone
+            .append_event(serde_json::json!({"id": 2}))
+            .await;
         assert_eq!(handle.event_count(), 2);
         Ok(())
     }

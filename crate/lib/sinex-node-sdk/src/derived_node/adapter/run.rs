@@ -14,7 +14,6 @@ use sinex_primitives::settlement::{
     DefaultFailurePolicy, FailureContext, FailurePolicy, RuntimeOperation, RuntimePhase, Settlement,
 };
 
-use sinex_primitives::Id;
 use sinex_primitives::events::builder::OperationMarker;
 use sinex_primitives::temporal::Timestamp;
 

@@ -5,7 +5,7 @@
 //! identity to operators and downstream automation.
 
 #[cfg(feature = "db")]
-use super::{Node, NodeRunner, NodeType, ServiceInfo};
+use super::{Node, NodeRunner, ServiceInfo};
 #[cfg(feature = "db")]
 use crate::{NodeResult, SinexError};
 #[cfg(feature = "db")]

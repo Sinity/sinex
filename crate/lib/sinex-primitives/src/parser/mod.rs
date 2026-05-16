@@ -22,13 +22,13 @@ use camino::Utf8PathBuf;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use crate::SinexError;
 use crate::domain::{EventSource, EventType};
-use crate::events::builder::EventId;
 use crate::events::SourceMaterial;
+use crate::events::builder::EventId;
 use crate::ids::Id;
 use crate::primitives::Uuid;
 use crate::temporal::Timestamp;
-use crate::SinexError;
 
 // =============================================================================
 // Parser identity types
@@ -89,10 +89,9 @@ impl ParserId {
         if s.is_empty() {
             return Err(SinexError::validation("ParserId must not be empty"));
         }
-        if !s
-            .chars()
-            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_' || c == '.')
-        {
+        if !s.chars().all(|c| {
+            c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_' || c == '.'
+        }) {
             return Err(SinexError::validation(
                 "ParserId must contain only [a-z0-9_.-]",
             ));
@@ -105,7 +104,11 @@ impl ParserId {
         let mut i = 0;
         while i < bytes.len() {
             let b = bytes[i];
-            if !(b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-' || b == b'_' || b == b'.')
+            if !(b.is_ascii_lowercase()
+                || b.is_ascii_digit()
+                || b == b'-'
+                || b == b'_'
+                || b == b'.')
             {
                 return false;
             }
@@ -173,10 +176,9 @@ impl SourceUnitId {
         if s.is_empty() {
             return Err(SinexError::validation("SourceUnitId must not be empty"));
         }
-        if !s
-            .chars()
-            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_' || c == '.')
-        {
+        if !s.chars().all(|c| {
+            c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_' || c == '.'
+        }) {
             return Err(SinexError::validation(
                 "SourceUnitId must contain only [a-z0-9_.-]",
             ));
@@ -189,7 +191,11 @@ impl SourceUnitId {
         let mut i = 0;
         while i < bytes.len() {
             let b = bytes[i];
-            if !(b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-' || b == b'_' || b == b'.')
+            if !(b.is_ascii_lowercase()
+                || b.is_ascii_digit()
+                || b == b'-'
+                || b == b'_'
+                || b == b'.')
             {
                 return false;
             }
@@ -210,9 +216,7 @@ impl std::fmt::Display for SourceUnitId {
 /// A `SourceBindingId` is a durable reference to a row in
 /// `raw.source_bindings`. It links acquisition intent to parser
 /// execution.
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema,
-)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(transparent)]
 pub struct SourceBindingId(pub Uuid);
 
@@ -334,16 +338,10 @@ impl std::fmt::Display for InputShapeKind {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum MaterialAnchor {
     /// Byte-offset range within a material blob.
-    ByteRange {
-        start: u64,
-        len: u64,
-    },
+    ByteRange { start: u64, len: u64 },
 
     /// A line within a text material.
-    Line {
-        byte_start: u64,
-        line: u64,
-    },
+    Line { byte_start: u64, line: u64 },
 
     /// A directory entry with optional content hash.
     DirectoryEntry {
@@ -354,10 +352,7 @@ pub enum MaterialAnchor {
     },
 
     /// A row in a SQLite table.
-    SqliteRow {
-        table: String,
-        rowid: i64,
-    },
+    SqliteRow { table: String, rowid: i64 },
 
     /// A git object identified by OID.
     GitObject {
@@ -379,9 +374,7 @@ pub enum MaterialAnchor {
 // =============================================================================
 
 /// Confidence level for a timing derivation.
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema,
-)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum TimingConfidence {
     /// Timestamp is intrinsic to the record (e.g., a log line timestamp).
@@ -414,9 +407,7 @@ pub enum TimingEvidence {
     },
 
     /// Timestamp comes from a temporal ledger entry.
-    Wrapper {
-        ledger_id: Uuid,
-    },
+    Wrapper { ledger_id: Uuid },
 
     /// Timestamp inferred from file mtime.
     InferredMtime {
@@ -426,10 +417,7 @@ pub enum TimingEvidence {
     },
 
     /// Timestamp explicitly declared by the user or import process.
-    UserDeclared {
-        value: Timestamp,
-        reason: String,
-    },
+    UserDeclared { value: Timestamp, reason: String },
 
     /// No timestamp available — the record is atemporal.
     Atemporal,
@@ -590,10 +578,7 @@ impl ParsedEventIntent {
     /// - `self.id` would appear as both parent and child (self-referential
     ///   synthesis). This is structurally impossible with a freshly generated
     ///   child ID, but the check is made explicit for correctness.
-    pub fn derive_synthesis<P>(
-        &self,
-        payload: P,
-    ) -> Result<ParsedEventIntent, ParserError>
+    pub fn derive_synthesis<P>(&self, payload: P) -> Result<ParsedEventIntent, ParserError>
     where
         P: crate::events::EventPayload,
     {
@@ -750,7 +735,7 @@ pub struct ParserContext {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use xtask::sandbox::{TestResult, sinex_test};
+    use xtask::sandbox::sinex_test;
 
     // ---------------------------------------------------------------------------
     // Helpers
@@ -758,8 +743,8 @@ mod tests {
 
     /// Build a minimal material-provenance `ParsedEventIntent` for tests.
     fn material_intent() -> ParsedEventIntent {
-        use crate::events::payloads::DocumentIngestedPayload;
         use crate::events::EventPayload as _;
+        use crate::events::payloads::DocumentIngestedPayload;
 
         let payload = DocumentIngestedPayload::test_default();
         ParsedEventIntent {
@@ -801,7 +786,10 @@ mod tests {
         let child = parent.derive_synthesis(tag_payload)?;
 
         // synthesis_parents must be populated with the parent's id
-        let parents = child.synthesis_parents.as_ref().expect("synthesis_parents must be Some");
+        let parents = child
+            .synthesis_parents
+            .as_ref()
+            .expect("synthesis_parents must be Some");
         assert_eq!(parents.len(), 1);
         assert_eq!(parents[0], parent.id);
         assert!(child.is_synthesis());
@@ -838,10 +826,7 @@ mod tests {
 
         let child = parent.derive_synthesis(tag_payload)?;
 
-        assert_ne!(
-            child.id, parent_id,
-            "child id must differ from parent id"
-        );
+        assert_ne!(child.id, parent_id, "child id must differ from parent id");
 
         Ok(())
     }
@@ -871,8 +856,8 @@ mod tests {
 
     #[sinex_test]
     async fn derive_synthesis_uses_new_event_type() -> TestResult<()> {
-        use crate::events::payloads::KnowledgeTagAppliedPayload;
         use crate::events::EventPayload as _;
+        use crate::events::payloads::KnowledgeTagAppliedPayload;
 
         let parent = material_intent();
         // Parent is document.ingested; child must be knowledge.tag_applied

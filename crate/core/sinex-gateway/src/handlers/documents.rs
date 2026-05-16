@@ -11,8 +11,9 @@ use serde_json::Value;
 use sinex_db::DbPoolExt;
 use sinex_db::repositories::{DocumentSearchQuery, SearchMode};
 use sinex_primitives::rpc::documents::{
-    DocumentsChunkEntry, DocumentsGetChunksRequest, DocumentsGetChunksResponse, DocumentsGetRequest,
-    DocumentsGetResponse, DocumentsSearchRequest, DocumentsSearchResponse, DocumentsSearchResult,
+    DocumentsChunkEntry, DocumentsGetChunksRequest, DocumentsGetChunksResponse,
+    DocumentsGetRequest, DocumentsGetResponse, DocumentsSearchRequest, DocumentsSearchResponse,
+    DocumentsSearchResult,
 };
 use sinex_primitives::{Result, SinexError};
 use sqlx::PgPool;
@@ -30,8 +31,10 @@ pub async fn handle_documents_search(pool: &PgPool, params: Value) -> Result<Val
     })?;
 
     if req.query.trim().is_empty() {
-        return Err(SinexError::validation("documents.search: query must not be empty")
-            .with_context("field", "query"));
+        return Err(
+            SinexError::validation("documents.search: query must not be empty")
+                .with_context("field", "query"),
+        );
     }
 
     let query = DocumentSearchQuery {
@@ -74,8 +77,10 @@ pub async fn handle_documents_search(pool: &PgPool, params: Value) -> Result<Val
         search_mode: search_mode.to_owned(),
     };
 
-    serde_json::to_value(response)
-        .map_err(|e| SinexError::serialization("failed to serialize documents.search response").with_std_error(&e))
+    serde_json::to_value(response).map_err(|e| {
+        SinexError::serialization("failed to serialize documents.search response")
+            .with_std_error(&e)
+    })
 }
 
 // ── documents.get ─────────────────────────────────────────────────────────────
@@ -106,8 +111,9 @@ pub async fn handle_documents_get(pool: &PgPool, params: Value) -> Result<Value>
         updated_at: record.updated_at,
     };
 
-    serde_json::to_value(response)
-        .map_err(|e| SinexError::serialization("failed to serialize documents.get response").with_std_error(&e))
+    serde_json::to_value(response).map_err(|e| {
+        SinexError::serialization("failed to serialize documents.get response").with_std_error(&e)
+    })
 }
 
 // ── documents.get_chunks ──────────────────────────────────────────────────────
@@ -147,6 +153,8 @@ pub async fn handle_documents_get_chunks(pool: &PgPool, params: Value) -> Result
             .collect(),
     };
 
-    serde_json::to_value(response)
-        .map_err(|e| SinexError::serialization("failed to serialize documents.get_chunks response").with_std_error(&e))
+    serde_json::to_value(response).map_err(|e| {
+        SinexError::serialization("failed to serialize documents.get_chunks response")
+            .with_std_error(&e)
+    })
 }

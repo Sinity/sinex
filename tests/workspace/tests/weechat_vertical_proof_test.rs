@@ -20,12 +20,10 @@ use sinex_node_sdk::parser::{
     WeeChatLogParser,
 };
 use sinex_primitives::domain::HostName;
+use sinex_primitives::events::SourceMaterial;
 use sinex_primitives::events::admission::AdmittedEventIntent;
 use sinex_primitives::events::builder::{OffsetKind, Provenance};
-use sinex_primitives::events::SourceMaterial;
-use sinex_primitives::parser::{
-    MaterialAnchor, ParsedEventIntent, ParserContext, SourceUnitId,
-};
+use sinex_primitives::parser::{MaterialAnchor, ParsedEventIntent, ParserContext, SourceUnitId};
 use sinex_primitives::{Event, EventSource, EventType, Id, Timestamp, Uuid};
 use xtask::sandbox::prelude::*;
 
@@ -49,18 +47,12 @@ const EXPECTED_TYPES: &[&str] = &[
     "irc.server_notice",
 ];
 
-const EXPECTED_NICKS: &[&str] = &[
-    "sinity",
-    "user1",
-    "user2",
-    "user1",
-    "__server__",
-];
+const EXPECTED_NICKS: &[&str] = &["sinity", "user1", "user2", "user1", "__server__"];
 
 /// Return the `ts_orig` parsed from a WeeChat-format timestamp string.
 fn weechat_ts(s: &str) -> Timestamp {
-    use time::macros::format_description;
     use time::PrimitiveDateTime;
+    use time::macros::format_description;
 
     const FMT: &[time::format_description::BorrowedFormatItem<'_>] =
         format_description!("[year]-[month]-[day] [hour]:[minute]:[second]");
@@ -154,11 +146,7 @@ fn intents_to_events(
 }
 
 /// Build a raw events NATS subject for the given source + event type.
-fn raw_events_subject(
-    ctx: &Sandbox,
-    source: &str,
-    event_type: &str,
-) -> String {
+fn raw_events_subject(ctx: &Sandbox, source: &str, event_type: &str) -> String {
     ctx.env().nats_raw_event_subject_with_namespace(
         Some(ctx.pipeline_namespace().prefix()),
         source,
@@ -254,7 +242,18 @@ async fn weechat_full_pipeline_persists_correctly(ctx: TestContext) -> TestResul
     let pool = stack.pool();
 
     // Query persisted events by source material, ordered by ts_orig.
-    let rows = sqlx::query_as::<_, (Uuid, String, String, Timestamp, serde_json::Value, i64, Option<String>)>(
+    let rows = sqlx::query_as::<
+        _,
+        (
+            Uuid,
+            String,
+            String,
+            Timestamp,
+            serde_json::Value,
+            i64,
+            Option<String>,
+        ),
+    >(
         r#"
         SELECT id, event_type, source, ts_orig, payload,
                anchor_byte, offset_kind
@@ -282,10 +281,7 @@ async fn weechat_full_pipeline_persists_correctly(ctx: TestContext) -> TestResul
         rows.iter().enumerate()
     {
         // Event identity
-        assert!(
-            !id.is_nil(),
-            "row[{i}] event id should not be nil"
-        );
+        assert!(!id.is_nil(), "row[{i}] event id should not be nil");
 
         // Source and type
         assert_eq!(
@@ -301,19 +297,11 @@ async fn weechat_full_pipeline_persists_correctly(ctx: TestContext) -> TestResul
         );
 
         // Timestamp
-        assert_eq!(
-            *ts_orig, expected_ts[i],
-            "row[{i}] ts_orig mismatch"
-        );
+        assert_eq!(*ts_orig, expected_ts[i], "row[{i}] ts_orig mismatch");
 
         // Payload fields
-        let nick = payload["nick"]
-            .as_str()
-            .unwrap_or("");
-        assert_eq!(
-            nick, EXPECTED_NICKS[i],
-            "row[{i}] payload.nick mismatch"
-        );
+        let nick = payload["nick"].as_str().unwrap_or("");
+        assert_eq!(nick, EXPECTED_NICKS[i], "row[{i}] payload.nick mismatch");
         assert!(
             !payload["message"].is_null(),
             "row[{i}] payload.message must be present"
@@ -338,7 +326,10 @@ async fn weechat_full_pipeline_persists_correctly(ctx: TestContext) -> TestResul
     .bind(material_id.to_uuid())
     .fetch_one(pool)
     .await?;
-    assert_eq!(material_count, 5, "all 5 events must share the source material");
+    assert_eq!(
+        material_count, 5,
+        "all 5 events must share the source material"
+    );
 
     // ── No events leaked to wrong source ─────────────────────────────────
     let other_irc_count = sqlx::query_scalar::<_, i64>(

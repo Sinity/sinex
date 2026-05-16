@@ -11,9 +11,9 @@ use sinex_primitives::domain::{
     TemporalSourceType,
 };
 use sinex_primitives::rpc::sources::{
-    CaveatSeverity, SOURCE_MATERIAL_CONTRACT_METADATA_KEY, SourceCaveat, SourceMaterialMetadataContract,
-    SourceMaterialStatistics, SourceOrigin, SourceReadiness, SourceReadinessCost,
-    SourceReadinessStatus, caveat_codes,
+    CaveatSeverity, SOURCE_MATERIAL_CONTRACT_METADATA_KEY, SourceCaveat,
+    SourceMaterialMetadataContract, SourceMaterialStatistics, SourceOrigin, SourceReadiness,
+    SourceReadinessCost, SourceReadinessStatus, caveat_codes,
 };
 use sinex_primitives::{Id, SinexError, Timestamp, events::OffsetKind};
 pub use sinex_schema::schema::records::SourceMaterialLinkRecord;
@@ -1808,9 +1808,7 @@ impl SourceMaterialRepository<'_> {
             .await
             .map_err(|e| db_error(e, "count parsed events for readiness"))?;
 
-            let freshness_seconds = row
-                .last_success_at
-                .map(|ts| (now - ts).whole_seconds());
+            let freshness_seconds = row.last_success_at.map(|ts| (now - ts).whole_seconds());
 
             let display_identifier = redact_identifier_for_display(&row.source_identifier);
 
@@ -1858,8 +1856,7 @@ impl SourceMaterialRepository<'_> {
                 caveats.push(SourceCaveat {
                     code: caveat_codes::MATERIAL_STAGED_UNPARSED.to_string(),
                     severity: CaveatSeverity::Degraded,
-                    message: "Material is staged but no parsed events reference it."
-                        .to_string(),
+                    message: "Material is staged but no parsed events reference it.".to_string(),
                     evidence_ref: None,
                 });
                 SourceReadinessStatus::Partial
@@ -2009,10 +2006,7 @@ impl SourceMaterialRepository<'_> {
     /// archived event still claims this material as its provenance root.
     /// Tombstones (`core.event_tombstones`) carry only metadata, not
     /// `source_material_id`, so they don't keep materials alive.
-    pub async fn find_orphan_materials(
-        &self,
-        candidate_ids: &[Uuid],
-    ) -> DbResult<Vec<Uuid>> {
+    pub async fn find_orphan_materials(&self, candidate_ids: &[Uuid]) -> DbResult<Vec<Uuid>> {
         if candidate_ids.is_empty() {
             return Ok(Vec::new());
         }
@@ -2040,10 +2034,7 @@ impl SourceMaterialRepository<'_> {
     /// Delete a source material registry row by ID. Returns `true` if a row was
     /// actually removed. Caller is responsible for dropping the associated
     /// blob from the content store separately — this only removes the DB row.
-    pub async fn delete_material(
-        &self,
-        id: Id<SourceMaterialRecord>,
-    ) -> DbResult<bool> {
+    pub async fn delete_material(&self, id: Id<SourceMaterialRecord>) -> DbResult<bool> {
         let result = sqlx::query!(
             r#"
             DELETE FROM raw.source_material_registry
@@ -2066,9 +2057,7 @@ impl SourceMaterialRepository<'_> {
 /// should treat unfamiliar values as `"generic"`.
 fn derive_source_family(source_identifier: &str, _material_kind: &str) -> &'static str {
     let lower = source_identifier.to_ascii_lowercase();
-    if lower.starts_with("integration.")
-        || lower.starts_with("analysis.")
-    {
+    if lower.starts_with("integration.") || lower.starts_with("analysis.") {
         // External producer envelopes use dotted source-unit identifiers.
         return "integration";
     }

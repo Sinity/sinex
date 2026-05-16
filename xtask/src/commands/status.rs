@@ -178,8 +178,7 @@ fn execute_next(ctx: &CommandContext) -> Result<CommandResult> {
         println!("    {}\n", action.reason);
     }
 
-    Ok(CommandResult::success()
-        .with_message(format!("{} recommended action(s)", actions.len())))
+    Ok(CommandResult::success().with_message(format!("{} recommended action(s)", actions.len())))
 }
 
 /// Show event payload schema information (formerly `contracts info describe-schemas`)

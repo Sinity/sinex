@@ -61,15 +61,13 @@
 //!   propagation for records that are individually complete lines.
 
 use serde::{Deserialize, Serialize};
+use sinex_primitives::Timestamp;
 use sinex_primitives::domain::{EventSource, EventType};
 use sinex_primitives::parser::{
-    MaterialAnchor, OccurrenceKey, ParsedEventIntent, ParserContext, ParserId, SourceRecord,
-    SourceUnitId, TimingConfidence, TimingEvidence,
+    OccurrenceKey, ParsedEventIntent, ParserContext, ParserId, SourceRecord, SourceUnitId,
+    TimingConfidence, TimingEvidence,
 };
-use sinex_primitives::privacy::{
-    self, FieldPrivacyDecision, ProcessingContext,
-};
-use sinex_primitives::Timestamp;
+use sinex_primitives::privacy::{self, FieldPrivacyDecision, ProcessingContext};
 use std::borrow::Cow;
 use std::collections::BTreeMap;
 
@@ -96,7 +94,6 @@ pub struct DeclarativeParserSpec {
     pub fields: Vec<FieldSpec>,
 
     // --- Extension A: discriminator / multi-event-type dispatch ---
-
     /// If `Some`, one field's extracted value selects the emitted
     /// `(event_source, event_type)` at parse time.  See [`Discriminator`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -212,7 +209,6 @@ pub struct FieldSpec {
     pub suppress_if: Option<SuppressPredicate>,
 
     // --- Extension F: stateful carry across records ---
-
     /// If `Some`, this field participates in stateful carry-across-records.
     /// The semantics depend on [`StatefulCarryPolicy`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -529,10 +525,8 @@ fn evaluate_inner(
         // Privacy processing for fields with a declared context.
         let final_value = if let Some(ctx_priv) = field.privacy_context {
             if suppressed_by_predicate {
-                let mut decision = FieldPrivacyDecision::suppressed_by_predicate(
-                    &field.name,
-                    ctx_priv,
-                );
+                let mut decision =
+                    FieldPrivacyDecision::suppressed_by_predicate(&field.name, ctx_priv);
                 if let Some(pred) = &field.suppress_if {
                     if pred.whole_event {
                         decision = decision.into_whole_event_suppressor();
@@ -545,11 +539,8 @@ fn evaluate_inner(
                 let value_str = value_as_string(&coerced);
                 let processed = privacy::process(&value_str, ctx_priv)
                     .map_err(|e| ParserError::Privacy(e.to_string()))?;
-                let decision = FieldPrivacyDecision::from_processed(
-                    &field.name,
-                    ctx_priv,
-                    &processed,
-                );
+                let decision =
+                    FieldPrivacyDecision::from_processed(&field.name, ctx_priv, &processed);
                 field_privacy_log.push(decision);
                 if processed.suppressed {
                     None
@@ -598,28 +589,26 @@ fn evaluate_inner(
     // --- Extension A: discriminator dispatch ---
     let (resolved_event_type, resolved_event_source) = if let Some(disc) = &spec.discriminator {
         match discriminator_value {
-            Some(ref val) => {
-                match disc.cases.iter().find(|c| &c.value == val) {
-                    Some(case) => (
-                        case.event_type.clone(),
-                        case.event_source
-                            .clone()
-                            .unwrap_or_else(|| spec.event_source.clone()),
-                    ),
-                    None => match disc.on_unknown {
-                        DiscriminatorFallback::SkipRecord => return Ok(vec![]),
-                        DiscriminatorFallback::Error => {
-                            return Err(ParserError::Field(format!(
-                                "discriminator field '{}' = {:?} matched no case",
-                                disc.field, val
-                            )))
-                        }
-                        DiscriminatorFallback::Default => {
-                            (spec.event_type.clone(), spec.event_source.clone())
-                        }
-                    },
-                }
-            }
+            Some(ref val) => match disc.cases.iter().find(|c| &c.value == val) {
+                Some(case) => (
+                    case.event_type.clone(),
+                    case.event_source
+                        .clone()
+                        .unwrap_or_else(|| spec.event_source.clone()),
+                ),
+                None => match disc.on_unknown {
+                    DiscriminatorFallback::SkipRecord => return Ok(vec![]),
+                    DiscriminatorFallback::Error => {
+                        return Err(ParserError::Field(format!(
+                            "discriminator field '{}' = {:?} matched no case",
+                            disc.field, val
+                        )));
+                    }
+                    DiscriminatorFallback::Default => {
+                        (spec.event_type.clone(), spec.event_source.clone())
+                    }
+                },
+            },
             None => {
                 // Discriminator field was absent.
                 match disc.on_unknown {
@@ -628,7 +617,7 @@ fn evaluate_inner(
                         return Err(ParserError::Field(format!(
                             "discriminator field '{}' was missing from record",
                             disc.field
-                        )))
+                        )));
                     }
                     DiscriminatorFallback::Default => {
                         (spec.event_type.clone(), spec.event_source.clone())
@@ -688,10 +677,7 @@ enum DecodedRecord {
     Line(String),
 }
 
-fn decode_record(
-    format: InputFormat,
-    record: &SourceRecord,
-) -> Result<DecodedRecord, ParserError> {
+fn decode_record(format: InputFormat, record: &SourceRecord) -> Result<DecodedRecord, ParserError> {
     let text = std::str::from_utf8(&record.bytes)
         .map_err(|e| ParserError::Decode(format!("record bytes not valid UTF-8: {e}")))?;
     match format {
@@ -752,30 +738,23 @@ fn coerce_field(
         (FieldType::Integer, serde_json::Value::String(s)) => s
             .parse::<i64>()
             .map(|n| serde_json::Value::Number(n.into()))
-            .map_err(|_| {
-                ParserError::Field(format!("'{field_name}' = {s:?} is not an integer"))
-            }),
+            .map_err(|_| ParserError::Field(format!("'{field_name}' = {s:?} is not an integer"))),
         (FieldType::Integer, serde_json::Value::Number(n)) if n.is_f64() => n
             .as_f64()
             .filter(|f| f.fract() == 0.0)
             .and_then(|f| {
                 let i = f as i64;
-                serde_json::Number::from_f64(i as f64).map(|_| {
-                    serde_json::Value::Number(serde_json::Number::from(i))
-                })
+                serde_json::Number::from_f64(i as f64)
+                    .map(|_| serde_json::Value::Number(serde_json::Number::from(i)))
             })
-            .ok_or_else(|| {
-                ParserError::Field(format!("'{field_name}' = {n:?} is not an integer"))
-            }),
+            .ok_or_else(|| ParserError::Field(format!("'{field_name}' = {n:?} is not an integer"))),
         (FieldType::Number, serde_json::Value::Number(_)) => Ok(value.clone()),
         (FieldType::Number, serde_json::Value::String(s)) => s
             .parse::<f64>()
             .ok()
             .and_then(serde_json::Number::from_f64)
             .map(serde_json::Value::Number)
-            .ok_or_else(|| {
-                ParserError::Field(format!("'{field_name}' = {s:?} is not a number"))
-            }),
+            .ok_or_else(|| ParserError::Field(format!("'{field_name}' = {s:?} is not a number"))),
         (FieldType::Boolean, serde_json::Value::Bool(_)) => Ok(value.clone()),
         (FieldType::Boolean, serde_json::Value::String(s)) => match s.to_lowercase().as_str() {
             "true" | "1" | "yes" => Ok(serde_json::Value::Bool(true)),
@@ -841,8 +820,8 @@ fn value_as_string(value: &serde_json::Value) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use xtask::sandbox::prelude::sinex_test;
     use sinex_primitives::Id;
+    use xtask::sandbox::prelude::sinex_test;
 
     fn test_ctx() -> ParserContext {
         ParserContext {
@@ -1044,7 +1023,8 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn occurrence_key_concatenates_fields_in_declared_order() -> xtask::sandbox::TestResult<()> {
+    async fn occurrence_key_concatenates_fields_in_declared_order() -> xtask::sandbox::TestResult<()>
+    {
         let mut spec = minimal_spec();
         spec.fields.push(FieldSpec {
             name: "session".into(),
@@ -1063,7 +1043,9 @@ mod tests {
         });
         spec.fields.push(FieldSpec {
             name: "id".into(),
-            source: FieldSource::JsonPointer { pointer: "/id".into() },
+            source: FieldSource::JsonPointer {
+                pointer: "/id".into(),
+            },
             field_type: FieldType::String,
             required: true,
             default: None,
@@ -1097,7 +1079,9 @@ mod tests {
         let mut spec = minimal_spec();
         spec.fields.push(FieldSpec {
             name: "command".into(),
-            source: FieldSource::JsonPointer { pointer: "/cmd".into() },
+            source: FieldSource::JsonPointer {
+                pointer: "/cmd".into(),
+            },
             field_type: FieldType::String,
             required: true,
             default: None,
@@ -1105,7 +1089,7 @@ mod tests {
             privacy_context: Some(ProcessingContext::Command),
             occurrence_key: false,
             timestamp: None,
-suppress_if: Some(SuppressPredicate {
+            suppress_if: Some(SuppressPredicate {
                 binding_field: "private_mode_active".into(),
                 whole_event: false,
             }),
@@ -1132,7 +1116,9 @@ suppress_if: Some(SuppressPredicate {
         let mut spec = minimal_spec();
         spec.fields.push(FieldSpec {
             name: "command".into(),
-            source: FieldSource::JsonPointer { pointer: "/cmd".into() },
+            source: FieldSource::JsonPointer {
+                pointer: "/cmd".into(),
+            },
             field_type: FieldType::String,
             required: true,
             default: None,
@@ -1140,7 +1126,7 @@ suppress_if: Some(SuppressPredicate {
             privacy_context: Some(ProcessingContext::Command),
             occurrence_key: false,
             timestamp: None,
-suppress_if: Some(SuppressPredicate {
+            suppress_if: Some(SuppressPredicate {
                 binding_field: "private_mode_active".into(),
                 whole_event: true,
             }),
@@ -1163,7 +1149,9 @@ suppress_if: Some(SuppressPredicate {
         let mut spec = minimal_spec();
         spec.fields.push(FieldSpec {
             name: "command".into(),
-            source: FieldSource::JsonPointer { pointer: "/cmd".into() },
+            source: FieldSource::JsonPointer {
+                pointer: "/cmd".into(),
+            },
             field_type: FieldType::String,
             required: true,
             default: None,
@@ -1171,7 +1159,7 @@ suppress_if: Some(SuppressPredicate {
             privacy_context: Some(ProcessingContext::Command),
             occurrence_key: false,
             timestamp: None,
-suppress_if: Some(SuppressPredicate {
+            suppress_if: Some(SuppressPredicate {
                 binding_field: "private_mode_active".into(),
                 whole_event: false,
             }),
@@ -1255,7 +1243,9 @@ suppress_if: Some(SuppressPredicate {
         let mut spec = minimal_spec();
         spec.fields.push(FieldSpec {
             name: "ts".into(),
-            source: FieldSource::JsonPointer { pointer: "/ts".into() },
+            source: FieldSource::JsonPointer {
+                pointer: "/ts".into(),
+            },
             field_type: FieldType::String,
             required: true,
             default: None,
@@ -1288,7 +1278,9 @@ suppress_if: Some(SuppressPredicate {
         let mut spec = minimal_spec();
         spec.fields.push(FieldSpec {
             name: "ts".into(),
-            source: FieldSource::JsonPointer { pointer: "/ts".into() },
+            source: FieldSource::JsonPointer {
+                pointer: "/ts".into(),
+            },
             field_type: FieldType::Integer,
             required: true,
             default: None,
@@ -1321,7 +1313,9 @@ suppress_if: Some(SuppressPredicate {
         let mut spec = minimal_spec();
         spec.fields.push(FieldSpec {
             name: "ts".into(),
-            source: FieldSource::JsonPointer { pointer: "/ts".into() },
+            source: FieldSource::JsonPointer {
+                pointer: "/ts".into(),
+            },
             field_type: FieldType::String,
             required: true,
             default: None,
@@ -1350,7 +1344,8 @@ suppress_if: Some(SuppressPredicate {
     }
 
     #[sinex_test]
-    async fn no_timestamp_uses_acquisition_time_with_staged_fallback_evidence() -> xtask::sandbox::TestResult<()> {
+    async fn no_timestamp_uses_acquisition_time_with_staged_fallback_evidence()
+    -> xtask::sandbox::TestResult<()> {
         let intents = DeclarativeParser::evaluate(
             &minimal_spec(),
             json_record("{}"),
@@ -1358,7 +1353,10 @@ suppress_if: Some(SuppressPredicate {
             &BindingConfig::default(),
         )
         .unwrap();
-        assert!(matches!(intents[0].timing, TimingEvidence::StagedAtFallback));
+        assert!(matches!(
+            intents[0].timing,
+            TimingEvidence::StagedAtFallback
+        ));
         Ok(())
     }
 
@@ -1455,11 +1453,14 @@ suppress_if: Some(SuppressPredicate {
     // -----------------------------------------------------------------------
 
     #[sinex_test]
-    async fn timestamp_invalid_with_error_fallback_rejects_record() -> xtask::sandbox::TestResult<()> {
+    async fn timestamp_invalid_with_error_fallback_rejects_record() -> xtask::sandbox::TestResult<()>
+    {
         let mut spec = minimal_spec();
         spec.fields.push(FieldSpec {
             name: "ts".into(),
-            source: FieldSource::JsonPointer { pointer: "/ts".into() },
+            source: FieldSource::JsonPointer {
+                pointer: "/ts".into(),
+            },
             field_type: FieldType::String,
             required: true,
             default: None,
@@ -1484,12 +1485,15 @@ suppress_if: Some(SuppressPredicate {
     }
 
     #[sinex_test]
-    async fn timestamp_unix_millis_distinguishable_from_seconds() -> xtask::sandbox::TestResult<()> {
+    async fn timestamp_unix_millis_distinguishable_from_seconds() -> xtask::sandbox::TestResult<()>
+    {
         // Same numeric input under millis vs seconds yields different timestamps.
         let mut spec = minimal_spec();
         spec.fields.push(FieldSpec {
             name: "ts".into(),
-            source: FieldSource::JsonPointer { pointer: "/ts".into() },
+            source: FieldSource::JsonPointer {
+                pointer: "/ts".into(),
+            },
             field_type: FieldType::Integer,
             required: true,
             default: None,
@@ -1511,7 +1515,10 @@ suppress_if: Some(SuppressPredicate {
             &BindingConfig::default(),
         )
         .unwrap();
-        assert!(matches!(&intents[0].timing, TimingEvidence::Intrinsic { .. }));
+        assert!(matches!(
+            &intents[0].timing,
+            TimingEvidence::Intrinsic { .. }
+        ));
         let expected = Timestamp::from_unix_timestamp_millis(1_700_000_000_000).unwrap();
         assert_eq!(intents[0].ts_orig, expected);
         Ok(())
@@ -1522,7 +1529,9 @@ suppress_if: Some(SuppressPredicate {
         let mut spec = minimal_spec();
         spec.fields.push(FieldSpec {
             name: "ts".into(),
-            source: FieldSource::JsonPointer { pointer: "/ts".into() },
+            source: FieldSource::JsonPointer {
+                pointer: "/ts".into(),
+            },
             field_type: FieldType::Integer,
             required: true,
             default: None,
@@ -1543,7 +1552,10 @@ suppress_if: Some(SuppressPredicate {
             &BindingConfig::default(),
         )
         .unwrap();
-        assert!(matches!(intents[0].timing, TimingEvidence::Intrinsic { .. }));
+        assert!(matches!(
+            intents[0].timing,
+            TimingEvidence::Intrinsic { .. }
+        ));
         Ok(())
     }
 
@@ -1552,7 +1564,9 @@ suppress_if: Some(SuppressPredicate {
         let mut spec = minimal_spec();
         spec.fields.push(FieldSpec {
             name: "count".into(),
-            source: FieldSource::JsonPointer { pointer: "/count".into() },
+            source: FieldSource::JsonPointer {
+                pointer: "/count".into(),
+            },
             field_type: FieldType::Integer,
             required: true,
             default: None,
@@ -1578,7 +1592,9 @@ suppress_if: Some(SuppressPredicate {
         let mut spec = minimal_spec();
         spec.fields.push(FieldSpec {
             name: "n".into(),
-            source: FieldSource::JsonPointer { pointer: "/n".into() },
+            source: FieldSource::JsonPointer {
+                pointer: "/n".into(),
+            },
             field_type: FieldType::Integer,
             required: true,
             default: None,
@@ -1620,24 +1636,23 @@ suppress_if: Some(SuppressPredicate {
             source_ts_hint: None,
             metadata: serde_json::Value::Null,
         };
-        let result = DeclarativeParser::evaluate(
-            &spec,
-            record,
-            &test_ctx(),
-            &BindingConfig::default(),
-        );
+        let result =
+            DeclarativeParser::evaluate(&spec, record, &test_ctx(), &BindingConfig::default());
         assert!(matches!(result, Err(ParserError::Decode(_))));
         Ok(())
     }
 
     #[sinex_test]
-    async fn suppress_if_whole_event_without_privacy_context_drops_event() -> xtask::sandbox::TestResult<()> {
+    async fn suppress_if_whole_event_without_privacy_context_drops_event()
+    -> xtask::sandbox::TestResult<()> {
         // Cover the `else if suppressed_by_predicate` branch: no privacy_context
         // but whole_event = true. Must produce zero intents.
         let mut spec = minimal_spec();
         spec.fields.push(FieldSpec {
             name: "secret".into(),
-            source: FieldSource::JsonPointer { pointer: "/secret".into() },
+            source: FieldSource::JsonPointer {
+                pointer: "/secret".into(),
+            },
             field_type: FieldType::String,
             required: true,
             default: None,
@@ -1645,7 +1660,7 @@ suppress_if: Some(SuppressPredicate {
             privacy_context: None,
             occurrence_key: false,
             timestamp: None,
-suppress_if: Some(SuppressPredicate {
+            suppress_if: Some(SuppressPredicate {
                 binding_field: "private_mode".into(),
                 whole_event: true,
             }),
@@ -1659,7 +1674,10 @@ suppress_if: Some(SuppressPredicate {
             &binding,
         )
         .unwrap();
-        assert!(intents.is_empty(), "whole_event suppression must yield no intents");
+        assert!(
+            intents.is_empty(),
+            "whole_event suppression must yield no intents"
+        );
         Ok(())
     }
 
@@ -1671,7 +1689,9 @@ suppress_if: Some(SuppressPredicate {
         spec.input_format = InputFormat::TabSeparated;
         spec.fields.push(FieldSpec {
             name: "f".into(),
-            source: FieldSource::JsonPointer { pointer: "/x".into() },
+            source: FieldSource::JsonPointer {
+                pointer: "/x".into(),
+            },
             field_type: FieldType::String,
             required: true,
             default: None,
@@ -1684,28 +1704,30 @@ suppress_if: Some(SuppressPredicate {
         });
         let record = SourceRecord {
             material_id: Id::from_uuid(uuid::Uuid::nil()),
-            anchor: MaterialAnchor::Line { byte_start: 0, line: 1 },
+            anchor: MaterialAnchor::Line {
+                byte_start: 0,
+                line: 1,
+            },
             bytes: b"a\tb\tc".to_vec(),
             logical_path: None,
             source_ts_hint: None,
             metadata: serde_json::Value::Null,
         };
-        let result = DeclarativeParser::evaluate(
-            &spec,
-            record,
-            &test_ctx(),
-            &BindingConfig::default(),
-        );
+        let result =
+            DeclarativeParser::evaluate(&spec, record, &test_ctx(), &BindingConfig::default());
         assert!(matches!(result, Err(ParserError::Field(_))));
         Ok(())
     }
 
     #[sinex_test]
-    async fn occurrence_key_with_skip_payload_contributes_key_but_not_payload() -> xtask::sandbox::TestResult<()> {
+    async fn occurrence_key_with_skip_payload_contributes_key_but_not_payload()
+    -> xtask::sandbox::TestResult<()> {
         let mut spec = minimal_spec();
         spec.fields.push(FieldSpec {
             name: "rowid".into(),
-            source: FieldSource::JsonPointer { pointer: "/rowid".into() },
+            source: FieldSource::JsonPointer {
+                pointer: "/rowid".into(),
+            },
             field_type: FieldType::Integer,
             required: true,
             default: None,
@@ -1736,7 +1758,9 @@ suppress_if: Some(SuppressPredicate {
         let mut spec = minimal_spec();
         spec.fields.push(FieldSpec {
             name: "label".into(),
-            source: FieldSource::JsonPointer { pointer: "/label".into() },
+            source: FieldSource::JsonPointer {
+                pointer: "/label".into(),
+            },
             field_type: FieldType::String,
             required: false,
             default: Some(serde_json::json!(42)),

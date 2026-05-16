@@ -1273,16 +1273,8 @@ impl HistoryDb {
         self.ensure_column_exists("invocations", "host_cpu_pressure_some_avg10_max", "REAL")?;
         self.ensure_column_exists("invocations", "host_io_pressure_some_avg10_max", "REAL")?;
         self.ensure_column_exists("invocations", "host_io_pressure_full_avg10_max", "REAL")?;
-        self.ensure_column_exists(
-            "invocations",
-            "host_memory_pressure_some_avg10_max",
-            "REAL",
-        )?;
-        self.ensure_column_exists(
-            "invocations",
-            "host_memory_pressure_full_avg10_max",
-            "REAL",
-        )?;
+        self.ensure_column_exists("invocations", "host_memory_pressure_some_avg10_max", "REAL")?;
+        self.ensure_column_exists("invocations", "host_memory_pressure_full_avg10_max", "REAL")?;
         self.ensure_column_exists("invocations", "shm_free_min_mb", "REAL")?;
         self.ensure_column_exists("invocations", "shm_used_max_mb", "REAL")?;
         self.ensure_column_exists("invocations", "process_count_max", "INTEGER")?;

@@ -85,7 +85,9 @@ pub struct JournalctlCursor {
 impl JournalctlCursor {
     #[must_use]
     pub fn new(cursor: impl Into<String>) -> Self {
-        Self { cursor: cursor.into() }
+        Self {
+            cursor: cursor.into(),
+        }
     }
 }
 
@@ -185,8 +187,9 @@ impl InputShapeAdapter for JournalctlStreamAdapter {
 
     fn cursor_after(&self, record: &SourceRecord) -> ParserResult<Self::Cursor> {
         // Extract __CURSOR from the record bytes (expected to be a JSON object).
-        let json: serde_json::Value = serde_json::from_slice(&record.bytes)
-            .map_err(|e| ParserError::Cursor(format!("failed to parse journal record as JSON: {e}")))?;
+        let json: serde_json::Value = serde_json::from_slice(&record.bytes).map_err(|e| {
+            ParserError::Cursor(format!("failed to parse journal record as JSON: {e}"))
+        })?;
 
         if let Some(cursor) = json.get("__CURSOR").and_then(|v| v.as_str()) {
             Ok(JournalctlCursor::new(cursor))
@@ -283,7 +286,9 @@ impl SharedJournalctlStream {
                     }
                 }
             }
-            tracing::debug!("SharedJournalctlStream: subprocess stream ended — driver task exiting");
+            tracing::debug!(
+                "SharedJournalctlStream: subprocess stream ended — driver task exiting"
+            );
         });
 
         Ok(Self { sender: tx })
@@ -325,7 +330,7 @@ pub struct JournalctlSubscriber {
 
 #[async_trait]
 impl InputShapeAdapter for JournalctlSubscriber {
-    type Config = ();  // Config is owned by SharedJournalctlStream.
+    type Config = (); // Config is owned by SharedJournalctlStream.
     type Cursor = JournalctlCursor;
     const KIND: InputShapeKind = InputShapeKind::Subprocess;
 
@@ -344,7 +349,8 @@ impl InputShapeAdapter for JournalctlSubscriber {
             "JournalctlSubscriber::open() is not supported — use \
              into_stream() to consume the subscriber as a stream instead. \
              For integration with register_adapter_ingestor!, call \
-             SharedJournalctlStream::subscribe() fresh for each open.".into(),
+             SharedJournalctlStream::subscribe() fresh for each open."
+                .into(),
         ))
     }
 
@@ -364,7 +370,8 @@ impl JournalctlSubscriber {
     /// resuming at the oldest available message.
     pub fn into_stream(
         mut self,
-    ) -> impl futures::Stream<Item = crate::parser::ParserResult<SourceRecord>> + Send + 'static {
+    ) -> impl futures::Stream<Item = crate::parser::ParserResult<SourceRecord>> + Send + 'static
+    {
         async_stream::stream! {
             loop {
                 match self.receiver.recv().await {
@@ -436,8 +443,7 @@ mod tests {
 
     const JOURNAL_LINE_WITH_CURSOR: &str =
         r#"{"__CURSOR":"s=abc;i=1;b=x","MESSAGE":"hello","PRIORITY":"6"}"#;
-    const JOURNAL_LINE_NO_CURSOR: &str =
-        r#"{"MESSAGE":"no cursor here","PRIORITY":"6"}"#;
+    const JOURNAL_LINE_NO_CURSOR: &str = r#"{"MESSAGE":"no cursor here","PRIORITY":"6"}"#;
 
     #[sinex_test]
     async fn test_records_from_lines_happy_path() -> xtask::sandbox::TestResult<()> {
@@ -645,7 +651,12 @@ mod tests {
         ];
 
         let received = drive_and_collect(tx, subscriber, records).await;
-        assert_eq!(received.len(), 2, "expected 2 matching records, got {}", received.len());
+        assert_eq!(
+            received.len(),
+            2,
+            "expected 2 matching records, got {}",
+            received.len()
+        );
         assert!(received[0].starts_with(b"MATCH"));
         assert!(received[1].starts_with(b"MATCH"));
         Ok(())
@@ -696,8 +707,16 @@ mod tests {
             sender_task,
         );
 
-        let bytes_a: Vec<_> = results_a.into_iter().filter_map(|r| r.ok()).map(|r| r.bytes).collect();
-        let bytes_b: Vec<_> = results_b.into_iter().filter_map(|r| r.ok()).map(|r| r.bytes).collect();
+        let bytes_a: Vec<_> = results_a
+            .into_iter()
+            .filter_map(|r| r.ok())
+            .map(|r| r.bytes)
+            .collect();
+        let bytes_b: Vec<_> = results_b
+            .into_iter()
+            .filter_map(|r| r.ok())
+            .map(|r| r.bytes)
+            .collect();
 
         assert_eq!(bytes_a.len(), 2, "sub_a should get 2 records");
         assert_eq!(bytes_b.len(), 2, "sub_b should get 2 records");
@@ -716,7 +735,8 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_subscriber_cursor_after_extracts_journal_cursor() -> xtask::sandbox::TestResult<()> {
+    async fn test_subscriber_cursor_after_extracts_journal_cursor() -> xtask::sandbox::TestResult<()>
+    {
         let (tx, rx) = broadcast::channel::<SourceRecord>(4);
         drop(tx); // no sending needed for this test
         let subscriber = super::JournalctlSubscriber {
@@ -726,7 +746,10 @@ mod tests {
 
         let record = SourceRecord {
             material_id: dummy_material_id(),
-            anchor: MaterialAnchor::StreamFrame { material_offset: 0, frame_index: 0 },
+            anchor: MaterialAnchor::StreamFrame {
+                material_offset: 0,
+                frame_index: 0,
+            },
             bytes: JOURNAL_LINE_WITH_CURSOR.as_bytes().to_vec(),
             logical_path: None,
             source_ts_hint: None,
@@ -748,7 +771,10 @@ mod tests {
         };
         let mid = dummy_material_id();
         let result = subscriber.open(mid, &(), None).await;
-        assert!(result.is_err(), "open() must return an error — use into_stream() instead");
+        assert!(
+            result.is_err(),
+            "open() must return an error — use into_stream() instead"
+        );
         Ok(())
     }
 

@@ -89,7 +89,10 @@ pub struct ChainedCursor<A, B> {
 
 impl<A: Default, B: Default> Default for ChainedCursor<A, B> {
     fn default() -> Self {
-        Self { primary: None, secondary: None }
+        Self {
+            primary: None,
+            secondary: None,
+        }
     }
 }
 
@@ -212,11 +215,17 @@ where
         match leg {
             ChainedLeg::Primary => {
                 let cur = self.0.cursor_after(&stripped)?;
-                Ok(ChainedCursor { primary: Some(cur), secondary: None })
+                Ok(ChainedCursor {
+                    primary: Some(cur),
+                    secondary: None,
+                })
             }
             ChainedLeg::Secondary => {
                 let cur = self.1.cursor_after(&stripped)?;
-                Ok(ChainedCursor { primary: None, secondary: Some(cur) })
+                Ok(ChainedCursor {
+                    primary: None,
+                    secondary: Some(cur),
+                })
             }
         }
     }
@@ -318,9 +327,9 @@ mod tests {
 
         fn cursor_after(&self, record: &SourceRecord) -> ParserResult<Self::Cursor> {
             match &record.anchor {
-                MaterialAnchor::StreamFrame { frame_index, .. } => {
-                    Ok(FixtureCursor { next_frame: frame_index + 1 })
-                }
+                MaterialAnchor::StreamFrame { frame_index, .. } => Ok(FixtureCursor {
+                    next_frame: frame_index + 1,
+                }),
                 _ => Err(ParserError::Cursor("unexpected anchor".into())),
             }
         }
@@ -337,9 +346,7 @@ mod tests {
             make_record(mid, 0, "p0"),
             make_record(mid, 1, "p1"),
         ]);
-        let secondary = FixtureAdapter::with_records(vec![
-            make_record(mid, 0, "s0"),
-        ]);
+        let secondary = FixtureAdapter::with_records(vec![make_record(mid, 0, "s0")]);
 
         let adapter = ChainedAdapter(primary, secondary);
         let config = ChainedConfig {
@@ -363,9 +370,18 @@ mod tests {
         let lp1 = records[1].logical_path.as_ref().unwrap().as_str();
         let lp2 = records[2].logical_path.as_ref().unwrap().as_str();
 
-        assert!(lp0.starts_with(PRIMARY_PREFIX), "first record must be primary: {lp0}");
-        assert!(lp1.starts_with(PRIMARY_PREFIX), "second record must be primary: {lp1}");
-        assert!(lp2.starts_with(SECONDARY_PREFIX), "third record must be secondary: {lp2}");
+        assert!(
+            lp0.starts_with(PRIMARY_PREFIX),
+            "first record must be primary: {lp0}"
+        );
+        assert!(
+            lp1.starts_with(PRIMARY_PREFIX),
+            "second record must be primary: {lp1}"
+        );
+        assert!(
+            lp2.starts_with(SECONDARY_PREFIX),
+            "third record must be secondary: {lp2}"
+        );
 
         Ok(())
     }
@@ -485,7 +501,10 @@ mod tests {
         rec.logical_path = Some("primary/foo/bar.csv".into());
 
         let stripped = strip_prefix(&rec);
-        assert_eq!(stripped.logical_path.as_deref().map(|p| p.as_str()), Some("foo/bar.csv"));
+        assert_eq!(
+            stripped.logical_path.as_deref().map(|p| p.as_str()),
+            Some("foo/bar.csv")
+        );
         Ok(())
     }
 

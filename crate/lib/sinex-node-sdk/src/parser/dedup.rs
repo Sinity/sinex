@@ -155,7 +155,11 @@ mod tests {
         window.observe(b"dup");
         window.observe(b"dup");
         window.observe(b"dup");
-        assert_eq!(window.len(), 1, "duplicate observations should not grow the window");
+        assert_eq!(
+            window.len(),
+            1,
+            "duplicate observations should not grow the window"
+        );
     }
 
     #[test]

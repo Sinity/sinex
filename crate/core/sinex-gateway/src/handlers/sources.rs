@@ -16,10 +16,10 @@ use sinex_primitives::rpc::sources::{
     SourcesBindingsCreateResponse, SourcesBindingsListRequest, SourcesBindingsListResponse,
     SourcesBindingsResolveRequest, SourcesBindingsResolveResponse, SourcesContinuityRequest,
     SourcesContinuityResponse, SourcesCoverageRequest, SourcesCoverageResponse, SourcesListRequest,
-    SourcesListResponse, SourcesPresetsListResponse,
-    SourcesReadinessGetRequest, SourcesReadinessGetResponse, SourcesReadinessListRequest,
-    SourcesReadinessListResponse, SourcesShowRequest, SourcesShowResponse,
-    SourcesStageRequest, SourcesStageResponse, TemporalEvidenceSummary,
+    SourcesListResponse, SourcesPresetsListResponse, SourcesReadinessGetRequest,
+    SourcesReadinessGetResponse, SourcesReadinessListRequest, SourcesReadinessListResponse,
+    SourcesShowRequest, SourcesShowResponse, SourcesStageRequest, SourcesStageResponse,
+    TemporalEvidenceSummary,
 };
 use sinex_primitives::{Result, SinexError};
 use sqlx::{FromRow, PgPool};
@@ -88,11 +88,11 @@ pub async fn handle_sources_stage(
     // ── Privacy: classify the material path ──────────────────────
     let (path_class, display_path) = sinex_primitives::privacy::classify_material_path(&canonical);
     if path_class == sinex_primitives::privacy::MaterialPathClass::Temporary {
-        return Err(SinexError::validation(
-            "Staging of temporary paths is not allowed",
-        )
-        .with_context("file_path", &canonical)
-        .with_context("path_class", "temporary"));
+        return Err(
+            SinexError::validation("Staging of temporary paths is not allowed")
+                .with_context("file_path", &canonical)
+                .with_context("path_class", "temporary"),
+        );
     }
 
     // ── Determine material capture class ─────────────────────────
@@ -100,16 +100,15 @@ pub async fn handle_sources_stage(
     // Default to allowed_plaintext for now; binding-based policy is a follow-up.
     let capture_class = "allowed_plaintext".to_string();
 
-    let material_class =
-        sinex_primitives::privacy::MaterialCaptureClass::from_str(&capture_class)
-            .unwrap_or(sinex_primitives::privacy::MaterialCaptureClass::AllowedPlaintext);
+    let material_class = sinex_primitives::privacy::MaterialCaptureClass::from_str(&capture_class)
+        .unwrap_or(sinex_primitives::privacy::MaterialCaptureClass::AllowedPlaintext);
 
     if material_class.is_rejected() {
-        return Err(SinexError::validation(
-            "Material capture policy rejects this file",
-        )
-        .with_context("file_path", &canonical)
-        .with_context("capture_class", capture_class));
+        return Err(
+            SinexError::validation("Material capture policy rejects this file")
+                .with_context("file_path", &canonical)
+                .with_context("capture_class", capture_class),
+        );
     }
 
     let format = req
@@ -184,9 +183,11 @@ pub async fn handle_sources_stage(
 
     // Build material with optional blob_id.
     let material = SourceMaterial::file(&canonical)
-        .with_optional_blob_id(blob_id.as_ref().and_then(|id_str| {
-            uuid::Uuid::parse_str(id_str).ok().map(sinex_db::Id::from)
-        }))
+        .with_optional_blob_id(
+            blob_id
+                .as_ref()
+                .and_then(|id_str| uuid::Uuid::parse_str(id_str).ok().map(sinex_db::Id::from)),
+        )
         .with_metadata_contract(contract.clone());
 
     let mut record = pool
@@ -440,17 +441,66 @@ fn builtin_presets() -> Vec<SourcePresetDescriptor> {
     use SourcePresetDescriptor as P;
     vec![
         // Terminal presets
-        P { name: "atuin.default".into(), description: "Default Atuin shell history database".into(), source_family: "terminal".into(), input_shape_kind: "sqlite_db".into(), material_format_hint: Some("sqlite".into()), resolver_preset: None },
-        P { name: "zsh.default".into(), description: "Default Zsh history file".into(), source_family: "terminal".into(), input_shape_kind: "file".into(), material_format_hint: Some("plaintext".into()), resolver_preset: None },
+        P {
+            name: "atuin.default".into(),
+            description: "Default Atuin shell history database".into(),
+            source_family: "terminal".into(),
+            input_shape_kind: "sqlite_db".into(),
+            material_format_hint: Some("sqlite".into()),
+            resolver_preset: None,
+        },
+        P {
+            name: "zsh.default".into(),
+            description: "Default Zsh history file".into(),
+            source_family: "terminal".into(),
+            input_shape_kind: "file".into(),
+            material_format_hint: Some("plaintext".into()),
+            resolver_preset: None,
+        },
         // Browser presets
-        P { name: "firefox.default".into(), description: "Default Firefox profile history database".into(), source_family: "browser".into(), input_shape_kind: "sqlite_db".into(), material_format_hint: Some("sqlite".into()), resolver_preset: None },
-        P { name: "chromium.default".into(), description: "Default Chromium profile history database".into(), source_family: "browser".into(), input_shape_kind: "sqlite_db".into(), material_format_hint: Some("sqlite".into()), resolver_preset: None },
+        P {
+            name: "firefox.default".into(),
+            description: "Default Firefox profile history database".into(),
+            source_family: "browser".into(),
+            input_shape_kind: "sqlite_db".into(),
+            material_format_hint: Some("sqlite".into()),
+            resolver_preset: None,
+        },
+        P {
+            name: "chromium.default".into(),
+            description: "Default Chromium profile history database".into(),
+            source_family: "browser".into(),
+            input_shape_kind: "sqlite_db".into(),
+            material_format_hint: Some("sqlite".into()),
+            resolver_preset: None,
+        },
         // Desktop presets
-        P { name: "activitywatch.default".into(), description: "Default ActivityWatch SQLite database".into(), source_family: "desktop".into(), input_shape_kind: "sqlite_db".into(), material_format_hint: Some("sqlite".into()), resolver_preset: None },
+        P {
+            name: "activitywatch.default".into(),
+            description: "Default ActivityWatch SQLite database".into(),
+            source_family: "desktop".into(),
+            input_shape_kind: "sqlite_db".into(),
+            material_format_hint: Some("sqlite".into()),
+            resolver_preset: None,
+        },
         // Chat export presets
-        P { name: "polylogue.exports.default".into(), description: "Polylogue chat archive root".into(), source_family: "chat".into(), input_shape_kind: "directory".into(), material_format_hint: None, resolver_preset: None },
+        P {
+            name: "polylogue.exports.default".into(),
+            description: "Polylogue chat archive root".into(),
+            source_family: "chat".into(),
+            input_shape_kind: "directory".into(),
+            material_format_hint: None,
+            resolver_preset: None,
+        },
         // Generic presets
-        P { name: "directory.watch".into(), description: "Operator-supplied directory with optional glob pattern".into(), source_family: "generic".into(), input_shape_kind: "directory".into(), material_format_hint: None, resolver_preset: None },
+        P {
+            name: "directory.watch".into(),
+            description: "Operator-supplied directory with optional glob pattern".into(),
+            source_family: "generic".into(),
+            input_shape_kind: "directory".into(),
+            material_format_hint: None,
+            resolver_preset: None,
+        },
     ]
 }
 
@@ -469,10 +519,7 @@ pub async fn handle_sources_presets_list(
 
 // ── sources.bindings.list ───────────────────────────────────────
 
-pub async fn handle_sources_bindings_list(
-    _pool: &PgPool,
-    _params: Value,
-) -> Result<Value> {
+pub async fn handle_sources_bindings_list(_pool: &PgPool, _params: Value) -> Result<Value> {
     // Source bindings are Nix configuration (#1098), not a DB catalog.
     // The binding catalog DB tables were removed in #1160.
     let response = SourcesBindingsListResponse { bindings: vec![] };
@@ -484,23 +531,17 @@ pub async fn handle_sources_bindings_list(
 
 // ── sources.bindings.create ─────────────────────────────────────
 
-pub async fn handle_sources_bindings_create(
-    _pool: &PgPool,
-    _params: Value,
-) -> Result<Value> {
+pub async fn handle_sources_bindings_create(_pool: &PgPool, _params: Value) -> Result<Value> {
     Err(SinexError::configuration(
-        "Source bindings are Nix configuration (#1098), not a DB catalog. Bindings are declared in nixos/modules/source-bindings.nix."
+        "Source bindings are Nix configuration (#1098), not a DB catalog. Bindings are declared in nixos/modules/source-bindings.nix.",
     ))
 }
 
 // ── sources.bindings.resolve ─────────────────────────────────────
 
-pub async fn handle_sources_bindings_resolve(
-    _pool: &PgPool,
-    _params: Value,
-) -> Result<Value> {
+pub async fn handle_sources_bindings_resolve(_pool: &PgPool, _params: Value) -> Result<Value> {
     Err(SinexError::configuration(
-        "Source bindings are Nix configuration (#1098), not a DB catalog. Bindings are declared in nixos/modules/source-bindings.nix."
+        "Source bindings are Nix configuration (#1098), not a DB catalog. Bindings are declared in nixos/modules/source-bindings.nix.",
     ))
 }
 
@@ -536,10 +577,12 @@ pub async fn handle_sources_annotate(pool: &PgPool, params: Value) -> Result<Val
 
     // Read existing contract from metadata.
     let mut contract = SourceMaterialMetadataContract::from_metadata(&record.metadata)
-        .unwrap_or_else(|| SourceMaterialMetadataContract::new(
-            SourceMaterialFormat::Unknown,
-            SourceMaterialTimingInfoType::Unknown,
-        ));
+        .unwrap_or_else(|| {
+            SourceMaterialMetadataContract::new(
+                SourceMaterialFormat::Unknown,
+                SourceMaterialTimingInfoType::Unknown,
+            )
+        });
 
     let mut annotations = contract.annotations.unwrap_or_default();
 
@@ -594,8 +637,7 @@ pub async fn handle_sources_annotate(pool: &PgPool, params: Value) -> Result<Val
     .execute(pool)
     .await
     .map_err(|error| {
-        SinexError::database("Failed to persist source material annotations")
-            .with_std_error(&error)
+        SinexError::database("Failed to persist source material annotations").with_std_error(&error)
     })?;
 
     let response = SourcesAnnotateResponse {
@@ -878,9 +920,11 @@ pub async fn handle_sources_continuity(pool: &PgPool, params: Value) -> Result<V
 // ── sources.readiness.list (#1099) ─────────────────────────────
 
 pub async fn handle_sources_readiness_list(pool: &PgPool, params: Value) -> Result<Value> {
-    let req: SourcesReadinessListRequest = super::parse_default_on_null(params).map_err(|error| {
-        SinexError::serialization("Invalid sources.readiness.list request").with_std_error(&error)
-    })?;
+    let req: SourcesReadinessListRequest =
+        super::parse_default_on_null(params).map_err(|error| {
+            SinexError::serialization("Invalid sources.readiness.list request")
+                .with_std_error(&error)
+        })?;
 
     let sources = pool
         .source_materials()
@@ -945,10 +989,7 @@ pub async fn handle_sources_continuity_list(pool: &PgPool, params: Value) -> Res
         })?
     };
 
-    let reports = pool
-        .continuity()
-        .list_continuity_reports(req.since)
-        .await?;
+    let reports = pool.continuity().list_continuity_reports(req.since).await?;
 
     serde_json::to_value(SourcesContinuityListResponse { reports }).map_err(|error| {
         SinexError::serialization("Failed to serialize sources.continuity.list response")
@@ -978,10 +1019,7 @@ pub async fn handle_sources_continuity_get(pool: &PgPool, params: Value) -> Resu
 }
 
 /// Handle `sources.continuity.explain_gap` — attribute a single window.
-pub async fn handle_sources_continuity_explain_gap(
-    pool: &PgPool,
-    params: Value,
-) -> Result<Value> {
+pub async fn handle_sources_continuity_explain_gap(pool: &PgPool, params: Value) -> Result<Value> {
     use sinex_primitives::sources::continuity::{
         SourcesExplainGapRequest, SourcesExplainGapResponse,
     };

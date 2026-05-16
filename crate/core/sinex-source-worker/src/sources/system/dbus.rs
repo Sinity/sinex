@@ -3,8 +3,18 @@
 //! Dispatches 9 payload types based on interface + signal name patterns.
 //! Notification body and D-Bus args are passed through the privacy engine.
 
+use crate::register_parser;
 use sinex_node_sdk::parser::{DbusStreamAdapter, MaterialParser, ParserError};
 use sinex_primitives::domain::{EventSource, EventType};
+use sinex_primitives::events::enums::{
+    BluetoothEventType, DBusBus, DeviceType, MountEventType, NetworkConnectionType,
+    NetworkEventType, NetworkState, PlaybackStatus, PowerEventType,
+};
+use sinex_primitives::events::payloads::system::{
+    DbusBluetoothDeviceChangedPayload, DbusDeviceConnectedPayload, DbusMediaStateChangedPayload,
+    DbusMethodCalledPayload, DbusMountEventPayload, DbusNetworkStateChangedPayload,
+    DbusNotificationSentPayload, DbusPowerStateChangedPayload, DbusSignalPayload,
+};
 use sinex_primitives::ids::Id;
 use sinex_primitives::parser::{
     InputShapeKind, ParsedEventIntent, ParserContext, ParserId, ParserManifest, SourceRecord,
@@ -16,17 +26,7 @@ use sinex_primitives::proof::{
     SourceUnitBinding, SourceUnitBuildImpact, SourceUnitDescriptor, SubjectRef,
 };
 use sinex_primitives::temporal::Timestamp;
-use sinex_primitives::events::payloads::system::{
-    DbusBluetoothDeviceChangedPayload, DbusDeviceConnectedPayload, DbusMediaStateChangedPayload,
-    DbusMethodCalledPayload, DbusMountEventPayload, DbusNetworkStateChangedPayload,
-    DbusNotificationSentPayload, DbusPowerStateChangedPayload, DbusSignalPayload,
-};
-use sinex_primitives::events::enums::{
-    BluetoothEventType, DBusBus, DeviceType, MountEventType, NetworkConnectionType,
-    NetworkEventType, NetworkState, PlaybackStatus, PowerEventType,
-};
 use sinex_primitives::{register_source_unit, register_source_unit_binding};
-use crate::register_parser;
 
 use std::collections::HashMap;
 
@@ -128,15 +128,42 @@ impl MaterialParser for DbusParser {
             accepted_input_shapes: vec![InputShapeKind::DbusSubscription],
             source_unit_id: SourceUnitId::from_static("system.dbus"),
             declared_event_types: vec![
-                (EventSource::from_static("dbus"), EventType::from_static("signal.received")),
-                (EventSource::from_static("dbus"), EventType::from_static("method.called")),
-                (EventSource::from_static("dbus"), EventType::from_static("power.state_changed")),
-                (EventSource::from_static("dbus"), EventType::from_static("bluetooth.device_changed")),
-                (EventSource::from_static("dbus"), EventType::from_static("network.state_changed")),
-                (EventSource::from_static("dbus"), EventType::from_static("device.connected")),
-                (EventSource::from_static("dbus"), EventType::from_static("media.state_changed")),
-                (EventSource::from_static("dbus"), EventType::from_static("mount.event")),
-                (EventSource::from_static("dbus"), EventType::from_static("notification.sent")),
+                (
+                    EventSource::from_static("dbus"),
+                    EventType::from_static("signal.received"),
+                ),
+                (
+                    EventSource::from_static("dbus"),
+                    EventType::from_static("method.called"),
+                ),
+                (
+                    EventSource::from_static("dbus"),
+                    EventType::from_static("power.state_changed"),
+                ),
+                (
+                    EventSource::from_static("dbus"),
+                    EventType::from_static("bluetooth.device_changed"),
+                ),
+                (
+                    EventSource::from_static("dbus"),
+                    EventType::from_static("network.state_changed"),
+                ),
+                (
+                    EventSource::from_static("dbus"),
+                    EventType::from_static("device.connected"),
+                ),
+                (
+                    EventSource::from_static("dbus"),
+                    EventType::from_static("media.state_changed"),
+                ),
+                (
+                    EventSource::from_static("dbus"),
+                    EventType::from_static("mount.event"),
+                ),
+                (
+                    EventSource::from_static("dbus"),
+                    EventType::from_static("notification.sent"),
+                ),
             ],
             privacy_contexts: vec![ProcessingContext::Dbus, ProcessingContext::Notification],
             proof_obligations: vec![
@@ -153,13 +180,13 @@ impl MaterialParser for DbusParser {
         ctx: &ParserContext,
     ) -> Result<Vec<ParsedEventIntent>, ParserError> {
         if record.bytes.len() > MAX_DBUS_MESSAGE_BYTES {
-            return Err(ParserError::Parse(
-                format!("D-Bus message exceeds {MAX_DBUS_MESSAGE_BYTES} bytes, dropping"),
-            ));
+            return Err(ParserError::Parse(format!(
+                "D-Bus message exceeds {MAX_DBUS_MESSAGE_BYTES} bytes, dropping"
+            )));
         }
 
-        let body_json: serde_json::Value = serde_json::from_slice(&record.bytes)
-            .unwrap_or(serde_json::Value::Null);
+        let body_json: serde_json::Value =
+            serde_json::from_slice(&record.bytes).unwrap_or(serde_json::Value::Null);
 
         let interface = record
             .metadata
@@ -192,7 +219,10 @@ impl MaterialParser for DbusParser {
         // Apply privacy to args for generic signals.
         let args_raw = body_json.to_string();
         let args_redacted = match privacy::engine() {
-            Ok(eng) => eng.process(&args_raw, ProcessingContext::Dbus).text.into_owned(),
+            Ok(eng) => eng
+                .process(&args_raw, ProcessingContext::Dbus)
+                .text
+                .into_owned(),
             Err(e) => return Err(ParserError::Privacy(format!("privacy engine: {e}"))),
         };
         let args_value: serde_json::Value =
@@ -211,11 +241,17 @@ impl MaterialParser for DbusParser {
                     .unwrap_or("")
                     .to_string();
                 let summary = match privacy::engine() {
-                    Ok(eng) => eng.process(&raw_summary, ProcessingContext::Notification).text.into_owned(),
+                    Ok(eng) => eng
+                        .process(&raw_summary, ProcessingContext::Notification)
+                        .text
+                        .into_owned(),
                     Err(_) => raw_summary.clone(),
                 };
                 let body = match privacy::engine() {
-                    Ok(eng) => eng.process(&raw_body, ProcessingContext::Notification).text.into_owned(),
+                    Ok(eng) => eng
+                        .process(&raw_body, ProcessingContext::Notification)
+                        .text
+                        .into_owned(),
                     Err(_) => raw_body.clone(),
                 };
                 let app_name = body_json
@@ -233,8 +269,7 @@ impl MaterialParser for DbusParser {
                     hints: HashMap::new(),
                     timestamp,
                 };
-                serde_json::to_value(&payload)
-                    .map_err(|e| ParserError::Parse(e.to_string()))?
+                serde_json::to_value(&payload).map_err(|e| ParserError::Parse(e.to_string()))?
             }
             "media.state_changed" => {
                 let player = sender.clone();
@@ -261,8 +296,7 @@ impl MaterialParser for DbusParser {
                     art_url: None,
                     timestamp,
                 };
-                serde_json::to_value(&payload)
-                    .map_err(|e| ParserError::Parse(e.to_string()))?
+                serde_json::to_value(&payload).map_err(|e| ParserError::Parse(e.to_string()))?
             }
             "power.state_changed" => {
                 let payload = DbusPowerStateChangedPayload {
@@ -270,8 +304,7 @@ impl MaterialParser for DbusParser {
                     details: args_value,
                     timestamp,
                 };
-                serde_json::to_value(&payload)
-                    .map_err(|e| ParserError::Parse(e.to_string()))?
+                serde_json::to_value(&payload).map_err(|e| ParserError::Parse(e.to_string()))?
             }
             "bluetooth.device_changed" => {
                 let payload = DbusBluetoothDeviceChangedPayload {
@@ -285,8 +318,7 @@ impl MaterialParser for DbusParser {
                     trusted: false,
                     timestamp,
                 };
-                serde_json::to_value(&payload)
-                    .map_err(|e| ParserError::Parse(e.to_string()))?
+                serde_json::to_value(&payload).map_err(|e| ParserError::Parse(e.to_string()))?
             }
             "network.state_changed" => {
                 let payload = DbusNetworkStateChangedPayload {
@@ -298,8 +330,7 @@ impl MaterialParser for DbusParser {
                     state: NetworkState::Unknown,
                     timestamp,
                 };
-                serde_json::to_value(&payload)
-                    .map_err(|e| ParserError::Parse(e.to_string()))?
+                serde_json::to_value(&payload).map_err(|e| ParserError::Parse(e.to_string()))?
             }
             "mount.event" => {
                 let payload = DbusMountEventPayload {
@@ -312,8 +343,7 @@ impl MaterialParser for DbusParser {
                     size_bytes: None,
                     timestamp,
                 };
-                serde_json::to_value(&payload)
-                    .map_err(|e| ParserError::Parse(e.to_string()))?
+                serde_json::to_value(&payload).map_err(|e| ParserError::Parse(e.to_string()))?
             }
             "device.connected" => {
                 let payload = DbusDeviceConnectedPayload {
@@ -327,8 +357,7 @@ impl MaterialParser for DbusParser {
                     properties: HashMap::new(),
                     timestamp,
                 };
-                serde_json::to_value(&payload)
-                    .map_err(|e| ParserError::Parse(e.to_string()))?
+                serde_json::to_value(&payload).map_err(|e| ParserError::Parse(e.to_string()))?
             }
             "method.called" => {
                 let payload = DbusMethodCalledPayload {
@@ -341,8 +370,7 @@ impl MaterialParser for DbusParser {
                     args: args_value,
                     timestamp,
                 };
-                serde_json::to_value(&payload)
-                    .map_err(|e| ParserError::Parse(e.to_string()))?
+                serde_json::to_value(&payload).map_err(|e| ParserError::Parse(e.to_string()))?
             }
             _ => {
                 // "signal.received" — generic fallback
@@ -355,8 +383,7 @@ impl MaterialParser for DbusParser {
                     args: args_value,
                     timestamp,
                 };
-                serde_json::to_value(&payload)
-                    .map_err(|e| ParserError::Parse(e.to_string()))?
+                serde_json::to_value(&payload).map_err(|e| ParserError::Parse(e.to_string()))?
             }
         };
 
@@ -422,17 +449,20 @@ crate::register_adapter_ingestor!(
 mod tests {
     use super::*;
     use sinex_node_sdk::parser::{DbusMessage, MockDbusBackend};
-    use sinex_primitives::ids::Id;
     use sinex_primitives::events::SourceMaterial;
-    use sinex_primitives::primitives::Uuid;
+    use sinex_primitives::ids::Id;
     use sinex_primitives::parser::MaterialAnchor;
+    use sinex_primitives::primitives::Uuid;
     use xtask::sandbox::prelude::*;
 
     fn make_ctx(mid: Id<SourceMaterial>) -> ParserContext {
         ParserContext {
             source_unit_id: SourceUnitId::from_static("system.dbus"),
             source_material_id: mid,
-            record_anchor: MaterialAnchor::StreamFrame { material_offset: 0, frame_index: 0 },
+            record_anchor: MaterialAnchor::StreamFrame {
+                material_offset: 0,
+                frame_index: 0,
+            },
             operation_id: Uuid::new_v4(),
             job_id: Uuid::new_v4(),
             host: "test-host".into(),
@@ -440,10 +470,18 @@ mod tests {
         }
     }
 
-    fn make_dbus_record(mid: Id<SourceMaterial>, interface: &str, member: &str, body: serde_json::Value) -> SourceRecord {
+    fn make_dbus_record(
+        mid: Id<SourceMaterial>,
+        interface: &str,
+        member: &str,
+        body: serde_json::Value,
+    ) -> SourceRecord {
         SourceRecord {
             material_id: mid,
-            anchor: MaterialAnchor::StreamFrame { material_offset: 0, frame_index: 0 },
+            anchor: MaterialAnchor::StreamFrame {
+                material_offset: 0,
+                frame_index: 0,
+            },
             bytes: serde_json::to_vec(&body).unwrap(),
             logical_path: None,
             source_ts_hint: None,
@@ -459,7 +497,12 @@ mod tests {
     #[sinex_test]
     async fn test_dbus_parser_signal_received() -> TestResult<()> {
         let mid = Id::<SourceMaterial>::new();
-        let record = make_dbus_record(mid, "org.example.Unknown", "SomeSignal", serde_json::json!({"key": "value"}));
+        let record = make_dbus_record(
+            mid,
+            "org.example.Unknown",
+            "SomeSignal",
+            serde_json::json!({"key": "value"}),
+        );
 
         let mut parser = DbusParser;
         let ctx = make_ctx(mid);
@@ -492,9 +535,18 @@ mod tests {
 
     #[sinex_test]
     async fn test_classify_dbus_event() -> TestResult<()> {
-        assert_eq!(classify_dbus_event("org.freedesktop.Notifications", "Notify"), "notification.sent");
-        assert_eq!(classify_dbus_event("org.mpris.MediaPlayer2", "PropertiesChanged"), "media.state_changed");
-        assert_eq!(classify_dbus_event("org.example.Unknown", "Signal"), "signal.received");
+        assert_eq!(
+            classify_dbus_event("org.freedesktop.Notifications", "Notify"),
+            "notification.sent"
+        );
+        assert_eq!(
+            classify_dbus_event("org.mpris.MediaPlayer2", "PropertiesChanged"),
+            "media.state_changed"
+        );
+        assert_eq!(
+            classify_dbus_event("org.example.Unknown", "Signal"),
+            "signal.received"
+        );
         Ok(())
     }
 }

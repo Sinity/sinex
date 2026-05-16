@@ -18,9 +18,7 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::sync::OnceLock;
 
-use sinex_node_sdk::parser::{
-    DirectoryWalkAdapter, MaterialParser, ParserError, ParserResult,
-};
+use sinex_node_sdk::parser::{DirectoryWalkAdapter, MaterialParser, ParserError, ParserResult};
 use sinex_primitives::domain::{EventSource, EventType};
 use sinex_primitives::ids::Id;
 use sinex_primitives::parser::{
@@ -82,7 +80,9 @@ fn split_front_matter(content: &str) -> (&str, &str) {
     if let Some(pos) = find_closing_fence(rest) {
         let fm = &rest[..pos];
         let body_start = pos + 3; // skip `---`
-        let body = rest[body_start..].trim_start_matches('\n').trim_start_matches("\r\n");
+        let body = rest[body_start..]
+            .trim_start_matches('\n')
+            .trim_start_matches("\r\n");
         (fm, body)
     } else {
         // Unclosed fence — treat everything as body.
@@ -204,7 +204,10 @@ fn derive_title(fm: &serde_json::Value, path: &str) -> String {
     }
     // Fallback: strip extension from the last path segment.
     let filename = path.rsplit('/').next().unwrap_or(path);
-    filename.trim_end_matches(".md").replace('-', " ").replace('_', " ")
+    filename
+        .trim_end_matches(".md")
+        .replace('-', " ")
+        .replace('_', " ")
 }
 
 // ---------------------------------------------------------------------------
@@ -474,10 +477,10 @@ crate::register_adapter_ingestor!(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sinex_primitives::ids::Id;
     use sinex_primitives::Uuid;
-    use xtask::sandbox::prelude::sinex_test;
+    use sinex_primitives::ids::Id;
     use xtask::sandbox::TestResult;
+    use xtask::sandbox::prelude::sinex_test;
 
     fn test_ctx() -> ParserContext {
         ParserContext {
@@ -628,7 +631,10 @@ See [[note-a]] and [[note-b|Alias]] and [[note-a]] again and [[note-c#heading]].
             )
             .await
             .unwrap();
-        let hash1 = intents[0].payload["body_text_hash"].as_str().unwrap().to_owned();
+        let hash1 = intents[0].payload["body_text_hash"]
+            .as_str()
+            .unwrap()
+            .to_owned();
         assert_eq!(hash1.len(), 64, "BLAKE3 hex digest should be 64 chars");
 
         // Same content → same hash.
@@ -640,7 +646,10 @@ See [[note-a]] and [[note-b|Alias]] and [[note-a]] again and [[note-c#heading]].
             .await
             .unwrap();
         let hash2 = intents2[0].payload["body_text_hash"].as_str().unwrap();
-        assert_eq!(hash1, hash2, "hash must be stable across parses of same content");
+        assert_eq!(
+            hash1, hash2,
+            "hash must be stable across parses of same content"
+        );
         Ok(())
     }
 
@@ -675,10 +684,7 @@ See [[note-a]] and [[note-b|Alias]] and [[note-a]] again and [[note-c#heading]].
     async fn skips_non_md_files() -> TestResult<()> {
         let mut parser = KnowledgebaseVaultParser;
         let intents = parser
-            .parse_record(
-                record_for("assets/image.png", b"\x89PNG\r\n"),
-                &test_ctx(),
-            )
+            .parse_record(record_for("assets/image.png", b"\x89PNG\r\n"), &test_ctx())
             .await
             .unwrap();
         assert!(intents.is_empty(), "non-md files must be skipped");
@@ -713,9 +719,14 @@ Some text with a real #inline-tag here.
         let tags = intents[0].payload["tags"].as_array().unwrap();
         let tag_strs: Vec<&str> = tags.iter().map(|v| v.as_str().unwrap()).collect();
         // "inline-tag" should be present, but "Top-level" and "Section" should not.
-        assert!(tag_strs.contains(&"inline-tag"), "real inline tag must be collected");
         assert!(
-            !tag_strs.iter().any(|t| *t == "Top-level" || *t == "Section"),
+            tag_strs.contains(&"inline-tag"),
+            "real inline tag must be collected"
+        );
+        assert!(
+            !tag_strs
+                .iter()
+                .any(|t| *t == "Top-level" || *t == "Section"),
             "heading tokens must not become tags; got: {tag_strs:?}"
         );
         Ok(())

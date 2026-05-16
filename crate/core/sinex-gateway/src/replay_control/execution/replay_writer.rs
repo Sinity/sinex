@@ -764,7 +764,9 @@ impl ReplayExecutionEngine {
                 ReplayState::Failed => {
                     return Err(eyre!(
                         "Staged-source replay failed for operation {operation_id}: {}",
-                        operation.error_details.unwrap_or_else(|| "unknown error".to_string())
+                        operation
+                            .error_details
+                            .unwrap_or_else(|| "unknown error".to_string())
                     ));
                 }
                 ReplayState::Cancelled => {

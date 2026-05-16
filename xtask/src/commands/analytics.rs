@@ -614,10 +614,7 @@ fn execute_pressure(
     }
 
     println!("\n{}", style("Current Host Pressure:").bold());
-    println!(
-        "  cpu.some avg10: {}",
-        format_pressure_cell(cpu.some_avg10)
-    );
+    println!("  cpu.some avg10: {}", format_pressure_cell(cpu.some_avg10));
     println!(
         "  io.some/full avg10: {}/{}",
         format_pressure_cell(io.some_avg10),
@@ -645,7 +642,14 @@ fn execute_pressure(
             style(format!("Top physical IO over {sample_ms} ms:")).bold()
         );
         let mut builder = Builder::new();
-        builder.push_record(["PID", "READ", "WRITE", "READ CALLS", "WRITE CALLS", "COMMAND"]);
+        builder.push_record([
+            "PID",
+            "READ",
+            "WRITE",
+            "READ CALLS",
+            "WRITE CALLS",
+            "COMMAND",
+        ]);
         for row in &top_io_processes {
             builder.push_record([
                 &row.pid.to_string(),
@@ -740,9 +744,7 @@ fn sample_top_io(sample_window: Duration, limit: usize) -> Vec<ProcessIoDelta> {
         .collect::<Vec<_>>();
 
     rows.sort_by(|left, right| {
-        let left_bytes = left
-            .read_bytes_delta
-            .saturating_add(left.write_bytes_delta);
+        let left_bytes = left.read_bytes_delta.saturating_add(left.write_bytes_delta);
         let right_bytes = right
             .read_bytes_delta
             .saturating_add(right.write_bytes_delta);

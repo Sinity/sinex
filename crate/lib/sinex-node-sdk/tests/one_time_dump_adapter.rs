@@ -43,8 +43,14 @@ async fn one_time_dump_emits_all_lines_and_flips_consumed() -> TestResult<()> {
 
     let initial = source.initial_checkpoint();
     assert!(!initial.consumed);
-    let batch = source.read_batch(&initial, RecordReadHorizon::Unbounded).await?;
-    let lines: Vec<_> = batch.records.iter().map(|r| r.record.line.clone()).collect();
+    let batch = source
+        .read_batch(&initial, RecordReadHorizon::Unbounded)
+        .await?;
+    let lines: Vec<_> = batch
+        .records
+        .iter()
+        .map(|r| r.record.line.clone())
+        .collect();
     assert_eq!(
         lines,
         vec![
@@ -59,10 +65,7 @@ async fn one_time_dump_emits_all_lines_and_flips_consumed() -> TestResult<()> {
     let hash = final_checkpoint
         .content_hash
         .ok_or_else(|| color_eyre::eyre::eyre!("expected content hash to be recorded"))?;
-    assert_eq!(
-        hash,
-        *blake3::hash(fixture_jsonl().as_bytes()).as_bytes()
-    );
+    assert_eq!(hash, *blake3::hash(fixture_jsonl().as_bytes()).as_bytes());
 
     // Re-reading with a consumed checkpoint short-circuits to empty.
     let again = source

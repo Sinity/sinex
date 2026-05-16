@@ -54,7 +54,12 @@ fn try_expand(input: &DeriveInput) -> syn::Result<TokenStream2> {
         ));
     };
 
-    let StructAttrs { schema, table, column, version } = parse_struct_attrs(input)?;
+    let StructAttrs {
+        schema,
+        table,
+        column,
+        version,
+    } = parse_struct_attrs(input)?;
 
     let mut allowed_values: Vec<String> = Vec::with_capacity(variants.len());
     for variant in variants {
@@ -137,9 +142,8 @@ fn parse_struct_attrs(input: &DeriveInput) -> syn::Result<StructAttrs> {
     let column = column.ok_or_else(|| {
         syn::Error::new_spanned(input, "#[db_check(column = \"...\")] is required")
     })?;
-    let version = version.ok_or_else(|| {
-        syn::Error::new_spanned(input, "#[db_check(version = N)] is required")
-    })?;
+    let version = version
+        .ok_or_else(|| syn::Error::new_spanned(input, "#[db_check(version = N)] is required"))?;
     Ok(StructAttrs {
         schema: schema.unwrap_or_else(|| "core".to_string()),
         table,
@@ -167,7 +171,10 @@ fn parse_variant_rename(variant: &syn::Variant) -> syn::Result<Option<String>> {
 }
 
 fn lit_string(expr: &Expr) -> syn::Result<String> {
-    if let Expr::Lit(syn::ExprLit { lit: Lit::Str(s), .. }) = expr {
+    if let Expr::Lit(syn::ExprLit {
+        lit: Lit::Str(s), ..
+    }) = expr
+    {
         Ok(s.value())
     } else {
         Err(syn::Error::new_spanned(expr, "expected a string literal"))
@@ -175,7 +182,10 @@ fn lit_string(expr: &Expr) -> syn::Result<String> {
 }
 
 fn lit_u32(expr: &Expr) -> syn::Result<u32> {
-    if let Expr::Lit(syn::ExprLit { lit: Lit::Int(i), .. }) = expr {
+    if let Expr::Lit(syn::ExprLit {
+        lit: Lit::Int(i), ..
+    }) = expr
+    {
         i.base10_parse::<u32>()
     } else {
         Err(syn::Error::new_spanned(expr, "expected an integer literal"))

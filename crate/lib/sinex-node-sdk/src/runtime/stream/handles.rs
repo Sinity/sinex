@@ -296,10 +296,7 @@ impl EventEmitter {
     /// slot is shared across `EventEmitter` clones (via `Arc<RwLock<_>>`), so
     /// installation propagates to all downstream sites that already hold the
     /// emitter.
-    pub fn register_emit_tracker(
-        &self,
-        tracker: Arc<crate::health_reporter::EmitTracker>,
-    ) {
+    pub fn register_emit_tracker(&self, tracker: Arc<crate::health_reporter::EmitTracker>) {
         *self.emit_tracker.write() = Some(tracker);
     }
 

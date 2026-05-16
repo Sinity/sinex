@@ -24,7 +24,6 @@ use crate::{NodeResult, SinexError};
 use sinex_primitives::env as shared_env;
 
 use sinex_primitives::events::Event;
-use sinex_primitives::non_empty::NonEmptyVec;
 use sinex_primitives::query::TimeRange;
 use sinex_primitives::temporal::Timestamp;
 use sinex_primitives::{Id, JsonValue, Pagination, Uuid};

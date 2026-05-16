@@ -234,9 +234,12 @@ pub fn cp_tree(src: &Path, dst_parent: &Path) -> Result<()> {
         format!("{src_str}/")
     };
 
-    let dst_str = dst_parent
-        .to_str()
-        .ok_or_else(|| eyre!("destination path is not valid UTF-8: {}", dst_parent.display()))?;
+    let dst_str = dst_parent.to_str().ok_or_else(|| {
+        eyre!(
+            "destination path is not valid UTF-8: {}",
+            dst_parent.display()
+        )
+    })?;
 
     let output = Command::new("cp")
         .args(["-a", &src_with_slash, dst_str])

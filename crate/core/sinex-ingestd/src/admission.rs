@@ -11,9 +11,7 @@ use sinex_db::DbPool;
 use sinex_db::repositories::{DbPoolExt, StreamBatchRow};
 use sinex_primitives::constants::limits::MAX_EVENT_PAYLOAD_BYTES;
 use sinex_primitives::events::Event;
-use sinex_primitives::events::admission::{
-    ACCEPTED_ENVELOPE_VERSIONS, AdmittedEventIntent,
-};
+use sinex_primitives::events::admission::{ACCEPTED_ENVELOPE_VERSIONS, AdmittedEventIntent};
 use sinex_primitives::events::builder::Provenance;
 use sinex_primitives::{Id, JsonValue, Timestamp, Uuid};
 use std::collections::{HashSet, VecDeque};

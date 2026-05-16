@@ -69,12 +69,18 @@ mod tests {
     #[test]
     fn claude_declares_source_and_event_type() {
         assert_eq!(ClaudeAiMessagePayload::SOURCE.as_static_str(), "claude");
-        assert_eq!(ClaudeAiMessagePayload::EVENT_TYPE.as_static_str(), "ai.message");
+        assert_eq!(
+            ClaudeAiMessagePayload::EVENT_TYPE.as_static_str(),
+            "ai.message"
+        );
     }
 
     #[test]
     fn chatgpt_declares_source_and_event_type() {
         assert_eq!(ChatGptAiMessagePayload::SOURCE.as_static_str(), "chatgpt");
-        assert_eq!(ChatGptAiMessagePayload::EVENT_TYPE.as_static_str(), "ai.message");
+        assert_eq!(
+            ChatGptAiMessagePayload::EVENT_TYPE.as_static_str(),
+            "ai.message"
+        );
     }
 }

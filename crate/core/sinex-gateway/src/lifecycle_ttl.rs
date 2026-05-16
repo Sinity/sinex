@@ -269,8 +269,14 @@ async fn archive_expired_for_event_type(
     //    `core.fn_archive_before_delete` which moves rows to
     //    `audit.archived_events`.
     let session_id = format!("{}_{}", session_prefix, Uuid::now_v7().simple());
-    let archive_outcome =
-        execute_ttl_archive(pool, &session_id, &operation.id.to_uuid(), &actor, &cascade_ids).await;
+    let archive_outcome = execute_ttl_archive(
+        pool,
+        &session_id,
+        &operation.id.to_uuid(),
+        &actor,
+        &cascade_ids,
+    )
+    .await;
 
     let archived = match archive_outcome {
         Ok(count) => {
@@ -396,12 +402,9 @@ async fn collect_cascade_ids(
             .map_err(|e| {
                 SinexError::database("Failed to expand TTL cascade").with_source(e.to_string())
             })?;
-        let ids = repo_tx
-            .get_cascade_ids(&table_name)
-            .await
-            .map_err(|e| {
-                SinexError::database("Failed to get TTL cascade IDs").with_source(e.to_string())
-            })?;
+        let ids = repo_tx.get_cascade_ids(&table_name).await.map_err(|e| {
+            SinexError::database("Failed to get TTL cascade IDs").with_source(e.to_string())
+        })?;
         repo_tx
             .cleanup_cascade_session(&table_name)
             .await

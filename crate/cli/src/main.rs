@@ -2,6 +2,7 @@ use clap::{CommandFactory, FromArgMatches, Parser, Subcommand, parser::ValueSour
 use color_eyre::eyre::eyre;
 use sinex_node_sdk::service_runtime;
 use sinex_primitives::RuntimeTargetDescriptor;
+use sinexctl::AdminCommands;
 use sinexctl::client::{ClientConfig, GatewayClient};
 use sinexctl::commands::{
     AnnotateCommand, AuditCommand, AutomataCommand, BlobCommands, CompletionsCommand,
@@ -11,7 +12,6 @@ use sinexctl::commands::{
     RecentCommand, ReplayCommands, ReportCommands, SourcesCommand, StatusCommand,
     TelemetryCommands, ThroughputCommand, TraceCommand, TuiCommand, VerifyCommand, WatchCommand,
 };
-use sinexctl::AdminCommands;
 use sinexctl::model::OutputFormat;
 use sinexctl::{Config, default_rpc_url, render_format_matrix_terminal, validate_format};
 use std::path::PathBuf;

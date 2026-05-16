@@ -515,18 +515,19 @@ impl MaterialParser for WykopEntryParser {
         for (line_index, line) in record.bytes.split(|&b| b == b'\n').enumerate() {
             let trimmed = line.iter().copied().collect::<Vec<u8>>();
             let trimmed_str = std::str::from_utf8(&trimmed)
-                .map_err(|e| ParserError::Parse(format!("UTF-8 error on line {}: {e}", line_index + 1)))?
+                .map_err(|e| {
+                    ParserError::Parse(format!("UTF-8 error on line {}: {e}", line_index + 1))
+                })?
                 .trim();
             if trimmed_str.is_empty() {
                 continue;
             }
-            let row: WykopEntryJsonRow =
-                serde_json::from_str(trimmed_str).map_err(|e| {
-                    ParserError::Parse(format!(
-                        "wykop_entries_added.jsonl line {} parse error: {e}",
-                        line_index + 1
-                    ))
-                })?;
+            let row: WykopEntryJsonRow = serde_json::from_str(trimmed_str).map_err(|e| {
+                ParserError::Parse(format!(
+                    "wykop_entries_added.jsonl line {} parse error: {e}",
+                    line_index + 1
+                ))
+            })?;
             intents.push(parse_wykop_entry_row(row, (line_index + 1) as u64, ctx)?);
         }
         Ok(intents)
@@ -706,14 +707,17 @@ impl MaterialParser for WykopEntryCommentParser {
             if trimmed_str.is_empty() {
                 continue;
             }
-            let row: WykopEntryCommentJsonRow =
-                serde_json::from_str(trimmed_str).map_err(|e| {
-                    ParserError::Parse(format!(
-                        "wykop_entry_comments.jsonl line {} parse error: {e}",
-                        line_index + 1
-                    ))
-                })?;
-            intents.push(parse_wykop_entry_comment_row(row, (line_index + 1) as u64, ctx)?);
+            let row: WykopEntryCommentJsonRow = serde_json::from_str(trimmed_str).map_err(|e| {
+                ParserError::Parse(format!(
+                    "wykop_entry_comments.jsonl line {} parse error: {e}",
+                    line_index + 1
+                ))
+            })?;
+            intents.push(parse_wykop_entry_comment_row(
+                row,
+                (line_index + 1) as u64,
+                ctx,
+            )?);
         }
         Ok(intents)
     }
@@ -831,7 +835,8 @@ fn parse_reddit_date(raw: &str) -> ParserResult<Timestamp> {
 
     // First try: strip " UTC" and parse as `YYYY-MM-DD HH:MM:SS`.
     let without_tz = raw.trim_end_matches(" UTC").trim();
-    let fmt: &[FormatItem<'_>] = format_description!("[year]-[month]-[day] [hour]:[minute]:[second]");
+    let fmt: &[FormatItem<'_>] =
+        format_description!("[year]-[month]-[day] [hour]:[minute]:[second]");
     if let Ok(dt) = PrimitiveDateTime::parse(without_tz, fmt) {
         use time::UtcOffset;
         return Ok(Timestamp::new(dt.assume_offset(UtcOffset::UTC)));
@@ -840,9 +845,7 @@ fn parse_reddit_date(raw: &str) -> ParserResult<Timestamp> {
     use time::OffsetDateTime;
     OffsetDateTime::parse(raw.trim(), &Rfc3339)
         .map(Timestamp::new)
-        .map_err(|e| {
-            ParserError::Parse(format!("invalid Reddit timestamp '{raw}': {e}"))
-        })
+        .map_err(|e| ParserError::Parse(format!("invalid Reddit timestamp '{raw}': {e}")))
 }
 
 /// Parse Wykop's datetime column: `"YYYY-MM-DD HH:MM:SS"` (no timezone; treat as UTC).
@@ -870,10 +873,10 @@ fn non_empty(s: &str) -> Option<&str> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sinex_primitives::ids::Id;
     use sinex_primitives::Uuid;
-    use xtask::sandbox::prelude::sinex_test;
+    use sinex_primitives::ids::Id;
     use xtask::sandbox::TestResult;
+    use xtask::sandbox::prelude::sinex_test;
 
     // -----------------------------------------------------------------------
     // Test helpers
@@ -945,8 +948,7 @@ mod tests {
     // Reddit comments
     // -----------------------------------------------------------------------
 
-    const COMMENT_CSV: &str =
-        "id,permalink,date,ip,subreddit,gildings,link,parent,body,media\n\
+    const COMMENT_CSV: &str = "id,permalink,date,ip,subreddit,gildings,link,parent,body,media\n\
          ck1fsao,https://www.reddit.com/r/Futurology/comments/2em2io/elon_musk_warns_ais_could_exterminate_humanity/ck1fsao/,2014-08-27 00:59:46 UTC,,Futurology,0,https://www.reddit.com/r/Futurology/comments/2em2io/,ck1bai1,\"Great comment body.\",\n\
          ck1to2z,https://www.reddit.com/r/Futurology/comments/2em2io/elon_musk_warns_ais_could_exterminate_humanity/ck1to2z/,2014-08-27 13:36:36 UTC,,Futurology,0,https://www.reddit.com/r/Futurology/comments/2em2io/,ck1k0yu,Another comment.,\n";
 
@@ -1059,8 +1061,7 @@ mod tests {
     // Reddit posts
     // -----------------------------------------------------------------------
 
-    const POST_CSV: &str =
-        "id,permalink,date,ip,subreddit,gildings,title,url,body\n\
+    const POST_CSV: &str = "id,permalink,date,ip,subreddit,gildings,title,url,body\n\
          38focg,https://www.reddit.com/r/kindle/comments/38focg/kindle_5621_rootjailbreak/,2015-06-03 22:18:00 UTC,,kindle,0,Kindle root/jailbreak,/r/kindle/comments/38focg/,\"Post body text.\"\n\
          3a1oqo,https://www.reddit.com/r/oculus/comments/3a1oqo/when_should_i_expect/,2015-06-16 15:17:27 UTC,,oculus,0,When should I expect CV1?,/r/oculus/comments/3a1oqo/,\n";
 
@@ -1124,8 +1125,7 @@ mod tests {
     // Wykop entries
     // -----------------------------------------------------------------------
 
-    const WYKOP_ENTRIES_JSONL: &str =
-        "{\"platform\":\"wykop\",\"kind\":\"entry\",\"username\":\"Sinity\",\"page\":1,\"entry_id\":76315507,\"entry_url\":\"https://wykop.pl/wpis/76315507/piosenka\",\"entry_created_at\":\"2024-05-18 06:53:25\",\"entry_author\":\"Sinity\",\"entry_content\":\"Piosenka o cenzopapie\",\"entry_tags\":[\"humor\",\"sztucznainteligencja\"],\"entry_photo_url\":null,\"votes_score\":0,\"votes_up\":0,\"votes_down\":0}\n\
+    const WYKOP_ENTRIES_JSONL: &str = "{\"platform\":\"wykop\",\"kind\":\"entry\",\"username\":\"Sinity\",\"page\":1,\"entry_id\":76315507,\"entry_url\":\"https://wykop.pl/wpis/76315507/piosenka\",\"entry_created_at\":\"2024-05-18 06:53:25\",\"entry_author\":\"Sinity\",\"entry_content\":\"Piosenka o cenzopapie\",\"entry_tags\":[\"humor\",\"sztucznainteligencja\"],\"entry_photo_url\":null,\"votes_score\":0,\"votes_up\":0,\"votes_down\":0}\n\
          {\"platform\":\"wykop\",\"kind\":\"entry\",\"username\":\"Sinity\",\"page\":1,\"entry_id\":76315508,\"entry_url\":\"https://wykop.pl/wpis/76315508/test\",\"entry_created_at\":\"2024-05-19 10:00:00\",\"entry_author\":\"Sinity\",\"entry_content\":\"Test entry\",\"entry_tags\":[],\"entry_photo_url\":\"https://example.com/photo.jpg\",\"votes_score\":5,\"votes_up\":5,\"votes_down\":0}\n";
 
     #[sinex_test]
@@ -1194,10 +1194,7 @@ mod tests {
             .await
             .unwrap();
         let key = intents[0].occurrence_key.as_ref().unwrap();
-        assert_eq!(
-            key.fields,
-            vec![("entry_id".into(), "76315507".into())]
-        );
+        assert_eq!(key.fields, vec![("entry_id".into(), "76315507".into())]);
         Ok(())
     }
 
@@ -1220,8 +1217,7 @@ mod tests {
 
     #[sinex_test]
     async fn wykop_entry_invalid_timestamp_errors() -> TestResult<()> {
-        let bad =
-            "{\"platform\":\"wykop\",\"kind\":\"entry\",\"username\":\"Sinity\",\"page\":1,\"entry_id\":1,\"entry_url\":\"https://wykop.pl/wpis/1/x\",\"entry_created_at\":\"not-a-time\",\"entry_author\":\"Sinity\",\"entry_content\":\"x\",\"entry_tags\":[],\"entry_photo_url\":null,\"votes_score\":0,\"votes_up\":0,\"votes_down\":0}\n";
+        let bad = "{\"platform\":\"wykop\",\"kind\":\"entry\",\"username\":\"Sinity\",\"page\":1,\"entry_id\":1,\"entry_url\":\"https://wykop.pl/wpis/1/x\",\"entry_created_at\":\"not-a-time\",\"entry_author\":\"Sinity\",\"entry_content\":\"x\",\"entry_tags\":[],\"entry_photo_url\":null,\"votes_score\":0,\"votes_up\":0,\"votes_down\":0}\n";
         let mut parser = WykopEntryParser;
         let err = parser
             .parse_record(record_for(bad.as_bytes()), &wykop_entry_ctx())
@@ -1236,8 +1232,7 @@ mod tests {
     // Wykop entry comments
     // -----------------------------------------------------------------------
 
-    const WYKOP_COMMENTS_JSONL: &str =
-        "{\"platform\":\"wykop\",\"kind\":\"entry_comment\",\"username\":\"Sinity\",\"page\":1,\"comment_id\":279391731,\"comment_created_at\":\"2025-02-16 08:21:58\",\"comment_content\":\"Nice entry!\",\"comment_photo_url\":null,\"comment_rating\":2,\"entry_id\":80205363,\"entry_url\":\"https://wykop.pl/wpis/80205363/x\"}\n\
+    const WYKOP_COMMENTS_JSONL: &str = "{\"platform\":\"wykop\",\"kind\":\"entry_comment\",\"username\":\"Sinity\",\"page\":1,\"comment_id\":279391731,\"comment_created_at\":\"2025-02-16 08:21:58\",\"comment_content\":\"Nice entry!\",\"comment_photo_url\":null,\"comment_rating\":2,\"entry_id\":80205363,\"entry_url\":\"https://wykop.pl/wpis/80205363/x\"}\n\
          {\"platform\":\"wykop\",\"kind\":\"entry_comment\",\"username\":\"Sinity\",\"page\":1,\"comment_id\":279391732,\"comment_created_at\":\"2025-02-17 09:00:00\",\"comment_content\":\"Another reply\",\"comment_photo_url\":\"https://example.com/img.png\",\"comment_rating\":0,\"entry_id\":80205364,\"entry_url\":\"https://wykop.pl/wpis/80205364/y\"}\n";
 
     #[sinex_test]
@@ -1253,10 +1248,7 @@ mod tests {
         assert_eq!(intents.len(), 2);
         for intent in &intents {
             assert_eq!(intent.event_source.as_str(), "wykop");
-            assert_eq!(
-                intent.event_type.as_str(),
-                "social.entry_comment.posted"
-            );
+            assert_eq!(intent.event_type.as_str(), "social.entry_comment.posted");
         }
         Ok(())
     }
@@ -1288,10 +1280,7 @@ mod tests {
             .await
             .unwrap();
         let key = intents[0].occurrence_key.as_ref().unwrap();
-        assert_eq!(
-            key.fields,
-            vec![("comment_id".into(), "279391731".into())]
-        );
+        assert_eq!(key.fields, vec![("comment_id".into(), "279391731".into())]);
         Ok(())
     }
 

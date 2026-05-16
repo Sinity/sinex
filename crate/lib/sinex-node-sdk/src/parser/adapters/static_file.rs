@@ -10,7 +10,7 @@ use sinex_primitives::events::SourceMaterial;
 use sinex_primitives::ids::Id;
 use sinex_primitives::parser::{InputShapeKind, MaterialAnchor, SourceRecord};
 
-use crate::parser::{InputShapeAdapter, ParserError, ParserResult};
+use crate::parser::{InputShapeAdapter, ParserResult};
 
 // =============================================================================
 // StaticFileAdapter
@@ -78,9 +78,9 @@ impl InputShapeAdapter for StaticFileAdapter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use xtask::sandbox::prelude::sinex_test;
     use std::io::Write;
     use tempfile::NamedTempFile;
+    use xtask::sandbox::prelude::sinex_test;
 
     fn dummy_material_id() -> Id<SourceMaterial> {
         Id::from_uuid(uuid::Uuid::new_v4())
@@ -94,7 +94,10 @@ mod tests {
 
         let adapter = StaticFileAdapter;
         let config = StaticFileConfig { path };
-        let mut stream = adapter.open(dummy_material_id(), &config, None).await.unwrap();
+        let mut stream = adapter
+            .open(dummy_material_id(), &config, None)
+            .await
+            .unwrap();
 
         let record = stream.next().await.unwrap().unwrap();
         assert_eq!(record.bytes, b"hello world");
@@ -111,14 +114,18 @@ mod tests {
         let adapter = StaticFileAdapter;
         let config = StaticFileConfig { path };
         let cursor = Some(StaticFileCursor { processed: true });
-        let mut stream = adapter.open(dummy_material_id(), &config, cursor).await.unwrap();
+        let mut stream = adapter
+            .open(dummy_material_id(), &config, cursor)
+            .await
+            .unwrap();
 
         assert!(stream.next().await.is_none());
         Ok(())
     }
 
     #[sinex_test]
-    async fn test_static_file_not_processed_cursor_yields_record() -> xtask::sandbox::TestResult<()> {
+    async fn test_static_file_not_processed_cursor_yields_record() -> xtask::sandbox::TestResult<()>
+    {
         let mut f = NamedTempFile::new().unwrap();
         f.write_all(b"content").unwrap();
         let path = f.path().to_str().unwrap().to_string();
@@ -126,7 +133,10 @@ mod tests {
         let adapter = StaticFileAdapter;
         let config = StaticFileConfig { path };
         let cursor = Some(StaticFileCursor { processed: false });
-        let mut stream = adapter.open(dummy_material_id(), &config, cursor).await.unwrap();
+        let mut stream = adapter
+            .open(dummy_material_id(), &config, cursor)
+            .await
+            .unwrap();
 
         assert!(stream.next().await.unwrap().is_ok());
         Ok(())
@@ -140,7 +150,10 @@ mod tests {
 
         let adapter = StaticFileAdapter;
         let config = StaticFileConfig { path };
-        let mut stream = adapter.open(dummy_material_id(), &config, None).await.unwrap();
+        let mut stream = adapter
+            .open(dummy_material_id(), &config, None)
+            .await
+            .unwrap();
         let record = stream.next().await.unwrap().unwrap();
 
         assert!(matches!(
@@ -158,7 +171,10 @@ mod tests {
 
         let adapter = StaticFileAdapter;
         let config = StaticFileConfig { path };
-        let mut stream = adapter.open(dummy_material_id(), &config, None).await.unwrap();
+        let mut stream = adapter
+            .open(dummy_material_id(), &config, None)
+            .await
+            .unwrap();
         let record = stream.next().await.unwrap().unwrap();
 
         let cursor = adapter.cursor_after(&record).unwrap();
@@ -169,20 +185,26 @@ mod tests {
     #[sinex_test]
     async fn test_static_file_missing_path_returns_error() -> xtask::sandbox::TestResult<()> {
         let adapter = StaticFileAdapter;
-        let config = StaticFileConfig { path: "/nonexistent/path/file.txt".into() };
+        let config = StaticFileConfig {
+            path: "/nonexistent/path/file.txt".into(),
+        };
         let result = adapter.open(dummy_material_id(), &config, None).await;
         assert!(result.is_err());
         Ok(())
     }
 
     #[sinex_test]
-    async fn test_static_file_empty_file_yields_one_empty_record() -> xtask::sandbox::TestResult<()> {
+    async fn test_static_file_empty_file_yields_one_empty_record() -> xtask::sandbox::TestResult<()>
+    {
         let f = NamedTempFile::new().unwrap();
         let path = f.path().to_str().unwrap().to_string();
 
         let adapter = StaticFileAdapter;
         let config = StaticFileConfig { path };
-        let mut stream = adapter.open(dummy_material_id(), &config, None).await.unwrap();
+        let mut stream = adapter
+            .open(dummy_material_id(), &config, None)
+            .await
+            .unwrap();
 
         let record = stream.next().await.unwrap().unwrap();
         assert!(record.bytes.is_empty());

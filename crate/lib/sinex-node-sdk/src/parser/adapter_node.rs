@@ -84,13 +84,14 @@ use serde_json::Value as JsonValue;
 use tracing::{debug, info, warn};
 
 use sinex_primitives::events::Event;
-use sinex_primitives::events::builder::{EventBuilder, NoProvenance};
 use sinex_primitives::events::SourceMaterial;
+use sinex_primitives::events::builder::{EventBuilder, NoProvenance};
 use sinex_primitives::ids::Id;
 use sinex_primitives::parser::{MaterialAnchor, ParsedEventIntent, ParserContext};
 use sinex_primitives::primitives::Uuid;
 use sinex_primitives::temporal::Timestamp;
 
+use crate::NodeResult;
 use crate::acquisition_manager::{AcquisitionManager, AppendStreamAcquirer, RotationPolicy};
 use crate::ingestor_node::IngestorNode;
 use crate::parser::adapters::SqliteSnapshotLane;
@@ -99,7 +100,6 @@ use crate::runtime::stream::{
     Checkpoint, ContinuousStart, NodeCapabilities, NodeRuntimeState, ScanArgs, ScanReport,
     TimeHorizon,
 };
-use crate::NodeResult;
 use std::sync::Arc;
 
 // =============================================================================
@@ -340,7 +340,10 @@ where
             self.stream_acquirer = Some(AppendStreamAcquirer::new(Arc::clone(manager)));
         }
         // SAFETY: we just set it above if it was None
-        Ok(self.stream_acquirer.as_mut().expect("stream_acquirer initialized above"))
+        Ok(self
+            .stream_acquirer
+            .as_mut()
+            .expect("stream_acquirer initialized above"))
     }
 
     /// Open the adapter, drain all records through the parser, emit each
@@ -617,7 +620,10 @@ where
     ) -> NodeResult<()> {
         // Build the AcquisitionManager from the runtime's NATS handles.
         let acq = runtime
-            .acquisition_manager(crate::acquisition_manager::RotationPolicy::default(), self.source_unit_id)
+            .acquisition_manager(
+                crate::acquisition_manager::RotationPolicy::default(),
+                self.source_unit_id,
+            )
             .map_err(|e| {
                 crate::SinexError::lifecycle(
                     "AdapterBackedIngestor: failed to build AcquisitionManager",
@@ -646,7 +652,10 @@ where
         // wants one by returning `Some(spec)` from `snapshot_lane`; we spawn
         // an independent tokio task that captures the substrate on its own
         // timer.  Per-record drain (above) is untouched.
-        if let Some(spec) = self.adapter.snapshot_lane(self.source_unit_id, &adapter_config) {
+        if let Some(spec) = self
+            .adapter
+            .snapshot_lane(self.source_unit_id, &adapter_config)
+        {
             let manager = Arc::clone(
                 self.acquisition_manager
                     .as_ref()
@@ -754,7 +763,10 @@ where
         loop {
             // Check for shutdown before polling.
             if *shutdown_rx.borrow() {
-                info!(source_unit = self.source_unit_id, "Drain signal received; exiting continuous loop");
+                info!(
+                    source_unit = self.source_unit_id,
+                    "Drain signal received; exiting continuous loop"
+                );
                 break;
             }
 
@@ -871,7 +883,9 @@ fn intent_to_event(
         MaterialAnchor::ByteRange { start, .. } => *start as i64,
         MaterialAnchor::Line { byte_start, .. } => *byte_start as i64,
         MaterialAnchor::SqliteRow { rowid, .. } => *rowid,
-        MaterialAnchor::StreamFrame { material_offset, .. } => *material_offset as i64,
+        MaterialAnchor::StreamFrame {
+            material_offset, ..
+        } => *material_offset as i64,
         MaterialAnchor::DirectoryEntry { .. } | MaterialAnchor::GitObject { .. } => 0,
     };
 

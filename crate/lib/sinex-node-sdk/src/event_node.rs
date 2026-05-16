@@ -3,10 +3,7 @@
 use crate::{NodeResult, nats_publisher::NatsPublisher};
 use serde::{Deserialize, Serialize};
 use sinex_primitives::domain::HostName;
-use sinex_primitives::events::{
-    Event,
-    admission::AdmittedEventIntent,
-};
+use sinex_primitives::events::{Event, admission::AdmittedEventIntent};
 use sinex_primitives::{JsonValue, Uuid};
 use std::path::{Path, PathBuf};
 use std::sync::{
@@ -589,7 +586,11 @@ impl EventBatcher {
         let event_count = events.len();
 
         let intent = AdmittedEventIntent::new(
-            if source_unit_id.is_empty() { "unknown" } else { source_unit_id },
+            if source_unit_id.is_empty() {
+                "unknown"
+            } else {
+                source_unit_id
+            },
             parser_id,
             parser_version,
             events.drain(..).collect(),

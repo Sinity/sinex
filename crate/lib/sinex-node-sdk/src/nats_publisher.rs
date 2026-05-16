@@ -6,10 +6,7 @@ use sinex_primitives::env as shared_env;
 use sinex_primitives::{
     JsonValue,
     environment::{SinexEnvironment, environment},
-    events::{
-        Event, OffsetKind, Provenance,
-        admission::AdmittedEventIntent,
-    },
+    events::{Event, OffsetKind, Provenance, admission::AdmittedEventIntent},
     nats::{NatsTrafficClass, insert_traffic_class_header},
     transport,
 };
@@ -326,9 +323,7 @@ impl NatsPublisher {
 
         // Use the first event's source/type for subject routing
         let first_event = intent.events.first().ok_or_else(|| {
-            sinex_primitives::SinexError::processing(
-                "admitted event intent has no events"
-            )
+            sinex_primitives::SinexError::processing("admitted event intent has no events")
         })?;
         let subject = self.env.nats_raw_event_subject_with_namespace(
             self.namespace.as_deref(),
@@ -340,7 +335,11 @@ impl NatsPublisher {
         let msg_id = if let Some(first_id) = first_event.id.as_ref() {
             format!("intent-{}-{}", first_id, intent.event_count())
         } else {
-            format!("intent-{}-{}", sinex_primitives::Uuid::now_v7(), intent.event_count())
+            format!(
+                "intent-{}-{}",
+                sinex_primitives::Uuid::now_v7(),
+                intent.event_count()
+            )
         };
 
         let mut headers = async_nats::HeaderMap::new();
@@ -394,12 +393,9 @@ impl NatsPublisher {
     }
 
     /// Publish a single raw event (internal helper for the escape hatch).
-    async fn publish_raw_event(
-        &self,
-        event: &Event,
-        class: transport::Class,
-    ) -> NodeResult<()> {
-        let _permit = acquire_lane_permit(&self.semaphores.raw_event, "raw event (escape hatch)").await?;
+    async fn publish_raw_event(&self, event: &Event, class: transport::Class) -> NodeResult<()> {
+        let _permit =
+            acquire_lane_permit(&self.semaphores.raw_event, "raw event (escape hatch)").await?;
 
         let prov = destructure_provenance(event.provenance());
 
@@ -454,8 +450,7 @@ impl NatsPublisher {
             matches!(class, transport::Class::Telemetry),
             "publish_telemetry is exclusively for Class::Telemetry; got {class:?}"
         );
-        let _permit =
-            acquire_lane_permit(&self.semaphores.telemetry, "telemetry event").await?;
+        let _permit = acquire_lane_permit(&self.semaphores.telemetry, "telemetry event").await?;
 
         let prov = destructure_provenance(event.provenance());
 
@@ -480,7 +475,12 @@ impl NatsPublisher {
         transport::insert_transport_class_headers(&mut headers, class);
 
         let ack_future = self
-            .publish_with_headers(subject, headers, payload, "Failed to publish telemetry event")
+            .publish_with_headers(
+                subject,
+                headers,
+                payload,
+                "Failed to publish telemetry event",
+            )
             .await?;
         let ack = wait_for_publish_ack(ack_future, self.publish_ack_timeout).await?;
 

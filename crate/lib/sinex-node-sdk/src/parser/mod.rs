@@ -31,47 +31,76 @@ pub use adapter_node::{AdapterBackedIngestor, AdapterNodeConfig, AdapterNodeStat
 
 pub use adapters::{
     // Adapter JSON Schema export (#1238).
-    AdapterSchema, all_adapter_schemas,
+    AdapterSchema,
     // Existing adapters.
-    AppendOnlyCursor, AppendOnlyFileAdapter, AppendOnlyFileConfig,
-    SqliteRowAdapter, SqliteRowConfig, SqliteRowCursor,
-    StaticFileAdapter, StaticFileConfig, StaticFileCursor,
+    AppendOnlyCursor,
+    AppendOnlyFileAdapter,
+    AppendOnlyFileConfig,
     // New adapters — Phase 1B.
-    ArboardBackend, ClipboardBackend, ClipboardPollingAdapter, ClipboardPollingConfig,
-    ClipboardPollingCursor, MockClipboardBackend,
-    DbusBus, DbusBackend, DbusMessage, DbusStreamAdapter, DbusStreamConfig, DbusStreamCursor,
-    MockDbusBackend,
-    FileDropAdapter, FileDropConfig, FileDropCursor, FileDropEventKind,
-    JournalctlCursor, JournalctlStreamAdapter, JournalctlStreamConfig,
-    JournalctlSubscriber, SharedJournalctlStream,
-    JOURNALCTL_BROADCAST_CAPACITY,
-    records_from_journal_lines,
-    UnixSocketStreamAdapter, UnixSocketStreamConfig, UnixSocketStreamCursor,
-    // Phase 1F — DirectoryWalk adapter (9th input-shape adapter).
-    DirectoryWalkAdapter, DirectoryWalkConfig, DirectoryWalkCursor, FileFingerprint,
+    ArboardBackend,
+    CHAINED_PRIMARY_PREFIX,
+    CHAINED_SECONDARY_PREFIX,
     // Phase 1C — ChainedAdapter: compose two adapters into one merged stream.
-    ChainedAdapter, ChainedConfig, ChainedCursor, ChainedLeg,
+    ChainedAdapter,
+    ChainedConfig,
+    ChainedCursor,
+    ChainedLeg,
+    ClipboardBackend,
+    ClipboardPollingAdapter,
+    ClipboardPollingConfig,
+    ClipboardPollingCursor,
+    DbusBackend,
+    DbusBus,
+    DbusMessage,
+    DbusStreamAdapter,
+    DbusStreamConfig,
+    DbusStreamCursor,
+    // Phase 1F — DirectoryWalk adapter (9th input-shape adapter).
+    DirectoryWalkAdapter,
+    DirectoryWalkConfig,
+    DirectoryWalkCursor,
+    FileDropAdapter,
+    FileDropConfig,
+    FileDropCursor,
+    FileDropEventKind,
+    FileFingerprint,
+    JOURNALCTL_BROADCAST_CAPACITY,
+    JournalctlCursor,
+    JournalctlStreamAdapter,
+    JournalctlStreamConfig,
+    JournalctlSubscriber,
+    MockClipboardBackend,
+    MockDbusBackend,
+    SharedJournalctlStream,
+    SqliteRowAdapter,
+    SqliteRowConfig,
+    SqliteRowCursor,
+    StaticFileAdapter,
+    StaticFileConfig,
+    StaticFileCursor,
+    UnixSocketStreamAdapter,
+    UnixSocketStreamConfig,
+    UnixSocketStreamCursor,
+    all_adapter_schemas,
     chained_classify_record,
-    CHAINED_PRIMARY_PREFIX, CHAINED_SECONDARY_PREFIX,
+    records_from_journal_lines,
 };
 pub use declarative::{
-    BindingConfig, CarrySpec, DeclarativeParser, DeclarativeParserSpec,
-    Discriminator, DiscriminatorCase, DiscriminatorFallback,
-    FieldSource, FieldSpec, FieldType,
-    InputFormat, StatefulCarryPolicy, StatefulDeclarativeParser,
-    SuppressPredicate, TimestampFallback, TimestampFormat, TimestampSpec,
+    BindingConfig, CarrySpec, DeclarativeParser, DeclarativeParserSpec, Discriminator,
+    DiscriminatorCase, DiscriminatorFallback, FieldSource, FieldSpec, FieldType, InputFormat,
+    StatefulCarryPolicy, StatefulDeclarativeParser, SuppressPredicate, TimestampFallback,
+    TimestampFormat, TimestampSpec,
 };
 pub use fingerprint::{DriftAccumulator, DriftEvent, SourceRecordFingerprint};
 pub use fixture::{
-    FixtureAssertion, FixtureExpectation, FixtureSpec, ParserFixtureHarness,
-    ParserTestContext,
+    FixtureAssertion, FixtureExpectation, FixtureSpec, ParserFixtureHarness, ParserTestContext,
 };
 pub use weechat::{WeeChatLogConfig, WeeChatLogParser};
 
 use async_trait::async_trait;
 use futures::stream::BoxStream;
-use serde::de::DeserializeOwned;
 use serde::Serialize;
+use serde::de::DeserializeOwned;
 
 use sinex_primitives::events::SourceMaterial;
 use sinex_primitives::ids::Id;

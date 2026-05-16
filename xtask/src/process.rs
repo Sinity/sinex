@@ -204,14 +204,7 @@ impl IoPriority {
         const IOPRIO_WHO_PROCESS: i32 = 1;
 
         let value = (self.class << 13) | self.priority;
-        let rc = unsafe {
-            libc::syscall(
-                libc::SYS_ioprio_set,
-                IOPRIO_WHO_PROCESS,
-                pid,
-                value,
-            )
-        };
+        let rc = unsafe { libc::syscall(libc::SYS_ioprio_set, IOPRIO_WHO_PROCESS, pid, value) };
         if rc == -1 {
             Err(std::io::Error::last_os_error())
         } else {

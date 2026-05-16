@@ -462,8 +462,7 @@ fn check_privacy_invocation_for_sensitive_units() -> Result<Vec<String>> {
         let search_dir = abs_path
             .parent()
             .expect("file path must have a parent directory");
-        let has_privacy_invocation =
-            directory_contains_privacy_indicator(search_dir);
+        let has_privacy_invocation = directory_contains_privacy_indicator(search_dir);
 
         if has_privacy_invocation {
             continue;
@@ -494,7 +493,9 @@ fn directory_contains_privacy_indicator(dir: &std::path::Path) -> bool {
     for entry in entries.filter_map(|e| e.ok()) {
         let path = entry.path();
         if path.extension().is_some_and(|ext| ext == "rs") {
-            let Ok(text) = std::fs::read_to_string(&path) else { continue };
+            let Ok(text) = std::fs::read_to_string(&path) else {
+                continue;
+            };
             if PRIVACY_INVOCATION_INDICATORS
                 .iter()
                 .any(|ind| text.contains(ind))
@@ -1254,7 +1255,10 @@ mod tests {
         "#;
 
         let violations = run_privacy_gate_on_fixture(fixture);
-        assert!(violations.is_empty(), "Public tier must not require privacy invocation");
+        assert!(
+            violations.is_empty(),
+            "Public tier must not require privacy invocation"
+        );
         Ok(())
     }
 
@@ -1298,7 +1302,10 @@ mod tests {
         "#;
 
         let violations = run_privacy_gate_on_fixture(fixture);
-        assert!(violations.is_empty(), "ProcessingContext:: satisfies the gate");
+        assert!(
+            violations.is_empty(),
+            "ProcessingContext:: satisfies the gate"
+        );
         Ok(())
     }
 
@@ -1322,7 +1329,10 @@ mod tests {
         "#;
 
         let violations = run_privacy_gate_on_fixture(fixture);
-        assert!(violations.is_empty(), "default_privacy_context = satisfies the gate");
+        assert!(
+            violations.is_empty(),
+            "default_privacy_context = satisfies the gate"
+        );
         Ok(())
     }
 
@@ -1344,7 +1354,10 @@ mod tests {
         "#;
 
         let violations = run_privacy_gate_on_fixture(fixture);
-        assert!(violations.is_empty(), "#[allow(missing_privacy_invocation satisfies the gate");
+        assert!(
+            violations.is_empty(),
+            "#[allow(missing_privacy_invocation satisfies the gate"
+        );
         Ok(())
     }
 

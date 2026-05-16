@@ -9,7 +9,6 @@ use sinex_primitives::domain::{EventSource, NodeType};
 use sinex_primitives::rpc::{
     JsonRpcError,
     automata::{AutomataStatusRequest, AutomataStatusResponse},
-    ingestors::{IngestorsStatusRequest, IngestorsStatusResponse},
     coordination::{
         InstanceHealthRequest, InstanceHealthResponse, InstanceInfo, ListInstancesRequest,
         ListInstancesResponse,
@@ -24,6 +23,7 @@ use sinex_primitives::rpc::{
         GitOpsDeleteSourceResponse, GitOpsListSourcesRequest, GitOpsListSourcesResponse,
         GitOpsSourceInfo, GitOpsTriggerSyncRequest, GitOpsTriggerSyncResponse,
     },
+    ingestors::{IngestorsStatusRequest, IngestorsStatusResponse},
     lifecycle::{
         LifecycleArchiveRequest, LifecycleArchiveResponse, LifecycleRestoreRequest,
         LifecycleRestoreResponse, LifecycleStatusRequest, LifecycleStatusResponse,
@@ -58,10 +58,10 @@ use sinex_primitives::rpc::{
         TelemetryIngestdValidationResponse, TelemetryMetricCountersRequest,
         TelemetryMetricCountersResponse, TelemetryNodeStatsRequest, TelemetryNodeStatsResponse,
         TelemetryRecentActivityRequest, TelemetryRecentActivityResponse,
-        TelemetryThroughputRequest, TelemetryThroughputResponse,
         TelemetryStreamStatsRequest, TelemetryStreamStatsResponse, TelemetrySystemStateRequest,
-        TelemetrySystemStateResponse, TelemetryTimeRange, TelemetryWindowFocusRequest,
-        TelemetryWindowFocusResponse, WindowFocusBucket,
+        TelemetrySystemStateResponse, TelemetryThroughputRequest, TelemetryThroughputResponse,
+        TelemetryTimeRange, TelemetryWindowFocusRequest, TelemetryWindowFocusResponse,
+        WindowFocusBucket,
     },
 };
 use sinex_primitives::temporal::Timestamp;

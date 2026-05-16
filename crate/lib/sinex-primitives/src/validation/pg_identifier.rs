@@ -64,7 +64,7 @@ pub fn validate_pg_identifier(ident: &str, kind: &str) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use xtask::sandbox::{TestResult, sinex_test};
+    use xtask::sandbox::sinex_test;
 
     #[sinex_test]
     async fn valid_identifiers_are_accepted() -> TestResult<()> {

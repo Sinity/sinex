@@ -41,15 +41,15 @@ pub struct SqliteRowAdapter {
 
 impl Default for SqliteRowAdapter {
     fn default() -> Self {
-        Self { path: String::new() }
+        Self {
+            path: String::new(),
+        }
     }
 }
 
 impl SqliteRowAdapter {
     pub fn new(path: impl Into<String>) -> Self {
-        Self {
-            path: path.into(),
-        }
+        Self { path: path.into() }
     }
 
     /// Returns the path this adapter reads from.
@@ -238,8 +238,8 @@ impl InputShapeAdapter for SqliteRowAdapter {
         // scan/poll cycle.
         let mut flags = rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX;
         let connection = if config.read_only {
-            flags |= rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY
-                | rusqlite::OpenFlags::SQLITE_OPEN_URI;
+            flags |=
+                rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_URI;
             let uri = if config.immutable {
                 format!("file:{path}?immutable=1&mode=ro")
             } else {
@@ -253,11 +253,7 @@ impl InputShapeAdapter for SqliteRowAdapter {
                 | rusqlite::OpenFlags::SQLITE_OPEN_CREATE;
             rusqlite::Connection::open_with_flags(&path, flags)
         }
-        .map_err(|e| {
-            ParserError::Adapter(format!(
-                "failed to open SQLite database {path}: {e}"
-            ))
-        })?;
+        .map_err(|e| ParserError::Adapter(format!("failed to open SQLite database {path}: {e}")))?;
 
         let batch_size = config.batch_size;
         let (sql, bind_rowid) = if last_rowid > 0 {
@@ -276,49 +272,50 @@ impl InputShapeAdapter for SqliteRowAdapter {
             )
         };
 
-        let mut stmt = connection.prepare(&sql).map_err(|e| {
-            ParserError::Adapter(format!("failed to prepare query: {e}"))
-        })?;
+        let mut stmt = connection
+            .prepare(&sql)
+            .map_err(|e| ParserError::Adapter(format!("failed to prepare query: {e}")))?;
 
         let column_names: Vec<String> = (0..stmt.column_count())
             .map(|i| stmt.column_name(i).unwrap_or("?").to_string())
             .collect();
 
-        let rows_result: Result<Vec<(i64, serde_json::Value)>, ParserError> = if let Some(rowid_val) = bind_rowid {
-            let mapped = stmt
-                .query_map([rowid_val], |row| {
-                    let rowid: i64 = row.get(0)?;
-                    let json = row_to_json(row, &column_names);
-                    Ok((rowid, json))
-                })
-                .map_err(|e| ParserError::Adapter(format!("query error: {e}")))?;
+        let rows_result: Result<Vec<(i64, serde_json::Value)>, ParserError> =
+            if let Some(rowid_val) = bind_rowid {
+                let mapped = stmt
+                    .query_map([rowid_val], |row| {
+                        let rowid: i64 = row.get(0)?;
+                        let json = row_to_json(row, &column_names);
+                        Ok((rowid, json))
+                    })
+                    .map_err(|e| ParserError::Adapter(format!("query error: {e}")))?;
 
-            let mut rows = Vec::new();
-            for r in mapped {
-                match r {
-                    Ok((rowid, json)) => rows.push((rowid, json)),
-                    Err(e) => return Err(ParserError::Adapter(format!("row error: {e}"))),
+                let mut rows = Vec::new();
+                for r in mapped {
+                    match r {
+                        Ok((rowid, json)) => rows.push((rowid, json)),
+                        Err(e) => return Err(ParserError::Adapter(format!("row error: {e}"))),
+                    }
                 }
-            }
-            Ok(rows)
-        } else {
-            let mapped = stmt
-                .query_map([], |row| {
-                    let rowid: i64 = row.get(0)?;
-                    let json = row_to_json(row, &column_names);
-                    Ok((rowid, json))
-                })
-                .map_err(|e| ParserError::Adapter(format!("query error: {e}")))?;
+                Ok(rows)
+            } else {
+                let mapped = stmt
+                    .query_map([], |row| {
+                        let rowid: i64 = row.get(0)?;
+                        let json = row_to_json(row, &column_names);
+                        Ok((rowid, json))
+                    })
+                    .map_err(|e| ParserError::Adapter(format!("query error: {e}")))?;
 
-            let mut rows = Vec::new();
-            for r in mapped {
-                match r {
-                    Ok((rowid, json)) => rows.push((rowid, json)),
-                    Err(e) => return Err(ParserError::Adapter(format!("row error: {e}"))),
+                let mut rows = Vec::new();
+                for r in mapped {
+                    match r {
+                        Ok((rowid, json)) => rows.push((rowid, json)),
+                        Err(e) => return Err(ParserError::Adapter(format!("row error: {e}"))),
+                    }
                 }
-            }
-            Ok(rows)
-        };
+                Ok(rows)
+            };
 
         // Drop statement and connection explicitly before we build records.
         drop(stmt);
@@ -328,9 +325,8 @@ impl InputShapeAdapter for SqliteRowAdapter {
         let records: Vec<ParserResult<SourceRecord>> = rows
             .into_iter()
             .map(|(rowid, json)| {
-                let bytes = serde_json::to_vec(&json).map_err(|e| {
-                    ParserError::Parse(format!("failed to serialize row: {e}"))
-                })?;
+                let bytes = serde_json::to_vec(&json)
+                    .map_err(|e| ParserError::Parse(format!("failed to serialize row: {e}")))?;
 
                 Ok(SourceRecord {
                     material_id,
@@ -351,9 +347,7 @@ impl InputShapeAdapter for SqliteRowAdapter {
 
     fn cursor_after(&self, record: &SourceRecord) -> ParserResult<Self::Cursor> {
         match &record.anchor {
-            MaterialAnchor::SqliteRow { rowid, .. } => Ok(SqliteRowCursor {
-                last_rowid: *rowid,
-            }),
+            MaterialAnchor::SqliteRow { rowid, .. } => Ok(SqliteRowCursor { last_rowid: *rowid }),
             other => Err(ParserError::Cursor(format!(
                 "expected SqliteRow anchor, got {other:?}"
             ))),
@@ -386,10 +380,7 @@ impl InputShapeAdapter for SqliteRowAdapter {
 // =============================================================================
 
 /// Convert a rusqlite Row to a JSON object using column names.
-pub(crate) fn row_to_json(
-    row: &rusqlite::Row<'_>,
-    column_names: &[String],
-) -> serde_json::Value {
+pub(crate) fn row_to_json(row: &rusqlite::Row<'_>, column_names: &[String]) -> serde_json::Value {
     let mut map = serde_json::Map::new();
     for (i, name) in column_names.iter().enumerate() {
         let val: rusqlite::Result<rusqlite::types::Value> = row.get(i);
@@ -411,8 +402,8 @@ pub(crate) fn row_to_json(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use xtask::sandbox::prelude::sinex_test;
     use tempfile::NamedTempFile;
+    use xtask::sandbox::prelude::sinex_test;
 
     fn dummy_material_id() -> Id<SourceMaterial> {
         Id::from_uuid(uuid::Uuid::new_v4())
@@ -442,7 +433,10 @@ mod tests {
             ..Default::default()
         };
 
-        let stream = adapter.open(dummy_material_id(), &config, None).await.unwrap();
+        let stream = adapter
+            .open(dummy_material_id(), &config, None)
+            .await
+            .unwrap();
         let records: Vec<_> = stream.collect().await;
 
         assert_eq!(records.len(), 3);
@@ -460,7 +454,10 @@ mod tests {
             ..Default::default()
         };
 
-        let stream = adapter.open(dummy_material_id(), &config, None).await.unwrap();
+        let stream = adapter
+            .open(dummy_material_id(), &config, None)
+            .await
+            .unwrap();
         let records: Vec<_> = stream.collect().await;
         let cursor_after_row1 = adapter.cursor_after(records[0].as_ref().unwrap()).unwrap();
 
@@ -485,10 +482,15 @@ mod tests {
             ..Default::default()
         };
 
-        let mut stream = adapter.open(dummy_material_id(), &config, None).await.unwrap();
+        let mut stream = adapter
+            .open(dummy_material_id(), &config, None)
+            .await
+            .unwrap();
         let record = stream.next().await.unwrap().unwrap();
 
-        assert!(matches!(&record.anchor, MaterialAnchor::SqliteRow { table, .. } if table == "items"));
+        assert!(
+            matches!(&record.anchor, MaterialAnchor::SqliteRow { table, .. } if table == "items")
+        );
         Ok(())
     }
 
@@ -517,7 +519,12 @@ mod tests {
             rowid_column: "rowid".into(),
             ..Default::default()
         };
-        assert!(adapter.open(dummy_material_id(), &config, None).await.is_err());
+        assert!(
+            adapter
+                .open(dummy_material_id(), &config, None)
+                .await
+                .is_err()
+        );
         Ok(())
     }
 
@@ -532,7 +539,10 @@ mod tests {
             ..Default::default()
         };
 
-        let mut stream = adapter.open(dummy_material_id(), &config, None).await.unwrap();
+        let mut stream = adapter
+            .open(dummy_material_id(), &config, None)
+            .await
+            .unwrap();
         let record = stream.next().await.unwrap().unwrap();
         let json: serde_json::Value = serde_json::from_slice(&record.bytes).unwrap();
 
@@ -552,7 +562,10 @@ mod tests {
             ..Default::default()
         };
 
-        let stream = adapter.open(dummy_material_id(), &config, None).await.unwrap();
+        let stream = adapter
+            .open(dummy_material_id(), &config, None)
+            .await
+            .unwrap();
         let records: Vec<_> = stream.collect().await;
 
         let cursors: Vec<SqliteRowCursor> = records

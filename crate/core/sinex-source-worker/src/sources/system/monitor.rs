@@ -11,22 +11,20 @@
 use futures::future::BoxFuture;
 use sinex_node_sdk::{NodeResult, runtime::stream::NodeRuntimeState};
 use sinex_primitives::proof::{
-    CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, RetentionPolicy,
-    RuntimeShape, SourceUnitBinding, SourceUnitBuildImpact, SourceUnitDescriptor,
-    SubjectRef,
+    CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, RetentionPolicy, RuntimeShape,
+    SourceUnitBinding, SourceUnitBuildImpact, SourceUnitDescriptor, SubjectRef,
 };
-use sinex_primitives::{register_source_unit, register_source_unit_binding};
 use sinex_primitives::{
-    SinexError,
-    events::{Event, EventPayload, SourceMaterial},
+    JsonValue, SinexError,
     events::payloads::system::SystemMonitoringStartedPayload,
+    events::{Event, EventPayload, SourceMaterial},
     ids::Id,
     temporal::Timestamp,
-    JsonValue,
 };
+use sinex_primitives::{register_source_unit, register_source_unit_binding};
 
-use crate::register_monitor_unit;
 use crate::monitor_node::MonitorPhase;
+use crate::register_monitor_unit;
 
 // ---------------------------------------------------------------------------
 // Source-unit descriptor + binding
@@ -143,7 +141,11 @@ mod tests {
                     .map_err(|err| SinexError::serialization(err.to_string()))
             });
 
-        assert!(event.is_ok(), "payload build/erase failed: {:?}", event.err());
+        assert!(
+            event.is_ok(),
+            "payload build/erase failed: {:?}",
+            event.err()
+        );
 
         let event = event.unwrap();
         assert_eq!(event.event_type.as_str(), "monitoring.started");

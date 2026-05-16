@@ -163,12 +163,13 @@ async fn handle_parse_command(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use xtask::sandbox::prelude::sinex_test;
     use crate::dispatch::test_parser_dispatch;
     use sinex_primitives::Uuid;
+    use xtask::sandbox::prelude::sinex_test;
 
     #[sinex_test]
-    async fn test_parse_command_accepted_for_matching_source_id() -> xtask::sandbox::TestResult<()> {
+    async fn test_parse_command_accepted_for_matching_source_id() -> xtask::sandbox::TestResult<()>
+    {
         let (dispatch, calls) = test_parser_dispatch();
         let cmd = SourceParseCommand {
             operation_id: Uuid::now_v7(),
@@ -207,7 +208,8 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_parse_command_rejected_for_mismatched_source_id() -> xtask::sandbox::TestResult<()> {
+    async fn test_parse_command_rejected_for_mismatched_source_id() -> xtask::sandbox::TestResult<()>
+    {
         let (dispatch, calls) = test_parser_dispatch();
         let cmd = SourceParseCommand {
             operation_id: Uuid::now_v7(),
@@ -219,7 +221,11 @@ mod tests {
 
         let ack = if cmd.source_id == "weechat" {
             // ... (would dispatch)
-            SourceParseAck { accepted: true, error: None, event_count: None }
+            SourceParseAck {
+                accepted: true,
+                error: None,
+                event_count: None,
+            }
         } else {
             SourceParseAck {
                 accepted: false,
@@ -230,7 +236,11 @@ mod tests {
 
         assert!(!ack.accepted);
         assert!(ack.error.unwrap().contains("mismatch"));
-        assert_eq!(calls.lock().unwrap().len(), 0, "dispatch should not be called for mismatched source");
+        assert_eq!(
+            calls.lock().unwrap().len(),
+            0,
+            "dispatch should not be called for mismatched source"
+        );
         Ok(())
     }
 

@@ -185,7 +185,10 @@ fn prune_incremental(incremental_dir: &Path, keep_n: usize) -> Result<(usize, u6
             .metadata()
             .and_then(|m| m.modified())
             .unwrap_or(SystemTime::UNIX_EPOCH);
-        by_crate.entry(crate_prefix).or_default().push((mtime, path));
+        by_crate
+            .entry(crate_prefix)
+            .or_default()
+            .push((mtime, path));
     }
 
     let mut deleted = 0usize;

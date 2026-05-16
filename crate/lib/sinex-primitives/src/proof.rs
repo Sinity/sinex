@@ -865,16 +865,13 @@ pub enum CheckpointFamily {
 /// `privacy_tier` column of `raw.source_material_registry` when that
 /// column exists. See issue #1236; the spec is forward-declared and
 /// skipped at apply time when the column is absent.
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Serialize,
-    sinex_macros::DbCheck,
-)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, sinex_macros::DbCheck)]
 #[serde(rename_all = "snake_case")]
 #[db_check(
     schema = "raw",
     table = "source_material_registry",
     column = "privacy_tier",
-    version = 1,
+    version = 1
 )]
 pub enum PrivacyTier {
     Public,
@@ -1086,7 +1083,10 @@ mod tests {
 
     #[sinex_test]
     async fn source_unit_privacy_rules_registered_and_found() -> TestResult<()> {
-        use crate::privacy::{Matcher, PatternRule, ProcessingContext, PrivacyConfig, PrivacyEngine, RuleCategory, Strategy};
+        use crate::privacy::{
+            Matcher, PatternRule, PrivacyConfig, PrivacyEngine, ProcessingContext, RuleCategory,
+            Strategy,
+        };
         use crate::proof::find_source_unit_privacy_rules;
 
         // Build an engine augmented with a scoped rule for a hypothetical
@@ -1115,7 +1115,10 @@ mod tests {
         let engine = PrivacyEngine::new(config)?;
         let input = "atuin login --url https://atuin.sh/auth?token=supersecret123";
         let result = engine.process(input, ProcessingContext::Command);
-        assert!(result.any_matched(), "scoped rule should fire on atuin auth URL");
+        assert!(
+            result.any_matched(),
+            "scoped rule should fire on atuin auth URL"
+        );
         assert!(
             result.text.contains("<ATUIN_AUTH_URL>"),
             "expected redaction label, got: {}",
@@ -1144,8 +1147,7 @@ mod tests {
         // The with-rules form is syntactically tested via the macro expansion path
         // verified by the trybuild suite.
         use crate::proof::{
-            CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, RetentionPolicy,
-            RuntimeShape, SourceUnitDescriptor, SourceUnitBuildImpact,
+            Horizon, OccurrenceIdentity, PrivacyTier, RetentionPolicy, SourceUnitDescriptor,
         };
 
         let descriptor = SourceUnitDescriptor {

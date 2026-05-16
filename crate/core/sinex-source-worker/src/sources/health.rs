@@ -124,11 +124,7 @@ impl MaterialParser for SleepMergedSummaryParser {
     }
 }
 
-fn parse_row(
-    row: SleepCsvRow,
-    line: u64,
-    ctx: &ParserContext,
-) -> ParserResult<ParsedEventIntent> {
+fn parse_row(row: SleepCsvRow, line: u64, ctx: &ParserContext) -> ParserResult<ParsedEventIntent> {
     let start_at = parse_iso8601(&row.start_local)?;
     let end_at = parse_iso8601(&row.end_local)?;
 
@@ -250,10 +246,10 @@ crate::register_adapter_ingestor!(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sinex_primitives::ids::Id;
     use sinex_primitives::Uuid;
-    use xtask::sandbox::prelude::sinex_test;
+    use sinex_primitives::ids::Id;
     use xtask::sandbox::TestResult;
+    use xtask::sandbox::prelude::sinex_test;
 
     fn test_ctx() -> ParserContext {
         ParserContext {

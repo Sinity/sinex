@@ -136,7 +136,10 @@ mod tests {
         };
         assert_eq!(spec.constraint_name(), "manifest_type_check_v1");
         assert_eq!(spec.constraint_name_prefix(), "manifest_type_check_v");
-        assert_eq!(spec.legacy_constraint_name(), "manifests_manifest_type_check");
+        assert_eq!(
+            spec.legacy_constraint_name(),
+            "manifests_manifest_type_check"
+        );
         assert_eq!(spec.qualified_table(), "core.manifests");
     }
 }

@@ -387,9 +387,7 @@ mod tests {
         let plan = NextestExecutionPlan {
             runner_packages: vec!["sinex-terminal-ingestor".to_string()],
             excluded_packages: Vec::new(),
-            workload_scope: WorkloadScope::Packages(vec![
-                "sinex-terminal-ingestor".to_string(),
-            ]),
+            workload_scope: WorkloadScope::Packages(vec!["sinex-terminal-ingestor".to_string()]),
         };
 
         let requirements = runtime_binary_requirements_for_plan(&plan);
@@ -404,9 +402,7 @@ mod tests {
         let plan = NextestExecutionPlan {
             runner_packages: vec!["sinex-browser-ingestor".to_string()],
             excluded_packages: Vec::new(),
-            workload_scope: WorkloadScope::Packages(vec![
-                "sinex-browser-ingestor".to_string(),
-            ]),
+            workload_scope: WorkloadScope::Packages(vec!["sinex-browser-ingestor".to_string()]),
         };
 
         let requirements = runtime_binary_requirements_for_plan(&plan);
@@ -421,9 +417,7 @@ mod tests {
         let plan = NextestExecutionPlan {
             runner_packages: vec!["sinex-desktop-ingestor".to_string()],
             excluded_packages: Vec::new(),
-            workload_scope: WorkloadScope::Packages(vec![
-                "sinex-desktop-ingestor".to_string(),
-            ]),
+            workload_scope: WorkloadScope::Packages(vec!["sinex-desktop-ingestor".to_string()]),
         };
 
         let requirements = runtime_binary_requirements_for_plan(&plan);

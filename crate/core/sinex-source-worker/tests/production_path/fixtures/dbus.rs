@@ -58,7 +58,9 @@ pub fn build(data: &[u8]) -> Result<FixtureHandle, String> {
         .map(|m| serde_json::to_vec(&m.body_json).unwrap_or_default())
         .collect();
 
-    Ok(FixtureHandle::in_memory(FixtureBinding::InMemoryRecords(record_bytes)))
+    Ok(FixtureHandle::in_memory(FixtureBinding::InMemoryRecords(
+        record_bytes,
+    )))
 }
 
 /// Build a D-Bus fixture directly from typed messages (for callers that

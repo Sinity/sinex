@@ -17,12 +17,15 @@ use super::{FixtureBinding, FixtureHandle};
 ///
 /// Returns an error if the temp file cannot be created or written.
 pub fn build(data: &[u8]) -> Result<FixtureHandle, String> {
-    let mut file = NamedTempFile::new()
-        .map_err(|e| format!("failed to create append-only temp file: {e}"))?;
+    let mut file =
+        NamedTempFile::new().map_err(|e| format!("failed to create append-only temp file: {e}"))?;
     file.write_all(data)
         .map_err(|e| format!("failed to write fixture data: {e}"))?;
     file.flush()
         .map_err(|e| format!("failed to flush fixture data: {e}"))?;
     let path = file.path().to_owned();
-    Ok(FixtureHandle::with_resource(FixtureBinding::FilePath(path), file))
+    Ok(FixtureHandle::with_resource(
+        FixtureBinding::FilePath(path),
+        file,
+    ))
 }

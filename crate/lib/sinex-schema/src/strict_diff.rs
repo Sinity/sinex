@@ -970,7 +970,8 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn strict_drift_display_includes_location_and_summaries() -> xtask::sandbox::TestResult<()> {
+    async fn strict_drift_display_includes_location_and_summaries() -> xtask::sandbox::TestResult<()>
+    {
         let drift = StrictDrift {
             category: DriftCategory::ColumnDefault,
             location: "core.events.ts_persisted".to_string(),

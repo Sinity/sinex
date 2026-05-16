@@ -139,7 +139,9 @@ impl ReplayScope {
     /// (source identity or specific material). Replay planning uses this to
     /// decide between source-worker and legacy node-scan execution.
     pub fn is_staged_source_scope(&self) -> bool {
-        self.source_id.is_some() || self.source_material_id.is_some() || self.source_version.is_some()
+        self.source_id.is_some()
+            || self.source_material_id.is_some()
+            || self.source_version.is_some()
     }
 
     pub fn validate(&self) -> Result<()> {

@@ -145,15 +145,15 @@ impl ScopeReconcilerNode for RelationExtractor {
         //   2. Age: 60 s since the window opened (force-emit even under
         //      continuous activity so co-occurrences flow steadily).
         //   3. Capacity: MAX_WINDOW_ENTITIES (defensive bound on burst).
-        let gap_triggered = state.last_seen.is_some_and(|last| {
-            now - last >= Duration::seconds(WINDOW_GAP_SECS)
-        });
-        let age_triggered = state.window_started_at.is_some_and(|opened| {
-            now - opened >= Duration::seconds(WINDOW_FORCE_EMIT_SECS)
-        });
+        let gap_triggered = state
+            .last_seen
+            .is_some_and(|last| now - last >= Duration::seconds(WINDOW_GAP_SECS));
+        let age_triggered = state
+            .window_started_at
+            .is_some_and(|opened| now - opened >= Duration::seconds(WINDOW_FORCE_EMIT_SECS));
         let capacity_triggered = state.window.len() >= MAX_WINDOW_ENTITIES;
-        let should_close = (gap_triggered || age_triggered || capacity_triggered)
-            && state.window.len() >= 2;
+        let should_close =
+            (gap_triggered || age_triggered || capacity_triggered) && state.window.len() >= 2;
 
         let mut outputs = Vec::new();
         if should_close {

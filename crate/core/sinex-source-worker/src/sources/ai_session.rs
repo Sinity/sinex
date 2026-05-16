@@ -166,21 +166,14 @@ impl MaterialParser for ClaudeSessionParser {
         record: SourceRecord,
         ctx: &ParserContext,
     ) -> ParserResult<Vec<ParsedEventIntent>> {
-        let conversations: Vec<ClaudeConversation> =
-            serde_json::from_slice(&record.bytes).map_err(|e| {
-                ParserError::Parse(format!("invalid Claude conversations.json: {e}"))
-            })?;
+        let conversations: Vec<ClaudeConversation> = serde_json::from_slice(&record.bytes)
+            .map_err(|e| ParserError::Parse(format!("invalid Claude conversations.json: {e}")))?;
 
         let mut intents = Vec::new();
         for (conv_index, conv) in conversations.into_iter().enumerate() {
             for (msg_index, msg) in conv.chat_messages.into_iter().enumerate() {
                 intents.push(parse_claude_message(
-                    msg,
-                    conv_index,
-                    msg_index,
-                    &conv.uuid,
-                    &conv.name,
-                    ctx,
+                    msg, conv_index, msg_index, &conv.uuid, &conv.name, ctx,
                 )?);
             }
         }
@@ -198,13 +191,16 @@ fn parse_claude_message(
     ctx: &ParserContext,
 ) -> ParserResult<ParsedEventIntent> {
     let message_ts = Timestamp::new(
-        time::OffsetDateTime::parse(&msg.created_at, &time::format_description::well_known::Rfc3339)
-            .map_err(|e| {
-                ParserError::Parse(format!(
-                    "invalid Claude message timestamp {:?}: {e}",
-                    msg.created_at
-                ))
-            })?,
+        time::OffsetDateTime::parse(
+            &msg.created_at,
+            &time::format_description::well_known::Rfc3339,
+        )
+        .map_err(|e| {
+            ParserError::Parse(format!(
+                "invalid Claude message timestamp {:?}: {e}",
+                msg.created_at
+            ))
+        })?,
     );
 
     // Prefer the structured content array; fall back to the flat `text` field
@@ -426,10 +422,8 @@ impl MaterialParser for ChatGptSessionParser {
         record: SourceRecord,
         ctx: &ParserContext,
     ) -> ParserResult<Vec<ParsedEventIntent>> {
-        let conversations: Vec<ChatGptConversation> =
-            serde_json::from_slice(&record.bytes).map_err(|e| {
-                ParserError::Parse(format!("invalid ChatGPT conversations JSON: {e}"))
-            })?;
+        let conversations: Vec<ChatGptConversation> = serde_json::from_slice(&record.bytes)
+            .map_err(|e| ParserError::Parse(format!("invalid ChatGPT conversations JSON: {e}")))?;
 
         let mut intents = Vec::new();
         for (conv_index, conv) in conversations.into_iter().enumerate() {
@@ -503,22 +497,15 @@ fn parse_chatgpt_message(
     let text_opt: Option<String> = if text.is_empty() { None } else { Some(text) };
 
     let create_time = msg.create_time.ok_or_else(|| {
-        ParserError::Parse(format!(
-            "ChatGPT message {} missing create_time",
-            msg.id
-        ))
+        ParserError::Parse(format!("ChatGPT message {} missing create_time", msg.id))
     })?;
 
     let secs = create_time.trunc() as i64;
     let nanos = ((create_time.fract()) * 1e9) as i64;
     let message_ts = Timestamp::new(
-        time::OffsetDateTime::from_unix_timestamp(secs)
-            .map_err(|e| {
-                ParserError::Parse(format!(
-                    "invalid ChatGPT timestamp {create_time}: {e}"
-                ))
-            })?
-            + time::Duration::nanoseconds(nanos),
+        time::OffsetDateTime::from_unix_timestamp(secs).map_err(|e| {
+            ParserError::Parse(format!("invalid ChatGPT timestamp {create_time}: {e}"))
+        })? + time::Duration::nanoseconds(nanos),
     );
 
     let model = msg
@@ -636,10 +623,10 @@ crate::register_adapter_ingestor!(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sinex_primitives::ids::Id;
     use sinex_primitives::Uuid;
-    use xtask::sandbox::prelude::sinex_test;
+    use sinex_primitives::ids::Id;
     use xtask::sandbox::TestResult;
+    use xtask::sandbox::prelude::sinex_test;
 
     fn claude_ctx() -> ParserContext {
         ParserContext {
@@ -721,7 +708,11 @@ mod tests {
             .parse_record(record_for(&bytes), &ctx)
             .await
             .unwrap();
-        assert_eq!(intents.len(), 3, "expected 3 intents across 2 conversations");
+        assert_eq!(
+            intents.len(),
+            3,
+            "expected 3 intents across 2 conversations"
+        );
         assert_eq!(intents[0].event_source.as_static_str(), "claude");
         assert_eq!(intents[0].event_type.as_static_str(), "ai.message");
         Ok(())
@@ -782,11 +773,23 @@ mod tests {
             .await
             .unwrap();
         // conv=0, msg=0 -> 0*1_000_000 + 0 = 0
-        assert_eq!(intents[0].anchor, MaterialAnchor::ByteRange { start: 0, len: 1 });
+        assert_eq!(
+            intents[0].anchor,
+            MaterialAnchor::ByteRange { start: 0, len: 1 }
+        );
         // conv=0, msg=1 -> 0*1_000_000 + 1 = 1
-        assert_eq!(intents[1].anchor, MaterialAnchor::ByteRange { start: 1, len: 1 });
+        assert_eq!(
+            intents[1].anchor,
+            MaterialAnchor::ByteRange { start: 1, len: 1 }
+        );
         // conv=1, msg=0 -> 1*1_000_000 + 0 = 1_000_000
-        assert_eq!(intents[2].anchor, MaterialAnchor::ByteRange { start: 1_000_000, len: 1 });
+        assert_eq!(
+            intents[2].anchor,
+            MaterialAnchor::ByteRange {
+                start: 1_000_000,
+                len: 1
+            }
+        );
         Ok(())
     }
 

@@ -68,8 +68,8 @@ use std::collections::{HashMap, HashSet};
 use crate::apply::ApplyError;
 use crate::schema::{
     Blobs, EmbeddingCache, EmbeddingModels, Entities, EntityRelations, EventAnnotations,
-    EventEmbeddings, EventPayloadSchemas, Events, OperationsLog,
-    SourceMaterialRegistry, TableMeta, TaggedItems, Tags,
+    EventEmbeddings, EventPayloadSchemas, Events, OperationsLog, SourceMaterialRegistry, TableMeta,
+    TaggedItems, Tags,
 };
 use sea_query::{
     Alias, ColumnDef, ColumnSpec, ForeignKeyCreateStatement, PostgresQueryBuilder, Table,
@@ -800,13 +800,11 @@ pub fn convergible_tables() -> Result<Vec<ConvergibleTable>, ApplyError> {
                     // JSON null — and a CHECK that evaluates to NULL passes
                     // in PostgreSQL. The earlier `? 'kind'` rejected only the
                     // missing-key case.
-                    expression:
-                        "coverage_contract IS NULL OR (jsonb_typeof(coverage_contract) = 'object' AND (coverage_contract->>'kind') IS NOT NULL AND (coverage_contract->>'kind') IN ('Continuous', 'PeriodicDump', 'OpportunisticImport', 'FiniteOneShot', 'EphemeralStream', 'Unknown'))",
+                    expression: "coverage_contract IS NULL OR (jsonb_typeof(coverage_contract) = 'object' AND (coverage_contract->>'kind') IS NOT NULL AND (coverage_contract->>'kind') IN ('Continuous', 'PeriodicDump', 'OpportunisticImport', 'FiniteOneShot', 'EphemeralStream', 'Unknown'))",
                 },
                 NamedConstraint {
                     name: "source_material_registry_privacy_class_check",
-                    expression:
-                        "privacy_class IN ('public', 'personal', 'secret', 'redacted', 'unknown')",
+                    expression: "privacy_class IN ('public', 'personal', 'secret', 'redacted', 'unknown')",
                 },
             ],
             foreign_keys: vec![],

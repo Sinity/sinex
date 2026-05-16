@@ -167,10 +167,10 @@ impl<P: TransientErrorPredicate> RetryableMaterialCapture<P> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use xtask::sandbox::prelude::sinex_test;
-    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::time::Instant;
+    use xtask::sandbox::prelude::sinex_test;
 
     // Note: tests use Arc<AtomicUsize> not Rc<RefCell> because the predicate
     // crosses an .await point inside RetryableMaterialCapture::run, requiring
@@ -182,7 +182,9 @@ mod tests {
 
     impl TransientErrorPredicate for CountingPredicate {
         fn is_transient(&self, err: &SinexError) -> bool {
-            err.context_map().get("transient").is_some_and(|v| v == "true")
+            err.context_map()
+                .get("transient")
+                .is_some_and(|v| v == "true")
         }
     }
 
@@ -221,7 +223,8 @@ mod tests {
                 Box::pin(async move {
                     let n = a.fetch_add(1, Ordering::SeqCst) + 1;
                     if n < 2 {
-                        let err = SinexError::io("test error").with_context("io_kind", "Interrupted");
+                        let err =
+                            SinexError::io("test error").with_context("io_kind", "Interrupted");
                         Err(err)
                     } else {
                         Ok::<i32, SinexError>(42)
@@ -245,7 +248,8 @@ mod tests {
                 let a = attempts_clone.clone();
                 Box::pin(async move {
                     a.fetch_add(1, Ordering::SeqCst);
-                    let err = SinexError::io("persistent error").with_context("io_kind", "Interrupted");
+                    let err =
+                        SinexError::io("persistent error").with_context("io_kind", "Interrupted");
                     Err::<i32, _>(err)
                 })
             })
@@ -266,8 +270,7 @@ mod tests {
                 let a = attempts_clone.clone();
                 Box::pin(async move {
                     a.fetch_add(1, Ordering::SeqCst);
-                    let err = SinexError::io("permanent error")
-                        .with_context("transient", "false");
+                    let err = SinexError::io("permanent error").with_context("transient", "false");
                     Err::<i32, _>(err)
                 })
             })

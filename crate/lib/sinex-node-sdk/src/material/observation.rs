@@ -28,7 +28,7 @@ use serde::Serialize;
 use sinex_primitives::SinexError;
 use std::sync::Arc;
 use tokio::sync::{mpsc, oneshot};
-use tokio::time::{interval, Duration, Instant};
+use tokio::time::{Duration, Instant, interval};
 use tracing::debug;
 
 /// Configuration for [ObservationMaterializer] behavior.
@@ -115,7 +115,10 @@ impl<R: Serialize + Send + 'static> ObservationMaterializer<R> {
     /// Returns `Ok(())` if the record was successfully buffered.
     /// Returns `Err` if the buffer channel is closed or capacity exceeded.
     pub async fn append(&mut self, record: R) -> NodeResult<()> {
-        let (tx, rx): (oneshot::Sender<NodeResult<()>>, oneshot::Receiver<NodeResult<()>>) = oneshot::channel();
+        let (tx, rx): (
+            oneshot::Sender<NodeResult<()>>,
+            oneshot::Receiver<NodeResult<()>>,
+        ) = oneshot::channel();
         self.tx
             .send(AppendRequest { record, reply: tx })
             .await
@@ -212,10 +215,7 @@ async fn flush_internal<R: Serialize>(
     let record_count = buffer.len();
     *buffer_bytes = 0;
 
-    let batch = SerializedBatch {
-        data,
-        record_count,
-    };
+    let batch = SerializedBatch { data, record_count };
 
     debug!("Flushing {} observation records", record_count);
     on_flush(batch).await
@@ -224,11 +224,11 @@ async fn flush_internal<R: Serialize>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use xtask::sandbox::prelude::sinex_test;
     use serde_json::json;
-    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc as StdArc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use tokio::time::sleep;
+    use xtask::sandbox::prelude::sinex_test;
 
     #[derive(Serialize, Clone)]
     struct TestRecord {
@@ -238,9 +238,8 @@ mod tests {
 
     #[sinex_test]
     async fn test_append_single_record() -> xtask::sandbox::TestResult<()> {
-        let mut mat = ObservationMaterializer::<TestRecord>::new(
-            ObservationMaterializerConfig::default(),
-        );
+        let mut mat =
+            ObservationMaterializer::<TestRecord>::new(ObservationMaterializerConfig::default());
 
         let record = TestRecord {
             id: 1,
@@ -293,13 +292,14 @@ mod tests {
         let flush_count = StdArc::new(AtomicUsize::new(0));
         let flush_count_clone = flush_count.clone();
 
-        let on_flush: Arc<FlushCallback> = Arc::new(move |_batch: SerializedBatch| -> FlushFuture {
-            let fc = flush_count_clone.clone();
-            Box::pin(async move {
-                fc.fetch_add(1, Ordering::SeqCst);
-                Ok(())
-            })
-        });
+        let on_flush: Arc<FlushCallback> =
+            Arc::new(move |_batch: SerializedBatch| -> FlushFuture {
+                let fc = flush_count_clone.clone();
+                Box::pin(async move {
+                    fc.fetch_add(1, Ordering::SeqCst);
+                    Ok(())
+                })
+            });
 
         let config = ObservationMaterializerConfig {
             batch_coalesce_window_ms: 50,
@@ -328,13 +328,14 @@ mod tests {
         let flush_count = StdArc::new(AtomicUsize::new(0));
         let flush_count_clone = flush_count.clone();
 
-        let on_flush: Arc<FlushCallback> = Arc::new(move |_batch: SerializedBatch| -> FlushFuture {
-            let fc = flush_count_clone.clone();
-            Box::pin(async move {
-                fc.fetch_add(1, Ordering::SeqCst);
-                Ok(())
-            })
-        });
+        let on_flush: Arc<FlushCallback> =
+            Arc::new(move |_batch: SerializedBatch| -> FlushFuture {
+                let fc = flush_count_clone.clone();
+                Box::pin(async move {
+                    fc.fetch_add(1, Ordering::SeqCst);
+                    Ok(())
+                })
+            });
 
         let config = ObservationMaterializerConfig {
             batch_coalesce_window_ms: 50,
@@ -357,13 +358,14 @@ mod tests {
         let flush_count = StdArc::new(AtomicUsize::new(0));
         let flush_count_clone = flush_count.clone();
 
-        let on_flush: Arc<FlushCallback> = Arc::new(move |_batch: SerializedBatch| -> FlushFuture {
-            let fc = flush_count_clone.clone();
-            Box::pin(async move {
-                fc.fetch_add(1, Ordering::SeqCst);
-                Ok(())
-            })
-        });
+        let on_flush: Arc<FlushCallback> =
+            Arc::new(move |_batch: SerializedBatch| -> FlushFuture {
+                let fc = flush_count_clone.clone();
+                Box::pin(async move {
+                    fc.fetch_add(1, Ordering::SeqCst);
+                    Ok(())
+                })
+            });
 
         let config = ObservationMaterializerConfig {
             batch_coalesce_window_ms: 1000,
@@ -395,13 +397,14 @@ mod tests {
         let flush_count = StdArc::new(AtomicUsize::new(0));
         let flush_count_clone = flush_count.clone();
 
-        let on_flush: Arc<FlushCallback> = Arc::new(move |_batch: SerializedBatch| -> FlushFuture {
-            let fc = flush_count_clone.clone();
-            Box::pin(async move {
-                fc.fetch_add(1, Ordering::SeqCst);
-                Ok(())
-            })
-        });
+        let on_flush: Arc<FlushCallback> =
+            Arc::new(move |_batch: SerializedBatch| -> FlushFuture {
+                let fc = flush_count_clone.clone();
+                Box::pin(async move {
+                    fc.fetch_add(1, Ordering::SeqCst);
+                    Ok(())
+                })
+            });
 
         let config = ObservationMaterializerConfig::default();
         let mut mat = ObservationMaterializer::<TestRecord>::with_callback(config, on_flush);

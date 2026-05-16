@@ -184,9 +184,9 @@ pub async fn make_socket_pair() -> (UnixStream, UnixStream) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use xtask::sandbox::prelude::sinex_test;
     use futures::StreamExt;
     use tokio::io::AsyncWriteExt;
+    use xtask::sandbox::prelude::sinex_test;
 
     fn dummy_material_id() -> Id<SourceMaterial> {
         Id::from_uuid(uuid::Uuid::new_v4())
@@ -229,12 +229,18 @@ mod tests {
 
         assert!(matches!(
             records[0].as_ref().unwrap().anchor,
-            MaterialAnchor::StreamFrame { material_offset: 0, frame_index: 0 }
+            MaterialAnchor::StreamFrame {
+                material_offset: 0,
+                frame_index: 0
+            }
         ));
         // "hello\n" = 6 bytes → next line starts at offset 6
         assert!(matches!(
             records[1].as_ref().unwrap().anchor,
-            MaterialAnchor::StreamFrame { material_offset: 6, frame_index: 1 }
+            MaterialAnchor::StreamFrame {
+                material_offset: 6,
+                frame_index: 1
+            }
         ));
         Ok(())
     }
@@ -290,7 +296,10 @@ mod tests {
         let adapter = UnixSocketStreamAdapter;
         let record = SourceRecord {
             material_id: dummy_material_id(),
-            anchor: MaterialAnchor::StreamFrame { material_offset: 0, frame_index: 0 },
+            anchor: MaterialAnchor::StreamFrame {
+                material_offset: 0,
+                frame_index: 0,
+            },
             bytes: b"data".to_vec(),
             logical_path: None,
             source_ts_hint: None,
@@ -308,7 +317,12 @@ mod tests {
             socket_path: Utf8PathBuf::from("/nonexistent/socket.sock"),
             reconnect_on_eof: false,
         };
-        assert!(adapter.open(dummy_material_id(), &config, None).await.is_err());
+        assert!(
+            adapter
+                .open(dummy_material_id(), &config, None)
+                .await
+                .is_err()
+        );
         Ok(())
     }
 

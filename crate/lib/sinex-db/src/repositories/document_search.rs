@@ -320,9 +320,7 @@ impl<'a> DocumentSearchRepository<'a> {
         q = q.bind(offset);
 
         let rows = q.fetch_all(self.pool).await?;
-        rows.into_iter()
-            .map(Self::map_search_row)
-            .collect()
+        rows.into_iter().map(Self::map_search_row).collect()
     }
 
     async fn search_trigram(
@@ -331,9 +329,7 @@ impl<'a> DocumentSearchRepository<'a> {
         limit: i64,
         offset: i64,
     ) -> DbResult<Vec<DocumentSearchResult>> {
-        let mut predicates = vec![format!(
-            "similarity(dc.text, $1) > $2"
-        )];
+        let mut predicates = vec![format!("similarity(dc.text, $1) > $2")];
         let mut bind_index: u32 = 3; // $1 = query, $2 = threshold
 
         if query.kind.is_some() {
@@ -406,9 +402,7 @@ impl<'a> DocumentSearchRepository<'a> {
         q = q.bind(offset);
 
         let rows = q.fetch_all(self.pool).await?;
-        rows.into_iter()
-            .map(Self::map_search_row)
-            .collect()
+        rows.into_iter().map(Self::map_search_row).collect()
     }
 
     fn map_search_row(row: sqlx::postgres::PgRow) -> DbResult<DocumentSearchResult> {

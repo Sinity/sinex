@@ -22,8 +22,8 @@ pub use blobs::{BlobRepository, StorageStats};
 pub use common::{DbResult, EnhancedRepository, Repository, TableDef, TransactionSupport};
 pub use continuity::ContinuityRepository;
 pub use document_search::{
-    DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE, DocumentSearchQuery, DocumentSearchResult,
-    DocumentSearchResults, DocumentSearchRepository, SearchMode,
+    DEFAULT_PAGE_SIZE, DocumentSearchQuery, DocumentSearchRepository, DocumentSearchResult,
+    DocumentSearchResults, MAX_PAGE_SIZE, SearchMode,
 };
 pub use embeddings::{
     CacheEntry, CachedEmbeddingHit, EmbeddingModelRecord, EmbeddingRepository, EmbeddingTarget,

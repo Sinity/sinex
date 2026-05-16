@@ -322,8 +322,7 @@ impl DriftAccumulator {
         let previous_hash = self.last_hash.clone().unwrap_or_default();
 
         // Compute key deltas.
-        let current_key_set: std::collections::HashSet<_> =
-            current.keys.iter().cloned().collect();
+        let current_key_set: std::collections::HashSet<_> = current.keys.iter().cloned().collect();
         let previous_key_set: std::collections::HashSet<_> =
             previous_keys.iter().cloned().collect();
 
@@ -451,8 +450,8 @@ fn current_unix_timestamp() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use xtask::sandbox::prelude::sinex_test;
     use serde_json::json;
+    use xtask::sandbox::prelude::sinex_test;
 
     #[sinex_test]
     async fn test_from_json_simple() -> xtask::sandbox::TestResult<()> {
@@ -594,7 +593,8 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_drift_accumulator_respects_record_count_limit() -> xtask::sandbox::TestResult<()> {
+    async fn test_drift_accumulator_respects_record_count_limit() -> xtask::sandbox::TestResult<()>
+    {
         let source_unit = SourceUnitId::from_static("test.unit");
         let mut acc = DriftAccumulator::new(source_unit)
             .with_emit_every_n_records(100)
@@ -672,7 +672,14 @@ mod tests {
         assert!(event.added_keys.is_empty());
         assert!(event.removed_keys.is_empty());
         assert_eq!(event.type_changes.len(), 1);
-        assert_eq!(event.type_changes[0], ("count".to_string(), "integer".to_string(), "string".to_string()));
+        assert_eq!(
+            event.type_changes[0],
+            (
+                "count".to_string(),
+                "integer".to_string(),
+                "string".to_string()
+            )
+        );
         Ok(())
     }
 
@@ -723,8 +730,8 @@ mod tests {
 
     #[sinex_test]
     async fn from_record_falls_back_to_binary_for_non_json() -> xtask::sandbox::TestResult<()> {
-        use sinex_primitives::parser::{MaterialAnchor, SourceRecord};
         use sinex_primitives::Id;
+        use sinex_primitives::parser::{MaterialAnchor, SourceRecord};
         let record = SourceRecord {
             material_id: Id::from_uuid(uuid::Uuid::nil()),
             anchor: MaterialAnchor::ByteRange { start: 0, len: 8 },
@@ -754,8 +761,7 @@ mod tests {
             .with_cooldown_secs(0);
         let fp1 = SourceRecordFingerprint::from_json(&json!({"a": 1}));
         let fp2 = SourceRecordFingerprint::from_json(&json!({"a": 1, "b": 2}));
-        let fp3 =
-            SourceRecordFingerprint::from_json(&json!({"a": 1, "b": 2, "c": 3}));
+        let fp3 = SourceRecordFingerprint::from_json(&json!({"a": 1, "b": 2, "c": 3}));
         let _ = acc.observe(&fp1); // baseline
         let drift = acc.observe(&fp2);
         assert!(drift.is_some(), "first drift after baseline should emit");
@@ -771,14 +777,13 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn drift_hash_stable_for_same_schema_under_value_changes() -> xtask::sandbox::TestResult<()> {
+    async fn drift_hash_stable_for_same_schema_under_value_changes()
+    -> xtask::sandbox::TestResult<()> {
         // Two records with the same field set + types but different values
         // must produce the same fingerprint hash, so DriftAccumulator does
         // not flap on every record.
-        let fp1 =
-            SourceRecordFingerprint::from_json(&json!({"a": 1, "b": "x"}));
-        let fp2 =
-            SourceRecordFingerprint::from_json(&json!({"a": 999, "b": "y"}));
+        let fp1 = SourceRecordFingerprint::from_json(&json!({"a": 1, "b": "x"}));
+        let fp2 = SourceRecordFingerprint::from_json(&json!({"a": 999, "b": "y"}));
         assert_eq!(fp1.hash(), fp2.hash());
         assert_eq!(fp1.keys, fp2.keys);
         Ok(())

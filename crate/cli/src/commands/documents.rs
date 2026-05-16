@@ -186,10 +186,7 @@ fn render_search_table(response: &DocumentsSearchResponse) -> String {
 
     for (rank, result) in response.results.iter().enumerate() {
         // Strip <mark> tags from headline for plain-text rendering
-        let headline = result
-            .headline
-            .replace("<mark>", "")
-            .replace("</mark>", "");
+        let headline = result.headline.replace("<mark>", "").replace("</mark>", "");
         let headline = truncate_str(&headline, 64);
         let natural_key = truncate_str(&result.natural_key, 40);
 
@@ -228,9 +225,7 @@ impl GetArgs {
     pub async fn execute(&self, client: &GatewayClient, format: OutputFormat) -> Result<()> {
         let request = DocumentsGetRequest { id: self.id };
         let params = serde_json::to_value(&request)?;
-        let raw = client
-            .call_raw_rpc(methods::DOCUMENTS_GET, params)
-            .await?;
+        let raw = client.call_raw_rpc(methods::DOCUMENTS_GET, params).await?;
 
         match format {
             OutputFormat::Json | OutputFormat::Dot => {
@@ -362,10 +357,7 @@ fn render_chunks_table(raw: &serde_json::Value) -> String {
             .get("byte_offset_end")
             .and_then(|v| v.as_i64())
             .map_or_else(|| "-".to_string(), |v| v.to_string());
-        let text = chunk
-            .get("text")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
+        let text = chunk.get("text").and_then(|v| v.as_str()).unwrap_or("");
         let preview = truncate_str(&text.replace('\n', " "), 72);
 
         builder.push_record([idx.to_string(), start, end, preview]);

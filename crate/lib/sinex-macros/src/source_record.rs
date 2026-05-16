@@ -10,13 +10,9 @@
 
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
-use syn::{
-    parse_macro_input, Data, DataStruct, DeriveInput, Error, Field, Fields, Type,
-};
+use syn::{Data, DataStruct, DeriveInput, Error, Field, Fields, Type, parse_macro_input};
 
-pub fn derive_source_record_impl(
-    input: proc_macro::TokenStream,
-) -> proc_macro::TokenStream {
+pub fn derive_source_record_impl(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
     match derive_source_record_inner(&input) {
         Ok(tokens) => tokens.into(),
@@ -63,7 +59,11 @@ fn derive_source_record_inner(input: &DeriveInput) -> syn::Result<TokenStream> {
             input,
             format!(
                 "at most one field may have #[event_dispatch(...)]; found on fields: {}",
-                dispatch_fields.iter().map(|d| d.name.as_str()).collect::<Vec<_>>().join(", ")
+                dispatch_fields
+                    .iter()
+                    .map(|d| d.name.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
             ),
         ));
     }
@@ -87,21 +87,23 @@ fn derive_source_record_inner(input: &DeriveInput) -> syn::Result<TokenStream> {
     let discriminator_token = {
         // Prefer the struct-level `discriminator = "..."` key.  Fall back to the
         // field that carries event_dispatch.
-        let disc_info: Option<(&str, &FieldDecl)> = if let Some(ref disc_name) = attrs.discriminator_field {
-            dispatch_fields
-                .first()
-                .map(|fd| (disc_name.as_str(), *fd))
-                .or_else(|| {
-                    // discriminator declared but no dispatch field — still build discriminator
-                    // with an empty case table (unusual, but valid).
-                    None
-                })
-        } else {
-            dispatch_fields.first().map(|fd| (fd.name.as_str(), *fd))
-        };
+        let disc_info: Option<(&str, &FieldDecl)> =
+            if let Some(ref disc_name) = attrs.discriminator_field {
+                dispatch_fields
+                    .first()
+                    .map(|fd| (disc_name.as_str(), *fd))
+                    .or_else(|| {
+                        // discriminator declared but no dispatch field — still build discriminator
+                        // with an empty case table (unusual, but valid).
+                        None
+                    })
+            } else {
+                dispatch_fields.first().map(|fd| (fd.name.as_str(), *fd))
+            };
 
         if let Some((disc_field_name, fd)) = disc_info {
-            let on_unknown_tok = on_unknown_token(attrs.on_unknown.as_deref().unwrap_or("default"))?;
+            let on_unknown_tok =
+                on_unknown_token(attrs.on_unknown.as_deref().unwrap_or("default"))?;
             let cases: Vec<TokenStream> = fd
                 .event_dispatch
                 .iter()
@@ -393,7 +395,7 @@ fn parse_source_record_attrs(attrs: &[syn::Attribute]) -> syn::Result<SourceReco
                         "unknown source_record attribute '{other}'; expected one of: id, \
                          source_unit_id, input_shape, event_type, event_source, \
                          default_privacy_context, version, discriminator, on_unknown"
-                    )))
+                    )));
                 }
             }
             Ok(())
@@ -407,17 +409,14 @@ fn parse_source_record_attrs(attrs: &[syn::Attribute]) -> syn::Result<SourceReco
         ));
     }
 
-    let id =
-        id.ok_or_else(|| Error::new_spanned(attrs.first(), "source_record: missing 'id'"))?;
+    let id = id.ok_or_else(|| Error::new_spanned(attrs.first(), "source_record: missing 'id'"))?;
     let source_unit_id = source_unit_id.ok_or_else(|| {
         Error::new_spanned(attrs.first(), "source_record: missing 'source_unit_id'")
     })?;
-    let input_shape = input_shape.ok_or_else(|| {
-        Error::new_spanned(attrs.first(), "source_record: missing 'input_shape'")
-    })?;
-    let event_type = event_type.ok_or_else(|| {
-        Error::new_spanned(attrs.first(), "source_record: missing 'event_type'")
-    })?;
+    let input_shape = input_shape
+        .ok_or_else(|| Error::new_spanned(attrs.first(), "source_record: missing 'input_shape'"))?;
+    let event_type = event_type
+        .ok_or_else(|| Error::new_spanned(attrs.first(), "source_record: missing 'event_type'"))?;
 
     Ok(SourceRecordAttrs {
         id,
@@ -607,12 +606,13 @@ fn parse_field_decl(field: &Field) -> syn::Result<FieldDecl> {
                         fallback = Some(v.value());
                         Ok(())
                     } else {
-                        Err(meta.error("expected timestamp(format = \"...\") or timestamp(fallback = \"...\")"))
+                        Err(meta.error(
+                            "expected timestamp(format = \"...\") or timestamp(fallback = \"...\")",
+                        ))
                     }
                 })?;
-                let format = format.ok_or_else(|| {
-                    Error::new_spanned(attr, "timestamp: missing 'format'")
-                })?;
+                let format = format
+                    .ok_or_else(|| Error::new_spanned(attr, "timestamp: missing 'format'"))?;
                 timestamp = Some(TimestampDecl { format, fallback });
             }
             "suppress_if" => {
@@ -699,9 +699,7 @@ fn parse_field_decl(field: &Field) -> syn::Result<FieldDecl> {
 /// Parse `#[event_dispatch("Created" => "file.created", "Deleted" => "file.deleted", ...)]`.
 ///
 /// Returns `Vec<(discriminator_value, event_type)>`.
-fn parse_event_dispatch_attr(
-    attr: &syn::Attribute,
-) -> syn::Result<Vec<(String, String)>> {
+fn parse_event_dispatch_attr(attr: &syn::Attribute) -> syn::Result<Vec<(String, String)>> {
     use proc_macro2::TokenTree;
 
     let mut cases: Vec<(String, String)> = Vec::new();
@@ -719,7 +717,7 @@ fn parse_event_dispatch_attr(
                 let s = lit.to_string();
                 // Strip surrounding quotes.
                 if s.starts_with('"') && s.ends_with('"') {
-                    s[1..s.len()-1].to_string()
+                    s[1..s.len() - 1].to_string()
                 } else {
                     return Err(syn::Error::new(lit.span(), "expected string literal"));
                 }
@@ -732,12 +730,22 @@ fn parse_event_dispatch_attr(
         match iter.next() {
             Some(TokenTree::Punct(p)) if p.as_char() == '=' => {}
             Some(tok) => return Err(syn::Error::new(tok.span(), "expected `=>`")),
-            None => return Err(syn::Error::new(proc_macro2::Span::call_site(), "expected `=>`")),
+            None => {
+                return Err(syn::Error::new(
+                    proc_macro2::Span::call_site(),
+                    "expected `=>`",
+                ));
+            }
         }
         match iter.next() {
             Some(TokenTree::Punct(p)) if p.as_char() == '>' => {}
             Some(tok) => return Err(syn::Error::new(tok.span(), "expected `>`")),
-            None => return Err(syn::Error::new(proc_macro2::Span::call_site(), "expected `>`")),
+            None => {
+                return Err(syn::Error::new(
+                    proc_macro2::Span::call_site(),
+                    "expected `>`",
+                ));
+            }
         }
 
         // Expect: LitStr ("file.created")
@@ -745,20 +753,35 @@ fn parse_event_dispatch_attr(
             Some(TokenTree::Literal(lit)) => {
                 let s = lit.to_string();
                 if s.starts_with('"') && s.ends_with('"') {
-                    s[1..s.len()-1].to_string()
+                    s[1..s.len() - 1].to_string()
                 } else {
-                    return Err(syn::Error::new(lit.span(), "expected string literal for event type"));
+                    return Err(syn::Error::new(
+                        lit.span(),
+                        "expected string literal for event type",
+                    ));
                 }
             }
-            Some(tok) => return Err(syn::Error::new(tok.span(), "expected string literal for event type")),
-            None => return Err(syn::Error::new(proc_macro2::Span::call_site(), "expected event type string")),
+            Some(tok) => {
+                return Err(syn::Error::new(
+                    tok.span(),
+                    "expected string literal for event type",
+                ));
+            }
+            None => {
+                return Err(syn::Error::new(
+                    proc_macro2::Span::call_site(),
+                    "expected event type string",
+                ));
+            }
         };
 
         cases.push((key, event_type));
 
         // Optional trailing comma.
         match iter.peek() {
-            Some(TokenTree::Punct(p)) if p.as_char() == ',' => { iter.next(); }
+            Some(TokenTree::Punct(p)) if p.as_char() == ',' => {
+                iter.next();
+            }
             _ => {}
         }
     }
@@ -807,9 +830,8 @@ fn parse_carry_attr(attr: &syn::Attribute) -> syn::Result<CarryDecl> {
         Ok(())
     })?;
 
-    let policy = policy.ok_or_else(|| {
-        Error::new_spanned(attr, "carry_across_records: missing 'policy'")
-    })?;
+    let policy =
+        policy.ok_or_else(|| Error::new_spanned(attr, "carry_across_records: missing 'policy'"))?;
 
     // Validate policy value.
     match policy.as_str() {
@@ -825,7 +847,11 @@ fn parse_carry_attr(attr: &syn::Attribute) -> syn::Result<CarryDecl> {
         }
     }
 
-    Ok(CarryDecl { policy, from_carry, clear_on_use })
+    Ok(CarryDecl {
+        policy,
+        from_carry,
+        clear_on_use,
+    })
 }
 
 fn infer_field_type(ty: &Type) -> FieldType {
@@ -864,7 +890,7 @@ fn input_format_token(input_shape: &str) -> syn::Result<TokenStream> {
                     "unknown input_shape '{other}'; expected one of: json, \
                      tab_separated, csv_row, sqlite_row, raw_line"
                 ),
-            ))
+            ));
         }
     })
 }
@@ -888,7 +914,7 @@ fn privacy_context_token(name: &str) -> syn::Result<TokenStream> {
                      Command, Clipboard, WindowTitle, Journal, Dbus, \
                      Notification, Document, Metadata, SourceCapture"
                 ),
-            ))
+            ));
         }
     })
 }
@@ -952,7 +978,7 @@ fn field_decl_to_token(d: &FieldDecl) -> syn::Result<TokenStream> {
                             "unknown timestamp fallback '{other}'; expected \
                              'material_timing' or 'error'"
                         ),
-                    ))
+                    ));
                 }
             };
             quote!(Some(_sdk_parser::TimestampSpec {
@@ -1019,7 +1045,7 @@ fn carry_policy_token(name: &str) -> syn::Result<TokenStream> {
                     "unknown carry policy '{other}'; expected one of: \
                      set_then_consume, set_then_retain, consume_carried"
                 ),
-            ))
+            ));
         }
     })
 }
@@ -1036,7 +1062,7 @@ fn on_unknown_token(name: &str) -> syn::Result<TokenStream> {
                     "unknown on_unknown value '{other}'; expected one of: \
                      skip, error, default"
                 ),
-            ))
+            ));
         }
     })
 }
@@ -1057,7 +1083,7 @@ fn timestamp_format_token(name: &str) -> syn::Result<TokenStream> {
                      unix_seconds, unix_seconds_nanos, unix_millis, \
                      unix_micros, rfc3339, iso8601"
                 ),
-            ))
+            ));
         }
     })
 }

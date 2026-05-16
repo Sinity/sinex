@@ -22,14 +22,7 @@
 //! advance `last_message_seq` inside the user-level processing closure that
 //! consumes records produced by this source.
 
-use std::{
-    error::Error,
-    fmt,
-    future::Future,
-    marker::PhantomData,
-    sync::Arc,
-    time::Duration,
-};
+use std::{error::Error, fmt, future::Future, marker::PhantomData, sync::Arc, time::Duration};
 
 use serde::{Deserialize, Serialize};
 use tokio::{
@@ -163,10 +156,7 @@ where
         self
     }
 
-    async fn ensure_connected(
-        &self,
-        state: &mut IpcStreamState<S>,
-    ) -> Result<(), IpcStreamError> {
+    async fn ensure_connected(&self, state: &mut IpcStreamState<S>) -> Result<(), IpcStreamError> {
         if state.reader.is_some() {
             return Ok(());
         }
@@ -175,9 +165,7 @@ where
             Some(timeout) => tokio::time::timeout(timeout, connect)
                 .await
                 .map_err(|_| {
-                    IpcStreamError::Connect(
-                        format!("connect timed out after {:?}", timeout).into(),
-                    )
+                    IpcStreamError::Connect(format!("connect timed out after {:?}", timeout).into())
                 })?
                 .map_err(|error| IpcStreamError::Connect(Box::new(error)))?,
             None => connect

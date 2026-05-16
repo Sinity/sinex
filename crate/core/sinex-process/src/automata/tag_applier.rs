@@ -26,8 +26,8 @@
 use sinex_node_sdk::derived_node::{DerivedOutput, DerivedTriggerContext, TransducerNodeAdapter};
 use sinex_node_sdk::tags;
 use sinex_node_sdk::{InputProvenanceFilter, NodeLogicError, TransducerNode};
-use sinex_primitives::events::payloads::KnowledgeTagAppliedPayload;
 use sinex_primitives::events::EventPayload;
+use sinex_primitives::events::payloads::KnowledgeTagAppliedPayload;
 use sinex_primitives::privacy::ProcessingContext;
 
 #[derive(Debug, Clone, Default)]
