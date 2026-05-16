@@ -14,8 +14,8 @@
 
 use futures::future::BoxFuture;
 use sinex_primitives::parser::SourceUnitId;
-use std::sync::LazyLock;
 use std::collections::HashMap;
+use std::sync::LazyLock;
 
 /// Type-erased factory function for running a source-unit ingestor.
 ///
@@ -77,11 +77,9 @@ pub fn registered_node_factory_ids() -> Vec<SourceUnitId> {
 #[macro_export]
 macro_rules! register_node_factory {
     ($id:expr, $node_type:ty) => {
-        $crate::__submit_registry_entry!(
-            $crate::node_factory::NodeFactoryEntry,
-            $id,
-            |args| Box::pin($crate::node_factory::run_ingestor::<$node_type>(args)),
-        );
+        $crate::__submit_registry_entry!($crate::node_factory::NodeFactoryEntry, $id, |args| {
+            Box::pin($crate::node_factory::run_ingestor::<$node_type>(args))
+        },);
     };
 }
 
@@ -151,15 +149,12 @@ macro_rules! register_adapter_ingestor {
         $crate::register_parser!($id, $parser);
 
         // 2. Register the node factory (continuous ingestion path).
-        $crate::__submit_registry_entry!(
-            $crate::node_factory::NodeFactoryEntry,
-            $id,
-            |args| {
-                Box::pin($crate::node_factory::run_adapter_ingestor::<$adapter, $parser>(
-                    $id, args,
-                ))
-            },
-        );
+        $crate::__submit_registry_entry!($crate::node_factory::NodeFactoryEntry, $id, |args| {
+            Box::pin($crate::node_factory::run_adapter_ingestor::<
+                $adapter,
+                $parser,
+            >($id, args))
+        },);
     };
 }
 
@@ -175,16 +170,8 @@ pub async fn run_adapter_ingestor<A, P>(
 where
     A: sinex_node_sdk::parser::InputShapeAdapter + Default + Send + Sync + 'static,
     P: sinex_node_sdk::parser::MaterialParser + Default + Send + Sync + 'static,
-    A::Config: Clone
-        + serde::Serialize
-        + serde::de::DeserializeOwned
-        + Send
-        + Sync,
-    A::Cursor: Clone
-        + serde::Serialize
-        + serde::de::DeserializeOwned
-        + Send
-        + Sync,
+    A::Config: Clone + serde::Serialize + serde::de::DeserializeOwned + Send + Sync,
+    A::Cursor: Clone + serde::Serialize + serde::de::DeserializeOwned + Send + Sync,
 {
     use clap::Parser;
     use sinex_node_sdk::IngestorNodeAdapter;
@@ -197,7 +184,6 @@ where
     let mut runner = NodeCliRunner::new(adapter);
     runner.run(parsed).await.map_err(std::convert::Into::into)
 }
-
 
 /// Run a source-unit ingestor through the standard SDK lifecycle.
 ///

@@ -3,7 +3,10 @@
 
 #![allow(unused_imports)]
 
-use super::*;
+use super::{
+    Context, ReplayExecutionEngine, Result, ScopeInvalidationBucket, StreamExt, eyre,
+    replay_scope_drift_error, stale_preview_missing_root_ids_error,
+};
 use async_nats::jetstream;
 use sinex_db::repositories::{DbPoolExt, EventRepositoryTx};
 use sinex_node_sdk::derived_node::invalidation::{DerivedScopeInvalidation, INVALIDATION_SUBJECT};
@@ -284,6 +287,8 @@ impl ReplayExecutionEngine {
                 .await
         {
             error!(
+                target: "sinex_metrics",
+                metric = "gateway.replay_invalidation_failures_total",
                 operation_id = %operation_id,
                 archived_count,
                 scope_buckets = scope_metadata.len(),
@@ -719,7 +724,7 @@ impl ReplayExecutionEngine {
         let ack: serde_json::Value = serde_json::from_slice(&ack_msg.payload)
             .map_err(|e| eyre!("Failed to deserialize source parse ack: {e}"))?;
 
-        if ack.get("accepted").and_then(|v| v.as_bool()) != Some(true) {
+        if ack.get("accepted").and_then(serde_json::Value::as_bool) != Some(true) {
             let error_msg = ack
                 .get("error")
                 .and_then(|v| v.as_str())
@@ -764,7 +769,9 @@ impl ReplayExecutionEngine {
                 ReplayState::Failed => {
                     return Err(eyre!(
                         "Staged-source replay failed for operation {operation_id}: {}",
-                        operation.error_details.unwrap_or_else(|| "unknown error".to_string())
+                        operation
+                            .error_details
+                            .unwrap_or_else(|| "unknown error".to_string())
                     ));
                 }
                 ReplayState::Cancelled => {

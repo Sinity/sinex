@@ -58,16 +58,16 @@ pub async fn run(
     tokio::time::timeout(Duration::from_secs(5), async {
         controller.finish_active_work(source_unit_id).await;
         controller.flush_intents(source_unit_id).await;
-        controller.wait_confirmations(source_unit_id, Duration::from_millis(100)).await;
+        controller
+            .wait_confirmations(source_unit_id, Duration::from_millis(100))
+            .await;
         controller.finalize_materials(source_unit_id).await;
         controller.save_checkpoint(source_unit_id).await;
         controller.mark_drained(source_unit_id).await;
     })
     .await
     .map_err(|_| {
-        format!(
-            "drain for '{source_unit_id}': timed out advancing drain phases after 5s"
-        )
+        format!("drain for '{source_unit_id}': timed out advancing drain phases after 5s")
     })?;
 
     let final_phase = controller.current_phase().await;

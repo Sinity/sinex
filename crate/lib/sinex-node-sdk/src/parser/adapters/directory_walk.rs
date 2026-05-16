@@ -81,6 +81,7 @@ pub struct DirectoryWalkCursor(pub BTreeMap<Utf8PathBuf, FileFingerprint>);
 
 impl DirectoryWalkCursor {
     /// Returns the stored fingerprint for `path`, if any.
+    #[must_use]
     pub fn get(&self, path: &Utf8Path) -> Option<&FileFingerprint> {
         self.0.get(path)
     }
@@ -122,9 +123,9 @@ impl DirectoryWalkAdapter {
             })?;
             builder.add(glob);
         }
-        let set = builder.build().map_err(|e| {
-            ParserError::Config(format!("failed to build glob set: {e}"))
-        })?;
+        let set = builder
+            .build()
+            .map_err(|e| ParserError::Config(format!("failed to build glob set: {e}")))?;
         Ok(Some(set))
     }
 
@@ -174,14 +175,9 @@ impl DirectoryWalkAdapter {
 
             if metadata.is_dir() {
                 let next_depth = current_depth + 1;
-                if max_depth.map_or(true, |limit| next_depth <= limit) {
-                    let mut sub = Self::collect_paths(
-                        &path,
-                        globs,
-                        follow_symlinks,
-                        max_depth,
-                        next_depth,
-                    )?;
+                if max_depth.is_none_or(|limit| next_depth <= limit) {
+                    let mut sub =
+                        Self::collect_paths(&path, globs, follow_symlinks, max_depth, next_depth)?;
                     results.append(&mut sub);
                 }
                 continue;
@@ -192,10 +188,10 @@ impl DirectoryWalkAdapter {
             }
 
             // Glob filter: test the full path string.
-            if let Some(set) = globs {
-                if !set.is_match(path.as_str()) {
-                    continue;
-                }
+            if let Some(set) = globs
+                && !set.is_match(path.as_str())
+            {
+                continue;
             }
 
             results.push(path);
@@ -240,13 +236,8 @@ impl InputShapeAdapter for DirectoryWalkAdapter {
             if !root.exists() {
                 continue; // non-existent roots are silently skipped
             }
-            let paths = Self::collect_paths(
-                root,
-                &glob_set,
-                config.follow_symlinks,
-                config.max_depth,
-                0,
-            )?;
+            let paths =
+                Self::collect_paths(root, &glob_set, config.follow_symlinks, config.max_depth, 0)?;
             all_paths.extend(paths);
         }
 
@@ -268,10 +259,13 @@ impl InputShapeAdapter for DirectoryWalkAdapter {
                 continue;
             }
             let fp = Self::fingerprint(&meta);
-            if cursor.get(&path).map_or(false, |prev| *prev == fp) {
+            if cursor.get(&path).is_some_and(|prev| *prev == fp) {
                 continue; // unchanged — skip
             }
-            pending.push(PendingEntry { path, fingerprint: fp });
+            pending.push(PendingEntry {
+                path,
+                fingerprint: fp,
+            });
         }
 
         // Build a stream that reads each file lazily.
@@ -311,7 +305,7 @@ impl InputShapeAdapter for DirectoryWalkAdapter {
             _ => {
                 return Err(ParserError::Cursor(
                     "DirectoryWalkAdapter: record anchor is not DirectoryEntry".into(),
-                ))
+                ));
             }
         };
         let size_bytes = record.bytes.len() as u64;
@@ -319,7 +313,10 @@ impl InputShapeAdapter for DirectoryWalkAdapter {
         // so a subsequent walk (which re-reads metadata) will compare correctly.
         // In practice cursor_after is called once per record and the runtime
         // merges cursors; the metadata comparison uses the live FS value.
-        let fp = FileFingerprint { size_bytes, modified_ms: 0 };
+        let fp = FileFingerprint {
+            size_bytes,
+            modified_ms: 0,
+        };
         let mut cursor = DirectoryWalkCursor::default();
         cursor.insert(path, fp);
         Ok(cursor)
@@ -475,12 +472,14 @@ mod tests {
 
         let records = collect_records(&adapter, &config, None).await;
         assert_eq!(records.len(), 1);
-        assert!(records[0]
-            .logical_path
-            .as_ref()
-            .unwrap()
-            .as_str()
-            .ends_with("doc.md"));
+        assert!(
+            records[0]
+                .logical_path
+                .as_ref()
+                .unwrap()
+                .as_str()
+                .ends_with("doc.md")
+        );
         Ok(())
     }
 
@@ -508,12 +507,14 @@ mod tests {
         };
         let records_shallow = collect_records(&adapter, &config_shallow, None).await;
         assert_eq!(records_shallow.len(), 1, "only top.txt at depth 0");
-        assert!(records_shallow[0]
-            .logical_path
-            .as_ref()
-            .unwrap()
-            .as_str()
-            .ends_with("top.txt"));
+        assert!(
+            records_shallow[0]
+                .logical_path
+                .as_ref()
+                .unwrap()
+                .as_str()
+                .ends_with("top.txt")
+        );
 
         // max_depth=1 → includes sub/nested.txt.
         let config_deep = DirectoryWalkConfig {
@@ -523,7 +524,11 @@ mod tests {
             max_depth: Some(1),
         };
         let records_deep = collect_records(&adapter, &config_deep, None).await;
-        assert_eq!(records_deep.len(), 2, "both top.txt and nested.txt at depth 1");
+        assert_eq!(
+            records_deep.len(),
+            2,
+            "both top.txt and nested.txt at depth 1"
+        );
         Ok(())
     }
 
@@ -541,7 +546,10 @@ mod tests {
         assert_eq!(records.len(), 1);
         assert!(matches!(
             &records[0].anchor,
-            MaterialAnchor::DirectoryEntry { path: _, content_hash: None }
+            MaterialAnchor::DirectoryEntry {
+                path: _,
+                content_hash: None
+            }
         ));
         Ok(())
     }
@@ -549,7 +557,9 @@ mod tests {
     #[sinex_test]
     async fn test_non_existent_root_is_silently_skipped() -> xtask::sandbox::TestResult<()> {
         let adapter = DirectoryWalkAdapter;
-        let config = simple_config(vec![Utf8PathBuf::from("/nonexistent/dir/that/does/not/exist")]);
+        let config = simple_config(vec![Utf8PathBuf::from(
+            "/nonexistent/dir/that/does/not/exist",
+        )]);
         let records = collect_records(&adapter, &config, None).await;
         assert_eq!(records.len(), 0);
         Ok(())

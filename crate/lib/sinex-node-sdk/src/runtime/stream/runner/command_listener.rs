@@ -4,7 +4,11 @@
 //! incoming `NodeScanCommand`s to isolated replay workers. Only compiled
 //! with the `messaging` feature.
 
-use super::*;
+use super::{
+    Arc, AtomicBool, ControlCommandKind, EventTransport, LISTENER_RETRY_DELAY, Node, NodeRunner,
+    NodeScanAck, NodeScanCommand, NodeScanProgress, NodeType, Ordering, StreamExt, Uuid,
+    control_command_kind, debug, error, info, run_resubscribing_listener, warn, watch,
+};
 
 impl<T: Node + 'static> NodeRunner<T> {
     /// Start the NATS command listener for node-dispatch replay.
@@ -125,7 +129,13 @@ impl<T: Node + 'static> NodeRunner<T> {
                                     let command: NodeScanCommand = match serde_json::from_slice(&msg.payload) {
                                         Ok(cmd) => cmd,
                                         Err(err) => {
-                                            warn!(error = %err, "Failed to deserialize NodeScanCommand");
+                                            warn!(
+                                                target: "sinex_metrics",
+                                                metric = "node.scan_command_deser_failures_total",
+                                                node = %loop_node_name,
+                                                error = %err,
+                                                "Failed to deserialize NodeScanCommand"
+                                            );
                                             if let Some(reply) = msg.reply {
                                                 let nack = NodeScanAck {
                                                     operation_id: Uuid::now_v7(),
@@ -294,6 +304,8 @@ impl<T: Node + 'static> NodeRunner<T> {
                                         Self::publish_scan_ack(&loop_client, Some(reply.clone()), &ack).await
                                     {
                                         error!(
+                                            target: "sinex_metrics",
+                                            metric = "node.scan_ack_failures_total",
                                             operation_id = %operation_id,
                                             node = %loop_node_name,
                                             error = %error,
@@ -348,6 +360,8 @@ impl<T: Node + 'static> NodeRunner<T> {
                                         .await
                                         {
                                             error!(
+                                                target: "sinex_metrics",
+                                                metric = "node.scan_progress_failures_total",
                                                 operation_id = %operation_id,
                                                 node = %scan_node_name,
                                                 error = %error,
@@ -384,6 +398,8 @@ impl<T: Node + 'static> NodeRunner<T> {
                                             }
                                             Err(outcome) => {
                                                 warn!(
+                                                    target: "sinex_metrics",
+                                                    metric = "node.dispatched_scan_failures_total",
                                                     operation_id = %operation_id,
                                                     node = %scan_node_name,
                                                     error = %outcome.error,
@@ -406,6 +422,8 @@ impl<T: Node + 'static> NodeRunner<T> {
                                                 .await
                                         {
                                             error!(
+                                                target: "sinex_metrics",
+                                                metric = "node.scan_progress_failures_total",
                                                 operation_id = %operation_id,
                                                 node = %scan_node_name,
                                                 error = %error,

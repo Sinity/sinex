@@ -26,8 +26,8 @@ use mimalloc::MiMalloc;
 static GLOBAL: MiMalloc = MiMalloc;
 
 use sinex_primitives::parser::SourceUnitId;
-use sinex_source_worker::registry::SourceUnitRegistry;
 use sinex_source_worker::node_factory;
+use sinex_source_worker::registry::SourceUnitRegistry;
 
 /// Extract `--source-unit <name>` (or `SINEX_SOURCE_UNIT`) from raw argv and
 /// return both the source unit name and the filtered argv (without the
@@ -37,9 +37,7 @@ use sinex_source_worker::node_factory;
 /// dispatch selector — it only sees it as an optional identity field. We strip
 /// the selector form before forwarding the remaining args, and the identity is
 /// already carried through NodeCli's `--source-unit` identity field.
-fn extract_source_unit(
-    args: Vec<std::ffi::OsString>,
-) -> (SourceUnitId, Vec<std::ffi::OsString>) {
+fn extract_source_unit(args: Vec<std::ffi::OsString>) -> (SourceUnitId, Vec<std::ffi::OsString>) {
     // Read env as the fallback; CLI must override (standard CLI precedence).
     let env_val = std::env::var("SINEX_SOURCE_UNIT")
         .ok()

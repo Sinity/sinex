@@ -12,12 +12,12 @@
 use sinex_macros::SourceRecord;
 use sinex_node_sdk::parser::{BindingConfig, DeclarativeParser, MaterialParser};
 use sinex_primitives::{
+    Id, Timestamp,
     parser::{
         MaterialAnchor, ParserContext, SourceRecord as SourceRecordValue, SourceUnitId,
         TimingEvidence,
     },
     privacy::ProcessingContext,
-    Id, Timestamp,
 };
 use uuid::Uuid;
 
@@ -271,10 +271,7 @@ async fn tab_separated_with_column_index_extracts_correctly() {
         source_ts_hint: None,
         metadata: serde_json::Value::Null,
     };
-    let intents = parser
-        .parse_record(rec, &ctx("irc.weechat"))
-        .await
-        .unwrap();
+    let intents = parser.parse_record(rec, &ctx("irc.weechat")).await.unwrap();
     assert_eq!(intents[0].payload["timestamp"], "2024-01-15 12:34:56");
     assert_eq!(intents[0].payload["prefix"], "@nick");
     assert_eq!(intents[0].payload["message"], "hello world");
@@ -338,10 +335,7 @@ fn manifest_reflects_spec_metadata() {
     assert_eq!(manifest.parser_id.as_str(), "minimal-test");
     assert_eq!(manifest.source_unit_id.as_str(), "test.minimal");
     assert_eq!(manifest.declared_event_types.len(), 1);
-    assert_eq!(
-        manifest.declared_event_types[0].1.as_str(),
-        "test.event"
-    );
+    assert_eq!(manifest.declared_event_types[0].1.as_str(), "test.event");
 }
 
 // ---------------------------------------------------------------------------
@@ -428,13 +422,20 @@ async fn discriminator_on_unknown_skip_emits_no_events() {
         )
         .await
         .unwrap();
-    assert_eq!(intents.len(), 0, "unknown discriminator value must produce zero events");
+    assert_eq!(
+        intents.len(),
+        0,
+        "unknown discriminator value must produce zero events"
+    );
 }
 
 #[test]
 fn discriminator_spec_is_built_from_attrs() {
     let spec = FsDispatchRecord::parser_spec();
-    let disc = spec.discriminator.as_ref().expect("discriminator must be set");
+    let disc = spec
+        .discriminator
+        .as_ref()
+        .expect("discriminator must be set");
     assert_eq!(disc.field, "kind");
     assert_eq!(disc.cases.len(), 4);
     assert_eq!(disc.cases[0].value, "Created");
@@ -476,7 +477,7 @@ fn discriminator_manifest_includes_all_event_types() {
     event_type = "aw.unknown",
     event_source = "activitywatch",
     discriminator = "bucket_kind",
-    on_unknown = "error",
+    on_unknown = "error"
 )]
 struct AwDispatchRecord {
     #[source(json_pointer = "/bucket_kind")]
@@ -546,7 +547,7 @@ use sinex_node_sdk::parser::StatefulDeclarativeParser;
     input_shape = "raw_line",
     event_type = "command.imported",
     event_source = "shell.history",
-    default_privacy_context = "Command",
+    default_privacy_context = "Command"
 )]
 struct ZshCarryRecord {
     /// The raw line — used by both producer and consumer fields.
@@ -588,7 +589,11 @@ async fn carry_producer_sets_state_and_consumer_receives_it() {
 #[test]
 fn carry_spec_is_built_from_field_attr() {
     let spec = ZshCarryRecord::parser_spec();
-    let ts_field = spec.fields.iter().find(|f| f.name == "ts_raw").expect("ts_raw field");
+    let ts_field = spec
+        .fields
+        .iter()
+        .find(|f| f.name == "ts_raw")
+        .expect("ts_raw field");
     let carry = ts_field.carry.as_ref().expect("carry spec");
     assert_eq!(
         carry.policy,

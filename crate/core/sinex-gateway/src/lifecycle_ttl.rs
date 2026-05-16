@@ -35,10 +35,10 @@ use tokio::sync::watch;
 use tracing::{debug, info, warn};
 
 /// Default cadence between TTL sweeps.
-const TTL_TICK_INTERVAL: Duration = Duration::from_secs(3_600);
+const TTL_TICK_INTERVAL: Duration = Duration::from_hours(1);
 
 /// Initial delay before the first sweep, to avoid stampeding the DB at boot.
-const TTL_INITIAL_DELAY: Duration = Duration::from_secs(60);
+const TTL_INITIAL_DELAY: Duration = Duration::from_mins(1);
 
 /// Leadership key for the TTL enforcer (single owner across the deployment).
 const TTL_LEADERSHIP_KEY: &str = "gateway-ttl-enforcer";
@@ -58,7 +58,7 @@ pub fn spawn_ttl_task(
         // Hold off briefly so a freshly started gateway doesn't race the
         // schema-apply / coordination-bootstrap phase.
         tokio::select! {
-            _ = tokio::time::sleep(TTL_INITIAL_DELAY) => {}
+            () = tokio::time::sleep(TTL_INITIAL_DELAY) => {}
             _ = shutdown.changed() => return,
         }
 
@@ -84,12 +84,11 @@ pub fn spawn_ttl_task(
 
 async fn run_ttl_sweep(services: &ServiceContainer, instance_id: &str) -> Result<()> {
     // Leader gate.
-    let coord = match services.coordination.as_ref() {
-        Some(client) => Arc::clone(client),
-        None => {
-            debug!("TTL sweep skipped — coordination client not configured");
-            return Ok(());
-        }
+    let coord = if let Some(client) = services.coordination.as_ref() {
+        Arc::clone(client)
+    } else {
+        debug!("TTL sweep skipped — coordination client not configured");
+        return Ok(());
     };
 
     // `acquire_leadership` is keyed by the candidate id only — there is no
@@ -171,11 +170,11 @@ async fn fetch_retention_entries(pool: &PgPool) -> Result<Vec<RetentionEntry>> {
     // lists. Until then, query directly so we don't depend on the typed row
     // shape (which `sqlx::query!` would lock at compile time).
     let rows = sqlx::query(
-        r#"
+        r"
         SELECT source, event_type, retention_seconds
         FROM sinex_schemas.event_payload_schemas
         WHERE retention_seconds IS NOT NULL AND is_active = true
-        "#,
+        ",
     )
     .fetch_all(pool)
     .await
@@ -194,7 +193,7 @@ async fn fetch_retention_entries(pool: &PgPool) -> Result<Vec<RetentionEntry>> {
         .collect())
 }
 
-/// Limit per (source, event_type) per sweep — protects against runaway
+/// Limit per (source, `event_type`) per sweep — protects against runaway
 /// archives if a horizon is shortened on a high-volume event type.
 const TTL_BATCH_LIMIT: i64 = 10_000;
 
@@ -207,7 +206,7 @@ async fn archive_expired_for_event_type(
     //    Keyed on `ts_orig` per the plan: "events older than ts_orig - retention".
     let cutoff_secs = entry.retention_seconds;
     let rows = sqlx::query(
-        r#"
+        r"
         SELECT id
         FROM core.events
         WHERE source = $1
@@ -215,7 +214,7 @@ async fn archive_expired_for_event_type(
           AND ts_orig < (NOW() - make_interval(secs => $3))
         ORDER BY ts_orig ASC
         LIMIT $4
-        "#,
+        ",
     )
     .bind(&entry.source)
     .bind(&entry.event_type)
@@ -269,8 +268,14 @@ async fn archive_expired_for_event_type(
     //    `core.fn_archive_before_delete` which moves rows to
     //    `audit.archived_events`.
     let session_id = format!("{}_{}", session_prefix, Uuid::now_v7().simple());
-    let archive_outcome =
-        execute_ttl_archive(pool, &session_id, &operation.id.to_uuid(), &actor, &cascade_ids).await;
+    let archive_outcome = execute_ttl_archive(
+        pool,
+        &session_id,
+        &operation.id.to_uuid(),
+        &actor,
+        &cascade_ids,
+    )
+    .await;
 
     let archived = match archive_outcome {
         Ok(count) => {
@@ -396,12 +401,9 @@ async fn collect_cascade_ids(
             .map_err(|e| {
                 SinexError::database("Failed to expand TTL cascade").with_source(e.to_string())
             })?;
-        let ids = repo_tx
-            .get_cascade_ids(&table_name)
-            .await
-            .map_err(|e| {
-                SinexError::database("Failed to get TTL cascade IDs").with_source(e.to_string())
-            })?;
+        let ids = repo_tx.get_cascade_ids(&table_name).await.map_err(|e| {
+            SinexError::database("Failed to get TTL cascade IDs").with_source(e.to_string())
+        })?;
         repo_tx
             .cleanup_cascade_session(&table_name)
             .await

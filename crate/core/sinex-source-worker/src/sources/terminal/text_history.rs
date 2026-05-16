@@ -6,19 +6,18 @@
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
-use sinex_node_sdk::parser::{AppendOnlyFileAdapter, MaterialParser, ParserError, ParserResult};
 use sinex_node_sdk::parser::dedup::ContentHashWindow;
+use sinex_node_sdk::parser::{AppendOnlyFileAdapter, MaterialParser, ParserError, ParserResult};
 use sinex_primitives::domain::{EventSource, EventType};
 use sinex_primitives::events::payloads::shell::HistoryCommandImportedPayload;
 use sinex_primitives::parser::{
-    InputShapeKind, ParsedEventIntent, ParserContext, ParserId, ParserManifest,
-    SourceUnitId, TimingEvidence,
+    InputShapeKind, ParsedEventIntent, ParserContext, ParserId, ParserManifest, SourceUnitId,
+    TimingEvidence,
 };
 use sinex_primitives::privacy::ProcessingContext;
 use sinex_primitives::proof::{
-    CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, RetentionPolicy,
-    RuntimeShape, SourceUnitBinding, SourceUnitBuildImpact, SourceUnitDescriptor,
-    SubjectRef,
+    CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, RetentionPolicy, RuntimeShape,
+    SourceUnitBinding, SourceUnitBuildImpact, SourceUnitDescriptor, SubjectRef,
 };
 use sinex_primitives::{register_source_unit, register_source_unit_binding};
 
@@ -76,17 +75,9 @@ register_source_unit_binding! {
 pub struct TextHistoryParserConfig;
 
 /// Parser for generic plain-text history files.
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct TextHistoryParser {
     dedup: ContentHashWindow,
-}
-
-impl Default for TextHistoryParser {
-    fn default() -> Self {
-        Self {
-            dedup: ContentHashWindow::default(),
-        }
-    }
 }
 
 #[async_trait]
@@ -108,7 +99,8 @@ impl MaterialParser for TextHistoryParser {
                 "obligation:source_unit.material_provenance".into(),
                 "obligation:source_unit.package_impact_rationale".into(),
             ],
-            description: "Parses generic plain-text history files into command.imported events.".into(),
+            description: "Parses generic plain-text history files into command.imported events."
+                .into(),
         }
     }
 
@@ -121,7 +113,7 @@ impl MaterialParser for TextHistoryParser {
         if record
             .metadata
             .get("rotation_detected")
-            .and_then(|v| v.as_bool())
+            .and_then(sinex_primitives::JsonValue::as_bool)
             .unwrap_or(false)
         {
             self.dedup.clear();
@@ -158,7 +150,7 @@ impl MaterialParser for TextHistoryParser {
         let source_file = record
             .logical_path
             .as_ref()
-            .map(|p| p.to_string())
+            .map(std::string::ToString::to_string)
             .unwrap_or_default();
 
         let payload = HistoryCommandImportedPayload {

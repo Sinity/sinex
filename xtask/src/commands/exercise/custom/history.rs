@@ -123,7 +123,6 @@ pub fn custom_diagnostic_delta_roundtrip(dir: &Path, verbose: bool) -> Vec<StepO
     );
     steps.push(outcome);
 
-
     // 2. Query current diagnostics (package-scoped supersession view)
     let (mut outcome, output) = exec_step(
         dir,
@@ -175,7 +174,6 @@ pub fn custom_history_stages_populated(dir: &Path, verbose: bool) -> Vec<StepOut
         verbose,
     );
     steps.push(outcome);
-
 
     // 2. Get the last check invocation ID
     let (outcome, last_output) = exec_step(

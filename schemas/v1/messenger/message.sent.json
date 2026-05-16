@@ -1,0 +1,74 @@
+{
+  "$defs": {
+    "DateTime": {
+      "description": "RFC 3339 formatted date-time string",
+      "format": "date-time",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "One message observation from a Facebook Messenger GDPR export thread file.\n\nEach thread file is a JSON object with `participants`, `threadName`, and a\n`messages[]` array. We emit one event per message. The thread name is\npreserved so threads can be reconstructed downstream; sender + thread\ntogether name the conversation participants.",
+  "properties": {
+    "is_unsent": {
+      "description": "Whether the message was unsent (recalled by the sender).",
+      "type": "boolean"
+    },
+    "media_count": {
+      "description": "Count of media attachments. The export's `media` array is dropped\n(it points to per-export blob paths that are not stable across\nsnapshots); only the count is preserved so message presence is not\nerased.",
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "message_type": {
+      "description": "Message type: `text`, `share`, `subscribe`, `call`, etc. Verbatim\nfrom the export's `type` field.",
+      "type": "string"
+    },
+    "participants": {
+      "description": "All participants in the thread, including the sender. Useful for\nreconstructing group chats vs 1:1 threads downstream.",
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "reaction_count": {
+      "description": "Count of reactions attached to the message. Reaction details\n(who-reacted-with-what) are dropped to keep payload bounded;\nthe count surfaces engagement signal.",
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "sender_name": {
+      "description": "Sender display name (Facebook profile name at export time).",
+      "type": "string"
+    },
+    "sent_at": {
+      "$ref": "#/$defs/DateTime",
+      "description": "Wall-clock time the message was sent (Messenger uses epoch milliseconds)."
+    },
+    "text": {
+      "description": "Message text body. None when the message has no text component\n(e.g., pure media share or system message).",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "thread_name": {
+      "description": "Thread name as Facebook recorded it (often \"<other-participant>_<N>\").",
+      "type": "string"
+    }
+  },
+  "required": [
+    "sent_at",
+    "thread_name",
+    "sender_name",
+    "participants",
+    "message_type",
+    "is_unsent",
+    "media_count",
+    "reaction_count"
+  ],
+  "title": "MessengerMessageSentPayload",
+  "type": "object",
+  "x-sinex-event-type": "message.sent",
+  "x-sinex-source": "messenger",
+  "x-sinex-version": "1.0.0"
+}

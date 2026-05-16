@@ -1,6 +1,6 @@
 //! Relation extractor — [`ScopeReconcilerNode`] implementation.
 //!
-//! Model classification: **ScopeReconciler** — maintains a sliding co-occurrence
+//! Model classification: **`ScopeReconciler`** — maintains a sliding co-occurrence
 //! window of resolved entities. When the window closes (gap > 300 s or entity
 //! count reaches 2000), pairwise `entity.related` events are emitted.
 //!
@@ -34,7 +34,7 @@ use sinex_primitives::temporal::{Duration, Timestamp};
 /// capacity-bound close emits N*(N-1)/2 = ~2M relation events. Each event
 /// also cloned the full Vec of `source_event_ids` (one per window entry).
 /// Memory cost: 2M outputs × 2000 × 16-byte UUIDs = 64 GB allocated per
-/// close, with the kernel's MemoryHigh pressure throttling it down to a
+/// close, with the kernel's `MemoryHigh` pressure throttling it down to a
 /// "mere" 4 GB RSS leak before OOM. That's the bug fixed here.
 ///
 /// 50 entries gives 50*49/2 = 1225 pairs per close — manageable. Combined
@@ -145,15 +145,15 @@ impl ScopeReconcilerNode for RelationExtractor {
         //   2. Age: 60 s since the window opened (force-emit even under
         //      continuous activity so co-occurrences flow steadily).
         //   3. Capacity: MAX_WINDOW_ENTITIES (defensive bound on burst).
-        let gap_triggered = state.last_seen.is_some_and(|last| {
-            now - last >= Duration::seconds(WINDOW_GAP_SECS)
-        });
-        let age_triggered = state.window_started_at.is_some_and(|opened| {
-            now - opened >= Duration::seconds(WINDOW_FORCE_EMIT_SECS)
-        });
+        let gap_triggered = state
+            .last_seen
+            .is_some_and(|last| now - last >= Duration::seconds(WINDOW_GAP_SECS));
+        let age_triggered = state
+            .window_started_at
+            .is_some_and(|opened| now - opened >= Duration::seconds(WINDOW_FORCE_EMIT_SECS));
         let capacity_triggered = state.window.len() >= MAX_WINDOW_ENTITIES;
-        let should_close = (gap_triggered || age_triggered || capacity_triggered)
-            && state.window.len() >= 2;
+        let should_close =
+            (gap_triggered || age_triggered || capacity_triggered) && state.window.len() >= 2;
 
         let mut outputs = Vec::new();
         if should_close {
@@ -189,7 +189,7 @@ fn drain_and_emit_pairs(
 ) -> Vec<DerivedOutput<EntityRelatedPayload>> {
     let entries = std::mem::take(&mut state.window);
     state.window_started_at = None;
-    let ts_orig = entries.last().map(|e| e.arrived_at).unwrap_or(now);
+    let ts_orig = entries.last().map_or(now, |e| e.arrived_at);
 
     let mut outputs = Vec::with_capacity(entries.len() * (entries.len().saturating_sub(1)) / 2);
     for i in 0..entries.len() {

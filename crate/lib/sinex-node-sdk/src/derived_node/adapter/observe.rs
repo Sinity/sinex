@@ -132,51 +132,42 @@ where
         };
         let labels = self.derived_metric_labels();
 
-        if lag_ms.is_finite() {
-            if let Err(error) = obs
+        if lag_ms.is_finite()
+            && let Err(error) = obs
                 .emit_gauge("derived.event_lag_ms", lag_ms, Some(labels.clone()))
                 .await
-            {
-                log_self_observation_failure(self.node.name(), "derived.event_lag_ms", &error);
-            }
+        {
+            log_self_observation_failure(self.node.name(), "derived.event_lag_ms", &error);
         }
 
-        if runtime_ms.is_finite() {
-            if let Err(error) = obs
+        if runtime_ms.is_finite()
+            && let Err(error) = obs
                 .emit_gauge("derived.tick_runtime_ms", runtime_ms, Some(labels.clone()))
                 .await
-            {
-                log_self_observation_failure(self.node.name(), "derived.tick_runtime_ms", &error);
-            }
+        {
+            log_self_observation_failure(self.node.name(), "derived.tick_runtime_ms", &error);
         }
 
-        if let Some(p50) = self.lag_window.percentile(0.5) {
-            if let Err(error) = obs
+        if let Some(p50) = self.lag_window.percentile(0.5)
+            && let Err(error) = obs
                 .emit_gauge("derived.event_lag_p50_ms", p50, Some(labels.clone()))
                 .await
-            {
-                log_self_observation_failure(self.node.name(), "derived.event_lag_p50_ms", &error);
-            }
+        {
+            log_self_observation_failure(self.node.name(), "derived.event_lag_p50_ms", &error);
         }
-        if let Some(p99) = self.lag_window.percentile(0.99) {
-            if let Err(error) = obs
+        if let Some(p99) = self.lag_window.percentile(0.99)
+            && let Err(error) = obs
                 .emit_gauge("derived.event_lag_p99_ms", p99, Some(labels.clone()))
                 .await
-            {
-                log_self_observation_failure(self.node.name(), "derived.event_lag_p99_ms", &error);
-            }
+        {
+            log_self_observation_failure(self.node.name(), "derived.event_lag_p99_ms", &error);
         }
-        if let Some(p99) = self.runtime_window.percentile(0.99) {
-            if let Err(error) = obs
+        if let Some(p99) = self.runtime_window.percentile(0.99)
+            && let Err(error) = obs
                 .emit_gauge("derived.tick_runtime_p99_ms", p99, Some(labels.clone()))
                 .await
-            {
-                log_self_observation_failure(
-                    self.node.name(),
-                    "derived.tick_runtime_p99_ms",
-                    &error,
-                );
-            }
+        {
+            log_self_observation_failure(self.node.name(), "derived.tick_runtime_p99_ms", &error);
         }
 
         let eps = self.throughput_window.eps(Instant::now());
@@ -222,26 +213,24 @@ where
         let mut labels = self.derived_metric_labels();
         labels.insert("batch_size".to_string(), batch_size.to_string());
 
-        if lag_ms.is_finite() {
-            if let Err(error) = obs
+        if lag_ms.is_finite()
+            && let Err(error) = obs
                 .emit_gauge("derived.event_lag_ms", lag_ms, Some(labels.clone()))
                 .await
-            {
-                log_self_observation_failure(self.node.name(), "derived.event_lag_ms", &error);
-            }
+        {
+            log_self_observation_failure(self.node.name(), "derived.event_lag_ms", &error);
         }
 
-        if batch_runtime_ms.is_finite() {
-            if let Err(error) = obs
+        if batch_runtime_ms.is_finite()
+            && let Err(error) = obs
                 .emit_gauge(
                     "derived.batch_runtime_ms",
                     batch_runtime_ms,
                     Some(labels.clone()),
                 )
                 .await
-            {
-                log_self_observation_failure(self.node.name(), "derived.batch_runtime_ms", &error);
-            }
+        {
+            log_self_observation_failure(self.node.name(), "derived.batch_runtime_ms", &error);
         }
     }
 
@@ -300,4 +289,36 @@ where
 
     #[cfg(not(feature = "messaging"))]
     pub(super) async fn observe_pending_invalidations(&self, _count: usize) {}
+
+    /// Emit a counter for events filtered out by type/provenance mismatch.
+    /// High filter rates indicate a consumer subscribed to a broader subject than
+    /// the node's declared input type.
+    #[cfg(feature = "messaging")]
+    pub(super) async fn observe_filtered_events(&self, filtered_count: usize) {
+        if filtered_count == 0 {
+            return;
+        }
+        tracing::debug!(
+            target: "sinex_metrics",
+            metric = "derived.events_filtered",
+            node = %self.node.name(),
+            filtered_count,
+        );
+        let Some(obs) = self.self_observer.as_ref() else {
+            return;
+        };
+        if let Err(error) = obs
+            .emit_counter(
+                "derived.events_filtered_total",
+                filtered_count as u64,
+                Some(self.derived_metric_labels()),
+            )
+            .await
+        {
+            log_self_observation_failure(self.node.name(), "derived.events_filtered_total", &error);
+        }
+    }
+
+    #[cfg(not(feature = "messaging"))]
+    pub(super) async fn observe_filtered_events(&self, _filtered_count: usize) {}
 }

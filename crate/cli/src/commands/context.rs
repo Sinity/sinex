@@ -4,7 +4,7 @@ use color_eyre::Result;
 use console::style;
 use serde_json::json;
 use sinex_primitives::query::{EventQuery, EventQueryResult, SortDirection, TimeRange};
-use sinex_primitives::temporal::{Duration, Timestamp};
+use sinex_primitives::temporal::Timestamp;
 use std::collections::HashMap;
 
 use crate::client::GatewayClient;

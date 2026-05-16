@@ -9,7 +9,7 @@ use sinex_node_sdk::ScopeReconcilerNode;
 use sinex_node_sdk::derived_node::DerivedTriggerContext;
 use sinex_primitives::Uuid;
 use sinex_primitives::domain::{EntityTypeName, ProcessingMode, TriggerKind};
-use sinex_primitives::events::payloads::{EntityRelatedPayload, EntityResolvedPayload};
+use sinex_primitives::events::payloads::EntityResolvedPayload;
 use sinex_primitives::events::{Event, EventPayload};
 use sinex_primitives::temporal::{Duration, Timestamp};
 use sinex_primitives::{Id, JsonValue};

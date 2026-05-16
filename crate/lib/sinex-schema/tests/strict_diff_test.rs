@@ -728,9 +728,7 @@ async fn detects_missing_temporal_ledger_trigger(ctx: TestContext) -> TestResult
         .await?;
 
     let drifts = sinex_schema::apply::diff(&ctx.pool).await?;
-    let has_detection = drifts
-        .iter()
-        .any(|d| d.contains("trg_tl_no_update_delete"));
+    let has_detection = drifts.iter().any(|d| d.contains("trg_tl_no_update_delete"));
 
     assert!(
         has_detection,
@@ -751,9 +749,7 @@ async fn detects_missing_document_projection_trigger(ctx: TestContext) -> TestRe
         .await?;
 
     let drifts = sinex_schema::apply::diff(&ctx.pool).await?;
-    let has_detection = drifts
-        .iter()
-        .any(|d| d.contains("trg_document_projection"));
+    let has_detection = drifts.iter().any(|d| d.contains("trg_document_projection"));
 
     assert!(
         has_detection,
@@ -764,9 +760,7 @@ async fn detects_missing_document_projection_trigger(ctx: TestContext) -> TestRe
 }
 
 #[sinex_test]
-async fn detects_manual_edit_to_fn_temporal_ledger_append_only(
-    ctx: TestContext,
-) -> TestResult<()> {
+async fn detects_manual_edit_to_fn_temporal_ledger_append_only(ctx: TestContext) -> TestResult<()> {
     sinex_schema::apply::apply(&ctx.pool).await?;
 
     // Replace the append-only guard with a pass-through — would allow
@@ -825,8 +819,7 @@ async fn detects_manual_edit_to_fn_events_no_update(ctx: TestContext) -> TestRes
     let matched: Vec<_> = drifts
         .iter()
         .filter(|d| {
-            d.category == DriftCategory::TriggerBody
-                && d.location == "core.fn_events_no_update"
+            d.category == DriftCategory::TriggerBody && d.location == "core.fn_events_no_update"
         })
         .collect();
 
@@ -897,8 +890,7 @@ async fn detects_manual_edit_to_execute_cascade_restore(ctx: TestContext) -> Tes
     let matched: Vec<_> = drifts
         .iter()
         .filter(|d| {
-            d.category == DriftCategory::TriggerBody
-                && d.location == "core.execute_cascade_restore"
+            d.category == DriftCategory::TriggerBody && d.location == "core.execute_cascade_restore"
         })
         .collect();
 
@@ -977,11 +969,13 @@ async fn strict_diff_clean_after_apply_for_db_check(ctx: TestContext) -> TestRes
     let drifts = check_strict(&ctx.pool).await?;
     let dbcheck_drifts: Vec<_> = drifts
         .iter()
-        .filter(|d| d.location.contains("::NodeType")
-            || d.location.contains("::OperationStatus")
-            || d.location.contains("::DataTier")
-            || d.location.contains("::HealthStatus")
-            || d.location.contains("::PrivacyTier"))
+        .filter(|d| {
+            d.location.contains("::NodeType")
+                || d.location.contains("::OperationStatus")
+                || d.location.contains("::DataTier")
+                || d.location.contains("::HealthStatus")
+                || d.location.contains("::PrivacyTier")
+        })
         .collect();
     assert!(
         dbcheck_drifts.is_empty(),
@@ -991,9 +985,7 @@ async fn strict_diff_clean_after_apply_for_db_check(ctx: TestContext) -> TestRes
 }
 
 #[sinex_test]
-async fn apply_replaces_legacy_unversioned_check_constraint(
-    ctx: TestContext,
-) -> TestResult<()> {
+async fn apply_replaces_legacy_unversioned_check_constraint(ctx: TestContext) -> TestResult<()> {
     // Simulate the Wave-B production state: apply once, then drop the
     // versioned constraint and re-install the legacy unversioned one with
     // a stale variant set ('node' instead of 'ingestor').
@@ -1011,8 +1003,9 @@ async fn apply_replaces_legacy_unversioned_check_constraint(
     // diff() must surface the stale state.
     let drifts = sinex_schema::apply::diff(&ctx.pool).await?;
     assert!(
-        drifts.iter().any(|d| d.contains("manifest_type")
-            && d.contains("manifest_type_check_v1")),
+        drifts
+            .iter()
+            .any(|d| d.contains("manifest_type") && d.contains("manifest_type_check_v1")),
         "diff must report stale CHECK on manifest_type: {drifts:?}"
     );
 
@@ -1031,7 +1024,10 @@ async fn apply_replaces_legacy_unversioned_check_constraint(
     )
     .fetch_one(&ctx.pool)
     .await?;
-    assert!(!legacy_exists, "legacy unversioned constraint should be dropped");
+    assert!(
+        !legacy_exists,
+        "legacy unversioned constraint should be dropped"
+    );
 
     let def: String = sqlx::query_scalar(
         r"SELECT pg_get_constraintdef(c.oid)
@@ -1043,8 +1039,14 @@ async fn apply_replaces_legacy_unversioned_check_constraint(
     )
     .fetch_one(&ctx.pool)
     .await?;
-    assert!(def.contains("'ingestor'"), "renamed back to 'ingestor': {def}");
-    assert!(!def.contains("'node'"), "stale 'node' value must be gone: {def}");
+    assert!(
+        def.contains("'ingestor'"),
+        "renamed back to 'ingestor': {def}"
+    );
+    assert!(
+        !def.contains("'node'"),
+        "stale 'node' value must be gone: {def}"
+    );
 
     Ok(())
 }
@@ -1082,7 +1084,10 @@ async fn diff_detects_stale_versioned_check_constraint(ctx: TestContext) -> Test
     )
     .fetch_one(&ctx.pool)
     .await?;
-    assert!(!def.contains("'misc'"), "stale 'misc' value must be cleared: {def}");
+    assert!(
+        !def.contains("'misc'"),
+        "stale 'misc' value must be cleared: {def}"
+    );
 
     Ok(())
 }

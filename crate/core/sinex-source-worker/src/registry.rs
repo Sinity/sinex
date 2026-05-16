@@ -36,10 +36,7 @@ impl SourceUnitRegistry {
     /// # Errors
     ///
     /// Returns an error string if `id` is not found in the inventory.
-    pub fn validate(
-        &self,
-        id: &SourceUnitId,
-    ) -> Result<&'static SourceUnitDescriptor, String> {
+    pub fn validate(&self, id: &SourceUnitId) -> Result<&'static SourceUnitDescriptor, String> {
         self.find(id).ok_or_else(|| {
             let available = self.list_ids();
             if available.is_empty() {
@@ -66,6 +63,8 @@ impl SourceUnitRegistry {
     /// List the ids of all registered source units.
     #[must_use]
     pub fn list_ids(&self) -> Vec<&'static str> {
-        proof::all_source_units().map(|descriptor| descriptor.id).collect()
+        proof::all_source_units()
+            .map(|descriptor| descriptor.id)
+            .collect()
     }
 }

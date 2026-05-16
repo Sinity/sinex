@@ -82,7 +82,7 @@ pub struct ReplayScope {
     /// Replay only material registered by this source unit.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source_unit_id: Option<String>,
-    /// Replay only this specific source material (UUIDv7).
+    /// Replay only this specific source material (`UUIDv7`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source_material_id: Option<String>,
     /// Queue parser jobs from this parser profile.

@@ -19,12 +19,12 @@
 //! ```
 
 use crate::NodeResult;
-use sinex_primitives::{Id, JsonValue, Uuid};
 use sinex_db::models::SourceMaterial;
 use sinex_primitives::SinexError;
+use sinex_primitives::{Id, JsonValue, Uuid};
 use std::fmt;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use tokio::sync::Mutex;
 use tracing::{debug, warn};
 
@@ -49,7 +49,10 @@ impl fmt::Debug for StreamHandle {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("StreamHandle")
             .field("material_id", &self.inner.material_id)
-            .field("event_count", &self.inner.event_count.load(Ordering::SeqCst))
+            .field(
+                "event_count",
+                &self.inner.event_count.load(Ordering::SeqCst),
+            )
             .field("finalized", &self.inner.finalized.load(Ordering::SeqCst))
             .finish()
     }
@@ -57,16 +60,19 @@ impl fmt::Debug for StreamHandle {
 
 impl StreamHandle {
     /// Get the material ID for this stream.
+    #[must_use]
     pub fn material_id(&self) -> Id<SourceMaterial> {
         self.inner.material_id
     }
 
     /// Get the current event count.
+    #[must_use]
     pub fn event_count(&self) -> u64 {
         self.inner.event_count.load(Ordering::SeqCst)
     }
 
     /// Check if this handle has been finalized.
+    #[must_use]
     pub fn is_finalized(&self) -> bool {
         self.inner.finalized.load(Ordering::SeqCst)
     }
@@ -108,7 +114,10 @@ impl StreamHandle {
             .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
             .is_err()
         {
-            debug!("Stream already finalized (material_id={})", self.inner.material_id);
+            debug!(
+                "Stream already finalized (material_id={})",
+                self.inner.material_id
+            );
             return Ok(());
         }
 
@@ -143,7 +152,7 @@ impl Drop for StreamHandle {
 /// Designed to be embedded in ingestor-specific watcher implementations.
 /// Handles stream lifecycle coordination without holding locks across I/O.
 pub struct StreamMaterialContext {
-    /// Mutex held only during begin_stream, not across append or finalize
+    /// Mutex held only during `begin_stream`, not across append or finalize
     next_id: Arc<Mutex<u64>>,
     dropped_unfinalized: Arc<AtomicBool>,
 }
@@ -156,6 +165,7 @@ impl fmt::Debug for StreamMaterialContext {
 
 impl StreamMaterialContext {
     /// Create a new streaming material context.
+    #[must_use]
     pub fn new() -> Self {
         Self {
             next_id: Arc::new(Mutex::new(0)),
@@ -165,7 +175,7 @@ impl StreamMaterialContext {
 
     /// Begin a new stream with the given metadata.
     ///
-    /// Returns a [StreamHandle] that can be used to append events and finalize.
+    /// Returns a [`StreamHandle`] that can be used to append events and finalize.
     /// The metadata is stored with the material for provenance tracking.
     pub async fn begin_stream(&self, _metadata: JsonValue) -> NodeResult<StreamHandle> {
         // Acquire ID under lock (brief)
@@ -176,7 +186,10 @@ impl StreamMaterialContext {
 
         let material_id = Id::from_uuid(Uuid::now_v7());
 
-        debug!(stream_counter = id_val, "Beginning new stream (material_id={})", material_id);
+        debug!(
+            stream_counter = id_val,
+            "Beginning new stream (material_id={})", material_id
+        );
 
         Ok(StreamHandle {
             inner: Arc::new(StreamHandleInner {
@@ -189,6 +202,7 @@ impl StreamMaterialContext {
     }
 
     /// Check if any streams were dropped without finalization.
+    #[must_use]
     pub fn had_unfinalized_drops(&self) -> bool {
         self.dropped_unfinalized.load(Ordering::SeqCst)
     }
@@ -302,7 +316,9 @@ mod tests {
         let _ = handle.append_event(serde_json::json!({"id": 1})).await;
         assert_eq!(handle_clone.event_count(), 1);
 
-        let _ = handle_clone.append_event(serde_json::json!({"id": 2})).await;
+        let _ = handle_clone
+            .append_event(serde_json::json!({"id": 2}))
+            .await;
         assert_eq!(handle.event_count(), 2);
         Ok(())
     }

@@ -1203,7 +1203,12 @@ pub async fn run_with_transport<T: NativeMessagingTransport>(
                     let response = process_message(&services, &config, message).await;
 
                     if let Err(e) = transport.write_message(&response).await {
-                        error!("Failed to write response: {}", e);
+                        error!(
+                            target: "sinex_metrics",
+                            metric = "gateway.native_messaging_write_failures_total",
+                            error = %e,
+                            "Failed to write response"
+                        );
                         break;
                     }
                 } else {

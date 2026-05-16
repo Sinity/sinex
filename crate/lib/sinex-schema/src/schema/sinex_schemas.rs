@@ -10,8 +10,8 @@
 use crate::primitives::{Timestamp, Uuid};
 use crate::schema::TableDef;
 use sea_query::{
-    Alias, ColumnDef, Expr, ForeignKey, ForeignKeyAction, Iden, Index,
-    IndexCreateStatement, Table, TableCreateStatement,
+    Alias, ColumnDef, Expr, ForeignKey, ForeignKeyAction, Iden, Index, IndexCreateStatement, Table,
+    TableCreateStatement,
 };
 use serde_json::Value as JsonValue;
 use sqlx::FromRow;
@@ -191,9 +191,15 @@ pub enum Runs {
 }
 
 impl TableDef for Runs {
-    fn table_name() -> &'static str { "runs" }
-    fn schema_name() -> &'static str { "core" }
-    fn primary_key() -> &'static str { "id" }
+    fn table_name() -> &'static str {
+        "runs"
+    }
+    fn schema_name() -> &'static str {
+        "core"
+    }
+    fn primary_key() -> &'static str {
+        "id"
+    }
 }
 
 #[derive(Debug, FromRow, serde::Serialize, serde::Deserialize)]
@@ -217,14 +223,29 @@ impl Runs {
         Table::create()
             .table(Self::table_iden())
             .if_not_exists()
-            .col(ColumnDef::new(Runs::Id).custom(Alias::new("UUID")).primary_key().extra("DEFAULT uuidv7()"))
+            .col(
+                ColumnDef::new(Runs::Id)
+                    .custom(Alias::new("UUID"))
+                    .primary_key()
+                    .extra("DEFAULT uuidv7()"),
+            )
             .col(ColumnDef::new(Runs::ManifestId).integer())
             .col(ColumnDef::new(Runs::ServiceName).text().not_null())
             .col(ColumnDef::new(Runs::InstanceId).text().not_null())
             .col(ColumnDef::new(Runs::Host).text().not_null())
-            .col(ColumnDef::new(Runs::StartedAt).timestamp_with_time_zone().not_null().default(Expr::current_timestamp()))
+            .col(
+                ColumnDef::new(Runs::StartedAt)
+                    .timestamp_with_time_zone()
+                    .not_null()
+                    .default(Expr::current_timestamp()),
+            )
             .col(ColumnDef::new(Runs::EndedAt).timestamp_with_time_zone())
-            .col(ColumnDef::new(Runs::Status).text().not_null().default("running"))
+            .col(
+                ColumnDef::new(Runs::Status)
+                    .text()
+                    .not_null()
+                    .default("running"),
+            )
             .col(ColumnDef::new(Runs::LastHeartbeatAt).timestamp_with_time_zone())
             .col(ColumnDef::new(Runs::EffectiveConfigHash).text())
             .col(ColumnDef::new(Runs::EffectiveConfig).json_binary())
@@ -241,10 +262,19 @@ impl Runs {
     #[must_use]
     pub fn create_indexes() -> Vec<IndexCreateStatement> {
         vec![
-            Index::create().if_not_exists().name("ix_runs_service_status")
-                .table(Self::table_iden()).col(Runs::ServiceName).col(Runs::Status).to_owned(),
-            Index::create().if_not_exists().name("ix_runs_heartbeat")
-                .table(Self::table_iden()).col(Runs::LastHeartbeatAt).to_owned(),
+            Index::create()
+                .if_not_exists()
+                .name("ix_runs_service_status")
+                .table(Self::table_iden())
+                .col(Runs::ServiceName)
+                .col(Runs::Status)
+                .to_owned(),
+            Index::create()
+                .if_not_exists()
+                .name("ix_runs_heartbeat")
+                .table(Self::table_iden())
+                .col(Runs::LastHeartbeatAt)
+                .to_owned(),
         ]
     }
 }
@@ -266,9 +296,15 @@ pub enum BinarySchemaVersion {
 }
 
 impl TableDef for BinarySchemaVersion {
-    fn table_name() -> &'static str { "binary_schema_version" }
-    fn schema_name() -> &'static str { "sinex_schemas" }
-    fn primary_key() -> &'static str { "id" }
+    fn table_name() -> &'static str {
+        "binary_schema_version"
+    }
+    fn schema_name() -> &'static str {
+        "sinex_schemas"
+    }
+    fn primary_key() -> &'static str {
+        "id"
+    }
 }
 
 #[derive(Debug, FromRow, serde::Serialize, serde::Deserialize)]
@@ -283,8 +319,16 @@ impl BinarySchemaVersion {
         Table::create()
             .table(Self::table_iden())
             .if_not_exists()
-            .col(ColumnDef::new(BinarySchemaVersion::Id).integer().primary_key())
-            .col(ColumnDef::new(BinarySchemaVersion::Version).text().not_null())
+            .col(
+                ColumnDef::new(BinarySchemaVersion::Id)
+                    .integer()
+                    .primary_key(),
+            )
+            .col(
+                ColumnDef::new(BinarySchemaVersion::Version)
+                    .text()
+                    .not_null(),
+            )
             .to_owned()
     }
 }

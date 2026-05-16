@@ -1,0 +1,79 @@
+{
+  "$defs": {
+    "DateTime": {
+      "description": "RFC 3339 formatted date-time string",
+      "format": "date-time",
+      "type": "string"
+    },
+    "LedgerPosting": {
+      "description": "One account posting within a transaction (debit or credit leg).\n\nIn hledger format, a transaction may have two or more postings that\nmust balance to zero. Each posting names an account hierarchy and\noptionally an explicit amount + currency. When the last posting omits\nthe amount, hledger infers it by balance; we surface the inferred\namount as `None`.",
+      "properties": {
+        "account": {
+          "description": "Full account name, colon-delimited hierarchy (e.g.\n`\"Expenses:Consumable:Food\"`).",
+          "type": "string"
+        },
+        "amount": {
+          "description": "Amount as a decimal string (e.g. `\"52.97\"`). `None` when the\nposting amount is implicit (hledger balances it to zero).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "currency": {
+          "description": "Currency or commodity code (e.g. `\"PLN\"`, `\"USD\"`, `\"ETH\"`).\n`None` when amount is implicit.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "account"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "One hledger/ledger-format transaction from a personal journal file\n(#1074).\n\nEmitted once per transaction block. A block starts with a\n`YYYY-MM-DD <payee>|<description>` header line (the pipe separator\nis a personal convention used in this journal to split payee from\nnarration) followed by two or more posting lines.\n\nPrivacy tier is Sensitive: the journal contains merchant names,\nincome amounts, and account hierarchy that reveals purchasing and\nsalary patterns.",
+  "properties": {
+    "comment": {
+      "description": "Inline comment on the transaction header line (`;` prefix),\nstripped of the leading semicolon. `None` when absent.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "date": {
+      "$ref": "#/$defs/DateTime",
+      "description": "Transaction date as recorded in the journal (`YYYY-MM-DD`)."
+    },
+    "description": {
+      "description": "Primary label on the transaction header line. When the journal\nuses `Payee|Narration` format this is the payee; otherwise it is\nthe full description string.",
+      "type": "string"
+    },
+    "narration": {
+      "description": "Narration text after the pipe separator (personal convention in\nthis journal). `None` when the header has no pipe separator.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "postings": {
+      "description": "Account postings — at least two for a balanced transaction.",
+      "items": {
+        "$ref": "#/$defs/LedgerPosting"
+      },
+      "type": "array"
+    }
+  },
+  "required": [
+    "date",
+    "description",
+    "postings"
+  ],
+  "title": "LedgerTransactionPayload",
+  "type": "object",
+  "x-sinex-event-type": "transaction.posted",
+  "x-sinex-source": "ledger",
+  "x-sinex-version": "1.0.0"
+}

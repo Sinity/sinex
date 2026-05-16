@@ -433,9 +433,7 @@ fn canonical_source_unit_descriptor(
         nix_output_impact: build_impact.nix_output_impact.to_string(),
         derivation_impact: build_impact.derivation_impact.to_string(),
         sqlx_validation_impact: build_impact.sqlx_validation_impact.to_string(),
-        dedicated_build_rationale: build_impact
-            .dedicated_build_rationale
-            .map(str::to_string),
+        dedicated_build_rationale: build_impact.dedicated_build_rationale.map(str::to_string),
     }
 }
 
@@ -443,9 +441,9 @@ fn runner_pack_manifests(source_units: &[SourceUnitDescriptor]) -> Vec<RunnerPac
     let mut by_pack = BTreeMap::<String, Vec<String>>::new();
     for unit in source_units {
         by_pack
-            .entry(unit.runner_pack.to_string())
+            .entry(unit.runner_pack.clone())
             .or_default()
-            .push(unit.id.to_string());
+            .push(unit.id.clone());
     }
 
     by_pack
@@ -466,14 +464,14 @@ fn service_manifests(source_units: &[SourceUnitDescriptor]) -> Vec<SourceUnitSer
     source_units
         .iter()
         .map(|unit| SourceUnitServiceManifest {
-            source_unit_id: unit.id.to_string(),
+            source_unit_id: unit.id.clone(),
             service_name: source_unit_service_name(&unit.id),
-            runner_pack: unit.runner_pack.to_string(),
+            runner_pack: unit.runner_pack.clone(),
             binary: runner_pack_binary(&unit.runner_pack)
                 .unwrap_or(&unit.runner_pack)
                 .to_string(),
-            checkpoint_identity: unit.id.to_string(),
-            control_identity: unit.id.to_string(),
+            checkpoint_identity: unit.id.clone(),
+            control_identity: unit.id.clone(),
             host_identity: "runtime_hostname",
         })
         .collect()
@@ -630,7 +628,7 @@ fn validate_source_units(
                 || unit.sqlx_validation_impact != "0")
                 && unit.dedicated_build_rationale.is_none()
         })
-        .map(|unit| unit.id.to_string())
+        .map(|unit| unit.id.clone())
         .collect::<Vec<_>>();
     let payload_pairs = get_all_payloads()
         .map(|payload| (payload.source, payload.event_type))
@@ -686,17 +684,11 @@ fn validate_source_units(
         .map(|unit| unit.id.as_str())
         .collect::<HashSet<_>>();
     let mut unresolved_binding_source_unit_ids = proof::source_unit_bindings()
-        .filter_map(|binding| {
-            (!binding.source_unit_id.is_empty()
-                && !registered_descriptor_ids.contains(binding.source_unit_id))
-            .then(|| {
-                format!(
-                    "{}->{}",
-                    binding.subject.as_str(),
-                    binding.source_unit_id
-                )
-            })
+        .filter(|&binding| {
+            !binding.source_unit_id.is_empty()
+                && !registered_descriptor_ids.contains(binding.source_unit_id)
         })
+        .map(|binding| format!("{}->{}", binding.subject.as_str(), binding.source_unit_id))
         .collect::<Vec<_>>();
     unresolved_binding_source_unit_ids.sort();
     unresolved_binding_source_unit_ids.dedup();

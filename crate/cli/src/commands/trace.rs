@@ -394,11 +394,11 @@ fn escape_dot_label(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use xtask::sandbox::prelude::sinex_test;
     use serde_json::json;
     use sinex_primitives::events::{DynamicPayload, SourceMaterial};
     use sinex_primitives::ids::Id;
     use sinex_primitives::query::SourceMaterialLinkInfo;
+    use xtask::sandbox::prelude::sinex_test;
 
     fn material_event(source: &str, event_type: &str) -> Event<JsonValue> {
         let mut event = DynamicPayload::new(source, event_type, json!({}))
@@ -428,7 +428,8 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn dot_renderer_uses_provenance_edges_instead_of_flattening_to_root() -> xtask::sandbox::TestResult<()> {
+    async fn dot_renderer_uses_provenance_edges_instead_of_flattening_to_root()
+    -> xtask::sandbox::TestResult<()> {
         let ancestor = material_event("fs", "file.created");
         let root = synthesis_event(
             "process",
@@ -471,7 +472,8 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn dot_renderer_includes_material_evidence_and_legend() -> xtask::sandbox::TestResult<()> {
+    async fn dot_renderer_includes_material_evidence_and_legend() -> xtask::sandbox::TestResult<()>
+    {
         let root = material_event("fs", "file.created");
         let from_material_id = Id::<SourceMaterial>::new().to_uuid();
         let to_material_id = Id::<SourceMaterial>::new().to_uuid();

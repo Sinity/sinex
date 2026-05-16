@@ -74,7 +74,7 @@ pub enum DeclaredCoverageContractKind {
 }
 
 impl DeclaredCoverageContractKind {
-    /// Return the canonical PascalCase wire form persisted in JSONB.
+    /// Return the canonical `PascalCase` wire form persisted in JSONB.
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
@@ -179,6 +179,7 @@ impl Default for DeclaredCoverageContract {
 /// of `Personal`, `Secret`, or `Redacted` — never on `Unknown`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]
+#[derive(Default)]
 pub enum PrivacyClass {
     /// Material may be shown / shared without redaction.
     Public,
@@ -189,6 +190,7 @@ pub enum PrivacyClass {
     /// Material that has already been redacted at capture time.
     Redacted,
     /// Operator has not classified this material yet (legacy default).
+    #[default]
     Unknown,
 }
 
@@ -224,12 +226,6 @@ impl PrivacyClass {
     #[must_use]
     pub const fn is_private(self) -> bool {
         matches!(self, Self::Personal | Self::Secret | Self::Redacted)
-    }
-}
-
-impl Default for PrivacyClass {
-    fn default() -> Self {
-        Self::Unknown
     }
 }
 
@@ -343,7 +339,7 @@ pub struct CoverageGap {
 /// Each dimension is a coarse boolean rather than a probability — the
 /// operator question is "is this dimension in good standing?", not
 /// "what is the failure rate?". `weak_points` carries human-readable
-/// caveats (e.g. "anchor_byte unstable across re-exports").
+/// caveats (e.g. "`anchor_byte` unstable across re-exports").
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct Replayability {
     /// Source bytes are still on disk (blob staged) and re-readable.
@@ -432,8 +428,7 @@ impl Replayability {
         }
         if any_recovered {
             weak_points.push(
-                "material status=recovered_partial; replay covers the recovered subset only"
-                    .into(),
+                "material status=recovered_partial; replay covers the recovered subset only".into(),
             );
         }
         weak_points.push(
@@ -589,7 +584,8 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn declared_coverage_contract_kind_strings_match_check_set() -> xtask::sandbox::TestResult<()> {
+    async fn declared_coverage_contract_kind_strings_match_check_set()
+    -> xtask::sandbox::TestResult<()> {
         for kind in [
             DeclaredCoverageContractKind::Continuous,
             DeclaredCoverageContractKind::PeriodicDump,
@@ -609,7 +605,8 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn declared_coverage_contract_serializes_kind_pascal_case() -> xtask::sandbox::TestResult<()> {
+    async fn declared_coverage_contract_serializes_kind_pascal_case()
+    -> xtask::sandbox::TestResult<()> {
         let c = DeclaredCoverageContract {
             kind: DeclaredCoverageContractKind::PeriodicDump,
             ..Default::default()
@@ -641,7 +638,8 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn privacy_class_is_private_excludes_public_and_unknown() -> xtask::sandbox::TestResult<()> {
+    async fn privacy_class_is_private_excludes_public_and_unknown() -> xtask::sandbox::TestResult<()>
+    {
         assert!(!PrivacyClass::Public.is_private());
         assert!(!PrivacyClass::Unknown.is_private());
         assert!(PrivacyClass::Personal.is_private());

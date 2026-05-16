@@ -31,7 +31,10 @@ async fn insert_metric_gauge(
     let mut labels = labels.as_object().cloned().unwrap_or_default();
     labels.insert("node".to_string(), json!(node_name));
     labels.insert("node_model".to_string(), json!("transducer"));
-    labels.insert("source_run_id".to_string(), json!(source_run_id.to_string()));
+    labels.insert(
+        "source_run_id".to_string(),
+        json!(source_run_id.to_string()),
+    );
 
     insert_material_event(
         ctx,

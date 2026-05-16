@@ -43,7 +43,7 @@ async fn admit(service: &AdmissionService, event: Event<JsonValue>) -> TestResul
 
 async fn insert_tombstone(ctx: &TestContext, event_id: Uuid, event_type: &str) -> TestResult<()> {
     sqlx::query(
-        r#"
+        r"
         INSERT INTO core.event_tombstones (
             id, source, event_type, ts_orig, ts_purged,
             purge_reason, purge_operation_id, archived_at
@@ -52,7 +52,7 @@ async fn insert_tombstone(ctx: &TestContext, event_id: Uuid, event_type: &str) -
             $1::uuid, 'admission-test', $2, NOW(), NOW(),
             'admission test tombstone', $3::uuid, NOW()
         )
-        "#,
+        ",
     )
     .bind(event_id)
     .bind(event_type)
@@ -196,11 +196,11 @@ async fn admission_candidate_metadata_stamps_existing_event_columns(
     assert_eq!(result.inserted_ids.as_deref(), Some(&[event_id][..]));
 
     let row = sqlx::query(
-        r#"
+        r"
         SELECT semantics_version, created_by_operation_id
         FROM core.events
         WHERE id = $1::uuid
-        "#,
+        ",
     )
     .bind(event_id)
     .fetch_one(&ctx.pool)
@@ -220,7 +220,7 @@ async fn admission_plan_reports_tombstoned_disposition(ctx: TestContext) -> Test
         .await?;
     let event_id = Uuid::now_v7();
     sqlx::query(
-        r#"
+        r"
         INSERT INTO core.event_tombstones (
             id, source, event_type, ts_orig, ts_purged,
             purge_reason, purge_operation_id, archived_at
@@ -229,7 +229,7 @@ async fn admission_plan_reports_tombstoned_disposition(ctx: TestContext) -> Test
             $1::uuid, 'admission-test', 'tombstoned.event', NOW(), NOW(),
             'admission test tombstone', $2::uuid, NOW()
         )
-        "#,
+        ",
     )
     .bind(event_id)
     .bind(Uuid::now_v7())
@@ -284,7 +284,7 @@ async fn admission_plan_keeps_batch_duplicates_with_representative_until_success
     let first = admit(
         &service,
         material_event(
-            material_id.clone(),
+            material_id,
             event_id,
             "admission-test",
             "batch.duplicate",
@@ -295,7 +295,7 @@ async fn admission_plan_keeps_batch_duplicates_with_representative_until_success
     let second = admit(
         &service,
         material_event(
-            material_id.clone(),
+            material_id,
             event_id,
             "admission-test",
             "batch.duplicate",
@@ -329,7 +329,7 @@ async fn admission_persist_reports_cache_cold_db_duplicates(ctx: TestContext) ->
     let first = admit(
         &first_service,
         material_event(
-            material_id.clone(),
+            material_id,
             event_id,
             "admission-test",
             "cache-cold.duplicate",
@@ -344,7 +344,7 @@ async fn admission_persist_reports_cache_cold_db_duplicates(ctx: TestContext) ->
     let duplicate = admit(
         &cache_cold_service,
         material_event(
-            material_id.clone(),
+            material_id,
             event_id,
             "admission-test",
             "cache-cold.duplicate",
@@ -376,7 +376,7 @@ async fn admission_tombstone_disposition_wins_over_recent_id_cache(
     let live = admit(
         &service,
         material_event(
-            material_id.clone(),
+            material_id,
             live_id,
             "admission-test",
             "tombstone.cache.live",
@@ -387,7 +387,7 @@ async fn admission_tombstone_disposition_wins_over_recent_id_cache(
     let tombstoned = admit(
         &service,
         material_event(
-            material_id.clone(),
+            material_id,
             tombstoned_id,
             "admission-test",
             "tombstone.cache",

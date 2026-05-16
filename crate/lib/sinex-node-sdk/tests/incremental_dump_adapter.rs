@@ -32,15 +32,36 @@ async fn incremental_dump_emits_only_new_records_on_second_pass() -> TestResult<
     // Snapshot 1: rows a, b.
     // Snapshot 2: rows a, b, c, d, e — three new (c, d, e).
     let snapshot1 = vec![
-        VisitRow { id: "a".into(), url: "https://a".into() },
-        VisitRow { id: "b".into(), url: "https://b".into() },
+        VisitRow {
+            id: "a".into(),
+            url: "https://a".into(),
+        },
+        VisitRow {
+            id: "b".into(),
+            url: "https://b".into(),
+        },
     ];
     let snapshot2 = vec![
-        VisitRow { id: "a".into(), url: "https://a".into() },
-        VisitRow { id: "b".into(), url: "https://b".into() },
-        VisitRow { id: "c".into(), url: "https://c".into() },
-        VisitRow { id: "d".into(), url: "https://d".into() },
-        VisitRow { id: "e".into(), url: "https://e".into() },
+        VisitRow {
+            id: "a".into(),
+            url: "https://a".into(),
+        },
+        VisitRow {
+            id: "b".into(),
+            url: "https://b".into(),
+        },
+        VisitRow {
+            id: "c".into(),
+            url: "https://c".into(),
+        },
+        VisitRow {
+            id: "d".into(),
+            url: "https://d".into(),
+        },
+        VisitRow {
+            id: "e".into(),
+            url: "https://e".into(),
+        },
     ];
 
     let live: Arc<AsyncMutex<Vec<VisitRow>>> = Arc::new(AsyncMutex::new(snapshot1));
@@ -63,7 +84,9 @@ async fn incremental_dump_emits_only_new_records_on_second_pass() -> TestResult<
         );
 
     let mut checkpoint = source.initial_checkpoint();
-    let batch1 = source.read_batch(&checkpoint, RecordReadHorizon::Unbounded).await?;
+    let batch1 = source
+        .read_batch(&checkpoint, RecordReadHorizon::Unbounded)
+        .await?;
     let ids1: Vec<_> = batch1.records.iter().map(|r| r.record.id.clone()).collect();
     assert_eq!(ids1, vec!["a".to_string(), "b".to_string()]);
     checkpoint = batch1.final_checkpoint;
@@ -71,9 +94,14 @@ async fn incremental_dump_emits_only_new_records_on_second_pass() -> TestResult<
     // Swap to snapshot 2.
     *live.lock().await = snapshot2;
 
-    let batch2 = source.read_batch(&checkpoint, RecordReadHorizon::Unbounded).await?;
+    let batch2 = source
+        .read_batch(&checkpoint, RecordReadHorizon::Unbounded)
+        .await?;
     let ids2: Vec<_> = batch2.records.iter().map(|r| r.record.id.clone()).collect();
-    assert_eq!(ids2, vec!["c".to_string(), "d".to_string(), "e".to_string()]);
+    assert_eq!(
+        ids2,
+        vec!["c".to_string(), "d".to_string(), "e".to_string()]
+    );
     assert_eq!(batch2.records.len(), 3);
 
     // Final checkpoint should contain all 5 keys.

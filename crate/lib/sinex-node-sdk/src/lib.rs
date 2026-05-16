@@ -62,20 +62,20 @@ pub mod health_reporter;
 pub mod heartbeat;
 pub mod ids;
 pub mod ingestion_helpers;
-pub mod material;
 #[cfg(feature = "messaging")]
 pub mod ingestor_node;
 pub mod input_shapes;
 #[cfg(feature = "messaging")]
 pub mod jetstream_consumer;
+pub mod material;
 #[cfg(feature = "messaging")]
 pub mod nats_publisher;
 #[cfg(all(feature = "db", feature = "messaging"))]
 pub mod node_cli;
+pub mod parser;
 #[cfg(feature = "preflight")]
 pub mod preflight;
 pub mod prelude;
-pub mod parser;
 pub mod processing;
 #[cfg(feature = "messaging")]
 pub mod record_source;
@@ -153,7 +153,6 @@ pub use health_reporter::{EmitTracker, HealthMetrics, HealthReporter, HealthThre
 #[cfg(feature = "messaging")]
 pub use heartbeat::{HeartbeatCounterHandle, HeartbeatEmitter, HeartbeatLogSink, HeartbeatMetrics};
 pub use ids::{deterministic_event_id, deterministic_material_event_id};
-pub use material::{ObservationMaterializer, RetryableMaterialCapture, StreamMaterialContext, TransientErrorPredicate};
 #[cfg(feature = "messaging")]
 pub use ingestor_node::{IngestorNode, IngestorNodeAdapter, IngestorState};
 pub use input_shapes::{
@@ -161,6 +160,10 @@ pub use input_shapes::{
 };
 #[cfg(feature = "messaging")]
 pub use jetstream_consumer::{JetStreamEventConsumer, JetStreamEventConsumerConfig};
+pub use material::{
+    ObservationMaterializer, RetryableMaterialCapture, StreamMaterialContext,
+    TransientErrorPredicate,
+};
 #[cfg(feature = "messaging")]
 pub use nats_publisher::NatsPublisher;
 #[cfg(all(feature = "db", feature = "messaging"))]

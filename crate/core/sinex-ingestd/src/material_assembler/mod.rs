@@ -64,6 +64,9 @@ struct AssemblyStats {
     failed: AtomicU64,
     timed_out: AtomicU64,
     disk_backpressure: AtomicU64,
+    /// Times the finalization COMMIT result was ambiguous (TCP timeout during commit).
+    /// Non-zero is a durable signal of potential duplicate-material risk on restart.
+    commit_outcome_unknown: AtomicU64,
 }
 
 impl AssemblyStats {
@@ -91,6 +94,10 @@ impl AssemblyStats {
         self.disk_backpressure.fetch_add(1, Ordering::Relaxed);
     }
 
+    fn inc_commit_outcome_unknown(&self) {
+        self.commit_outcome_unknown.fetch_add(1, Ordering::Relaxed);
+    }
+
     fn snapshot(&self) -> AssemblyStatsSnapshot {
         AssemblyStatsSnapshot {
             started: self.started.load(Ordering::Relaxed),
@@ -99,6 +106,7 @@ impl AssemblyStats {
             failed: self.failed.load(Ordering::Relaxed),
             timed_out: self.timed_out.load(Ordering::Relaxed),
             disk_backpressure: self.disk_backpressure.load(Ordering::Relaxed),
+            commit_outcome_unknown: self.commit_outcome_unknown.load(Ordering::Relaxed),
         }
     }
 }
@@ -111,6 +119,7 @@ struct AssemblyStatsSnapshot {
     failed: u64,
     timed_out: u64,
     disk_backpressure: u64,
+    commit_outcome_unknown: u64,
 }
 
 use crate::{IngestdResult, SinexError, material_ready_set::MaterialReadySet};
@@ -466,6 +475,27 @@ impl MaterialAssembler {
             self.spawn_observer_emit("sinex_assembly_failed_total", async move {
                 observer
                     .emit_counter("sinex_assembly_failed_total", 1, None)
+                    .await
+            });
+        }
+    }
+
+    /// Increment the "`commit_outcome_unknown`" counter when a finalization COMMIT result is ambiguous.
+    /// Signals potential duplicate-material risk after restart; non-zero warrants investigation.
+    pub(super) fn stats_inc_commit_outcome_unknown(&self) {
+        self.stats.inc_commit_outcome_unknown();
+        tracing::warn!(
+            target: "sinex_metrics",
+            metric = "assembly_commit_outcome_unknown",
+            total_commit_outcome_unknown = self.stats.commit_outcome_unknown.load(Ordering::Relaxed),
+            active_assemblies = self.assembler_state.len() as u64,
+        );
+
+        if let Some(ref observer) = self.observer {
+            let observer = observer.clone();
+            self.spawn_observer_emit("sinex_assembly_commit_outcome_unknown_total", async move {
+                observer
+                    .emit_counter("sinex_assembly_commit_outcome_unknown_total", 1, None)
                     .await
             });
         }

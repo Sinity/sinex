@@ -609,8 +609,7 @@ impl EventRepository<'_> {
             return Err(SinexError::validation(
                 "get_by_ids called with more than 1000 IDs; callers must chunk explicitly",
             )
-            .with_context("ids_len", ids.len().to_string())
-            .into());
+            .with_context("ids_len", ids.len().to_string()));
         }
 
         self.get_by_ids_chunk(ids).await

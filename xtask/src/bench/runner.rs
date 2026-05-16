@@ -141,10 +141,7 @@ fn active_heavy_processes() -> Result<Vec<ActiveProcess>> {
 
     for entry in entries.flatten() {
         let file_name = entry.file_name();
-        let Some(pid) = file_name
-            .to_str()
-            .and_then(|name| name.parse::<u32>().ok())
-        else {
+        let Some(pid) = file_name.to_str().and_then(|name| name.parse::<u32>().ok()) else {
             continue;
         };
         if pid == self_pid {
@@ -164,8 +161,7 @@ fn active_heavy_processes() -> Result<Vec<ActiveProcess>> {
             .file_name()
             .and_then(|name| name.to_str())
             .unwrap_or(argv0);
-        if heavy_development_command(executable, &command)
-        {
+        if heavy_development_command(executable, &command) {
             processes.push(ActiveProcess { pid, command });
         }
     }
@@ -265,10 +261,8 @@ impl<'a> BenchRunner<'a> {
         let builder = if let Some(db_pool_size) = scenario.db_pool_size {
             let exe = std::env::current_exe()
                 .context("failed to resolve current xtask executable for db benchmark")?;
-            let mut builder = ProcessBuilder::new(exe.to_string_lossy()).args([
-                "test",
-                "--ephemeral-postgres",
-            ]);
+            let mut builder =
+                ProcessBuilder::new(exe.to_string_lossy()).args(["test", "--ephemeral-postgres"]);
             if self.ctx.config.target == "workspace" {
                 builder = builder.arg("--all");
             } else {
@@ -417,11 +411,14 @@ pub(super) fn generate_scenarios(config: &BenchConfig) -> Vec<Scenario> {
         .iter()
         .copied()
         .flat_map(|threads| {
-            db_pool_sizes.iter().copied().map(move |db_pool_size| Scenario {
-                threads,
-                package: String::new(),
-                db_pool_size,
-            })
+            db_pool_sizes
+                .iter()
+                .copied()
+                .map(move |db_pool_size| Scenario {
+                    threads,
+                    package: String::new(),
+                    db_pool_size,
+                })
         })
         .collect()
 }
@@ -446,7 +443,5 @@ fn emit_failure_stream(name: &str, content: &str) {
         .into_iter()
         .rev()
         .collect();
-    eprintln!(
-        "--- child {name} (last {MAX_CHARS} chars of {char_count}) ---\n{tail}"
-    );
+    eprintln!("--- child {name} (last {MAX_CHARS} chars of {char_count}) ---\n{tail}");
 }

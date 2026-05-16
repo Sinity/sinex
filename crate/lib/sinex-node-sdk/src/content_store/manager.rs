@@ -789,7 +789,7 @@ mod tests {
     use camino::Utf8Path;
     use sinex_db::models::Blob;
     use sinex_primitives::domain::BlobVerificationStatus;
-    use xtask::sandbox::{TestResult, sinex_test};
+    use xtask::sandbox::sinex_test;
 
     // Inline because these cover private blob verification error helpers only.
     #[sinex_test]

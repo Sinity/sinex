@@ -241,7 +241,7 @@ impl GatewayClientBuilder {
 #[cfg(test)]
 mod tests {
     use super::{format_http_error, should_accept_invalid_certs};
-    use xtask::sandbox::{TestResult, sinex_test};
+    use xtask::sandbox::sinex_test;
 
     #[sinex_test]
     async fn format_http_error_includes_non_empty_body() -> TestResult<()> {

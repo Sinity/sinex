@@ -31,9 +31,7 @@ INSERT INTO visits VALUES ('https://chromium.org', 'Chromium', 13305000000000000
         b"{\"url\":\"https://dump.example.com\",\"title\":\"Dump\",\"time\":1700002000}\n";
 
     #[sinex_test]
-    async fn browser_history_qutebrowser_initial_ingestion(
-        _ctx: TestContext,
-    ) -> TestResult<()> {
+    async fn browser_history_qutebrowser_initial_ingestion(_ctx: TestContext) -> TestResult<()> {
         let failures = crate::_run_case(
             "browser.history",
             crate::AdapterKind::SqliteRow,

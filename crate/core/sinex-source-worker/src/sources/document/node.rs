@@ -513,7 +513,13 @@ impl DocumentNode {
                             ));
                         }
                         Err(err) => {
-                            error!(path = %document.path, error = %err, "Failed to ingest document");
+                            error!(
+                                target: "sinex_metrics",
+                                metric = "source_worker.document_ingest_failures_total",
+                                path = %document.path,
+                                error = %err,
+                                "Failed to ingest document"
+                            );
                             failed_targets
                                 .push((document.path.as_str().to_string(), err.to_string()));
                         }
@@ -530,7 +536,13 @@ impl DocumentNode {
                     }
                 }
                 Err(err) => {
-                    error!(path = %target.path, error = %err, "Failed to inspect document");
+                    error!(
+                        target: "sinex_metrics",
+                        metric = "source_worker.document_inspect_failures_total",
+                        path = %target.path,
+                        error = %err,
+                        "Failed to inspect document"
+                    );
                     failed_targets.push((target.path.as_str().to_string(), err.to_string()));
                 }
             }
@@ -958,4 +970,3 @@ mod tests {
         Ok(())
     }
 }
-

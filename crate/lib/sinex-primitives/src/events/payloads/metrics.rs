@@ -161,6 +161,9 @@ pub struct AssemblyStatsPayload {
     pub total_failed: u64,
     /// Total assemblies timed out
     pub total_timed_out: u64,
+    /// Times the finalization COMMIT result was ambiguous (TCP timeout during COMMIT).
+    /// Non-zero signals potential duplicate-material risk after restart.
+    pub total_commit_outcome_unknown: u64,
     /// Average assembly duration (ms)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub avg_duration_ms: Option<f64>,
@@ -301,7 +304,7 @@ pub struct ReplayStatsPayload {
 #[event_payload(
     source = "sinex.ingestd",
     event_type = "batch.stats",
-    version = "2.0.0"
+    version = "2.2.0"
 )]
 pub struct IngestdBatchStatsPayload {
     /// Number of events in this batch
@@ -331,9 +334,16 @@ pub struct IngestdBatchStatsPayload {
     pub validation_coverage_pct: f64,
     /// Cumulative count of events whose `ts_orig` is implausibly far in the future.
     pub suspicious_future_ts_orig: u64,
+    /// Cumulative count of failures emitting observer telemetry gauges.
+    /// Non-zero indicates the self-observation NATS channel is degraded.
+    pub telemetry_publish_failures: u64,
+    /// Cumulative count of confirmation-durability gaps: events were persisted
+    /// but the confirmation publish to the Confirmations stream failed
+    /// non-transiently. Non-zero is a durable signal of pipeline split-brain.
+    pub confirmation_durability_gaps: u64,
 }
 
-/// Startup snapshot for a JetStream pull consumer.
+/// Startup snapshot for a `JetStream` pull consumer.
 ///
 /// Emitted once per consumer before the ingestd pull loop begins (before READY/`sd_notify`).
 /// Captures stream state and consumer configuration so operators can determine at a glance
@@ -341,11 +351,11 @@ pub struct IngestdBatchStatsPayload {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
 #[event_payload(source = "sinex.ingestd", event_type = "consumer.startup_snapshot")]
 pub struct ConsumerStartupSnapshotPayload {
-    /// Name of the JetStream stream being consumed.
+    /// Name of the `JetStream` stream being consumed.
     pub stream_name: String,
     /// Durable consumer name.
     pub durable_name: String,
-    /// Whether the durable consumer already existed in JetStream before this startup.
+    /// Whether the durable consumer already existed in `JetStream` before this startup.
     pub consumer_existed: bool,
     /// Deliver policy as a string (e.g. `"All"`, `"New"`, `"ByStartSequence"`).
     pub deliver_policy: String,
@@ -374,7 +384,7 @@ pub struct ConsumerStartupSnapshotPayload {
     /// Configured `max_deliver` (redelivery budget) for this consumer.
     pub consumer_max_deliver: i64,
     /// True when this looks like a dangerous cold-start full replay
-    /// (new consumer, DeliverPolicy::All, non-empty stream).
+    /// (new consumer, `DeliverPolicy::All`, non-empty stream).
     pub initial_replay_risk: bool,
 }
 
@@ -391,7 +401,7 @@ pub struct ConsumerStartupSnapshotPayload {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
 #[event_payload(source = "sinex.ingestd", event_type = "consumer.startup_replay_risk")]
 pub struct DangerousReplayWarningPayload {
-    /// Name of the JetStream stream.
+    /// Name of the `JetStream` stream.
     pub stream_name: String,
     /// Durable consumer name that was missing.
     pub durable_name: String,

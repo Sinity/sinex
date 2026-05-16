@@ -606,7 +606,7 @@ pub fn get_hostname() -> HostName {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use xtask::sandbox::{TestResult, sinex_test};
+    use xtask::sandbox::sinex_test;
 
     // Inline because these exercise private host-identity resolution helpers directly.
     #[sinex_test]

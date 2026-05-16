@@ -20,7 +20,11 @@ pub fn expand(input: TokenStream) -> TokenStream {
 fn try_expand(input: &DeriveInput) -> syn::Result<TokenStream2> {
     let StructAttrs { prefix, context } = parse_struct_attrs(input)?;
 
-    let Data::Struct(DataStruct { fields: Fields::Named(fields), .. }) = &input.data else {
+    let Data::Struct(DataStruct {
+        fields: Fields::Named(fields),
+        ..
+    }) = &input.data
+    else {
         return Err(syn::Error::new_spanned(
             input,
             "SinexConfig can only be derived on structs with named fields",
@@ -47,7 +51,7 @@ fn try_expand(input: &DeriveInput) -> syn::Result<TokenStream2> {
             .env
             .clone()
             .unwrap_or_else(|| field_name_to_env(&name.to_string()));
-        let env_key = format!("{}_{}", prefix, env_suffix);
+        let env_key = format!("{prefix}_{env_suffix}");
         let helper_call = infer_helper(&field.ty, &env_key, &context, &attrs)?;
         field_inits.push(quote! { #name: #helper_call });
     }
@@ -185,17 +189,19 @@ fn infer_helper(
     let kind = classify(ty);
     match kind {
         TypeKind::Bool => {
-            let default = attrs.default.clone().unwrap_or_else(|| {
-                syn::parse_quote!(false)
-            });
+            let default = attrs
+                .default
+                .clone()
+                .unwrap_or_else(|| syn::parse_quote!(false));
             Ok(quote! {
                 ::sinex_primitives::env::bool_or(#env_key, #default, #context)
             })
         }
         TypeKind::String => {
-            let default = attrs.default.clone().unwrap_or_else(|| {
-                syn::parse_quote!("")
-            });
+            let default = attrs
+                .default
+                .clone()
+                .unwrap_or_else(|| syn::parse_quote!(""));
             Ok(quote! {
                 ::sinex_primitives::env::var_or(#env_key, #default, #context)
             })
@@ -281,13 +287,13 @@ fn classify(ty: &Type) -> TypeKind {
 }
 
 fn lit_string(expr: &Expr) -> syn::Result<String> {
-    if let Expr::Lit(syn::ExprLit { lit: Lit::Str(s), .. }) = expr {
+    if let Expr::Lit(syn::ExprLit {
+        lit: Lit::Str(s), ..
+    }) = expr
+    {
         Ok(s.value())
     } else {
-        Err(syn::Error::new_spanned(
-            expr,
-            "expected a string literal",
-        ))
+        Err(syn::Error::new_spanned(expr, "expected a string literal"))
     }
 }
 

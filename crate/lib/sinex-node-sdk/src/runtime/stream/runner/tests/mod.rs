@@ -6,6 +6,7 @@ use super::*;
 use crate::checkpoint::CheckpointManager;
 use crate::{IngestorNode, IngestorNodeAdapter, NatsPublisher};
 use async_nats::jetstream;
+use serde::Serialize;
 use serde::ser::Error as _;
 use sinex_primitives::domain::{EventSource, EventType};
 use sinex_primitives::events::builder::EventId;

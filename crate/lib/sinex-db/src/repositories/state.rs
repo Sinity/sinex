@@ -1539,7 +1539,7 @@ impl StateRepository<'_> {
     /// Sibling to [`list_automata_status`](Self::list_automata_status), filtered on
     /// `manifest_type = 'ingestor'`. Ingestors emit on-change `health.status` events
     /// (not continuous `metric.gauge` like derived nodes), so per-node telemetry is
-    /// narrower: latest current_status + reason + recent output count by source-run-id.
+    /// narrower: latest `current_status` + reason + recent output count by source-run-id.
     pub async fn list_ingestors_status(
         &self,
         stale_after: Duration,

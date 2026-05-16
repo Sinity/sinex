@@ -4,7 +4,13 @@
 //! checkpoint manager bootstrap, schema/checkpoint listeners, leader election
 //! preparation, DB-backed registration, and runtime state assembly.
 
-use super::*;
+use super::{
+    Arc, CheckpointManager, DEFAULT_EVENT_CHANNEL_SIZE, Event, EventBatcherConfig, EventEmitter,
+    EventTransport, HashMap, JsonValue, Node, NodeHandles, NodeInitContext, NodeResult, NodeRunner,
+    NodeState, NodeType, PgPool, ProcessingModel, RunnerLifecycle, ServiceInfo, SinexError,
+    StreamExt, Utf8PathBuf, create_checkpoint_kv, info, maybe_start_schema_listener, mpsc,
+    spawn_event_batcher, watch,
+};
 use sinex_primitives::domain::ServiceName;
 
 impl<T: Node + 'static> NodeRunner<T> {

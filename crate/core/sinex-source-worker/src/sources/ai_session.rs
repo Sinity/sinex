@@ -1,4 +1,4 @@
-//! AI session export parsers — Claude and ChatGPT (#1068).
+//! AI session export parsers — Claude and `ChatGPT` (#1068).
 //!
 //! ## Claude
 //!
@@ -23,9 +23,9 @@
 //!
 //! Each message becomes one `claude`/`ai.message` event.
 //!
-//! ## ChatGPT
+//! ## `ChatGPT`
 //!
-//! Reads one of potentially many `conversations-NNN.json` files from a ChatGPT
+//! Reads one of potentially many `conversations-NNN.json` files from a `ChatGPT`
 //! data export. Each file is a JSON array of conversation objects. Each
 //! conversation uses a `mapping` node graph where nodes have `parent`/`children`
 //! references. The canonical thread is reconstructed by walking backwards from
@@ -43,7 +43,7 @@
 //!
 //! **Claude**: `(session_id, message_id)` — both are stable UUIDs from the export.
 //!
-//! **ChatGPT**: `(session_id, message_id)` — `session_id` = `conversation.id`,
+//! **`ChatGPT`**: `(session_id, message_id)` — `session_id` = `conversation.id`,
 //! `message_id` = mapping node id (a stable UUID in the export).
 //!
 //! ## Anchoring
@@ -52,7 +52,7 @@
 //!
 //! For Claude: `conversations.json` is a single flat array, so
 //! `start = conv_index * 1_000_000 + msg_index` encodes both the conversation
-//! and the message position.  For ChatGPT: same scheme across the per-batch
+//! and the message position.  For `ChatGPT`: same scheme across the per-batch
 //! file; `conv_index` is the conversation's index within the current file's
 //! array.
 
@@ -77,9 +77,9 @@ use sinex_primitives::{register_source_unit, register_source_unit_binding};
 // Shared anchor helper
 // ---------------------------------------------------------------------------
 
-/// Encode (conversation_index, message_index) into a single u64 anchor.
+/// Encode (`conversation_index`, `message_index`) into a single u64 anchor.
 ///
-/// We reserve 1_000_000 positions per conversation. That is sufficient for any
+/// We reserve `1_000_000` positions per conversation. That is sufficient for any
 /// real-world conversation length; the scheme stays stable across partial
 /// re-exports as long as the file's conversation order is stable.
 fn anchor(conv_index: usize, msg_index: usize) -> u64 {
@@ -166,21 +166,14 @@ impl MaterialParser for ClaudeSessionParser {
         record: SourceRecord,
         ctx: &ParserContext,
     ) -> ParserResult<Vec<ParsedEventIntent>> {
-        let conversations: Vec<ClaudeConversation> =
-            serde_json::from_slice(&record.bytes).map_err(|e| {
-                ParserError::Parse(format!("invalid Claude conversations.json: {e}"))
-            })?;
+        let conversations: Vec<ClaudeConversation> = serde_json::from_slice(&record.bytes)
+            .map_err(|e| ParserError::Parse(format!("invalid Claude conversations.json: {e}")))?;
 
         let mut intents = Vec::new();
         for (conv_index, conv) in conversations.into_iter().enumerate() {
             for (msg_index, msg) in conv.chat_messages.into_iter().enumerate() {
                 intents.push(parse_claude_message(
-                    msg,
-                    conv_index,
-                    msg_index,
-                    &conv.uuid,
-                    &conv.name,
-                    ctx,
+                    msg, conv_index, msg_index, &conv.uuid, &conv.name, ctx,
                 )?);
             }
         }
@@ -198,13 +191,16 @@ fn parse_claude_message(
     ctx: &ParserContext,
 ) -> ParserResult<ParsedEventIntent> {
     let message_ts = Timestamp::new(
-        time::OffsetDateTime::parse(&msg.created_at, &time::format_description::well_known::Rfc3339)
-            .map_err(|e| {
-                ParserError::Parse(format!(
-                    "invalid Claude message timestamp {:?}: {e}",
-                    msg.created_at
-                ))
-            })?,
+        time::OffsetDateTime::parse(
+            &msg.created_at,
+            &time::format_description::well_known::Rfc3339,
+        )
+        .map_err(|e| {
+            ParserError::Parse(format!(
+                "invalid Claude message timestamp {:?}: {e}",
+                msg.created_at
+            ))
+        })?,
     );
 
     // Prefer the structured content array; fall back to the flat `text` field
@@ -217,10 +213,10 @@ fn parse_claude_message(
             .map(|b| b.text.as_str())
             .collect::<Vec<_>>()
             .join("\n");
-        if !from_content.is_empty() {
-            Some(from_content)
-        } else {
+        if from_content.is_empty() {
             msg.text.filter(|t| !t.is_empty())
+        } else {
+            Some(from_content)
         }
     };
 
@@ -426,10 +422,8 @@ impl MaterialParser for ChatGptSessionParser {
         record: SourceRecord,
         ctx: &ParserContext,
     ) -> ParserResult<Vec<ParsedEventIntent>> {
-        let conversations: Vec<ChatGptConversation> =
-            serde_json::from_slice(&record.bytes).map_err(|e| {
-                ParserError::Parse(format!("invalid ChatGPT conversations JSON: {e}"))
-            })?;
+        let conversations: Vec<ChatGptConversation> = serde_json::from_slice(&record.bytes)
+            .map_err(|e| ParserError::Parse(format!("invalid ChatGPT conversations JSON: {e}")))?;
 
         let mut intents = Vec::new();
         for (conv_index, conv) in conversations.into_iter().enumerate() {
@@ -495,7 +489,7 @@ fn parse_chatgpt_message(
         .content
         .parts
         .iter()
-        .filter_map(|p| p.as_str().map(|s| s.to_string()))
+        .filter_map(|p| p.as_str().map(std::string::ToString::to_string))
         .collect::<Vec<_>>()
         .join("\n");
 
@@ -503,22 +497,15 @@ fn parse_chatgpt_message(
     let text_opt: Option<String> = if text.is_empty() { None } else { Some(text) };
 
     let create_time = msg.create_time.ok_or_else(|| {
-        ParserError::Parse(format!(
-            "ChatGPT message {} missing create_time",
-            msg.id
-        ))
+        ParserError::Parse(format!("ChatGPT message {} missing create_time", msg.id))
     })?;
 
     let secs = create_time.trunc() as i64;
     let nanos = ((create_time.fract()) * 1e9) as i64;
     let message_ts = Timestamp::new(
-        time::OffsetDateTime::from_unix_timestamp(secs)
-            .map_err(|e| {
-                ParserError::Parse(format!(
-                    "invalid ChatGPT timestamp {create_time}: {e}"
-                ))
-            })?
-            + time::Duration::nanoseconds(nanos),
+        time::OffsetDateTime::from_unix_timestamp(secs).map_err(|e| {
+            ParserError::Parse(format!("invalid ChatGPT timestamp {create_time}: {e}"))
+        })? + time::Duration::nanoseconds(nanos),
     );
 
     let model = msg
@@ -636,10 +623,10 @@ crate::register_adapter_ingestor!(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sinex_primitives::ids::Id;
     use sinex_primitives::Uuid;
+    use sinex_primitives::ids::Id;
+
     use xtask::sandbox::prelude::sinex_test;
-    use xtask::sandbox::TestResult;
 
     fn claude_ctx() -> ParserContext {
         ParserContext {
@@ -721,7 +708,11 @@ mod tests {
             .parse_record(record_for(&bytes), &ctx)
             .await
             .unwrap();
-        assert_eq!(intents.len(), 3, "expected 3 intents across 2 conversations");
+        assert_eq!(
+            intents.len(),
+            3,
+            "expected 3 intents across 2 conversations"
+        );
         assert_eq!(intents[0].event_source.as_static_str(), "claude");
         assert_eq!(intents[0].event_type.as_static_str(), "ai.message");
         Ok(())
@@ -782,11 +773,23 @@ mod tests {
             .await
             .unwrap();
         // conv=0, msg=0 -> 0*1_000_000 + 0 = 0
-        assert_eq!(intents[0].anchor, MaterialAnchor::ByteRange { start: 0, len: 1 });
+        assert_eq!(
+            intents[0].anchor,
+            MaterialAnchor::ByteRange { start: 0, len: 1 }
+        );
         // conv=0, msg=1 -> 0*1_000_000 + 1 = 1
-        assert_eq!(intents[1].anchor, MaterialAnchor::ByteRange { start: 1, len: 1 });
+        assert_eq!(
+            intents[1].anchor,
+            MaterialAnchor::ByteRange { start: 1, len: 1 }
+        );
         // conv=1, msg=0 -> 1*1_000_000 + 0 = 1_000_000
-        assert_eq!(intents[2].anchor, MaterialAnchor::ByteRange { start: 1_000_000, len: 1 });
+        assert_eq!(
+            intents[2].anchor,
+            MaterialAnchor::ByteRange {
+                start: 1_000_000,
+                len: 1
+            }
+        );
         Ok(())
     }
 

@@ -6,7 +6,7 @@
       "type": "integer"
     },
     "NodeType": {
-      "description": "Type of node in the system",
+      "description": "Type of node in the system\n\n`Display` rendering maps to `core.manifests.manifest_type`. The\n`#[derive(DbCheck)]` declaration below is the source of truth for the\nDB `CHECK` constraint: bumping `version` ships a rename without manual\nmigration. See issue #1236.",
       "oneOf": [
         {
           "const": "ingestor",

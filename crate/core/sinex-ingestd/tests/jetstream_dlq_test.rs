@@ -1354,7 +1354,7 @@ async fn test_dlq_entry_omits_missing_nats_msg_id() -> TestResult<()> {
 // Payload size cap and structural guard tests (#919)
 // ---------------------------------------------------------------------------
 
-/// Helper: build raw bytes that are valid UTF-8 but exceed MAX_EVENT_PAYLOAD_BYTES by 1 byte.
+/// Helper: build raw bytes that are valid UTF-8 but exceed `MAX_EVENT_PAYLOAD_BYTES` by 1 byte.
 fn oversized_raw_event_bytes() -> Vec<u8> {
     use sinex_primitives::constants::limits::MAX_EVENT_PAYLOAD_BYTES;
     // The padding string must be long enough to push the total byte count over the limit.

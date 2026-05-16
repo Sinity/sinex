@@ -23,7 +23,7 @@
 //!
 //! One `entity.extracted` event per matched pattern, with synthesis provenance
 //! from the source event. The entity resolver (Stage 2) assigns deterministic
-//! UUIDv5 identities.
+//! `UUIDv5` identities.
 //!
 //! Ref: `.agent/scratch/071-issue-331-entity-extractor-spec.md`.
 
@@ -271,7 +271,7 @@ register_source_unit_binding! {
 mod tests {
     use super::*;
     use serde_json::json;
-    use xtask::sandbox::{TestResult, sinex_test};
+    use xtask::sandbox::sinex_test;
 
     #[sinex_test]
     async fn test_url_extraction() -> TestResult<()> {

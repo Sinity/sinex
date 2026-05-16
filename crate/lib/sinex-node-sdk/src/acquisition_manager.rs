@@ -53,6 +53,7 @@ pub const SOURCE_MATERIAL_END_SUBJECT: NatsSubject =
     NatsSubject::from_static("source_material.frames.end");
 
 #[must_use]
+#[allow(clippy::expect_used)]
 pub fn source_material_slice_subject(material_id: Uuid) -> NatsSubject {
     let raw = format!("{SOURCE_MATERIAL_SLICE_SUBJECT_PREFIX}{material_id}");
     NatsSubject::from_str(&raw)
@@ -419,9 +420,10 @@ impl AcquisitionManager {
             started_at: started_at.format_rfc3339(),
         };
 
-        let subject = self
-            .env
-            .nats_subject_with_namespace(self.namespace.as_deref(), SOURCE_MATERIAL_BEGIN_SUBJECT.as_str());
+        let subject = self.env.nats_subject_with_namespace(
+            self.namespace.as_deref(),
+            SOURCE_MATERIAL_BEGIN_SUBJECT.as_str(),
+        );
         let payload = serde_json::to_vec(&msg)?;
         let mut headers = async_nats::HeaderMap::new();
         transport::insert_transport_class_headers(&mut headers, transport::Class::SourceMaterial);
@@ -764,9 +766,10 @@ impl AcquisitionManager {
             metadata,
         };
 
-        let subject = self
-            .env
-            .nats_subject_with_namespace(self.namespace.as_deref(), SOURCE_MATERIAL_END_SUBJECT.as_str());
+        let subject = self.env.nats_subject_with_namespace(
+            self.namespace.as_deref(),
+            SOURCE_MATERIAL_END_SUBJECT.as_str(),
+        );
         let payload = serde_json::to_vec(&msg)?;
         let mut headers = async_nats::HeaderMap::new();
         transport::insert_transport_class_headers(&mut headers, transport::Class::SourceMaterial);

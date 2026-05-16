@@ -357,6 +357,7 @@ pub enum MaterialPathClass {
 /// let (class, _display) = classify_material_path("/tmp/sinex-clipboard-abc123");
 /// assert_eq!(class, MaterialPathClass::Temporary);
 /// ```
+#[must_use]
 pub fn classify_material_path(path: &str) -> (MaterialPathClass, String) {
     // Temporary paths: suppress from export.
     if is_temporary_path(path) {
@@ -423,29 +424,29 @@ fn is_system_path(path: &str) -> bool {
 /// the path is rooted under a home directory, or `None` otherwise.
 fn home_suffix(path: &str) -> Option<&str> {
     // Check live HOME env var first for accuracy.
-    if let Ok(home) = std::env::var("HOME") {
-        if !home.is_empty() {
-            let home_slash = if home.ends_with('/') {
-                home.clone()
-            } else {
-                format!("{home}/")
-            };
-            if let Some(suffix) = path.strip_prefix(home_slash.as_str()) {
-                return Some(suffix);
-            }
-            // Exact home dir itself
-            if path == home {
-                return Some("");
-            }
+    if let Ok(home) = std::env::var("HOME")
+        && !home.is_empty()
+    {
+        let home_slash = if home.ends_with('/') {
+            home.clone()
+        } else {
+            format!("{home}/")
+        };
+        if let Some(suffix) = path.strip_prefix(home_slash.as_str()) {
+            return Some(suffix);
+        }
+        // Exact home dir itself
+        if path == home {
+            return Some("");
         }
     }
 
     // Heuristic fallback: /home/<user>/ or /Users/<user>/
     for prefix in ["/home/", "/Users/"] {
-        if let Some(rest) = path.strip_prefix(prefix) {
-            if let Some(slash) = rest.find('/') {
-                return Some(&rest[slash + 1..]);
-            }
+        if let Some(rest) = path.strip_prefix(prefix)
+            && let Some(slash) = rest.find('/')
+        {
+            return Some(&rest[slash + 1..]);
         }
     }
 
@@ -513,7 +514,10 @@ impl MaterialCaptureClass {
     /// Whether bytes content may be stored (in any form).
     #[must_use]
     pub fn allows_byte_storage(&self) -> bool {
-        matches!(self, Self::AllowedPlaintext | Self::EncryptedMaterial | Self::LocalQuarantine)
+        matches!(
+            self,
+            Self::AllowedPlaintext | Self::EncryptedMaterial | Self::LocalQuarantine
+        )
     }
 
     /// Whether the material is rejected entirely (nothing stored).
@@ -651,7 +655,10 @@ mod tests {
         let engine = engine_for_source_unit(&crate::parser::SourceUnitId::from_static(
             "nonexistent.source-unit",
         ))?;
-        let result = engine.process("export TOKEN=ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghij", ProcessingContext::Command);
+        let result = engine.process(
+            "export TOKEN=ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghij",
+            ProcessingContext::Command,
+        );
         assert!(result.any_matched(), "global rules should still fire");
         Ok(())
     }
@@ -681,13 +688,26 @@ mod tests {
         let engine = PrivacyEngine::new(config)?;
 
         // Global rule fires.
-        let result = engine.process("export TOKEN=ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghij", ProcessingContext::Command);
-        assert!(result.any_matched(), "global rule should fire in merged engine");
+        let result = engine.process(
+            "export TOKEN=ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghij",
+            ProcessingContext::Command,
+        );
+        assert!(
+            result.any_matched(),
+            "global rule should fire in merged engine"
+        );
 
         // Scoped rule fires.
         let result2 = engine.process("SCOPED_SENTINEL_XYZ", ProcessingContext::Command);
-        assert!(result2.any_matched(), "scoped rule should fire in merged engine");
-        assert!(result2.text.contains("<SCOPED_RULE>"), "got: {}", result2.text);
+        assert!(
+            result2.any_matched(),
+            "scoped rule should fire in merged engine"
+        );
+        assert!(
+            result2.text.contains("<SCOPED_RULE>"),
+            "got: {}",
+            result2.text
+        );
         Ok(())
     }
 }

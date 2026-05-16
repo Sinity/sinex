@@ -1,4 +1,4 @@
-//! PostgreSQL identifier validation.
+//! `PostgreSQL` identifier validation.
 //!
 //! Provides [`validate_pg_identifier`] for fail-closed validation of identifiers
 //! (role names, database names, schema names, table names, column names) before
@@ -7,7 +7,7 @@
 //! ## What is allowed
 //!
 //! Only ASCII letters, digits, and underscores; must start with a letter or
-//! underscore; length bounded to 63 bytes (PostgreSQL's `NAMEDATALEN - 1` limit).
+//! underscore; length bounded to 63 bytes (`PostgreSQL`'s `NAMEDATALEN - 1` limit).
 //! This rejects anything that could escape an un-quoted identifier context —
 //! spaces, semicolons, quotes, dashes — and prevents SQL injection via
 //! `format!`-constructed DDL statements.
@@ -18,11 +18,11 @@
 
 use crate::error::{Result, SinexError};
 
-/// Validate a PostgreSQL identifier against the strict ASCII allowlist.
+/// Validate a `PostgreSQL` identifier against the strict ASCII allowlist.
 ///
 /// Accepts only ASCII letters (`[a-zA-Z]`), digits (`[0-9]`), and underscores
 /// (`_`); the first character must be a letter or underscore; length must be
-/// 1–63 bytes (PostgreSQL's `NAMEDATALEN - 1`).
+/// 1–63 bytes (`PostgreSQL`'s `NAMEDATALEN - 1`).
 ///
 /// Returns `Err(SinexError::Validation)` for any identifier that fails the
 /// check. The `kind` parameter is included in the error message for context
@@ -52,9 +52,8 @@ pub fn validate_pg_identifier(ident: &str, kind: &str) -> Result<()> {
         Ok(())
     } else {
         Err(SinexError::validation(format!(
-            "invalid PostgreSQL {kind} identifier {:?}: \
-             must match [a-zA-Z_][a-zA-Z0-9_]{{0,62}}",
-            ident
+            "invalid PostgreSQL {kind} identifier {ident:?}: \
+             must match [a-zA-Z_][a-zA-Z0-9_]{{0,62}}"
         ))
         .with_context("kind", kind)
         .with_context("identifier", ident))
@@ -64,7 +63,7 @@ pub fn validate_pg_identifier(ident: &str, kind: &str) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use xtask::sandbox::{TestResult, sinex_test};
+    use xtask::sandbox::sinex_test;
 
     #[sinex_test]
     async fn valid_identifiers_are_accepted() -> TestResult<()> {

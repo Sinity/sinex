@@ -13,8 +13,8 @@
 //! requiring a full pipeline setup.
 
 use sinex_node_sdk::{AcquisitionManager, AppendStreamAcquirer, RotationPolicy};
-use sinex_primitives::units::{Bytes, Seconds};
 use sinex_primitives::Uuid;
+use sinex_primitives::units::{Bytes, Seconds};
 use std::sync::Arc;
 use xtask::sandbox::prelude::*;
 
@@ -32,8 +32,13 @@ fn make_manager(
     use sinex_node_sdk::acquisition_manager::AcquisitionManager as AM;
     let namespace = format!("{label}-{}", Uuid::new_v4());
     Arc::new(
-        AM::new_with_namespace(nats_client, rotation_policy, label.to_string(), Some(namespace))
-            .with_work_dir(work_dir),
+        AM::new_with_namespace(
+            nats_client,
+            rotation_policy,
+            label.to_string(),
+            Some(namespace),
+        )
+        .with_work_dir(work_dir),
     )
 }
 
@@ -232,7 +237,10 @@ async fn source_identifier_change_rotates_material(ctx: TestContext) -> TestResu
         first.material_id, second.material_id,
         "a source identifier change must rotate the material"
     );
-    assert_eq!(second.offset_start, 0, "rotated material must start at offset 0");
+    assert_eq!(
+        second.offset_start, 0,
+        "rotated material must start at offset 0"
+    );
 
     Ok(())
 }

@@ -247,8 +247,9 @@ async fn can_toggle_core_events_triggers(
             let error_string = error.to_string();
             assert!(
                 error_string.contains("hypertables do not support  enabling or disabling triggers")
-                    || error_string
-                        .contains("operation not supported on hypertables that have columnstore enabled"),
+                    || error_string.contains(
+                        "operation not supported on hypertables that have columnstore enabled"
+                    ),
                 "Unexpected trigger toggle failure on core.events: {error:#?}",
             );
 

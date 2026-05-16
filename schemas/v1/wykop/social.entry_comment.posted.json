@@ -1,0 +1,62 @@
+{
+  "$defs": {
+    "DateTime": {
+      "description": "RFC 3339 formatted date-time string",
+      "format": "date-time",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "A comment the user posted on a Wykop entry.\n\nSourced from `wykop_entry_comments.jsonl`.",
+  "properties": {
+    "comment_id": {
+      "description": "Numeric Wykop comment id.",
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "content": {
+      "description": "Comment text content.",
+      "type": "string"
+    },
+    "created_at": {
+      "$ref": "#/$defs/DateTime",
+      "description": "When the comment was posted."
+    },
+    "entry_id": {
+      "description": "Numeric id of the parent entry.",
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "entry_url": {
+      "description": "URL of the parent entry.",
+      "type": "string"
+    },
+    "photo_url": {
+      "description": "URL of an attached photo, if any.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "rating": {
+      "description": "Comment vote rating.",
+      "format": "int64",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "comment_id",
+    "entry_id",
+    "entry_url",
+    "created_at",
+    "content",
+    "rating"
+  ],
+  "title": "WykopEntryCommentPayload",
+  "type": "object",
+  "x-sinex-event-type": "social.entry_comment.posted",
+  "x-sinex-source": "wykop",
+  "x-sinex-version": "1.0.0"
+}

@@ -24,7 +24,6 @@ use crate::{NodeResult, SinexError};
 use sinex_primitives::env as shared_env;
 
 use sinex_primitives::events::Event;
-use sinex_primitives::non_empty::NonEmptyVec;
 use sinex_primitives::query::TimeRange;
 use sinex_primitives::temporal::Timestamp;
 use sinex_primitives::{Id, JsonValue, Pagination, Uuid};
@@ -489,7 +488,10 @@ where
         &mut self,
         events: Vec<Event<JsonValue>>,
     ) -> NodeResult<ProcessingStats> {
+        let input_count = events.len();
         let matching = self.filter_matching_events(events);
+        let filtered_count = input_count - matching.len();
+        self.observe_filtered_events(filtered_count).await;
 
         if matching.is_empty() {
             return Ok(ProcessingStats::default());
@@ -537,7 +539,13 @@ where
             .on_shutdown_derived(&self.persisted_state.state)
             .await
             .map_err(|e| {
-                error!(node = %self.node.name(), error = %e, "Shutdown hook failed");
+                error!(
+                    target: "sinex_metrics",
+                    metric = "derive.shutdown_hook_failures_total",
+                    node = %self.node.name(),
+                    error = %e,
+                    "Shutdown hook failed"
+                );
                 e
             })?;
 

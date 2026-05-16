@@ -119,9 +119,7 @@ impl ProofCatalogValidation {
 pub fn build_proof_catalog(workspace_root: &Path) -> Result<ProofCatalog> {
     crate::source_unit_inventory::link_source_unit_inventories();
 
-    let mut runtime_units = proof::source_unit_bindings()
-        .copied()
-        .collect::<Vec<_>>();
+    let mut runtime_units = proof::source_unit_bindings().copied().collect::<Vec<_>>();
     runtime_units.sort_by(|left, right| left.subject.as_str().cmp(right.subject.as_str()));
 
     // Build a binding lookup keyed by source_unit_id so source_unit_subject
@@ -306,11 +304,7 @@ pub fn validate_proof_catalog(catalog: &ProofCatalog) -> ProofCatalogValidation 
             ));
             continue;
         };
-        if !binding
-            .claims
-            .iter()
-            .any(|claim| *claim == obligation.claim_id)
-        {
+        if !binding.claims.contains(&obligation.claim_id) {
             errors.push(format!(
                 "{} uses runner {} which does not list claim {}",
                 obligation.id, binding.id, obligation.claim_id

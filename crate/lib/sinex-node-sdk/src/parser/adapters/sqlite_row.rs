@@ -1,4 +1,4 @@
-//! Adapter for reading rows from a SQLite database.
+//! Adapter for reading rows from a `SQLite` database.
 
 use async_trait::async_trait;
 use camino::Utf8Path;
@@ -18,7 +18,7 @@ use crate::parser::{InputShapeAdapter, ParserError, ParserResult};
 // SqliteRowAdapter
 // =============================================================================
 
-/// Adapter for reading rows from a SQLite database.
+/// Adapter for reading rows from a `SQLite` database.
 ///
 /// Yields one [`SourceRecord`] per row. Uses rowid-based cursor for
 /// resumption. The database is opened read-only.
@@ -34,22 +34,14 @@ use crate::parser::{InputShapeAdapter, ParserError, ParserResult};
 ///    adapter is wired via `register_adapter_ingestor!`, where the adapter
 ///    is constructed via `Default` and the path arrives from the node's JSON
 ///    config at `initialize` time.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct SqliteRowAdapter {
     path: String,
 }
 
-impl Default for SqliteRowAdapter {
-    fn default() -> Self {
-        Self { path: String::new() }
-    }
-}
-
 impl SqliteRowAdapter {
     pub fn new(path: impl Into<String>) -> Self {
-        Self {
-            path: path.into(),
-        }
+        Self { path: path.into() }
     }
 
     /// Returns the path this adapter reads from.
@@ -67,7 +59,7 @@ impl SqliteRowAdapter {
 /// — a regression that masked an adapter that returns zero rows.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct SqliteRowConfig {
-    /// Path to the SQLite database file.
+    /// Path to the `SQLite` database file.
     ///
     /// When non-empty, overrides the path supplied to [`SqliteRowAdapter::new`].
     /// Required when using the adapter via `register_adapter_ingestor!` (where
@@ -89,7 +81,7 @@ pub struct SqliteRowConfig {
     #[serde(default = "default_rowid_column")]
     pub rowid_column: String,
 
-    /// Open the SQLite database read-only.
+    /// Open the `SQLite` database read-only.
     ///
     /// Browser-history and similar sources that share their DB with a
     /// long-running writer (qutebrowser, chromium, atuin) must open
@@ -102,16 +94,16 @@ pub struct SqliteRowConfig {
 
     /// When `read_only` is true, also pass `immutable=1` in the open URI.
     ///
-    /// `immutable=1` tells SQLite the file will not change while open,
+    /// `immutable=1` tells `SQLite` the file will not change while open,
     /// which lets it skip WAL/-shm setup entirely. That's ideal for
     /// rarely-mutated source DBs (qutebrowser History between sessions,
     /// Atuin history sync intervals). But it FAILS to open the DB when a
     /// concurrent writer holds the WAL active — observed on
-    /// `aw-server-rust` where the ActivityWatch server keeps a live WAL
+    /// `aw-server-rust` where the `ActivityWatch` server keeps a live WAL
     /// open and `immutable=1` opens return `SQLITE_CANTOPEN`.
     ///
     /// For sources that share their DB with a continuously-writing
-    /// service, set `immutable = false`. SQLite then opens normally
+    /// service, set `immutable = false`. `SQLite` then opens normally
     /// read-only and reads through WAL.
     ///
     /// Default `true` preserves prior behavior for atuin / qutebrowser.
@@ -131,7 +123,7 @@ pub struct SqliteRowConfig {
     pub batch_size: u32,
 
     /// Optional parallel **file-snapshot lane**: periodically capture the
-    /// SQLite DB file itself as a single source material, separately from
+    /// `SQLite` DB file itself as a single source material, separately from
     /// the per-row stream.  Disabled by default (`interval_seconds: 0`).
     ///
     /// See [`SqliteSnapshotConfig`] for tunables. When enabled, the hosting
@@ -207,10 +199,10 @@ impl InputShapeAdapter for SqliteRowAdapter {
         cursor: Option<Self::Cursor>,
     ) -> ParserResult<BoxStream<'static, ParserResult<SourceRecord>>> {
         // Config path takes priority; fall back to constructor-supplied path.
-        let path = if !config.path.is_empty() {
-            config.path.clone()
-        } else {
+        let path = if config.path.is_empty() {
             self.path.clone()
+        } else {
+            config.path.clone()
         };
         let table = config.table.clone();
         let rowid_col = config.rowid_column.clone();
@@ -238,8 +230,8 @@ impl InputShapeAdapter for SqliteRowAdapter {
         // scan/poll cycle.
         let mut flags = rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX;
         let connection = if config.read_only {
-            flags |= rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY
-                | rusqlite::OpenFlags::SQLITE_OPEN_URI;
+            flags |=
+                rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_URI;
             let uri = if config.immutable {
                 format!("file:{path}?immutable=1&mode=ro")
             } else {
@@ -253,11 +245,7 @@ impl InputShapeAdapter for SqliteRowAdapter {
                 | rusqlite::OpenFlags::SQLITE_OPEN_CREATE;
             rusqlite::Connection::open_with_flags(&path, flags)
         }
-        .map_err(|e| {
-            ParserError::Adapter(format!(
-                "failed to open SQLite database {path}: {e}"
-            ))
-        })?;
+        .map_err(|e| ParserError::Adapter(format!("failed to open SQLite database {path}: {e}")))?;
 
         let batch_size = config.batch_size;
         let (sql, bind_rowid) = if last_rowid > 0 {
@@ -276,49 +264,50 @@ impl InputShapeAdapter for SqliteRowAdapter {
             )
         };
 
-        let mut stmt = connection.prepare(&sql).map_err(|e| {
-            ParserError::Adapter(format!("failed to prepare query: {e}"))
-        })?;
+        let mut stmt = connection
+            .prepare(&sql)
+            .map_err(|e| ParserError::Adapter(format!("failed to prepare query: {e}")))?;
 
         let column_names: Vec<String> = (0..stmt.column_count())
             .map(|i| stmt.column_name(i).unwrap_or("?").to_string())
             .collect();
 
-        let rows_result: Result<Vec<(i64, serde_json::Value)>, ParserError> = if let Some(rowid_val) = bind_rowid {
-            let mapped = stmt
-                .query_map([rowid_val], |row| {
-                    let rowid: i64 = row.get(0)?;
-                    let json = row_to_json(row, &column_names);
-                    Ok((rowid, json))
-                })
-                .map_err(|e| ParserError::Adapter(format!("query error: {e}")))?;
+        let rows_result: Result<Vec<(i64, serde_json::Value)>, ParserError> =
+            if let Some(rowid_val) = bind_rowid {
+                let mapped = stmt
+                    .query_map([rowid_val], |row| {
+                        let rowid: i64 = row.get(0)?;
+                        let json = row_to_json(row, &column_names);
+                        Ok((rowid, json))
+                    })
+                    .map_err(|e| ParserError::Adapter(format!("query error: {e}")))?;
 
-            let mut rows = Vec::new();
-            for r in mapped {
-                match r {
-                    Ok((rowid, json)) => rows.push((rowid, json)),
-                    Err(e) => return Err(ParserError::Adapter(format!("row error: {e}"))),
+                let mut rows = Vec::new();
+                for r in mapped {
+                    match r {
+                        Ok((rowid, json)) => rows.push((rowid, json)),
+                        Err(e) => return Err(ParserError::Adapter(format!("row error: {e}"))),
+                    }
                 }
-            }
-            Ok(rows)
-        } else {
-            let mapped = stmt
-                .query_map([], |row| {
-                    let rowid: i64 = row.get(0)?;
-                    let json = row_to_json(row, &column_names);
-                    Ok((rowid, json))
-                })
-                .map_err(|e| ParserError::Adapter(format!("query error: {e}")))?;
+                Ok(rows)
+            } else {
+                let mapped = stmt
+                    .query_map([], |row| {
+                        let rowid: i64 = row.get(0)?;
+                        let json = row_to_json(row, &column_names);
+                        Ok((rowid, json))
+                    })
+                    .map_err(|e| ParserError::Adapter(format!("query error: {e}")))?;
 
-            let mut rows = Vec::new();
-            for r in mapped {
-                match r {
-                    Ok((rowid, json)) => rows.push((rowid, json)),
-                    Err(e) => return Err(ParserError::Adapter(format!("row error: {e}"))),
+                let mut rows = Vec::new();
+                for r in mapped {
+                    match r {
+                        Ok((rowid, json)) => rows.push((rowid, json)),
+                        Err(e) => return Err(ParserError::Adapter(format!("row error: {e}"))),
+                    }
                 }
-            }
-            Ok(rows)
-        };
+                Ok(rows)
+            };
 
         // Drop statement and connection explicitly before we build records.
         drop(stmt);
@@ -328,9 +317,8 @@ impl InputShapeAdapter for SqliteRowAdapter {
         let records: Vec<ParserResult<SourceRecord>> = rows
             .into_iter()
             .map(|(rowid, json)| {
-                let bytes = serde_json::to_vec(&json).map_err(|e| {
-                    ParserError::Parse(format!("failed to serialize row: {e}"))
-                })?;
+                let bytes = serde_json::to_vec(&json)
+                    .map_err(|e| ParserError::Parse(format!("failed to serialize row: {e}")))?;
 
                 Ok(SourceRecord {
                     material_id,
@@ -339,7 +327,7 @@ impl InputShapeAdapter for SqliteRowAdapter {
                         rowid,
                     },
                     bytes,
-                    logical_path: Some(Utf8Path::new(&path).to_owned().into()),
+                    logical_path: Some(Utf8Path::new(&path).to_owned()),
                     source_ts_hint: None,
                     metadata: json,
                 })
@@ -351,9 +339,7 @@ impl InputShapeAdapter for SqliteRowAdapter {
 
     fn cursor_after(&self, record: &SourceRecord) -> ParserResult<Self::Cursor> {
         match &record.anchor {
-            MaterialAnchor::SqliteRow { rowid, .. } => Ok(SqliteRowCursor {
-                last_rowid: *rowid,
-            }),
+            MaterialAnchor::SqliteRow { rowid, .. } => Ok(SqliteRowCursor { last_rowid: *rowid }),
             other => Err(ParserError::Cursor(format!(
                 "expected SqliteRow anchor, got {other:?}"
             ))),
@@ -386,10 +372,7 @@ impl InputShapeAdapter for SqliteRowAdapter {
 // =============================================================================
 
 /// Convert a rusqlite Row to a JSON object using column names.
-pub(crate) fn row_to_json(
-    row: &rusqlite::Row<'_>,
-    column_names: &[String],
-) -> serde_json::Value {
+pub(crate) fn row_to_json(row: &rusqlite::Row<'_>, column_names: &[String]) -> serde_json::Value {
     let mut map = serde_json::Map::new();
     for (i, name) in column_names.iter().enumerate() {
         let val: rusqlite::Result<rusqlite::types::Value> = row.get(i);
@@ -411,8 +394,8 @@ pub(crate) fn row_to_json(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use xtask::sandbox::prelude::sinex_test;
     use tempfile::NamedTempFile;
+    use xtask::sandbox::prelude::sinex_test;
 
     fn dummy_material_id() -> Id<SourceMaterial> {
         Id::from_uuid(uuid::Uuid::new_v4())
@@ -442,7 +425,10 @@ mod tests {
             ..Default::default()
         };
 
-        let stream = adapter.open(dummy_material_id(), &config, None).await.unwrap();
+        let stream = adapter
+            .open(dummy_material_id(), &config, None)
+            .await
+            .unwrap();
         let records: Vec<_> = stream.collect().await;
 
         assert_eq!(records.len(), 3);
@@ -460,7 +446,10 @@ mod tests {
             ..Default::default()
         };
 
-        let stream = adapter.open(dummy_material_id(), &config, None).await.unwrap();
+        let stream = adapter
+            .open(dummy_material_id(), &config, None)
+            .await
+            .unwrap();
         let records: Vec<_> = stream.collect().await;
         let cursor_after_row1 = adapter.cursor_after(records[0].as_ref().unwrap()).unwrap();
 
@@ -485,10 +474,15 @@ mod tests {
             ..Default::default()
         };
 
-        let mut stream = adapter.open(dummy_material_id(), &config, None).await.unwrap();
+        let mut stream = adapter
+            .open(dummy_material_id(), &config, None)
+            .await
+            .unwrap();
         let record = stream.next().await.unwrap().unwrap();
 
-        assert!(matches!(&record.anchor, MaterialAnchor::SqliteRow { table, .. } if table == "items"));
+        assert!(
+            matches!(&record.anchor, MaterialAnchor::SqliteRow { table, .. } if table == "items")
+        );
         Ok(())
     }
 
@@ -517,7 +511,12 @@ mod tests {
             rowid_column: "rowid".into(),
             ..Default::default()
         };
-        assert!(adapter.open(dummy_material_id(), &config, None).await.is_err());
+        assert!(
+            adapter
+                .open(dummy_material_id(), &config, None)
+                .await
+                .is_err()
+        );
         Ok(())
     }
 
@@ -532,7 +531,10 @@ mod tests {
             ..Default::default()
         };
 
-        let mut stream = adapter.open(dummy_material_id(), &config, None).await.unwrap();
+        let mut stream = adapter
+            .open(dummy_material_id(), &config, None)
+            .await
+            .unwrap();
         let record = stream.next().await.unwrap().unwrap();
         let json: serde_json::Value = serde_json::from_slice(&record.bytes).unwrap();
 
@@ -552,7 +554,10 @@ mod tests {
             ..Default::default()
         };
 
-        let stream = adapter.open(dummy_material_id(), &config, None).await.unwrap();
+        let stream = adapter
+            .open(dummy_material_id(), &config, None)
+            .await
+            .unwrap();
         let records: Vec<_> = stream.collect().await;
 
         let cursors: Vec<SqliteRowCursor> = records

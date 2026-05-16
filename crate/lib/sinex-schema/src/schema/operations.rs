@@ -61,9 +61,7 @@ impl OperationsLog {
                 ColumnDef::new(OperationsLog::OperationType)
                     .text()
                     .not_null()
-                    .check(Expr::cust(
-                        "operation_type ~ '^[a-z][a-z0-9_.-]*$'",
-                    )),
+                    .check(Expr::cust("operation_type ~ '^[a-z][a-z0-9_.-]*$'")),
             )
             .col(ColumnDef::new(OperationsLog::Operator).text().not_null())
             .col(ColumnDef::new(OperationsLog::Scope).json_binary()) // Parameters of the operation

@@ -64,6 +64,8 @@ pub async fn spawn_parse_listener(
                     Ok(()) => {}
                     Err(e) => {
                         warn!(
+                            target: "sinex_metrics",
+                            metric = "source_worker.parse_command_failures_total",
                             source_id = %source_id,
                             error = %e,
                             "Parse command handling failed"
@@ -97,16 +99,7 @@ async fn handle_parse_command(
                 "Received parse command"
             );
 
-            if cmd.source_id != source_id {
-                SourceParseAck {
-                    accepted: false,
-                    error: Some(format!(
-                        "Parse command source_id '{}' does not match listener '{}'",
-                        cmd.source_id, source_id
-                    )),
-                    event_count: None,
-                }
-            } else {
+            if cmd.source_id == source_id {
                 // Invoke the parser dispatch. For now, this passes empty bytes —
                 // the next slice wires material loading from source_material_registry.
                 match dispatch(&cmd.source_id, &[], cmd.source_material_id) {
@@ -126,6 +119,8 @@ async fn handle_parse_command(
                     }
                     Err(e) => {
                         warn!(
+                            target: "sinex_metrics",
+                            metric = "source_worker.parse_dispatch_failures_total",
                             operation_id = %cmd.operation_id,
                             source_id = %cmd.source_id,
                             error = %e,
@@ -138,10 +133,24 @@ async fn handle_parse_command(
                         }
                     }
                 }
+            } else {
+                SourceParseAck {
+                    accepted: false,
+                    error: Some(format!(
+                        "Parse command source_id '{}' does not match listener '{}'",
+                        cmd.source_id, source_id
+                    )),
+                    event_count: None,
+                }
             }
         }
         Err(e) => {
-            warn!(error = %e, "Failed to deserialize parse command");
+            warn!(
+                target: "sinex_metrics",
+                metric = "source_worker.parse_command_deser_failures_total",
+                error = %e,
+                "Failed to deserialize parse command"
+            );
             SourceParseAck {
                 accepted: false,
                 error: Some(format!("Invalid parse command payload: {e}")),
@@ -153,7 +162,12 @@ async fn handle_parse_command(
     if let Some(reply) = reply_subject {
         let payload = serde_json::to_vec(&ack)?;
         if let Err(e) = client.publish(reply, payload.into()).await {
-            error!(error = %e, "Failed to send parse command ack");
+            error!(
+                target: "sinex_metrics",
+                metric = "source_worker.parse_ack_failures_total",
+                error = %e,
+                "Failed to send parse command ack"
+            );
         }
     }
 
@@ -163,12 +177,13 @@ async fn handle_parse_command(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use xtask::sandbox::prelude::sinex_test;
     use crate::dispatch::test_parser_dispatch;
     use sinex_primitives::Uuid;
+    use xtask::sandbox::prelude::sinex_test;
 
     #[sinex_test]
-    async fn test_parse_command_accepted_for_matching_source_id() -> xtask::sandbox::TestResult<()> {
+    async fn test_parse_command_accepted_for_matching_source_id() -> xtask::sandbox::TestResult<()>
+    {
         let (dispatch, calls) = test_parser_dispatch();
         let cmd = SourceParseCommand {
             operation_id: Uuid::now_v7(),
@@ -207,8 +222,9 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_parse_command_rejected_for_mismatched_source_id() -> xtask::sandbox::TestResult<()> {
-        let (dispatch, calls) = test_parser_dispatch();
+    async fn test_parse_command_rejected_for_mismatched_source_id() -> xtask::sandbox::TestResult<()>
+    {
+        let (_dispatch, calls) = test_parser_dispatch();
         let cmd = SourceParseCommand {
             operation_id: Uuid::now_v7(),
             source_id: "desktop".to_string(),
@@ -219,7 +235,11 @@ mod tests {
 
         let ack = if cmd.source_id == "weechat" {
             // ... (would dispatch)
-            SourceParseAck { accepted: true, error: None, event_count: None }
+            SourceParseAck {
+                accepted: true,
+                error: None,
+                event_count: None,
+            }
         } else {
             SourceParseAck {
                 accepted: false,
@@ -230,7 +250,11 @@ mod tests {
 
         assert!(!ack.accepted);
         assert!(ack.error.unwrap().contains("mismatch"));
-        assert_eq!(calls.lock().unwrap().len(), 0, "dispatch should not be called for mismatched source");
+        assert_eq!(
+            calls.lock().unwrap().len(),
+            0,
+            "dispatch should not be called for mismatched source"
+        );
         Ok(())
     }
 

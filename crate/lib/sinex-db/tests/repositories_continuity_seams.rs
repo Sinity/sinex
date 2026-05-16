@@ -182,7 +182,10 @@ async fn seam_classification_emits_overlap(ctx: TestContext) -> TestResult<()> {
         .expect("family observable");
 
     assert!(
-        report.seams.iter().any(|s| matches!(s.kind, SeamKind::Overlap)),
+        report
+            .seams
+            .iter()
+            .any(|s| matches!(s.kind, SeamKind::Overlap)),
         "expected at least one Overlap seam, got: {:?}",
         report.seams.iter().map(|s| s.kind).collect::<Vec<_>>()
     );

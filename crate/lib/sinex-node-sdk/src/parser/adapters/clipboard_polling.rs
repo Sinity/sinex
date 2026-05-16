@@ -161,6 +161,7 @@ impl ClipboardPollingAdapter {
 }
 
 impl Default for ClipboardPollingAdapter {
+    #[allow(clippy::unwrap_used)]
     fn default() -> Self {
         Self::new().expect("failed to initialize arboard clipboard backend")
     }
@@ -258,9 +259,9 @@ fn build_clipboard_stream(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use xtask::sandbox::prelude::sinex_test;
     use futures::StreamExt;
     use tokio::time::{Duration, timeout};
+    use xtask::sandbox::prelude::sinex_test;
 
     fn dummy_material_id() -> Id<SourceMaterial> {
         Id::from_uuid(uuid::Uuid::new_v4())
@@ -282,8 +283,13 @@ mod tests {
             max_content_bytes: 1024,
         };
 
-        let stream = adapter.open(dummy_material_id(), &config, None).await.unwrap();
-        let records: Vec<_> = timeout(Duration::from_secs(2), stream.take(2).collect()).await.unwrap();
+        let stream = adapter
+            .open(dummy_material_id(), &config, None)
+            .await
+            .unwrap();
+        let records: Vec<_> = timeout(Duration::from_secs(2), stream.take(2).collect())
+            .await
+            .unwrap();
 
         assert_eq!(records.len(), 2);
         assert_eq!(records[0].as_ref().unwrap().bytes, b"hello");
@@ -304,8 +310,13 @@ mod tests {
             max_content_bytes: 1024,
         };
 
-        let stream = adapter.open(dummy_material_id(), &config, None).await.unwrap();
-        let records: Vec<_> = timeout(Duration::from_secs(2), stream.take(2).collect()).await.unwrap();
+        let stream = adapter
+            .open(dummy_material_id(), &config, None)
+            .await
+            .unwrap();
+        let records: Vec<_> = timeout(Duration::from_secs(2), stream.take(2).collect())
+            .await
+            .unwrap();
 
         assert_eq!(records.len(), 2);
         assert_eq!(records[0].as_ref().unwrap().bytes, b"same");
@@ -316,17 +327,19 @@ mod tests {
     #[sinex_test]
     async fn test_clipboard_skips_oversized_content() -> xtask::sandbox::TestResult<()> {
         let big = "x".repeat(10);
-        let adapter = make_adapter(vec![
-            Some(big.clone()),
-            Some("small".into()),
-        ]);
+        let adapter = make_adapter(vec![Some(big.clone()), Some("small".into())]);
         let config = ClipboardPollingConfig {
             poll_interval_ms: 1,
             max_content_bytes: 5, // big will be dropped, small will pass
         };
 
-        let stream = adapter.open(dummy_material_id(), &config, None).await.unwrap();
-        let records: Vec<_> = timeout(Duration::from_secs(2), stream.take(1).collect()).await.unwrap();
+        let stream = adapter
+            .open(dummy_material_id(), &config, None)
+            .await
+            .unwrap();
+        let records: Vec<_> = timeout(Duration::from_secs(2), stream.take(1).collect())
+            .await
+            .unwrap();
 
         assert_eq!(records.len(), 1);
         assert_eq!(records[0].as_ref().unwrap().bytes, b"small");
@@ -341,8 +354,13 @@ mod tests {
             max_content_bytes: 1024,
         };
 
-        let stream = adapter.open(dummy_material_id(), &config, None).await.unwrap();
-        let records: Vec<_> = timeout(Duration::from_secs(2), stream.take(1).collect()).await.unwrap();
+        let stream = adapter
+            .open(dummy_material_id(), &config, None)
+            .await
+            .unwrap();
+        let records: Vec<_> = timeout(Duration::from_secs(2), stream.take(1).collect())
+            .await
+            .unwrap();
 
         assert!(matches!(
             records[0].as_ref().unwrap().anchor,
@@ -353,18 +371,19 @@ mod tests {
 
     #[sinex_test]
     async fn test_clipboard_change_counter_monotonic() -> xtask::sandbox::TestResult<()> {
-        let adapter = make_adapter(vec![
-            Some("a".into()),
-            Some("b".into()),
-            Some("c".into()),
-        ]);
+        let adapter = make_adapter(vec![Some("a".into()), Some("b".into()), Some("c".into())]);
         let config = ClipboardPollingConfig {
             poll_interval_ms: 1,
             max_content_bytes: 1024,
         };
 
-        let stream = adapter.open(dummy_material_id(), &config, None).await.unwrap();
-        let records: Vec<_> = timeout(Duration::from_secs(2), stream.take(3).collect()).await.unwrap();
+        let stream = adapter
+            .open(dummy_material_id(), &config, None)
+            .await
+            .unwrap();
+        let records: Vec<_> = timeout(Duration::from_secs(2), stream.take(3).collect())
+            .await
+            .unwrap();
 
         let indices: Vec<u64> = records
             .iter()
@@ -383,7 +402,10 @@ mod tests {
         let adapter = make_adapter(vec![]);
         let record = SourceRecord {
             material_id: dummy_material_id(),
-            anchor: MaterialAnchor::StreamFrame { material_offset: 0, frame_index: 0 },
+            anchor: MaterialAnchor::StreamFrame {
+                material_offset: 0,
+                frame_index: 0,
+            },
             bytes: b"x".to_vec(),
             logical_path: None,
             source_ts_hint: None,

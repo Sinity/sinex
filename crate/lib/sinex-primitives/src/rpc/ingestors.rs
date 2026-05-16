@@ -98,7 +98,7 @@ pub struct IngestorStatus {
 // requiring any new pipeline plumbing.
 
 /// Default uptime gate: do not classify as stalled inside the first 10 min
-/// after startup. Initialization work (snapshot scans, JetStream ack-pending
+/// after startup. Initialization work (snapshot scans, `JetStream` ack-pending
 /// catch-up, etc.) legitimately produces no new events for several minutes.
 pub const DEFAULT_EMIT_STALL_UPTIME_GATE_SECS: u64 = 600;
 
