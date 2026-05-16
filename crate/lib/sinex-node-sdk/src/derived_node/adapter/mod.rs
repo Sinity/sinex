@@ -488,7 +488,10 @@ where
         &mut self,
         events: Vec<Event<JsonValue>>,
     ) -> NodeResult<ProcessingStats> {
+        let input_count = events.len();
         let matching = self.filter_matching_events(events);
+        let filtered_count = input_count - matching.len();
+        self.observe_filtered_events(filtered_count).await;
 
         if matching.is_empty() {
             return Ok(ProcessingStats::default());

@@ -79,8 +79,11 @@ impl<T: Node + 'static> NodeRunner<T> {
                             }
                             let event_id = event.id;
                             warn!(
+                                target: "sinex_metrics",
+                                metric = "derived.events_dlq_routed",
                                 error = %event_err,
                                 ?event_id,
+                                node = %node_name,
                                 "Event processing failed; routing to DLQ"
                             );
                             if let Err(dlq_err) = transport

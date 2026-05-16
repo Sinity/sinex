@@ -300,4 +300,40 @@ where
 
     #[cfg(not(feature = "messaging"))]
     pub(super) async fn observe_pending_invalidations(&self, _count: usize) {}
+
+    /// Emit a counter for events filtered out by type/provenance mismatch.
+    /// High filter rates indicate a consumer subscribed to a broader subject than
+    /// the node's declared input type.
+    #[cfg(feature = "messaging")]
+    pub(super) async fn observe_filtered_events(&self, filtered_count: usize) {
+        if filtered_count == 0 {
+            return;
+        }
+        tracing::debug!(
+            target: "sinex_metrics",
+            metric = "derived.events_filtered",
+            node = %self.node.name(),
+            filtered_count,
+        );
+        let Some(obs) = self.self_observer.as_ref() else {
+            return;
+        };
+        if let Err(error) = obs
+            .emit_counter(
+                "derived.events_filtered_total",
+                filtered_count as u64,
+                Some(self.derived_metric_labels()),
+            )
+            .await
+        {
+            log_self_observation_failure(
+                self.node.name(),
+                "derived.events_filtered_total",
+                &error,
+            );
+        }
+    }
+
+    #[cfg(not(feature = "messaging"))]
+    pub(super) async fn observe_filtered_events(&self, _filtered_count: usize) {}
 }

@@ -820,6 +820,7 @@ fn value_as_string(value: &serde_json::Value) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sinex_primitives::parser::MaterialAnchor;
     use sinex_primitives::Id;
     use xtask::sandbox::prelude::sinex_test;
 
