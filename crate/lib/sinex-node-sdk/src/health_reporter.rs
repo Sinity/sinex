@@ -7,12 +7,13 @@ use crate::error_helpers::unix_timestamp_secs_with_warning;
 use crate::self_observation::SelfObserver;
 use parking_lot::Mutex;
 use parking_lot::RwLock;
+use futures::future::BoxFuture;
 use sinex_primitives::env as shared_env;
 use sinex_primitives::{Result, SinexError, events::payloads::process::ProcessStatus};
 use std::collections::VecDeque;
 use std::sync::{
     Arc,
-    atomic::{AtomicU64, Ordering},
+    atomic::{AtomicBool, AtomicU64, Ordering},
 };
 use std::time::{Duration, Instant};
 
@@ -313,11 +314,14 @@ impl HealthThresholds {
     }
 }
 
+/// Liveness probe: an async function that returns `true` when the node's
+/// dependencies (NATS, DB, external socket) are reachable.
+pub type LivenessProbe = Arc<dyn Fn() -> BoxFuture<'static, bool> + Send + Sync>;
+
 /// Standardized health reporter for nodes
 ///
 /// Tracks events/errors and automatically emits health.status events
 /// when the component's health status changes.
-#[derive(Debug)]
 pub struct HealthReporter {
     component_name: String,
     observer: Arc<SelfObserver>,
@@ -325,6 +329,23 @@ pub struct HealthReporter {
     last_status: Arc<RwLock<ProcessStatus>>,
     thresholds: HealthThresholds,
     clock: Arc<dyn HealthClock>,
+    /// Optional async probe that verifies node dependencies are reachable.
+    /// When set, `check_and_emit()` calls the probe and caches the result in
+    /// `liveness_ok`. `calculate_status()` demotes `Healthy` → `Degraded` when
+    /// `liveness_ok = false`.
+    #[allow(clippy::type_complexity)]
+    liveness_probe: Option<LivenessProbe>,
+    liveness_ok: Arc<AtomicBool>,
+}
+
+impl std::fmt::Debug for HealthReporter {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("HealthReporter")
+            .field("component_name", &self.component_name)
+            .field("has_liveness_probe", &self.liveness_probe.is_some())
+            .field("liveness_ok", &self.liveness_ok.load(Ordering::Relaxed))
+            .finish_non_exhaustive()
+    }
 }
 
 impl HealthReporter {
@@ -358,7 +379,21 @@ impl HealthReporter {
             last_status: Arc::new(RwLock::new(ProcessStatus::Healthy)),
             thresholds,
             clock,
+            liveness_probe: None,
+            liveness_ok: Arc::new(AtomicBool::new(true)),
         }
+    }
+
+    /// Attach a liveness probe that verifies node dependencies are reachable.
+    ///
+    /// The probe is called once per `check_and_emit()` invocation. If it returns
+    /// `false`, `calculate_status()` downgrades `Healthy` → `Degraded` so the
+    /// health surface reflects connectivity failures immediately — before errors
+    /// accumulate in the error-rate window.
+    #[must_use]
+    pub fn with_liveness_probe(mut self, probe: LivenessProbe) -> Self {
+        self.liveness_probe = Some(probe);
+        self
     }
 
     /// Enable emit-stall detection on this reporter, returning a shared
@@ -474,10 +509,19 @@ impl HealthReporter {
         };
 
         if matches!(base, ProcessStatus::Healthy) && self.emit_stalled() {
-            ProcessStatus::Degraded
-        } else {
-            base
+            return ProcessStatus::Degraded;
         }
+
+        // Liveness probe result is cached by check_and_emit(). Demote Healthy →
+        // Degraded when connectivity failed on the last probe tick.
+        if matches!(base, ProcessStatus::Healthy)
+            && self.liveness_probe.is_some()
+            && !self.liveness_ok.load(Ordering::Relaxed)
+        {
+            return ProcessStatus::Degraded;
+        }
+
+        base
     }
 
     /// Get current health status without emitting
@@ -499,6 +543,13 @@ impl HealthReporter {
     ///
     /// Returns the current status after checking.
     pub async fn check_and_emit(&self) -> Result<ProcessStatus> {
+        // Run the liveness probe (if configured) and cache the result so
+        // calculate_status() — which is sync — can read it atomically.
+        if let Some(ref probe) = self.liveness_probe {
+            let alive = probe().await;
+            self.liveness_ok.store(alive, Ordering::Relaxed);
+        }
+
         let new_status = self.calculate_status();
 
         // Read current status and determine if emission is needed.
