@@ -935,6 +935,8 @@ impl JetStreamConsumer {
                 }
                 _ = capacity_check_interval.tick() => {
                     self.check_stream_capacity(&stream_name).await;
+                    // DLQ growth is a durable signal of persistent failures; monitor it too.
+                    self.check_stream_capacity(&self.topology.dlq_stream.to_string()).await;
                 }
                 _ = lag_check_interval.tick() => {
                     if self.observer.is_some() {
