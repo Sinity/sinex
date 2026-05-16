@@ -297,6 +297,33 @@ fn parse_sqlite_record(
         parse_chromium_row(&obj)?
     } else if obj.contains_key("atime") {
         parse_qutebrowser_row(&obj)?
+    } else if let Some(visit_time) = extract_timestamp(&obj) {
+        // Fallback: JSONL dump row arriving without the "secondary/" logical-path
+        // prefix (e.g. test dispatch with logical_path = None). Parse generically.
+        let url = obj.get("url").and_then(|v| v.as_str()).unwrap_or("").to_string();
+        let title = obj.get("title").and_then(|v| v.as_str()).unwrap_or("").to_string();
+        VisitData {
+            browser: infer_browser_from_path(&source_file),
+            title,
+            url,
+            visit_time,
+            referrer: obj
+                .get("referrer")
+                .or_else(|| obj.get("external_referrer_url"))
+                .and_then(|v| v.as_str())
+                .map(String::from),
+            transition: obj.get("transition").and_then(|v| v.as_str()).map(String::from),
+            visit_id: obj
+                .get("visitId")
+                .or_else(|| obj.get("visit_id"))
+                .or_else(|| obj.get("id"))
+                .and_then(|v| v.as_str())
+                .map(String::from),
+            visit_duration_ms: None,
+            source_file: source_file.clone(),
+            line_number: None,
+            db_row_id: None,
+        }
     } else {
         return Ok(vec![]);
     };
