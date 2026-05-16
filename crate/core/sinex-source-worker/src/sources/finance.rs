@@ -121,13 +121,14 @@ fn parse_journal(text: &str) -> ParserResult<Vec<JournalTransaction>> {
         if trimmed.starts_with(';') || trimmed.starts_with("include ") || trimmed.is_empty() {
             // Blank line terminates an open transaction block.
             if raw_line.trim().is_empty()
-                && let Some((header, postings)) = current.take() {
-                    transactions.push(build_transaction(
-                        transactions.len() as u64,
-                        &header,
-                        &postings,
-                    )?);
-                }
+                && let Some((header, postings)) = current.take()
+            {
+                transactions.push(build_transaction(
+                    transactions.len() as u64,
+                    &header,
+                    &postings,
+                )?);
+            }
             continue;
         }
 

@@ -76,9 +76,10 @@ impl ContentHashWindow {
         }
         if self.seen.insert(hash) {
             if self.order.len() >= self.capacity
-                && let Some(evicted) = self.order.pop_front() {
-                    self.seen.remove(&evicted);
-                }
+                && let Some(evicted) = self.order.pop_front()
+            {
+                self.seen.remove(&evicted);
+            }
             self.order.push_back(hash);
         }
         hash

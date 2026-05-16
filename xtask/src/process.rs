@@ -250,9 +250,7 @@ fn child_ioprio_from_env() -> Option<IoPriority> {
 
 #[cfg(target_os = "linux")]
 fn env_flag_enabled(name: &str) -> bool {
-    std::env::var(name)
-        .map(|value| matches!(value.as_str(), "1" | "true" | "yes" | "on"))
-        .unwrap_or(false)
+    std::env::var(name).is_ok_and(|value| matches!(value.as_str(), "1" | "true" | "yes" | "on"))
 }
 
 #[cfg(target_os = "linux")]
@@ -290,6 +288,7 @@ pub fn arm_current_process_parent_death_signal() -> Result<()> {
 ///
 /// Used by the job-manager (foreground sweep) and the detached reaper
 /// (grandchild fallback). See `commands/reap.rs` and `jobs/mod.rs`.
+#[must_use]
 pub fn is_xtask_pid(pid: u32) -> bool {
     let cmdline_path = format!("/proc/{pid}/cmdline");
     match std::fs::read(&cmdline_path) {
@@ -1387,6 +1386,7 @@ impl HostPressureAccumulator {
 }
 
 #[cfg(target_os = "linux")]
+#[must_use]
 pub fn read_pressure_snapshot(resource: &str) -> PressureSnapshot {
     let path = format!("/proc/pressure/{resource}");
     let Ok(contents) = std::fs::read_to_string(path) else {
@@ -1423,6 +1423,7 @@ fn parse_pressure_snapshot(contents: &str) -> PressureSnapshot {
 }
 
 #[cfg(target_os = "linux")]
+#[must_use]
 pub fn shm_usage_mb() -> Option<(f64, f64)> {
     let path = std::ffi::CString::new("/dev/shm").ok()?;
     let mut stats = std::mem::MaybeUninit::<libc::statvfs>::uninit();

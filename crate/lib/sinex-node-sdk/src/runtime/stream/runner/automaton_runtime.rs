@@ -5,7 +5,12 @@
 //! confirmation-event bridge that resolves provisional events to fully
 //! materialized inputs and feeds them into the node implementation.
 
-use super::{info, warn, debug, NodeRunner, Node, NodeResult, SinexError, systemd_notify, ProcessingModel, TimeHorizon, ScanArgs, LeaderState, Checkpoint, mpsc, ProvisionalEvent, CONFIRMED_EVENT_CHANNEL_CAPACITY, Arc, RunnerConfirmedEventHandler, EventTransport, JetStreamEventConsumerConfig, JetStreamEventConsumer, StreamExt, Uuid, DbPoolExt};
+use super::{
+    Arc, CONFIRMED_EVENT_CHANNEL_CAPACITY, Checkpoint, DbPoolExt, EventTransport,
+    JetStreamEventConsumer, JetStreamEventConsumerConfig, LeaderState, Node, NodeResult,
+    NodeRunner, ProcessingModel, ProvisionalEvent, RunnerConfirmedEventHandler, ScanArgs,
+    SinexError, StreamExt, TimeHorizon, Uuid, debug, info, mpsc, systemd_notify, warn,
+};
 
 impl<T: Node + 'static> NodeRunner<T> {
     /// Run automaton in continuous mode

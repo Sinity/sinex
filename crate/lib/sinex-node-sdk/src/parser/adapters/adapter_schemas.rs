@@ -59,7 +59,7 @@ pub struct AdapterSchema {
 /// - `SqliteRowAdapter`
 /// - `StaticFileAdapter`
 /// - `UnixSocketStreamAdapter`
-#[must_use] 
+#[must_use]
 pub fn all_adapter_schemas() -> BTreeMap<String, AdapterSchema> {
     let mut map = BTreeMap::new();
 

@@ -145,7 +145,7 @@ pub struct AdapterNodeConfig {
 impl AdapterNodeConfig {
     /// Convert the `binding_flags` map into a [`BindingConfig`] for use with
     /// `DeclarativeParser::evaluate`.
-    #[must_use] 
+    #[must_use]
     pub fn to_binding_config(&self) -> BindingConfig {
         let mut bc = BindingConfig::new();
         for (name, &value) in &self.binding_flags {
@@ -802,13 +802,14 @@ where
         // exits.  Best-effort: a failure here only affects the current open
         // material; already-finalized materials and persisted events are safe.
         if let Some(acquirer) = self.stream_acquirer.as_mut()
-            && let Err(e) = acquirer.finalize("continuous-mode-shutdown").await {
-                warn!(
-                    source_unit = self.source_unit_id,
-                    error = %e,
-                    "Failed to finalize stream material on shutdown — in-flight material may be incomplete"
-                );
-            }
+            && let Err(e) = acquirer.finalize("continuous-mode-shutdown").await
+        {
+            warn!(
+                source_unit = self.source_unit_id,
+                error = %e,
+                "Failed to finalize stream material on shutdown — in-flight material may be incomplete"
+            );
+        }
 
         // Signal the snapshot lane (if any) to exit and wait briefly for it.
         if let Some(tx) = self.snapshot_shutdown.take() {

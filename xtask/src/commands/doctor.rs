@@ -367,9 +367,10 @@ impl XtaskCommand for DoctorCommand {
         }
 
         if self.reclaim {
-            let target_dir = std::env::var("CARGO_TARGET_DIR")
-                .map(std::path::PathBuf::from)
-                .unwrap_or_else(|_| crate::config::workspace_root().join("target"));
+            let target_dir = std::env::var("CARGO_TARGET_DIR").map_or_else(
+                |_| crate::config::workspace_root().join("target"),
+                std::path::PathBuf::from,
+            );
             if ctx.is_human() {
                 println!(
                     "Reclaiming stale artifacts from {}...",
@@ -493,9 +494,10 @@ async fn execute_test_db_check(_ctx: &CommandContext) -> Result<TestDbDoctorRepo
 fn execute_rust_analyzer_check() -> Result<RustAnalyzerDoctorReport> {
     let root = crate::config::workspace_root();
     let config_path = root.join("rust-analyzer.toml");
-    let target_dir = std::env::var("CARGO_TARGET_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| crate::config::workspace_target_dir_for(&root));
+    let target_dir = std::env::var("CARGO_TARGET_DIR").map_or_else(
+        |_| crate::config::workspace_target_dir_for(&root),
+        PathBuf::from,
+    );
     let processes = collect_rust_analyzer_processes()?;
     let total_rss_mb = if processes.is_empty() {
         0.0
@@ -511,8 +513,7 @@ fn execute_rust_analyzer_check() -> Result<RustAnalyzerDoctorReport> {
     }
     if total_rss_mb > 2048.0 {
         warnings.push(format!(
-            "rust-analyzer RSS is {:.0} MB; consider checking editor duplicate sessions",
-            total_rss_mb
+            "rust-analyzer RSS is {total_rss_mb:.0} MB; consider checking editor duplicate sessions"
         ));
     }
 

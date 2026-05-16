@@ -304,11 +304,7 @@ pub fn validate_proof_catalog(catalog: &ProofCatalog) -> ProofCatalogValidation 
             ));
             continue;
         };
-        if !binding
-            .claims
-            .iter()
-            .any(|claim| *claim == obligation.claim_id)
-        {
+        if !binding.claims.contains(&obligation.claim_id) {
             errors.push(format!(
                 "{} uses runner {} which does not list claim {}",
                 obligation.id, binding.id, obligation.claim_id

@@ -235,11 +235,7 @@ async fn clean_empty_cas_dirs(content_store: &MaterialContentStore) {
         return;
     };
     while let Ok(Some(entry)) = prefix_a.next_entry().await {
-        if !entry
-            .file_type()
-            .await
-            .is_ok_and(|ft| ft.is_dir())
-        {
+        if !entry.file_type().await.is_ok_and(|ft| ft.is_dir()) {
             continue;
         }
         let prefix_a_path = entry.path();
@@ -248,11 +244,7 @@ async fn clean_empty_cas_dirs(content_store: &MaterialContentStore) {
         };
         let mut b_empty = true;
         while let Ok(Some(sub_entry)) = prefix_b.next_entry().await {
-            if !sub_entry
-                .file_type()
-                .await
-                .is_ok_and(|ft| ft.is_dir())
-            {
+            if !sub_entry.file_type().await.is_ok_and(|ft| ft.is_dir()) {
                 continue;
             }
             let sub_path = sub_entry.path();

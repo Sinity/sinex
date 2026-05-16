@@ -155,9 +155,18 @@ impl MaterialParser for AtuinHistoryParser {
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string();
-        let timestamp_ns = row.get("timestamp").and_then(sinex_primitives::JsonValue::as_i64).unwrap_or(0);
-        let duration_ns = row.get("duration").and_then(sinex_primitives::JsonValue::as_i64).unwrap_or(0);
-        let exit_code = row.get("exit").and_then(sinex_primitives::JsonValue::as_i64).unwrap_or(0);
+        let timestamp_ns = row
+            .get("timestamp")
+            .and_then(sinex_primitives::JsonValue::as_i64)
+            .unwrap_or(0);
+        let duration_ns = row
+            .get("duration")
+            .and_then(sinex_primitives::JsonValue::as_i64)
+            .unwrap_or(0);
+        let exit_code = row
+            .get("exit")
+            .and_then(sinex_primitives::JsonValue::as_i64)
+            .unwrap_or(0);
 
         // Apply privacy processing.
         let command_processed = {

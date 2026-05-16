@@ -90,7 +90,7 @@ struct AppendRequest<R: Serialize + Send> {
 
 impl<R: Serialize + Send + 'static> ObservationMaterializer<R> {
     /// Create a new materializer with the given configuration.
-    #[must_use] 
+    #[must_use]
     pub fn new(config: ObservationMaterializerConfig) -> Self {
         Self::with_callback(config, Arc::new(|_| Box::pin(async { Ok(()) })))
     }

@@ -264,9 +264,7 @@ pub(crate) fn load_user_preferences() -> UserPreferences {
         // dirs::config_dir() returns None only in unusual environments (no $HOME set).
         // Fall back to $HOME/.config rather than the literal "~/.config" path, which
         // the OS would not expand and would fail to locate the file.
-        let home = std::env::var_os("HOME")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from("/"));
+        let home = std::env::var_os("HOME").map_or_else(|| PathBuf::from("/"), PathBuf::from);
         home.join(".config")
     });
     let path = config_dir.join("xtask/preferences.toml");

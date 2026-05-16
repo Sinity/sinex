@@ -423,13 +423,14 @@ impl ParserFixtureHarness {
                 if spec.expect_error {
                     let err_str = format!("{e}");
                     if let Some(ref expected_contains) = spec.expected_error_contains
-                        && !err_str.contains(expected_contains.as_str()) {
-                            failures.push(FixtureFailure {
-                                intent_index: None,
-                                expected: format!("error containing \"{expected_contains}\""),
-                                found: format!("error: {err_str}"),
-                            });
-                        }
+                        && !err_str.contains(expected_contains.as_str())
+                    {
+                        failures.push(FixtureFailure {
+                            intent_index: None,
+                            expected: format!("error containing \"{expected_contains}\""),
+                            found: format!("error: {err_str}"),
+                        });
+                    }
                     return FixtureOutcome {
                         fixture_name: spec.name.clone(),
                         passed: failures.is_empty(),
@@ -471,15 +472,16 @@ impl ParserFixtureHarness {
                             if spec.expect_error {
                                 let err_str = format!("{e}");
                                 if let Some(ref expected_contains) = spec.expected_error_contains
-                                    && !err_str.contains(expected_contains.as_str()) {
-                                        failures.push(FixtureFailure {
-                                            intent_index: None,
-                                            expected: format!(
-                                                "error containing \"{expected_contains}\""
-                                            ),
-                                            found: format!("error: {err_str}"),
-                                        });
-                                    }
+                                    && !err_str.contains(expected_contains.as_str())
+                                {
+                                    failures.push(FixtureFailure {
+                                        intent_index: None,
+                                        expected: format!(
+                                            "error containing \"{expected_contains}\""
+                                        ),
+                                        found: format!("error: {err_str}"),
+                                    });
+                                }
                                 return FixtureOutcome {
                                     fixture_name: spec.name.clone(),
                                     passed: failures.is_empty(),

@@ -1312,7 +1312,7 @@ fn check_sw_binding_drift(root: &Path, bindings_json: Option<&Path>) -> SwCheck 
             .iter()
             .filter_map(|b| b["sourceUnitId"].as_str())
             .filter(|s| !s.is_empty())
-            .map(|s| s.to_string())
+            .map(std::string::ToString::to_string)
             .collect();
         (ids, "live host config")
     } else {
@@ -1424,7 +1424,7 @@ fn check_sw_ingestor_crates(
     };
 
     let mut present: Vec<String> = entries
-        .filter_map(|e| e.ok())
+        .filter_map(std::result::Result::ok)
         .filter_map(|e| {
             let name = e.file_name().to_string_lossy().into_owned();
             if name.ends_with("-ingestor") {
@@ -1560,7 +1560,7 @@ fn check_sw_registered_parsers(root: &Path) -> SwCheck {
 /// as `"source_unit_id -> TypeName"` strings, push to `out`.
 fn scan_rs_files_for_pattern(dir: &Path, pattern: &regex::Regex, out: &mut Vec<String>) {
     let Ok(rd) = fs::read_dir(dir) else { return };
-    for entry in rd.filter_map(|e| e.ok()) {
+    for entry in rd.filter_map(std::result::Result::ok) {
         let path = entry.path();
         if path.is_dir() {
             scan_rs_files_for_pattern(&path, pattern, out);
@@ -1652,7 +1652,7 @@ fn collect_privacy_violations(
     out: &mut Vec<String>,
 ) {
     let Ok(rd) = fs::read_dir(dir) else { return };
-    for entry in rd.filter_map(|e| e.ok()) {
+    for entry in rd.filter_map(std::result::Result::ok) {
         let path = entry.path();
         if path.is_dir() {
             collect_privacy_violations(&path, non_public_tiers, privacy_indicators, out);
@@ -1682,16 +1682,14 @@ fn collect_privacy_violations(
             let has_sibling_invocation = path
                 .parent()
                 .and_then(|parent| fs::read_dir(parent).ok())
-                .map(|rd| {
-                    rd.filter_map(|e| e.ok())
+                .is_some_and(|rd| {
+                    rd.filter_map(std::result::Result::ok)
                         .filter(|e| e.path().extension().is_some_and(|ext| ext == "rs"))
                         .any(|e| {
                             fs::read_to_string(e.path())
-                                .map(|c| privacy_indicators.iter().any(|ind| c.contains(ind)))
-                                .unwrap_or(false)
+                                .is_ok_and(|c| privacy_indicators.iter().any(|ind| c.contains(ind)))
                         })
-                })
-                .unwrap_or(false);
+                });
 
             if has_sibling_invocation {
                 continue;
@@ -1716,12 +1714,11 @@ fn extract_unit_id_from_contents(contents: &str) -> String {
         let trimmed = line.trim();
         if let Some(rest) = trimmed.strip_prefix("id:") {
             let rest = rest.trim();
-            if let Some(inner) = rest.strip_prefix('"') {
-                if let Some(id) = inner.split('"').next()
-                    && !id.is_empty()
-                {
-                    return id.to_string();
-                }
+            if let Some(inner) = rest.strip_prefix('"')
+                && let Some(id) = inner.split('"').next()
+                && !id.is_empty()
+            {
+                return id.to_string();
             }
         }
     }

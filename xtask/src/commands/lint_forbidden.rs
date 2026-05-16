@@ -490,7 +490,7 @@ fn directory_contains_privacy_indicator(dir: &std::path::Path) -> bool {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return false;
     };
-    for entry in entries.filter_map(|e| e.ok()) {
+    for entry in entries.filter_map(std::result::Result::ok) {
         let path = entry.path();
         if path.extension().is_some_and(|ext| ext == "rs") {
             let Ok(text) = std::fs::read_to_string(&path) else {
@@ -543,12 +543,11 @@ fn extract_source_unit_ids(contents: &str) -> Vec<String> {
         let trimmed = line.trim();
         if let Some(rest) = trimmed.strip_prefix("id:") {
             let rest = rest.trim();
-            if let Some(inner) = rest.strip_prefix('"') {
-                if let Some(id) = inner.split('"').next() {
-                    if !id.is_empty() {
-                        ids.push(id.to_string());
-                    }
-                }
+            if let Some(inner) = rest.strip_prefix('"')
+                && let Some(id) = inner.split('"').next()
+                && !id.is_empty()
+            {
+                ids.push(id.to_string());
             }
         }
     }

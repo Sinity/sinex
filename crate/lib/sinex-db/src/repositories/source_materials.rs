@@ -98,8 +98,10 @@ fn contract_for_source(
 
 fn format_for_material_type(material_type: &str, source_uri: Option<&str>) -> SourceMaterialFormat {
     match material_type {
-        material_types::FILE => source_uri
-            .map_or(SourceMaterialFormat::Unknown, SourceMaterialFormat::infer_from_path),
+        material_types::FILE => source_uri.map_or(
+            SourceMaterialFormat::Unknown,
+            SourceMaterialFormat::infer_from_path,
+        ),
         material_types::STREAM => SourceMaterialFormat::Jsonl,
         material_types::BLOB_TEXT => SourceMaterialFormat::Text,
         material_types::BLOB | material_types::BLOB_BINARY => SourceMaterialFormat::Binary,
@@ -1784,9 +1786,10 @@ impl SourceMaterialRepository<'_> {
             let representative_kind = row.material_kinds.last().map_or("", String::as_str);
             let family = derive_source_family(&row.source_identifier, representative_kind);
             if let Some(filter) = source_family
-                && family != filter {
-                    continue;
-                }
+                && family != filter
+            {
+                continue;
+            }
 
             // Parsed-event count: count events referencing any material from
             // this source identifier across ALL material_kinds — matches the

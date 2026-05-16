@@ -128,7 +128,9 @@ impl MaterialParser for FishHistoryParser {
             return Ok(vec![]);
         }
 
-        let when_unix: Option<i64> = row.get("when").and_then(sinex_primitives::JsonValue::as_i64);
+        let when_unix: Option<i64> = row
+            .get("when")
+            .and_then(sinex_primitives::JsonValue::as_i64);
 
         // Privacy processing.
         let processed = {

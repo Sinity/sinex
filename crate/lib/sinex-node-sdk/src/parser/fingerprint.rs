@@ -79,7 +79,7 @@ impl SourceRecordFingerprint {
     /// assert_eq!(fp.type_map["name"], "string");
     /// assert_eq!(fp.type_map["id"], "integer");
     /// ```
-    #[must_use] 
+    #[must_use]
     pub fn from_json(value: &JsonValue) -> Self {
         let (mut keys, type_map) = Self::extract_types(value);
 
@@ -102,7 +102,7 @@ impl SourceRecordFingerprint {
     /// Creates a fingerprint from a `SourceRecord`.
     ///
     /// Dispatches based on record format (currently only JSON is fully supported).
-    #[must_use] 
+    #[must_use]
     pub fn from_record(record: &crate::parser::SourceRecord) -> Self {
         // Try to parse as JSON first.
         if let Ok(json) = serde_json::from_slice::<JsonValue>(&record.bytes) {
@@ -191,7 +191,7 @@ impl SourceRecordFingerprint {
     }
 
     /// Returns the BLAKE3 hash of this fingerprint.
-    #[must_use] 
+    #[must_use]
     pub fn hash(&self) -> &str {
         &self.blake3_hash
     }
@@ -230,7 +230,7 @@ pub struct DriftAccumulator {
 
 impl DriftAccumulator {
     /// Creates a new drift accumulator for a source unit.
-    #[must_use] 
+    #[must_use]
     pub fn new(source_unit_id: SourceUnitId) -> Self {
         Self {
             source_unit_id,
@@ -273,9 +273,10 @@ impl DriftAccumulator {
 
         // Same hash: no drift.
         if let Some(ref last) = self.last_hash
-            && last == hash {
-                return None;
-            }
+            && last == hash
+        {
+            return None;
+        }
 
         // Drift detected: check rate limits.
         if !self.is_emit_allowed() {
@@ -293,7 +294,7 @@ impl DriftAccumulator {
     }
 
     /// Returns the last-observed fingerprint hash.
-    #[must_use] 
+    #[must_use]
     pub fn last_seen_hash(&self) -> Option<&str> {
         self.last_hash.as_deref()
     }
@@ -417,7 +418,7 @@ pub struct DriftEvent {
 
 impl DriftEvent {
     /// Serializes this event as a JSON payload suitable for a parser-emitted event.
-    #[must_use] 
+    #[must_use]
     pub fn to_payload(&self) -> serde_json::Value {
         serde_json::json!({
             "source_unit_id": self.source_unit_id.as_str(),

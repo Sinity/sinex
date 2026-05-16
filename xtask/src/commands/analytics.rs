@@ -829,8 +829,7 @@ fn read_proc_command(proc_dir: &std::path::Path) -> String {
         }
     }
     std::fs::read_to_string(proc_dir.join("comm"))
-        .map(|comm| comm.trim().to_string())
-        .unwrap_or_else(|_| "<unknown>".to_string())
+        .map_or_else(|_| "<unknown>".to_string(), |comm| comm.trim().to_string())
 }
 
 fn format_bytes(bytes: u64) -> String {

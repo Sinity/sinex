@@ -157,8 +157,7 @@ impl XtaskCommand for ResetCommand {
                 let stamp = OffsetDateTime::now_utc()
                     .format(&time::format_description::well_known::Iso8601::DEFAULT)
                     .unwrap_or_else(|_| "unknown".to_string())
-                    .replace(':', "")
-                    .replace('-', "");
+                    .replace([':', '-'], "");
                 let backup_path = path.with_extension(format!("db.reset.bak.{stamp}"));
                 std::fs::rename(&path, &backup_path).with_context(|| {
                     format!(

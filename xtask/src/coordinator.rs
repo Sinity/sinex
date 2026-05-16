@@ -1296,9 +1296,7 @@ pub fn update_coordinator_state(command: &str, bg_result: &CommandResult) -> Res
     // already exited by the time we read /proc/{pid}/stat, store 0 (sentinel:
     // "unknown") — the coordinator will treat any non-zero process at this PID
     // as a mismatch and refuse to send signals.
-    let start_ticks = crate::process::read_proc_sample(pid as u32)
-        .map(|s| s.start_ticks)
-        .unwrap_or(0);
+    let start_ticks = crate::process::read_proc_sample(pid as u32).map_or(0, |s| s.start_ticks);
 
     if let Err(error) = coordinator.update_state(command, job_id, pid as u32, start_ticks) {
         let cleared = clear_pending(

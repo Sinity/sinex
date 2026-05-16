@@ -160,7 +160,8 @@ impl MaterialParser for DocumentStagingParser {
 
         let file_size = std::fs::metadata(&path).map_or(0, |m| m.len());
 
-        let redacted_path = privacy::process(&path, ProcessingContext::Metadata).map_or_else(|_| path.clone(), |r| r.text.into_owned());
+        let redacted_path = privacy::process(&path, ProcessingContext::Metadata)
+            .map_or_else(|_| path.clone(), |r| r.text.into_owned());
 
         let source_material_id = record.material_id.to_uuid().to_string();
 

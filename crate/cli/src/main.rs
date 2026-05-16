@@ -314,7 +314,7 @@ async fn main() -> color_eyre::Result<()> {
         // or auth token. Short-circuit so it can be run in CI without
         // requiring a live deployment.
         Commands::Verify(cmd) if cmd.is_source_units_only() => {
-            cmd.execute_source_units_only(format)?
+            cmd.execute_source_units_only(format)?;
         }
         other => {
             let client_config = ClientConfig::from(&config);
@@ -400,7 +400,7 @@ fn command_path(cmd: &Commands) -> String {
             ReplayCommands::Run { .. } => "replay run".to_string(),
         },
         Commands::Dlq { cmd } => match cmd {
-            DlqCommands::List { .. } => "dlq list".to_string(),
+            DlqCommands::List => "dlq list".to_string(),
             DlqCommands::Peek { .. } => "dlq peek".to_string(),
             DlqCommands::Requeue { .. } => "dlq requeue".to_string(),
             DlqCommands::Purge { .. } => "dlq purge".to_string(),
@@ -417,7 +417,7 @@ fn command_path(cmd: &Commands) -> String {
         Commands::Tui(_) => "tui".to_string(),
         Commands::Config { cmd } => match cmd {
             ConfigCommands::Init { .. } => "config init".to_string(),
-            ConfigCommands::Show { .. } => "config show".to_string(),
+            ConfigCommands::Show => "config show".to_string(),
             ConfigCommands::Path => "config path".to_string(),
             ConfigCommands::Edit => "config edit".to_string(),
         },
@@ -481,9 +481,7 @@ fn command_path(cmd: &Commands) -> String {
             TelemetryCommands::IngestdBatchStats { .. } => {
                 "telemetry ingestd-batch-stats".to_string()
             }
-            TelemetryCommands::IngestdValidation { .. } => {
-                "telemetry ingestd-validation".to_string()
-            }
+            TelemetryCommands::IngestdValidation => "telemetry ingestd-validation".to_string(),
         },
         Commands::Report { cmd } => match cmd {
             ReportCommands::Today => "report today".to_string(),

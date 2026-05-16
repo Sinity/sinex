@@ -5,7 +5,11 @@
 //! load checkpoint state, fetch persisted events, parse identifiers, and
 //! build typed errors when a provisional reference cannot be resolved.
 
-use super::{Deserialize, NodeRunner, Node, CheckpointManager, NodeResult, SinexError, PgPool, EventId, Event, JsonValue, DbPoolExt, Uuid, OffsetKind, ProvisionalEvent, Provenance, Id, SourceMaterial, NonEmptyVec, StreamExt, EventSource, EventType, HostName, ResolvedBatch};
+use super::{
+    CheckpointManager, DbPoolExt, Deserialize, Event, EventId, EventSource, EventType, HostName,
+    Id, JsonValue, Node, NodeResult, NodeRunner, NonEmptyVec, OffsetKind, PgPool, Provenance,
+    ProvisionalEvent, ResolvedBatch, SinexError, SourceMaterial, StreamExt, Uuid,
+};
 
 impl<T: Node + 'static> NodeRunner<T> {
     #[cfg(feature = "messaging")]

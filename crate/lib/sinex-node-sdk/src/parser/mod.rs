@@ -257,7 +257,7 @@ pub trait MaterialParser: Send + Sync {
     /// Lets a parser declare adapter-mandatory fields it knows the right
     /// value for (e.g. atuin's SqliteRowConfig.query = "history") without
     /// forcing every Nix binding to repeat them. Default empty object.
-    #[must_use] 
+    #[must_use]
     fn baseline_adapter_config() -> serde_json::Value
     where
         Self: Sized,

@@ -1551,6 +1551,7 @@ struct SseFrameParser {
     state: SseFrameState,
 }
 
+#[derive(Default)]
 struct SseFrameState {
     buffer: Vec<u8>,
     current_event: Option<String>,
@@ -1563,17 +1564,6 @@ impl SseFrameParser {
         Self {
             stream: response,
             state: SseFrameState::default(),
-        }
-    }
-}
-
-impl Default for SseFrameState {
-    fn default() -> Self {
-        Self {
-            buffer: Vec::new(),
-            current_event: None,
-            current_data: String::new(),
-            saw_data_field: false,
         }
     }
 }

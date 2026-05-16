@@ -347,15 +347,15 @@ fn render_chunks_table(raw: &serde_json::Value) -> String {
     for chunk in &chunks {
         let idx = chunk
             .get("chunk_index")
-            .and_then(|v| v.as_i64())
+            .and_then(serde_json::Value::as_i64)
             .unwrap_or(-1);
         let start = chunk
             .get("byte_offset_start")
-            .and_then(|v| v.as_i64())
+            .and_then(serde_json::Value::as_i64)
             .map_or_else(|| "-".to_string(), |v| v.to_string());
         let end = chunk
             .get("byte_offset_end")
-            .and_then(|v| v.as_i64())
+            .and_then(serde_json::Value::as_i64)
             .map_or_else(|| "-".to_string(), |v| v.to_string());
         let text = chunk.get("text").and_then(|v| v.as_str()).unwrap_or("");
         let preview = truncate_str(&text.replace('\n', " "), 72);

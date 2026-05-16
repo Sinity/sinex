@@ -118,8 +118,7 @@ pub struct ZshHistoryParserConfig;
 /// Parser for zsh history files (plain and HISTTIMEFORMAT extended).
 ///
 /// Maintains dedup window and tracks multi-line continuation state.
-#[derive(Debug)]
-#[derive(Default)]
+#[derive(Debug, Default)]
 pub struct ZshHistoryParser {
     dedup: ContentHashWindow,
     /// Accumulated command for a multi-line continuation (backslash-continued).
@@ -131,7 +130,6 @@ pub struct ZshHistoryParser {
     /// Source file path, carried through for the payload.
     source_file: String,
 }
-
 
 #[async_trait]
 impl MaterialParser for ZshHistoryParser {

@@ -67,6 +67,7 @@ pub fn changed_rust_files(base_ref: &str) -> Result<Vec<PathBuf>> {
 ///
 /// Returns `None` when no owning `Cargo.toml` is found or the file is at the
 /// workspace root (the root `Cargo.toml` is a workspace manifest, not a package).
+#[must_use]
 pub fn owning_package(file: &Path, workspace_root: &Path) -> Option<String> {
     // Start from the file's parent directory, walk up stopping before workspace root.
     let start_dir = if file.is_absolute() {
@@ -83,10 +84,10 @@ pub fn owning_package(file: &Path, workspace_root: &Path) -> Option<String> {
         }
 
         let candidate = dir.join("Cargo.toml");
-        if candidate.is_file() {
-            if let Some(name) = extract_package_name(&candidate) {
-                return Some(name);
-            }
+        if candidate.is_file()
+            && let Some(name) = extract_package_name(&candidate)
+        {
+            return Some(name);
         }
 
         dir = dir.parent()?;
@@ -217,7 +218,9 @@ pub fn run_changed_strict(
             all_ok = false;
         }
 
-        let output_excerpt = if !success {
+        let output_excerpt = if success {
+            None
+        } else {
             // Combine stdout + stderr, cap at 20 lines
             let combined = format!(
                 "{}{}",
@@ -235,8 +238,6 @@ pub fn run_changed_strict(
                 lines.join("\n")
             };
             Some(excerpt)
-        } else {
-            None
         };
 
         package_results.push(PackageCheckResult {

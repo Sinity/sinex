@@ -7,10 +7,7 @@ use sinex_node_sdk::parser::{MaterialParser, ParserError};
 use sinex_primitives::{
     Uuid,
     ids::Id,
-    parser::{
-        MaterialAnchor, ParserContext,
-        SourceRecord, SourceUnitId,
-    },
+    parser::{MaterialAnchor, ParserContext, SourceRecord, SourceUnitId},
     temporal::Timestamp,
 };
 use sinex_source_worker::sources::ai_session::{ChatGptSessionParser, ClaudeSessionParser};

@@ -757,24 +757,26 @@ async fn check_foreign_key_actions(pool: &PgPool) -> Result<Vec<StrictDrift>, Ap
         };
 
         if let Some(delete_marker) = declared.expected_delete_action_marker
-            && !matching.contains(delete_marker) {
-                drifts.push(StrictDrift {
-                    category: DriftCategory::ForeignKeyAction,
-                    location: format!("{location} (ON DELETE)"),
-                    declared_summary: format!("contains `{delete_marker}`"),
-                    observed_summary: matching.clone(),
-                });
-            }
+            && !matching.contains(delete_marker)
+        {
+            drifts.push(StrictDrift {
+                category: DriftCategory::ForeignKeyAction,
+                location: format!("{location} (ON DELETE)"),
+                declared_summary: format!("contains `{delete_marker}`"),
+                observed_summary: matching.clone(),
+            });
+        }
 
         if let Some(update_marker) = declared.expected_update_action_marker
-            && !matching.contains(update_marker) {
-                drifts.push(StrictDrift {
-                    category: DriftCategory::ForeignKeyAction,
-                    location: format!("{location} (ON UPDATE)"),
-                    declared_summary: format!("contains `{update_marker}`"),
-                    observed_summary: matching.clone(),
-                });
-            }
+            && !matching.contains(update_marker)
+        {
+            drifts.push(StrictDrift {
+                category: DriftCategory::ForeignKeyAction,
+                location: format!("{location} (ON UPDATE)"),
+                declared_summary: format!("contains `{update_marker}`"),
+                observed_summary: matching.clone(),
+            });
+        }
     }
     Ok(drifts)
 }

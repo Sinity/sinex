@@ -96,7 +96,7 @@ pub fn default_match_rules() -> Vec<String> {
 
 impl DbusStreamConfig {
     /// Match rules to forward to the broker. Empty config -> defaults.
-    #[must_use] 
+    #[must_use]
     pub fn effective_match_rules(&self) -> Vec<String> {
         if self.match_rules.is_empty() {
             default_match_rules()
@@ -264,7 +264,7 @@ pub struct MockDbusBackend {
 }
 
 impl MockDbusBackend {
-    #[must_use] 
+    #[must_use]
     pub fn new(messages: Vec<DbusMessage>) -> Self {
         Self { messages }
     }
@@ -542,7 +542,7 @@ impl DbusStreamAdapter {
     ///
     /// Used by `InputShapeAdapter::open` after lifting a backend out of the
     /// adapter, and directly by tests that want to drive a mock stream.
-    #[must_use] 
+    #[must_use]
     pub fn open_with_backend(
         backend: Box<dyn DbusBackend + Send + Sync>,
         material_id: Id<SourceMaterial>,

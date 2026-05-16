@@ -191,9 +191,10 @@ fn dedup_sorted(v: Vec<String>) -> Vec<String> {
 /// 3. filename stem as fallback
 fn derive_title(fm: &serde_json::Value, path: &str) -> String {
     if let Some(title) = fm.get("title").and_then(|v| v.as_str())
-        && !title.trim().is_empty() {
-            return title.to_owned();
-        }
+        && !title.trim().is_empty()
+    {
+        return title.to_owned();
+    }
     if let Some(id) = fm.get("id").and_then(|v| v.as_str()) {
         // Dendron id: `area.subarea.note` — last segment is the note name.
         let stem = id.rsplit('.').next().unwrap_or(id);
@@ -203,9 +204,7 @@ fn derive_title(fm: &serde_json::Value, path: &str) -> String {
     }
     // Fallback: strip extension from the last path segment.
     let filename = path.rsplit('/').next().unwrap_or(path);
-    filename
-        .trim_end_matches(".md")
-        .replace(['-', '_'], " ")
+    filename.trim_end_matches(".md").replace(['-', '_'], " ")
 }
 
 // ---------------------------------------------------------------------------
@@ -363,29 +362,31 @@ fn pick_timestamp(
         .and_then(|v| v.as_array())
         .and_then(|arr| arr.last())
         .and_then(|v| v.as_str())
-        && let Some(ts) = parse_date(last_revised) {
-            return (
-                ts,
-                Some(last_revised.to_owned()),
-                TimingEvidence::Intrinsic {
-                    field: "revised".into(),
-                    confidence: TimingConfidence::Intrinsic,
-                },
-            );
-        }
+        && let Some(ts) = parse_date(last_revised)
+    {
+        return (
+            ts,
+            Some(last_revised.to_owned()),
+            TimingEvidence::Intrinsic {
+                field: "revised".into(),
+                confidence: TimingConfidence::Intrinsic,
+            },
+        );
+    }
 
     // Try `created`.
     if let Some(created) = fm.get("created").and_then(|v| v.as_str())
-        && let Some(ts) = parse_date(created) {
-            return (
-                ts,
-                Some(created.to_owned()),
-                TimingEvidence::Intrinsic {
-                    field: "created".into(),
-                    confidence: TimingConfidence::Intrinsic,
-                },
-            );
-        }
+        && let Some(ts) = parse_date(created)
+    {
+        return (
+            ts,
+            Some(created.to_owned()),
+            TimingEvidence::Intrinsic {
+                field: "created".into(),
+                confidence: TimingConfidence::Intrinsic,
+            },
+        );
+    }
 
     // Fall back to acquisition time.
     (ctx.acquisition_time, None, TimingEvidence::StagedAtFallback)

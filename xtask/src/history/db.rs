@@ -844,7 +844,7 @@ impl HistoryDb {
                 drop(db);
                 let backup_path = path.with_extension(format!("db.v{current_version}.bak"));
                 match std::fs::rename(path, &backup_path) {
-                    Ok(_) => eprintln!(
+                    Ok(()) => eprintln!(
                         "⚠️  History DB schema v{current_version} != v{HISTORY_DB_SCHEMA_VERSION}, \
                          renamed to {} and creating fresh DB",
                         backup_path.display()
@@ -1766,10 +1766,10 @@ impl HistoryDb {
                 }
 
                 // Zombie: alive but past the hard ceiling. Kill it.
-                if let Some(pid) = candidate.pid {
-                    if try_reap_zombie_pid(pid).is_ok() {
-                        reaped_zombies += 1;
-                    }
+                if let Some(pid) = candidate.pid
+                    && try_reap_zombie_pid(pid).is_ok()
+                {
+                    reaped_zombies += 1;
                 }
             }
 

@@ -312,7 +312,7 @@ impl StatusCommand {
 
                     let name = format!("{:width$}", signal.name, width = 8);
                     let message = signal.message.as_deref().unwrap_or("");
-                    println!("{}: {} {}", name, color, message);
+                    println!("{name}: {color} {message}");
                 }
 
                 for warning in &snapshot.warnings {
@@ -326,12 +326,11 @@ impl StatusCommand {
                     for (ing, verdict) in &stalled_units {
                         let last = ing
                             .last_output_at
-                            .map(|t| t.to_string())
-                            .unwrap_or_else(|| "never".to_string());
-                        let uptime = ing
-                            .started_at
-                            .map(|s| format!("{}s", (Timestamp::now() - s).whole_seconds()))
-                            .unwrap_or_else(|| "?".to_string());
+                            .map_or_else(|| "never".to_string(), |t| t.to_string());
+                        let uptime = ing.started_at.map_or_else(
+                            || "?".to_string(),
+                            |s| format!("{}s", (Timestamp::now() - s).whole_seconds()),
+                        );
                         println!(
                             "  {} {}  ({}, uptime {}, last_output {})",
                             style("●").yellow(),

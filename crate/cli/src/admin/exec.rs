@@ -42,7 +42,7 @@ pub fn pg_dump(database_url: &str, dump_path: &Path) -> Result<Vec<u8>> {
     Ok(output.stderr)
 }
 
-/// Query PostgreSQL for live row-count estimates (from `pg_stat_user_tables`).
+/// Query `PostgreSQL` for live row-count estimates (from `pg_stat_user_tables`).
 ///
 /// Uses `psql` with `-t` (tuples only) and `-A` (unaligned) to produce
 /// `schema.table|count` lines.  Returns a map of `"schema.table" → count`.
@@ -82,10 +82,10 @@ pub fn pg_row_counts(database_url: &str) -> Result<BTreeMap<String, i64>> {
         if line.is_empty() {
             continue;
         }
-        if let Some((table, count_str)) = line.split_once('|') {
-            if let Ok(count) = count_str.trim().parse::<i64>() {
-                map.insert(table.trim().to_string(), count);
-            }
+        if let Some((table, count_str)) = line.split_once('|')
+            && let Ok(count) = count_str.trim().parse::<i64>()
+        {
+            map.insert(table.trim().to_string(), count);
         }
     }
     Ok(map)
@@ -169,6 +169,7 @@ pub fn tar_verify(archive_path: &Path) -> Result<usize> {
 ///
 /// Returns the list of active unit names matching `sinex-*`.  If `systemctl`
 /// is not available (dev environment) returns an empty list.
+#[must_use]
 pub fn active_sinex_services() -> Vec<String> {
     let Ok(output) = Command::new("systemctl")
         .args([

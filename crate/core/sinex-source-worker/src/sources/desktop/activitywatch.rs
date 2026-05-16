@@ -212,12 +212,14 @@ impl MaterialParser for ActivityWatchParser {
         let data = row.get("data").cloned().unwrap_or(serde_json::Value::Null);
 
         let redact_title = |title: &str| -> String {
-            privacy::engine()
-                .ok().map_or_else(|| title.to_string(), |eng| {
+            privacy::engine().ok().map_or_else(
+                || title.to_string(),
+                |eng| {
                     eng.process(title, ProcessingContext::WindowTitle)
                         .text
                         .into_owned()
-                })
+                },
+            )
         };
 
         // Schema payloads (ActivityWatchWindowActivePayload, AfkChangedPayload,

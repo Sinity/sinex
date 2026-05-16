@@ -60,19 +60,19 @@ impl fmt::Debug for StreamHandle {
 
 impl StreamHandle {
     /// Get the material ID for this stream.
-    #[must_use] 
+    #[must_use]
     pub fn material_id(&self) -> Id<SourceMaterial> {
         self.inner.material_id
     }
 
     /// Get the current event count.
-    #[must_use] 
+    #[must_use]
     pub fn event_count(&self) -> u64 {
         self.inner.event_count.load(Ordering::SeqCst)
     }
 
     /// Check if this handle has been finalized.
-    #[must_use] 
+    #[must_use]
     pub fn is_finalized(&self) -> bool {
         self.inner.finalized.load(Ordering::SeqCst)
     }
@@ -165,7 +165,7 @@ impl fmt::Debug for StreamMaterialContext {
 
 impl StreamMaterialContext {
     /// Create a new streaming material context.
-    #[must_use] 
+    #[must_use]
     pub fn new() -> Self {
         Self {
             next_id: Arc::new(Mutex::new(0)),
@@ -202,7 +202,7 @@ impl StreamMaterialContext {
     }
 
     /// Check if any streams were dropped without finalization.
-    #[must_use] 
+    #[must_use]
     pub fn had_unfinalized_drops(&self) -> bool {
         self.dropped_unfinalized.load(Ordering::SeqCst)
     }

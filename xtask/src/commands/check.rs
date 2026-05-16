@@ -183,16 +183,16 @@ impl CheckCommand {
             let mut affected_pkgs = crate::affected::affected_packages()?;
 
             // --plan: supplement affected scope with planner recommendations (#1146)
-            if self.plan {
-                if let Ok(actions) = crate::planner::plan_next_actions() {
-                    let planner_pkgs = extract_packages_from_actions(&actions);
-                    for pkg in planner_pkgs {
-                        if !affected_pkgs.contains(&pkg) {
-                            if is_human {
-                                eprintln!("  ℹ Planner: adding {pkg} (recent failure context)");
-                            }
-                            affected_pkgs.push(pkg);
+            if self.plan
+                && let Ok(actions) = crate::planner::plan_next_actions()
+            {
+                let planner_pkgs = extract_packages_from_actions(&actions);
+                for pkg in planner_pkgs {
+                    if !affected_pkgs.contains(&pkg) {
+                        if is_human {
+                            eprintln!("  ℹ Planner: adding {pkg} (recent failure context)");
                         }
+                        affected_pkgs.push(pkg);
                     }
                 }
             }

@@ -117,7 +117,7 @@ pub struct SchemaBundle {
 }
 
 impl SchemaBundle {
-    #[must_use] 
+    #[must_use]
     pub fn new(mut entries: Vec<SchemaBundleEntry>) -> Self {
         entries.sort_by(|left, right| {
             (
@@ -139,12 +139,12 @@ impl SchemaBundle {
         &self.entries
     }
 
-    #[must_use] 
+    #[must_use]
     pub fn into_entries(self) -> Vec<SchemaBundleEntry> {
         self.entries
     }
 
-    #[must_use] 
+    #[must_use]
     pub fn into_schema_map(self) -> HashMap<(String, String, String), Value> {
         self.entries
             .into_iter()

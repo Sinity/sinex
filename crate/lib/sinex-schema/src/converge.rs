@@ -1038,7 +1038,7 @@ pub async fn converge_tables(pool: &PgPool, tables: &[ConvergibleTable]) -> Resu
 ///
 /// Used by `strict_diff::check_orphan_columns` to detect columns that exist in
 /// the live database but are absent from the source declaration.
-#[must_use] 
+#[must_use]
 pub fn declared_columns_for(ct: &ConvergibleTable) -> (Vec<String>, &[&'static str]) {
     let stmt = (ct.statement_fn)();
     let names = extract_column_names(&stmt);

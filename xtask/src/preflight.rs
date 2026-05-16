@@ -1355,9 +1355,10 @@ pub fn ensure_ready(ctx: &crate::command::CommandContext) -> Result<()> {
     //
     // Opt-out: SINEX_PREFLIGHT_SKIP_DISK_CHECK=1 (CI / unusual setups).
     if std::env::var("SINEX_PREFLIGHT_SKIP_DISK_CHECK").is_err() {
-        let target_dir = std::env::var("CARGO_TARGET_DIR")
-            .map(std::path::PathBuf::from)
-            .unwrap_or_else(|_| workspace_root().join("target"));
+        let target_dir = std::env::var("CARGO_TARGET_DIR").map_or_else(
+            |_| workspace_root().join("target"),
+            std::path::PathBuf::from,
+        );
         if let Ok(usage) = crate::cache_hygiene::disk_usage(&target_dir) {
             if usage.should_auto_reclaim() {
                 if is_interactive {

@@ -33,7 +33,7 @@ pub struct VerifyCommand {
 
     /// Cross-check every registered `SourceUnitDescriptor` against the
     /// `EventPayload` inventory: report orphan descriptor pairs (descriptor
-    /// declares a (source, event_type) with no matching payload) and
+    /// declares a (source, `event_type`) with no matching payload) and
     /// unclaimed payloads (payload has no `register_source_unit!` entry).
     ///
     /// Uses `docs/source-units.json` if present (xtask renders the manifest
@@ -203,6 +203,7 @@ impl VerifyCommand {
 
     /// Returns true when `--source-units` is the only request and the
     /// gateway-dependent checks should be skipped entirely.
+    #[must_use]
     pub fn is_source_units_only(&self) -> bool {
         self.source_units
             && !self.demo
@@ -496,34 +497,35 @@ struct SourceUnitsReport {
 
 fn build_source_units_report() -> SourceUnitsReport {
     let manifest_pairs = load_descriptor_pairs_from_manifest();
-    let (descriptor_count, declared_pairs, source_note) = match manifest_pairs {
-        Some((count, pairs)) => (
+    let (descriptor_count, declared_pairs, source_note) = if let Some((count, pairs)) =
+        manifest_pairs
+    {
+        (
             count,
             pairs,
             Some(format!(
                 "loaded from {MANIFEST_RELATIVE_PATH} (xtask-rendered manifest with full crate linkage)"
             )),
-        ),
-        None => {
-            let mut count = 0usize;
-            let mut pairs = BTreeSet::new();
-            for descriptor in proof::all_source_units() {
-                count += 1;
-                for (src, ty) in descriptor.event_types {
-                    pairs.insert(((*src).to_string(), (*ty).to_string()));
-                }
+        )
+    } else {
+        let mut count = 0usize;
+        let mut pairs = BTreeSet::new();
+        for descriptor in proof::all_source_units() {
+            count += 1;
+            for (src, ty) in descriptor.event_types {
+                pairs.insert(((*src).to_string(), (*ty).to_string()));
             }
-            let note = if count == 0 {
-                Some(
-                    "no manifest at docs/source-units.json and no descriptors compiled into this binary — descriptor coverage cannot be verified".to_string(),
-                )
-            } else {
-                Some(format!(
-                    "no manifest at {MANIFEST_RELATIVE_PATH}; falling back to {count} in-binary descriptor(s); node-crate descriptors will not be visible — run `xtask source-units check` for full coverage"
-                ))
-            };
-            (count, pairs, note)
         }
+        let note = if count == 0 {
+            Some(
+                "no manifest at docs/source-units.json and no descriptors compiled into this binary — descriptor coverage cannot be verified".to_string(),
+            )
+        } else {
+            Some(format!(
+                "no manifest at {MANIFEST_RELATIVE_PATH}; falling back to {count} in-binary descriptor(s); node-crate descriptors will not be visible — run `xtask source-units check` for full coverage"
+            ))
+        };
+        (count, pairs, note)
     };
 
     let mut payload_pairs: BTreeSet<(String, String)> = BTreeSet::new();
@@ -1618,12 +1620,10 @@ This file is regenerated on every run; do not edit by hand.\n\n",
     for step in steps {
         let expected = step
             .expectation_min
-            .map(|v| v.to_string())
-            .unwrap_or_else(|| "-".into());
+            .map_or_else(|| "-".into(), |v| v.to_string());
         let actual = step
             .actual
-            .map(|v| v.to_string())
-            .unwrap_or_else(|| "(error)".into());
+            .map_or_else(|| "(error)".into(), |v| v.to_string());
         let passed = if step.passed { "yes" } else { "no" };
         out.push_str(&format!(
             "| `{id}` | {description} | {expected} | {actual} | {passed} |\n",

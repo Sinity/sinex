@@ -1,7 +1,7 @@
 //! `sinexctl admin snapshot` — quiesce-mode backup of the complete sinex
 //! runtime state surface.
 //!
-//! Captures Postgres (via `pg_dump`), NATS JetStream state, the CAS blob
+//! Captures Postgres (via `pg_dump`), NATS `JetStream` state, the CAS blob
 //! repository, and remaining per-source-worker state files into a single
 //! zstd-compressed tar archive.
 
@@ -27,6 +27,7 @@ pub enum Component {
 }
 
 impl Component {
+    #[must_use]
     pub fn name(&self) -> &'static str {
         match self {
             Self::Postgres => "postgres",
@@ -36,6 +37,7 @@ impl Component {
         }
     }
 
+    #[must_use]
     pub fn all() -> Vec<Self> {
         vec![Self::Postgres, Self::Nats, Self::Cas, Self::State]
     }
@@ -118,11 +120,11 @@ pub struct AdminSnapshotCommand {
     #[arg(long)]
     pub dry_run: bool,
 
-    /// PostgreSQL connection URL (defaults to DATABASE_URL env var).
+    /// `PostgreSQL` connection URL (defaults to `DATABASE_URL` env var).
     #[arg(long, env = "DATABASE_URL")]
     pub database_url: Option<String>,
 
-    /// Sinex state directory root (defaults to SINEX_STATE_DIR, then /var/lib/sinex).
+    /// Sinex state directory root (defaults to `SINEX_STATE_DIR`, then /var/lib/sinex).
     #[arg(long, env = "SINEX_STATE_DIR")]
     pub state_dir: Option<PathBuf>,
 
@@ -265,7 +267,7 @@ impl AdminSnapshotCommand {
     ) -> Result<SnapshotResult> {
         let mut component_records: Vec<ComponentRecord> = Vec::new();
 
-        let component_set: BTreeSet<&str> = self.components.iter().map(|c| c.name()).collect();
+        let component_set: BTreeSet<&str> = self.components.iter().map(Component::name).collect();
 
         // 5–8. Capture each component.
         if component_set.contains("postgres") {
@@ -366,7 +368,7 @@ impl AdminSnapshotCommand {
         exec::tar_verify(&self.output)
             .with_context(|| format!("verify snapshot archive at {}", self.output.display()))?;
 
-        let archive_bytes = self.output.metadata().map(|m| m.len()).unwrap_or(0);
+        let archive_bytes = self.output.metadata().map_or(0, |m| m.len());
 
         // 12. Remove staging.
         staging.cleanup().context("remove staging directory")?;
@@ -404,7 +406,7 @@ impl AdminSnapshotCommand {
             (0u64, "dry-run".to_string())
         } else {
             exec::pg_dump(database_url, &dump_path).context("capture postgres component")?;
-            let bytes = dump_path.metadata().map(|m| m.len()).unwrap_or(0);
+            let bytes = dump_path.metadata().map_or(0, |m| m.len());
             let blake3 = blake3_file(&dump_path).unwrap_or_else(|_| "error".to_string());
             (bytes, blake3)
         };
@@ -552,8 +554,7 @@ fn current_rfc3339() -> String {
 
 fn hostname() -> String {
     std::fs::read_to_string("/etc/hostname")
-        .map(|s| s.trim().to_string())
-        .unwrap_or_else(|_| "unknown".to_string())
+        .map_or_else(|_| "unknown".to_string(), |s| s.trim().to_string())
 }
 
 fn git_sha() -> Option<String> {
@@ -581,7 +582,7 @@ fn estimate_dir_bytes(dir: &Path) -> u64 {
                 continue;
             }
             if p.is_file() {
-                total += p.metadata().map(|m| m.len()).unwrap_or(0);
+                total += p.metadata().map_or(0, |m| m.len());
             } else if p.is_dir() {
                 total += estimate_dir_bytes(&p);
             }
@@ -601,7 +602,7 @@ fn estimate_dir_bytes_skip(dir: &Path, skip: &[&str]) -> u64 {
             }
             let p = entry.path();
             if p.is_file() {
-                total += p.metadata().map(|m| m.len()).unwrap_or(0);
+                total += p.metadata().map_or(0, |m| m.len());
             } else if p.is_dir() {
                 total += estimate_dir_bytes(&p);
             }
@@ -638,7 +639,7 @@ fn free_bytes_at(_path: &Path) -> u64 {
             Err(_) => return u64::MAX,
         };
         let mut stat: libc::statvfs = unsafe { std::mem::zeroed() };
-        let rc = unsafe { libc::statvfs(path_cstr.as_ptr(), &mut stat) };
+        let rc = unsafe { libc::statvfs(path_cstr.as_ptr(), &raw mut stat) };
         if rc == 0 {
             (stat.f_bavail as u64) * (stat.f_bsize as u64)
         } else {
@@ -662,7 +663,7 @@ fn blake3_file(path: &Path) -> Result<String> {
 /// Compute a deterministic BLAKE3 summary over a directory tree.
 ///
 /// Strategy: sort all regular file paths lexicographically, hash each file's
-/// contents, then hash the concatenation of (relative_path + file_hash) pairs.
+/// contents, then hash the concatenation of (`relative_path` + `file_hash`) pairs.
 /// This gives a stable content-addressed fingerprint of the tree.
 fn blake3_dir(dir: &Path) -> Result<String> {
     let mut entries = collect_files_sorted(dir, dir);
@@ -740,6 +741,7 @@ fn format_bytes(bytes: u64) -> String {
 // ── Display ────────────────────────────────────────────────────────────────
 
 /// Render the snapshot result as a human-readable table string.
+#[must_use]
 pub fn format_snapshot_result(result: &SnapshotResult) -> String {
     let mut out = String::new();
     out.push_str("Sinex Snapshot\n");

@@ -229,7 +229,6 @@ impl PrivacyClass {
     }
 }
 
-
 impl std::str::FromStr for PrivacyClass {
     type Err = crate::SinexError;
 

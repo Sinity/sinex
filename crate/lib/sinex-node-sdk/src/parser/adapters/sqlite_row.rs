@@ -34,12 +34,10 @@ use crate::parser::{InputShapeAdapter, ParserError, ParserResult};
 ///    adapter is wired via `register_adapter_ingestor!`, where the adapter
 ///    is constructed via `Default` and the path arrives from the node's JSON
 ///    config at `initialize` time.
-#[derive(Debug, Clone)]
-#[derive(Default)]
+#[derive(Debug, Clone, Default)]
 pub struct SqliteRowAdapter {
     path: String,
 }
-
 
 impl SqliteRowAdapter {
     pub fn new(path: impl Into<String>) -> Self {

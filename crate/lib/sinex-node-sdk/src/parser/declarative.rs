@@ -313,7 +313,6 @@ pub enum TimestampFallback {
     Error,
 }
 
-
 /// Predicate for `#[suppress_if(field = "...")]`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SuppressPredicate {
@@ -414,7 +413,7 @@ pub struct StatefulDeclarativeParser {
 }
 
 impl StatefulDeclarativeParser {
-    #[must_use] 
+    #[must_use]
     pub fn new(spec: DeclarativeParserSpec) -> Self {
         Self {
             spec,
@@ -422,7 +421,7 @@ impl StatefulDeclarativeParser {
         }
     }
 
-    #[must_use] 
+    #[must_use]
     pub fn spec(&self) -> &DeclarativeParserSpec {
         &self.spec
     }
@@ -511,9 +510,10 @@ fn evaluate_inner(
 
         // --- Extension A: collect discriminator value ---
         if let Some(disc) = &spec.discriminator
-            && disc.field == field.name {
-                discriminator_value = Some(value_as_string(&coerced));
-            }
+            && disc.field == field.name
+        {
+            discriminator_value = Some(value_as_string(&coerced));
+        }
 
         let suppressed_by_predicate = match &field.suppress_if {
             Some(pred) => binding.is_truthy(&pred.binding_field),
@@ -526,10 +526,11 @@ fn evaluate_inner(
                 let mut decision =
                     FieldPrivacyDecision::suppressed_by_predicate(&field.name, ctx_priv);
                 if let Some(pred) = &field.suppress_if
-                    && pred.whole_event {
-                        decision = decision.into_whole_event_suppressor();
-                        whole_event_suppressed = true;
-                    }
+                    && pred.whole_event
+                {
+                    decision = decision.into_whole_event_suppressor();
+                    whole_event_suppressed = true;
+                }
                 field_privacy_log.push(decision);
                 None
             } else {
@@ -550,9 +551,10 @@ fn evaluate_inner(
             }
         } else if suppressed_by_predicate {
             if let Some(pred) = &field.suppress_if
-                && pred.whole_event {
-                    whole_event_suppressed = true;
-                }
+                && pred.whole_event
+            {
+                whole_event_suppressed = true;
+            }
             None
         } else {
             Some(coerced.clone())
@@ -560,9 +562,10 @@ fn evaluate_inner(
 
         // Timestamp derivation.
         if let Some(ts_spec) = &field.timestamp
-            && let Some(ts) = parse_timestamp(&coerced, ts_spec, &field.name, ctx)? {
-                ts_override = Some((ts, field.name.clone()));
-            }
+            && let Some(ts) = parse_timestamp(&coerced, ts_spec, &field.name, ctx)?
+        {
+            ts_override = Some((ts, field.name.clone()));
+        }
 
         // Occurrence key contribution.
         if field.occurrence_key {
@@ -571,9 +574,10 @@ fn evaluate_inner(
 
         // Add to payload unless skipped or suppressed.
         if !field.skip_payload
-            && let Some(v) = final_value {
-                payload.insert(field.name.clone(), v);
-            }
+            && let Some(v) = final_value
+        {
+            payload.insert(field.name.clone(), v);
+        }
     }
 
     if whole_event_suppressed {
@@ -685,7 +689,9 @@ fn decode_record(format: InputFormat, record: &SourceRecord) -> Result<DecodedRe
             Ok(DecodedRecord::Json(v))
         }
         InputFormat::TabSeparated => Ok(DecodedRecord::TabFields(
-            text.split('\t').map(std::string::ToString::to_string).collect(),
+            text.split('\t')
+                .map(std::string::ToString::to_string)
+                .collect(),
         )),
         InputFormat::RawLine => Ok(DecodedRecord::Line(text.to_string())),
     }

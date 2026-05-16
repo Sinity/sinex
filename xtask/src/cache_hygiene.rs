@@ -48,12 +48,15 @@ pub struct DiskUsage {
 }
 
 impl DiskUsage {
+    #[must_use]
     pub fn warn(&self) -> bool {
         self.percent_used >= WARN_PERCENT
     }
+    #[must_use]
     pub fn should_auto_reclaim(&self) -> bool {
         self.percent_used >= AUTO_RECLAIM_PERCENT
     }
+    #[must_use]
     pub fn refuse(&self) -> bool {
         self.percent_used >= REFUSE_PERCENT
     }

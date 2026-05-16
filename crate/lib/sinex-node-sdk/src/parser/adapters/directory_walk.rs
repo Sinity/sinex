@@ -81,7 +81,7 @@ pub struct DirectoryWalkCursor(pub BTreeMap<Utf8PathBuf, FileFingerprint>);
 
 impl DirectoryWalkCursor {
     /// Returns the stored fingerprint for `path`, if any.
-    #[must_use] 
+    #[must_use]
     pub fn get(&self, path: &Utf8Path) -> Option<&FileFingerprint> {
         self.0.get(path)
     }
@@ -189,9 +189,10 @@ impl DirectoryWalkAdapter {
 
             // Glob filter: test the full path string.
             if let Some(set) = globs
-                && !set.is_match(path.as_str()) {
-                    continue;
-                }
+                && !set.is_match(path.as_str())
+            {
+                continue;
+            }
 
             results.push(path);
         }

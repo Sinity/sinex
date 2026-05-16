@@ -652,9 +652,7 @@ fn parse_field_decl(field: &Field) -> syn::Result<FieldDecl> {
 
     // Fields with `carry.policy = ConsumeCarried` don't need a #[source] —
     // they pull from carry-state, not from the record bytes.
-    let needs_source = carry
-        .as_ref()
-        .is_none_or(|c| c.policy != "consume_carried");
+    let needs_source = carry.as_ref().is_none_or(|c| c.policy != "consume_carried");
     let source = if needs_source {
         Some(source.ok_or_else(|| {
             Error::new_spanned(
@@ -947,12 +945,16 @@ fn field_decl_to_token(d: &FieldDecl) -> syn::Result<TokenStream> {
         // Best-effort: try to parse as JSON, else wrap as string.
         quote!(Some(::serde_json::from_str::<::serde_json::Value>(#s)
             .unwrap_or_else(|_| ::serde_json::Value::String(#s.to_string()))))
-    } else { quote!(None) };
+    } else {
+        quote!(None)
+    };
 
     let privacy_token = if let Some(name) = &d.privacy_context {
         let tok = privacy_context_token(name)?;
         quote!(Some(_sdk_privacy::ProcessingContext::#tok))
-    } else { quote!(None) };
+    } else {
+        quote!(None)
+    };
 
     let timestamp_token = if let Some(ts) = &d.timestamp {
         let format_tok = timestamp_format_token(&ts.format)?;
@@ -975,7 +977,9 @@ fn field_decl_to_token(d: &FieldDecl) -> syn::Result<TokenStream> {
             format: _sdk_parser::TimestampFormat::#format_tok,
             fallback: #fallback_tok,
         }))
-    } else { quote!(None) };
+    } else {
+        quote!(None)
+    };
 
     let suppress_token = if let Some(s) = &d.suppress_if {
         let bf = &s.binding_field;
@@ -984,18 +988,26 @@ fn field_decl_to_token(d: &FieldDecl) -> syn::Result<TokenStream> {
             binding_field: #bf.into(),
             whole_event: #we,
         }))
-    } else { quote!(None) };
+    } else {
+        quote!(None)
+    };
 
     let carry_token = if let Some(c) = &d.carry {
         let policy_tok = carry_policy_token(&c.policy)?;
-        let from_carry_tok = if let Some(s) = &c.from_carry { quote!(Some(#s.to_string())) } else { quote!(None) };
+        let from_carry_tok = if let Some(s) = &c.from_carry {
+            quote!(Some(#s.to_string()))
+        } else {
+            quote!(None)
+        };
         let clear = c.clear_on_use;
         quote!(Some(_sdk_parser::CarrySpec {
             policy: #policy_tok,
             from_carry: #from_carry_tok,
             clear_on_use: #clear,
         }))
-    } else { quote!(None) };
+    } else {
+        quote!(None)
+    };
 
     Ok(quote!(_sdk_parser::FieldSpec {
         name: #name.into(),

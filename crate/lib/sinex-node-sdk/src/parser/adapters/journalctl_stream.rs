@@ -408,7 +408,7 @@ impl JournalctlSubscriber {
 ///
 /// This function mirrors what `open()` does to a stream of lines, so tests
 /// can exercise the record-building and cursor logic without a live systemd.
-#[must_use] 
+#[must_use]
 pub fn records_from_journal_lines(
     material_id: Id<SourceMaterial>,
     lines: &[&str],

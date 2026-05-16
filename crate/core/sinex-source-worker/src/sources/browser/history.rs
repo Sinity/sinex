@@ -129,9 +129,10 @@ fn extract_timestamp(obj: &serde_json::Map<String, serde_json::Value>) -> Option
         match v {
             serde_json::Value::Number(n) => {
                 if let Some(v) = n.as_i64()
-                    && let Some(ts) = parse_integer_timestamp(v) {
-                        return Some(ts);
-                    }
+                    && let Some(ts) = parse_integer_timestamp(v)
+                {
+                    return Some(ts);
+                }
             }
             serde_json::Value::String(s) => {
                 // Try RFC3339 via time crate (already a workspace dep).
@@ -139,14 +140,15 @@ fn extract_timestamp(obj: &serde_json::Map<String, serde_json::Value>) -> Option
                     time::OffsetDateTime::parse(s, &time::format_description::well_known::Rfc3339)
                     && let Some(ts) =
                         Timestamp::from_unix_timestamp_nanos(odt.unix_timestamp_nanos())
-                    {
-                        return Some(ts);
-                    }
+                {
+                    return Some(ts);
+                }
                 // Fallback: try parsing as integer string.
                 if let Ok(n) = s.trim().parse::<i64>()
-                    && let Some(ts) = parse_integer_timestamp(n) {
-                        return Some(ts);
-                    }
+                    && let Some(ts) = parse_integer_timestamp(n)
+                {
+                    return Some(ts);
+                }
             }
             _ => {}
         }
@@ -305,7 +307,10 @@ fn parse_sqlite_record(
 fn parse_qutebrowser_row(
     obj: &serde_json::Map<String, serde_json::Value>,
 ) -> ParserResult<VisitData> {
-    let row_id = obj.get("rowid").and_then(sinex_primitives::JsonValue::as_i64).unwrap_or(0);
+    let row_id = obj
+        .get("rowid")
+        .and_then(sinex_primitives::JsonValue::as_i64)
+        .unwrap_or(0);
     let url = obj
         .get("url")
         .and_then(|v| v.as_str())
@@ -316,8 +321,14 @@ fn parse_qutebrowser_row(
         .and_then(|v| v.as_str())
         .unwrap_or("")
         .to_string();
-    let atime = obj.get("atime").and_then(sinex_primitives::JsonValue::as_i64).unwrap_or(0);
-    let redirect = obj.get("redirect").and_then(sinex_primitives::JsonValue::as_i64).unwrap_or(0);
+    let atime = obj
+        .get("atime")
+        .and_then(sinex_primitives::JsonValue::as_i64)
+        .unwrap_or(0);
+    let redirect = obj
+        .get("redirect")
+        .and_then(sinex_primitives::JsonValue::as_i64)
+        .unwrap_or(0);
     let visit_time = parse_integer_timestamp(atime)
         .ok_or_else(|| ParserError::Parse(format!("invalid qutebrowser atime {atime}")))?;
     Ok(VisitData {
@@ -336,7 +347,10 @@ fn parse_qutebrowser_row(
 }
 
 fn parse_chromium_row(obj: &serde_json::Map<String, serde_json::Value>) -> ParserResult<VisitData> {
-    let row_id = obj.get("rowid").and_then(sinex_primitives::JsonValue::as_i64).unwrap_or(0);
+    let row_id = obj
+        .get("rowid")
+        .and_then(sinex_primitives::JsonValue::as_i64)
+        .unwrap_or(0);
     let url = obj
         .get("url")
         .and_then(|v| v.as_str())
@@ -347,13 +361,19 @@ fn parse_chromium_row(obj: &serde_json::Map<String, serde_json::Value>) -> Parse
         .and_then(|v| v.as_str())
         .unwrap_or("")
         .to_string();
-    let visit_time_raw = obj.get("visit_time").and_then(sinex_primitives::JsonValue::as_i64).unwrap_or(0);
+    let visit_time_raw = obj
+        .get("visit_time")
+        .and_then(sinex_primitives::JsonValue::as_i64)
+        .unwrap_or(0);
     let referrer = obj
         .get("external_referrer_url")
         .and_then(|v| v.as_str())
         .filter(|s| !s.is_empty())
         .map(String::from);
-    let transition_raw = obj.get("transition").and_then(sinex_primitives::JsonValue::as_i64).unwrap_or(0);
+    let transition_raw = obj
+        .get("transition")
+        .and_then(sinex_primitives::JsonValue::as_i64)
+        .unwrap_or(0);
     let visit_duration = obj
         .get("visit_duration")
         .and_then(sinex_primitives::JsonValue::as_i64)

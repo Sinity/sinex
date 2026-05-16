@@ -23,6 +23,7 @@ pub struct FormatCapability {
 
 impl FormatCapability {
     /// Construct a single-shot capability.
+    #[must_use]
     pub const fn single_shot(supported: &'static [OutputFormat]) -> Self {
         Self {
             supported,
@@ -32,6 +33,7 @@ impl FormatCapability {
     }
 
     /// Construct a streaming capability.
+    #[must_use]
     pub const fn streaming(supported: &'static [OutputFormat]) -> Self {
         Self {
             supported,
@@ -41,12 +43,14 @@ impl FormatCapability {
     }
 
     /// Attach a note.
+    #[must_use]
     pub const fn with_note(mut self, note: &'static str) -> Self {
         self.note = Some(note);
         self
     }
 
     /// Return `true` if `format` is in the supported set.
+    #[must_use]
     pub fn supports(&self, format: OutputFormat) -> bool {
         self.supported.contains(&format)
     }

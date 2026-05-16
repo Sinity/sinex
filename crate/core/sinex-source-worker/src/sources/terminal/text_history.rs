@@ -75,12 +75,10 @@ register_source_unit_binding! {
 pub struct TextHistoryParserConfig;
 
 /// Parser for generic plain-text history files.
-#[derive(Debug)]
-#[derive(Default)]
+#[derive(Debug, Default)]
 pub struct TextHistoryParser {
     dedup: ContentHashWindow,
 }
-
 
 #[async_trait]
 impl MaterialParser for TextHistoryParser {

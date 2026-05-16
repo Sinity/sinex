@@ -472,7 +472,7 @@ impl BlobMigrateCommand {
                         migrated_count += 1;
                         migrated_keys.push(MigratedKey {
                             annex_key: annex_key.clone(),
-                            cas_key: format!("would-migrate:{}", blake3_hash),
+                            cas_key: format!("would-migrate:{blake3_hash}"),
                             size_bytes: *size_bytes,
                         });
                     }

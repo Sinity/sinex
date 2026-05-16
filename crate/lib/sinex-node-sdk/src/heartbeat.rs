@@ -419,14 +419,13 @@ impl HeartbeatEmitter {
             let log_persistence_warn = warn_skipped.is_multiple_of(100);
 
             use sinex_db::DbPoolExt;
-            if self.node_name.is_none() && self.source_run_id.is_none()
-                && log_persistence_warn {
-                    warn!(
-                        service = %metrics.service_name,
-                        skipped = warn_skipped,
-                        "Heartbeat persistence is configured without a node identity; database heartbeat updates are disabled (rate-limited)"
-                    );
-                }
+            if self.node_name.is_none() && self.source_run_id.is_none() && log_persistence_warn {
+                warn!(
+                    service = %metrics.service_name,
+                    skipped = warn_skipped,
+                    "Heartbeat persistence is configured without a node identity; database heartbeat updates are disabled (rate-limited)"
+                );
+            }
             if let Some(node_name) = &self.node_name {
                 match pool
                     .state()

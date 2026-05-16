@@ -137,9 +137,10 @@ fn extract_year(stem: &str) -> Option<u16> {
             if before_ok && after_ok {
                 let s = std::str::from_utf8(slice).ok()?;
                 if let Ok(y) = s.parse::<u16>()
-                    && (1900..=2030).contains(&y) {
-                        return Some(y);
-                    }
+                    && (1900..=2030).contains(&y)
+                {
+                    return Some(y);
+                }
             }
         }
         i += 1;

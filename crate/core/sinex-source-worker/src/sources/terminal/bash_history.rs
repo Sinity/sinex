@@ -82,12 +82,10 @@ pub struct BashHistoryParserConfig;
 ///
 /// Each line is a raw command string. Maintains a [`ContentHashWindow`] to
 /// suppress re-emission of lines that appear after a file rotation.
-#[derive(Debug)]
-#[derive(Default)]
+#[derive(Debug, Default)]
 pub struct BashHistoryParser {
     dedup: ContentHashWindow,
 }
-
 
 #[async_trait]
 impl MaterialParser for BashHistoryParser {

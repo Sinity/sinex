@@ -40,12 +40,12 @@ pub struct CheckpointSnapshot {
 }
 
 impl CheckpointSnapshot {
-    #[must_use] 
+    #[must_use]
     pub fn requires_event_id(&self) -> bool {
         matches!(self.checkpoint_kind, CheckpointKind::Internal)
     }
 
-    #[must_use] 
+    #[must_use]
     pub fn supports_event_correlation(&self) -> bool {
         matches!(
             self.checkpoint_kind,
