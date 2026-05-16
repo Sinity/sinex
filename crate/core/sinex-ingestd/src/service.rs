@@ -421,7 +421,10 @@ impl IngestService {
                 .start_run(manifest_id, "sinex-ingestd", "default", &host, None, None)
                 .await
             {
-                Ok(_) => info!("Started ingestd run"),
+                Ok(run) => {
+                    info!(run_id = %run.id, "Started ingestd run");
+                    self.observer.set_source_run_id(run.id.to_uuid());
+                }
                 Err(e) => warn!(%e, "Failed to start ingestd run"),
             }
 

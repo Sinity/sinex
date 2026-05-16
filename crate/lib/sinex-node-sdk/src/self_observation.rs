@@ -44,7 +44,7 @@ use sinex_primitives::events::payloads::{
 use sinex_primitives::events::{Event, Provenance, SourceMaterial};
 use sinex_primitives::{Id, JsonValue, SinexError, Timestamp};
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
 use tracing::{debug, warn};
@@ -66,6 +66,9 @@ pub struct SelfObserver {
     metric_emissions: Arc<RwLock<HashMap<String, Instant>>>,
     /// Minimum interval between emissions (rate limiting)
     min_interval: Duration,
+    /// The `core.runs` row ID for this component instance, stamped on every emitted event.
+    /// Shared across clones via `Arc<OnceLock>` so it can be set once after DB registration.
+    source_run_id: Arc<OnceLock<sinex_primitives::Uuid>>,
 }
 
 impl std::fmt::Debug for SelfObserver {
@@ -162,6 +165,7 @@ impl SelfObserver {
             enabled,
             metric_emissions: Arc::new(RwLock::new(HashMap::new())),
             min_interval: min_emission_interval,
+            source_run_id: Arc::new(OnceLock::new()),
         }
     }
 
@@ -175,7 +179,18 @@ impl SelfObserver {
             enabled: false,
             metric_emissions: Arc::new(RwLock::new(HashMap::new())),
             min_interval: Duration::from_secs(1),
+            source_run_id: Arc::new(OnceLock::new()),
         }
+    }
+
+    /// Attach the `core.runs` row ID so every emitted event carries provenance
+    /// back to the specific process instance that emitted it.
+    ///
+    /// Can be called after construction (even after clones are taken) because
+    /// the backing `OnceLock` is shared across all clones. Subsequent calls are
+    /// silently ignored — the first write wins.
+    pub fn set_source_run_id(&self, run_id: sinex_primitives::Uuid) {
+        let _ = self.source_run_id.set(run_id);
     }
 
     /// Check if self-observation is enabled
@@ -357,7 +372,10 @@ impl SelfObserver {
             ))
             .build()
         {
-            Ok(event) => event.with_timestamp(ts_orig).with_host(host),
+            Ok(mut event) => {
+                event.source_run_id = self.source_run_id.get().copied();
+                event.with_timestamp(ts_orig).with_host(host)
+            }
             Err(error) => {
                 self.release_metric_slot(&metric_key).await;
                 return Err(SelfObservationError::Build(error));
@@ -905,6 +923,7 @@ mod tests {
             enabled: true,
             metric_emissions: Arc::new(RwLock::new(HashMap::new())),
             min_interval: Duration::from_secs(1),
+            source_run_id: Arc::new(OnceLock::new()),
         }
     }
 
