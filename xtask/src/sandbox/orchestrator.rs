@@ -52,9 +52,45 @@ impl Default for TestIngestdConfig {
     }
 }
 
+/// Configuration for a test `sinex-source-worker` instance.
+#[derive(Debug, Clone)]
+pub struct TestSourceWorkerConfig {
+    pub source_unit_id: String,
+    pub nats: sinex_primitives::nats::NatsConnectionConfig,
+    pub database_url: String,
+    pub work_dir: Option<std::path::PathBuf>,
+    pub namespace: Option<String>,
+    pub node_config: Option<String>,
+    pub service_name: Option<String>,
+}
+
+impl TestSourceWorkerConfig {
+    #[must_use]
+    pub fn new(source_unit_id: impl Into<String>) -> Self {
+        Self {
+            source_unit_id: source_unit_id.into(),
+            nats: sinex_primitives::nats::NatsConnectionConfig::default(),
+            database_url: crate::infra::stack::StackConfig::for_current_checkout().map_or_else(
+                |_| "postgresql:///sinex_test?host=/run/postgresql".to_string(),
+                |cfg| cfg.database_url(),
+            ),
+            work_dir: None,
+            namespace: None,
+            node_config: None,
+            service_name: None,
+        }
+    }
+}
+
 pub struct TestIngestdHandle {
     child: tokio::process::Child,
     pub stream_name: String,
+}
+
+/// Handle to a running test `sinex-source-worker` instance.
+pub struct TestSourceWorkerHandle {
+    child: tokio::process::Child,
+    pub source_unit_id: String,
 }
 
 async fn terminate_test_child(child: &mut tokio::process::Child, process_name: &str) -> Result<()> {
@@ -106,8 +142,39 @@ impl Drop for TestIngestdHandle {
     }
 }
 
+impl TestSourceWorkerHandle {
+    pub async fn stop(&mut self) -> Result<()> {
+        let stop_result = terminate_test_child(&mut self.child, "test source-worker").await;
+        let debug_log = source_worker_debug_log_path_for_test_process(&self.source_unit_id);
+        match std::fs::read_to_string(&debug_log) {
+            Ok(content) if content.is_empty() => eprintln!("📋 source-worker log: EMPTY"),
+            Ok(content) => {
+                let end = content.floor_char_boundary(3000);
+                let truncated = &content[..end];
+                eprintln!("📋 source-worker log ({} bytes):\n{truncated}", content.len());
+            }
+            Err(error) => eprintln!("📋 source-worker log unavailable: {error:#}"),
+        }
+        stop_result
+    }
+}
+
+impl Drop for TestSourceWorkerHandle {
+    fn drop(&mut self) {
+        let _ = self.child.start_kill();
+    }
+}
+
 pub(crate) fn ingestd_debug_log_path_for_test_process() -> PathBuf {
     PathBuf::from(format!("/tmp/sinex-ingestd-{}.log", std::process::id()))
+}
+
+pub(crate) fn source_worker_debug_log_path_for_test_process(source_unit_id: &str) -> PathBuf {
+    let safe_unit = source_unit_id.replace(['/', ':'], "_");
+    PathBuf::from(format!(
+        "/tmp/sinex-source-worker-{safe_unit}-{}.log",
+        std::process::id()
+    ))
 }
 
 pub(crate) fn read_ingestd_debug_log(path: &std::path::Path) -> Result<Option<String>> {
@@ -503,6 +570,16 @@ pub(crate) fn runtime_binary_path(workspace_root: &std::path::Path, binary_name:
         .join(binary_name)
 }
 
+/// Return the expected `sinex-source-worker` binary path for this workspace.
+///
+/// This mirrors the runtime-binary path convention used by gateway and ingestd
+/// launchers while giving production-path tests a source-worker-specific
+/// public helper.
+#[must_use]
+pub fn source_worker_binary_path(workspace_root: &std::path::Path) -> PathBuf {
+    runtime_binary_path(workspace_root, "sinex-source-worker")
+}
+
 pub(crate) fn check_runtime_binary_freshness(
     workspace_root: &std::path::Path,
     package: &str,
@@ -700,6 +777,114 @@ fn system_time_epoch_secs(time: Option<SystemTime>) -> Option<u64> {
         .map(|duration| duration.as_secs())
 }
 
+pub async fn start_test_source_worker(
+    config: TestSourceWorkerConfig,
+    ctx: Option<&crate::sandbox::context::Sandbox>,
+) -> Result<TestSourceWorkerHandle> {
+    let workspace_root = find_workspace_root()?;
+    let freshness = check_runtime_binary_freshness(
+        &workspace_root,
+        "sinex-source-worker",
+        "sinex-source-worker",
+    )?;
+    if let Some(sandbox) = ctx {
+        sandbox.record_evidence_event(
+            "runtime_binary.freshness",
+            "checked runtime binary freshness before launching test source-worker",
+            freshness.to_json(),
+        );
+    }
+    freshness.ensure_fresh()?;
+    let binary_path = freshness.binary_path.clone();
+
+    let debug_log = source_worker_debug_log_path_for_test_process(&config.source_unit_id);
+    let notify_socket_path = notify_socket_path("sw")?;
+    let _ = std::fs::remove_file(&notify_socket_path);
+    let notify_listener = UnixDatagram::bind(&notify_socket_path)
+        .wrap_err_with(|| format!("failed to bind {}", notify_socket_path.display()))?;
+
+    let log_file = std::fs::File::create(&debug_log)
+        .wrap_err_with(|| format!("failed to create {}", debug_log.display()))?;
+    let log_file_for_stderr = log_file
+        .try_clone()
+        .wrap_err_with(|| format!("failed to clone {}", debug_log.display()))?;
+
+    let mut cmd = Command::new(&binary_path);
+    crate::process::configure_managed_child_tokio(&mut cmd);
+    cmd.args([
+        "--source-unit",
+        &config.source_unit_id,
+        "--runner-pack",
+        "source-worker",
+    ]);
+    cmd.env("DATABASE_URL", &config.database_url);
+    cmd.env("SINEX_NATS_URL", &config.nats.url);
+    cmd.env("SINEX_SOURCE_UNIT", &config.source_unit_id);
+    cmd.env("SINEX_RUNNER_PACK", "source-worker");
+    if config.nats.require_tls {
+        cmd.env("SINEX_NATS_REQUIRE_TLS", "true");
+    }
+    if let Some(ca) = &config.nats.ca_cert {
+        cmd.env("SINEX_NATS_CA_CERT", ca);
+    }
+    if let Some(cert) = &config.nats.client_cert {
+        cmd.env("SINEX_NATS_CLIENT_CERT", cert);
+    }
+    if let Some(key) = &config.nats.client_key {
+        cmd.env("SINEX_NATS_CLIENT_KEY", key);
+    }
+    if let Some(ns) = &config.namespace {
+        cmd.env("SINEX_NAMESPACE", ns);
+    }
+    if let Some(wd) = &config.work_dir {
+        cmd.arg("--work-dir").arg(wd);
+    }
+    if let Some(service_name) = &config.service_name {
+        cmd.arg("--service-name").arg(service_name);
+    }
+    if let Some(node_config) = &config.node_config {
+        cmd.arg("--node-config").arg(node_config);
+    }
+    cmd.env("NOTIFY_SOCKET", &notify_socket_path);
+    cmd.arg("service");
+    cmd.stdin(Stdio::null())
+        .stdout(Stdio::from(log_file))
+        .stderr(Stdio::from(log_file_for_stderr))
+        .kill_on_drop(true);
+
+    let mut child = cmd.spawn()?;
+    crate::process::register_tokio_child_process_group(&child, "sandbox source-worker");
+
+    if let Some(sandbox) = ctx
+        && sandbox.nats_handle().is_ok()
+        && let Err(error) = wait_for_ready_notify(
+            "sinex-source-worker",
+            &notify_listener,
+            &mut child,
+            Duration::from_secs(Timeouts::STANDARD),
+        )
+        .await
+    {
+        let _ = std::fs::remove_file(&notify_socket_path);
+        let mut handle = TestSourceWorkerHandle {
+            child,
+            source_unit_id: config.source_unit_id,
+        };
+        if let Err(stop_error) = handle.stop().await {
+            return Err(error).wrap_err(format!(
+                "source-worker failed to become ready and cleanup failed: {stop_error:#}"
+            ));
+        }
+        return Err(error).wrap_err("source-worker failed to become ready");
+    }
+    let _ = std::fs::remove_file(&notify_socket_path);
+
+    Ok(TestSourceWorkerHandle {
+        child,
+        source_unit_id: config.source_unit_id,
+    })
+}
+
 pub async fn start_test_ingestd_with_config(
     config: TestIngestdConfig,
     ctx: Option<&crate::sandbox::context::Sandbox>,
@@ -829,6 +1014,26 @@ mod tests {
         fs::write(path, content)?;
         let file = fs::OpenOptions::new().write(true).open(path)?;
         file.set_times(std::fs::FileTimes::new().set_modified(modified_at))?;
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn source_worker_binary_path_uses_runtime_target_dir() -> TestResult<()> {
+        let tempdir = tempfile::tempdir()?;
+        let path = source_worker_binary_path(tempdir.path());
+
+        assert!(path.ends_with("sinex-source-worker"));
+        assert!(path.starts_with(crate::orchestrator::get_target_dir(tempdir.path())));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn source_worker_debug_log_path_includes_sanitized_unit() -> TestResult<()> {
+        let path = source_worker_debug_log_path_for_test_process("browser.history:test");
+        let rendered = path.display().to_string();
+
+        assert!(rendered.contains("browser.history_test"));
+        assert!(!rendered.contains(':'));
         Ok(())
     }
 
