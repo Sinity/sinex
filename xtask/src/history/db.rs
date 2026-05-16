@@ -978,6 +978,8 @@ impl HistoryDb {
                 duration_secs REAL,
                 exit_code INTEGER,
                 status TEXT NOT NULL DEFAULT 'running',
+                cancel_reason TEXT,
+                cancelled_by TEXT,
                 host TEXT NOT NULL,
                 cwd TEXT NOT NULL,
                 pid INTEGER,
@@ -1275,6 +1277,8 @@ impl HistoryDb {
         self.ensure_column_exists("invocations", "host_io_pressure_full_avg10_max", "REAL")?;
         self.ensure_column_exists("invocations", "host_memory_pressure_some_avg10_max", "REAL")?;
         self.ensure_column_exists("invocations", "host_memory_pressure_full_avg10_max", "REAL")?;
+        self.ensure_column_exists("invocations", "cancel_reason", "TEXT")?;
+        self.ensure_column_exists("invocations", "cancelled_by", "TEXT")?;
         self.ensure_column_exists("invocations", "shm_free_min_mb", "REAL")?;
         self.ensure_column_exists("invocations", "shm_used_max_mb", "REAL")?;
         self.ensure_column_exists("invocations", "process_count_max", "INTEGER")?;
@@ -1433,6 +1437,59 @@ impl HistoryDb {
         })?;
 
         Ok(())
+    }
+
+    /// Finish a cancelled invocation and record why it was cancelled.
+    pub fn finish_invocation_cancelled(
+        &self,
+        id: i64,
+        exit_code: Option<i32>,
+        duration_secs: f64,
+        cancel_reason: &str,
+        cancelled_by: &str,
+    ) -> Result<()> {
+        let finished_at = Timestamp::now().format_rfc3339();
+
+        with_sqlite_lock_retry("finish cancelled invocation history row", || {
+            self.conn.execute(
+                r"
+                UPDATE invocations
+                SET finished_at = ?1,
+                    duration_secs = ?2,
+                    exit_code = ?3,
+                    status = 'cancelled',
+                    cancel_reason = ?4,
+                    cancelled_by = ?5
+                WHERE id = ?6
+                ",
+                params![
+                    finished_at,
+                    duration_secs,
+                    exit_code,
+                    cancel_reason,
+                    cancelled_by,
+                    id
+                ],
+            )?;
+            Ok(())
+        })?;
+
+        Ok(())
+    }
+
+    /// Return cancellation metadata for an invocation, when present.
+    pub fn get_invocation_cancel_metadata(
+        &self,
+        id: i64,
+    ) -> Result<Option<(Option<String>, Option<String>)>> {
+        self.conn
+            .query_row(
+                "SELECT cancel_reason, cancelled_by FROM invocations WHERE id = ?1",
+                params![id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()
+            .context("failed to read invocation cancellation metadata")
     }
 
     /// Record timing for a pipeline stage (fmt, clippy, forbidden, compile, preflight).
@@ -1748,7 +1805,8 @@ impl HistoryDb {
         }
 
         let stale_candidates = self.stale_invocation_candidates()?;
-        let mut cancelled_invocation_ids = Vec::new();
+        let mut stale_invocation_ids = Vec::new();
+        let mut zombie_invocation_ids = Vec::new();
         let mut orphaned_background_job_ids = HashSet::new();
         let mut reaped_zombies = 0usize;
 
@@ -1771,9 +1829,10 @@ impl HistoryDb {
                 {
                     reaped_zombies += 1;
                 }
+                zombie_invocation_ids.push(candidate.invocation_id);
+            } else {
+                stale_invocation_ids.push(candidate.invocation_id);
             }
-
-            cancelled_invocation_ids.push(candidate.invocation_id);
             if let Some(background_job_id) = candidate.background_job_id {
                 orphaned_background_job_ids.insert(background_job_id);
             }
@@ -1785,7 +1844,17 @@ impl HistoryDb {
             );
         }
 
-        let cleaned = self.mark_stale_invocations_cancelled(&cancelled_invocation_ids)?;
+        let stale_cleaned = self.mark_stale_invocations_cancelled(
+            &stale_invocation_ids,
+            "stale_pid",
+            "open_time_sweep",
+        )?;
+        let zombie_cleaned = self.mark_stale_invocations_cancelled(
+            &zombie_invocation_ids,
+            "zombie_reaped",
+            "open_time_sweep",
+        )?;
+        let cleaned = stale_cleaned + zombie_cleaned;
         if cleaned > 0 {
             eprintln!(
                 "ℹ️  Cleaned up {cleaned} stale 'running' invocation(s) older than 10 minutes"
@@ -1851,7 +1920,12 @@ impl HistoryDb {
             .context("failed to collect stale invocation candidates")
     }
 
-    fn mark_stale_invocations_cancelled(&self, invocation_ids: &[i64]) -> Result<usize> {
+    fn mark_stale_invocations_cancelled(
+        &self,
+        invocation_ids: &[i64],
+        cancel_reason: &str,
+        cancelled_by: &str,
+    ) -> Result<usize> {
         if invocation_ids.is_empty() {
             return Ok(0);
         }
@@ -1868,15 +1942,20 @@ impl HistoryDb {
                 UPDATE invocations
                 SET status = 'cancelled',
                     finished_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now'),
-                    duration_secs = (julianday('now') - julianday(started_at)) * 86400
+                    duration_secs = (julianday('now') - julianday(started_at)) * 86400,
+                    cancel_reason = ?1,
+                    cancelled_by = ?2
                 WHERE id IN ({})
                   AND status IN ('running', 'pending')
                 ",
                 placeholders.join(",")
             );
+            let params = std::iter::once(&cancel_reason as &dyn rusqlite::ToSql)
+                .chain(std::iter::once(&cancelled_by as &dyn rusqlite::ToSql))
+                .chain(chunk.iter().map(|id| id as &dyn rusqlite::ToSql));
             total_cancelled += self
                 .conn
-                .execute(&sql, rusqlite::params_from_iter(chunk.iter()))
+                .execute(&sql, rusqlite::params_from_iter(params))
                 .context("failed to mark stale invocations as cancelled")?;
         }
         Ok(total_cancelled)
@@ -4675,6 +4754,40 @@ mod tests {
         assert_eq!(
             background_status, "orphaned",
             "dead background job handles should be marked orphaned on open"
+        );
+        let (cancel_reason, cancelled_by): (String, String) = reopened.conn.query_row(
+            "SELECT cancel_reason, cancelled_by FROM invocations WHERE id = ?1",
+            params![invocation_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        assert_eq!(cancel_reason, "stale_pid");
+        assert_eq!(cancelled_by, "open_time_sweep");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_finish_invocation_cancelled_records_reason_metadata() -> TestResult<()> {
+        let dir = tempdir()?;
+        let db_path = dir.path().join("test-history-cancel-metadata.db");
+        let db = HistoryDb::open(&db_path)?;
+        let invocation_id = db.start_invocation("test", None, None, None)?;
+
+        db.finish_invocation_cancelled(
+            invocation_id,
+            Some(124),
+            42.0,
+            "watchdog_timeout",
+            "watchdog",
+        )?;
+
+        let invocation = db
+            .get_invocation_full(invocation_id)?
+            .ok_or_else(|| color_eyre::eyre::eyre!("missing cancelled invocation"))?;
+        assert_eq!(invocation.invocation.status, InvocationStatus::Cancelled);
+        assert_eq!(invocation.invocation.exit_code, Some(124));
+        assert_eq!(
+            db.get_invocation_cancel_metadata(invocation_id)?,
+            Some((Some("watchdog_timeout".into()), Some("watchdog".into())))
         );
         Ok(())
     }

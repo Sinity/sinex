@@ -730,7 +730,7 @@ impl JobManager {
             // Update both the job handle and the invocation record.
             let db = self.db.lock().map_err(|_| eyre!("db lock poisoned"))?;
             if let Some(inv_id) = job.invocation_id {
-                db.finish_invocation(inv_id, InvocationStatus::Cancelled, None, 0.0)
+                db.finish_invocation_cancelled(inv_id, None, 0.0, "user_cancel", "user")
                     .with_context(|| {
                         format!("failed to finish cancelled invocation {inv_id} in history DB")
                     })?;
@@ -1252,6 +1252,10 @@ mod tests {
             .ok_or_else(|| eyre!("missing invocation after cancellation"))?;
         assert_eq!(invocation.invocation.status, InvocationStatus::Cancelled);
         assert!(invocation.invocation.finished_at.is_some());
+        assert_eq!(
+            db.get_invocation_cancel_metadata(invocation_id)?,
+            Some((Some("user_cancel".into()), Some("user".into())))
+        );
 
         let job = db
             .get_background_job_by_id(job_id)?
