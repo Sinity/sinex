@@ -9,14 +9,7 @@
 //! Key extraction is caller-supplied. The checkpoint stores keys as a
 //! `BTreeSet<K>` so the JSON encoding is stable and diffable.
 
-use std::{
-    collections::BTreeSet,
-    error::Error,
-    fmt,
-    future::Future,
-    hash::Hash,
-    sync::Arc,
-};
+use std::{collections::BTreeSet, error::Error, fmt, future::Future, hash::Hash, sync::Arc};
 
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use tokio::sync::Mutex;

@@ -245,8 +245,11 @@ impl GatewayAuth {
             }
             Err(error) => {
                 error!(
-                    "Failed to read token file {:?} after modification: {}",
-                    path, error
+                    target: "sinex_metrics",
+                    metric = "gateway.token_file_watch_failures_total",
+                    path = ?path,
+                    error = %error,
+                    "Failed to read token file after modification"
                 );
             }
         }
@@ -328,9 +331,10 @@ impl GatewayAuth {
                                         // allowing unauthenticated access. If the file is recreated,
                                         // the Create/Modify handler will reload it.
                                         error!(
-                                            "RPC token file {:?} deleted! Keeping last valid token. \
-                                               Re-create the file to update the token.",
-                                            path_for_closure
+                                            target: "sinex_metrics",
+                                            metric = "gateway.token_file_watch_failures_total",
+                                            path = ?path_for_closure,
+                                            "RPC token file deleted! Keeping last valid token. Re-create the file to update the token."
                                         );
                                     }
                                     _ => {
@@ -339,7 +343,12 @@ impl GatewayAuth {
                                 }
                             }
                             Err(e) => {
-                                error!("Token file watch error: {}", e);
+                                error!(
+                                    target: "sinex_metrics",
+                                    metric = "gateway.token_file_watch_failures_total",
+                                    error = %e,
+                                    "Token file watch error"
+                                );
                             }
                         }
                     },
@@ -353,7 +362,12 @@ impl GatewayAuth {
                             Err(eyre!("Failed to create file watcher: {e}")),
                             "create",
                         );
-                        error!("Failed to create file watcher: {}", e);
+                        error!(
+                            target: "sinex_metrics",
+                            metric = "gateway.token_file_watch_failures_total",
+                            error = %e,
+                            "Failed to create file watcher"
+                        );
                         return;
                     }
                 };
@@ -364,7 +378,13 @@ impl GatewayAuth {
                         Err(eyre!("Failed to watch token file {:?}: {e}", path_clone)),
                         "watch",
                     );
-                    error!("Failed to watch token file {:?}: {}", path_clone, e);
+                    error!(
+                        target: "sinex_metrics",
+                        metric = "gateway.token_file_watch_failures_total",
+                        path = ?path_clone,
+                        error = %e,
+                        "Failed to watch token file"
+                    );
                     return;
                 }
 
@@ -992,7 +1012,7 @@ async fn handle_rpc(
             &request.method,
             AccessOutcome::InvalidRequest,
             Some(&auth_context),
-            Some(&detail),
+            Some(detail),
         );
         emit_rpc_call_audit(
             &state,
@@ -1049,6 +1069,8 @@ async fn handle_rpc(
             let error_id = Uuid::now_v7();
             state.metrics.record_request_rejected();
             error!(
+                target: "sinex_metrics",
+                metric = "gateway.rpc_method_failures_total",
                 error_id = %error_id,
                 method = %method,
                 error = %err,
@@ -1255,7 +1277,7 @@ async fn handle_rpc_batch(
                 &request.method,
                 AccessOutcome::InvalidRequest,
                 Some(&auth_context),
-                Some(&detail),
+                Some(detail),
             );
             emit_rpc_call_audit(
                 &state,
@@ -1306,6 +1328,8 @@ async fn handle_rpc_batch(
                 state.metrics.record_request_rejected();
                 let error_id = Uuid::now_v7();
                 error!(
+                    target: "sinex_metrics",
+                    metric = "gateway.rpc_method_failures_total",
                     error_id = %error_id,
                     method = %method,
                     error = %err,
@@ -1598,7 +1622,7 @@ where
     let cors = if cors_origins.is_empty() {
         CorsLayer::new()
             .allow_origin(AllowOrigin::predicate(|origin, _| {
-                origin.to_str().is_ok_and(|s| is_localhost_origin(s))
+                origin.to_str().is_ok_and(is_localhost_origin)
             }))
             .allow_methods([Method::POST, Method::GET, Method::OPTIONS])
             .allow_headers([header::CONTENT_TYPE, header::AUTHORIZATION])
@@ -2004,11 +2028,23 @@ impl RpcServer {
                                 let service = TowerToHyperService::new(app_clone);
                                 let io = TokioIo::new(tls_stream);
                                 if let Err(err) = builder.serve_connection(io, service).await {
-                                    error!(?err, "TLS RPC connection from {:?} closed with error", peer);
+                                    error!(
+                                        target: "sinex_metrics",
+                                        metric = "gateway.tls_failures_total",
+                                        peer = ?peer,
+                                        ?err,
+                                        "TLS RPC connection closed with error"
+                                    );
                                 }
                             }
                             Err(err) => {
-                                error!(?err, "TLS handshake failed for {:?}", peer);
+                                error!(
+                                    target: "sinex_metrics",
+                                    metric = "gateway.tls_failures_total",
+                                    peer = ?peer,
+                                    ?err,
+                                    "TLS handshake failed"
+                                );
                             }
                         }
                     });

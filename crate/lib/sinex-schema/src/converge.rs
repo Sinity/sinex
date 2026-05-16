@@ -25,7 +25,7 @@
 //!    declared nullability diverges from the live DB, emits
 //!    `ALTER COLUMN … SET NOT NULL` or `DROP NOT NULL`. `SET NOT NULL` fails
 //!    loudly if any row contains NULL, forcing explicit data migration.
-//!    Generated columns are excluded — PostgreSQL manages their nullability.
+//!    Generated columns are excluded — `PostgreSQL` manages their nullability.
 //!
 //! 5. **Named constraint convergence** — compares declared named CHECK constraints
 //!    against `pg_constraint`. Missing constraints are added with `NOT VALID` and
@@ -68,8 +68,8 @@ use std::collections::{HashMap, HashSet};
 use crate::apply::ApplyError;
 use crate::schema::{
     Blobs, EmbeddingCache, EmbeddingModels, Entities, EntityRelations, EventAnnotations,
-    EventEmbeddings, EventPayloadSchemas, Events, OperationsLog,
-    SourceMaterialRegistry, TableMeta, TaggedItems, Tags,
+    EventEmbeddings, EventPayloadSchemas, Events, OperationsLog, SourceMaterialRegistry, TableMeta,
+    TaggedItems, Tags,
 };
 use sea_query::{
     Alias, ColumnDef, ColumnSpec, ForeignKeyCreateStatement, PostgresQueryBuilder, Table,
@@ -163,7 +163,7 @@ fn col_is_generated(col: &ColumnDef) -> bool {
 ///
 /// A column is NOT NULL when it carries `ColumnSpec::NotNull` and no
 /// `ColumnSpec::Null` spec overrides it (later spec wins, matching sea-query's
-/// own rendering logic), or when it is an inline primary key. PostgreSQL
+/// own rendering logic), or when it is an inline primary key. `PostgreSQL`
 /// primary keys imply `NOT NULL`; convergence must not try to drop that
 /// database-enforced nullability just because the column lacks an explicit
 /// `NOT NULL` spec.
@@ -183,7 +183,7 @@ fn col_is_not_null(col: &ColumnDef) -> bool {
 
 /// Extracts `(column_name, is_not_null)` pairs from a `TableCreateStatement`.
 ///
-/// Generated columns are excluded: PostgreSQL manages their nullability
+/// Generated columns are excluded: `PostgreSQL` manages their nullability
 /// internally (they are always NOT NULL when the expression is non-null).
 /// Attempting `ALTER COLUMN … SET NOT NULL` on a generated column is an error,
 /// so we must not emit it.
@@ -800,13 +800,11 @@ pub fn convergible_tables() -> Result<Vec<ConvergibleTable>, ApplyError> {
                     // JSON null — and a CHECK that evaluates to NULL passes
                     // in PostgreSQL. The earlier `? 'kind'` rejected only the
                     // missing-key case.
-                    expression:
-                        "coverage_contract IS NULL OR (jsonb_typeof(coverage_contract) = 'object' AND (coverage_contract->>'kind') IS NOT NULL AND (coverage_contract->>'kind') IN ('Continuous', 'PeriodicDump', 'OpportunisticImport', 'FiniteOneShot', 'EphemeralStream', 'Unknown'))",
+                    expression: "coverage_contract IS NULL OR (jsonb_typeof(coverage_contract) = 'object' AND (coverage_contract->>'kind') IS NOT NULL AND (coverage_contract->>'kind') IN ('Continuous', 'PeriodicDump', 'OpportunisticImport', 'FiniteOneShot', 'EphemeralStream', 'Unknown'))",
                 },
                 NamedConstraint {
                     name: "source_material_registry_privacy_class_check",
-                    expression:
-                        "privacy_class IN ('public', 'personal', 'secret', 'redacted', 'unknown')",
+                    expression: "privacy_class IN ('public', 'personal', 'secret', 'redacted', 'unknown')",
                 },
             ],
             foreign_keys: vec![],
@@ -1040,6 +1038,7 @@ pub async fn converge_tables(pool: &PgPool, tables: &[ConvergibleTable]) -> Resu
 ///
 /// Used by `strict_diff::check_orphan_columns` to detect columns that exist in
 /// the live database but are absent from the source declaration.
+#[must_use]
 pub fn declared_columns_for(ct: &ConvergibleTable) -> (Vec<String>, &[&'static str]) {
     let stmt = (ct.statement_fn)();
     let names = extract_column_names(&stmt);

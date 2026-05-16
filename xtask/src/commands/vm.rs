@@ -737,7 +737,7 @@ async fn run_single_vm_test(
                     None => summary_stream_open = false,
                 }
             }
-            _ = &mut poll_fut => {
+            () = &mut poll_fut => {
                 match child.try_wait() {
                     Ok(Some(status)) => {
                         if status.success() {
@@ -756,7 +756,7 @@ async fn run_single_vm_test(
                     }
                 }
             }
-            _ = &mut timeout_fut => {
+            () = &mut timeout_fut => {
                 timed_out = true;
                 let cleanup_summary = if let Err(error) = terminate_vm_test_process_tree(&mut child).await {
                     format!("Timed-out VM test cleanup failed: {error:#}")

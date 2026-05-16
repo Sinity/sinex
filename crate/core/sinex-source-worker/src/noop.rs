@@ -5,6 +5,7 @@
 //! without depending on external ingestor crates. Real source units follow the
 //! same pattern with actual ingestion logic.
 
+use crate::register_node_factory;
 use serde::{Deserialize, Serialize};
 use sinex_node_sdk::{
     IngestorNode, NodeResult,
@@ -17,7 +18,6 @@ use sinex_primitives::proof::{
     SourceUnitBinding, SourceUnitBuildImpact, SourceUnitDescriptor, SubjectRef,
 };
 use sinex_primitives::{register_source_unit, register_source_unit_binding};
-use crate::register_node_factory;
 use std::collections::HashMap;
 use std::time::Instant;
 use tokio::sync::watch;
@@ -74,7 +74,7 @@ impl IngestorNode for NoopSourceUnit {
     type Config = serde_json::Value;
     type State = NoopState;
 
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "noop"
     }
 

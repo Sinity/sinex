@@ -23,8 +23,7 @@ use super::{FixtureBinding, FixtureHandle};
 ///
 /// Returns an error if the socket cannot be bound.
 pub async fn build(data: &[u8]) -> Result<FixtureHandle, String> {
-    let dir = TempDir::new()
-        .map_err(|e| format!("failed to create unix socket temp dir: {e}"))?;
+    let dir = TempDir::new().map_err(|e| format!("failed to create unix socket temp dir: {e}"))?;
     let socket_path: PathBuf = dir.path().join("fixture.sock");
 
     let listener = UnixListener::bind(&socket_path)
@@ -40,5 +39,8 @@ pub async fn build(data: &[u8]) -> Result<FixtureHandle, String> {
         // After serving once, the listener goes out of scope.
     });
 
-    Ok(FixtureHandle::with_resource(FixtureBinding::UnixSocketPath(socket_path), dir))
+    Ok(FixtureHandle::with_resource(
+        FixtureBinding::UnixSocketPath(socket_path),
+        dir,
+    ))
 }

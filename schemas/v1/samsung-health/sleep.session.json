@@ -1,0 +1,112 @@
+{
+  "$defs": {
+    "DateTime": {
+      "description": "RFC 3339 formatted date-time string",
+      "format": "date-time",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "One sleep session observation from a merged Samsung Health / Sleep As\nAndroid export (#1052).\n\nThe `sleep_merged_summary.csv` joins Samsung Health (`sh_*`) data with\nthe Sleep As Android comment (`sa_comment`). Both halves carry useful\nsignal: Samsung exposes heart-rate aggregates + per-stage event counts,\nSleep As Android contributes the user's own categorization.",
+  "properties": {
+    "duration_minutes": {
+      "description": "Reported duration in minutes (column `sh_duration_minutes`).",
+      "format": "double",
+      "type": "number"
+    },
+    "end_at": {
+      "$ref": "#/$defs/DateTime",
+      "description": "Session end time in the local timezone (column `end_local`)."
+    },
+    "events_deep": {
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "events_hr": {
+      "description": "Per-stage event counts. Samsung exposes these as separate columns:\n`events_hr`, `events_light`, `events_deep`, `events_rem`.",
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "events_light": {
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "events_rem": {
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "hr_avg": {
+      "description": "Average heart rate (BPM). None when Samsung did not record HR data.",
+      "format": "double",
+      "type": [
+        "number",
+        "null"
+      ]
+    },
+    "hr_max": {
+      "description": "Maximum heart rate (BPM). None when Samsung did not record HR data.",
+      "format": "double",
+      "type": [
+        "number",
+        "null"
+      ]
+    },
+    "hr_min": {
+      "description": "Minimum heart rate (BPM). None when Samsung did not record HR data.",
+      "format": "double",
+      "type": [
+        "number",
+        "null"
+      ]
+    },
+    "sa_comment": {
+      "description": "Free-text Sleep As Android comment (column `sa_comment`). User-edited\ntags like `#watch`, `#nap`, sleep notes. None when blank.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "sa_vs_sh_duration_minutes": {
+      "description": "Sleep As Android-observed duration vs Samsung Health duration delta\n(column `sa_vs_sh_duration_minutes`). Surface for cross-source\nreconciliation; small values mean the two sources agree.",
+      "format": "double",
+      "type": [
+        "number",
+        "null"
+      ]
+    },
+    "sh_data_uuid": {
+      "description": "Samsung Health row UUID (column `sh_datauuid`). Stable across exports.",
+      "type": "string"
+    },
+    "start_at": {
+      "$ref": "#/$defs/DateTime",
+      "description": "Session start time in the local timezone the device recorded\n(column `start_local`)."
+    },
+    "trimmed_event_count": {
+      "description": "Total trimmed-event count for the session (column\n`trimmed_event_count`).",
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "sh_data_uuid",
+    "start_at",
+    "end_at",
+    "duration_minutes",
+    "events_hr",
+    "events_light",
+    "events_deep",
+    "events_rem",
+    "trimmed_event_count"
+  ],
+  "title": "SleepSessionPayload",
+  "type": "object",
+  "x-sinex-event-type": "sleep.session",
+  "x-sinex-source": "samsung-health",
+  "x-sinex-version": "1.0.0"
+}

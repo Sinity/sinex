@@ -189,6 +189,7 @@ impl MaterialAssembler {
                 total_failed = stats.failed,
                 total_timed_out = stats.timed_out,
                 total_disk_backpressure = stats.disk_backpressure,
+                total_commit_outcome_unknown = stats.commit_outcome_unknown,
                 buffered_slices = buffered_slices,
             );
 
@@ -201,6 +202,7 @@ impl MaterialAssembler {
                         stats.cancelled,
                         stats.failed,
                         stats.timed_out,
+                        stats.commit_outcome_unknown,
                         None,
                         buffered_slices,
                     )

@@ -24,6 +24,7 @@ impl NodeLogicError {
     /// settlement should use. This intentionally preserves the distinction
     /// between transient processing failures and data-shaped input/output
     /// failures.
+    #[must_use]
     pub fn to_sinex_error(&self) -> SinexError {
         match self {
             Self::Processing(msg) => SinexError::processing(msg.clone()),

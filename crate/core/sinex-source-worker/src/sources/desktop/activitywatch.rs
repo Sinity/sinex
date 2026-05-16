@@ -1,12 +1,12 @@
 //! `desktop.activitywatch` source unit.
 //!
-//! Reads ActivityWatch events from its SQLite database by joining `events` and
-//! `buckets` tables. The bucket_id prefix determines which payload type to emit:
+//! Reads `ActivityWatch` events from its `SQLite` database by joining `events` and
+//! `buckets` tables. The `bucket_id` prefix determines which payload type to emit:
 //! - `aw-watcher-window_*` → `window.active`
 //! - `aw-watcher-afk_*`    → `afk.changed`
 //! - `aw-watcher-web_*`    → `browser.tab.active`
 //!
-//! Adapter: `SqliteRowAdapter` (MutableSnapshot checkpoint, ROWID cursor)
+//! Adapter: `SqliteRowAdapter` (`MutableSnapshot` checkpoint, ROWID cursor)
 //! Anchor: `SqliteRow`
 //! Checkpoint family: `MutableSnapshot { backing_store: "sqlite", anchor: "bucket_event_timestamp" }`
 //! Privacy tier: `Secret` — titles/URLs pass through `ProcessingContext::WindowTitle`
@@ -124,23 +124,20 @@ fn classify_bucket(bucket_id: &str) -> BucketKind {
 // Timestamp parsing helpers
 // ---------------------------------------------------------------------------
 
-/// Parse an ISO8601 datetime string from ActivityWatch into a `Timestamp`.
+/// Parse an ISO8601 datetime string from `ActivityWatch` into a `Timestamp`.
 ///
-/// ActivityWatch stores timestamps as `"2024-01-15T14:23:45.123456+00:00"`.
+/// `ActivityWatch` stores timestamps as `"2024-01-15T14:23:45.123456+00:00"`.
 fn parse_aw_timestamp(s: &str) -> Option<Timestamp> {
-    time::OffsetDateTime::parse(
-        s,
-        &time::format_description::well_known::Rfc3339,
-    )
-    .ok()
-    .map(Timestamp::new)
+    time::OffsetDateTime::parse(s, &time::format_description::well_known::Rfc3339)
+        .ok()
+        .map(Timestamp::new)
 }
 
 // ---------------------------------------------------------------------------
 // Parser
 // ---------------------------------------------------------------------------
 
-/// Parses ActivityWatch SQLite rows into typed window/afk/browser-tab events.
+/// Parses `ActivityWatch` `SQLite` rows into typed window/afk/browser-tab events.
 ///
 /// The `SqliteRowAdapter` is configured with a JOIN query that attaches the
 /// `bucket_id` from the `buckets` table to each event row.  The parser reads
@@ -162,9 +159,18 @@ impl MaterialParser for ActivityWatchParser {
             accepted_input_shapes: vec![InputShapeKind::SqliteQuery],
             source_unit_id: SourceUnitId::from_static("desktop.activitywatch"),
             declared_event_types: vec![
-                (EventSource::from_static("activitywatch"), EventType::from_static("window.active")),
-                (EventSource::from_static("activitywatch"), EventType::from_static("afk.changed")),
-                (EventSource::from_static("activitywatch"), EventType::from_static("browser.tab.active")),
+                (
+                    EventSource::from_static("activitywatch"),
+                    EventType::from_static("window.active"),
+                ),
+                (
+                    EventSource::from_static("activitywatch"),
+                    EventType::from_static("afk.changed"),
+                ),
+                (
+                    EventSource::from_static("activitywatch"),
+                    EventType::from_static("browser.tab.active"),
+                ),
             ],
             privacy_contexts: vec![ProcessingContext::WindowTitle],
             proof_obligations: vec![
@@ -172,7 +178,8 @@ impl MaterialParser for ActivityWatchParser {
                 "timestamp_intrinsic".into(),
                 "window_title_redacted".into(),
             ],
-            description: "Parses ActivityWatch SQLite events into typed window/afk/browser events.".into(),
+            description: "Parses ActivityWatch SQLite events into typed window/afk/browser events."
+                .into(),
         }
     }
 
@@ -188,10 +195,7 @@ impl MaterialParser for ActivityWatchParser {
         let row: serde_json::Value = serde_json::from_slice(&record.bytes)
             .map_err(|e| ParserError::Parse(format!("failed to parse AW row JSON: {e}")))?;
 
-        let bucket_id = row
-            .get("bucket_id")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
+        let bucket_id = row.get("bucket_id").and_then(|v| v.as_str()).unwrap_or("");
 
         // Silently skip rows with unknown bucket kinds — AW can have custom watchers.
         let kind = classify_bucket(bucket_id);
@@ -208,10 +212,14 @@ impl MaterialParser for ActivityWatchParser {
         let data = row.get("data").cloned().unwrap_or(serde_json::Value::Null);
 
         let redact_title = |title: &str| -> String {
-            privacy::engine()
-                .ok()
-                .map(|eng| eng.process(title, ProcessingContext::WindowTitle).text.into_owned())
-                .unwrap_or_else(|| title.to_string())
+            privacy::engine().ok().map_or_else(
+                || title.to_string(),
+                |eng| {
+                    eng.process(title, ProcessingContext::WindowTitle)
+                        .text
+                        .into_owned()
+                },
+            )
         };
 
         // Schema payloads (ActivityWatchWindowActivePayload, AfkChangedPayload,
@@ -221,7 +229,7 @@ impl MaterialParser for ActivityWatchParser {
         // bucket name suffix (`aw-watcher-web-firefox` → "firefox").
         let duration_ms: u64 = row
             .get("duration")
-            .and_then(|v| v.as_f64())
+            .and_then(sinex_primitives::JsonValue::as_f64)
             .map_or(0, |secs| (secs * 1000.0).max(0.0) as u64);
 
         let (event_type, payload) = match kind {

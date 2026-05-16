@@ -1,7 +1,13 @@
 //! `system.udev` — stream udev device events via `FileDropAdapter` over `/sys`.
 
+use crate::register_parser;
 use sinex_node_sdk::parser::{FileDropAdapter, MaterialParser, ParserError};
 use sinex_primitives::domain::{EventSource, EventType};
+use sinex_primitives::events::enums::{DeviceType, UdevAction};
+use sinex_primitives::events::payloads::system::{
+    UdevDeviceChangedPayload, UdevDeviceConnectedPayload, UdevDeviceDisconnectedPayload,
+    UdevDeviceDriverChangedPayload, UdevDeviceOtherPayload,
+};
 use sinex_primitives::ids::Id;
 use sinex_primitives::parser::{
     InputShapeKind, ParsedEventIntent, ParserContext, ParserId, ParserManifest, SourceRecord,
@@ -13,13 +19,7 @@ use sinex_primitives::proof::{
     SourceUnitBinding, SourceUnitBuildImpact, SourceUnitDescriptor, SubjectRef,
 };
 use sinex_primitives::temporal::Timestamp;
-use sinex_primitives::events::payloads::system::{
-    UdevDeviceChangedPayload, UdevDeviceConnectedPayload, UdevDeviceDisconnectedPayload,
-    UdevDeviceDriverChangedPayload, UdevDeviceOtherPayload,
-};
-use sinex_primitives::events::enums::{DeviceType, UdevAction};
 use sinex_primitives::{register_source_unit, register_source_unit_binding};
-use crate::register_parser;
 
 use std::collections::HashMap;
 
@@ -107,17 +107,29 @@ impl MaterialParser for UdevParser {
             accepted_input_shapes: vec![InputShapeKind::FileDrop],
             source_unit_id: SourceUnitId::from_static("system.udev"),
             declared_event_types: vec![
-                (EventSource::from_static("udev"), EventType::from_static("device.connected")),
-                (EventSource::from_static("udev"), EventType::from_static("device.disconnected")),
-                (EventSource::from_static("udev"), EventType::from_static("device.changed")),
-                (EventSource::from_static("udev"), EventType::from_static("device.driver_changed")),
-                (EventSource::from_static("udev"), EventType::from_static("device.other")),
+                (
+                    EventSource::from_static("udev"),
+                    EventType::from_static("device.connected"),
+                ),
+                (
+                    EventSource::from_static("udev"),
+                    EventType::from_static("device.disconnected"),
+                ),
+                (
+                    EventSource::from_static("udev"),
+                    EventType::from_static("device.changed"),
+                ),
+                (
+                    EventSource::from_static("udev"),
+                    EventType::from_static("device.driver_changed"),
+                ),
+                (
+                    EventSource::from_static("udev"),
+                    EventType::from_static("device.other"),
+                ),
             ],
             privacy_contexts: vec![ProcessingContext::Metadata],
-            proof_obligations: vec![
-                "udev_action_dispatch".into(),
-                "privacy_device_path".into(),
-            ],
+            proof_obligations: vec!["udev_action_dispatch".into(), "privacy_device_path".into()],
             description: "Maps FileDropAdapter inotify records to udev device events.".into(),
         }
     }
@@ -128,13 +140,14 @@ impl MaterialParser for UdevParser {
         ctx: &ParserContext,
     ) -> Result<Vec<ParsedEventIntent>, ParserError> {
         let raw_path = std::str::from_utf8(&record.bytes)
-            .map_err(|e| ParserError::Parse(
-                format!("udev record path not UTF-8: {e}"),
-            ))?
+            .map_err(|e| ParserError::Parse(format!("udev record path not UTF-8: {e}")))?
             .to_string();
 
         let device_path = match privacy::engine() {
-            Ok(eng) => eng.process(&raw_path, ProcessingContext::Metadata).text.into_owned(),
+            Ok(eng) => eng
+                .process(&raw_path, ProcessingContext::Metadata)
+                .text
+                .into_owned(),
             Err(e) => return Err(ParserError::Privacy(format!("privacy engine: {e}"))),
         };
 
@@ -302,10 +315,10 @@ crate::register_adapter_ingestor!(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sinex_primitives::ids::Id;
     use sinex_primitives::events::SourceMaterial;
-    use sinex_primitives::primitives::Uuid;
+    use sinex_primitives::ids::Id;
     use sinex_primitives::parser::MaterialAnchor;
+    use sinex_primitives::primitives::Uuid;
     use xtask::sandbox::prelude::*;
 
     fn make_ctx(mid: Id<SourceMaterial>) -> ParserContext {
@@ -371,10 +384,22 @@ mod tests {
 
     #[sinex_test]
     async fn test_infer_device_type() -> TestResult<()> {
-        assert!(matches!(infer_device_type("/sys/bus/usb/devices/1-1"), DeviceType::Usb));
-        assert!(matches!(infer_device_type("/sys/block/sda"), DeviceType::Storage));
-        assert!(matches!(infer_device_type("/sys/class/net/eth0"), DeviceType::Network));
-        assert!(matches!(infer_device_type("/sys/bus/other"), DeviceType::Other));
+        assert!(matches!(
+            infer_device_type("/sys/bus/usb/devices/1-1"),
+            DeviceType::Usb
+        ));
+        assert!(matches!(
+            infer_device_type("/sys/block/sda"),
+            DeviceType::Storage
+        ));
+        assert!(matches!(
+            infer_device_type("/sys/class/net/eth0"),
+            DeviceType::Network
+        ));
+        assert!(matches!(
+            infer_device_type("/sys/bus/other"),
+            DeviceType::Other
+        ));
         Ok(())
     }
 }

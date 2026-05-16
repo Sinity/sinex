@@ -590,7 +590,7 @@ fn format_restore_table(
 
 fn format_tombstone_create_table(response: &TombstoneCreateResponse) -> String {
     let mut output = String::new();
-    output.push_str("\n");
+    output.push('\n');
     output.push_str("Tombstone Operation Created\n");
     output.push_str(&"\u{2550}".repeat(60));
     output.push_str("\n\n");
@@ -603,7 +603,7 @@ fn format_tombstone_create_table(response: &TombstoneCreateResponse) -> String {
         "  Expires:      {}\n",
         response.operation.expires_at
     ));
-    output.push_str("\n");
+    output.push('\n');
 
     if let Some(analysis) = &response.operation.cascade_analysis {
         output.push_str("Cascade Analysis:\n");
@@ -618,23 +618,22 @@ fn format_tombstone_create_table(response: &TombstoneCreateResponse) -> String {
         }
     }
 
-    output.push_str("\n");
+    output.push('\n');
     let warning_count = response
         .operation
         .cascade_analysis
         .as_ref()
         .map_or(0, |a| a.cascade_total);
     output.push_str(&format!(
-        "\u{26a0}\u{fe0f}  This operation will PERMANENTLY DELETE {} events.\n",
-        warning_count
+        "\u{26a0}\u{fe0f}  This operation will PERMANENTLY DELETE {warning_count} events.\n"
     ));
-    output.push_str("\n");
+    output.push('\n');
     output.push_str("To approve and execute, run within 1 hour:\n");
     output.push_str(&format!(
         "  sinexctl lifecycle tombstone approve {} --yes-i-understand-data-is-gone\n",
         response.operation.operation_id
     ));
-    output.push_str("\n");
+    output.push('\n');
     output.push_str("To cancel:\n");
     output.push_str(&format!(
         "  sinexctl lifecycle tombstone cancel {}\n",
@@ -646,10 +645,10 @@ fn format_tombstone_create_table(response: &TombstoneCreateResponse) -> String {
 
 fn format_tombstone_approve_table(response: &TombstoneApproveResponse) -> String {
     let mut output = String::new();
-    output.push_str("\n");
+    output.push('\n');
     output.push_str("\u{1f480} Tombstone Complete (PERMANENT)\n");
     output.push_str(&"\u{2500}".repeat(50));
-    output.push_str("\n");
+    output.push('\n');
     output.push_str(&format!(
         "  Operation ID:  {}\n",
         response.operation.operation_id
@@ -661,14 +660,14 @@ fn format_tombstone_approve_table(response: &TombstoneApproveResponse) -> String
     if let Some(count) = response.operation.tombstoned_count {
         output.push_str(&format!("  Tombstoned:    {count} events\n"));
     }
-    output.push_str("\n");
+    output.push('\n');
     output.push_str("Data has been permanently deleted.\n");
     output
 }
 
 fn format_tombstone_preview_table(response: &TombstonePreviewResponse) -> String {
     let mut output = String::new();
-    output.push_str("\n");
+    output.push('\n');
     output.push_str("Tombstone Operation Preview\n");
     output.push_str(&"\u{2550}".repeat(60));
     output.push_str("\n\n");
@@ -686,7 +685,7 @@ fn format_tombstone_preview_table(response: &TombstonePreviewResponse) -> String
         response.operation.expires_at
     ));
     output.push_str(&format!("  Reason:       {}\n", response.operation.reason));
-    output.push_str("\n");
+    output.push('\n');
 
     if let Some(analysis) = &response.operation.cascade_analysis {
         output.push_str("Cascade Analysis:\n");
@@ -700,16 +699,16 @@ fn format_tombstone_preview_table(response: &TombstonePreviewResponse) -> String
 
 fn format_tombstone_list_table(response: &TombstoneListResponse) -> String {
     let mut output = String::new();
-    output.push_str("\n");
+    output.push('\n');
     output.push_str("Tombstone Operations\n");
     output.push_str(&"\u{2550}".repeat(100));
-    output.push_str("\n");
+    output.push('\n');
     output.push_str(&format!(
         "{:<28} {:<12} {:<10} {:<20} Reason\n",
         "Operation ID", "State", "Events", "Created"
     ));
     output.push_str(&"\u{2500}".repeat(100));
-    output.push_str("\n");
+    output.push('\n');
 
     for op in &response.operations {
         let event_count = op.cascade_analysis.as_ref().map_or(0, |a| a.cascade_total);
@@ -734,7 +733,7 @@ fn format_tombstone_list_table(response: &TombstoneListResponse) -> String {
 fn format_tombstone_status_table(response: &TombstoneStatusResponse) -> String {
     let op = &response.operation;
     let mut output = String::new();
-    output.push_str("\n");
+    output.push('\n');
     output.push_str("Tombstone Operation Status\n");
     output.push_str(&"\u{2550}".repeat(60));
     output.push_str("\n\n");
@@ -744,7 +743,7 @@ fn format_tombstone_status_table(response: &TombstoneStatusResponse) -> String {
     output.push_str(&format!("  Created at:   {}\n", op.created_at));
     output.push_str(&format!("  Expires at:   {}\n", op.expires_at));
     output.push_str(&format!("  Reason:       {}\n", op.reason));
-    output.push_str("\n");
+    output.push('\n');
 
     if let Some(by) = &op.approved_by {
         output.push_str(&format!("  Approved by:  {by}\n"));
@@ -766,7 +765,7 @@ fn format_tombstone_status_table(response: &TombstoneStatusResponse) -> String {
     }
 
     if let Some(analysis) = &op.cascade_analysis {
-        output.push_str("\n");
+        output.push('\n');
         output.push_str("Cascade Analysis:\n");
         output.push_str(&format!("  Root events:   {}\n", analysis.root_event_count));
         output.push_str(&format!("  Total cascade: {}\n", analysis.cascade_total));

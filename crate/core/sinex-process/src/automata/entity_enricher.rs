@@ -1,6 +1,6 @@
 //! Entity enricher — [`ScopeReconcilerNode`] implementation.
 //!
-//! Model classification: **ScopeReconciler** — each resolved entity is its own
+//! Model classification: **`ScopeReconciler`** — each resolved entity is its own
 //! scope. On every `entity.resolved` event, the per-entity state is updated with
 //! temporal statistics (first/last seen, occurrence count, active-hours histogram).
 //! A periodic sweep (default 5 min) emits enriched snapshots for entities that
@@ -193,7 +193,7 @@ impl ScopeReconcilerNode for EntityEnricher {
                 DerivedOutput::reconciled(payload, now, vec![*entity_id], entity_key.clone())
                     .with_temporal_policy(SyntheticTemporalPolicy::DeclaredEffective)
                     .with_semantics_version("1.0.0")
-                    .with_equivalence_key(format!("entity-enricher:{}:{}", entity_id, now));
+                    .with_equivalence_key(format!("entity-enricher:{entity_id}:{now}"));
 
             outputs.push(output);
         }
@@ -215,7 +215,7 @@ fn hour_of_day(ts: Timestamp) -> u8 {
     hours as u8
 }
 
-/// Map entity_type to a coarse EntityCategory.
+/// Map `entity_type` to a coarse `EntityCategory`.
 fn refine_category(entity_type: &str) -> EntityCategory {
     match entity_type {
         "tool" | "binary" | "cli" => EntityCategory::Tool,

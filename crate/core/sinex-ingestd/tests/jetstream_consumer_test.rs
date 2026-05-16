@@ -628,7 +628,7 @@ async fn tombstoned_event_is_acked_without_confirmation(ctx: TestContext) -> Tes
     let nats_client = ctx.nats_client();
     let event_id = Uuid::now_v7();
     sqlx::query(
-        r#"
+        r"
         INSERT INTO core.event_tombstones (
             id, source, event_type, ts_orig, ts_purged,
             purge_reason, purge_operation_id, archived_at
@@ -637,7 +637,7 @@ async fn tombstoned_event_is_acked_without_confirmation(ctx: TestContext) -> Tes
             $1::uuid, 'tombstone-admission', 'pipeline.event', NOW(), NOW(),
             'jetstream tombstone admission test', $2::uuid, NOW()
         )
-        "#,
+        ",
     )
     .bind(event_id)
     .bind(Uuid::now_v7())

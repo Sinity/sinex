@@ -5,10 +5,10 @@
 
 use sinex_node_sdk::parser::MaterialParser;
 use sinex_primitives::{
+    Uuid,
     ids::Id,
     parser::{MaterialAnchor, ParserContext, SourceRecord, SourceUnitId},
     temporal::Timestamp,
-    Uuid,
 };
 use sinex_source_worker::sources::finance::HledgerJournalParser;
 

@@ -51,7 +51,7 @@ use tracing::{error, warn};
 use crate::watcher_handle::WatcherHealth;
 
 /// Maximum individual backoff delay between watcher restart attempts.
-const MAX_BACKOFF: Duration = Duration::from_secs(60);
+const MAX_BACKOFF: Duration = Duration::from_mins(1);
 
 /// Base delay for the first restart attempt after a failure.
 const BASE_BACKOFF: Duration = Duration::from_secs(1);
@@ -83,6 +83,7 @@ impl Default for SupervisedWatcherConfig {
 impl SupervisedWatcherConfig {
     /// Log errors but do not restart — useful for watchers that manage their own
     /// reconnection internally.
+    #[must_use]
     pub fn log_only() -> Self {
         Self {
             restart_on_failure: false,
@@ -120,6 +121,8 @@ where
             Ok(Err(err)) => {
                 let error_msg = err.to_string();
                 error!(
+                    target: "sinex_metrics",
+                    metric = "node.watcher_failures_total",
                     watcher = watcher_name,
                     error = %err,
                     "Watcher task failed"
@@ -131,6 +134,8 @@ where
             Err(panic_payload) => {
                 let panic_msg = format_panic_payload(panic_payload.as_ref());
                 error!(
+                    target: "sinex_metrics",
+                    metric = "node.watcher_panics_total",
                     watcher = watcher_name,
                     panic = %panic_msg,
                     "Watcher task panicked"
@@ -203,6 +208,8 @@ where
                 Ok(Err(err)) => {
                     let error_msg = err.to_string();
                     error!(
+                        target: "sinex_metrics",
+                        metric = "node.watcher_failures_total",
                         watcher = watcher_name,
                         error = %err,
                         "Watcher task failed"
@@ -216,6 +223,8 @@ where
                 Err(panic_payload) => {
                     let panic_msg = format_panic_payload(panic_payload.as_ref());
                     error!(
+                        target: "sinex_metrics",
+                        metric = "node.watcher_panics_total",
                         watcher = watcher_name,
                         panic = %panic_msg,
                         "Watcher task panicked"
@@ -234,6 +243,8 @@ where
             restarts += 1;
             if config.max_restarts > 0 && restarts >= config.max_restarts {
                 error!(
+                    target: "sinex_metrics",
+                    metric = "node.watcher_max_restarts_total",
                     watcher = watcher_name,
                     restarts = restarts,
                     max_restarts = config.max_restarts,
@@ -257,8 +268,8 @@ where
 
             // Wait for backoff or shutdown.
             tokio::select! {
-                _ = tokio::time::sleep(backoff) => {}
-                _ = shutdown_notified(&shutdown_rx) => {
+                () = tokio::time::sleep(backoff) => {}
+                () = shutdown_notified(&shutdown_rx) => {
                     return;
                 }
             }

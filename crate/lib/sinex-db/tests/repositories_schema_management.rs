@@ -1,5 +1,4 @@
 use serde_json::json;
-use sinex_db::DynamicPayload;
 use sinex_db::repositories::DbPoolExt;
 use sinex_db::repositories::schema_management::NewEventSchema;
 use sinex_primitives::domain::{EventSource, EventType};

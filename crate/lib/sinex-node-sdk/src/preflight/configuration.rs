@@ -874,7 +874,7 @@ fn resolve_uid_from_target_user(user: &str) -> Option<u32> {
             passwd.as_mut_ptr(),
             buf.as_mut_ptr().cast::<libc::c_char>(),
             buf_size,
-            &mut result,
+            &raw mut result,
         )
     };
 

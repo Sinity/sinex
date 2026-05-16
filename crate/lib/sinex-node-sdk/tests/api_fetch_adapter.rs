@@ -101,20 +101,32 @@ async fn api_fetch_walks_paginated_cursor_sequence() -> TestResult<()> {
     let mut checkpoint = source.initial_checkpoint();
     assert_eq!(checkpoint.last_cursor, None);
 
-    let batch1 = source.read_batch(&checkpoint, RecordReadHorizon::Unbounded).await?;
+    let batch1 = source
+        .read_batch(&checkpoint, RecordReadHorizon::Unbounded)
+        .await?;
     let recs: Vec<_> = batch1.records.iter().map(|r| r.record.clone()).collect();
     assert_eq!(recs, vec!["r1", "r2"]);
-    assert_eq!(batch1.final_checkpoint.last_cursor.as_deref(), Some("page-2"));
+    assert_eq!(
+        batch1.final_checkpoint.last_cursor.as_deref(),
+        Some("page-2")
+    );
     assert_eq!(batch1.final_checkpoint.last_etag.as_deref(), Some("etag-1"));
     checkpoint = batch1.final_checkpoint;
 
-    let batch2 = source.read_batch(&checkpoint, RecordReadHorizon::Unbounded).await?;
+    let batch2 = source
+        .read_batch(&checkpoint, RecordReadHorizon::Unbounded)
+        .await?;
     let recs2: Vec<_> = batch2.records.iter().map(|r| r.record.clone()).collect();
     assert_eq!(recs2, vec!["r3"]);
-    assert_eq!(batch2.final_checkpoint.last_cursor.as_deref(), Some("page-3"));
+    assert_eq!(
+        batch2.final_checkpoint.last_cursor.as_deref(),
+        Some("page-3")
+    );
     checkpoint = batch2.final_checkpoint;
 
-    let batch3 = source.read_batch(&checkpoint, RecordReadHorizon::Unbounded).await?;
+    let batch3 = source
+        .read_batch(&checkpoint, RecordReadHorizon::Unbounded)
+        .await?;
     assert!(batch3.records.is_empty());
     assert_eq!(batch3.final_checkpoint.last_cursor, None);
     Ok(())
@@ -129,16 +141,19 @@ async fn api_fetch_retries_transient_errors() -> TestResult<()> {
     }];
     // Two failures, then success — needs at least 3 attempts.
     let client = Arc::new(MockClient::new(pages, 2));
-    let source = ApiFetchRecordSource::new("test://api-retry", MockClientHandle(Arc::clone(&client)))
-        .with_retry(RetryPolicy {
-            max_attempts: 4,
-            base_delay: std::time::Duration::from_millis(1),
-            max_delay: std::time::Duration::from_millis(5),
-            jitter_ratio: 0.0,
-        });
+    let source =
+        ApiFetchRecordSource::new("test://api-retry", MockClientHandle(Arc::clone(&client)))
+            .with_retry(RetryPolicy {
+                max_attempts: 4,
+                base_delay: std::time::Duration::from_millis(1),
+                max_delay: std::time::Duration::from_millis(5),
+                jitter_ratio: 0.0,
+            });
 
     let initial = source.initial_checkpoint();
-    let batch = source.read_batch(&initial, RecordReadHorizon::Unbounded).await?;
+    let batch = source
+        .read_batch(&initial, RecordReadHorizon::Unbounded)
+        .await?;
     let recs: Vec<_> = batch.records.iter().map(|r| r.record.clone()).collect();
     assert_eq!(recs, vec!["after-retry"]);
     assert_eq!(client.total_calls.load(Ordering::SeqCst), 3);

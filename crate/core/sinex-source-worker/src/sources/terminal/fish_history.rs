@@ -1,4 +1,4 @@
-//! `terminal.fish-history` — fish shell SQLite history adapter.
+//! `terminal.fish-history` — fish shell `SQLite` history adapter.
 //!
 //! Adapter: [`SqliteRowAdapter`] — reads from
 //!          `~/.local/share/fish/fish_history`.
@@ -12,17 +12,16 @@ use sinex_node_sdk::parser::{MaterialParser, ParserError, ParserResult, SqliteRo
 use sinex_primitives::domain::{EventSource, EventType};
 use sinex_primitives::events::payloads::shell::HistoryCommandImportedPayload;
 use sinex_primitives::parser::{
-    InputShapeKind, ParsedEventIntent, ParserContext, ParserId, ParserManifest,
-    SourceUnitId, TimingConfidence, TimingEvidence,
+    InputShapeKind, ParsedEventIntent, ParserContext, ParserId, ParserManifest, SourceUnitId,
+    TimingConfidence, TimingEvidence,
 };
 use sinex_primitives::privacy::ProcessingContext;
 use sinex_primitives::proof::{
-    CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, RetentionPolicy,
-    RuntimeShape, SourceUnitBinding, SourceUnitBuildImpact, SourceUnitDescriptor,
-    SubjectRef,
+    CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, RetentionPolicy, RuntimeShape,
+    SourceUnitBinding, SourceUnitBuildImpact, SourceUnitDescriptor, SubjectRef,
 };
-use sinex_primitives::{register_source_unit, register_source_unit_binding};
 use sinex_primitives::temporal::Timestamp;
+use sinex_primitives::{register_source_unit, register_source_unit_binding};
 
 use crate::register_adapter_ingestor;
 
@@ -80,7 +79,7 @@ register_source_unit_binding! {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct FishHistoryParserConfig;
 
-/// Parser for fish shell SQLite history rows.
+/// Parser for fish shell `SQLite` history rows.
 ///
 /// Each [`SourceRecord`] carries a JSON-serialized row from the `history`
 /// table with columns `ROWID`, `command`, `when` (optional Unix seconds).
@@ -106,7 +105,8 @@ impl MaterialParser for FishHistoryParser {
                 "obligation:source_unit.material_provenance".into(),
                 "obligation:source_unit.package_impact_rationale".into(),
             ],
-            description: "Parses fish shell SQLite history rows into command.imported events.".into(),
+            description: "Parses fish shell SQLite history rows into command.imported events."
+                .into(),
         }
     }
 
@@ -128,7 +128,9 @@ impl MaterialParser for FishHistoryParser {
             return Ok(vec![]);
         }
 
-        let when_unix: Option<i64> = row.get("when").and_then(|v| v.as_i64());
+        let when_unix: Option<i64> = row
+            .get("when")
+            .and_then(sinex_primitives::JsonValue::as_i64);
 
         // Privacy processing.
         let processed = {
@@ -159,7 +161,7 @@ impl MaterialParser for FishHistoryParser {
         let source_file = record
             .logical_path
             .as_ref()
-            .map(|p| p.to_string())
+            .map(std::string::ToString::to_string)
             .unwrap_or_default();
 
         let payload = HistoryCommandImportedPayload {

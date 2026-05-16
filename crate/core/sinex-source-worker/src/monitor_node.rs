@@ -49,10 +49,9 @@ use sinex_node_sdk::{
     },
 };
 use sinex_primitives::{
-    SinexError,
+    JsonValue, SinexError,
     events::{Event, SourceMaterial},
     ids::Id,
-    JsonValue,
 };
 
 // =============================================================================
@@ -130,7 +129,10 @@ async fn fire_monitor_once(
     let events = emit_fn(runtime.clone(), material_id).await?;
 
     if events.is_empty() {
-        debug!(source_unit_id, "monitor closure returned 0 events — skipping");
+        debug!(
+            source_unit_id,
+            "monitor closure returned 0 events — skipping"
+        );
         acq.finalize(mat_handle, "monitor-empty").await?;
         return Ok(());
     }
@@ -167,7 +169,10 @@ async fn drive_monitor_phase(
 ) -> NodeResult<()> {
     match phase {
         MonitorPhase::ServiceStart => {
-            info!(source_unit_id, "MonitorPhase::ServiceStart — firing once at boot");
+            info!(
+                source_unit_id,
+                "MonitorPhase::ServiceStart — firing once at boot"
+            );
             fire_monitor_once(source_unit_id, emit_fn, runtime).await?;
         }
 
@@ -189,7 +194,7 @@ async fn drive_monitor_phase(
                             break;
                         }
                     }
-                    _ = tokio::time::sleep(*period) => {}
+                    () = tokio::time::sleep(*period) => {}
                 }
             }
         }
@@ -207,7 +212,10 @@ async fn drive_monitor_phase(
                     break;
                 }
             }
-            info!(source_unit_id, "drain received — firing ServiceShutdown monitor");
+            info!(
+                source_unit_id,
+                "drain received — firing ServiceShutdown monitor"
+            );
             if let Err(e) = fire_monitor_once(source_unit_id, emit_fn, runtime).await {
                 warn!(
                     source_unit_id,
@@ -230,7 +238,7 @@ async fn drive_monitor_phase(
 ///
 /// `initialize()` captures the `NodeRuntimeState` into `runtime_snapshot`.
 /// `run_continuous()` then drives `drive_monitor_phase` directly, giving the
-/// monitor closure full SDK access (NATS, AcquisitionManager, etc.).
+/// monitor closure full SDK access (NATS, `AcquisitionManager`, etc.).
 ///
 /// This bridges the gap that `IngestorNode::run_continuous` does not receive
 /// `NodeRuntimeState` directly.
@@ -287,7 +295,10 @@ impl IngestorNode for MonitorDriverNode {
     ) -> NodeResult<()> {
         // Snapshot the runtime so run_continuous() can access it.
         self.runtime_snapshot = Some(runtime.clone());
-        info!(source_unit_id = self.source_unit_id, "monitor unit initialized");
+        info!(
+            source_unit_id = self.source_unit_id,
+            "monitor unit initialized"
+        );
         Ok(())
     }
 
@@ -336,9 +347,7 @@ impl IngestorNode for MonitorDriverNode {
         let started_at = Instant::now();
 
         let runtime = self.runtime_snapshot.take().ok_or_else(|| {
-            SinexError::invalid_state(
-                "MonitorDriverNode: runtime not captured during initialize()",
-            )
+            SinexError::invalid_state("MonitorDriverNode: runtime not captured during initialize()")
         })?;
 
         let phase = self.phase.take().ok_or_else(|| {
@@ -457,18 +466,11 @@ macro_rules! register_monitor_unit {
         emit_at: $phase:expr,
         emit: $emit_fn:expr $(,)?
     ) => {
-        $crate::__submit_registry_entry!(
-            $crate::node_factory::NodeFactoryEntry,
-            $id,
-            |args| {
-                Box::pin($crate::monitor_node::run_monitor_unit_delegated(
-                    $id,
-                    $phase,
-                    $emit_fn,
-                    args,
-                ))
-            },
-        );
+        $crate::__submit_registry_entry!($crate::node_factory::NodeFactoryEntry, $id, |args| {
+            Box::pin($crate::monitor_node::run_monitor_unit_delegated(
+                $id, $phase, $emit_fn, args,
+            ))
+        },);
     };
 }
 
@@ -544,9 +546,15 @@ mod tests {
         let caps = node.capabilities();
 
         assert!(!caps.supports_snapshot, "monitors have no snapshot mode");
-        assert!(!caps.supports_historical, "monitors have no historical mode");
+        assert!(
+            !caps.supports_historical,
+            "monitors have no historical mode"
+        );
         assert!(caps.supports_continuous, "monitors run in continuous mode");
-        assert!(caps.manages_own_continuous_loop, "monitors manage their own loop");
+        assert!(
+            caps.manages_own_continuous_loop,
+            "monitors manage their own loop"
+        );
 
         Ok(())
     }

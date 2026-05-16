@@ -279,14 +279,14 @@ impl Events {
         "SELECT create_hypertable('core.events', by_range('id'), if_not_exists => TRUE);"
     }
 
-    /// Enables native TimescaleDB compression on `core.events`.
+    /// Enables native `TimescaleDB` compression on `core.events`.
     ///
     /// Uses `source_material_id` as the segmentby column (groups related events by
-    /// provenance material) and `id DESC` as the orderby (aligns with the UUIDv7
+    /// provenance material) and `id DESC` as the orderby (aligns with the `UUIDv7`
     /// partition key for efficient time-range pruning within compressed segments).
     #[must_use]
     pub fn enable_compression_sql() -> &'static str {
-        r#"
+        r"
         DO $$
         BEGIN
             IF NOT EXISTS (
@@ -303,11 +303,11 @@ impl Events {
             END IF;
         END
         $$;
-        "#
+        "
     }
 
     /// Adds an automatic compression policy: chunks older than 7 days are compressed
-    /// by the TimescaleDB background worker.
+    /// by the `TimescaleDB` background worker.
     #[must_use]
     pub fn add_compression_policy_sql() -> &'static str {
         "SELECT add_compression_policy('core.events', INTERVAL '7 days', if_not_exists => true);"
@@ -703,9 +703,9 @@ impl ArchivedEvents {
     ///
     /// ## Annotation cascade (#579)
     ///
-    /// `core.event_annotations` has a FK to `core.events`, but TimescaleDB hypertables
+    /// `core.event_annotations` has a FK to `core.events`, but `TimescaleDB` hypertables
     /// cannot be the target of FK references from other tables — so `ON DELETE CASCADE`
-    /// on that FK is not enforced by PostgreSQL. This trigger compensates by archiving
+    /// on that FK is not enforced by `PostgreSQL`. This trigger compensates by archiving
     /// annotations to `audit.archived_annotations` (idempotent via `ON CONFLICT (id) DO
     /// NOTHING` so the Rust application path that pre-archives in bulk before the DELETE
     /// batch does not produce duplicates) and then deleting them from the live table.

@@ -1,13 +1,16 @@
 //! `system.journald` — stream all journald entries via `JournalctlStreamAdapter`.
 
-use sinex_node_sdk::parser::{
-    JournalctlStreamAdapter, JournalctlStreamConfig, MaterialParser, ParserError,
-};
+use crate::register_parser;
+use sinex_node_sdk::parser::{JournalctlStreamAdapter, MaterialParser, ParserError};
 use sinex_primitives::domain::{EventSource, EventType};
+use sinex_primitives::events::enums::JournalSyncType;
+use sinex_primitives::events::payloads::system::{
+    JournalEntryWrittenPayload, JournalSyncCompletedPayload,
+};
 use sinex_primitives::ids::Id;
 use sinex_primitives::parser::{
     InputShapeKind, ParsedEventIntent, ParserContext, ParserId, ParserManifest, SourceRecord,
-    SourceUnitId, TimingEvidence, TimingConfidence,
+    SourceUnitId, TimingConfidence, TimingEvidence,
 };
 use sinex_primitives::privacy::{self, ProcessingContext};
 use sinex_primitives::proof::{
@@ -16,12 +19,7 @@ use sinex_primitives::proof::{
 };
 use sinex_primitives::temporal::Timestamp;
 use sinex_primitives::units::{Microseconds, ProcessId, SyslogPriority, UnixGid, UnixUid};
-use sinex_primitives::events::payloads::system::{
-    JournalEntryWrittenPayload, JournalSyncCompletedPayload,
-};
-use sinex_primitives::events::enums::JournalSyncType;
 use sinex_primitives::{register_source_unit, register_source_unit_binding};
-use crate::register_parser;
 
 use std::collections::HashMap;
 
@@ -94,8 +92,14 @@ impl MaterialParser for JournaldParser {
             accepted_input_shapes: vec![InputShapeKind::Subprocess],
             source_unit_id: SourceUnitId::from_static("system.journald"),
             declared_event_types: vec![
-                (EventSource::from_static("journald"), EventType::from_static("entry.written")),
-                (EventSource::from_static("journald"), EventType::from_static("sync.completed")),
+                (
+                    EventSource::from_static("journald"),
+                    EventType::from_static("entry.written"),
+                ),
+                (
+                    EventSource::from_static("journald"),
+                    EventType::from_static("sync.completed"),
+                ),
             ],
             privacy_contexts: vec![ProcessingContext::Journal, ProcessingContext::Command],
             proof_obligations: vec![
@@ -103,7 +107,8 @@ impl MaterialParser for JournaldParser {
                 "cursor_anchor".into(),
                 "privacy_journal_message".into(),
             ],
-            description: "Parses journald JSON lines into entry.written and sync.completed events.".into(),
+            description: "Parses journald JSON lines into entry.written and sync.completed events."
+                .into(),
         }
     }
 
@@ -113,15 +118,13 @@ impl MaterialParser for JournaldParser {
         ctx: &ParserContext,
     ) -> Result<Vec<ParsedEventIntent>, ParserError> {
         if record.bytes.len() > MAX_JOURNAL_LINE_BYTES {
-            return Err(ParserError::Parse(
-                format!("journal line exceeds {MAX_JOURNAL_LINE_BYTES} bytes, dropping"),
-            ));
+            return Err(ParserError::Parse(format!(
+                "journal line exceeds {MAX_JOURNAL_LINE_BYTES} bytes, dropping"
+            )));
         }
 
         let json: serde_json::Value = serde_json::from_slice(&record.bytes)
-            .map_err(|e| ParserError::Parse(
-                format!("failed to parse journal JSON: {e}"),
-            ))?;
+            .map_err(|e| ParserError::Parse(format!("failed to parse journal JSON: {e}")))?;
 
         let cursor = json
             .get("__CURSOR")
@@ -134,8 +137,7 @@ impl MaterialParser for JournaldParser {
             || json
                 .get("MESSAGE")
                 .and_then(|v| v.as_str())
-                .map(|m| m.contains("Journal sync"))
-                .unwrap_or(false)
+                .is_some_and(|m| m.contains("Journal sync"))
         {
             let payload = JournalSyncCompletedPayload {
                 sync_type: JournalSyncType::Incremental,
@@ -174,8 +176,7 @@ impl MaterialParser for JournaldParser {
             .unwrap_or(0);
 
         let timestamp = if timestamp_us > 0 {
-            Timestamp::from_unix_timestamp(timestamp_us / 1_000_000)
-                .unwrap_or_else(Timestamp::now)
+            Timestamp::from_unix_timestamp(timestamp_us / 1_000_000).unwrap_or_else(Timestamp::now)
         } else {
             Timestamp::now()
         };
@@ -187,22 +188,25 @@ impl MaterialParser for JournaldParser {
             .to_string();
 
         let message = match privacy::engine() {
-            Ok(eng) => eng.process(&raw_message, ProcessingContext::Journal).text.into_owned(),
+            Ok(eng) => eng
+                .process(&raw_message, ProcessingContext::Journal)
+                .text
+                .into_owned(),
             Err(e) => return Err(ParserError::Privacy(format!("privacy engine: {e}"))),
         };
 
-        let cmdline = json
-            .get("_CMDLINE")
-            .and_then(|v| v.as_str())
-            .map(|s| match privacy::engine() {
-                Ok(eng) => eng.process(s, ProcessingContext::Command).text.into_owned(),
-                Err(_) => s.to_string(),
-            });
+        let cmdline =
+            json.get("_CMDLINE")
+                .and_then(|v| v.as_str())
+                .map(|s| match privacy::engine() {
+                    Ok(eng) => eng.process(s, ProcessingContext::Command).text.into_owned(),
+                    Err(_) => s.to_string(),
+                });
 
         let exe = json
             .get("_EXE")
             .and_then(|v| v.as_str())
-            .map(|s| s.to_string());
+            .map(std::string::ToString::to_string);
 
         let mut fields: HashMap<String, String> = HashMap::new();
         if let Some(obj) = json.as_object() {
@@ -220,15 +224,15 @@ impl MaterialParser for JournaldParser {
             hostname: json
                 .get("_HOSTNAME")
                 .and_then(|v| v.as_str())
-                .map(|s| s.to_string()),
+                .map(std::string::ToString::to_string),
             unit: json
                 .get("_SYSTEMD_UNIT")
                 .and_then(|v| v.as_str())
-                .map(|s| s.to_string()),
+                .map(std::string::ToString::to_string),
             syslog_identifier: json
                 .get("SYSLOG_IDENTIFIER")
                 .and_then(|v| v.as_str())
-                .map(|s| s.to_string()),
+                .map(std::string::ToString::to_string),
             pid: json
                 .get("_PID")
                 .and_then(|v| v.as_str())
@@ -255,7 +259,7 @@ impl MaterialParser for JournaldParser {
             facility: json
                 .get("SYSLOG_FACILITY")
                 .and_then(|v| v.as_str())
-                .map(|s| s.to_string()),
+                .map(std::string::ToString::to_string),
             message,
             fields,
         };
@@ -303,17 +307,20 @@ crate::register_adapter_ingestor!(
 mod tests {
     use super::*;
     use sinex_node_sdk::parser::records_from_journal_lines;
-    use sinex_primitives::ids::Id;
     use sinex_primitives::events::SourceMaterial;
-    use sinex_primitives::primitives::Uuid;
+    use sinex_primitives::ids::Id;
     use sinex_primitives::parser::MaterialAnchor;
+    use sinex_primitives::primitives::Uuid;
     use xtask::sandbox::prelude::*;
 
     fn make_ctx(mid: Id<SourceMaterial>) -> ParserContext {
         ParserContext {
             source_unit_id: SourceUnitId::from_static("system.journald"),
             source_material_id: mid,
-            record_anchor: MaterialAnchor::Line { byte_start: 0, line: 1 },
+            record_anchor: MaterialAnchor::Line {
+                byte_start: 0,
+                line: 1,
+            },
             operation_id: Uuid::new_v4(),
             job_id: Uuid::new_v4(),
             host: "test-host".into(),
@@ -348,7 +355,9 @@ mod tests {
         let ctx = make_ctx(mid);
 
         // Empty / invalid JSON should fail parse — that's OK; the harness skips errors.
-        let result = parser.parse_record(records[0].as_ref().unwrap().clone(), &ctx).await;
+        let result = parser
+            .parse_record(records[0].as_ref().unwrap().clone(), &ctx)
+            .await;
         assert!(result.is_err() || result.unwrap().is_empty());
         Ok(())
     }

@@ -59,10 +59,14 @@ pub struct AdapterSchema {
 /// - `SqliteRowAdapter`
 /// - `StaticFileAdapter`
 /// - `UnixSocketStreamAdapter`
+#[must_use]
 pub fn all_adapter_schemas() -> BTreeMap<String, AdapterSchema> {
     let mut map = BTreeMap::new();
 
-    map.insert("AppendOnlyFileAdapter".into(), schema_for_type::<AppendOnlyFileConfig>());
+    map.insert(
+        "AppendOnlyFileAdapter".into(),
+        schema_for_type::<AppendOnlyFileConfig>(),
+    );
 
     // ChainedConfig is generic; we produce the schema for the most common
     // concrete instantiation used in the codebase (SqliteRow + StaticFile).
@@ -73,17 +77,38 @@ pub fn all_adapter_schemas() -> BTreeMap<String, AdapterSchema> {
         schema_for_type::<ChainedConfig<SqliteRowConfig, StaticFileConfig>>(),
     );
 
-    map.insert("ClipboardPollingAdapter".into(), schema_for_type::<ClipboardPollingConfig>());
+    map.insert(
+        "ClipboardPollingAdapter".into(),
+        schema_for_type::<ClipboardPollingConfig>(),
+    );
 
     // DbusStreamAdapter — hand-authored schema (source file owned by Agent D / #1235).
     map.insert("DbusStreamAdapter".into(), dbus_stream_schema());
 
-    map.insert("DirectoryWalkAdapter".into(), schema_for_type::<DirectoryWalkConfig>());
-    map.insert("FileDropAdapter".into(), schema_for_type::<FileDropConfig>());
-    map.insert("JournalctlStreamAdapter".into(), schema_for_type::<JournalctlStreamConfig>());
-    map.insert("SqliteRowAdapter".into(), schema_for_type::<SqliteRowConfig>());
-    map.insert("StaticFileAdapter".into(), schema_for_type::<StaticFileConfig>());
-    map.insert("UnixSocketStreamAdapter".into(), schema_for_type::<UnixSocketStreamConfig>());
+    map.insert(
+        "DirectoryWalkAdapter".into(),
+        schema_for_type::<DirectoryWalkConfig>(),
+    );
+    map.insert(
+        "FileDropAdapter".into(),
+        schema_for_type::<FileDropConfig>(),
+    );
+    map.insert(
+        "JournalctlStreamAdapter".into(),
+        schema_for_type::<JournalctlStreamConfig>(),
+    );
+    map.insert(
+        "SqliteRowAdapter".into(),
+        schema_for_type::<SqliteRowConfig>(),
+    );
+    map.insert(
+        "StaticFileAdapter".into(),
+        schema_for_type::<StaticFileConfig>(),
+    );
+    map.insert(
+        "UnixSocketStreamAdapter".into(),
+        schema_for_type::<UnixSocketStreamConfig>(),
+    );
 
     map
 }
@@ -96,15 +121,19 @@ pub fn all_adapter_schemas() -> BTreeMap<String, AdapterSchema> {
 ///
 /// Uses [`SchemaGenerator::root_schema_for`] to produce a self-contained schema
 /// (i.e. `properties` and `required` at the top level, not behind a `$ref`).
+#[allow(clippy::expect_used)]
 fn schema_for_type<T: JsonSchema>() -> AdapterSchema {
     // root_schema_for produces a RootSchema with all definitions inlined,
     // so `required` is always at the top level of the schema object.
     let root = SchemaGenerator::default().root_schema_for::<T>();
-    let schema_value = serde_json::to_value(&root)
-        .expect("schemars schema should be JSON-serializable");
+    let schema_value =
+        serde_json::to_value(&root).expect("schemars schema should be JSON-serializable");
 
     let required = extract_required(&schema_value);
-    AdapterSchema { schema: schema_value, required }
+    AdapterSchema {
+        schema: schema_value,
+        required,
+    }
 }
 
 /// Extract the `required` array from a JSON Schema object.

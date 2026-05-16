@@ -13,12 +13,7 @@
 //! Snapshot and historical reads return the same content (the file is the
 //! ground truth); continuous returns nothing once consumed.
 
-use std::{
-    error::Error,
-    fmt,
-    future::Future,
-    sync::Arc,
-};
+use std::{error::Error, fmt, future::Future, sync::Arc};
 
 use serde::{Deserialize, Serialize};
 use tokio::{

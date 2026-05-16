@@ -37,7 +37,7 @@ pub const DEFAULT_LATENCY_RESERVOIR: usize = 1024;
 /// Throughput window length. Bigger window = more stable EPS reading, smaller
 /// window = faster reaction to load spikes. One minute matches what operators
 /// expect from `sinexctl automata` at a glance.
-pub const THROUGHPUT_WINDOW: Duration = Duration::from_secs(60);
+pub const THROUGHPUT_WINDOW: Duration = Duration::from_mins(1);
 
 /// Fixed-capacity ring buffer of latency samples for percentile queries.
 #[derive(Debug, Clone)]
@@ -160,7 +160,7 @@ impl ThroughputWindow {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use xtask::sandbox::{TestResult, sinex_test};
+    use xtask::sandbox::sinex_test;
 
     #[sinex_test]
     async fn latency_window_percentile_on_uniform_distribution() -> TestResult<()> {

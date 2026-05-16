@@ -48,9 +48,7 @@ impl AnnotateCommand {
             "content": self.note,
         });
 
-        let response = client
-            .call_raw_rpc("events.annotate", params)
-            .await?;
+        let response = client.call_raw_rpc("events.annotate", params).await?;
 
         match format {
             OutputFormat::Json | OutputFormat::Dot => {

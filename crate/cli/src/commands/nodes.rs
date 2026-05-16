@@ -53,7 +53,7 @@ impl NodesCommand {
                     "nodes": enriched.iter().map(|n| serde_json::json!({
                         "instance_id": n.info.instance_id.as_str(),
                         "node_type": n.info.node_type.to_string(),
-                        "hostname": n.info.hostname.as_ref().map(|h| h.as_str()),
+                        "hostname": n.info.hostname.as_ref().map(sinex_primitives::HostName::as_str),
                         "healthy": n.healthy,
                         "stale": n.stale,
                         "last_heartbeat": n.info.last_heartbeat.map(|hb| hb.format_rfc3339()),
@@ -67,7 +67,7 @@ impl NodesCommand {
                     "nodes": enriched.iter().map(|n| serde_json::json!({
                         "instance_id": n.info.instance_id.as_str(),
                         "node_type": n.info.node_type.to_string(),
-                        "hostname": n.info.hostname.as_ref().map(|h| h.as_str()),
+                        "hostname": n.info.hostname.as_ref().map(sinex_primitives::HostName::as_str),
                         "healthy": n.healthy,
                         "stale": n.stale,
                         "last_heartbeat": n.info.last_heartbeat.map(|hb| hb.format_rfc3339()),
@@ -132,8 +132,8 @@ fn render_nodes_table(nodes: &[EnrichedNodeInfo]) {
 
     // Column headers
     println!(
-        "  {:<32} {:<14} {:<10} {:<12} {:<10} {}",
-        "NAME", "TYPE", "HEALTH", "LAST SEEN", "HOST", "LEADER"
+        "  {:<32} {:<14} {:<10} {:<12} {:<10} LEADER",
+        "NAME", "TYPE", "HEALTH", "LAST SEEN", "HOST"
     );
     println!(
         "  {:-<32} {:-<14} {:-<10} {:-<12} {:-<10} {:-<6}",
@@ -156,15 +156,13 @@ fn render_nodes_table(nodes: &[EnrichedNodeInfo]) {
             .info
             .last_heartbeat
             .as_ref()
-            .map(|hb| format_heartbeat_age(hb))
-            .unwrap_or_else(|| "never".to_string());
+            .map_or_else(|| "never".to_string(), format_heartbeat_age);
 
         let host = node
             .info
             .hostname
             .as_ref()
-            .map(|h| h.as_str())
-            .unwrap_or("—");
+            .map_or("—", sinex_primitives::HostName::as_str);
 
         let leader = if node.info.is_leader {
             style("yes").cyan()
@@ -172,9 +170,6 @@ fn render_nodes_table(nodes: &[EnrichedNodeInfo]) {
             style("—").dim()
         };
 
-        println!(
-            "  {:<32} {:<14} {:<16} {:<12} {:<10} {}",
-            name, node_type, health, last_seen, host, leader
-        );
+        println!("  {name:<32} {node_type:<14} {health:<16} {last_seen:<12} {host:<10} {leader}");
     }
 }

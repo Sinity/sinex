@@ -1,0 +1,61 @@
+{
+  "$defs": {
+    "DateTime": {
+      "description": "RFC 3339 formatted date-time string",
+      "format": "date-time",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "One message in a ChatGPT conversation export (`conversations-NNN.json`).\n\nSource: ChatGPT data export → `mapping` node graph, walking from\n`current_node` backwards to reconstruct the canonical thread. Only text\nmessages (`content_type = \"text\"`) are included; tool-use / DALL-E / etc.\nnodes are skipped.",
+  "properties": {
+    "conversation_title": {
+      "description": "Conversation title.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "message_id": {
+      "description": "Node id of the message.",
+      "type": "string"
+    },
+    "message_ts": {
+      "$ref": "#/$defs/DateTime",
+      "description": "Unix-epoch timestamp (as stored in the export)."
+    },
+    "model": {
+      "description": "Model slug when it appears on the message metadata.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "role": {
+      "description": "`\"user\"`, `\"assistant\"`, `\"system\"`, or `\"tool\"`.",
+      "type": "string"
+    },
+    "session_id": {
+      "description": "ChatGPT conversation id.",
+      "type": "string"
+    },
+    "text": {
+      "description": "Rendered message text.",
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "session_id",
+    "message_id",
+    "role",
+    "message_ts"
+  ],
+  "title": "ChatGptAiMessagePayload",
+  "type": "object",
+  "x-sinex-event-type": "ai.message",
+  "x-sinex-source": "chatgpt",
+  "x-sinex-version": "1.0.0"
+}

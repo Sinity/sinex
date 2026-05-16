@@ -205,9 +205,11 @@ impl MaterialAssembler {
                     .await
                 {
                     error!(
+                        target: "sinex_metrics",
+                        metric = "ingestd.material_dlq_publish_failures_total",
                         material_id = %material_id,
-                        "Failed to publish material DLQ entry: {}",
-                        e
+                        error = %e,
+                        "Failed to publish material DLQ entry"
                     );
                 } else {
                     debug!(material_id = %material_id, "Routed to DLQ");
@@ -215,9 +217,11 @@ impl MaterialAssembler {
             }
             Err(e) => {
                 error!(
+                    target: "sinex_metrics",
+                    metric = "ingestd.material_dlq_publish_failures_total",
                     material_id = %material_id,
-                    "Failed to encode DLQ payload: {}",
-                    e
+                    error = %e,
+                    "Failed to encode DLQ payload"
                 );
             }
         }
@@ -714,6 +718,7 @@ impl MaterialAssembler {
                 let commit_outcome_unknown = e.is_commit_outcome_unknown();
                 let e = e.into_inner();
                 if commit_outcome_unknown {
+                    self.stats_inc_commit_outcome_unknown();
                     warn!(
                         material_id = %material_id,
                         error = %e,
@@ -811,6 +816,8 @@ impl MaterialAssembler {
         })?;
         if self.pool.is_closed() {
             error!(
+                target: "sinex_metrics",
+                metric = "ingestd.material_finalization_failures_total",
                 material_id = %material_id,
                 "Database pool closed before handling end message"
             );

@@ -329,6 +329,8 @@ impl<'a> FinalizationTransaction<'a> {
             .await
             .map_err(|e| {
                 error!(
+                    target: "sinex_metrics",
+                    metric = "ingestd.material_finalization_failures_total",
                     material_id = %state.material_id,
                     backend = %content_key.storage_backend(),
                     digest = %content_key.digest,

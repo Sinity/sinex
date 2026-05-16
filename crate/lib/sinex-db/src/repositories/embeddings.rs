@@ -163,7 +163,7 @@ impl<'a> EmbeddingRepository<'a> {
             .collect();
 
         let rows = sqlx::query_as::<_, EmbeddingTarget>(
-            r#"
+            r"
             SELECT e.id as event_id,
                    e.event_type as event_type,
                    e.payload::text as text_for_embedding
@@ -177,7 +177,7 @@ impl<'a> EmbeddingRepository<'a> {
               )
             ORDER BY e.id ASC
             LIMIT $3
-            "#,
+            ",
         )
         .bind(event_types.as_slice())
         .bind(model_id)
@@ -241,7 +241,7 @@ impl<'a> EmbeddingRepository<'a> {
 
         let embedding_str = format_vector(query_embedding);
         let rows = sqlx::query_as::<_, KnnSearchResult>(
-            r#"
+            r"
             SELECT hs.event_id,
                    hs.cosine_distance
             FROM core.hybrid_search(
@@ -255,7 +255,7 @@ impl<'a> EmbeddingRepository<'a> {
                 0.0::float8
             ) hs
             ORDER BY hs.vector_rank ASC, hs.event_id ASC
-            "#,
+            ",
         )
         .bind(embedding_str)
         .bind(model_id)

@@ -2,13 +2,13 @@
 
 use serde::{Deserialize, Serialize};
 
-/// Unique identifier for a snapshot (UUIDv7 — sortable by creation time).
+/// Unique identifier for a snapshot (`UUIDv7` — sortable by creation time).
 pub type SnapshotId = String;
 
 /// Top-level manifest written into every snapshot archive as `manifest.json`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SnapshotManifest {
-    /// UUIDv7 identifier assigned at snapshot creation time.
+    /// `UUIDv7` identifier assigned at snapshot creation time.
     pub snapshot_id: SnapshotId,
     /// RFC 3339 timestamp of when the snapshot was started.
     pub created_at: String,
@@ -47,7 +47,7 @@ pub struct ComponentRecord {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum ComponentExtras {
-    /// PostgreSQL row counts per table.
+    /// `PostgreSQL` row counts per table.
     Postgres(PostgresExtras),
     /// CAS blob count.
     Cas(CasExtras),

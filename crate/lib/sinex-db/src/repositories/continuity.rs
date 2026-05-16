@@ -28,12 +28,12 @@
 //!   carries a `privacy.tier` that requires a more conservative answer.
 
 use super::common::{DbResult, db_error};
+use sinex_primitives::Timestamp;
 use sinex_primitives::sources::SourceFamily;
 use sinex_primitives::sources::continuity::{
     CoverageContract, CoverageGap, DeclaredCoverageContract, DeclaredCoverageContractKind, GapKind,
     PrivacyClass, Replayability, SeamKind, SourceContinuityReport, TemporalSeam,
 };
-use sinex_primitives::Timestamp;
 use sqlx::PgPool;
 use time::OffsetDateTime;
 
@@ -101,10 +101,7 @@ impl<'a> ContinuityRepository<'a> {
     // Internals
     // ────────────────────────────────────────────────────────────
 
-    async fn observed_families(
-        &self,
-        since: Option<Timestamp>,
-    ) -> DbResult<Vec<SourceFamily>> {
+    async fn observed_families(&self, since: Option<Timestamp>) -> DbResult<Vec<SourceFamily>> {
         let since_pg: Option<OffsetDateTime> = since.map(Into::into);
         let rows = sqlx::query!(
             r#"
@@ -489,9 +486,7 @@ fn declared_kind_to_contract(kind: DeclaredCoverageContractKind) -> CoverageCont
     match kind {
         DeclaredCoverageContractKind::Continuous => CoverageContract::Continuous,
         DeclaredCoverageContractKind::PeriodicDump => CoverageContract::PeriodicDump,
-        DeclaredCoverageContractKind::OpportunisticImport => {
-            CoverageContract::OpportunisticImport
-        }
+        DeclaredCoverageContractKind::OpportunisticImport => CoverageContract::OpportunisticImport,
         DeclaredCoverageContractKind::FiniteOneShot => CoverageContract::FiniteOneShot,
         DeclaredCoverageContractKind::EphemeralStream => CoverageContract::EphemeralStream,
         // Filtered upstream; if reached, treat as opportunistic.
@@ -523,9 +518,7 @@ where
     // Heuristic: if all chunks are `realtime`, assume continuous.
     // If chunks are spaced regularly with `intrinsic` timing, periodic dump.
     // Fall back to opportunistic import.
-    let all_realtime = chunks
-        .iter()
-        .all(|c| matches!(c.timing(), "realtime"));
+    let all_realtime = chunks.iter().all(|c| matches!(c.timing(), "realtime"));
     if all_realtime {
         return CoverageContract::Continuous;
     }
@@ -544,9 +537,8 @@ fn build_replayability(
         weak_points.push("no source bytes preserved (no blob backing)".into());
     }
     if !good_timing {
-        weak_points.push(
-            "timing inferred from filesystem mtime/ctime — replay times may drift".into(),
-        );
+        weak_points
+            .push("timing inferred from filesystem mtime/ctime — replay times may drift".into());
     }
     if !all_finalized {
         weak_points.push(
@@ -646,8 +638,8 @@ impl ChunkAccess for Chunk {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use xtask::sandbox::prelude::sinex_test;
     use time::macros::datetime;
+    use xtask::sandbox::prelude::sinex_test;
 
     fn chunk(
         kind: &str,
@@ -700,7 +692,8 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn classify_overlap_when_curr_starts_before_prev_ends() -> xtask::sandbox::TestResult<()> {
+    async fn classify_overlap_when_curr_starts_before_prev_ends() -> xtask::sandbox::TestResult<()>
+    {
         let prev = chunk(
             "annex",
             "completed",
@@ -778,7 +771,8 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn classify_recovered_partial_when_either_chunk_marked() -> xtask::sandbox::TestResult<()> {
+    async fn classify_recovered_partial_when_either_chunk_marked() -> xtask::sandbox::TestResult<()>
+    {
         let prev = chunk(
             "annex",
             "recovered_partial",
@@ -884,7 +878,8 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn declared_coverage_contract_overrides_heuristic_inference() -> xtask::sandbox::TestResult<()> {
+    async fn declared_coverage_contract_overrides_heuristic_inference()
+    -> xtask::sandbox::TestResult<()> {
         let declared = DeclaredCoverageContract {
             kind: DeclaredCoverageContractKind::EphemeralStream,
             ..Default::default()

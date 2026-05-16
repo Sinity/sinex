@@ -98,7 +98,10 @@ async fn duplicate_entity_skipped_via_dedup_map() -> TestResult<()> {
         .expect("first");
     let second = drive(&mut resolver, &mut state, extracted("tool", "git")).await;
 
-    assert!(second.is_none(), "duplicate must not produce a new resolved payload");
+    assert!(
+        second.is_none(),
+        "duplicate must not produce a new resolved payload"
+    );
     assert_eq!(state.candidates_processed, 1);
     assert_eq!(state.known_entities.len(), 1);
     Ok(())
@@ -109,12 +112,16 @@ async fn identity_is_deterministic_uuidv5() -> TestResult<()> {
     let payload_a = {
         let mut r = EntityResolver::default();
         let mut s = ResolverState::default();
-        drive(&mut r, &mut s, extracted("tool", "git")).await.unwrap()
+        drive(&mut r, &mut s, extracted("tool", "git"))
+            .await
+            .unwrap()
     };
     let payload_b = {
         let mut r = EntityResolver::default();
         let mut s = ResolverState::default();
-        drive(&mut r, &mut s, extracted("tool", "git")).await.unwrap()
+        drive(&mut r, &mut s, extracted("tool", "git"))
+            .await
+            .unwrap()
     };
 
     assert_eq!(

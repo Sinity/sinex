@@ -47,7 +47,10 @@ impl FixtureHandle {
     }
 
     /// Convenience: construct with a single owned resource.
-    pub fn with_resource(binding: FixtureBinding, resource: impl std::any::Any + Send + 'static) -> Self {
+    pub fn with_resource(
+        binding: FixtureBinding,
+        resource: impl std::any::Any + Send + 'static,
+    ) -> Self {
         Self::new(binding, vec![Box::new(resource)])
     }
 

@@ -2,16 +2,16 @@
 //!
 //! Model classification: **Windowed** — stateful deduplication over extracted
 //! entities. Each `entity.extracted` candidate is canonicalized by type and
-//! assigned a deterministic UUIDv5 identity. Already-resolved entities are
+//! assigned a deterministic `UUIDv5` identity. Already-resolved entities are
 //! silently skipped.
 //!
 //! # Design note
 //!
 //! The processing model is 1:1 (one input → zero or one output), but the
-//! stateful deduplication map needs checkpoint persistence. A WindowedNode
-//! with instant windows (window_complete returns true whenever a pending
+//! stateful deduplication map needs checkpoint persistence. A `WindowedNode`
+//! with instant windows (`window_complete` returns true whenever a pending
 //! resolution exists) gives exactly the 1:1 semantics with full state
-//! persistence without widening to a ScopeReconciler.
+//! persistence without widening to a `ScopeReconciler`.
 
 use serde::{Deserialize, Serialize};
 use sinex_node_sdk::derived_node::{DerivedOutput, DerivedTriggerContext, WindowedNodeAdapter};
@@ -23,13 +23,13 @@ use sinex_primitives::events::payloads::{EntityExtractedPayload, EntityResolvedP
 use sinex_primitives::privacy::ProcessingContext;
 use std::collections::HashMap;
 
-/// Persistent resolver state: the deduplication map of canonical_key → entity_id.
+/// Persistent resolver state: the deduplication map of `canonical_key` → `entity_id`.
 ///
-/// Checkpointed by the SDK so restarts do not re-compute the same UUIDv5
+/// Checkpointed by the SDK so restarts do not re-compute the same `UUIDv5`
 /// identities from scratch.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ResolverState {
-    /// Map from `"{entity_type}:{canonical_name}"` to deterministic UUIDv5 entity ID.
+    /// Map from `"{entity_type}:{canonical_name}"` to deterministic `UUIDv5` entity ID.
     pub known_entities: HashMap<String, Uuid>,
 
     /// Number of new candidates processed (for observability).
@@ -123,7 +123,7 @@ impl WindowedNode for EntityResolver {
         let output = DerivedOutput::windowed_now(payload, vec![entity_id])
             .with_temporal_policy(SyntheticTemporalPolicy::DeclaredEffective)
             .with_semantics_version("1.0.0")
-            .with_equivalence_key(format!("entity-resolver:{}:{}", entity_id, canonical_name));
+            .with_equivalence_key(format!("entity-resolver:{entity_id}:{canonical_name}"));
 
         Ok(Some(output))
     }
@@ -149,7 +149,7 @@ fn canonical_key(entity_type: &EntityTypeName, canonical_name: &str) -> String {
     format!("{}:{}", entity_type.as_str(), canonical_name)
 }
 
-/// Deterministic UUIDv5 from `(entity_type, canonical_name)`.
+/// Deterministic `UUIDv5` from `(entity_type, canonical_name)`.
 fn compute_entity_id(entity_type: &EntityTypeName, canonical_name: &str) -> Uuid {
     let input = format!("{}:{}", entity_type.as_str(), canonical_name);
     Uuid::new_v5(&Uuid::NAMESPACE_OID, input.as_bytes())

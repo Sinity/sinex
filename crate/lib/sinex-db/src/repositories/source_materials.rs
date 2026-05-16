@@ -11,9 +11,9 @@ use sinex_primitives::domain::{
     TemporalSourceType,
 };
 use sinex_primitives::rpc::sources::{
-    CaveatSeverity, SOURCE_MATERIAL_CONTRACT_METADATA_KEY, SourceCaveat, SourceMaterialMetadataContract,
-    SourceMaterialStatistics, SourceOrigin, SourceReadiness, SourceReadinessCost,
-    SourceReadinessStatus, caveat_codes,
+    CaveatSeverity, SOURCE_MATERIAL_CONTRACT_METADATA_KEY, SourceCaveat,
+    SourceMaterialMetadataContract, SourceMaterialStatistics, SourceOrigin, SourceReadiness,
+    SourceReadinessCost, SourceReadinessStatus, caveat_codes,
 };
 use sinex_primitives::{Id, SinexError, Timestamp, events::OffsetKind};
 pub use sinex_schema::schema::records::SourceMaterialLinkRecord;
@@ -98,9 +98,10 @@ fn contract_for_source(
 
 fn format_for_material_type(material_type: &str, source_uri: Option<&str>) -> SourceMaterialFormat {
     match material_type {
-        material_types::FILE => source_uri
-            .map(SourceMaterialFormat::infer_from_path)
-            .unwrap_or(SourceMaterialFormat::Unknown),
+        material_types::FILE => source_uri.map_or(
+            SourceMaterialFormat::Unknown,
+            SourceMaterialFormat::infer_from_path,
+        ),
         material_types::STREAM => SourceMaterialFormat::Jsonl,
         material_types::BLOB_TEXT => SourceMaterialFormat::Text,
         material_types::BLOB | material_types::BLOB_BINARY => SourceMaterialFormat::Binary,
@@ -1782,12 +1783,12 @@ impl SourceMaterialRepository<'_> {
             // For family classification, prefer the most-specific kind we saw;
             // sorted ascending, the last element is the alphabetically-greatest
             // kind, which is fine as a stable tiebreaker. Family is advisory.
-            let representative_kind = row.material_kinds.last().map(String::as_str).unwrap_or("");
+            let representative_kind = row.material_kinds.last().map_or("", String::as_str);
             let family = derive_source_family(&row.source_identifier, representative_kind);
-            if let Some(filter) = source_family {
-                if family != filter {
-                    continue;
-                }
+            if let Some(filter) = source_family
+                && family != filter
+            {
+                continue;
             }
 
             // Parsed-event count: count events referencing any material from
@@ -1808,9 +1809,7 @@ impl SourceMaterialRepository<'_> {
             .await
             .map_err(|e| db_error(e, "count parsed events for readiness"))?;
 
-            let freshness_seconds = row
-                .last_success_at
-                .map(|ts| (now - ts).whole_seconds());
+            let freshness_seconds = row.last_success_at.map(|ts| (now - ts).whole_seconds());
 
             let display_identifier = redact_identifier_for_display(&row.source_identifier);
 
@@ -1858,8 +1857,7 @@ impl SourceMaterialRepository<'_> {
                 caveats.push(SourceCaveat {
                     code: caveat_codes::MATERIAL_STAGED_UNPARSED.to_string(),
                     severity: CaveatSeverity::Degraded,
-                    message: "Material is staged but no parsed events reference it."
-                        .to_string(),
+                    message: "Material is staged but no parsed events reference it.".to_string(),
                     evidence_ref: None,
                 });
                 SourceReadinessStatus::Partial
@@ -2009,10 +2007,7 @@ impl SourceMaterialRepository<'_> {
     /// archived event still claims this material as its provenance root.
     /// Tombstones (`core.event_tombstones`) carry only metadata, not
     /// `source_material_id`, so they don't keep materials alive.
-    pub async fn find_orphan_materials(
-        &self,
-        candidate_ids: &[Uuid],
-    ) -> DbResult<Vec<Uuid>> {
+    pub async fn find_orphan_materials(&self, candidate_ids: &[Uuid]) -> DbResult<Vec<Uuid>> {
         if candidate_ids.is_empty() {
             return Ok(Vec::new());
         }
@@ -2040,10 +2035,7 @@ impl SourceMaterialRepository<'_> {
     /// Delete a source material registry row by ID. Returns `true` if a row was
     /// actually removed. Caller is responsible for dropping the associated
     /// blob from the content store separately — this only removes the DB row.
-    pub async fn delete_material(
-        &self,
-        id: Id<SourceMaterialRecord>,
-    ) -> DbResult<bool> {
+    pub async fn delete_material(&self, id: Id<SourceMaterialRecord>) -> DbResult<bool> {
         let result = sqlx::query!(
             r#"
             DELETE FROM raw.source_material_registry
@@ -2060,15 +2052,13 @@ impl SourceMaterialRepository<'_> {
 
 /// Best-effort family classification from registry-only data.
 ///
-/// Bindings (#1098) carry the canonical source_family in Nix; until the
+/// Bindings (#1098) carry the canonical `source_family` in Nix; until the
 /// readiness derivation can join binding evidence, we infer a coarse family
 /// from the identifier shape. The classification is advisory; consumers
 /// should treat unfamiliar values as `"generic"`.
 fn derive_source_family(source_identifier: &str, _material_kind: &str) -> &'static str {
     let lower = source_identifier.to_ascii_lowercase();
-    if lower.starts_with("integration.")
-        || lower.starts_with("analysis.")
-    {
+    if lower.starts_with("integration.") || lower.starts_with("analysis.") {
         // External producer envelopes use dotted source-unit identifiers.
         return "integration";
     }

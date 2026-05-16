@@ -73,7 +73,13 @@ async fn seed_chunk(
 async fn document_search_fts_single_word(ctx: TestContext) -> TestResult<()> {
     let doc_id = Uuid::now_v7();
     seed_document(&ctx, doc_id, "dendron_markdown", "notes/rust-async").await?;
-    seed_chunk(&ctx, doc_id, 0, "Rust async programming with tokio and futures").await?;
+    seed_chunk(
+        &ctx,
+        doc_id,
+        0,
+        "Rust async programming with tokio and futures",
+    )
+    .await?;
     seed_chunk(&ctx, doc_id, 1, "Unrelated content about cooking recipes").await?;
 
     let repo = ctx.pool.documents();
@@ -153,7 +159,13 @@ async fn document_search_fts_exclusion_operator(ctx: TestContext) -> TestResult<
     let doc_id = Uuid::now_v7();
     seed_document(&ctx, doc_id, "dendron_markdown", "notes/systems").await?;
     seed_chunk(&ctx, doc_id, 0, "Memory management in systems programming").await?;
-    seed_chunk(&ctx, doc_id, 1, "Memory management without garbage collection").await?;
+    seed_chunk(
+        &ctx,
+        doc_id,
+        1,
+        "Memory management without garbage collection",
+    )
+    .await?;
 
     let repo = ctx.pool.documents();
     // Exclude chunks mentioning "systems"
@@ -226,7 +238,13 @@ async fn document_search_kind_filter(ctx: TestContext) -> TestResult<()> {
     let term_doc = Uuid::now_v7();
     seed_document(&ctx, md_doc, "dendron_markdown", "notes/filtering-md").await?;
     seed_document(&ctx, term_doc, "terminal_output", "term/filtering-term").await?;
-    seed_chunk(&ctx, md_doc, 0, "database indexing strategies for performance").await?;
+    seed_chunk(
+        &ctx,
+        md_doc,
+        0,
+        "database indexing strategies for performance",
+    )
+    .await?;
     seed_chunk(
         &ctx,
         term_doc,
@@ -380,10 +398,7 @@ async fn document_search_pagination_non_overlap(ctx: TestContext) -> TestResult<
         0,
         "page 1 and page 2 must not overlap"
     );
-    assert!(
-        !page1.results.is_empty(),
-        "page 1 should have results"
-    );
+    assert!(!page1.results.is_empty(), "page 1 should have results");
     Ok(())
 }
 
@@ -393,13 +408,7 @@ async fn document_search_pagination_ordering_stable(ctx: TestContext) -> TestRes
     let doc_id = Uuid::now_v7();
     seed_document(&ctx, doc_id, "dendron_markdown", "notes/ordering").await?;
     for i in 0..5i32 {
-        seed_chunk(
-            &ctx,
-            doc_id,
-            i,
-            &format!("ordering test keyword chunk {i}"),
-        )
-        .await?;
+        seed_chunk(&ctx, doc_id, i, &format!("ordering test keyword chunk {i}")).await?;
     }
 
     let repo = ctx.pool.documents();
@@ -438,7 +447,10 @@ async fn document_search_get_document(ctx: TestContext) -> TestResult<()> {
     let repo = ctx.pool.documents();
     let doc = repo.get_document(doc_id).await?;
 
-    assert!(doc.is_some(), "get_document should find the seeded document");
+    assert!(
+        doc.is_some(),
+        "get_document should find the seeded document"
+    );
     let doc = doc.unwrap();
     assert_eq!(doc.kind, "terminal_output");
     assert_eq!(doc.natural_key, "term/get-document-test");
@@ -451,7 +463,10 @@ async fn document_search_get_document_not_found(ctx: TestContext) -> TestResult<
     let unknown_id = Uuid::now_v7();
     let repo = ctx.pool.documents();
     let doc = repo.get_document(unknown_id).await?;
-    assert!(doc.is_none(), "get_document should return None for unknown id");
+    assert!(
+        doc.is_none(),
+        "get_document should return None for unknown id"
+    );
     Ok(())
 }
 

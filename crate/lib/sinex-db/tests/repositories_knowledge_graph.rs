@@ -88,13 +88,11 @@ async fn merge_duplicate_outgoing_relations_unions_source_event_ids(
     let e4 = Id::<Event<JsonValue>>::new();
 
     repo.create_relation(
-        CreateEntityRelation::new(target.id, other.id, "knows")
-            .with_source_event_ids(vec![e1, e2]),
+        CreateEntityRelation::new(target.id, other.id, "knows").with_source_event_ids(vec![e1, e2]),
     )
     .await?;
     repo.create_relation(
-        CreateEntityRelation::new(source.id, other.id, "knows")
-            .with_source_event_ids(vec![e3, e4]),
+        CreateEntityRelation::new(source.id, other.id, "knows").with_source_event_ids(vec![e3, e4]),
     )
     .await?;
 
@@ -276,13 +274,11 @@ async fn merge_entities_idempotent(ctx: TestContext) -> TestResult<()> {
     let e3 = Id::<Event<JsonValue>>::new();
 
     repo.create_relation(
-        CreateEntityRelation::new(target.id, other.id, "knows")
-            .with_source_event_ids(vec![e1, e2]),
+        CreateEntityRelation::new(target.id, other.id, "knows").with_source_event_ids(vec![e1, e2]),
     )
     .await?;
     repo.create_relation(
-        CreateEntityRelation::new(source.id, other.id, "knows")
-            .with_source_event_ids(vec![e3]),
+        CreateEntityRelation::new(source.id, other.id, "knows").with_source_event_ids(vec![e3]),
     )
     .await?;
 

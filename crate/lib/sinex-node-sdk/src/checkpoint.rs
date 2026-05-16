@@ -519,6 +519,8 @@ impl CheckpointManager {
 
                     if existing_entry.is_none() {
                         warn!(
+                            target: "sinex_metrics",
+                            metric = "node.checkpoint_kv_recovery_total",
                             node = %self.node_name,
                             consumer_group = %self.consumer_group,
                             consumer_name = %self.consumer_name,
@@ -558,6 +560,8 @@ impl CheckpointManager {
 
                         if checkpoint_states_match(&existing_state, state) {
                             warn!(
+                                target: "sinex_metrics",
+                                metric = "node.checkpoint_idempotent_save_total",
                                 node = %self.node_name,
                                 consumer_group = %self.consumer_group,
                                 consumer_name = %self.consumer_name,

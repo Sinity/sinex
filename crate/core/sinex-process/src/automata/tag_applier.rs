@@ -1,4 +1,4 @@
-//! Rule-based tag automaton — deterministic TransducerNode applying
+//! Rule-based tag automaton — deterministic `TransducerNode` applying
 //! configured rules to events and emitting `knowledge.tag_applied` events.
 //!
 //! ## v1 rules
@@ -26,8 +26,8 @@
 use sinex_node_sdk::derived_node::{DerivedOutput, DerivedTriggerContext, TransducerNodeAdapter};
 use sinex_node_sdk::tags;
 use sinex_node_sdk::{InputProvenanceFilter, NodeLogicError, TransducerNode};
-use sinex_primitives::events::payloads::KnowledgeTagAppliedPayload;
 use sinex_primitives::events::EventPayload;
+use sinex_primitives::events::payloads::KnowledgeTagAppliedPayload;
 use sinex_primitives::privacy::ProcessingContext;
 
 #[derive(Debug, Clone, Default)]
@@ -112,34 +112,33 @@ fn evaluate_rules(input: &serde_json::Value, context: &DerivedTriggerContext) ->
         .get("path")
         .or_else(|| input.get("file_path"))
         .and_then(|v| v.as_str())
+        && let Some(ext) = path.rsplit('.').next()
     {
-        if let Some(ext) = path.rsplit('.').next() {
-            let file_type_tag = match ext {
-                "rs" => Some("rust"),
-                "nix" => Some("nix"),
-                "md" => Some("markdown"),
-                "py" => Some("python"),
-                "js" | "ts" | "tsx" | "jsx" => Some("javascript"),
-                "json" => Some("json"),
-                "toml" => Some("toml"),
-                "yaml" | "yml" => Some("yaml"),
-                "html" | "htm" => Some("html"),
-                "css" => Some("css"),
-                "sql" => Some("sql"),
-                "sh" | "bash" | "zsh" => Some("shell"),
-                _ => None,
-            };
-            if let Some(ft) = file_type_tag {
-                tags.push(tags::tag_name(tags::inferred::FILE_TYPE_PREFIX, ft));
-            }
+        let file_type_tag = match ext {
+            "rs" => Some("rust"),
+            "nix" => Some("nix"),
+            "md" => Some("markdown"),
+            "py" => Some("python"),
+            "js" | "ts" | "tsx" | "jsx" => Some("javascript"),
+            "json" => Some("json"),
+            "toml" => Some("toml"),
+            "yaml" | "yml" => Some("yaml"),
+            "html" | "htm" => Some("html"),
+            "css" => Some("css"),
+            "sql" => Some("sql"),
+            "sh" | "bash" | "zsh" => Some("shell"),
+            _ => None,
+        };
+        if let Some(ft) = file_type_tag {
+            tags.push(tags::tag_name(tags::inferred::FILE_TYPE_PREFIX, ft));
         }
     }
 
     // MIME-based rules for document.ingested events
-    if event_type == "document.ingested" {
-        if let Some(mime) = input.get("mime_type").and_then(|v| v.as_str()) {
-            tags.extend(tags::auto_tags_for_mime(mime));
-        }
+    if event_type == "document.ingested"
+        && let Some(mime) = input.get("mime_type").and_then(|v| v.as_str())
+    {
+        tags.extend(tags::auto_tags_for_mime(mime));
     }
 
     tags
@@ -200,9 +199,9 @@ register_source_unit_binding! {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+
     use serde_json::json;
-    use xtask::sandbox::{TestResult, sinex_test};
+    use xtask::sandbox::sinex_test;
 
     #[sinex_test]
     async fn test_source_based_tagging() -> TestResult<()> {

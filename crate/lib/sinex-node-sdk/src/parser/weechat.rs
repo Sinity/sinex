@@ -1,6 +1,6 @@
-//! WeeChat IRC log file parser (#1051).
+//! `WeeChat` IRC log file parser (#1051).
 //!
-//! Parses WeeChat IRC client log files in tab-delimited format:
+//! Parses `WeeChat` IRC client log files in tab-delimited format:
 //! `YYYY-MM-DD HH:MM:SS\tprefix\tmessage`
 //!
 //! ## Prefix mapping
@@ -15,7 +15,7 @@
 //! ## Format
 //!
 //! Each line is tab-delimited with three fields. The timestamp is in
-//! local time (WeeChat default); the parser assumes UTC as a baseline
+//! local time (`WeeChat` default); the parser assumes UTC as a baseline
 //! and records `TimingEvidence::Intrinsic` with the `"timestamp"` field.
 //!
 //! ## Occurrence identity
@@ -26,8 +26,8 @@
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
-use time::macros::format_description;
 use time::PrimitiveDateTime;
+use time::macros::format_description;
 
 use sinex_primitives::domain::{EventSource, EventType};
 use sinex_primitives::parser::{
@@ -46,11 +46,10 @@ use super::{MaterialParser, ParserError, ParserResult};
 const TIMESTAMP_FORMAT: &[time::format_description::BorrowedFormatItem<'_>] =
     format_description!("[year]-[month]-[day] [hour]:[minute]:[second]");
 
-/// Parse a WeeChat timestamp string into a [`Timestamp`].
+/// Parse a `WeeChat` timestamp string into a [`Timestamp`].
 fn parse_weechat_ts(s: &str) -> ParserResult<Timestamp> {
-    let dt = PrimitiveDateTime::parse(s, TIMESTAMP_FORMAT).map_err(|e| {
-        ParserError::Parse(format!("invalid WeeChat timestamp '{s}': {e}"))
-    })?;
+    let dt = PrimitiveDateTime::parse(s, TIMESTAMP_FORMAT)
+        .map_err(|e| ParserError::Parse(format!("invalid WeeChat timestamp '{s}': {e}")))?;
     Ok(Timestamp::new(dt.assume_utc()))
 }
 
@@ -58,7 +57,7 @@ fn parse_weechat_ts(s: &str) -> ParserResult<Timestamp> {
 // Prefix classification
 // ---------------------------------------------------------------------------
 
-/// The result of classifying a WeeChat log prefix.
+/// The result of classifying a `WeeChat` log prefix.
 struct WeeChatClassification {
     /// The static event type string (e.g. `irc.message`).
     event_type: &'static str,
@@ -68,7 +67,7 @@ struct WeeChatClassification {
     channel: Option<String>,
 }
 
-/// Classify a WeeChat line prefix into an event type and extract nick/channel.
+/// Classify a `WeeChat` line prefix into an event type and extract nick/channel.
 fn classify(prefix: &str, message: &str) -> WeeChatClassification {
     match prefix {
         "-->" => {
@@ -129,7 +128,7 @@ pub struct WeeChatLogConfig;
 // Parser
 // ---------------------------------------------------------------------------
 
-/// Parser for WeeChat IRC client log files.
+/// Parser for `WeeChat` IRC client log files.
 ///
 /// Expects input from an [`AppendOnlyFileAdapter`](super::AppendOnlyFileAdapter)
 /// that yields one [`SourceRecord`](sinex_primitives::parser::SourceRecord) per
@@ -181,10 +180,8 @@ impl MaterialParser for WeeChatLogParser {
         record: sinex_primitives::parser::SourceRecord,
         ctx: &ParserContext,
     ) -> ParserResult<Vec<ParsedEventIntent>> {
-        let line =
-            std::str::from_utf8(&record.bytes).map_err(|e| {
-                ParserError::Parse(format!("invalid UTF-8 in WeeChat log: {e}"))
-            })?;
+        let line = std::str::from_utf8(&record.bytes)
+            .map_err(|e| ParserError::Parse(format!("invalid UTF-8 in WeeChat log: {e}")))?;
 
         let line = line.trim();
         if line.is_empty() {
@@ -248,8 +245,8 @@ mod tests {
     use super::*;
     use xtask::sandbox::prelude::sinex_test;
 
-    use sinex_primitives::parser::MaterialAnchor;
     use sinex_primitives::Uuid;
+    use sinex_primitives::parser::MaterialAnchor;
 
     fn test_ctx() -> ParserContext {
         ParserContext {
@@ -266,7 +263,11 @@ mod tests {
         }
     }
 
-    fn make_record(bytes: &[u8], line: u64, byte_start: u64) -> sinex_primitives::parser::SourceRecord {
+    fn make_record(
+        bytes: &[u8],
+        line: u64,
+        byte_start: u64,
+    ) -> sinex_primitives::parser::SourceRecord {
         sinex_primitives::parser::SourceRecord {
             material_id: sinex_primitives::ids::Id::new(),
             anchor: MaterialAnchor::Line { byte_start, line },
@@ -280,11 +281,7 @@ mod tests {
     #[sinex_test]
     async fn parse_irc_message() -> xtask::sandbox::TestResult<()> {
         let mut parser = WeeChatLogParser;
-        let record = make_record(
-            b"2024-01-15 14:23:45\tsinity\thello world",
-            1,
-            0,
-        );
+        let record = make_record(b"2024-01-15 14:23:45\tsinity\thello world", 1, 0);
         let ctx = test_ctx();
 
         let intents = parser.parse_record(record, &ctx).await.unwrap();
@@ -363,7 +360,10 @@ mod tests {
 
         assert_eq!(intent.event_type.as_str(), "irc.server_notice");
         assert_eq!(intent.payload["nick"], "__server__");
-        assert_eq!(intent.payload["message"], "Notice: Server restart scheduled");
+        assert_eq!(
+            intent.payload["message"],
+            "Notice: Server restart scheduled"
+        );
         Ok(())
     }
 

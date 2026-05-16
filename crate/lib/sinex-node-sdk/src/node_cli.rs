@@ -1009,7 +1009,7 @@ mod tests {
     use sinex_primitives::SanitizedPath;
     use std::str::FromStr;
     use xtask::sandbox::sinex_serial_test;
-    use xtask::sandbox::{TestResult, sinex_test};
+    use xtask::sandbox::sinex_test;
 
     #[sinex_test]
     async fn export_result_surfaces_failure_with_path_context() -> TestResult<()> {

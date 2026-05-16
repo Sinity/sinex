@@ -49,7 +49,13 @@ async fn show_ipc_stream() -> Result<(), Box<dyn std::error::Error>> {
     let client = Arc::new(AsyncMutex::new(Some(client)));
     let source = IpcStreamRecordSource::new("demo://ipc", move || {
         let client = client.clone();
-        async move { client.lock().await.take().ok_or(DemoError("already connected")) }
+        async move {
+            client
+                .lock()
+                .await
+                .take()
+                .ok_or(DemoError("already connected"))
+        }
     });
     let batch = source
         .read_batch(&source.initial_checkpoint(), RecordReadHorizon::Unbounded)
@@ -65,15 +71,17 @@ async fn show_one_time_dump() -> Result<(), Box<dyn std::error::Error>> {
     let batch = source
         .read_batch(&source.initial_checkpoint(), RecordReadHorizon::Unbounded)
         .await?;
-    println!("one-time: {} records, consumed={}", batch.records.len(), batch.final_checkpoint.consumed);
+    println!(
+        "one-time: {} records, consumed={}",
+        batch.records.len(),
+        batch.final_checkpoint.consumed
+    );
     Ok(())
 }
 
 async fn show_incremental_dump() -> Result<(), Box<dyn std::error::Error>> {
-    let live: Arc<AsyncMutex<Vec<(u32, String)>>> = Arc::new(AsyncMutex::new(vec![
-        (1, "a".into()),
-        (2, "b".into()),
-    ]));
+    let live: Arc<AsyncMutex<Vec<(u32, String)>>> =
+        Arc::new(AsyncMutex::new(vec![(1, "a".into()), (2, "b".into())]));
     let live_for_closure = Arc::clone(&live);
     let source: IncrementalDumpRecordSource<(u32, String), u32, _, _, DemoError, _> =
         IncrementalDumpRecordSource::new(
@@ -85,11 +93,19 @@ async fn show_incremental_dump() -> Result<(), Box<dyn std::error::Error>> {
             |row: &(u32, String)| row.0,
         );
     let mut checkpoint = source.initial_checkpoint();
-    let first = source.read_batch(&checkpoint, RecordReadHorizon::Unbounded).await?;
+    let first = source
+        .read_batch(&checkpoint, RecordReadHorizon::Unbounded)
+        .await?;
     checkpoint = first.final_checkpoint;
     live.lock().await.push((3, "c".into()));
-    let second = source.read_batch(&checkpoint, RecordReadHorizon::Unbounded).await?;
-    println!("incremental: first={}, second={}", first.records.len(), second.records.len());
+    let second = source
+        .read_batch(&checkpoint, RecordReadHorizon::Unbounded)
+        .await?;
+    println!(
+        "incremental: first={}, second={}",
+        first.records.len(),
+        second.records.len()
+    );
     Ok(())
 }
 
@@ -133,9 +149,17 @@ async fn show_api_fetch() -> Result<(), Box<dyn std::error::Error>> {
     };
     let source = ApiFetchRecordSource::new("demo://api", client).with_retry(RetryPolicy::never());
     let mut checkpoint = source.initial_checkpoint();
-    let batch1 = source.read_batch(&checkpoint, RecordReadHorizon::Unbounded).await?;
+    let batch1 = source
+        .read_batch(&checkpoint, RecordReadHorizon::Unbounded)
+        .await?;
     checkpoint = batch1.final_checkpoint;
-    let batch2 = source.read_batch(&checkpoint, RecordReadHorizon::Unbounded).await?;
-    println!("api: page1={} page2={}", batch1.records.len(), batch2.records.len());
+    let batch2 = source
+        .read_batch(&checkpoint, RecordReadHorizon::Unbounded)
+        .await?;
+    println!(
+        "api: page1={} page2={}",
+        batch1.records.len(),
+        batch2.records.len()
+    );
     Ok(())
 }

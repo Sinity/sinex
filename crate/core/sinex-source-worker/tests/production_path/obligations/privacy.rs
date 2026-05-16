@@ -29,9 +29,9 @@
 //! Wave B subagents add `case!(...)` calls inside the fence for their domain.
 
 use crate::AdapterKind;
+use sinex_primitives::Uuid;
 use sinex_primitives::privacy::{self, ProcessingContext};
 use sinex_source_worker::dispatch::default_parser_dispatch;
-use sinex_primitives::Uuid;
 
 /// A decoy secret that should be redacted by the privacy engine.
 ///

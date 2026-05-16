@@ -28,6 +28,12 @@
       "minimum": 0,
       "type": "integer"
     },
+    "total_commit_outcome_unknown": {
+      "description": "Times the finalization COMMIT result was ambiguous (TCP timeout during COMMIT).\nNon-zero signals potential duplicate-material risk after restart.",
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
     "total_completed": {
       "description": "Total assemblies completed successfully",
       "format": "uint64",
@@ -60,6 +66,7 @@
     "total_cancelled",
     "total_failed",
     "total_timed_out",
+    "total_commit_outcome_unknown",
     "buffered_slices"
   ],
   "title": "AssemblyStatsPayload",

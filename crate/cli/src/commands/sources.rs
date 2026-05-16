@@ -6,13 +6,14 @@ use sinex_primitives::rpc::sources::{
     SourcesShowRequest, SourcesShowResponse, SourcesStageRequest, SourcesStageResponse,
 };
 
-use sinex_primitives::rpc::sources::{
-    SourcesAnnotateRequest, SourcesAnnotateResponse, SourcesArchiveRequest, SourcesArchiveResponse,
-    SourcesContinuityRequest, SourcesContinuityResponse,
-};
+use sinex_primitives::Timestamp;
 use sinex_primitives::rpc::sources::{
     SourceReadiness, SourceReadinessStatus, SourcesReadinessGetRequest,
     SourcesReadinessGetResponse, SourcesReadinessListRequest, SourcesReadinessListResponse,
+};
+use sinex_primitives::rpc::sources::{
+    SourcesAnnotateRequest, SourcesAnnotateResponse, SourcesArchiveRequest, SourcesArchiveResponse,
+    SourcesContinuityRequest, SourcesContinuityResponse,
 };
 use sinex_primitives::sources::SourceFamily;
 use sinex_primitives::sources::continuity::{
@@ -20,7 +21,6 @@ use sinex_primitives::sources::continuity::{
     SourcesContinuityListRequest, SourcesContinuityListResponse, SourcesExplainGapRequest,
     SourcesExplainGapResponse,
 };
-use sinex_primitives::Timestamp;
 
 use crate::Result;
 use crate::client::GatewayClient;
@@ -506,16 +506,12 @@ fn format_archive_result(response: &SourcesArchiveResponse) -> String {
         style(response.cascade_count).yellow()
     ));
     if let Some(op_id) = &response.operation_id {
-        lines.push(format!(
-            "  Operation ID:  {}",
-            style(op_id).cyan()
-        ));
+        lines.push(format!("  Operation ID:  {}", style(op_id).cyan()));
     }
     if let Some(preview) = &response.preview {
         lines.push(format!(
             "  Preview:       {}",
-            style(serde_json::to_string_pretty(preview).unwrap_or_else(|_| "-".to_string()))
-                .dim()
+            style(serde_json::to_string_pretty(preview).unwrap_or_else(|_| "-".to_string())).dim()
         ));
     }
     lines.join("\n")
@@ -580,11 +576,7 @@ impl ContinuityCommand {
         }
 
         // ── List mode ──
-        let since = self
-            .since
-            .as_deref()
-            .map(parse_timestamp)
-            .transpose()?;
+        let since = self.since.as_deref().map(parse_timestamp).transpose()?;
         let req = SourcesContinuityListRequest { since };
         let response = client
             .call_raw_rpc("sources.continuity.list", serde_json::to_value(&req)?)
@@ -723,11 +715,26 @@ fn format_report_full(r: &SourceContinuityReport) -> String {
         "  Replayability:     {}/5",
         style(rp.green_count()).cyan()
     ));
-    lines.push(format!("    raw_bytes_preserved : {}", checkmark(rp.raw_bytes_preserved)));
-    lines.push(format!("    timing_quality      : {}", checkmark(rp.timing_quality)));
-    lines.push(format!("    anchor_stability    : {}", checkmark(rp.anchor_stability)));
-    lines.push(format!("    parser_determinism  : {}", checkmark(rp.parser_determinism)));
-    lines.push(format!("    privacy_safe_replay : {}", checkmark(rp.privacy_safe_replay)));
+    lines.push(format!(
+        "    raw_bytes_preserved : {}",
+        checkmark(rp.raw_bytes_preserved)
+    ));
+    lines.push(format!(
+        "    timing_quality      : {}",
+        checkmark(rp.timing_quality)
+    ));
+    lines.push(format!(
+        "    anchor_stability    : {}",
+        checkmark(rp.anchor_stability)
+    ));
+    lines.push(format!(
+        "    parser_determinism  : {}",
+        checkmark(rp.parser_determinism)
+    ));
+    lines.push(format!(
+        "    privacy_safe_replay : {}",
+        checkmark(rp.privacy_safe_replay)
+    ));
     if !rp.weak_points.is_empty() {
         lines.push("  Weak points:".to_string());
         for w in &rp.weak_points {
@@ -743,8 +750,10 @@ fn format_report_full(r: &SourceContinuityReport) -> String {
             lines.push(format!(
                 "    {:?}  before={}  after={}",
                 s.kind,
-                s.before_ts.map_or_else(|| "-".to_string(), |t| t.to_string()),
-                s.after_ts.map_or_else(|| "-".to_string(), |t| t.to_string()),
+                s.before_ts
+                    .map_or_else(|| "-".to_string(), |t| t.to_string()),
+                s.after_ts
+                    .map_or_else(|| "-".to_string(), |t| t.to_string()),
             ));
         }
     }
@@ -974,7 +983,10 @@ fn format_readiness_detail(r: &SourceReadiness) -> String {
         ),
         format!("  Family:         {}", r.source_family),
         format!("  Status:         {}", status_label(r.status)),
-        format!("  Cost:           {}", format!("{:?}", r.cost).to_lowercase()),
+        format!(
+            "  Cost:           {}",
+            format!("{:?}", r.cost).to_lowercase()
+        ),
         format!("  Materials:      {}", r.material_count),
     ];
     if let Some(c) = r.parsed_event_count {

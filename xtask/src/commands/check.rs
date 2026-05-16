@@ -183,16 +183,16 @@ impl CheckCommand {
             let mut affected_pkgs = crate::affected::affected_packages()?;
 
             // --plan: supplement affected scope with planner recommendations (#1146)
-            if self.plan {
-                if let Ok(actions) = crate::planner::plan_next_actions() {
-                    let planner_pkgs = extract_packages_from_actions(&actions);
-                    for pkg in planner_pkgs {
-                        if !affected_pkgs.contains(&pkg) {
-                            if is_human {
-                                eprintln!("  ℹ Planner: adding {pkg} (recent failure context)");
-                            }
-                            affected_pkgs.push(pkg);
+            if self.plan
+                && let Ok(actions) = crate::planner::plan_next_actions()
+            {
+                let planner_pkgs = extract_packages_from_actions(&actions);
+                for pkg in planner_pkgs {
+                    if !affected_pkgs.contains(&pkg) {
+                        if is_human {
+                            eprintln!("  ℹ Planner: adding {pkg} (recent failure context)");
                         }
+                        affected_pkgs.push(pkg);
                     }
                 }
             }
@@ -341,9 +341,7 @@ impl XtaskCommand for CheckCommand {
         // --changed-strict: API drift guard.  Runs before the normal check
         // pipeline and short-circuits it when set.
         if let Some(ref base_opt) = this.changed_strict {
-            let base_ref = base_opt
-                .as_deref()
-                .unwrap_or("origin/master");
+            let base_ref = base_opt.as_deref().unwrap_or("origin/master");
             return run_changed_strict_command(base_ref, ctx, &this).await;
         }
 
@@ -688,7 +686,6 @@ impl XtaskCommand for CheckCommand {
     fn metadata(&self) -> CommandMetadata {
         CommandMetadata::check()
     }
-
 }
 
 fn resolve_fixable_diagnostic_count(ctx: &CommandContext) -> (Option<usize>, Option<String>) {
@@ -792,8 +789,7 @@ async fn run_changed_strict_command(
 
     // Resolve the xtask binary: use the currently-running executable so we
     // don't accidentally pick up a different version.
-    let xtask_bin = std::env::current_exe()
-        .unwrap_or_else(|_| std::path::PathBuf::from("xtask"));
+    let xtask_bin = std::env::current_exe().unwrap_or_else(|_| std::path::PathBuf::from("xtask"));
 
     // Forward check modifier flags to the per-package invocations.
     let mut extra_args: Vec<String> = vec![];
@@ -810,8 +806,12 @@ async fn run_changed_strict_command(
         extra_args.push("--skip-tests".to_string());
     }
 
-    let report =
-        crate::strict_changed::run_changed_strict(base_ref, &workspace_root, &xtask_bin, &extra_args)?;
+    let report = crate::strict_changed::run_changed_strict(
+        base_ref,
+        &workspace_root,
+        &xtask_bin,
+        &extra_args,
+    )?;
 
     if ctx.is_human() {
         let n_files = report.changed_files.len();
@@ -841,7 +841,11 @@ async fn run_changed_strict_command(
             .with_detail(format!(
                 "changed-strict: {} package{} checked, all passed",
                 report.affected_packages.len(),
-                if report.affected_packages.len() == 1 { "" } else { "s" }
+                if report.affected_packages.len() == 1 {
+                    ""
+                } else {
+                    "s"
+                }
             ))
             .with_data(report_json)
             .with_duration(ctx.elapsed()))

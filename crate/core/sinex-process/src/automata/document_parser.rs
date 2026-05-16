@@ -7,8 +7,8 @@
 //!
 //! | Corpus | Input event type | Chunking |
 //! |--------|-----------------|----------|
-//! | DendronMarkdown | `document.ingested` | Paragraph (`\n\n+`) |
-//! | TerminalOutput | `command.canonical` | Line-group (blank-line split) |
+//! | `DendronMarkdown` | `document.ingested` | Paragraph (`\n\n+`) |
+//! | `TerminalOutput` | `command.canonical` | Line-group (blank-line split) |
 //!
 //! ## Chunking
 //!
@@ -42,7 +42,7 @@ const MAX_DOCUMENT_BYTES: u64 = 4 * 1024 * 1024;
 /// Maximum chunk size in bytes (64 KiB).
 const MAX_CHUNK_BYTES: usize = 64 * 1024;
 
-/// UUIDv5 namespace for document IDs (`NAMESPACE_OID`).
+/// `UUIDv5` namespace for document IDs (`NAMESPACE_OID`).
 const NS_DOCUMENTS: Uuid = Uuid::from_bytes([
     0x6b, 0xa7, 0xb8, 0x10, 0x9d, 0xad, 0x11, 0xd1, 0x80, 0xb4, 0x00, 0xc0, 0x4f, 0xd4, 0x30, 0xc8,
 ]);
@@ -185,7 +185,7 @@ impl DocumentParserNode {
         let mut outputs = Vec::with_capacity(1 + raw_chunks.len());
 
         // Emit document.parsed
-        let parsed_payload = serde_json::to_value(&serde_json::json!({
+        let parsed_payload = serde_json::to_value(serde_json::json!({
             "document_id": document_id,
             "kind": DocumentKind::DendronMarkdown.as_str(),
             "natural_key": natural_key,
@@ -219,7 +219,7 @@ impl DocumentParserNode {
             // Apply privacy redaction to chunk text.
             let redacted = redact_chunk_text(&chunk_text);
 
-            let chunk_payload = serde_json::to_value(&serde_json::json!({
+            let chunk_payload = serde_json::to_value(serde_json::json!({
                 "document_id": document_id,
                 "chunk_index": i as u32,
                 "text": redacted,
@@ -282,7 +282,7 @@ impl DocumentParserNode {
 
         let mut outputs = Vec::with_capacity(1 + raw_chunks.len());
 
-        let parsed_payload = serde_json::to_value(&serde_json::json!({
+        let parsed_payload = serde_json::to_value(serde_json::json!({
             "document_id": document_id,
             "kind": DocumentKind::TerminalOutput.as_str(),
             "natural_key": natural_key,
@@ -303,7 +303,7 @@ impl DocumentParserNode {
             let chunk_len = chunk_text.len() as u64;
             let redacted = redact_chunk_text(&chunk_text);
 
-            let chunk_payload = serde_json::to_value(&serde_json::json!({
+            let chunk_payload = serde_json::to_value(serde_json::json!({
                 "document_id": document_id,
                 "chunk_index": i as u32,
                 "text": redacted,
@@ -327,7 +327,7 @@ impl DocumentParserNode {
 
 // ── Helpers ─────────────────────────────────────────────────────────────
 
-/// Derive a deterministic UUIDv5 document ID.
+/// Derive a deterministic `UUIDv5` document ID.
 fn derive_document_id(corpus: &str, natural_key: &str) -> Uuid {
     let name = format!("{corpus}/{natural_key}");
     Uuid::new_v5(&NS_DOCUMENTS, name.as_bytes())
@@ -433,7 +433,7 @@ fn paragraph_split(text: &str) -> Vec<String> {
                         .rfind(". ")
                         .or_else(|| chunk[search_end.saturating_sub(100)..search_end].rfind('\n'))
                     {
-                        Some(local) => &chunk[pos..search_end.saturating_sub(100) + local + 1],
+                        Some(local) => &chunk[pos..=(search_end.saturating_sub(100) + local)],
                         None => &chunk[pos..end],
                     }
                 } else {
@@ -471,7 +471,7 @@ fn redact_chunk_text(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use xtask::sandbox::{TestResult, sinex_test};
+    use xtask::sandbox::sinex_test;
 
     #[sinex_test]
     async fn test_frontmatter_extraction() -> TestResult<()> {

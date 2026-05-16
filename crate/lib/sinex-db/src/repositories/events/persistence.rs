@@ -2122,10 +2122,7 @@ impl<'a> EventRepository<'a> {
         tx.commit().await.map_err(|e| {
             db_error(
                 e,
-                &format!(
-                    "Failed to commit archive transaction for {} events",
-                    requested_count
-                ),
+                &format!("Failed to commit archive transaction for {requested_count} events"),
             )
         })?;
 

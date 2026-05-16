@@ -15,7 +15,7 @@ use crate::{NodeResult, SinexError};
 
 use sinex_primitives::events::Event;
 use sinex_primitives::events::builder::OperationMarker;
-use sinex_primitives::{Id, JsonValue, Uuid};
+use sinex_primitives::{JsonValue, Uuid};
 
 use std::time::Instant;
 use tracing::{debug, error, info, warn};
@@ -443,6 +443,8 @@ where
                         Ok(count) => count,
                         Err(error) => {
                             error!(
+                                target: "sinex_metrics",
+                                metric = "derive.invalidation_errors_total",
                                 node = %node_name,
                                 error = %error,
                                 action = %invalidation.action,
@@ -467,6 +469,8 @@ where
                         .await
                     {
                         error!(
+                            target: "sinex_metrics",
+                            metric = "derive.invalidation_errors_total",
                             node = %node_name,
                             error = %error,
                             action = %invalidation.action,
@@ -496,6 +500,8 @@ where
                             Err(e) => {
                                 self.consecutive_checkpoint_failures += 1;
                                 error!(
+                                    target: "sinex_metrics",
+                                    metric = "derive.checkpoint_failures_total",
                                     node = %node_name,
                                     error = %e,
                                     consecutive_failures =
@@ -588,6 +594,8 @@ where
                 }
                 Err(e) => {
                     error!(
+                        target: "sinex_metrics",
+                        metric = "derive.invalidation_errors_total",
                         node = %node_name,
                         error = %e,
                         action = %invalidation.action,

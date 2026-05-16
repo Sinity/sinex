@@ -7,10 +7,10 @@
 //! - **[observation]**: Buffered batching for metadata-only events (no payload bytes)
 //! - **[stream]**: Base abstraction for streaming material contexts that produce events over time
 
-pub mod retry;
 pub mod observation;
+pub mod retry;
 pub mod stream;
 
-pub use retry::{RetryableMaterialCapture, TransientErrorPredicate};
 pub use observation::ObservationMaterializer;
+pub use retry::{RetryableMaterialCapture, TransientErrorPredicate};
 pub use stream::StreamMaterialContext;

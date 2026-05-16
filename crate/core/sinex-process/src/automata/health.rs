@@ -1,6 +1,6 @@
 //! Health aggregator — [`ScopeReconcilerNode`] implementation.
 //!
-//! Model classification: **ScopeReconciler** — groups health events by component
+//! Model classification: **`ScopeReconciler`** — groups health events by component
 //! (the scope key), maintains per-component state, and emits reports when
 //! conditions are met (status transitions, periodic intervals). During replay,
 //! invalidating a component scope recomputes all health reports for that component.

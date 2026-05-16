@@ -164,7 +164,7 @@ fn execute_next(ctx: &CommandContext) -> Result<CommandResult> {
     }
 
     println!("Recommended next actions:\n");
-    for (i, action) in actions.iter().enumerate() {
+    for action in &actions {
         let priority_marker = match action.priority {
             crate::planner::Priority::Now => "●",
             crate::planner::Priority::Soon => "○",
@@ -178,8 +178,7 @@ fn execute_next(ctx: &CommandContext) -> Result<CommandResult> {
         println!("    {}\n", action.reason);
     }
 
-    Ok(CommandResult::success()
-        .with_message(format!("{} recommended action(s)", actions.len())))
+    Ok(CommandResult::success().with_message(format!("{} recommended action(s)", actions.len())))
 }
 
 /// Show event payload schema information (formerly `contracts info describe-schemas`)

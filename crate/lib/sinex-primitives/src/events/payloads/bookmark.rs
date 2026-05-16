@@ -59,10 +59,7 @@ mod tests {
 
     #[test]
     fn declares_source_and_event_type() {
-        assert_eq!(
-            RaindropBookmarkPayload::SOURCE.as_static_str(),
-            "raindrop"
-        );
+        assert_eq!(RaindropBookmarkPayload::SOURCE.as_static_str(), "raindrop");
         assert_eq!(
             RaindropBookmarkPayload::EVENT_TYPE.as_static_str(),
             "bookmark.created"

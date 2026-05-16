@@ -60,7 +60,7 @@ async fn duplicate_plan_for_same_node_rejected(ctx: TestContext) -> TestResult<(
     let error_code = second
         .get("error")
         .and_then(|e| e.get("code"))
-        .and_then(|c| c.as_i64());
+        .and_then(serde_json::Value::as_i64);
     assert_eq!(
         error_code,
         Some(-32803),
@@ -96,7 +96,7 @@ async fn concurrent_duplicate_plan_for_same_node_rejected(ctx: TestContext) -> T
         .into_iter()
         .filter(|response| response.get("result").is_some())
         .count();
-    let errors: Vec<&str> = [&first, &second]
+    let _errors: Vec<&str> = [&first, &second]
         .into_iter()
         .filter_map(|response| {
             response
@@ -117,7 +117,7 @@ async fn concurrent_duplicate_plan_for_same_node_rejected(ctx: TestContext) -> T
             response
                 .get("error")
                 .and_then(|error| error.get("code"))
-                .and_then(|code| code.as_i64())
+                .and_then(serde_json::Value::as_i64)
         })
         .collect();
     assert!(

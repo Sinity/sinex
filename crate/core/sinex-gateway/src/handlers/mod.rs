@@ -8,10 +8,10 @@ use serde_json::Value;
 pub mod audit;
 pub mod automata;
 pub mod content;
-pub mod ingestors;
 pub mod coordination;
 pub mod dlq;
 pub mod documents;
+pub mod ingestors;
 pub mod lifecycle;
 pub mod node_registry;
 pub mod nodes;
@@ -28,17 +28,17 @@ pub mod telemetry;
 pub use query::{handle_events_annotate, handle_events_lineage, handle_events_query};
 pub use replay::{
     handle_replay_approve_operation, handle_replay_cancel_operation,
-    handle_replay_create_operation, handle_replay_execute_operation,
-    handle_replay_list_operations, handle_replay_operation_status,
-    handle_replay_preview_operation, handle_replay_submit_operation,
+    handle_replay_create_operation, handle_replay_execute_operation, handle_replay_list_operations,
+    handle_replay_operation_status, handle_replay_preview_operation,
+    handle_replay_submit_operation,
 };
 pub use rpc_handlers::*;
 
 // Re-export new domain-specific handler functions
 pub use audit::handle_audit_get;
 pub use automata::handle_automata_status;
-pub use ingestors::handle_ingestors_status;
 pub use dlq::{handle_dlq_list, handle_dlq_peek, handle_dlq_purge, handle_dlq_requeue};
+pub use ingestors::handle_ingestors_status;
 pub use lifecycle::{
     handle_lifecycle_archive,
     handle_lifecycle_restore,
@@ -58,11 +58,11 @@ pub use ops::{handle_ops_cancel, handle_ops_get, handle_ops_list, handle_ops_sta
 pub use shadow::{handle_shadow_create, handle_shadow_delete, handle_shadow_list};
 
 pub use content::{handle_retrieve_blob, handle_store_blob};
-pub use documents::{handle_documents_get, handle_documents_get_chunks, handle_documents_search};
 pub use coordination::{
     handle_coordination_get_leader, handle_coordination_instance_health,
     handle_coordination_list_instances,
 };
+pub use documents::{handle_documents_get, handle_documents_get_chunks, handle_documents_search};
 pub use node_registry::{handle_nodes_health, handle_nodes_list_active};
 pub use pkm::{handle_create_entities, handle_create_note, handle_link_entities};
 pub use sources::{

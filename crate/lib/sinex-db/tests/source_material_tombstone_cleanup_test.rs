@@ -23,9 +23,7 @@ async fn material_ids_for_archived_events_returns_empty_for_empty_input(
 }
 
 #[sinex_test]
-async fn find_orphan_materials_returns_empty_for_empty_input(
-    ctx: TestContext,
-) -> TestResult<()> {
+async fn find_orphan_materials_returns_empty_for_empty_input(ctx: TestContext) -> TestResult<()> {
     let repo = ctx.pool.source_materials();
     let ids = repo.find_orphan_materials(&[]).await?;
     assert!(ids.is_empty());
@@ -43,7 +41,11 @@ async fn find_orphan_materials_returns_unreferenced_ids(ctx: TestContext) -> Tes
     let repo = ctx.pool.source_materials();
     let orphans = repo.find_orphan_materials(&[material_id]).await?;
 
-    assert_eq!(orphans.len(), 1, "newly-created material with no events should be orphan");
+    assert_eq!(
+        orphans.len(),
+        1,
+        "newly-created material with no events should be orphan"
+    );
     assert_eq!(orphans[0], material_id);
     Ok(())
 }
@@ -106,6 +108,9 @@ async fn delete_material_removes_registry_row(ctx: TestContext) -> TestResult<()
 
     // Idempotent: second delete returns false.
     let second = repo.delete_material(typed_id).await?;
-    assert!(!second, "second delete on missing row should report no rows affected");
+    assert!(
+        !second,
+        "second delete on missing row should report no rows affected"
+    );
     Ok(())
 }

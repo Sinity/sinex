@@ -1039,8 +1039,10 @@ pub async fn handle_telemetry_throughput(pool: &PgPool, params: Value) -> Result
     .await
     .map_err(|error| telemetry_query_error("core.events throughput components", error))?;
 
-    let mut comp_1h: std::collections::HashMap<&'static str, i64> = std::collections::HashMap::new();
-    let mut comp_24h: std::collections::HashMap<&'static str, i64> = std::collections::HashMap::new();
+    let mut comp_1h: std::collections::HashMap<&'static str, i64> =
+        std::collections::HashMap::new();
+    let mut comp_24h: std::collections::HashMap<&'static str, i64> =
+        std::collections::HashMap::new();
     for row in &component_rows {
         // Map the SQL string back to the same &'static str the const slice
         // below uses, so unknown buckets (which shouldn't happen) silently drop.
@@ -1061,14 +1063,15 @@ pub async fn handle_telemetry_throughput(pool: &PgPool, params: Value) -> Result
     // without re-typing the rule. The component query mirrors it exactly.
     let _ = classify_component;
 
-    let mut per_component: Vec<ThroughputComponentEntry> = ["gateway", "ingestion", "derived", "self_observation"]
-        .iter()
-        .map(|component| ThroughputComponentEntry {
-            component: (*component).to_string(),
-            eps_1h: comp_1h.get(component).copied().unwrap_or(0) as f64 / 3_600.0,
-            eps_24h: comp_24h.get(component).copied().unwrap_or(0) as f64 / 86_400.0,
-        })
-        .collect();
+    let mut per_component: Vec<ThroughputComponentEntry> =
+        ["gateway", "ingestion", "derived", "self_observation"]
+            .iter()
+            .map(|component| ThroughputComponentEntry {
+                component: (*component).to_string(),
+                eps_1h: comp_1h.get(component).copied().unwrap_or(0) as f64 / 3_600.0,
+                eps_24h: comp_24h.get(component).copied().unwrap_or(0) as f64 / 86_400.0,
+            })
+            .collect();
     per_component.sort_by(|a, b| {
         b.eps_1h
             .partial_cmp(&a.eps_1h)

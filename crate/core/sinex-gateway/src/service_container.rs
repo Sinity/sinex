@@ -66,8 +66,7 @@ async fn recover_stale_replay_operations(replay: &ReplayStateMachine) -> SinexRe
             "Failed to recover stale replay operations on startup",
         )
         .with_operation("gateway.recover_stale_replay_operations")
-        .with_source(error.to_string())
-        .into()),
+        .with_source(error.to_string())),
     }
 }
 

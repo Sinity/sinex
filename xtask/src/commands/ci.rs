@@ -422,9 +422,10 @@ struct SchemaSetupConfig {
 
 impl SchemaSetupConfig {
     fn from_env(target_dir: Option<&std::path::Path>, default_suffix: &str) -> Self {
-        let target_dir = target_dir
-            .map(std::path::Path::to_path_buf)
-            .unwrap_or_else(|| crate::config::workspace_target_dir().join(default_suffix));
+        let target_dir = target_dir.map_or_else(
+            || crate::config::workspace_target_dir().join(default_suffix),
+            std::path::Path::to_path_buf,
+        );
         let super_url = env::var("DATABASE_URL_SUPERUSER")
             .or_else(|_| env::var("DATABASE_URL"))
             .unwrap_or_else(|_| default_checkout_database_url());

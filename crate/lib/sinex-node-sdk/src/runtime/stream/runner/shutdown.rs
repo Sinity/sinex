@@ -5,7 +5,10 @@
 //! Idempotent: safe to call on already-shut-down or never-initialized
 //! runners.
 
-use super::*;
+use super::{
+    Node, NodeResult, NodeRunner, RunnerLifecycle, StreamExt, TASK_SHUTDOWN_GRACE_PERIOD, debug,
+    info, watch,
+};
 
 impl<T: Node + 'static> NodeRunner<T> {
     /// Graceful shutdown.

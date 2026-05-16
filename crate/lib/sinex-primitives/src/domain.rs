@@ -789,7 +789,7 @@ impl EventName {
     /// Build the canonical raw-event NATS subject for this event name.
     ///
     /// Delegates to the environment's subject-token encoding so that `_` and `.`
-    /// characters in source/event_type are correctly escaped.
+    /// characters in `source/event_type` are correctly escaped.
     #[must_use]
     pub fn nats_subject(
         &self,
@@ -1095,7 +1095,7 @@ define_string_type!(
 // ─── Source identifier ───────────────────────────────────────────────────────
 
 /// Identifies a logical source within a source material, carrying an optional
-/// material_id for disambiguation. The wire/DB representation is:
+/// `material_id` for disambiguation. The wire/DB representation is:
 ///   `{logical_id}#material={material_id}`
 ///
 /// Callers should use the typed API (`new`, `from_wire`, `to_wire`) instead of
@@ -1121,7 +1121,7 @@ impl SourceIdentifier {
     /// Parse from the wire/DB format: `"path/to/file#material=<uuid>"`
     ///
     /// If the string does not contain `#material=`, the entire string is treated
-    /// as the logical_id and material_id is set to `None`.
+    /// as the `logical_id` and `material_id` is set to `None`.
     pub fn from_wire(s: &str) -> Result<Self, crate::SinexError> {
         if let Some(pos) = s.find("#material=") {
             let logical_id = s[..pos].to_string();
@@ -1952,7 +1952,14 @@ impl std::str::FromStr for NodeState {
 /// source of truth for the DB `CHECK` constraint: bumping `version` ships a
 /// rename without a manual migration. See issue #1236.
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    serde::Serialize,
+    serde::Deserialize,
     sinex_macros::DbCheck,
 )]
 #[serde(rename_all = "snake_case")]
@@ -1960,7 +1967,7 @@ impl std::str::FromStr for NodeState {
     schema = "core",
     table = "operations_log",
     column = "result_status",
-    version = 1,
+    version = 1
 )]
 pub enum OperationStatus {
     /// Operation is actively running
@@ -1989,7 +1996,9 @@ pub enum OperationStatus {
 /// vocabulary used by `core.operations_log.result_status`. Keep the
 /// two enums distinct — one describes the run lifecycle, the other
 /// describes the terminal result.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize, JsonSchema)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize, JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum OperationRunStatus {
     /// Job is declared but not yet claimed by a worker.
@@ -2125,16 +2134,18 @@ impl std::str::FromStr for OperationStatus {
 /// The schema-apply engine reconciles a CHECK constraint on the
 /// `data_tier` column wherever it exists. See issue #1236.
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    serde::Serialize,
+    serde::Deserialize,
     sinex_macros::DbCheck,
 )]
 #[serde(rename_all = "snake_case")]
-#[db_check(
-    schema = "core",
-    table = "events",
-    column = "data_tier",
-    version = 1,
-)]
+#[db_check(schema = "core", table = "events", column = "data_tier", version = 1)]
 pub enum DataTier {
     /// Events available for real-time queries
     Live,
@@ -2176,7 +2187,14 @@ impl std::str::FromStr for DataTier {
 /// #1236; the spec is forward-declared and skipped at apply time when the
 /// table/column does not yet exist.
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    serde::Serialize,
+    serde::Deserialize,
     sinex_macros::DbCheck,
 )]
 #[serde(rename_all = "snake_case")]
@@ -2184,7 +2202,7 @@ impl std::str::FromStr for DataTier {
     schema = "core",
     table = "health_reports",
     column = "status",
-    version = 1,
+    version = 1
 )]
 pub enum HealthStatus {
     /// All subsystems operating normally
@@ -2225,7 +2243,15 @@ impl std::str::FromStr for HealthStatus {
 /// DB `CHECK` constraint: bumping `version` ships a rename without manual
 /// migration. See issue #1236.
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    Serialize,
+    Deserialize,
+    JsonSchema,
     sinex_macros::DbCheck,
 )]
 #[serde(rename_all = "snake_case")]
@@ -2233,7 +2259,7 @@ impl std::str::FromStr for HealthStatus {
     schema = "core",
     table = "manifests",
     column = "manifest_type",
-    version = 1,
+    version = 1
 )]
 pub enum NodeType {
     /// Ingestor node (captures events from external sources)
@@ -2514,8 +2540,8 @@ mod sqlx_impls {
         EntityTypeName, EventSource, EventType, GlobPattern, HealthStatus, HostName, InstanceId,
         InvalidationAction, IpAddress, JobId, NatsSubject, NodeId, NodeName, NodeState, NodeType,
         OperationRunStatus, OperationStatus, ProcessingMode, RecordedPath, RegexPattern,
-        RelationType, RemoteName, SanitizedPath, SchemaName, SchemaVersion, ServiceName,
-        ShellName, SourceIdentifier, SyntheticTemporalPolicy, TemporalClock, TemporalPrecision,
+        RelationType, RemoteName, SanitizedPath, SchemaName, SchemaVersion, ServiceName, ShellName,
+        SourceIdentifier, SyntheticTemporalPolicy, TemporalClock, TemporalPrecision,
         TemporalSourceType, TriggerKind, UserId,
     };
 
@@ -2734,7 +2760,7 @@ pub enum AcquisitionMode {
     WatchDirectory,
     /// Append-only file tailing (JSONL, log).
     AppendTail,
-    /// SQLite database snapshot or row-stream extraction.
+    /// `SQLite` database snapshot or row-stream extraction.
     SqliteSnapshot,
     /// Git repository snapshot.
     RepositorySnapshot,

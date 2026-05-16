@@ -334,7 +334,8 @@ async fn health_reporter_emit_stall_disabled(ctx: TestContext) -> TestResult<()>
         window_seconds: 60,
         emit_stall_seconds: 0,
     };
-    let reporter = create_reporter_with_clock("stall-disabled", observer, thresholds, clock.clone());
+    let reporter =
+        create_reporter_with_clock("stall-disabled", observer, thresholds, clock.clone());
     let _tracker = reporter.enable_emit_stall_detection();
     clock.advance(Duration::from_secs(86_400));
     ctx.assert("stall disabled -> healthy after a day without emits")

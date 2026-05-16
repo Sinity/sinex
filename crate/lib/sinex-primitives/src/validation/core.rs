@@ -4,7 +4,7 @@ use serde_json::Value;
 
 use crate::error::{Result, SinexError};
 
-/// Reject NaN and Infinity when deserializing f64 — PostgreSQL JSONB rejects these.
+/// Reject NaN and Infinity when deserializing f64 — `PostgreSQL` JSONB rejects these.
 pub fn reject_non_finite_f64<'de, D: serde::Deserializer<'de>>(
     d: D,
 ) -> std::result::Result<f64, D::Error> {

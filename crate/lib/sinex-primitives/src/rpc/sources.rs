@@ -3,13 +3,13 @@
 //! # External Producer Wire Contract
 //!
 //! Non-Rust producers (Python, shell scripts, external tools) can publish
-//! [`AdmittedEventIntent`] envelopes to NATS JetStream without depending on the
+//! [`AdmittedEventIntent`] envelopes to NATS `JetStream` without depending on the
 //! Rust SDK. The contract below is the minimum a producer must satisfy for
 //! ingestd to accept the payload.
 //!
 //! ## Envelope format
 //!
-//! Publish a JSON [`AdmittedEventIntent`] to the JetStream subject
+//! Publish a JSON [`AdmittedEventIntent`] to the `JetStream` subject
 //! `{env}.sinex.events.raw.{source}.{event_type}` (typically
 //! `sinex.events.raw.{source}.{event_type}` in development).
 //!
@@ -57,7 +57,7 @@
 //!
 //! | Field | Type | Required | Notes |
 //! |-------|------|----------|-------|
-//! | `id` | UUIDv7 | yes | Event identifier; use deterministic UUIDv5 if replayable |
+//! | `id` | `UUIDv7` | yes | Event identifier; use deterministic `UUIDv5` if replayable |
 //! | `source` | string | yes | Event source, typically matching `source_unit_id` |
 //! | `event_type` | string | yes | Dotted event type, e.g. `"integration.polylogue.conversation_indexed"` |
 //! | `payload` | JSON object | yes | Free-form event payload |
@@ -67,7 +67,7 @@
 //! | `Synthesis` | object | XOR * | Synthesis provenance (derived from parent events) |
 //!
 //! For external producers emitting metadata-only events, use `Material`
-//! provenance with a deterministic UUIDv5 material ID derived from a
+//! provenance with a deterministic `UUIDv5` material ID derived from a
 //! producer-specific namespace and a stable key (e.g. the archive database
 //! path). This gives the event an occurrence identity without requiring a
 //! pre-registered source material.
@@ -76,7 +76,7 @@
 //!
 //! | Header | Value | Required | Notes |
 //! |--------|-------|----------|-------|
-//! | `Nats-Msg-Id` | UUIDv7 of the first event | yes | Idempotency key for JetStream dedup |
+//! | `Nats-Msg-Id` | `UUIDv7` of the first event | yes | Idempotency key for `JetStream` dedup |
 //! | `Sinex-Traffic-Class` | `"raw_event"` | yes | Traffic class for rate limiting |
 //!
 //! ### Subjects
@@ -286,7 +286,7 @@ pub struct SourcesListRequest {
 pub struct SourceMaterialSummary {
     /// UUID of the material
     pub id: String,
-    /// Material kind ("annex", "git", "local_cas")
+    /// Material kind ("annex", "git", "`local_cas`")
     pub material_kind: String,
     /// Source identifier (typically the file path)
     pub source_identifier: String,
@@ -454,7 +454,7 @@ pub struct SourcesBindingsCreateRequest {
     pub name: String,
     /// Source family (e.g. "terminal", "browser").
     pub source_family: String,
-    /// Binding mode: stage_only, stage_then_parse, live_capture, external_producer.
+    /// Binding mode: `stage_only`, `stage_then_parse`, `live_capture`, `external_producer`.
     pub binding_mode: String,
     /// Expected input shape kind.
     pub input_shape_kind: String,
@@ -565,7 +565,7 @@ pub struct SourcesArchiveRequest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SourcesArchiveResponse {
     pub material_id: String,
-    /// Archival operation ID (only set when dry_run is false).
+    /// Archival operation ID (only set when `dry_run` is false).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub operation_id: Option<String>,
     /// Number of events in the cascade.
@@ -602,7 +602,7 @@ pub struct CoverageGap {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub gap_duration_seconds: Option<i64>,
     /// Gap classification: "temporal" (events missing in a time range) or
-    /// "material_missing" (no source material registered for a period).
+    /// "`material_missing`" (no source material registered for a period).
     pub gap_type: String,
 }
 

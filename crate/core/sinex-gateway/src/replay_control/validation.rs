@@ -256,7 +256,7 @@ pub(super) fn replay_scope_drift_error(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use xtask::sandbox::{EnvGuard, TestContext, sinex_test};
+    use xtask::sandbox::{EnvGuard, sinex_test};
 
     #[sinex_test]
     async fn actor_validation_rejects_empty_actor(_ctx: TestContext) -> Result<()> {

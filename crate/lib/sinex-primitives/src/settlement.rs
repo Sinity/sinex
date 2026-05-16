@@ -329,7 +329,7 @@ pub struct ProcessingFailureIntent {
     pub effect_id: String,
 }
 
-/// Default failure policy: maps ErrorClass → Settlement with standard budgets.
+/// Default failure policy: maps `ErrorClass` → Settlement with standard budgets.
 pub struct DefaultFailurePolicy;
 
 impl FailurePolicy for DefaultFailurePolicy {
@@ -360,7 +360,7 @@ impl FailurePolicy for DefaultFailurePolicy {
                         },
                         budget: RetryBudget {
                             max_attempts: 10,
-                            max_elapsed: Some(Duration::from_secs(300)),
+                            max_elapsed: Some(Duration::from_mins(5)),
                             backoff: Backoff::Exponential {
                                 base: Duration::from_millis(200),
                                 max: Duration::from_secs(30),

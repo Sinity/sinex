@@ -240,9 +240,8 @@ fn format_optional_f64(value: Option<f64>) -> String {
 }
 
 fn command_exists(program: &str) -> bool {
-    std::env::var_os("PATH").is_some_and(|paths| {
-        std::env::split_paths(&paths).any(|dir| dir.join(program).is_file())
-    })
+    std::env::var_os("PATH")
+        .is_some_and(|paths| std::env::split_paths(&paths).any(|dir| dir.join(program).is_file()))
 }
 
 fn format_jsonish_list(values: &[String]) -> String {
@@ -278,7 +277,10 @@ fn active_heavy_processes(limit: usize) -> Vec<String> {
         }
         let command = String::from_utf8_lossy(&raw).replace('\0', " ");
         if is_heavy_command(&command) {
-            rows.push(format!("pid {pid}: {}", truncate_process_line(&command, 180)));
+            rows.push(format!(
+                "pid {pid}: {}",
+                truncate_process_line(&command, 180)
+            ));
             if rows.len() >= limit {
                 break;
             }

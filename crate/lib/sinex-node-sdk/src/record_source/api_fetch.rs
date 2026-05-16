@@ -12,13 +12,7 @@
 //! The checkpoint records `last_cursor`, `last_etag`, and the `last_fetched`
 //! timestamp so callers can skip re-fetching unchanged windows.
 
-use std::{
-    error::Error,
-    fmt,
-    future::Future,
-    sync::Arc,
-    time::Duration,
-};
+use std::{error::Error, fmt, future::Future, sync::Arc, time::Duration};
 
 use serde::{Deserialize, Serialize};
 use sinex_primitives::temporal::Timestamp;
@@ -119,7 +113,7 @@ impl RetryPolicy {
         if self.jitter_ratio == 0.0 {
             return capped;
         }
-        let mut x = (attempt as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+        let mut x = u64::from(attempt).wrapping_mul(0x9E37_79B9_7F4A_7C15);
         x ^= x >> 30;
         x = x.wrapping_mul(0xBF58_476D_1CE4_E5B9);
         x ^= x >> 27;
@@ -143,10 +137,9 @@ pub enum ApiFetchError {
 impl fmt::Display for ApiFetchError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Exhausted { attempts, source } => write!(
-                f,
-                "api fetch exhausted after {attempts} attempts: {source}"
-            ),
+            Self::Exhausted { attempts, source } => {
+                write!(f, "api fetch exhausted after {attempts} attempts: {source}")
+            }
         }
     }
 }

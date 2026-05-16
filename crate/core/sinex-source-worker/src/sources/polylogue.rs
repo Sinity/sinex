@@ -3,7 +3,7 @@
 //! ## Architecture
 //!
 //! The Polylogue daemon is an **external producer**: it publishes
-//! [`AdmittedEventIntent`] envelopes directly to NATS JetStream without
+//! [`AdmittedEventIntent`] envelopes directly to NATS `JetStream` without
 //! depending on the sinex Rust SDK. ingestd picks them up on the standard
 //! `{env}.sinex.events.raw.>` stream just like any other source.
 //!
@@ -48,7 +48,7 @@
 //! ## Occurrence identity
 //!
 //! `(content_hash, conversation_id)` — the content hash detects changed
-//! conversations; the conversation_id provides the stable external key.
+//! conversations; the `conversation_id` provides the stable external key.
 
 use sinex_primitives::proof::{
     CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, RetentionPolicy, RuntimeShape,

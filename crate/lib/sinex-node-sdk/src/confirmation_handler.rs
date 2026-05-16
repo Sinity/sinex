@@ -170,6 +170,8 @@ impl ConfirmationBuffer {
             // Log periodically to avoid log spam
             if rejected.is_multiple_of(100) {
                 tracing::error!(
+                    target: "sinex_metrics",
+                    metric = "node.confirmation_buffer_rejections_total",
                     max_capacity = self.max_capacity,
                     rejected_total = rejected + 1,
                     event_id = %event.event_id,
@@ -223,13 +225,10 @@ impl ConfirmationBuffer {
     }
 
     /// Returns Some(event) iff the provisional event's kind already has a
-    /// watermark `>=` its event_id — i.e. ingestd already confirmed it but the
+    /// watermark `>=` its `event_id` — i.e. ingestd already confirmed it but the
     /// confirmation arrived before this provisional was buffered. Caller should
     /// treat the returned event as already confirmed.
-    pub async fn try_implicit_confirm_on_add(
-        &self,
-        event: &ProvisionalEvent,
-    ) -> bool {
+    pub async fn try_implicit_confirm_on_add(&self, event: &ProvisionalEvent) -> bool {
         let watermarks = self.kind_watermarks.read().await;
         let key = (
             event.source.as_str().to_string(),

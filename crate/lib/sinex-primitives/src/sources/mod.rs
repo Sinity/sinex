@@ -66,10 +66,9 @@ impl SourceFamily {
                 "SourceFamily must not be empty",
             ));
         }
-        if !s
-            .chars()
-            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '.' || c == '_' || c == '-')
-        {
+        if !s.chars().all(|c| {
+            c.is_ascii_lowercase() || c.is_ascii_digit() || c == '.' || c == '_' || c == '-'
+        }) {
             return Err(crate::SinexError::validation(
                 "SourceFamily must contain only [a-z0-9._-]",
             ));
@@ -82,7 +81,11 @@ impl SourceFamily {
         let mut i = 0;
         while i < bytes.len() {
             let b = bytes[i];
-            if !(b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'.' || b == b'_' || b == b'-')
+            if !(b.is_ascii_lowercase()
+                || b.is_ascii_digit()
+                || b == b'.'
+                || b == b'_'
+                || b == b'-')
             {
                 return false;
             }

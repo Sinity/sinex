@@ -91,8 +91,7 @@ impl InputShapeAdapter for AppendOnlyFileAdapter {
         // than a hard adapter error. Same for paths that don't exist on disk
         // — the file may appear later (e.g. browser export drop directory).
         if path.is_empty() || std::fs::metadata(&path).is_err() {
-            let empty: BoxStream<'static, ParserResult<SourceRecord>> =
-                Box::pin(stream::empty());
+            let empty: BoxStream<'static, ParserResult<SourceRecord>> = Box::pin(stream::empty());
             return Ok(empty);
         }
 
@@ -101,28 +100,26 @@ impl InputShapeAdapter for AppendOnlyFileAdapter {
         // log's bytes are gone (or have been moved aside), so we must start
         // scanning at offset 0 instead of inheriting stale offsets.
         let current_ino = current_inode(&path);
-        let (start_offset, start_line, rotation_marker) = match (
-            cursor.as_ref().and_then(|c| c.inode),
-            current_ino,
-        ) {
-            (Some(prev), Some(curr)) if prev != curr => {
-                // Rotation observed: reset to start-of-file, surface the
-                // transition on the first emitted record so parsers can react
-                // (emit a `parser.stream_rotation_detected` synthesis event,
-                // flush dedup window, etc.).
-                let marker = serde_json::json!({
-                    "rotation_detected": true,
-                    "previous_inode": prev,
-                    "current_inode": curr,
-                });
-                (0_u64, 1_u64, Some(marker))
-            }
-            _ => (
-                cursor.as_ref().map_or(0, |c| c.last_byte_offset),
-                cursor.as_ref().map_or(1, |c| c.last_line + 1),
-                None,
-            ),
-        };
+        let (start_offset, start_line, rotation_marker) =
+            match (cursor.as_ref().and_then(|c| c.inode), current_ino) {
+                (Some(prev), Some(curr)) if prev != curr => {
+                    // Rotation observed: reset to start-of-file, surface the
+                    // transition on the first emitted record so parsers can react
+                    // (emit a `parser.stream_rotation_detected` synthesis event,
+                    // flush dedup window, etc.).
+                    let marker = serde_json::json!({
+                        "rotation_detected": true,
+                        "previous_inode": prev,
+                        "current_inode": curr,
+                    });
+                    (0_u64, 1_u64, Some(marker))
+                }
+                _ => (
+                    cursor.as_ref().map_or(0, |c| c.last_byte_offset),
+                    cursor.as_ref().map_or(1, |c| c.last_line + 1),
+                    None,
+                ),
+            };
 
         let content = std::fs::read_to_string(&path)?;
 
@@ -164,7 +161,7 @@ impl InputShapeAdapter for AppendOnlyFileAdapter {
                     line: line_num,
                 },
                 bytes: line_bytes,
-                logical_path: Some(Utf8Path::new(&path).to_owned().into()),
+                logical_path: Some(Utf8Path::new(&path).to_owned()),
                 source_ts_hint: None,
                 metadata,
             });
@@ -236,9 +233,9 @@ fn build_record_metadata(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use xtask::sandbox::prelude::sinex_test;
     use std::io::Write;
     use tempfile::NamedTempFile;
+    use xtask::sandbox::prelude::sinex_test;
 
     fn dummy_material_id() -> Id<SourceMaterial> {
         Id::from_uuid(uuid::Uuid::new_v4())
@@ -253,8 +250,14 @@ mod tests {
         let path = f.path().to_str().unwrap().to_string();
 
         let adapter = AppendOnlyFileAdapter;
-        let config = AppendOnlyFileConfig { path, skip_empty: false };
-        let stream = adapter.open(dummy_material_id(), &config, None).await.unwrap();
+        let config = AppendOnlyFileConfig {
+            path,
+            skip_empty: false,
+        };
+        let stream = adapter
+            .open(dummy_material_id(), &config, None)
+            .await
+            .unwrap();
         let records: Vec<_> = stream.collect().await;
 
         assert_eq!(records.len(), 3);
@@ -273,8 +276,14 @@ mod tests {
         let path = f.path().to_str().unwrap().to_string();
 
         let adapter = AppendOnlyFileAdapter;
-        let config = AppendOnlyFileConfig { path, skip_empty: true };
-        let stream = adapter.open(dummy_material_id(), &config, None).await.unwrap();
+        let config = AppendOnlyFileConfig {
+            path,
+            skip_empty: true,
+        };
+        let stream = adapter
+            .open(dummy_material_id(), &config, None)
+            .await
+            .unwrap();
         let records: Vec<_> = stream.collect().await;
 
         assert_eq!(records.len(), 2);
@@ -290,15 +299,24 @@ mod tests {
         let path = f.path().to_str().unwrap().to_string();
 
         let adapter = AppendOnlyFileAdapter;
-        let config = AppendOnlyFileConfig { path: path.clone(), skip_empty: false };
+        let config = AppendOnlyFileConfig {
+            path: path.clone(),
+            skip_empty: false,
+        };
 
         // First pass to get cursor for line 2
-        let stream = adapter.open(dummy_material_id(), &config, None).await.unwrap();
+        let stream = adapter
+            .open(dummy_material_id(), &config, None)
+            .await
+            .unwrap();
         let records: Vec<_> = stream.collect().await;
         let cursor_after_line2 = adapter.cursor_after(records[1].as_ref().unwrap()).unwrap();
 
         // Resume: should only yield line3
-        let stream2 = adapter.open(dummy_material_id(), &config, Some(cursor_after_line2)).await.unwrap();
+        let stream2 = adapter
+            .open(dummy_material_id(), &config, Some(cursor_after_line2))
+            .await
+            .unwrap();
         let records2: Vec<_> = stream2.collect().await;
 
         assert_eq!(records2.len(), 1);
@@ -313,11 +331,20 @@ mod tests {
         let path = f.path().to_str().unwrap().to_string();
 
         let adapter = AppendOnlyFileAdapter;
-        let config = AppendOnlyFileConfig { path, skip_empty: false };
-        let mut stream = adapter.open(dummy_material_id(), &config, None).await.unwrap();
+        let config = AppendOnlyFileConfig {
+            path,
+            skip_empty: false,
+        };
+        let mut stream = adapter
+            .open(dummy_material_id(), &config, None)
+            .await
+            .unwrap();
         let record = stream.next().await.unwrap().unwrap();
 
-        assert!(matches!(record.anchor, MaterialAnchor::Line { line: 1, .. }));
+        assert!(matches!(
+            record.anchor,
+            MaterialAnchor::Line { line: 1, .. }
+        ));
         Ok(())
     }
 
@@ -343,7 +370,12 @@ mod tests {
             path: "/nonexistent/file.log".into(),
             skip_empty: false,
         };
-        assert!(adapter.open(dummy_material_id(), &config, None).await.is_err());
+        assert!(
+            adapter
+                .open(dummy_material_id(), &config, None)
+                .await
+                .is_err()
+        );
         Ok(())
     }
 
@@ -354,8 +386,14 @@ mod tests {
         let path = f.path().to_str().unwrap().to_string();
 
         let adapter = AppendOnlyFileAdapter;
-        let config = AppendOnlyFileConfig { path, skip_empty: false };
-        let stream = adapter.open(dummy_material_id(), &config, None).await.unwrap();
+        let config = AppendOnlyFileConfig {
+            path,
+            skip_empty: false,
+        };
+        let stream = adapter
+            .open(dummy_material_id(), &config, None)
+            .await
+            .unwrap();
         let records: Vec<_> = stream.collect().await;
 
         let rec = records[0].as_ref().unwrap();
@@ -388,17 +426,31 @@ mod tests {
         let adapter = AppendOnlyFileAdapter;
 
         // Scan f1 fully, capture cursor.
-        let cfg1 = AppendOnlyFileConfig { path: path1, skip_empty: false };
-        let stream1 = adapter.open(dummy_material_id(), &cfg1, None).await.unwrap();
+        let cfg1 = AppendOnlyFileConfig {
+            path: path1,
+            skip_empty: false,
+        };
+        let stream1 = adapter
+            .open(dummy_material_id(), &cfg1, None)
+            .await
+            .unwrap();
         let records1: Vec<_> = stream1.collect().await;
-        let cursor1 = adapter.cursor_after(records1.last().unwrap().as_ref().unwrap()).unwrap();
+        let cursor1 = adapter
+            .cursor_after(records1.last().unwrap().as_ref().unwrap())
+            .unwrap();
         if cfg!(unix) {
             assert!(cursor1.inode.is_some(), "f1 cursor must capture inode");
         }
 
         // Resume against f2 using f1's cursor (offsets non-zero, inode different).
-        let cfg2 = AppendOnlyFileConfig { path: path2, skip_empty: false };
-        let stream2 = adapter.open(dummy_material_id(), &cfg2, Some(cursor1.clone())).await.unwrap();
+        let cfg2 = AppendOnlyFileConfig {
+            path: path2,
+            skip_empty: false,
+        };
+        let stream2 = adapter
+            .open(dummy_material_id(), &cfg2, Some(cursor1.clone()))
+            .await
+            .unwrap();
         let records2: Vec<_> = stream2.collect().await;
 
         // On unix the rotation is detected: both new lines are emitted from
@@ -406,15 +458,24 @@ mod tests {
         // (no inode), the adapter falls back to inheriting offsets — which
         // would emit zero records because f2 is shorter than cursor1.offset.
         if cfg!(unix) {
-            assert_eq!(records2.len(), 2, "rotation should reset and emit all of f2");
+            assert_eq!(
+                records2.len(),
+                2,
+                "rotation should reset and emit all of f2"
+            );
             let first_meta = &records2[0].as_ref().unwrap().metadata;
             assert_eq!(
-                first_meta.get("rotation_detected").and_then(|v| v.as_bool()),
+                first_meta
+                    .get("rotation_detected")
+                    .and_then(|v| v.as_bool()),
                 Some(true),
                 "first post-rotation record must carry rotation_detected: true"
             );
             assert!(
-                first_meta.get("previous_inode").and_then(|v| v.as_u64()).is_some(),
+                first_meta
+                    .get("previous_inode")
+                    .and_then(|v| v.as_u64())
+                    .is_some(),
                 "rotation marker must include previous_inode"
             );
         }
@@ -428,8 +489,14 @@ mod tests {
         let path = f.path().to_str().unwrap().to_string();
 
         let adapter = AppendOnlyFileAdapter;
-        let config = AppendOnlyFileConfig { path, skip_empty: false };
-        let stream = adapter.open(dummy_material_id(), &config, None).await.unwrap();
+        let config = AppendOnlyFileConfig {
+            path,
+            skip_empty: false,
+        };
+        let stream = adapter
+            .open(dummy_material_id(), &config, None)
+            .await
+            .unwrap();
         let records: Vec<_> = stream.collect().await;
 
         assert!(records.is_empty());
