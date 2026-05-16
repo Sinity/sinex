@@ -135,6 +135,25 @@ disabled (e.g. staging migrations).
   and `nodes.desktop.session.*` remain the typed override surfaces when the
   target user layout is non-standard or a deployment needs explicit socket/runtime
   wiring.
+- Desktop target-user access is a two-step bridge. First, the root
+  `sinex-desktop-target-access` setup unit grants the `sinex` service account
+  read/traverse ACLs for the target user's runtime directory, Hyprland socket
+  tree, ActivityWatch SQLite parent, and target-home parents needed by enabled
+  desktop sources. Second, it writes `${stateRoot}/run/desktop-target.env`, which
+  is consumed as an optional `EnvironmentFile` by `desktop.activitywatch`,
+  `desktop.window-manager`, and `desktop.clipboard`. The environment file carries
+  the resolved `XDG_RUNTIME_DIR`, `WAYLAND_DISPLAY`,
+  `SINEX_HYPRLAND_RUNTIME_DIR`, `SINEX_HYPRLAND_INSTANCE_SIGNATURE`, and explicit
+  socket overrides when configured.
+- Prefer the typed `nodes.desktop.session.{runtimeDir,waylandDisplay,
+  hyprlandInstanceSignature,hyprlandEventSocket,hyprlandCommandSocket}` options
+  over ad hoc per-unit environment variables. `desktop.window-manager` resolves
+  the Hyprland event socket from `SINEX_HYPRLAND_EVENT_SOCKET` first, then from
+  `SINEX_HYPRLAND_RUNTIME_DIR`/`XDG_RUNTIME_DIR` plus
+  `SINEX_HYPRLAND_INSTANCE_SIGNATURE`/`HYPRLAND_INSTANCE_SIGNATURE`.
+  `desktop.clipboard` uses the same runtime/display bridge, while
+  `desktop.activitywatch` uses `SINEX_ACTIVITYWATCH_DB_PATH` when the SQLite
+  path is explicitly configured.
 - Service resource defaults are intentionally workstation-civil: all long-running
   Sinex services default to low CPU/IO scheduler weight (`CPUWeight=10`,
   `IOWeight=10`), idle IO scheduling, and `Nice=10` in addition to their
