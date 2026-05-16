@@ -82,7 +82,7 @@ register_source_unit_binding! {
         backing_store_kind: "sqlite",
         occurrence_anchor: "bucket_event_timestamp",
     })
-    .runtime_shape(RuntimeShape::OnDemand)
+    .runtime_shape(RuntimeShape::Continuous)
     .package_impact("desktop_activitywatch")
     .implementation_mode("rust_in_pack:source-worker")
     .build_impact(SourceUnitBuildImpact::ZERO)
