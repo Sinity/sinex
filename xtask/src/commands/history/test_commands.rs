@@ -160,6 +160,10 @@ fn describe_test_run(run: &crate::history::ResolvedTestRun) -> String {
     }
 }
 
+fn format_optional_pressure(value: Option<f64>) -> String {
+    value.map_or_else(|| "unavailable".to_string(), |value| format!("{value:.2}%"))
+}
+
 pub(super) fn execute_tests_slowest(
     db: &HistoryDb,
     invocation: Option<&str>,
@@ -549,6 +553,23 @@ pub(super) fn execute_tests_analyze(
                             t.package, t.test_name, t.duration_secs, t.status
                         );
                     }
+                }
+
+                if let Some(host_pressure) = &analysis.host_pressure {
+                    let heading = if host_pressure.timing_failures_may_be_invalidated {
+                        style("⚠ Host Pressure Classification").yellow().bold()
+                    } else {
+                        style("Host Pressure Classification").cyan().bold()
+                    };
+                    println!("\n{heading}");
+                    println!("  level: {}", host_pressure.level);
+                    println!("  {}", host_pressure.reason);
+                    println!(
+                        "  io.full avg10 max: {}; memory.full avg10 max: {}; cpu.some avg10 max: {}",
+                        format_optional_pressure(host_pressure.host_io_pressure_full_avg10_max),
+                        format_optional_pressure(host_pressure.host_memory_pressure_full_avg10_max),
+                        format_optional_pressure(host_pressure.host_cpu_pressure_some_avg10_max)
+                    );
                 }
 
                 // Per-package failure summary
