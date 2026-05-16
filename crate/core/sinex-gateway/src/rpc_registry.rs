@@ -368,7 +368,7 @@ pub fn build_registry() -> RpcRegistry {
 
 /// List all registered RPC methods with their required roles.
 ///
-/// Returns a sorted Vec of (method_name, required_role) tuples for display
+/// Returns a sorted Vec of (`method_name`, `required_role`) tuples for display
 /// or programmatic inspection.
 #[must_use]
 pub fn list_all_methods() -> Vec<(String, crate::auth::Role)> {

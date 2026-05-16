@@ -2,7 +2,7 @@
 //!
 //! Proves the SSE HTTP endpoint receives events that flowed through the real
 //! production path: NATS publish → ingestd admission → DB persist → confirmation
-//! → SubscriptionBus → SSE frame.
+//! → `SubscriptionBus` → SSE frame.
 //!
 //! This complements `sse_stream_test.rs` (which exercises `SubscriptionBus`
 //! fanout via direct DB inserts and synthetic confirmations) by closing the
@@ -185,7 +185,7 @@ async fn test_sse_delivers_event_after_real_ingestd_confirmation(
 
     // Drain SSE frames until we see our event id, an explicit error frame,
     // or hit the deadline.
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(60);
+    let deadline = tokio::time::Instant::now() + Duration::from_mins(1);
     let event_id_str = event_id.to_string();
     let mut saw_event = false;
     while tokio::time::Instant::now() < deadline {

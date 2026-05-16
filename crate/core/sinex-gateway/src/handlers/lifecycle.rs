@@ -1363,7 +1363,7 @@ pub async fn handle_tombstone_status(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use xtask::sandbox::{TestResult, sinex_test};
+    use xtask::sandbox::sinex_test;
 
     #[sinex_test]
     async fn parse_duration_to_timestamp_preserves_subsecond_precision() -> TestResult<()> {

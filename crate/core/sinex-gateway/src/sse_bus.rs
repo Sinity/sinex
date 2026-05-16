@@ -225,7 +225,7 @@ pub struct SubscriptionBus {
     next_sub_id: AtomicU64,
     active_subscriptions: AtomicUsize,
     /// Tracks retry counts for confirmed event IDs that were not found in the DB.
-    /// After CONFIRMATION_RETRY_MAX_ATTEMPTS, the ID is dropped with a warning.
+    /// After `CONFIRMATION_RETRY_MAX_ATTEMPTS`, the ID is dropped with a warning.
     confirmation_retry_counts: Mutex<HashMap<Id<Event<JsonValue>>, u8>>,
 }
 

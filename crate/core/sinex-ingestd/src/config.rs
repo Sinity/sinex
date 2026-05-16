@@ -1296,7 +1296,7 @@ mod tests {
         assert_eq!(pool.idle_timeout_secs.as_secs(), 29);
         assert_eq!(pool.statement_timeout_secs.as_secs(), 0);
         assert_eq!(
-            pool.max_lifetime_secs.map(|value| value.as_secs()),
+            pool.max_lifetime_secs.map(sinex_primitives::Seconds::as_secs),
             Some(30 * 60)
         );
         assert!(!pool.validate_against_postgres_max);

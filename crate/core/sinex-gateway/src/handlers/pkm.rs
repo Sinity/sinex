@@ -32,13 +32,13 @@ pub async fn handle_create_note(
             None,
         )
         .await?;
-    Ok(serde_json::to_value(CreateNoteResponse {
+    serde_json::to_value(CreateNoteResponse {
         annotation_id: Id::<Event<JsonValue>>::from_uuid(annotation_id),
     })
     .map_err(|error| {
         SinexError::serialization("failed to serialize `pkm.create_note` response")
             .with_std_error(&error)
-    })?)
+    })
 }
 
 pub async fn handle_create_entities(
@@ -66,13 +66,13 @@ pub async fn handle_create_entities(
             auth.actor_id(),
         )
         .await?;
-    Ok(serde_json::to_value(CreateEntitiesResponse {
+    serde_json::to_value(CreateEntitiesResponse {
         entity_ids: entity_ids.into_iter().map(Id::from_uuid).collect(),
     })
     .map_err(|error| {
         SinexError::serialization("failed to serialize `pkm.create_entities` response")
             .with_std_error(&error)
-    })?)
+    })
 }
 
 pub async fn handle_link_entities(
@@ -104,11 +104,11 @@ pub async fn handle_link_entities(
         )
         .await?;
 
-    Ok(serde_json::to_value(LinkEntitiesResponse {
+    serde_json::to_value(LinkEntitiesResponse {
         relation_id: Id::<EntityRelation>::from_uuid(relation_id),
     })
     .map_err(|error| {
         SinexError::serialization("failed to serialize `pkm.link_entities` response")
             .with_std_error(&error)
-    })?)
+    })
 }

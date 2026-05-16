@@ -1,20 +1,19 @@
-//! Vertical proof: WeeChat parser through production-shaped pipeline (#1132).
+//! Vertical proof: `WeeChat` parser through production-shaped pipeline (#1132).
 //!
 //! This test replaces the fake-scan-node pattern (direct DB inserts) with the
-//! real parser pipeline: AppendOnlyFileAdapter → WeeChatLogParser →
-//! ParsedEventIntent → Event (material provenance) → AdmittedEventIntent →
+//! real parser pipeline: `AppendOnlyFileAdapter` → `WeeChatLogParser` →
+//! `ParsedEventIntent` → Event (material provenance) → `AdmittedEventIntent` →
 //! NATS publish → ingestd admission → DB persistence → query verification.
 //!
 //! # Coverage
 //!
-//! - Four WeeChat event types: message, join, part, server_notice
+//! - Four `WeeChat` event types: message, join, part, `server_notice`
 //! - Material provenance with per-line anchors
 //! - Admitted event intent envelope
 //! - Full NATS → ingestd → DB round-trip
 //! - DB verification of event type, source, timestamp, payload, provenance
 
 use futures::StreamExt;
-use sinex_db::DbPoolExt;
 use sinex_node_sdk::parser::{
     AppendOnlyFileAdapter, AppendOnlyFileConfig, InputShapeAdapter, MaterialParser,
     WeeChatLogParser,
@@ -24,12 +23,12 @@ use sinex_primitives::events::SourceMaterial;
 use sinex_primitives::events::admission::AdmittedEventIntent;
 use sinex_primitives::events::builder::{OffsetKind, Provenance};
 use sinex_primitives::parser::{MaterialAnchor, ParsedEventIntent, ParserContext, SourceUnitId};
-use sinex_primitives::{Event, EventSource, EventType, Id, Timestamp, Uuid};
+use sinex_primitives::{Event, Id, Timestamp, Uuid};
 use xtask::sandbox::prelude::*;
 
 // ── Fixture ──────────────────────────────────────────────────────────────────
 
-/// A representative WeeChat log with all four event types.
+/// A representative `WeeChat` log with all four event types.
 const FIXTURE: &str = "\
 2024-01-15 14:23:45\tsinity\thello world
 2024-01-15 14:24:00\t-->\tuser1 (~user1@host) joined #general
@@ -254,13 +253,13 @@ async fn weechat_full_pipeline_persists_correctly(ctx: TestContext) -> TestResul
             Option<String>,
         ),
     >(
-        r#"
+        r"
         SELECT id, event_type, source, ts_orig, payload,
                anchor_byte, offset_kind
         FROM core.events
         WHERE source_material_id = $1
         ORDER BY ts_orig ASC
-        "#,
+        ",
     )
     .bind(material_id.to_uuid())
     .fetch_all(pool)

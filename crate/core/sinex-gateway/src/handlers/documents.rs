@@ -44,7 +44,7 @@ pub async fn handle_documents_search(pool: &PgPool, params: Value) -> Result<Val
         natural_key_prefix: req.natural_key_prefix,
         updated_after: req.updated_after,
         updated_before: req.updated_before,
-        limit: req.limit.map(|v| i64::from(v)),
+        limit: req.limit.map(i64::from),
         offset: req.offset.map(|v| v as i64),
     };
 

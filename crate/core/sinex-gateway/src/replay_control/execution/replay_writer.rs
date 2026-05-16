@@ -3,7 +3,7 @@
 
 #![allow(unused_imports)]
 
-use super::*;
+use super::{eyre, ReplayExecutionEngine, Result, StreamExt, Context, stale_preview_missing_root_ids_error, replay_scope_drift_error, ScopeInvalidationBucket};
 use async_nats::jetstream;
 use sinex_db::repositories::{DbPoolExt, EventRepositoryTx};
 use sinex_node_sdk::derived_node::invalidation::{DerivedScopeInvalidation, INVALIDATION_SUBJECT};
@@ -719,7 +719,7 @@ impl ReplayExecutionEngine {
         let ack: serde_json::Value = serde_json::from_slice(&ack_msg.payload)
             .map_err(|e| eyre!("Failed to deserialize source parse ack: {e}"))?;
 
-        if ack.get("accepted").and_then(|v| v.as_bool()) != Some(true) {
+        if ack.get("accepted").and_then(serde_json::Value::as_bool) != Some(true) {
             let error_msg = ack
                 .get("error")
                 .and_then(|v| v.as_str())

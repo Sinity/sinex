@@ -1,4 +1,4 @@
-//! Transport boundary tests for the AdmittedEventIntent envelope (#1131).
+//! Transport boundary tests for the `AdmittedEventIntent` envelope (#1131).
 //!
 //! Tests prove:
 //! 1. Happy path: admitted intent → NATS → ingestd admission → DB persistence → confirmation
@@ -6,13 +6,13 @@
 //! 3. The low-level escape hatch (`publish_raw_event_batch`) is grep-detectable
 
 use sinex_ingestd::admission::{
-    AdmissionDecision, AdmissionRejectionKind, AdmissionService, AdmittedEvent,
+    AdmissionDecision, AdmissionRejectionKind, AdmissionService,
 };
-use sinex_ingestd::{IngestEventValidator, ValidationResult};
+use sinex_ingestd::IngestEventValidator;
 use sinex_primitives::domain::HostName;
 use sinex_primitives::events::Event;
 use sinex_primitives::events::admission::{
-    ACCEPTED_ENVELOPE_VERSIONS, AdmittedEventIntent, CURRENT_ENVELOPE_VERSION,
+    AdmittedEventIntent, CURRENT_ENVELOPE_VERSION,
 };
 use sinex_primitives::{DynamicPayload, Id, JsonValue, Uuid};
 use std::sync::Arc;
@@ -252,22 +252,19 @@ async fn legacy_raw_event_still_deserializes(ctx: TestContext) -> TestResult<()>
     // The event should at least be attempted; admission may reject it for
     // schema or FK reasons but not for envelope deserialization.
     for decision in &decisions {
-        match decision {
-            AdmissionDecision::Rejected(rejection) => {
-                // Rejection is expected (no registered source material in test),
-                // but it should NOT be an envelope validation error.
-                assert_ne!(
-                    rejection.kind,
-                    AdmissionRejectionKind::EnvelopeValidation,
-                    "legacy events should not be rejected as envelope validation failures"
-                );
-                assert_ne!(
-                    rejection.kind,
-                    AdmissionRejectionKind::EnvelopeDeserialization,
-                    "legacy events should not be rejected as envelope deserialization failures"
-                );
-            }
-            _ => {}
+        if let AdmissionDecision::Rejected(rejection) = decision {
+            // Rejection is expected (no registered source material in test),
+            // but it should NOT be an envelope validation error.
+            assert_ne!(
+                rejection.kind,
+                AdmissionRejectionKind::EnvelopeValidation,
+                "legacy events should not be rejected as envelope validation failures"
+            );
+            assert_ne!(
+                rejection.kind,
+                AdmissionRejectionKind::EnvelopeDeserialization,
+                "legacy events should not be rejected as envelope deserialization failures"
+            );
         }
     }
     Ok(())

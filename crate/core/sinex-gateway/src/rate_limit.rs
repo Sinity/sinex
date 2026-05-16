@@ -234,7 +234,7 @@ mod tests {
             write_rps: NonZeroU32::new(50).unwrap(),
             admin_rps: NonZeroU32::new(2).unwrap(),
             burst_size: NonZeroU32::new(2).unwrap(),
-            idle_timeout: Duration::from_secs(60),
+            idle_timeout: Duration::from_mins(1),
             enabled: true,
         };
         let limiter = TokenRateLimiter::new(config);

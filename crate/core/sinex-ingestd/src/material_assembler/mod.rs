@@ -480,7 +480,7 @@ impl MaterialAssembler {
         }
     }
 
-    /// Increment the "commit_outcome_unknown" counter when a finalization COMMIT result is ambiguous.
+    /// Increment the "`commit_outcome_unknown`" counter when a finalization COMMIT result is ambiguous.
     /// Signals potential duplicate-material risk after restart; non-zero warrants investigation.
     pub(super) fn stats_inc_commit_outcome_unknown(&self) {
         self.stats.inc_commit_outcome_unknown();

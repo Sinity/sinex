@@ -8,10 +8,11 @@ use sinex_db::DbPoolExt;
 use sinex_db::repositories::SourceMaterial;
 use sinex_primitives::domain::{SourceMaterialFormat, SourceMaterialTimingInfoType};
 use sinex_primitives::rpc::sources::{
-    ContinuityContractStatus, CoverageGap, ReplayabilityStatus, SourceAnnotations, SourceCoverageEntry, SourceMaterialDetail,
-    SourceMaterialMetadataContract, SourceMaterialStatistics, SourceMaterialSummary, SourceOrigin,
-    SourcePolicyEvidence, SourcePresetDescriptor, SourcesAnnotateRequest, SourcesAnnotateResponse,
-    SourcesArchiveRequest, SourcesArchiveResponse, SourcesBindingsListResponse, SourcesContinuityRequest,
+    ContinuityContractStatus, CoverageGap, ReplayabilityStatus, SourceAnnotations,
+    SourceCoverageEntry, SourceMaterialDetail, SourceMaterialMetadataContract,
+    SourceMaterialStatistics, SourceMaterialSummary, SourceOrigin, SourcePolicyEvidence,
+    SourcePresetDescriptor, SourcesAnnotateRequest, SourcesAnnotateResponse, SourcesArchiveRequest,
+    SourcesArchiveResponse, SourcesBindingsListResponse, SourcesContinuityRequest,
     SourcesContinuityResponse, SourcesCoverageRequest, SourcesCoverageResponse, SourcesListRequest,
     SourcesListResponse, SourcesPresetsListResponse, SourcesReadinessGetRequest,
     SourcesReadinessGetResponse, SourcesReadinessListRequest, SourcesReadinessListResponse,
@@ -795,8 +796,8 @@ pub async fn handle_sources_continuity(pool: &PgPool, params: Value) -> Result<V
 
     for row in &material_rows {
         if let Some(start) = row.start_time {
-            if let Some(prev) = prev_end {
-                if start > prev {
+            if let Some(prev) = prev_end
+                && start > prev {
                     let gap_secs = (start - prev).whole_seconds();
                     // Only report gaps larger than 1 second (rounding noise).
                     if gap_secs > 1 {
@@ -808,7 +809,6 @@ pub async fn handle_sources_continuity(pool: &PgPool, params: Value) -> Result<V
                         });
                     }
                 }
-            }
             prev_end = row.end_time.max(Some(start));
         }
     }
