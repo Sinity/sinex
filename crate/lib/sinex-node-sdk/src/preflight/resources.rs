@@ -771,8 +771,14 @@ mod tests {
     use serde_json::Value;
     use std::fs;
     use std::os::unix::fs::PermissionsExt;
-    use tempfile::tempdir;
+    use tempfile::{TempDir, tempdir, tempdir_in};
     use xtask::sandbox::{EnvGuard, sinex_test};
+
+    fn spacious_tempdir() -> ::xtask::sandbox::TestResult<TempDir> {
+        let root = std::env::current_dir()?.join(".sinex/test-preflight-resources");
+        fs::create_dir_all(&root)?;
+        Ok(tempdir_in(root)?)
+    }
 
     #[sinex_test]
     async fn resolution_target_host_skips_local_and_socket_targets()
@@ -846,7 +852,7 @@ mod tests {
     #[sinex_test]
     async fn verify_disk_space_accepts_missing_paths_when_parent_filesystem_exists()
     -> ::xtask::sandbox::TestResult<()> {
-        let root = tempdir()?;
+        let root = spacious_tempdir()?;
         let state_dir = root.path().join("state");
         let data_dir = root.path().join("data");
         let log_dir = root.path().join("logs");

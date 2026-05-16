@@ -73,8 +73,7 @@ async fn many_drain_cycles_share_material_until_rotation(ctx: TestContext) -> Te
 
     let mut stream = AppendStreamAcquirer::new(Arc::clone(&manager));
     const DRAIN_CYCLES: usize = 100;
-    const RECORD_BYTES: usize = 10; // 10 bytes per "poll cycle"
-    const RECORD: &[u8] = b"0123456789"; // exactly RECORD_BYTES
+    const RECORD: &[u8] = b"0123456789"; // 10 bytes per "poll cycle"
 
     let mut seen_material_ids = std::collections::HashSet::new();
 
