@@ -1433,7 +1433,7 @@ fn expand_rstest_variant(
         #rstest_attr
         #(#case_attrs)*
         #(#other_attrs)*
-        #[tokio::test]
+        #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
         #fn_vis #new_sig {
             let test_name = stringify!(#fn_name);
             let start = ::std::time::Instant::now();
@@ -1480,7 +1480,7 @@ fn expand_async_context_test(
 
     quote! {
         #(#test_attrs)*
-        #[tokio::test]
+        #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
         #fn_vis async fn #fn_name() -> ::xtask::sandbox::TestResult<()> {
             let test_future = async {
                 let test_name = stringify!(#fn_name);
@@ -1560,7 +1560,7 @@ fn expand_simple_async_test(
 
     quote! {
         #(#test_attrs)*
-        #[tokio::test]
+        #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
         #fn_vis async fn #fn_name() -> ::xtask::sandbox::TestResult<()> {
             let test_future = async {
                 let test_name = stringify!(#fn_name);
