@@ -79,7 +79,9 @@ disabled (e.g. staging migrations).
   `/etc/sinex/db-password` / `/etc/sinex/remote-db-password` automatically.
 - Shared preload libraries always include TimescaleDB support plus schema/vector extensions required by migrations.
 - Pool sizing (`connectionPool.{maxConnections,minConnections,...}`) feeds both
-  Postgres `max_connections` and the CLI flags passed to service binaries.
+  Postgres `max_connections` and the CLI flags passed to service binaries. The
+  defaults are conservative for the single-host runtime: 4 max / 1 min
+  connection per process, plus a small admin/preflight reserve.
 - Identifier policy is UUIDv7 in persistence; application code should keep typed
   `Id<T>` wrappers and convert only at storage boundaries.
 

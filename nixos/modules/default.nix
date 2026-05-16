@@ -385,12 +385,12 @@ in
               options = {
                 maxConnections = mkOption {
                   type = positive;
-                  default = 15;
+                  default = 4;
                   description = "Maximum connections per Sinex process.";
                 };
                 minConnections = mkOption {
                   type = positive;
-                  default = 2;
+                  default = 1;
                   description = "Minimum number of pooled connections.";
                 };
                 connectionTimeout = mkOption {
