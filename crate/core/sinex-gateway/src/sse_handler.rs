@@ -295,6 +295,8 @@ fn serialize_sse_error_payload(payload: &SseErrorPayload) -> String {
         Ok(error_payload) => error_payload,
         Err(fallback_error) => {
             tracing::error!(
+                target: "sinex_metrics",
+                metric = "gateway.sse_failures_total",
                 error = %fallback_error,
                 "Failed to serialize SSE fallback error payload"
             );
@@ -309,6 +311,8 @@ fn serialize_sse_payload<T: Serialize>(
 ) -> Result<String, SseErrorPayload> {
     serde_json::to_string(payload).map_err(|error| {
         tracing::error!(
+            target: "sinex_metrics",
+            metric = "gateway.sse_failures_total",
             payload_kind,
             error = %error,
             "Failed to serialize SSE payload"

@@ -985,16 +985,31 @@ impl JetStreamConsumer {
                 }
                 _ = confirmation_retry_interval.tick() => {
                     if let Err(e) = self.process_confirmation_retry_batch(&confirmation_retry_consumer).await {
-                        error!("Confirmation retry processing error: {}", e);
+                        error!(
+                            target: "sinex_metrics",
+                            metric = "ingestd.confirmation_retry_failures_total",
+                            error = %e,
+                            "Confirmation retry processing error"
+                        );
                     }
                 }
                 batch_result = &mut batch_future => {
                     if let Err(e) = batch_result {
                         if Self::is_fatal_batch_processing_error(&e) {
-                            error!("Fatal batch processing error: {}", e);
+                            error!(
+                                target: "sinex_metrics",
+                                metric = "ingestd.fatal_batch_errors_total",
+                                error = %e,
+                                "Fatal batch processing error"
+                            );
                             return Err(e);
                         }
-                        error!("Batch processing error: {}", e);
+                        error!(
+                            target: "sinex_metrics",
+                            metric = "ingestd.batch_errors_total",
+                            error = %e,
+                            "Batch processing error"
+                        );
                     }
                     batch_future = Box::pin(Self::process_batch_with_semaphore(
                         &self,
@@ -1375,6 +1390,8 @@ impl JetStreamConsumer {
                                     }
                                     Err(retry_err) => {
                                         error!(
+                                            target: "sinex_metrics",
+                                            metric = "ingestd.confirmation_retry_failures_total",
                                             source = %source,
                                             event_type = %event_type,
                                             watermark = %max_event_id,
@@ -1549,7 +1566,12 @@ impl JetStreamConsumer {
                         continue;
                     }
 
-                    error!("Failed to persist batch: {}", e);
+                    error!(
+                        target: "sinex_metrics",
+                        metric = "ingestd.batch_persistence_failures_total",
+                        error = %e,
+                        "Failed to persist batch"
+                    );
                     let mut settlement_errors = Vec::new();
                     for prepared in &attempted_batch {
                         match self.should_route_terminal_persistence_failure(&prepared.message, &e)
@@ -1696,7 +1718,9 @@ impl JetStreamConsumer {
             | AdmissionRejectionKind::InvalidEventId
             | AdmissionRejectionKind::EnvelopeDeserialization
             | AdmissionRejectionKind::EnvelopeValidation => {
-                self.stats.validation_failures.fetch_add(1, Ordering::Relaxed);
+                self.stats
+                    .validation_failures
+                    .fetch_add(1, Ordering::Relaxed);
             }
         }
 
@@ -2449,13 +2473,25 @@ impl JetStreamConsumer {
                         return Ok(());
                     }
                     Err(err) => {
-                        error!(attempt, error = %err, "Failed to confirm DLQ publish");
+                        error!(
+                            target: "sinex_metrics",
+                            metric = "ingestd.dlq_confirm_failures_total",
+                            attempt,
+                            error = %err,
+                            "Failed to confirm DLQ publish"
+                        );
                         last_error =
                             Some(SinexError::network("DLQ publish ack failed").with_source(err));
                     }
                 },
                 Err(err) => {
-                    error!(attempt, error = %err, "Failed to route to DLQ");
+                    error!(
+                        target: "sinex_metrics",
+                        metric = "ingestd.dlq_routing_failures_total",
+                        attempt,
+                        error = %err,
+                        "Failed to route to DLQ"
+                    );
                     last_error = Some(SinexError::network("DLQ publish failed").with_source(err));
                 }
             }
@@ -2657,11 +2693,11 @@ mod tests {
             "1999-12-31 should be before lower bound"
         );
         assert!(
-            !(lower_bound < lower_bound),
+            (lower_bound >= lower_bound),
             "2000-01-01 itself should not be flagged"
         );
         assert!(
-            !(after_2000 < lower_bound),
+            (after_2000 >= lower_bound),
             "2000-01-02 should not be flagged"
         );
         Ok(())

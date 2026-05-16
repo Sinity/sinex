@@ -128,7 +128,12 @@ async fn main() -> Result<()> {
                 info!(signal = signal_name, "Received shutdown signal");
             }
             Err(err) => {
-                error!("Failed to listen for shutdown signal: {}", err);
+                error!(
+                    target: "sinex_metrics",
+                    metric = "ingestd.shutdown_signal_failures_total",
+                    error = %err,
+                    "Failed to listen for shutdown signal"
+                );
             }
         }
     };
@@ -139,7 +144,12 @@ async fn main() -> Result<()> {
             match result {
                 Ok(()) => info!("Service completed successfully"),
                 Err(e) => {
-                    error!("Service failed: {}", e);
+                    error!(
+                        target: "sinex_metrics",
+                        metric = "ingestd.service_failures_total",
+                        error = %e,
+                        "Service failed"
+                    );
                     std::process::exit(1);
                 }
             }
@@ -147,7 +157,12 @@ async fn main() -> Result<()> {
         () = shutdown_signal => {
             info!("Shutting down gracefully...");
             if let Err(e) = service.shutdown().await {
-                error!("Error during shutdown: {}", e);
+                error!(
+                    target: "sinex_metrics",
+                    metric = "ingestd.shutdown_failures_total",
+                    error = %e,
+                    "Error during shutdown"
+                );
             }
         }
     }

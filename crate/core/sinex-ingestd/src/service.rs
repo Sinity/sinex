@@ -500,6 +500,9 @@ impl IngestService {
             (Ok(()), Err(error)) => Err(error),
             (Err(error), Err(cleanup_error)) => {
                 error!(
+                    target: "sinex_metrics",
+                    metric = "ingestd.component_failures_total",
+                    component = "runtime_shutdown",
                     runtime_error = %error,
                     cleanup_error = %cleanup_error,
                     "Runtime shutdown surfaced an additional background task failure"
@@ -515,13 +518,20 @@ impl IngestService {
         js_handle: Option<JoinHandle<IngestdResult<()>>>,
         ma_handle: Option<JoinHandle<IngestdResult<()>>>,
     ) -> IngestdResult<()> {
-        error!(error = %startup_error, "Critical ingestd component failed during startup");
+        error!(
+            target: "sinex_metrics",
+            metric = "ingestd.startup_failures_total",
+            error = %startup_error,
+            "Critical ingestd component failed during startup"
+        );
         trigger_shutdown(&self.shutdown_flag, &self.shutdown_notify);
 
         let mut startup_error = match self.monitor_runtime(js_handle, ma_handle).await {
             Ok(()) => startup_error,
             Err(cleanup_error) => {
                 error!(
+                    target: "sinex_metrics",
+                    metric = "ingestd.startup_failures_total",
                     startup_error = %startup_error,
                     cleanup_error = %cleanup_error,
                     "Startup failure cleanup surfaced an additional critical task failure"
@@ -532,6 +542,8 @@ impl IngestService {
 
         if let Err(cleanup_error) = self.wait_for_tasks(Duration::from_secs(5)).await {
             error!(
+                target: "sinex_metrics",
+                metric = "ingestd.startup_failures_total",
                 startup_error = %startup_error,
                 cleanup_error = %cleanup_error,
                 "Startup failure cleanup surfaced an additional background task failure"
@@ -723,12 +735,23 @@ impl IngestService {
                 Ok(())
             }
             Ok(()) => {
-                error!("{name} exited unexpectedly without error");
+                error!(
+                    target: "sinex_metrics",
+                    metric = "ingestd.component_exits_total",
+                    component = name,
+                    "{name} exited unexpectedly without error"
+                );
                 trigger_shutdown(shutdown_flag, shutdown_notify);
                 Err(SinexError::service(format!("{name} exited unexpectedly")))
             }
             Err(e) => {
-                error!(error = %e, "{name} failed");
+                error!(
+                    target: "sinex_metrics",
+                    metric = "ingestd.component_failures_total",
+                    component = name,
+                    error = %e,
+                    "{name} failed"
+                );
                 trigger_shutdown(shutdown_flag, shutdown_notify);
                 Err(e)
             }
@@ -741,7 +764,13 @@ impl IngestService {
         shutdown_flag: &Arc<AtomicBool>,
         shutdown_notify: &Arc<tokio::sync::Notify>,
     ) -> IngestdResult<()> {
-        error!(error = ?err, "{name} panicked");
+        error!(
+            target: "sinex_metrics",
+            metric = "ingestd.component_panics_total",
+            component = name,
+            error = ?err,
+            "{name} panicked"
+        );
         trigger_shutdown(shutdown_flag, shutdown_notify);
         Err(SinexError::service(format!("{name} panicked: {err}")))
     }
@@ -760,7 +789,12 @@ impl IngestService {
                 Ok(())
             }
             Err(error) => {
-                error!(error = %error, "MaterialAssembler failed");
+                error!(
+                    target: "sinex_metrics",
+                    metric = "ingestd.material_assembler_failures_total",
+                    error = %error,
+                    "MaterialAssembler failed"
+                );
                 Err(error)
             }
         }
@@ -831,7 +865,13 @@ impl IngestService {
                             Ok(())
                         }
                         Err(e) => {
-                            error!(error = %e, "JetStream consumer failed");
+                            error!(
+                                target: "sinex_metrics",
+                                metric = "ingestd.component_failures_total",
+                                component = "jetstream_consumer",
+                                error = %e,
+                                "JetStream consumer failed"
+                            );
                             Err(e)
                         }
                     }
@@ -886,6 +926,8 @@ impl IngestService {
                 Ok(content_store) => Arc::new(content_store),
                 Err(e) => {
                     error!(
+                        target: "sinex_metrics",
+                        metric = "ingestd.startup_failures_total",
                         path = %content_store_path,
                         error = %e,
                         "Failed to initialize content-store root"
@@ -915,7 +957,12 @@ impl IngestService {
             ) {
                 Ok(assembler) => assembler.with_observer(observer),
                 Err(e) => {
-                    error!(error = %e, "Failed to create MaterialAssembler");
+                    error!(
+                        target: "sinex_metrics",
+                        metric = "ingestd.material_assembler_failures_total",
+                        error = %e,
+                        "Failed to create MaterialAssembler"
+                    );
                     return Err(e);
                 }
             };
@@ -1137,6 +1184,9 @@ impl IngestService {
             }
             Err(error) => {
                 error!(
+                    target: "sinex_metrics",
+                    metric = "ingestd.component_exits_total",
+                    component = "background_task",
                     task_index = index,
                     error = %error,
                     "Background task exited unexpectedly during forced shutdown"
@@ -1171,6 +1221,9 @@ impl IngestService {
                 if let Err(error) = handle.await {
                     if error.is_panic() {
                         error!(
+                            target: "sinex_metrics",
+                            metric = "ingestd.component_panics_total",
+                            component = "background_task",
                             task_index = i,
                             error = %error,
                             "Background task panicked during shutdown"
@@ -1799,7 +1852,7 @@ mod tests {
         let mut service = test_service();
         // Use a long interval so the task is reliably parked in `interval.tick`
         // when shutdown fires, exercising the shutdown branch of the select.
-        let interval_duration = Duration::from_secs(60);
+        let interval_duration = Duration::from_mins(1);
         // Drive the path through the spawn helper directly with a placeholder
         // pool — we never actually tick because we shut down immediately.
         // The placeholder pool is constructed via a lazy connect string; we

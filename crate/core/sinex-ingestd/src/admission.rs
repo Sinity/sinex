@@ -1,7 +1,7 @@
 //! Reusable event admission boundary for ingestd.
 //!
 //! This module owns validation and persistence that are not intrinsically tied
-//! to NATS message settlement. The JetStream consumer remains responsible for
+//! to NATS message settlement. The `JetStream` consumer remains responsible for
 //! ACK/NAK/DLQ and confirmation publishing, while finite staged parsers can call
 //! this service directly before they have a transport shape of their own.
 
@@ -68,6 +68,7 @@ pub struct CandidateEvent {
 }
 
 impl CandidateEvent {
+    #[must_use] 
     pub fn new(event: Event<JsonValue>, metadata: CandidateEventMetadata) -> Self {
         Self { event, metadata }
     }
@@ -172,10 +173,12 @@ pub struct AdmissionBatchPlan {
 }
 
 impl AdmissionBatchPlan {
+    #[must_use] 
     pub fn attempted_event_ids(&self) -> Vec<Uuid> {
         self.events.iter().map(|event| event.event_id).collect()
     }
 
+    #[must_use] 
     pub fn success_duplicate_event_ids(&self, inserted_ids: &[Uuid]) -> Vec<Uuid> {
         let inserted_set: HashSet<_> = inserted_ids.iter().copied().collect();
         let mut duplicate_event_ids = self.cached_duplicate_event_ids.clone();
@@ -189,6 +192,7 @@ impl AdmissionBatchPlan {
         duplicate_event_ids
     }
 
+    #[must_use] 
     pub fn cacheable_event_ids(&self) -> &[Uuid] {
         &self.cacheable_event_ids
     }
@@ -388,6 +392,9 @@ impl AdmissionService {
             let now = Timestamp::now();
             if ts_orig < self.ts_orig_lower_bound {
                 error!(
+                    target: "sinex_metrics",
+                    metric = "ingestd.admission_rejections_total",
+                    kind = "past_timestamp",
                     event_id = ?event.id,
                     source = %event.source,
                     event_type = %event.event_type,
@@ -406,6 +413,9 @@ impl AdmissionService {
             if ts_orig > now + self.future_ts_skew {
                 let latest_expected = now + self.future_ts_skew;
                 error!(
+                    target: "sinex_metrics",
+                    metric = "ingestd.admission_rejections_total",
+                    kind = "future_timestamp",
                     event_id = ?event.id,
                     source = %event.source,
                     event_type = %event.event_type,
@@ -428,6 +438,9 @@ impl AdmissionService {
             && anchor_byte < 0
         {
             error!(
+                target: "sinex_metrics",
+                metric = "ingestd.admission_rejections_total",
+                kind = "negative_anchor",
                 event_id = ?event.id,
                 source = %event.source,
                 event_type = %event.event_type,
@@ -459,7 +472,12 @@ impl AdmissionService {
         let event_id = if let Some(id) = event.id {
             *id.as_uuid()
         } else {
-            error!("Event missing required ID");
+            error!(
+                target: "sinex_metrics",
+                metric = "ingestd.admission_rejections_total",
+                kind = "missing_event_id",
+                "Event missing required ID"
+            );
             return Ok(AdmissionDecision::Rejected(AdmissionRejection::new(
                 AdmissionRejectionKind::MissingEventId,
                 "Missing event ID",
@@ -467,6 +485,9 @@ impl AdmissionService {
         };
         if !is_uuid_v7(&event_id) {
             error!(
+                target: "sinex_metrics",
+                metric = "ingestd.admission_rejections_total",
+                kind = "invalid_event_id",
                 event_id = %event_id,
                 source = %event.source,
                 event_type = %event.event_type,
@@ -715,6 +736,8 @@ impl AdmissionService {
         .await
         .map_err(|_| {
             error!(
+                target: "sinex_metrics",
+                metric = "ingestd.batch_insert_timeouts_total",
                 batch_size = to_persist.len(),
                 timeout_seconds = DB_WRITE_TIMEOUT.as_secs(),
                 "Timed out waiting for batch insert to complete"
@@ -762,7 +785,12 @@ impl AdmissionService {
                     "INSERT hit FK violation (source_material not yet registered); will retry"
                 );
             } else {
-                error!("Failed to persist events batch: {}", error);
+                error!(
+                    target: "sinex_metrics",
+                    metric = "ingestd.batch_persistence_failures_total",
+                    error = %error,
+                    "Failed to persist events batch"
+                );
             }
             error
         })?;
@@ -772,6 +800,7 @@ impl AdmissionService {
         Ok(AdmissionPersistResult::persisted_plan(plan, inserted_ids))
     }
 
+    #[must_use] 
     pub fn is_source_material_fk_violation_for_admitted_batch(
         error: &SinexError,
         batch: &[&AdmittedEvent],
@@ -780,6 +809,7 @@ impl AdmissionService {
             || (is_foreign_key_violation(error) && batch_depends_only_on_source_material_fk(batch))
     }
 
+    #[must_use] 
     pub fn is_source_material_fk_violation_for_stream_batch(
         error: &SinexError,
         batch: &[StreamBatchRow],
@@ -787,6 +817,7 @@ impl AdmissionService {
         is_source_material_fk_violation_for_stream_batch(error, batch)
     }
 
+    #[must_use] 
     pub fn is_isolatable_persistence_failure(error: &SinexError) -> bool {
         is_isolatable_batch_persistence_failure(error)
     }
@@ -852,7 +883,12 @@ impl AdmissionService {
             .filter_tombstoned(&ids)
             .await
             .map_err(|error| {
-                error!("Failed to query event_tombstones during batch persistence: {error}");
+                error!(
+                    target: "sinex_metrics",
+                    metric = "ingestd.tombstone_query_failures_total",
+                    error = %error,
+                    "Failed to query event_tombstones during batch persistence"
+                );
                 SinexError::database("tombstone query failed")
                     .with_context("batch_size", batch.len().to_string())
             })?;

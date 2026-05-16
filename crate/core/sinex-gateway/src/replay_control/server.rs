@@ -218,11 +218,18 @@ impl ReplayControlServer {
                         .publish_with_headers(reply_subject, headers, bytes.into())
                         .await
                     {
-                        error!(?err, "Failed to send replay control response");
+                        error!(
+                            target: "sinex_metrics",
+                            metric = "gateway.replay_control_failures_total",
+                            ?err,
+                            "Failed to send replay control response"
+                        );
                     }
                 }
                 Err(err) => {
                     error!(
+                        target: "sinex_metrics",
+                        metric = "gateway.replay_control_failures_total",
                         ?err,
                         "Failed to serialize replay control response; reply not sent"
                     );
