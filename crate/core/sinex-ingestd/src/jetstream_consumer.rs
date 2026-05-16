@@ -917,10 +917,10 @@ impl JetStreamConsumer {
                     self.stats.log();
                     // Emit processing stats via self-observer
                     if let Some(ref observer) = self.observer {
-                        let processed = self.stats.events_processed.load(std::sync::atomic::Ordering::Relaxed);
-                        let failed = self.stats.events_failed.load(std::sync::atomic::Ordering::Relaxed);
-                        let deferred = self.stats.events_deferred.load(std::sync::atomic::Ordering::Relaxed);
-                        let dlq_routed = self.stats.dlq_routed.load(std::sync::atomic::Ordering::Relaxed);
+                        let processed = self.stats.events_processed.load(Ordering::Relaxed);
+                        let failed = self.stats.events_failed.load(Ordering::Relaxed);
+                        let deferred = self.stats.events_deferred.load(Ordering::Relaxed);
+                        let dlq_routed = self.stats.dlq_routed.load(Ordering::Relaxed);
                         if let Err(e) = observer.emit_node_processing_stats(
                             "jetstream-consumer",
                             processed,
@@ -930,6 +930,23 @@ impl JetStreamConsumer {
                             failed,
                         ).await {
                             warn!("Failed to emit processing stats: {}", e);
+                        }
+
+                        // Emit operational health counters not covered by emit_node_processing_stats.
+                        // These are monotonic cumulative totals emitted as gauges (snapshot-at-tick).
+                        let operational_gauges: &[(&'static str, u64)] = &[
+                            ("ingestd.tombstoned_events_rejected_total", self.stats.tombstoned_events_rejected.load(Ordering::Relaxed)),
+                            ("ingestd.confirmation_failures_total", self.stats.confirmation_failures.load(Ordering::Relaxed)),
+                            ("ingestd.confirmation_retries_enqueued_total", self.stats.confirmation_retries_enqueued.load(Ordering::Relaxed)),
+                            ("ingestd.confirmation_retry_failures_total", self.stats.confirmation_retry_failures.load(Ordering::Relaxed)),
+                            ("ingestd.confirmation_durability_gaps_total", self.stats.confirmation_durability_gaps.load(Ordering::Relaxed)),
+                            ("ingestd.dlq_publish_failures_total", self.stats.dlq_publish_failures.load(Ordering::Relaxed)),
+                            ("ingestd.nack_failures_total", self.stats.nack_failures.load(Ordering::Relaxed)),
+                            ("ingestd.nats_errors_total", self.stats.nats_errors.load(Ordering::Relaxed)),
+                            ("ingestd.telemetry_publish_failures_total", self.stats.telemetry_publish_failures.load(Ordering::Relaxed)),
+                        ];
+                        for (metric, value) in operational_gauges {
+                            self.emit_observer_gauge(metric, *value as f64, None).await;
                         }
                     }
                 }
