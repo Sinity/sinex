@@ -7,24 +7,19 @@
 mod tests {
     use xtask::sandbox::prelude::*;
 
-    /// Minimal qutebrowser-style History table fixture.
+    /// Qutebrowser SQLite row serialised as JSON.
     ///
-    /// Columns: `url TEXT, title TEXT, atime INTEGER, redirect INTEGER`.
-    /// `atime` is Unix seconds — qutebrowser schema.
-    const QUTEBROWSER_FIXTURE: &[u8] = b"\
-CREATE TABLE History (url TEXT, title TEXT, atime INTEGER, redirect INTEGER);
-INSERT INTO History VALUES ('https://example.com', 'Example', 1700000000, 0);
-INSERT INTO History VALUES ('https://rust-lang.org', 'Rust', 1700001000, 0);
-";
+    /// Fields match what `SqliteRowAdapter` produces from the `History` table:
+    /// `rowid`, `url`, `title`, `atime` (Unix seconds), `redirect` (0/1).
+    const QUTEBROWSER_FIXTURE: &[u8] =
+        br#"{"rowid":1,"url":"https://example.com","title":"Example","atime":1700000000,"redirect":0}"#;
 
-    /// Minimal Chromium-style visits fixture.
+    /// Chromium SQLite row serialised as JSON.
     ///
-    /// Columns: `url TEXT, title TEXT, visit_time INTEGER, transition INTEGER,
-    /// visit_duration INTEGER`. `visit_time` is Windows FILETIME microseconds.
-    const CHROMIUM_FIXTURE: &[u8] = b"\
-CREATE TABLE visits (url TEXT, title TEXT, visit_time INTEGER, transition INTEGER, visit_duration INTEGER);
-INSERT INTO visits VALUES ('https://chromium.org', 'Chromium', 13305000000000000, 0, 5000000);
-";
+    /// Fields match what `SqliteRowAdapter` produces from the `visits` table:
+    /// `rowid`, `url`, `title`, `visit_time` (Windows FILETIME µs), `transition`, `visit_duration` (µs).
+    const CHROMIUM_FIXTURE: &[u8] =
+        br#"{"rowid":1,"url":"https://chromium.org","title":"Chromium","visit_time":13305000000000000,"transition":0,"visit_duration":5000000}"#;
 
     /// Minimal JSONL dump fixture (secondary leg).
     const JSONL_DUMP_FIXTURE: &[u8] =
