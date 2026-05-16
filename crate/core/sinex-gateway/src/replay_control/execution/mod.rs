@@ -262,6 +262,8 @@ impl ReplayExecutionEngine {
 
         if let Err(err) = result {
             error!(
+                target: "sinex_metrics",
+                metric = "gateway.replay_execution_failures_total",
                 operation_id = %operation_id,
                 error = %err,
                 "Replay execution failed"
@@ -272,6 +274,8 @@ impl ReplayExecutionEngine {
                 .await
             {
                 error!(
+                    target: "sinex_metrics",
+                    metric = "gateway.replay_execution_failures_total",
                     operation_id = %operation_id,
                     mark_error = %mark_err,
                     execution_error = %err,

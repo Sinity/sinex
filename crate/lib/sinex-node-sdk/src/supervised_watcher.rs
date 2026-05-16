@@ -83,7 +83,7 @@ impl Default for SupervisedWatcherConfig {
 impl SupervisedWatcherConfig {
     /// Log errors but do not restart — useful for watchers that manage their own
     /// reconnection internally.
-    #[must_use] 
+    #[must_use]
     pub fn log_only() -> Self {
         Self {
             restart_on_failure: false,
@@ -121,6 +121,8 @@ where
             Ok(Err(err)) => {
                 let error_msg = err.to_string();
                 error!(
+                    target: "sinex_metrics",
+                    metric = "node.watcher_failures_total",
                     watcher = watcher_name,
                     error = %err,
                     "Watcher task failed"
@@ -132,6 +134,8 @@ where
             Err(panic_payload) => {
                 let panic_msg = format_panic_payload(panic_payload.as_ref());
                 error!(
+                    target: "sinex_metrics",
+                    metric = "node.watcher_panics_total",
                     watcher = watcher_name,
                     panic = %panic_msg,
                     "Watcher task panicked"
@@ -204,6 +208,8 @@ where
                 Ok(Err(err)) => {
                     let error_msg = err.to_string();
                     error!(
+                        target: "sinex_metrics",
+                        metric = "node.watcher_failures_total",
                         watcher = watcher_name,
                         error = %err,
                         "Watcher task failed"
@@ -217,6 +223,8 @@ where
                 Err(panic_payload) => {
                     let panic_msg = format_panic_payload(panic_payload.as_ref());
                     error!(
+                        target: "sinex_metrics",
+                        metric = "node.watcher_panics_total",
                         watcher = watcher_name,
                         panic = %panic_msg,
                         "Watcher task panicked"
@@ -235,6 +243,8 @@ where
             restarts += 1;
             if config.max_restarts > 0 && restarts >= config.max_restarts {
                 error!(
+                    target: "sinex_metrics",
+                    metric = "node.watcher_max_restarts_total",
                     watcher = watcher_name,
                     restarts = restarts,
                     max_restarts = config.max_restarts,

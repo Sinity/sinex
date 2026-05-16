@@ -114,7 +114,13 @@ pub async fn verify_postgresql_extensions() -> NodeResult<(VerificationStatus, V
                 }
             }
             Err(e) => {
-                error!("Failed to verify extension {extension_name}: {e}");
+                error!(
+                    target: "sinex_metrics",
+                    metric = "node.preflight_failures_total",
+                    extension = extension_name,
+                    error = %e,
+                    "Failed to verify extension"
+                );
                 extension_status.insert(
                     extension_name.to_string(),
                     json!({

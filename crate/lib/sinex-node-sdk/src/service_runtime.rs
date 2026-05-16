@@ -128,6 +128,8 @@ pub fn spawn_shutdown_task(service_name: &'static str) -> watch::Receiver<bool> 
             }
             Err(error) => {
                 error!(
+                    target: "sinex_metrics",
+                    metric = "node.shutdown_signal_failures_total",
                     service = service_name,
                     error = %error,
                     "Failed to listen for shutdown signal"

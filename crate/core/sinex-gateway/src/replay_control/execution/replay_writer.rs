@@ -287,6 +287,8 @@ impl ReplayExecutionEngine {
                 .await
         {
             error!(
+                target: "sinex_metrics",
+                metric = "gateway.replay_invalidation_failures_total",
                 operation_id = %operation_id,
                 archived_count,
                 scope_buckets = scope_metadata.len(),
