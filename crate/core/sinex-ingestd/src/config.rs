@@ -847,6 +847,8 @@ fn default_consumer_fetch_max_messages() -> usize {
         Ok(None) => 100,
         Err(error) => {
             error!(
+                target: "sinex_metrics",
+                metric = "ingestd.config_env_parse_errors_total",
                 env = "SINEX_INGESTD_CONSUMER_FETCH_MAX_MESSAGES",
                 %error,
                 "Invalid env override for consumer fetch max messages; using default"
@@ -862,6 +864,8 @@ fn default_consumer_fetch_timeout_ms() -> Milliseconds {
         Ok(None) => Milliseconds::from_millis(100),
         Err(error) => {
             error!(
+                target: "sinex_metrics",
+                metric = "ingestd.config_env_parse_errors_total",
                 env = "SINEX_INGESTD_CONSUMER_FETCH_TIMEOUT_MS",
                 %error,
                 "Invalid env override for consumer fetch timeout; using default"
@@ -877,6 +881,8 @@ fn default_consumer_max_ack_pending() -> i64 {
         Ok(None) => 100,
         Err(error) => {
             error!(
+                target: "sinex_metrics",
+                metric = "ingestd.config_env_parse_errors_total",
                 env = "SINEX_INGESTD_CONSUMER_MAX_ACK_PENDING",
                 %error,
                 "Invalid env override for consumer max_ack_pending; using default"
@@ -892,6 +898,8 @@ fn default_material_slices_max_ack_pending() -> i64 {
         Ok(None) => 1_000,
         Err(error) => {
             error!(
+                target: "sinex_metrics",
+                metric = "ingestd.config_env_parse_errors_total",
                 env = "SINEX_INGESTD_MATERIAL_SLICES_MAX_ACK_PENDING",
                 %error,
                 "Invalid env override for material slices max_ack_pending; using default"
@@ -1035,6 +1043,8 @@ fn default_max_buffered_slices() -> usize {
         Ok(None) => 100,
         Err(error) => {
             error!(
+                target: "sinex_metrics",
+                metric = "ingestd.config_env_parse_errors_total",
                 env = "SINEX_INGESTD_MAX_BUFFERED_SLICES",
                 %error,
                 "Invalid env override for max buffered slices; using default"
@@ -1057,6 +1067,8 @@ fn default_slice_timeout_secs() -> u64 {
         Ok(None) => 3_600,
         Err(error) => {
             error!(
+                target: "sinex_metrics",
+                metric = "ingestd.config_env_parse_errors_total",
                 env = "SINEX_INGESTD_SLICE_TIMEOUT_SECS",
                 %error,
                 "Invalid env override for slice timeout; using default"
@@ -1072,6 +1084,8 @@ fn default_orphan_threshold_secs() -> u64 {
         Ok(None) => 3600,
         Err(error) => {
             error!(
+                target: "sinex_metrics",
+                metric = "ingestd.config_env_parse_errors_total",
                 env = "SINEX_INGESTD_ORPHAN_THRESHOLD_SECS",
                 %error,
                 "Invalid env override for orphan threshold; using default"
@@ -1087,6 +1101,8 @@ fn default_disk_threshold_percent() -> u8 {
         Ok(None) => 90,
         Err(error) => {
             error!(
+                target: "sinex_metrics",
+                metric = "ingestd.config_env_parse_errors_total",
                 env = "SINEX_INGESTD_DISK_THRESHOLD_PERCENT",
                 %error,
                 "Invalid env override for disk threshold percent; using default"
@@ -1102,6 +1118,8 @@ fn default_max_material_size_bytes() -> Bytes {
         Ok(None) => Bytes::from_mebibytes(512),
         Err(error) => {
             error!(
+                target: "sinex_metrics",
+                metric = "ingestd.config_env_parse_errors_total",
                 env = "SINEX_INGESTD_MAX_MATERIAL_SIZE_BYTES",
                 %error,
                 "Invalid env override for max material size; using default"
@@ -1117,6 +1135,8 @@ fn default_material_staged_sync_bytes() -> Bytes {
         Ok(None) => Bytes::from_mebibytes(1),
         Err(error) => {
             error!(
+                target: "sinex_metrics",
+                metric = "ingestd.config_env_parse_errors_total",
                 env = "SINEX_INGESTD_MATERIAL_STAGED_SYNC_BYTES",
                 %error,
                 "Invalid env override for staged material sync bytes; using default"
@@ -1132,6 +1152,8 @@ fn default_material_staged_sync_interval_ms() -> Milliseconds {
         Ok(None) => Milliseconds::from_millis(1000),
         Err(error) => {
             error!(
+                target: "sinex_metrics",
+                metric = "ingestd.config_env_parse_errors_total",
                 env = "SINEX_INGESTD_MATERIAL_STAGED_SYNC_INTERVAL_MS",
                 %error,
                 "Invalid env override for staged material sync interval; using default"
@@ -1147,6 +1169,8 @@ fn default_material_wal_sync_bytes() -> Bytes {
         Ok(None) => Bytes::from_kibibytes(256),
         Err(error) => {
             error!(
+                target: "sinex_metrics",
+                metric = "ingestd.config_env_parse_errors_total",
                 env = "SINEX_INGESTD_MATERIAL_WAL_SYNC_BYTES",
                 %error,
                 "Invalid env override for material WAL sync bytes; using default"
@@ -1162,6 +1186,8 @@ fn default_material_wal_sync_entries() -> u32 {
         Ok(None) => 128,
         Err(error) => {
             error!(
+                target: "sinex_metrics",
+                metric = "ingestd.config_env_parse_errors_total",
                 env = "SINEX_INGESTD_MATERIAL_WAL_SYNC_ENTRIES",
                 %error,
                 "Invalid env override for material WAL sync entries; using default"
@@ -1177,6 +1203,8 @@ fn default_material_wal_sync_interval_ms() -> Milliseconds {
         Ok(None) => Milliseconds::from_millis(1000),
         Err(error) => {
             error!(
+                target: "sinex_metrics",
+                metric = "ingestd.config_env_parse_errors_total",
                 env = "SINEX_INGESTD_MATERIAL_WAL_SYNC_INTERVAL_MS",
                 %error,
                 "Invalid env override for material WAL sync interval; using default"
@@ -1215,6 +1243,8 @@ fn default_startup_catch_up_max_concurrent() -> usize {
         Ok(None) => 4,
         Err(error) => {
             error!(
+                target: "sinex_metrics",
+                metric = "ingestd.config_env_parse_errors_total",
                 env = "SINEX_INGESTD_STARTUP_CATCH_UP_MAX_CONCURRENT",
                 %error,
                 "Invalid env override for startup catch-up max concurrent; using default"

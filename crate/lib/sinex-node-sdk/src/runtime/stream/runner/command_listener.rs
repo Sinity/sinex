@@ -304,6 +304,8 @@ impl<T: Node + 'static> NodeRunner<T> {
                                         Self::publish_scan_ack(&loop_client, Some(reply.clone()), &ack).await
                                     {
                                         error!(
+                                            target: "sinex_metrics",
+                                            metric = "node.scan_ack_failures_total",
                                             operation_id = %operation_id,
                                             node = %loop_node_name,
                                             error = %error,
@@ -358,6 +360,8 @@ impl<T: Node + 'static> NodeRunner<T> {
                                         .await
                                         {
                                             error!(
+                                                target: "sinex_metrics",
+                                                metric = "node.scan_progress_failures_total",
                                                 operation_id = %operation_id,
                                                 node = %scan_node_name,
                                                 error = %error,
@@ -418,6 +422,8 @@ impl<T: Node + 'static> NodeRunner<T> {
                                                 .await
                                         {
                                             error!(
+                                                target: "sinex_metrics",
+                                                metric = "node.scan_progress_failures_total",
                                                 operation_id = %operation_id,
                                                 node = %scan_node_name,
                                                 error = %error,

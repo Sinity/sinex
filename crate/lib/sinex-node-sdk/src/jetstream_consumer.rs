@@ -263,7 +263,12 @@ impl JetStreamEventConsumer {
         tokio::select! {
             result = provisional_task => {
                 let stop_requested = !*self.running.read().await;
-                error!("Provisional events task stopped: {result:?}");
+                error!(
+                    target: "sinex_metrics",
+                    metric = "node.consumer_task_exits_total",
+                    task = "provisional_events",
+                    "Provisional events task stopped: {result:?}"
+                );
                 // Abort remaining tasks
                 confirmation_abort.abort();
                 timeout_abort.abort();
@@ -271,7 +276,12 @@ impl JetStreamEventConsumer {
             }
             result = confirmation_task => {
                 let stop_requested = !*self.running.read().await;
-                error!("Confirmation task stopped: {result:?}");
+                error!(
+                    target: "sinex_metrics",
+                    metric = "node.consumer_task_exits_total",
+                    task = "confirmation",
+                    "Confirmation task stopped: {result:?}"
+                );
                 // Abort remaining tasks
                 provisional_abort.abort();
                 timeout_abort.abort();

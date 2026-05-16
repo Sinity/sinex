@@ -4,7 +4,10 @@
 //! per-event DLQ fallback if the batch fails, and the checkpoint-save
 //! helper that persists progress through the bridge.
 
-use super::{debug, error, warn, info, NodeRunner, Node, EventTransport, Event, JsonValue, NodeResult, SinexError, CheckpointManager, Uuid, Checkpoint};
+use super::{
+    Checkpoint, CheckpointManager, Event, EventTransport, JsonValue, Node, NodeResult, NodeRunner,
+    SinexError, Uuid, debug, error, info, warn,
+};
 
 impl<T: Node + 'static> NodeRunner<T> {
     /// Process a batch of events, falling back to per-event processing with DLQ
@@ -47,6 +50,8 @@ impl<T: Node + 'static> NodeRunner<T> {
                 let error_class = batch_err.error_class();
                 if error_class.is_fatal() {
                     error!(
+                        target: "sinex_metrics",
+                        metric = "derive.batch_fatal_errors_total",
                         error = %batch_err,
                         ?error_class,
                         batch_size,
@@ -72,6 +77,8 @@ impl<T: Node + 'static> NodeRunner<T> {
                             // are not data errors. Halt immediately.
                             if event_err.error_class().is_fatal() {
                                 error!(
+                                    target: "sinex_metrics",
+                                    metric = "derive.batch_fatal_errors_total",
                                     error = %event_err,
                                     "Checkpoint error during per-event fallback; halting node"
                                 );
@@ -153,6 +160,8 @@ impl<T: Node + 'static> NodeRunner<T> {
             Err(err) => {
                 *consecutive_failures += 1;
                 error!(
+                    target: "sinex_metrics",
+                    metric = "derive.checkpoint_failures_total",
                     error = %err,
                     consecutive_failures = *consecutive_failures,
                     "Failed to save checkpoint; will retry next interval"
