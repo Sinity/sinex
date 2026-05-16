@@ -64,8 +64,9 @@ pub use nats::EventOverrides;
 pub use node_runtime::{TestRuntime, TestRuntimeBuilder};
 pub use orchestrator::{
     CapturedOutput, TestGatewayConfig, TestGatewayHandle, TestIngestdConfig, TestIngestdHandle,
-    TestSourceWorkerConfig, TestSourceWorkerHandle, source_worker_binary_path, start_test_gateway,
-    start_test_ingestd_with_config, start_test_source_worker,
+    TestSourceWorkerConfig, TestSourceWorkerHandle, run_test_source_worker_scan,
+    source_worker_binary_path, start_test_gateway, start_test_ingestd_with_config,
+    start_test_source_worker,
 };
 pub use prelude::SinexError;
 pub use prelude::TestContext;

@@ -335,11 +335,19 @@ impl AcquisitionManager {
         rotation_policy: RotationPolicy,
         source_type: impl Into<String>,
     ) -> NodeResult<Self> {
-        let nats_client = match handles.transport() {
-            crate::event_node::EventTransport::Nats(publisher) => publisher.nats_client().clone(),
+        let (nats_client, namespace) = match handles.transport() {
+            crate::event_node::EventTransport::Nats(publisher) => (
+                publisher.nats_client().clone(),
+                publisher.namespace().map(ToOwned::to_owned),
+            ),
         };
 
-        Ok(Self::new(nats_client, rotation_policy, source_type.into()))
+        Ok(Self::new_with_namespace(
+            nats_client,
+            rotation_policy,
+            source_type.into(),
+            namespace,
+        ))
     }
 
     /// Override the working directory for temporary material buffers.

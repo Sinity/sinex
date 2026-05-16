@@ -9,15 +9,12 @@
 //! - The parser accepts the fixture bytes without error.
 //! - The parser emits at least one event per expected type.
 //!
-//! ## Binary-launcher gap (substrate note)
+//! ## Binary path coverage
 //!
-//! This obligation drives the dispatch function directly. A full end-to-end
-//! path (binary launch → NATS → ingestd → `core.events` DB row) requires
-//! `TestSourceWorkerHandle` (the binary launcher, analogous to
-//! `start_test_ingestd_with_config`). That helper is marked as a substrate
-//! gap: the orchestrator must expose `pub fn source_worker_binary_path(workspace_root)`
-//! and `pub async fn start_test_source_worker(config)` before the binary path
-//! can be activated. See `substrate_gaps()` below.
+//! The default obligation still drives the parser dispatch function directly
+//! so Wave-B cases can cover many source units cheaply. The `binary_path`
+//! canary below separately launches the real `sinex-source-worker` binary,
+//! publishes through NATS, runs ingestd, and verifies the resulting DB row.
 //!
 //! ## Per-domain fenced regions
 //!
@@ -161,28 +158,87 @@ mod canary {
 }
 
 // =============================================================================
-// Substrate gap: binary launcher
+// Binary path canary
 // =============================================================================
 
-/// Returns the substrate gaps that must be filled before the full binary-path
-/// obligation (source-worker → NATS → ingestd → DB) can be activated.
-///
-/// Currently:
-///
-/// 1. `xtask::sandbox::orchestrator::source_worker_binary_path(workspace_root)` —
-///    analogous to `runtime_binary_path` but for `sinex-source-worker`.
-///
-/// 2. `xtask::sandbox::orchestrator::start_test_source_worker(config)` —
-///    spawns the binary with `--source-unit <id>` + env vars pointing at the
-///    test NATS URL + DB URL, returns a `TestSourceWorkerHandle` with `stop()`.
-///    Modelled on `start_test_ingestd_with_config`.
-///
-/// Until these are added, obligations drive `default_parser_dispatch()` directly
-/// (unit-test level) rather than the full binary path (integration level).
-#[allow(dead_code)]
-pub fn substrate_gaps() -> &'static [&'static str] {
-    &[
-        "xtask::sandbox::orchestrator::source_worker_binary_path",
-        "xtask::sandbox::orchestrator::start_test_source_worker",
-    ]
+#[cfg(test)]
+mod binary_path {
+    use xtask::sandbox::prelude::*;
+
+    const WEECHAT_MESSAGE: &str = "hello from source-worker binary";
+
+    /// Proves the real `sinex-source-worker scan` path for an adapter-backed
+    /// source unit: binary launch, adapter config, parser, NATS publish,
+    /// ingestd persistence, and DB payload visibility.
+    #[sinex_test(timeout = 120)]
+    async fn weechat_source_worker_binary_scan_persists_message(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        let ctx = ctx.with_nats().shared().await?;
+        let stack = TestCoreStack::new(&ctx).await?;
+
+        let tempdir = tempfile::tempdir()?;
+        let log_path = tempdir.path().join("weechat.log");
+        tokio::fs::write(
+            &log_path,
+            format!("2024-01-15 14:23:45\tsinity\t{WEECHAT_MESSAGE}\n"),
+        )
+        .await?;
+        let worker_dir = tempdir.path().join("worker");
+        tokio::fs::create_dir_all(&worker_dir).await?;
+
+        let mut config = TestSourceWorkerConfig::new("weechat");
+        config.nats = ctx.nats_handle()?.connection_config();
+        config.database_url = ctx.database_url().to_string();
+        config.namespace = Some(ctx.pipeline_namespace().prefix().to_string());
+        config.work_dir = Some(worker_dir);
+        config.node_config = Some(
+            serde_json::json!({
+                "path": log_path,
+                "skip_empty": true,
+            })
+            .to_string(),
+        );
+
+        let output = run_test_source_worker_scan(config, &[], Some(&ctx)).await?;
+        ctx.assert("source-worker scan processed one event").that(
+            output.stdout.contains("Events processed: 1"),
+            "scan output should report one processed event",
+        )?;
+
+        WaitHelpers::wait_for_condition(
+            || async {
+                let count: i64 = sqlx::query_scalar(
+                    r"
+                    SELECT COUNT(*)::bigint
+                    FROM core.events
+                    WHERE source = 'irc' AND event_type = 'irc.message'
+                    ",
+                )
+                .fetch_one(ctx.pool())
+                .await?;
+                Ok::<bool, sqlx::Error>(count >= 1)
+            },
+            10,
+        )
+        .await?;
+
+        let payload: serde_json::Value = sqlx::query_scalar(
+            r"
+            SELECT payload
+            FROM core.events
+            WHERE source = 'irc' AND event_type = 'irc.message'
+            ORDER BY ts_orig
+            LIMIT 1
+            ",
+        )
+        .fetch_one(ctx.pool())
+        .await?;
+
+        ctx.assert("persisted irc.message payload")
+            .eq(&payload["message"].as_str(), &Some(WEECHAT_MESSAGE))?;
+
+        stack.shutdown().await?;
+        Ok(())
+    }
 }

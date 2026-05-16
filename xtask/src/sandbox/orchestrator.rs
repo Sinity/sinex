@@ -151,7 +151,10 @@ impl TestSourceWorkerHandle {
             Ok(content) => {
                 let end = content.floor_char_boundary(3000);
                 let truncated = &content[..end];
-                eprintln!("📋 source-worker log ({} bytes):\n{truncated}", content.len());
+                eprintln!(
+                    "📋 source-worker log ({} bytes):\n{truncated}",
+                    content.len()
+                );
             }
             Err(error) => eprintln!("📋 source-worker log unavailable: {error:#}"),
         }
@@ -883,6 +886,103 @@ pub async fn start_test_source_worker(
         child,
         source_unit_id: config.source_unit_id,
     })
+}
+
+/// Run a one-shot `sinex-source-worker scan` subprocess and capture its output.
+///
+/// Use this for production-path tests that need to exercise the real binary
+/// path without keeping a long-running service process alive.
+pub async fn run_test_source_worker_scan(
+    config: TestSourceWorkerConfig,
+    targets: &[PathBuf],
+    ctx: Option<&crate::sandbox::context::Sandbox>,
+) -> Result<CapturedOutput> {
+    let workspace_root = find_workspace_root()?;
+    let freshness = check_runtime_binary_freshness(
+        &workspace_root,
+        "sinex-source-worker",
+        "sinex-source-worker",
+    )?;
+    if let Some(sandbox) = ctx {
+        sandbox.record_evidence_event(
+            "runtime_binary.freshness",
+            "checked runtime binary freshness before running test source-worker scan",
+            freshness.to_json(),
+        );
+    }
+    freshness.ensure_fresh()?;
+
+    let mut cmd = Command::new(&freshness.binary_path);
+    crate::process::configure_managed_child_tokio(&mut cmd);
+    cmd.args([
+        "--source-unit",
+        &config.source_unit_id,
+        "--runner-pack",
+        "source-worker",
+    ]);
+    if let Some(wd) = &config.work_dir {
+        cmd.arg("--work-dir").arg(wd);
+    }
+    if let Some(service_name) = &config.service_name {
+        cmd.arg("--service-name").arg(service_name);
+    }
+    if let Some(node_config) = &config.node_config {
+        cmd.arg("--node-config").arg(node_config);
+    }
+    cmd.arg("scan").arg("--until").arg("snapshot");
+    for target in targets {
+        cmd.arg("--targets").arg(target);
+    }
+
+    cmd.env("DATABASE_URL", &config.database_url);
+    cmd.env("SINEX_NATS_URL", &config.nats.url);
+    cmd.env("SINEX_SOURCE_UNIT", &config.source_unit_id);
+    cmd.env("SINEX_RUNNER_PACK", "source-worker");
+    if config.nats.require_tls {
+        cmd.env("SINEX_NATS_REQUIRE_TLS", "true");
+    }
+    if let Some(ca) = &config.nats.ca_cert {
+        cmd.env("SINEX_NATS_CA_CERT", ca);
+    }
+    if let Some(cert) = &config.nats.client_cert {
+        cmd.env("SINEX_NATS_CLIENT_CERT", cert);
+    }
+    if let Some(key) = &config.nats.client_key {
+        cmd.env("SINEX_NATS_CLIENT_KEY", key);
+    }
+    if let Some(ns) = &config.namespace {
+        cmd.env("SINEX_NAMESPACE", ns);
+    }
+    cmd.stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true);
+
+    let child = cmd.spawn()?;
+    crate::process::register_tokio_child_process_group(&child, "sandbox source-worker scan");
+    let output = tokio::time::timeout(
+        Duration::from_secs(Timeouts::STANDARD),
+        child.wait_with_output(),
+    )
+    .await
+    .wrap_err("source-worker scan timed out")?
+    .wrap_err("failed to wait for source-worker scan")?;
+
+    let captured = CapturedOutput {
+        stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
+        stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+        exit_code: output.status.code().unwrap_or(-1),
+    };
+    if !output.status.success() {
+        bail!(
+            "source-worker scan for '{}' exited with {}.\nstdout:\n{}\nstderr:\n{}",
+            config.source_unit_id,
+            captured.exit_code,
+            captured.stdout,
+            captured.stderr
+        );
+    }
+    Ok(captured)
 }
 
 pub async fn start_test_ingestd_with_config(
