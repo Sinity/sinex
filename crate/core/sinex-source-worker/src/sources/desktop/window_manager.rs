@@ -10,6 +10,7 @@
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
 
 use sinex_primitives::domain::{EventSource, EventType};
 use sinex_primitives::parser::{
@@ -219,6 +220,38 @@ impl MaterialParser for HyprlandParser {
 
         Ok(vec![intent])
     }
+
+    fn baseline_adapter_config() -> serde_json::Value {
+        let socket_path = std::env::var("SINEX_HYPRLAND_EVENT_SOCKET")
+            .ok()
+            .filter(|value| !value.is_empty())
+            .or_else(|| {
+                let runtime_dir = std::env::var("SINEX_HYPRLAND_RUNTIME_DIR")
+                    .or_else(|_| std::env::var("XDG_RUNTIME_DIR"))
+                    .ok()
+                    .filter(|value| !value.is_empty())?;
+                let signature = std::env::var("SINEX_HYPRLAND_INSTANCE_SIGNATURE")
+                    .or_else(|_| std::env::var("HYPRLAND_INSTANCE_SIGNATURE"))
+                    .ok()
+                    .filter(|value| !value.is_empty())?;
+                Some(
+                    PathBuf::from(runtime_dir)
+                        .join("hypr")
+                        .join(signature)
+                        .join(".socket2.sock")
+                        .to_string_lossy()
+                        .into_owned(),
+                )
+            });
+
+        match socket_path {
+            Some(socket_path) => serde_json::json!({
+                "socket_path": socket_path,
+                "reconnect_on_eof": true,
+            }),
+            None => serde_json::json!({}),
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -351,3 +384,63 @@ register_adapter_ingestor!(
     adapter: UnixSocketStreamAdapter,
     parser: HyprlandParser,
 );
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::{LazyLock, Mutex};
+
+    static ENV_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
+
+    fn clear_hyprland_env() {
+        unsafe {
+            std::env::remove_var("SINEX_HYPRLAND_EVENT_SOCKET");
+            std::env::remove_var("SINEX_HYPRLAND_RUNTIME_DIR");
+            std::env::remove_var("XDG_RUNTIME_DIR");
+            std::env::remove_var("SINEX_HYPRLAND_INSTANCE_SIGNATURE");
+            std::env::remove_var("HYPRLAND_INSTANCE_SIGNATURE");
+        }
+    }
+
+    #[test]
+    fn baseline_adapter_config_prefers_explicit_event_socket() {
+        let _guard = ENV_LOCK.lock().expect("env lock poisoned");
+        clear_hyprland_env();
+        unsafe {
+            std::env::set_var(
+                "SINEX_HYPRLAND_EVENT_SOCKET",
+                "/run/user/1000/hypr/explicit/.socket2.sock",
+            );
+            std::env::set_var("SINEX_HYPRLAND_RUNTIME_DIR", "/run/user/1000");
+            std::env::set_var("SINEX_HYPRLAND_INSTANCE_SIGNATURE", "derived");
+        }
+
+        let config = <HyprlandParser as MaterialParser>::baseline_adapter_config();
+
+        assert_eq!(
+            config["socket_path"],
+            "/run/user/1000/hypr/explicit/.socket2.sock"
+        );
+        assert_eq!(config["reconnect_on_eof"], true);
+        clear_hyprland_env();
+    }
+
+    #[test]
+    fn baseline_adapter_config_derives_socket_from_bridge_env() {
+        let _guard = ENV_LOCK.lock().expect("env lock poisoned");
+        clear_hyprland_env();
+        unsafe {
+            std::env::set_var("SINEX_HYPRLAND_RUNTIME_DIR", "/run/user/1000");
+            std::env::set_var("SINEX_HYPRLAND_INSTANCE_SIGNATURE", "abc123");
+        }
+
+        let config = <HyprlandParser as MaterialParser>::baseline_adapter_config();
+
+        assert_eq!(
+            config["socket_path"],
+            "/run/user/1000/hypr/abc123/.socket2.sock"
+        );
+        assert_eq!(config["reconnect_on_eof"], true);
+        clear_hyprland_env();
+    }
+}
