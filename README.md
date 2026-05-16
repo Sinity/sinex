@@ -166,6 +166,7 @@ journalctl -u sinex-gateway -u sinex-ingestd -f
 | Build a node or derived service | [crate/lib/sinex-node-sdk/docs/overview.md](crate/lib/sinex-node-sdk/docs/overview.md) |
 | Understand event schemas | [crate/lib/sinex-schema/docs/event-taxonomy.md](crate/lib/sinex-schema/docs/event-taxonomy.md) |
 | Reason about replay evidence and source snapshots | [docs/architecture/evidence-lanes.md](docs/architecture/evidence-lanes.md) |
+| Reason about large aggregate provenance | [docs/architecture/high-fan-in-lineage.md](docs/architecture/high-fan-in-lineage.md) |
 | Reason about runtime backpressure and loss policy | [docs/architecture/runtime-qos.md](docs/architecture/runtime-qos.md) |
 | Decide which surface owns a runtime or data concern | [docs/architecture/authority-surfaces.md](docs/architecture/authority-surfaces.md) |
 | Integrate an external tool or sibling project | [docs/architecture/integration-authority.md](docs/architecture/integration-authority.md) |
