@@ -120,14 +120,23 @@ struct HistoryIntegrityStamp {
     checked_at_unix: i64,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 struct StaleInvocationCandidate {
     invocation_id: i64,
     background_job_id: Option<i64>,
+    command: String,
     pid: Option<i64>,
     /// Seconds since started_at, computed in SQL via julianday() arithmetic.
     /// `None` if started_at couldn't be parsed.
     age_secs: Option<f64>,
+}
+
+fn background_watchdog_timeout_secs(command: &str) -> f64 {
+    if command == "test" { 3600.0 } else { 1800.0 }
+}
+
+fn background_watchdog_escape_threshold_secs(command: &str) -> f64 {
+    background_watchdog_timeout_secs(command) * 2.0
 }
 
 /// Best-effort zombie reaper: SIGTERM, 2s grace, SIGKILL if still alive.
@@ -1799,7 +1808,7 @@ impl HistoryDb {
     }
 
     /// Mark invocations stuck in 'running' for over 10 minutes as 'cancelled',
-    /// and aggressively reap zombies (alive PIDs running past `ZOMBIE_AGE_SECS`).
+    /// and aggressively reap zombies (alive PIDs running past 2× watchdog timeout).
     ///
     /// Called on `open()` to prevent orphaned invocations from accumulating
     /// when a process crashes before calling `finish_invocation()`.
@@ -1807,10 +1816,8 @@ impl HistoryDb {
     /// Three branches per candidate:
     /// - **Dead PID**: just mark cancelled (the crash/orphan safety net)
     /// - **Alive PID past zombie threshold**: SIGTERM → 2s wait → SIGKILL, then
-    ///   mark cancelled. This catches per-job watchdogs that died with their
-    ///   parent (the `std::thread`-based watchdog at `jobs/mod.rs:517` does not
-    ///   survive parent exit). Without this, zombies accumulate indefinitely —
-    ///   the live DB had 81 such rows from invocations running for days.
+    ///   mark killed with exit_code=124. This catches per-job watchdogs that
+    ///   fail to survive their launching cgroup.
     /// - **Alive PID within legitimate window**: leave alone (drop guard handles
     ///   normal completion)
     fn cleanup_stale_invocations(&self) -> Result<()> {
@@ -1822,39 +1829,40 @@ impl HistoryDb {
         let mut stale_invocation_ids = Vec::new();
         let mut zombie_invocation_ids = Vec::new();
         let mut orphaned_background_job_ids = HashSet::new();
+        let mut killed_background_job_ids = HashSet::new();
         let mut reaped_zombies = 0usize;
-
-        // Per-command zombie thresholds (2× the watchdog's documented timeouts).
-        // Anything past these is a zombie that escaped its watchdog.
-        const HARD_CEILING_SECS: f64 = 4.0 * 3600.0; // 4 hours, command-agnostic
 
         for candidate in stale_candidates {
             let pid_alive = candidate.pid.is_some_and(history_process_is_alive);
 
             if pid_alive {
-                // PID is still running. Only reap if past the hard ceiling.
-                if candidate.age_secs.unwrap_or(0.0) < HARD_CEILING_SECS {
+                let escape_threshold =
+                    background_watchdog_escape_threshold_secs(&candidate.command);
+                if candidate.age_secs.unwrap_or(0.0) < escape_threshold {
                     continue; // legitimate long-running bg job, skip
                 }
 
-                // Zombie: alive but past the hard ceiling. Kill it.
+                // Zombie: alive but past the command-specific escape threshold.
                 if let Some(pid) = candidate.pid
                     && try_reap_zombie_pid(pid).is_ok()
                 {
                     reaped_zombies += 1;
                 }
                 zombie_invocation_ids.push(candidate.invocation_id);
+                if let Some(background_job_id) = candidate.background_job_id {
+                    killed_background_job_ids.insert(background_job_id);
+                }
             } else {
                 stale_invocation_ids.push(candidate.invocation_id);
-            }
-            if let Some(background_job_id) = candidate.background_job_id {
-                orphaned_background_job_ids.insert(background_job_id);
+                if let Some(background_job_id) = candidate.background_job_id {
+                    orphaned_background_job_ids.insert(background_job_id);
+                }
             }
         }
 
         if reaped_zombies > 0 {
             eprintln!(
-                "ℹ️  Reaped {reaped_zombies} zombie invocation(s) (alive PID running > 4 hours, watchdog never fired — see issue #1211)"
+                "ℹ️  Reaped {reaped_zombies} zombie invocation(s) (alive PID running past 2× watchdog timeout — see issue #1211)"
             );
         }
 
@@ -1862,11 +1870,13 @@ impl HistoryDb {
             &stale_invocation_ids,
             "stale_pid",
             "open_time_sweep",
+            None,
         )?;
         let zombie_cleaned = self.mark_stale_invocations_cancelled(
             &zombie_invocation_ids,
             "zombie_reaped",
             "open_time_sweep",
+            Some(124),
         )?;
         let cleaned = stale_cleaned + zombie_cleaned;
         if cleaned > 0 {
@@ -1877,6 +1887,9 @@ impl HistoryDb {
 
         self.mark_background_jobs_orphaned(
             &orphaned_background_job_ids.into_iter().collect::<Vec<_>>(),
+        )?;
+        self.mark_background_jobs_killed_by_watchdog(
+            &killed_background_job_ids.into_iter().collect::<Vec<_>>(),
         )?;
         Ok(())
     }
@@ -1909,6 +1922,7 @@ impl HistoryDb {
                 SELECT
                     i.id,
                     bg.id,
+                    COALESCE(bg.command, i.command),
                     COALESCE(i.pid, bg.pid),
                     (julianday('now') - julianday(i.started_at)) * 86400.0
                 FROM invocations i
@@ -1925,8 +1939,9 @@ impl HistoryDb {
                 Ok(StaleInvocationCandidate {
                     invocation_id: row.get(0)?,
                     background_job_id: row.get(1)?,
-                    pid: row.get(2)?,
-                    age_secs: row.get(3)?,
+                    command: row.get(2)?,
+                    pid: row.get(3)?,
+                    age_secs: row.get(4)?,
                 })
             })
             .context("failed to execute stale invocation candidate query")?;
@@ -1939,6 +1954,7 @@ impl HistoryDb {
         invocation_ids: &[i64],
         cancel_reason: &str,
         cancelled_by: &str,
+        exit_code: Option<i32>,
     ) -> Result<usize> {
         if invocation_ids.is_empty() {
             return Ok(0);
@@ -1956,6 +1972,7 @@ impl HistoryDb {
                 UPDATE invocations
                 SET status = 'cancelled',
                     finished_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now'),
+                    exit_code = COALESCE(?3, exit_code),
                     duration_secs = (julianday('now') - julianday(started_at)) * 86400,
                     cancel_reason = ?1,
                     cancelled_by = ?2
@@ -1966,6 +1983,7 @@ impl HistoryDb {
             );
             let params = std::iter::once(&cancel_reason as &dyn rusqlite::ToSql)
                 .chain(std::iter::once(&cancelled_by as &dyn rusqlite::ToSql))
+                .chain(std::iter::once(&exit_code as &dyn rusqlite::ToSql))
                 .chain(chunk.iter().map(|id| id as &dyn rusqlite::ToSql));
             total_cancelled += self
                 .conn
@@ -1998,6 +2016,32 @@ impl HistoryDb {
             self.conn
                 .execute(&sql, rusqlite::params_from_iter(chunk.iter()))
                 .context("failed to mark stale background jobs as orphaned")?;
+        }
+        Ok(())
+    }
+
+    fn mark_background_jobs_killed_by_watchdog(&self, background_job_ids: &[i64]) -> Result<()> {
+        if background_job_ids.is_empty() {
+            return Ok(());
+        }
+
+        const BATCH: usize = 500;
+        for chunk in background_job_ids.chunks(BATCH) {
+            let placeholders: Vec<&str> = chunk.iter().map(|_| "?").collect();
+            let sql = format!(
+                r"
+                UPDATE background_jobs
+                SET job_status = 'killed',
+                    exit_code = 124,
+                    finished_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+                WHERE id IN ({})
+                  AND job_status = 'running'
+                ",
+                placeholders.join(",")
+            );
+            self.conn
+                .execute(&sql, rusqlite::params_from_iter(chunk.iter()))
+                .context("failed to mark zombie background jobs as killed")?;
         }
         Ok(())
     }
@@ -4714,8 +4758,65 @@ mod tests {
     async fn test_history_db_open_preserves_live_background_job_rows() -> TestResult<()> {
         let dir = tempdir()?;
         let db_path = dir.path().join("test-history-open-live-background-job.db");
+        let mut child = std::process::Command::new("sleep").arg("3600").spawn()?;
+        let child_pid = i64::from(child.id());
+        let started_at = Timestamp::now().format_rfc3339();
         let db = HistoryDb::open(&db_path)?;
 
+        db.conn.execute(
+            r"
+            INSERT INTO invocations (
+                command, started_at, status, host, cwd, is_background
+            ) VALUES (?1, ?2, 'running', ?3, ?4, 1)
+            ",
+            params!["check", &started_at, "localhost", "/tmp"],
+        )?;
+        let invocation_id = db.conn.last_insert_rowid();
+        db.conn.execute(
+            r"
+            INSERT INTO background_jobs (
+                invocation_id, command, pid, job_status, started_at
+            ) VALUES (?1, ?2, ?3, 'running', ?4)
+            ",
+            params![invocation_id, "check", child_pid, &started_at],
+        )?;
+        drop(db);
+
+        let reopened = HistoryDb::open(&db_path)?;
+        child.kill()?;
+        let _ = child.wait();
+        let invocation_status: String = reopened.conn.query_row(
+            "SELECT status FROM invocations WHERE id = ?1",
+            params![invocation_id],
+            |row| row.get(0),
+        )?;
+        let background_status: String = reopened.conn.query_row(
+            "SELECT job_status FROM background_jobs WHERE invocation_id = ?1",
+            params![invocation_id],
+            |row| row.get(0),
+        )?;
+
+        assert_eq!(
+            invocation_status, "running",
+            "fresh live background jobs must remain running"
+        );
+        assert_eq!(
+            background_status, "running",
+            "live background job handles must not be orphaned during open-time cleanup"
+        );
+        Ok(())
+    }
+
+    #[sinex_test(timeout = 30)]
+    async fn test_history_db_open_kills_overage_background_job_rows() -> TestResult<()> {
+        let dir = tempdir()?;
+        let db_path = dir
+            .path()
+            .join("test-history-open-overage-background-job.db");
+        let mut child = std::process::Command::new("sleep").arg("3600").spawn()?;
+        let child_pid = i64::from(child.id());
+
+        let db = HistoryDb::open(&db_path)?;
         db.conn.execute(
             r"
             INSERT INTO invocations (
@@ -4731,35 +4832,36 @@ mod tests {
                 invocation_id, command, pid, job_status, started_at
             ) VALUES (?1, ?2, ?3, 'running', ?4)
             ",
-            params![
-                invocation_id,
-                "check",
-                i64::from(std::process::id()),
-                "2000-01-01T00:00:00Z"
-            ],
+            params![invocation_id, "check", child_pid, "2000-01-01T00:00:00Z"],
         )?;
         drop(db);
 
         let reopened = HistoryDb::open(&db_path)?;
-        let invocation_status: String = reopened.conn.query_row(
-            "SELECT status FROM invocations WHERE id = ?1",
-            params![invocation_id],
-            |row| row.get(0),
-        )?;
-        let background_status: String = reopened.conn.query_row(
-            "SELECT job_status FROM background_jobs WHERE invocation_id = ?1",
-            params![invocation_id],
-            |row| row.get(0),
-        )?;
+        let _ = child.wait();
 
-        assert_eq!(
-            invocation_status, "running",
-            "live background jobs must remain running even when older than the stale threshold"
-        );
-        assert_eq!(
-            background_status, "running",
-            "live background job handles must not be orphaned during open-time cleanup"
-        );
+        let (invocation_status, invocation_exit_code, cancel_reason, cancelled_by): (
+            String,
+            Option<i32>,
+            String,
+            String,
+        ) = reopened.conn.query_row(
+            "SELECT status, exit_code, cancel_reason, cancelled_by FROM invocations WHERE id = ?1",
+            params![invocation_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )?;
+        let (background_status, background_exit_code): (String, Option<i32>) =
+            reopened.conn.query_row(
+                "SELECT job_status, exit_code FROM background_jobs WHERE invocation_id = ?1",
+                params![invocation_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )?;
+
+        assert_eq!(invocation_status, "cancelled");
+        assert_eq!(invocation_exit_code, Some(124));
+        assert_eq!(cancel_reason, "zombie_reaped");
+        assert_eq!(cancelled_by, "open_time_sweep");
+        assert_eq!(background_status, "killed");
+        assert_eq!(background_exit_code, Some(124));
         Ok(())
     }
 
