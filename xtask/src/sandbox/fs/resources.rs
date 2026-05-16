@@ -177,9 +177,8 @@ fn workspace_test_temp_root() -> TestResult<Utf8PathBuf> {
     if let Some(configured) = std::env::var_os("SINEX_TEST_TMPDIR") {
         let temp_root = Utf8PathBuf::from_path_buf(configured.into())
             .map_err(|path| eyre!("SINEX_TEST_TMPDIR is not valid UTF-8: {path:?}"))?;
-        std::fs::create_dir_all(temp_root.as_std_path()).map_err(|e| {
-            eyre!("Failed to create configured test temp root {temp_root}: {e}")
-        })?;
+        std::fs::create_dir_all(temp_root.as_std_path())
+            .map_err(|e| eyre!("Failed to create configured test temp root {temp_root}: {e}"))?;
         return Ok(temp_root);
     }
 
@@ -267,8 +266,8 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_workspace_test_temp_root_honors_env_override()
-    -> ::xtask::sandbox::TestResult<()> {
+    async fn test_workspace_test_temp_root_honors_env_override() -> ::xtask::sandbox::TestResult<()>
+    {
         let temp_dir = tempfile::tempdir()?;
         let override_root = temp_dir.path().join("sinex-test-root");
         let _guard = EnvGuard::set_single("SINEX_TEST_TMPDIR", override_root.as_os_str());

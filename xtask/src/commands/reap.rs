@@ -19,7 +19,10 @@ use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskComman
 use crate::history::{HistoryDb, InvocationStatus, JobLifecycleStatus};
 
 #[derive(Parser, Clone, Debug)]
-#[command(hide = true, about = "Internal: detached process watchdog (not for human use)")]
+#[command(
+    hide = true,
+    about = "Internal: detached process watchdog (not for human use)"
+)]
 pub struct ReapCommand {
     /// PID of the background job process to monitor.
     #[arg(long)]
@@ -93,7 +96,7 @@ fn double_fork_reap(args: ReapCommand) -> Result<CommandResult> {
             // This is synchronous but takes only microseconds (child calls _exit(0)).
             let _ = nix::sys::wait::waitpid(child, None);
             // Parent returns immediately; the grandchild is now an orphan.
-            return Ok(CommandResult::success());
+            Ok(CommandResult::success())
         }
         ForkResult::Child => {
             // Intermediate child: detach from the caller's session.
@@ -161,28 +164,25 @@ fn run_reaper_grandchild(args: ReapCommand) {
 
     // Update history DB.
     let duration_secs = args.max_secs as f64;
-    match HistoryDb::open(&args.db_path) {
-        Ok(db) => {
-            let _ = db.finish_invocation(
-                args.invocation_id,
-                InvocationStatus::Cancelled,
-                Some(124),
-                duration_secs,
-            );
-            let _ = db.finish_background_job(
-                args.job_id,
-                JobLifecycleStatus::Killed,
-                Some(124),
-                duration_secs,
-                None,
-                None,
-            );
-        }
-        Err(_) => {
-            // No stderr in orphaned grandchild; silently skip DB update.
-            // The open-time sweep (a158ae44b) will clean this up on the next
-            // xtask invocation.
-        }
+    if let Ok(db) = HistoryDb::open(&args.db_path) {
+        let _ = db.finish_invocation(
+            args.invocation_id,
+            InvocationStatus::Cancelled,
+            Some(124),
+            duration_secs,
+        );
+        let _ = db.finish_background_job(
+            args.job_id,
+            JobLifecycleStatus::Killed,
+            Some(124),
+            duration_secs,
+            None,
+            None,
+        );
+    } else {
+        // No stderr in orphaned grandchild; silently skip DB update.
+        // The open-time sweep (a158ae44b) will clean this up on the next
+        // xtask invocation.
     }
 }
 
@@ -246,8 +246,8 @@ pub fn spawn_reaper(
 #[cfg(test)]
 mod tests {
     use super::*;
+
     use crate::sandbox::sinex_test;
-    use crate::sandbox::prelude::*;
 
     /// CLI argument parsing round-trips correctly.
     #[sinex_test]
@@ -274,7 +274,10 @@ mod tests {
         assert_eq!(args.max_secs, 1800);
         assert_eq!(args.invocation_id, 42);
         assert_eq!(args.job_id, 7);
-        assert_eq!(args.db_path, std::path::PathBuf::from("/tmp/xtask-history.db"));
+        assert_eq!(
+            args.db_path,
+            std::path::PathBuf::from("/tmp/xtask-history.db")
+        );
         assert_eq!(args.job_dir, std::path::PathBuf::from("/tmp/jobs/7"));
         Ok(())
     }

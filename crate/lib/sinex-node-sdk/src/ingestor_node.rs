@@ -498,6 +498,8 @@ impl<I: IngestorNode> Node for IngestorNodeAdapter<I> {
                     min_emission_interval: std::time::Duration::from_secs(1),
                 };
 
+                // Clone before SelfObserver::new() takes ownership of nats_client.
+                let nats_for_probe = nats_client.clone();
                 let observer = Arc::new(SelfObserver::new(nats_client, config));
                 let thresholds = HealthThresholds::from_env().unwrap_or_else(|error| {
                     warn!(
@@ -507,12 +509,29 @@ impl<I: IngestorNode> Node for IngestorNodeAdapter<I> {
                     );
                     HealthThresholds::default()
                 });
+                let liveness_probe: crate::health_reporter::LivenessProbe = Arc::new(move || {
+                    let client = nats_for_probe.clone();
+                    Box::pin(async move {
+                        use async_nats::connection::State as NatsState;
+                        // Fast path: avoid the async round-trip when already disconnected.
+                        if !matches!(client.connection_state(), NatsState::Connected) {
+                            return false;
+                        }
+                        // Active probe: flush() issues PING and waits for PONG.
+                        tokio::time::timeout(std::time::Duration::from_millis(500), client.flush())
+                            .await
+                            .is_ok_and(|r| r.is_ok())
+                    })
+                });
 
-                let reporter = Arc::new(HealthReporter::new(
-                    self.ingestor.name().to_string(),
-                    Arc::clone(&observer),
-                    thresholds,
-                ));
+                let reporter = Arc::new(
+                    HealthReporter::new(
+                        self.ingestor.name().to_string(),
+                        Arc::clone(&observer),
+                        thresholds,
+                    )
+                    .with_liveness_probe(liveness_probe),
+                );
 
                 // Wire emit-stall detection: install a shared `EmitTracker` into both
                 // the reporter and the runtime's `EventEmitter`. Every event the
@@ -602,6 +621,8 @@ impl<I: IngestorNode> Node for IngestorNodeAdapter<I> {
                             interval.tick().await;
                             if let Err(e) = reporter.check_and_emit().await {
                                 warn!(
+                                    target: "sinex_metrics",
+                                    metric = "node.health_emit_failures_total",
                                     node = %node_name,
                                     error = %e,
                                     "Failed to emit ingestor health status"
@@ -609,7 +630,7 @@ impl<I: IngestorNode> Node for IngestorNodeAdapter<I> {
                             }
                         }
                     } else {
-                        std::future::pending::<()>().await
+                        std::future::pending::<()>().await;
                     }
                 };
 
@@ -643,7 +664,13 @@ impl<I: IngestorNode> Node for IngestorNodeAdapter<I> {
                 reporter.record_error(&SinexError::processing(error_msg));
             }
             if let Err(e) = reporter.check_and_emit().await {
-                warn!(node = %self.ingestor.name(), error = %e, "Failed to emit ingestor health status");
+                warn!(
+                    target: "sinex_metrics",
+                    metric = "node.health_emit_failures_total",
+                    node = %self.ingestor.name(),
+                    error = %e,
+                    "Failed to emit ingestor health status"
+                );
             }
         }
 

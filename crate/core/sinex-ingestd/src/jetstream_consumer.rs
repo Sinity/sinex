@@ -61,7 +61,7 @@ use sinex_primitives::events::builder::Provenance;
 /// kind — the latest event of this kind that ingestd has persisted. Per #1306,
 /// the implied semantics is that all earlier events of the same kind are also
 /// confirmed (publish order is monotonic per kind: ingestd publishes only when
-/// a fresh max event_id is seen for that kind within or across batches).
+/// a fresh max `event_id` is seen for that kind within or across batches).
 ///
 /// Downstream readers that watch confirmations should advance their per-kind
 /// high-watermark on each message and treat pending events of that kind with
@@ -145,15 +145,15 @@ pub struct JetStreamConsumer {
     stats_log_interval: Duration,
     /// Heartbeat counter handle — feeds batch counts into health status determination
     heartbeat_handle: Option<HeartbeatCounterHandle>,
-    /// Maximum duration ts_orig may exceed wall-clock time before DLQ routing
+    /// Maximum duration `ts_orig` may exceed wall-clock time before DLQ routing
     future_ts_skew: time::Duration,
-    /// Earliest accepted ts_orig as a timestamp (default: 2000-01-01 UTC)
+    /// Earliest accepted `ts_orig` as a timestamp (default: 2000-01-01 UTC)
     ts_orig_lower_bound: Timestamp,
     /// Max concurrent batch-processing tasks during startup catch-up.
     /// Limits I/O pressure while the consumer works through the backlog.
     /// Default: 4. Set to 0 to disable catch-up limiting (full speed).
     startup_catch_up_max_concurrent: usize,
-    /// Per-(source, event_type) high-watermark of latest confirmed event_id.
+    /// Per-(source, `event_type`) high-watermark of latest confirmed `event_id`.
     /// Used by the per-kind compaction strategy in `publish_confirmations_for_batch`
     /// to skip publishes that would not advance the watermark. Per #1306.
     confirmation_watermark: Arc<tokio::sync::Mutex<HashMap<(String, String), Uuid>>>,
@@ -238,7 +238,7 @@ fn is_isolatable_batch_persistence_failure(err: &SinexError) -> bool {
 const DEFAULT_BATCH_FETCH_MAX_MESSAGES: usize = 100;
 const DEFAULT_BATCH_FETCH_TIMEOUT: Duration = Duration::from_secs(1);
 const DEFAULT_MAX_ACK_PENDING: i64 = 100;
-/// NATS-side max_deliver on the events consumer. Must be >= the highest
+/// NATS-side `max_deliver` on the events consumer. Must be >= the highest
 /// application-side terminal threshold below so app-level DLQ routing fires
 /// before NATS silently stops redelivery. Sized for the source-material
 /// cross-stream-lag scenario (#1310/#1311).
@@ -246,7 +246,7 @@ const MAIN_CONSUMER_JETSTREAM_MAX_DELIVER: i64 = 32;
 const MAIN_CONSUMER_TERMINAL_DLQ_THRESHOLD: i64 = 10;
 /// Source-material-not-found is a soft cross-stream-lag condition, not a hard
 /// error: the material's BEGIN message is being processed on a separate consumer
-/// path. Give it generous retry budget. With FK_VIOLATION_RETRY_DELAY = 5s,
+/// path. Give it generous retry budget. With `FK_VIOLATION_RETRY_DELAY` = 5s,
 /// threshold = 30 means up to ~150s wall-clock for the BEGIN to catch up before
 /// we give up and DLQ. The earlier value of 10 (50s) routed many events to DLQ
 /// during normal backlog drains. See #1310 / #1311.
@@ -277,8 +277,8 @@ const BATCH_ATOMICITY_SCOPE: &str = "per_successful_persistence_attempt";
 ///
 /// The cross-stream race is the load-bearing case: events on
 /// `PROD_SINEX_RAW_EVENTS` and material lifecycle frames on `SOURCE_MATERIAL`
-/// flow through independent JetStream consumers with no cross-stream ordering.
-/// Under backlog, the SOURCE_MATERIAL consumer can lag behind the events
+/// flow through independent `JetStream` consumers with no cross-stream ordering.
+/// Under backlog, the `SOURCE_MATERIAL` consumer can lag behind the events
 /// consumer by tens of seconds; the previous 200 ms delay × 10 retries (= 2 s
 /// total window) was insufficient and DLQ'd every fresh self-observation
 /// material's first events (see issue #1241).
@@ -374,6 +374,7 @@ struct ConsumerStats {
     dlq_publish_failures: AtomicU64,
     nack_failures: AtomicU64,
     nats_errors: AtomicU64,
+    telemetry_publish_failures: AtomicU64,
 }
 
 impl ConsumerStats {
@@ -397,13 +398,21 @@ impl ConsumerStats {
                 self.confirmation_durability_gaps.load(Ordering::Relaxed),
             dlq_publish_failures = self.dlq_publish_failures.load(Ordering::Relaxed),
             nack_failures = self.nack_failures.load(Ordering::Relaxed),
+            telemetry_publish_failures = self.telemetry_publish_failures.load(Ordering::Relaxed),
             "JetStream consumer stats"
         );
     }
 }
 
 impl JetStreamConsumer {
-    fn log_observer_error(metric: &'static str, error: &sinex_node_sdk::SelfObservationError) {
+    fn log_observer_error(
+        stats: &ConsumerStats,
+        metric: &'static str,
+        error: &sinex_node_sdk::SelfObservationError,
+    ) {
+        stats
+            .telemetry_publish_failures
+            .fetch_add(1, Ordering::Relaxed);
         warn!(metric, error = %error, "Failed to emit ingestd telemetry");
     }
 
@@ -447,7 +456,7 @@ impl JetStreamConsumer {
         if let Some(ref observer) = self.observer
             && let Err(error) = observer.emit_gauge(metric, value, labels).await
         {
-            Self::log_observer_error(metric, &error);
+            Self::log_observer_error(&self.stats, metric, &error);
         }
     }
 
@@ -506,7 +515,7 @@ impl JetStreamConsumer {
         }
     }
 
-    /// Set the maximum duration ts_orig may exceed wall-clock time before DLQ routing.
+    /// Set the maximum duration `ts_orig` may exceed wall-clock time before DLQ routing.
     #[must_use]
     pub fn with_future_ts_skew(mut self, skew: time::Duration) -> Self {
         self.future_ts_skew = skew;
@@ -514,7 +523,7 @@ impl JetStreamConsumer {
         self
     }
 
-    /// Set the earliest accepted ts_orig as a timestamp.
+    /// Set the earliest accepted `ts_orig` as a timestamp.
     #[must_use]
     pub fn with_ts_orig_lower_bound(mut self, lower_bound: Timestamp) -> Self {
         self.ts_orig_lower_bound = lower_bound;
@@ -863,7 +872,7 @@ impl JetStreamConsumer {
                     consumer_info.as_ref().map_or(0, |ci| ci.num_ack_pending),
                     0,
                     consumer_spec.max_ack_pending,
-                    consumer_spec.max_deliver as i64,
+                    consumer_spec.max_deliver,
                     initial_replay_risk,
                 )
                 .await;
@@ -908,10 +917,10 @@ impl JetStreamConsumer {
                     self.stats.log();
                     // Emit processing stats via self-observer
                     if let Some(ref observer) = self.observer {
-                        let processed = self.stats.events_processed.load(std::sync::atomic::Ordering::Relaxed);
-                        let failed = self.stats.events_failed.load(std::sync::atomic::Ordering::Relaxed);
-                        let deferred = self.stats.events_deferred.load(std::sync::atomic::Ordering::Relaxed);
-                        let dlq_routed = self.stats.dlq_routed.load(std::sync::atomic::Ordering::Relaxed);
+                        let processed = self.stats.events_processed.load(Ordering::Relaxed);
+                        let failed = self.stats.events_failed.load(Ordering::Relaxed);
+                        let deferred = self.stats.events_deferred.load(Ordering::Relaxed);
+                        let dlq_routed = self.stats.dlq_routed.load(Ordering::Relaxed);
                         if let Err(e) = observer.emit_node_processing_stats(
                             "jetstream-consumer",
                             processed,
@@ -922,10 +931,29 @@ impl JetStreamConsumer {
                         ).await {
                             warn!("Failed to emit processing stats: {}", e);
                         }
+
+                        // Emit operational health counters not covered by emit_node_processing_stats.
+                        // These are monotonic cumulative totals emitted as gauges (snapshot-at-tick).
+                        let operational_gauges: &[(&'static str, u64)] = &[
+                            ("ingestd.tombstoned_events_rejected_total", self.stats.tombstoned_events_rejected.load(Ordering::Relaxed)),
+                            ("ingestd.confirmation_failures_total", self.stats.confirmation_failures.load(Ordering::Relaxed)),
+                            ("ingestd.confirmation_retries_enqueued_total", self.stats.confirmation_retries_enqueued.load(Ordering::Relaxed)),
+                            ("ingestd.confirmation_retry_failures_total", self.stats.confirmation_retry_failures.load(Ordering::Relaxed)),
+                            ("ingestd.confirmation_durability_gaps_total", self.stats.confirmation_durability_gaps.load(Ordering::Relaxed)),
+                            ("ingestd.dlq_publish_failures_total", self.stats.dlq_publish_failures.load(Ordering::Relaxed)),
+                            ("ingestd.nack_failures_total", self.stats.nack_failures.load(Ordering::Relaxed)),
+                            ("ingestd.nats_errors_total", self.stats.nats_errors.load(Ordering::Relaxed)),
+                            ("ingestd.telemetry_publish_failures_total", self.stats.telemetry_publish_failures.load(Ordering::Relaxed)),
+                        ];
+                        for (metric, value) in operational_gauges {
+                            self.emit_observer_gauge(metric, *value as f64, None).await;
+                        }
                     }
                 }
                 _ = capacity_check_interval.tick() => {
                     self.check_stream_capacity(&stream_name).await;
+                    // DLQ growth is a durable signal of persistent failures; monitor it too.
+                    self.check_stream_capacity(self.topology.dlq_stream.as_ref()).await;
                 }
                 _ = lag_check_interval.tick() => {
                     if self.observer.is_some() {
@@ -957,16 +985,31 @@ impl JetStreamConsumer {
                 }
                 _ = confirmation_retry_interval.tick() => {
                     if let Err(e) = self.process_confirmation_retry_batch(&confirmation_retry_consumer).await {
-                        error!("Confirmation retry processing error: {}", e);
+                        error!(
+                            target: "sinex_metrics",
+                            metric = "ingestd.confirmation_retry_failures_total",
+                            error = %e,
+                            "Confirmation retry processing error"
+                        );
                     }
                 }
                 batch_result = &mut batch_future => {
                     if let Err(e) = batch_result {
                         if Self::is_fatal_batch_processing_error(&e) {
-                            error!("Fatal batch processing error: {}", e);
+                            error!(
+                                target: "sinex_metrics",
+                                metric = "ingestd.fatal_batch_errors_total",
+                                error = %e,
+                                "Fatal batch processing error"
+                            );
                             return Err(e);
                         }
-                        error!("Batch processing error: {}", e);
+                        error!(
+                            target: "sinex_metrics",
+                            metric = "ingestd.batch_errors_total",
+                            error = %e,
+                            "Batch processing error"
+                        );
                     }
                     batch_future = Box::pin(Self::process_batch_with_semaphore(
                         &self,
@@ -1076,10 +1119,16 @@ impl JetStreamConsumer {
                     val_stats.invalid,
                     val_stats.coverage_pct(),
                     suspicious_future_ts_orig,
+                    self.stats
+                        .telemetry_publish_failures
+                        .load(Ordering::Relaxed),
+                    self.stats
+                        .confirmation_durability_gaps
+                        .load(Ordering::Relaxed),
                 )
                 .await
             {
-                Self::log_observer_error("ingestd.batch", &error);
+                Self::log_observer_error(&self.stats, "ingestd.batch", &error);
             }
         }
 
@@ -1087,10 +1136,7 @@ impl JetStreamConsumer {
     }
 
     #[instrument(skip(self, msg))]
-    async fn prepare_events(
-        &self,
-        msg: jetstream::Message,
-    ) -> IngestdResult<Vec<PreparedEvent>> {
+    async fn prepare_events(&self, msg: jetstream::Message) -> IngestdResult<Vec<PreparedEvent>> {
         let decisions = self.admission.admit_intent_bytes(&msg.payload).await?;
         let mut prepared = Vec::with_capacity(decisions.len());
 
@@ -1238,7 +1284,7 @@ impl JetStreamConsumer {
                     // per kind.
                     let mut by_kind: HashMap<(String, String), Vec<&PreparedEvent>> =
                         HashMap::new();
-                    for prepared in confirmation_batch.iter() {
+                    for prepared in &confirmation_batch {
                         let key = (
                             prepared.event.source.as_str().to_string(),
                             prepared.event.event_type.as_str().to_string(),
@@ -1251,11 +1297,10 @@ impl JetStreamConsumer {
                         .map(|(kind, preps)| {
                             let sem = Arc::clone(&self.confirmation_semaphore);
                             let watermark = Arc::clone(&self.confirmation_watermark);
-                            let max_event_id = preps
-                                .iter()
-                                .map(|p| p.parsed_id)
-                                .max()
-                                .expect("by_kind grouping guarantees at least one event per kind");
+                            let max_event_id =
+                                preps.iter().map(|p| p.parsed_id).max().expect(
+                                    "by_kind grouping guarantees at least one event per kind",
+                                );
                             let (source, event_type) = (kind.0.clone(), kind.1.clone());
                             let key = kind;
                             async move {
@@ -1294,7 +1339,7 @@ impl JetStreamConsumer {
                     let mut ack_messages = Vec::with_capacity(batch.len());
                     ack_messages.extend(tombstoned_batch.iter().map(|prepared| &prepared.message));
                     let mut confirmation_durability_gaps = Vec::new();
-                    for (preps, max_event_id, source, event_type, result) in kind_results.iter() {
+                    for (preps, max_event_id, source, event_type, result) in &kind_results {
                         match result {
                             Ok(()) => {
                                 for prepared in preps {
@@ -1325,11 +1370,7 @@ impl JetStreamConsumer {
                                 // implicitly confirms every event of the kind with
                                 // id <= watermark.
                                 match self
-                                    .enqueue_confirmation_retry(
-                                        max_event_id,
-                                        source,
-                                        event_type,
-                                    )
+                                    .enqueue_confirmation_retry(max_event_id, source, event_type)
                                     .await
                                 {
                                     Ok(()) => {
@@ -1349,6 +1390,8 @@ impl JetStreamConsumer {
                                     }
                                     Err(retry_err) => {
                                         error!(
+                                            target: "sinex_metrics",
+                                            metric = "ingestd.confirmation_retry_failures_total",
                                             source = %source,
                                             event_type = %event_type,
                                             watermark = %max_event_id,
@@ -1523,7 +1566,12 @@ impl JetStreamConsumer {
                         continue;
                     }
 
-                    error!("Failed to persist batch: {}", e);
+                    error!(
+                        target: "sinex_metrics",
+                        metric = "ingestd.batch_persistence_failures_total",
+                        error = %e,
+                        "Failed to persist batch"
+                    );
                     let mut settlement_errors = Vec::new();
                     for prepared in &attempted_batch {
                         match self.should_route_terminal_persistence_failure(&prepared.message, &e)
@@ -1640,45 +1688,81 @@ impl JetStreamConsumer {
     }
 
     async fn record_admission_rejection(&self, rejection: &AdmissionRejection) {
+        // Update legacy per-kind in-memory counters for backward compatibility.
         match rejection.kind {
             AdmissionRejectionKind::PastTimestamp => {
                 self.stats
                     .suspicious_past_ts_orig
                     .fetch_add(1, Ordering::Relaxed);
-                if let Some(ref observer) = self.observer {
-                    let _ = observer
-                        .emit_counter("suspicious_past_ts_orig_total", 1, None)
-                        .await;
-                }
             }
             AdmissionRejectionKind::FutureTimestamp => {
                 self.stats
                     .suspicious_future_ts_orig
                     .fetch_add(1, Ordering::Relaxed);
-                if let Some(ref observer) = self.observer {
-                    let _ = observer
-                        .emit_counter("suspicious_future_ts_orig_total", 1, None)
-                        .await;
-                }
             }
             AdmissionRejectionKind::NegativeAnchor => {
                 self.stats
                     .negative_anchor_byte
                     .fetch_add(1, Ordering::Relaxed);
             }
-            AdmissionRejectionKind::PayloadTooLarge
+            AdmissionRejectionKind::SchemaValidation
+            | AdmissionRejectionKind::MissingTimestamp
+            | AdmissionRejectionKind::PayloadTooLarge
             | AdmissionRejectionKind::InvalidUtf8
             | AdmissionRejectionKind::StructuralJson
             | AdmissionRejectionKind::EventDeserialization
-            | AdmissionRejectionKind::MissingTimestamp
-            | AdmissionRejectionKind::SchemaValidation
             | AdmissionRejectionKind::CandidateMetadata
             | AdmissionRejectionKind::PrivacyPolicy
             | AdmissionRejectionKind::QuarantinePolicy
             | AdmissionRejectionKind::MissingEventId
             | AdmissionRejectionKind::InvalidEventId
             | AdmissionRejectionKind::EnvelopeDeserialization
-            | AdmissionRejectionKind::EnvelopeValidation => {}
+            | AdmissionRejectionKind::EnvelopeValidation => {
+                self.stats
+                    .validation_failures
+                    .fetch_add(1, Ordering::Relaxed);
+            }
+        }
+
+        // Emit a unified rejection counter with kind label so every rejection
+        // variant is visible in NATS metrics, not just PastTimestamp/FutureTimestamp.
+        let kind_label = match rejection.kind {
+            AdmissionRejectionKind::PayloadTooLarge => "payload_too_large",
+            AdmissionRejectionKind::InvalidUtf8 => "invalid_utf8",
+            AdmissionRejectionKind::StructuralJson => "structural_json",
+            AdmissionRejectionKind::EventDeserialization => "event_deserialization",
+            AdmissionRejectionKind::EnvelopeDeserialization => "envelope_deserialization",
+            AdmissionRejectionKind::EnvelopeValidation => "envelope_validation",
+            AdmissionRejectionKind::MissingTimestamp => "missing_timestamp",
+            AdmissionRejectionKind::PastTimestamp => "past_timestamp",
+            AdmissionRejectionKind::FutureTimestamp => "future_timestamp",
+            AdmissionRejectionKind::NegativeAnchor => "negative_anchor",
+            AdmissionRejectionKind::SchemaValidation => "schema_validation",
+            AdmissionRejectionKind::CandidateMetadata => "candidate_metadata",
+            AdmissionRejectionKind::PrivacyPolicy => "privacy_policy",
+            AdmissionRejectionKind::QuarantinePolicy => "quarantine_policy",
+            AdmissionRejectionKind::MissingEventId => "missing_event_id",
+            AdmissionRejectionKind::InvalidEventId => "invalid_event_id",
+        };
+
+        tracing::debug!(
+            target: "sinex_metrics",
+            metric = "ingestd.admission_rejections_total",
+            kind = kind_label,
+            "Event rejected by admission service"
+        );
+
+        if let Some(ref observer) = self.observer {
+            let labels = Some(std::collections::HashMap::from([(
+                "kind".to_string(),
+                kind_label.to_string(),
+            )]));
+            if let Err(error) = observer
+                .emit_counter("ingestd.admission_rejections_total", 1, labels)
+                .await
+            {
+                Self::log_observer_error(&self.stats, "ingestd.admission_rejections_total", &error);
+            }
         }
     }
 
@@ -1707,7 +1791,7 @@ impl JetStreamConsumer {
 
         // Per #1306: per-kind watermark, not per-event.
         let mut by_kind: HashMap<(String, String), Vec<&PreparedEvent>> = HashMap::new();
-        for prepared in duplicate_batch.iter() {
+        for prepared in &duplicate_batch {
             let key = (
                 prepared.event.source.as_str().to_string(),
                 prepared.event.event_type.as_str().to_string(),
@@ -1753,7 +1837,7 @@ impl JetStreamConsumer {
         let mut ack_messages = Vec::with_capacity(duplicate_batch.len() + tombstoned_batch.len());
         ack_messages.extend(tombstoned_batch.iter().map(|prepared| &prepared.message));
         let mut confirmation_durability_gaps = Vec::new();
-        for (preps, max_event_id, source, event_type, result) in kind_results.iter() {
+        for (preps, max_event_id, source, event_type, result) in &kind_results {
             match result {
                 Ok(()) => {
                     for prepared in preps {
@@ -2158,7 +2242,10 @@ impl JetStreamConsumer {
         let mut last_error: Option<SinexError> = None;
 
         for attempt in 1..=CONFIRM_PUBLISH_MAX_ATTEMPTS {
-            match self.publish_confirmation(event_id, source, event_type).await {
+            match self
+                .publish_confirmation(event_id, source, event_type)
+                .await
+            {
                 Ok(()) => return Ok(()),
                 Err(err) => {
                     warn!(
@@ -2386,13 +2473,25 @@ impl JetStreamConsumer {
                         return Ok(());
                     }
                     Err(err) => {
-                        error!(attempt, error = %err, "Failed to confirm DLQ publish");
+                        error!(
+                            target: "sinex_metrics",
+                            metric = "ingestd.dlq_confirm_failures_total",
+                            attempt,
+                            error = %err,
+                            "Failed to confirm DLQ publish"
+                        );
                         last_error =
                             Some(SinexError::network("DLQ publish ack failed").with_source(err));
                     }
                 },
                 Err(err) => {
-                    error!(attempt, error = %err, "Failed to route to DLQ");
+                    error!(
+                        target: "sinex_metrics",
+                        metric = "ingestd.dlq_routing_failures_total",
+                        attempt,
+                        error = %err,
+                        "Failed to route to DLQ"
+                    );
                     last_error = Some(SinexError::network("DLQ publish failed").with_source(err));
                 }
             }
@@ -2462,7 +2561,7 @@ impl JetStreamConsumer {
                                 )
                                 .await
                         {
-                            Self::log_observer_error("ingestd.stream", &error);
+                            Self::log_observer_error(&self.stats, "ingestd.stream", &error);
                         }
 
                         // Check message count capacity
@@ -2594,11 +2693,11 @@ mod tests {
             "1999-12-31 should be before lower bound"
         );
         assert!(
-            !(lower_bound < lower_bound),
+            (lower_bound >= lower_bound),
             "2000-01-01 itself should not be flagged"
         );
         assert!(
-            !(after_2000 < lower_bound),
+            (after_2000 >= lower_bound),
             "2000-01-02 should not be flagged"
         );
         Ok(())

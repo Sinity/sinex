@@ -126,22 +126,47 @@ impl MaterialParser for HyprlandParser {
             accepted_input_shapes: vec![InputShapeKind::UnixSocket],
             source_unit_id: SourceUnitId::from_static("desktop.window-manager"),
             declared_event_types: vec![
-                (EventSource::from_static("wm.hyprland"), EventType::from_static("window.opened")),
-                (EventSource::from_static("wm.hyprland"), EventType::from_static("window.closed")),
-                (EventSource::from_static("wm.hyprland"), EventType::from_static("window.focused")),
-                (EventSource::from_static("wm.hyprland"), EventType::from_static("window.moved")),
-                (EventSource::from_static("wm.hyprland"), EventType::from_static("window.title_changed")),
-                (EventSource::from_static("wm.hyprland"), EventType::from_static("workspace.switched")),
-                (EventSource::from_static("wm.hyprland"), EventType::from_static("monitor.focused")),
-                (EventSource::from_static("wm.hyprland"), EventType::from_static("state.captured")),
-                (EventSource::from_static("wm.hyprland"), EventType::from_static("wm.unhandled")),
+                (
+                    EventSource::from_static("wm.hyprland"),
+                    EventType::from_static("window.opened"),
+                ),
+                (
+                    EventSource::from_static("wm.hyprland"),
+                    EventType::from_static("window.closed"),
+                ),
+                (
+                    EventSource::from_static("wm.hyprland"),
+                    EventType::from_static("window.focused"),
+                ),
+                (
+                    EventSource::from_static("wm.hyprland"),
+                    EventType::from_static("window.moved"),
+                ),
+                (
+                    EventSource::from_static("wm.hyprland"),
+                    EventType::from_static("window.title_changed"),
+                ),
+                (
+                    EventSource::from_static("wm.hyprland"),
+                    EventType::from_static("workspace.switched"),
+                ),
+                (
+                    EventSource::from_static("wm.hyprland"),
+                    EventType::from_static("monitor.focused"),
+                ),
+                (
+                    EventSource::from_static("wm.hyprland"),
+                    EventType::from_static("state.captured"),
+                ),
+                (
+                    EventSource::from_static("wm.hyprland"),
+                    EventType::from_static("wm.unhandled"),
+                ),
             ],
             privacy_contexts: vec![ProcessingContext::WindowTitle],
-            proof_obligations: vec![
-                "anchor_stream_frame".into(),
-                "window_title_redacted".into(),
-            ],
-            description: "Parses Hyprland IPC socket events into typed window-manager events.".into(),
+            proof_obligations: vec!["anchor_stream_frame".into(), "window_title_redacted".into()],
+            description: "Parses Hyprland IPC socket events into typed window-manager events."
+                .into(),
         }
     }
 
@@ -210,7 +235,10 @@ fn dispatch_hyprland_event(
     // Redact any window title through the privacy engine before including in payload.
     let redact_title = |title: &str| -> String {
         match privacy::engine() {
-            Ok(eng) => eng.process(title, ProcessingContext::WindowTitle).text.into_owned(),
+            Ok(eng) => eng
+                .process(title, ProcessingContext::WindowTitle)
+                .text
+                .into_owned(),
             Err(_) => title.to_string(),
         }
     };
@@ -230,9 +258,10 @@ fn dispatch_hyprland_event(
                 }),
             )
         }
-        "closewindow" => {
-            ("window.closed", serde_json::json!({ "window_id": data.trim() }))
-        }
+        "closewindow" => (
+            "window.closed",
+            serde_json::json!({ "window_id": data.trim() }),
+        ),
         "activewindow" => {
             // activewindow>>class,title
             let (class, title) = data.split_once(',').unwrap_or((data, ""));
@@ -244,9 +273,10 @@ fn dispatch_hyprland_event(
                 }),
             )
         }
-        "activewindowv2" => {
-            ("window.focused", serde_json::json!({ "window_id": data.trim() }))
-        }
+        "activewindowv2" => (
+            "window.focused",
+            serde_json::json!({ "window_id": data.trim() }),
+        ),
         "movewindow" => {
             // movewindow>>address,workspaceid,workspacename
             let parts: Vec<&str> = data.splitn(3, ',').collect();
@@ -272,7 +302,10 @@ fn dispatch_hyprland_event(
         }
         "windowtitle" => {
             // windowtitle>>address (title hint, no payload beyond address)
-            ("window.title_changed", serde_json::json!({ "window_id": data.trim() }))
+            (
+                "window.title_changed",
+                serde_json::json!({ "window_id": data.trim() }),
+            )
         }
         "workspace" | "workspacev2" => {
             let (id, name) = data.split_once(',').unwrap_or((data, ""));

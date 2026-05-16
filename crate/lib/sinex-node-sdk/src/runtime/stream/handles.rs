@@ -48,6 +48,7 @@ impl RuntimeDrainController {
         *self.drain_tx.borrow()
     }
 
+    #[must_use]
     pub fn request_drain(&self) -> bool {
         if self.is_requested() {
             return false;
@@ -72,6 +73,7 @@ impl RuntimeDrainController {
         true
     }
 
+    #[allow(clippy::expect_used)]
     pub fn register_runtime_abort(&self, abort_handle: tokio::task::AbortHandle) {
         let mut guard = self
             .runtime_abort
@@ -80,6 +82,7 @@ impl RuntimeDrainController {
         *guard = Some(abort_handle);
     }
 
+    #[allow(clippy::expect_used)]
     pub fn clear_runtime_abort(&self) {
         let mut guard = self
             .runtime_abort
@@ -88,6 +91,8 @@ impl RuntimeDrainController {
         *guard = None;
     }
 
+    #[allow(clippy::expect_used)]
+    #[must_use]
     pub fn abort_runtime_work(&self) -> bool {
         let guard = self
             .runtime_abort
@@ -296,10 +301,7 @@ impl EventEmitter {
     /// slot is shared across `EventEmitter` clones (via `Arc<RwLock<_>>`), so
     /// installation propagates to all downstream sites that already hold the
     /// emitter.
-    pub fn register_emit_tracker(
-        &self,
-        tracker: Arc<crate::health_reporter::EmitTracker>,
-    ) {
+    pub fn register_emit_tracker(&self, tracker: Arc<crate::health_reporter::EmitTracker>) {
         *self.emit_tracker.write() = Some(tracker);
     }
 

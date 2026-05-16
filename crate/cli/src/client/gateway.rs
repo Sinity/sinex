@@ -9,7 +9,6 @@ use sinex_primitives::domain::{EventSource, NodeType};
 use sinex_primitives::rpc::{
     JsonRpcError,
     automata::{AutomataStatusRequest, AutomataStatusResponse},
-    ingestors::{IngestorsStatusRequest, IngestorsStatusResponse},
     coordination::{
         InstanceHealthRequest, InstanceHealthResponse, InstanceInfo, ListInstancesRequest,
         ListInstancesResponse,
@@ -24,6 +23,7 @@ use sinex_primitives::rpc::{
         GitOpsDeleteSourceResponse, GitOpsListSourcesRequest, GitOpsListSourcesResponse,
         GitOpsSourceInfo, GitOpsTriggerSyncRequest, GitOpsTriggerSyncResponse,
     },
+    ingestors::{IngestorsStatusRequest, IngestorsStatusResponse},
     lifecycle::{
         LifecycleArchiveRequest, LifecycleArchiveResponse, LifecycleRestoreRequest,
         LifecycleRestoreResponse, LifecycleStatusRequest, LifecycleStatusResponse,
@@ -58,10 +58,10 @@ use sinex_primitives::rpc::{
         TelemetryIngestdValidationResponse, TelemetryMetricCountersRequest,
         TelemetryMetricCountersResponse, TelemetryNodeStatsRequest, TelemetryNodeStatsResponse,
         TelemetryRecentActivityRequest, TelemetryRecentActivityResponse,
-        TelemetryThroughputRequest, TelemetryThroughputResponse,
         TelemetryStreamStatsRequest, TelemetryStreamStatsResponse, TelemetrySystemStateRequest,
-        TelemetrySystemStateResponse, TelemetryTimeRange, TelemetryWindowFocusRequest,
-        TelemetryWindowFocusResponse, WindowFocusBucket,
+        TelemetrySystemStateResponse, TelemetryThroughputRequest, TelemetryThroughputResponse,
+        TelemetryTimeRange, TelemetryWindowFocusRequest, TelemetryWindowFocusResponse,
+        WindowFocusBucket,
     },
 };
 use sinex_primitives::temporal::Timestamp;
@@ -1551,6 +1551,7 @@ struct SseFrameParser {
     state: SseFrameState,
 }
 
+#[derive(Default)]
 struct SseFrameState {
     buffer: Vec<u8>,
     current_event: Option<String>,
@@ -1563,17 +1564,6 @@ impl SseFrameParser {
         Self {
             stream: response,
             state: SseFrameState::default(),
-        }
-    }
-}
-
-impl Default for SseFrameState {
-    fn default() -> Self {
-        Self {
-            buffer: Vec::new(),
-            current_event: None,
-            current_data: String::new(),
-            saw_data_field: false,
         }
     }
 }

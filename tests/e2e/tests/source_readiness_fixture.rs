@@ -28,7 +28,7 @@ use sqlx::types::Uuid;
 use xtask::sandbox::prelude::*;
 
 /// Insert a registry row at a fixed status with no temporal metadata. Used
-/// for the `staged_unparsed` (status=sensing, total_bytes NULL) shape.
+/// for the `staged_unparsed` (status=sensing, `total_bytes` NULL) shape.
 async fn insert_registry_row_unparsed(pool: &DbPool, source_identifier: &str) -> TestResult<Uuid> {
     let id = Uuid::now_v7();
     sqlx::query(
@@ -45,7 +45,7 @@ async fn insert_registry_row_unparsed(pool: &DbPool, source_identifier: &str) ->
     Ok(id)
 }
 
-/// Insert a registry row at `status='completed'` with finalized total_bytes
+/// Insert a registry row at `status='completed'` with finalized `total_bytes`
 /// so the readiness query treats it as a successful staging.
 async fn insert_registry_row_completed(pool: &DbPool, source_identifier: &str) -> TestResult<Uuid> {
     let id = Uuid::now_v7();

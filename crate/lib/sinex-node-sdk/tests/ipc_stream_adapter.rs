@@ -11,9 +11,7 @@ use std::sync::{
     atomic::{AtomicUsize, Ordering},
 };
 
-use sinex_node_sdk::{
-    IpcStreamCheckpoint, IpcStreamRecordSource, RecordReadHorizon, RecordSource,
-};
+use sinex_node_sdk::{IpcStreamCheckpoint, IpcStreamRecordSource, RecordReadHorizon, RecordSource};
 use tokio::{
     io::{AsyncWriteExt, DuplexStream},
     sync::Mutex as AsyncMutex,
@@ -78,8 +76,14 @@ async fn ipc_stream_drains_lines_and_advances_reconnect_on_eof() -> TestResult<(
     // First batch: drain connection #1 (two lines) + observe EOF that bumps
     // reconnect counter to 1. Records emitted carry reconnect_index = 0.
     let initial = source.initial_checkpoint();
-    let batch1 = source.read_batch(&initial, RecordReadHorizon::Unbounded).await?;
-    let lines1: Vec<_> = batch1.records.iter().map(|r| r.record.line.clone()).collect();
+    let batch1 = source
+        .read_batch(&initial, RecordReadHorizon::Unbounded)
+        .await?;
+    let lines1: Vec<_> = batch1
+        .records
+        .iter()
+        .map(|r| r.record.line.clone())
+        .collect();
     assert_eq!(lines1, vec!["first".to_string(), "second".to_string()]);
     assert!(batch1.records.iter().all(|r| r.record.reconnect_index == 0));
     assert_eq!(batch1.final_checkpoint.reconnects, 1);
@@ -91,7 +95,11 @@ async fn ipc_stream_drains_lines_and_advances_reconnect_on_eof() -> TestResult<(
     let batch2 = source
         .read_batch(&batch1.final_checkpoint, RecordReadHorizon::Unbounded)
         .await?;
-    let lines2: Vec<_> = batch2.records.iter().map(|r| r.record.line.clone()).collect();
+    let lines2: Vec<_> = batch2
+        .records
+        .iter()
+        .map(|r| r.record.line.clone())
+        .collect();
     assert_eq!(lines2, vec!["third".to_string()]);
     assert_eq!(batch2.final_checkpoint.reconnects, 2);
     assert_eq!(attempts.load(Ordering::SeqCst), 2);

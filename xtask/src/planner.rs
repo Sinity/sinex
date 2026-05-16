@@ -85,28 +85,30 @@ fn check_active_jobs() -> Result<Option<Vec<PlannedAction>>> {
     let mut actions = Vec::new();
     for entry in entries.flatten() {
         let path = entry.path();
-        if path.extension().is_some_and(|ext| ext == "json") {
-            if let Ok(content) = std::fs::read_to_string(&path) {
-                if let Ok(state) =
-                    serde_json::from_str::<crate::coordinator::CoordinationState>(&content)
-                {
-                    if state.job_id > 0 && state.pid > 0 {
-                        actions.push(PlannedAction {
-                            command: format!("xtask jobs status {}", state.job_id),
-                            reason: format!(
-                                "active job {} ({}) is running (pid {})",
-                                state.job_id, state.command, state.pid
-                            ),
-                            priority: Priority::Now,
-                            confidence: 0.9,
-                        });
-                    }
-                }
-            }
+        if path.extension().is_some_and(|ext| ext == "json")
+            && let Ok(content) = std::fs::read_to_string(&path)
+            && let Ok(state) =
+                serde_json::from_str::<crate::coordinator::CoordinationState>(&content)
+            && state.job_id > 0
+            && state.pid > 0
+        {
+            actions.push(PlannedAction {
+                command: format!("xtask jobs status {}", state.job_id),
+                reason: format!(
+                    "active job {} ({}) is running (pid {})",
+                    state.job_id, state.command, state.pid
+                ),
+                priority: Priority::Now,
+                confidence: 0.9,
+            });
         }
     }
 
-    if actions.is_empty() { Ok(None) } else { Ok(Some(actions)) }
+    if actions.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(actions))
+    }
 }
 
 fn check_dirty_files() -> Result<Option<Vec<PlannedAction>>> {
@@ -164,7 +166,7 @@ fn check_dirty_files() -> Result<Option<Vec<PlannedAction>>> {
     }
 
     Ok(Some(vec![PlannedAction {
-        command: format!("xtask check{}", package_list),
+        command: format!("xtask check{package_list}"),
         reason,
         priority: Priority::Now,
         confidence: 0.95,
@@ -234,9 +236,7 @@ fn check_resource_pressure() -> Option<Vec<PlannedAction>> {
 }
 
 fn num_cpus() -> usize {
-    std::thread::available_parallelism()
-        .map(|n| n.get())
-        .unwrap_or(1)
+    std::thread::available_parallelism().map_or(1, std::num::NonZero::get)
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────────

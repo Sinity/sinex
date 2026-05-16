@@ -1,0 +1,85 @@
+{
+  "$defs": {
+    "DateTime": {
+      "description": "RFC 3339 formatted date-time string",
+      "format": "date-time",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Inventory event emitted once per file in the document library.\n\n`path` is relative to the configured library root so events are\nportable across host renames.  `content_hash` (BLAKE3 hex) provides\nstable identity: the same file re-imported after a rename produces\nthe same hash and can be deduplicated on `(path, content_hash)`.\n\nFilename heuristics (`title_hint`, `author_hint`, `year_hint`,\n`external_id`) are best-effort only.  Callers must treat `None` as\n\"unknown\" and `Some` as an unverified hint.",
+  "properties": {
+    "author_hint": {
+      "description": "Heuristic author extracted from the filename.\n\nDerived by taking the segment before the first ` - ` separator.\n`None` when the separator is absent.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "byte_size": {
+      "description": "File size in bytes.",
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "content_hash": {
+      "description": "BLAKE3 hex digest of the file contents, if computed.\n\nThe adapter may supply this via the anchor; the parser falls back\nto `None` when not available.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "extension": {
+      "description": "Lowercase file extension without the leading dot (e.g. `\"pdf\"`, `\"epub\"`).",
+      "type": "string"
+    },
+    "external_id": {
+      "description": "External identifier found in the filename.\n\nA 32-character hex sequence is interpreted as an MD5 / Anna's Archive\nidentifier.  `None` when no such sequence is found.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "filename": {
+      "description": "Bare filename with extension.",
+      "type": "string"
+    },
+    "mtime": {
+      "$ref": "#/$defs/DateTime",
+      "description": "File modification time according to the local filesystem."
+    },
+    "path": {
+      "description": "Path relative to the library root (e.g. `\"Aaron Clarey - ... (2013).epub\"`).",
+      "type": "string"
+    },
+    "title_hint": {
+      "description": "Heuristic title extracted from the filename.\n\nDerived by stripping the author prefix (everything up to ` - `),\nthe year suffix, and the extension.  `None` when the heuristic\ndoes not fire.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "year_hint": {
+      "description": "Four-digit year extracted from the filename, if present.\n\nMatches the first `(\\d{4})` group in the range 1900–2030.",
+      "format": "uint16",
+      "maximum": 65535,
+      "minimum": 0,
+      "type": [
+        "integer",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "path",
+    "filename",
+    "extension",
+    "byte_size",
+    "mtime"
+  ],
+  "title": "LibraryDocumentIndexedPayload",
+  "type": "object",
+  "x-sinex-event-type": "document.indexed",
+  "x-sinex-source": "docs-library",
+  "x-sinex-version": "1.0.0"
+}

@@ -6,7 +6,7 @@
 //! The `data` bytes are interpreted as newline-delimited JSON journal lines
 //! (the same format `journalctl --output=json` produces).
 
-use sinex_node_sdk::parser::{records_from_journal_lines, ParserResult};
+use sinex_node_sdk::parser::{ParserResult, records_from_journal_lines};
 use sinex_primitives::events::SourceMaterial;
 use sinex_primitives::ids::Id;
 use sinex_primitives::parser::SourceRecord;
@@ -41,5 +41,7 @@ pub fn build(data: &[u8]) -> Result<FixtureHandle, String> {
         .map(|r| r.bytes)
         .collect();
 
-    Ok(FixtureHandle::in_memory(FixtureBinding::InMemoryRecords(record_bytes)))
+    Ok(FixtureHandle::in_memory(FixtureBinding::InMemoryRecords(
+        record_bytes,
+    )))
 }

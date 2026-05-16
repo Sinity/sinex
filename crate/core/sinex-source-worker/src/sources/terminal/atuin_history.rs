@@ -1,10 +1,10 @@
-//! `terminal.atuin-history` — Atuin SQLite history adapter.
+//! `terminal.atuin-history` — Atuin `SQLite` history adapter.
 //!
 //! Folds the Atuin history source unit from `sinex-terminal-ingestor` into
 //! the source-worker dispatch and node factory registries.
 //!
 //! Adapter: [`SqliteRowAdapter`] — reads from `~/.local/share/atuin/history.db`.
-//! Parser:  [`AtuinHistoryParser`] — maps each SQLite row to
+//! Parser:  [`AtuinHistoryParser`] — maps each `SQLite` row to
 //!          [`AtuinCommandExecutedPayload`].
 //!
 //! The source-unit descriptor and binding are registered here; the
@@ -15,23 +15,19 @@
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
-use sinex_node_sdk::parser::{
-    MaterialParser, ParserError, ParserResult, SqliteRowAdapter,
-};
+use sinex_node_sdk::parser::{MaterialParser, ParserError, ParserResult, SqliteRowAdapter};
 use sinex_primitives::domain::{EventSource, EventType};
 use sinex_primitives::events::payloads::shell::AtuinCommandExecutedPayload;
 use sinex_primitives::parser::{
-    InputShapeKind, ParsedEventIntent, ParserContext, ParserId, ParserManifest,
-    SourceUnitId, TimingConfidence, TimingEvidence,
+    InputShapeKind, ParsedEventIntent, ParserContext, ParserId, ParserManifest, SourceUnitId,
+    TimingConfidence, TimingEvidence,
 };
 use sinex_primitives::privacy::ProcessingContext;
 use sinex_primitives::proof::{
-    CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, RetentionPolicy,
-    RuntimeShape, SourceUnitBinding, SourceUnitBuildImpact, SourceUnitDescriptor,
-    SubjectRef,
+    CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, RetentionPolicy, RuntimeShape,
+    SourceUnitBinding, SourceUnitBuildImpact, SourceUnitDescriptor, SubjectRef,
 };
 use sinex_primitives::{register_source_unit, register_source_unit_binding};
-use sinex_primitives::temporal::Timestamp;
 
 use crate::register_adapter_ingestor;
 
@@ -90,7 +86,7 @@ register_source_unit_binding! {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct AtuinHistoryParserConfig;
 
-/// Parser for Atuin SQLite history rows.
+/// Parser for Atuin `SQLite` history rows.
 ///
 /// Each [`SourceRecord`] carries a JSON-serialized row from the `history`
 /// table. The parser extracts fields and builds [`AtuinCommandExecutedPayload`].
@@ -161,15 +157,15 @@ impl MaterialParser for AtuinHistoryParser {
             .to_string();
         let timestamp_ns = row
             .get("timestamp")
-            .and_then(|v| v.as_i64())
+            .and_then(sinex_primitives::JsonValue::as_i64)
             .unwrap_or(0);
         let duration_ns = row
             .get("duration")
-            .and_then(|v| v.as_i64())
+            .and_then(sinex_primitives::JsonValue::as_i64)
             .unwrap_or(0);
         let exit_code = row
             .get("exit")
-            .and_then(|v| v.as_i64())
+            .and_then(sinex_primitives::JsonValue::as_i64)
             .unwrap_or(0);
 
         // Apply privacy processing.

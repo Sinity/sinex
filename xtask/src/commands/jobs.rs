@@ -1129,8 +1129,7 @@ mod tests {
     /// Simulate the follow loop's file→DB handoff and verify exact output
     /// preservation: no dropped lines, no duplicated lines, correct order.
     #[sinex_test]
-    async fn test_follow_log_handoff_preserves_output()
-    -> ::xtask::sandbox::TestResult<()> {
+    async fn test_follow_log_handoff_preserves_output() -> ::xtask::sandbox::TestResult<()> {
         // Build numbered-line content: "1\n2\n...100\n"
         let lines: Vec<String> = (1..=100).map(|i| i.to_string()).collect();
         let content = lines.join("\n") + "\n";
@@ -1143,12 +1142,10 @@ mod tests {
 
         // Phase 2: read first half from file (simulates early follow iterations)
         let (first_half, new_pos) =
-            read_stdout_delta_from_file(&file_path, 0)?
-                .expect("file should exist and be readable");
+            read_stdout_delta_from_file(&file_path, 0)?.expect("file should exist and be readable");
         // Read the rest from the last consumed byte.
         let (second_half, new_pos) =
-            read_stdout_delta_from_file(&file_path, new_pos)?
-                .expect("file should still exist");
+            read_stdout_delta_from_file(&file_path, new_pos)?.expect("file should still exist");
 
         // Phase 3: simulate archiving — delete the file, read remainder from
         // a buffer (standing in for the DB-archived content).
@@ -1161,7 +1158,8 @@ mod tests {
         let combined_lines: Vec<&str> = combined.lines().collect();
 
         assert_eq!(
-            original_lines, combined_lines,
+            original_lines,
+            combined_lines,
             "log handoff must preserve exact line sequence: \
              {} original lines, {} combined lines. \
              Gaps/duplications indicate a handoff bug.",
@@ -1182,8 +1180,8 @@ mod tests {
     /// Verify the handoff detects when file content grows between delta-read
     /// and the terminal-state DB read.
     #[sinex_test]
-    async fn test_follow_handoff_catches_growth_before_archive()
-    -> ::xtask::sandbox::TestResult<()> {
+    async fn test_follow_handoff_catches_growth_before_archive() -> ::xtask::sandbox::TestResult<()>
+    {
         let dir = tempdir()?;
         let file_path = dir.path().join("stdout.log");
 
@@ -1192,17 +1190,14 @@ mod tests {
         std::fs::write(&file_path, initial)?;
 
         // Read position 0..end (gets "line1\nline2\n")
-        let (buf1, pos1) =
-            read_stdout_delta_from_file(&file_path, 0)?
-                .expect("file should exist");
+        let (buf1, pos1) = read_stdout_delta_from_file(&file_path, 0)?.expect("file should exist");
 
         // Append more content (simulating the job writing more between reads)
         std::fs::write(&file_path, format!("{initial}line3\nline4\n"))?;
 
         // Read from pos1 (gets "line3\nline4\n")
         let (buf2, pos2) =
-            read_stdout_delta_from_file(&file_path, pos1)?
-                .expect("file should exist");
+            read_stdout_delta_from_file(&file_path, pos1)?.expect("file should exist");
 
         // Combined output should have all 4 lines in order
         let combined = format!("{buf1}{buf2}");

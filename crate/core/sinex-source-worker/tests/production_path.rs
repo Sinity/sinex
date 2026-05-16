@@ -223,21 +223,9 @@ async fn _run_obligation(
             )
             .await
         }
-        "drain" => {
-            obligations::drain::run(
-                source_unit_id,
-                adapter_kind,
-                fixture_data,
-            )
-            .await
-        }
+        "drain" => obligations::drain::run(source_unit_id, adapter_kind, fixture_data).await,
         "isolation" => {
-            obligations::isolation::run(
-                source_unit_id,
-                adapter_kind,
-                fixture_data,
-            )
-            .await
+            obligations::isolation::run(source_unit_id, adapter_kind, fixture_data).await
         }
         "privacy" => {
             obligations::privacy::run(

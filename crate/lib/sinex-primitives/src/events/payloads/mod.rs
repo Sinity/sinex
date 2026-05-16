@@ -27,8 +27,8 @@ pub mod clipboard;
 pub mod desktop;
 pub mod document;
 pub mod entity;
-pub mod finance;
 pub mod filesystem;
+pub mod finance;
 pub mod gateway;
 pub mod health;
 pub mod integration;
@@ -57,8 +57,8 @@ pub use clipboard::*;
 pub use desktop::*;
 pub use document::*;
 pub use entity::*;
-pub use finance::*;
 pub use filesystem::*;
+pub use finance::*;
 pub use gateway::*;
 pub use health::*;
 pub use integration::*;
@@ -74,6 +74,3 @@ pub use system::*;
 pub use vcs::*;
 pub use web::*;
 pub use window::*;
-
-#[cfg(any(test, feature = "testing"))]
-pub use testing::*;

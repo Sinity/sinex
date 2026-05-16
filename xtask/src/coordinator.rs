@@ -1296,9 +1296,7 @@ pub fn update_coordinator_state(command: &str, bg_result: &CommandResult) -> Res
     // already exited by the time we read /proc/{pid}/stat, store 0 (sentinel:
     // "unknown") — the coordinator will treat any non-zero process at this PID
     // as a mismatch and refuse to send signals.
-    let start_ticks = crate::process::read_proc_sample(pid as u32)
-        .map(|s| s.start_ticks)
-        .unwrap_or(0);
+    let start_ticks = crate::process::read_proc_sample(pid as u32).map_or(0, |s| s.start_ticks);
 
     if let Err(error) = coordinator.update_state(command, job_id, pid as u32, start_ticks) {
         let cleared = clear_pending(
@@ -1523,7 +1521,6 @@ pub fn compute_scope_key(command: &str, args: &[String]) -> String {
 }
 
 // --- R2: Workflow Dependency Graph ---
-
 
 #[cfg(test)]
 mod tests {
@@ -1757,8 +1754,7 @@ mod tests {
     /// must NOT collide. Pre-#1212, all clean-tree fingerprints hashed zero bytes
     /// and SHA256("")'d into one bucket — 117 collisions in 7d on master.
     #[sinex_test]
-    async fn test_scoped_tree_fingerprint_clean_tree_distinguishes_packages()
-    -> TestResult<()> {
+    async fn test_scoped_tree_fingerprint_clean_tree_distinguishes_packages() -> TestResult<()> {
         let dir = tempfile::tempdir()?;
         run_git(&["init", "-q"], dir.path())?;
         run_git(&["config", "user.name", "Sinex Test"], dir.path())?;
@@ -1784,11 +1780,8 @@ mod tests {
         )?;
         run_git(&["commit", "-qm", "init"], dir.path())?;
 
-        let fp_db = scoped_tree_fingerprint_in(
-            dir.path(),
-            "check",
-            &["-p".into(), "sinex-db".into()],
-        )?;
+        let fp_db =
+            scoped_tree_fingerprint_in(dir.path(), "check", &["-p".into(), "sinex-db".into()])?;
         let fp_primitives = scoped_tree_fingerprint_in(
             dir.path(),
             "check",
@@ -1887,8 +1880,8 @@ mod tests {
                     output_format: OutputFormat::Human,
                     tree_fingerprint: "queued-fp-1".into(),
                     scope_key: "queued-scope-1".into(),
-                                    reason: String::new(),
-},
+                    reason: String::new(),
+                },
                 QueuedWork {
                     command: "test".into(),
                     args: vec!["-p".into(), "sinex-primitives".into()],
@@ -1896,8 +1889,8 @@ mod tests {
                     output_format: OutputFormat::Json,
                     tree_fingerprint: "queued-fp-2".into(),
                     scope_key: "queued-scope-2".into(),
-                                    reason: String::new(),
-},
+                    reason: String::new(),
+                },
             ],
         };
 
@@ -1962,8 +1955,8 @@ mod tests {
             output_format: OutputFormat::Human,
             tree_fingerprint: "fp-first".into(),
             scope_key: "scope-first".into(),
-                    reason: String::new(),
-});
+            reason: String::new(),
+        });
         s.queue.push(QueuedWork {
             command: "build".into(),
             args: vec!["second".into()],
@@ -1971,8 +1964,8 @@ mod tests {
             output_format: OutputFormat::Json,
             tree_fingerprint: "fp-second".into(),
             scope_key: "scope-second".into(),
-                    reason: String::new(),
-});
+            reason: String::new(),
+        });
         s.queue.push(QueuedWork {
             command: "vm".into(),
             args: vec!["third".into()],
@@ -1980,8 +1973,8 @@ mod tests {
             output_format: OutputFormat::Compact,
             tree_fingerprint: "fp-third".into(),
             scope_key: "scope-third".into(),
-                    reason: String::new(),
-});
+            reason: String::new(),
+        });
         write_state(&state_path, &s)?;
 
         // Read back and verify FIFO order
@@ -2028,8 +2021,8 @@ mod tests {
                         output_format: OutputFormat::Json,
                         tree_fingerprint: "queued-fp".into(),
                         scope_key: "queued-scope".into(),
-                                            reason: String::new(),
-},
+                        reason: String::new(),
+                    },
                     QueuedWork {
                         command: "vm".into(),
                         args: vec!["-p".into(), "xtask".into()],
@@ -2037,8 +2030,8 @@ mod tests {
                         output_format: OutputFormat::Human,
                         tree_fingerprint: "queued-fp-2".into(),
                         scope_key: "queued-scope-2".into(),
-                                            reason: String::new(),
-},
+                        reason: String::new(),
+                    },
                 ],
             },
         )?;
@@ -2092,8 +2085,8 @@ mod tests {
                     output_format: OutputFormat::Json,
                     tree_fingerprint: "queued-fp-final".into(),
                     scope_key: "queued-scope-final".into(),
-                                    reason: String::new(),
-}],
+                    reason: String::new(),
+                }],
             },
         )?;
 
@@ -2310,8 +2303,8 @@ mod tests {
                 output_format: OutputFormat::Human,
                 tree_fingerprint: "queued-fp".into(),
                 scope_key: "queued-scope".into(),
-                            reason: String::new(),
-}],
+                reason: String::new(),
+            }],
         };
 
         write_state(&path, &state)?;
@@ -2560,9 +2553,7 @@ mod tests {
     #[sinex_test]
     async fn test_cancel_process_skips_wrong_start_ticks() -> TestResult<()> {
         // Spawn an innocent long-running process.
-        let mut child = std::process::Command::new("sleep")
-            .arg("10")
-            .spawn()?;
+        let mut child = std::process::Command::new("sleep").arg("10").spawn()?;
         let pid = child.id();
 
         // Read its actual start_ticks from /proc.
@@ -2602,9 +2593,7 @@ mod tests {
         // start_ticks=0 is the sentinel: "not captured, pre-existing state."
         // In this case cancel_process must still deliver signals (backward
         // compatible with state files written before the #1141 fix).
-        let mut child = std::process::Command::new("sleep")
-            .arg("10")
-            .spawn()?;
+        let mut child = std::process::Command::new("sleep").arg("10").spawn()?;
         let pid = child.id();
 
         cancel_process(pid, 0);
@@ -2624,9 +2613,7 @@ mod tests {
 
     #[sinex_test]
     async fn test_process_identity_valid_rejects_stolen_pid() -> TestResult<()> {
-        let mut child = std::process::Command::new("sleep")
-            .arg("10")
-            .spawn()?;
+        let mut child = std::process::Command::new("sleep").arg("10").spawn()?;
         let pid = child.id();
         let actual = crate::process::read_proc_sample(pid).unwrap();
 

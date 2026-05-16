@@ -18,12 +18,15 @@ use super::{FixtureBinding, FixtureHandle};
 ///
 /// Returns an error if the temp file cannot be created or written.
 pub fn build(data: &[u8]) -> Result<FixtureHandle, String> {
-    let mut file = NamedTempFile::new()
-        .map_err(|e| format!("failed to create static fixture file: {e}"))?;
+    let mut file =
+        NamedTempFile::new().map_err(|e| format!("failed to create static fixture file: {e}"))?;
     file.write_all(data)
         .map_err(|e| format!("failed to write static fixture data: {e}"))?;
     file.flush()
         .map_err(|e| format!("failed to flush static fixture data: {e}"))?;
     let path = file.path().to_owned();
-    Ok(FixtureHandle::with_resource(FixtureBinding::FilePath(path), file))
+    Ok(FixtureHandle::with_resource(
+        FixtureBinding::FilePath(path),
+        file,
+    ))
 }

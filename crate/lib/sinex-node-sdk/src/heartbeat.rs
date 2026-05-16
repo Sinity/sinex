@@ -92,7 +92,7 @@ impl HeartbeatLogSink for StdoutHeartbeatSink {
 /// Heartbeat emitter that logs structured JSON to stdout.
 ///
 /// TODO(#754): This is superseded by [`crate::health_reporter::HealthReporter`] and will be
-/// removed once all consumers are migrated. The HealthReporter provides the same
+/// removed once all consumers are migrated. The `HealthReporter` provides the same
 /// functionality (tracking status, emitting on transition) with a cleaner API and
 /// is now wired into both `DerivedNodeAdapter` and `IngestorNodeAdapter`.
 /// Consumers should migrate to using the adapter's `health_reporter()` accessor.
@@ -350,22 +350,16 @@ impl HeartbeatEmitter {
 
     /// Create heartbeat metrics
     ///
-    /// Uses atomic counter reset for heartbeat interval accounting.
-    /// Note: `CoordinationPrimitive::reset()` internally uses swap(0, `AcqRel`) which is atomic,
-    /// but the pattern of get-then-reset is not. We read `errors_count` before resetting to
-    /// include it in the current heartbeat metrics.
-    ///
-    /// KNOWN LIMITATION: There's a small window between `get()` and `reset()` where counter
-    /// updates could be lost. For heartbeat metrics this is acceptable as it only affects
-    /// the accuracy of per-interval counts, not cumulative totals. To fix this properly,
-    /// `CoordinationPrimitive` would need a `fetch_and_reset()` method.
+    /// Uses `CoordinationPrimitive::swap_reset()` (an `AtomicUsize::swap(0, AcqRel)`) to
+    /// atomically read-and-zero each counter in a single operation. Increments arriving
+    /// concurrently are never lost: they land either in the snapshot (if they raced before
+    /// the swap) or in the next interval (if they raced after). No window where counts
+    /// silently disappear.
     pub async fn create_heartbeat_metrics(
         &self,
         metadata: Option<serde_json::Value>,
     ) -> HeartbeatMetrics {
         let uptime = elapsed_seconds_with_warning(self.start_time, "heartbeat uptime");
-        // Atomically snapshot-and-reset both counters to prevent the race window
-        // between get() and reset() where increments could be silently lost.
         let recent_errors = self.errors_count.swap_reset();
         let events_processed = self.events_processed.swap_reset();
         let last_error = self.last_error.lock().take();
@@ -422,17 +416,15 @@ impl HeartbeatEmitter {
         #[cfg(feature = "db")]
         if let Some(ref pool) = self.db_pool {
             let warn_skipped = self.persistence_warn_count.fetch_add(1, Ordering::Relaxed);
-            let log_persistence_warn = warn_skipped % 100 == 0;
+            let log_persistence_warn = warn_skipped.is_multiple_of(100);
 
             use sinex_db::DbPoolExt;
-            if self.node_name.is_none() && self.source_run_id.is_none() {
-                if log_persistence_warn {
-                    warn!(
-                        service = %metrics.service_name,
-                        skipped = warn_skipped,
-                        "Heartbeat persistence is configured without a node identity; database heartbeat updates are disabled (rate-limited)"
-                    );
-                }
+            if self.node_name.is_none() && self.source_run_id.is_none() && log_persistence_warn {
+                warn!(
+                    service = %metrics.service_name,
+                    skipped = warn_skipped,
+                    "Heartbeat persistence is configured without a node identity; database heartbeat updates are disabled (rate-limited)"
+                );
             }
             if let Some(node_name) = &self.node_name {
                 match pool

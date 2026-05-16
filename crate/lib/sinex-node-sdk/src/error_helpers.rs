@@ -4,7 +4,6 @@
 //! across nodes. These helpers provide consistent error context and conversion patterns.
 
 use crate::{SinexError, runtime::stream::NodeRuntimeState};
-use sinex_primitives::env as shared_env;
 use std::collections::HashMap;
 use std::io;
 use std::time::SystemTime;

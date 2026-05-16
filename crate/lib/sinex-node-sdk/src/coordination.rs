@@ -1097,7 +1097,12 @@ impl NodeCoordination {
                 Ok(true) => InstanceMode::Leader,
                 Ok(false) => InstanceMode::Standby,
                 Err(e) => {
-                    error!("Failed to check leadership: {}", e);
+                    error!(
+                        target: "sinex_metrics",
+                        metric = "node.leadership_check_failures_total",
+                        error = %e,
+                        "Failed to check leadership"
+                    );
                     self.record_coordination_failure("acquire_leadership", &e);
                     if self.current_mode == InstanceMode::Leader {
                         warn!("Cannot confirm leadership, degrading to Standby");
@@ -1161,7 +1166,12 @@ impl NodeCoordination {
                         return Ok(CoordinationLoopDirective::Exit);
                     }
                     Err(e) => {
-                        error!("Error running as leader: {}", e);
+                        error!(
+                            target: "sinex_metrics",
+                            metric = "node.leader_loop_failures_total",
+                            error = %e,
+                            "Error running as leader"
+                        );
                         self.current_mode = InstanceMode::Standby;
                         return Err(e);
                     }
@@ -1240,6 +1250,8 @@ impl NodeCoordination {
                 Err(e) => {
                     let _ = handoff_drops_clone.add(1);
                     error!(
+                        target: "sinex_metrics",
+                        metric = "node.coordination_failures_total",
                         service = %service_name_health,
                         error = %e,
                         "Handoff monitor failed to subscribe - coordination may be impaired"
@@ -1267,11 +1279,20 @@ impl NodeCoordination {
                            // Still leader, continue
                        }
                        Ok(false) => {
-                           error!("Lost leadership to another instance");
+                           error!(
+                               target: "sinex_metrics",
+                               metric = "node.leadership_lost_total",
+                               "Lost leadership to another instance"
+                           );
                            return Ok(LeaderLoopOutcome::LeadershipLost);
                        }
                        Err(e) => {
-                           error!("Failed to maintain leadership: {}", e);
+                           error!(
+                               target: "sinex_metrics",
+                               metric = "node.leadership_maintenance_failures_total",
+                               error = %e,
+                               "Failed to maintain leadership"
+                           );
                            return Err(SinexError::service("Lost connection to coordination"));
                        }
                    }
@@ -1292,7 +1313,12 @@ impl NodeCoordination {
                            return Ok(LeaderLoopOutcome::Exit);
                        }
                        Err(e) => {
-                           error!("Critical failure in event processing: {}", e);
+                           error!(
+                               target: "sinex_metrics",
+                               metric = "node.leader_loop_failures_total",
+                               error = %e,
+                               "Critical failure in event processing"
+                           );
                            self.signal_critical_failure(&e.to_string()).await?;
                            return Err(e);
                        }
@@ -1695,7 +1721,11 @@ impl NodeCoordination {
             .await
             .map_err(|e| SinexError::network("failed to publish failure signal").with_source(e))?;
 
-        error!("Signaled critical failure to standbys: {}", error);
+        error!(
+            target: "sinex_metrics",
+            metric = "node.critical_failure_signals_total",
+            "Signaled critical failure to standbys: {error}"
+        );
 
         // Also force release lease if we can
         if let Err(e) = self

@@ -1,4 +1,4 @@
-//! Static (source, event_type) registry built from the `EventPayload`
+//! Static (source, `event_type`) registry built from the `EventPayload`
 //! inventory at startup (#1172, AC-4 — "schema-as-code").
 //!
 //! Every event-emitting RPC must validate the `(source, event_type)` pair
@@ -36,7 +36,8 @@ impl SchemaRegistry {
     /// Look up a `(source, event_type)` pair.
     #[must_use]
     pub fn contains(&self, source: &str, event_type: &str) -> bool {
-        self.pairs.contains(&(source.to_string(), event_type.to_string()))
+        self.pairs
+            .contains(&(source.to_string(), event_type.to_string()))
     }
 
     /// Number of registered pairs (mostly for diagnostics / startup logs).
@@ -57,9 +58,11 @@ impl SchemaRegistry {
         if self.contains(source.as_str(), event_type.as_str()) {
             Ok(())
         } else {
-            Err(SinexError::validation("unknown event (source, event_type) pair")
-                .with_context("source", source.as_str())
-                .with_context("event_type", event_type.as_str()))
+            Err(
+                SinexError::validation("unknown event (source, event_type) pair")
+                    .with_context("source", source.as_str())
+                    .with_context("event_type", event_type.as_str()),
+            )
         }
     }
 }
@@ -81,7 +84,7 @@ mod tests {
         // The inventory is sizeable in this workspace; a non-zero population
         // is the only durable invariant we can pin at this layer without
         // hard-coding a moving target.
-        assert!(reg.len() > 0, "schema registry should be non-empty");
+        assert!(!reg.is_empty(), "schema registry should be non-empty");
         Ok(())
     }
 

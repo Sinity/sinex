@@ -142,8 +142,7 @@ fn render_table(snapshot: &NowSnapshot) {
             let ts = entry
                 .timestamp
                 .as_deref()
-                .map(|t| &t[..t.len().min(19)])
-                .unwrap_or("unknown");
+                .map_or("unknown", |t| &t[..t.len().min(19)]);
             let detail = entry.detail.as_deref().unwrap_or("");
             let detail_display = if detail.len() > 50 {
                 format!("{}...", &detail[..47])
@@ -170,8 +169,8 @@ fn render_table(snapshot: &NowSnapshot) {
         println!();
         println!("{}", style("Active Nodes").bold());
         println!(
-            "  {:<30} {:<14} {:<10}  {:<10}  {}",
-            "NAME", "TYPE", "STATUS", "LAST SEEN", "LDR"
+            "  {:<30} {:<14} {:<10}  {:<10}  LDR",
+            "NAME", "TYPE", "STATUS", "LAST SEEN"
         );
         println!(
             "  {:-<30} {:-<14} {:-<10}  {:-<10}  {:-<3}",
@@ -182,8 +181,7 @@ fn render_table(snapshot: &NowSnapshot) {
             let age = node
                 .last_heartbeat
                 .as_ref()
-                .map(|hb| format_heartbeat_age(hb))
-                .unwrap_or_else(|| "never".to_string());
+                .map_or_else(|| "never".to_string(), format_heartbeat_age);
 
             let status = if node
                 .last_heartbeat
@@ -218,10 +216,7 @@ fn render_table(snapshot: &NowSnapshot) {
     if !snapshot.automata.automata.is_empty() {
         println!();
         println!("{}", style("Automata").bold());
-        println!(
-            "  {:<30} {:<12} {:<10}  {}",
-            "NAME", "LIVE", "STATUS", "EVENTS"
-        );
+        println!("  {:<30} {:<12} {:<10}  EVENTS", "NAME", "LIVE", "STATUS");
         println!("  {:-<30} {:-<12} {:-<10}  {:-<8}", "", "", "", "");
 
         for automaton in &snapshot.automata.automata {
@@ -233,8 +228,7 @@ fn render_table(snapshot: &NowSnapshot) {
             let run_status = automaton.run_status.as_deref().unwrap_or("—");
             let events = automaton
                 .events_processed_current_run
-                .map(|n| n.to_string())
-                .unwrap_or_else(|| "—".to_string());
+                .map_or_else(|| "—".to_string(), |n| n.to_string());
 
             println!(
                 "  {:<30} {:<12} {:<10}  {}",

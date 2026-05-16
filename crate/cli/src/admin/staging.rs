@@ -25,6 +25,7 @@ impl StagingDir {
     }
 
     /// Return the path to the staging directory.
+    #[must_use]
     pub fn path(&self) -> &Path {
         &self.path
     }

@@ -1,0 +1,54 @@
+{
+  "$defs": {
+    "DateTime": {
+      "description": "RFC 3339 formatted date-time string",
+      "format": "date-time",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "One message in a Claude conversation export (`conversations.json`).\n\nSource: Claude GDPR export → `chat_messages[].sender` is `\"human\"` or\n`\"assistant\"`. The `text` field carries the rendered message body.",
+  "properties": {
+    "conversation_name": {
+      "description": "Human-readable conversation title (if set by the user).",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "message_id": {
+      "description": "UUID of the message itself.",
+      "type": "string"
+    },
+    "message_ts": {
+      "$ref": "#/$defs/DateTime",
+      "description": "ISO 8601 timestamp of the message as recorded in the export."
+    },
+    "role": {
+      "description": "`\"human\"` or `\"assistant\"`.",
+      "type": "string"
+    },
+    "session_id": {
+      "description": "UUID of the conversation this message belongs to.",
+      "type": "string"
+    },
+    "text": {
+      "description": "Rendered message text (may be empty for tool-use or attachment-only turns).",
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "session_id",
+    "message_id",
+    "role",
+    "message_ts"
+  ],
+  "title": "ClaudeAiMessagePayload",
+  "type": "object",
+  "x-sinex-event-type": "ai.message",
+  "x-sinex-source": "claude",
+  "x-sinex-version": "1.0.0"
+}

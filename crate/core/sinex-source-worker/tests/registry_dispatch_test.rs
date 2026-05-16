@@ -56,8 +56,8 @@ async fn weechat_parser_registered_and_dispatches() {
 async fn weechat_join_line_produces_irc_join() {
     let dispatch = default_parser_dispatch();
     let log_line = b"2024-06-01 10:00:00\t-->\tuser (~user@host) joined #general";
-    let outcome = dispatch("weechat", log_line, None)
-        .expect("dispatch must succeed for a join line");
+    let outcome =
+        dispatch("weechat", log_line, None).expect("dispatch must succeed for a join line");
     assert_eq!(outcome.events.len(), 1);
     assert_eq!(outcome.events[0].event_type.as_str(), "irc.join");
     assert_eq!(outcome.events[0].payload["channel"], "#general");

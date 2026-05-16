@@ -912,9 +912,9 @@ fn weakness_dimensions(r: &Replayability) -> Vec<&'static str> {
 #[cfg(test)]
 mod tests {
     use super::{
-        format_per_material_scorecard_table, format_replay_preview_table, preview_total_events,
-        truncate_head_chars, truncate_tail_chars, weakness_dimensions,
-        MaterialReplayabilityScorecard, Replayability,
+        MaterialReplayabilityScorecard, Replayability, format_per_material_scorecard_table,
+        format_replay_preview_table, preview_total_events, truncate_head_chars,
+        truncate_tail_chars, weakness_dimensions,
     };
     use serde_json::json;
     use sinex_primitives::rpc::replay::{
@@ -1058,8 +1058,7 @@ mod tests {
         // Two materials with distinct replayability shapes — one strong,
         // one weak — should compose into an aggregate row that names the
         // material count and a midpoint score.
-        let strong =
-            Replayability::from_material_facts("completed", true, "intrinsic", Some(2048));
+        let strong = Replayability::from_material_facts("completed", true, "intrinsic", Some(2048));
         let weak = Replayability::from_material_facts("sensing", false, "inferred", None);
         let rows = vec![
             make_scorecard("mat-a-uuid", "/path/strong.csv", "completed", strong),

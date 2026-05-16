@@ -11,9 +11,9 @@
     {
       "source": "sinex.ingestd",
       "event_type": "batch.stats",
-      "version": "2.0.0",
+      "version": "2.2.0",
       "path": "sinex.ingestd/batch.stats.json",
-      "content_hash": "ad8ac8d8acb587a40e6c0a95e6eab21aaa38dd8e9d64b5f905c83a4ba70f5d11"
+      "content_hash": "857ef945ea42a058f6369a2a97a4888a95e9cc2a21f1d650d72a7923dfa8884d"
     }
   ]
 }

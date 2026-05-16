@@ -1093,7 +1093,11 @@ pub async fn handle_tombstone_approve(
             {
                 let content_store = services.content.content_store();
                 // Translate blob UUID to a content-store key by looking up core.blobs.
-                match pool.blobs().get_by_id(sinex_primitives::Id::from_uuid(blob_uuid)).await {
+                match pool
+                    .blobs()
+                    .get_by_id(sinex_primitives::Id::from_uuid(blob_uuid))
+                    .await
+                {
                     Ok(Some(blob_row)) => {
                         if let Err(e) = content_store
                             .drop_content(&blob_row.content_key(), true)
@@ -1359,7 +1363,7 @@ pub async fn handle_tombstone_status(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use xtask::sandbox::{TestResult, sinex_test};
+    use xtask::sandbox::sinex_test;
 
     #[sinex_test]
     async fn parse_duration_to_timestamp_preserves_subsecond_precision() -> TestResult<()> {

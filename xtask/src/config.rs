@@ -264,9 +264,7 @@ pub(crate) fn load_user_preferences() -> UserPreferences {
         // dirs::config_dir() returns None only in unusual environments (no $HOME set).
         // Fall back to $HOME/.config rather than the literal "~/.config" path, which
         // the OS would not expand and would fail to locate the file.
-        let home = std::env::var_os("HOME")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from("/"));
+        let home = std::env::var_os("HOME").map_or_else(|| PathBuf::from("/"), PathBuf::from);
         home.join(".config")
     });
     let path = config_dir.join("xtask/preferences.toml");
@@ -595,10 +593,7 @@ mod tests {
         let other_inner = other.path().join("crate/foo");
         std::fs::create_dir_all(&other_inner)?;
 
-        assert!(path_belongs_to_other_checkout(
-            &other_inner,
-            active.path()
-        ));
+        assert!(path_belongs_to_other_checkout(&other_inner, active.path()));
         assert!(!path_belongs_to_other_checkout(
             &active.path().join("crate/foo"),
             active.path()
@@ -617,11 +612,8 @@ mod tests {
         let mut env = EnvGuard::with_keys(&["SINEX_TEST_PINNED_PATH"]);
         env.set("SINEX_TEST_PINNED_PATH", &cross);
         let fallback = active.path().join("fallback");
-        let resolved = workspace_pinned_env_path(
-            "SINEX_TEST_PINNED_PATH",
-            active.path(),
-            || fallback.clone(),
-        );
+        let resolved =
+            workspace_pinned_env_path("SINEX_TEST_PINNED_PATH", active.path(), || fallback.clone());
         assert_eq!(
             resolved, fallback,
             "cross-checkout env value must fall back to the workspace-local default"
@@ -637,11 +629,9 @@ mod tests {
 
         let mut env = EnvGuard::with_keys(&["SINEX_TEST_PINNED_PATH"]);
         env.set("SINEX_TEST_PINNED_PATH", &inside);
-        let resolved = workspace_pinned_env_path(
-            "SINEX_TEST_PINNED_PATH",
-            active.path(),
-            || active.path().join("fallback"),
-        );
+        let resolved = workspace_pinned_env_path("SINEX_TEST_PINNED_PATH", active.path(), || {
+            active.path().join("fallback")
+        });
         assert_eq!(resolved, inside);
         Ok(())
     }
@@ -657,11 +647,9 @@ mod tests {
 
         let mut env = EnvGuard::with_keys(&["SINEX_TEST_PINNED_PATH"]);
         env.set("SINEX_TEST_PINNED_PATH", external.path());
-        let resolved = workspace_pinned_env_path(
-            "SINEX_TEST_PINNED_PATH",
-            active.path(),
-            || active.path().join("fallback"),
-        );
+        let resolved = workspace_pinned_env_path("SINEX_TEST_PINNED_PATH", active.path(), || {
+            active.path().join("fallback")
+        });
         assert_eq!(
             resolved,
             external.path(),

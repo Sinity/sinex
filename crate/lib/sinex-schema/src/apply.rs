@@ -1,10 +1,10 @@
 use crate::schema::{
-    ArchivedEventAnnotations, ArchivedEventEmbeddings, ArchivedEvents,
-    ArchivedTaggedItems, BinarySchemaVersion, Blobs, DocumentChunks, Documents, EmbeddingCache,
-    EmbeddingModels, Entities, EntityRelations, EventAnnotations, EventClusterMembers,
-    EventClusters, EventEmbeddings, EventPayloadSchemas, EventReplacements, EventTombstones, Events,
-    Manifests, OperationsLog, Runs,
-    SourceMaterialLinks, SourceMaterialRegistry, TaggedItems, Tags, TemporalLedger,
+    ArchivedEventAnnotations, ArchivedEventEmbeddings, ArchivedEvents, ArchivedTaggedItems,
+    BinarySchemaVersion, Blobs, DocumentChunks, Documents, EmbeddingCache, EmbeddingModels,
+    Entities, EntityRelations, EventAnnotations, EventClusterMembers, EventClusters,
+    EventEmbeddings, EventPayloadSchemas, EventReplacements, EventTombstones, Events, Manifests,
+    OperationsLog, Runs, SourceMaterialLinks, SourceMaterialRegistry, TaggedItems, Tags,
+    TemporalLedger,
 };
 use crate::schema_registry;
 use sea_query::{IndexCreateStatement, PostgresQueryBuilder, TableCreateStatement};
@@ -25,8 +25,7 @@ const TEMPORAL_LEDGER_REQUIRED_TRIGGERS: &[&str] = &["trg_tl_no_update_delete"];
 const ENTITIES_REQUIRED_TRIGGERS: &[&str] = &["trg_entities_updated_at"];
 const ENTITY_RELATIONS_REQUIRED_TRIGGERS: &[&str] = &["trg_entity_relations_updated_at"];
 const EVENT_ANNOTATIONS_REQUIRED_TRIGGERS: &[&str] = &["trg_event_annotations_updated_at"];
-const EVENT_PAYLOAD_SCHEMAS_REQUIRED_TRIGGERS: &[&str] =
-    &["trg_event_payload_schemas_updated_at"];
+const EVENT_PAYLOAD_SCHEMAS_REQUIRED_TRIGGERS: &[&str] = &["trg_event_payload_schemas_updated_at"];
 const DLQ_EVENTS_REQUIRED_TRIGGERS: &[&str] = &["set_timestamp"];
 const EMBEDDING_MODELS_REQUIRED_TRIGGERS: &[&str] = &["trg_embedding_model_create_index"];
 const EVENTS_REQUIRED_INDEXES: &[&str] = &[
@@ -180,7 +179,10 @@ pub async fn diff(pool: &PgPool) -> Result<Vec<String>, ApplyError> {
         ("raw.temporal_ledger", TEMPORAL_LEDGER_REQUIRED_TRIGGERS),
         ("core.entities", ENTITIES_REQUIRED_TRIGGERS),
         ("core.entity_relations", ENTITY_RELATIONS_REQUIRED_TRIGGERS),
-        ("core.event_annotations", EVENT_ANNOTATIONS_REQUIRED_TRIGGERS),
+        (
+            "core.event_annotations",
+            EVENT_ANNOTATIONS_REQUIRED_TRIGGERS,
+        ),
         (
             "sinex_schemas.event_payload_schemas",
             EVENT_PAYLOAD_SCHEMAS_REQUIRED_TRIGGERS,
@@ -759,7 +761,6 @@ async fn create_tables(pool: &PgPool) -> Result<(), ApplyError> {
     execute_sql(pool, &ArchivedEventEmbeddings::create_table_sql()).await?;
     execute_sql(pool, &ArchivedTaggedItems::create_table_sql()).await?;
 
-
     Ok(())
 }
 
@@ -873,7 +874,7 @@ async fn configure_timescaledb(pool: &PgPool) -> Result<(), ApplyError> {
     .await?;
     execute_sql(
         pool,
-        r#"
+        r"
         CREATE INDEX IF NOT EXISTS ix_events_sinex_metric_gauge_latest
         ON core.events (
             (payload->>'name'),
@@ -882,16 +883,16 @@ async fn configure_timescaledb(pool: &PgPool) -> Result<(), ApplyError> {
             id DESC
         )
         WHERE source = 'sinex' AND event_type = 'metric.gauge'
-        "#,
+        ",
     )
     .await?;
     execute_sql(
         pool,
-        r#"
+        r"
         CREATE INDEX IF NOT EXISTS ix_events_node_run_synthesis_latest
         ON core.events (source_run_id, id DESC)
         WHERE source_run_id IS NOT NULL AND source_event_ids IS NOT NULL
-        "#,
+        ",
     )
     .await?;
 

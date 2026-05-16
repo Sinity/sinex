@@ -31,26 +31,24 @@
 //! The adapter's fingerprint dedup (`size_bytes`, `modified_ms`) guards
 //! the cursor; the occurrence key guards cross-run idempotency.
 
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::UNIX_EPOCH;
 
 use async_trait::async_trait;
 use camino::Utf8PathBuf;
 use serde::{Deserialize, Serialize};
 
-use sinex_node_sdk::parser::{
-    DirectoryWalkAdapter, MaterialParser, ParserError, ParserResult,
-};
+use sinex_node_sdk::parser::{DirectoryWalkAdapter, MaterialParser, ParserError, ParserResult};
 use sinex_primitives::{
     domain::{EventSource, EventType},
     ids::Id,
     parser::{
-        InputShapeKind, MaterialAnchor, OccurrenceKey, ParsedEventIntent, ParserContext,
-        ParserId, ParserManifest, SourceRecord, SourceUnitId, TimingConfidence, TimingEvidence,
+        InputShapeKind, MaterialAnchor, OccurrenceKey, ParsedEventIntent, ParserContext, ParserId,
+        ParserManifest, SourceRecord, SourceUnitId, TimingEvidence,
     },
     privacy::{self, ProcessingContext},
     proof::{
-        CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, RetentionPolicy,
-        RuntimeShape, SourceUnitBinding, SourceUnitBuildImpact, SourceUnitDescriptor, SubjectRef,
+        CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, RetentionPolicy, RuntimeShape,
+        SourceUnitBinding, SourceUnitBuildImpact, SourceUnitDescriptor, SubjectRef,
     },
     temporal::Timestamp,
 };
@@ -131,17 +129,17 @@ fn extract_year(stem: &str) -> Option<u16> {
     let mut i = 0;
     while i + 4 <= bytes.len() {
         let slice = &bytes[i..i + 4];
-        if slice.iter().all(|b| b.is_ascii_digit()) {
+        if slice.iter().all(u8::is_ascii_digit) {
             // Check that neither adjacent byte is also a digit (avoid matching
             // longer numeric sequences at the boundary).
             let before_ok = i == 0 || !bytes[i - 1].is_ascii_digit();
             let after_ok = i + 4 >= bytes.len() || !bytes[i + 4].is_ascii_digit();
             if before_ok && after_ok {
                 let s = std::str::from_utf8(slice).ok()?;
-                if let Ok(y) = s.parse::<u16>() {
-                    if (1900..=2030).contains(&y) {
-                        return Some(y);
-                    }
+                if let Ok(y) = s.parse::<u16>()
+                    && (1900..=2030).contains(&y)
+                {
+                    return Some(y);
                 }
             }
         }
@@ -168,8 +166,8 @@ fn extract_external_id(stem: &str) -> Option<String> {
             if run_len == 32 {
                 // Check the run terminates (not longer than 32 hex chars).
                 let after = i + 1;
-                let after_is_hex = after < bytes.len()
-                    && matches!(bytes[after], b'0'..=b'9' | b'a'..=b'f');
+                let after_is_hex =
+                    after < bytes.len() && matches!(bytes[after], b'0'..=b'9' | b'a'..=b'f');
                 if !after_is_hex {
                     let start = run_start.unwrap();
                     return Some(stem[start..start + 32].to_string());
@@ -242,7 +240,7 @@ fn extract_author_title(stem: &str) -> (Option<String>, Option<String>) {
 /// [`DirectoryWalkAdapter`]). The parser:
 ///
 /// 1. Extracts the path + extension from the anchor.
-/// 2. Uses `bytes.len()` for byte_size.
+/// 2. Uses `bytes.len()` for `byte_size`.
 /// 3. Reads mtime from the live filesystem (path from anchor).
 /// 4. Applies filename heuristics to derive optional fields.
 /// 5. Runs `ProcessingContext::Metadata` privacy on the path string.
@@ -297,10 +295,7 @@ impl MaterialParser for DocsLibraryParser {
             .unwrap_or(path_buf.as_str())
             .to_string();
 
-        let extension = path_buf
-            .extension()
-            .unwrap_or("")
-            .to_lowercase();
+        let extension = path_buf.extension().unwrap_or("").to_lowercase();
 
         let byte_size = record.bytes.len() as u64;
 
@@ -309,9 +304,7 @@ impl MaterialParser for DocsLibraryParser {
         let (mtime, mtime_confidence) = read_mtime(&path_buf);
 
         // Filename stem for heuristics (filename without extension).
-        let stem = path_buf
-            .file_stem()
-            .unwrap_or(filename.as_str());
+        let stem = path_buf.file_stem().unwrap_or(filename.as_str());
 
         let year_hint = extract_year(stem);
         let external_id = extract_external_id(&stem.to_lowercase());
@@ -418,8 +411,8 @@ crate::register_adapter_ingestor!(
 #[cfg(test)]
 mod tests {
     use super::*;
+
     use sinex_primitives::ids::Id;
-    use sinex_primitives::events::SourceMaterial;
     use sinex_primitives::parser::{MaterialAnchor, ParserContext, SourceRecord, SourceUnitId};
     use sinex_primitives::temporal::Timestamp;
     use std::io::Write;
@@ -460,7 +453,9 @@ mod tests {
     #[sinex_test]
     async fn parses_pdf_into_one_intent() -> xtask::sandbox::TestResult<()> {
         let dir = TempDir::new().unwrap();
-        let file = dir.path().join("Aaron Clarey - Bachelor Pad Economics (2013).pdf");
+        let file = dir
+            .path()
+            .join("Aaron Clarey - Bachelor Pad Economics (2013).pdf");
         let mut f = std::fs::File::create(&file).unwrap();
         f.write_all(b"pdf content").unwrap();
         drop(f);
@@ -523,7 +518,9 @@ mod tests {
     #[sinex_test]
     async fn author_and_title_hints_extracted() -> xtask::sandbox::TestResult<()> {
         let dir = TempDir::new().unwrap();
-        let file = dir.path().join("Jordan B. Peterson - 12 Rules for Life (2018).pdf");
+        let file = dir
+            .path()
+            .join("Jordan B. Peterson - 12 Rules for Life (2018).pdf");
         let mut f = std::fs::File::create(&file).unwrap();
         f.write_all(b"x").unwrap();
         drop(f);
@@ -536,14 +533,8 @@ mod tests {
         let intents = parser.parse_record(record, &ctx).await?;
 
         let payload = &intents[0].payload;
-        assert_eq!(
-            payload["author_hint"].as_str(),
-            Some("Jordan B. Peterson"),
-        );
-        assert_eq!(
-            payload["title_hint"].as_str(),
-            Some("12 Rules for Life"),
-        );
+        assert_eq!(payload["author_hint"].as_str(), Some("Jordan B. Peterson"),);
+        assert_eq!(payload["title_hint"].as_str(), Some("12 Rules for Life"),);
         Ok(())
     }
 
@@ -551,7 +542,8 @@ mod tests {
     async fn external_id_extracted_from_md5_in_name() -> xtask::sandbox::TestResult<()> {
         // Anna's Archive filename pattern: "... -- e73bc86a05ff4661d735d35f844c9650 -- Anna's Archive.pdf"
         let dir = TempDir::new().unwrap();
-        let file = dir.path()
+        let file = dir
+            .path()
             .join("Some Book -- e73bc86a05ff4661d735d35f844c9650 -- Anna's Archive.pdf");
         let mut f = std::fs::File::create(&file).unwrap();
         f.write_all(b"x").unwrap();
@@ -588,10 +580,22 @@ mod tests {
         let intents = parser.parse_record(record, &ctx).await?;
 
         let payload = &intents[0].payload;
-        assert!(payload["author_hint"].is_null(), "no author hint for bare filename");
-        assert!(payload["title_hint"].is_null(), "no title hint for bare filename");
-        assert!(payload["year_hint"].is_null(), "no year hint for bare filename");
-        assert!(payload["external_id"].is_null(), "no external_id for bare filename");
+        assert!(
+            payload["author_hint"].is_null(),
+            "no author hint for bare filename"
+        );
+        assert!(
+            payload["title_hint"].is_null(),
+            "no title hint for bare filename"
+        );
+        assert!(
+            payload["year_hint"].is_null(),
+            "no year hint for bare filename"
+        );
+        assert!(
+            payload["external_id"].is_null(),
+            "no external_id for bare filename"
+        );
         Ok(())
     }
 
@@ -631,11 +635,17 @@ mod tests {
         let mut parser = DocsLibraryParser;
         let intents = parser.parse_record(record, &ctx).await?;
 
-        let key = intents[0].occurrence_key.as_ref().expect("occurrence_key present");
+        let key = intents[0]
+            .occurrence_key
+            .as_ref()
+            .expect("occurrence_key present");
         assert_eq!(key.source_unit_id.as_str(), "docs-library-index");
         let field_names: Vec<&str> = key.fields.iter().map(|(k, _)| k.as_str()).collect();
         assert!(field_names.contains(&"path"), "key has 'path' field");
-        assert!(field_names.contains(&"content_hash"), "key has 'content_hash' field");
+        assert!(
+            field_names.contains(&"content_hash"),
+            "key has 'content_hash' field"
+        );
         Ok(())
     }
 

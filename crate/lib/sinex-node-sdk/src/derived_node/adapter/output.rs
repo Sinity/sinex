@@ -264,7 +264,7 @@ where
             source_event_ids, ..
         } = &provenance
         {
-            for source_event_id in source_event_ids.iter() {
+            for source_event_id in source_event_ids {
                 id_anchor.push(0);
                 id_anchor.extend_from_slice(source_event_id.as_uuid().as_bytes());
             }

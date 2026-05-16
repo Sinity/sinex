@@ -41,7 +41,9 @@ pub fn build(data: &[u8]) -> Result<FixtureHandle, String> {
         .map(|s| s.as_bytes().to_vec())
         .collect();
 
-    Ok(FixtureHandle::in_memory(FixtureBinding::InMemoryRecords(record_bytes)))
+    Ok(FixtureHandle::in_memory(FixtureBinding::InMemoryRecords(
+        record_bytes,
+    )))
 }
 
 /// Build a clipboard fixture directly from snapshot strings.

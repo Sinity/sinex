@@ -44,7 +44,7 @@ use sinex_primitives::events::payloads::{
 use sinex_primitives::events::{Event, Provenance, SourceMaterial};
 use sinex_primitives::{Id, JsonValue, SinexError, Timestamp};
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
 use tracing::{debug, warn};
@@ -66,6 +66,9 @@ pub struct SelfObserver {
     metric_emissions: Arc<RwLock<HashMap<String, Instant>>>,
     /// Minimum interval between emissions (rate limiting)
     min_interval: Duration,
+    /// The `core.runs` row ID for this component instance, stamped on every emitted event.
+    /// Shared across clones via `Arc<OnceLock>` so it can be set once after DB registration.
+    source_run_id: Arc<OnceLock<sinex_primitives::Uuid>>,
 }
 
 impl std::fmt::Debug for SelfObserver {
@@ -162,6 +165,7 @@ impl SelfObserver {
             enabled,
             metric_emissions: Arc::new(RwLock::new(HashMap::new())),
             min_interval: min_emission_interval,
+            source_run_id: Arc::new(OnceLock::new()),
         }
     }
 
@@ -175,7 +179,18 @@ impl SelfObserver {
             enabled: false,
             metric_emissions: Arc::new(RwLock::new(HashMap::new())),
             min_interval: Duration::from_secs(1),
+            source_run_id: Arc::new(OnceLock::new()),
         }
+    }
+
+    /// Attach the `core.runs` row ID so every emitted event carries provenance
+    /// back to the specific process instance that emitted it.
+    ///
+    /// Can be called after construction (even after clones are taken) because
+    /// the backing `OnceLock` is shared across all clones. Subsequent calls are
+    /// silently ignored — the first write wins.
+    pub fn set_source_run_id(&self, run_id: sinex_primitives::Uuid) {
+        let _ = self.source_run_id.set(run_id);
     }
 
     /// Check if self-observation is enabled
@@ -185,7 +200,7 @@ impl SelfObserver {
     }
 
     /// Eagerly open the underlying source material and commit its `BEGIN` frame
-    /// to the NATS `SOURCE_MATERIAL` JetStream before any telemetry events are
+    /// to the NATS `SOURCE_MATERIAL` `JetStream` before any telemetry events are
     /// emitted.
     ///
     /// # Why this exists (#1241 prong 2)
@@ -194,14 +209,14 @@ impl SelfObserver {
     /// first `append_*` call.  When the adapter emits a `metric.gauge` event,
     /// the event carries a `source_material_id` that was assigned by the
     /// materializer at append time.  If the BEGIN frame hasn't been committed to
-    /// JetStream yet — or if ingestd's `MaterialAssembler` consumer hasn't
+    /// `JetStream` yet — or if ingestd's `MaterialAssembler` consumer hasn't
     /// processed it yet — ingestd's `MaterialReadySet` pre-check returns false
     /// and the event is NAK'd for retry.  Under a fast startup this retry window
     /// is often exhausted before the material lands, causing DLQ routing.
     ///
     /// Calling `prime()` before storing the observer (and therefore before any
     /// event is published) flushes the BEGIN frame synchronously, so the
-    /// material is registered in JetStream before the first telemetry event can
+    /// material is registered in `JetStream` before the first telemetry event can
     /// reference it.
     ///
     /// Returns `Ok(())` immediately when the observer is disabled.
@@ -357,7 +372,10 @@ impl SelfObserver {
             ))
             .build()
         {
-            Ok(event) => event.with_timestamp(ts_orig).with_host(host),
+            Ok(mut event) => {
+                event.source_run_id = self.source_run_id.get().copied();
+                event.with_timestamp(ts_orig).with_host(host)
+            }
             Err(error) => {
                 self.release_metric_slot(&metric_key).await;
                 return Err(SelfObservationError::Build(error));
@@ -541,6 +559,7 @@ impl SelfObserver {
         cancelled: u64,
         failed: u64,
         timed_out: u64,
+        commit_outcome_unknown: u64,
         avg_duration_ms: Option<f64>,
         buffered_slices: u32,
     ) -> Result<(), SelfObservationError> {
@@ -551,6 +570,7 @@ impl SelfObserver {
             total_cancelled: cancelled,
             total_failed: failed,
             total_timed_out: timed_out,
+            total_commit_outcome_unknown: commit_outcome_unknown,
             avg_duration_ms,
             buffered_slices,
         })
@@ -598,10 +618,7 @@ impl SelfObserver {
     ) -> Result<(), SelfObservationError> {
         // Cap the recorded token prefix at 8 chars defensively even if a
         // caller passed a longer string.
-        let prefix = token_prefix
-            .chars()
-            .take(8)
-            .collect::<String>();
+        let prefix = token_prefix.chars().take(8).collect::<String>();
         self.publish(GatewayRpcCallPayload {
             method: method.to_string(),
             role: role.to_string(),
@@ -725,6 +742,8 @@ impl SelfObserver {
         validation_invalid: u64,
         validation_coverage_pct: f64,
         suspicious_future_ts_orig: u64,
+        telemetry_publish_failures: u64,
+        confirmation_durability_gaps: u64,
     ) -> Result<(), SelfObservationError> {
         self.publish(IngestdBatchStatsPayload {
             batch_size,
@@ -740,6 +759,8 @@ impl SelfObserver {
             validation_invalid,
             validation_coverage_pct,
             suspicious_future_ts_orig,
+            telemetry_publish_failures,
+            confirmation_durability_gaps,
         })
         .await
     }
@@ -903,6 +924,7 @@ mod tests {
             enabled: true,
             metric_emissions: Arc::new(RwLock::new(HashMap::new())),
             min_interval: Duration::from_secs(1),
+            source_run_id: Arc::new(OnceLock::new()),
         }
     }
 

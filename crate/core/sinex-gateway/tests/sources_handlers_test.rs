@@ -15,9 +15,7 @@ use tempfile::tempdir;
 use xtask::sandbox::prelude::*;
 
 #[sinex_test]
-async fn sources_stage_list_and_show_surface_contract_metadata(
-    ctx: TestContext,
-) -> TestResult<()> {
+async fn sources_stage_list_and_show_surface_contract_metadata(ctx: TestContext) -> TestResult<()> {
     let services = ServiceContainer::from_database_url(ctx.database_url().to_string()).await?;
     let auth = RpcAuthContext::system();
 

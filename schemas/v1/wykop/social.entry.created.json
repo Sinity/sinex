@@ -1,0 +1,62 @@
+{
+  "$defs": {
+    "DateTime": {
+      "description": "RFC 3339 formatted date-time string",
+      "format": "date-time",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "A Wykop entry (micropost / wpis) authored by the user.\n\nSourced from `wykop_entries_added.jsonl`.",
+  "properties": {
+    "content": {
+      "description": "Text content of the entry.",
+      "type": "string"
+    },
+    "created_at": {
+      "$ref": "#/$defs/DateTime",
+      "description": "When the entry was created."
+    },
+    "entry_id": {
+      "description": "Numeric Wykop entry id.",
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "entry_url": {
+      "description": "URL of the entry on Wykop.",
+      "type": "string"
+    },
+    "photo_url": {
+      "description": "URL of the attached photo, if any.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "tags": {
+      "description": "Hashtags extracted from the entry (without `#`).",
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "votes_score": {
+      "description": "Net vote score (up − down).",
+      "format": "int64",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "entry_id",
+    "entry_url",
+    "created_at",
+    "content",
+    "votes_score"
+  ],
+  "title": "WykopEntryPayload",
+  "type": "object",
+  "x-sinex-event-type": "social.entry.created",
+  "x-sinex-source": "wykop",
+  "x-sinex-version": "1.0.0"
+}

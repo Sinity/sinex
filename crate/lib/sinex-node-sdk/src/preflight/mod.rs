@@ -42,11 +42,11 @@ pub(crate) async fn run_command_with_timeout(program: &str, args: &[&str]) -> No
     }
 }
 
-/// Connect to PostgreSQL for preflight checks with startup-safe session limits.
+/// Connect to `PostgreSQL` for preflight checks with startup-safe session limits.
 ///
 /// Preflight runs on runtime startup paths, so its database work must stay cheap
 /// and cancellable. All DB phases share this pool to keep connection count,
-/// statement runtime, lock waits, and PostgreSQL parallel workers bounded.
+/// statement runtime, lock waits, and `PostgreSQL` parallel workers bounded.
 pub(crate) async fn connect_preflight_database_pool(database_url: &str) -> NodeResult<PgPool> {
     let connect = PgPoolOptions::new()
         .max_connections(PREFLIGHT_DB_MAX_CONNECTIONS)

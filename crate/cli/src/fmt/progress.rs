@@ -30,7 +30,7 @@ impl ProgressReporter {
             .fetch_add(delta, std::sync::atomic::Ordering::Relaxed)
             .saturating_add(delta)
             .min(self.total);
-        if self.total > 0 && (current == self.total || current % 100 == 0) {
+        if self.total > 0 && (current == self.total || current.is_multiple_of(100)) {
             eprintln!("{}: {current}/{}", self.message, self.total);
         }
     }

@@ -57,17 +57,17 @@ pub fn derive_event_payload(input: TokenStream) -> TokenStream {
 ///
 /// # Field attributes
 ///
-/// `#[source(json_pointer = "...")]` — extract via JSON Pointer (for json/csv_row/sqlite_row)
-/// `#[source(column_index = N)]` — extract by 0-based index (tab_separated)
-/// `#[source(column_name = "...")]` — extract by column name (csv_row/sqlite_row)
-/// `#[source(raw_line)]` — entire record as one string (raw_line)
+/// `#[source(json_pointer = "...")]` — extract via JSON Pointer (for `json/csv_row/sqlite_row`)
+/// `#[source(column_index = N)]` — extract by 0-based index (`tab_separated`)
+/// `#[source(column_name = "...")]` — extract by column name (`csv_row/sqlite_row`)
+/// `#[source(raw_line)]` — entire record as one string (`raw_line`)
 ///
 /// `#[required]` — fail the record if the field is missing
 /// `#[default = "..."]` — default value (parsed as JSON, falls back to string)
 /// `#[skip]` — exclude this field from the emitted payload
-/// `#[occurrence_key]` — include in composite OccurrenceKey
-/// `#[privacy(context = "Command")]` — run through privacy::process at parse time
-/// `#[timestamp(format = "rfc3339", fallback = "material_timing")]` — derive ts_orig
+/// `#[occurrence_key]` — include in composite `OccurrenceKey`
+/// `#[privacy(context = "Command")]` — run through `privacy::process` at parse time
+/// `#[timestamp(format = "rfc3339", fallback = "material_timing")]` — derive `ts_orig`
 /// `#[suppress_if(binding_field = "private_mode_active", whole_event = false)]`
 ///
 /// Field types are inferred from the Rust type:
@@ -190,7 +190,7 @@ pub fn derive_sinex_config(input: TokenStream) -> TokenStream {
 /// Failed,
 /// ```
 ///
-/// The default rendering converts PascalCase variant idents to snake_case,
+/// The default rendering converts `PascalCase` variant idents to `snake_case`,
 /// matching `serde(rename_all = "snake_case")`. Override when the
 /// `Display` impl emits something else (e.g. `OperationStatus::Failed` →
 /// `"failure"`).

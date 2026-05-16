@@ -56,6 +56,8 @@ pub async fn acquire_with_timeout(
         result.map_err(SinexError::from)
     } else {
         tracing::error!(
+            target: "sinex_metrics",
+            metric = "db.pool_acquire_timeouts_total",
             timeout_ms = timeout.whole_milliseconds(),
             pool_size = pool.size(),
             pool_idle = pool.num_idle(),
@@ -120,7 +122,7 @@ pub struct PoolConfig {
     pub validate_against_postgres_max: bool,
 }
 
-/// Session setup policy applied when constructing a PostgreSQL pool.
+/// Session setup policy applied when constructing a `PostgreSQL` pool.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PoolSessionPolicy {
     /// Configure `statement_timeout` after connect and before reusing pooled
@@ -388,7 +390,7 @@ pub async fn create_database_if_not_exists(database_url: &str) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use xtask::sandbox::{TestResult, sinex_test};
+    use xtask::sandbox::sinex_test;
     // Inline because this covers local env parsing semantics in the pool module.
     use super::{
         DEFAULT_POOL_ACQUIRE_WARN_MS, PoolConfig, env_parse_override, env_parse_with_default,

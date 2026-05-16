@@ -22,9 +22,9 @@ pub mod rate_limit;
 pub mod replay_control;
 pub mod rpc_registry;
 pub mod rpc_server;
-pub mod schema_registry;
 #[cfg(any(feature = "test-support", test))]
 pub mod rpc_server_test_support;
+pub mod schema_registry;
 pub mod service_container;
 pub mod sse_bus;
 pub mod sse_handler;

@@ -5,7 +5,12 @@
 //! its own handles, drive its scan, forward emitted events, and finalize
 //! the worker on completion.
 
-use super::*;
+use super::{
+    Arc, AtomicU64, CheckpointManager, DEFAULT_EVENT_CHANNEL_SIZE, DbPoolExt,
+    DispatchedScanOutcome, Event, FailedDispatchedScanOutcome, HashMap, JsonValue, Node,
+    NodeFactory, NodeHandles, NodeInitContext, NodeResult, NodeRunner, NodeScanCommand, Ordering,
+    ServiceInfo, SinexError, StreamExt, Utf8PathBuf, Uuid, create_checkpoint_kv, mpsc,
+};
 
 impl<T: Node + 'static> NodeRunner<T> {
     #[cfg(feature = "messaging")]

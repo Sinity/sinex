@@ -691,9 +691,7 @@ pub async fn run_cli() -> Result<()> {
                         // left remaining items in the state file with sentinel values.
                         if let Some(pid) = job.pid {
                             let start_ticks =
-                                crate::process::read_proc_sample(pid)
-                                    .map(|s| s.start_ticks)
-                                    .unwrap_or(0);
+                                crate::process::read_proc_sample(pid).map_or(0, |s| s.start_ticks);
                             if let Err(error) =
                                 coord.update_state(&queued_command, job.id, pid, start_ticks)
                             {

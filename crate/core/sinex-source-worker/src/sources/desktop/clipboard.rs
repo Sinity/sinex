@@ -132,8 +132,14 @@ impl MaterialParser for ClipboardParser {
             accepted_input_shapes: vec![InputShapeKind::Polling],
             source_unit_id: SourceUnitId::from_static("desktop.clipboard"),
             declared_event_types: vec![
-                (EventSource::from_static("clipboard"), EventType::from_static("clipboard.copied")),
-                (EventSource::from_static("clipboard"), EventType::from_static("clipboard.selected")),
+                (
+                    EventSource::from_static("clipboard"),
+                    EventType::from_static("clipboard.copied"),
+                ),
+                (
+                    EventSource::from_static("clipboard"),
+                    EventType::from_static("clipboard.selected"),
+                ),
             ],
             privacy_contexts: vec![ProcessingContext::Clipboard],
             proof_obligations: vec![
@@ -153,13 +159,21 @@ impl MaterialParser for ClipboardParser {
             return Ok(vec![]);
         }
 
-        let raw_text = std::str::from_utf8(&record.bytes)
-            .map_err(|e| ParserError::Parse(format!("clipboard content is not valid UTF-8: {e}")))?;
+        let raw_text = std::str::from_utf8(&record.bytes).map_err(|e| {
+            ParserError::Parse(format!("clipboard content is not valid UTF-8: {e}"))
+        })?;
 
         // Apply clipboard-tier privacy redaction.
         let redacted_text = match privacy::engine() {
-            Ok(eng) => eng.process(raw_text, ProcessingContext::Clipboard).text.into_owned(),
-            Err(e) => return Err(ParserError::Privacy(format!("privacy engine init failed: {e}"))),
+            Ok(eng) => eng
+                .process(raw_text, ProcessingContext::Clipboard)
+                .text
+                .into_owned(),
+            Err(e) => {
+                return Err(ParserError::Privacy(format!(
+                    "privacy engine init failed: {e}"
+                )));
+            }
         };
 
         // Preview: first N characters of the redacted text.

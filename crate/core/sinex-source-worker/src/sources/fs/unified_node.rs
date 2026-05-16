@@ -632,10 +632,13 @@ impl FilesystemNode {
                             attempt += 1;
                             if attempt >= MAX_INIT_ATTEMPTS {
                                 error!(
+                                    target: "sinex_metrics",
+                                    metric = "source_worker.watcher_init_failures_total",
                                     path = %root_path,
                                     attempts = attempt,
-                                    "Failed to initialize watcher after {} attempts: {}",
-                                    MAX_INIT_ATTEMPTS, error
+                                    error = %error,
+                                    "Failed to initialize watcher after {} attempts",
+                                    MAX_INIT_ATTEMPTS
                                 );
                                 return Err(error.with_context("watch_root", root_path.clone()));
                             }
@@ -1348,24 +1351,24 @@ fn add_filtered_watch_targets(
     targets: impl IntoIterator<Item = PathBuf>,
 ) -> NodeResult<()> {
     for target in targets {
-        if watched_targets.insert(target.clone()) {
-            if let Err(error) = watcher.watch(&target, RecursiveMode::NonRecursive) {
-                if notify_error_is_skippable_filtered_target(&error) {
-                    watched_targets.remove(&target);
-                    warn!(
-                        path = %target.display(),
-                        error = %error,
-                        "Skipping filtered native watcher target that became unavailable after survey"
-                    );
-                    continue;
-                }
-
-                return Err(SinexError::lifecycle(
-                    "Failed to register filtered native watcher target",
-                )
-                .with_source(error)
-                .with_path(target.display()));
+        if watched_targets.insert(target.clone())
+            && let Err(error) = watcher.watch(&target, RecursiveMode::NonRecursive)
+        {
+            if notify_error_is_skippable_filtered_target(&error) {
+                watched_targets.remove(&target);
+                warn!(
+                    path = %target.display(),
+                    error = %error,
+                    "Skipping filtered native watcher target that became unavailable after survey"
+                );
+                continue;
             }
+
+            return Err(
+                SinexError::lifecycle("Failed to register filtered native watcher target")
+                    .with_source(error)
+                    .with_path(target.display()),
+            );
         }
     }
 
@@ -2231,6 +2234,8 @@ fn handle_watcher_callback(
             let error_count = error_counter.fetch_add(1, Ordering::Relaxed) + 1;
             if error_count == 1 || error_count.is_multiple_of(100) {
                 error!(
+                    target: "sinex_metrics",
+                    metric = "source_worker.watcher_errors_total",
                     watcher_errors = error_count,
                     error = %error,
                     watcher_mode,
@@ -2318,12 +2323,13 @@ fn replay_material_identifier(material: &ResolvedReplayMaterial) -> String {
         .material_metadata
         .get("logical_source_identifier")
         .and_then(serde_json::Value::as_str)
-        .map(str::to_string)
-        .unwrap_or_else(|| {
-            SourceIdentifier::from_wire(&material.source_identifier)
-                .map(|si| si.logical_id)
-                .unwrap_or_else(|_| material.source_identifier.clone())
-        })
+        .map_or_else(
+            || {
+                SourceIdentifier::from_wire(&material.source_identifier)
+                    .map_or_else(|_| material.source_identifier.clone(), |si| si.logical_id)
+            },
+            str::to_string,
+        )
 }
 
 fn historical_scan_targets(
@@ -3493,11 +3499,14 @@ mod tests {
                             ResolvedReplayMaterial {
                                 source_material_id: Uuid::now_v7(),
                                 material_kind: "annex".to_string(),
-                                source_identifier: SourceIdentifier::new(
-                                    file_a.display().to_string(),
-                                    sinex_primitives::Id::<sinex_primitives::events::SourceMaterial>::new(),
-                                )
-                                .to_wire(),
+                                source_identifier:
+                                    SourceIdentifier::new(
+                                        file_a.display().to_string(),
+                                        sinex_primitives::Id::<
+                                            sinex_primitives::events::SourceMaterial,
+                                        >::new(),
+                                    )
+                                    .to_wire(),
                                 material_metadata: serde_json::json!({
                                     "logical_source_identifier": file_a.display().to_string()
                                 }),
@@ -3507,11 +3516,14 @@ mod tests {
                             ResolvedReplayMaterial {
                                 source_material_id: Uuid::now_v7(),
                                 material_kind: "annex".to_string(),
-                                source_identifier: SourceIdentifier::new(
-                                    file_b.display().to_string(),
-                                    sinex_primitives::Id::<sinex_primitives::events::SourceMaterial>::new(),
-                                )
-                                .to_wire(),
+                                source_identifier:
+                                    SourceIdentifier::new(
+                                        file_b.display().to_string(),
+                                        sinex_primitives::Id::<
+                                            sinex_primitives::events::SourceMaterial,
+                                        >::new(),
+                                    )
+                                    .to_wire(),
                                 material_metadata: serde_json::json!({
                                     "logical_source_identifier": file_b.display().to_string()
                                 }),

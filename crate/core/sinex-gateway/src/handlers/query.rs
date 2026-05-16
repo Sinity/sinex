@@ -41,9 +41,7 @@ pub async fn handle_events_annotate(
     let event_id_str = params
         .get("event_id")
         .and_then(|v| v.as_str())
-        .ok_or_else(|| {
-            SinexError::validation("events.annotate: missing event_id (string)")
-        })?;
+        .ok_or_else(|| SinexError::validation("events.annotate: missing event_id (string)"))?;
     let annotation_type = params
         .get("annotation_type")
         .and_then(|v| v.as_str())
@@ -53,9 +51,7 @@ pub async fn handle_events_annotate(
     let content = params
         .get("content")
         .and_then(|v| v.as_str())
-        .ok_or_else(|| {
-            SinexError::validation("events.annotate: missing content (string)")
-        })?;
+        .ok_or_else(|| SinexError::validation("events.annotate: missing content (string)"))?;
     let metadata = params.get("metadata").cloned().unwrap_or_else(|| json!({}));
 
     if annotation_type.trim().is_empty() {
@@ -74,9 +70,8 @@ pub async fn handle_events_annotate(
             .with_context("event_id", event_id_str)
             .with_std_error(&error)
     })?;
-    let event_id = Id::<
-        sinex_primitives::events::Event<sinex_primitives::JsonValue>,
-    >::from_uuid(event_uuid);
+    let event_id =
+        Id::<sinex_primitives::events::Event<sinex_primitives::JsonValue>>::from_uuid(event_uuid);
 
     let record = pool
         .events()

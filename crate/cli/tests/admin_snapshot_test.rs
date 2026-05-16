@@ -7,7 +7,6 @@
 
 use assert_cmd::cargo;
 use std::fs;
-use std::path::PathBuf;
 use std::process::Command;
 use tempfile::TempDir;
 use xtask::sandbox::sinex_test;

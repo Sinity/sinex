@@ -454,11 +454,7 @@ impl TestCommand {
         effective_filter: Option<&str>,
         effective_test_binaries: &[String],
     ) -> Result<()> {
-        if self.allow_contended_host
-            || self.list
-            || self.list_scenarios
-            || self.dry_run
-        {
+        if self.allow_contended_host || self.list || self.list_scenarios || self.dry_run {
             return Ok(());
         }
 

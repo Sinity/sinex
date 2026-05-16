@@ -3,12 +3,18 @@
 //! Uses `JournalctlStreamAdapter` (same subprocess as `system.journald`).
 //! Records without `_SYSTEMD_UNIT` are silently skipped.
 
+use crate::register_parser;
 use sinex_node_sdk::parser::{JournalctlStreamAdapter, MaterialParser, ParserError};
 use sinex_primitives::domain::{EventSource, EventType};
+use sinex_primitives::events::enums::{SystemdActiveState, SystemdUnitType};
+use sinex_primitives::events::payloads::system::{
+    SystemdTimerTriggeredPayload, SystemdUnitFailedPayload, SystemdUnitReloadedPayload,
+    SystemdUnitStartedPayload, SystemdUnitStoppedPayload,
+};
 use sinex_primitives::ids::Id;
 use sinex_primitives::parser::{
     InputShapeKind, ParsedEventIntent, ParserContext, ParserId, ParserManifest, SourceRecord,
-    SourceUnitId, TimingEvidence, TimingConfidence,
+    SourceUnitId, TimingConfidence, TimingEvidence,
 };
 use sinex_primitives::privacy::{self, ProcessingContext};
 use sinex_primitives::proof::{
@@ -16,13 +22,7 @@ use sinex_primitives::proof::{
     SourceUnitBinding, SourceUnitBuildImpact, SourceUnitDescriptor, SubjectRef,
 };
 use sinex_primitives::temporal::Timestamp;
-use sinex_primitives::events::payloads::system::{
-    SystemdTimerTriggeredPayload, SystemdUnitFailedPayload, SystemdUnitReloadedPayload,
-    SystemdUnitStartedPayload, SystemdUnitStoppedPayload,
-};
-use sinex_primitives::events::enums::{SystemdActiveState, SystemdUnitType};
 use sinex_primitives::{register_source_unit, register_source_unit_binding};
-use crate::register_parser;
 
 // ---------------------------------------------------------------------------
 // Source-unit descriptor
@@ -114,11 +114,26 @@ impl MaterialParser for SystemdParser {
             accepted_input_shapes: vec![InputShapeKind::Subprocess],
             source_unit_id: SourceUnitId::from_static("system.systemd"),
             declared_event_types: vec![
-                (EventSource::from_static("systemd"), EventType::from_static("unit.started")),
-                (EventSource::from_static("systemd"), EventType::from_static("unit.stopped")),
-                (EventSource::from_static("systemd"), EventType::from_static("unit.failed")),
-                (EventSource::from_static("systemd"), EventType::from_static("unit.reloaded")),
-                (EventSource::from_static("systemd"), EventType::from_static("timer.triggered")),
+                (
+                    EventSource::from_static("systemd"),
+                    EventType::from_static("unit.started"),
+                ),
+                (
+                    EventSource::from_static("systemd"),
+                    EventType::from_static("unit.stopped"),
+                ),
+                (
+                    EventSource::from_static("systemd"),
+                    EventType::from_static("unit.failed"),
+                ),
+                (
+                    EventSource::from_static("systemd"),
+                    EventType::from_static("unit.reloaded"),
+                ),
+                (
+                    EventSource::from_static("systemd"),
+                    EventType::from_static("timer.triggered"),
+                ),
             ],
             privacy_contexts: vec![ProcessingContext::Journal],
             proof_obligations: vec![
@@ -135,9 +150,7 @@ impl MaterialParser for SystemdParser {
         ctx: &ParserContext,
     ) -> Result<Vec<ParsedEventIntent>, ParserError> {
         let json: serde_json::Value = serde_json::from_slice(&record.bytes)
-            .map_err(|e| ParserError::Parse(
-                format!("failed to parse journal JSON: {e}"),
-            ))?;
+            .map_err(|e| ParserError::Parse(format!("failed to parse journal JSON: {e}")))?;
 
         // Only process records with a unit name.
         let unit_name = match json.get("_SYSTEMD_UNIT").and_then(|v| v.as_str()) {
@@ -158,8 +171,7 @@ impl MaterialParser for SystemdParser {
             .unwrap_or(0);
 
         let timestamp = if timestamp_us > 0 {
-            Timestamp::from_unix_timestamp(timestamp_us / 1_000_000)
-                .unwrap_or_else(Timestamp::now)
+            Timestamp::from_unix_timestamp(timestamp_us / 1_000_000).unwrap_or_else(Timestamp::now)
         } else {
             Timestamp::now()
         };
@@ -171,18 +183,21 @@ impl MaterialParser for SystemdParser {
             .to_string();
 
         let message = match privacy::engine() {
-            Ok(eng) => eng.process(&raw_message, ProcessingContext::Journal).text.into_owned(),
+            Ok(eng) => eng
+                .process(&raw_message, ProcessingContext::Journal)
+                .text
+                .into_owned(),
             Err(e) => return Err(ParserError::Privacy(format!("privacy engine: {e}"))),
         };
 
         let pid_str = json
             .get("_PID")
             .and_then(|v| v.as_str())
-            .map(|s| s.to_string());
+            .map(std::string::ToString::to_string);
         let uid_str = json
             .get("_UID")
             .and_then(|v| v.as_str())
-            .map(|s| s.to_string());
+            .map(std::string::ToString::to_string);
 
         let unit_result = json
             .get("UNIT_RESULT")
@@ -218,8 +233,7 @@ impl MaterialParser for SystemdParser {
             };
             (
                 "unit.failed",
-                serde_json::to_value(&payload)
-                    .map_err(|e| ParserError::Parse(e.to_string()))?,
+                serde_json::to_value(&payload).map_err(|e| ParserError::Parse(e.to_string()))?,
             )
         } else if message.contains("Reloading") || message.contains("Reloaded") {
             let payload = SystemdUnitReloadedPayload {
@@ -233,8 +247,7 @@ impl MaterialParser for SystemdParser {
             };
             (
                 "unit.reloaded",
-                serde_json::to_value(&payload)
-                    .map_err(|e| ParserError::Parse(e.to_string()))?,
+                serde_json::to_value(&payload).map_err(|e| ParserError::Parse(e.to_string()))?,
             )
         } else if unit_type == SystemdUnitType::Timer
             && (message.contains("Scheduled") || message.contains("Triggered"))
@@ -250,8 +263,7 @@ impl MaterialParser for SystemdParser {
             };
             (
                 "timer.triggered",
-                serde_json::to_value(&payload)
-                    .map_err(|e| ParserError::Parse(e.to_string()))?,
+                serde_json::to_value(&payload).map_err(|e| ParserError::Parse(e.to_string()))?,
             )
         } else if message.contains("Stopped") || message.contains("Deactivated") {
             let payload = SystemdUnitStoppedPayload {
@@ -263,8 +275,7 @@ impl MaterialParser for SystemdParser {
             };
             (
                 "unit.stopped",
-                serde_json::to_value(&payload)
-                    .map_err(|e| ParserError::Parse(e.to_string()))?,
+                serde_json::to_value(&payload).map_err(|e| ParserError::Parse(e.to_string()))?,
             )
         } else {
             let payload = SystemdUnitStartedPayload {
@@ -276,8 +287,7 @@ impl MaterialParser for SystemdParser {
             };
             (
                 "unit.started",
-                serde_json::to_value(&payload)
-                    .map_err(|e| ParserError::Parse(e.to_string()))?,
+                serde_json::to_value(&payload).map_err(|e| ParserError::Parse(e.to_string()))?,
             )
         };
 
@@ -331,17 +341,20 @@ crate::register_adapter_ingestor!(
 mod tests {
     use super::*;
     use sinex_node_sdk::parser::records_from_journal_lines;
-    use sinex_primitives::ids::Id;
     use sinex_primitives::events::SourceMaterial;
-    use sinex_primitives::primitives::Uuid;
+    use sinex_primitives::ids::Id;
     use sinex_primitives::parser::MaterialAnchor;
+    use sinex_primitives::primitives::Uuid;
     use xtask::sandbox::prelude::*;
 
     fn make_ctx(mid: Id<SourceMaterial>) -> ParserContext {
         ParserContext {
             source_unit_id: SourceUnitId::from_static("system.systemd"),
             source_material_id: mid,
-            record_anchor: MaterialAnchor::Line { byte_start: 0, line: 1 },
+            record_anchor: MaterialAnchor::Line {
+                byte_start: 0,
+                line: 1,
+            },
             operation_id: Uuid::new_v4(),
             job_id: Uuid::new_v4(),
             host: "test-host".into(),
@@ -383,8 +396,14 @@ mod tests {
 
     #[sinex_test]
     async fn test_infer_unit_type() -> TestResult<()> {
-        assert!(matches!(infer_unit_type("nginx.service"), SystemdUnitType::Service));
-        assert!(matches!(infer_unit_type("cron.timer"), SystemdUnitType::Timer));
+        assert!(matches!(
+            infer_unit_type("nginx.service"),
+            SystemdUnitType::Service
+        ));
+        assert!(matches!(
+            infer_unit_type("cron.timer"),
+            SystemdUnitType::Timer
+        ));
         assert!(matches!(infer_unit_type("unknown"), SystemdUnitType::Other));
         Ok(())
     }

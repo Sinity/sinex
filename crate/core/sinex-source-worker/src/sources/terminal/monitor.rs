@@ -11,22 +11,20 @@
 use futures::future::BoxFuture;
 use sinex_node_sdk::{NodeResult, runtime::stream::NodeRuntimeState};
 use sinex_primitives::proof::{
-    CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, RetentionPolicy,
-    RuntimeShape, SourceUnitBinding, SourceUnitBuildImpact, SourceUnitDescriptor,
-    SubjectRef,
+    CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, RetentionPolicy, RuntimeShape,
+    SourceUnitBinding, SourceUnitBuildImpact, SourceUnitDescriptor, SubjectRef,
 };
-use sinex_primitives::{register_source_unit, register_source_unit_binding};
 use sinex_primitives::{
-    SinexError,
-    events::{Event, EventPayload, SourceMaterial},
+    JsonValue, SinexError,
     events::payloads::shell::TerminalMonitoringStartedPayload,
+    events::{Event, EventPayload, SourceMaterial},
     ids::Id,
     temporal::Timestamp,
-    JsonValue,
 };
+use sinex_primitives::{register_source_unit, register_source_unit_binding};
 
-use crate::register_monitor_unit;
 use crate::monitor_node::MonitorPhase;
+use crate::register_monitor_unit;
 
 // ---------------------------------------------------------------------------
 // Source-unit descriptor + binding
@@ -169,8 +167,6 @@ mod tests {
     /// starts using NATS resources it must be promoted to an integration test.
     #[sinex_test]
     async fn test_emit_terminal_monitor_one_event() -> TestResult<()> {
-        use sinex_node_sdk::runtime::stream::NodeRuntimeState;
-
         // Construct a dummy NodeRuntimeState. The emit fn does not call any
         // runtime methods (it only uses the material_id), so we use the
         // Default-like sentinel provided by the test SDK if available, or

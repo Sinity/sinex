@@ -7,7 +7,7 @@
 //! 4. Entity Enrichment (Stage 4, issue #934)
 //!
 //! All events in this module are synthesis-provenance events derived from
-//! upstream pipeline stages or document parsing -- none carry source_material_id.
+//! upstream pipeline stages or document parsing -- none carry `source_material_id`.
 
 use std::collections::BTreeMap;
 
@@ -28,7 +28,7 @@ use crate::domain::{EntityTypeName, RelationType};
 /// This is the initial output of Stage 1 -- a lightweight signal carrying the
 /// entity type and the raw text span as it appeared in the source document.
 /// Downstream stages (resolver) canonicalize the name and assign a
-/// deterministic UUIDv5 identity.
+/// deterministic `UUIDv5` identity.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
 #[event_payload(
     source = "entity-extractor",
@@ -49,11 +49,11 @@ pub struct EntityExtractedPayload {
 // Stage 2: Entity Resolution
 // ============================================================================
 
-/// Resolved entity with a deterministic UUIDv5 identity and canonical name.
+/// Resolved entity with a deterministic `UUIDv5` identity and canonical name.
 ///
 /// The entity resolver (Stage 2) consumes `entity.extracted` events and emits
 /// one `entity.resolved` per unique `(entity_type, canonical_name)` pair.
-/// The UUIDv5 is deterministically derived from that pair so that replay
+/// The `UUIDv5` is deterministically derived from that pair so that replay
 /// against the same source always produces identical IDs.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
 #[event_payload(
@@ -62,7 +62,7 @@ pub struct EntityExtractedPayload {
     version = "1.0.0"
 )]
 pub struct EntityResolvedPayload {
-    /// Deterministic entity identity. UUIDv5 over `(entity_type, canonical_name)`.
+    /// Deterministic entity identity. `UUIDv5` over `(entity_type, canonical_name)`.
     pub entity_id: Uuid,
     /// Type-aware canonicalized name (e.g., lowercased tool, normalized URL host).
     pub canonical_name: String,
@@ -93,7 +93,7 @@ pub struct EntityRelatedPayload {
     pub source_entity_id: Uuid,
     /// The target entity of the relationship.
     pub target_entity_id: Uuid,
-    /// Semantic type of the relationship (e.g. works_on, co_occurs_with).
+    /// Semantic type of the relationship (e.g. `works_on`, `co_occurs_with`).
     pub relation_type: RelationType,
     /// Confidence score for this relationship in [0.0, 1.0].
     #[serde(deserialize_with = "crate::validation::reject_non_finite_f64")]

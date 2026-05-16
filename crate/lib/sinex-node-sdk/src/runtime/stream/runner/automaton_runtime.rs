@@ -5,7 +5,12 @@
 //! confirmation-event bridge that resolves provisional events to fully
 //! materialized inputs and feeds them into the node implementation.
 
-use super::*;
+use super::{
+    Arc, CONFIRMED_EVENT_CHANNEL_CAPACITY, Checkpoint, DbPoolExt, EventTransport,
+    JetStreamEventConsumer, JetStreamEventConsumerConfig, LeaderState, Node, NodeResult,
+    NodeRunner, ProcessingModel, ProvisionalEvent, RunnerConfirmedEventHandler, ScanArgs,
+    SinexError, StreamExt, TimeHorizon, Uuid, debug, info, mpsc, systemd_notify, warn,
+};
 
 impl<T: Node + 'static> NodeRunner<T> {
     /// Run automaton in continuous mode
@@ -307,11 +312,7 @@ impl<T: Node + 'static> NodeRunner<T> {
             // runner-owned consumer is aborted and the bridge switches to
             // draining whatever is already buffered before exiting cleanly.
             let next_event = if drain_controller.is_requested() {
-                match receiver.try_recv() {
-                    Ok(event) => Some(event),
-                    Err(tokio::sync::mpsc::error::TryRecvError::Empty)
-                    | Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => None,
-                }
+                receiver.try_recv().ok()
             } else {
                 receiver.recv().await
             };

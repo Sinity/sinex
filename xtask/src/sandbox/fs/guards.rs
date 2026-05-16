@@ -72,6 +72,7 @@ pub struct EnvGuard {
 
 impl EnvGuard {
     /// Acquire the global environment mutex and prepare to record changes.
+    #[must_use]
     pub fn new() -> Self {
         let lock = acquire_env_lock();
         Self {
@@ -83,6 +84,7 @@ impl EnvGuard {
     /// Acquire the global environment mutex and pre-snapshot the current value of
     /// each key in `keys`.  Subsequent `set`/`clear`/`remove` calls on those keys
     /// will not double-record them (the first captured value is preserved).
+    #[must_use]
     pub fn with_keys(keys: &[&str]) -> Self {
         let lock = acquire_env_lock();
         let original = keys

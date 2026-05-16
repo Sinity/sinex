@@ -86,7 +86,13 @@ mod tests {
 
     #[test]
     fn declares_source_and_event_type() {
-        assert_eq!(LibraryDocumentIndexedPayload::SOURCE.as_static_str(), "docs-library");
-        assert_eq!(LibraryDocumentIndexedPayload::EVENT_TYPE.as_static_str(), "document.indexed");
+        assert_eq!(
+            LibraryDocumentIndexedPayload::SOURCE.as_static_str(),
+            "docs-library"
+        );
+        assert_eq!(
+            LibraryDocumentIndexedPayload::EVENT_TYPE.as_static_str(),
+            "document.indexed"
+        );
     }
 }

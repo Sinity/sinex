@@ -23,6 +23,7 @@ pub struct FormatCapability {
 
 impl FormatCapability {
     /// Construct a single-shot capability.
+    #[must_use]
     pub const fn single_shot(supported: &'static [OutputFormat]) -> Self {
         Self {
             supported,
@@ -32,6 +33,7 @@ impl FormatCapability {
     }
 
     /// Construct a streaming capability.
+    #[must_use]
     pub const fn streaming(supported: &'static [OutputFormat]) -> Self {
         Self {
             supported,
@@ -41,12 +43,14 @@ impl FormatCapability {
     }
 
     /// Attach a note.
+    #[must_use]
     pub const fn with_note(mut self, note: &'static str) -> Self {
         self.note = Some(note);
         self
     }
 
     /// Return `true` if `format` is in the supported set.
+    #[must_use]
     pub fn supports(&self, format: OutputFormat) -> bool {
         self.supported.contains(&format)
     }
@@ -342,10 +346,7 @@ pub fn build() -> HashMap<&'static str, FormatCapability> {
         "telemetry ingestd-validation",
         FormatCapability::single_shot(TABLE_JSON_YAML),
     );
-    m.insert(
-        "throughput",
-        FormatCapability::single_shot(TABLE_JSON_YAML),
-    );
+    m.insert("throughput", FormatCapability::single_shot(TABLE_JSON_YAML));
 
     // ── Report ───────────────────────────────────────────────────────────────
     m.insert(
@@ -557,7 +558,8 @@ mod tests {
     use xtask::sandbox::prelude::sinex_test;
 
     #[sinex_test]
-    async fn all_registry_entries_have_at_least_one_format_or_note() -> xtask::sandbox::TestResult<()> {
+    async fn all_registry_entries_have_at_least_one_format_or_note()
+    -> xtask::sandbox::TestResult<()> {
         for (cmd, cap) in build() {
             assert!(
                 !cap.supported.is_empty() || cap.note.is_some(),

@@ -22,7 +22,7 @@
 //! - Conversion of `ParsedEventIntent` → `Event<JsonValue>` → `emit()`.
 //! - Long-lived source-material lifecycle: records from many drain cycles are
 //!   appended to the same [`AppendStreamAcquirer`], which auto-rotates at 100
-//!   MB or 1 hour (configurable). This prevents O(poll_count) material rows.
+//!   MB or 1 hour (configurable). This prevents `O(poll_count)` material rows.
 //!
 //! # Config shape
 //!
@@ -57,7 +57,7 @@
 //! historical, and every continuous poll). Record bytes are appended to the
 //! growing material; [`AppendStreamAcquirer`] handles size/time-based rotation
 //! transparently. This ensures `raw.source_material_registry` grows at
-//! O(rotation_count), not O(poll_count).
+//! `O(rotation_count)`, not `O(poll_count)`.
 //!
 //! When `run_continuous` exits cleanly (shutdown signal), the current material
 //! is finalized. On ingestor drop the [`AppendStreamAcquirer`] finalizes via its
@@ -84,13 +84,14 @@ use serde_json::Value as JsonValue;
 use tracing::{debug, info, warn};
 
 use sinex_primitives::events::Event;
-use sinex_primitives::events::builder::{EventBuilder, NoProvenance};
 use sinex_primitives::events::SourceMaterial;
+use sinex_primitives::events::builder::{EventBuilder, NoProvenance};
 use sinex_primitives::ids::Id;
 use sinex_primitives::parser::{MaterialAnchor, ParsedEventIntent, ParserContext};
 use sinex_primitives::primitives::Uuid;
 use sinex_primitives::temporal::Timestamp;
 
+use crate::NodeResult;
 use crate::acquisition_manager::{AcquisitionManager, AppendStreamAcquirer, RotationPolicy};
 use crate::ingestor_node::IngestorNode;
 use crate::parser::adapters::SqliteSnapshotLane;
@@ -99,7 +100,6 @@ use crate::runtime::stream::{
     Checkpoint, ContinuousStart, NodeCapabilities, NodeRuntimeState, ScanArgs, ScanReport,
     TimeHorizon,
 };
-use crate::NodeResult;
 use std::sync::Arc;
 
 // =============================================================================
@@ -145,6 +145,7 @@ pub struct AdapterNodeConfig {
 impl AdapterNodeConfig {
     /// Convert the `binding_flags` map into a [`BindingConfig`] for use with
     /// `DeclarativeParser::evaluate`.
+    #[must_use]
     pub fn to_binding_config(&self) -> BindingConfig {
         let mut bc = BindingConfig::new();
         for (name, &value) in &self.binding_flags {
@@ -228,7 +229,7 @@ where
     /// Adapter config deserialized from the node config at `initialize`.
     config: Option<A::Config>,
 
-    /// BindingConfig derived from `binding_flags` in the node config.
+    /// `BindingConfig` derived from `binding_flags` in the node config.
     /// Held for the lifetime of the ingestor; passed to any `BindingConfig`-
     /// aware parsers (currently `DeclarativeParser`).
     binding_config: BindingConfig,
@@ -251,7 +252,7 @@ where
     /// Optional parallel snapshot-lane task. Spawned in `initialize` when the
     /// adapter returns a [`SnapshotLaneSpec`]. The lane runs an independent
     /// timer that captures the underlying substrate (currently only the
-    /// SQLite DB file) into a separate source-material lineage. Per-row
+    /// `SQLite` DB file) into a separate source-material lineage. Per-row
     /// drain is unaffected.
     snapshot_task: Option<tokio::task::JoinHandle<NodeResult<()>>>,
 
@@ -322,7 +323,7 @@ where
     pub fn current_material_id(&self) -> Option<Uuid> {
         self.stream_acquirer
             .as_ref()
-            .and_then(|a| a.current_material_id())
+            .and_then(super::super::acquisition_manager::AppendStreamAcquirer::current_material_id)
     }
 
     /// Ensure the `AppendStreamAcquirer` is initialized, creating it from the
@@ -330,6 +331,7 @@ where
     ///
     /// Returns a mutable reference to the acquirer, or an error if the ingestor
     /// has not been initialized yet.
+    #[allow(clippy::expect_used)]
     async fn ensure_stream_acquirer(&mut self) -> NodeResult<&mut AppendStreamAcquirer> {
         if self.stream_acquirer.is_none() {
             let manager = self.acquisition_manager.as_ref().ok_or_else(|| {
@@ -340,7 +342,10 @@ where
             self.stream_acquirer = Some(AppendStreamAcquirer::new(Arc::clone(manager)));
         }
         // SAFETY: we just set it above if it was None
-        Ok(self.stream_acquirer.as_mut().expect("stream_acquirer initialized above"))
+        Ok(self
+            .stream_acquirer
+            .as_mut()
+            .expect("stream_acquirer initialized above"))
     }
 
     /// Open the adapter, drain all records through the parser, emit each
@@ -350,7 +355,7 @@ where
     /// The stream acquirer is reused across drain calls; it rotates the
     /// underlying source material automatically at the configured size/time
     /// thresholds. This ensures `raw.source_material_registry` grows at
-    /// O(rotation_count) rather than O(poll_count).
+    /// `O(rotation_count)` rather than `O(poll_count)`.
     /// On adapter-open failure the material is cancelled before returning the
     /// error.
     ///
@@ -617,7 +622,10 @@ where
     ) -> NodeResult<()> {
         // Build the AcquisitionManager from the runtime's NATS handles.
         let acq = runtime
-            .acquisition_manager(crate::acquisition_manager::RotationPolicy::default(), self.source_unit_id)
+            .acquisition_manager(
+                crate::acquisition_manager::RotationPolicy::default(),
+                self.source_unit_id,
+            )
             .map_err(|e| {
                 crate::SinexError::lifecycle(
                     "AdapterBackedIngestor: failed to build AcquisitionManager",
@@ -646,7 +654,11 @@ where
         // wants one by returning `Some(spec)` from `snapshot_lane`; we spawn
         // an independent tokio task that captures the substrate on its own
         // timer.  Per-record drain (above) is untouched.
-        if let Some(spec) = self.adapter.snapshot_lane(self.source_unit_id, &adapter_config) {
+        if let Some(spec) = self
+            .adapter
+            .snapshot_lane(self.source_unit_id, &adapter_config)
+        {
+            #[allow(clippy::expect_used)]
             let manager = Arc::clone(
                 self.acquisition_manager
                     .as_ref()
@@ -754,7 +766,10 @@ where
         loop {
             // Check for shutdown before polling.
             if *shutdown_rx.borrow() {
-                info!(source_unit = self.source_unit_id, "Drain signal received; exiting continuous loop");
+                info!(
+                    source_unit = self.source_unit_id,
+                    "Drain signal received; exiting continuous loop"
+                );
                 break;
             }
 
@@ -786,14 +801,14 @@ where
         // receives the END frame and commits the row count before the process
         // exits.  Best-effort: a failure here only affects the current open
         // material; already-finalized materials and persisted events are safe.
-        if let Some(acquirer) = self.stream_acquirer.as_mut() {
-            if let Err(e) = acquirer.finalize("continuous-mode-shutdown").await {
-                warn!(
-                    source_unit = self.source_unit_id,
-                    error = %e,
-                    "Failed to finalize stream material on shutdown — in-flight material may be incomplete"
-                );
-            }
+        if let Some(acquirer) = self.stream_acquirer.as_mut()
+            && let Err(e) = acquirer.finalize("continuous-mode-shutdown").await
+        {
+            warn!(
+                source_unit = self.source_unit_id,
+                error = %e,
+                "Failed to finalize stream material on shutdown — in-flight material may be incomplete"
+            );
         }
 
         // Signal the snapshot lane (if any) to exit and wait briefly for it.
@@ -871,7 +886,9 @@ fn intent_to_event(
         MaterialAnchor::ByteRange { start, .. } => *start as i64,
         MaterialAnchor::Line { byte_start, .. } => *byte_start as i64,
         MaterialAnchor::SqliteRow { rowid, .. } => *rowid,
-        MaterialAnchor::StreamFrame { material_offset, .. } => *material_offset as i64,
+        MaterialAnchor::StreamFrame {
+            material_offset, ..
+        } => *material_offset as i64,
         MaterialAnchor::DirectoryEntry { .. } | MaterialAnchor::GitObject { .. } => 0,
     };
 
@@ -892,7 +909,7 @@ fn intent_to_event(
 ///
 /// When events are emitted from a long-lived source material managed by
 /// [`AppendStreamAcquirer`], the "natural" anchor inside `ParsedEventIntent` reflects
-/// a logical position within the *source record* (e.g. a SQLite rowid).  The real
+/// a logical position within the *source record* (e.g. a `SQLite` rowid).  The real
 /// byte position in the material is the offset returned by `append_with_anchor`, which
 /// is what downstream queries need to replay or seek into the material blob.
 fn intent_to_event_with_anchor(

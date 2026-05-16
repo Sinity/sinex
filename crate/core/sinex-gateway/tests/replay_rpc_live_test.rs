@@ -5,7 +5,6 @@
 //! operations work through the actual HTTP API that sinexctl and other
 //! clients use.
 
-use color_eyre::eyre::bail;
 use futures::StreamExt;
 use serde_json::json;
 use sinex_db::{DbPool, repositories::DbPoolExt};

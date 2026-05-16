@@ -48,12 +48,15 @@ pub struct DiskUsage {
 }
 
 impl DiskUsage {
+    #[must_use]
     pub fn warn(&self) -> bool {
         self.percent_used >= WARN_PERCENT
     }
+    #[must_use]
     pub fn should_auto_reclaim(&self) -> bool {
         self.percent_used >= AUTO_RECLAIM_PERCENT
     }
+    #[must_use]
     pub fn refuse(&self) -> bool {
         self.percent_used >= REFUSE_PERCENT
     }
@@ -185,7 +188,10 @@ fn prune_incremental(incremental_dir: &Path, keep_n: usize) -> Result<(usize, u6
             .metadata()
             .and_then(|m| m.modified())
             .unwrap_or(SystemTime::UNIX_EPOCH);
-        by_crate.entry(crate_prefix).or_default().push((mtime, path));
+        by_crate
+            .entry(crate_prefix)
+            .or_default()
+            .push((mtime, path));
     }
 
     let mut deleted = 0usize;

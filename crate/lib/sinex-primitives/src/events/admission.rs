@@ -32,7 +32,7 @@ pub const ACCEPTED_ENVELOPE_VERSIONS: &[&str] = &["1"];
 pub enum OccurrenceAnchorKind {
     /// Byte offset from the start of the material.
     ByteOffset,
-    /// SQLite row ID within a database table.
+    /// `SQLite` row ID within a database table.
     SqliteRow,
     /// Line number (1-based) within a text stream.
     LineNumber,
@@ -75,8 +75,10 @@ impl OccurrenceAnchorKind {
             "cursor_token" => Ok(OccurrenceAnchorKind::CursorToken),
             "git_oid" => Ok(OccurrenceAnchorKind::GitOid),
             "stream_frame" => Ok(OccurrenceAnchorKind::StreamFrame),
-            _ => Err(crate::SinexError::validation("invalid occurrence anchor kind")
-                .with_context("anchor_kind", s.to_string())),
+            _ => Err(
+                crate::SinexError::validation("invalid occurrence anchor kind")
+                    .with_context("anchor_kind", s.to_string()),
+            ),
         }
     }
 }
@@ -98,7 +100,7 @@ impl std::str::FromStr for OccurrenceAnchorKind {
 /// An admitted event intent — the producer's declaration that admission checks
 /// have been performed on these events.
 ///
-/// This is the envelope that producers publish to NATS JetStream instead of raw
+/// This is the envelope that producers publish to NATS `JetStream` instead of raw
 /// `Event` batches. It carries:
 /// - **Envelope metadata** (version, source unit, parser identity)
 /// - **The admitted events** — one or more `Event<JsonValue>` entries
@@ -212,8 +214,8 @@ mod tests {
     use super::*;
     use crate::events::builder::Provenance;
     use crate::{Id, Uuid};
+
     use xtask::sandbox::sinex_test;
-    use xtask::sandbox::prelude::TestResult;
 
     #[sinex_test]
     async fn envelope_validation_rejects_empty_version() -> TestResult<()> {

@@ -25,13 +25,14 @@ impl<'a> Repository<'a> for IntegrityRepository<'a> {
     }
 }
 
-impl<'a> IntegrityRepository<'a> {
+impl IntegrityRepository<'_> {
     /// Get the names of all expected automaton nodes from `core.manifests`.
     pub async fn get_expected_automatons(&self) -> SinexResult<Vec<String>> {
-        let names =
-            sqlx::query_scalar!(r#"SELECT name FROM core.manifests WHERE manifest_type = 'automaton' ORDER BY name"#)
-                .fetch_all(self.pool)
-                .await?;
+        let names = sqlx::query_scalar!(
+            r#"SELECT name FROM core.manifests WHERE manifest_type = 'automaton' ORDER BY name"#
+        )
+        .fetch_all(self.pool)
+        .await?;
         Ok(names)
     }
 

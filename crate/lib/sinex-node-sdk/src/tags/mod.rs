@@ -122,7 +122,7 @@ pub fn is_valid_tag_name(name: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use xtask::sandbox::{TestResult, sinex_test};
+    use xtask::sandbox::sinex_test;
 
     #[sinex_test]
     async fn test_tag_name_construction() -> TestResult<()> {

@@ -320,10 +320,12 @@ pub(super) async fn spawn_material_consumer(
                 Ok(()) => {}
                 Err(err) => {
                     error!(
+                        target: "sinex_metrics",
+                        metric = "ingestd.material_pipeline_failures_total",
                         material_id = %material_id,
                         frame_kind,
-                        "Failed to process material frame: {}",
-                        err
+                        error = %err,
+                        "Failed to process material frame"
                     );
                     let decision = RedeliveryDecision::for_processing_error(
                         &err,

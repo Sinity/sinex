@@ -306,8 +306,7 @@ async fn start_test_gateway_inner(
     wait_ready: bool,
 ) -> Result<TestGatewayHandle> {
     let workspace = find_workspace_root()?;
-    let freshness =
-        check_runtime_binary_freshness(&workspace, "sinex-gateway", "sinex-gateway")?;
+    let freshness = check_runtime_binary_freshness(&workspace, "sinex-gateway", "sinex-gateway")?;
     freshness.ensure_fresh()?;
     let binary_path = freshness.binary_path;
 

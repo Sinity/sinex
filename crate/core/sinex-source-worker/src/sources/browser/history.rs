@@ -1,10 +1,10 @@
-//! `browser.history` source unit — SQLite + dump-file browser history ingestion.
+//! `browser.history` source unit — `SQLite` + dump-file browser history ingestion.
 //!
 //! Two input legs via [`ChainedAdapter`]:
-//! - **Primary (SQLite)**: reads browser history DBs (qutebrowser `History` table,
+//! - **Primary (`SQLite`)**: reads browser history DBs (qutebrowser `History` table,
 //!   chromium `visits JOIN urls`). Format discrimination happens at parse time
 //!   by inspecting which columns are present in each row's JSON.
-//! - **Secondary (AppendOnlyFile)**: reads JSONL/NDJSON dump export lines appended
+//! - **Secondary (`AppendOnlyFile`)**: reads JSONL/NDJSON dump export lines appended
 //!   to by polylogue or manual browser history exports.
 //!
 //! Privacy tier: `Secret` — URLs carry auth tokens.
@@ -18,6 +18,10 @@ use serde::{Deserialize, Serialize};
 use sinex_node_sdk::parser::{
     AppendOnlyFileAdapter, ChainedAdapter, MaterialParser, ParserError, ParserResult,
 };
+use sinex_primitives::proof::{
+    CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, RetentionPolicy, RuntimeShape,
+    SourceUnitBinding, SourceUnitBuildImpact, SourceUnitDescriptor, SubjectRef,
+};
 use sinex_primitives::{
     domain::{EventSource, EventType},
     parser::{
@@ -26,10 +30,6 @@ use sinex_primitives::{
     },
     privacy::{self, ProcessingContext},
     temporal::Timestamp,
-};
-use sinex_primitives::proof::{
-    CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, RetentionPolicy, RuntimeShape,
-    SourceUnitBinding, SourceUnitBuildImpact, SourceUnitDescriptor, SubjectRef,
 };
 use sinex_primitives::{register_source_unit, register_source_unit_binding};
 
@@ -100,46 +100,54 @@ fn chromium_visit_timestamp(raw: i64) -> Option<Timestamp> {
 /// Heuristic integer timestamp decoder: infers unit (ns/µs/ms/s) from digit count.
 fn parse_integer_timestamp(value: i64) -> Option<Timestamp> {
     let digits = value.unsigned_abs().checked_ilog10().unwrap_or(0) + 1;
-    let unit_nanos: i128 = if digits >= 18 { 1 }
-        else if digits >= 15 { 1_000 }
-        else if digits >= 12 { 1_000_000 }
-        else { 1_000_000_000 };
+    let unit_nanos: i128 = if digits >= 18 {
+        1
+    } else if digits >= 15 {
+        1_000
+    } else if digits >= 12 {
+        1_000_000
+    } else {
+        1_000_000_000
+    };
     Timestamp::from_unix_timestamp_nanos(i128::from(value) * unit_nanos)
 }
 
 /// Extract the first recognisable timestamp from a JSON object.
 fn extract_timestamp(obj: &serde_json::Map<String, serde_json::Value>) -> Option<Timestamp> {
     const FIELDS: &[&str] = &[
-        "iso_time", "time", "visit_time", "visitTime", "lastVisitTime",
-        "timestamp", "DateTime", "date",
+        "iso_time",
+        "time",
+        "visit_time",
+        "visitTime",
+        "lastVisitTime",
+        "timestamp",
+        "DateTime",
+        "date",
     ];
     for field in FIELDS {
         let Some(v) = obj.get(*field) else { continue };
         match v {
             serde_json::Value::Number(n) => {
-                if let Some(v) = n.as_i64() {
-                    if let Some(ts) = parse_integer_timestamp(v) {
-                        return Some(ts);
-                    }
+                if let Some(v) = n.as_i64()
+                    && let Some(ts) = parse_integer_timestamp(v)
+                {
+                    return Some(ts);
                 }
             }
             serde_json::Value::String(s) => {
                 // Try RFC3339 via time crate (already a workspace dep).
-                if let Ok(odt) = time::OffsetDateTime::parse(
-                    s,
-                    &time::format_description::well_known::Rfc3339,
-                ) {
-                    if let Some(ts) = Timestamp::from_unix_timestamp_nanos(
-                        i128::from(odt.unix_timestamp_nanos()),
-                    ) {
-                        return Some(ts);
-                    }
+                if let Ok(odt) =
+                    time::OffsetDateTime::parse(s, &time::format_description::well_known::Rfc3339)
+                    && let Some(ts) =
+                        Timestamp::from_unix_timestamp_nanos(odt.unix_timestamp_nanos())
+                {
+                    return Some(ts);
                 }
                 // Fallback: try parsing as integer string.
-                if let Ok(n) = s.trim().parse::<i64>() {
-                    if let Some(ts) = parse_integer_timestamp(n) {
-                        return Some(ts);
-                    }
+                if let Ok(n) = s.trim().parse::<i64>()
+                    && let Some(ts) = parse_integer_timestamp(n)
+                {
+                    return Some(ts);
                 }
             }
             _ => {}
@@ -158,7 +166,16 @@ fn infer_browser_from_path(path: &str) -> String {
         .and_then(std::ffi::OsStr::to_str)
         .unwrap_or("")
         .to_ascii_lowercase();
-    for browser in ["chrome", "edge", "firefox", "floorp", "qutebrowser", "zen", "merged", "browser"] {
+    for browser in [
+        "chrome",
+        "edge",
+        "firefox",
+        "floorp",
+        "qutebrowser",
+        "zen",
+        "merged",
+        "browser",
+    ] {
         if lower.starts_with(browser) {
             return browser.to_string();
         }
@@ -181,9 +198,9 @@ pub struct BrowserHistoryParserConfig {}
 /// Imperative parser for `browser.history`.
 ///
 /// Dispatches on the `logical_path` prefix injected by [`ChainedAdapter`]:
-/// - `"primary/"` → SQLite row JSON (columns from `SqliteRowAdapter`).
+/// - `"primary/"` → `SQLite` row JSON (columns from `SqliteRowAdapter`).
 /// - `"secondary/"` → JSONL dump file line.
-/// - No prefix → assume SQLite (direct test invocation).
+/// - No prefix → assume `SQLite` (direct test invocation).
 #[derive(Debug, Clone, Default)]
 pub struct BrowserHistoryParser;
 
@@ -231,8 +248,7 @@ impl MaterialParser for BrowserHistoryParser {
         let logical_path = record
             .logical_path
             .as_deref()
-            .map(camino::Utf8Path::as_str)
-            .unwrap_or("");
+            .map_or("", camino::Utf8Path::as_str);
 
         if logical_path.starts_with("secondary/") {
             parse_dump_record(&record, ctx)
@@ -263,9 +279,8 @@ fn parse_sqlite_record(
     record: &SourceRecord,
     ctx: &ParserContext,
 ) -> ParserResult<Vec<ParsedEventIntent>> {
-    let obj: serde_json::Map<String, serde_json::Value> =
-        serde_json::from_slice(&record.bytes)
-            .map_err(|e| ParserError::Parse(format!("browser SQLite row JSON parse failed: {e}")))?;
+    let obj: serde_json::Map<String, serde_json::Value> = serde_json::from_slice(&record.bytes)
+        .map_err(|e| ParserError::Parse(format!("browser SQLite row JSON parse failed: {e}")))?;
 
     // Carry the DB file path through to `source_file` — `PageVisitedPayload`
     // requires it (#1321). The row parsers leave it empty; we backfill from
@@ -275,8 +290,7 @@ fn parse_sqlite_record(
     let source_file = record
         .logical_path
         .as_deref()
-        .map(camino::Utf8Path::as_str)
-        .unwrap_or("")
+        .map_or("", camino::Utf8Path::as_str)
         .to_string();
 
     let mut visit = if obj.contains_key("visit_time") {
@@ -290,12 +304,31 @@ fn parse_sqlite_record(
     build_intent(visit, record, ctx)
 }
 
-fn parse_qutebrowser_row(obj: &serde_json::Map<String, serde_json::Value>) -> ParserResult<VisitData> {
-    let row_id = obj.get("rowid").and_then(|v| v.as_i64()).unwrap_or(0);
-    let url = obj.get("url").and_then(|v| v.as_str()).unwrap_or("").to_string();
-    let title = obj.get("title").and_then(|v| v.as_str()).unwrap_or("").to_string();
-    let atime = obj.get("atime").and_then(|v| v.as_i64()).unwrap_or(0);
-    let redirect = obj.get("redirect").and_then(|v| v.as_i64()).unwrap_or(0);
+fn parse_qutebrowser_row(
+    obj: &serde_json::Map<String, serde_json::Value>,
+) -> ParserResult<VisitData> {
+    let row_id = obj
+        .get("rowid")
+        .and_then(sinex_primitives::JsonValue::as_i64)
+        .unwrap_or(0);
+    let url = obj
+        .get("url")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let title = obj
+        .get("title")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let atime = obj
+        .get("atime")
+        .and_then(sinex_primitives::JsonValue::as_i64)
+        .unwrap_or(0);
+    let redirect = obj
+        .get("redirect")
+        .and_then(sinex_primitives::JsonValue::as_i64)
+        .unwrap_or(0);
     let visit_time = parse_integer_timestamp(atime)
         .ok_or_else(|| ParserError::Parse(format!("invalid qutebrowser atime {atime}")))?;
     Ok(VisitData {
@@ -314,19 +347,40 @@ fn parse_qutebrowser_row(obj: &serde_json::Map<String, serde_json::Value>) -> Pa
 }
 
 fn parse_chromium_row(obj: &serde_json::Map<String, serde_json::Value>) -> ParserResult<VisitData> {
-    let row_id = obj.get("rowid").and_then(|v| v.as_i64()).unwrap_or(0);
-    let url = obj.get("url").and_then(|v| v.as_str()).unwrap_or("").to_string();
-    let title = obj.get("title").and_then(|v| v.as_str()).unwrap_or("").to_string();
-    let visit_time_raw = obj.get("visit_time").and_then(|v| v.as_i64()).unwrap_or(0);
+    let row_id = obj
+        .get("rowid")
+        .and_then(sinex_primitives::JsonValue::as_i64)
+        .unwrap_or(0);
+    let url = obj
+        .get("url")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let title = obj
+        .get("title")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let visit_time_raw = obj
+        .get("visit_time")
+        .and_then(sinex_primitives::JsonValue::as_i64)
+        .unwrap_or(0);
     let referrer = obj
         .get("external_referrer_url")
         .and_then(|v| v.as_str())
         .filter(|s| !s.is_empty())
         .map(String::from);
-    let transition_raw = obj.get("transition").and_then(|v| v.as_i64()).unwrap_or(0);
-    let visit_duration = obj.get("visit_duration").and_then(|v| v.as_i64()).unwrap_or(0);
-    let visit_time = chromium_visit_timestamp(visit_time_raw)
-        .ok_or_else(|| ParserError::Parse(format!("invalid chromium visit_time {visit_time_raw}")))?;
+    let transition_raw = obj
+        .get("transition")
+        .and_then(sinex_primitives::JsonValue::as_i64)
+        .unwrap_or(0);
+    let visit_duration = obj
+        .get("visit_duration")
+        .and_then(sinex_primitives::JsonValue::as_i64)
+        .unwrap_or(0);
+    let visit_time = chromium_visit_timestamp(visit_time_raw).ok_or_else(|| {
+        ParserError::Parse(format!("invalid chromium visit_time {visit_time_raw}"))
+    })?;
     Ok(VisitData {
         browser: "chromium".into(),
         title,
@@ -367,8 +421,16 @@ fn parse_dump_record(
     let Some(visit_time) = extract_timestamp(obj) else {
         return Ok(vec![]);
     };
-    let url = obj.get("url").and_then(|v| v.as_str()).unwrap_or("").to_string();
-    let title = obj.get("title").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let url = obj
+        .get("url")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let title = obj
+        .get("title")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
     let path_suffix = record
         .logical_path
         .as_deref()
@@ -384,7 +446,10 @@ fn parse_dump_record(
             .or_else(|| obj.get("external_referrer_url"))
             .and_then(|v| v.as_str())
             .map(String::from),
-        transition: obj.get("transition").and_then(|v| v.as_str()).map(String::from),
+        transition: obj
+            .get("transition")
+            .and_then(|v| v.as_str())
+            .map(String::from),
         visit_id: obj
             .get("visitId")
             .or_else(|| obj.get("visit_id"))
@@ -424,14 +489,20 @@ fn build_intent(
 ) -> ParserResult<Vec<ParsedEventIntent>> {
     let url = redact(visit.url, ProcessingContext::Clipboard)?;
     let title = redact(visit.title, ProcessingContext::WindowTitle)?;
-    let referrer = visit.referrer.map(|r| redact(r, ProcessingContext::Clipboard)).transpose()?;
+    let referrer = visit
+        .referrer
+        .map(|r| redact(r, ProcessingContext::Clipboard))
+        .transpose()?;
     let source_file = redact(visit.source_file, ProcessingContext::Metadata)?;
 
     let mut payload = serde_json::Map::new();
     payload.insert("browser".into(), serde_json::json!(visit.browser));
     payload.insert("title".into(), serde_json::json!(title));
     payload.insert("url".into(), serde_json::json!(url));
-    payload.insert("visit_time".into(), serde_json::json!(visit.visit_time.format_rfc3339()));
+    payload.insert(
+        "visit_time".into(),
+        serde_json::json!(visit.visit_time.format_rfc3339()),
+    );
     if let Some(ref r) = referrer {
         payload.insert("referrer".into(), serde_json::json!(r));
     }
@@ -494,7 +565,7 @@ fn redact(value: String, ctx: ProcessingContext) -> ParserResult<String> {
 // Adapter type alias and registration
 // ---------------------------------------------------------------------------
 
-/// Chained adapter: primary = SQLite history DB rows, secondary = dump file lines.
+/// Chained adapter: primary = `SQLite` history DB rows, secondary = dump file lines.
 pub type BrowserHistoryAdapter =
     ChainedAdapter<sinex_node_sdk::parser::SqliteRowAdapter, AppendOnlyFileAdapter>;
 

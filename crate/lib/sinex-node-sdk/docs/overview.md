@@ -151,13 +151,13 @@ treat duplicates very differently.
 | Adapter | Input shape | Checkpoint shape | Replay semantics | Typical use |
 |---------|-------------|------------------|------------------|-------------|
 | `append_only_utf8_file()` | UTF-8 file that grows; bytes never rewritten | Byte offset | Re-tail from offset — idempotent | Atuin history, logs, append-only journals |
-| `sqlite()` | SQLite DB with monotone ROWID | `SqliteRowCheckpoint` | Re-read rows after `row_id` — idempotent; optional snapshot evidence | Browser history, Atuin store, dump files |
+| `sqlite()` | `SQLite` DB with monotone ROWID | `SqliteRowCheckpoint` | Re-read rows after `row_id` — idempotent; optional snapshot evidence | Browser history, Atuin store, dump files |
 | `polling()` | Anything with a caller-defined poll fn | Caller-defined | Caller-defined | Custom polling adapters |
 | `journal()` | systemd journald cursor | `JournalCursorCheckpoint` | Re-read from cursor — idempotent | System node, journald-style sources |
-| `ipc_stream()` | `AsyncRead` ephemeral pipe / Unix socket | `IpcStreamCheckpoint` (reconnects, last_seq) | Snapshot/historical empty — ephemeral | D-Bus signal subscriptions, polkit, custom IPC |
-| `one_time_dump()` | Single bounded `AsyncRead` | `OneTimeDumpCheckpoint` (consumed, content_hash) | Idempotent — same bytes produce same records | Single-shot CSV/JSON dumps, GDPR archives |
-| `incremental_dump()` | Refreshable dump rewritten end-to-end | `IncrementalDumpCheckpoint` (BTreeSet of seen keys) | Emits only records whose key isn't in the checkpoint | Browser history exports, Reddit/Wykop GDPR refreshes |
-| `api_fetch()` | Paginated remote API behind `ApiClient` | `ApiFetchCheckpoint` (cursor, etag, fetched_at) | Caller-driven — cursor advances forward, etag/last-fetched skip unchanged windows | Spotify, Goodreads, Lastpass, Raindrop |
+| `ipc_stream()` | `AsyncRead` ephemeral pipe / Unix socket | `IpcStreamCheckpoint` (reconnects, `last_seq`) | Snapshot/historical empty — ephemeral | D-Bus signal subscriptions, polkit, custom IPC |
+| `one_time_dump()` | Single bounded `AsyncRead` | `OneTimeDumpCheckpoint` (consumed, `content_hash`) | Idempotent — same bytes produce same records | Single-shot CSV/JSON dumps, GDPR archives |
+| `incremental_dump()` | Refreshable dump rewritten end-to-end | `IncrementalDumpCheckpoint` (`BTreeSet` of seen keys) | Emits only records whose key isn't in the checkpoint | Browser history exports, Reddit/Wykop GDPR refreshes |
+| `api_fetch()` | Paginated remote API behind `ApiClient` | `ApiFetchCheckpoint` (cursor, etag, `fetched_at`) | Caller-driven — cursor advances forward, etag/last-fetched skip unchanged windows | Spotify, Goodreads, Lastpass, Raindrop |
 
 Decision questions to ask, in order:
 
@@ -199,7 +199,7 @@ roles in the same pipeline and are intentionally distinct, not redundant:
 |-----|--------|------|
 | `batch_importer` | `crate::batch_importer` | Discovers files in a directory tree (FS-style ingestors that turn N files in a directory into N source materials in one pass). |
 | `acquisition_manager` | `crate::acquisition_manager` | Owns the lifecycle of one source material: `begin → append slices → finalize`. Used by `StageAsYouGoContext` for streamed captures, and by ingestors that already have the bytes and need to register them as material. |
-| `record_source` | `crate::record_source` | Reads logical records out of a backed material (or a raw input stream): append-only UTF-8 lines, SQLite rows, JSON-API pages. The output is the per-record byte anchors that feed event provenance. |
+| `record_source` | `crate::record_source` | Reads logical records out of a backed material (or a raw input stream): append-only UTF-8 lines, `SQLite` rows, JSON-API pages. The output is the per-record byte anchors that feed event provenance. |
 
 In a typical ingestor flow they layer top-down: the batch importer enumerates
 files, the acquisition manager registers and writes each as a source material,

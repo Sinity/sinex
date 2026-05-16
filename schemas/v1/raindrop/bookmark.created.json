@@ -1,0 +1,76 @@
+{
+  "$defs": {
+    "DateTime": {
+      "description": "RFC 3339 formatted date-time string",
+      "format": "date-time",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "One bookmark observation from a Raindrop CSV export.\n\nRaindrop's CSV columns are: `id,title,note,excerpt,url,folder,tags,created,\ncover,highlights,favorite`. We keep the semantic fields and drop the\ncover-image URL by default (it's a CDN reference that rots quickly and\nhas no replay role).",
+  "properties": {
+    "created_at": {
+      "$ref": "#/$defs/DateTime",
+      "description": "Time the bookmark was created (column `created`)."
+    },
+    "excerpt": {
+      "description": "Page excerpt Raindrop grabbed when the bookmark was saved (column `excerpt`).",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "favorite": {
+      "description": "Whether the bookmark was marked favorite (column `favorite`).",
+      "type": "boolean"
+    },
+    "folder": {
+      "description": "Folder name (column `folder`). `\"Unsorted\"` for the default folder.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "note": {
+      "description": "User note attached to the bookmark (column `note`).",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "raindrop_id": {
+      "description": "Numeric Raindrop bookmark id (column `id`).",
+      "format": "int64",
+      "type": "integer"
+    },
+    "tags": {
+      "description": "Comma-delimited tags as stored in Raindrop (column `tags`). Preserved\nverbatim; downstream consumers can split on `,` if they want a list.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "title": {
+      "description": "Title — often the URL itself or a copy of the URL prefixed with a dash\nfor the operator's archive (column `title`).",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "url": {
+      "description": "URL of the bookmarked page (column `url`).",
+      "type": "string"
+    }
+  },
+  "required": [
+    "raindrop_id",
+    "url",
+    "created_at",
+    "favorite"
+  ],
+  "title": "RaindropBookmarkPayload",
+  "type": "object",
+  "x-sinex-event-type": "bookmark.created",
+  "x-sinex-source": "raindrop",
+  "x-sinex-version": "1.0.0"
+}

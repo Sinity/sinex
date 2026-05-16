@@ -1,13 +1,13 @@
-//! WeeChat source unit — binds the WeeChat log parser to the source-worker
+//! `WeeChat` source unit — binds the `WeeChat` log parser to the source-worker
 //! dispatch and node factory registries.
 //!
 //! Two parsers are registered in the dispatch registry:
 //!
 //! 1. **Imperative (`WeeChatLogParser`)** — the full production parser from
-//!    `sinex_node_sdk::parser::WeeChatLogParser`. Handles all four WeeChat
-//!    event types (irc.join, irc.part, irc.server_notice, irc.message) with
+//!    `sinex_node_sdk::parser::WeeChatLogParser`. Handles all four `WeeChat`
+//!    event types (irc.join, irc.part, `irc.server_notice`, irc.message) with
 //!    custom timestamp parsing and prefix classification. Registered under
-//!    "weechat" so parse commands for WeeChat logs reach it.
+//!    "weechat" so parse commands for `WeeChat` logs reach it.
 //!
 //! 2. **Declarative companion (`WeeChatMessageRecord`)** — a
 //!    `#[derive(SourceRecord)]` struct that exercises the new declarative path
@@ -20,6 +20,7 @@
 //! Both registrations are performed at link time via `inventory::submit!`.
 //! No match arms.
 
+use crate::register_parser;
 use sinex_macros::SourceRecord;
 use sinex_node_sdk::parser::{AppendOnlyFileAdapter, WeeChatLogParser};
 use sinex_primitives::proof::{
@@ -27,7 +28,6 @@ use sinex_primitives::proof::{
     SourceUnitBinding, SourceUnitBuildImpact, SourceUnitDescriptor, SubjectRef,
 };
 use sinex_primitives::{register_source_unit, register_source_unit_binding};
-use crate::register_parser;
 
 // ---------------------------------------------------------------------------
 // Source unit descriptor — "weechat"

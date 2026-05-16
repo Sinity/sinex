@@ -4,7 +4,10 @@
 
 #![allow(unused_imports)]
 
-use super::*;
+use super::{
+    Context, ExpectedReplayOutputs, OperationOutputEvent, REPLAY_OUTPUT_VISIBILITY_TIMEOUT,
+    ReplayExecutionEngine, Result, ScopeInvalidationBucket, StreamExt, eyre,
+};
 use async_nats::jetstream;
 use sinex_db::repositories::{DbPoolExt, EventRepositoryTx};
 use sinex_node_sdk::derived_node::invalidation::{DerivedScopeInvalidation, INVALIDATION_SUBJECT};
@@ -137,12 +140,13 @@ impl ReplayExecutionEngine {
             .material_metadata
             .get("logical_source_identifier")
             .and_then(serde_json::Value::as_str)
-            .map(str::to_string)
-            .unwrap_or_else(|| {
-                SourceIdentifier::from_wire(&material.source_identifier)
-                    .map(|si| si.logical_id)
-                    .unwrap_or_else(|_| material.source_identifier.clone())
-            })
+            .map_or_else(
+                || {
+                    SourceIdentifier::from_wire(&material.source_identifier)
+                        .map_or_else(|_| material.source_identifier.clone(), |si| si.logical_id)
+                },
+                str::to_string,
+            )
     }
 
     pub(crate) fn with_logical_source_identifiers(

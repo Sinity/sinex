@@ -21,12 +21,12 @@ use sinex_primitives::{DynamicPayload, Id, Uuid};
 use std::collections::HashMap;
 use std::sync::atomic::AtomicUsize;
 use tokio::time::sleep;
-use xtask::sandbox::{EnvGuard, sinex_test};
+use xtask::sandbox::sinex_test;
 
 /// Subscribe to scope-invalidation messages in tests.
 ///
 /// `js.publish` requires the target subject to be covered by an existing
-/// JetStream stream, and the production stream bootstrap (in
+/// `JetStream` stream, and the production stream bootstrap (in
 /// `sinex_ingestd::jetstream_consumer::bootstrap_streams`) does not run
 /// in test contexts that use ephemeral NATS. This helper:
 ///

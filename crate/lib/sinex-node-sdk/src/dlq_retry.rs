@@ -325,7 +325,12 @@ impl DlqRetryHandler {
                 Ok(true)
             }
             Err(e) => {
-                error!("Failed to retry message: {e}");
+                error!(
+                    target: "sinex_metrics",
+                    metric = "node.dlq_retry_failures_total",
+                    error = %e,
+                    "Failed to retry message"
+                );
                 msg.ack_with(async_nats::jetstream::AckKind::Nak(Some(
                     self.config.retry_delay(),
                 )))

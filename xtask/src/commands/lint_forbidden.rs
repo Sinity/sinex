@@ -246,6 +246,9 @@ impl XtaskCommand for LintForbiddenCommand {
         // Check for test-utils usage in production code (layering violation)
         check_test_utils_layering(&mut violations)?;
 
+        // C1: Secret-tier source units must invoke the privacy engine
+        violations.extend(check_secret_tier_privacy_coverage()?);
+
         let ast_grep = run_ast_grep_scan()?;
         if let Some(ref ag) = ast_grep {
             if ag.has_findings() && ctx.is_human() {
@@ -459,8 +462,7 @@ fn check_privacy_invocation_for_sensitive_units() -> Result<Vec<String>> {
         let search_dir = abs_path
             .parent()
             .expect("file path must have a parent directory");
-        let has_privacy_invocation =
-            directory_contains_privacy_indicator(search_dir);
+        let has_privacy_invocation = directory_contains_privacy_indicator(search_dir);
 
         if has_privacy_invocation {
             continue;
@@ -488,10 +490,12 @@ fn directory_contains_privacy_indicator(dir: &std::path::Path) -> bool {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return false;
     };
-    for entry in entries.filter_map(|e| e.ok()) {
+    for entry in entries.filter_map(std::result::Result::ok) {
         let path = entry.path();
         if path.extension().is_some_and(|ext| ext == "rs") {
-            let Ok(text) = std::fs::read_to_string(&path) else { continue };
+            let Ok(text) = std::fs::read_to_string(&path) else {
+                continue;
+            };
             if PRIVACY_INVOCATION_INDICATORS
                 .iter()
                 .any(|ind| text.contains(ind))
@@ -539,12 +543,11 @@ fn extract_source_unit_ids(contents: &str) -> Vec<String> {
         let trimmed = line.trim();
         if let Some(rest) = trimmed.strip_prefix("id:") {
             let rest = rest.trim();
-            if let Some(inner) = rest.strip_prefix('"') {
-                if let Some(id) = inner.split('"').next() {
-                    if !id.is_empty() {
-                        ids.push(id.to_string());
-                    }
-                }
+            if let Some(inner) = rest.strip_prefix('"')
+                && let Some(id) = inner.split('"').next()
+                && !id.is_empty()
+            {
+                ids.push(id.to_string());
             }
         }
     }
@@ -716,6 +719,75 @@ fn check_println_in_lib(label: &str, pattern: &str, allow: &[&str]) -> Result<Ve
 
 /// Check for `sinex_test_utils` usage outside expected locations.
 /// Reports usage for awareness but doesn't block (inline #[cfg(test)] modules are OK).
+/// C1 (issue #1337): Every source unit module declaring `PrivacyTier::Secret` must invoke
+/// the privacy engine (`privacy::engine` or `privacy::process`) somewhere in its module directory.
+/// The descriptor and the engine call may live in different files within the same module.
+///
+/// xtask and schema/test infrastructure that reference `PrivacyTier::Secret` for inspection
+/// or validation purposes are excluded; only `crate/` source worker paths are checked.
+fn check_secret_tier_privacy_coverage() -> Result<Vec<String>> {
+    // Files with PrivacyTier::Secret declarations (source unit descriptors).
+    let secret_files_output = Command::new("rg")
+        .current_dir(workspace_root())
+        .args([
+            "--color=never",
+            "--files-with-matches",
+            r"PrivacyTier::Secret",
+            "--glob",
+            "*.rs",
+            "--glob",
+            "!**/tests/**",
+            // Only check source worker source units, not xtask/schema inspection code.
+            "crate/core/sinex-source-worker/src/sources/",
+        ])
+        .output()
+        .with_context(|| "failed to scan for PrivacyTier::Secret files")?;
+    ensure_rg_completed(&secret_files_output, "ripgrep (Secret-tier files)")?;
+
+    let secret_files = String::from_utf8_lossy(&secret_files_output.stdout);
+    let mut violations = Vec::new();
+
+    for file in secret_files.lines() {
+        let file = file.trim();
+        if file.is_empty() {
+            continue;
+        }
+        // The descriptor may be in mod.rs while the engine call is in a sibling file.
+        // Check the entire directory so the constraint is "module must invoke privacy engine",
+        // not "this exact file must invoke privacy engine".
+        let dir = std::path::Path::new(file)
+            .parent()
+            .and_then(|p| p.to_str())
+            .unwrap_or(file);
+        let engine_check = Command::new("rg")
+            .current_dir(workspace_root())
+            .args([
+                "--color=never",
+                "--quiet",
+                r"privacy::(engine|process)",
+                "--glob",
+                "*.rs",
+                dir,
+            ])
+            .output()
+            .with_context(|| format!("failed to check privacy engine usage in {dir}"))?;
+        // rg exits 0 if found, 1 if not found.
+        if !engine_check.status.success() {
+            violations.push(format!(
+                "{file}:0:0 [secret-tier-no-privacy-engine] Source unit declares PrivacyTier::Secret but no file in its module directory invokes privacy::engine() or privacy::process() — secrets may emit unredacted"
+            ));
+        }
+    }
+
+    if !violations.is_empty() {
+        eprintln!(
+            "🔒 {} Secret-tier module(s) missing privacy engine invocation",
+            violations.len()
+        );
+    }
+    Ok(violations)
+}
+
 fn check_test_utils_layering(_violations: &mut Vec<String>) -> Result<()> {
     // Allow test-utils imports in expected locations
     let allow_prefixes = [
@@ -1182,7 +1254,10 @@ mod tests {
         "#;
 
         let violations = run_privacy_gate_on_fixture(fixture);
-        assert!(violations.is_empty(), "Public tier must not require privacy invocation");
+        assert!(
+            violations.is_empty(),
+            "Public tier must not require privacy invocation"
+        );
         Ok(())
     }
 
@@ -1226,7 +1301,10 @@ mod tests {
         "#;
 
         let violations = run_privacy_gate_on_fixture(fixture);
-        assert!(violations.is_empty(), "ProcessingContext:: satisfies the gate");
+        assert!(
+            violations.is_empty(),
+            "ProcessingContext:: satisfies the gate"
+        );
         Ok(())
     }
 
@@ -1250,7 +1328,10 @@ mod tests {
         "#;
 
         let violations = run_privacy_gate_on_fixture(fixture);
-        assert!(violations.is_empty(), "default_privacy_context = satisfies the gate");
+        assert!(
+            violations.is_empty(),
+            "default_privacy_context = satisfies the gate"
+        );
         Ok(())
     }
 
@@ -1272,7 +1353,10 @@ mod tests {
         "#;
 
         let violations = run_privacy_gate_on_fixture(fixture);
-        assert!(violations.is_empty(), "#[allow(missing_privacy_invocation satisfies the gate");
+        assert!(
+            violations.is_empty(),
+            "#[allow(missing_privacy_invocation satisfies the gate"
+        );
         Ok(())
     }
 
