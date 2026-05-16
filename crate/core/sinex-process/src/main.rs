@@ -12,18 +12,18 @@
 //!
 //! # Automaton names
 //!
-//! - `canonicalizer`      — terminal command canonicalizer (TransducerNode)
-//! - `analytics`          — activity window analytics (WindowedNode)
-//! - `health`             — health aggregator (ScopeReconcilerNode)
-//! - `session`            — session detector (WindowedNode)
-//! - `hourly`             — hourly activity summarizer (WindowedNode)
-//! - `daily`              — daily activity summarizer (WindowedNode)
-//! - `entity-resolver`    — entity resolver (WindowedNode)
-//! - `relation-extractor` — relation extractor (ScopeReconcilerNode)
-//! - `entity-enricher`    — entity enricher (ScopeReconcilerNode)
-//! - `entity-extractor`   — entity extractor (TransducerNode)
-//! - `tag-applier`       — rule-based tag applier (TransducerNode)
-//! - `document-parser`    — document parser (MultiOutputTransducerNode)
+//! - `canonicalizer`      — terminal command canonicalizer (`TransducerNode`)
+//! - `analytics`          — activity window analytics (`WindowedNode`)
+//! - `health`             — health aggregator (`ScopeReconcilerNode`)
+//! - `session`            — session detector (`WindowedNode`)
+//! - `hourly`             — hourly activity summarizer (`WindowedNode`)
+//! - `daily`              — daily activity summarizer (`WindowedNode`)
+//! - `entity-resolver`    — entity resolver (`WindowedNode`)
+//! - `relation-extractor` — relation extractor (`ScopeReconcilerNode`)
+//! - `entity-enricher`    — entity enricher (`ScopeReconcilerNode`)
+//! - `entity-extractor`   — entity extractor (`TransducerNode`)
+//! - `tag-applier`       — rule-based tag applier (`TransducerNode`)
+//! - `document-parser`    — document parser (`MultiOutputTransducerNode`)
 
 #[cfg(not(target_env = "msvc"))]
 use mimalloc::MiMalloc;
@@ -41,7 +41,7 @@ use sinex_process::{
 /// Extract `--automaton <name>` (or `SINEX_AUTOMATON`) from raw argv and return
 /// both the automaton name and the filtered argv (without the `--automaton` flag).
 ///
-/// The NodeCli parser does not know about `--automaton`, so we strip it before
+/// The `NodeCli` parser does not know about `--automaton`, so we strip it before
 /// forwarding the remaining args to it.
 fn extract_automaton(args: Vec<std::ffi::OsString>) -> (String, Vec<std::ffi::OsString>) {
     // Check env first.
@@ -67,10 +67,10 @@ fn extract_automaton(args: Vec<std::ffi::OsString>) -> (String, Vec<std::ffi::Os
         if s == "--automaton" {
             // Next arg is the value; record it (if not already set from env).
             skip_next = true;
-            if automaton.is_none() {
-                if let Some(val) = args.get(i + 1) {
-                    automaton = Some(val.to_string_lossy().into_owned());
-                }
+            if automaton.is_none()
+                && let Some(val) = args.get(i + 1)
+            {
+                automaton = Some(val.to_string_lossy().into_owned());
             }
         } else if let Some(val) = s.strip_prefix("--automaton=") {
             if automaton.is_none() {

@@ -9,15 +9,15 @@
 //! - Parser satisfies source-worker registration and manifest obligations
 //!   (Bus-First admission path verified via `declared_event_types` + `privacy_contexts`).
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
 use sinex_node_sdk::parser::MaterialParser;
 use sinex_primitives::{
+    Uuid,
     ids::Id,
     parser::{MaterialAnchor, ParserContext, SourceRecord, SourceUnitId},
     privacy::ProcessingContext,
     temporal::Timestamp,
-    Uuid,
 };
 use sinex_source_worker::sources::bookmark::RaindropBookmarkParser;
 
@@ -119,7 +119,11 @@ async fn overlapping_snapshots_dedup_by_occurrence_key() {
 
     // Overlap: ids 200 and 300 appear in both snapshots with identical keys.
     let overlap: HashSet<&String> = keys_a.intersection(&keys_b).collect();
-    assert_eq!(overlap.len(), 2, "expected 2 overlapping keys (ids 200, 300)");
+    assert_eq!(
+        overlap.len(),
+        2,
+        "expected 2 overlapping keys (ids 200, 300)"
+    );
 
     // Union of keys across both snapshots = 4 distinct logical bookmarks.
     let union: HashSet<&String> = keys_a.union(&keys_b).collect();
@@ -150,8 +154,14 @@ async fn row_anchors_are_sequential_line_numbers() {
         let expected_line = (i + 1) as u64;
         match &intent.anchor {
             MaterialAnchor::Line { byte_start, line } => {
-                assert_eq!(*byte_start, 0, "byte_start should be 0 (whole-file material)");
-                assert_eq!(*line, expected_line, "line anchor should be 1-based row index");
+                assert_eq!(
+                    *byte_start, 0,
+                    "byte_start should be 0 (whole-file material)"
+                );
+                assert_eq!(
+                    *line, expected_line,
+                    "line anchor should be 1-based row index"
+                );
             }
             other => panic!("expected Line anchor, got {other:?}"),
         }
