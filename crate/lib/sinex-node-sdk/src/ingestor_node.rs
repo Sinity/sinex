@@ -520,8 +520,7 @@ impl<I: IngestorNode> Node for IngestorNodeAdapter<I> {
                         // Active probe: flush() issues PING and waits for PONG.
                         tokio::time::timeout(std::time::Duration::from_millis(500), client.flush())
                             .await
-                            .map(|r| r.is_ok())
-                            .unwrap_or(false)
+                            .is_ok_and(|r| r.is_ok())
                     })
                 });
 
@@ -622,6 +621,8 @@ impl<I: IngestorNode> Node for IngestorNodeAdapter<I> {
                             interval.tick().await;
                             if let Err(e) = reporter.check_and_emit().await {
                                 warn!(
+                                    target: "sinex_metrics",
+                                    metric = "node.health_emit_failures_total",
                                     node = %node_name,
                                     error = %e,
                                     "Failed to emit ingestor health status"
@@ -629,7 +630,7 @@ impl<I: IngestorNode> Node for IngestorNodeAdapter<I> {
                             }
                         }
                     } else {
-                        std::future::pending::<()>().await
+                        std::future::pending::<()>().await;
                     }
                 };
 
@@ -663,7 +664,13 @@ impl<I: IngestorNode> Node for IngestorNodeAdapter<I> {
                 reporter.record_error(&SinexError::processing(error_msg));
             }
             if let Err(e) = reporter.check_and_emit().await {
-                warn!(node = %self.ingestor.name(), error = %e, "Failed to emit ingestor health status");
+                warn!(
+                    target: "sinex_metrics",
+                    metric = "node.health_emit_failures_total",
+                    node = %self.ingestor.name(),
+                    error = %e,
+                    "Failed to emit ingestor health status"
+                );
             }
         }
 

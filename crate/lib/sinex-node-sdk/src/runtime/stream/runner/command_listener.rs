@@ -390,6 +390,8 @@ impl<T: Node + 'static> NodeRunner<T> {
                                             }
                                             Err(outcome) => {
                                                 warn!(
+                                                    target: "sinex_metrics",
+                                                    metric = "node.dispatched_scan_failures_total",
                                                     operation_id = %operation_id,
                                                     node = %scan_node_name,
                                                     error = %outcome.error,
