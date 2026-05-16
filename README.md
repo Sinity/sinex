@@ -165,6 +165,7 @@ journalctl -u sinex-gateway -u sinex-ingestd -f
 | Deploy on NixOS | [nixos/README.md](nixos/README.md) |
 | Build a node or derived service | [crate/lib/sinex-node-sdk/docs/overview.md](crate/lib/sinex-node-sdk/docs/overview.md) |
 | Understand event schemas | [crate/lib/sinex-schema/docs/event-taxonomy.md](crate/lib/sinex-schema/docs/event-taxonomy.md) |
+| Integrate an external tool or sibling project | [docs/architecture/integration-authority.md](docs/architecture/integration-authority.md) |
 | Work on repo workflow or verification | [CONTRIBUTING.md](CONTRIBUTING.md), [TESTING.md](TESTING.md) |
 | Work on the CLI/tooling loop | [xtask/docs/README.md](xtask/docs/README.md) |
 
