@@ -289,7 +289,12 @@ impl JetStreamEventConsumer {
             }
             result = timeout_task => {
                 let stop_requested = !*self.running.read().await;
-                error!("Timeout check task stopped: {result:?}");
+                error!(
+                    target: "sinex_metrics",
+                    metric = "node.consumer_task_exits_total",
+                    task = "timeout_check",
+                    "Timeout check task stopped: {result:?}"
+                );
                 // Abort remaining tasks
                 provisional_abort.abort();
                 confirmation_abort.abort();
@@ -350,7 +355,12 @@ impl JetStreamEventConsumer {
         let event = match Self::parse_provisional_event(&msg) {
             Ok(event) => event,
             Err(e) => {
-                error!("Failed to parse provisional event: {e}");
+                error!(
+                    target: "sinex_metrics",
+                    metric = "node.provisional_event_parse_failures_total",
+                    error = %e,
+                    "Failed to parse provisional event"
+                );
                 msg.ack().await.map_err(|ack_err| {
                     Self::message_settlement_error(
                         "failed to ack bad provisional message",
@@ -455,7 +465,12 @@ impl JetStreamEventConsumer {
         let confirmation = match Self::parse_confirmation(&msg) {
             Ok(c) => c,
             Err(e) => {
-                error!("Failed to parse confirmation: {e}");
+                error!(
+                    target: "sinex_metrics",
+                    metric = "node.confirmation_parse_failures_total",
+                    error = %e,
+                    "Failed to parse confirmation"
+                );
                 msg.ack().await.map_err(|ack_err| {
                     Self::message_settlement_error(
                         "failed to ack bad confirmation",
@@ -580,7 +595,12 @@ impl JetStreamEventConsumer {
             let handler_success = match confirmed_handler.handle_confirmed(&synthetic).await {
                 Ok(()) => true,
                 Err(e) => {
-                    error!("Confirmed handler failed on unbuffered kind watermark: {e}");
+                    error!(
+                        target: "sinex_metrics",
+                        metric = "node.confirmation_handler_failures_total",
+                        error = %e,
+                        "Confirmed handler failed on unbuffered kind watermark"
+                    );
                     false
                 }
             };
@@ -673,7 +693,12 @@ impl JetStreamEventConsumer {
             let handler_success = match confirmed_handler.handle_confirmed(&event).await {
                 Ok(()) => true,
                 Err(e) => {
-                    error!("Confirmed handler failed: {e}");
+                    error!(
+                        target: "sinex_metrics",
+                        metric = "node.confirmation_handler_failures_total",
+                        error = %e,
+                        "Confirmed handler failed"
+                    );
                     false
                 }
             };
@@ -718,7 +743,12 @@ impl JetStreamEventConsumer {
                 let handler_success = match confirmed_handler.handle_confirmed(&event).await {
                     Ok(()) => true,
                     Err(e) => {
-                        error!("Confirmed handler failed: {e}");
+                        error!(
+                        target: "sinex_metrics",
+                        metric = "node.confirmation_handler_failures_total",
+                        error = %e,
+                        "Confirmed handler failed"
+                    );
                         false
                     }
                 };
@@ -795,7 +825,13 @@ impl JetStreamEventConsumer {
                     if let Some(handler) = provisional_handler.as_ref()
                         && let Err(e) = handler.rollback_provisional(event_id).await
                     {
-                        error!("Failed to rollback provisional event {event_id}: {e}");
+                        error!(
+                            target: "sinex_metrics",
+                            metric = "node.provisional_rollback_failures_total",
+                            %event_id,
+                            error = %e,
+                            "Failed to rollback provisional event"
+                        );
                     }
                 }
             }
