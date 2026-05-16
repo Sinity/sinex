@@ -55,25 +55,6 @@ impl Component {
     }
 }
 
-fn parse_components(s: &str) -> Result<Vec<Component>> {
-    let mut out = Vec::new();
-    let mut seen = BTreeSet::new();
-    for part in s.split(',') {
-        let part = part.trim();
-        if part.is_empty() {
-            continue;
-        }
-        let c = Component::from_str(part)?;
-        if seen.insert(part.to_string()) {
-            out.push(c);
-        }
-    }
-    if out.is_empty() {
-        bail!("--components must contain at least one component");
-    }
-    Ok(out)
-}
-
 // ── CLI definition ────────────────────────────────────────────────────────────
 
 /// Create a quiesce-mode snapshot of the complete sinex runtime state.
@@ -136,13 +117,14 @@ pub struct AdminSnapshotCommand {
     #[arg(
         long,
         default_value = "postgres,nats,cas,state",
-        value_parser = parse_components_str
+        value_delimiter = ',',
+        value_parser = parse_component_str
     )]
     pub components: Vec<Component>,
 }
 
-fn parse_components_str(s: &str) -> std::result::Result<Vec<Component>, String> {
-    parse_components(s).map_err(|e| e.to_string())
+fn parse_component_str(s: &str) -> std::result::Result<Component, String> {
+    Component::from_str(s).map_err(|e| e.to_string())
 }
 
 // ── Result types ────────────────────────────────────────────────────────────
@@ -185,7 +167,7 @@ impl AdminSnapshotCommand {
             eyre!("DATABASE_URL must be set (or pass --database-url) for Postgres capture")
         })?;
 
-        // 1. Generate a snapshot ID (UUIDv7 formatted as a hex string).
+        // 1. Generate a snapshot ID (UUIDv7 formatted as a string).
         let snapshot_id = gen_snapshot_id();
         let created_at = current_rfc3339();
 
@@ -533,16 +515,7 @@ impl AdminSnapshotCommand {
 // ── Helpers ────────────────────────────────────────────────────────────────
 
 fn gen_snapshot_id() -> String {
-    // Use UUIDv4 here (sufficient for uniqueness; UUIDv7 would require extra dep).
-    // The ID is stable within a snapshot and used for the staging dir name.
-    use std::time::{SystemTime, UNIX_EPOCH};
-    let ts = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis();
-    // Simple but collision-resistant: timestamp-ms + 8 random hex bytes.
-    let r: u64 = rand::random();
-    format!("{ts:013x}-{r:016x}")
+    sinex_primitives::Uuid::now_v7().to_string()
 }
 
 fn current_rfc3339() -> String {
