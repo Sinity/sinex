@@ -4,7 +4,7 @@
 //! incoming `NodeScanCommand`s to isolated replay workers. Only compiled
 //! with the `messaging` feature.
 
-use super::*;
+use super::{warn, debug, error, info, NodeRunner, Node, EventTransport, watch, Arc, AtomicBool, run_resubscribing_listener, LISTENER_RETRY_DELAY, StreamExt, control_command_kind, ControlCommandKind, NodeScanCommand, NodeScanAck, Uuid, NodeType, Ordering, NodeScanProgress};
 
 impl<T: Node + 'static> NodeRunner<T> {
     /// Start the NATS command listener for node-dispatch replay.
@@ -125,7 +125,13 @@ impl<T: Node + 'static> NodeRunner<T> {
                                     let command: NodeScanCommand = match serde_json::from_slice(&msg.payload) {
                                         Ok(cmd) => cmd,
                                         Err(err) => {
-                                            warn!(error = %err, "Failed to deserialize NodeScanCommand");
+                                            warn!(
+                                                target: "sinex_metrics",
+                                                metric = "node.scan_command_deser_failures_total",
+                                                node = %loop_node_name,
+                                                error = %err,
+                                                "Failed to deserialize NodeScanCommand"
+                                            );
                                             if let Some(reply) = msg.reply {
                                                 let nack = NodeScanAck {
                                                     operation_id: Uuid::now_v7(),

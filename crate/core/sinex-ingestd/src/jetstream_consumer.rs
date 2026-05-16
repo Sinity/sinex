@@ -61,7 +61,7 @@ use sinex_primitives::events::builder::Provenance;
 /// kind — the latest event of this kind that ingestd has persisted. Per #1306,
 /// the implied semantics is that all earlier events of the same kind are also
 /// confirmed (publish order is monotonic per kind: ingestd publishes only when
-/// a fresh max event_id is seen for that kind within or across batches).
+/// a fresh max `event_id` is seen for that kind within or across batches).
 ///
 /// Downstream readers that watch confirmations should advance their per-kind
 /// high-watermark on each message and treat pending events of that kind with
@@ -145,15 +145,15 @@ pub struct JetStreamConsumer {
     stats_log_interval: Duration,
     /// Heartbeat counter handle — feeds batch counts into health status determination
     heartbeat_handle: Option<HeartbeatCounterHandle>,
-    /// Maximum duration ts_orig may exceed wall-clock time before DLQ routing
+    /// Maximum duration `ts_orig` may exceed wall-clock time before DLQ routing
     future_ts_skew: time::Duration,
-    /// Earliest accepted ts_orig as a timestamp (default: 2000-01-01 UTC)
+    /// Earliest accepted `ts_orig` as a timestamp (default: 2000-01-01 UTC)
     ts_orig_lower_bound: Timestamp,
     /// Max concurrent batch-processing tasks during startup catch-up.
     /// Limits I/O pressure while the consumer works through the backlog.
     /// Default: 4. Set to 0 to disable catch-up limiting (full speed).
     startup_catch_up_max_concurrent: usize,
-    /// Per-(source, event_type) high-watermark of latest confirmed event_id.
+    /// Per-(source, `event_type`) high-watermark of latest confirmed `event_id`.
     /// Used by the per-kind compaction strategy in `publish_confirmations_for_batch`
     /// to skip publishes that would not advance the watermark. Per #1306.
     confirmation_watermark: Arc<tokio::sync::Mutex<HashMap<(String, String), Uuid>>>,
@@ -238,7 +238,7 @@ fn is_isolatable_batch_persistence_failure(err: &SinexError) -> bool {
 const DEFAULT_BATCH_FETCH_MAX_MESSAGES: usize = 100;
 const DEFAULT_BATCH_FETCH_TIMEOUT: Duration = Duration::from_secs(1);
 const DEFAULT_MAX_ACK_PENDING: i64 = 100;
-/// NATS-side max_deliver on the events consumer. Must be >= the highest
+/// NATS-side `max_deliver` on the events consumer. Must be >= the highest
 /// application-side terminal threshold below so app-level DLQ routing fires
 /// before NATS silently stops redelivery. Sized for the source-material
 /// cross-stream-lag scenario (#1310/#1311).
@@ -246,7 +246,7 @@ const MAIN_CONSUMER_JETSTREAM_MAX_DELIVER: i64 = 32;
 const MAIN_CONSUMER_TERMINAL_DLQ_THRESHOLD: i64 = 10;
 /// Source-material-not-found is a soft cross-stream-lag condition, not a hard
 /// error: the material's BEGIN message is being processed on a separate consumer
-/// path. Give it generous retry budget. With FK_VIOLATION_RETRY_DELAY = 5s,
+/// path. Give it generous retry budget. With `FK_VIOLATION_RETRY_DELAY` = 5s,
 /// threshold = 30 means up to ~150s wall-clock for the BEGIN to catch up before
 /// we give up and DLQ. The earlier value of 10 (50s) routed many events to DLQ
 /// during normal backlog drains. See #1310 / #1311.
@@ -277,8 +277,8 @@ const BATCH_ATOMICITY_SCOPE: &str = "per_successful_persistence_attempt";
 ///
 /// The cross-stream race is the load-bearing case: events on
 /// `PROD_SINEX_RAW_EVENTS` and material lifecycle frames on `SOURCE_MATERIAL`
-/// flow through independent JetStream consumers with no cross-stream ordering.
-/// Under backlog, the SOURCE_MATERIAL consumer can lag behind the events
+/// flow through independent `JetStream` consumers with no cross-stream ordering.
+/// Under backlog, the `SOURCE_MATERIAL` consumer can lag behind the events
 /// consumer by tens of seconds; the previous 200 ms delay × 10 retries (= 2 s
 /// total window) was insufficient and DLQ'd every fresh self-observation
 /// material's first events (see issue #1241).
@@ -515,7 +515,7 @@ impl JetStreamConsumer {
         }
     }
 
-    /// Set the maximum duration ts_orig may exceed wall-clock time before DLQ routing.
+    /// Set the maximum duration `ts_orig` may exceed wall-clock time before DLQ routing.
     #[must_use]
     pub fn with_future_ts_skew(mut self, skew: time::Duration) -> Self {
         self.future_ts_skew = skew;
@@ -523,7 +523,7 @@ impl JetStreamConsumer {
         self
     }
 
-    /// Set the earliest accepted ts_orig as a timestamp.
+    /// Set the earliest accepted `ts_orig` as a timestamp.
     #[must_use]
     pub fn with_ts_orig_lower_bound(mut self, lower_bound: Timestamp) -> Self {
         self.ts_orig_lower_bound = lower_bound;
@@ -872,7 +872,7 @@ impl JetStreamConsumer {
                     consumer_info.as_ref().map_or(0, |ci| ci.num_ack_pending),
                     0,
                     consumer_spec.max_ack_pending,
-                    consumer_spec.max_deliver as i64,
+                    consumer_spec.max_deliver,
                     initial_replay_risk,
                 )
                 .await;
@@ -936,7 +936,7 @@ impl JetStreamConsumer {
                 _ = capacity_check_interval.tick() => {
                     self.check_stream_capacity(&stream_name).await;
                     // DLQ growth is a durable signal of persistent failures; monitor it too.
-                    self.check_stream_capacity(&self.topology.dlq_stream.to_string()).await;
+                    self.check_stream_capacity(self.topology.dlq_stream.as_ref()).await;
                 }
                 _ = lag_check_interval.tick() => {
                     if self.observer.is_some() {
@@ -1252,7 +1252,7 @@ impl JetStreamConsumer {
                     // per kind.
                     let mut by_kind: HashMap<(String, String), Vec<&PreparedEvent>> =
                         HashMap::new();
-                    for prepared in confirmation_batch.iter() {
+                    for prepared in &confirmation_batch {
                         let key = (
                             prepared.event.source.as_str().to_string(),
                             prepared.event.event_type.as_str().to_string(),
@@ -1307,7 +1307,7 @@ impl JetStreamConsumer {
                     let mut ack_messages = Vec::with_capacity(batch.len());
                     ack_messages.extend(tombstoned_batch.iter().map(|prepared| &prepared.message));
                     let mut confirmation_durability_gaps = Vec::new();
-                    for (preps, max_event_id, source, event_type, result) in kind_results.iter() {
+                    for (preps, max_event_id, source, event_type, result) in &kind_results {
                         match result {
                             Ok(()) => {
                                 for prepared in preps {
@@ -1649,45 +1649,79 @@ impl JetStreamConsumer {
     }
 
     async fn record_admission_rejection(&self, rejection: &AdmissionRejection) {
+        // Update legacy per-kind in-memory counters for backward compatibility.
         match rejection.kind {
             AdmissionRejectionKind::PastTimestamp => {
                 self.stats
                     .suspicious_past_ts_orig
                     .fetch_add(1, Ordering::Relaxed);
-                if let Some(ref observer) = self.observer {
-                    let _ = observer
-                        .emit_counter("suspicious_past_ts_orig_total", 1, None)
-                        .await;
-                }
             }
             AdmissionRejectionKind::FutureTimestamp => {
                 self.stats
                     .suspicious_future_ts_orig
                     .fetch_add(1, Ordering::Relaxed);
-                if let Some(ref observer) = self.observer {
-                    let _ = observer
-                        .emit_counter("suspicious_future_ts_orig_total", 1, None)
-                        .await;
-                }
             }
             AdmissionRejectionKind::NegativeAnchor => {
                 self.stats
                     .negative_anchor_byte
                     .fetch_add(1, Ordering::Relaxed);
             }
-            AdmissionRejectionKind::PayloadTooLarge
+            AdmissionRejectionKind::SchemaValidation
+            | AdmissionRejectionKind::MissingTimestamp
+            | AdmissionRejectionKind::PayloadTooLarge
             | AdmissionRejectionKind::InvalidUtf8
             | AdmissionRejectionKind::StructuralJson
             | AdmissionRejectionKind::EventDeserialization
-            | AdmissionRejectionKind::MissingTimestamp
-            | AdmissionRejectionKind::SchemaValidation
             | AdmissionRejectionKind::CandidateMetadata
             | AdmissionRejectionKind::PrivacyPolicy
             | AdmissionRejectionKind::QuarantinePolicy
             | AdmissionRejectionKind::MissingEventId
             | AdmissionRejectionKind::InvalidEventId
             | AdmissionRejectionKind::EnvelopeDeserialization
-            | AdmissionRejectionKind::EnvelopeValidation => {}
+            | AdmissionRejectionKind::EnvelopeValidation => {
+                self.stats.validation_failures.fetch_add(1, Ordering::Relaxed);
+            }
+        }
+
+        // Emit a unified rejection counter with kind label so every rejection
+        // variant is visible in NATS metrics, not just PastTimestamp/FutureTimestamp.
+        let kind_label = match rejection.kind {
+            AdmissionRejectionKind::PayloadTooLarge => "payload_too_large",
+            AdmissionRejectionKind::InvalidUtf8 => "invalid_utf8",
+            AdmissionRejectionKind::StructuralJson => "structural_json",
+            AdmissionRejectionKind::EventDeserialization => "event_deserialization",
+            AdmissionRejectionKind::EnvelopeDeserialization => "envelope_deserialization",
+            AdmissionRejectionKind::EnvelopeValidation => "envelope_validation",
+            AdmissionRejectionKind::MissingTimestamp => "missing_timestamp",
+            AdmissionRejectionKind::PastTimestamp => "past_timestamp",
+            AdmissionRejectionKind::FutureTimestamp => "future_timestamp",
+            AdmissionRejectionKind::NegativeAnchor => "negative_anchor",
+            AdmissionRejectionKind::SchemaValidation => "schema_validation",
+            AdmissionRejectionKind::CandidateMetadata => "candidate_metadata",
+            AdmissionRejectionKind::PrivacyPolicy => "privacy_policy",
+            AdmissionRejectionKind::QuarantinePolicy => "quarantine_policy",
+            AdmissionRejectionKind::MissingEventId => "missing_event_id",
+            AdmissionRejectionKind::InvalidEventId => "invalid_event_id",
+        };
+
+        tracing::debug!(
+            target: "sinex_metrics",
+            metric = "ingestd.admission_rejections_total",
+            kind = kind_label,
+            "Event rejected by admission service"
+        );
+
+        if let Some(ref observer) = self.observer {
+            let labels = Some(std::collections::HashMap::from([(
+                "kind".to_string(),
+                kind_label.to_string(),
+            )]));
+            if let Err(error) = observer
+                .emit_counter("ingestd.admission_rejections_total", 1, labels)
+                .await
+            {
+                Self::log_observer_error(&self.stats, "ingestd.admission_rejections_total", &error);
+            }
         }
     }
 
@@ -1716,7 +1750,7 @@ impl JetStreamConsumer {
 
         // Per #1306: per-kind watermark, not per-event.
         let mut by_kind: HashMap<(String, String), Vec<&PreparedEvent>> = HashMap::new();
-        for prepared in duplicate_batch.iter() {
+        for prepared in &duplicate_batch {
             let key = (
                 prepared.event.source.as_str().to_string(),
                 prepared.event.event_type.as_str().to_string(),
@@ -1762,7 +1796,7 @@ impl JetStreamConsumer {
         let mut ack_messages = Vec::with_capacity(duplicate_batch.len() + tombstoned_batch.len());
         ack_messages.extend(tombstoned_batch.iter().map(|prepared| &prepared.message));
         let mut confirmation_durability_gaps = Vec::new();
-        for (preps, max_event_id, source, event_type, result) in kind_results.iter() {
+        for (preps, max_event_id, source, event_type, result) in &kind_results {
             match result {
                 Ok(()) => {
                     for prepared in preps {

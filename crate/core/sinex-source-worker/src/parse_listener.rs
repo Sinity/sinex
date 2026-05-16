@@ -64,6 +64,8 @@ pub async fn spawn_parse_listener(
                     Ok(()) => {}
                     Err(e) => {
                         warn!(
+                            target: "sinex_metrics",
+                            metric = "source_worker.parse_command_failures_total",
                             source_id = %source_id,
                             error = %e,
                             "Parse command handling failed"
@@ -97,16 +99,7 @@ async fn handle_parse_command(
                 "Received parse command"
             );
 
-            if cmd.source_id != source_id {
-                SourceParseAck {
-                    accepted: false,
-                    error: Some(format!(
-                        "Parse command source_id '{}' does not match listener '{}'",
-                        cmd.source_id, source_id
-                    )),
-                    event_count: None,
-                }
-            } else {
+            if cmd.source_id == source_id {
                 // Invoke the parser dispatch. For now, this passes empty bytes —
                 // the next slice wires material loading from source_material_registry.
                 match dispatch(&cmd.source_id, &[], cmd.source_material_id) {
@@ -126,6 +119,8 @@ async fn handle_parse_command(
                     }
                     Err(e) => {
                         warn!(
+                            target: "sinex_metrics",
+                            metric = "source_worker.parse_dispatch_failures_total",
                             operation_id = %cmd.operation_id,
                             source_id = %cmd.source_id,
                             error = %e,
@@ -138,10 +133,24 @@ async fn handle_parse_command(
                         }
                     }
                 }
+            } else {
+                SourceParseAck {
+                    accepted: false,
+                    error: Some(format!(
+                        "Parse command source_id '{}' does not match listener '{}'",
+                        cmd.source_id, source_id
+                    )),
+                    event_count: None,
+                }
             }
         }
         Err(e) => {
-            warn!(error = %e, "Failed to deserialize parse command");
+            warn!(
+                target: "sinex_metrics",
+                metric = "source_worker.parse_command_deser_failures_total",
+                error = %e,
+                "Failed to deserialize parse command"
+            );
             SourceParseAck {
                 accepted: false,
                 error: Some(format!("Invalid parse command payload: {e}")),
