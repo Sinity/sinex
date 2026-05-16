@@ -1251,7 +1251,14 @@ impl<'a> EventRepository<'a> {
             // Synthesis batches: wrap in REPEATABLE READ for cycle detection.
             // COPY cannot be mixed with cycle-detection queries in the same
             // transaction easily, so synthesis batches use the VALUES path.
+            //
+            // PostgreSQL caps bound parameters at 65 535 per query. With 22
+            // columns per event, each chunk must stay ≤ ⌊65535 / 22⌋ = 2978
+            // events to stay within the wire-protocol limit. Large mixed batches
+            // (material + synthesis) arrive during burst replay and would otherwise
+            // exceed the limit and fail.
             Some(StreamBatchInsertStrategy::Synthesis) => {
+                // Intra-batch cycle check runs on the full batch before splitting.
                 let synthesis_checks = batch
                     .iter()
                     .filter_map(|row| {
@@ -1265,22 +1272,44 @@ impl<'a> EventRepository<'a> {
                     .collect::<Vec<_>>();
                 ensure_no_intra_batch_synthesis_cycles(&synthesis_checks)?;
 
-                let mut tx = self
-                    .pool
-                    .begin()
-                    .await
-                    .map_err(|e| db_error(e, "begin stream batch transaction"))?;
-                set_repeatable_read(&mut tx).await?;
+                // 22 columns × SYNTHESIS_CHUNK_MAX ≤ 65535 PostgreSQL param limit.
+                const SYNTHESIS_CHUNK_MAX: usize = 2978;
+                let mut total = StreamBatchInsertResult::default();
+                for chunk in batch.chunks(SYNTHESIS_CHUNK_MAX) {
+                    let chunk_synthesis_checks = chunk
+                        .iter()
+                        .filter_map(|row| {
+                            row.source_event_ids
+                                .as_ref()
+                                .filter(|source_ids| !source_ids.is_empty())
+                                .map(|source_ids| {
+                                    (Id::<Event<JsonValue>>::from(row.id), source_ids.clone())
+                                })
+                        })
+                        .collect::<Vec<_>>();
 
-                for (event_id, source_ids) in &synthesis_checks {
-                    ensure_no_synthesis_cycles(&mut *tx, event_id, source_ids)?;
+                    let mut tx = self
+                        .pool
+                        .begin()
+                        .await
+                        .map_err(|e| db_error(e, "begin stream batch transaction"))?;
+                    set_repeatable_read(&mut tx).await?;
+
+                    for (event_id, source_ids) in &chunk_synthesis_checks {
+                        ensure_no_synthesis_cycles(&mut *tx, event_id, source_ids)?;
+                    }
+
+                    let result = Self::execute_batch_insert(&mut *tx, chunk).await?;
+                    tx.commit()
+                        .await
+                        .map_err(|e| db_error(e, "commit stream batch"))?;
+
+                    total.inserted_count += result.inserted_count;
+                    if let Some(ids) = result.inserted_ids {
+                        total.inserted_ids.get_or_insert_with(Vec::new).extend(ids);
+                    }
                 }
-
-                let result = Self::execute_batch_insert(&mut *tx, batch).await?;
-                tx.commit()
-                    .await
-                    .map_err(|e| db_error(e, "commit stream batch"))?;
-                Ok(result)
+                Ok(total)
             }
             // Large material-only batch: use COPY for maximum throughput.
             // Avoids the 65 535-parameter limit of parameterised VALUES queries
