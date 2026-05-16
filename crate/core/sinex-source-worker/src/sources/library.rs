@@ -31,7 +31,7 @@
 //! The adapter's fingerprint dedup (`size_bytes`, `modified_ms`) guards
 //! the cursor; the occurrence key guards cross-run idempotency.
 
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::UNIX_EPOCH;
 
 use async_trait::async_trait;
 use camino::Utf8PathBuf;
@@ -43,7 +43,7 @@ use sinex_primitives::{
     ids::Id,
     parser::{
         InputShapeKind, MaterialAnchor, OccurrenceKey, ParsedEventIntent, ParserContext, ParserId,
-        ParserManifest, SourceRecord, SourceUnitId, TimingConfidence, TimingEvidence,
+        ParserManifest, SourceRecord, SourceUnitId, TimingEvidence,
     },
     privacy::{self, ProcessingContext},
     proof::{
@@ -411,7 +411,7 @@ crate::register_adapter_ingestor!(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sinex_primitives::events::SourceMaterial;
+    
     use sinex_primitives::ids::Id;
     use sinex_primitives::parser::{MaterialAnchor, ParserContext, SourceRecord, SourceUnitId};
     use sinex_primitives::temporal::Timestamp;

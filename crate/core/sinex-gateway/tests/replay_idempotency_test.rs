@@ -96,7 +96,7 @@ async fn concurrent_duplicate_plan_for_same_node_rejected(ctx: TestContext) -> T
         .into_iter()
         .filter(|response| response.get("result").is_some())
         .count();
-    let errors: Vec<&str> = [&first, &second]
+    let _errors: Vec<&str> = [&first, &second]
         .into_iter()
         .filter_map(|response| {
             response

@@ -8,13 +8,10 @@ use sinex_db::DbPoolExt;
 use sinex_db::repositories::SourceMaterial;
 use sinex_primitives::domain::{SourceMaterialFormat, SourceMaterialTimingInfoType};
 use sinex_primitives::rpc::sources::{
-    ContinuityContractStatus, CoverageGap, ReplayabilityStatus, SourceAnnotations,
-    SourceBindingSummary, SourceCoverageEntry, SourceMaterialDetail,
+    ContinuityContractStatus, CoverageGap, ReplayabilityStatus, SourceAnnotations, SourceCoverageEntry, SourceMaterialDetail,
     SourceMaterialMetadataContract, SourceMaterialStatistics, SourceMaterialSummary, SourceOrigin,
     SourcePolicyEvidence, SourcePresetDescriptor, SourcesAnnotateRequest, SourcesAnnotateResponse,
-    SourcesArchiveRequest, SourcesArchiveResponse, SourcesBindingsCreateRequest,
-    SourcesBindingsCreateResponse, SourcesBindingsListRequest, SourcesBindingsListResponse,
-    SourcesBindingsResolveRequest, SourcesBindingsResolveResponse, SourcesContinuityRequest,
+    SourcesArchiveRequest, SourcesArchiveResponse, SourcesBindingsListResponse, SourcesContinuityRequest,
     SourcesContinuityResponse, SourcesCoverageRequest, SourcesCoverageResponse, SourcesListRequest,
     SourcesListResponse, SourcesPresetsListResponse, SourcesReadinessGetRequest,
     SourcesReadinessGetResponse, SourcesReadinessListRequest, SourcesReadinessListResponse,
@@ -86,7 +83,7 @@ pub async fn handle_sources_stage(
         .to_string();
 
     // ── Privacy: classify the material path ──────────────────────
-    let (path_class, display_path) = sinex_primitives::privacy::classify_material_path(&canonical);
+    let (path_class, _display_path) = sinex_primitives::privacy::classify_material_path(&canonical);
     if path_class == sinex_primitives::privacy::MaterialPathClass::Temporary {
         return Err(
             SinexError::validation("Staging of temporary paths is not allowed")
@@ -563,7 +560,7 @@ pub async fn handle_sources_annotate(pool: &PgPool, params: Value) -> Result<Val
             .with_std_error(&error)
     })?;
 
-    let mut record = pool
+    let record = pool
         .source_materials()
         .get_by_id(material_id.into())
         .await

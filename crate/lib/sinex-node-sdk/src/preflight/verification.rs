@@ -592,8 +592,8 @@ mod tests {
         PREFLIGHT_MAX_PARALLEL_WORKERS_PER_GATHER, configure_preflight_database_session,
     };
     use serde_json::Value;
-    use xtask::sandbox::prelude::*;
-    use xtask::sandbox::{TestResult, sinex_test};
+    
+    use xtask::sandbox::sinex_test;
 
     #[sinex_test]
     async fn event_access_probe_is_metadata_only() -> TestResult<()> {

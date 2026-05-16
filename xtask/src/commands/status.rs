@@ -164,7 +164,7 @@ fn execute_next(ctx: &CommandContext) -> Result<CommandResult> {
     }
 
     println!("Recommended next actions:\n");
-    for (i, action) in actions.iter().enumerate() {
+    for (_i, action) in actions.iter().enumerate() {
         let priority_marker = match action.priority {
             crate::planner::Priority::Now => "●",
             crate::planner::Priority::Soon => "○",

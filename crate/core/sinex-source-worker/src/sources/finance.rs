@@ -482,7 +482,7 @@ mod tests {
     use super::*;
     use sinex_primitives::Uuid;
     use sinex_primitives::ids::Id;
-    use xtask::sandbox::TestResult;
+    
     use xtask::sandbox::prelude::sinex_test;
 
     // ---------------------------------------------------------------------------

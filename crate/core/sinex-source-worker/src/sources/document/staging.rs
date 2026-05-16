@@ -31,7 +31,7 @@ use sinex_primitives::{
     },
     ids::Id,
     parser::{
-        InputShapeKind, MaterialAnchor, ParsedEventIntent, ParserContext, ParserId, ParserManifest,
+        InputShapeKind, ParsedEventIntent, ParserContext, ParserId, ParserManifest,
         SourceRecord, SourceUnitId, TimingEvidence,
     },
     privacy::{self, ProcessingContext},

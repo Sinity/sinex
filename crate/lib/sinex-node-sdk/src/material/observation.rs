@@ -224,7 +224,7 @@ async fn flush_internal<R: Serialize>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
+    
     use std::sync::Arc as StdArc;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use tokio::time::sleep;

@@ -4,7 +4,7 @@ use color_eyre::eyre::{WrapErr, eyre};
 use serde::Serialize;
 use sinex_db::create_pool;
 use sinex_node_sdk::content_store::{
-    CasFileStatus, CasFsckReport, ContentStoreConfig, MaterialContentStore, UnusedContentEntry,
+    CasFsckReport, ContentStoreConfig, MaterialContentStore, UnusedContentEntry,
     cas_fsck::check_cas,
     gc::{BlobGcReport, sweep_orphans_detailed},
 };

@@ -326,11 +326,7 @@ where
             )
             .await
         {
-            log_self_observation_failure(
-                self.node.name(),
-                "derived.events_filtered_total",
-                &error,
-            );
+            log_self_observation_failure(self.node.name(), "derived.events_filtered_total", &error);
         }
     }
 

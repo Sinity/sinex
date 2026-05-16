@@ -9,7 +9,7 @@ use std::time::Duration;
 use tabled::{builder::Builder, settings::Style};
 
 use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskCommand};
-use crate::history::{HistoryAnalysis, HistoryDb, PackageHealth, WorkspaceHealthReport};
+use crate::history::{HistoryAnalysis, HistoryDb, WorkspaceHealthReport};
 
 /// `xtask analytics` — developer intelligence analytics.
 #[derive(Debug, Clone, clap::Args)]

@@ -27,7 +27,6 @@ use sinex_primitives::proof::{
     CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, RetentionPolicy, RuntimeShape,
     SourceUnitBinding, SourceUnitBuildImpact, SourceUnitDescriptor, SubjectRef,
 };
-use sinex_primitives::temporal::Timestamp;
 use sinex_primitives::{register_source_unit, register_source_unit_binding};
 
 use crate::register_adapter_ingestor;

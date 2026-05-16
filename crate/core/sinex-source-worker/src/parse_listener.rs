@@ -210,7 +210,7 @@ mod tests {
     #[sinex_test]
     async fn test_parse_command_rejected_for_mismatched_source_id() -> xtask::sandbox::TestResult<()>
     {
-        let (dispatch, calls) = test_parser_dispatch();
+        let (_dispatch, calls) = test_parser_dispatch();
         let cmd = SourceParseCommand {
             operation_id: Uuid::now_v7(),
             source_id: "desktop".to_string(),

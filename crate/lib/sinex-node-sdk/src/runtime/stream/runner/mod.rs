@@ -130,9 +130,9 @@ impl<T: Node + 'static> NodeRunner<T> {
 mod shutdown;
 
 #[cfg(test)]
-use super::{ContinuousStart, ProcessingStats};
-#[cfg(test)]
 use super::control_protocol::encode_control_message;
+#[cfg(test)]
+use super::{ContinuousStart, ProcessingStats};
 
 #[cfg(test)]
 mod tests;

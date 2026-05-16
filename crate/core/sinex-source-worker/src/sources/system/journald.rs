@@ -2,7 +2,7 @@
 
 use crate::register_parser;
 use sinex_node_sdk::parser::{
-    JournalctlStreamAdapter, JournalctlStreamConfig, MaterialParser, ParserError,
+    JournalctlStreamAdapter, MaterialParser, ParserError,
 };
 use sinex_primitives::domain::{EventSource, EventType};
 use sinex_primitives::events::enums::JournalSyncType;

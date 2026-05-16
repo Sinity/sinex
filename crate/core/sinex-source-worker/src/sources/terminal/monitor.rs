@@ -167,7 +167,7 @@ mod tests {
     /// starts using NATS resources it must be promoted to an integration test.
     #[sinex_test]
     async fn test_emit_terminal_monitor_one_event() -> TestResult<()> {
-        use sinex_node_sdk::runtime::stream::NodeRuntimeState;
+        
 
         // Construct a dummy NodeRuntimeState. The emit fn does not call any
         // runtime methods (it only uses the material_id), so we use the

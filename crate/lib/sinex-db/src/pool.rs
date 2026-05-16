@@ -388,7 +388,7 @@ pub async fn create_database_if_not_exists(database_url: &str) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use xtask::sandbox::{TestResult, sinex_test};
+    use xtask::sandbox::sinex_test;
     // Inline because this covers local env parsing semantics in the pool module.
     use super::{
         DEFAULT_POOL_ACQUIRE_WARN_MS, PoolConfig, env_parse_override, env_parse_with_default,

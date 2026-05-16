@@ -3,7 +3,6 @@
 //!
 //! Replaces the fake-DB-write scan-node tests referenced in #1132.
 
-use async_nats::Client;
 use color_eyre::eyre::eyre;
 use sinex_primitives::Uuid;
 use sinex_source_worker::dispatch::test_parser_dispatch;

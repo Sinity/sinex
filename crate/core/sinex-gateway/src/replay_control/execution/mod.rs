@@ -3,24 +3,17 @@ use color_eyre::eyre::{Context, Result, eyre};
 use futures::StreamExt;
 use serde::Deserialize;
 use sinex_db::replay::state_machine::{
-    ReplayCheckpoint, ReplayOperation, ReplayScope, ReplayState, ReplayStateMachine,
+    ReplayCheckpoint, ReplayOperation, ReplayState, ReplayStateMachine,
 };
-use sinex_db::repositories::{DbPoolExt, EventRepositoryTx};
-use sinex_node_sdk::derived_node::invalidation::{DerivedScopeInvalidation, INVALIDATION_SUBJECT};
-use sinex_node_sdk::runtime::stream::{
-    Checkpoint, MaterialReplayContext, NodeScanAck, NodeScanCommand, NodeScanProgress,
-    ReplayScopeFilters as NodeReplayScopeFilters, ResolvedReplayMaterial, ScanArgs, TimeHorizon,
-};
+use sinex_db::repositories::DbPoolExt;
 use sinex_primitives::domain::{EventSource, EventType, NodeName};
 use sinex_primitives::environment::{SinexEnvironment, environment};
-use sinex_primitives::events::{Event as StoredEvent, Provenance};
-use sinex_primitives::{Id, SinexError, Timestamp, Uuid};
-use std::collections::{HashMap, HashSet};
+use sinex_primitives::{SinexError, Timestamp, Uuid};
 use std::sync::Arc;
 #[cfg(test)]
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
-use tracing::{debug, error, info, warn};
+use tracing::{error, info};
 
 use super::validation::{replay_scope_drift_error, stale_preview_missing_root_ids_error};
 

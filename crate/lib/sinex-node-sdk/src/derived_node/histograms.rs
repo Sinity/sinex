@@ -160,7 +160,7 @@ impl ThroughputWindow {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use xtask::sandbox::{TestResult, sinex_test};
+    use xtask::sandbox::sinex_test;
 
     #[sinex_test]
     async fn latency_window_percentile_on_uniform_distribution() -> TestResult<()> {

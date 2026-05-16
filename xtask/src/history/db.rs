@@ -877,7 +877,7 @@ impl HistoryDb {
                     )
                 })?;
                 Self::configure_connection(&conn, mode)?;
-                let mut recreated = Self {
+                let recreated = Self {
                     conn,
                     is_synthetic: false,
                 };
