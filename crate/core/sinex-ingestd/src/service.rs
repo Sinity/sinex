@@ -396,7 +396,31 @@ impl IngestService {
         // Register a run for ingestd and start periodic heartbeat
         if let Some(ref pool) = self.db_pool {
             let host = std::env::var("HOSTNAME").unwrap_or_else(|_| "unknown".to_string());
-            match pool.state().start_run(None, "sinex-ingestd", "default", &host, None, None).await {
+            let node_name = NodeName::new("sinex-ingestd");
+            let manifest_id = match pool
+                .state()
+                .register_node(
+                    &node_name,
+                    NodeType::Service,
+                    env!("CARGO_PKG_VERSION"),
+                    Some("Ingestion daemon: NATS JetStream consumer to PostgreSQL batch writer"),
+                )
+                .await
+            {
+                Ok(row) => {
+                    info!(manifest_id = row.id, "Registered ingestd manifest");
+                    Some(row.id)
+                }
+                Err(e) => {
+                    warn!(%e, "Failed to register ingestd manifest; heartbeat persistence disabled");
+                    None
+                }
+            };
+            match pool
+                .state()
+                .start_run(manifest_id, "sinex-ingestd", "default", &host, None, None)
+                .await
+            {
                 Ok(_) => info!("Started ingestd run"),
                 Err(e) => warn!(%e, "Failed to start ingestd run"),
             }
