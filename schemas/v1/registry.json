@@ -559,7 +559,7 @@
       "event_type": "assembly.stats",
       "version": "1.0.0",
       "path": "sinex.ingestd/assembly.stats.json",
-      "content_hash": "333ba888e0683231d5c940e05e890e41cd751b95a987797c79276b4c65b9f50d"
+      "content_hash": "105f2da9a9b89a6f780eb5cd03788a918ce1b01a2a399e2421906264b937c614"
     },
     {
       "source": "sinex.ingestd",
