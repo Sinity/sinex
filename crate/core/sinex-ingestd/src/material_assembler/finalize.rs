@@ -714,6 +714,7 @@ impl MaterialAssembler {
                 let commit_outcome_unknown = e.is_commit_outcome_unknown();
                 let e = e.into_inner();
                 if commit_outcome_unknown {
+                    self.stats_inc_commit_outcome_unknown();
                     warn!(
                         material_id = %material_id,
                         error = %e,

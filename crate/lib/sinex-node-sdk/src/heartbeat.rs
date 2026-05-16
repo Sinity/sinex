@@ -350,22 +350,16 @@ impl HeartbeatEmitter {
 
     /// Create heartbeat metrics
     ///
-    /// Uses atomic counter reset for heartbeat interval accounting.
-    /// Note: `CoordinationPrimitive::reset()` internally uses swap(0, `AcqRel`) which is atomic,
-    /// but the pattern of get-then-reset is not. We read `errors_count` before resetting to
-    /// include it in the current heartbeat metrics.
-    ///
-    /// KNOWN LIMITATION: There's a small window between `get()` and `reset()` where counter
-    /// updates could be lost. For heartbeat metrics this is acceptable as it only affects
-    /// the accuracy of per-interval counts, not cumulative totals. To fix this properly,
-    /// `CoordinationPrimitive` would need a `fetch_and_reset()` method.
+    /// Uses `CoordinationPrimitive::swap_reset()` (an `AtomicUsize::swap(0, AcqRel)`) to
+    /// atomically read-and-zero each counter in a single operation. Increments arriving
+    /// concurrently are never lost: they land either in the snapshot (if they raced before
+    /// the swap) or in the next interval (if they raced after). No window where counts
+    /// silently disappear.
     pub async fn create_heartbeat_metrics(
         &self,
         metadata: Option<serde_json::Value>,
     ) -> HeartbeatMetrics {
         let uptime = elapsed_seconds_with_warning(self.start_time, "heartbeat uptime");
-        // Atomically snapshot-and-reset both counters to prevent the race window
-        // between get() and reset() where increments could be silently lost.
         let recent_errors = self.errors_count.swap_reset();
         let events_processed = self.events_processed.swap_reset();
         let last_error = self.last_error.lock().take();

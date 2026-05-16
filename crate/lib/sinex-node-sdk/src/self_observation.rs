@@ -559,6 +559,7 @@ impl SelfObserver {
         cancelled: u64,
         failed: u64,
         timed_out: u64,
+        commit_outcome_unknown: u64,
         avg_duration_ms: Option<f64>,
         buffered_slices: u32,
     ) -> Result<(), SelfObservationError> {
@@ -569,6 +570,7 @@ impl SelfObserver {
             total_cancelled: cancelled,
             total_failed: failed,
             total_timed_out: timed_out,
+            total_commit_outcome_unknown: commit_outcome_unknown,
             avg_duration_ms,
             buffered_slices,
         })

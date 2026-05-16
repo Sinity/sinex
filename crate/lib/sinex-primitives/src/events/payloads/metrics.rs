@@ -161,6 +161,9 @@ pub struct AssemblyStatsPayload {
     pub total_failed: u64,
     /// Total assemblies timed out
     pub total_timed_out: u64,
+    /// Times the finalization COMMIT result was ambiguous (TCP timeout during COMMIT).
+    /// Non-zero signals potential duplicate-material risk after restart.
+    pub total_commit_outcome_unknown: u64,
     /// Average assembly duration (ms)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub avg_duration_ms: Option<f64>,
