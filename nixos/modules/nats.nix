@@ -447,7 +447,7 @@ in
           {
             name = "SINEX_RAW_EVENTS";
             subjects = [ "events.raw.>" ];
-            maxAge = "336h"; # 14d
+            maxAge = "168h"; # 7d; replay is served from source material/archive, not JetStream
             maxMsgs = 2000000;
             maxBytes = natsCliMaxBytes;
           }
