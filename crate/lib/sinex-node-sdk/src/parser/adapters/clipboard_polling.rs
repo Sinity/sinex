@@ -161,6 +161,7 @@ impl ClipboardPollingAdapter {
 }
 
 impl Default for ClipboardPollingAdapter {
+    #[allow(clippy::unwrap_used)]
     fn default() -> Self {
         Self::new().expect("failed to initialize arboard clipboard backend")
     }

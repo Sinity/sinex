@@ -224,6 +224,7 @@ where
             // borrow conflict. The value only changes on EOF (which breaks the
             // loop) so a snapshot is sufficient for record annotation.
             let reconnect_index = state.reconnects;
+            #[allow(clippy::expect_used)]
             let reader = state
                 .reader
                 .as_mut()

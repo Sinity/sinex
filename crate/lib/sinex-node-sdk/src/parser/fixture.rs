@@ -358,6 +358,7 @@ impl ParserFixtureHarness {
     ///
     /// This is the primary execution method. Callers supply concrete configs
     /// and the harness manages the pipeline: material → adapter → parser → assertions.
+    #[allow(clippy::unwrap_used)]
     pub async fn run_with_config<A, P>(
         &mut self,
         spec: &FixtureSpec,
@@ -726,6 +727,7 @@ impl ParserFixtureHarness {
     }
 
     /// Create a temporary file with the given bytes for use as source material.
+    #[allow(clippy::unwrap_used)]
     fn create_temp_material(
         &mut self,
         name: &str,

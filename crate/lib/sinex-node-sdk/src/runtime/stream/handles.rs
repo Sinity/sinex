@@ -72,6 +72,7 @@ impl RuntimeDrainController {
         true
     }
 
+    #[allow(clippy::expect_used)]
     pub fn register_runtime_abort(&self, abort_handle: tokio::task::AbortHandle) {
         let mut guard = self
             .runtime_abort
@@ -80,6 +81,7 @@ impl RuntimeDrainController {
         *guard = Some(abort_handle);
     }
 
+    #[allow(clippy::expect_used)]
     pub fn clear_runtime_abort(&self) {
         let mut guard = self
             .runtime_abort
@@ -88,6 +90,7 @@ impl RuntimeDrainController {
         *guard = None;
     }
 
+    #[allow(clippy::expect_used)]
     pub fn abort_runtime_work(&self) -> bool {
         let guard = self
             .runtime_abort

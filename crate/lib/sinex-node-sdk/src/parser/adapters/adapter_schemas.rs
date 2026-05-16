@@ -120,6 +120,7 @@ pub fn all_adapter_schemas() -> BTreeMap<String, AdapterSchema> {
 ///
 /// Uses [`SchemaGenerator::root_schema_for`] to produce a self-contained schema
 /// (i.e. `properties` and `required` at the top level, not behind a `$ref`).
+#[allow(clippy::expect_used)]
 fn schema_for_type<T: JsonSchema>() -> AdapterSchema {
     // root_schema_for produces a RootSchema with all definitions inlined,
     // so `required` is always at the top level of the schema object.

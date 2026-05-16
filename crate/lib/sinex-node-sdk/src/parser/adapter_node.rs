@@ -330,6 +330,7 @@ where
     ///
     /// Returns a mutable reference to the acquirer, or an error if the ingestor
     /// has not been initialized yet.
+    #[allow(clippy::expect_used)]
     async fn ensure_stream_acquirer(&mut self) -> NodeResult<&mut AppendStreamAcquirer> {
         if self.stream_acquirer.is_none() {
             let manager = self.acquisition_manager.as_ref().ok_or_else(|| {
@@ -656,6 +657,7 @@ where
             .adapter
             .snapshot_lane(self.source_unit_id, &adapter_config)
         {
+            #[allow(clippy::expect_used)]
             let manager = Arc::clone(
                 self.acquisition_manager
                     .as_ref()

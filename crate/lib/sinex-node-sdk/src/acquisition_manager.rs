@@ -53,6 +53,7 @@ pub const SOURCE_MATERIAL_END_SUBJECT: NatsSubject =
     NatsSubject::from_static("source_material.frames.end");
 
 #[must_use]
+#[allow(clippy::expect_used)]
 pub fn source_material_slice_subject(material_id: Uuid) -> NatsSubject {
     let raw = format!("{SOURCE_MATERIAL_SLICE_SUBJECT_PREFIX}{material_id}");
     NatsSubject::from_str(&raw)
