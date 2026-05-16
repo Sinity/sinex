@@ -1,0 +1,61 @@
+{
+  "$defs": {
+    "DateTime": {
+      "description": "RFC 3339 formatted date-time string",
+      "format": "date-time",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "A submission (post) the user created on Reddit.\n\nSourced from `posts.csv` in the Reddit GDPR export.",
+  "properties": {
+    "body": {
+      "description": "Self-text body for text posts; absent for link posts.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "created_at": {
+      "$ref": "#/$defs/DateTime",
+      "description": "When the post was submitted (from `date` column)."
+    },
+    "permalink": {
+      "description": "Full permalink URL.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "reddit_id": {
+      "description": "Reddit's internal base-36 post id (e.g. `38focg`).",
+      "type": "string"
+    },
+    "subreddit": {
+      "description": "Subreddit name (no `r/` prefix).",
+      "type": "string"
+    },
+    "title": {
+      "description": "Post title.",
+      "type": "string"
+    },
+    "url": {
+      "description": "External URL for link posts; absent for text posts.",
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "reddit_id",
+    "subreddit",
+    "title",
+    "created_at"
+  ],
+  "title": "RedditPostPayload",
+  "type": "object",
+  "x-sinex-event-type": "social.post.created",
+  "x-sinex-source": "reddit",
+  "x-sinex-version": "1.0.0"
+}

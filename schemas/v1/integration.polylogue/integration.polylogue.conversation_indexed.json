@@ -1,0 +1,82 @@
+{
+  "$defs": {
+    "DateTime": {
+      "description": "RFC 3339 formatted date-time string",
+      "format": "date-time",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Metadata snapshot emitted by the Polylogue daemon when a conversation is\nindexed or re-indexed in the archive.\n\nRaw conversation text is **not** included. Only structural metadata and\nderived signals are present, keeping the payload at privacy tier Sensitive\nrather than Secret.\n\nPublished to:\n`{env}.sinex.events.raw.integration.polylogue.conversation_indexed`",
+  "properties": {
+    "content_hash": {
+      "description": "SHA-256 hex digest of the canonical conversation content.\n\nComputed by the Polylogue daemon. Changes when any message is added,\nedited, or deleted. Used as the stable occurrence identity together with\n`conversation_id`.",
+      "type": "string"
+    },
+    "conversation_id": {
+      "description": "Stable polylogue conversation identifier (opaque string, typically a UUID).",
+      "type": "string"
+    },
+    "cost_usd": {
+      "description": "Estimated conversation cost in USD, if the provider exposes it.",
+      "format": "double",
+      "type": [
+        "number",
+        "null"
+      ]
+    },
+    "created_at": {
+      "$ref": "#/$defs/DateTime",
+      "description": "When the conversation was created (from provider metadata)."
+    },
+    "message_count": {
+      "description": "Total number of messages in the conversation.",
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "model_slug": {
+      "description": "Primary model slug used in the conversation (e.g. `\"claude-opus-4-5\"`).\n\nAbsent when the provider does not expose model information.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "provider": {
+      "description": "AI provider that hosted the conversation.\n\nKnown values: `\"claude\"`, `\"chatgpt\"`, `\"codex\"`, `\"gemini\"`.",
+      "type": "string"
+    },
+    "tags": {
+      "default": [],
+      "description": "User-applied and auto-inferred tags.",
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "title": {
+      "description": "Conversation title as set by the provider or the user.\n\nAbsent for untitled conversations.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "updated_at": {
+      "$ref": "#/$defs/DateTime",
+      "description": "When the conversation was last updated (from provider metadata)."
+    }
+  },
+  "required": [
+    "conversation_id",
+    "provider",
+    "content_hash",
+    "created_at",
+    "updated_at",
+    "message_count"
+  ],
+  "title": "PolylogueConversationIndexedPayload",
+  "type": "object",
+  "x-sinex-event-type": "integration.polylogue.conversation_indexed",
+  "x-sinex-source": "integration.polylogue",
+  "x-sinex-version": "1.0.0"
+}

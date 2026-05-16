@@ -744,6 +744,7 @@ impl SelfObserver {
         validation_coverage_pct: f64,
         suspicious_future_ts_orig: u64,
         telemetry_publish_failures: u64,
+        confirmation_durability_gaps: u64,
     ) -> Result<(), SelfObservationError> {
         self.publish(IngestdBatchStatsPayload {
             batch_size,
@@ -760,6 +761,7 @@ impl SelfObserver {
             validation_coverage_pct,
             suspicious_future_ts_orig,
             telemetry_publish_failures,
+            confirmation_durability_gaps,
         })
         .await
     }

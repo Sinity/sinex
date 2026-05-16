@@ -301,7 +301,7 @@ pub struct ReplayStatsPayload {
 #[event_payload(
     source = "sinex.ingestd",
     event_type = "batch.stats",
-    version = "2.1.0"
+    version = "2.2.0"
 )]
 pub struct IngestdBatchStatsPayload {
     /// Number of events in this batch
@@ -334,6 +334,10 @@ pub struct IngestdBatchStatsPayload {
     /// Cumulative count of failures emitting observer telemetry gauges.
     /// Non-zero indicates the self-observation NATS channel is degraded.
     pub telemetry_publish_failures: u64,
+    /// Cumulative count of confirmation-durability gaps: events were persisted
+    /// but the confirmation publish to the Confirmations stream failed
+    /// non-transiently. Non-zero is a durable signal of pipeline split-brain.
+    pub confirmation_durability_gaps: u64,
 }
 
 /// Startup snapshot for a JetStream pull consumer.

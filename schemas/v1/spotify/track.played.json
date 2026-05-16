@@ -1,0 +1,134 @@
+{
+  "$defs": {
+    "DateTime": {
+      "description": "RFC 3339 formatted date-time string",
+      "format": "date-time",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "One playback observation from a Spotify Extended Streaming History export.\n\nThe export records one entry per played track/episode. We mirror its\nfields verbatim where they carry semantic load, drop the leaked IP /\nuser-agent fields by default, and surface `skipped` in two forms:\n\n- `skipped_provider` — the raw boolean Spotify wrote into the export\n- `skipped_inferred` — `played_ms < 30_000`, the target-vision threshold\n\nBoth are preserved so downstream consumers can pick which definition to\nuse without re-deriving it from the payload.",
+  "properties": {
+    "album_name": {
+      "description": "Album display name.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "artist_name": {
+      "description": "Album artist display name.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "conn_country": {
+      "description": "`conn_country` two-letter country code as reported by Spotify.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "episode_name": {
+      "description": "Podcast episode title.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "episode_uri": {
+      "description": "`spotify:episode:...` URI when the entry is a podcast episode.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "incognito_mode": {
+      "description": "Whether the user was in incognito (private) mode.",
+      "type": "boolean"
+    },
+    "offline": {
+      "description": "Whether the playback happened offline.",
+      "type": "boolean"
+    },
+    "platform": {
+      "description": "Platform string (e.g. `\"Windows 7 (Unknown Ed) SP0 [x86 0]\"`).",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "played_ms": {
+      "description": "Milliseconds the track was played, from `ms_played`.",
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "reason_end": {
+      "description": "`reason_end`: why playback ended.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "reason_start": {
+      "description": "`reason_start`: why playback began (`\"uriopen\"`, `\"trackdone\"`, etc.).",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "show_name": {
+      "description": "Podcast show name.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "shuffle": {
+      "description": "Whether shuffle was active.",
+      "type": "boolean"
+    },
+    "skipped_inferred": {
+      "description": "Locally inferred skip: `played_ms < 30_000`.\nPreserved so downstream consumers can switch definitions without\nre-deriving from the raw payload.",
+      "type": "boolean"
+    },
+    "skipped_provider": {
+      "description": "Provider-supplied skipped flag (Spotify's own determination).",
+      "type": "boolean"
+    },
+    "started_at": {
+      "$ref": "#/$defs/DateTime",
+      "description": "ISO-8601 start time, copied from the `ts` field."
+    },
+    "track_name": {
+      "description": "Track display name. None when only podcast/audiobook metadata is set.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "track_uri": {
+      "description": "`spotify:track:...` URI (None for podcasts and audiobooks).",
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "started_at",
+    "played_ms",
+    "skipped_provider",
+    "skipped_inferred",
+    "shuffle",
+    "offline",
+    "incognito_mode"
+  ],
+  "title": "SpotifyTrackPlayedPayload",
+  "type": "object",
+  "x-sinex-event-type": "track.played",
+  "x-sinex-source": "spotify",
+  "x-sinex-version": "1.0.0"
+}

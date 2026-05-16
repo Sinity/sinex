@@ -51,6 +51,20 @@
       "content_hash": "fe708664d39ea7cbee69dd93785cc3ff73600636bf1ce9d192ad9eac8261b192"
     },
     {
+      "source": "chatgpt",
+      "event_type": "ai.message",
+      "version": "1.0.0",
+      "path": "chatgpt/ai.message.json",
+      "content_hash": "5e40af748707cf778fdb1f5de6961b0dc87269d90e3074f09c4c5ac2645323f9"
+    },
+    {
+      "source": "claude",
+      "event_type": "ai.message",
+      "version": "1.0.0",
+      "path": "claude/ai.message.json",
+      "content_hash": "8286b2d84f8fb968b562dccb680089944ec38348b5cdf8a3cf0f6bd0434e26a4"
+    },
+    {
       "source": "clipboard",
       "event_type": "clipboard.copied",
       "version": "1.0.0",
@@ -163,6 +177,13 @@
       "content_hash": "a85f119c0052889b3d98a6d01da647f7234f7b8a54964ea974ee105beeb619a1"
     },
     {
+      "source": "docs-library",
+      "event_type": "document.indexed",
+      "version": "1.0.0",
+      "path": "docs-library/document.indexed.json",
+      "content_hash": "72351d4cd232e6458bf529fbb034454a74dcc0c6e90ff19525c4bfeab1ed514d"
+    },
+    {
       "source": "document-ingestor",
       "event_type": "document.ingested",
       "version": "1.0.0",
@@ -247,11 +268,25 @@
       "content_hash": "0d188eef9f8e39e1ee14b8808f67d15020015f4e1dafa9456dd776f1087bb56f"
     },
     {
+      "source": "git",
+      "event_type": "commit.created",
+      "version": "1.0.0",
+      "path": "git/commit.created.json",
+      "content_hash": "47ddf221b6f62117c983213e47fff877d2225f01a97b20f8acf68b71f4c1dbb3"
+    },
+    {
       "source": "health-aggregator",
       "event_type": "health.aggregated_report",
       "version": "1.0.0",
       "path": "health-aggregator/health.aggregated_report.json",
       "content_hash": "7a98f4a12b24fa3c41221f2f544a3a4a40219ad3448e0645586b6d0d756e3dfd"
+    },
+    {
+      "source": "integration.polylogue",
+      "event_type": "integration.polylogue.conversation_indexed",
+      "version": "1.0.0",
+      "path": "integration.polylogue/integration.polylogue.conversation_indexed.json",
+      "content_hash": "6538704c100208e6a3315c19a3aa8ce2e473aae6a3ffd99a23250c5c574c92b2"
     },
     {
       "source": "journald",
@@ -317,11 +352,60 @@
       "content_hash": "e9d66b34b5b4bb00dd0e97050964829c25c419eb99f385982cea28205b93d807"
     },
     {
+      "source": "knowledgebase",
+      "event_type": "note.observed",
+      "version": "1.0.0",
+      "path": "knowledgebase/note.observed.json",
+      "content_hash": "af4d58403ec0c53f0d55867da9e87f59e4f3244dd9331ff71372e64694bb3f1e"
+    },
+    {
+      "source": "ledger",
+      "event_type": "transaction.posted",
+      "version": "1.0.0",
+      "path": "ledger/transaction.posted.json",
+      "content_hash": "7fe090f8bb868292ef58448157d1026921274136365f2f80f209746fdfe9a72d"
+    },
+    {
+      "source": "messenger",
+      "event_type": "message.sent",
+      "version": "1.0.0",
+      "path": "messenger/message.sent.json",
+      "content_hash": "29d60e858cc1ec1a44bd8365e1361dabfce82c543dfcf929f5c40bd5b2335973"
+    },
+    {
+      "source": "raindrop",
+      "event_type": "bookmark.created",
+      "version": "1.0.0",
+      "path": "raindrop/bookmark.created.json",
+      "content_hash": "07ab4c9dc0816be323fe40e47043fe898335f20d0bb177cefaba345b7f9c1546"
+    },
+    {
+      "source": "reddit",
+      "event_type": "social.comment.posted",
+      "version": "1.0.0",
+      "path": "reddit/social.comment.posted.json",
+      "content_hash": "591d1a1b2c953edbab61733e54b15e5d9041d64e7d75739de55b548a3279cbd5"
+    },
+    {
+      "source": "reddit",
+      "event_type": "social.post.created",
+      "version": "1.0.0",
+      "path": "reddit/social.post.created.json",
+      "content_hash": "578a86c8e0cc12870407ccbe104f107435ce3ffdab10a77575459903449c545f"
+    },
+    {
       "source": "relation-extractor",
       "event_type": "entity.related",
       "version": "1.0.0",
       "path": "relation-extractor/entity.related.json",
       "content_hash": "2b16b360255b1d3867b358a845151cd9db0dad48ae74b9845799f6bf30feb33e"
+    },
+    {
+      "source": "samsung-health",
+      "event_type": "sleep.session",
+      "version": "1.0.0",
+      "path": "samsung-health/sleep.session.json",
+      "content_hash": "2c0b9e644f7c6a882f8dd052f21f10037197dddc950829f1b5a084127cdfb7e5"
     },
     {
       "source": "shell.atuin",
@@ -426,14 +510,14 @@
       "event_type": "process.shutdown",
       "version": "1.0.0",
       "path": "sinex/process.shutdown.json",
-      "content_hash": "57dbb6aa09a31febb36608a455b1fd4716b0503e5d083ad77c3f465d45959c0d"
+      "content_hash": "879fbf5716ac3c93be2d606066796641cd02f75da3e4110c8ad5e228c9c540bc"
     },
     {
       "source": "sinex",
       "event_type": "process.started",
       "version": "1.0.0",
       "path": "sinex/process.started.json",
-      "content_hash": "8943832dc132366fcf631c7d2fd15ba4d10606e1012aa7ff9e93bfabf107399e"
+      "content_hash": "08cfcbac816b184af91a25348cb7796c8cd7172876cfaffc4128af24bff73742"
     },
     {
       "source": "sinex.gateway",
@@ -504,6 +588,13 @@
       "version": "1.0.0",
       "path": "sinex.node/processing.stats.json",
       "content_hash": "e85825ea99b556d896bfb56949879808b7c1fd4d70a68f8ab224d4094c058479"
+    },
+    {
+      "source": "spotify",
+      "event_type": "track.played",
+      "version": "1.0.0",
+      "path": "spotify/track.played.json",
+      "content_hash": "5670d4777cfe6e7ea8c72cc880125c1800adb1a2c3b31e8867a83dc2c3bb3831"
     },
     {
       "source": "system",
@@ -714,6 +805,20 @@
       "version": "1.0.0",
       "path": "wm.hyprland/workspace.switched.json",
       "content_hash": "8eed6cf1fbb4d751342a48bf02eb0131f267460f03f7bd26dbafa716dcb003a2"
+    },
+    {
+      "source": "wykop",
+      "event_type": "social.entry.created",
+      "version": "1.0.0",
+      "path": "wykop/social.entry.created.json",
+      "content_hash": "38ebf70f1e057c9e461a6e06c16d9b1e64eeb11b57eba7ede61302f5e8cef5fb"
+    },
+    {
+      "source": "wykop",
+      "event_type": "social.entry_comment.posted",
+      "version": "1.0.0",
+      "path": "wykop/social.entry_comment.posted.json",
+      "content_hash": "87f9c497544dfe039a66ce3cf6792e781472748433d8e75b383a1ee1d8cdf35d"
     }
   ]
 }

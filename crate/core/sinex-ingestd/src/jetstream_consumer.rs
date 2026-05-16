@@ -1086,6 +1086,7 @@ impl JetStreamConsumer {
                     val_stats.coverage_pct(),
                     suspicious_future_ts_orig,
                     self.stats.telemetry_publish_failures.load(Ordering::Relaxed),
+                    self.stats.confirmation_durability_gaps.load(Ordering::Relaxed),
                 )
                 .await
             {

@@ -8,6 +8,12 @@
       "minimum": 0,
       "type": "integer"
     },
+    "confirmation_durability_gaps": {
+      "description": "Cumulative count of confirmation-durability gaps: events were persisted\nbut the confirmation publish to the Confirmations stream failed\nnon-transiently. Non-zero is a durable signal of pipeline split-brain.",
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
     "events_deferred": {
       "description": "Events deferred to retry",
       "format": "uint32",
@@ -96,11 +102,12 @@
     "validation_invalid",
     "validation_coverage_pct",
     "suspicious_future_ts_orig",
-    "telemetry_publish_failures"
+    "telemetry_publish_failures",
+    "confirmation_durability_gaps"
   ],
   "title": "IngestdBatchStatsPayload",
   "type": "object",
   "x-sinex-event-type": "batch.stats",
   "x-sinex-source": "sinex.ingestd",
-  "x-sinex-version": "2.1.0"
+  "x-sinex-version": "2.2.0"
 }

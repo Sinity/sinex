@@ -1,0 +1,61 @@
+{
+  "$defs": {
+    "DateTime": {
+      "description": "RFC 3339 formatted date-time string",
+      "format": "date-time",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "A comment the user posted on Reddit.\n\nSourced from `comments.csv` in the Reddit GDPR export.",
+  "properties": {
+    "body": {
+      "description": "Comment body text.",
+      "type": "string"
+    },
+    "created_at": {
+      "$ref": "#/$defs/DateTime",
+      "description": "When the comment was created (from `date` column)."
+    },
+    "link_id": {
+      "description": "Base-36 link (submission) id the comment belongs to.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "parent_id": {
+      "description": "Base-36 parent id (may be a comment id or link id).",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "permalink": {
+      "description": "Full permalink URL.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "reddit_id": {
+      "description": "Reddit's internal base-36 comment id (e.g. `ck1fsao`).",
+      "type": "string"
+    },
+    "subreddit": {
+      "description": "Subreddit name (no `r/` prefix).",
+      "type": "string"
+    }
+  },
+  "required": [
+    "reddit_id",
+    "subreddit",
+    "body",
+    "created_at"
+  ],
+  "title": "RedditCommentPayload",
+  "type": "object",
+  "x-sinex-event-type": "social.comment.posted",
+  "x-sinex-source": "reddit",
+  "x-sinex-version": "1.0.0"
+}

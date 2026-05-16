@@ -1,0 +1,62 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Emitted once per `.md` file observed in the knowledgebase vault.\n\nThis is a periodic mirror / federated snapshot — sinex observes the vault's\nstate without claiming ownership. Re-imports re-publish only when the note's\ncontent has changed (BLAKE3 hash of body differs).",
+  "properties": {
+    "body_byte_size": {
+      "description": "Byte size of the note body (everything after front-matter).",
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "body_text_hash": {
+      "description": "BLAKE3 hex digest of the note body (everything after the front-matter\ndelimiter). Used for change detection between imports.",
+      "type": "string"
+    },
+    "front_matter": {
+      "description": "Front-matter fields as an opaque JSON object.\nAll YAML scalars, sequences, and mappings are preserved verbatim so\ndownstream consumers can use whatever fields they need without schema\ncoupling."
+    },
+    "mtime": {
+      "description": "File modification time as an RFC 3339 string, if available from the OS.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "path": {
+      "description": "Path relative to vault root (e.g. `permanent.concept.foo.md`).",
+      "type": "string"
+    },
+    "tags": {
+      "description": "Tags collected from both front-matter (`tags:` list) and inline body\n`#tag` syntax. Deduplicated and sorted.",
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "title": {
+      "description": "Note title — from front-matter `title:` field, otherwise the stem of\nthe filename (dendron-style `area.subarea.note`).",
+      "type": "string"
+    },
+    "wikilinks": {
+      "description": "`[[wikilink]]` references found in the note body. Deduplicated and\nsorted. Brackets and alias suffixes (`|alias`) are stripped.",
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    }
+  },
+  "required": [
+    "path",
+    "title",
+    "front_matter",
+    "tags",
+    "wikilinks",
+    "body_text_hash",
+    "body_byte_size"
+  ],
+  "title": "KnowledgeNoteObservedPayload",
+  "type": "object",
+  "x-sinex-event-type": "note.observed",
+  "x-sinex-source": "knowledgebase",
+  "x-sinex-version": "1.0.0"
+}
