@@ -3,7 +3,10 @@
 
 #![allow(unused_imports)]
 
-use super::{eyre, ReplayExecutionEngine, Result, StreamExt, Context, stale_preview_missing_root_ids_error, replay_scope_drift_error, ScopeInvalidationBucket};
+use super::{
+    Context, ReplayExecutionEngine, Result, ScopeInvalidationBucket, StreamExt, eyre,
+    replay_scope_drift_error, stale_preview_missing_root_ids_error,
+};
 use async_nats::jetstream;
 use sinex_db::repositories::{DbPoolExt, EventRepositoryTx};
 use sinex_node_sdk::derived_node::invalidation::{DerivedScopeInvalidation, INVALIDATION_SUBJECT};

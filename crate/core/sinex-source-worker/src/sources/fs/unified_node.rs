@@ -1351,8 +1351,8 @@ fn add_filtered_watch_targets(
     targets: impl IntoIterator<Item = PathBuf>,
 ) -> NodeResult<()> {
     for target in targets {
-        if watched_targets.insert(target.clone()) {
-            if let Err(error) = watcher.watch(&target, RecursiveMode::NonRecursive) {
+        if watched_targets.insert(target.clone())
+            && let Err(error) = watcher.watch(&target, RecursiveMode::NonRecursive) {
                 if notify_error_is_skippable_filtered_target(&error) {
                     watched_targets.remove(&target);
                     warn!(
@@ -1369,7 +1369,6 @@ fn add_filtered_watch_targets(
                 .with_source(error)
                 .with_path(target.display()));
             }
-        }
     }
 
     Ok(())
@@ -2325,9 +2324,7 @@ fn replay_material_identifier(material: &ResolvedReplayMaterial) -> String {
         .and_then(serde_json::Value::as_str)
         .map(str::to_string)
         .unwrap_or_else(|| {
-            SourceIdentifier::from_wire(&material.source_identifier)
-                .map(|si| si.logical_id)
-                .unwrap_or_else(|_| material.source_identifier.clone())
+            SourceIdentifier::from_wire(&material.source_identifier).map_or_else(|_| material.source_identifier.clone(), |si| si.logical_id)
         })
 }
 

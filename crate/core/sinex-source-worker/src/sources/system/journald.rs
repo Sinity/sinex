@@ -1,9 +1,7 @@
 //! `system.journald` — stream all journald entries via `JournalctlStreamAdapter`.
 
 use crate::register_parser;
-use sinex_node_sdk::parser::{
-    JournalctlStreamAdapter, MaterialParser, ParserError,
-};
+use sinex_node_sdk::parser::{JournalctlStreamAdapter, MaterialParser, ParserError};
 use sinex_primitives::domain::{EventSource, EventType};
 use sinex_primitives::events::enums::JournalSyncType;
 use sinex_primitives::events::payloads::system::{
@@ -139,8 +137,7 @@ impl MaterialParser for JournaldParser {
             || json
                 .get("MESSAGE")
                 .and_then(|v| v.as_str())
-                .map(|m| m.contains("Journal sync"))
-                .unwrap_or(false)
+                .is_some_and(|m| m.contains("Journal sync"))
         {
             let payload = JournalSyncCompletedPayload {
                 sync_type: JournalSyncType::Incremental,
@@ -209,7 +206,7 @@ impl MaterialParser for JournaldParser {
         let exe = json
             .get("_EXE")
             .and_then(|v| v.as_str())
-            .map(|s| s.to_string());
+            .map(std::string::ToString::to_string);
 
         let mut fields: HashMap<String, String> = HashMap::new();
         if let Some(obj) = json.as_object() {
@@ -227,15 +224,15 @@ impl MaterialParser for JournaldParser {
             hostname: json
                 .get("_HOSTNAME")
                 .and_then(|v| v.as_str())
-                .map(|s| s.to_string()),
+                .map(std::string::ToString::to_string),
             unit: json
                 .get("_SYSTEMD_UNIT")
                 .and_then(|v| v.as_str())
-                .map(|s| s.to_string()),
+                .map(std::string::ToString::to_string),
             syslog_identifier: json
                 .get("SYSLOG_IDENTIFIER")
                 .and_then(|v| v.as_str())
-                .map(|s| s.to_string()),
+                .map(std::string::ToString::to_string),
             pid: json
                 .get("_PID")
                 .and_then(|v| v.as_str())
@@ -262,7 +259,7 @@ impl MaterialParser for JournaldParser {
             facility: json
                 .get("SYSLOG_FACILITY")
                 .and_then(|v| v.as_str())
-                .map(|s| s.to_string()),
+                .map(std::string::ToString::to_string),
             message,
             fields,
         };

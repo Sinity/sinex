@@ -31,7 +31,7 @@ use tokio::sync::{mpsc, oneshot};
 use tokio::time::{Duration, Instant, interval};
 use tracing::debug;
 
-/// Configuration for [ObservationMaterializer] behavior.
+/// Configuration for [`ObservationMaterializer`] behavior.
 #[derive(Debug, Clone)]
 pub struct ObservationMaterializerConfig {
     /// Time window (ms) before flushing even if thresholds not reached.
@@ -75,7 +75,7 @@ pub type FlushCallback = dyn Fn(SerializedBatch) -> FlushFuture + Send + Sync + 
 /// Buffered materializer for metadata-only observations.
 ///
 /// Accumulates records of type `R: Serialize` and flushes to JSON Lines format
-/// when thresholds (max_records, max_bytes, or coalesce window) are reached.
+/// when thresholds (`max_records`, `max_bytes`, or coalesce window) are reached.
 pub struct ObservationMaterializer<R: Serialize + Send> {
     config: ObservationMaterializerConfig,
     tx: mpsc::Sender<AppendRequest<R>>,
@@ -90,6 +90,7 @@ struct AppendRequest<R: Serialize + Send> {
 
 impl<R: Serialize + Send + 'static> ObservationMaterializer<R> {
     /// Create a new materializer with the given configuration.
+    #[must_use] 
     pub fn new(config: ObservationMaterializerConfig) -> Self {
         Self::with_callback(config, Arc::new(|_| Box::pin(async { Ok(()) })))
     }
@@ -133,7 +134,7 @@ impl<R: Serialize + Send + 'static> ObservationMaterializer<R> {
     /// Consumes the materializer and joins the internal buffer task.
     pub async fn join(self) -> NodeResult<()> {
         self.handle.await.map_err(|e| {
-            SinexError::lifecycle(format!("Observation materializer task panicked: {}", e))
+            SinexError::lifecycle(format!("Observation materializer task panicked: {e}"))
         })
     }
 }
@@ -173,7 +174,7 @@ async fn buffer_task<R: Serialize + Send + 'static>(
                         let _ = req.reply.send(Ok(()));
                     }
                     Err(e) => {
-                        let err = SinexError::processing(format!("Failed to serialize observation: {}", e));
+                        let err = SinexError::processing(format!("Failed to serialize observation: {e}"));
                         let _ = req.reply.send(Err(err));
                     }
                 }
@@ -224,7 +225,7 @@ async fn flush_internal<R: Serialize>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     use std::sync::Arc as StdArc;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use tokio::time::sleep;

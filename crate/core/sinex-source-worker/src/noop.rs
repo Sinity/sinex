@@ -74,7 +74,7 @@ impl IngestorNode for NoopSourceUnit {
     type Config = serde_json::Value;
     type State = NoopState;
 
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "noop"
     }
 

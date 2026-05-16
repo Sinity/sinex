@@ -1,4 +1,4 @@
-//! `terminal.fish-history` — fish shell SQLite history adapter.
+//! `terminal.fish-history` — fish shell `SQLite` history adapter.
 //!
 //! Adapter: [`SqliteRowAdapter`] — reads from
 //!          `~/.local/share/fish/fish_history`.
@@ -79,7 +79,7 @@ register_source_unit_binding! {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct FishHistoryParserConfig;
 
-/// Parser for fish shell SQLite history rows.
+/// Parser for fish shell `SQLite` history rows.
 ///
 /// Each [`SourceRecord`] carries a JSON-serialized row from the `history`
 /// table with columns `ROWID`, `command`, `when` (optional Unix seconds).
@@ -128,7 +128,7 @@ impl MaterialParser for FishHistoryParser {
             return Ok(vec![]);
         }
 
-        let when_unix: Option<i64> = row.get("when").and_then(|v| v.as_i64());
+        let when_unix: Option<i64> = row.get("when").and_then(sinex_primitives::JsonValue::as_i64);
 
         // Privacy processing.
         let processed = {
@@ -159,7 +159,7 @@ impl MaterialParser for FishHistoryParser {
         let source_file = record
             .logical_path
             .as_ref()
-            .map(|p| p.to_string())
+            .map(std::string::ToString::to_string)
             .unwrap_or_default();
 
         let payload = HistoryCommandImportedPayload {

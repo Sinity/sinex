@@ -119,6 +119,7 @@ pub struct ZshHistoryParserConfig;
 ///
 /// Maintains dedup window and tracks multi-line continuation state.
 #[derive(Debug)]
+#[derive(Default)]
 pub struct ZshHistoryParser {
     dedup: ContentHashWindow,
     /// Accumulated command for a multi-line continuation (backslash-continued).
@@ -131,17 +132,6 @@ pub struct ZshHistoryParser {
     source_file: String,
 }
 
-impl Default for ZshHistoryParser {
-    fn default() -> Self {
-        Self {
-            dedup: ContentHashWindow::default(),
-            pending_command: None,
-            pending_ts: None,
-            pending_anchor: None,
-            source_file: String::new(),
-        }
-    }
-}
 
 #[async_trait]
 impl MaterialParser for ZshHistoryParser {
@@ -175,7 +165,7 @@ impl MaterialParser for ZshHistoryParser {
         if record
             .metadata
             .get("rotation_detected")
-            .and_then(|v| v.as_bool())
+            .and_then(sinex_primitives::JsonValue::as_bool)
             .unwrap_or(false)
         {
             self.dedup.clear();

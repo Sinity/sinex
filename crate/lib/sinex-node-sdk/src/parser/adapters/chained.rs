@@ -9,7 +9,7 @@
 //! # Sequential vs interleaved
 //!
 //! The default merge is **sequential**: exhaust `A`, then exhaust `B`.
-//! This matches `browser.history` which needs SQLite rows (primary) fully
+//! This matches `browser.history` which needs `SQLite` rows (primary) fully
 //! drained before dump files (secondary). Set `interleaved: true` in
 //! [`ChainedConfig`] to interleave via `futures::stream::select` — useful
 //! when both adapters are live streams with no natural end.
@@ -107,8 +107,7 @@ fn tag_record(mut record: SourceRecord, prefix: &'static str) -> SourceRecord {
     let base = record
         .logical_path
         .as_deref()
-        .map(|p| p.as_str())
-        .unwrap_or("");
+        .map_or("", camino::Utf8Path::as_str);
     record.logical_path = Some(Utf8PathBuf::from(format!("{prefix}{base}")));
     record
 }

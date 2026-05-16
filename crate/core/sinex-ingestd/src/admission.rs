@@ -68,7 +68,7 @@ pub struct CandidateEvent {
 }
 
 impl CandidateEvent {
-    #[must_use] 
+    #[must_use]
     pub fn new(event: Event<JsonValue>, metadata: CandidateEventMetadata) -> Self {
         Self { event, metadata }
     }
@@ -173,12 +173,12 @@ pub struct AdmissionBatchPlan {
 }
 
 impl AdmissionBatchPlan {
-    #[must_use] 
+    #[must_use]
     pub fn attempted_event_ids(&self) -> Vec<Uuid> {
         self.events.iter().map(|event| event.event_id).collect()
     }
 
-    #[must_use] 
+    #[must_use]
     pub fn success_duplicate_event_ids(&self, inserted_ids: &[Uuid]) -> Vec<Uuid> {
         let inserted_set: HashSet<_> = inserted_ids.iter().copied().collect();
         let mut duplicate_event_ids = self.cached_duplicate_event_ids.clone();
@@ -192,7 +192,7 @@ impl AdmissionBatchPlan {
         duplicate_event_ids
     }
 
-    #[must_use] 
+    #[must_use]
     pub fn cacheable_event_ids(&self) -> &[Uuid] {
         &self.cacheable_event_ids
     }
@@ -800,7 +800,7 @@ impl AdmissionService {
         Ok(AdmissionPersistResult::persisted_plan(plan, inserted_ids))
     }
 
-    #[must_use] 
+    #[must_use]
     pub fn is_source_material_fk_violation_for_admitted_batch(
         error: &SinexError,
         batch: &[&AdmittedEvent],
@@ -809,7 +809,7 @@ impl AdmissionService {
             || (is_foreign_key_violation(error) && batch_depends_only_on_source_material_fk(batch))
     }
 
-    #[must_use] 
+    #[must_use]
     pub fn is_source_material_fk_violation_for_stream_batch(
         error: &SinexError,
         batch: &[StreamBatchRow],
@@ -817,7 +817,7 @@ impl AdmissionService {
         is_source_material_fk_violation_for_stream_batch(error, batch)
     }
 
-    #[must_use] 
+    #[must_use]
     pub fn is_isolatable_persistence_failure(error: &SinexError) -> bool {
         is_isolatable_batch_persistence_failure(error)
     }

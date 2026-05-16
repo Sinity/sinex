@@ -161,7 +161,7 @@ impl InputShapeAdapter for AppendOnlyFileAdapter {
                     line: line_num,
                 },
                 bytes: line_bytes,
-                logical_path: Some(Utf8Path::new(&path).to_owned().into()),
+                logical_path: Some(Utf8Path::new(&path).to_owned()),
                 source_ts_hint: None,
                 metadata,
             });

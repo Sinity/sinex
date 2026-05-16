@@ -193,11 +193,11 @@ impl MaterialParser for SystemdParser {
         let pid_str = json
             .get("_PID")
             .and_then(|v| v.as_str())
-            .map(|s| s.to_string());
+            .map(std::string::ToString::to_string);
         let uid_str = json
             .get("_UID")
             .and_then(|v| v.as_str())
-            .map(|s| s.to_string());
+            .map(std::string::ToString::to_string);
 
         let unit_result = json
             .get("UNIT_RESULT")

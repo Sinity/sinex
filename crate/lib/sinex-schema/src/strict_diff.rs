@@ -19,7 +19,7 @@
 //!    overwrite the body on each apply, but a manual prod edit between
 //!    applies is silently overwritten with no warning, and there is no
 //!    way to detect drift before re-applying.
-//! 5. **TimescaleDB hypertable settings** (chunk interval, compression,
+//! 5. **`TimescaleDB` hypertable settings** (chunk interval, compression,
 //!    retention).
 //! 6. **Comments / table descriptions**.
 //!
@@ -68,7 +68,7 @@ pub enum DriftCategory {
     InlineCheckExpr,
     /// Reserved for follow-up: foreign key `ON DELETE` / `ON UPDATE` actions.
     ForeignKeyAction,
-    /// Reserved for follow-up: TimescaleDB hypertable chunk interval,
+    /// Reserved for follow-up: `TimescaleDB` hypertable chunk interval,
     /// compression, retention.
     HypertableSetting,
     /// Reserved for follow-up: comments / table descriptions.
@@ -233,7 +233,7 @@ struct DeclaredDefault {
     /// Substring that the live DEFAULT expression MUST contain. We compare
     /// by substring rather than equality because Postgres normalizes
     /// expressions on read (e.g. `now()` may be stored as `now()` or
-    /// `pg_catalog.now()` depending on search_path at the time of DDL).
+    /// `pg_catalog.now()` depending on `search_path` at the time of DDL).
     /// Substring lets us pin the meaningful identifier without brittle
     /// formatting matches.
     expected_marker: &'static str,
@@ -756,8 +756,8 @@ async fn check_foreign_key_actions(pool: &PgPool) -> Result<Vec<StrictDrift>, Ap
             continue;
         };
 
-        if let Some(delete_marker) = declared.expected_delete_action_marker {
-            if !matching.contains(delete_marker) {
+        if let Some(delete_marker) = declared.expected_delete_action_marker
+            && !matching.contains(delete_marker) {
                 drifts.push(StrictDrift {
                     category: DriftCategory::ForeignKeyAction,
                     location: format!("{location} (ON DELETE)"),
@@ -765,10 +765,9 @@ async fn check_foreign_key_actions(pool: &PgPool) -> Result<Vec<StrictDrift>, Ap
                     observed_summary: matching.clone(),
                 });
             }
-        }
 
-        if let Some(update_marker) = declared.expected_update_action_marker {
-            if !matching.contains(update_marker) {
+        if let Some(update_marker) = declared.expected_update_action_marker
+            && !matching.contains(update_marker) {
                 drifts.push(StrictDrift {
                     category: DriftCategory::ForeignKeyAction,
                     location: format!("{location} (ON UPDATE)"),
@@ -776,7 +775,6 @@ async fn check_foreign_key_actions(pool: &PgPool) -> Result<Vec<StrictDrift>, Ap
                     observed_summary: matching.clone(),
                 });
             }
-        }
     }
     Ok(drifts)
 }

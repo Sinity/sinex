@@ -5,15 +5,11 @@
 //! 2. Rejection paths: invalid envelope version, missing fields, empty events
 //! 3. The low-level escape hatch (`publish_raw_event_batch`) is grep-detectable
 
-use sinex_ingestd::admission::{
-    AdmissionDecision, AdmissionRejectionKind, AdmissionService,
-};
 use sinex_ingestd::IngestEventValidator;
+use sinex_ingestd::admission::{AdmissionDecision, AdmissionRejectionKind, AdmissionService};
 use sinex_primitives::domain::HostName;
 use sinex_primitives::events::Event;
-use sinex_primitives::events::admission::{
-    AdmittedEventIntent, CURRENT_ENVELOPE_VERSION,
-};
+use sinex_primitives::events::admission::{AdmittedEventIntent, CURRENT_ENVELOPE_VERSION};
 use sinex_primitives::{DynamicPayload, Id, JsonValue, Uuid};
 use std::sync::Arc;
 use tokio::sync::RwLock;

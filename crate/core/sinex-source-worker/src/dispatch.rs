@@ -1,4 +1,4 @@
-//! Parser dispatch: maps source_id to a `MaterialParser` and invokes it
+//! Parser dispatch: maps `source_id` to a `MaterialParser` and invokes it
 //! against staged source material.
 //!
 //! The dispatch is fully registry-driven — no match arms. Source units register
@@ -25,7 +25,7 @@ pub struct ParseOutcome {
     pub parser_version: String,
 }
 
-/// Function signature for parser dispatch: takes source_id + material bytes,
+/// Function signature for parser dispatch: takes `source_id` + material bytes,
 /// returns parsed event intents or an error.
 ///
 /// This is the sync wrapper type used by the NATS parse listener. The actual
@@ -139,6 +139,7 @@ macro_rules! register_parser {
 /// Looks up the parser for `source_id` in the compile-time registry. Returns
 /// an error for unregistered source units. No match arms — registration via
 /// [`register_parser!`] is the only path.
+#[must_use] 
 pub fn default_parser_dispatch() -> ParserDispatchFn {
     Arc::new(
         move |source_id: &str, material_bytes: &[u8], material_id: Option<Uuid>| {
@@ -146,22 +147,19 @@ pub fn default_parser_dispatch() -> ParserDispatchFn {
             let source_unit_id = SourceUnitId::new(source_id)
                 .map_err(|e| format!("invalid source_id '{source_id}': {e}"))?;
 
-            let factory_fn = match find_parser_factory(&source_unit_id) {
-                Some(f) => f,
-                None => {
-                    let mut ids: Vec<&str> = PARSER_REGISTRY.keys().copied().collect();
-                    ids.sort_unstable();
-                    return Err(if ids.is_empty() {
-                        format!(
-                            "unknown source_id '{source_id}': no parsers registered in this binary"
-                        )
-                    } else {
-                        format!(
-                            "unknown source_id '{source_id}': registered parsers are [{}]",
-                            ids.join(", ")
-                        )
-                    });
-                }
+            let factory_fn = if let Some(f) = find_parser_factory(&source_unit_id) { f } else {
+                let mut ids: Vec<&str> = PARSER_REGISTRY.keys().copied().collect();
+                ids.sort_unstable();
+                return Err(if ids.is_empty() {
+                    format!(
+                        "unknown source_id '{source_id}': no parsers registered in this binary"
+                    )
+                } else {
+                    format!(
+                        "unknown source_id '{source_id}': registered parsers are [{}]",
+                        ids.join(", ")
+                    )
+                });
             };
 
             let mut parser = factory_fn();
@@ -171,7 +169,7 @@ pub fn default_parser_dispatch() -> ParserDispatchFn {
             // full material context, so we use a zero anchor.
             let mat_id = material_id
                 .map(Id::<SourceMaterial>::from_uuid)
-                .unwrap_or_else(Id::new);
+                .unwrap_or_default();
 
             let record = SourceRecord {
                 material_id: mat_id,
@@ -229,6 +227,7 @@ fn hostname() -> String {
 // =============================================================================
 
 /// A test-only parser dispatch that records invocations and returns no events.
+#[must_use] 
 pub fn test_parser_dispatch() -> (
     ParserDispatchFn,
     Arc<Mutex<Vec<(String, Vec<u8>, Option<Uuid>)>>>,

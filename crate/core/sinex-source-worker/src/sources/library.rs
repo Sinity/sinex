@@ -129,18 +129,17 @@ fn extract_year(stem: &str) -> Option<u16> {
     let mut i = 0;
     while i + 4 <= bytes.len() {
         let slice = &bytes[i..i + 4];
-        if slice.iter().all(|b| b.is_ascii_digit()) {
+        if slice.iter().all(u8::is_ascii_digit) {
             // Check that neither adjacent byte is also a digit (avoid matching
             // longer numeric sequences at the boundary).
             let before_ok = i == 0 || !bytes[i - 1].is_ascii_digit();
             let after_ok = i + 4 >= bytes.len() || !bytes[i + 4].is_ascii_digit();
             if before_ok && after_ok {
                 let s = std::str::from_utf8(slice).ok()?;
-                if let Ok(y) = s.parse::<u16>() {
-                    if (1900..=2030).contains(&y) {
+                if let Ok(y) = s.parse::<u16>()
+                    && (1900..=2030).contains(&y) {
                         return Some(y);
                     }
-                }
             }
         }
         i += 1;
@@ -240,7 +239,7 @@ fn extract_author_title(stem: &str) -> (Option<String>, Option<String>) {
 /// [`DirectoryWalkAdapter`]). The parser:
 ///
 /// 1. Extracts the path + extension from the anchor.
-/// 2. Uses `bytes.len()` for byte_size.
+/// 2. Uses `bytes.len()` for `byte_size`.
 /// 3. Reads mtime from the live filesystem (path from anchor).
 /// 4. Applies filename heuristics to derive optional fields.
 /// 5. Runs `ProcessingContext::Metadata` privacy on the path string.
@@ -411,7 +410,7 @@ crate::register_adapter_ingestor!(
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     use sinex_primitives::ids::Id;
     use sinex_primitives::parser::{MaterialAnchor, ParserContext, SourceRecord, SourceUnitId};
     use sinex_primitives::temporal::Timestamp;

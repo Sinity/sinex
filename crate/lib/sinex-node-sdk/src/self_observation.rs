@@ -200,7 +200,7 @@ impl SelfObserver {
     }
 
     /// Eagerly open the underlying source material and commit its `BEGIN` frame
-    /// to the NATS `SOURCE_MATERIAL` JetStream before any telemetry events are
+    /// to the NATS `SOURCE_MATERIAL` `JetStream` before any telemetry events are
     /// emitted.
     ///
     /// # Why this exists (#1241 prong 2)
@@ -209,14 +209,14 @@ impl SelfObserver {
     /// first `append_*` call.  When the adapter emits a `metric.gauge` event,
     /// the event carries a `source_material_id` that was assigned by the
     /// materializer at append time.  If the BEGIN frame hasn't been committed to
-    /// JetStream yet — or if ingestd's `MaterialAssembler` consumer hasn't
+    /// `JetStream` yet — or if ingestd's `MaterialAssembler` consumer hasn't
     /// processed it yet — ingestd's `MaterialReadySet` pre-check returns false
     /// and the event is NAK'd for retry.  Under a fast startup this retry window
     /// is often exhausted before the material lands, causing DLQ routing.
     ///
     /// Calling `prime()` before storing the observer (and therefore before any
     /// event is published) flushes the BEGIN frame synchronously, so the
-    /// material is registered in JetStream before the first telemetry event can
+    /// material is registered in `JetStream` before the first telemetry event can
     /// reference it.
     ///
     /// Returns `Ok(())` immediately when the observer is disabled.

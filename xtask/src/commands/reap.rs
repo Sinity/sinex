@@ -249,7 +249,7 @@ pub fn spawn_reaper(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sandbox::prelude::*;
+    
     use crate::sandbox::sinex_test;
 
     /// CLI argument parsing round-trips correctly.

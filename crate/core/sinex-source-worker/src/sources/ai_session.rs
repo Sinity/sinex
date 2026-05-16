@@ -1,4 +1,4 @@
-//! AI session export parsers — Claude and ChatGPT (#1068).
+//! AI session export parsers — Claude and `ChatGPT` (#1068).
 //!
 //! ## Claude
 //!
@@ -23,9 +23,9 @@
 //!
 //! Each message becomes one `claude`/`ai.message` event.
 //!
-//! ## ChatGPT
+//! ## `ChatGPT`
 //!
-//! Reads one of potentially many `conversations-NNN.json` files from a ChatGPT
+//! Reads one of potentially many `conversations-NNN.json` files from a `ChatGPT`
 //! data export. Each file is a JSON array of conversation objects. Each
 //! conversation uses a `mapping` node graph where nodes have `parent`/`children`
 //! references. The canonical thread is reconstructed by walking backwards from
@@ -43,7 +43,7 @@
 //!
 //! **Claude**: `(session_id, message_id)` — both are stable UUIDs from the export.
 //!
-//! **ChatGPT**: `(session_id, message_id)` — `session_id` = `conversation.id`,
+//! **`ChatGPT`**: `(session_id, message_id)` — `session_id` = `conversation.id`,
 //! `message_id` = mapping node id (a stable UUID in the export).
 //!
 //! ## Anchoring
@@ -52,7 +52,7 @@
 //!
 //! For Claude: `conversations.json` is a single flat array, so
 //! `start = conv_index * 1_000_000 + msg_index` encodes both the conversation
-//! and the message position.  For ChatGPT: same scheme across the per-batch
+//! and the message position.  For `ChatGPT`: same scheme across the per-batch
 //! file; `conv_index` is the conversation's index within the current file's
 //! array.
 
@@ -77,9 +77,9 @@ use sinex_primitives::{register_source_unit, register_source_unit_binding};
 // Shared anchor helper
 // ---------------------------------------------------------------------------
 
-/// Encode (conversation_index, message_index) into a single u64 anchor.
+/// Encode (`conversation_index`, `message_index`) into a single u64 anchor.
 ///
-/// We reserve 1_000_000 positions per conversation. That is sufficient for any
+/// We reserve `1_000_000` positions per conversation. That is sufficient for any
 /// real-world conversation length; the scheme stays stable across partial
 /// re-exports as long as the file's conversation order is stable.
 fn anchor(conv_index: usize, msg_index: usize) -> u64 {
@@ -213,10 +213,10 @@ fn parse_claude_message(
             .map(|b| b.text.as_str())
             .collect::<Vec<_>>()
             .join("\n");
-        if !from_content.is_empty() {
-            Some(from_content)
-        } else {
+        if from_content.is_empty() {
             msg.text.filter(|t| !t.is_empty())
+        } else {
+            Some(from_content)
         }
     };
 
@@ -489,7 +489,7 @@ fn parse_chatgpt_message(
         .content
         .parts
         .iter()
-        .filter_map(|p| p.as_str().map(|s| s.to_string()))
+        .filter_map(|p| p.as_str().map(std::string::ToString::to_string))
         .collect::<Vec<_>>()
         .join("\n");
 
@@ -625,7 +625,7 @@ mod tests {
     use super::*;
     use sinex_primitives::Uuid;
     use sinex_primitives::ids::Id;
-    
+
     use xtask::sandbox::prelude::sinex_test;
 
     fn claude_ctx() -> ParserContext {

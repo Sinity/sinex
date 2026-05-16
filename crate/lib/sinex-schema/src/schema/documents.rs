@@ -63,7 +63,7 @@ pub struct DocumentRecord {
 
 impl Documents {
     /// `CREATE TABLE` for `core.documents`. The deterministic `id`
-    /// is set by the parser (UUIDv5 over `(NS_DOCUMENTS, source_unit ||
+    /// is set by the parser (`UUIDv5` over `(NS_DOCUMENTS, source_unit ||
     /// natural_key)`) and is *not* defaulted to `uuidv7()` — the
     /// projection writer always supplies it.
     #[must_use]

@@ -25,7 +25,7 @@ impl<'a> Repository<'a> for IntegrityRepository<'a> {
     }
 }
 
-impl<'a> IntegrityRepository<'a> {
+impl IntegrityRepository<'_> {
     /// Get the names of all expected automaton nodes from `core.manifests`.
     pub async fn get_expected_automatons(&self) -> SinexResult<Vec<String>> {
         let names = sqlx::query_scalar!(

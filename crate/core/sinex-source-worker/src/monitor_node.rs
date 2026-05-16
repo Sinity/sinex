@@ -194,7 +194,7 @@ async fn drive_monitor_phase(
                             break;
                         }
                     }
-                    _ = tokio::time::sleep(*period) => {}
+                    () = tokio::time::sleep(*period) => {}
                 }
             }
         }
@@ -238,7 +238,7 @@ async fn drive_monitor_phase(
 ///
 /// `initialize()` captures the `NodeRuntimeState` into `runtime_snapshot`.
 /// `run_continuous()` then drives `drive_monitor_phase` directly, giving the
-/// monitor closure full SDK access (NATS, AcquisitionManager, etc.).
+/// monitor closure full SDK access (NATS, `AcquisitionManager`, etc.).
 ///
 /// This bridges the gap that `IngestorNode::run_continuous` does not receive
 /// `NodeRuntimeState` directly.

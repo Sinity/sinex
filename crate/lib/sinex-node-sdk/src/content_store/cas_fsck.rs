@@ -187,7 +187,7 @@ pub async fn check_cas(
             report.missing += 1;
             file_statuses.push(CasFileStatus {
                 hash: hash.clone(),
-                path: format!("{}/XX/YY/{}", LOCAL_BLAKE3_CAS_DIR, hash),
+                path: format!("{LOCAL_BLAKE3_CAS_DIR}/XX/YY/{hash}"),
                 size_bytes: 0,
                 status: CasStatus::Missing,
                 blob_id: Some(blob_id.clone()),
@@ -206,11 +206,11 @@ pub async fn check_cas(
 /// Load all BLAKE3 hashes from `core.blobs` where `annex_backend = 'SINEXBLAKE3'`.
 async fn load_sinexblake3_hashes(pool: &PgPool) -> NodeResult<Vec<(String, String)>> {
     let rows = sqlx::query_as::<_, (String, String)>(
-        r#"
+        r"
         SELECT content_hash, id::text
         FROM core.blobs
         WHERE annex_backend = $1
-        "#,
+        ",
     )
     .bind(LOCAL_BLAKE3_CAS_BACKEND)
     .fetch_all(pool)
@@ -222,7 +222,7 @@ async fn load_sinexblake3_hashes(pool: &PgPool) -> NodeResult<Vec<(String, Strin
 
 /// Verify that a CAS file's BLAKE3 hash matches its filename.
 async fn verify_cas_file_content(path: &camino::Utf8Path, expected_hash: &str) -> NodeResult<bool> {
-    let content = tokio::fs::read(path).await.map_err(|e| SinexError::io(e))?;
+    let content = tokio::fs::read(path).await.map_err(SinexError::io)?;
     let computed = blake3::hash(&content).to_hex();
     Ok(computed.as_str() == expected_hash)
 }
@@ -238,8 +238,7 @@ async fn clean_empty_cas_dirs(content_store: &MaterialContentStore) {
         if !entry
             .file_type()
             .await
-            .map(|ft| ft.is_dir())
-            .unwrap_or(false)
+            .is_ok_and(|ft| ft.is_dir())
         {
             continue;
         }
@@ -252,8 +251,7 @@ async fn clean_empty_cas_dirs(content_store: &MaterialContentStore) {
             if !sub_entry
                 .file_type()
                 .await
-                .map(|ft| ft.is_dir())
-                .unwrap_or(false)
+                .is_ok_and(|ft| ft.is_dir())
             {
                 continue;
             }

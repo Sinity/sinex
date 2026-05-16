@@ -4,7 +4,11 @@
 //! incoming `NodeScanCommand`s to isolated replay workers. Only compiled
 //! with the `messaging` feature.
 
-use super::{warn, debug, error, info, NodeRunner, Node, EventTransport, watch, Arc, AtomicBool, run_resubscribing_listener, LISTENER_RETRY_DELAY, StreamExt, control_command_kind, ControlCommandKind, NodeScanCommand, NodeScanAck, Uuid, NodeType, Ordering, NodeScanProgress};
+use super::{
+    Arc, AtomicBool, ControlCommandKind, EventTransport, LISTENER_RETRY_DELAY, Node, NodeRunner,
+    NodeScanAck, NodeScanCommand, NodeScanProgress, NodeType, Ordering, StreamExt, Uuid,
+    control_command_kind, debug, error, info, run_resubscribing_listener, warn, watch,
+};
 
 impl<T: Node + 'static> NodeRunner<T> {
     /// Start the NATS command listener for node-dispatch replay.

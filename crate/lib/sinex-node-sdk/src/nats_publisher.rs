@@ -197,7 +197,7 @@ impl NatsPublisher {
 
     /// Publish an event to the raw-ingest DLQ.
     ///
-    /// transport::Class::Critical (DLQ routing) — operator-facing raw DLQ;
+    /// `transport::Class::Critical` (DLQ routing) — operator-facing raw DLQ;
     /// retry tooling available via `sinexctl dlq retry`. Derived/runtime
     /// processing failures must use `publish_processing_failure`.
     pub async fn publish_to_raw_ingest_dlq(
@@ -496,7 +496,7 @@ impl NatsPublisher {
 
     /// Publish a derived-node processing failure envelope.
     ///
-    /// transport::Class::Derived (failure routing) — routes to the
+    /// `transport::Class::Derived` (failure routing) — routes to the
     /// processing-failure stream (`events.processing_failures.*`), not the
     /// raw-ingest DLQ. Re-runnable via automaton replay.
     pub async fn publish_processing_failure(
@@ -575,7 +575,7 @@ impl NatsPublisher {
         let count = self
             .processing_failure_log_count
             .fetch_add(1, Ordering::Relaxed);
-        if count % 100 == 0 {
+        if count.is_multiple_of(100) {
             tracing::warn!(
                 event_id = %event_id,
                 node = %node_name,

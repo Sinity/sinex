@@ -485,8 +485,7 @@ async fn verify_service_integration(_messages: &mut [String]) -> NodeResult<Valu
             Ok(Ok(_stream)) => checked_streams.push(stream.clone()),
             Ok(Err(error)) => missing_streams.push(format!("{stream} ({error})")),
             Err(_) => missing_streams.push(format!(
-                "{stream} (timed out after {:?})",
-                PREFLIGHT_NATS_OPERATION_TIMEOUT
+                "{stream} (timed out after {PREFLIGHT_NATS_OPERATION_TIMEOUT:?})"
             )),
         }
     }
@@ -592,7 +591,7 @@ mod tests {
         PREFLIGHT_MAX_PARALLEL_WORKERS_PER_GATHER, configure_preflight_database_session,
     };
     use serde_json::Value;
-    
+
     use xtask::sandbox::sinex_test;
 
     #[sinex_test]

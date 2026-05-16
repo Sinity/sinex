@@ -2,7 +2,7 @@
 //!
 //! - `desktop.window-manager` — Hyprland IPC socket (`UnixSocketStreamAdapter`)
 //! - `desktop.clipboard`      — clipboard polling (`ClipboardPollingAdapter`)
-//! - `desktop.activitywatch`  — ActivityWatch SQLite DB (`SqliteRowAdapter`)
+//! - `desktop.activitywatch`  — `ActivityWatch` `SQLite` DB (`SqliteRowAdapter`)
 
 pub mod activitywatch;
 pub mod clipboard;

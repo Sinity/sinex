@@ -92,7 +92,7 @@ fn derive_source_record_inner(input: &DeriveInput) -> syn::Result<TokenStream> {
                 dispatch_fields
                     .first()
                     .map(|fd| (disc_name.as_str(), *fd))
-                    .or_else(|| {
+                    .or({
                         // discriminator declared but no dispatch field — still build discriminator
                         // with an empty case table (unusual, but valid).
                         None
@@ -191,7 +191,7 @@ fn derive_source_record_inner(input: &DeriveInput) -> syn::Result<TokenStream> {
 
     let field_specs = field_decls
         .iter()
-        .map(|d| field_decl_to_token(d))
+        .map(field_decl_to_token)
         .collect::<syn::Result<Vec<_>>>()?;
 
     // For stateful structs, we persist carry-state between parse_record calls via
@@ -376,7 +376,7 @@ fn parse_source_record_attrs(attrs: &[syn::Attribute]) -> syn::Result<SourceReco
             let key = meta
                 .path
                 .get_ident()
-                .map(|i| i.to_string())
+                .map(std::string::ToString::to_string)
                 .ok_or_else(|| meta.error("expected attribute key"))?;
             let value = meta.value()?;
             let s: syn::LitStr = value.parse()?;
@@ -521,7 +521,7 @@ fn parse_field_decl(field: &Field) -> syn::Result<FieldDecl> {
                     let key = meta
                         .path
                         .get_ident()
-                        .map(|i| i.to_string())
+                        .map(std::string::ToString::to_string)
                         .ok_or_else(|| meta.error("expected source attribute key"))?;
                     match key.as_str() {
                         "json_pointer" => {
@@ -561,25 +561,22 @@ fn parse_field_decl(field: &Field) -> syn::Result<FieldDecl> {
             }
             "default" => {
                 // Support both #[default = "0"] (MetaNameValue) and #[default("0")] (List).
-                match &attr.meta {
-                    syn::Meta::NameValue(nv) => {
-                        if let syn::Expr::Lit(syn::ExprLit {
-                            lit: syn::Lit::Str(s),
-                            ..
-                        }) = &nv.value
-                        {
-                            default = Some(s.value());
-                        } else {
-                            return Err(Error::new_spanned(
-                                &nv.value,
-                                "expected string literal: #[default = \"...\"]",
-                            ));
-                        }
+                if let syn::Meta::NameValue(nv) = &attr.meta {
+                    if let syn::Expr::Lit(syn::ExprLit {
+                        lit: syn::Lit::Str(s),
+                        ..
+                    }) = &nv.value
+                    {
+                        default = Some(s.value());
+                    } else {
+                        return Err(Error::new_spanned(
+                            &nv.value,
+                            "expected string literal: #[default = \"...\"]",
+                        ));
                     }
-                    _ => {
-                        let v: syn::LitStr = attr.parse_args()?;
-                        default = Some(v.value());
-                    }
+                } else {
+                    let v: syn::LitStr = attr.parse_args()?;
+                    default = Some(v.value());
                 }
             }
             "privacy" => {
@@ -657,7 +654,7 @@ fn parse_field_decl(field: &Field) -> syn::Result<FieldDecl> {
     // they pull from carry-state, not from the record bytes.
     let needs_source = carry
         .as_ref()
-        .map_or(true, |c| c.policy != "consume_carried");
+        .is_none_or(|c| c.policy != "consume_carried");
     let source = if needs_source {
         Some(source.ok_or_else(|| {
             Error::new_spanned(
@@ -805,7 +802,7 @@ fn parse_carry_attr(attr: &syn::Attribute) -> syn::Result<CarryDecl> {
         let key = meta
             .path
             .get_ident()
-            .map(|i| i.to_string())
+            .map(std::string::ToString::to_string)
             .ok_or_else(|| meta.error("expected carry_across_records attribute key"))?;
         match key.as_str() {
             "policy" => {
@@ -946,77 +943,59 @@ fn field_decl_to_token(d: &FieldDecl) -> syn::Result<TokenStream> {
     let skip_payload = d.skip_payload;
     let occurrence_key = d.occurrence_key;
 
-    let default_token = match &d.default {
-        Some(s) => {
-            // Best-effort: try to parse as JSON, else wrap as string.
-            quote!(Some(::serde_json::from_str::<::serde_json::Value>(#s)
-                .unwrap_or_else(|_| ::serde_json::Value::String(#s.to_string()))))
-        }
-        None => quote!(None),
-    };
+    let default_token = if let Some(s) = &d.default {
+        // Best-effort: try to parse as JSON, else wrap as string.
+        quote!(Some(::serde_json::from_str::<::serde_json::Value>(#s)
+            .unwrap_or_else(|_| ::serde_json::Value::String(#s.to_string()))))
+    } else { quote!(None) };
 
-    let privacy_token = match &d.privacy_context {
-        Some(name) => {
-            let tok = privacy_context_token(name)?;
-            quote!(Some(_sdk_privacy::ProcessingContext::#tok))
-        }
-        None => quote!(None),
-    };
+    let privacy_token = if let Some(name) = &d.privacy_context {
+        let tok = privacy_context_token(name)?;
+        quote!(Some(_sdk_privacy::ProcessingContext::#tok))
+    } else { quote!(None) };
 
-    let timestamp_token = match &d.timestamp {
-        Some(ts) => {
-            let format_tok = timestamp_format_token(&ts.format)?;
-            let fallback_tok = match ts.fallback.as_deref() {
-                Some("error") => quote!(_sdk_parser::TimestampFallback::Error),
-                Some("material_timing") | None => {
-                    quote!(_sdk_parser::TimestampFallback::MaterialTiming)
-                }
-                Some(other) => {
-                    return Err(Error::new_spanned(
-                        proc_macro2::Literal::string(other),
-                        format!(
-                            "unknown timestamp fallback '{other}'; expected \
-                             'material_timing' or 'error'"
-                        ),
-                    ));
-                }
-            };
-            quote!(Some(_sdk_parser::TimestampSpec {
-                format: _sdk_parser::TimestampFormat::#format_tok,
-                fallback: #fallback_tok,
-            }))
-        }
-        None => quote!(None),
-    };
+    let timestamp_token = if let Some(ts) = &d.timestamp {
+        let format_tok = timestamp_format_token(&ts.format)?;
+        let fallback_tok = match ts.fallback.as_deref() {
+            Some("error") => quote!(_sdk_parser::TimestampFallback::Error),
+            Some("material_timing") | None => {
+                quote!(_sdk_parser::TimestampFallback::MaterialTiming)
+            }
+            Some(other) => {
+                return Err(Error::new_spanned(
+                    proc_macro2::Literal::string(other),
+                    format!(
+                        "unknown timestamp fallback '{other}'; expected \
+                         'material_timing' or 'error'"
+                    ),
+                ));
+            }
+        };
+        quote!(Some(_sdk_parser::TimestampSpec {
+            format: _sdk_parser::TimestampFormat::#format_tok,
+            fallback: #fallback_tok,
+        }))
+    } else { quote!(None) };
 
-    let suppress_token = match &d.suppress_if {
-        Some(s) => {
-            let bf = &s.binding_field;
-            let we = s.whole_event;
-            quote!(Some(_sdk_parser::SuppressPredicate {
-                binding_field: #bf.into(),
-                whole_event: #we,
-            }))
-        }
-        None => quote!(None),
-    };
+    let suppress_token = if let Some(s) = &d.suppress_if {
+        let bf = &s.binding_field;
+        let we = s.whole_event;
+        quote!(Some(_sdk_parser::SuppressPredicate {
+            binding_field: #bf.into(),
+            whole_event: #we,
+        }))
+    } else { quote!(None) };
 
-    let carry_token = match &d.carry {
-        Some(c) => {
-            let policy_tok = carry_policy_token(&c.policy)?;
-            let from_carry_tok = match &c.from_carry {
-                Some(s) => quote!(Some(#s.to_string())),
-                None => quote!(None),
-            };
-            let clear = c.clear_on_use;
-            quote!(Some(_sdk_parser::CarrySpec {
-                policy: #policy_tok,
-                from_carry: #from_carry_tok,
-                clear_on_use: #clear,
-            }))
-        }
-        None => quote!(None),
-    };
+    let carry_token = if let Some(c) = &d.carry {
+        let policy_tok = carry_policy_token(&c.policy)?;
+        let from_carry_tok = if let Some(s) = &c.from_carry { quote!(Some(#s.to_string())) } else { quote!(None) };
+        let clear = c.clear_on_use;
+        quote!(Some(_sdk_parser::CarrySpec {
+            policy: #policy_tok,
+            from_carry: #from_carry_tok,
+            clear_on_use: #clear,
+        }))
+    } else { quote!(None) };
 
     Ok(quote!(_sdk_parser::FieldSpec {
         name: #name.into(),

@@ -1079,8 +1079,7 @@ impl MaterialContentStore {
                 entries
                     .iter()
                     .max_by_key(|(_, _, s)| s)
-                    .map(|(h, _, _)| h.as_str())
-                    .unwrap_or("N/A"),
+                    .map_or("N/A", |(h, _, _)| h.as_str()),
             ));
         }
         Ok(out)

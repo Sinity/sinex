@@ -65,7 +65,7 @@ pub enum RecordSourceKind {
 /// Runtime identity for a record source.
 ///
 /// The `source_identifier` field is a logical label (e.g. `"/path/to/log"`).
-/// When a material_id is also needed, use
+/// When a `material_id` is also needed, use
 /// `sinex_primitives::domain::SourceIdentifier` to produce the wire/DB encoding
 /// (`"{logical_id}#material={material_id}"`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1090,7 +1090,7 @@ impl<'a> SqliteSnapshotLinker<'a> {
                     pool.source_materials()
                         .link_backing_material(from_material_id, to_material_id, metadata)
                         .await
-                        .map(|record| Some(record))
+                        .map(Some)
                         .map_err(|e| e.to_string())
                 }
             },

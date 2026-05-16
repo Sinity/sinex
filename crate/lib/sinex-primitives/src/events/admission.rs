@@ -32,7 +32,7 @@ pub const ACCEPTED_ENVELOPE_VERSIONS: &[&str] = &["1"];
 pub enum OccurrenceAnchorKind {
     /// Byte offset from the start of the material.
     ByteOffset,
-    /// SQLite row ID within a database table.
+    /// `SQLite` row ID within a database table.
     SqliteRow,
     /// Line number (1-based) within a text stream.
     LineNumber,
@@ -100,7 +100,7 @@ impl std::str::FromStr for OccurrenceAnchorKind {
 /// An admitted event intent — the producer's declaration that admission checks
 /// have been performed on these events.
 ///
-/// This is the envelope that producers publish to NATS JetStream instead of raw
+/// This is the envelope that producers publish to NATS `JetStream` instead of raw
 /// `Event` batches. It carries:
 /// - **Envelope metadata** (version, source unit, parser identity)
 /// - **The admitted events** — one or more `Event<JsonValue>` entries

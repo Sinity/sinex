@@ -165,7 +165,7 @@ where
             Some(timeout) => tokio::time::timeout(timeout, connect)
                 .await
                 .map_err(|_| {
-                    IpcStreamError::Connect(format!("connect timed out after {:?}", timeout).into())
+                    IpcStreamError::Connect(format!("connect timed out after {timeout:?}").into())
                 })?
                 .map_err(|error| IpcStreamError::Connect(Box::new(error)))?,
             None => connect

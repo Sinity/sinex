@@ -1,4 +1,4 @@
-//! Adapter for reading rows from a SQLite database.
+//! Adapter for reading rows from a `SQLite` database.
 
 use async_trait::async_trait;
 use camino::Utf8Path;
@@ -18,7 +18,7 @@ use crate::parser::{InputShapeAdapter, ParserError, ParserResult};
 // SqliteRowAdapter
 // =============================================================================
 
-/// Adapter for reading rows from a SQLite database.
+/// Adapter for reading rows from a `SQLite` database.
 ///
 /// Yields one [`SourceRecord`] per row. Uses rowid-based cursor for
 /// resumption. The database is opened read-only.
@@ -35,17 +35,11 @@ use crate::parser::{InputShapeAdapter, ParserError, ParserResult};
 ///    is constructed via `Default` and the path arrives from the node's JSON
 ///    config at `initialize` time.
 #[derive(Debug, Clone)]
+#[derive(Default)]
 pub struct SqliteRowAdapter {
     path: String,
 }
 
-impl Default for SqliteRowAdapter {
-    fn default() -> Self {
-        Self {
-            path: String::new(),
-        }
-    }
-}
 
 impl SqliteRowAdapter {
     pub fn new(path: impl Into<String>) -> Self {
@@ -67,7 +61,7 @@ impl SqliteRowAdapter {
 /// — a regression that masked an adapter that returns zero rows.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct SqliteRowConfig {
-    /// Path to the SQLite database file.
+    /// Path to the `SQLite` database file.
     ///
     /// When non-empty, overrides the path supplied to [`SqliteRowAdapter::new`].
     /// Required when using the adapter via `register_adapter_ingestor!` (where
@@ -89,7 +83,7 @@ pub struct SqliteRowConfig {
     #[serde(default = "default_rowid_column")]
     pub rowid_column: String,
 
-    /// Open the SQLite database read-only.
+    /// Open the `SQLite` database read-only.
     ///
     /// Browser-history and similar sources that share their DB with a
     /// long-running writer (qutebrowser, chromium, atuin) must open
@@ -102,16 +96,16 @@ pub struct SqliteRowConfig {
 
     /// When `read_only` is true, also pass `immutable=1` in the open URI.
     ///
-    /// `immutable=1` tells SQLite the file will not change while open,
+    /// `immutable=1` tells `SQLite` the file will not change while open,
     /// which lets it skip WAL/-shm setup entirely. That's ideal for
     /// rarely-mutated source DBs (qutebrowser History between sessions,
     /// Atuin history sync intervals). But it FAILS to open the DB when a
     /// concurrent writer holds the WAL active — observed on
-    /// `aw-server-rust` where the ActivityWatch server keeps a live WAL
+    /// `aw-server-rust` where the `ActivityWatch` server keeps a live WAL
     /// open and `immutable=1` opens return `SQLITE_CANTOPEN`.
     ///
     /// For sources that share their DB with a continuously-writing
-    /// service, set `immutable = false`. SQLite then opens normally
+    /// service, set `immutable = false`. `SQLite` then opens normally
     /// read-only and reads through WAL.
     ///
     /// Default `true` preserves prior behavior for atuin / qutebrowser.
@@ -131,7 +125,7 @@ pub struct SqliteRowConfig {
     pub batch_size: u32,
 
     /// Optional parallel **file-snapshot lane**: periodically capture the
-    /// SQLite DB file itself as a single source material, separately from
+    /// `SQLite` DB file itself as a single source material, separately from
     /// the per-row stream.  Disabled by default (`interval_seconds: 0`).
     ///
     /// See [`SqliteSnapshotConfig`] for tunables. When enabled, the hosting
@@ -207,10 +201,10 @@ impl InputShapeAdapter for SqliteRowAdapter {
         cursor: Option<Self::Cursor>,
     ) -> ParserResult<BoxStream<'static, ParserResult<SourceRecord>>> {
         // Config path takes priority; fall back to constructor-supplied path.
-        let path = if !config.path.is_empty() {
-            config.path.clone()
-        } else {
+        let path = if config.path.is_empty() {
             self.path.clone()
+        } else {
+            config.path.clone()
         };
         let table = config.table.clone();
         let rowid_col = config.rowid_column.clone();
@@ -335,7 +329,7 @@ impl InputShapeAdapter for SqliteRowAdapter {
                         rowid,
                     },
                     bytes,
-                    logical_path: Some(Utf8Path::new(&path).to_owned().into()),
+                    logical_path: Some(Utf8Path::new(&path).to_owned()),
                     source_ts_hint: None,
                     metadata: json,
                 })

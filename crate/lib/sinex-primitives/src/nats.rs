@@ -446,7 +446,7 @@ mod tests {
 /// Standard `JetStream` topology for Sinex ingestion pipelines.
 ///
 /// Stream / subject identity is type-distinguished: `StreamName` addresses a
-/// JetStream stream, `NatsSubject` is a publish/filter pattern. Prefix and
+/// `JetStream` stream, `NatsSubject` is a publish/filter pattern. Prefix and
 /// consumer-durable fields stay `String` (the former are partial subjects, not
 /// valid on their own; the latter are consumer identifiers, not subjects).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

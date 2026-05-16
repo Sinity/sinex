@@ -1,4 +1,4 @@
-//! Adapter for hot-folder (FileDrop) watching.
+//! Adapter for hot-folder (`FileDrop`) watching.
 //!
 //! Uses `notify` to observe a set of paths for filesystem events. Each event
 //! yields one [`SourceRecord`] with a [`MaterialAnchor::DirectoryEntry`] anchor.
@@ -128,8 +128,8 @@ fn build_file_drop_stream(
                 }
                 Ok(event) => {
                     let kind = map_notify_kind(&event.kind);
-                    if let Some(kind) = kind {
-                        if event_filter.is_empty() || event_filter.contains(&kind) {
+                    if let Some(kind) = kind
+                        && (event_filter.is_empty() || event_filter.contains(&kind)) {
                             // Emit one record per affected path.
                             if let Some(path) = event.paths.first().cloned() {
                                 let utf8_path = Utf8PathBuf::from_path_buf(path)
@@ -154,7 +154,6 @@ fn build_file_drop_stream(
                                 });
                             }
                         }
-                    }
                 }
             }
         }

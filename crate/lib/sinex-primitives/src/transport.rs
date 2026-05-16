@@ -28,7 +28,7 @@ pub const SINEX_TRANSPORT_CLASS_HEADER: &str = "Sinex-Transport-Class";
 /// Canonical publish-class catalog.
 ///
 /// Every NATS publish site in the workspace declares one of these classes.
-/// The class determines QoS, retry budget, failure routing, and drain
+/// The class determines `QoS`, retry budget, failure routing, and drain
 /// behavior on SIGTERM / NixOS service restart / test shutdown.
 ///
 /// ## Class semantics
@@ -39,14 +39,14 @@ pub const SINEX_TRANSPORT_CLASS_HEADER: &str = "Sinex-Transport-Class";
 /// Loss means lost provenance history.
 ///
 /// - **Subject pattern**: `{env}.sinex.events.raw.{source}.{event_type}`
-/// - **QoS**: JetStream with `Nats-Msg-Id` idempotency header; `AckAll` after
+/// - **`QoS`**: `JetStream` with `Nats-Msg-Id` idempotency header; `AckAll` after
 ///   ack from server.
 /// - **Retry budget**: semaphore-bounded (100 permits); on NATS error, caller
 ///   retries up to the node's configured retry limit.
 /// - **Failure routing**: permanent NATS failure → local recovery spool
 ///   (`sinex_event_recovery_spool.jsonl`); at-most once per-run the spool
 ///   is replayed on next startup.
-/// - **Drain on SIGTERM**: wait for all in-flight JetStream ack futures before
+/// - **Drain on SIGTERM**: wait for all in-flight `JetStream` ack futures before
 ///   shutting down (bounded by `DEFAULT_PUBLISH_ACK_TIMEOUT`).
 ///
 /// ### [`Class::Derived`] — automaton synthesis outputs
@@ -56,7 +56,7 @@ pub const SINEX_TRANSPORT_CLASS_HEADER: &str = "Sinex-Transport-Class";
 /// if lost; a critical event cannot be replayed without its source material.
 ///
 /// - **Subject pattern**: `{env}.sinex.events.raw.{source}.{event_type}`
-/// - **QoS**: JetStream with `Nats-Msg-Id` idempotency header.
+/// - **`QoS`**: `JetStream` with `Nats-Msg-Id` idempotency header.
 /// - **Retry budget**: semaphore-bounded (100 permits); exhausted retries →
 ///   processing-failure stream.
 /// - **Failure routing**: `events.processing_failures.{node}.{event_id}` —
@@ -71,7 +71,7 @@ pub const SINEX_TRANSPORT_CLASS_HEADER: &str = "Sinex-Transport-Class";
 /// anchors depend on these frames reaching the material assembler.
 ///
 /// - **Subject pattern**: `{env}.source_material.frames.*`
-/// - **QoS**: JetStream, ordered stream, slice idempotency headers.
+/// - **`QoS`**: `JetStream`, ordered stream, slice idempotency headers.
 /// - **Retry budget**: caller operation propagates publish failure and retries
 ///   according to the node's material acquisition policy.
 /// - **Failure routing**: no raw-event DLQ; material acquisition fails before
@@ -84,7 +84,7 @@ pub const SINEX_TRANSPORT_CLASS_HEADER: &str = "Sinex-Transport-Class";
 /// duplicate processing (not data loss); automata re-check against DB state.
 ///
 /// - **Subject pattern**: `{env}.events.confirmations.{event_id}`
-/// - **QoS**: JetStream with idempotency header; best-effort semantics.
+/// - **`QoS`**: `JetStream` with idempotency header; best-effort semantics.
 /// - **Retry budget**: up to 3 attempts with exponential backoff; exhausted
 ///   retries → durable retry queue (`events.confirmation_retries.*`) or
 ///   durability-gap warning.
@@ -99,13 +99,13 @@ pub const SINEX_TRANSPORT_CLASS_HEADER: &str = "Sinex-Transport-Class";
 /// archival). JetStream-backed; consumers have durable subscriptions.
 ///
 /// - **Subject pattern**: `{env}.sinex.derived.invalidation`
-/// - **QoS**: JetStream (stream: `{BASE}_DERIVED_INVALIDATIONS`).
-/// - **Retry budget**: JetStream guarantees delivery to active consumers.
+/// - **`QoS`**: `JetStream` (stream: `{BASE}_DERIVED_INVALIDATIONS`).
+/// - **Retry budget**: `JetStream` guarantees delivery to active consumers.
 ///   Publish failures → error log; the operation that caused the invalidation
 ///   must decide whether to abort or continue.
-/// - **Failure routing**: JetStream provides delivery; the publish caller
+/// - **Failure routing**: `JetStream` provides delivery; the publish caller
 ///   propagates errors up to the replay/archive operation.
-/// - **Drain on SIGTERM**: no special drain needed — JetStream holds messages
+/// - **Drain on SIGTERM**: no special drain needed — `JetStream` holds messages
 ///   for offline consumers.
 ///
 /// ### [`Class::Control`] — lifecycle and coordination traffic
@@ -116,7 +116,7 @@ pub const SINEX_TRANSPORT_CLASS_HEADER: &str = "Sinex-Transport-Class";
 /// - **Subject pattern**: `{env}.sinex.control.nodes.{id}.*`,
 ///   `{env}.sinex.control.replay.progress.{op}`, direct request-reply
 ///   subjects.
-/// - **QoS**: Core NATS (not JetStream); at-most-once. Request-reply with
+/// - **`QoS`**: Core NATS (not `JetStream`); at-most-once. Request-reply with
 ///   timeout (`REPLAY_CONTROL_SUBSCRIBE_ATTEMPT_TIMEOUT`).
 /// - **Retry budget**: none — timeouts surface as errors to the caller.
 /// - **Failure routing**: timeout or NATS error → returned as `SinexError`;
@@ -131,7 +131,7 @@ pub const SINEX_TRANSPORT_CLASS_HEADER: &str = "Sinex-Transport-Class";
 ///
 /// - **Subject pattern**: `{env}.sinex.events.raw.sinex.{metric_type}` (same
 ///   raw-event plane, separate semaphore lane).
-/// - **QoS**: JetStream with idempotency header; smaller semaphore budget
+/// - **`QoS`**: `JetStream` with idempotency header; smaller semaphore budget
 ///   (16 permits) so telemetry cannot crowd out critical traffic.
 /// - **Retry budget**: none — `emit_*` methods are fire-and-observe; failures
 ///   are logged at warn level and dropped.
@@ -214,7 +214,7 @@ impl Class {
         matches!(self, Self::Critical | Self::SourceMaterial)
     }
 
-    /// Whether this class uses JetStream (as opposed to core NATS).
+    /// Whether this class uses `JetStream` (as opposed to core NATS).
     #[must_use]
     pub const fn uses_jetstream(self) -> bool {
         !matches!(self, Self::Control)

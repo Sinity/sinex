@@ -1,6 +1,6 @@
-//! WeeChat IRC log file parser (#1051).
+//! `WeeChat` IRC log file parser (#1051).
 //!
-//! Parses WeeChat IRC client log files in tab-delimited format:
+//! Parses `WeeChat` IRC client log files in tab-delimited format:
 //! `YYYY-MM-DD HH:MM:SS\tprefix\tmessage`
 //!
 //! ## Prefix mapping
@@ -15,7 +15,7 @@
 //! ## Format
 //!
 //! Each line is tab-delimited with three fields. The timestamp is in
-//! local time (WeeChat default); the parser assumes UTC as a baseline
+//! local time (`WeeChat` default); the parser assumes UTC as a baseline
 //! and records `TimingEvidence::Intrinsic` with the `"timestamp"` field.
 //!
 //! ## Occurrence identity
@@ -46,7 +46,7 @@ use super::{MaterialParser, ParserError, ParserResult};
 const TIMESTAMP_FORMAT: &[time::format_description::BorrowedFormatItem<'_>] =
     format_description!("[year]-[month]-[day] [hour]:[minute]:[second]");
 
-/// Parse a WeeChat timestamp string into a [`Timestamp`].
+/// Parse a `WeeChat` timestamp string into a [`Timestamp`].
 fn parse_weechat_ts(s: &str) -> ParserResult<Timestamp> {
     let dt = PrimitiveDateTime::parse(s, TIMESTAMP_FORMAT)
         .map_err(|e| ParserError::Parse(format!("invalid WeeChat timestamp '{s}': {e}")))?;
@@ -57,7 +57,7 @@ fn parse_weechat_ts(s: &str) -> ParserResult<Timestamp> {
 // Prefix classification
 // ---------------------------------------------------------------------------
 
-/// The result of classifying a WeeChat log prefix.
+/// The result of classifying a `WeeChat` log prefix.
 struct WeeChatClassification {
     /// The static event type string (e.g. `irc.message`).
     event_type: &'static str,
@@ -67,7 +67,7 @@ struct WeeChatClassification {
     channel: Option<String>,
 }
 
-/// Classify a WeeChat line prefix into an event type and extract nick/channel.
+/// Classify a `WeeChat` line prefix into an event type and extract nick/channel.
 fn classify(prefix: &str, message: &str) -> WeeChatClassification {
     match prefix {
         "-->" => {
@@ -128,7 +128,7 @@ pub struct WeeChatLogConfig;
 // Parser
 // ---------------------------------------------------------------------------
 
-/// Parser for WeeChat IRC client log files.
+/// Parser for `WeeChat` IRC client log files.
 ///
 /// Expects input from an [`AppendOnlyFileAdapter`](super::AppendOnlyFileAdapter)
 /// that yields one [`SourceRecord`](sinex_primitives::parser::SourceRecord) per

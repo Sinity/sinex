@@ -77,7 +77,7 @@ impl DocumentKind {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
 #[event_payload(source = "document-parser", event_type = "document.parsed")]
 pub struct DocumentParsedPayload {
-    /// Deterministic document identity. UUIDv5 over `(NS_DOCUMENTS,
+    /// Deterministic document identity. `UUIDv5` over `(NS_DOCUMENTS,
     /// source_unit || "/" || natural_key)` — replay against the same source
     /// produces the same id.
     pub document_id: Uuid,

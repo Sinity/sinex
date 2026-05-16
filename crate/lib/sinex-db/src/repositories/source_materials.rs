@@ -99,8 +99,7 @@ fn contract_for_source(
 fn format_for_material_type(material_type: &str, source_uri: Option<&str>) -> SourceMaterialFormat {
     match material_type {
         material_types::FILE => source_uri
-            .map(SourceMaterialFormat::infer_from_path)
-            .unwrap_or(SourceMaterialFormat::Unknown),
+            .map_or(SourceMaterialFormat::Unknown, SourceMaterialFormat::infer_from_path),
         material_types::STREAM => SourceMaterialFormat::Jsonl,
         material_types::BLOB_TEXT => SourceMaterialFormat::Text,
         material_types::BLOB | material_types::BLOB_BINARY => SourceMaterialFormat::Binary,
@@ -1782,13 +1781,12 @@ impl SourceMaterialRepository<'_> {
             // For family classification, prefer the most-specific kind we saw;
             // sorted ascending, the last element is the alphabetically-greatest
             // kind, which is fine as a stable tiebreaker. Family is advisory.
-            let representative_kind = row.material_kinds.last().map(String::as_str).unwrap_or("");
+            let representative_kind = row.material_kinds.last().map_or("", String::as_str);
             let family = derive_source_family(&row.source_identifier, representative_kind);
-            if let Some(filter) = source_family {
-                if family != filter {
+            if let Some(filter) = source_family
+                && family != filter {
                     continue;
                 }
-            }
 
             // Parsed-event count: count events referencing any material from
             // this source identifier across ALL material_kinds — matches the
@@ -2051,7 +2049,7 @@ impl SourceMaterialRepository<'_> {
 
 /// Best-effort family classification from registry-only data.
 ///
-/// Bindings (#1098) carry the canonical source_family in Nix; until the
+/// Bindings (#1098) carry the canonical `source_family` in Nix; until the
 /// readiness derivation can join binding evidence, we infer a coarse family
 /// from the identifier shape. The classification is advisory; consumers
 /// should treat unfamiliar values as `"generic"`.

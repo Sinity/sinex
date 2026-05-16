@@ -138,6 +138,7 @@ impl ReplayScope {
     /// Returns `true` when the scope targets the staged-source architecture
     /// (source identity or specific material). Replay planning uses this to
     /// decide between source-worker and legacy node-scan execution.
+    #[must_use] 
     pub fn is_staged_source_scope(&self) -> bool {
         self.source_id.is_some()
             || self.source_material_id.is_some()
@@ -470,12 +471,12 @@ impl ReplayStateMachine {
                 })?
                 .clone(),
         ))?;
-        Ok(decode_meta_to_operation(
+        decode_meta_to_operation(
             operation_id,
             operator,
             scope_val,
             serde_json::to_value(meta)?,
-        )?)
+        )
     }
 
     /// Transition to new state
@@ -1199,7 +1200,7 @@ pub struct MetaJson {
     pub preview: Option<serde_json::Value>,
 }
 
-/// Decode a MetaJson from an optional JSON value.
+/// Decode a `MetaJson` from an optional JSON value.
 pub fn decode_meta_json(v: Option<serde_json::Value>) -> Result<MetaJson> {
     let val = v.ok_or_else(|| {
         SinexError::processing("Replay operation is missing preview_summary metadata")
@@ -1208,7 +1209,7 @@ pub fn decode_meta_json(v: Option<serde_json::Value>) -> Result<MetaJson> {
     Ok(serde_json::from_value(val)?)
 }
 
-/// Decode raw operation fields into a ReplayOperation.
+/// Decode raw operation fields into a `ReplayOperation`.
 pub fn decode_meta_to_operation(
     operation_id: Uuid,
     operator: String,

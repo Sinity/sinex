@@ -357,6 +357,7 @@ pub enum MaterialPathClass {
 /// let (class, _display) = classify_material_path("/tmp/sinex-clipboard-abc123");
 /// assert_eq!(class, MaterialPathClass::Temporary);
 /// ```
+#[must_use] 
 pub fn classify_material_path(path: &str) -> (MaterialPathClass, String) {
     // Temporary paths: suppress from export.
     if is_temporary_path(path) {
@@ -423,8 +424,8 @@ fn is_system_path(path: &str) -> bool {
 /// the path is rooted under a home directory, or `None` otherwise.
 fn home_suffix(path: &str) -> Option<&str> {
     // Check live HOME env var first for accuracy.
-    if let Ok(home) = std::env::var("HOME") {
-        if !home.is_empty() {
+    if let Ok(home) = std::env::var("HOME")
+        && !home.is_empty() {
             let home_slash = if home.ends_with('/') {
                 home.clone()
             } else {
@@ -438,15 +439,13 @@ fn home_suffix(path: &str) -> Option<&str> {
                 return Some("");
             }
         }
-    }
 
     // Heuristic fallback: /home/<user>/ or /Users/<user>/
     for prefix in ["/home/", "/Users/"] {
-        if let Some(rest) = path.strip_prefix(prefix) {
-            if let Some(slash) = rest.find('/') {
+        if let Some(rest) = path.strip_prefix(prefix)
+            && let Some(slash) = rest.find('/') {
                 return Some(&rest[slash + 1..]);
             }
-        }
     }
 
     None

@@ -593,7 +593,7 @@ impl EventBatcher {
             },
             parser_id,
             parser_version,
-            events.drain(..).collect(),
+            std::mem::take(events),
             HostName::from_static("sinex-batcher"),
         );
 

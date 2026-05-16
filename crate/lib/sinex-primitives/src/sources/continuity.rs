@@ -74,7 +74,7 @@ pub enum DeclaredCoverageContractKind {
 }
 
 impl DeclaredCoverageContractKind {
-    /// Return the canonical PascalCase wire form persisted in JSONB.
+    /// Return the canonical `PascalCase` wire form persisted in JSONB.
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
@@ -179,6 +179,7 @@ impl Default for DeclaredCoverageContract {
 /// of `Personal`, `Secret`, or `Redacted` — never on `Unknown`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]
+#[derive(Default)]
 pub enum PrivacyClass {
     /// Material may be shown / shared without redaction.
     Public,
@@ -189,6 +190,7 @@ pub enum PrivacyClass {
     /// Material that has already been redacted at capture time.
     Redacted,
     /// Operator has not classified this material yet (legacy default).
+    #[default]
     Unknown,
 }
 
@@ -227,11 +229,6 @@ impl PrivacyClass {
     }
 }
 
-impl Default for PrivacyClass {
-    fn default() -> Self {
-        Self::Unknown
-    }
-}
 
 impl std::str::FromStr for PrivacyClass {
     type Err = crate::SinexError;
@@ -343,7 +340,7 @@ pub struct CoverageGap {
 /// Each dimension is a coarse boolean rather than a probability — the
 /// operator question is "is this dimension in good standing?", not
 /// "what is the failure rate?". `weak_points` carries human-readable
-/// caveats (e.g. "anchor_byte unstable across re-exports").
+/// caveats (e.g. "`anchor_byte` unstable across re-exports").
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct Replayability {
     /// Source bytes are still on disk (blob staged) and re-readable.

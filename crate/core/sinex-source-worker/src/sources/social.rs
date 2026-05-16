@@ -513,7 +513,7 @@ impl MaterialParser for WykopEntryParser {
     ) -> ParserResult<Vec<ParsedEventIntent>> {
         let mut intents = Vec::new();
         for (line_index, line) in record.bytes.split(|&b| b == b'\n').enumerate() {
-            let trimmed = line.iter().copied().collect::<Vec<u8>>();
+            let trimmed = line.to_vec();
             let trimmed_str = std::str::from_utf8(&trimmed)
                 .map_err(|e| {
                     ParserError::Parse(format!("UTF-8 error on line {}: {e}", line_index + 1))
@@ -698,7 +698,7 @@ impl MaterialParser for WykopEntryCommentParser {
     ) -> ParserResult<Vec<ParsedEventIntent>> {
         let mut intents = Vec::new();
         for (line_index, line) in record.bytes.split(|&b| b == b'\n').enumerate() {
-            let trimmed = line.iter().copied().collect::<Vec<u8>>();
+            let trimmed = line.to_vec();
             let trimmed_str = std::str::from_utf8(&trimmed)
                 .map_err(|e| {
                     ParserError::Parse(format!("UTF-8 error on line {}: {e}", line_index + 1))
@@ -875,7 +875,7 @@ mod tests {
     use super::*;
     use sinex_primitives::Uuid;
     use sinex_primitives::ids::Id;
-    
+
     use xtask::sandbox::prelude::sinex_test;
 
     // -----------------------------------------------------------------------

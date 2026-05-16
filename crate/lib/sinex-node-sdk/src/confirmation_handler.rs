@@ -223,7 +223,7 @@ impl ConfirmationBuffer {
     }
 
     /// Returns Some(event) iff the provisional event's kind already has a
-    /// watermark `>=` its event_id — i.e. ingestd already confirmed it but the
+    /// watermark `>=` its `event_id` — i.e. ingestd already confirmed it but the
     /// confirmation arrived before this provisional was buffered. Caller should
     /// treat the returned event as already confirmed.
     pub async fn try_implicit_confirm_on_add(&self, event: &ProvisionalEvent) -> bool {

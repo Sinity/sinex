@@ -448,7 +448,7 @@ crate::register_adapter_ingestor!(
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     use sinex_primitives::events::SourceMaterial;
     use sinex_primitives::ids::Id;
     use sinex_primitives::parser::MaterialAnchor;

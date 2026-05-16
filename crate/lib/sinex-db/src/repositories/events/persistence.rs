@@ -2123,8 +2123,7 @@ impl<'a> EventRepository<'a> {
             db_error(
                 e,
                 &format!(
-                    "Failed to commit archive transaction for {} events",
-                    requested_count
+                    "Failed to commit archive transaction for {requested_count} events"
                 ),
             )
         })?;

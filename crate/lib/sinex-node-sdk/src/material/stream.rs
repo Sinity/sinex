@@ -60,16 +60,19 @@ impl fmt::Debug for StreamHandle {
 
 impl StreamHandle {
     /// Get the material ID for this stream.
+    #[must_use] 
     pub fn material_id(&self) -> Id<SourceMaterial> {
         self.inner.material_id
     }
 
     /// Get the current event count.
+    #[must_use] 
     pub fn event_count(&self) -> u64 {
         self.inner.event_count.load(Ordering::SeqCst)
     }
 
     /// Check if this handle has been finalized.
+    #[must_use] 
     pub fn is_finalized(&self) -> bool {
         self.inner.finalized.load(Ordering::SeqCst)
     }
@@ -149,7 +152,7 @@ impl Drop for StreamHandle {
 /// Designed to be embedded in ingestor-specific watcher implementations.
 /// Handles stream lifecycle coordination without holding locks across I/O.
 pub struct StreamMaterialContext {
-    /// Mutex held only during begin_stream, not across append or finalize
+    /// Mutex held only during `begin_stream`, not across append or finalize
     next_id: Arc<Mutex<u64>>,
     dropped_unfinalized: Arc<AtomicBool>,
 }
@@ -162,6 +165,7 @@ impl fmt::Debug for StreamMaterialContext {
 
 impl StreamMaterialContext {
     /// Create a new streaming material context.
+    #[must_use] 
     pub fn new() -> Self {
         Self {
             next_id: Arc::new(Mutex::new(0)),
@@ -171,7 +175,7 @@ impl StreamMaterialContext {
 
     /// Begin a new stream with the given metadata.
     ///
-    /// Returns a [StreamHandle] that can be used to append events and finalize.
+    /// Returns a [`StreamHandle`] that can be used to append events and finalize.
     /// The metadata is stored with the material for provenance tracking.
     pub async fn begin_stream(&self, _metadata: JsonValue) -> NodeResult<StreamHandle> {
         // Acquire ID under lock (brief)
@@ -198,6 +202,7 @@ impl StreamMaterialContext {
     }
 
     /// Check if any streams were dropped without finalization.
+    #[must_use] 
     pub fn had_unfinalized_drops(&self) -> bool {
         self.dropped_unfinalized.load(Ordering::SeqCst)
     }

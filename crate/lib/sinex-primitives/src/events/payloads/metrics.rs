@@ -343,7 +343,7 @@ pub struct IngestdBatchStatsPayload {
     pub confirmation_durability_gaps: u64,
 }
 
-/// Startup snapshot for a JetStream pull consumer.
+/// Startup snapshot for a `JetStream` pull consumer.
 ///
 /// Emitted once per consumer before the ingestd pull loop begins (before READY/`sd_notify`).
 /// Captures stream state and consumer configuration so operators can determine at a glance
@@ -351,11 +351,11 @@ pub struct IngestdBatchStatsPayload {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
 #[event_payload(source = "sinex.ingestd", event_type = "consumer.startup_snapshot")]
 pub struct ConsumerStartupSnapshotPayload {
-    /// Name of the JetStream stream being consumed.
+    /// Name of the `JetStream` stream being consumed.
     pub stream_name: String,
     /// Durable consumer name.
     pub durable_name: String,
-    /// Whether the durable consumer already existed in JetStream before this startup.
+    /// Whether the durable consumer already existed in `JetStream` before this startup.
     pub consumer_existed: bool,
     /// Deliver policy as a string (e.g. `"All"`, `"New"`, `"ByStartSequence"`).
     pub deliver_policy: String,
@@ -384,7 +384,7 @@ pub struct ConsumerStartupSnapshotPayload {
     /// Configured `max_deliver` (redelivery budget) for this consumer.
     pub consumer_max_deliver: i64,
     /// True when this looks like a dangerous cold-start full replay
-    /// (new consumer, DeliverPolicy::All, non-empty stream).
+    /// (new consumer, `DeliverPolicy::All`, non-empty stream).
     pub initial_replay_risk: bool,
 }
 
@@ -401,7 +401,7 @@ pub struct ConsumerStartupSnapshotPayload {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
 #[event_payload(source = "sinex.ingestd", event_type = "consumer.startup_replay_risk")]
 pub struct DangerousReplayWarningPayload {
-    /// Name of the JetStream stream.
+    /// Name of the `JetStream` stream.
     pub stream_name: String,
     /// Durable consumer name that was missing.
     pub durable_name: String,

@@ -17,7 +17,7 @@
 use blake3::{Hash, Hasher};
 use std::collections::VecDeque;
 
-/// Default window size: 10_000 records is enough for the longest plausible
+/// Default window size: `10_000` records is enough for the longest plausible
 /// rotation overlap on the terminal history files we ingest (bash/zsh/text)
 /// while staying small enough to keep the per-source-unit memory footprint
 /// trivial (~320 KiB).
@@ -75,11 +75,10 @@ impl ContentHashWindow {
             return hash;
         }
         if self.seen.insert(hash) {
-            if self.order.len() >= self.capacity {
-                if let Some(evicted) = self.order.pop_front() {
+            if self.order.len() >= self.capacity
+                && let Some(evicted) = self.order.pop_front() {
                     self.seen.remove(&evicted);
                 }
-            }
             self.order.push_back(hash);
         }
         hash

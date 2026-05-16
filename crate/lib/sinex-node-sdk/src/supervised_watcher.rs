@@ -51,7 +51,7 @@ use tracing::{error, warn};
 use crate::watcher_handle::WatcherHealth;
 
 /// Maximum individual backoff delay between watcher restart attempts.
-const MAX_BACKOFF: Duration = Duration::from_secs(60);
+const MAX_BACKOFF: Duration = Duration::from_mins(1);
 
 /// Base delay for the first restart attempt after a failure.
 const BASE_BACKOFF: Duration = Duration::from_secs(1);
@@ -83,6 +83,7 @@ impl Default for SupervisedWatcherConfig {
 impl SupervisedWatcherConfig {
     /// Log errors but do not restart — useful for watchers that manage their own
     /// reconnection internally.
+    #[must_use] 
     pub fn log_only() -> Self {
         Self {
             restart_on_failure: false,
@@ -257,8 +258,8 @@ where
 
             // Wait for backoff or shutdown.
             tokio::select! {
-                _ = tokio::time::sleep(backoff) => {}
-                _ = shutdown_notified(&shutdown_rx) => {
+                () = tokio::time::sleep(backoff) => {}
+                () = shutdown_notified(&shutdown_rx) => {
                     return;
                 }
             }

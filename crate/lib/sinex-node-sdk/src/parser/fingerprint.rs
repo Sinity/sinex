@@ -10,8 +10,8 @@
 //! A `SourceRecordFingerprint` captures:
 //! - **format**: record encoding (`"json"`, `"csv"`, etc.)
 //! - **keys**: field names / JSON pointers / column names (sorted, deduped)
-//! - **type_map**: inferred type for each key (`"string"`, `"integer"`, etc.)
-//! - **blake3_hash**: BLAKE3 of canonical representation (stability across sessions)
+//! - **`type_map`**: inferred type for each key (`"string"`, `"integer"`, etc.)
+//! - **`blake3_hash`**: BLAKE3 of canonical representation (stability across sessions)
 //!
 //! Two fingerprints are equal iff their BLAKE3 hashes match.
 //!
@@ -24,8 +24,8 @@
 //! 3. Different fingerprint (returns `Some(DriftEvent)`) if not rate-limited
 //!
 //! Rate limiting applies two gates:
-//! - **emit_every_n_records**: minimum records between drift events for the same hash
-//! - **cooldown_secs**: minimum seconds between drift events
+//! - **`emit_every_n_records`**: minimum records between drift events for the same hash
+//! - **`cooldown_secs`**: minimum seconds between drift events
 //!
 //! Either gate can suppress a drift event; both must clear for emission.
 
@@ -50,7 +50,7 @@ use sinex_primitives::temporal::Timestamp;
 /// different orderings and representations of the same logical data.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct SourceRecordFingerprint {
-    /// Record format (e.g., "json", "csv", "sqlite_row").
+    /// Record format (e.g., "json", "csv", "`sqlite_row`").
     pub format: String,
 
     /// Sorted, deduplicated list of field/column names or JSON Pointers.
@@ -59,7 +59,7 @@ pub struct SourceRecordFingerprint {
     /// Inferred type for each key (e.g., "string", "integer", "object").
     pub type_map: BTreeMap<String, String>,
 
-    /// BLAKE3 hash of canonical (format, keys, type_map) representation.
+    /// BLAKE3 hash of canonical (format, keys, `type_map`) representation.
     /// Serves as the structural identity — two fingerprints with the same
     /// hash are structurally identical.
     blake3_hash: String,
@@ -79,6 +79,7 @@ impl SourceRecordFingerprint {
     /// assert_eq!(fp.type_map["name"], "string");
     /// assert_eq!(fp.type_map["id"], "integer");
     /// ```
+    #[must_use] 
     pub fn from_json(value: &JsonValue) -> Self {
         let (mut keys, type_map) = Self::extract_types(value);
 
@@ -98,9 +99,10 @@ impl SourceRecordFingerprint {
         fingerprint
     }
 
-    /// Creates a fingerprint from a SourceRecord.
+    /// Creates a fingerprint from a `SourceRecord`.
     ///
     /// Dispatches based on record format (currently only JSON is fully supported).
+    #[must_use] 
     pub fn from_record(record: &crate::parser::SourceRecord) -> Self {
         // Try to parse as JSON first.
         if let Ok(json) = serde_json::from_slice::<JsonValue>(&record.bytes) {
@@ -123,7 +125,7 @@ impl SourceRecordFingerprint {
 
         match value {
             JsonValue::Object(map) => {
-                for (key, val) in map.iter() {
+                for (key, val) in map {
                     keys.push(key.clone());
                     type_map.insert(key.clone(), Self::infer_type(val));
                 }
@@ -189,6 +191,7 @@ impl SourceRecordFingerprint {
     }
 
     /// Returns the BLAKE3 hash of this fingerprint.
+    #[must_use] 
     pub fn hash(&self) -> &str {
         &self.blake3_hash
     }
@@ -227,6 +230,7 @@ pub struct DriftAccumulator {
 
 impl DriftAccumulator {
     /// Creates a new drift accumulator for a source unit.
+    #[must_use] 
     pub fn new(source_unit_id: SourceUnitId) -> Self {
         Self {
             source_unit_id,
@@ -268,11 +272,10 @@ impl DriftAccumulator {
         }
 
         // Same hash: no drift.
-        if let Some(ref last) = self.last_hash {
-            if last == hash {
+        if let Some(ref last) = self.last_hash
+            && last == hash {
                 return None;
             }
-        }
 
         // Drift detected: check rate limits.
         if !self.is_emit_allowed() {
@@ -290,6 +293,7 @@ impl DriftAccumulator {
     }
 
     /// Returns the last-observed fingerprint hash.
+    #[must_use] 
     pub fn last_seen_hash(&self) -> Option<&str> {
         self.last_hash.as_deref()
     }
@@ -338,7 +342,7 @@ impl DriftAccumulator {
 
         // Compute type changes for keys that exist in both.
         let mut type_changes = vec![];
-        for key in previous_keys.iter() {
+        for key in &previous_keys {
             if current_key_set.contains(key) {
                 let prev_type = previous_types
                     .get(key)
@@ -404,7 +408,7 @@ pub struct DriftEvent {
     /// Keys that disappeared from the previous but are absent in current.
     pub removed_keys: Vec<String>,
 
-    /// Type changes for keys that exist in both: (key, old_type, new_type).
+    /// Type changes for keys that exist in both: (key, `old_type`, `new_type`).
     pub type_changes: Vec<(String, String, String)>,
 
     /// When this drift was observed.
@@ -413,6 +417,7 @@ pub struct DriftEvent {
 
 impl DriftEvent {
     /// Serializes this event as a JSON payload suitable for a parser-emitted event.
+    #[must_use] 
     pub fn to_payload(&self) -> serde_json::Value {
         serde_json::json!({
             "source_unit_id": self.source_unit_id.as_str(),
@@ -443,8 +448,7 @@ impl DriftEvent {
 fn current_unix_timestamp() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0)
+        .map_or(0, |d| d.as_secs())
 }
 
 #[cfg(test)]

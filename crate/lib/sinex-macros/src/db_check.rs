@@ -28,8 +28,8 @@
 //!   1. Collects each variant's wire string. By default this is the
 //!      variant ident lowercased (matching `serde(rename_all = "snake_case")`
 //!      for single-word variants). A `#[db_check(rename = "...")]` override
-//!      replaces it. For multi-word PascalCase variants, the default falls
-//!      back to a snake_case conversion.
+//!      replaces it. For multi-word `PascalCase` variants, the default falls
+//!      back to a `snake_case` conversion.
 //!   2. Emits `impl <Enum> { pub const DB_CHECK: &'static DbCheckSpec = &... }`.
 //!   3. Emits `inventory::submit! { DbCheckRegistration { spec: &<Enum>::DB_CHECK } }`.
 
@@ -192,7 +192,7 @@ fn lit_u32(expr: &Expr) -> syn::Result<u32> {
     }
 }
 
-/// Convert a PascalCase identifier to snake_case, matching serde's
+/// Convert a `PascalCase` identifier to `snake_case`, matching serde's
 /// `rename_all = "snake_case"`.
 fn pascal_to_snake_case(input: &str) -> String {
     let mut out = String::with_capacity(input.len() + 4);

@@ -48,6 +48,7 @@ impl RuntimeDrainController {
         *self.drain_tx.borrow()
     }
 
+    #[must_use] 
     pub fn request_drain(&self) -> bool {
         if self.is_requested() {
             return false;
@@ -91,6 +92,7 @@ impl RuntimeDrainController {
     }
 
     #[allow(clippy::expect_used)]
+    #[must_use] 
     pub fn abort_runtime_work(&self) -> bool {
         let guard = self
             .runtime_abort

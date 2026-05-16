@@ -76,17 +76,11 @@ pub struct TextHistoryParserConfig;
 
 /// Parser for generic plain-text history files.
 #[derive(Debug)]
+#[derive(Default)]
 pub struct TextHistoryParser {
     dedup: ContentHashWindow,
 }
 
-impl Default for TextHistoryParser {
-    fn default() -> Self {
-        Self {
-            dedup: ContentHashWindow::default(),
-        }
-    }
-}
 
 #[async_trait]
 impl MaterialParser for TextHistoryParser {
@@ -121,7 +115,7 @@ impl MaterialParser for TextHistoryParser {
         if record
             .metadata
             .get("rotation_detected")
-            .and_then(|v| v.as_bool())
+            .and_then(sinex_primitives::JsonValue::as_bool)
             .unwrap_or(false)
         {
             self.dedup.clear();
@@ -158,7 +152,7 @@ impl MaterialParser for TextHistoryParser {
         let source_file = record
             .logical_path
             .as_ref()
-            .map(|p| p.to_string())
+            .map(std::string::ToString::to_string)
             .unwrap_or_default();
 
         let payload = HistoryCommandImportedPayload {

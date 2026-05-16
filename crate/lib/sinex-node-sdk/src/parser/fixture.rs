@@ -120,8 +120,8 @@ pub struct FixtureSpec {
     /// Raw bytes to stage as source material content.
     ///
     /// The harness creates a temp file with this content and passes it
-    /// to the adapter. For SQLite adapters, this should be a valid
-    /// SQLite database.
+    /// to the adapter. For `SQLite` adapters, this should be a valid
+    /// `SQLite` database.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub material_bytes: Vec<u8>,
 
@@ -422,15 +422,14 @@ impl ParserFixtureHarness {
             Err(e) => {
                 if spec.expect_error {
                     let err_str = format!("{e}");
-                    if let Some(ref expected_contains) = spec.expected_error_contains {
-                        if !err_str.contains(expected_contains.as_str()) {
+                    if let Some(ref expected_contains) = spec.expected_error_contains
+                        && !err_str.contains(expected_contains.as_str()) {
                             failures.push(FixtureFailure {
                                 intent_index: None,
                                 expected: format!("error containing \"{expected_contains}\""),
                                 found: format!("error: {err_str}"),
                             });
                         }
-                    }
                     return FixtureOutcome {
                         fixture_name: spec.name.clone(),
                         passed: failures.is_empty(),
@@ -471,8 +470,8 @@ impl ParserFixtureHarness {
                         Err(e) => {
                             if spec.expect_error {
                                 let err_str = format!("{e}");
-                                if let Some(ref expected_contains) = spec.expected_error_contains {
-                                    if !err_str.contains(expected_contains.as_str()) {
+                                if let Some(ref expected_contains) = spec.expected_error_contains
+                                    && !err_str.contains(expected_contains.as_str()) {
                                         failures.push(FixtureFailure {
                                             intent_index: None,
                                             expected: format!(
@@ -481,7 +480,6 @@ impl ParserFixtureHarness {
                                             found: format!("error: {err_str}"),
                                         });
                                     }
-                                }
                                 return FixtureOutcome {
                                     fixture_name: spec.name.clone(),
                                     passed: failures.is_empty(),
@@ -551,7 +549,7 @@ impl ParserFixtureHarness {
                                     expected: format!(
                                         "intent matching golden artifact {golden_path}"
                                     ),
-                                    found: format!("golden mismatch (expected != actual)"),
+                                    found: "golden mismatch (expected != actual)".to_string(),
                                 });
                             }
                         }

@@ -83,17 +83,11 @@ pub struct BashHistoryParserConfig;
 /// Each line is a raw command string. Maintains a [`ContentHashWindow`] to
 /// suppress re-emission of lines that appear after a file rotation.
 #[derive(Debug)]
+#[derive(Default)]
 pub struct BashHistoryParser {
     dedup: ContentHashWindow,
 }
 
-impl Default for BashHistoryParser {
-    fn default() -> Self {
-        Self {
-            dedup: ContentHashWindow::default(),
-        }
-    }
-}
 
 #[async_trait]
 impl MaterialParser for BashHistoryParser {
@@ -128,7 +122,7 @@ impl MaterialParser for BashHistoryParser {
         if record
             .metadata
             .get("rotation_detected")
-            .and_then(|v| v.as_bool())
+            .and_then(sinex_primitives::JsonValue::as_bool)
             .unwrap_or(false)
         {
             self.dedup.clear();
@@ -167,7 +161,7 @@ impl MaterialParser for BashHistoryParser {
         let source_file = record
             .logical_path
             .as_ref()
-            .map(|p| p.to_string())
+            .map(std::string::ToString::to_string)
             .unwrap_or_default();
 
         let payload = HistoryCommandImportedPayload {

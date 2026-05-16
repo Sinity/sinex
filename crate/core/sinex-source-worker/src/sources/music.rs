@@ -311,7 +311,7 @@ mod tests {
     use sinex_primitives::Uuid;
     use sinex_primitives::ids::Id;
     use sinex_primitives::parser::MaterialAnchor;
-    
+
     use xtask::sandbox::prelude::sinex_test;
 
     fn test_ctx() -> ParserContext {

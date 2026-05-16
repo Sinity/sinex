@@ -1,4 +1,4 @@
-//! SQLite database-file snapshot lane.
+//! `SQLite` database-file snapshot lane.
 //!
 //! # Purpose
 //!
@@ -11,9 +11,9 @@
 //! same evidence, recovering blob columns that the current query projects out,
 //! or auditing what was actually on disk at a moment in time — the row-export
 //! lane is weak evidence. It contains only the columns and rows the parser
-//! chose to read. The actual SQLite database file is stronger evidence.
+//! chose to read. The actual `SQLite` database file is stronger evidence.
 //!
-//! `SqliteSnapshotLane` captures the **SQLite database file as a single source
+//! `SqliteSnapshotLane` captures the **`SQLite` database file as a single source
 //! material** on a periodic timer. It runs in parallel with the row-export
 //! lane: events stay anchored in their row-export materials, but a second
 //! material lineage records the substrate. Per-snapshot content hashing skips
@@ -69,7 +69,7 @@ const SNAPSHOT_SLICE_BYTES: usize = 256 * 1024;
 /// Default snapshot interval: 1 hour matches the default rotation-window
 /// max-age. Snapshots and rotations land at similar cadences, but on
 /// independent timers.
-pub const DEFAULT_SNAPSHOT_INTERVAL: Duration = Duration::from_secs(3600);
+pub const DEFAULT_SNAPSHOT_INTERVAL: Duration = Duration::from_hours(1);
 
 /// Per-source-unit snapshot configuration.
 ///
@@ -142,7 +142,7 @@ pub struct SnapshotLaneSpec {
 }
 
 impl SnapshotLaneSpec {
-    /// Build a spec from a SQLite path and snapshot config. Returns `None` if
+    /// Build a spec from a `SQLite` path and snapshot config. Returns `None` if
     /// the config is not enabled.
     #[must_use]
     pub fn from_sqlite_config(

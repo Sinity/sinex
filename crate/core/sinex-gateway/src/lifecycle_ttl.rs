@@ -84,7 +84,9 @@ pub fn spawn_ttl_task(
 
 async fn run_ttl_sweep(services: &ServiceContainer, instance_id: &str) -> Result<()> {
     // Leader gate.
-    let coord = if let Some(client) = services.coordination.as_ref() { Arc::clone(client) } else {
+    let coord = if let Some(client) = services.coordination.as_ref() {
+        Arc::clone(client)
+    } else {
         debug!("TTL sweep skipped — coordination client not configured");
         return Ok(());
     };

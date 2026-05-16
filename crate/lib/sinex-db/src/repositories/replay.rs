@@ -115,7 +115,7 @@ fn build_filter_query<'a>(
 
 // ── ReplayRepository methods ─────────────────────────────────────────────
 
-impl<'a> ReplayRepository<'a> {
+impl ReplayRepository<'_> {
     // ── Advisory lock ────────────────────────────────────────────────────
 
     /// Acquire the per-node advisory lock for replay operation creation.
@@ -234,7 +234,7 @@ impl<'a> ReplayRepository<'a> {
         Ok(())
     }
 
-    /// Load an operation row (operator, scope, preview_summary) by ID.
+    /// Load an operation row (operator, scope, `preview_summary`) by ID.
     pub async fn load_operation_row(
         &self,
         operation_id: Uuid,
@@ -265,7 +265,7 @@ impl<'a> ReplayRepository<'a> {
         Ok((row.operator, scope_val, Some(meta_val)))
     }
 
-    /// Load an operation row with full fields (used by submit_previewed_for_execution).
+    /// Load an operation row with full fields (used by `submit_previewed_for_execution`).
     pub async fn load_operation_row_full(
         &self,
         tx: &mut Transaction<'_, Postgres>,
@@ -292,7 +292,7 @@ impl<'a> ReplayRepository<'a> {
         Ok((row.operator, scope_val, row.preview_summary))
     }
 
-    /// Fetch preview_summary with FOR UPDATE row lock.
+    /// Fetch `preview_summary` with FOR UPDATE row lock.
     pub async fn fetch_meta_for_update(
         &self,
         tx: &mut Transaction<'_, Postgres>,
@@ -458,7 +458,7 @@ impl<'a> ReplayRepository<'a> {
         .map(|rows| rows.into_iter().map(|row| row.source).collect())
     }
 
-    /// Load distinct (event_type, scope_key) pairs for derived events.
+    /// Load distinct (`event_type`, `scope_key`) pairs for derived events.
     pub async fn load_cascade_affected_scopes(
         tx: &mut Transaction<'_, Postgres>,
         derived_ids: &[Uuid],

@@ -1,10 +1,10 @@
-//! `terminal.atuin-history` — Atuin SQLite history adapter.
+//! `terminal.atuin-history` — Atuin `SQLite` history adapter.
 //!
 //! Folds the Atuin history source unit from `sinex-terminal-ingestor` into
 //! the source-worker dispatch and node factory registries.
 //!
 //! Adapter: [`SqliteRowAdapter`] — reads from `~/.local/share/atuin/history.db`.
-//! Parser:  [`AtuinHistoryParser`] — maps each SQLite row to
+//! Parser:  [`AtuinHistoryParser`] — maps each `SQLite` row to
 //!          [`AtuinCommandExecutedPayload`].
 //!
 //! The source-unit descriptor and binding are registered here; the
@@ -86,7 +86,7 @@ register_source_unit_binding! {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct AtuinHistoryParserConfig;
 
-/// Parser for Atuin SQLite history rows.
+/// Parser for Atuin `SQLite` history rows.
 ///
 /// Each [`SourceRecord`] carries a JSON-serialized row from the `history`
 /// table. The parser extracts fields and builds [`AtuinCommandExecutedPayload`].
@@ -155,9 +155,9 @@ impl MaterialParser for AtuinHistoryParser {
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string();
-        let timestamp_ns = row.get("timestamp").and_then(|v| v.as_i64()).unwrap_or(0);
-        let duration_ns = row.get("duration").and_then(|v| v.as_i64()).unwrap_or(0);
-        let exit_code = row.get("exit").and_then(|v| v.as_i64()).unwrap_or(0);
+        let timestamp_ns = row.get("timestamp").and_then(sinex_primitives::JsonValue::as_i64).unwrap_or(0);
+        let duration_ns = row.get("duration").and_then(sinex_primitives::JsonValue::as_i64).unwrap_or(0);
+        let exit_code = row.get("exit").and_then(sinex_primitives::JsonValue::as_i64).unwrap_or(0);
 
         // Apply privacy processing.
         let command_processed = {

@@ -76,7 +76,8 @@ impl RetryableMaterialCapture {
     /// Defaults:
     /// - `max_attempts`: 3
     /// - `base_delay_ms`: 100
-    /// - `predicate`: [DefaultTransientPredicate]
+    /// - `predicate`: [`DefaultTransientPredicate`]
+    #[must_use] 
     pub fn new() -> Self {
         Self::default()
     }

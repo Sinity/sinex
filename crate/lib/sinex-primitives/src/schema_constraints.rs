@@ -33,7 +33,7 @@
 /// The schema-apply engine consumes these via `inventory::iter::<DbCheckRegistration>`.
 #[derive(Debug, Clone, Copy)]
 pub struct DbCheckSpec {
-    /// PostgreSQL schema name (e.g. `"core"`).
+    /// `PostgreSQL` schema name (e.g. `"core"`).
     pub schema: &'static str,
     /// Table name (e.g. `"manifests"`).
     pub table: &'static str,
@@ -64,7 +64,7 @@ impl DbCheckSpec {
         format!("{}_check_v", self.column)
     }
 
-    /// Legacy sea-query / PostgreSQL default constraint name that pre-dated
+    /// Legacy sea-query / `PostgreSQL` default constraint name that pre-dated
     /// versioning, e.g. `"manifests_manifest_type_check"`. The apply engine
     /// drops this alongside older versioned constraints to migrate cleanly.
     #[must_use]

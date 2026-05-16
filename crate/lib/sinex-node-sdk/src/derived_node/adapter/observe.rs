@@ -132,42 +132,38 @@ where
         };
         let labels = self.derived_metric_labels();
 
-        if lag_ms.is_finite() {
-            if let Err(error) = obs
+        if lag_ms.is_finite()
+            && let Err(error) = obs
                 .emit_gauge("derived.event_lag_ms", lag_ms, Some(labels.clone()))
                 .await
             {
                 log_self_observation_failure(self.node.name(), "derived.event_lag_ms", &error);
             }
-        }
 
-        if runtime_ms.is_finite() {
-            if let Err(error) = obs
+        if runtime_ms.is_finite()
+            && let Err(error) = obs
                 .emit_gauge("derived.tick_runtime_ms", runtime_ms, Some(labels.clone()))
                 .await
             {
                 log_self_observation_failure(self.node.name(), "derived.tick_runtime_ms", &error);
             }
-        }
 
-        if let Some(p50) = self.lag_window.percentile(0.5) {
-            if let Err(error) = obs
+        if let Some(p50) = self.lag_window.percentile(0.5)
+            && let Err(error) = obs
                 .emit_gauge("derived.event_lag_p50_ms", p50, Some(labels.clone()))
                 .await
             {
                 log_self_observation_failure(self.node.name(), "derived.event_lag_p50_ms", &error);
             }
-        }
-        if let Some(p99) = self.lag_window.percentile(0.99) {
-            if let Err(error) = obs
+        if let Some(p99) = self.lag_window.percentile(0.99)
+            && let Err(error) = obs
                 .emit_gauge("derived.event_lag_p99_ms", p99, Some(labels.clone()))
                 .await
             {
                 log_self_observation_failure(self.node.name(), "derived.event_lag_p99_ms", &error);
             }
-        }
-        if let Some(p99) = self.runtime_window.percentile(0.99) {
-            if let Err(error) = obs
+        if let Some(p99) = self.runtime_window.percentile(0.99)
+            && let Err(error) = obs
                 .emit_gauge("derived.tick_runtime_p99_ms", p99, Some(labels.clone()))
                 .await
             {
@@ -177,7 +173,6 @@ where
                     &error,
                 );
             }
-        }
 
         let eps = self.throughput_window.eps(Instant::now());
         if let Err(error) = obs
@@ -222,17 +217,16 @@ where
         let mut labels = self.derived_metric_labels();
         labels.insert("batch_size".to_string(), batch_size.to_string());
 
-        if lag_ms.is_finite() {
-            if let Err(error) = obs
+        if lag_ms.is_finite()
+            && let Err(error) = obs
                 .emit_gauge("derived.event_lag_ms", lag_ms, Some(labels.clone()))
                 .await
             {
                 log_self_observation_failure(self.node.name(), "derived.event_lag_ms", &error);
             }
-        }
 
-        if batch_runtime_ms.is_finite() {
-            if let Err(error) = obs
+        if batch_runtime_ms.is_finite()
+            && let Err(error) = obs
                 .emit_gauge(
                     "derived.batch_runtime_ms",
                     batch_runtime_ms,
@@ -242,7 +236,6 @@ where
             {
                 log_self_observation_failure(self.node.name(), "derived.batch_runtime_ms", &error);
             }
-        }
     }
 
     #[cfg(not(feature = "messaging"))]

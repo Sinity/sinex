@@ -25,7 +25,7 @@
 //!
 //! Per-row `MaterialAnchor::Line { byte_start: 0, line: <csv_row_index> }`
 //! using the CSV row position (1-based, excluding the header). The
-//! `StaticFileAdapter` records the whole file as one ByteRange; the parser
+//! `StaticFileAdapter` records the whole file as one `ByteRange`; the parser
 //! synthesizes per-row line anchors so cascade-archive can target
 //! individual bookmarks.
 
@@ -270,7 +270,7 @@ mod tests {
     use sinex_primitives::Uuid;
     use sinex_primitives::ids::Id;
     use sinex_primitives::parser::MaterialAnchor;
-    
+
     use xtask::sandbox::prelude::sinex_test;
 
     fn test_ctx() -> ParserContext {

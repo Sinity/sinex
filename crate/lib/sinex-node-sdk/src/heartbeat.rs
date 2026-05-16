@@ -92,7 +92,7 @@ impl HeartbeatLogSink for StdoutHeartbeatSink {
 /// Heartbeat emitter that logs structured JSON to stdout.
 ///
 /// TODO(#754): This is superseded by [`crate::health_reporter::HealthReporter`] and will be
-/// removed once all consumers are migrated. The HealthReporter provides the same
+/// removed once all consumers are migrated. The `HealthReporter` provides the same
 /// functionality (tracking status, emitting on transition) with a cleaner API and
 /// is now wired into both `DerivedNodeAdapter` and `IngestorNodeAdapter`.
 /// Consumers should migrate to using the adapter's `health_reporter()` accessor.
@@ -416,18 +416,17 @@ impl HeartbeatEmitter {
         #[cfg(feature = "db")]
         if let Some(ref pool) = self.db_pool {
             let warn_skipped = self.persistence_warn_count.fetch_add(1, Ordering::Relaxed);
-            let log_persistence_warn = warn_skipped % 100 == 0;
+            let log_persistence_warn = warn_skipped.is_multiple_of(100);
 
             use sinex_db::DbPoolExt;
-            if self.node_name.is_none() && self.source_run_id.is_none() {
-                if log_persistence_warn {
+            if self.node_name.is_none() && self.source_run_id.is_none()
+                && log_persistence_warn {
                     warn!(
                         service = %metrics.service_name,
                         skipped = warn_skipped,
                         "Heartbeat persistence is configured without a node identity; database heartbeat updates are disabled (rate-limited)"
                     );
                 }
-            }
             if let Some(node_name) = &self.node_name {
                 match pool
                     .state()

@@ -700,7 +700,7 @@ pub struct MaterialMetadataPolicy {
 /// A single rule mapping a material path class to a redaction action.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PathClassRule {
-    /// MaterialPathClass variant name in snake_case (`"temporary"`,
+    /// `MaterialPathClass` variant name in `snake_case` (`"temporary"`,
     /// `"system_path"`, `"application_data"`, `"durable_identifier"`).
     pub class: String,
 

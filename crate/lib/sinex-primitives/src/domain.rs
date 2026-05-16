@@ -789,7 +789,7 @@ impl EventName {
     /// Build the canonical raw-event NATS subject for this event name.
     ///
     /// Delegates to the environment's subject-token encoding so that `_` and `.`
-    /// characters in source/event_type are correctly escaped.
+    /// characters in `source/event_type` are correctly escaped.
     #[must_use]
     pub fn nats_subject(
         &self,
@@ -1095,7 +1095,7 @@ define_string_type!(
 // ─── Source identifier ───────────────────────────────────────────────────────
 
 /// Identifies a logical source within a source material, carrying an optional
-/// material_id for disambiguation. The wire/DB representation is:
+/// `material_id` for disambiguation. The wire/DB representation is:
 ///   `{logical_id}#material={material_id}`
 ///
 /// Callers should use the typed API (`new`, `from_wire`, `to_wire`) instead of
@@ -1121,7 +1121,7 @@ impl SourceIdentifier {
     /// Parse from the wire/DB format: `"path/to/file#material=<uuid>"`
     ///
     /// If the string does not contain `#material=`, the entire string is treated
-    /// as the logical_id and material_id is set to `None`.
+    /// as the `logical_id` and `material_id` is set to `None`.
     pub fn from_wire(s: &str) -> Result<Self, crate::SinexError> {
         if let Some(pos) = s.find("#material=") {
             let logical_id = s[..pos].to_string();
@@ -2760,7 +2760,7 @@ pub enum AcquisitionMode {
     WatchDirectory,
     /// Append-only file tailing (JSONL, log).
     AppendTail,
-    /// SQLite database snapshot or row-stream extraction.
+    /// `SQLite` database snapshot or row-stream extraction.
     SqliteSnapshot,
     /// Git repository snapshot.
     RepositorySnapshot,

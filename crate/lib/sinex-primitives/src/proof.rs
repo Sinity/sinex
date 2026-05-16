@@ -277,7 +277,7 @@ pub struct SourceUnitBinding {
     pub runtime_shape: RuntimeShape,
     /// Coarse package-level impact summary string.
     pub package_impact: &'static str,
-    /// How the unit is implemented (e.g. "rust_in_pack:terminal").
+    /// How the unit is implemented (e.g. "`rust_in_pack:terminal`").
     pub implementation_mode: &'static str,
     /// Physical/build footprint declared by this binding.
     pub build_impact: SourceUnitBuildImpact,
@@ -446,7 +446,7 @@ impl<O, P, M, C, CF, RS, BI> SourceUnitBindingBuilder<O, P, M, C, CF, RS, BI> {
         self
     }
 
-    /// How the unit is implemented (e.g. "rust_in_pack:terminal").
+    /// How the unit is implemented (e.g. "`rust_in_pack:terminal`").
     #[must_use]
     pub const fn implementation_mode(mut self, mode: &'static str) -> Self {
         self.descriptor.implementation_mode = mode;

@@ -62,7 +62,7 @@ fn body_tag_re() -> &'static Regex {
 // Markdown parsing helpers
 // ---------------------------------------------------------------------------
 
-/// Split raw file bytes into (front_matter_str, body_str).
+/// Split raw file bytes into (`front_matter_str`, `body_str`).
 ///
 /// Recognises the `---` YAML fence. Returns `("", full_content)` if no fence
 /// is found (uncommon for the KB vault but handled gracefully).
@@ -190,24 +190,22 @@ fn dedup_sorted(v: Vec<String>) -> Vec<String> {
 /// 2. front-matter `id:` field — strip leading path prefix, use last segment
 /// 3. filename stem as fallback
 fn derive_title(fm: &serde_json::Value, path: &str) -> String {
-    if let Some(title) = fm.get("title").and_then(|v| v.as_str()) {
-        if !title.trim().is_empty() {
+    if let Some(title) = fm.get("title").and_then(|v| v.as_str())
+        && !title.trim().is_empty() {
             return title.to_owned();
         }
-    }
     if let Some(id) = fm.get("id").and_then(|v| v.as_str()) {
         // Dendron id: `area.subarea.note` — last segment is the note name.
         let stem = id.rsplit('.').next().unwrap_or(id);
         if !stem.trim().is_empty() {
-            return stem.replace('-', " ").replace('_', " ");
+            return stem.replace(['-', '_'], " ");
         }
     }
     // Fallback: strip extension from the last path segment.
     let filename = path.rsplit('/').next().unwrap_or(path);
     filename
         .trim_end_matches(".md")
-        .replace('-', " ")
-        .replace('_', " ")
+        .replace(['-', '_'], " ")
 }
 
 // ---------------------------------------------------------------------------
@@ -365,8 +363,7 @@ fn pick_timestamp(
         .and_then(|v| v.as_array())
         .and_then(|arr| arr.last())
         .and_then(|v| v.as_str())
-    {
-        if let Some(ts) = parse_date(last_revised) {
+        && let Some(ts) = parse_date(last_revised) {
             return (
                 ts,
                 Some(last_revised.to_owned()),
@@ -376,11 +373,10 @@ fn pick_timestamp(
                 },
             );
         }
-    }
 
     // Try `created`.
-    if let Some(created) = fm.get("created").and_then(|v| v.as_str()) {
-        if let Some(ts) = parse_date(created) {
+    if let Some(created) = fm.get("created").and_then(|v| v.as_str())
+        && let Some(ts) = parse_date(created) {
             return (
                 ts,
                 Some(created.to_owned()),
@@ -390,7 +386,6 @@ fn pick_timestamp(
                 },
             );
         }
-    }
 
     // Fall back to acquisition time.
     (ctx.acquisition_time, None, TimingEvidence::StagedAtFallback)
@@ -479,7 +474,7 @@ mod tests {
     use super::*;
     use sinex_primitives::Uuid;
     use sinex_primitives::ids::Id;
-    
+
     use xtask::sandbox::prelude::sinex_test;
 
     fn test_ctx() -> ParserContext {

@@ -9,9 +9,9 @@
 //! Source Material -> InputShapeAdapter -> SourceRecord -> MaterialParser -> ParsedEventIntent
 //! ```
 //!
-//! - **InputShapeAdapter** owns material access, enumeration, and cursor advancement.
-//! - **MaterialParser** owns semantic interpretation of records.
-//! - **ParserFixtureHarness** provides reusable test infrastructure.
+//! - **`InputShapeAdapter`** owns material access, enumeration, and cursor advancement.
+//! - **`MaterialParser`** owns semantic interpretation of records.
+//! - **`ParserFixtureHarness`** provides reusable test infrastructure.
 //!
 //! Parser authors implement `MaterialParser::parse_record()` and declare their
 //! manifest. The source-worker runtime owns adapter opening, cursor persistence,
@@ -257,6 +257,7 @@ pub trait MaterialParser: Send + Sync {
     /// Lets a parser declare adapter-mandatory fields it knows the right
     /// value for (e.g. atuin's SqliteRowConfig.query = "history") without
     /// forcing every Nix binding to repeat them. Default empty object.
+    #[must_use] 
     fn baseline_adapter_config() -> serde_json::Value
     where
         Self: Sized,

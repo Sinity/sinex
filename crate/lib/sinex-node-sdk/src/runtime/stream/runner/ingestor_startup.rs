@@ -4,7 +4,7 @@
 //! nodes, including drain awareness and checkpoint persistence between
 //! phases.
 
-use super::*;
+use super::{info, debug, warn, NodeRunner, Node, NodeResult, SinexError, systemd_notify, Checkpoint, TimeHorizon, ScanArgs};
 
 impl<T: Node + 'static> NodeRunner<T> {
     /// Run ingestor startup sequence (Snapshot -> Gap-fill -> Continuous)

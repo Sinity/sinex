@@ -148,7 +148,7 @@ fn parse_message(
     ctx: &ParserContext,
 ) -> ParserResult<ParsedEventIntent> {
     let sent_at = Timestamp::new(
-        time::OffsetDateTime::from_unix_timestamp_nanos((msg.timestamp as i128) * 1_000_000)
+        time::OffsetDateTime::from_unix_timestamp_nanos(i128::from(msg.timestamp) * 1_000_000)
             .map_err(|e| {
                 ParserError::Parse(format!(
                     "invalid Messenger timestamp {} ms: {e}",
@@ -270,7 +270,7 @@ mod tests {
     use super::*;
     use sinex_primitives::Uuid;
     use sinex_primitives::ids::Id;
-    
+
     use xtask::sandbox::prelude::sinex_test;
 
     fn test_ctx() -> ParserContext {

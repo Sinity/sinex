@@ -120,15 +120,14 @@ fn parse_journal(text: &str) -> ParserResult<Vec<JournalTransaction>> {
 
         if trimmed.starts_with(';') || trimmed.starts_with("include ") || trimmed.is_empty() {
             // Blank line terminates an open transaction block.
-            if raw_line.trim().is_empty() {
-                if let Some((header, postings)) = current.take() {
+            if raw_line.trim().is_empty()
+                && let Some((header, postings)) = current.take() {
                     transactions.push(build_transaction(
                         transactions.len() as u64,
                         &header,
                         &postings,
                     )?);
                 }
-            }
             continue;
         }
 
@@ -172,9 +171,9 @@ fn looks_like_date(line: &str) -> bool {
     bytes.len() >= 10
         && bytes[4] == b'-'
         && bytes[7] == b'-'
-        && bytes[..4].iter().all(|b| b.is_ascii_digit())
-        && bytes[5..7].iter().all(|b| b.is_ascii_digit())
-        && bytes[8..10].iter().all(|b| b.is_ascii_digit())
+        && bytes[..4].iter().all(u8::is_ascii_digit)
+        && bytes[5..7].iter().all(u8::is_ascii_digit)
+        && bytes[8..10].iter().all(u8::is_ascii_digit)
 }
 
 fn build_transaction(
@@ -337,7 +336,7 @@ fn parse_amount(s: &str) -> ParserResult<(String, String)> {
 
 fn looks_like_number(s: &str) -> bool {
     let s = s.trim_start_matches('-').trim_start_matches('+');
-    !s.is_empty() && s.chars().next().map_or(false, |c| c.is_ascii_digit())
+    !s.is_empty() && s.chars().next().is_some_and(|c| c.is_ascii_digit())
 }
 
 /// Parses a `YYYY-MM-DD` date into a [`Timestamp`] at midnight UTC.
@@ -482,7 +481,7 @@ mod tests {
     use super::*;
     use sinex_primitives::Uuid;
     use sinex_primitives::ids::Id;
-    
+
     use xtask::sandbox::prelude::sinex_test;
 
     // ---------------------------------------------------------------------------

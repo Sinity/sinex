@@ -1,6 +1,6 @@
 //! AI session message payloads.
 //!
-//! Hosts both Claude and ChatGPT provider exports under one domain module.
+//! Hosts both Claude and `ChatGPT` provider exports under one domain module.
 //! Future providers (Gemini, Codex, etc.) will also land here rather than
 //! spawning separate modules.
 
@@ -33,16 +33,16 @@ pub struct ClaudeAiMessagePayload {
     pub conversation_name: Option<String>,
 }
 
-/// One message in a ChatGPT conversation export (`conversations-NNN.json`).
+/// One message in a `ChatGPT` conversation export (`conversations-NNN.json`).
 ///
-/// Source: ChatGPT data export → `mapping` node graph, walking from
+/// Source: `ChatGPT` data export → `mapping` node graph, walking from
 /// `current_node` backwards to reconstruct the canonical thread. Only text
 /// messages (`content_type = "text"`) are included; tool-use / DALL-E / etc.
 /// nodes are skipped.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
 #[event_payload(source = "chatgpt", event_type = "ai.message")]
 pub struct ChatGptAiMessagePayload {
-    /// ChatGPT conversation id.
+    /// `ChatGPT` conversation id.
     pub session_id: String,
     /// Node id of the message.
     pub message_id: String,

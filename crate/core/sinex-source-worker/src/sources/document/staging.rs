@@ -31,8 +31,8 @@ use sinex_primitives::{
     },
     ids::Id,
     parser::{
-        InputShapeKind, ParsedEventIntent, ParserContext, ParserId, ParserManifest,
-        SourceRecord, SourceUnitId, TimingEvidence,
+        InputShapeKind, ParsedEventIntent, ParserContext, ParserId, ParserManifest, SourceRecord,
+        SourceUnitId, TimingEvidence,
     },
     privacy::{self, ProcessingContext},
     proof::{
@@ -158,11 +158,9 @@ impl MaterialParser for DocumentStagingParser {
             .unwrap_or("application/octet-stream")
             .to_string();
 
-        let file_size = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
+        let file_size = std::fs::metadata(&path).map_or(0, |m| m.len());
 
-        let redacted_path = privacy::process(&path, ProcessingContext::Metadata)
-            .map(|r| r.text.into_owned())
-            .unwrap_or_else(|_| path.clone());
+        let redacted_path = privacy::process(&path, ProcessingContext::Metadata).map_or_else(|_| path.clone(), |r| r.text.into_owned());
 
         let source_material_id = record.material_id.to_uuid().to_string();
 

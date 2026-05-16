@@ -105,7 +105,7 @@ pub enum ErrorClass {
     NodeFatal,
     /// Transport is degraded — pause consumption, circuit-break, alert.
     /// DLQ stream unavailable, confirmation stream unavailable,
-    /// JetStream publish failing beyond retry budget.
+    /// `JetStream` publish failing beyond retry budget.
     TransportDegraded,
 }
 
@@ -656,7 +656,7 @@ impl From<sqlx::Error> for SinexError {
 /// Build a `SinexError::Nats` enriched with the kind name, kind value, and
 /// the underlying source-error chain. The bare `From` impl below uses this so
 /// every NATS-bound failure path inherits the same diagnostics shape — the
-/// pattern mirrors `classify_sqlx_error` for SQLx errors.
+/// pattern mirrors `classify_sqlx_error` for `SQLx` errors.
 ///
 /// The captured shape is intentionally string-only (no `with_std_error`) so
 /// the helper does not require a `'static` bound on `T`. Every NATS error

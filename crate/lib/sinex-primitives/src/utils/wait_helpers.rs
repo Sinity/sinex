@@ -31,10 +31,10 @@ pub struct RetryConfig {
     /// Add jitter to delays
     #[builder(default = true)]
     pub jitter: bool,
-    /// Timeout for a single JetStream publish ack wait.
+    /// Timeout for a single `JetStream` publish ack wait.
     ///
     /// Default: 10 seconds. Controls how long `NatsPublisher` waits for
-    /// a JetStream publish acknowledgment before timing out.
+    /// a `JetStream` publish acknowledgment before timing out.
     #[builder(default = Duration::from_secs(10))]
     #[serde(default = "default_publish_ack_timeout")]
     pub publish_ack_timeout: Duration,

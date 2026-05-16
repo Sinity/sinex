@@ -49,7 +49,7 @@ impl InputShapeAdapter for StaticFileAdapter {
         config: &Self::Config,
         cursor: Option<Self::Cursor>,
     ) -> ParserResult<BoxStream<'static, ParserResult<SourceRecord>>> {
-        if cursor.map_or(false, |c| c.processed) {
+        if cursor.is_some_and(|c| c.processed) {
             return Ok(stream::empty().boxed());
         }
 
@@ -62,7 +62,7 @@ impl InputShapeAdapter for StaticFileAdapter {
             material_id,
             anchor: MaterialAnchor::ByteRange { start: 0, len },
             bytes,
-            logical_path: Some(Utf8Path::new(&path).to_owned().into()),
+            logical_path: Some(Utf8Path::new(&path).to_owned()),
             source_ts_hint: None,
             metadata: serde_json::Value::Null,
         };

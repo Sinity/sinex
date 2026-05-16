@@ -797,18 +797,19 @@ pub async fn handle_sources_continuity(pool: &PgPool, params: Value) -> Result<V
     for row in &material_rows {
         if let Some(start) = row.start_time {
             if let Some(prev) = prev_end
-                && start > prev {
-                    let gap_secs = (start - prev).whole_seconds();
-                    // Only report gaps larger than 1 second (rounding noise).
-                    if gap_secs > 1 {
-                        gaps.push(CoverageGap {
-                            gap_start: Some(prev.to_string()),
-                            gap_end: Some(start.to_string()),
-                            gap_duration_seconds: Some(gap_secs),
-                            gap_type: "temporal".to_string(),
-                        });
-                    }
+                && start > prev
+            {
+                let gap_secs = (start - prev).whole_seconds();
+                // Only report gaps larger than 1 second (rounding noise).
+                if gap_secs > 1 {
+                    gaps.push(CoverageGap {
+                        gap_start: Some(prev.to_string()),
+                        gap_end: Some(start.to_string()),
+                        gap_duration_seconds: Some(gap_secs),
+                        gap_type: "temporal".to_string(),
+                    });
                 }
+            }
             prev_end = row.end_time.max(Some(start));
         }
     }

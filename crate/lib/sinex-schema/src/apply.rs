@@ -874,7 +874,7 @@ async fn configure_timescaledb(pool: &PgPool) -> Result<(), ApplyError> {
     .await?;
     execute_sql(
         pool,
-        r#"
+        r"
         CREATE INDEX IF NOT EXISTS ix_events_sinex_metric_gauge_latest
         ON core.events (
             (payload->>'name'),
@@ -883,16 +883,16 @@ async fn configure_timescaledb(pool: &PgPool) -> Result<(), ApplyError> {
             id DESC
         )
         WHERE source = 'sinex' AND event_type = 'metric.gauge'
-        "#,
+        ",
     )
     .await?;
     execute_sql(
         pool,
-        r#"
+        r"
         CREATE INDEX IF NOT EXISTS ix_events_node_run_synthesis_latest
         ON core.events (source_run_id, id DESC)
         WHERE source_run_id IS NOT NULL AND source_event_ids IS NOT NULL
-        "#,
+        ",
     )
     .await?;
 

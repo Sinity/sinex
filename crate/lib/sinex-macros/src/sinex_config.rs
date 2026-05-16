@@ -51,7 +51,7 @@ fn try_expand(input: &DeriveInput) -> syn::Result<TokenStream2> {
             .env
             .clone()
             .unwrap_or_else(|| field_name_to_env(&name.to_string()));
-        let env_key = format!("{}_{}", prefix, env_suffix);
+        let env_key = format!("{prefix}_{env_suffix}");
         let helper_call = infer_helper(&field.ty, &env_key, &context, &attrs)?;
         field_inits.push(quote! { #name: #helper_call });
     }

@@ -96,6 +96,7 @@ pub fn default_match_rules() -> Vec<String> {
 
 impl DbusStreamConfig {
     /// Match rules to forward to the broker. Empty config -> defaults.
+    #[must_use] 
     pub fn effective_match_rules(&self) -> Vec<String> {
         if self.match_rules.is_empty() {
             default_match_rules()
@@ -225,7 +226,7 @@ impl ParsedMatchRule {
 }
 
 /// Does the message satisfy at least one of the parsed rules? An empty rule
-/// list is treated as "match everything" (mirrors how an empty match_rules
+/// list is treated as "match everything" (mirrors how an empty `match_rules`
 /// config is rewritten to the defaults at subscription time).
 pub fn matches_any_rule(msg: &DbusMessage, rules: &[ParsedMatchRule]) -> bool {
     if rules.is_empty() {
@@ -263,6 +264,7 @@ pub struct MockDbusBackend {
 }
 
 impl MockDbusBackend {
+    #[must_use] 
     pub fn new(messages: Vec<DbusMessage>) -> Self {
         Self { messages }
     }
@@ -374,10 +376,10 @@ impl DbusBackend for RealDbusBackend {
                 if !matches!(header.message_type(), zbus::message::Type::Signal) {
                     continue;
                 }
-                let interface = header.interface().map(|i| i.to_string()).unwrap_or_default();
-                let member = header.member().map(|m| m.to_string()).unwrap_or_default();
-                let path = header.path().map(|p| p.to_string()).unwrap_or_default();
-                let sender = header.sender().map(|s| s.to_string());
+                let interface = header.interface().map(std::string::ToString::to_string).unwrap_or_default();
+                let member = header.member().map(std::string::ToString::to_string).unwrap_or_default();
+                let path = header.path().map(std::string::ToString::to_string).unwrap_or_default();
+                let sender = header.sender().map(std::string::ToString::to_string);
 
                 // Deserialize the body into a zvariant Structure, then
                 // convert to JSON for the parser. If the body is empty or
@@ -436,8 +438,7 @@ fn zvariant_value_to_json(v: &zvariant::Value<'_>) -> serde_json::Value {
         Z::I64(n) => serde_json::Value::Number((*n).into()),
         Z::U64(n) => serde_json::Value::Number((*n).into()),
         Z::F64(n) => serde_json::Number::from_f64(*n)
-            .map(serde_json::Value::Number)
-            .unwrap_or(serde_json::Value::Null),
+            .map_or(serde_json::Value::Null, serde_json::Value::Number),
         Z::Str(s) => serde_json::Value::String(s.as_str().to_string()),
         Z::Signature(s) => serde_json::Value::String(s.to_string()),
         Z::ObjectPath(p) => serde_json::Value::String(p.as_str().to_string()),
@@ -487,7 +488,7 @@ pub struct DbusStreamAdapter {
 
 impl DbusStreamAdapter {
     /// Create an adapter with a custom backend (useful for tests).
-    pub fn with_backend(backend: impl DbusBackend + Send + Sync + 'static) -> Self {
+    pub fn with_backend(backend: impl DbusBackend + Sync + 'static) -> Self {
         Self {
             injected_backend: std::sync::Mutex::new(Some(Box::new(backend))),
         }
@@ -541,6 +542,7 @@ impl DbusStreamAdapter {
     ///
     /// Used by `InputShapeAdapter::open` after lifting a backend out of the
     /// adapter, and directly by tests that want to drive a mock stream.
+    #[must_use] 
     pub fn open_with_backend(
         backend: Box<dyn DbusBackend + Send + Sync>,
         material_id: Id<SourceMaterial>,

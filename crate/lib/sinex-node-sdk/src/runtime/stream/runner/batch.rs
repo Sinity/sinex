@@ -4,7 +4,7 @@
 //! per-event DLQ fallback if the batch fails, and the checkpoint-save
 //! helper that persists progress through the bridge.
 
-use super::*;
+use super::{debug, error, warn, info, NodeRunner, Node, EventTransport, Event, JsonValue, NodeResult, SinexError, CheckpointManager, Uuid, Checkpoint};
 
 impl<T: Node + 'static> NodeRunner<T> {
     /// Process a batch of events, falling back to per-event processing with DLQ

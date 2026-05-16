@@ -271,7 +271,7 @@ pub enum InputShapeKind {
     /// A file that grows by appending (log-style).
     AppendOnlyFile,
 
-    /// SQLite database queried via rowid cursor.
+    /// `SQLite` database queried via rowid cursor.
     SqliteQuery,
 
     /// A git repository snapshot.
@@ -351,7 +351,7 @@ pub enum MaterialAnchor {
         content_hash: Option<String>,
     },
 
-    /// A row in a SQLite table.
+    /// A row in a `SQLite` table.
     SqliteRow { table: String, rowid: i64 },
 
     /// A git object identified by OID.
@@ -476,7 +476,7 @@ pub type ParserError = SinexError;
 /// tracking.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ParsedEventIntent {
-    /// A freshly-generated UUIDv7 identity for this intent.
+    /// A freshly-generated `UUIDv7` identity for this intent.
     ///
     /// The transport layer uses this as the event ID it persists and
     /// references in confirmations. Synthesis intents reference their
@@ -562,7 +562,7 @@ impl ParsedEventIntent {
     /// - Carries the parent's `source_unit_id`, `parser_id`, `parser_version`,
     ///   `acquisition_time` (via `ts_orig`), and `anchor` (transport layer
     ///   ignores it for synthesis intents).
-    /// - Has its own freshly-generated `id` (UUIDv7).
+    /// - Has its own freshly-generated `id` (`UUIDv7`).
     /// - Has `synthesis_parents = Some(vec![self.id])` pointing to `self`.
     /// - Has `event_source` and `event_type` taken from `P::SOURCE` /
     ///   `P::EVENT_TYPE` (the *new* payload, **not** the parent's types).

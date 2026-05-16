@@ -113,7 +113,7 @@ impl RetryPolicy {
         if self.jitter_ratio == 0.0 {
             return capped;
         }
-        let mut x = (attempt as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+        let mut x = u64::from(attempt).wrapping_mul(0x9E37_79B9_7F4A_7C15);
         x ^= x >> 30;
         x = x.wrapping_mul(0xBF58_476D_1CE4_E5B9);
         x ^= x >> 27;

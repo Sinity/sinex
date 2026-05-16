@@ -15,7 +15,7 @@
 //! - JSON / tab-separated / SQLite-row / CSV-row / raw-line input formats
 //! - Field extraction via JSON Pointer, column index, column name, raw line
 //! - Type coercion for string, integer, number, boolean, JSON
-//! - Per-field privacy via `privacy::process()` (records FieldPrivacyDecision)
+//! - Per-field privacy via `privacy::process()` (records `FieldPrivacyDecision`)
 //! - `#[suppress_if]` predicate (per-field or whole-event)
 //! - `#[required]` / `#[default]` / `#[skip]` semantics
 //! - `#[occurrence_key]` composite key construction
@@ -37,7 +37,7 @@
 //! - `desktop.window-manager` (via `type>>data` prefix dispatch on the `kind`
 //!   field)
 //!
-//! # Extension F — carry_across_records / stateful continuation
+//! # Extension F — `carry_across_records` / stateful continuation
 //!
 //! `StatefulCarryPolicy` lets one field "carry" a value from one record into the
 //! next.  Used for zsh extended history (`": timestamp:elapsed;cmd"` prefix
@@ -51,13 +51,13 @@
 //!
 //! - `#[anchor(kind = "...")]` override — for v1 we pass through the
 //!   adapter's anchor on the source record. Adapters that need a derived
-//!   anchor must compute it themselves before yielding the SourceRecord.
-//! - Regex captures for line logs (use raw_line + a thin imperative
+//!   anchor must compute it themselves before yielding the `SourceRecord`.
+//! - Regex captures for line logs (use `raw_line` + a thin imperative
 //!   wrapper for now)
 //! - `#[redact_if(rule = "...")]` named rule references
 //! - Multi-line record continuation (backslash-continuation in zsh history)
-//!   is NOT handled by carry_across_records — that requires an adapter-level
-//!   record assembler. carry_across_records handles only cross-record state
+//!   is NOT handled by `carry_across_records` — that requires an adapter-level
+//!   record assembler. `carry_across_records` handles only cross-record state
 //!   propagation for records that are individually complete lines.
 
 use serde::{Deserialize, Serialize};
@@ -161,7 +161,7 @@ pub enum InputFormat {
     TabSeparated,
     /// CSV row already deserialized into a JSON object — extract via column name.
     CsvRow,
-    /// SQLite row already deserialized into a JSON object — extract via column name.
+    /// `SQLite` row already deserialized into a JSON object — extract via column name.
     SqliteRow,
     /// Single line, no field structure — extract via `RawLine`.
     RawLine,
@@ -264,7 +264,7 @@ pub enum FieldSource {
     JsonPointer { pointer: String },
     /// Tab/CSV column by 0-based index.
     ColumnIndex { index: usize },
-    /// Column by name (CSV header or SQLite column).
+    /// Column by name (CSV header or `SQLite` column).
     ColumnName { name: String },
     /// The entire record bytes interpreted as a string.
     RawLine,
@@ -304,18 +304,15 @@ pub enum TimestampFormat {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum TimestampFallback {
     /// Fall back to the material's acquisition time (default).
+    #[default]
     MaterialTiming,
     /// Fail the record.
     Error,
 }
 
-impl Default for TimestampFallback {
-    fn default() -> Self {
-        Self::MaterialTiming
-    }
-}
 
 /// Predicate for `#[suppress_if(field = "...")]`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -417,6 +414,7 @@ pub struct StatefulDeclarativeParser {
 }
 
 impl StatefulDeclarativeParser {
+    #[must_use] 
     pub fn new(spec: DeclarativeParserSpec) -> Self {
         Self {
             spec,
@@ -424,6 +422,7 @@ impl StatefulDeclarativeParser {
         }
     }
 
+    #[must_use] 
     pub fn spec(&self) -> &DeclarativeParserSpec {
         &self.spec
     }
@@ -511,11 +510,10 @@ fn evaluate_inner(
         }
 
         // --- Extension A: collect discriminator value ---
-        if let Some(disc) = &spec.discriminator {
-            if disc.field == field.name {
+        if let Some(disc) = &spec.discriminator
+            && disc.field == field.name {
                 discriminator_value = Some(value_as_string(&coerced));
             }
-        }
 
         let suppressed_by_predicate = match &field.suppress_if {
             Some(pred) => binding.is_truthy(&pred.binding_field),
@@ -527,12 +525,11 @@ fn evaluate_inner(
             if suppressed_by_predicate {
                 let mut decision =
                     FieldPrivacyDecision::suppressed_by_predicate(&field.name, ctx_priv);
-                if let Some(pred) = &field.suppress_if {
-                    if pred.whole_event {
+                if let Some(pred) = &field.suppress_if
+                    && pred.whole_event {
                         decision = decision.into_whole_event_suppressor();
                         whole_event_suppressed = true;
                     }
-                }
                 field_privacy_log.push(decision);
                 None
             } else {
@@ -552,22 +549,20 @@ fn evaluate_inner(
                 }
             }
         } else if suppressed_by_predicate {
-            if let Some(pred) = &field.suppress_if {
-                if pred.whole_event {
+            if let Some(pred) = &field.suppress_if
+                && pred.whole_event {
                     whole_event_suppressed = true;
                 }
-            }
             None
         } else {
             Some(coerced.clone())
         };
 
         // Timestamp derivation.
-        if let Some(ts_spec) = &field.timestamp {
-            if let Some(ts) = parse_timestamp(&coerced, ts_spec, &field.name, ctx)? {
+        if let Some(ts_spec) = &field.timestamp
+            && let Some(ts) = parse_timestamp(&coerced, ts_spec, &field.name, ctx)? {
                 ts_override = Some((ts, field.name.clone()));
             }
-        }
 
         // Occurrence key contribution.
         if field.occurrence_key {
@@ -575,11 +570,10 @@ fn evaluate_inner(
         }
 
         // Add to payload unless skipped or suppressed.
-        if !field.skip_payload {
-            if let Some(v) = final_value {
+        if !field.skip_payload
+            && let Some(v) = final_value {
                 payload.insert(field.name.clone(), v);
             }
-        }
     }
 
     if whole_event_suppressed {
@@ -691,7 +685,7 @@ fn decode_record(format: InputFormat, record: &SourceRecord) -> Result<DecodedRe
             Ok(DecodedRecord::Json(v))
         }
         InputFormat::TabSeparated => Ok(DecodedRecord::TabFields(
-            text.split('\t').map(|s| s.to_string()).collect(),
+            text.split('\t').map(std::string::ToString::to_string).collect(),
         )),
         InputFormat::RawLine => Ok(DecodedRecord::Line(text.to_string())),
     }

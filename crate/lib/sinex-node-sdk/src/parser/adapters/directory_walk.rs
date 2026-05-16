@@ -81,6 +81,7 @@ pub struct DirectoryWalkCursor(pub BTreeMap<Utf8PathBuf, FileFingerprint>);
 
 impl DirectoryWalkCursor {
     /// Returns the stored fingerprint for `path`, if any.
+    #[must_use] 
     pub fn get(&self, path: &Utf8Path) -> Option<&FileFingerprint> {
         self.0.get(path)
     }
@@ -174,7 +175,7 @@ impl DirectoryWalkAdapter {
 
             if metadata.is_dir() {
                 let next_depth = current_depth + 1;
-                if max_depth.map_or(true, |limit| next_depth <= limit) {
+                if max_depth.is_none_or(|limit| next_depth <= limit) {
                     let mut sub =
                         Self::collect_paths(&path, globs, follow_symlinks, max_depth, next_depth)?;
                     results.append(&mut sub);
@@ -187,11 +188,10 @@ impl DirectoryWalkAdapter {
             }
 
             // Glob filter: test the full path string.
-            if let Some(set) = globs {
-                if !set.is_match(path.as_str()) {
+            if let Some(set) = globs
+                && !set.is_match(path.as_str()) {
                     continue;
                 }
-            }
 
             results.push(path);
         }
@@ -258,7 +258,7 @@ impl InputShapeAdapter for DirectoryWalkAdapter {
                 continue;
             }
             let fp = Self::fingerprint(&meta);
-            if cursor.get(&path).map_or(false, |prev| *prev == fp) {
+            if cursor.get(&path).is_some_and(|prev| *prev == fp) {
                 continue; // unchanged — skip
             }
             pending.push(PendingEntry {
