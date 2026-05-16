@@ -6,7 +6,7 @@
     }
   },
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "description": "Raw entity extracted from document text by the entity extractor.\n\nThis is the initial output of Stage 1 -- a lightweight signal carrying the\nentity type and the raw text span as it appeared in the source document.\nDownstream stages (resolver) canonicalize the name and assign a\ndeterministic UUIDv5 identity.",
+  "description": "Raw entity extracted from document text by the entity extractor.\n\nThis is the initial output of Stage 1 -- a lightweight signal carrying the\nentity type and the raw text span as it appeared in the source document.\nDownstream stages (resolver) canonicalize the name and assign a\ndeterministic `UUIDv5` identity.",
   "properties": {
     "confidence": {
       "description": "Extraction confidence in [0.0, 1.0].",
