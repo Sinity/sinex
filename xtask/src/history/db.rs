@@ -21,6 +21,20 @@ const LATEST_PER_PACKAGE_CTE_CLOSE: &str = "
         GROUP BY ip.package
     )
 ";
+
+pub(crate) fn non_zombie_cancel_filter(column_prefix: &str) -> String {
+    format!(
+        "NOT ({prefix}status = 'cancelled' \
+        AND ({prefix}cancel_reason IS NULL \
+             OR {prefix}cancel_reason IN (\
+                'stale_pid', \
+                'watchdog_timeout', \
+                'zombie_reaped', \
+                'zombie_escaped_watchdog'\
+             )))",
+        prefix = column_prefix
+    )
+}
 use rusqlite::{Connection, OpenFlags, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 
@@ -2546,6 +2560,16 @@ impl HistoryDb {
         command_filter: Option<&str>,
         limit: usize,
     ) -> Result<Vec<ResourceUsage>> {
+        self.get_resource_usage_with_zombies(command_filter, limit, false)
+    }
+
+    /// Get resource usage (CPU/memory) for recent invocations, optionally including zombie cancellations.
+    pub fn get_resource_usage_with_zombies(
+        &self,
+        command_filter: Option<&str>,
+        limit: usize,
+        include_zombies: bool,
+    ) -> Result<Vec<ResourceUsage>> {
         let columns = self.invocation_columns()?;
         let process_cpu_expr = if columns.contains("process_cpu_usage_avg") {
             "process_cpu_usage_avg"
@@ -2697,6 +2721,10 @@ impl HistoryDb {
                      OR cpu_usage_avg IS NOT NULL
                      OR memory_usage_max_mb IS NOT NULL)",
         ));
+        if !include_zombies {
+            query.push_str(" AND ");
+            query.push_str(&non_zombie_cancel_filter(""));
+        }
         let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
         let mut param_idx = 1usize;
 
@@ -3470,6 +3498,17 @@ impl HistoryDb {
         days: u32,
         limit: usize,
     ) -> Result<Vec<InvocationTimelineEntry>> {
+        self.get_invocation_timeline_with_zombies(command, days, limit, false)
+    }
+
+    /// I4: Get cross-invocation chronological timeline, optionally including zombie cancellations.
+    pub fn get_invocation_timeline_with_zombies(
+        &self,
+        command: Option<&str>,
+        days: u32,
+        limit: usize,
+        include_zombies: bool,
+    ) -> Result<Vec<InvocationTimelineEntry>> {
         let cutoff = format_history_timestamp(
             time::OffsetDateTime::now_utc() - time::Duration::days(i64::from(days)),
             "history timeline cutoff",
@@ -3505,6 +3544,10 @@ impl HistoryDb {
               AND i.started_at >= ?1
             ",
         );
+        if !include_zombies {
+            sql.push_str(" AND ");
+            sql.push_str(&non_zombie_cancel_filter("i."));
+        }
 
         let mut params: Vec<String> = vec![cutoff];
         let mut idx = 2usize;
@@ -3569,6 +3612,16 @@ impl HistoryDb {
         limit: usize,
         gap_minutes: u32,
     ) -> Result<Vec<WorkingSession>> {
+        self.get_working_sessions_with_zombies(limit, gap_minutes, false)
+    }
+
+    /// I6: Group invocations into working sessions, optionally including zombie cancellations.
+    pub fn get_working_sessions_with_zombies(
+        &self,
+        limit: usize,
+        gap_minutes: u32,
+        include_zombies: bool,
+    ) -> Result<Vec<WorkingSession>> {
         struct Row {
             command: String,
             started_at: String,
@@ -3578,15 +3631,20 @@ impl HistoryDb {
             status: String,
         }
 
-        let mut stmt = self.conn.prepare(
+        let mut sql = String::from(
             r"
             SELECT command, started_at, finished_at, duration_secs, status
             FROM invocations
             WHERE status IN ('success', 'failed', 'cancelled')
-            ORDER BY started_at ASC
-            LIMIT 2000
             ",
-        )?;
+        );
+        if !include_zombies {
+            sql.push_str(" AND ");
+            sql.push_str(&non_zombie_cancel_filter(""));
+        }
+        sql.push_str(" ORDER BY started_at ASC LIMIT 2000");
+
+        let mut stmt = self.conn.prepare(&sql)?;
 
         let rows: Vec<Row> = stmt
             .query_map([], |row| {
@@ -6449,6 +6507,61 @@ mod tests {
         assert_eq!(resources[0].host_cpu_usage_avg, Some(12.5));
         assert_eq!(resources[0].host_memory_usage_max_mb, Some(256.0));
         assert_eq!(resources[0].process_cpu_usage_avg, None);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_history_analytics_filter_zombie_cancellations_by_default() -> TestResult<()> {
+        let db = HistoryDb::open_in_memory()?;
+
+        let success = db.start_invocation("check", None, None, None)?;
+        db.finish_invocation(success, InvocationStatus::Success, Some(0), 0.1)?;
+        db.record_system_metrics(success, 10.0, 100.0)?;
+
+        let stale = db.start_invocation("check", None, None, None)?;
+        db.finish_invocation_cancelled(stale, None, 0.2, "stale_pid", "open_time_sweep")?;
+        db.record_system_metrics(stale, 20.0, 200.0)?;
+
+        let watchdog = db.start_invocation("check", None, None, None)?;
+        db.finish_invocation_cancelled(watchdog, None, 0.3, "watchdog_timeout", "watchdog")?;
+        db.record_system_metrics(watchdog, 30.0, 300.0)?;
+
+        let user_cancel = db.start_invocation("check", None, None, None)?;
+        db.finish_invocation_cancelled(user_cancel, None, 0.4, "user_cancel", "user")?;
+        db.record_system_metrics(user_cancel, 40.0, 400.0)?;
+
+        let resource_statuses = db
+            .get_resource_usage(None, 10)?
+            .into_iter()
+            .map(|usage| usage.status)
+            .collect::<Vec<_>>();
+        assert_eq!(resource_statuses, vec!["cancelled", "success"]);
+        assert_eq!(
+            db.get_resource_usage_with_zombies(None, 10, true)?.len(),
+            4,
+            "--include-zombies path should retain forensic rows"
+        );
+
+        let timeline_ids = db
+            .get_invocation_timeline(None, 30, 10)?
+            .into_iter()
+            .map(|entry| entry.id)
+            .collect::<Vec<_>>();
+        assert_eq!(timeline_ids, vec![user_cancel, success]);
+        assert_eq!(
+            db.get_invocation_timeline_with_zombies(None, 30, 10, true)?
+                .len(),
+            4
+        );
+
+        let sessions = db.get_working_sessions(10, 30)?;
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions[0].invocation_count, 2);
+        assert_eq!(
+            db.get_working_sessions_with_zombies(10, 30, true)?[0].invocation_count,
+            4
+        );
+
         Ok(())
     }
 
