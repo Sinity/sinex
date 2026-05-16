@@ -539,7 +539,13 @@ where
             .on_shutdown_derived(&self.persisted_state.state)
             .await
             .map_err(|e| {
-                error!(node = %self.node.name(), error = %e, "Shutdown hook failed");
+                error!(
+                    target: "sinex_metrics",
+                    metric = "derive.shutdown_hook_failures_total",
+                    node = %self.node.name(),
+                    error = %e,
+                    "Shutdown hook failed"
+                );
                 e
             })?;
 

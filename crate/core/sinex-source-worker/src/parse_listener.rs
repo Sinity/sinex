@@ -162,7 +162,12 @@ async fn handle_parse_command(
     if let Some(reply) = reply_subject {
         let payload = serde_json::to_vec(&ack)?;
         if let Err(e) = client.publish(reply, payload.into()).await {
-            error!(error = %e, "Failed to send parse command ack");
+            error!(
+                target: "sinex_metrics",
+                metric = "source_worker.parse_ack_failures_total",
+                error = %e,
+                "Failed to send parse command ack"
+            );
         }
     }
 

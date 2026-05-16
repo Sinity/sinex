@@ -64,7 +64,7 @@ where
                 match js.get_stream(&stream_name).await {
                     Ok(stream) => {
                         let config = async_nats::jetstream::consumer::push::Config {
-                            deliver_subject: deliver_subject.to_string(),
+                            deliver_subject: deliver_subject.clone(),
                             deliver_group: Some(queue_group.clone()),
                             ..Default::default()
                         };
@@ -212,6 +212,8 @@ where
                             Err(e) => {
                                 self.consecutive_checkpoint_failures += 1;
                                 error!(
+                                    target: "sinex_metrics",
+                                    metric = "derive.checkpoint_failures_total",
                                     node = %node_name,
                                     error = %e,
                                     consecutive_failures = self.consecutive_checkpoint_failures,
@@ -240,7 +242,13 @@ where
         }
 
         if let Err(e) = self.save_state().await {
-            error!(node = %node_name, error = %e, "Failed to save final checkpoint after invalidation run");
+            error!(
+                target: "sinex_metrics",
+                metric = "derive.checkpoint_failures_total",
+                node = %node_name,
+                error = %e,
+                "Failed to save final checkpoint after invalidation run"
+            );
             return Err(SinexError::checkpoint(format!(
                 "Failed to save final checkpoint after invalidation run: {e}"
             )));
@@ -408,6 +416,8 @@ where
                                     .await;
                                 if let Err(cp_err) = self.save_state().await {
                                     error!(
+                                        target: "sinex_metrics",
+                                        metric = "derive.checkpoint_failures_total",
                                         node = %self.node.name(),
                                         error = %cp_err,
                                         "Failed to save checkpoint after replay processing-failure routing error"
@@ -416,9 +426,21 @@ where
                                 failure_err?;
                             }
                             Settlement::Retry { .. } => {
-                                error!(node = %self.node.name(), error = %e, "Retryable error in historical replay; halting replay");
+                                error!(
+                                    target: "sinex_metrics",
+                                    metric = "derive.replay_retry_halts_total",
+                                    node = %self.node.name(),
+                                    error = %e,
+                                    "Retryable error in historical replay; halting replay"
+                                );
                                 if let Err(cp_err) = self.save_state().await {
-                                    error!(node = %self.node.name(), error = %cp_err, "Failed to save checkpoint after replay error");
+                                    error!(
+                                        target: "sinex_metrics",
+                                        metric = "derive.checkpoint_failures_total",
+                                        node = %self.node.name(),
+                                        error = %cp_err,
+                                        "Failed to save checkpoint after replay error"
+                                    );
                                 }
                                 return Err(e.into());
                             }
@@ -429,9 +451,22 @@ where
                                 if let Some(drain) = self.shutdown_tx.as_ref() {
                                     drain.request_drain_and_warn(self.node.name());
                                 }
-                                error!(node = %self.node.name(), error = %e, reason = ?reason, "Halting node during historical replay; runtime drain requested");
+                                error!(
+                                    target: "sinex_metrics",
+                                    metric = "derive.node_halts_total",
+                                    node = %self.node.name(),
+                                    error = %e,
+                                    reason = ?reason,
+                                    "Halting node during historical replay; runtime drain requested"
+                                );
                                 if let Err(cp_err) = self.save_state().await {
-                                    error!(node = %self.node.name(), error = %cp_err, "Failed to save checkpoint after replay halt error");
+                                    error!(
+                                        target: "sinex_metrics",
+                                        metric = "derive.checkpoint_failures_total",
+                                        node = %self.node.name(),
+                                        error = %cp_err,
+                                        "Failed to save checkpoint after replay halt error"
+                                    );
                                 }
                                 return Err(SinexError::processing(format!(
                                     "Node halted during replay: {reason:?} — {e}"
@@ -441,9 +476,22 @@ where
                                 if let Some(drain) = self.shutdown_tx.as_ref() {
                                     drain.request_drain_and_warn(self.node.name());
                                 }
-                                error!(node = %self.node.name(), error = %e, reason = %reason, "Draining runtime unit during historical replay");
+                                error!(
+                                    target: "sinex_metrics",
+                                    metric = "derive.runtime_drains_total",
+                                    node = %self.node.name(),
+                                    error = %e,
+                                    reason = %reason,
+                                    "Draining runtime unit during historical replay"
+                                );
                                 if let Err(cp_err) = self.save_state().await {
-                                    error!(node = %self.node.name(), error = %cp_err, "Failed to save checkpoint after replay drain error");
+                                    error!(
+                                        target: "sinex_metrics",
+                                        metric = "derive.checkpoint_failures_total",
+                                        node = %self.node.name(),
+                                        error = %cp_err,
+                                        "Failed to save checkpoint after replay drain error"
+                                    );
                                 }
                                 return Err(SinexError::processing(format!(
                                     "Runtime unit drained during replay: {reason} — {e}"
@@ -460,6 +508,8 @@ where
             if self.should_checkpoint() {
                 self.save_state().await.map_err(|e| {
                     error!(
+                        target: "sinex_metrics",
+                        metric = "derive.checkpoint_failures_total",
                         node = %self.node.name(),
                         error = %e,
                         "Failed to save checkpoint during historical replay"
@@ -477,7 +527,13 @@ where
         }
 
         if let Err(e) = self.save_state().await {
-            error!(node = %self.node.name(), error = %e, "Failed to save checkpoint after replay");
+            error!(
+                target: "sinex_metrics",
+                metric = "derive.checkpoint_failures_total",
+                node = %self.node.name(),
+                error = %e,
+                "Failed to save checkpoint after replay"
+            );
             return Err(SinexError::checkpoint(format!(
                 "Failed to save checkpoint after historical replay: {e}"
             )));

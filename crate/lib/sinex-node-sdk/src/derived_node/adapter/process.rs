@@ -263,7 +263,13 @@ where
                         Ok(Vec::new())
                     }
                     Settlement::Retry { .. } => {
-                        error!(node = %self.node.name(), error = %e, "Retryable error; halting batch");
+                        error!(
+                            target: "sinex_metrics",
+                            metric = "derive.batch_retry_halts_total",
+                            node = %self.node.name(),
+                            error = %e,
+                            "Retryable error; halting batch"
+                        );
                         Err(e.into())
                     }
                     Settlement::HaltNode { reason } => {
@@ -274,7 +280,14 @@ where
                         if let Some(drain) = self.shutdown_tx.as_ref() {
                             drain.request_drain_and_warn(self.node.name());
                         }
-                        error!(node = %self.node.name(), error = %e, reason = ?reason, "Halting node; runtime drain requested");
+                        error!(
+                            target: "sinex_metrics",
+                            metric = "derive.node_halts_total",
+                            node = %self.node.name(),
+                            error = %e,
+                            reason = ?reason,
+                            "Halting node; runtime drain requested"
+                        );
                         Err(SinexError::processing(format!(
                             "Node halted: {reason:?} — {e}"
                         )))
@@ -285,7 +298,14 @@ where
                         if let Some(drain) = self.shutdown_tx.as_ref() {
                             drain.request_drain_and_warn(self.node.name());
                         }
-                        error!(node = %self.node.name(), error = %e, reason = %reason, "Draining runtime unit");
+                        error!(
+                            target: "sinex_metrics",
+                            metric = "derive.runtime_drains_total",
+                            node = %self.node.name(),
+                            error = %e,
+                            reason = %reason,
+                            "Draining runtime unit"
+                        );
                         Err(SinexError::processing(format!(
                             "Runtime unit drained: {reason} — {e}"
                         )))
@@ -310,7 +330,13 @@ where
             match self.process_one(event).await {
                 Ok(mut output_events) => outputs.append(&mut output_events),
                 Err(e) => {
-                    error!(node = %self.node.name(), error = %e, "Retryable error processing event in batch; halting batch");
+                    error!(
+                        target: "sinex_metrics",
+                        metric = "derive.batch_retry_halts_total",
+                        node = %self.node.name(),
+                        error = %e,
+                        "Retryable error processing event in batch; halting batch"
+                    );
                     retry_error = Some(e);
                     break;
                 }
@@ -325,6 +351,8 @@ where
                 Err(e) => {
                     self.consecutive_checkpoint_failures += 1;
                     error!(
+                        target: "sinex_metrics",
+                        metric = "derive.checkpoint_failures_total",
                         node = %self.node.name(),
                         error = %e,
                         consecutive_failures = self.consecutive_checkpoint_failures,

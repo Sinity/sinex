@@ -632,10 +632,13 @@ impl FilesystemNode {
                             attempt += 1;
                             if attempt >= MAX_INIT_ATTEMPTS {
                                 error!(
+                                    target: "sinex_metrics",
+                                    metric = "source_worker.watcher_init_failures_total",
                                     path = %root_path,
                                     attempts = attempt,
-                                    "Failed to initialize watcher after {} attempts: {}",
-                                    MAX_INIT_ATTEMPTS, error
+                                    error = %error,
+                                    "Failed to initialize watcher after {} attempts",
+                                    MAX_INIT_ATTEMPTS
                                 );
                                 return Err(error.with_context("watch_root", root_path.clone()));
                             }
@@ -2231,6 +2234,8 @@ fn handle_watcher_callback(
             let error_count = error_counter.fetch_add(1, Ordering::Relaxed) + 1;
             if error_count == 1 || error_count.is_multiple_of(100) {
                 error!(
+                    target: "sinex_metrics",
+                    metric = "source_worker.watcher_errors_total",
                     watcher_errors = error_count,
                     error = %error,
                     watcher_mode,
