@@ -27,6 +27,7 @@ use sinex_node_sdk::derived_node::{DerivedOutput, DerivedTriggerContext, Transdu
 use sinex_node_sdk::tags;
 use sinex_node_sdk::{InputProvenanceFilter, NodeLogicError, TransducerNode};
 use sinex_primitives::events::payloads::KnowledgeTagAppliedPayload;
+use sinex_primitives::events::EventPayload;
 use sinex_primitives::privacy::ProcessingContext;
 
 #[derive(Debug, Clone, Default)]
@@ -46,7 +47,11 @@ impl TransducerNode for TagApplier {
     }
 
     fn output_event_type(&self) -> &'static str {
-        "knowledge.tag_applied"
+        KnowledgeTagAppliedPayload::EVENT_TYPE.as_static_str()
+    }
+
+    fn output_event_source(&self) -> &'static str {
+        KnowledgeTagAppliedPayload::SOURCE.as_static_str()
     }
 
     fn output_privacy_context(&self) -> ProcessingContext {
