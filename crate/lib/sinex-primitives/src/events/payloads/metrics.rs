@@ -301,7 +301,7 @@ pub struct ReplayStatsPayload {
 #[event_payload(
     source = "sinex.ingestd",
     event_type = "batch.stats",
-    version = "2.0.0"
+    version = "2.1.0"
 )]
 pub struct IngestdBatchStatsPayload {
     /// Number of events in this batch
@@ -331,6 +331,9 @@ pub struct IngestdBatchStatsPayload {
     pub validation_coverage_pct: f64,
     /// Cumulative count of events whose `ts_orig` is implausibly far in the future.
     pub suspicious_future_ts_orig: u64,
+    /// Cumulative count of failures emitting observer telemetry gauges.
+    /// Non-zero indicates the self-observation NATS channel is degraded.
+    pub telemetry_publish_failures: u64,
 }
 
 /// Startup snapshot for a JetStream pull consumer.

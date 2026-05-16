@@ -374,6 +374,7 @@ struct ConsumerStats {
     dlq_publish_failures: AtomicU64,
     nack_failures: AtomicU64,
     nats_errors: AtomicU64,
+    telemetry_publish_failures: AtomicU64,
 }
 
 impl ConsumerStats {
@@ -397,13 +398,21 @@ impl ConsumerStats {
                 self.confirmation_durability_gaps.load(Ordering::Relaxed),
             dlq_publish_failures = self.dlq_publish_failures.load(Ordering::Relaxed),
             nack_failures = self.nack_failures.load(Ordering::Relaxed),
+            telemetry_publish_failures = self.telemetry_publish_failures.load(Ordering::Relaxed),
             "JetStream consumer stats"
         );
     }
 }
 
 impl JetStreamConsumer {
-    fn log_observer_error(metric: &'static str, error: &sinex_node_sdk::SelfObservationError) {
+    fn log_observer_error(
+        stats: &ConsumerStats,
+        metric: &'static str,
+        error: &sinex_node_sdk::SelfObservationError,
+    ) {
+        stats
+            .telemetry_publish_failures
+            .fetch_add(1, Ordering::Relaxed);
         warn!(metric, error = %error, "Failed to emit ingestd telemetry");
     }
 
@@ -447,7 +456,7 @@ impl JetStreamConsumer {
         if let Some(ref observer) = self.observer
             && let Err(error) = observer.emit_gauge(metric, value, labels).await
         {
-            Self::log_observer_error(metric, &error);
+            Self::log_observer_error(&self.stats, metric, &error);
         }
     }
 
@@ -1076,10 +1085,11 @@ impl JetStreamConsumer {
                     val_stats.invalid,
                     val_stats.coverage_pct(),
                     suspicious_future_ts_orig,
+                    self.stats.telemetry_publish_failures.load(Ordering::Relaxed),
                 )
                 .await
             {
-                Self::log_observer_error("ingestd.batch", &error);
+                Self::log_observer_error(&self.stats, "ingestd.batch", &error);
             }
         }
 
@@ -2462,7 +2472,7 @@ impl JetStreamConsumer {
                                 )
                                 .await
                         {
-                            Self::log_observer_error("ingestd.stream", &error);
+                            Self::log_observer_error(&self.stats, "ingestd.stream", &error);
                         }
 
                         // Check message count capacity
