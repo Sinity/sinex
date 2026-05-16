@@ -249,6 +249,9 @@ async fn _run_obligation(
 #[path = "production_path/browser.rs"]
 mod browser;
 
+#[path = "production_path/desktop.rs"]
+mod desktop;
+
 #[path = "production_path/document.rs"]
 mod document;
 
