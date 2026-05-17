@@ -166,6 +166,7 @@ journalctl -u sinex-gateway -u sinex-ingestd -f
 | Build a node or derived service | [crate/lib/sinex-node-sdk/docs/overview.md](crate/lib/sinex-node-sdk/docs/overview.md) |
 | Understand event schemas | [crate/lib/sinex-schema/docs/event-taxonomy.md](crate/lib/sinex-schema/docs/event-taxonomy.md) |
 | Define current-state projections for event-native domains | [docs/architecture/domain-reducers.md](docs/architecture/domain-reducers.md) |
+| Model tasks as event-native workflow objects | [docs/architecture/task-domain.md](docs/architecture/task-domain.md) |
 | Model declarations, omissions, and conceptual time | [docs/architecture/declarations-and-conceptual-time.md](docs/architecture/declarations-and-conceptual-time.md) |
 | Design interval-backed moment queries | [docs/architecture/moment-evidence-windows.md](docs/architecture/moment-evidence-windows.md) |
 | Explain semantic composition beyond ancestry trace | [docs/architecture/semantic-trace-teardown.md](docs/architecture/semantic-trace-teardown.md) |
