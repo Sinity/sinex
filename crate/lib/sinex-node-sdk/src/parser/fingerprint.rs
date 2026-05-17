@@ -42,6 +42,7 @@ use sinex_primitives::temporal::Timestamp;
 
 const MAX_JSON_FINGERPRINT_DEPTH: usize = 8;
 const MAX_JSON_FINGERPRINT_FIELDS: usize = 512;
+const MAX_DELIMITED_FINGERPRINT_FIELDS: usize = 512;
 
 // =============================================================================
 // SourceRecordFingerprint
@@ -104,6 +105,38 @@ impl SourceRecordFingerprint {
         fingerprint
     }
 
+    /// Creates a fingerprint from a CSV record.
+    ///
+    /// Header names are the shape keys. Value samples are only used for coarse
+    /// type inference and are not retained in the fingerprint.
+    #[must_use]
+    pub fn from_csv_record(headers: &[String], fields: &[String]) -> Self {
+        Self::from_delimited_record("csv", headers, fields)
+    }
+
+    /// Creates a fingerprint from a TSV record.
+    ///
+    /// Header names are the shape keys. Value samples are only used for coarse
+    /// type inference and are not retained in the fingerprint.
+    #[must_use]
+    pub fn from_tsv_record(headers: &[String], fields: &[String]) -> Self {
+        Self::from_delimited_record("tsv", headers, fields)
+    }
+
+    /// Creates a fingerprint from CSV bytes by reading the header row and first
+    /// data row. Empty inputs and header-only inputs still produce a stable
+    /// structural fingerprint of the visible columns.
+    pub fn from_csv_bytes(bytes: &[u8]) -> Result<Self, csv::Error> {
+        Self::from_delimited_bytes("csv", b',', bytes)
+    }
+
+    /// Creates a fingerprint from TSV bytes by reading the header row and first
+    /// data row. Empty inputs and header-only inputs still produce a stable
+    /// structural fingerprint of the visible columns.
+    pub fn from_tsv_bytes(bytes: &[u8]) -> Result<Self, csv::Error> {
+        Self::from_delimited_bytes("tsv", b'\t', bytes)
+    }
+
     /// Creates a fingerprint from a `SourceRecord`.
     ///
     /// Dispatches based on record format (currently only JSON is fully supported).
@@ -121,6 +154,69 @@ impl SourceRecordFingerprint {
             type_map: BTreeMap::new(),
             blake3_hash: Self::compute_opaque_hash(&record.bytes),
         }
+    }
+
+    fn from_delimited_bytes(format: &str, delimiter: u8, bytes: &[u8]) -> Result<Self, csv::Error> {
+        if bytes.iter().all(u8::is_ascii_whitespace) {
+            return Ok(Self::from_delimited_record(format, &[], &[]));
+        }
+
+        let mut reader = csv::ReaderBuilder::new()
+            .delimiter(delimiter)
+            .flexible(true)
+            .from_reader(bytes);
+        let headers = reader
+            .headers()?
+            .iter()
+            .map(str::to_string)
+            .collect::<Vec<_>>();
+        let mut records = reader.records();
+        let fields = match records.next().transpose()? {
+            Some(record) => record.iter().map(str::to_string).collect::<Vec<_>>(),
+            None => Vec::new(),
+        };
+        Ok(Self::from_delimited_record(format, &headers, &fields))
+    }
+
+    fn from_delimited_record(format: &str, headers: &[String], fields: &[String]) -> Self {
+        let mut type_map = BTreeMap::new();
+        let mut keys = Vec::new();
+
+        for (idx, header) in headers
+            .iter()
+            .take(MAX_DELIMITED_FINGERPRINT_FIELDS)
+            .enumerate()
+        {
+            let key = normalize_delimited_header(idx, header);
+            keys.push(key.clone());
+            let inferred = fields
+                .get(idx)
+                .map_or_else(|| "missing".to_string(), |value| infer_text_type(value));
+            type_map.insert(key, inferred);
+        }
+
+        let remaining_capacity = MAX_DELIMITED_FINGERPRINT_FIELDS.saturating_sub(keys.len());
+        for idx in headers.len()..headers.len().saturating_add(remaining_capacity) {
+            if let Some(value) = fields.get(idx) {
+                let key = format!("__extra_{idx}");
+                keys.push(key.clone());
+                type_map.insert(key, infer_text_type(value));
+            }
+        }
+
+        keys.sort();
+        keys.dedup();
+
+        let fp = Self {
+            format: format.to_string(),
+            keys: keys.clone(),
+            type_map: type_map.clone(),
+            blake3_hash: String::new(),
+        };
+
+        let mut fingerprint = fp;
+        fingerprint.blake3_hash = fingerprint.compute_hash();
+        fingerprint
     }
 
     /// Extracts JSON Pointer paths and their inferred types from a JSON value.
@@ -502,6 +598,32 @@ fn join_json_pointer(parent: &str, key: &str) -> String {
     }
 }
 
+fn normalize_delimited_header(idx: usize, header: &str) -> String {
+    let trimmed = header.trim();
+    if trimmed.is_empty() {
+        format!("column_{idx}")
+    } else {
+        trimmed.to_string()
+    }
+}
+
+fn infer_text_type(value: &str) -> String {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return "empty".to_string();
+    }
+    if trimmed.eq_ignore_ascii_case("true") || trimmed.eq_ignore_ascii_case("false") {
+        return "boolean".to_string();
+    }
+    if trimmed.parse::<i64>().is_ok() || trimmed.parse::<u64>().is_ok() {
+        return "integer".to_string();
+    }
+    if trimmed.parse::<f64>().is_ok() {
+        return "number".to_string();
+    }
+    "string".to_string()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -611,6 +733,67 @@ mod tests {
         let fp2 = SourceRecordFingerprint::from_json(&value2);
 
         assert_ne!(fp1.hash(), fp2.hash());
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_from_csv_bytes_infers_header_shape() -> xtask::sandbox::TestResult<()> {
+        let fp =
+            SourceRecordFingerprint::from_csv_bytes(b"id,name,active,score\n42,Alice,true,98.5\n")?;
+
+        assert_eq!(fp.format, "csv");
+        assert_eq!(fp.keys, vec!["active", "id", "name", "score"]);
+        assert_eq!(fp.type_map["id"], "integer");
+        assert_eq!(fp.type_map["name"], "string");
+        assert_eq!(fp.type_map["active"], "boolean");
+        assert_eq!(fp.type_map["score"], "number");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_from_tsv_bytes_detects_missing_and_extra_columns()
+    -> xtask::sandbox::TestResult<()> {
+        let fp = SourceRecordFingerprint::from_tsv_bytes(b"id\tname\n42\tAlice\tunexpected\n")?;
+
+        assert_eq!(fp.format, "tsv");
+        assert_eq!(fp.keys, vec!["__extra_2", "id", "name"]);
+        assert_eq!(fp.type_map["__extra_2"], "string");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_from_csv_bytes_handles_empty_input() -> xtask::sandbox::TestResult<()> {
+        let fp = SourceRecordFingerprint::from_csv_bytes(b"  \n\t")?;
+
+        assert_eq!(fp.format, "csv");
+        assert!(fp.keys.is_empty());
+        assert!(fp.type_map.is_empty());
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_csv_drift_reports_header_and_type_changes() -> xtask::sandbox::TestResult<()> {
+        let source_unit = SourceUnitId::from_static("test.csv");
+        let mut acc = DriftAccumulator::new(source_unit)
+            .with_emit_every_n_records(1)
+            .with_cooldown_secs(0);
+        let fp1 = SourceRecordFingerprint::from_csv_bytes(b"id,name,score\n42,Alice,98.5\n")?;
+        let fp2 = SourceRecordFingerprint::from_csv_bytes(b"id,full_name,score\n42,Alice,high\n")?;
+
+        acc.observe(&fp1);
+        let drift = acc.observe(&fp2).expect("csv shape drift should emit");
+
+        assert_eq!(drift.format, "csv");
+        assert_eq!(drift.added_keys, vec!["full_name"]);
+        assert_eq!(drift.removed_keys, vec!["name"]);
+        assert_eq!(
+            drift.type_changes,
+            vec![(
+                "score".to_string(),
+                "number".to_string(),
+                "string".to_string()
+            )]
+        );
         Ok(())
     }
 

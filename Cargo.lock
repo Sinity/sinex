@@ -5540,6 +5540,7 @@ dependencies = [
  "camino",
  "clap",
  "color-eyre",
+ "csv",
  "dirs",
  "futures",
  "gethostname 0.4.3",
