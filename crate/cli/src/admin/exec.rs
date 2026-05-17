@@ -165,6 +165,68 @@ pub fn tar_verify(archive_path: &Path) -> Result<usize> {
     Ok(count)
 }
 
+/// List a zstd-compressed tar archive.
+pub fn tar_list_zstd(archive_path: &Path) -> Result<Vec<String>> {
+    let output = Command::new("tar")
+        .args([
+            "--use-compress-program=zstd",
+            "-tf",
+            archive_path
+                .to_str()
+                .ok_or_else(|| eyre!("archive path is not valid UTF-8"))?,
+        ])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .context("spawn tar for zstd archive listing")?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        bail!(
+            "tar listing failed (exit {}): {}",
+            output.status.code().unwrap_or(-1),
+            stderr.trim()
+        );
+    }
+
+    Ok(String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(str::to_string)
+        .collect())
+}
+
+/// Read one member from a zstd-compressed tar archive.
+pub fn tar_read_file_zstd(archive_path: &Path, member: &str) -> Result<Vec<u8>> {
+    let output = Command::new("tar")
+        .args([
+            "--use-compress-program=zstd",
+            "-xOf",
+            archive_path
+                .to_str()
+                .ok_or_else(|| eyre!("archive path is not valid UTF-8"))?,
+            member,
+        ])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .with_context(|| format!("spawn tar to read {member} from archive"))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        bail!(
+            "tar read failed for {member} (exit {}): {}",
+            output.status.code().unwrap_or(-1),
+            stderr.trim()
+        );
+    }
+
+    Ok(output.stdout)
+}
+
 /// Check which sinex systemd services are currently active.
 ///
 /// Returns the list of active unit names matching `sinex-*`.  If `systemctl`
