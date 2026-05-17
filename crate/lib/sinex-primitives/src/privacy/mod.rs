@@ -20,10 +20,15 @@ mod detector;
 mod engine;
 mod envelope;
 pub mod field;
+pub mod private_mode;
 
 pub use config::{PrivacyConfig, PrivacyConfigError};
 pub use engine::PrivacyEngine;
 pub use field::{FieldPrivacyDecision, parser_field_privacy};
+pub use private_mode::{
+    PRIVATE_MODE_STATE_RELATIVE_PATH, PrivateModeReasonClass, RuntimePrivateModeState,
+    load_private_mode_state, private_mode_state_path, save_private_mode_state,
+};
 
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
