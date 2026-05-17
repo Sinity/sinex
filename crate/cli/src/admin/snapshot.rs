@@ -163,9 +163,14 @@ impl AdminSnapshotCommand {
             .clone()
             .unwrap_or_else(|| PathBuf::from("/var/lib/sinex"));
 
-        let database_url = self.database_url.clone().ok_or_else(|| {
-            eyre!("DATABASE_URL must be set (or pass --database-url) for Postgres capture")
-        })?;
+        let captures_postgres = self.components.iter().any(|c| c == &Component::Postgres);
+        let database_url = if captures_postgres {
+            Some(self.database_url.clone().ok_or_else(|| {
+                eyre!("DATABASE_URL must be set (or pass --database-url) for Postgres capture")
+            })?)
+        } else {
+            self.database_url.clone()
+        };
 
         // 1. Generate a snapshot ID (UUIDv7 formatted as a string).
         let snapshot_id = gen_snapshot_id();
@@ -226,7 +231,7 @@ impl AdminSnapshotCommand {
             &snapshot_id,
             &created_at,
             &state_dir,
-            &database_url,
+            database_url.as_deref(),
             &mut staging,
         );
 
@@ -244,7 +249,7 @@ impl AdminSnapshotCommand {
         snapshot_id: &str,
         created_at: &str,
         state_dir: &Path,
-        database_url: &str,
+        database_url: Option<&str>,
         staging: &mut StagingDir,
     ) -> Result<SnapshotResult> {
         let mut component_records: Vec<ComponentRecord> = Vec::new();
@@ -253,6 +258,9 @@ impl AdminSnapshotCommand {
 
         // 5–8. Capture each component.
         if component_set.contains("postgres") {
+            let database_url = database_url.ok_or_else(|| {
+                eyre!("DATABASE_URL must be set (or pass --database-url) for Postgres capture")
+            })?;
             let record = self.capture_postgres(database_url, staging, self.dry_run)?;
             component_records.push(record);
         }
