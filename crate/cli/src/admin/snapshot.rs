@@ -137,6 +137,7 @@ pub struct SnapshotResult {
     pub output_path: Option<String>,
     pub archive_bytes: Option<u64>,
     pub uncompressed_bytes: u64,
+    pub source_unit_ids: Vec<String>,
     pub components_captured: Vec<ComponentSummary>,
 }
 
@@ -307,6 +308,7 @@ impl AdminSnapshotCommand {
 
         // 9. Write manifest.
         let uncompressed_bytes: u64 = component_records.iter().map(|r| r.bytes).sum();
+        let source_unit_ids = discover_source_unit_ids(state_dir);
 
         let manifest = SnapshotManifest {
             snapshot_id: snapshot_id.to_string(),
@@ -315,6 +317,7 @@ impl AdminSnapshotCommand {
             git_sha: git_sha(),
             host: hostname(),
             mode: "quiesce".to_string(),
+            source_unit_ids: source_unit_ids.clone(),
             components: component_records.clone(),
             totals: Totals {
                 uncompressed_bytes,
@@ -346,6 +349,7 @@ impl AdminSnapshotCommand {
                 output_path: None,
                 archive_bytes: None,
                 uncompressed_bytes,
+                source_unit_ids,
                 components_captured: summaries,
             });
         }
@@ -378,6 +382,7 @@ impl AdminSnapshotCommand {
             output_path: Some(self.output.display().to_string()),
             archive_bytes: Some(archive_bytes),
             uncompressed_bytes,
+            source_unit_ids,
             components_captured: summaries,
         })
     }
@@ -551,6 +556,38 @@ fn git_sha() -> Option<String> {
     } else {
         None
     }
+}
+
+fn discover_source_unit_ids(state_dir: &Path) -> Vec<String> {
+    let candidates = [
+        state_dir.join("source-units.json"),
+        PathBuf::from("docs/source-units.json"),
+    ];
+
+    for candidate in candidates {
+        if let Ok(data) = std::fs::read_to_string(&candidate)
+            && let Some(ids) = parse_source_unit_ids(&data)
+            && !ids.is_empty()
+        {
+            return ids;
+        }
+    }
+
+    Vec::new()
+}
+
+fn parse_source_unit_ids(data: &str) -> Option<Vec<String>> {
+    let value: serde_json::Value = serde_json::from_str(data).ok()?;
+    let mut ids: Vec<String> = value
+        .get("source_units")?
+        .as_array()?
+        .iter()
+        .filter_map(|unit| unit.get("id")?.as_str())
+        .map(str::to_string)
+        .collect();
+    ids.sort();
+    ids.dedup();
+    Some(ids)
 }
 
 /// Estimate total bytes under a directory tree (best-effort, ignores errors).
@@ -734,6 +771,10 @@ pub fn format_snapshot_result(result: &SnapshotResult) -> String {
     out.push_str(&format!(
         "  Uncompressed: {}\n",
         format_bytes(result.uncompressed_bytes)
+    ));
+    out.push_str(&format!(
+        "  Source units: {}\n",
+        result.source_unit_ids.len()
     ));
     if let Some(archive_bytes) = result.archive_bytes {
         out.push_str(&format!("  Archive: {}\n", format_bytes(archive_bytes)));

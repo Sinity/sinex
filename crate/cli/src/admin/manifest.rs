@@ -21,6 +21,9 @@ pub struct SnapshotManifest {
     pub host: String,
     /// Snapshot mode — currently always `"quiesce"`.
     pub mode: String,
+    /// Source-unit IDs known at snapshot time.
+    #[serde(default)]
+    pub source_unit_ids: Vec<String>,
     /// Per-component capture records.
     pub components: Vec<ComponentRecord>,
     /// Aggregate size summary.
