@@ -796,8 +796,20 @@ fn build_registry_impl() -> RpcRegistry {
             Role::Write,
             |params, services, auth| {
                 Box::pin(async move {
-                    handle_private_mode_enable(services.pool(), services.state_dir(), params, auth)
-                        .await
+                    let nats = services.nats_client().ok_or_else(|| {
+                        SinexError::configuration(
+                            "NATS client is not available for private-mode broadcast",
+                        )
+                    })?;
+                    let control = Some((nats, services.environment()));
+                    handle_private_mode_enable(
+                        services.pool(),
+                        services.state_dir(),
+                        control,
+                        params,
+                        auth,
+                    )
+                    .await
                 })
             },
         )
@@ -806,8 +818,20 @@ fn build_registry_impl() -> RpcRegistry {
             Role::Write,
             |params, services, auth| {
                 Box::pin(async move {
-                    handle_private_mode_disable(services.pool(), services.state_dir(), params, auth)
-                        .await
+                    let nats = services.nats_client().ok_or_else(|| {
+                        SinexError::configuration(
+                            "NATS client is not available for private-mode broadcast",
+                        )
+                    })?;
+                    let control = Some((nats, services.environment()));
+                    handle_private_mode_disable(
+                        services.pool(),
+                        services.state_dir(),
+                        control,
+                        params,
+                        auth,
+                    )
+                    .await
                 })
             },
         )
