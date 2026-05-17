@@ -190,6 +190,25 @@ pub(crate) fn read_ingestd_debug_log(path: &std::path::Path) -> Result<Option<St
     }
 }
 
+fn format_ingestd_debug_context(debug_log: &std::path::Path) -> String {
+    match read_ingestd_debug_log(debug_log) {
+        Ok(Some(content)) => {
+            let end = content.floor_char_boundary(3000);
+            format!(
+                "ingestd debug log at {} ({} bytes):\n{}",
+                debug_log.display(),
+                content.len(),
+                &content[..end]
+            )
+        }
+        Ok(None) => format!("ingestd debug log at {} was empty", debug_log.display()),
+        Err(log_error) => format!(
+            "ingestd debug log at {} unavailable: {log_error:#}",
+            debug_log.display()
+        ),
+    }
+}
+
 fn notify_socket_path(prefix: &str) -> Result<PathBuf> {
     let base = PathBuf::from("/tmp");
     std::fs::create_dir_all(&base)
@@ -1084,14 +1103,20 @@ pub async fn start_test_ingestd_with_config(
         // but don't initialize NATS on the sandbox.
         if let Ok(nats) = sandbox.nats_handle() {
             let _ = nats;
-            wait_for_ready_notify(
+            if let Err(error) = wait_for_ready_notify(
                 "sinex-ingestd",
                 &notify_listener,
                 &mut child,
                 Duration::from_secs(Timeouts::STANDARD),
             )
             .await
-            .wrap_err("ingestd did not reach systemd READY state")?;
+            {
+                let _ = std::fs::remove_file(&notify_socket_path);
+                let _ = child.start_kill();
+                return Err(error)
+                    .wrap_err(format_ingestd_debug_context(&debug_log))
+                    .wrap_err("ingestd did not reach systemd READY state");
+            }
         }
     }
     let _ = std::fs::remove_file(&notify_socket_path);
@@ -1327,6 +1352,19 @@ mod tests {
             read_ingestd_debug_log(&debug_log)?,
             Some("line one\nline two\n".to_string())
         );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn format_ingestd_debug_context_includes_path_size_and_content() -> TestResult<()> {
+        let tempdir = tempfile::tempdir()?;
+        let debug_log = tempdir.path().join("ingestd.log");
+        fs::write(&debug_log, "startup failed\nmissing stream\n")?;
+        let context = format_ingestd_debug_context(&debug_log);
+
+        assert!(context.contains(debug_log.display().to_string().as_str()));
+        assert!(context.contains("(30 bytes)"));
+        assert!(context.contains("startup failed\nmissing stream\n"));
         Ok(())
     }
 
