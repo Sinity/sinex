@@ -12,7 +12,7 @@ use sinex_primitives::parser::{InputShapeKind, MaterialAnchor, SourceRecord};
 
 #[cfg(feature = "messaging")]
 use crate::parser::adapters::{SnapshotLaneSpec, SqliteSnapshotConfig};
-use crate::parser::{InputShapeAdapter, ParserError, ParserResult};
+use crate::parser::{InputShapeAdapter, ParserError, ParserResult, SourceRecordFingerprint};
 
 // =============================================================================
 // SqliteRowAdapter
@@ -48,6 +48,36 @@ impl SqliteRowAdapter {
     #[must_use]
     pub fn path(&self) -> &str {
         &self.path
+    }
+
+    fn effective_path(&self, config: &SqliteRowConfig) -> String {
+        if config.path.is_empty() {
+            self.path.clone()
+        } else {
+            config.path.clone()
+        }
+    }
+
+    fn open_connection(
+        path: &str,
+        read_only: bool,
+        immutable: bool,
+    ) -> rusqlite::Result<rusqlite::Connection> {
+        let mut flags = rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX;
+        if read_only {
+            flags |=
+                rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_URI;
+            let uri = if immutable {
+                format!("file:{path}?immutable=1&mode=ro")
+            } else {
+                format!("file:{path}?mode=ro")
+            };
+            rusqlite::Connection::open_with_flags(&uri, flags)
+        } else {
+            flags |= rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE
+                | rusqlite::OpenFlags::SQLITE_OPEN_CREATE;
+            rusqlite::Connection::open_with_flags(path, flags)
+        }
     }
 }
 
@@ -199,11 +229,7 @@ impl InputShapeAdapter for SqliteRowAdapter {
         cursor: Option<Self::Cursor>,
     ) -> ParserResult<BoxStream<'static, ParserResult<SourceRecord>>> {
         // Config path takes priority; fall back to constructor-supplied path.
-        let path = if config.path.is_empty() {
-            self.path.clone()
-        } else {
-            config.path.clone()
-        };
+        let path = self.effective_path(config);
         let table = config.table.clone();
         let rowid_col = config.rowid_column.clone();
         let last_rowid = cursor.map_or(0, |c| c.last_rowid);
@@ -228,24 +254,10 @@ impl InputShapeAdapter for SqliteRowAdapter {
         // Trade-off: data added by the writer after we open is not visible
         // until the next adapter open() — acceptable because we re-open per
         // scan/poll cycle.
-        let mut flags = rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX;
-        let connection = if config.read_only {
-            flags |=
-                rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_URI;
-            let uri = if config.immutable {
-                format!("file:{path}?immutable=1&mode=ro")
-            } else {
-                // Sources with concurrent writers (e.g. aw-server-rust) must
-                // open without immutable=1 so SQLite can read through WAL.
-                format!("file:{path}?mode=ro")
-            };
-            rusqlite::Connection::open_with_flags(&uri, flags)
-        } else {
-            flags |= rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE
-                | rusqlite::OpenFlags::SQLITE_OPEN_CREATE;
-            rusqlite::Connection::open_with_flags(&path, flags)
-        }
-        .map_err(|e| ParserError::Adapter(format!("failed to open SQLite database {path}: {e}")))?;
+        let connection =
+            Self::open_connection(&path, config.read_only, config.immutable).map_err(|e| {
+                ParserError::Adapter(format!("failed to open SQLite database {path}: {e}"))
+            })?;
 
         let batch_size = config.batch_size;
         let (sql, bind_rowid) = if last_rowid > 0 {
@@ -335,6 +347,22 @@ impl InputShapeAdapter for SqliteRowAdapter {
             .collect();
 
         Ok(stream::iter(records).boxed())
+    }
+
+    fn input_fingerprint(
+        &self,
+        config: &Self::Config,
+    ) -> ParserResult<Option<SourceRecordFingerprint>> {
+        let path = self.effective_path(config);
+        let connection =
+            Self::open_connection(&path, config.read_only, config.immutable).map_err(|e| {
+                ParserError::Adapter(format!("failed to open SQLite database {path}: {e}"))
+            })?;
+        let fingerprint =
+            SourceRecordFingerprint::from_sqlite_connection(&connection).map_err(|e| {
+                ParserError::Adapter(format!("failed to fingerprint SQLite schema: {e}"))
+            })?;
+        Ok(Some(fingerprint))
     }
 
     fn cursor_after(&self, record: &SourceRecord) -> ParserResult<Self::Cursor> {
@@ -460,6 +488,33 @@ mod tests {
         let records2: Vec<_> = stream2.collect().await;
 
         assert_eq!(records2.len(), 2);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_sqlite_input_fingerprint_reports_schema_shape() -> xtask::sandbox::TestResult<()>
+    {
+        let db = make_test_db();
+        let adapter = SqliteRowAdapter::new(db.path().to_str().unwrap());
+        let config = SqliteRowConfig {
+            query: "SELECT rowid, * FROM items".into(),
+            table: "items".into(),
+            rowid_column: "rowid".into(),
+            ..Default::default()
+        };
+
+        let fingerprint = adapter
+            .input_fingerprint(&config)
+            .expect("fingerprint SQLite input shape")
+            .expect("SQLite adapter should expose a fingerprint");
+
+        assert_eq!(fingerprint.format, "sqlite_schema");
+        assert!(fingerprint.keys.contains(&"table:items".to_string()));
+        assert!(fingerprint.keys.contains(&"items.name".to_string()));
+        assert_eq!(
+            fingerprint.type_map["items.name"],
+            "text;not_null=false;pk=0"
+        );
         Ok(())
     }
 

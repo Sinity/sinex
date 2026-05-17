@@ -189,6 +189,19 @@ pub trait InputShapeAdapter: Send + Sync {
         cursor: Option<Self::Cursor>,
     ) -> ParserResult<BoxStream<'static, ParserResult<SourceRecord>>>;
 
+    /// Optionally compute a bounded structural fingerprint for the input
+    /// substrate before row/record parsing.
+    ///
+    /// Adapters with a cheap schema/header surface can override this so
+    /// callers can compare upstream shape before parser logic silently
+    /// degrades. The default keeps existing adapters out of the drift path.
+    fn input_fingerprint(
+        &self,
+        _config: &Self::Config,
+    ) -> ParserResult<Option<SourceRecordFingerprint>> {
+        Ok(None)
+    }
+
     /// Compute the cursor position after consuming `record`.
     ///
     /// This is called by the runtime after each record is successfully
