@@ -8,6 +8,11 @@ the SDK capture/porting slice from
 [#493](https://github.com/Sinity/sinex/issues/493) are implemented. Retention
 policy and snapshot-backed reinterpretation remain follow-up work.
 
+Update for [#1285](https://github.com/Sinity/sinex/issues/1285): SQLite
+row-stream material is long-lived and rotates by size/time policy. The older
+shape that created a source-material registry row for every tiny poll cycle, or
+effectively for every row, is superseded.
+
 ## Decision
 
 SQLite-backed sources should keep the existing SDK row-stream lane as the
@@ -20,6 +25,11 @@ history should continue to cite byte ranges inside SDK-managed JSONL stream
 materials. Those bytes are the acquisition payload: the exact rows sinex read,
 serialized in stable observation order, privacy-processed by the owning node,
 and validated through the normal NATS -> ingestd -> DB pipeline.
+
+The row-stream material is not per poll and not per row. It is a growing
+`AppendStreamAcquirer` material held across many adapter drain cycles and
+rotated by policy. The default rotation policy is 100 MiB or one hour, with
+tests allowed to use smaller thresholds to prove rotation behavior quickly.
 
 Add periodic SQLite database snapshots as evidence materials linked to the
 row-stream materials that were acquired from that live database. These snapshots
@@ -73,12 +83,21 @@ The current implementation already has the right acquisition shape:
 - `BufferedRecordSourceHarness` applies one retry/skip cursor policy.
 - `BufferedRecordMaterializer` appends stable per-record bytes and returns
   exact source-material anchors.
+- `AdapterBackedIngestor` keeps one `AppendStreamAcquirer` across drain cycles,
+  so low-volume polling creates `O(rotation_count)` materials rather than
+  `O(poll_count)` materials.
 - Terminal, desktop, and browser SQLite paths use this SDK path instead of
   registering the live external database file as the event material.
 
 That shape is correct because the event is an interpretation of the row bytes the
 node actually consumed. It also keeps hot capture incremental and bounded: sinex
 does not copy an entire ActivityWatch or browser database for every new row.
+
+It also avoids registry bloat. The historical per-poll/per-row material pattern
+produced one registry row for each small polling cycle. That was honest
+acquisition evidence, but it was the wrong lifecycle granularity for a source
+that is observed continuously. The current row-stream lane preserves the same
+per-record anchors inside fewer, policy-rotated source materials.
 
 The weakness is epistemic, not operational. JSONL row-stream bytes prove what
 sinex observed and emitted; they do not preserve the surrounding SQLite
@@ -122,6 +141,23 @@ boundary based:
 
 The source unit should surface this as a policy, not as ad-hoc timers inside
 each node.
+
+## Rotation Semantics
+
+SQLite row streams rotate by source-material policy, not by adapter `open()` or
+drain invocation. A source unit keeps its stream material open while polling and
+appends each serialized row to the current material. Rotation finalizes the
+current material and starts a new one only when a configured boundary is reached:
+
+- maximum material size, default 100 MiB;
+- maximum material age, default one hour;
+- explicit forced rotation in tests or operator maintenance;
+- shutdown finalization when the owning unit exits cleanly.
+
+For low-volume pollers such as Atuin or ActivityWatch during idle periods, many
+poll cycles should share the same material. The regression shape is: 1,000
+polling cycles that emit one or two tiny records should produce one material
+under the default policy, not approximately 1,000 registry rows.
 
 ## Storage and Retention
 
@@ -204,6 +240,7 @@ runtime DB pool; it does not manually insert material links.
 ## Non-Goals
 
 - Do not register only the external mutable SQLite path as a source material.
+- Do not create one source-material row per poll cycle or per SQLite row.
 - Do not make every SQLite poll copy the whole database.
 - Do not make WAL capture a prerequisite for correct row-stream ingestion.
 - Do not bypass NATS, ingestd, schema validation, privacy processing, or normal

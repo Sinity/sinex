@@ -4,14 +4,16 @@ Status: design record for #1207.
 
 Sinex source material has two complementary evidence lanes:
 
-1. **Occurrence lane**: per-record or per-row material that anchors one observed
-   occurrence with offsets, anchors, timestamps, and parser semantics.
+1. **Occurrence lane**: rotating acquisition-payload material that anchors
+   observed records with offsets, anchors, timestamps, and parser semantics.
 2. **Snapshot lane**: immutable source-of-truth artefacts plus change logs that
    can re-derive occurrences after the live source mutates or disappears.
 
-The occurrence lane is efficient for normal ingestion. The snapshot lane is the
-replay-correctness backstop: it preserves what the source looked like around the
-time the occurrence was interpreted.
+The occurrence lane is efficient for normal ingestion. For polling sources, one
+row-stream material spans many poll cycles and rotates by policy; a registry row
+per poll or per source row is historical bad shape, not the target model. The
+snapshot lane is the replay-correctness backstop: it preserves what the source
+looked like around the time the occurrence was interpreted.
 
 ## Roles
 
@@ -32,7 +34,7 @@ for immediate ingestion, but it does not prove the wider source state by itself.
 
 | Source class | Occurrence lane | Snapshot lane | Trigger policy |
 |---|---|---|---|
-| Growing SQLite DB | Row or query-result frames with stable row identity. | SQLite backup/snapshot file. | On startup, periodic interval, clean shutdown, and before destructive replay. |
+| Growing SQLite DB | Long-lived row-stream material with stable row identity. | SQLite backup/snapshot file. | Row stream rotates by size/time; snapshots on startup, periodic interval, clean shutdown, and before destructive replay. |
 | Append-only log | Byte-range segment with offset anchors. | Rotated log copy or compressed segment set. | On rotation, size threshold, and periodic seal. |
 | Static export file | File material with byte offsets. | Same file may serve as both occurrence and evidence. | Content hash change. |
 | Mutable directory tree | File/drop occurrence records. | Directory snapshot or manifest+content bundle. | Periodic interval or significant content change. |
