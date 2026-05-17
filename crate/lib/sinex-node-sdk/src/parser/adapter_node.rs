@@ -89,6 +89,7 @@ use sinex_primitives::events::builder::{EventBuilder, NoProvenance};
 use sinex_primitives::ids::Id;
 use sinex_primitives::parser::{MaterialAnchor, ParsedEventIntent, ParserContext};
 use sinex_primitives::primitives::Uuid;
+use sinex_primitives::privacy::load_private_mode_state;
 use sinex_primitives::temporal::Timestamp;
 
 use crate::NodeResult;
@@ -100,6 +101,7 @@ use crate::runtime::stream::{
     Checkpoint, ContinuousStart, NodeCapabilities, NodeRuntimeState, ScanArgs, ScanReport,
     TimeHorizon,
 };
+use std::path::PathBuf;
 use std::sync::Arc;
 
 // =============================================================================
@@ -126,7 +128,9 @@ use std::sync::Arc;
 /// ```json
 /// {
 ///   "path": "/home/user/.weechat/logs/irc.log",
-///   "binding_flags": { "private_mode_active": false }
+///   "binding_flags": { "private_mode_active": false },
+///   "private_mode_state_dir": "/var/lib/sinex",
+///   "private_mode_source_class": "desktop"
 /// }
 /// ```
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -140,6 +144,16 @@ pub struct AdapterNodeConfig {
     /// Optional runtime flags for `BindingConfig`-aware parsers.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub binding_flags: BTreeMap<String, bool>,
+
+    /// Optional state root used to derive `private_mode_active` from the
+    /// persisted runtime private-mode file.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub private_mode_state_dir: Option<PathBuf>,
+
+    /// Optional source-class override used when matching private-mode scope.
+    /// Defaults to the prefix before the first `.` in the source-unit id.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub private_mode_source_class: Option<String>,
 }
 
 impl AdapterNodeConfig {
@@ -152,6 +166,36 @@ impl AdapterNodeConfig {
             bc = bc.with_flag(name, value);
         }
         bc
+    }
+
+    /// Convert static binding flags and persisted private-mode state into a
+    /// parser [`BindingConfig`].
+    pub fn to_binding_config_for_source(
+        &self,
+        source_unit_id: &str,
+    ) -> Result<BindingConfig, crate::SinexError> {
+        let mut bc = self.to_binding_config();
+        let Some(state_dir) = &self.private_mode_state_dir else {
+            return Ok(bc);
+        };
+
+        let state = load_private_mode_state(state_dir)?;
+        let source_class = self
+            .private_mode_source_class
+            .as_deref()
+            .unwrap_or_else(|| {
+                source_unit_id
+                    .split_once('.')
+                    .map_or(source_unit_id, |(class, _)| class)
+            });
+        let source_unit = source_unit_id;
+        let scoped = state.affected_source_classes.is_empty()
+            || state
+                .affected_source_classes
+                .iter()
+                .any(|class| class == source_class || class == source_unit);
+        bc = bc.with_flag("private_mode_active", state.enabled && scoped);
+        Ok(bc)
     }
 
     /// Deserialize the flattened adapter JSON into the typed adapter config.
@@ -635,7 +679,7 @@ where
             })?;
 
         self.acquisition_manager = Some(Arc::new(acq));
-        self.binding_config = config.to_binding_config();
+        self.binding_config = config.to_binding_config_for_source(self.source_unit_id)?;
 
         // Merge user-supplied JSON over the parser's baseline. The parser
         // declares mandatory adapter fields (parser-specific SQL query,
@@ -953,5 +997,54 @@ where
             }
         }
         None => Checkpoint::None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sinex_primitives::privacy::{RuntimePrivateModeState, save_private_mode_state};
+    use xtask::sandbox::prelude::sinex_test;
+
+    #[sinex_test]
+    async fn adapter_node_config_derives_private_mode_binding_flag()
+    -> xtask::sandbox::TestResult<()> {
+        let dir = tempfile::tempdir()?;
+        let state = RuntimePrivateModeState::enabled_by(
+            "sinity",
+            vec!["desktop".to_string()],
+            Timestamp::UNIX_EPOCH,
+        );
+        save_private_mode_state(dir.path(), &state)?;
+        let config = AdapterNodeConfig {
+            private_mode_state_dir: Some(dir.path().to_path_buf()),
+            ..Default::default()
+        };
+
+        let binding = config.to_binding_config_for_source("desktop.clipboard")?;
+
+        assert!(binding.is_truthy("private_mode_active"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn adapter_node_config_respects_private_mode_source_scope()
+    -> xtask::sandbox::TestResult<()> {
+        let dir = tempfile::tempdir()?;
+        let state = RuntimePrivateModeState::enabled_by(
+            "sinity",
+            vec!["desktop".to_string()],
+            Timestamp::UNIX_EPOCH,
+        );
+        save_private_mode_state(dir.path(), &state)?;
+        let config = AdapterNodeConfig {
+            private_mode_state_dir: Some(dir.path().to_path_buf()),
+            ..Default::default()
+        };
+
+        let binding = config.to_binding_config_for_source("terminal.zsh-history")?;
+
+        assert!(!binding.is_truthy("private_mode_active"));
+        Ok(())
     }
 }
