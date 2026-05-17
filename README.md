@@ -165,6 +165,7 @@ journalctl -u sinex-gateway -u sinex-ingestd -f
 | Deploy on NixOS | [nixos/README.md](nixos/README.md) |
 | Build a node or derived service | [crate/lib/sinex-node-sdk/docs/overview.md](crate/lib/sinex-node-sdk/docs/overview.md) |
 | Understand event schemas | [crate/lib/sinex-schema/docs/event-taxonomy.md](crate/lib/sinex-schema/docs/event-taxonomy.md) |
+| Separate notes, typed records, graph, and artifacts | [docs/architecture/knowledge-boundaries.md](docs/architecture/knowledge-boundaries.md) |
 | Define current-state projections for event-native domains | [docs/architecture/domain-reducers.md](docs/architecture/domain-reducers.md) |
 | Model tasks as event-native workflow objects | [docs/architecture/task-domain.md](docs/architecture/task-domain.md) |
 | Model sensitive health and self-observation logs | [docs/architecture/health-self-observation-domain.md](docs/architecture/health-self-observation-domain.md) |
