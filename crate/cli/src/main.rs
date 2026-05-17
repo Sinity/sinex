@@ -8,8 +8,8 @@ use sinexctl::commands::{
     AnnotateCommand, AuditCommand, AutomataCommand, BlobCommands, CompletionsCommand,
     ConfigCommands, ContextCommand, CoreCommands, DemoCommand, DlqCommands, DocumentsCommand,
     ErrorsCommand, ExplainCommand, GatewayCommands, GitOpsCommands, IngestorsCommand,
-    LifecycleCommands, NodeCommands, NodesCommand, NowCommand, OpsCommands, QueryCommand,
-    RecentCommand, ReplayCommands, ReportCommands, SourcesCommand, StatusCommand,
+    LifecycleCommands, NodeCommands, NodesCommand, NowCommand, OpsCommands, PrivacyCommand,
+    QueryCommand, RecentCommand, ReplayCommands, ReportCommands, SourcesCommand, StatusCommand,
     TelemetryCommands, ThroughputCommand, TraceCommand, TuiCommand, VerifyCommand, WatchCommand,
 };
 use sinexctl::model::OutputFormat;
@@ -138,6 +138,9 @@ enum Commands {
         #[command(subcommand)]
         cmd: OpsCommands,
     },
+
+    /// Privacy controls
+    Privacy(PrivacyCommand),
 
     /// Get audit trail for an operation
     Audit(AuditCommand),
@@ -301,6 +304,7 @@ async fn main() -> color_eyre::Result<()> {
 
     match command {
         Commands::Config { cmd } => cmd.execute(format)?,
+        Commands::Privacy(cmd) => cmd.execute(format)?,
         Commands::Completions(cmd) => {
             let mut clap_cmd = Cli::command();
             cmd.execute(&mut clap_cmd)?;
@@ -331,6 +335,7 @@ async fn main() -> color_eyre::Result<()> {
                 Commands::Query(cmd) => cmd.execute(&client, format).await?,
                 Commands::Trace(cmd) => cmd.execute(&client, format).await?,
                 Commands::Ops { cmd } => cmd.execute(&client, format).await?,
+                Commands::Privacy(_) => unreachable!("Privacy command handled above"),
                 Commands::Audit(cmd) => cmd.execute(&client, format).await?,
                 Commands::Tui(cmd) => cmd.execute(&client).await?,
                 Commands::Config { .. } => unreachable!("Config command handled above"),
@@ -413,6 +418,7 @@ fn command_path(cmd: &Commands) -> String {
             OpsCommands::Get { .. } => "ops get".to_string(),
             OpsCommands::Cancel { .. } => "ops cancel".to_string(),
         },
+        Commands::Privacy(_) => "privacy private-mode".to_string(),
         Commands::Audit(_) => "audit".to_string(),
         Commands::Tui(_) => "tui".to_string(),
         Commands::Config { cmd } => match cmd {
