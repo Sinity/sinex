@@ -311,6 +311,18 @@ pub struct IngestdConfig {
     #[validate(range(min = 0, max = 256))]
     pub startup_catch_up_max_concurrent: usize,
 
+    /// Refuse to create a missing durable consumer with `DeliverPolicy::All`
+    /// when the raw-event stream already contains messages.
+    ///
+    /// This defaults on for production so accidental cold-start replay is an
+    /// explicit operator decision. Test harnesses may disable it when the test
+    /// intentionally publishes before ingestd starts and expects catch-up.
+    ///
+    /// Set via: `SINEX_INGESTD_REJECT_INITIAL_REPLAY=false`
+    #[serde(default = "default_reject_initial_replay")]
+    #[builder(default = default_reject_initial_replay())]
+    pub reject_initial_replay: bool,
+
     /// Interval between automatic blob garbage collection sweeps. None = disabled.
     ///
     /// When set, ingestd periodically sweeps content-store keys that are unused
@@ -477,6 +489,9 @@ impl IngestdConfig {
             shared_env::strict_parsed("SINEX_INGESTD_STARTUP_CATCH_UP_MAX_CONCURRENT")?
         {
             config.startup_catch_up_max_concurrent = value;
+        }
+        if let Some(value) = shared_env::strict_flag("SINEX_INGESTD_REJECT_INITIAL_REPLAY")? {
+            config.reject_initial_replay = value;
         }
 
         Ok(config.normalize())
@@ -775,6 +790,7 @@ impl Default for IngestdConfig {
             stats_log_interval_secs: default_stats_log_interval_secs(),
             retry_config: RetryConfig::default(),
             startup_catch_up_max_concurrent: default_startup_catch_up_max_concurrent(),
+            reject_initial_replay: default_reject_initial_replay(),
             blob_gc_interval_secs: default_blob_gc_interval_secs(),
         }
     }
@@ -1250,6 +1266,23 @@ fn default_startup_catch_up_max_concurrent() -> usize {
                 "Invalid env override for startup catch-up max concurrent; using default"
             );
             4
+        }
+    }
+}
+
+fn default_reject_initial_replay() -> bool {
+    match shared_env::strict_flag("SINEX_INGESTD_REJECT_INITIAL_REPLAY") {
+        Ok(Some(value)) => value,
+        Ok(None) => true,
+        Err(error) => {
+            error!(
+                target: "sinex_metrics",
+                metric = "ingestd.config_env_parse_errors_total",
+                env = "SINEX_INGESTD_REJECT_INITIAL_REPLAY",
+                %error,
+                "Invalid env override for initial replay guard; using default"
+            );
+            true
         }
     }
 }

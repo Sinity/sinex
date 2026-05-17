@@ -108,6 +108,7 @@ impl<'ctx> TestCoreStack<'ctx> {
             consumer_fetch_max_messages: 32,
             consumer_fetch_timeout_ms: 50,
             database_pool_size: 10,
+            reject_initial_replay: false,
         };
         let ingestd = start_test_ingestd_with_config(ingestd_config, Some(ctx)).await?;
 
