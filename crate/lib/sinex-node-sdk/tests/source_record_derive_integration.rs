@@ -322,6 +322,30 @@ async fn suppress_if_drops_field_when_flag_set() {
     assert_eq!(intents[0].payload["cmd"], "secret-stuff");
 }
 
+#[tokio::test]
+async fn derived_parser_honors_binding_aware_entrypoint() {
+    let mut parser = SuppressRecord {
+        cmd: String::new(),
+    };
+
+    let binding = BindingConfig::new().with_flag("private_mode_active", true);
+    let intents = parser
+        .parse_record_with_binding(
+            record(r#"{"cmd": "secret-stuff"}"#),
+            &ctx("test.suppress"),
+            &binding,
+        )
+        .await
+        .unwrap();
+    assert!(intents[0].payload.get("cmd").is_none());
+
+    let intents = parser
+        .parse_record(record(r#"{"cmd": "secret-stuff"}"#), &ctx("test.suppress"))
+        .await
+        .unwrap();
+    assert_eq!(intents[0].payload["cmd"], "secret-stuff");
+}
+
 // ---------------------------------------------------------------------------
 // Test 7 — manifest is built from the spec.
 // ---------------------------------------------------------------------------

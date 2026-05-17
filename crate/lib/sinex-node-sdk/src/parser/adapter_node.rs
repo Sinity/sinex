@@ -539,7 +539,11 @@ where
                 acquisition_time: Timestamp::now(),
             };
 
-            let intents = match self.parser.parse_record(record, &ctx).await {
+            let intents = match self
+                .parser
+                .parse_record_with_binding(record, &ctx, &self.binding_config)
+                .await
+            {
                 Ok(v) => v,
                 Err(e) => {
                     warn!(
