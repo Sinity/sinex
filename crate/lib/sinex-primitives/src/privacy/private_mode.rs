@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
 pub const PRIVATE_MODE_STATE_RELATIVE_PATH: &str = "private-mode/state.json";
+pub const DEFAULT_PRIVATE_MODE_STATE_DIR: &str = "/var/lib/sinex";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -110,6 +111,13 @@ impl Default for RuntimePrivateModeState {
 #[must_use]
 pub fn private_mode_state_path(state_dir: &Path) -> PathBuf {
     state_dir.join(PRIVATE_MODE_STATE_RELATIVE_PATH)
+}
+
+#[must_use]
+pub fn resolve_private_mode_state_dir(explicit: Option<PathBuf>) -> PathBuf {
+    explicit
+        .or_else(|| std::env::var_os("SINEX_STATE_DIR").map(PathBuf::from))
+        .unwrap_or_else(|| PathBuf::from(DEFAULT_PRIVATE_MODE_STATE_DIR))
 }
 
 pub fn load_private_mode_state(state_dir: &Path) -> Result<RuntimePrivateModeState, SinexError> {
