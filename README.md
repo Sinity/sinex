@@ -172,6 +172,7 @@ journalctl -u sinex-gateway -u sinex-ingestd -f
 | Model declarations, omissions, and conceptual time | [docs/architecture/declarations-and-conceptual-time.md](docs/architecture/declarations-and-conceptual-time.md) |
 | Design interval-backed moment queries | [docs/architecture/moment-evidence-windows.md](docs/architecture/moment-evidence-windows.md) |
 | Define versioned SQL-shaped derivations | [docs/architecture/sql-derivation-engine.md](docs/architecture/sql-derivation-engine.md) |
+| Record replayable inference confidence and seeds | [docs/architecture/inference-decision-metadata.md](docs/architecture/inference-decision-metadata.md) |
 | Explain semantic composition beyond ancestry trace | [docs/architecture/semantic-trace-teardown.md](docs/architecture/semantic-trace-teardown.md) |
 | Run replay-safe semantic experiments | [docs/architecture/semantic-epochs-shadow-lanes.md](docs/architecture/semantic-epochs-shadow-lanes.md) |
 | Bound active instruction and actuator loops | [docs/architecture/instruction-actuator-loops.md](docs/architecture/instruction-actuator-loops.md) |
