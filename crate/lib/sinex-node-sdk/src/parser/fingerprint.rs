@@ -40,6 +40,9 @@ use serde_json::Value as JsonValue;
 use sinex_primitives::parser::SourceUnitId;
 use sinex_primitives::temporal::Timestamp;
 
+const MAX_JSON_FINGERPRINT_DEPTH: usize = 8;
+const MAX_JSON_FINGERPRINT_FIELDS: usize = 512;
+
 // =============================================================================
 // SourceRecordFingerprint
 // =============================================================================
@@ -69,15 +72,17 @@ impl SourceRecordFingerprint {
     /// Creates a fingerprint from a JSON value.
     ///
     /// Recursively infers types from the JSON structure. The result is stable
-    /// across different orderings of the same keys.
+    /// across different orderings of the same keys. Object paths use JSON
+    /// Pointer syntax (`/message/content`) so nested drift is visible without
+    /// storing raw sample values.
     ///
     /// # Examples
     ///
     /// ```ignore
     /// let fp = SourceRecordFingerprint::from_json(&json!({"name": "foo", "id": 42}));
-    /// assert_eq!(fp.keys, vec!["id", "name"]);  // sorted
-    /// assert_eq!(fp.type_map["name"], "string");
-    /// assert_eq!(fp.type_map["id"], "integer");
+    /// assert_eq!(fp.keys, vec!["/id", "/name"]);  // sorted
+    /// assert_eq!(fp.type_map["/name"], "string");
+    /// assert_eq!(fp.type_map["/id"], "integer");
     /// ```
     #[must_use]
     pub fn from_json(value: &JsonValue) -> Self {
@@ -118,28 +123,62 @@ impl SourceRecordFingerprint {
         }
     }
 
-    /// Extracts field names and their inferred types from a JSON value.
+    /// Extracts JSON Pointer paths and their inferred types from a JSON value.
     fn extract_types(value: &JsonValue) -> (Vec<String>, BTreeMap<String, String>) {
         let mut keys = Vec::new();
         let mut type_map = BTreeMap::new();
+        Self::extract_types_at(
+            value,
+            "",
+            0,
+            &mut keys,
+            &mut type_map,
+            MAX_JSON_FINGERPRINT_FIELDS,
+        );
+        (keys, type_map)
+    }
 
+    fn extract_types_at(
+        value: &JsonValue,
+        path: &str,
+        depth: usize,
+        keys: &mut Vec<String>,
+        type_map: &mut BTreeMap<String, String>,
+        max_fields: usize,
+    ) {
+        if depth >= MAX_JSON_FINGERPRINT_DEPTH || keys.len() >= max_fields {
+            return;
+        }
         match value {
             JsonValue::Object(map) => {
                 for (key, val) in map {
-                    keys.push(key.clone());
-                    type_map.insert(key.clone(), Self::infer_type(val));
+                    if keys.len() >= max_fields {
+                        break;
+                    }
+                    let child_path = join_json_pointer(path, key);
+                    keys.push(child_path.clone());
+                    type_map.insert(child_path.clone(), Self::infer_type(val));
+                    if val.is_object() {
+                        Self::extract_types_at(
+                            val,
+                            &child_path,
+                            depth + 1,
+                            keys,
+                            type_map,
+                            max_fields,
+                        );
+                    }
                 }
             }
             JsonValue::Array(_) => {
-                // For arrays, we don't index individual elements;
-                // we just note it's an array.
+                // Arrays are represented by the field that owns them. We do
+                // not index elements because array cardinality is data, not
+                // source shape.
             }
             _ => {
                 // Scalar values: no keys to extract.
             }
         }
-
-        (keys, type_map)
     }
 
     /// Infers the JSON type of a value.
@@ -331,15 +370,17 @@ impl DriftAccumulator {
         let previous_key_set: std::collections::HashSet<_> =
             previous_keys.iter().cloned().collect();
 
-        let added_keys: Vec<_> = current_key_set
+        let mut added_keys: Vec<_> = current_key_set
             .difference(&previous_key_set)
             .cloned()
             .collect();
+        added_keys.sort();
 
-        let removed_keys: Vec<_> = previous_key_set
+        let mut removed_keys: Vec<_> = previous_key_set
             .difference(&current_key_set)
             .cloned()
             .collect();
+        removed_keys.sort();
 
         // Compute type changes for keys that exist in both.
         let mut type_changes = vec![];
@@ -452,6 +493,15 @@ fn current_unix_timestamp() -> u64 {
         .map_or(0, |d| d.as_secs())
 }
 
+fn join_json_pointer(parent: &str, key: &str) -> String {
+    let escaped = key.replace('~', "~0").replace('/', "~1");
+    if parent.is_empty() {
+        format!("/{escaped}")
+    } else {
+        format!("{parent}/{escaped}")
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -464,9 +514,9 @@ mod tests {
         let fp = SourceRecordFingerprint::from_json(&value);
 
         assert_eq!(fp.format, "json");
-        assert_eq!(fp.keys, vec!["age", "name"]); // sorted
-        assert_eq!(fp.type_map["name"], "string");
-        assert_eq!(fp.type_map["age"], "integer");
+        assert_eq!(fp.keys, vec!["/age", "/name"]); // sorted
+        assert_eq!(fp.type_map["/name"], "string");
+        assert_eq!(fp.type_map["/age"], "integer");
         Ok(())
     }
 
@@ -475,8 +525,8 @@ mod tests {
         let value = json!({"name": "Bob", "email": null});
         let fp = SourceRecordFingerprint::from_json(&value);
 
-        assert_eq!(fp.keys, vec!["email", "name"]);
-        assert_eq!(fp.type_map["email"], "null");
+        assert_eq!(fp.keys, vec!["/email", "/name"]);
+        assert_eq!(fp.type_map["/email"], "null");
         Ok(())
     }
 
@@ -492,12 +542,37 @@ mod tests {
         });
         let fp = SourceRecordFingerprint::from_json(&value);
 
-        assert_eq!(fp.type_map["text"], "string");
-        assert_eq!(fp.type_map["count"], "integer");
-        assert_eq!(fp.type_map["active"], "boolean");
-        assert_eq!(fp.type_map["nested"], "object");
-        assert_eq!(fp.type_map["items"], "array");
-        assert_eq!(fp.type_map["nullable"], "null");
+        assert_eq!(fp.type_map["/text"], "string");
+        assert_eq!(fp.type_map["/count"], "integer");
+        assert_eq!(fp.type_map["/active"], "boolean");
+        assert_eq!(fp.type_map["/nested"], "object");
+        assert_eq!(fp.type_map["/nested/key"], "string");
+        assert_eq!(fp.type_map["/items"], "array");
+        assert_eq!(fp.type_map["/nullable"], "null");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_from_json_uses_nested_json_pointer_paths() -> xtask::sandbox::TestResult<()> {
+        let value = json!({
+            "message": {
+                "content": "hello",
+                "meta/with~escape": {
+                    "tokens": 12
+                }
+            },
+            "session_id": "abc"
+        });
+        let fp = SourceRecordFingerprint::from_json(&value);
+
+        assert!(fp.keys.contains(&"/message/content".to_string()));
+        assert!(fp.keys.contains(&"/message/meta~1with~0escape".to_string()));
+        assert!(
+            fp.keys
+                .contains(&"/message/meta~1with~0escape/tokens".to_string())
+        );
+        assert_eq!(fp.type_map["/message/content"], "string");
+        assert_eq!(fp.type_map["/message/meta~1with~0escape/tokens"], "integer");
         Ok(())
     }
 
@@ -591,7 +666,7 @@ mod tests {
         assert!(event.is_some());
 
         let drift = event.unwrap();
-        assert_eq!(drift.added_keys, vec!["name".to_string()]);
+        assert_eq!(drift.added_keys, vec!["/name".to_string()]);
         assert!(drift.removed_keys.is_empty());
         assert!(drift.type_changes.is_empty());
         Ok(())
@@ -654,8 +729,8 @@ mod tests {
         let event = acc.observe(&fp2).unwrap();
 
         assert_eq!(event.source_unit_id, source_unit);
-        assert_eq!(event.added_keys, vec!["c"]);
-        assert_eq!(event.removed_keys, vec!["b"]);
+        assert_eq!(event.added_keys, vec!["/c"]);
+        assert_eq!(event.removed_keys, vec!["/b"]);
         // "a" should have no type change (integer -> integer).
         assert!(event.type_changes.is_empty());
         Ok(())
@@ -680,7 +755,7 @@ mod tests {
         assert_eq!(
             event.type_changes[0],
             (
-                "count".to_string(),
+                "/count".to_string(),
                 "integer".to_string(),
                 "string".to_string()
             )
@@ -704,7 +779,7 @@ mod tests {
         let payload = event.to_payload();
         assert!(payload.is_object());
         assert_eq!(payload["format"], "json");
-        assert_eq!(payload["added_keys"], serde_json::json!(["y"]));
+        assert_eq!(payload["added_keys"], serde_json::json!(["/y"]));
         Ok(())
     }
 
