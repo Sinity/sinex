@@ -80,6 +80,7 @@ Run the fast workspace verification pipeline
 | `--by-file` | no | no | Show breakdown of warning counts by file path (top 20) |
 | `--nix` | no | no | Run `nix flake check --no-build` (evaluation only, ~2-5s). Included in --full. Fails if `nix` is unavailable or unhealthy |
 | `--allow-contended-host` | no | no | Allow broad checks to start even when host PSI is already severe |
+| `--changed-strict` | yes | no | API drift guard: check only packages that own Rust files changed between HEAD and the merge-base of the given ref (default `origin/master`). Emits a JSON report of changed files, affected packages, and per-package results. Non-zero exit if any per-package check fails. This flag is opt-in and does not alter the default check behaviour |
 
 
 ## `xtask test`
@@ -436,7 +437,7 @@ Run exported NixOS VM flake checks
 
 | Flag | Value | Required | Description |
 |---|---|---|---|
-| `-c, --category` | yes | no | Test category: smoke, integration, performance, chaos, all |
+| `-c, --category` | yes | no | Test category: smoke, integration, performance, chaos, production-shape, all |
 | `-t, --timeout` | yes | no | Timeout per test in seconds (default: 900, closure-heavy scenarios: 3600) |
 | `-k, --keep-failed` | no | no | Keep VM state after test failure for debugging |
 | `-l, --list` | no | no | List available tests |
@@ -775,6 +776,7 @@ List recent invocations
 | `--with-diagnostics` | no | no | Include diagnostic error/warning counts for each invocation |
 | `--with-stages` | no | no | Include stage timing summary for each invocation |
 | `--with-tests` | no | no | Include test pass/fail counts for each invocation |
+| `--include-zombies` | no | no | Include watchdog/stale-pid cancellation rows normally hidden as zombie noise |
 
 
 ### `xtask history stats`
@@ -1036,6 +1038,7 @@ Cross-invocation chronological view of recent activity (I4)
 | `--command` | yes | no | Restrict to a specific command (check, test, build, …) |
 | `--days` | yes | no | How many days back to show (default: 7) |
 | `--limit` | yes | no | Maximum number of entries (default: 20) |
+| `--include-zombies` | no | no | Include watchdog/stale-pid cancellation rows normally hidden as zombie noise |
 
 
 ### `xtask history diff`
@@ -1061,6 +1064,7 @@ Group invocations into working sessions separated by inactivity gaps (I6)
 |---|---|---|---|
 | `--limit` | yes | no | Number of sessions to show (default: 10) |
 | `--gap-minutes` | yes | no | Inactivity gap in minutes that separates sessions (default: 30) |
+| `--include-zombies` | no | no | Include watchdog/stale-pid cancellation rows normally hidden as zombie noise |
 
 
 ### `xtask history invocation`
@@ -1194,6 +1198,7 @@ CPU and memory usage trends across invocations (J6)
 |---|---|---|---|
 | `--command` | yes | no | Filter by command (e.g., "check", "test") |
 | `--limit` | yes | no | Number of recent invocations to show |
+| `--include-zombies` | no | no | Include watchdog/stale-pid cancellation rows normally hidden as zombie noise |
 
 
 ### `xtask analytics pressure`
@@ -1505,7 +1510,7 @@ Source-worker integrity gate: dispatch cleanliness, NixOS binding drift, ingesto
 | Flag | Value | Required | Description |
 |---|---|---|---|
 | `--expect-deleted` | yes | no | Crate names (without path prefix) expected to already be deleted. Failing if they still exist. Use repeatedly or comma-separated |
-| `--expected-members` | yes | no | Expected workspace member count. Defaults to 20 (current baseline) |
+| `--expected-members` | yes | no | Expected workspace member count. Post-Wave-B (#1081) baseline is 14 (was 20: six legacy ingestor crates folded into sinex-source-worker and deleted) |
 | `--warn-ingestors` | no | no | Treat ingestor crates still present as warnings, not failures |
 | `--bindings-json` | yes | no | Path to the JSON file exported by `config.services.sinex.sources.exportedJson` (from the NixOS module) |
 | `--json` | no | no | Emit JSON output |
