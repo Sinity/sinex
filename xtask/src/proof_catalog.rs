@@ -119,8 +119,7 @@ impl ProofCatalogValidation {
 pub fn build_proof_catalog(workspace_root: &Path) -> Result<ProofCatalog> {
     crate::source_unit_inventory::link_source_unit_inventories();
 
-    let mut runtime_units_by_subject: BTreeMap<&'static str, SourceUnitBinding> =
-        BTreeMap::new();
+    let mut runtime_units_by_subject: BTreeMap<&'static str, SourceUnitBinding> = BTreeMap::new();
     for binding in proof::source_unit_bindings() {
         match runtime_units_by_subject.get(binding.subject.as_str()) {
             Some(existing) if !existing.proposed && binding.proposed => {}
