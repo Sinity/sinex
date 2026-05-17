@@ -112,8 +112,9 @@ impl EphemeralNatsBuilder {
 impl EphemeralNatsBuilder {
     fn store_tempdir() -> Result<TempDir> {
         let root = crate::config::workspace_root().join(".sinex/test-tmp/nats");
-        std::fs::create_dir_all(&root)
-            .wrap_err_with(|| format!("failed to create NATS test store root {}", root.display()))?;
+        std::fs::create_dir_all(&root).wrap_err_with(|| {
+            format!("failed to create NATS test store root {}", root.display())
+        })?;
         tempfile::Builder::new()
             .prefix("jetstream-")
             .tempdir_in(&root)
