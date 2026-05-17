@@ -5,16 +5,19 @@ use serde_json::{Value, json};
 use sinex_db::DbPoolExt;
 use sinex_db::repositories::state::Operation;
 use sinex_primitives::domain::OperationStatus;
+use sinex_primitives::environment::SinexEnvironment;
 use sinex_primitives::prelude::*;
 use sinex_primitives::privacy::{
     PrivateModeReasonClass, RuntimePrivateModeState, load_private_mode_state,
     save_private_mode_state,
 };
 use sinex_primitives::temporal::Timestamp;
+use sinex_primitives::transport;
 use sqlx::PgPool;
 use std::path::Path;
 
 const PRIVATE_MODE_OPERATION_TYPE: &str = "privacy.private_mode";
+const PRIVATE_MODE_CONTROL_SUBJECT: &str = "sinex.control.privacy.private_mode";
 
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct PrivateModeStatusRequest {}
@@ -61,6 +64,7 @@ pub async fn handle_private_mode_status(state_dir: &Path, params: Value) -> Resu
 pub async fn handle_private_mode_enable(
     pool: &PgPool,
     state_dir: &Path,
+    control: Option<(&async_nats::Client, &SinexEnvironment)>,
     params: Value,
     auth: &RpcAuthContext,
 ) -> Result<Value> {
@@ -68,25 +72,29 @@ pub async fn handle_private_mode_enable(
     let mut state =
         RuntimePrivateModeState::enabled_by(req.actor, req.source_classes, Timestamp::now());
     state.reason_class = req.reason_class;
-    persist_private_mode_state_with_audit(pool, state_dir, auth, "enable", &mut state).await?;
+    persist_private_mode_state_with_audit(pool, state_dir, control, auth, "enable", &mut state)
+        .await?;
     private_mode_response(state)
 }
 
 pub async fn handle_private_mode_disable(
     pool: &PgPool,
     state_dir: &Path,
+    control: Option<(&async_nats::Client, &SinexEnvironment)>,
     params: Value,
     auth: &RpcAuthContext,
 ) -> Result<Value> {
     let _req: PrivateModeDisableRequest = parse_default_on_null(params)?;
     let mut state = load_private_mode_state(state_dir)?.disable();
-    persist_private_mode_state_with_audit(pool, state_dir, auth, "disable", &mut state).await?;
+    persist_private_mode_state_with_audit(pool, state_dir, control, auth, "disable", &mut state)
+        .await?;
     private_mode_response(state)
 }
 
 async fn persist_private_mode_state_with_audit(
     pool: &PgPool,
     state_dir: &Path,
+    control: Option<(&async_nats::Client, &SinexEnvironment)>,
     auth: &RpcAuthContext,
     action: &'static str,
     state: &mut RuntimePrivateModeState,
@@ -120,7 +128,25 @@ async fn persist_private_mode_state_with_audit(
         return Err(error);
     }
 
-    let success_message = format!("private mode {action} persisted");
+    if let Some((nats_client, env)) = control
+        && let Err(error) = publish_private_mode_control(nats_client, env, action, state).await
+    {
+        pool.state()
+            .update_operation_meta(
+                &operation.id,
+                OperationStatus::Failed,
+                Some("private mode state broadcast failed"),
+                private_mode_operation_scope(action, state),
+            )
+            .await?;
+        return Err(error);
+    }
+
+    let success_message = if control.is_some() {
+        format!("private mode {action} persisted and broadcast")
+    } else {
+        format!("private mode {action} persisted")
+    };
     pool.state()
         .update_operation_meta(
             &operation.id,
@@ -131,6 +157,48 @@ async fn persist_private_mode_state_with_audit(
         .await?;
 
     Ok(())
+}
+
+async fn publish_private_mode_control(
+    nats_client: &async_nats::Client,
+    env: &SinexEnvironment,
+    action: &'static str,
+    state: &RuntimePrivateModeState,
+) -> Result<()> {
+    let subject = private_mode_control_subject(env);
+    let payload = private_mode_control_payload(action, state);
+    let mut headers = async_nats::HeaderMap::new();
+    transport::insert_transport_class_headers(&mut headers, transport::Class::Control);
+
+    nats_client
+        .publish_with_headers(
+            subject.clone(),
+            headers,
+            serde_json::to_vec(&payload)
+                .map_err(|err| {
+                    SinexError::serialization("failed to serialize private-mode control payload")
+                        .with_std_error(&err)
+                })?
+                .into(),
+        )
+        .await
+        .map_err(|err| {
+            SinexError::nats_publish("private-mode control update")
+                .with_context("subject", &subject)
+                .with_std_error(&err)
+        })
+}
+
+fn private_mode_control_subject(env: &SinexEnvironment) -> String {
+    env.nats_subject(PRIVATE_MODE_CONTROL_SUBJECT)
+}
+
+fn private_mode_control_payload(action: &'static str, state: &RuntimePrivateModeState) -> Value {
+    json!({
+        "action": action,
+        "timestamp": Timestamp::now(),
+        "state": state,
+    })
 }
 
 fn private_mode_operation_scope(action: &'static str, state: &RuntimePrivateModeState) -> Value {
@@ -177,6 +245,7 @@ mod tests {
         let enabled = handle_private_mode_enable(
             ctx.pool(),
             dir.path(),
+            None,
             json!({
                 "actor": "sinity",
                 "reason_class": "policy_hold",
@@ -197,7 +266,7 @@ mod tests {
         assert!(enabled.state.updated_by_operation_id.is_some());
 
         let disabled =
-            handle_private_mode_disable(ctx.pool(), dir.path(), Value::Null, &auth).await?;
+            handle_private_mode_disable(ctx.pool(), dir.path(), None, Value::Null, &auth).await?;
         let disabled: PrivateModeStateResponse = serde_json::from_value(disabled)?;
 
         assert!(!disabled.state.enabled);
@@ -215,7 +284,7 @@ mod tests {
         let auth = RpcAuthContext::system();
 
         let enabled =
-            handle_private_mode_enable(ctx.pool(), dir.path(), Value::Null, &auth).await?;
+            handle_private_mode_enable(ctx.pool(), dir.path(), None, Value::Null, &auth).await?;
         let enabled: PrivateModeStateResponse = serde_json::from_value(enabled)?;
 
         assert!(enabled.state.enabled);
@@ -239,6 +308,7 @@ mod tests {
         let enabled = handle_private_mode_enable(
             ctx.pool(),
             dir.path(),
+            None,
             json!({
                 "actor": "sinity",
                 "source_classes": ["desktop"]
@@ -268,6 +338,30 @@ mod tests {
             operation.scope.as_ref().unwrap()["affected_source_classes"],
             json!(["desktop"])
         );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn private_mode_control_payload_is_coarse() -> xtask::sandbox::TestResult<()> {
+        let env = SinexEnvironment::new("dev")?;
+        let state = RuntimePrivateModeState::enabled_by(
+            "sinity".to_string(),
+            vec!["desktop".to_string()],
+            Timestamp::now(),
+        );
+
+        let subject = private_mode_control_subject(&env);
+        let payload = private_mode_control_payload("enable", &state);
+
+        assert_eq!(subject, "dev.sinex.control.privacy.private_mode");
+        assert_eq!(payload["action"], "enable");
+        assert_eq!(payload["state"]["enabled"], true);
+        assert_eq!(payload["state"]["actor"], "sinity");
+        assert_eq!(
+            payload["state"]["affected_source_classes"],
+            json!(["desktop"])
+        );
+        assert!(payload.get("reason").is_none());
         Ok(())
     }
 }
