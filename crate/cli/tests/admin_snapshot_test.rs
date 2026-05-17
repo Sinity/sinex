@@ -11,7 +11,8 @@ use std::process::Command;
 use tempfile::TempDir;
 use xtask::sandbox::sinex_test;
 
-use sinexctl::admin::snapshot::{AdminSnapshotCommand, Component};
+use sinexctl::admin::exec;
+use sinexctl::admin::snapshot::{AdminSnapshotCommand, AdminSnapshotInspectCommand, Component};
 
 /// Helper: build a fake state directory with recognizable fixture files.
 fn make_fake_state_dir() -> TempDir {
@@ -52,6 +53,49 @@ fn make_fake_state_dir() -> TempDir {
 
 fn sinexctl_bin() -> Command {
     Command::new(cargo::cargo_bin!("sinexctl"))
+}
+
+fn make_snapshot_archive() -> (TempDir, std::path::PathBuf) {
+    use sinexctl::admin::manifest::{ComponentRecord, SnapshotManifest, Totals};
+
+    let dir = tempfile::tempdir().expect("archive tempdir");
+    let staging = dir.path().join("staging");
+    fs::create_dir_all(staging.join("state")).unwrap();
+    fs::write(
+        staging.join("state").join("checkpoint.bin"),
+        b"checkpoint-data",
+    )
+    .unwrap();
+
+    let manifest = SnapshotManifest {
+        snapshot_id: "01970a7f-391b-7000-8000-000000000001".to_string(),
+        created_at: "2026-05-15T11:30:00Z".to_string(),
+        sinex_version: "0.1.0".to_string(),
+        git_sha: Some("abc1234".to_string()),
+        host: "sinnix-prime".to_string(),
+        mode: "quiesce".to_string(),
+        source_unit_ids: vec!["terminal.atuin-history".to_string()],
+        components: vec![ComponentRecord {
+            name: "state".to_string(),
+            path: "state/".to_string(),
+            bytes: 15,
+            blake3: "c".repeat(64),
+            extras: None,
+        }],
+        totals: Totals {
+            uncompressed_bytes: 15,
+            archive_bytes: Some(512),
+        },
+    };
+    fs::write(
+        staging.join("manifest.json"),
+        serde_json::to_vec_pretty(&manifest).unwrap(),
+    )
+    .unwrap();
+
+    let archive_path = dir.path().join("fixture.sinex.tar.zst");
+    exec::tar_create_zstd(&staging, &archive_path, 1, 1).expect("create snapshot fixture archive");
+    (dir, archive_path)
 }
 
 // ── Dry-run test ─────────────────────────────────────────────────────────────
@@ -158,6 +202,50 @@ async fn dry_run_non_postgres_components_do_not_require_database_url()
     assert!(
         !output_path.exists(),
         "dry-run must NOT create an archive at {output_path:?}"
+    );
+
+    Ok(())
+}
+
+/// `admin snapshot-inspect` reads manifest.json from the compressed archive
+/// and validates that non-empty manifest component paths exist in the tar.
+#[sinex_test]
+async fn snapshot_inspect_reports_manifest_and_archive_paths() -> xtask::sandbox::TestResult<()> {
+    let (_dir, archive_path) = make_snapshot_archive();
+
+    let cmd = AdminSnapshotInspectCommand {
+        archive: archive_path.clone(),
+    };
+    let result = cmd.execute().expect("inspect fixture archive");
+
+    assert_eq!(result.snapshot_id, "01970a7f-391b-7000-8000-000000000001");
+    assert_eq!(result.source_unit_count, 1);
+    assert_eq!(result.component_count, 1);
+    assert!(
+        result.missing_component_paths.is_empty(),
+        "fixture archive should contain every non-empty manifest path"
+    );
+
+    let output = sinexctl_bin()
+        .args([
+            "admin",
+            "snapshot-inspect",
+            "--archive",
+            archive_path.to_str().unwrap(),
+            "--format",
+            "json",
+        ])
+        .output()
+        .expect("run sinexctl admin snapshot-inspect");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "snapshot-inspect must exit 0\nstdout: {stdout}\nstderr: {stderr}"
+    );
+    assert!(
+        stdout.contains("\"snapshot_id\":\"01970a7f-391b-7000-8000-000000000001\""),
+        "json output should include the manifest snapshot id\nstdout: {stdout}"
     );
 
     Ok(())

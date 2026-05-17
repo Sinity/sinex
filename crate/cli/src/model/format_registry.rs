@@ -451,6 +451,11 @@ pub fn build() -> HashMap<&'static str, FormatCapability> {
         FormatCapability::single_shot(TABLE_JSON_YAML)
             .with_note("quiesce-mode snapshot of postgres + NATS + CAS + state"),
     );
+    m.insert(
+        "admin snapshot-inspect",
+        FormatCapability::single_shot(TABLE_JSON_YAML)
+            .with_note("inspect snapshot manifest and archive member coverage"),
+    );
 
     m
 }

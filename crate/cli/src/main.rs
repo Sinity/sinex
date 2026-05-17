@@ -510,6 +510,7 @@ fn command_path(cmd: &Commands) -> String {
             use sinexctl::admin::AdminCommands;
             match cmd {
                 AdminCommands::Snapshot(_) => "admin snapshot".to_string(),
+                AdminCommands::SnapshotInspect(_) => "admin snapshot-inspect".to_string(),
             }
         }
     }
