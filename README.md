@@ -177,6 +177,7 @@ journalctl -u sinex-gateway -u sinex-ingestd -f
 | Run replay-safe semantic experiments | [docs/architecture/semantic-epochs-shadow-lanes.md](docs/architecture/semantic-epochs-shadow-lanes.md) |
 | Route model calls through prompts, policy, and budgets | [docs/architecture/prompt-router-budget.md](docs/architecture/prompt-router-budget.md) |
 | Bound active instruction and actuator loops | [docs/architecture/instruction-actuator-loops.md](docs/architecture/instruction-actuator-loops.md) |
+| Expose read-only evidence to coding agents | [docs/architecture/mcp-readonly-server.md](docs/architecture/mcp-readonly-server.md) |
 | Rename event taxonomy labels without parser replay | [docs/architecture/audited-semantic-renames.md](docs/architecture/audited-semantic-renames.md) |
 | Reason about replay evidence and source snapshots | [docs/architecture/evidence-lanes.md](docs/architecture/evidence-lanes.md) |
 | Reason about large aggregate provenance | [docs/architecture/high-fan-in-lineage.md](docs/architecture/high-fan-in-lineage.md) |
