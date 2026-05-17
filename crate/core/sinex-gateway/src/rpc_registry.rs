@@ -796,7 +796,8 @@ fn build_registry_impl() -> RpcRegistry {
             Role::Write,
             |params, services, auth| {
                 Box::pin(async move {
-                    handle_private_mode_enable(services.state_dir(), params, auth).await
+                    handle_private_mode_enable(services.pool(), services.state_dir(), params, auth)
+                        .await
                 })
             },
         )
@@ -805,7 +806,8 @@ fn build_registry_impl() -> RpcRegistry {
             Role::Write,
             |params, services, auth| {
                 Box::pin(async move {
-                    handle_private_mode_disable(services.state_dir(), params, auth).await
+                    handle_private_mode_disable(services.pool(), services.state_dir(), params, auth)
+                        .await
                 })
             },
         )
