@@ -279,9 +279,13 @@ where
     /// Adapter config deserialized from the node config at `initialize`.
     config: Option<A::Config>,
 
+    /// Original node config, retained so runtime-derived binding flags such as
+    /// `private_mode_active` can be refreshed before each acquisition.
+    node_config: Option<AdapterNodeConfig>,
+
     /// `BindingConfig` derived from `binding_flags` in the node config.
-    /// Held for the lifetime of the ingestor; passed to any `BindingConfig`-
-    /// aware parsers (currently `DeclarativeParser`).
+    /// Refreshed before each acquisition so live private-mode toggles do not
+    /// require node restart.
     binding_config: BindingConfig,
 
     /// Runtime handles captured during `initialize`.
@@ -332,6 +336,7 @@ where
             adapter: A::default(),
             parser: P::default(),
             config: None,
+            node_config: None,
             binding_config: BindingConfig::default(),
             runtime: None,
             stream_acquirer: None,
@@ -418,6 +423,19 @@ where
         }
     }
 
+    /// Refresh runtime-derived binding flags before an acquisition attempt.
+    ///
+    /// Static flags remain stable, but fields derived from the private-mode
+    /// state file must be re-read so live source-worker poll loops can react
+    /// to operator toggles without waiting for process restart.
+    fn refresh_binding_config(&mut self) -> NodeResult<()> {
+        let Some(config) = &self.node_config else {
+            return Ok(());
+        };
+        self.binding_config = config.to_binding_config_for_source(self.source_unit_id)?;
+        Ok(())
+    }
+
     /// Ensure the `AppendStreamAcquirer` is initialized, creating it from the
     /// acquisition manager if necessary.
     ///
@@ -457,6 +475,7 @@ where
         cursor: Option<A::Cursor>,
         state: &mut AdapterNodeState<A::Cursor>,
     ) -> NodeResult<u64> {
+        self.refresh_binding_config()?;
         if self.binding_config.is_truthy("private_mode_active") {
             info!(
                 source_unit = self.source_unit_id,
@@ -743,6 +762,7 @@ where
 
         self.acquisition_manager = Some(Arc::new(acq));
         self.binding_config = config.to_binding_config_for_source(self.source_unit_id)?;
+        self.node_config = Some(config.clone());
 
         // Merge user-supplied JSON over the parser's baseline. The parser
         // declares mandatory adapter fields (parser-specific SQL query,
@@ -1066,8 +1086,70 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::parser::{InputShapeKind, ParserResult, SourceRecord};
+    use async_trait::async_trait;
+    use futures::stream::{self, BoxStream};
+    use sinex_primitives::domain::{EventSource, EventType};
+    use sinex_primitives::parser::{ParserId, ParserManifest, SourceUnitId};
+    use sinex_primitives::privacy::ProcessingContext;
     use sinex_primitives::privacy::{RuntimePrivateModeState, save_private_mode_state};
     use xtask::sandbox::prelude::sinex_test;
+
+    #[derive(Default)]
+    struct TestAdapter;
+
+    #[async_trait]
+    impl InputShapeAdapter for TestAdapter {
+        type Config = ();
+        type Cursor = u64;
+
+        const KIND: InputShapeKind = InputShapeKind::AppendOnlyFile;
+
+        async fn open(
+            &self,
+            _material_id: Id<SourceMaterial>,
+            _config: &Self::Config,
+            _cursor: Option<Self::Cursor>,
+        ) -> ParserResult<BoxStream<'static, ParserResult<SourceRecord>>> {
+            Ok(Box::pin(stream::empty()))
+        }
+
+        fn cursor_after(&self, _record: &SourceRecord) -> ParserResult<Self::Cursor> {
+            Ok(0)
+        }
+    }
+
+    #[derive(Default)]
+    struct TestParser;
+
+    #[async_trait]
+    impl MaterialParser for TestParser {
+        type Config = ();
+
+        fn manifest(&self) -> ParserManifest {
+            ParserManifest {
+                parser_id: ParserId::from_static("test-parser"),
+                parser_version: "1.0.0".to_string(),
+                accepted_input_shapes: vec![InputShapeKind::AppendOnlyFile],
+                source_unit_id: SourceUnitId::from_static("desktop.clipboard"),
+                declared_event_types: vec![(
+                    EventSource::from_static("test"),
+                    EventType::from_static("test.event"),
+                )],
+                privacy_contexts: vec![ProcessingContext::Metadata],
+                proof_obligations: Vec::new(),
+                description: String::new(),
+            }
+        }
+
+        async fn parse_record(
+            &mut self,
+            _record: SourceRecord,
+            _ctx: &ParserContext,
+        ) -> ParserResult<Vec<ParsedEventIntent>> {
+            Ok(Vec::new())
+        }
+    }
 
     #[sinex_test]
     async fn adapter_node_config_derives_private_mode_binding_flag()
@@ -1108,6 +1190,33 @@ mod tests {
         let binding = config.to_binding_config_for_source("terminal.zsh-history")?;
 
         assert!(!binding.is_truthy("private_mode_active"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn adapter_backed_ingestor_refreshes_private_mode_binding()
+    -> xtask::sandbox::TestResult<()> {
+        let dir = tempfile::tempdir()?;
+        save_private_mode_state(dir.path(), &RuntimePrivateModeState::disabled())?;
+        let mut ingestor =
+            AdapterBackedIngestor::<TestAdapter, TestParser>::new("desktop.clipboard");
+        ingestor.node_config = Some(AdapterNodeConfig {
+            private_mode_state_dir: Some(dir.path().to_path_buf()),
+            ..Default::default()
+        });
+
+        ingestor.refresh_binding_config()?;
+        assert!(!ingestor.binding_config.is_truthy("private_mode_active"));
+
+        let state = RuntimePrivateModeState::enabled_by(
+            "sinity",
+            vec!["desktop".to_string()],
+            Timestamp::UNIX_EPOCH,
+        );
+        save_private_mode_state(dir.path(), &state)?;
+
+        ingestor.refresh_binding_config()?;
+        assert!(ingestor.binding_config.is_truthy("private_mode_active"));
         Ok(())
     }
 
