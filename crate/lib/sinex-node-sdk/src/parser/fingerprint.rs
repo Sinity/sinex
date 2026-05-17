@@ -398,6 +398,29 @@ impl SourceRecordFingerprint {
     pub fn hash(&self) -> &str {
         &self.blake3_hash
     }
+
+    /// Builds a drift event between two already-observed fingerprints.
+    ///
+    /// This is useful for runtimes that persist the previous fingerprint in
+    /// checkpoint state rather than keeping a live [`DriftAccumulator`].
+    #[must_use]
+    pub fn diff(
+        source_unit_id: SourceUnitId,
+        previous: &SourceRecordFingerprint,
+        current: &SourceRecordFingerprint,
+    ) -> Option<DriftEvent> {
+        if previous.hash() == current.hash() {
+            return None;
+        }
+
+        Some(build_drift_event_from_parts(
+            source_unit_id,
+            previous.hash().to_string(),
+            previous.keys.clone(),
+            previous.type_map.clone(),
+            current,
+        ))
+    }
 }
 
 // =============================================================================
@@ -529,54 +552,67 @@ impl DriftAccumulator {
 
         let previous_hash = self.last_hash.clone().unwrap_or_default();
 
-        // Compute key deltas.
-        let current_key_set: std::collections::HashSet<_> = current.keys.iter().cloned().collect();
-        let previous_key_set: std::collections::HashSet<_> =
-            previous_keys.iter().cloned().collect();
+        build_drift_event_from_parts(
+            self.source_unit_id.clone(),
+            previous_hash,
+            previous_keys,
+            previous_types,
+            current,
+        )
+    }
+}
 
-        let mut added_keys: Vec<_> = current_key_set
-            .difference(&previous_key_set)
-            .cloned()
-            .collect();
-        added_keys.sort();
+fn build_drift_event_from_parts(
+    source_unit_id: SourceUnitId,
+    previous_hash: String,
+    previous_keys: Vec<String>,
+    previous_types: BTreeMap<String, String>,
+    current: &SourceRecordFingerprint,
+) -> DriftEvent {
+    let current_key_set: std::collections::HashSet<_> = current.keys.iter().cloned().collect();
+    let previous_key_set: std::collections::HashSet<_> = previous_keys.iter().cloned().collect();
 
-        let mut removed_keys: Vec<_> = previous_key_set
-            .difference(&current_key_set)
-            .cloned()
-            .collect();
-        removed_keys.sort();
+    let mut added_keys: Vec<_> = current_key_set
+        .difference(&previous_key_set)
+        .cloned()
+        .collect();
+    added_keys.sort();
 
-        // Compute type changes for keys that exist in both.
-        let mut type_changes = vec![];
-        for key in &previous_keys {
-            if current_key_set.contains(key) {
-                let prev_type = previous_types
-                    .get(key)
-                    .cloned()
-                    .unwrap_or_else(|| "unknown".to_string());
-                let curr_type = current
-                    .type_map
-                    .get(key)
-                    .cloned()
-                    .unwrap_or_else(|| "unknown".to_string());
-                if prev_type != curr_type {
-                    type_changes.push((key.clone(), prev_type, curr_type));
-                }
+    let mut removed_keys: Vec<_> = previous_key_set
+        .difference(&current_key_set)
+        .cloned()
+        .collect();
+    removed_keys.sort();
+
+    let mut type_changes = vec![];
+    for key in &previous_keys {
+        if current_key_set.contains(key) {
+            let prev_type = previous_types
+                .get(key)
+                .cloned()
+                .unwrap_or_else(|| "unknown".to_string());
+            let curr_type = current
+                .type_map
+                .get(key)
+                .cloned()
+                .unwrap_or_else(|| "unknown".to_string());
+            if prev_type != curr_type {
+                type_changes.push((key.clone(), prev_type, curr_type));
             }
         }
+    }
 
-        DriftEvent {
-            source_unit_id: self.source_unit_id.clone(),
-            previous_hash,
-            current_hash: current.hash().to_string(),
-            format: current.format.clone(),
-            previous_keys,
-            current_keys: current.keys.clone(),
-            added_keys,
-            removed_keys,
-            type_changes,
-            observed_at: Timestamp::now(),
-        }
+    DriftEvent {
+        source_unit_id,
+        previous_hash,
+        current_hash: current.hash().to_string(),
+        format: current.format.clone(),
+        previous_keys,
+        current_keys: current.keys.clone(),
+        added_keys,
+        removed_keys,
+        type_changes,
+        observed_at: Timestamp::now(),
     }
 }
 
@@ -1095,6 +1131,35 @@ mod tests {
                 "integer".to_string(),
                 "string".to_string()
             )
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_fingerprint_diff_matches_drift_payload() -> xtask::sandbox::TestResult<()> {
+        let source_unit = SourceUnitId::from_static("test.unit");
+        let fp1 = SourceRecordFingerprint::from_json(&json!({"count": 42, "name": "old"}));
+        let fp2 = SourceRecordFingerprint::from_json(&json!({"count": "42", "enabled": true}));
+
+        let drift = SourceRecordFingerprint::diff(source_unit.clone(), &fp1, &fp2)
+            .expect("different fingerprints should report drift");
+
+        assert_eq!(drift.source_unit_id, source_unit);
+        assert_eq!(drift.previous_hash, fp1.hash());
+        assert_eq!(drift.current_hash, fp2.hash());
+        assert_eq!(drift.added_keys, vec!["/enabled"]);
+        assert_eq!(drift.removed_keys, vec!["/name"]);
+        assert_eq!(
+            drift.type_changes,
+            vec![(
+                "/count".to_string(),
+                "integer".to_string(),
+                "string".to_string()
+            )]
+        );
+        assert!(
+            SourceRecordFingerprint::diff(SourceUnitId::from_static("test.unit"), &fp1, &fp1)
+                .is_none()
         );
         Ok(())
     }

@@ -96,7 +96,7 @@ use crate::NodeResult;
 use crate::acquisition_manager::{AcquisitionManager, AppendStreamAcquirer, RotationPolicy};
 use crate::ingestor_node::IngestorNode;
 use crate::parser::adapters::SqliteSnapshotLane;
-use crate::parser::{BindingConfig, InputShapeAdapter, MaterialParser};
+use crate::parser::{BindingConfig, InputShapeAdapter, MaterialParser, SourceRecordFingerprint};
 use crate::runtime::stream::{
     Checkpoint, ContinuousStart, NodeCapabilities, NodeRuntimeState, ScanArgs, ScanReport,
     TimeHorizon,
@@ -223,6 +223,11 @@ where
 
     /// Total events emitted across all scans.
     pub total_events_emitted: u64,
+
+    /// Last adapter-reported input fingerprint, used to detect substrate
+    /// shape drift across checkpointed drain cycles.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_input_fingerprint: Option<SourceRecordFingerprint>,
 }
 
 impl<C> Default for AdapterNodeState<C>
@@ -233,6 +238,7 @@ where
         Self {
             cursor: None,
             total_events_emitted: 0,
+            last_input_fingerprint: None,
         }
     }
 }
@@ -370,6 +376,48 @@ where
             .and_then(super::super::acquisition_manager::AppendStreamAcquirer::current_material_id)
     }
 
+    /// Observe adapter-level input shape before draining records.
+    ///
+    /// This is advisory: shape observation should surface drift, but a
+    /// fingerprinting failure must not prevent ingestion from reading the
+    /// underlying source.
+    fn observe_input_fingerprint(
+        &self,
+        config: &A::Config,
+        state: &mut AdapterNodeState<A::Cursor>,
+        source_unit_id: &sinex_primitives::parser::SourceUnitId,
+    ) {
+        match self.adapter.input_fingerprint(config) {
+            Ok(Some(current)) => {
+                if let Some(previous) = &state.last_input_fingerprint
+                    && let Some(drift) =
+                        SourceRecordFingerprint::diff(source_unit_id.clone(), previous, &current)
+                {
+                    warn!(
+                        source_unit = self.source_unit_id,
+                        format = drift.format.as_str(),
+                        previous_hash = drift.previous_hash.as_str(),
+                        current_hash = drift.current_hash.as_str(),
+                        added_keys = ?&drift.added_keys,
+                        removed_keys = ?&drift.removed_keys,
+                        type_changes = ?&drift.type_changes,
+                        "input shape drift detected"
+                    );
+                }
+                state.last_input_fingerprint = Some(current);
+            }
+            Ok(None) => {}
+            Err(e) => {
+                warn!(
+                    source_unit = self.source_unit_id,
+                    adapter_kind = A::KIND.as_str(),
+                    error = %e,
+                    "input fingerprint failed; continuing without shape drift check"
+                );
+            }
+        }
+    }
+
     /// Ensure the `AppendStreamAcquirer` is initialized, creating it from the
     /// acquisition manager if necessary.
     ///
@@ -444,6 +492,8 @@ where
                 crate::SinexError::validation("invalid source_unit_id in AdapterBackedIngestor")
                     .with_std_error(&e)
             })?;
+
+        self.observe_input_fingerprint(config, state, &source_unit_id);
 
         let operation_id = Uuid::now_v7();
         let job_id = Uuid::now_v7();
@@ -1058,6 +1108,22 @@ mod tests {
         let binding = config.to_binding_config_for_source("terminal.zsh-history")?;
 
         assert!(!binding.is_truthy("private_mode_active"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn adapter_node_state_defaults_missing_input_fingerprint()
+    -> xtask::sandbox::TestResult<()> {
+        let value = serde_json::json!({
+            "cursor": 7,
+            "total_events_emitted": 12
+        });
+
+        let state: AdapterNodeState<u64> = serde_json::from_value(value)?;
+
+        assert_eq!(state.cursor, Some(7));
+        assert_eq!(state.total_events_emitted, 12);
+        assert!(state.last_input_fingerprint.is_none());
         Ok(())
     }
 }
