@@ -176,6 +176,7 @@ journalctl -u sinex-gateway -u sinex-ingestd -f
 | Explain semantic composition beyond ancestry trace | [docs/architecture/semantic-trace-teardown.md](docs/architecture/semantic-trace-teardown.md) |
 | Run replay-safe semantic experiments | [docs/architecture/semantic-epochs-shadow-lanes.md](docs/architecture/semantic-epochs-shadow-lanes.md) |
 | Route model calls through prompts, policy, and budgets | [docs/architecture/prompt-router-budget.md](docs/architecture/prompt-router-budget.md) |
+| Promote generated suggestions through human or policy authority | [docs/architecture/proposal-judgment-finalizer.md](docs/architecture/proposal-judgment-finalizer.md) |
 | Bound active instruction and actuator loops | [docs/architecture/instruction-actuator-loops.md](docs/architecture/instruction-actuator-loops.md) |
 | Expose read-only evidence to coding agents | [docs/architecture/mcp-readonly-server.md](docs/architecture/mcp-readonly-server.md) |
 | Rename event taxonomy labels without parser replay | [docs/architecture/audited-semantic-renames.md](docs/architecture/audited-semantic-renames.md) |
