@@ -108,6 +108,49 @@ async fn dry_run_reports_estimates_and_creates_no_archive() -> xtask::sandbox::T
     Ok(())
 }
 
+/// Non-Postgres component subsets do not need DATABASE_URL, even on the binary
+/// path. This keeps state-only forensic snapshots usable when Postgres is the
+/// broken component being investigated.
+#[sinex_test]
+async fn dry_run_non_postgres_components_do_not_require_database_url()
+-> xtask::sandbox::TestResult<()> {
+    let state_dir = make_fake_state_dir();
+    let output_dir = tempfile::tempdir().expect("output tempdir");
+    let output_path = output_dir.path().join("test.tar.zst");
+
+    let output = sinexctl_bin()
+        .args([
+            "admin",
+            "snapshot",
+            "--output",
+            output_path.to_str().unwrap(),
+            "--dry-run",
+            "--state-dir",
+            state_dir.path().to_str().unwrap(),
+            "--components",
+            "nats,cas,state",
+        ])
+        .output()
+        .expect("run sinexctl admin snapshot --dry-run without DATABASE_URL");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "non-postgres dry-run must not require DATABASE_URL\nstdout: {stdout}\nstderr: {stderr}"
+    );
+    assert!(
+        stdout.contains("dry-run"),
+        "stdout must mention dry-run mode\nstdout: {stdout}"
+    );
+    assert!(
+        !output_path.exists(),
+        "dry-run must NOT create an archive at {output_path:?}"
+    );
+
+    Ok(())
+}
+
 // ── Staging cleanup on pg_dump failure ──────────────────────────────────────
 
 /// When pg_dump fails (bad DATABASE_URL), staging must be cleaned up and the
@@ -196,7 +239,7 @@ async fn library_dry_run_returns_valid_result() -> xtask::sandbox::TestResult<()
         workers: 0,
         mode: "quiesce".to_string(),
         dry_run: true,
-        database_url: Some("postgresql://sinex:sinex@localhost/sinex_prod".to_string()),
+        database_url: None,
         state_dir: Some(state_dir.path().to_path_buf()),
         auto_stop: false,
         components: vec![Component::Nats, Component::Cas, Component::State],
