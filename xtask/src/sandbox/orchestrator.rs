@@ -32,6 +32,10 @@ pub struct TestIngestdConfig {
     /// Database connection pool size for the spawned ingestd.
     /// Defaults to 4 (test-appropriate; production default is 50).
     pub database_pool_size: u32,
+    /// Whether the spawned ingestd should reject missing durable consumers on
+    /// non-empty raw-event streams. Tests default this off because catch-up
+    /// from pre-seeded messages is a normal harness pattern.
+    pub reject_initial_replay: bool,
 }
 
 impl Default for TestIngestdConfig {
@@ -48,6 +52,7 @@ impl Default for TestIngestdConfig {
             consumer_fetch_max_messages: 100,
             consumer_fetch_timeout_ms: 50,
             database_pool_size: 4,
+            reject_initial_replay: false,
         }
     }
 }
@@ -1100,6 +1105,10 @@ pub async fn start_test_ingestd_with_config(
     cmd.env(
         "SINEX_INGESTD_CONSUMER_FETCH_TIMEOUT_MS",
         config.consumer_fetch_timeout_ms.to_string(),
+    );
+    cmd.env(
+        "SINEX_INGESTD_REJECT_INITIAL_REPLAY",
+        config.reject_initial_replay.to_string(),
     );
     // Disable schema validation and schema sync for test instances.
     // Test events use DynamicPayload with arbitrary payloads that don't conform

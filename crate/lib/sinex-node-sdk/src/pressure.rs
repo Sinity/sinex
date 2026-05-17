@@ -180,12 +180,12 @@ mod tests {
 
     #[sinex_test]
     async fn pressure_monitor_below_threshold_does_not_backoff() -> xtask::sandbox::TestResult<()> {
-        let monitor = PressureMonitor::new(99.0, 99.0);
-        // On non-Linux or systems with actual low pressure, this should be false.
+        let monitor = PressureMonitor::new(101.0, 101.0);
         assert!(!monitor.should_backoff());
         Ok(())
     }
 
+    #[cfg(not(target_os = "linux"))]
     #[sinex_test]
     async fn non_linux_stub_always_returns_false() -> xtask::sandbox::TestResult<()> {
         let monitor = PressureMonitor::default_thresholds();

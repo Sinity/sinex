@@ -521,6 +521,7 @@ impl StageAsYouGoContext {
         let handle = manager
             .build_material(identifier)
             .with_metadata(metadata.clone())
+            .publish_begin_before_return()
             .begin()
             .await
             .map_err(|e| SinexError::processing(format!("Failed to begin material: {e}")))?;

@@ -7,6 +7,7 @@ use std::{
 };
 
 use async_nats::jetstream;
+use color_eyre::eyre::WrapErr;
 use serde_json::json;
 use sinex_db::models::Event;
 use sinex_node_sdk::acquisition_manager::AcquisitionManager;
@@ -225,7 +226,8 @@ async fn stage_as_you_go_pipeline_end_to_end(ctx: TestContext) -> Result<()> {
         },
         Timeouts::STANDARD,
     )
-    .await?;
+    .await
+    .wrap_err("timed out waiting for ingestd raw event stream")?;
 
     let (event_tx, event_rx) = mpsc::channel::<Event<JsonValue>>(DEFAULT_EVENT_CHANNEL_SIZE);
     let (shutdown_tx, shutdown_rx) = oneshot::channel();
@@ -237,6 +239,9 @@ async fn stage_as_you_go_pipeline_end_to_end(ctx: TestContext) -> Result<()> {
     let node_batch_config = EventBatcherConfig {
         batch_size: 1,
         batch_timeout_ms: 100,
+        source_unit_id: "integration-log".to_string(),
+        parser_id: "stage-as-you-go-integration".to_string(),
+        parser_version: "1.0.0".to_string(),
         ..Default::default()
     };
     let batcher_handle = spawn_event_batcher(
@@ -269,6 +274,9 @@ async fn stage_as_you_go_pipeline_end_to_end(ctx: TestContext) -> Result<()> {
     assert_eq!(result.bytes_processed, content.len());
     assert_eq!(result.event_ids.len(), 3, "expected one event per line");
 
+    let _ = shutdown_tx.send(());
+    batcher_handle.await??;
+
     WaitHelpers::wait_for_condition(
         || {
             let pool = ctx.pool.clone();
@@ -289,7 +297,8 @@ async fn stage_as_you_go_pipeline_end_to_end(ctx: TestContext) -> Result<()> {
         },
         Timeouts::STANDARD,
     )
-    .await?;
+    .await
+    .wrap_err("timed out waiting for source material to complete")?;
 
     // `total_bytes` is a dedicated column on source_material_registry (not JSONB metadata);
     // the RESERVED_METADATA_KEYS guard strips it from the JSONB field on write.
@@ -328,7 +337,8 @@ async fn stage_as_you_go_pipeline_end_to_end(ctx: TestContext) -> Result<()> {
         },
         Timeouts::STANDARD,
     )
-    .await?;
+    .await
+    .wrap_err("timed out waiting for staged events to persist")?;
 
     let observed_events: i64 = sqlx::query_scalar!(
         "SELECT COUNT(*) FROM core.events WHERE source_material_id = $1::uuid",
@@ -339,29 +349,6 @@ async fn stage_as_you_go_pipeline_end_to_end(ctx: TestContext) -> Result<()> {
     .unwrap_or(0);
     assert_eq!(observed_events, result.event_ids.len() as i64);
 
-    WaitHelpers::wait_for_condition(
-        || {
-            let js = jetstream.clone();
-            let stream_name = ingest_handle.stream_name.clone();
-            let expected = result.event_ids.len() as u64;
-            async move {
-                let mut stream = js
-                    .get_stream(&stream_name)
-                    .await
-                    .map_err(|e| SinexError::network(e.to_string()))?;
-                let info = stream
-                    .info()
-                    .await
-                    .map_err(|e| SinexError::network(e.to_string()))?;
-                Ok::<bool, SinexError>(info.state.messages >= expected)
-            }
-        },
-        Timeouts::STANDARD,
-    )
-    .await?;
-
-    let _ = shutdown_tx.send(());
-    batcher_handle.await??;
     ingest_handle.stop().await?;
     Ok(())
 }

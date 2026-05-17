@@ -816,6 +816,7 @@ pub struct MaterialBuilder<'a> {
     manager: &'a AcquisitionManager,
     source_identifier: String,
     metadata: JsonValue,
+    publish_begin_before_return: bool,
 }
 
 impl<'a> MaterialBuilder<'a> {
@@ -824,6 +825,7 @@ impl<'a> MaterialBuilder<'a> {
             manager,
             source_identifier: source_identifier.into(),
             metadata: json!({}),
+            publish_begin_before_return: false,
         }
     }
 
@@ -842,6 +844,18 @@ impl<'a> MaterialBuilder<'a> {
         if let Some(obj) = self.metadata.as_object_mut() {
             obj.insert(key.to_string(), value);
         }
+        self
+    }
+
+    /// Publish the material BEGIN frame before returning the handle.
+    ///
+    /// Ordinary acquisition keeps BEGIN lazy so dropping an unused handle cannot
+    /// create an orphan material row. Stage-as-You-Go needs the opposite
+    /// contract because it may emit events against the material ID before the
+    /// first source slice exists.
+    #[must_use]
+    pub fn publish_begin_before_return(mut self) -> Self {
+        self.publish_begin_before_return = true;
         self
     }
 
@@ -893,11 +907,9 @@ impl<'a> MaterialBuilder<'a> {
             pending_published_slice: None,
         };
 
-        // Publish BEGIN before handing the material ID to callers. Stage-as-you-go
-        // events may be emitted immediately after `register_in_flight`, so the
-        // source material must already be durable rather than lazily published on
-        // first slice/finalize.
-        self.manager.ensure_begin_published(&mut handle).await?;
+        if self.publish_begin_before_return {
+            self.manager.ensure_begin_published(&mut handle).await?;
+        }
 
         Ok(handle)
     }
