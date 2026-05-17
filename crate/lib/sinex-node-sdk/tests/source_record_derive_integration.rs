@@ -324,9 +324,7 @@ async fn suppress_if_drops_field_when_flag_set() {
 
 #[tokio::test]
 async fn derived_parser_honors_binding_aware_entrypoint() {
-    let mut parser = SuppressRecord {
-        cmd: String::new(),
-    };
+    let mut parser = SuppressRecord { cmd: String::new() };
 
     let binding = BindingConfig::new().with_flag("private_mode_active", true);
     let intents = parser
