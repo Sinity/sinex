@@ -4,7 +4,7 @@ use clap::{Args, Subcommand};
 use color_eyre::Result;
 use sinex_primitives::privacy::{
     PrivateModeReasonClass, RuntimePrivateModeState, load_private_mode_state,
-    save_private_mode_state,
+    resolve_private_mode_state_dir, save_private_mode_state,
 };
 use sinex_primitives::temporal::Timestamp;
 use std::path::PathBuf;
@@ -105,10 +105,7 @@ impl PrivateModeCommand {
 }
 
 fn resolve_state_dir(explicit: &Option<PathBuf>) -> Result<PathBuf> {
-    Ok(explicit
-        .clone()
-        .or_else(|| std::env::var_os("SINEX_STATE_DIR").map(PathBuf::from))
-        .unwrap_or_else(|| PathBuf::from("/var/lib/sinex")))
+    Ok(resolve_private_mode_state_dir(explicit.clone()))
 }
 
 fn format_private_mode_state(state: &RuntimePrivateModeState) -> String {

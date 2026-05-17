@@ -17,6 +17,7 @@ pub mod node_registry;
 pub mod nodes;
 pub mod ops;
 pub mod pkm;
+pub mod privacy;
 pub mod query;
 pub mod replay;
 pub mod rpc_handlers;
@@ -65,6 +66,9 @@ pub use coordination::{
 pub use documents::{handle_documents_get, handle_documents_get_chunks, handle_documents_search};
 pub use node_registry::{handle_nodes_health, handle_nodes_list_active};
 pub use pkm::{handle_create_entities, handle_create_note, handle_link_entities};
+pub use privacy::{
+    handle_private_mode_disable, handle_private_mode_enable, handle_private_mode_status,
+};
 pub use sources::{
     handle_sources_annotate, handle_sources_archive, handle_sources_bindings_create,
     handle_sources_bindings_list, handle_sources_bindings_resolve, handle_sources_continuity,
