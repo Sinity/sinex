@@ -409,6 +409,15 @@ where
         cursor: Option<A::Cursor>,
         state: &mut AdapterNodeState<A::Cursor>,
     ) -> NodeResult<u64> {
+        if self.binding_config.is_truthy("private_mode_active") {
+            info!(
+                source_unit = self.source_unit_id,
+                adapter_kind = A::KIND.as_str(),
+                "private mode active for source unit; skipping adapter acquisition"
+            );
+            return Ok(0);
+        }
+
         let config = self.config.as_ref().ok_or_else(|| {
             crate::SinexError::lifecycle(
                 "AdapterBackedIngestor: adapter config not set (initialize not called)",
