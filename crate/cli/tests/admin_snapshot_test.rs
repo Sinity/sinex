@@ -35,6 +35,18 @@ fn make_fake_state_dir() -> TempDir {
     fs::create_dir_all(&spool).unwrap();
     fs::write(spool.join("checkpoint.bin"), b"checkpoint-data").unwrap();
 
+    fs::write(
+        root.join("source-units.json"),
+        r#"{
+          "source_units": [
+            { "id": "terminal.atuin-history" },
+            { "id": "desktop.clipboard" },
+            { "id": "desktop.clipboard" }
+          ]
+        }"#,
+    )
+    .unwrap();
+
     dir
 }
 
@@ -261,6 +273,13 @@ async fn library_dry_run_returns_valid_result() -> xtask::sandbox::TestResult<()
         !result.components_captured.is_empty(),
         "dry-run must return at least one component record"
     );
+    assert_eq!(
+        result.source_unit_ids,
+        vec![
+            "desktop.clipboard".to_string(),
+            "terminal.atuin-history".to_string()
+        ]
+    );
 
     // Nats, CAS, and state should all appear.
     let names: Vec<&str> = result
@@ -306,6 +325,10 @@ async fn manifest_round_trips_through_serde() -> xtask::sandbox::TestResult<()> 
         git_sha: Some("abc1234".to_string()),
         host: "sinnix-prime".to_string(),
         mode: "quiesce".to_string(),
+        source_unit_ids: vec![
+            "desktop.clipboard".to_string(),
+            "terminal.atuin-history".to_string(),
+        ],
         components: vec![
             ComponentRecord {
                 name: "postgres".to_string(),
@@ -332,6 +355,7 @@ async fn manifest_round_trips_through_serde() -> xtask::sandbox::TestResult<()> 
     let back: SnapshotManifest = serde_json::from_str(&json).expect("deserialise manifest");
 
     assert_eq!(back.snapshot_id, "test-id");
+    assert_eq!(back.source_unit_ids.len(), 2);
     assert_eq!(back.components.len(), 2);
     assert_eq!(back.totals.archive_bytes, Some(3_000_000));
 
