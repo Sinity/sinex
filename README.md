@@ -171,6 +171,7 @@ journalctl -u sinex-gateway -u sinex-ingestd -f
 | Explain semantic composition beyond ancestry trace | [docs/architecture/semantic-trace-teardown.md](docs/architecture/semantic-trace-teardown.md) |
 | Reason about replay evidence and source snapshots | [docs/architecture/evidence-lanes.md](docs/architecture/evidence-lanes.md) |
 | Reason about large aggregate provenance | [docs/architecture/high-fan-in-lineage.md](docs/architecture/high-fan-in-lineage.md) |
+| Coordinate late-arriving evidence in derived outputs | [docs/architecture/late-arriving-event-temporal-coordination.md](docs/architecture/late-arriving-event-temporal-coordination.md) |
 | Reason about runtime backpressure and loss policy | [docs/architecture/runtime-qos.md](docs/architecture/runtime-qos.md) |
 | Decide which surface owns a runtime or data concern | [docs/architecture/authority-surfaces.md](docs/architecture/authority-surfaces.md) |
 | Integrate an external tool or sibling project | [docs/architecture/integration-authority.md](docs/architecture/integration-authority.md) |
