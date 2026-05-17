@@ -190,16 +190,43 @@ pub(crate) fn read_ingestd_debug_log(path: &std::path::Path) -> Result<Option<St
     }
 }
 
+fn trailing_log_excerpt(content: &str, max_bytes: usize) -> (&str, bool) {
+    if content.len() <= max_bytes {
+        return (content, false);
+    }
+
+    let min_start = content.len() - max_bytes;
+    let start = content
+        .char_indices()
+        .map(|(index, _)| index)
+        .find(|index| *index >= min_start)
+        .unwrap_or(content.len());
+    let start = content[start..]
+        .find('\n')
+        .map(|offset| start + offset + 1)
+        .unwrap_or(start);
+    (&content[start..], true)
+}
+
 fn format_ingestd_debug_context(debug_log: &std::path::Path) -> String {
     match read_ingestd_debug_log(debug_log) {
         Ok(Some(content)) => {
-            let end = content.floor_char_boundary(3000);
-            format!(
-                "ingestd debug log at {} ({} bytes):\n{}",
-                debug_log.display(),
-                content.len(),
-                &content[..end]
-            )
+            let (excerpt, truncated) = trailing_log_excerpt(&content, 3000);
+            if truncated {
+                format!(
+                    "ingestd debug log at {} ({} bytes, trailing excerpt):\n{}",
+                    debug_log.display(),
+                    content.len(),
+                    excerpt
+                )
+            } else {
+                format!(
+                    "ingestd debug log at {} ({} bytes):\n{}",
+                    debug_log.display(),
+                    content.len(),
+                    excerpt
+                )
+            }
         }
         Ok(None) => format!("ingestd debug log at {} was empty", debug_log.display()),
         Err(log_error) => format!(
@@ -1365,6 +1392,25 @@ mod tests {
         assert!(context.contains(debug_log.display().to_string().as_str()));
         assert!(context.contains("(30 bytes)"));
         assert!(context.contains("startup failed\nmissing stream\n"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn format_ingestd_debug_context_uses_tail_for_long_logs() -> TestResult<()> {
+        let tempdir = tempfile::tempdir()?;
+        let debug_log = tempdir.path().join("ingestd.log");
+        let content = format!("{}\nFINAL ROOT CAUSE\n", "startup chatter\n".repeat(400));
+        fs::write(&debug_log, &content)?;
+        let context = format_ingestd_debug_context(&debug_log);
+
+        assert!(context.contains(debug_log.display().to_string().as_str()));
+        assert!(context.contains("trailing excerpt"));
+        assert!(context.contains("FINAL ROOT CAUSE"));
+        assert!(
+            !context.contains("startup chatte\n"),
+            "excerpt should start on a line boundary: {context}"
+        );
+        assert!(!context.contains(content.as_str()));
         Ok(())
     }
 
