@@ -182,6 +182,7 @@ journalctl -u sinex-gateway -u sinex-ingestd -f
 | Reason about large aggregate provenance | [docs/architecture/high-fan-in-lineage.md](docs/architecture/high-fan-in-lineage.md) |
 | Coordinate late-arriving evidence in derived outputs | [docs/architecture/late-arriving-event-temporal-coordination.md](docs/architecture/late-arriving-event-temporal-coordination.md) |
 | Reason about runtime backpressure and loss policy | [docs/architecture/runtime-qos.md](docs/architecture/runtime-qos.md) |
+| Drain and recover source-worker material cleanly | [docs/design/source-worker-drain-protocol.md](docs/design/source-worker-drain-protocol.md) |
 | Decide which surface owns a runtime or data concern | [docs/architecture/authority-surfaces.md](docs/architecture/authority-surfaces.md) |
 | Integrate an external tool or sibling project | [docs/architecture/integration-authority.md](docs/architecture/integration-authority.md) |
 | Work on repo workflow or verification | [CONTRIBUTING.md](CONTRIBUTING.md), [TESTING.md](TESTING.md) |
