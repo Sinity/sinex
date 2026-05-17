@@ -233,6 +233,9 @@ pub trait InputShapeAdapter: Send + Sync {
 ///
 /// - `manifest()` should return a static manifest with the parser's identity.
 /// - `parse_record()` is called once per source record, in order.
+/// - `parse_record_with_binding()` is called by binding-aware hosts and
+///   defaults to `parse_record()` for parsers that do not consult runtime
+///   binding flags.
 /// - Return `Ok(vec![])` to skip a record without an error.
 /// - Return an error only when the record is genuinely unparseable.
 #[async_trait]
@@ -249,6 +252,20 @@ pub trait MaterialParser: Send + Sync {
         record: SourceRecord,
         ctx: &ParserContext,
     ) -> ParserResult<Vec<ParsedEventIntent>>;
+
+    /// Parse a single source record with runtime binding flags.
+    ///
+    /// Generated declarative parsers use this to honor `#[suppress_if]`
+    /// predicates such as `private_mode_active`. Imperative parsers can ignore
+    /// the binding config by relying on this default implementation.
+    async fn parse_record_with_binding(
+        &mut self,
+        record: SourceRecord,
+        ctx: &ParserContext,
+        _binding: &BindingConfig,
+    ) -> ParserResult<Vec<ParsedEventIntent>> {
+        self.parse_record(record, ctx).await
+    }
 
     /// Optional baseline adapter config supplied by the parser type itself.
     ///
