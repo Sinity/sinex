@@ -137,6 +137,74 @@ impl SourceRecordFingerprint {
         Self::from_delimited_bytes("tsv", b'\t', bytes)
     }
 
+    /// Creates a fingerprint from the declared SQLite table/column shape.
+    ///
+    /// The fingerprint records table names, column names, declared types,
+    /// not-null flags, and primary-key positions. It never reads row values.
+    pub fn from_sqlite_connection(conn: &rusqlite::Connection) -> rusqlite::Result<Self> {
+        let mut table_stmt = conn.prepare(
+            r"
+            SELECT name
+            FROM sqlite_master
+            WHERE type = 'table'
+              AND name NOT LIKE 'sqlite_%'
+            ORDER BY name
+            ",
+        )?;
+        let table_names = table_stmt
+            .query_map([], |row| row.get::<_, String>(0))?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+
+        let mut keys = Vec::new();
+        let mut type_map = BTreeMap::new();
+        for table_name in table_names {
+            let table_key = format!("table:{table_name}");
+            keys.push(table_key.clone());
+            type_map.insert(table_key, "table".to_string());
+
+            let quoted = quote_sqlite_identifier(&table_name);
+            let mut column_stmt = conn.prepare(&format!("PRAGMA table_info({quoted})"))?;
+            let columns = column_stmt
+                .query_map([], |row| {
+                    Ok(SqliteColumnShape {
+                        name: row.get(1)?,
+                        declared_type: row.get::<_, String>(2)?,
+                        not_null: row.get::<_, i64>(3)? != 0,
+                        primary_key_position: row.get(5)?,
+                    })
+                })?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+
+            for column in columns {
+                let key = format!("{table_name}.{}", column.name);
+                keys.push(key.clone());
+                type_map.insert(
+                    key,
+                    format!(
+                        "{};not_null={};pk={}",
+                        normalize_sqlite_declared_type(&column.declared_type),
+                        column.not_null,
+                        column.primary_key_position
+                    ),
+                );
+            }
+        }
+
+        keys.sort();
+        keys.dedup();
+
+        let fp = Self {
+            format: "sqlite_schema".to_string(),
+            keys: keys.clone(),
+            type_map: type_map.clone(),
+            blake3_hash: String::new(),
+        };
+
+        let mut fingerprint = fp;
+        fingerprint.blake3_hash = fingerprint.compute_hash();
+        Ok(fingerprint)
+    }
+
     /// Creates a fingerprint from a `SourceRecord`.
     ///
     /// Dispatches based on record format (currently only JSON is fully supported).
@@ -624,6 +692,26 @@ fn infer_text_type(value: &str) -> String {
     "string".to_string()
 }
 
+struct SqliteColumnShape {
+    name: String,
+    declared_type: String,
+    not_null: bool,
+    primary_key_position: i64,
+}
+
+fn quote_sqlite_identifier(identifier: &str) -> String {
+    format!("\"{}\"", identifier.replace('"', "\"\""))
+}
+
+fn normalize_sqlite_declared_type(declared_type: &str) -> String {
+    let trimmed = declared_type.trim();
+    if trimmed.is_empty() {
+        "untyped".to_string()
+    } else {
+        trimmed.to_ascii_lowercase()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -792,6 +880,71 @@ mod tests {
                 "score".to_string(),
                 "number".to_string(),
                 "string".to_string()
+            )]
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_from_sqlite_connection_fingerprints_table_columns()
+    -> xtask::sandbox::TestResult<()> {
+        let conn = rusqlite::Connection::open_in_memory()?;
+        conn.execute(
+            "CREATE TABLE history (
+                id INTEGER PRIMARY KEY,
+                command TEXT NOT NULL,
+                ts_ms INTEGER
+            )",
+            [],
+        )?;
+
+        let fp = SourceRecordFingerprint::from_sqlite_connection(&conn)?;
+
+        assert_eq!(fp.format, "sqlite_schema");
+        assert!(fp.keys.contains(&"table:history".to_string()));
+        assert!(fp.keys.contains(&"history.command".to_string()));
+        assert_eq!(fp.type_map["history.command"], "text;not_null=true;pk=0");
+        assert_eq!(fp.type_map["history.id"], "integer;not_null=false;pk=1");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_sqlite_schema_drift_reports_column_change() -> xtask::sandbox::TestResult<()> {
+        let source_unit = SourceUnitId::from_static("test.sqlite");
+        let mut acc = DriftAccumulator::new(source_unit)
+            .with_emit_every_n_records(1)
+            .with_cooldown_secs(0);
+
+        let conn1 = rusqlite::Connection::open_in_memory()?;
+        conn1.execute(
+            "CREATE TABLE history (id INTEGER PRIMARY KEY, command TEXT)",
+            [],
+        )?;
+        let conn2 = rusqlite::Connection::open_in_memory()?;
+        conn2.execute(
+            "CREATE TABLE history (
+                id INTEGER PRIMARY KEY,
+                command BLOB,
+                exit_code INTEGER
+            )",
+            [],
+        )?;
+
+        let fp1 = SourceRecordFingerprint::from_sqlite_connection(&conn1)?;
+        let fp2 = SourceRecordFingerprint::from_sqlite_connection(&conn2)?;
+        acc.observe(&fp1);
+        let drift = acc
+            .observe(&fp2)
+            .expect("sqlite schema shape drift should emit");
+
+        assert_eq!(drift.format, "sqlite_schema");
+        assert_eq!(drift.added_keys, vec!["history.exit_code"]);
+        assert_eq!(
+            drift.type_changes,
+            vec![(
+                "history.command".to_string(),
+                "text;not_null=false;pk=0".to_string(),
+                "blob;not_null=false;pk=0".to_string()
             )]
         );
         Ok(())
