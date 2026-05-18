@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Durable record of the router decision used before a model effect attempt.",
+  "properties": {
+    "bucket_key": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "decision_reason": {
+      "type": "string"
+    },
+    "experiment_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "model": {
+      "type": "string"
+    },
+    "policy_id": {
+      "type": "string"
+    },
+    "prompt_id": {
+      "type": "string"
+    },
+    "prompt_version": {
+      "type": "string"
+    },
+    "provider": {
+      "type": "string"
+    },
+    "routing_decision_id": {
+      "format": "uuid",
+      "type": "string"
+    },
+    "task_kind": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "routing_decision_id",
+    "policy_id",
+    "task_kind",
+    "prompt_id",
+    "prompt_version",
+    "provider",
+    "model",
+    "decision_reason"
+  ],
+  "title": "LlmRoutingDecisionPayload",
+  "type": "object",
+  "x-sinex-event-type": "llm.routing.decision",
+  "x-sinex-source": "llm",
+  "x-sinex-version": "1.0.0"
+}

@@ -1,0 +1,75 @@
+{
+  "$defs": {
+    "PromptPrivacyClass": {
+      "description": "Privacy class declared by a prompt/template owner.",
+      "enum": [
+        "public",
+        "internal",
+        "sensitive",
+        "secret"
+      ],
+      "type": "string"
+    },
+    "PromptTemplateStatus": {
+      "description": "Prompt lifecycle state in the registry.",
+      "enum": [
+        "draft",
+        "active",
+        "shadow",
+        "retired"
+      ],
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Durable prompt-template registry entry.",
+  "properties": {
+    "body_storage_ref": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "owner": {
+      "type": "string"
+    },
+    "privacy_class": {
+      "$ref": "#/$defs/PromptPrivacyClass"
+    },
+    "prompt_id": {
+      "type": "string"
+    },
+    "purpose": {
+      "type": "string"
+    },
+    "schema_hash": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "status": {
+      "$ref": "#/$defs/PromptTemplateStatus"
+    },
+    "template_hash": {
+      "type": "string"
+    },
+    "version": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "prompt_id",
+    "version",
+    "purpose",
+    "template_hash",
+    "privacy_class",
+    "owner",
+    "status"
+  ],
+  "title": "LlmPromptTemplateRegisteredPayload",
+  "type": "object",
+  "x-sinex-event-type": "llm.prompt_template.registered",
+  "x-sinex-source": "llm",
+  "x-sinex-version": "1.0.0"
+}
