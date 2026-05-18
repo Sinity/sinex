@@ -9,6 +9,7 @@ pub mod audit;
 pub mod automata;
 pub mod content;
 pub mod coordination;
+pub mod curation;
 pub mod dlq;
 pub mod documents;
 pub mod ingestors;
@@ -26,6 +27,7 @@ pub mod sources;
 pub mod system;
 pub mod telemetry;
 
+pub use curation::{handle_curation_list_proposals, handle_curation_record_judgment};
 pub use query::{handle_events_annotate, handle_events_lineage, handle_events_query};
 pub use replay::{
     handle_replay_approve_operation, handle_replay_cancel_operation,
