@@ -1,13 +1,14 @@
 use std::path::Path;
 use std::time::Duration;
 
+use color_eyre::eyre::eyre;
 use reqwest::{ClientBuilder, StatusCode};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::{Value, json};
 use sinex_primitives::constants::env_vars;
 use sinex_primitives::domain::{EventSource, NodeType};
 use sinex_primitives::rpc::{
-    JsonRpcError,
+    JsonRpcError, RpcMethod,
     automata::{AutomataStatusRequest, AutomataStatusResponse},
     coordination::{
         InstanceHealthRequest, InstanceHealthResponse, InstanceInfo, ListInstancesRequest,
@@ -21,7 +22,10 @@ use sinex_primitives::rpc::{
         DocumentsGetChunksRequest, DocumentsGetChunksResponse, DocumentsGetRequest,
         DocumentsGetResponse, DocumentsSearchRequest, DocumentsSearchResponse,
     },
-    events::{EventsAnnotateRequest, EventsAnnotateResponse},
+    events::{
+        EVENTS_ANNOTATE_METHOD, EVENTS_LINEAGE_METHOD, EVENTS_QUERY_METHOD, EventsAnnotateRequest,
+        EventsAnnotateResponse,
+    },
     gitops::{
         DEFAULT_GITOPS_BRANCH, DEFAULT_GITOPS_PATH_PATTERN, DEFAULT_GITOPS_SYNC_FREQUENCY_MINUTES,
         GitOpsCreateSourceRequest, GitOpsCreateSourceResponse, GitOpsDeleteSourceRequest,
@@ -58,8 +62,9 @@ use sinex_primitives::rpc::{
     },
     system::{SystemHealthRequest, SystemHealthResponse},
     tasks::{
-        TaskCompleteRequest, TaskCompleteResponse, TaskCreateRequest, TaskCreateResponse,
-        TaskStateGetRequest, TaskStateResponse,
+        TASKS_COMPLETE_METHOD, TASKS_CREATE_METHOD, TASKS_STATE_GET_METHOD, TaskCompleteRequest,
+        TaskCompleteResponse, TaskCreateRequest, TaskCreateResponse, TaskStateGetRequest,
+        TaskStateResponse,
     },
     telemetry::{
         AssemblyStatsBucket, CommandFrequencyEntry, CurrentDeviceStateEntry, CurrentHealthEntry,
@@ -284,6 +289,28 @@ impl GatewayClient {
                 Err(e) => return Err(e),
             }
         }
+    }
+
+    /// Call a typed JSON-RPC method with retry logic.
+    async fn call_typed<Req, Resp>(
+        &self,
+        method: RpcMethod<Req, Resp>,
+        request: &Req,
+    ) -> Result<Resp>
+    where
+        Req: Serialize,
+        Resp: DeserializeOwned,
+    {
+        let params = serde_json::to_value(request)?;
+        let result = self.call_rpc(method.name, params).await?;
+        serde_path_to_error::deserialize(result).map_err(|error| {
+            eyre!(
+                "failed to decode {} response at {}: {}",
+                method.name,
+                error.path(),
+                error.inner()
+            )
+        })
     }
 
     /// Perform a single RPC call attempt (without retry)
@@ -862,18 +889,12 @@ impl GatewayClient {
 
     /// Query events using the composable query engine
     pub async fn query_events(&self, query: EventQuery) -> Result<EventQueryResult> {
-        let result = self
-            .call_rpc(methods::EVENTS_QUERY, serde_json::to_value(&query)?)
-            .await?;
-        serde_json::from_value(result).map_err(Into::into)
+        self.call_typed(EVENTS_QUERY_METHOD, &query).await
     }
 
     /// Trace provenance lineage for an event
     pub async fn trace_lineage(&self, query: LineageQuery) -> Result<LineageResult> {
-        let result = self
-            .call_rpc(methods::EVENTS_LINEAGE, serde_json::to_value(&query)?)
-            .await?;
-        serde_json::from_value(result).map_err(Into::into)
+        self.call_typed(EVENTS_LINEAGE_METHOD, &query).await
     }
 
     /// Record an annotation against an event.
@@ -881,20 +902,14 @@ impl GatewayClient {
         &self,
         request: EventsAnnotateRequest,
     ) -> Result<EventsAnnotateResponse> {
-        let result = self
-            .call_rpc(methods::EVENTS_ANNOTATE, serde_json::to_value(&request)?)
-            .await?;
-        serde_json::from_value(result).map_err(Into::into)
+        self.call_typed(EVENTS_ANNOTATE_METHOD, &request).await
     }
 
     // ==================== Task Domain Commands ====================
 
     /// Create a manual task declaration.
     pub async fn tasks_create(&self, request: TaskCreateRequest) -> Result<TaskCreateResponse> {
-        let result = self
-            .call_rpc(methods::TASKS_CREATE, serde_json::to_value(&request)?)
-            .await?;
-        serde_json::from_value(result).map_err(Into::into)
+        self.call_typed(TASKS_CREATE_METHOD, &request).await
     }
 
     /// Mark a task complete.
@@ -902,18 +917,12 @@ impl GatewayClient {
         &self,
         request: TaskCompleteRequest,
     ) -> Result<TaskCompleteResponse> {
-        let result = self
-            .call_rpc(methods::TASKS_COMPLETE, serde_json::to_value(&request)?)
-            .await?;
-        serde_json::from_value(result).map_err(Into::into)
+        self.call_typed(TASKS_COMPLETE_METHOD, &request).await
     }
 
     /// Fetch current task state.
     pub async fn tasks_state_get(&self, request: TaskStateGetRequest) -> Result<TaskStateResponse> {
-        let result = self
-            .call_rpc(methods::TASKS_STATE_GET, serde_json::to_value(&request)?)
-            .await?;
-        serde_json::from_value(result).map_err(Into::into)
+        self.call_typed(TASKS_STATE_GET_METHOD, &request).await
     }
 
     // ==================== Source Material Commands ====================

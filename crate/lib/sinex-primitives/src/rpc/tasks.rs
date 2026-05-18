@@ -7,8 +7,35 @@ use crate::events::{
     SourceMaterial,
     payloads::{TaskCompletedPayload, TaskCreatedPayload},
 };
+use crate::rpc::{RpcDomain, RpcMethod, RpcMutability, RpcRole, RpcStability, methods};
 use crate::task_domain::{TaskExternalRef, TaskState};
 use crate::{Id, Timestamp, Uuid};
+
+pub const TASKS_CREATE_METHOD: RpcMethod<TaskCreateRequest, TaskCreateResponse> = RpcMethod::new(
+    methods::TASKS_CREATE,
+    RpcRole::Write,
+    RpcDomain::Tasks,
+    RpcStability::Experimental,
+    RpcMutability::Mutating,
+);
+
+pub const TASKS_COMPLETE_METHOD: RpcMethod<TaskCompleteRequest, TaskCompleteResponse> =
+    RpcMethod::new(
+        methods::TASKS_COMPLETE,
+        RpcRole::Write,
+        RpcDomain::Tasks,
+        RpcStability::Experimental,
+        RpcMutability::Mutating,
+    );
+
+pub const TASKS_STATE_GET_METHOD: RpcMethod<TaskStateGetRequest, TaskStateResponse> =
+    RpcMethod::new(
+        methods::TASKS_STATE_GET,
+        RpcRole::ReadOnly,
+        RpcDomain::Tasks,
+        RpcStability::Experimental,
+        RpcMutability::ReadOnly,
+    );
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct TaskCreateRequest {
