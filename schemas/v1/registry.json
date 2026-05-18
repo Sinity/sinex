@@ -646,6 +646,20 @@
       "content_hash": "60e4890314d4dbb90200b0dd5be5e9863f262ae75fb42eece7fac0a2d8201f35"
     },
     {
+      "source": "task",
+      "event_type": "task.completed",
+      "version": "1.0.0",
+      "path": "task/task.completed.json",
+      "content_hash": "6678d2968c097faefde343cdbaf26fde01775a934953949527130f2ab802018e"
+    },
+    {
+      "source": "task",
+      "event_type": "task.created",
+      "version": "1.0.0",
+      "path": "task/task.created.json",
+      "content_hash": "d3fa1c79fc1cc0afca19c100fa1e1cdbf1351b860e302450ca74d731e191e069"
+    },
+    {
       "source": "terminal",
       "event_type": "shell.terminal_monitoring_started",
       "version": "1.0.0",
