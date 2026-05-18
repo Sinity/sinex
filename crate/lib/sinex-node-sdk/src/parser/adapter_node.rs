@@ -89,7 +89,9 @@ use sinex_primitives::events::builder::{EventBuilder, NoProvenance};
 use sinex_primitives::ids::Id;
 use sinex_primitives::parser::{MaterialAnchor, ParsedEventIntent, ParserContext};
 use sinex_primitives::primitives::Uuid;
-use sinex_primitives::privacy::load_private_mode_state;
+use sinex_primitives::privacy::{
+    RuntimePrivateModeState, load_private_mode_state, save_private_mode_state,
+};
 use sinex_primitives::temporal::Timestamp;
 
 use crate::NodeResult;
@@ -107,6 +109,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 const MAX_RECENT_INPUT_DRIFTS: usize = 16;
+const PRIVATE_MODE_CONTROL_SUBJECT: &str = "sinex.control.privacy.private_mode";
 
 // =============================================================================
 // Typed node config — wraps adapter config + optional binding flags
@@ -340,6 +343,10 @@ where
     /// `snapshot_task`; both are `Some` together or both are `None`.
     snapshot_shutdown: Option<tokio::sync::watch::Sender<bool>>,
 
+    /// NATS control listener that mirrors private-mode broadcasts into the
+    /// configured local state directory for this adapter-backed source unit.
+    private_mode_control_task: Option<tokio::task::JoinHandle<()>>,
+
     _phantom: PhantomData<()>,
 }
 
@@ -370,6 +377,7 @@ where
             rotation_policy: RotationPolicy::default(),
             snapshot_task: None,
             snapshot_shutdown: None,
+            private_mode_control_task: None,
             _phantom: PhantomData,
         }
     }
@@ -461,6 +469,12 @@ where
         };
         self.binding_config = config.to_binding_config_for_source(self.source_unit_id)?;
         Ok(())
+    }
+
+    fn stop_private_mode_control_listener(&mut self) {
+        if let Some(task) = self.private_mode_control_task.take() {
+            task.abort();
+        }
     }
 
     /// Ensure the `AppendStreamAcquirer` is initialized, creating it from the
@@ -571,6 +585,17 @@ where
         let mut emitted: u64 = 0;
 
         while let Some(record_result) = stream.next().await {
+            self.refresh_binding_config()?;
+            if self.binding_config.is_truthy("private_mode_active") {
+                info!(
+                    source_unit = self.source_unit_id,
+                    adapter_kind = A::KIND.as_str(),
+                    emitted,
+                    "private mode became active during adapter drain; stopping acquisition"
+                );
+                return Ok(emitted);
+            }
+
             let record = match record_result {
                 Ok(r) => r,
                 Err(e) => {
@@ -718,6 +743,7 @@ where
         if let Some(task) = self.snapshot_task.take() {
             task.abort();
         }
+        self.stop_private_mode_control_listener();
     }
 }
 
@@ -790,6 +816,16 @@ where
         self.acquisition_manager = Some(Arc::new(acq));
         self.binding_config = config.to_binding_config_for_source(self.source_unit_id)?;
         self.node_config = Some(config.clone());
+        #[cfg(feature = "messaging")]
+        if let Some(state_dir) = config.private_mode_state_dir.clone()
+            && let Some(nats_client) = runtime.nats_client()
+        {
+            self.private_mode_control_task = Some(spawn_private_mode_control_listener(
+                nats_client,
+                state_dir,
+                self.source_unit_id,
+            ));
+        }
 
         // Merge user-supplied JSON over the parser's baseline. The parser
         // declares mandatory adapter fields (parser-specific SQL query,
@@ -986,6 +1022,7 @@ where
                 ),
             }
         }
+        self.stop_private_mode_control_listener();
 
         let checkpoint = cursor_to_checkpoint(state);
         Ok(ScanReport {
@@ -1001,6 +1038,7 @@ where
     }
 
     async fn shutdown(&mut self, _state: &Self::State) -> NodeResult<()> {
+        self.stop_private_mode_control_listener();
         if let Some(acquirer) = self.stream_acquirer.as_mut() {
             acquirer.finalize("adapter-node-shutdown").await?;
         }
@@ -1011,6 +1049,79 @@ where
 // =============================================================================
 // Helpers
 // =============================================================================
+
+#[derive(Debug, Deserialize)]
+struct PrivateModeControlUpdate {
+    state: RuntimePrivateModeState,
+}
+
+#[cfg(feature = "messaging")]
+fn spawn_private_mode_control_listener(
+    client: async_nats::Client,
+    state_dir: PathBuf,
+    source_unit_id: &'static str,
+) -> tokio::task::JoinHandle<()> {
+    let subject =
+        sinex_primitives::environment::environment().nats_subject(PRIVATE_MODE_CONTROL_SUBJECT);
+
+    tokio::spawn(async move {
+        let mut subscription = match client.subscribe(subject.clone()).await {
+            Ok(subscription) => subscription,
+            Err(error) => {
+                warn!(
+                    source_unit = source_unit_id,
+                    subject = %subject,
+                    error = %error,
+                    "failed to subscribe to private-mode control subject"
+                );
+                return;
+            }
+        };
+
+        info!(
+            source_unit = source_unit_id,
+            subject = %subject,
+            state_dir = %state_dir.display(),
+            "private-mode control listener started"
+        );
+
+        while let Some(message) = subscription.next().await {
+            match serde_json::from_slice::<PrivateModeControlUpdate>(&message.payload) {
+                Ok(update) => {
+                    if let Err(error) = save_private_mode_state(&state_dir, &update.state) {
+                        warn!(
+                            source_unit = source_unit_id,
+                            subject = %subject,
+                            error = %error,
+                            "failed to persist private-mode control update"
+                        );
+                    } else {
+                        debug!(
+                            source_unit = source_unit_id,
+                            subject = %subject,
+                            enabled = update.state.enabled,
+                            "persisted private-mode control update"
+                        );
+                    }
+                }
+                Err(error) => {
+                    warn!(
+                        source_unit = source_unit_id,
+                        subject = %subject,
+                        error = %error,
+                        "failed to parse private-mode control update"
+                    );
+                }
+            }
+        }
+
+        warn!(
+            source_unit = source_unit_id,
+            subject = %subject,
+            "private-mode control subscription closed"
+        );
+    })
+}
 
 /// Convert a `ParsedEventIntent` to an `Event<JsonValue>` ready for emission.
 ///
@@ -1119,8 +1230,10 @@ mod tests {
     use sinex_primitives::domain::{EventSource, EventType};
     use sinex_primitives::parser::{ParserId, ParserManifest, SourceUnitId};
     use sinex_primitives::privacy::ProcessingContext;
-    use sinex_primitives::privacy::{RuntimePrivateModeState, save_private_mode_state};
-    use xtask::sandbox::prelude::sinex_test;
+    use sinex_primitives::privacy::{
+        RuntimePrivateModeState, load_private_mode_state, save_private_mode_state,
+    };
+    use xtask::sandbox::prelude::{TestContext, TestResult, WaitHelpers, sinex_test};
 
     #[derive(Default)]
     struct TestAdapter;
@@ -1277,6 +1390,61 @@ mod tests {
 
         ingestor.refresh_binding_config()?;
         assert!(ingestor.binding_config.is_truthy("private_mode_active"));
+        Ok(())
+    }
+
+    #[cfg(feature = "messaging")]
+    #[sinex_test]
+    async fn adapter_private_mode_control_listener_persists_broadcast(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        let ctx = ctx.with_nats().shared().await?;
+        let dir = tempfile::tempdir()?;
+        save_private_mode_state(dir.path(), &RuntimePrivateModeState::disabled())?;
+        let handle = spawn_private_mode_control_listener(
+            ctx.nats_client(),
+            dir.path().to_path_buf(),
+            "desktop.clipboard",
+        );
+
+        let state = RuntimePrivateModeState::enabled_by(
+            "sinity",
+            vec!["desktop".to_string()],
+            Timestamp::UNIX_EPOCH,
+        );
+        let subject =
+            sinex_primitives::environment::environment().nats_subject(PRIVATE_MODE_CONTROL_SUBJECT);
+        ctx.nats_client()
+            .publish(
+                subject,
+                serde_json::to_vec(&serde_json::json!({
+                    "action": "enable",
+                    "timestamp": Timestamp::now(),
+                    "state": state,
+                }))?
+                .into(),
+            )
+            .await?;
+        ctx.nats_client().flush().await?;
+
+        let state_dir = dir.path().to_path_buf();
+        WaitHelpers::wait_for_condition(
+            || {
+                let state_dir = state_dir.clone();
+                async move {
+                    let state = load_private_mode_state(&state_dir)?;
+                    Ok::<_, crate::SinexError>(state.enabled)
+                }
+            },
+            10,
+        )
+        .await?;
+
+        let loaded = load_private_mode_state(dir.path())?;
+        assert!(loaded.enabled);
+        assert_eq!(loaded.actor, "sinity");
+        assert_eq!(loaded.affected_source_classes, vec!["desktop"]);
+        handle.abort();
         Ok(())
     }
 
