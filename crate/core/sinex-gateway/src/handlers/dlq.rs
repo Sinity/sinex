@@ -8,7 +8,6 @@
 //! - Purge raw DLQ messages
 
 use crate::service_container::ServiceContainer;
-use serde_json::Value;
 use sinex_node_sdk::dlq_retry::{DlqRetryConfig, DlqRetryHandler};
 use sinex_primitives::validation::normalize_unicode;
 use sinex_primitives::{Result, SinexError};
@@ -16,8 +15,8 @@ use tracing::warn;
 
 // Re-export RPC types for consistency
 pub use sinex_primitives::rpc::dlq::{
-    DlqListResponse, DlqMessagePeek, DlqPeekRequest, DlqPeekResponse, DlqPurgeRequest,
-    DlqPurgeResponse, DlqRequeueRequest, DlqRequeueResponse,
+    DlqListRequest, DlqListResponse, DlqMessagePeek, DlqPeekRequest, DlqPeekResponse,
+    DlqPurgeRequest, DlqPurgeResponse, DlqRequeueRequest, DlqRequeueResponse,
 };
 
 fn parse_retry_count_header(headers: Option<&async_nats::HeaderMap>) -> Result<u32> {
@@ -48,7 +47,10 @@ fn payload_preview(payload: &str, max_chars: usize) -> String {
 }
 
 /// Handle raw-DLQ list request - returns statistics about the raw-ingest DLQ.
-pub async fn handle_dlq_list(services: &ServiceContainer, _params: Value) -> Result<Value> {
+pub async fn handle_dlq_list(
+    services: &ServiceContainer,
+    _request: DlqListRequest,
+) -> Result<DlqListResponse> {
     let nats_client = services
         .nats_client()
         .ok_or_else(|| SinexError::configuration("NATS client is not available"))?;
@@ -68,21 +70,20 @@ pub async fn handle_dlq_list(services: &ServiceContainer, _params: Value) -> Res
         last_seq: stats.last_seq,
     };
 
-    serialize_dlq_response("dlq.list", response)
+    Ok(response)
 }
 
 /// Handle raw-DLQ peek request - preview messages without removing them.
-pub async fn handle_dlq_peek(services: &ServiceContainer, params: Value) -> Result<Value> {
+pub async fn handle_dlq_peek(
+    services: &ServiceContainer,
+    peek_params: DlqPeekRequest,
+) -> Result<DlqPeekResponse> {
     use async_nats::jetstream;
     use futures::StreamExt;
     let nats_client = services
         .nats_client()
         .ok_or_else(|| SinexError::configuration("NATS client is not available"))?;
     let env = services.environment();
-
-    let peek_params: DlqPeekRequest = serde_json::from_value(params).map_err(|error| {
-        SinexError::serialization("Invalid DLQ peek parameters").with_std_error(&error)
-    })?;
 
     let js = jetstream::new(nats_client.clone());
     let dlq_stream_name = env.nats_stream_name("SINEX_RAW_EVENTS_DLQ");
@@ -175,7 +176,7 @@ pub async fn handle_dlq_peek(services: &ServiceContainer, params: Value) -> Resu
     }
 
     let response = DlqPeekResponse { messages: previews };
-    serialize_dlq_response("dlq.peek", response)
+    Ok(response)
 }
 
 /// Handle raw-DLQ requeue request - move raw-ingest failures back to the main stream.
@@ -186,18 +187,14 @@ pub async fn handle_dlq_peek(services: &ServiceContainer, params: Value) -> Resu
 /// The auth context is logged for audit purposes.
 pub async fn handle_dlq_requeue(
     services: &ServiceContainer,
-    params: Value,
+    requeue_params: DlqRequeueRequest,
     auth: &crate::rpc_server::RpcAuthContext,
-) -> Result<Value> {
+) -> Result<DlqRequeueResponse> {
     use tracing::info;
     let nats_client = services
         .nats_client()
         .ok_or_else(|| SinexError::configuration("NATS client is not available"))?;
     let env = services.environment();
-
-    let requeue_params: DlqRequeueRequest = serde_json::from_value(params).map_err(|error| {
-        SinexError::serialization("Invalid DLQ requeue parameters").with_std_error(&error)
-    })?;
 
     let config = DlqRetryConfig::default();
     let handler = DlqRetryHandler::new(nats_client.clone(), env.clone(), config);
@@ -241,7 +238,7 @@ pub async fn handle_dlq_requeue(
         status: "success".to_string(),
         requeued_count: requeued_count as u64,
     };
-    serialize_dlq_response("dlq.requeue", response)
+    Ok(response)
 }
 
 /// Handle raw-DLQ purge request - permanently delete raw-ingest DLQ messages.
@@ -252,19 +249,15 @@ pub async fn handle_dlq_requeue(
 /// The auth context is logged for audit purposes.
 pub async fn handle_dlq_purge(
     services: &ServiceContainer,
-    params: Value,
+    purge_params: DlqPurgeRequest,
     auth: &crate::rpc_server::RpcAuthContext,
-) -> Result<Value> {
+) -> Result<DlqPurgeResponse> {
     use async_nats::jetstream;
     use tracing::info;
     let nats_client = services
         .nats_client()
         .ok_or_else(|| SinexError::configuration("NATS client is not available"))?;
     let env = services.environment();
-
-    let purge_params: DlqPurgeRequest = serde_json::from_value(params).map_err(|error| {
-        SinexError::serialization("Invalid DLQ purge parameters").with_std_error(&error)
-    })?;
 
     if !purge_params.confirm {
         return Err(SinexError::validation(
@@ -304,14 +297,7 @@ pub async fn handle_dlq_purge(
         status: "success".to_string(),
         purged_count: messages_before,
     };
-    serialize_dlq_response("dlq.purge", response)
-}
-
-fn serialize_dlq_response<T: serde::Serialize>(method: &'static str, response: T) -> Result<Value> {
-    serde_json::to_value(response).map_err(|error| {
-        SinexError::serialization(format!("failed to serialize {method} response"))
-            .with_std_error(&error)
-    })
+    Ok(response)
 }
 
 #[cfg(test)]

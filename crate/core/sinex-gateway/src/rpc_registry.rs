@@ -13,6 +13,7 @@ use sinex_primitives::coordination::CoordinationKvClient;
 use sinex_primitives::rpc::{
     RpcMethod,
     automata::AUTOMATA_STATUS_METHOD,
+    dlq::{DLQ_LIST_METHOD, DLQ_PEEK_METHOD, DLQ_PURGE_METHOD, DLQ_REQUEUE_METHOD},
     documents::{DOCUMENTS_GET_CHUNKS_METHOD, DOCUMENTS_GET_METHOD, DOCUMENTS_SEARCH_METHOD},
     events::{EVENTS_ANNOTATE_METHOD, EVENTS_LINEAGE_METHOD, EVENTS_QUERY_METHOD},
     ingestors::INGESTORS_STATUS_METHOD,
@@ -190,6 +191,42 @@ impl RpcRegistry {
                     Box::pin(async move {
                         let request = decode_rpc_params(method.name, params)?;
                         let response = f(services, request).await?;
+                        encode_rpc_response(method.name, &response)
+                    })
+                }),
+                required_role: method.role.into(),
+            },
+        );
+        self
+    }
+
+    /// Register a typed service-backed RPC handler with auth context.
+    pub(crate) fn service_auth_typed_rpc<Req, Resp, F>(
+        mut self,
+        method: RpcMethod<Req, Resp>,
+        f: F,
+    ) -> Self
+    where
+        Req: DeserializeOwned + 'static,
+        Resp: Serialize + 'static,
+        F: for<'a> Fn(
+                &'a ServiceContainer,
+                Req,
+                &'a RpcAuthContext,
+            ) -> Pin<Box<dyn Future<Output = Result<Resp>> + Send + 'a>>
+            + Send
+            + Sync
+            + 'static,
+    {
+        let f = Arc::new(f);
+        self.methods.insert(
+            method.name,
+            RegistryEntry {
+                handler: Arc::new(move |params, services, auth| {
+                    let f = Arc::clone(&f);
+                    Box::pin(async move {
+                        let request = decode_rpc_params(method.name, params)?;
+                        let response = f(services, request, auth).await?;
                         encode_rpc_response(method.name, &response)
                     })
                 }),
@@ -636,20 +673,8 @@ fn build_registry_impl() -> RpcRegistry {
             boxed!(handle_lifecycle_status),
         )
         // DLQ read methods (ReadOnly)
-        .register(
-            methods::DLQ_LIST,
-            Role::ReadOnly,
-            |params, services, _auth| {
-                Box::pin(async move { handle_dlq_list(services, params).await })
-            },
-        )
-        .register(
-            methods::DLQ_PEEK,
-            Role::ReadOnly,
-            |params, services, _auth| {
-                Box::pin(async move { handle_dlq_peek(services, params).await })
-            },
-        )
+        .service_typed_rpc(DLQ_LIST_METHOD, boxed!(handle_dlq_list))
+        .service_typed_rpc(DLQ_PEEK_METHOD, boxed!(handle_dlq_peek))
         // Node listing (ReadOnly)
         .nats_rpc(
             methods::NODES_LIST,
@@ -972,16 +997,8 @@ fn build_registry_impl() -> RpcRegistry {
             boxed!(handle_replay_cancel_operation, 3),
         )
         // DLQ mutation methods (Admin)
-        .register(
-            methods::DLQ_REQUEUE,
-            Role::Admin,
-            |params, services, auth| {
-                Box::pin(async move { handle_dlq_requeue(services, params, auth).await })
-            },
-        )
-        .register(methods::DLQ_PURGE, Role::Admin, |params, services, auth| {
-            Box::pin(async move { handle_dlq_purge(services, params, auth).await })
-        })
+        .service_auth_typed_rpc(DLQ_REQUEUE_METHOD, boxed!(handle_dlq_requeue, 3))
+        .service_auth_typed_rpc(DLQ_PURGE_METHOD, boxed!(handle_dlq_purge, 3))
         // Operations cancel (Admin)
         .pool_auth_rpc(
             methods::OPS_CANCEL,
