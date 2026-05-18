@@ -1233,7 +1233,7 @@ mod tests {
     use sinex_primitives::privacy::{
         RuntimePrivateModeState, load_private_mode_state, save_private_mode_state,
     };
-    use xtask::sandbox::prelude::{TestContext, TestResult, WaitHelpers, sinex_test};
+    use xtask::sandbox::prelude::{WaitHelpers, sinex_test};
 
     #[derive(Default)]
     struct TestAdapter;
