@@ -2,7 +2,7 @@
 //!
 //! These tests exercise the snapshot command using a tempdir-based fake state
 //! directory.  They do NOT require a live Postgres or NATS instance — instead
-//! they pass a deliberately invalid DATABASE_URL to verify that pg_dump
+//! they pass a deliberately invalid `DATABASE_URL` to verify that `pg_dump`
 //! failure is surfaced cleanly, or they exercise only the `--dry-run` path.
 
 use assert_cmd::cargo;
@@ -314,7 +314,10 @@ async fn staging_cleaned_up_on_pg_dump_failure() -> xtask::sandbox::TestResult<(
 #[sinex_test]
 async fn component_all_covers_all_four() -> xtask::sandbox::TestResult<()> {
     let all = Component::all();
-    let names: Vec<&str> = all.iter().map(|c| c.name()).collect();
+    let names: Vec<&str> = all
+        .iter()
+        .map(sinexctl::admin::snapshot::Component::name)
+        .collect();
     for expected in &["postgres", "nats", "cas", "state"] {
         assert!(
             names.contains(expected),
