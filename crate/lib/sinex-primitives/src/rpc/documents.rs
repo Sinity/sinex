@@ -3,8 +3,36 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 
+use crate::rpc::{RpcDomain, RpcMethod, RpcMutability, RpcRole, RpcStability, methods};
 use crate::Timestamp;
 use crate::Uuid;
+
+pub const DOCUMENTS_SEARCH_METHOD: RpcMethod<DocumentsSearchRequest, DocumentsSearchResponse> =
+    RpcMethod::new(
+        methods::DOCUMENTS_SEARCH,
+        RpcRole::ReadOnly,
+        RpcDomain::Documents,
+        RpcStability::Experimental,
+        RpcMutability::ReadOnly,
+    );
+
+pub const DOCUMENTS_GET_METHOD: RpcMethod<DocumentsGetRequest, DocumentsGetResponse> =
+    RpcMethod::new(
+        methods::DOCUMENTS_GET,
+        RpcRole::ReadOnly,
+        RpcDomain::Documents,
+        RpcStability::Experimental,
+        RpcMutability::ReadOnly,
+    );
+
+pub const DOCUMENTS_GET_CHUNKS_METHOD:
+    RpcMethod<DocumentsGetChunksRequest, DocumentsGetChunksResponse> = RpcMethod::new(
+    methods::DOCUMENTS_GET_CHUNKS,
+    RpcRole::ReadOnly,
+    RpcDomain::Documents,
+    RpcStability::Experimental,
+    RpcMutability::ReadOnly,
+);
 
 /// Request for `documents.search`.
 #[derive(Debug, Clone, Serialize, Deserialize)]

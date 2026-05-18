@@ -12,6 +12,7 @@ use serde_json::Value as JsonValue;
 use sinex_primitives::coordination::CoordinationKvClient;
 use sinex_primitives::rpc::{
     RpcMethod,
+    documents::{DOCUMENTS_GET_CHUNKS_METHOD, DOCUMENTS_GET_METHOD, DOCUMENTS_SEARCH_METHOD},
     events::{EVENTS_ANNOTATE_METHOD, EVENTS_LINEAGE_METHOD, EVENTS_QUERY_METHOD},
     methods,
     sources::{
@@ -586,21 +587,9 @@ fn build_registry_impl() -> RpcRegistry {
         // Audit trail methods (ReadOnly)
         .pool_rpc(methods::AUDIT_GET, Role::ReadOnly, boxed!(handle_audit_get))
         // Document search methods (ReadOnly)
-        .pool_rpc(
-            methods::DOCUMENTS_SEARCH,
-            Role::ReadOnly,
-            boxed!(handle_documents_search),
-        )
-        .pool_rpc(
-            methods::DOCUMENTS_GET,
-            Role::ReadOnly,
-            boxed!(handle_documents_get),
-        )
-        .pool_rpc(
-            methods::DOCUMENTS_GET_CHUNKS,
-            Role::ReadOnly,
-            boxed!(handle_documents_get_chunks),
-        )
+        .pool_typed_rpc(DOCUMENTS_SEARCH_METHOD, boxed!(handle_documents_search))
+        .pool_typed_rpc(DOCUMENTS_GET_METHOD, boxed!(handle_documents_get))
+        .pool_typed_rpc(DOCUMENTS_GET_CHUNKS_METHOD, boxed!(handle_documents_get_chunks))
         // Operations log read methods (ReadOnly)
         .pool_auth_rpc(
             methods::OPS_LIST,

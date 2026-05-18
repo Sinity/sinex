@@ -19,6 +19,7 @@ use sinex_primitives::rpc::{
         DlqPurgeResponse, DlqRequeueRequest, DlqRequeueResponse,
     },
     documents::{
+        DOCUMENTS_GET_CHUNKS_METHOD, DOCUMENTS_GET_METHOD, DOCUMENTS_SEARCH_METHOD,
         DocumentsGetChunksRequest, DocumentsGetChunksResponse, DocumentsGetRequest,
         DocumentsGetResponse, DocumentsSearchRequest, DocumentsSearchResponse,
     },
@@ -1028,33 +1029,22 @@ impl GatewayClient {
         &self,
         request: DocumentsSearchRequest,
     ) -> Result<DocumentsSearchResponse> {
-        let result = self
-            .call_rpc(methods::DOCUMENTS_SEARCH, serde_json::to_value(&request)?)
-            .await?;
-        serde_json::from_value(result).map_err(Into::into)
+        self.call_typed(DOCUMENTS_SEARCH_METHOD, &request).await
     }
 
     pub async fn documents_get(
         &self,
         request: DocumentsGetRequest,
     ) -> Result<DocumentsGetResponse> {
-        let result = self
-            .call_rpc(methods::DOCUMENTS_GET, serde_json::to_value(&request)?)
-            .await?;
-        serde_json::from_value(result).map_err(Into::into)
+        self.call_typed(DOCUMENTS_GET_METHOD, &request).await
     }
 
     pub async fn documents_get_chunks(
         &self,
         request: DocumentsGetChunksRequest,
     ) -> Result<DocumentsGetChunksResponse> {
-        let result = self
-            .call_rpc(
-                methods::DOCUMENTS_GET_CHUNKS,
-                serde_json::to_value(&request)?,
-            )
-            .await?;
-        serde_json::from_value(result).map_err(Into::into)
+        self.call_typed(DOCUMENTS_GET_CHUNKS_METHOD, &request)
+            .await
     }
 
     // ==================== Operations Log Commands ====================
