@@ -735,24 +735,13 @@ pub async fn handle_sources_archive(pool: &PgPool, params: Value) -> Result<Valu
     let system_auth = crate::rpc_server::RpcAuthContext::system();
     let lifecycle_result = crate::handlers::lifecycle::handle_lifecycle_archive(
         pool,
-        {
-            serde_json::to_value(&lifecycle_req).map_err(|error| {
-                SinexError::serialization("Failed to build lifecycle archive request")
-                    .with_std_error(&error)
-            })?
-        },
+        lifecycle_req,
         &system_auth,
     )
     .await;
 
     match lifecycle_result {
-        Ok(value) => {
-            let archive_resp: sinex_primitives::rpc::lifecycle::LifecycleArchiveResponse =
-                serde_json::from_value(value).map_err(|error| {
-                    SinexError::serialization("Failed to parse lifecycle archive response")
-                        .with_std_error(&error)
-                })?;
-
+        Ok(archive_resp) => {
             let response = SourcesArchiveResponse {
                 material_id: req.material_id,
                 operation_id: Some(archive_resp.operation_id),

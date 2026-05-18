@@ -3,20 +3,43 @@
 use serde_json::json;
 use sinex_db::DbPoolExt;
 use sinex_gateway::handlers::{
-    handle_audit_get, handle_lifecycle_archive, handle_lifecycle_restore, handle_tombstone_approve,
-    handle_tombstone_cancel, handle_tombstone_create, handle_tombstone_list,
-    handle_tombstone_status,
+    handle_audit_get, handle_lifecycle_archive as handle_lifecycle_archive_typed,
+    handle_lifecycle_restore as handle_lifecycle_restore_typed, handle_tombstone_approve,
+    handle_tombstone_cancel, handle_tombstone_create, handle_tombstone_list, handle_tombstone_status,
 };
 use sinex_gateway::rpc_server::RpcAuthContext;
 use sinex_gateway::service_container::ServiceContainer;
 use sinex_primitives::events::DynamicPayload;
 use sinex_primitives::rpc::audit::AuditGetResponse;
 use sinex_primitives::rpc::lifecycle::{
-    LifecycleArchiveResponse, LifecycleRestoreResponse, TombstoneApproveResponse,
-    TombstoneCancelResponse, TombstoneCreateResponse, TombstoneListResponse,
-    TombstoneOperationState, TombstoneStatusResponse,
+    LifecycleArchiveRequest, LifecycleArchiveResponse, LifecycleRestoreRequest,
+    LifecycleRestoreResponse, TombstoneApproveResponse, TombstoneCancelResponse,
+    TombstoneCreateResponse, TombstoneListResponse, TombstoneOperationState,
+    TombstoneStatusResponse,
 };
 use xtask::sandbox::prelude::*;
+
+async fn handle_lifecycle_archive(
+    pool: &sqlx::PgPool,
+    params: serde_json::Value,
+    auth: &RpcAuthContext,
+) -> TestResult<serde_json::Value> {
+    let request: LifecycleArchiveRequest = serde_json::from_value(params)?;
+    Ok(serde_json::to_value(
+        handle_lifecycle_archive_typed(pool, request, auth).await?,
+    )?)
+}
+
+async fn handle_lifecycle_restore(
+    pool: &sqlx::PgPool,
+    params: serde_json::Value,
+    auth: &RpcAuthContext,
+) -> TestResult<serde_json::Value> {
+    let request: LifecycleRestoreRequest = serde_json::from_value(params)?;
+    Ok(serde_json::to_value(
+        handle_lifecycle_restore_typed(pool, request, auth).await?,
+    )?)
+}
 
 async fn publish_event(
     ctx: &TestContext,

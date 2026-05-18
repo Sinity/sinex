@@ -36,6 +36,7 @@ use sinex_primitives::rpc::{
     },
     ingestors::{INGESTORS_STATUS_METHOD, IngestorsStatusRequest, IngestorsStatusResponse},
     lifecycle::{
+        LIFECYCLE_ARCHIVE_METHOD, LIFECYCLE_RESTORE_METHOD, LIFECYCLE_STATUS_METHOD,
         LifecycleArchiveRequest, LifecycleArchiveResponse, LifecycleRestoreRequest,
         LifecycleRestoreResponse, LifecycleStatusRequest, LifecycleStatusResponse,
         TombstoneApproveRequest, TombstoneApproveResponse, TombstoneCancelRequest,
@@ -1110,10 +1111,7 @@ impl GatewayClient {
     /// Get lifecycle tier status
     pub async fn lifecycle_status(&self) -> Result<LifecycleStatusResponse> {
         let req = LifecycleStatusRequest::default();
-        let result = self
-            .call_rpc(methods::LIFECYCLE_STATUS, serde_json::to_value(&req)?)
-            .await?;
-        serde_json::from_value(result).map_err(Into::into)
+        self.call_typed(LIFECYCLE_STATUS_METHOD, &req).await
     }
 
     /// Archive live events (move to `audit.archived_events`)
@@ -1133,10 +1131,7 @@ impl GatewayClient {
             reason: None,
             dry_run,
         };
-        let result = self
-            .call_rpc(methods::LIFECYCLE_ARCHIVE, serde_json::to_value(&req)?)
-            .await?;
-        serde_json::from_value(result).map_err(Into::into)
+        self.call_typed(LIFECYCLE_ARCHIVE_METHOD, &req).await
     }
 
     /// Restore archived events back to live
@@ -1146,10 +1141,7 @@ impl GatewayClient {
         dry_run: bool,
     ) -> Result<LifecycleRestoreResponse> {
         let req = LifecycleRestoreRequest { event_ids, dry_run };
-        let result = self
-            .call_rpc(methods::LIFECYCLE_RESTORE, serde_json::to_value(&req)?)
-            .await?;
-        serde_json::from_value(result).map_err(Into::into)
+        self.call_typed(LIFECYCLE_RESTORE_METHOD, &req).await
     }
 
     // ==================== Two-Step Tombstone Commands (SEC-003) ====================

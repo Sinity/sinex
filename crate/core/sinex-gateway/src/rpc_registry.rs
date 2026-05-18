@@ -17,6 +17,9 @@ use sinex_primitives::rpc::{
     documents::{DOCUMENTS_GET_CHUNKS_METHOD, DOCUMENTS_GET_METHOD, DOCUMENTS_SEARCH_METHOD},
     events::{EVENTS_ANNOTATE_METHOD, EVENTS_LINEAGE_METHOD, EVENTS_QUERY_METHOD},
     ingestors::INGESTORS_STATUS_METHOD,
+    lifecycle::{
+        LIFECYCLE_ARCHIVE_METHOD, LIFECYCLE_RESTORE_METHOD, LIFECYCLE_STATUS_METHOD,
+    },
     methods,
     sources::{
         SOURCES_CONTINUITY_EXPLAIN_GAP_METHOD, SOURCES_CONTINUITY_GET_METHOD,
@@ -667,11 +670,7 @@ fn build_registry_impl() -> RpcRegistry {
         )
         .pool_auth_rpc(methods::OPS_GET, Role::ReadOnly, boxed!(handle_ops_get, 3))
         // Lifecycle status (ReadOnly)
-        .pool_rpc(
-            methods::LIFECYCLE_STATUS,
-            Role::ReadOnly,
-            boxed!(handle_lifecycle_status),
-        )
+        .pool_typed_rpc(LIFECYCLE_STATUS_METHOD, boxed!(handle_lifecycle_status))
         // DLQ read methods (ReadOnly)
         .service_typed_rpc(DLQ_LIST_METHOD, boxed!(handle_dlq_list))
         .service_typed_rpc(DLQ_PEEK_METHOD, boxed!(handle_dlq_peek))
@@ -1006,22 +1005,14 @@ fn build_registry_impl() -> RpcRegistry {
             boxed!(handle_ops_cancel, 3),
         )
         // Data lifecycle mutations (Admin - DESTRUCTIVE)
-        .pool_auth_rpc(
-            methods::LIFECYCLE_ARCHIVE,
-            Role::Admin,
-            boxed!(handle_lifecycle_archive, 3),
-        )
+        .pool_auth_typed_rpc(LIFECYCLE_ARCHIVE_METHOD, boxed!(handle_lifecycle_archive, 3))
         // Source material archival (Admin — archives material + cascade)
         .pool_rpc(
             methods::SOURCES_ARCHIVE,
             Role::Admin,
             boxed!(handle_sources_archive),
         )
-        .pool_auth_rpc(
-            methods::LIFECYCLE_RESTORE,
-            Role::Admin,
-            boxed!(handle_lifecycle_restore, 3),
-        )
+        .pool_auth_typed_rpc(LIFECYCLE_RESTORE_METHOD, boxed!(handle_lifecycle_restore, 3))
         // Two-step tombstone operations (SEC-003)
         .pool_auth_rpc(
             methods::LIFECYCLE_TOMBSTONE_CREATE,
