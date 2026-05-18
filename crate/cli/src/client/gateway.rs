@@ -15,8 +15,9 @@ use sinex_primitives::rpc::{
         ListInstancesResponse,
     },
     dlq::{
-        DlqListRequest, DlqListResponse, DlqPeekRequest, DlqPeekResponse, DlqPurgeRequest,
-        DlqPurgeResponse, DlqRequeueRequest, DlqRequeueResponse,
+        DLQ_LIST_METHOD, DLQ_PEEK_METHOD, DLQ_PURGE_METHOD, DLQ_REQUEUE_METHOD, DlqListRequest,
+        DlqListResponse, DlqPeekRequest, DlqPeekResponse, DlqPurgeRequest, DlqPurgeResponse,
+        DlqRequeueRequest, DlqRequeueResponse,
     },
     documents::{
         DOCUMENTS_GET_CHUNKS_METHOD, DOCUMENTS_GET_METHOD, DOCUMENTS_SEARCH_METHOD,
@@ -842,10 +843,7 @@ impl GatewayClient {
     /// List raw-ingest dead-letter queue statistics
     pub async fn dlq_list(&self) -> Result<DlqListResponse> {
         let req = DlqListRequest {};
-        let result = self
-            .call_rpc(methods::DLQ_LIST, serde_json::to_value(&req)?)
-            .await?;
-        serde_json::from_value(result).map_err(Into::into)
+        self.call_typed(DLQ_LIST_METHOD, &req).await
     }
 
     /// Peek at messages in a DLQ
@@ -853,10 +851,7 @@ impl GatewayClient {
         let req = DlqPeekRequest {
             limit: limit.unwrap_or(10),
         };
-        let result = self
-            .call_rpc(methods::DLQ_PEEK, serde_json::to_value(&req)?)
-            .await?;
-        serde_json::from_value(result).map_err(Into::into)
+        self.call_typed(DLQ_PEEK_METHOD, &req).await
     }
 
     /// Requeue messages from DLQ
@@ -866,19 +861,13 @@ impl GatewayClient {
         all: bool,
     ) -> Result<DlqRequeueResponse> {
         let req = DlqRequeueRequest { event_id, all };
-        let result = self
-            .call_rpc(methods::DLQ_REQUEUE, serde_json::to_value(&req)?)
-            .await?;
-        serde_json::from_value(result).map_err(Into::into)
+        self.call_typed(DLQ_REQUEUE_METHOD, &req).await
     }
 
     /// Purge all messages from DLQ
     pub async fn dlq_purge(&self, confirm: bool) -> Result<DlqPurgeResponse> {
         let req = DlqPurgeRequest { confirm };
-        let result = self
-            .call_rpc(methods::DLQ_PURGE, serde_json::to_value(&req)?)
-            .await?;
-        serde_json::from_value(result).map_err(Into::into)
+        self.call_typed(DLQ_PURGE_METHOD, &req).await
     }
 
     // ==================== Event Query Commands ====================

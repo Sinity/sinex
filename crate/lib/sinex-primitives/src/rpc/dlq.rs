@@ -1,10 +1,19 @@
 //! Raw-ingest DLQ management types
 
+use crate::rpc::{RpcDomain, RpcMethod, RpcMutability, RpcRole, RpcStability, methods};
 use serde::{Deserialize, Serialize};
 
 // ─────────────────────────────────────────────────────────────
 // dlq.list
 // ─────────────────────────────────────────────────────────────
+
+pub const DLQ_LIST_METHOD: RpcMethod<DlqListRequest, DlqListResponse> = RpcMethod::new(
+    methods::DLQ_LIST,
+    RpcRole::ReadOnly,
+    RpcDomain::Dlq,
+    RpcStability::Experimental,
+    RpcMutability::ReadOnly,
+);
 
 /// Request: `dlq.list` for the raw-ingest DLQ (no params required)
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -22,6 +31,14 @@ pub struct DlqListResponse {
 // ─────────────────────────────────────────────────────────────
 // dlq.peek
 // ─────────────────────────────────────────────────────────────
+
+pub const DLQ_PEEK_METHOD: RpcMethod<DlqPeekRequest, DlqPeekResponse> = RpcMethod::new(
+    methods::DLQ_PEEK,
+    RpcRole::ReadOnly,
+    RpcDomain::Dlq,
+    RpcStability::Experimental,
+    RpcMutability::ReadOnly,
+);
 
 /// Request: dlq.peek
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -62,6 +79,14 @@ pub struct DlqPeekResponse {
 // dlq.requeue
 // ─────────────────────────────────────────────────────────────
 
+pub const DLQ_REQUEUE_METHOD: RpcMethod<DlqRequeueRequest, DlqRequeueResponse> = RpcMethod::new(
+    methods::DLQ_REQUEUE,
+    RpcRole::Admin,
+    RpcDomain::Dlq,
+    RpcStability::Experimental,
+    RpcMutability::Mutating,
+);
+
 /// Request: dlq.requeue
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DlqRequeueRequest {
@@ -83,6 +108,14 @@ pub struct DlqRequeueResponse {
 // ─────────────────────────────────────────────────────────────
 // dlq.purge
 // ─────────────────────────────────────────────────────────────
+
+pub const DLQ_PURGE_METHOD: RpcMethod<DlqPurgeRequest, DlqPurgeResponse> = RpcMethod::new(
+    methods::DLQ_PURGE,
+    RpcRole::Admin,
+    RpcDomain::Dlq,
+    RpcStability::Experimental,
+    RpcMutability::Mutating,
+);
 
 /// Request: dlq.purge
 #[derive(Debug, Clone, Serialize, Deserialize)]
