@@ -96,13 +96,17 @@ use crate::NodeResult;
 use crate::acquisition_manager::{AcquisitionManager, AppendStreamAcquirer, RotationPolicy};
 use crate::ingestor_node::IngestorNode;
 use crate::parser::adapters::SqliteSnapshotLane;
-use crate::parser::{BindingConfig, InputShapeAdapter, MaterialParser, SourceRecordFingerprint};
+use crate::parser::{
+    BindingConfig, DriftEvent, InputShapeAdapter, MaterialParser, SourceRecordFingerprint,
+};
 use crate::runtime::stream::{
     Checkpoint, ContinuousStart, NodeCapabilities, NodeRuntimeState, ScanArgs, ScanReport,
     TimeHorizon,
 };
 use std::path::PathBuf;
 use std::sync::Arc;
+
+const MAX_RECENT_INPUT_DRIFTS: usize = 16;
 
 // =============================================================================
 // Typed node config — wraps adapter config + optional binding flags
@@ -228,6 +232,14 @@ where
     /// shape drift across checkpointed drain cycles.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_input_fingerprint: Option<SourceRecordFingerprint>,
+
+    /// Bounded history of recently observed input-shape drift events.
+    ///
+    /// This is checkpoint-persisted operator evidence: logs are still emitted
+    /// for live diagnosis, while this field keeps the most recent drift records
+    /// available for later readiness and CLI/RPC surfaces.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub recent_input_drifts: Vec<DriftEvent>,
 }
 
 impl<C> Default for AdapterNodeState<C>
@@ -239,6 +251,20 @@ where
             cursor: None,
             total_events_emitted: 0,
             last_input_fingerprint: None,
+            recent_input_drifts: Vec::new(),
+        }
+    }
+}
+
+impl<C> AdapterNodeState<C>
+where
+    C: Clone + Serialize + DeserializeOwned,
+{
+    fn record_input_drift(&mut self, drift: DriftEvent) {
+        self.recent_input_drifts.push(drift);
+        if self.recent_input_drifts.len() > MAX_RECENT_INPUT_DRIFTS {
+            let excess = self.recent_input_drifts.len() - MAX_RECENT_INPUT_DRIFTS;
+            self.recent_input_drifts.drain(0..excess);
         }
     }
 }
@@ -408,6 +434,7 @@ where
                         type_changes = ?&drift.type_changes,
                         "input shape drift detected"
                     );
+                    state.record_input_drift(drift);
                 }
                 state.last_input_fingerprint = Some(current);
             }
@@ -1120,6 +1147,39 @@ mod tests {
     }
 
     #[derive(Default)]
+    struct FingerprintAdapter {
+        fingerprint: Option<SourceRecordFingerprint>,
+    }
+
+    #[async_trait]
+    impl InputShapeAdapter for FingerprintAdapter {
+        type Config = ();
+        type Cursor = u64;
+
+        const KIND: InputShapeKind = InputShapeKind::AppendOnlyFile;
+
+        async fn open(
+            &self,
+            _material_id: Id<SourceMaterial>,
+            _config: &Self::Config,
+            _cursor: Option<Self::Cursor>,
+        ) -> ParserResult<BoxStream<'static, ParserResult<SourceRecord>>> {
+            Ok(Box::pin(stream::empty()))
+        }
+
+        fn cursor_after(&self, _record: &SourceRecord) -> ParserResult<Self::Cursor> {
+            Ok(0)
+        }
+
+        fn input_fingerprint(
+            &self,
+            _config: &Self::Config,
+        ) -> ParserResult<Option<SourceRecordFingerprint>> {
+            Ok(self.fingerprint.clone())
+        }
+    }
+
+    #[derive(Default)]
     struct TestParser;
 
     #[async_trait]
@@ -1233,6 +1293,55 @@ mod tests {
         assert_eq!(state.cursor, Some(7));
         assert_eq!(state.total_events_emitted, 12);
         assert!(state.last_input_fingerprint.is_none());
+        assert!(state.recent_input_drifts.is_empty());
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn adapter_node_state_records_bounded_input_drift_history()
+    -> xtask::sandbox::TestResult<()> {
+        let source_unit_id = SourceUnitId::from_static("desktop.clipboard");
+        let mut ingestor =
+            AdapterBackedIngestor::<FingerprintAdapter, TestParser>::new("desktop.clipboard");
+        let mut state = AdapterNodeState::<u64>::default();
+
+        ingestor.adapter.fingerprint = Some(SourceRecordFingerprint::from_json(
+            &serde_json::json!({"count": 1}),
+        ));
+        ingestor.observe_input_fingerprint(&(), &mut state, &source_unit_id);
+        assert!(state.recent_input_drifts.is_empty());
+
+        ingestor.adapter.fingerprint = Some(SourceRecordFingerprint::from_json(
+            &serde_json::json!({"count": "1", "enabled": true}),
+        ));
+        ingestor.observe_input_fingerprint(&(), &mut state, &source_unit_id);
+
+        assert_eq!(state.recent_input_drifts.len(), 1);
+        let drift = &state.recent_input_drifts[0];
+        assert_eq!(drift.source_unit_id, source_unit_id);
+        assert_eq!(drift.added_keys, vec!["/enabled".to_string()]);
+        assert_eq!(
+            drift.type_changes,
+            vec![(
+                "/count".to_string(),
+                "integer".to_string(),
+                "string".to_string()
+            )]
+        );
+
+        for idx in 0..(MAX_RECENT_INPUT_DRIFTS + 3) {
+            let drift = SourceRecordFingerprint::diff(
+                source_unit_id.clone(),
+                &SourceRecordFingerprint::from_json(&serde_json::json!({ "idx": idx })),
+                &SourceRecordFingerprint::from_json(&serde_json::json!({ "idx": idx, "x": true })),
+            )
+            .ok_or_else(|| {
+                color_eyre::eyre::eyre!("different fingerprints should produce drift")
+            })?;
+            state.record_input_drift(drift);
+        }
+
+        assert_eq!(state.recent_input_drifts.len(), MAX_RECENT_INPUT_DRIFTS);
         Ok(())
     }
 }
