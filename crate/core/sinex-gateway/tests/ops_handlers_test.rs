@@ -1,16 +1,16 @@
 use serde_json::json;
 use sinex_db::DbPoolExt;
 use sinex_gateway::handlers::{
-    handle_lifecycle_archive, handle_ops_cancel, handle_ops_get, handle_ops_list, handle_ops_start,
-    handle_tombstone_create, handle_tombstone_status,
+    handle_lifecycle_archive as handle_lifecycle_archive_typed, handle_ops_cancel, handle_ops_get,
+    handle_ops_list, handle_ops_start, handle_tombstone_create, handle_tombstone_status,
 };
 use sinex_gateway::rpc_server::RpcAuthContext;
 use sinex_gateway::{ReplayScope, ReplayState, ReplayStateMachine};
 use sinex_primitives::domain::{OperationStatus, ReplayOutcome};
 use sinex_primitives::events::DynamicPayload;
 use sinex_primitives::rpc::lifecycle::{
-    LifecycleArchiveResponse, TombstoneCreateResponse, TombstoneOperationState,
-    TombstoneStatusResponse,
+    LifecycleArchiveRequest, LifecycleArchiveResponse, TombstoneCreateResponse,
+    TombstoneOperationState, TombstoneStatusResponse,
 };
 use sinex_primitives::rpc::ops::{
     OpsCancelResponse, OpsGetResponse, OpsListResponse, OpsStartResponse,
@@ -20,6 +20,17 @@ use xtask::sandbox::prelude::*;
 
 fn system_auth() -> RpcAuthContext {
     RpcAuthContext::system()
+}
+
+async fn handle_lifecycle_archive(
+    pool: &sqlx::PgPool,
+    params: serde_json::Value,
+    auth: &RpcAuthContext,
+) -> TestResult<serde_json::Value> {
+    let request: LifecycleArchiveRequest = serde_json::from_value(params)?;
+    Ok(serde_json::to_value(
+        handle_lifecycle_archive_typed(pool, request, auth).await?,
+    )?)
 }
 
 async fn start_test_operation(

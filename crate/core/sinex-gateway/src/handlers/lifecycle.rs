@@ -132,9 +132,10 @@ async fn collect_cascade_ids(
 }
 
 /// Handle lifecycle.status - get status of all lifecycle tiers
-pub async fn handle_lifecycle_status(pool: &PgPool, params: Value) -> Result<Value> {
-    let _request: LifecycleStatusRequest = super::parse_default_on_null(params)?;
-
+pub async fn handle_lifecycle_status(
+    pool: &PgPool,
+    _request: LifecycleStatusRequest,
+) -> Result<LifecycleStatusResponse> {
     let repo = pool.events();
     let tiers = repo.lifecycle_tier_status().await.map_err(|e| {
         SinexError::database("Failed to get lifecycle tier status").with_source(e.to_string())
@@ -156,7 +157,7 @@ pub async fn handle_lifecycle_status(pool: &PgPool, params: Value) -> Result<Val
         total_events,
     };
 
-    Ok(serde_json::to_value(response)?)
+    Ok(response)
 }
 
 /// Handle lifecycle.archive - move live events to archive
@@ -172,10 +173,9 @@ pub async fn handle_lifecycle_status(pool: &PgPool, params: Value) -> Result<Val
 /// 5. If !`dry_run`: executes DELETE with session variables set, trigger archives
 pub async fn handle_lifecycle_archive(
     pool: &PgPool,
-    params: Value,
+    request: LifecycleArchiveRequest,
     auth: &crate::rpc_server::RpcAuthContext,
-) -> Result<Value> {
-    let request: LifecycleArchiveRequest = serde_json::from_value(params)?;
+) -> Result<LifecycleArchiveResponse> {
     let limit = require_positive_limit("lifecycle.archive", request.limit)?;
     reject_conflicting_explicit_event_filters(
         "lifecycle.archive",
@@ -282,7 +282,7 @@ pub async fn handle_lifecycle_archive(
             operation_id: operation_id.to_string(),
             dry_run: true,
         };
-        return Ok(serde_json::to_value(response)?);
+        return Ok(response);
     }
 
     // Execute archive operation
@@ -349,17 +349,15 @@ pub async fn handle_lifecycle_archive(
         dry_run: false,
     };
 
-    Ok(serde_json::to_value(response)?)
+    Ok(response)
 }
 
 /// Handle lifecycle.restore - move archived events back to live
 pub async fn handle_lifecycle_restore(
     pool: &PgPool,
-    params: Value,
+    request: LifecycleRestoreRequest,
     auth: &crate::rpc_server::RpcAuthContext,
-) -> Result<Value> {
-    let request: LifecycleRestoreRequest = serde_json::from_value(params)?;
-
+) -> Result<LifecycleRestoreResponse> {
     if request.event_ids.is_empty() {
         return Err(SinexError::validation("No event IDs provided for restore"));
     }
@@ -432,7 +430,7 @@ pub async fn handle_lifecycle_restore(
             operation_id: operation_id.to_string(),
             dry_run: true,
         };
-        return Ok(serde_json::to_value(response)?);
+        return Ok(response);
     }
 
     // Execute restore
@@ -490,7 +488,7 @@ pub async fn handle_lifecycle_restore(
         dry_run: false,
     };
 
-    Ok(serde_json::to_value(response)?)
+    Ok(response)
 }
 
 /// Parse a duration string (e.g., "30d", "90d") to a timestamp in the past

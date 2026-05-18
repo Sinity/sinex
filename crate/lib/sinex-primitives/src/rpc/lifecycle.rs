@@ -3,6 +3,7 @@
 //! Types for the three-tier data lifecycle: Live ↔ Archive → Tombstone
 
 use crate::domain::{DataTier, EventSource};
+use crate::rpc::{RpcDomain, RpcMethod, RpcMutability, RpcRole, RpcStability, methods};
 use serde::{Deserialize, Serialize};
 
 /// Lifecycle tier status
@@ -26,6 +27,15 @@ pub struct TierStatus {
 // lifecycle.status
 // ─────────────────────────────────────────────────────────────
 
+pub const LIFECYCLE_STATUS_METHOD:
+    RpcMethod<LifecycleStatusRequest, LifecycleStatusResponse> = RpcMethod::new(
+    methods::LIFECYCLE_STATUS,
+    RpcRole::ReadOnly,
+    RpcDomain::Lifecycle,
+    RpcStability::Experimental,
+    RpcMutability::ReadOnly,
+);
+
 /// Request: lifecycle.status
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct LifecycleStatusRequest {}
@@ -42,6 +52,15 @@ pub struct LifecycleStatusResponse {
 // ─────────────────────────────────────────────────────────────
 // lifecycle.archive
 // ─────────────────────────────────────────────────────────────
+
+pub const LIFECYCLE_ARCHIVE_METHOD:
+    RpcMethod<LifecycleArchiveRequest, LifecycleArchiveResponse> = RpcMethod::new(
+    methods::LIFECYCLE_ARCHIVE,
+    RpcRole::Admin,
+    RpcDomain::Lifecycle,
+    RpcStability::Experimental,
+    RpcMutability::Mutating,
+);
 
 /// Request: lifecycle.archive (Live → Archive)
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -84,6 +103,15 @@ pub struct LifecycleArchiveResponse {
 // ─────────────────────────────────────────────────────────────
 // lifecycle.restore
 // ─────────────────────────────────────────────────────────────
+
+pub const LIFECYCLE_RESTORE_METHOD:
+    RpcMethod<LifecycleRestoreRequest, LifecycleRestoreResponse> = RpcMethod::new(
+    methods::LIFECYCLE_RESTORE,
+    RpcRole::Admin,
+    RpcDomain::Lifecycle,
+    RpcStability::Experimental,
+    RpcMutability::Mutating,
+);
 
 /// Request: lifecycle.restore (Archive → Live)
 #[derive(Debug, Clone, Serialize, Deserialize)]
