@@ -22,6 +22,7 @@ use sinex_primitives::rpc::{
         LIFECYCLE_ARCHIVE_METHOD, LIFECYCLE_RESTORE_METHOD, LIFECYCLE_STATUS_METHOD,
     },
     methods,
+    ops::{OPS_CANCEL_METHOD, OPS_GET_METHOD, OPS_LIST_METHOD, OPS_START_METHOD},
     sources::{
         SOURCES_CONTINUITY_EXPLAIN_GAP_METHOD, SOURCES_CONTINUITY_GET_METHOD,
         SOURCES_CONTINUITY_LIST_METHOD, SOURCES_CONTINUITY_METHOD, SOURCES_COVERAGE_METHOD,
@@ -664,12 +665,8 @@ fn build_registry_impl() -> RpcRegistry {
         .pool_typed_rpc(DOCUMENTS_GET_METHOD, boxed!(handle_documents_get))
         .pool_typed_rpc(DOCUMENTS_GET_CHUNKS_METHOD, boxed!(handle_documents_get_chunks))
         // Operations log read methods (ReadOnly)
-        .pool_auth_rpc(
-            methods::OPS_LIST,
-            Role::ReadOnly,
-            boxed!(handle_ops_list, 3),
-        )
-        .pool_auth_rpc(methods::OPS_GET, Role::ReadOnly, boxed!(handle_ops_get, 3))
+        .pool_auth_typed_rpc(OPS_LIST_METHOD, boxed!(handle_ops_list, 3))
+        .pool_auth_typed_rpc(OPS_GET_METHOD, boxed!(handle_ops_get, 3))
         // Lifecycle status (ReadOnly)
         .pool_typed_rpc(LIFECYCLE_STATUS_METHOD, boxed!(handle_lifecycle_status))
         // DLQ read methods (ReadOnly)
@@ -916,7 +913,7 @@ fn build_registry_impl() -> RpcRegistry {
             boxed!(handle_nodes_set_horizon, 4),
         )
         // Operations log write (Write)
-        .pool_auth_rpc(methods::OPS_START, Role::Write, boxed!(handle_ops_start, 3))
+        .pool_auth_typed_rpc(OPS_START_METHOD, boxed!(handle_ops_start, 3))
         .register(
             methods::PRIVACY_PRIVATE_MODE_ENABLE,
             Role::Write,
@@ -1000,11 +997,7 @@ fn build_registry_impl() -> RpcRegistry {
         .service_auth_typed_rpc(DLQ_REQUEUE_METHOD, boxed!(handle_dlq_requeue, 3))
         .service_auth_typed_rpc(DLQ_PURGE_METHOD, boxed!(handle_dlq_purge, 3))
         // Operations cancel (Admin)
-        .pool_auth_rpc(
-            methods::OPS_CANCEL,
-            Role::Admin,
-            boxed!(handle_ops_cancel, 3),
-        )
+        .pool_auth_typed_rpc(OPS_CANCEL_METHOD, boxed!(handle_ops_cancel, 3))
         // Data lifecycle mutations (Admin - DESTRUCTIVE)
         .pool_auth_typed_rpc(LIFECYCLE_ARCHIVE_METHOD, boxed!(handle_lifecycle_archive, 3))
         // Source material archival (Admin — archives material + cascade)

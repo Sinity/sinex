@@ -1036,12 +1036,12 @@ impl GatewayClient {
         operation_type: &str,
         scope: Option<Value>,
     ) -> Result<OpsStartResponse> {
-        let params = json!({
-            "operation_type": operation_type,
-            "scope": scope
-        });
-        let result = self.call_rpc(methods::OPS_START, params).await?;
-        serde_json::from_value(result).map_err(Into::into)
+        let request = sinex_primitives::rpc::ops::OpsStartRequest {
+            operation_type: operation_type.to_string(),
+            scope,
+        };
+        self.call_typed(sinex_primitives::rpc::ops::OPS_START_METHOD, &request)
+            .await
     }
 
     /// List operations
@@ -1051,31 +1051,40 @@ impl GatewayClient {
         status: Option<String>,
         limit: Option<i64>,
     ) -> Result<Vec<OpsOperation>> {
-        let params = json!({
-            "operation_type": operation_type,
-            "status": status,
-            "limit": limit.unwrap_or(50)
-        });
-        let result = self.call_rpc(methods::OPS_LIST, params).await?;
-        let response: OpsListResponse = serde_json::from_value(result)?;
+        let status = status
+            .map(serde_json::Value::String)
+            .map(serde_json::from_value)
+            .transpose()?;
+        let request = sinex_primitives::rpc::ops::OpsListRequest {
+            operation_type,
+            status,
+            limit: limit.unwrap_or(50),
+        };
+        let response: OpsListResponse = self
+            .call_typed(sinex_primitives::rpc::ops::OPS_LIST_METHOD, &request)
+            .await?;
         Ok(response.operations)
     }
 
     /// Get operation details
     pub async fn ops_get(&self, operation_id: &str) -> Result<OpsOperation> {
-        let params = json!({ "operation_id": operation_id });
-        let result = self.call_rpc(methods::OPS_GET, params).await?;
-        let response: OpsGetResponse = serde_json::from_value(result)?;
+        let request = sinex_primitives::rpc::ops::OpsGetRequest {
+            operation_id: operation_id.to_string(),
+        };
+        let response: OpsGetResponse = self
+            .call_typed(sinex_primitives::rpc::ops::OPS_GET_METHOD, &request)
+            .await?;
         Ok(response.operation)
     }
 
     /// Cancel an operation
     pub async fn ops_cancel(&self, operation_id: &str, reason: Option<String>) -> Result<()> {
-        let params = json!({
-            "operation_id": operation_id,
-            "reason": reason
-        });
-        self.call_rpc(methods::OPS_CANCEL, params).await?;
+        let request = sinex_primitives::rpc::ops::OpsCancelRequest {
+            operation_id: operation_id.to_string(),
+            reason,
+        };
+        self.call_typed(sinex_primitives::rpc::ops::OPS_CANCEL_METHOD, &request)
+        .await?;
         Ok(())
     }
 
