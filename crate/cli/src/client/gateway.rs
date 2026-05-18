@@ -53,6 +53,8 @@ use sinex_primitives::rpc::{
         ReplaySubmitRequest, ReplaySubmitResponse,
     },
     sources::{
+        SOURCES_CONTINUITY_METHOD, SOURCES_COVERAGE_METHOD, SOURCES_LIST_METHOD,
+        SOURCES_READINESS_GET_METHOD, SOURCES_READINESS_LIST_METHOD, SOURCES_SHOW_METHOD,
         SourcesAnnotateRequest, SourcesAnnotateResponse, SourcesArchiveRequest,
         SourcesArchiveResponse, SourcesContinuityRequest, SourcesContinuityResponse,
         SourcesCoverageRequest, SourcesCoverageResponse, SourcesListRequest, SourcesListResponse,
@@ -938,27 +940,18 @@ impl GatewayClient {
     }
 
     pub async fn sources_list(&self, request: SourcesListRequest) -> Result<SourcesListResponse> {
-        let result = self
-            .call_rpc(methods::SOURCES_LIST, serde_json::to_value(&request)?)
-            .await?;
-        serde_json::from_value(result).map_err(Into::into)
+        self.call_typed(SOURCES_LIST_METHOD, &request).await
     }
 
     pub async fn sources_show(&self, request: SourcesShowRequest) -> Result<SourcesShowResponse> {
-        let result = self
-            .call_rpc(methods::SOURCES_SHOW, serde_json::to_value(&request)?)
-            .await?;
-        serde_json::from_value(result).map_err(Into::into)
+        self.call_typed(SOURCES_SHOW_METHOD, &request).await
     }
 
     pub async fn sources_coverage(
         &self,
         request: SourcesCoverageRequest,
     ) -> Result<SourcesCoverageResponse> {
-        let result = self
-            .call_rpc(methods::SOURCES_COVERAGE, serde_json::to_value(&request)?)
-            .await?;
-        serde_json::from_value(result).map_err(Into::into)
+        self.call_typed(SOURCES_COVERAGE_METHOD, &request).await
     }
 
     pub async fn sources_annotate(
@@ -985,10 +978,7 @@ impl GatewayClient {
         &self,
         request: SourcesContinuityRequest,
     ) -> Result<SourcesContinuityResponse> {
-        let result = self
-            .call_rpc(methods::SOURCES_CONTINUITY, serde_json::to_value(&request)?)
-            .await?;
-        serde_json::from_value(result).map_err(Into::into)
+        self.call_typed(SOURCES_CONTINUITY_METHOD, &request).await
     }
 
     pub async fn sources_continuity_get(
@@ -1034,26 +1024,15 @@ impl GatewayClient {
         &self,
         request: SourcesReadinessGetRequest,
     ) -> Result<SourcesReadinessGetResponse> {
-        let result = self
-            .call_rpc(
-                methods::SOURCES_READINESS_GET,
-                serde_json::to_value(&request)?,
-            )
-            .await?;
-        serde_json::from_value(result).map_err(Into::into)
+        self.call_typed(SOURCES_READINESS_GET_METHOD, &request).await
     }
 
     pub async fn sources_readiness_list(
         &self,
         request: SourcesReadinessListRequest,
     ) -> Result<SourcesReadinessListResponse> {
-        let result = self
-            .call_rpc(
-                methods::SOURCES_READINESS_LIST,
-                serde_json::to_value(&request)?,
-            )
-            .await?;
-        serde_json::from_value(result).map_err(Into::into)
+        self.call_typed(SOURCES_READINESS_LIST_METHOD, &request)
+            .await
     }
 
     // ==================== Document Commands ====================

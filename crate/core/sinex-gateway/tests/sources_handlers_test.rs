@@ -9,18 +9,26 @@ use sinex_gateway::service_container::ServiceContainer;
 use sinex_primitives::Timestamp;
 use sinex_primitives::domain::{SourceMaterialFormat, SourceMaterialTimingInfoType};
 use sinex_primitives::rpc::sources::{
-    SourcesListResponse, SourcesShowResponse, SourcesStageResponse,
+    SourcesListRequest, SourcesShowRequest, SourcesStageResponse,
 };
-use tempfile::tempdir;
+use std::path::PathBuf;
 use xtask::sandbox::prelude::*;
+
+fn durable_material_dir(label: &str) -> TestResult<PathBuf> {
+    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join(".test-materials")
+        .join(format!("{label}-{}", uuid::Uuid::now_v7()));
+    std::fs::create_dir_all(&dir)?;
+    Ok(dir)
+}
 
 #[sinex_test]
 async fn sources_stage_list_and_show_surface_contract_metadata(ctx: TestContext) -> TestResult<()> {
     let services = ServiceContainer::from_database_url(ctx.database_url().to_string()).await?;
     let auth = RpcAuthContext::system();
 
-    let dir = tempdir()?;
-    let file_path = dir.path().join("atuin-history.sqlite3");
+    let dir = durable_material_dir("stage-list-show")?;
+    let file_path = dir.join("atuin-history.sqlite3");
     std::fs::write(&file_path, b"sqlite bytes")?;
     let file_path = file_path.to_string_lossy().to_string();
 
@@ -64,8 +72,7 @@ async fn sources_stage_list_and_show_surface_contract_metadata(ctx: TestContext)
         ))
         .await?;
 
-    let list_value = handlers::handle_sources_list(ctx.pool(), json!({})).await?;
-    let list: SourcesListResponse = serde_json::from_value(list_value)?;
+    let list = handlers::handle_sources_list(ctx.pool(), SourcesListRequest::default()).await?;
     let summary = list
         .materials
         .iter()
@@ -75,10 +82,13 @@ async fn sources_stage_list_and_show_surface_contract_metadata(ctx: TestContext)
     assert_eq!(summary.contract_version, Some(1));
     assert_eq!(summary.timing_info_type, "intrinsic");
 
-    let show_value =
-        handlers::handle_sources_show(ctx.pool(), json!({ "material_id": stage.material_id }))
-            .await?;
-    let show: SourcesShowResponse = serde_json::from_value(show_value)?;
+    let show = handlers::handle_sources_show(
+        ctx.pool(),
+        SourcesShowRequest {
+            material_id: stage.material_id,
+        },
+    )
+    .await?;
     let contract = show
         .material
         .contract
@@ -100,6 +110,7 @@ async fn sources_stage_list_and_show_surface_contract_metadata(ctx: TestContext)
     assert_eq!(evidence.ledger_entries, 1);
     assert_eq!(evidence.source_types, vec!["intrinsic_content".to_string()]);
 
+    std::fs::remove_dir_all(&dir)?;
     Ok(())
 }
 
@@ -108,8 +119,8 @@ async fn sources_stage_rejects_non_file_material_formats(ctx: TestContext) -> Te
     let services = ServiceContainer::from_database_url(ctx.database_url().to_string()).await?;
     let auth = RpcAuthContext::system();
 
-    let dir = tempdir()?;
-    let file_path = dir.path().join("material.txt");
+    let dir = durable_material_dir("stage-reject-format")?;
+    let file_path = dir.join("material.txt");
     std::fs::write(&file_path, b"material")?;
     let file_path = file_path.to_string_lossy().to_string();
 
@@ -130,6 +141,7 @@ async fn sources_stage_rejects_non_file_material_formats(ctx: TestContext) -> Te
             .contains("sources.stage only accepts regular-file material formats"),
         "unexpected error: {error}"
     );
+    std::fs::remove_dir_all(&dir)?;
     Ok(())
 }
 
@@ -138,9 +150,9 @@ async fn sources_list_respects_limit(ctx: TestContext) -> TestResult<()> {
     let services = ServiceContainer::from_database_url(ctx.database_url().to_string()).await?;
     let auth = RpcAuthContext::system();
 
-    let dir = tempdir()?;
+    let dir = durable_material_dir("list-limit")?;
     for name in ["one.jsonl", "two.jsonl"] {
-        let file_path = dir.path().join(name);
+        let file_path = dir.join(name);
         std::fs::write(&file_path, b"{}")?;
         handlers::handle_sources_stage(
             json!({
@@ -153,8 +165,15 @@ async fn sources_list_respects_limit(ctx: TestContext) -> TestResult<()> {
         .await?;
     }
 
-    let list_value = handlers::handle_sources_list(ctx.pool(), json!({ "limit": 1 })).await?;
-    let list: SourcesListResponse = serde_json::from_value(list_value)?;
+    let list = handlers::handle_sources_list(
+        ctx.pool(),
+        SourcesListRequest {
+            status: None,
+            limit: Some(1),
+        },
+    )
+    .await?;
     assert_eq!(list.materials.len(), 1);
+    std::fs::remove_dir_all(&dir)?;
     Ok(())
 }
