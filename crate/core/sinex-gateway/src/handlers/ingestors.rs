@@ -1,6 +1,5 @@
 //! Operator-facing ingestor status handler.
 
-use serde_json::Value;
 use sinex_db::DbPoolExt;
 use sinex_primitives::SinexError;
 use sinex_primitives::rpc::ingestors::{
@@ -16,11 +15,10 @@ type Result<T> = std::result::Result<T, SinexError>;
 ///
 /// Mirrors `handle_automata_status` (`automata.status`) for the source-side
 /// surface; filtered to `manifest_type = 'ingestor'`.
-pub async fn handle_ingestors_status(pool: &PgPool, params: Value) -> Result<Value> {
-    let request: IngestorsStatusRequest = super::parse_default_on_null(params).map_err(|e| {
-        SinexError::serialization("Invalid ingestors status request").with_std_error(&e)
-    })?;
-
+pub async fn handle_ingestors_status(
+    pool: &PgPool,
+    request: IngestorsStatusRequest,
+) -> Result<IngestorsStatusResponse> {
     let stale_after = Duration::from_secs(request.stale_after_secs);
     let recent_window = Duration::from_secs(request.recent_window_secs);
     let ingestors = pool
@@ -57,8 +55,5 @@ pub async fn handle_ingestors_status(pool: &PgPool, params: Value) -> Result<Val
         ingestors,
     };
 
-    serde_json::to_value(response).map_err(|e| {
-        SinexError::serialization("Failed to serialize ingestors status response")
-            .with_std_error(&e)
-    })
+    Ok(response)
 }

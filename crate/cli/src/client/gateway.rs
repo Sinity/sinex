@@ -9,7 +9,7 @@ use sinex_primitives::constants::env_vars;
 use sinex_primitives::domain::{EventSource, NodeType};
 use sinex_primitives::rpc::{
     JsonRpcError, RpcMethod,
-    automata::{AutomataStatusRequest, AutomataStatusResponse},
+    automata::{AUTOMATA_STATUS_METHOD, AutomataStatusRequest, AutomataStatusResponse},
     coordination::{
         InstanceHealthRequest, InstanceHealthResponse, InstanceInfo, ListInstancesRequest,
         ListInstancesResponse,
@@ -33,7 +33,7 @@ use sinex_primitives::rpc::{
         GitOpsDeleteSourceResponse, GitOpsListSourcesRequest, GitOpsListSourcesResponse,
         GitOpsSourceInfo, GitOpsTriggerSyncRequest, GitOpsTriggerSyncResponse,
     },
-    ingestors::{IngestorsStatusRequest, IngestorsStatusResponse},
+    ingestors::{INGESTORS_STATUS_METHOD, IngestorsStatusRequest, IngestorsStatusResponse},
     lifecycle::{
         LifecycleArchiveRequest, LifecycleArchiveResponse, LifecycleRestoreRequest,
         LifecycleRestoreResponse, LifecycleStatusRequest, LifecycleStatusResponse,
@@ -529,10 +529,7 @@ impl GatewayClient {
             stale_after_secs,
             recent_window_secs,
         };
-        let result = self
-            .call_rpc(methods::AUTOMATA_STATUS, serde_json::to_value(&req)?)
-            .await?;
-        serde_json::from_value(result).map_err(Into::into)
+        self.call_typed(AUTOMATA_STATUS_METHOD, &req).await
     }
 
     /// List ingestor status (manifest, run, latest health.status, recent emissions).
@@ -545,10 +542,7 @@ impl GatewayClient {
             stale_after_secs,
             recent_window_secs,
         };
-        let result = self
-            .call_rpc(methods::INGESTORS_STATUS, serde_json::to_value(&req)?)
-            .await?;
-        serde_json::from_value(result).map_err(Into::into)
+        self.call_typed(INGESTORS_STATUS_METHOD, &req).await
     }
 
     /// List all nodes, optionally filtered by role.
