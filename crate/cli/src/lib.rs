@@ -10,6 +10,7 @@ pub mod commands;
 pub mod config;
 pub mod error;
 pub mod fmt;
+pub mod mcp;
 pub mod model;
 pub mod parse;
 pub mod prompt;

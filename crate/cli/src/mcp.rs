@@ -1,0 +1,422 @@
+//! Read-only MCP stdio surface for local coding agents.
+//!
+//! Protocol pin: Model Context Protocol `2024-11-05`, JSON-RPC over stdio
+//! using `Content-Length` framed messages. This module intentionally does not
+//! depend on an MCP SDK yet; the supported surface is pinned and tested here.
+
+use crate::GatewayClient;
+use color_eyre::Result;
+use color_eyre::eyre::{WrapErr, eyre};
+use serde::{Deserialize, Serialize};
+use serde_json::{Value, json};
+use sinex_primitives::domain::{EventSource, EventType};
+use sinex_primitives::events::Event;
+use sinex_primitives::ids::Id;
+use sinex_primitives::query::{EventQuery, LineageDirection, LineageQuery};
+use sinex_primitives::rpc::methods;
+use sinex_primitives::rpc::sources::{SourcesReadinessGetRequest, SourcesReadinessListRequest};
+use sinex_primitives::temporal::Timestamp;
+use std::io::{BufRead, Write};
+
+pub const MCP_PROTOCOL_VERSION: &str = "2024-11-05";
+pub const MCP_IMPLEMENTATION: &str = "sinex-mcp-server";
+pub const MCP_IMPLEMENTATION_VERSION: &str = env!("CARGO_PKG_VERSION");
+
+const FORBIDDEN_TOOL_TERMS: &[&str] = &[
+    "stage",
+    "publish",
+    "delete",
+    "archive",
+    "tombstone",
+    "finalize",
+    "actuate",
+];
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct McpTool {
+    pub name: &'static str,
+    pub description: &'static str,
+    #[serde(rename = "inputSchema")]
+    pub input_schema: Value,
+}
+
+#[derive(Debug, Deserialize)]
+struct JsonRpcRequest {
+    #[serde(default)]
+    id: Option<Value>,
+    method: String,
+    #[serde(default)]
+    params: Value,
+}
+
+#[derive(Debug, Deserialize)]
+struct ToolCallParams {
+    name: String,
+    #[serde(default)]
+    arguments: Value,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+struct SearchEventsArgs {
+    #[serde(default)]
+    sources: Vec<String>,
+    #[serde(default)]
+    event_types: Vec<String>,
+    #[serde(default)]
+    limit: Option<i64>,
+    #[serde(default)]
+    has_lineage: Option<bool>,
+    #[serde(default)]
+    include_total_estimate: bool,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+struct TraceLineageArgs {
+    event_id: String,
+    #[serde(default)]
+    direction: Option<LineageDirection>,
+    #[serde(default)]
+    max_depth: Option<u32>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+struct SourceReadinessArgs {
+    #[serde(default)]
+    source_family: Option<String>,
+    #[serde(default)]
+    source_unit_id: Option<String>,
+    #[serde(default)]
+    source_identifier: Option<String>,
+    #[serde(default)]
+    stale_after_seconds: Option<i64>,
+    #[serde(default = "default_true")]
+    include_caveats: bool,
+}
+
+const fn default_true() -> bool {
+    true
+}
+
+pub fn tools() -> Vec<McpTool> {
+    vec![
+        McpTool {
+            name: "sinex.search_events",
+            description: "Read-only search over persisted Sinex events.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "sources": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "description": "Optional exact event source filters."
+                    },
+                    "event_types": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "description": "Optional exact event type filters."
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 1000,
+                        "default": 20
+                    },
+                    "has_lineage": { "type": "boolean" },
+                    "include_total_estimate": { "type": "boolean", "default": false }
+                },
+                "additionalProperties": false
+            }),
+        },
+        McpTool {
+            name: "sinex.trace_lineage",
+            description: "Read-only provenance trace for one event.",
+            input_schema: json!({
+                "type": "object",
+                "required": ["event_id"],
+                "properties": {
+                    "event_id": { "type": "string", "format": "uuid" },
+                    "direction": {
+                        "type": "string",
+                        "enum": ["ancestors", "descendants", "both"],
+                        "default": "both"
+                    },
+                    "max_depth": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 50,
+                        "default": 10
+                    }
+                },
+                "additionalProperties": false
+            }),
+        },
+        McpTool {
+            name: "sinex.source_readiness",
+            description: "Read-only source readiness, caveat, freshness, and cost report.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "source_family": { "type": "string" },
+                    "source_unit_id": { "type": "string" },
+                    "source_identifier": { "type": "string" },
+                    "stale_after_seconds": { "type": "integer", "minimum": 1 },
+                    "include_caveats": { "type": "boolean", "default": true }
+                },
+                "additionalProperties": false
+            }),
+        },
+    ]
+}
+
+pub fn assert_read_only_tool_names() -> Result<()> {
+    for tool in tools() {
+        for term in FORBIDDEN_TOOL_TERMS {
+            if tool.name.contains(term) {
+                return Err(eyre!("MCP v1 tool name is not read-only: {}", tool.name));
+            }
+        }
+    }
+    Ok(())
+}
+
+pub async fn run_stdio(client: GatewayClient) -> Result<()> {
+    assert_read_only_tool_names()?;
+    let stdin = std::io::stdin();
+    let stdout = std::io::stdout();
+    let mut reader = std::io::BufReader::new(stdin.lock());
+    let mut writer = stdout.lock();
+
+    while let Some(request) = read_framed_request(&mut reader)? {
+        let Some(id) = request.id.clone() else {
+            continue;
+        };
+
+        let response = match handle_request(&client, request).await {
+            Ok(result) => json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "result": result
+            }),
+            Err(error) => json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "error": {
+                    "code": -32000,
+                    "message": error.to_string()
+                }
+            }),
+        };
+        write_framed_response(&mut writer, &response)?;
+    }
+
+    Ok(())
+}
+
+async fn handle_request(client: &GatewayClient, request: JsonRpcRequest) -> Result<Value> {
+    match request.method.as_str() {
+        "initialize" => Ok(json!({
+            "protocolVersion": MCP_PROTOCOL_VERSION,
+            "capabilities": {
+                "tools": { "listChanged": false }
+            },
+            "serverInfo": {
+                "name": MCP_IMPLEMENTATION,
+                "version": MCP_IMPLEMENTATION_VERSION
+            }
+        })),
+        "tools/list" => Ok(json!({ "tools": tools() })),
+        "tools/call" => {
+            let params: ToolCallParams = serde_json::from_value(request.params)
+                .wrap_err("invalid MCP tools/call parameters")?;
+            let structured = call_tool(client, &params.name, params.arguments).await?;
+            Ok(json!({
+                "content": [
+                    {
+                        "type": "text",
+                        "text": serde_json::to_string_pretty(&structured)?
+                    }
+                ],
+                "structuredContent": structured
+            }))
+        }
+        other => Err(eyre!("unsupported MCP method: {other}")),
+    }
+}
+
+pub async fn call_tool(client: &GatewayClient, name: &str, arguments: Value) -> Result<Value> {
+    match name {
+        "sinex.search_events" => search_events(client, arguments).await,
+        "sinex.trace_lineage" => trace_lineage(client, arguments).await,
+        "sinex.source_readiness" => source_readiness(client, arguments).await,
+        other => Err(eyre!("unknown MCP tool: {other}")),
+    }
+}
+
+async fn search_events(client: &GatewayClient, arguments: Value) -> Result<Value> {
+    let args: SearchEventsArgs = serde_json::from_value(arguments)?;
+    let mut query = EventQuery::default();
+    query.sources = args
+        .sources
+        .iter()
+        .map(EventSource::new)
+        .collect::<sinex_primitives::Result<Vec<_>>>()?;
+    query.event_types = args
+        .event_types
+        .iter()
+        .map(EventType::new)
+        .collect::<sinex_primitives::Result<Vec<_>>>()?;
+    query.limit = args.limit.unwrap_or(20);
+    query.has_lineage = args.has_lineage;
+    query.include_total_estimate = args.include_total_estimate;
+    query.validate()?;
+
+    let result = client.query_events(query).await?;
+    Ok(envelope(
+        "sinex.search_events",
+        json!(args),
+        json!({ "result": result }),
+    ))
+}
+
+async fn trace_lineage(client: &GatewayClient, arguments: Value) -> Result<Value> {
+    let args: TraceLineageArgs = serde_json::from_value(arguments)?;
+    let mut query = LineageQuery {
+        event_id: args.event_id.parse::<Id<Event<Value>>>()?,
+        direction: args.direction.unwrap_or_default(),
+        max_depth: args.max_depth.unwrap_or(10),
+    };
+    query.validate()?;
+
+    let result = client.trace_lineage(query).await?;
+    Ok(envelope(
+        "sinex.trace_lineage",
+        json!(args),
+        json!({ "result": result }),
+    ))
+}
+
+async fn source_readiness(client: &GatewayClient, arguments: Value) -> Result<Value> {
+    let args: SourceReadinessArgs = serde_json::from_value(arguments)?;
+
+    let mut result = if let Some(source_identifier) = args.source_identifier.as_deref() {
+        let request = SourcesReadinessGetRequest {
+            source_identifier: source_identifier.to_string(),
+            source_family: args.source_family.clone(),
+            stale_after_seconds: args.stale_after_seconds,
+        };
+        client
+            .call_raw_rpc(
+                methods::SOURCES_READINESS_GET,
+                serde_json::to_value(request)?,
+            )
+            .await?
+    } else {
+        let request = SourcesReadinessListRequest {
+            source_family: args.source_family.clone(),
+            stale_after_seconds: args.stale_after_seconds,
+        };
+        client
+            .call_raw_rpc(
+                methods::SOURCES_READINESS_LIST,
+                serde_json::to_value(request)?,
+            )
+            .await?
+    };
+
+    if let Some(source_unit_id) = args.source_unit_id.as_deref() {
+        filter_readiness_by_source_unit(&mut result, source_unit_id);
+    }
+
+    let mut payload = json!({ "result": result });
+    if !args.include_caveats {
+        strip_caveats(&mut payload);
+        payload["caveats"] = json!("suppressed_by_request");
+    }
+
+    Ok(envelope("sinex.source_readiness", json!(args), payload))
+}
+
+fn filter_readiness_by_source_unit(result: &mut Value, source_unit_id: &str) {
+    if let Some(sources) = result.get_mut("sources").and_then(Value::as_array_mut) {
+        sources.retain(|source| source_unit_matches(source, source_unit_id));
+    }
+
+    if let Some(readiness) = result.get_mut("readiness")
+        && !readiness.is_null()
+        && !source_unit_matches(readiness, source_unit_id)
+    {
+        *readiness = Value::Null;
+    }
+}
+
+fn source_unit_matches(source: &Value, source_unit_id: &str) -> bool {
+    source
+        .get("source_unit_id")
+        .and_then(Value::as_str)
+        .is_some_and(|value| value == source_unit_id)
+}
+
+fn strip_caveats(value: &mut Value) {
+    match value {
+        Value::Array(items) => {
+            for item in items {
+                strip_caveats(item);
+            }
+        }
+        Value::Object(fields) => {
+            fields.remove("caveats");
+            for field in fields.values_mut() {
+                strip_caveats(field);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn envelope(tool: &str, query: Value, result: Value) -> Value {
+    json!({
+        "tool": tool,
+        "generated_at": Timestamp::now(),
+        "query": query,
+        "provenance_refs": [],
+        "caveats": [],
+        "redaction": {
+            "mode": "gateway_default",
+            "raw_samples": false
+        },
+        "items": result
+    })
+}
+
+fn read_framed_request<R: BufRead>(reader: &mut R) -> Result<Option<JsonRpcRequest>> {
+    let mut content_length = None;
+    loop {
+        let mut line = String::new();
+        let bytes = reader.read_line(&mut line)?;
+        if bytes == 0 {
+            return Ok(None);
+        }
+        let line = line.trim_end_matches(['\r', '\n']);
+        if line.is_empty() {
+            break;
+        }
+        if let Some(value) = line.strip_prefix("Content-Length:") {
+            content_length = Some(value.trim().parse::<usize>()?);
+        }
+    }
+
+    let length = content_length.ok_or_else(|| eyre!("missing MCP Content-Length header"))?;
+    let mut body = vec![0; length];
+    reader.read_exact(&mut body)?;
+    serde_json::from_slice(&body)
+        .map(Some)
+        .wrap_err("invalid MCP JSON-RPC request")
+}
+
+fn write_framed_response<W: Write>(writer: &mut W, response: &Value) -> Result<()> {
+    let body = serde_json::to_vec(response)?;
+    write!(writer, "Content-Length: {}\r\n\r\n", body.len())?;
+    writer.write_all(&body)?;
+    writer.flush()?;
+    Ok(())
+}

@@ -39,10 +39,11 @@ semantics. It should not be smuggled into the read-only MCP binary.
 
 Initial transport: stdio for local agents on the same host.
 
-The implementation must pin the exact MCP protocol and library version in the
-binary docs and in a compatibility test. Do not track protocol drafts by
-assumption. The compatibility test should list tools and validate each tool's
-JSON schema shape.
+First implementation pin: MCP protocol `2024-11-05`, implemented as a local
+JSON-RPC stdio subset in `sinex-mcp-server` without an MCP SDK dependency. The
+compatibility test lists tools, validates each tool's JSON schema shape, and
+asserts the protocol-version constant. Do not track protocol drafts by
+assumption.
 
 HTTP/SSE transport is a follow-up only when there is a real consumer.
 
