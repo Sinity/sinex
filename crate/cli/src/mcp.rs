@@ -97,6 +97,7 @@ const fn default_true() -> bool {
     true
 }
 
+#[must_use]
 pub fn tools() -> Vec<McpTool> {
     vec![
         McpTool {
