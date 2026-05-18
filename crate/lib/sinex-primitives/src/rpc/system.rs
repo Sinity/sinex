@@ -5,6 +5,32 @@ use crate::rpc::{RpcDomain, RpcMethod, RpcMutability, RpcRole, RpcStability, met
 use serde::{Deserialize, Serialize};
 
 // ─────────────────────────────────────────────────────────────
+// system.ping / system.version
+// ─────────────────────────────────────────────────────────────
+
+pub const SYSTEM_PING_METHOD: RpcMethod<SystemPingRequest, String> = RpcMethod::new(
+    methods::SYSTEM_PING,
+    RpcRole::ReadOnly,
+    RpcDomain::System,
+    RpcStability::Experimental,
+    RpcMutability::ReadOnly,
+);
+
+pub const SYSTEM_VERSION_METHOD: RpcMethod<SystemVersionRequest, String> = RpcMethod::new(
+    methods::SYSTEM_VERSION,
+    RpcRole::ReadOnly,
+    RpcDomain::System,
+    RpcStability::Experimental,
+    RpcMutability::ReadOnly,
+);
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct SystemPingRequest {}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct SystemVersionRequest {}
+
+// ─────────────────────────────────────────────────────────────
 // system.health
 // ─────────────────────────────────────────────────────────────
 

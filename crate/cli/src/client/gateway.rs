@@ -67,7 +67,10 @@ use sinex_primitives::rpc::{
         SourcesReadinessListResponse, SourcesShowRequest, SourcesShowResponse, SourcesStageRequest,
         SourcesStageResponse,
     },
-    system::{SYSTEM_HEALTH_METHOD, SystemHealthRequest, SystemHealthResponse},
+    system::{
+        SYSTEM_HEALTH_METHOD, SYSTEM_PING_METHOD, SYSTEM_VERSION_METHOD, SystemHealthRequest,
+        SystemHealthResponse, SystemPingRequest, SystemVersionRequest,
+    },
     tasks::{
         TASKS_COMPLETE_METHOD, TASKS_CREATE_METHOD, TASKS_STATE_GET_METHOD, TaskCompleteRequest,
         TaskCompleteResponse, TaskCreateRequest, TaskCreateResponse, TaskStateGetRequest,
@@ -498,14 +501,14 @@ impl GatewayClient {
 
     /// Ping the gateway
     pub async fn ping(&self) -> Result<String> {
-        let result = self.call_rpc(methods::SYSTEM_PING, json!({})).await?;
-        Self::expect_string_result(methods::SYSTEM_PING, result)
+        self.call_typed(SYSTEM_PING_METHOD, &SystemPingRequest {})
+            .await
     }
 
     /// Get gateway version
     pub async fn version(&self) -> Result<String> {
-        let result = self.call_rpc(methods::SYSTEM_VERSION, json!({})).await?;
-        Self::expect_string_result(methods::SYSTEM_VERSION, result)
+        self.call_typed(SYSTEM_VERSION_METHOD, &SystemVersionRequest {})
+            .await
     }
 
     // ==================== Core Commands ====================

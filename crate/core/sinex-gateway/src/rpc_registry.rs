@@ -29,7 +29,7 @@ use sinex_primitives::rpc::{
         SOURCES_LIST_METHOD, SOURCES_READINESS_GET_METHOD, SOURCES_READINESS_LIST_METHOD,
         SOURCES_SHOW_METHOD,
     },
-    system::SYSTEM_HEALTH_METHOD,
+    system::{SYSTEM_HEALTH_METHOD, SYSTEM_PING_METHOD, SYSTEM_VERSION_METHOD},
     tasks::{TASKS_COMPLETE_METHOD, TASKS_CREATE_METHOD, TASKS_STATE_GET_METHOD},
 };
 use sinex_primitives::{Result, error::SinexError};
@@ -609,20 +609,8 @@ fn build_registry_impl() -> RpcRegistry {
         // ─────────────────────────────────────────────────────────────
         // ReadOnly methods (all authenticated users can access)
         // ─────────────────────────────────────────────────────────────
-        .register(
-            methods::SYSTEM_PING,
-            Role::ReadOnly,
-            |params, services, _auth| {
-                Box::pin(async move { handle_system_ping(services, params).await })
-            },
-        )
-        .register(
-            methods::SYSTEM_VERSION,
-            Role::ReadOnly,
-            |params, services, _auth| {
-                Box::pin(async move { handle_system_version(services, params).await })
-            },
-        )
+        .service_typed_rpc(SYSTEM_PING_METHOD, boxed!(handle_system_ping))
+        .service_typed_rpc(SYSTEM_VERSION_METHOD, boxed!(handle_system_version))
         .service_typed_rpc(SYSTEM_HEALTH_METHOD, boxed!(handle_system_health))
         .register(
             methods::PRIVACY_PRIVATE_MODE_STATUS,
