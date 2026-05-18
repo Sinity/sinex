@@ -384,8 +384,9 @@ fn build_registry_impl() -> RpcRegistry {
     use crate::handlers::{
         handle_audit_get, handle_automata_status, handle_coordination_get_leader,
         handle_coordination_instance_health, handle_coordination_list_instances,
-        handle_create_entities, handle_create_note, handle_dlq_list, handle_dlq_peek,
-        handle_dlq_purge, handle_dlq_requeue, handle_documents_get, handle_documents_get_chunks,
+        handle_create_entities, handle_create_note, handle_curation_list_proposals,
+        handle_curation_record_judgment, handle_dlq_list, handle_dlq_peek, handle_dlq_purge,
+        handle_dlq_requeue, handle_documents_get, handle_documents_get_chunks,
         handle_documents_search, handle_events_annotate, handle_events_lineage,
         handle_events_query, handle_ingestors_status, handle_lifecycle_archive,
         handle_lifecycle_restore, handle_lifecycle_status, handle_link_entities,
@@ -455,6 +456,11 @@ fn build_registry_impl() -> RpcRegistry {
             methods::EVENTS_QUERY,
             Role::ReadOnly,
             boxed!(handle_events_query),
+        )
+        .pool_rpc(
+            methods::CURATION_PROPOSALS_LIST,
+            Role::ReadOnly,
+            boxed!(handle_curation_list_proposals),
         )
         .pool_rpc(
             methods::EVENTS_LINEAGE,
@@ -704,6 +710,11 @@ fn build_registry_impl() -> RpcRegistry {
             methods::EVENTS_ANNOTATE,
             Role::Write,
             boxed!(handle_events_annotate, 3),
+        )
+        .pool_auth_rpc(
+            methods::CURATION_JUDGMENTS_RECORD,
+            Role::Write,
+            boxed!(handle_curation_record_judgment, 3),
         )
         // PKM methods (Write)
         .register(
