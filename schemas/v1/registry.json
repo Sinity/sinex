@@ -79,6 +79,27 @@
       "content_hash": "b983f2eb12a8a0187e1d93d3627e5d765c4b462964dc41a28338f2810004c37a"
     },
     {
+      "source": "curation",
+      "event_type": "curation.finalized",
+      "version": "1.0.0",
+      "path": "curation/curation.finalized.json",
+      "content_hash": "5c5264dedea253fd14f544ec395bd8811b5b87251839579695054240dae8de20"
+    },
+    {
+      "source": "curation",
+      "event_type": "curation.judgment",
+      "version": "1.0.0",
+      "path": "curation/curation.judgment.json",
+      "content_hash": "f55dad3d2e741c131f8c47c92c158620a7aa51586d3a58faf729d9a05dfd6f75"
+    },
+    {
+      "source": "curation",
+      "event_type": "curation.proposal",
+      "version": "1.0.0",
+      "path": "curation/curation.proposal.json",
+      "content_hash": "2a9969450f4a4bec38f1474d623733bbe50d1fe46efcd61ff4b156db5baea5b4"
+    },
+    {
       "source": "dbus",
       "event_type": "bluetooth.device_changed",
       "version": "1.0.0",
