@@ -38,6 +38,7 @@ pub mod __sinex_macros_reexport {
 }
 pub mod settlement;
 pub mod sources;
+pub mod task_domain;
 pub mod temporal;
 #[cfg(any(test, feature = "testing"))]
 pub mod testing;
@@ -116,6 +117,7 @@ pub use runtime_target::{
     RuntimeTargetState,
 };
 pub use serde_json::Value as JsonValue;
+pub use task_domain::*;
 pub use temporal::{OffsetDateTime, now};
 pub use units::{Bytes, Seconds};
 pub use validation::{
