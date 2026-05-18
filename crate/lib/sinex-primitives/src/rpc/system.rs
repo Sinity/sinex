@@ -1,11 +1,21 @@
 //! System types
 
 use crate::domain::HealthStatus;
+use crate::rpc::{RpcDomain, RpcMethod, RpcMutability, RpcRole, RpcStability, methods};
 use serde::{Deserialize, Serialize};
 
 // ─────────────────────────────────────────────────────────────
 // system.health
 // ─────────────────────────────────────────────────────────────
+
+pub const SYSTEM_HEALTH_METHOD: RpcMethod<SystemHealthRequest, SystemHealthResponse> =
+    RpcMethod::new(
+        methods::SYSTEM_HEALTH,
+        RpcRole::ReadOnly,
+        RpcDomain::System,
+        RpcStability::Experimental,
+        RpcMutability::ReadOnly,
+    );
 
 /// Request: system.health (no params)
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

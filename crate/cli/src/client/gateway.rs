@@ -65,7 +65,7 @@ use sinex_primitives::rpc::{
         SourcesReadinessListResponse, SourcesShowRequest, SourcesShowResponse, SourcesStageRequest,
         SourcesStageResponse,
     },
-    system::{SystemHealthRequest, SystemHealthResponse},
+    system::{SYSTEM_HEALTH_METHOD, SystemHealthRequest, SystemHealthResponse},
     tasks::{
         TASKS_COMPLETE_METHOD, TASKS_CREATE_METHOD, TASKS_STATE_GET_METHOD, TaskCompleteRequest,
         TaskCompleteResponse, TaskCreateRequest, TaskCreateResponse, TaskStateGetRequest,
@@ -511,10 +511,7 @@ impl GatewayClient {
     /// Get system health status
     pub async fn health(&self) -> Result<SystemHealthResponse> {
         let req = SystemHealthRequest {};
-        let result = self
-            .call_rpc(methods::SYSTEM_HEALTH, serde_json::to_value(&req)?)
-            .await?;
-        serde_json::from_value(result).map_err(Into::into)
+        self.call_typed(SYSTEM_HEALTH_METHOD, &req).await
     }
 
     // ==================== Node Commands ====================
