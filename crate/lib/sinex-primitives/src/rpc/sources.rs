@@ -99,11 +99,66 @@
 
 use crate::domain::{SourceMaterialFormat, SourceMaterialTimingInfoType};
 use crate::parser::{ParserId, SourceBindingId, SourceUnitId};
+use crate::rpc::{RpcDomain, RpcMethod, RpcMutability, RpcRole, RpcStability, methods};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 
 pub const SOURCE_MATERIAL_CONTRACT_METADATA_KEY: &str = "source_material_contract";
+
+pub const SOURCES_LIST_METHOD: RpcMethod<SourcesListRequest, SourcesListResponse> =
+    RpcMethod::new(
+        methods::SOURCES_LIST,
+        RpcRole::ReadOnly,
+        RpcDomain::Sources,
+        RpcStability::Experimental,
+        RpcMutability::ReadOnly,
+    );
+
+pub const SOURCES_SHOW_METHOD: RpcMethod<SourcesShowRequest, SourcesShowResponse> =
+    RpcMethod::new(
+        methods::SOURCES_SHOW,
+        RpcRole::ReadOnly,
+        RpcDomain::Sources,
+        RpcStability::Experimental,
+        RpcMutability::ReadOnly,
+    );
+
+pub const SOURCES_COVERAGE_METHOD: RpcMethod<SourcesCoverageRequest, SourcesCoverageResponse> =
+    RpcMethod::new(
+        methods::SOURCES_COVERAGE,
+        RpcRole::ReadOnly,
+        RpcDomain::Sources,
+        RpcStability::Experimental,
+        RpcMutability::ReadOnly,
+    );
+
+pub const SOURCES_CONTINUITY_METHOD: RpcMethod<SourcesContinuityRequest, SourcesContinuityResponse> =
+    RpcMethod::new(
+        methods::SOURCES_CONTINUITY,
+        RpcRole::ReadOnly,
+        RpcDomain::Sources,
+        RpcStability::Experimental,
+        RpcMutability::ReadOnly,
+    );
+
+pub const SOURCES_READINESS_LIST_METHOD:
+    RpcMethod<SourcesReadinessListRequest, SourcesReadinessListResponse> = RpcMethod::new(
+    methods::SOURCES_READINESS_LIST,
+    RpcRole::ReadOnly,
+    RpcDomain::Sources,
+    RpcStability::Experimental,
+    RpcMutability::ReadOnly,
+);
+
+pub const SOURCES_READINESS_GET_METHOD:
+    RpcMethod<SourcesReadinessGetRequest, SourcesReadinessGetResponse> = RpcMethod::new(
+    methods::SOURCES_READINESS_GET,
+    RpcRole::ReadOnly,
+    RpcDomain::Sources,
+    RpcStability::Experimental,
+    RpcMutability::ReadOnly,
+);
 
 /// Versioned source-material metadata contract stored under
 /// `metadata.source_material_contract`.

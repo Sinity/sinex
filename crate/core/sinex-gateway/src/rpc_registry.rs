@@ -14,6 +14,10 @@ use sinex_primitives::rpc::{
     RpcMethod,
     events::{EVENTS_ANNOTATE_METHOD, EVENTS_LINEAGE_METHOD, EVENTS_QUERY_METHOD},
     methods,
+    sources::{
+        SOURCES_CONTINUITY_METHOD, SOURCES_COVERAGE_METHOD, SOURCES_LIST_METHOD,
+        SOURCES_READINESS_GET_METHOD, SOURCES_READINESS_LIST_METHOD, SOURCES_SHOW_METHOD,
+    },
     tasks::{TASKS_COMPLETE_METHOD, TASKS_CREATE_METHOD, TASKS_STATE_GET_METHOD},
 };
 use sinex_primitives::{Result, error::SinexError};
@@ -662,34 +666,16 @@ fn build_registry_impl() -> RpcRegistry {
             boxed!(handle_ingestors_status),
         )
         // Source material inventory (ReadOnly)
-        .pool_rpc(
-            methods::SOURCES_LIST,
-            Role::ReadOnly,
-            boxed!(handle_sources_list),
-        )
-        .pool_rpc(
-            methods::SOURCES_SHOW,
-            Role::ReadOnly,
-            boxed!(handle_sources_show),
-        )
-        .pool_rpc(
-            methods::SOURCES_COVERAGE,
-            Role::ReadOnly,
-            boxed!(handle_sources_coverage),
-        )
-        .pool_rpc(
-            methods::SOURCES_CONTINUITY,
-            Role::ReadOnly,
-            boxed!(handle_sources_continuity),
-        )
-        .pool_rpc(
-            methods::SOURCES_READINESS_LIST,
-            Role::ReadOnly,
+        .pool_typed_rpc(SOURCES_LIST_METHOD, boxed!(handle_sources_list))
+        .pool_typed_rpc(SOURCES_SHOW_METHOD, boxed!(handle_sources_show))
+        .pool_typed_rpc(SOURCES_COVERAGE_METHOD, boxed!(handle_sources_coverage))
+        .pool_typed_rpc(SOURCES_CONTINUITY_METHOD, boxed!(handle_sources_continuity))
+        .pool_typed_rpc(
+            SOURCES_READINESS_LIST_METHOD,
             boxed!(handle_sources_readiness_list),
         )
-        .pool_rpc(
-            methods::SOURCES_READINESS_GET,
-            Role::ReadOnly,
+        .pool_typed_rpc(
+            SOURCES_READINESS_GET_METHOD,
             boxed!(handle_sources_readiness_get),
         )
         .pool_rpc(
