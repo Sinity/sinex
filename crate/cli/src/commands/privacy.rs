@@ -69,6 +69,17 @@ struct PrivateModeEnableArgs {
 }
 
 impl PrivacyCommand {
+    #[must_use]
+    pub fn command_path(&self) -> &'static str {
+        match &self.cmd {
+            PrivacySubcommand::PrivateMode { cmd } => match cmd {
+                PrivateModeCommand::Status(_) => "privacy private-mode status",
+                PrivateModeCommand::Enable(_) => "privacy private-mode enable",
+                PrivateModeCommand::Disable(_) => "privacy private-mode disable",
+            },
+        }
+    }
+
     pub fn execute(&self, format: OutputFormat) -> Result<()> {
         match &self.cmd {
             PrivacySubcommand::PrivateMode { cmd } => cmd.execute(format),
