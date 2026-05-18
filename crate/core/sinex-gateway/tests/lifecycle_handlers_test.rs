@@ -3,7 +3,8 @@
 use serde_json::json;
 use sinex_db::DbPoolExt;
 use sinex_gateway::handlers::{
-    handle_audit_get, handle_lifecycle_archive as handle_lifecycle_archive_typed,
+    handle_audit_get as handle_audit_get_typed,
+    handle_lifecycle_archive as handle_lifecycle_archive_typed,
     handle_lifecycle_restore as handle_lifecycle_restore_typed, handle_tombstone_approve,
     handle_tombstone_cancel, handle_tombstone_create, handle_tombstone_list, handle_tombstone_status,
 };
@@ -11,6 +12,7 @@ use sinex_gateway::rpc_server::RpcAuthContext;
 use sinex_gateway::service_container::ServiceContainer;
 use sinex_primitives::events::DynamicPayload;
 use sinex_primitives::rpc::audit::AuditGetResponse;
+use sinex_primitives::rpc::audit::AuditGetRequest;
 use sinex_primitives::rpc::lifecycle::{
     LifecycleArchiveRequest, LifecycleArchiveResponse, LifecycleRestoreRequest,
     LifecycleRestoreResponse, TombstoneApproveResponse, TombstoneCancelResponse,
@@ -18,6 +20,16 @@ use sinex_primitives::rpc::lifecycle::{
     TombstoneStatusResponse,
 };
 use xtask::sandbox::prelude::*;
+
+async fn handle_audit_get(
+    pool: &sqlx::PgPool,
+    params: serde_json::Value,
+) -> TestResult<serde_json::Value> {
+    let request: AuditGetRequest = serde_json::from_value(params)?;
+    Ok(serde_json::to_value(
+        handle_audit_get_typed(pool, request).await?,
+    )?)
+}
 
 async fn handle_lifecycle_archive(
     pool: &sqlx::PgPool,
