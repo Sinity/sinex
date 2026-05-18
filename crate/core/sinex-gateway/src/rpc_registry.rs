@@ -15,8 +15,10 @@ use sinex_primitives::rpc::{
     events::{EVENTS_ANNOTATE_METHOD, EVENTS_LINEAGE_METHOD, EVENTS_QUERY_METHOD},
     methods,
     sources::{
-        SOURCES_CONTINUITY_METHOD, SOURCES_COVERAGE_METHOD, SOURCES_LIST_METHOD,
-        SOURCES_READINESS_GET_METHOD, SOURCES_READINESS_LIST_METHOD, SOURCES_SHOW_METHOD,
+        SOURCES_CONTINUITY_EXPLAIN_GAP_METHOD, SOURCES_CONTINUITY_GET_METHOD,
+        SOURCES_CONTINUITY_LIST_METHOD, SOURCES_CONTINUITY_METHOD, SOURCES_COVERAGE_METHOD,
+        SOURCES_LIST_METHOD, SOURCES_READINESS_GET_METHOD, SOURCES_READINESS_LIST_METHOD,
+        SOURCES_SHOW_METHOD,
     },
     tasks::{TASKS_COMPLETE_METHOD, TASKS_CREATE_METHOD, TASKS_STATE_GET_METHOD},
 };
@@ -678,19 +680,16 @@ fn build_registry_impl() -> RpcRegistry {
             SOURCES_READINESS_GET_METHOD,
             boxed!(handle_sources_readiness_get),
         )
-        .pool_rpc(
-            methods::SOURCES_CONTINUITY_LIST,
-            Role::ReadOnly,
+        .pool_typed_rpc(
+            SOURCES_CONTINUITY_LIST_METHOD,
             boxed!(handle_sources_continuity_list),
         )
-        .pool_rpc(
-            methods::SOURCES_CONTINUITY_GET,
-            Role::ReadOnly,
+        .pool_typed_rpc(
+            SOURCES_CONTINUITY_GET_METHOD,
             boxed!(handle_sources_continuity_get),
         )
-        .pool_rpc(
-            methods::SOURCES_CONTINUITY_EXPLAIN_GAP,
-            Role::ReadOnly,
+        .pool_typed_rpc(
+            SOURCES_CONTINUITY_EXPLAIN_GAP_METHOD,
             boxed!(handle_sources_continuity_explain_gap),
         )
         // Source presets and bindings (ReadOnly)

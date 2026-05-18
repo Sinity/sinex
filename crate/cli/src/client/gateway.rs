@@ -53,8 +53,10 @@ use sinex_primitives::rpc::{
         ReplaySubmitRequest, ReplaySubmitResponse,
     },
     sources::{
-        SOURCES_CONTINUITY_METHOD, SOURCES_COVERAGE_METHOD, SOURCES_LIST_METHOD,
-        SOURCES_READINESS_GET_METHOD, SOURCES_READINESS_LIST_METHOD, SOURCES_SHOW_METHOD,
+        SOURCES_CONTINUITY_EXPLAIN_GAP_METHOD, SOURCES_CONTINUITY_GET_METHOD,
+        SOURCES_CONTINUITY_LIST_METHOD, SOURCES_CONTINUITY_METHOD, SOURCES_COVERAGE_METHOD,
+        SOURCES_LIST_METHOD, SOURCES_READINESS_GET_METHOD, SOURCES_READINESS_LIST_METHOD,
+        SOURCES_SHOW_METHOD,
         SourcesAnnotateRequest, SourcesAnnotateResponse, SourcesArchiveRequest,
         SourcesArchiveResponse, SourcesContinuityRequest, SourcesContinuityResponse,
         SourcesCoverageRequest, SourcesCoverageResponse, SourcesListRequest, SourcesListResponse,
@@ -985,39 +987,24 @@ impl GatewayClient {
         &self,
         request: SourcesContinuityGetRequest,
     ) -> Result<SourcesContinuityGetResponse> {
-        let result = self
-            .call_rpc(
-                methods::SOURCES_CONTINUITY_GET,
-                serde_json::to_value(&request)?,
-            )
-            .await?;
-        serde_json::from_value(result).map_err(Into::into)
+        self.call_typed(SOURCES_CONTINUITY_GET_METHOD, &request)
+            .await
     }
 
     pub async fn sources_continuity_list(
         &self,
         request: SourcesContinuityListRequest,
     ) -> Result<SourcesContinuityListResponse> {
-        let result = self
-            .call_rpc(
-                methods::SOURCES_CONTINUITY_LIST,
-                serde_json::to_value(&request)?,
-            )
-            .await?;
-        serde_json::from_value(result).map_err(Into::into)
+        self.call_typed(SOURCES_CONTINUITY_LIST_METHOD, &request)
+            .await
     }
 
     pub async fn sources_continuity_explain_gap(
         &self,
         request: SourcesExplainGapRequest,
     ) -> Result<SourcesExplainGapResponse> {
-        let result = self
-            .call_rpc(
-                methods::SOURCES_CONTINUITY_EXPLAIN_GAP,
-                serde_json::to_value(&request)?,
-            )
-            .await?;
-        serde_json::from_value(result).map_err(Into::into)
+        self.call_typed(SOURCES_CONTINUITY_EXPLAIN_GAP_METHOD, &request)
+            .await
     }
 
     pub async fn sources_readiness_get(

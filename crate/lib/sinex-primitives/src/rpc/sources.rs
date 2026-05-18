@@ -100,6 +100,10 @@
 use crate::domain::{SourceMaterialFormat, SourceMaterialTimingInfoType};
 use crate::parser::{ParserId, SourceBindingId, SourceUnitId};
 use crate::rpc::{RpcDomain, RpcMethod, RpcMutability, RpcRole, RpcStability, methods};
+use crate::sources::continuity::{
+    SourcesContinuityGetRequest, SourcesContinuityGetResponse, SourcesContinuityListRequest,
+    SourcesContinuityListResponse, SourcesExplainGapRequest, SourcesExplainGapResponse,
+};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
@@ -141,6 +145,33 @@ pub const SOURCES_CONTINUITY_METHOD: RpcMethod<SourcesContinuityRequest, Sources
         RpcStability::Experimental,
         RpcMutability::ReadOnly,
     );
+
+pub const SOURCES_CONTINUITY_LIST_METHOD:
+    RpcMethod<SourcesContinuityListRequest, SourcesContinuityListResponse> = RpcMethod::new(
+    methods::SOURCES_CONTINUITY_LIST,
+    RpcRole::ReadOnly,
+    RpcDomain::Sources,
+    RpcStability::Experimental,
+    RpcMutability::ReadOnly,
+);
+
+pub const SOURCES_CONTINUITY_GET_METHOD:
+    RpcMethod<SourcesContinuityGetRequest, SourcesContinuityGetResponse> = RpcMethod::new(
+    methods::SOURCES_CONTINUITY_GET,
+    RpcRole::ReadOnly,
+    RpcDomain::Sources,
+    RpcStability::Experimental,
+    RpcMutability::ReadOnly,
+);
+
+pub const SOURCES_CONTINUITY_EXPLAIN_GAP_METHOD:
+    RpcMethod<SourcesExplainGapRequest, SourcesExplainGapResponse> = RpcMethod::new(
+    methods::SOURCES_CONTINUITY_EXPLAIN_GAP,
+    RpcRole::ReadOnly,
+    RpcDomain::Sources,
+    RpcStability::Experimental,
+    RpcMutability::ReadOnly,
+);
 
 pub const SOURCES_READINESS_LIST_METHOD:
     RpcMethod<SourcesReadinessListRequest, SourcesReadinessListResponse> = RpcMethod::new(
