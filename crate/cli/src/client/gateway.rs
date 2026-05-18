@@ -1088,7 +1088,7 @@ impl GatewayClient {
     ) -> Result<sinex_primitives::rpc::audit::AuditGetResponse> {
         use sinex_primitives::Id;
         use sinex_primitives::events::builder::OperationMarker;
-        use sinex_primitives::rpc::audit::{AuditGetRequest, AuditGetResponse};
+        use sinex_primitives::rpc::audit::{AUDIT_GET_METHOD, AuditGetRequest};
 
         let op_id = operation_id
             .parse::<Id<OperationMarker>>()
@@ -1099,11 +1099,7 @@ impl GatewayClient {
             after_id: None,
             limit: 100,
         };
-        let result = self
-            .call_rpc(methods::AUDIT_GET, serde_json::to_value(&request)?)
-            .await?;
-        let response: AuditGetResponse = serde_json::from_value(result)?;
-        Ok(response)
+        self.call_typed(AUDIT_GET_METHOD, &request).await
     }
 
     // ==================== Lifecycle Commands ====================

@@ -3,7 +3,7 @@
 use serde_json::json;
 use sinex_db::DbPoolExt;
 use sinex_db::repositories::state::Operation as DbOperation;
-use sinex_gateway::handlers::handle_audit_get;
+use sinex_gateway::handlers::handle_audit_get as handle_audit_get_typed;
 use sinex_primitives::Id;
 use sinex_primitives::Uuid;
 use sinex_primitives::domain::OperationStatus;
@@ -15,6 +15,16 @@ use sinex_primitives::rpc::audit::{
 };
 use sinex_primitives::rpc::lifecycle::LifecycleOperationSummary;
 use xtask::sandbox::prelude::*;
+
+async fn handle_audit_get(
+    pool: &sqlx::PgPool,
+    params: serde_json::Value,
+) -> TestResult<serde_json::Value> {
+    let request: AuditGetRequest = serde_json::from_value(params)?;
+    Ok(serde_json::to_value(
+        handle_audit_get_typed(pool, request).await?,
+    )?)
+}
 
 #[sinex_test]
 async fn request_defaults_limit_to_100() -> TestResult<()> {

@@ -12,6 +12,7 @@ use serde_json::Value as JsonValue;
 use sinex_primitives::coordination::CoordinationKvClient;
 use sinex_primitives::rpc::{
     RpcMethod,
+    audit::AUDIT_GET_METHOD,
     automata::AUTOMATA_STATUS_METHOD,
     dlq::{DLQ_LIST_METHOD, DLQ_PEEK_METHOD, DLQ_PURGE_METHOD, DLQ_REQUEUE_METHOD},
     documents::{DOCUMENTS_GET_CHUNKS_METHOD, DOCUMENTS_GET_METHOD, DOCUMENTS_SEARCH_METHOD},
@@ -657,7 +658,7 @@ fn build_registry_impl() -> RpcRegistry {
             boxed!(handle_coordination_instance_health),
         )
         // Audit trail methods (ReadOnly)
-        .pool_rpc(methods::AUDIT_GET, Role::ReadOnly, boxed!(handle_audit_get))
+        .pool_typed_rpc(AUDIT_GET_METHOD, boxed!(handle_audit_get))
         // Document search methods (ReadOnly)
         .pool_typed_rpc(DOCUMENTS_SEARCH_METHOD, boxed!(handle_documents_search))
         .pool_typed_rpc(DOCUMENTS_GET_METHOD, boxed!(handle_documents_get))
