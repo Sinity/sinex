@@ -12,8 +12,10 @@ use serde_json::Value as JsonValue;
 use sinex_primitives::coordination::CoordinationKvClient;
 use sinex_primitives::rpc::{
     RpcMethod,
+    automata::AUTOMATA_STATUS_METHOD,
     documents::{DOCUMENTS_GET_CHUNKS_METHOD, DOCUMENTS_GET_METHOD, DOCUMENTS_SEARCH_METHOD},
     events::{EVENTS_ANNOTATE_METHOD, EVENTS_LINEAGE_METHOD, EVENTS_QUERY_METHOD},
+    ingestors::INGESTORS_STATUS_METHOD,
     methods,
     sources::{
         SOURCES_CONTINUITY_EXPLAIN_GAP_METHOD, SOURCES_CONTINUITY_GET_METHOD,
@@ -646,16 +648,8 @@ fn build_registry_impl() -> RpcRegistry {
             Role::ReadOnly,
             boxed!(handle_nodes_health),
         )
-        .pool_rpc(
-            methods::AUTOMATA_STATUS,
-            Role::ReadOnly,
-            boxed!(handle_automata_status),
-        )
-        .pool_rpc(
-            methods::INGESTORS_STATUS,
-            Role::ReadOnly,
-            boxed!(handle_ingestors_status),
-        )
+        .pool_typed_rpc(AUTOMATA_STATUS_METHOD, boxed!(handle_automata_status))
+        .pool_typed_rpc(INGESTORS_STATUS_METHOD, boxed!(handle_ingestors_status))
         // Source material inventory (ReadOnly)
         .pool_typed_rpc(SOURCES_LIST_METHOD, boxed!(handle_sources_list))
         .pool_typed_rpc(SOURCES_SHOW_METHOD, boxed!(handle_sources_show))
