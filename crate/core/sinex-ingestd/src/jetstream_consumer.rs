@@ -1306,16 +1306,13 @@ impl JetStreamConsumer {
 
                     let confirmation_futs: Vec<_> = by_kind
                         .into_iter()
-                        .map(|(kind, preps)| {
+                        .filter_map(|(kind, preps)| {
                             let sem = Arc::clone(&self.confirmation_semaphore);
                             let watermark = Arc::clone(&self.confirmation_watermark);
-                            let max_event_id =
-                                preps.iter().map(|p| p.parsed_id).max().expect(
-                                    "by_kind grouping guarantees at least one event per kind",
-                                );
+                            let max_event_id = preps.iter().map(|p| p.parsed_id).max()?;
                             let (source, event_type) = (kind.0.clone(), kind.1.clone());
                             let key = kind;
-                            async move {
+                            Some(async move {
                                 // Watermark advancement gate.
                                 let advance = {
                                     let mut wm = watermark.lock().await;
@@ -1333,8 +1330,21 @@ impl JetStreamConsumer {
                                     // ack accounting proceeds.
                                     return (preps, max_event_id, source, event_type, Ok(()));
                                 }
-                                let _permit =
-                                    sem.acquire().await.expect("confirmation semaphore closed");
+                                let _permit = match sem.acquire().await {
+                                    Ok(permit) => permit,
+                                    Err(error) => {
+                                        return (
+                                            preps,
+                                            max_event_id,
+                                            source,
+                                            event_type,
+                                            Err(SinexError::processing(
+                                                "confirmation semaphore closed",
+                                            )
+                                            .with_std_error(&error)),
+                                        );
+                                    }
+                                };
                                 let result = self
                                     .publish_confirmation_with_retry(
                                         &max_event_id,
@@ -1343,7 +1353,7 @@ impl JetStreamConsumer {
                                     )
                                     .await;
                                 (preps, max_event_id, source, event_type, result)
-                            }
+                            })
                         })
                         .collect();
                     let kind_results = join_all(confirmation_futs).await;
@@ -1813,17 +1823,13 @@ impl JetStreamConsumer {
 
         let confirmation_futs: Vec<_> = by_kind
             .into_iter()
-            .map(|(kind, preps)| {
+            .filter_map(|(kind, preps)| {
                 let sem = Arc::clone(&self.confirmation_semaphore);
                 let watermark = Arc::clone(&self.confirmation_watermark);
-                let max_event_id = preps
-                    .iter()
-                    .map(|p| p.parsed_id)
-                    .max()
-                    .expect("by_kind grouping guarantees at least one event per kind");
+                let max_event_id = preps.iter().map(|p| p.parsed_id).max()?;
                 let (source, event_type) = (kind.0.clone(), kind.1.clone());
                 let key = kind;
-                async move {
+                Some(async move {
                     let advance = {
                         let mut wm = watermark.lock().await;
                         let existing = wm.get(&key).copied();
@@ -1836,12 +1842,24 @@ impl JetStreamConsumer {
                     if !advance {
                         return (preps, max_event_id, source, event_type, Ok(()));
                     }
-                    let _permit = sem.acquire().await.expect("confirmation semaphore closed");
+                    let _permit = match sem.acquire().await {
+                        Ok(permit) => permit,
+                        Err(error) => {
+                            return (
+                                preps,
+                                max_event_id,
+                                source,
+                                event_type,
+                                Err(SinexError::processing("confirmation semaphore closed")
+                                    .with_std_error(&error)),
+                            );
+                        }
+                    };
                     let result = self
                         .publish_confirmation_with_retry(&max_event_id, &source, &event_type)
                         .await;
                     (preps, max_event_id, source, event_type, result)
-                }
+                })
             })
             .collect();
         let kind_results = join_all(confirmation_futs).await;

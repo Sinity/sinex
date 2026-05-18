@@ -2,6 +2,28 @@ use std::collections::HashMap;
 
 use super::OutputFormat;
 
+/// Operator-facing command family used for UX grouping and projection routing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum CommandFamily {
+    Gateway,
+    Query,
+    Operate,
+    Sources,
+    Domain,
+    Telemetry,
+    Report,
+    Local,
+    Admin,
+}
+
+/// Consolidated operator command metadata.
+#[derive(Debug, Clone)]
+pub struct CommandCatalogEntry {
+    pub path: &'static str,
+    pub family: CommandFamily,
+    pub capability: FormatCapability,
+}
+
 /// Describes the output-format contract for a single `sinexctl` command leaf.
 ///
 /// Every command declares:
@@ -492,6 +514,38 @@ pub fn registry() -> &'static HashMap<&'static str, FormatCapability> {
     REGISTRY.get_or_init(build)
 }
 
+/// Return the consolidated operator command catalog.
+#[must_use]
+pub fn command_catalog() -> Vec<CommandCatalogEntry> {
+    let mut entries: Vec<_> = registry()
+        .iter()
+        .map(|(&path, capability)| CommandCatalogEntry {
+            path,
+            family: family_for_path(path),
+            capability: capability.clone(),
+        })
+        .collect();
+    entries.sort_by_key(|entry| entry.path);
+    entries
+}
+
+fn family_for_path(path: &str) -> CommandFamily {
+    let root = path.split_once(' ').map_or(path, |(root, _)| root);
+    match root {
+        "gateway" | "core" => CommandFamily::Gateway,
+        "query" | "trace" | "recent" | "errors" | "watch" | "context" | "explain" | "verify"
+        | "now" | "nodes" | "status" => CommandFamily::Query,
+        "node" | "automata" | "ingestors" | "replay" | "dlq" | "ops" | "audit" | "lifecycle"
+        | "git-ops" | "privacy" | "blob" => CommandFamily::Operate,
+        "sources" => CommandFamily::Sources,
+        "declare" | "tasks" | "documents" | "annotate" => CommandFamily::Domain,
+        "telemetry" | "throughput" => CommandFamily::Telemetry,
+        "report" => CommandFamily::Report,
+        "admin" => CommandFamily::Admin,
+        _ => CommandFamily::Local,
+    }
+}
+
 /// Validate that `format` is supported for `command_path`.
 ///
 /// Returns `Ok(())` if `format` is in the supported set. Returns
@@ -527,18 +581,17 @@ pub fn validate_format(command_path: &str, format: OutputFormat) -> Result<(), S
 /// Render the full format-support matrix as a Markdown table.
 #[must_use]
 pub fn render_format_matrix() -> String {
-    let reg = registry();
-    let mut rows: Vec<(&str, &FormatCapability)> = reg.iter().map(|(&k, v)| (k, v)).collect();
-    rows.sort_by_key(|(k, _)| *k);
+    let rows = command_catalog();
 
     let mut out = String::from("| Command | table | json | yaml | dot | streaming | Note |\n");
     out.push_str("|---------|-------|------|------|-----|-----------|------|\n");
 
-    for (cmd, cap) in &rows {
+    for entry in &rows {
+        let cap = &entry.capability;
         let has = |f: OutputFormat| if cap.supports(f) { "✓" } else { "" };
         out.push_str(&format!(
             "| `{}` | {} | {} | {} | {} | {} | {} |\n",
-            cmd,
+            entry.path,
             has(OutputFormat::Table),
             has(OutputFormat::Json),
             has(OutputFormat::Yaml),
@@ -554,11 +607,14 @@ pub fn render_format_matrix() -> String {
 /// Render the matrix in plain text for terminal display.
 #[must_use]
 pub fn render_format_matrix_terminal() -> String {
-    let reg = registry();
-    let mut rows: Vec<(&str, &FormatCapability)> = reg.iter().map(|(&k, v)| (k, v)).collect();
-    rows.sort_by_key(|(k, _)| *k);
+    let rows = command_catalog();
 
-    let cmd_width = rows.iter().map(|(k, _)| k.len()).max().unwrap_or(10).max(7);
+    let cmd_width = rows
+        .iter()
+        .map(|entry| entry.path.len())
+        .max()
+        .unwrap_or(10)
+        .max(7);
     let header = format!(
         "{:<width$}  table  json   yaml   dot  stream  note",
         "COMMAND",
@@ -568,11 +624,12 @@ pub fn render_format_matrix_terminal() -> String {
 
     let mut out = format!("{header}\n{sep}\n");
 
-    for (cmd, cap) in &rows {
+    for entry in &rows {
+        let cap = &entry.capability;
         let has = |f: OutputFormat| if cap.supports(f) { "  ✓  " } else { "     " };
         out.push_str(&format!(
             "{:<width$} {}{}{}{}  {:<6}  {}\n",
-            cmd,
+            entry.path,
             has(OutputFormat::Table),
             has(OutputFormat::Json),
             has(OutputFormat::Yaml),
@@ -622,6 +679,41 @@ mod tests {
         assert!(validate_format("query", OutputFormat::Table).is_ok());
         assert!(validate_format("query", OutputFormat::Dot).is_ok());
         assert!(validate_format("watch", OutputFormat::Json).is_ok());
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn command_catalog_covers_registry_entries() -> xtask::sandbox::TestResult<()> {
+        let reg = registry();
+        let catalog = command_catalog();
+        assert_eq!(catalog.len(), reg.len());
+        for entry in catalog {
+            assert!(
+                reg.contains_key(entry.path),
+                "catalog entry `{}` must be backed by the format registry",
+                entry.path
+            );
+        }
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn command_modules_do_not_use_raw_rpc_escape_hatch() -> xtask::sandbox::TestResult<()> {
+        let commands_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("src")
+            .join("commands");
+        for entry in std::fs::read_dir(commands_dir)? {
+            let path = entry?.path();
+            if path.extension().and_then(|ext| ext.to_str()) != Some("rs") {
+                continue;
+            }
+            let body = std::fs::read_to_string(&path)?;
+            assert!(
+                !body.contains("call_raw_rpc"),
+                "command module `{}` must use a typed GatewayClient method",
+                path.display()
+            );
+        }
         Ok(())
     }
 

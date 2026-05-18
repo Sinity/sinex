@@ -1,70 +1,24 @@
 //! Task-domain RPC handlers.
 
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use serde_json::{Value, json};
 use sinex_db::DbPoolExt;
 use sinex_db::repositories::SourceMaterial as DbSourceMaterial;
 use sinex_primitives::events::EventPayload;
 use sinex_primitives::events::SourceMaterial;
 use sinex_primitives::events::payloads::{TaskCompletedPayload, TaskCreatedPayload};
+use sinex_primitives::rpc::tasks::{
+    TaskCompleteRequest, TaskCreateRequest, TaskEventResponse, TaskStateGetRequest,
+    TaskStateResponse,
+};
 use sinex_primitives::task_domain::{
-    TaskCompletedInput, TaskCreatedInput, TaskExternalRef, TaskLifecycleInput, TaskSourceSystem,
-    TaskState, reduce_task_event,
+    TaskCompletedInput, TaskCreatedInput, TaskLifecycleInput, TaskSourceSystem, TaskState,
+    reduce_task_event,
 };
 use sinex_primitives::{Id, Result, SinexError, Timestamp, Uuid};
 use sqlx::PgPool;
 
 use crate::rpc_server::RpcAuthContext;
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct TaskCreateRequest {
-    #[serde(default)]
-    pub task_id: Option<Uuid>,
-    pub title: String,
-    #[serde(default)]
-    pub body: Option<String>,
-    #[serde(default)]
-    pub external_refs: Vec<TaskExternalRef>,
-    #[serde(default)]
-    pub project_id: Option<String>,
-    #[serde(default)]
-    pub tags: Vec<String>,
-    #[serde(default)]
-    pub due_at: Option<Timestamp>,
-    #[serde(default)]
-    pub priority: Option<String>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct TaskCompleteRequest {
-    pub task_id: Uuid,
-    #[serde(default)]
-    pub completed_at: Option<Timestamp>,
-    #[serde(default)]
-    pub reason: Option<String>,
-    #[serde(default)]
-    pub external_version: Option<String>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct TaskStateGetRequest {
-    pub task_id: Uuid,
-}
-
-#[derive(Debug, Clone, Serialize)]
-struct TaskEventResponse<T> {
-    payload: T,
-    event: Value,
-    material_id: Uuid,
-    state: TaskState,
-}
-
-#[derive(Debug, Clone, Serialize)]
-struct TaskStateResponse {
-    task_id: Uuid,
-    state: Option<TaskState>,
-    event_count: usize,
-}
 
 struct TaskEventRow {
     id: Uuid,
@@ -123,7 +77,7 @@ pub async fn handle_tasks_create(
             SinexError::serialization("tasks.create: failed to serialize event")
                 .with_std_error(&error)
         })?,
-        material_id,
+        material_id: Id::<SourceMaterial>::from_uuid(material_id),
         state,
     })
 }
@@ -189,7 +143,7 @@ pub async fn handle_tasks_complete(
             SinexError::serialization("tasks.complete: failed to serialize event")
                 .with_std_error(&error)
         })?,
-        material_id,
+        material_id: Id::<SourceMaterial>::from_uuid(material_id),
         state,
     })
 }
