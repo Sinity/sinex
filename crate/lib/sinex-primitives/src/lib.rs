@@ -16,6 +16,7 @@ pub mod error;
 pub mod events;
 pub mod fs;
 pub mod ids;
+pub mod llm;
 #[cfg(feature = "nats")]
 pub mod nats;
 pub mod non_empty;
@@ -95,6 +96,7 @@ pub use events::builder::{OffsetKind, Provenance};
 pub use events::payload::DynamicPayload;
 pub use events::{Event, SourceMaterial, Timestamp};
 pub use ids::Id;
+pub use llm::*;
 pub use primitives::Uuid;
 pub use proof::{
     Claim, EvidenceEnvelope, Exemption, PROOF_CATALOG_SCHEMA_VERSION, ProofClaimKind,
