@@ -13,7 +13,6 @@ use sinex_primitives::domain::{EventSource, EventType};
 use sinex_primitives::events::Event;
 use sinex_primitives::ids::Id;
 use sinex_primitives::query::{EventQuery, LineageDirection, LineageQuery};
-use sinex_primitives::rpc::methods;
 use sinex_primitives::rpc::sources::{SourcesReadinessGetRequest, SourcesReadinessListRequest};
 use sinex_primitives::temporal::Timestamp;
 use std::io::{BufRead, Write};
@@ -305,23 +304,13 @@ async fn source_readiness(client: &GatewayClient, arguments: Value) -> Result<Va
             source_family: args.source_family.clone(),
             stale_after_seconds: args.stale_after_seconds,
         };
-        client
-            .call_raw_rpc(
-                methods::SOURCES_READINESS_GET,
-                serde_json::to_value(request)?,
-            )
-            .await?
+        serde_json::to_value(client.sources_readiness_get(request).await?)?
     } else {
         let request = SourcesReadinessListRequest {
             source_family: args.source_family.clone(),
             stale_after_seconds: args.stale_after_seconds,
         };
-        client
-            .call_raw_rpc(
-                methods::SOURCES_READINESS_LIST,
-                serde_json::to_value(request)?,
-            )
-            .await?
+        serde_json::to_value(client.sources_readiness_list(request).await?)?
     };
 
     if let Some(source_unit_id) = args.source_unit_id.as_deref() {

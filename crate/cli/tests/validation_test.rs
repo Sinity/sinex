@@ -89,6 +89,20 @@ async fn mcp_protocol_version_is_pinned() -> TestResult<()> {
 }
 
 #[sinex_test]
+async fn mcp_surface_uses_typed_gateway_client_methods() -> TestResult<()> {
+    let mcp_source = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("src")
+            .join("mcp.rs"),
+    )?;
+    assert!(
+        !mcp_source.contains("call_raw_rpc"),
+        "MCP tools must use typed GatewayClient methods"
+    );
+    Ok(())
+}
+
+#[sinex_test]
 async fn mcp_search_events_call_uses_gateway_fixture() -> TestResult<()> {
     let server = mount_mcp_gateway_fixture().await;
     let client = fixture_gateway_client(&server)?;

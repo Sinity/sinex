@@ -7,9 +7,15 @@ use crate::auth::Role;
 use crate::replay_control::ReplayControlClient;
 use crate::rpc_server::RpcAuthContext;
 use crate::service_container::ServiceContainer;
+use serde::{Serialize, de::DeserializeOwned};
 use serde_json::Value as JsonValue;
 use sinex_primitives::coordination::CoordinationKvClient;
-use sinex_primitives::rpc::methods;
+use sinex_primitives::rpc::{
+    RpcMethod,
+    events::{EVENTS_ANNOTATE_METHOD, EVENTS_LINEAGE_METHOD, EVENTS_QUERY_METHOD},
+    methods,
+    tasks::{TASKS_COMPLETE_METHOD, TASKS_CREATE_METHOD, TASKS_STATE_GET_METHOD},
+};
 use sinex_primitives::{Result, error::SinexError};
 use std::collections::HashMap;
 use std::future::Future;
@@ -76,6 +82,76 @@ impl RpcRegistry {
         Self {
             methods: HashMap::new(),
         }
+    }
+
+    /// Register a typed database-backed RPC handler (no auth context).
+    ///
+    /// The registry owns the JSON boundary: it deserializes request params with
+    /// path-aware diagnostics and serializes the typed response.
+    pub(crate) fn pool_typed_rpc<Req, Resp, F>(mut self, method: RpcMethod<Req, Resp>, f: F) -> Self
+    where
+        Req: DeserializeOwned + 'static,
+        Resp: Serialize + 'static,
+        F: for<'a> Fn(
+                &'a sqlx::PgPool,
+                Req,
+            ) -> Pin<Box<dyn Future<Output = Result<Resp>> + Send + 'a>>
+            + Send
+            + Sync
+            + 'static,
+    {
+        let f = Arc::new(f);
+        self.methods.insert(
+            method.name,
+            RegistryEntry {
+                handler: Arc::new(move |params, services, _auth| {
+                    let f = Arc::clone(&f);
+                    Box::pin(async move {
+                        let request = decode_rpc_params(method.name, params)?;
+                        let response = f(services.pool(), request).await?;
+                        encode_rpc_response(method.name, &response)
+                    })
+                }),
+                required_role: method.role.into(),
+            },
+        );
+        self
+    }
+
+    /// Register a typed database-backed RPC handler with auth context.
+    pub(crate) fn pool_auth_typed_rpc<Req, Resp, F>(
+        mut self,
+        method: RpcMethod<Req, Resp>,
+        f: F,
+    ) -> Self
+    where
+        Req: DeserializeOwned + 'static,
+        Resp: Serialize + 'static,
+        F: for<'a> Fn(
+                &'a sqlx::PgPool,
+                Req,
+                &'a RpcAuthContext,
+            ) -> Pin<Box<dyn Future<Output = Result<Resp>> + Send + 'a>>
+            + Send
+            + Sync
+            + 'static,
+    {
+        let f = Arc::new(f);
+        self.methods.insert(
+            method.name,
+            RegistryEntry {
+                handler: Arc::new(move |params, services, auth| {
+                    let f = Arc::clone(&f);
+                    Box::pin(async move {
+                        let request = decode_rpc_params(method.name, params)?;
+                        let response = f(services.pool(), request, auth).await?;
+                        encode_rpc_response(method.name, &response)
+                    })
+                }),
+                required_role: method.role.into(),
+            },
+        );
+        self
     }
 
     /// Register a handler for a method
@@ -357,6 +433,30 @@ impl RpcRegistry {
     }
 }
 
+fn decode_rpc_params<Req>(method: &str, params: JsonValue) -> Result<Req>
+where
+    Req: DeserializeOwned,
+{
+    serde_path_to_error::deserialize(params).map_err(|error| {
+        let path = error.path().to_string();
+        SinexError::serialization("invalid RPC request parameters")
+            .with_context("method", method)
+            .with_context("json_path", path)
+            .with_std_error(error.inner())
+    })
+}
+
+fn encode_rpc_response<Resp>(method: &str, response: &Resp) -> Result<JsonValue>
+where
+    Resp: Serialize,
+{
+    serde_json::to_value(response).map_err(|error| {
+        SinexError::serialization("failed to serialize RPC response")
+            .with_context("method", method)
+            .with_std_error(&error)
+    })
+}
+
 /// Build the RPC registry with all method handlers
 ///
 /// This function registers all RPC methods from the original dispatch table.
@@ -453,26 +553,14 @@ fn build_registry_impl() -> RpcRegistry {
             },
         )
         // Composable event query methods (ReadOnly)
-        .pool_rpc(
-            methods::EVENTS_QUERY,
-            Role::ReadOnly,
-            boxed!(handle_events_query),
-        )
+        .pool_typed_rpc(EVENTS_QUERY_METHOD, boxed!(handle_events_query))
         .pool_rpc(
             methods::CURATION_PROPOSALS_LIST,
             Role::ReadOnly,
             boxed!(handle_curation_list_proposals),
         )
-        .pool_rpc(
-            methods::EVENTS_LINEAGE,
-            Role::ReadOnly,
-            boxed!(handle_events_lineage),
-        )
-        .pool_rpc(
-            methods::TASKS_STATE_GET,
-            Role::ReadOnly,
-            boxed!(handle_tasks_state_get),
-        )
+        .pool_typed_rpc(EVENTS_LINEAGE_METHOD, boxed!(handle_events_lineage))
+        .pool_typed_rpc(TASKS_STATE_GET_METHOD, boxed!(handle_tasks_state_get))
         // Coordination methods (ReadOnly)
         .coord_rpc(
             methods::COORDINATION_LIST_INSTANCES,
@@ -712,26 +800,14 @@ fn build_registry_impl() -> RpcRegistry {
         // Write methods (requires Write or Admin role)
         // ─────────────────────────────────────────────────────────────
         // Event annotations (#1172 AC-9)
-        .pool_auth_rpc(
-            methods::EVENTS_ANNOTATE,
-            Role::Write,
-            boxed!(handle_events_annotate, 3),
-        )
+        .pool_auth_typed_rpc(EVENTS_ANNOTATE_METHOD, boxed!(handle_events_annotate, 3))
         .pool_auth_rpc(
             methods::CURATION_JUDGMENTS_RECORD,
             Role::Write,
             boxed!(handle_curation_record_judgment, 3),
         )
-        .pool_auth_rpc(
-            methods::TASKS_CREATE,
-            Role::Write,
-            boxed!(handle_tasks_create, 3),
-        )
-        .pool_auth_rpc(
-            methods::TASKS_COMPLETE,
-            Role::Write,
-            boxed!(handle_tasks_complete, 3),
-        )
+        .pool_auth_typed_rpc(TASKS_CREATE_METHOD, boxed!(handle_tasks_create, 3))
+        .pool_auth_typed_rpc(TASKS_COMPLETE_METHOD, boxed!(handle_tasks_complete, 3))
         // PKM methods (Write)
         .register(
             methods::PKM_CREATE_NOTE,

@@ -1,6 +1,5 @@
 //! Task-domain RPC handlers.
 
-use serde::Serialize;
 use serde_json::{Value, json};
 use sinex_db::DbPoolExt;
 use sinex_db::repositories::SourceMaterial as DbSourceMaterial;
@@ -8,8 +7,8 @@ use sinex_primitives::events::EventPayload;
 use sinex_primitives::events::SourceMaterial;
 use sinex_primitives::events::payloads::{TaskCompletedPayload, TaskCreatedPayload};
 use sinex_primitives::rpc::tasks::{
-    TaskCompleteRequest, TaskCreateRequest, TaskEventResponse, TaskStateGetRequest,
-    TaskStateResponse,
+    TaskCompleteRequest, TaskCompleteResponse, TaskCreateRequest, TaskCreateResponse,
+    TaskEventResponse, TaskStateGetRequest, TaskStateResponse,
 };
 use sinex_primitives::task_domain::{
     TaskCompletedInput, TaskCreatedInput, TaskLifecycleInput, TaskSourceSystem, TaskState,
@@ -29,12 +28,9 @@ struct TaskEventRow {
 
 pub async fn handle_tasks_create(
     pool: &PgPool,
-    params: Value,
+    req: TaskCreateRequest,
     auth: &RpcAuthContext,
-) -> Result<Value> {
-    let req: TaskCreateRequest = serde_json::from_value(params).map_err(|error| {
-        SinexError::serialization("tasks.create: invalid request").with_std_error(&error)
-    })?;
+) -> Result<TaskCreateResponse> {
     let title = req.title.trim();
     if title.is_empty() {
         return Err(SinexError::validation(
@@ -71,7 +67,7 @@ pub async fn handle_tasks_create(
             .with_context("task_id", task_id.to_string())
     })?;
 
-    serialize_response(TaskEventResponse {
+    Ok(TaskEventResponse {
         payload,
         event: serde_json::to_value(inserted).map_err(|error| {
             SinexError::serialization("tasks.create: failed to serialize event")
@@ -84,12 +80,9 @@ pub async fn handle_tasks_create(
 
 pub async fn handle_tasks_complete(
     pool: &PgPool,
-    params: Value,
+    req: TaskCompleteRequest,
     auth: &RpcAuthContext,
-) -> Result<Value> {
-    let req: TaskCompleteRequest = serde_json::from_value(params).map_err(|error| {
-        SinexError::serialization("tasks.complete: invalid request").with_std_error(&error)
-    })?;
+) -> Result<TaskCompleteResponse> {
     let prior_state = rebuild_task_state(pool, req.task_id)
         .await?
         .ok_or_else(|| {
@@ -137,7 +130,7 @@ pub async fn handle_tasks_complete(
                 .with_context("task_id", payload.task_id.to_string())
         })?;
 
-    serialize_response(TaskEventResponse {
+    Ok(TaskEventResponse {
         payload,
         event: serde_json::to_value(inserted).map_err(|error| {
             SinexError::serialization("tasks.complete: failed to serialize event")
@@ -148,14 +141,14 @@ pub async fn handle_tasks_complete(
     })
 }
 
-pub async fn handle_tasks_state_get(pool: &PgPool, params: Value) -> Result<Value> {
-    let req: TaskStateGetRequest = serde_json::from_value(params).map_err(|error| {
-        SinexError::serialization("tasks.state.get: invalid request").with_std_error(&error)
-    })?;
+pub async fn handle_tasks_state_get(
+    pool: &PgPool,
+    req: TaskStateGetRequest,
+) -> Result<TaskStateResponse> {
     let rows = query_task_event_rows(pool, req.task_id).await?;
     let event_count = rows.len();
     let state = reduce_task_rows(rows)?;
-    serialize_response(TaskStateResponse {
+    Ok(TaskStateResponse {
         task_id: req.task_id,
         state,
         event_count,
@@ -270,10 +263,4 @@ fn reduce_task_rows(rows: Vec<TaskEventRow>) -> Result<Option<TaskState>> {
         state = Some(reduce_task_event(state, row.id, input, row.ts_orig)?);
     }
     Ok(state)
-}
-
-fn serialize_response<T: Serialize>(value: T) -> Result<Value> {
-    serde_json::to_value(value).map_err(|error| {
-        SinexError::serialization("failed to serialize task RPC response").with_std_error(&error)
-    })
 }
