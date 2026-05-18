@@ -9,9 +9,9 @@ use clap::{Args, Subcommand};
 use console::style;
 use sinex_primitives::Uuid;
 use sinex_primitives::rpc::documents::{
-    DocumentsGetChunksRequest, DocumentsGetRequest, DocumentsSearchRequest, DocumentsSearchResponse,
+    DocumentsGetChunksRequest, DocumentsGetChunksResponse, DocumentsGetRequest,
+    DocumentsGetResponse, DocumentsSearchRequest, DocumentsSearchResponse,
 };
-use sinex_primitives::rpc::methods;
 use sinex_primitives::temporal::Timestamp;
 use tabled::{builder::Builder, settings::Style};
 
@@ -152,11 +152,7 @@ impl SearchArgs {
             },
         };
 
-        let params = serde_json::to_value(&request)?;
-        let raw = client
-            .call_raw_rpc(methods::DOCUMENTS_SEARCH, params)
-            .await?;
-        let response: DocumentsSearchResponse = serde_json::from_value(raw)?;
+        let response: DocumentsSearchResponse = client.documents_search(request).await?;
 
         match format {
             OutputFormat::Json | OutputFormat::Dot => {
@@ -224,50 +220,39 @@ pub struct GetArgs {
 impl GetArgs {
     pub async fn execute(&self, client: &GatewayClient, format: OutputFormat) -> Result<()> {
         let request = DocumentsGetRequest { id: self.id };
-        let params = serde_json::to_value(&request)?;
-        let raw = client.call_raw_rpc(methods::DOCUMENTS_GET, params).await?;
+        let response = client.documents_get(request).await?;
 
         match format {
             OutputFormat::Json | OutputFormat::Dot => {
-                println!("{}", format_json(&raw)?);
+                println!("{}", format_json(&response)?);
             }
             OutputFormat::Yaml => {
-                println!("{}", format_yaml(&raw)?);
+                println!("{}", format_yaml(&response)?);
             }
             OutputFormat::Table => {
-                println!("{}", render_document_table(&raw));
+                println!("{}", render_document_table(&response));
             }
         }
         Ok(())
     }
 }
 
-fn render_document_table(doc: &serde_json::Value) -> String {
+fn render_document_table(doc: &DocumentsGetResponse) -> String {
     let mut builder = Builder::new();
     builder.push_record(["FIELD", "VALUE"]);
 
-    let fields: &[(&str, &str)] = &[
-        ("id", "id"),
-        ("kind", "kind"),
-        ("natural_key", "natural_key"),
-        ("chunk_count", "chunk_count"),
-        ("extraction_version", "extraction_version"),
-        ("text_byte_len", "text_byte_len"),
-        ("updated_at", "updated_at"),
-        ("created_at", "created_at"),
+    let fields = [
+        ("id", doc.id.to_string()),
+        ("kind", doc.kind.clone()),
+        ("natural_key", doc.natural_key.clone()),
+        ("chunk_count", doc.chunk_count.to_string()),
+        ("extraction_version", doc.extraction_version.to_string()),
+        ("text_byte_len", doc.text_byte_len.to_string()),
+        ("updated_at", doc.updated_at.to_string()),
+        ("created_at", doc.created_at.to_string()),
     ];
-    for (label, key) in fields {
-        let value = doc
-            .get(*key)
-            .and_then(|v| {
-                if v.is_string() {
-                    v.as_str().map(str::to_string)
-                } else {
-                    Some(v.to_string())
-                }
-            })
-            .unwrap_or_else(|| style("-").dim().to_string());
-        builder.push_record([(*label).to_string(), value]);
+    for (label, value) in fields {
+        builder.push_record([label.to_string(), value]);
     }
 
     let mut table = builder.build();
@@ -306,61 +291,40 @@ impl ChunksArgs {
                 Some(self.offset)
             },
         };
-        let params = serde_json::to_value(&request)?;
-        let raw = client
-            .call_raw_rpc(methods::DOCUMENTS_GET_CHUNKS, params)
-            .await?;
+        let response = client.documents_get_chunks(request).await?;
 
         match format {
             OutputFormat::Json | OutputFormat::Dot => {
-                println!("{}", format_json(&raw)?);
+                println!("{}", format_json(&response)?);
             }
             OutputFormat::Yaml => {
-                println!("{}", format_yaml(&raw)?);
+                println!("{}", format_yaml(&response)?);
             }
             OutputFormat::Table => {
-                println!("{}", render_chunks_table(&raw));
+                println!("{}", render_chunks_table(&response));
             }
         }
         Ok(())
     }
 }
 
-fn render_chunks_table(raw: &serde_json::Value) -> String {
-    // The gateway returns the `get_chunks` response as a JSON object with a
-    // `chunks` array field (matching DocumentsGetChunksResponse from A3).
-    // Gracefully fall back to treating the value itself as an array.
-    let chunks = raw
-        .get("chunks")
-        .and_then(|v| v.as_array())
-        .or_else(|| raw.as_array())
-        .cloned()
-        .unwrap_or_default();
-
-    if chunks.is_empty() {
+fn render_chunks_table(response: &DocumentsGetChunksResponse) -> String {
+    if response.chunks.is_empty() {
         return "No chunks found for this document.".to_string();
     }
 
     let mut builder = Builder::new();
     builder.push_record(["IDX", "OFFSET START", "OFFSET END", "TEXT PREVIEW"]);
 
-    for chunk in &chunks {
-        let idx = chunk
-            .get("chunk_index")
-            .and_then(serde_json::Value::as_i64)
-            .unwrap_or(-1);
-        let start = chunk
-            .get("byte_offset_start")
-            .and_then(serde_json::Value::as_i64)
-            .map_or_else(|| "-".to_string(), |v| v.to_string());
-        let end = chunk
-            .get("byte_offset_end")
-            .and_then(serde_json::Value::as_i64)
-            .map_or_else(|| "-".to_string(), |v| v.to_string());
-        let text = chunk.get("text").and_then(|v| v.as_str()).unwrap_or("");
-        let preview = truncate_str(&text.replace('\n', " "), 72);
+    for chunk in &response.chunks {
+        let preview = truncate_str(&chunk.text.replace('\n', " "), 72);
 
-        builder.push_record([idx.to_string(), start, end, preview]);
+        builder.push_record([
+            chunk.chunk_index.to_string(),
+            chunk.byte_offset_start.to_string(),
+            chunk.byte_offset_end.to_string(),
+            preview,
+        ]);
     }
 
     let mut table = builder.build();

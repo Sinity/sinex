@@ -13,7 +13,7 @@
 //! mock queue of clipboard strings without requiring a display server. The
 //! default impl uses `arboard::Clipboard`.
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex as StdMutex};
 
 use async_trait::async_trait;
 use futures::stream::BoxStream;
@@ -140,7 +140,7 @@ pub struct ClipboardPollingCursor;
 /// content hash changes. To inject a mock backend for testing, use
 /// [`ClipboardPollingAdapter::from_backend`].
 pub struct ClipboardPollingAdapter {
-    backend: Arc<Mutex<dyn ClipboardBackend>>,
+    injected_backend: StdMutex<Option<Box<dyn ClipboardBackend>>>,
 }
 
 impl ClipboardPollingAdapter {
@@ -148,22 +148,23 @@ impl ClipboardPollingAdapter {
     pub fn new() -> ParserResult<Self> {
         let backend = ArboardBackend::new()?;
         Ok(Self {
-            backend: Arc::new(Mutex::new(backend)),
+            injected_backend: StdMutex::new(Some(Box::new(backend))),
         })
     }
 
     /// Create an adapter from a custom backend (useful for tests).
     pub fn from_backend(backend: impl ClipboardBackend + 'static) -> Self {
         Self {
-            backend: Arc::new(Mutex::new(backend)),
+            injected_backend: StdMutex::new(Some(Box::new(backend))),
         }
     }
 }
 
 impl Default for ClipboardPollingAdapter {
-    #[allow(clippy::unwrap_used)]
     fn default() -> Self {
-        Self::new().expect("failed to initialize arboard clipboard backend")
+        Self {
+            injected_backend: StdMutex::new(None),
+        }
     }
 }
 
@@ -179,7 +180,16 @@ impl InputShapeAdapter for ClipboardPollingAdapter {
         config: &Self::Config,
         _cursor: Option<Self::Cursor>,
     ) -> ParserResult<BoxStream<'static, ParserResult<SourceRecord>>> {
-        let backend = Arc::clone(&self.backend);
+        let backend = {
+            let mut injected = self.injected_backend.lock().map_err(|_| {
+                ParserError::Adapter("clipboard backend injection lock poisoned".to_string())
+            })?;
+            injected.take().map_or_else(
+                || ArboardBackend::new().map(|backend| Box::new(backend) as _),
+                Ok,
+            )?
+        };
+        let backend = Arc::new(Mutex::new(backend));
         let poll_interval = std::time::Duration::from_millis(config.poll_interval_ms);
         let max_bytes = config.max_content_bytes;
 
@@ -194,7 +204,7 @@ impl InputShapeAdapter for ClipboardPollingAdapter {
 
 fn build_clipboard_stream(
     material_id: Id<SourceMaterial>,
-    backend: Arc<Mutex<dyn ClipboardBackend>>,
+    backend: Arc<Mutex<Box<dyn ClipboardBackend>>>,
     poll_interval: std::time::Duration,
     max_bytes: usize,
 ) -> BoxStream<'static, ParserResult<SourceRecord>> {

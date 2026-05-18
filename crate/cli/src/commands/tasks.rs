@@ -2,7 +2,9 @@
 
 use clap::{Args, Subcommand};
 use color_eyre::Result;
-use serde_json::json;
+use color_eyre::eyre::eyre;
+use sinex_primitives::Uuid;
+use sinex_primitives::rpc::tasks::{TaskCompleteRequest, TaskStateGetRequest, TaskStateResponse};
 
 use crate::client::GatewayClient;
 use crate::commands::declare::render_task_response;
@@ -59,12 +61,15 @@ impl TaskCompleteCommand {
             .as_deref()
             .map(parse_time_input)
             .transpose()?;
-        let params = json!({
-            "task_id": self.task_id,
-            "completed_at": completed_at,
-            "reason": self.reason,
-        });
-        let response = client.call_raw_rpc("tasks.complete", params).await?;
+        let task_id = parse_task_id(&self.task_id)?;
+        let response = client
+            .tasks_complete(TaskCompleteRequest {
+                task_id,
+                completed_at,
+                reason: self.reason.clone(),
+                external_version: None,
+            })
+            .await?;
         render_task_response(&response, format, "Task completed")
     }
 }
@@ -77,8 +82,9 @@ pub struct TaskStateCommand {
 
 impl TaskStateCommand {
     async fn execute(&self, client: &GatewayClient, format: OutputFormat) -> Result<()> {
+        let task_id = parse_task_id(&self.task_id)?;
         let response = client
-            .call_raw_rpc("tasks.state.get", json!({ "task_id": self.task_id }))
+            .tasks_state_get(TaskStateGetRequest { task_id })
             .await?;
         match format {
             OutputFormat::Json | OutputFormat::Dot => {
@@ -88,32 +94,29 @@ impl TaskStateCommand {
                 println!("{}", format_yaml(&response)?);
             }
             OutputFormat::Table => {
-                if response["state"].is_null() {
+                if response.state.is_none() {
                     println!("No task state for {}.", self.task_id);
-                } else {
-                    println!(
-                        "Task {}",
-                        response["state"]["task_id"].as_str().unwrap_or("-")
-                    );
-                    println!(
-                        "  Status: {}",
-                        response["state"]["status"].as_str().unwrap_or("-")
-                    );
-                    println!(
-                        "  Title:  {}",
-                        response["state"]["title"].as_str().unwrap_or("-")
-                    );
-                    println!(
-                        "  Event:  {}",
-                        response["state"]["last_event_id"].as_str().unwrap_or("-")
-                    );
-                    println!(
-                        "  Events: {}",
-                        response["event_count"].as_u64().unwrap_or(0)
-                    );
+                } else if let Some(state) = response.state.as_ref() {
+                    render_task_state_table(&response, state);
                 }
             }
         }
         Ok(())
     }
+}
+
+fn parse_task_id(raw: &str) -> Result<Uuid> {
+    raw.parse::<Uuid>()
+        .map_err(|error| eyre!("invalid task UUID `{raw}`: {error}"))
+}
+
+fn render_task_state_table(
+    response: &TaskStateResponse,
+    state: &sinex_primitives::task_domain::TaskState,
+) {
+    println!("Task {}", state.task_id);
+    println!("  Status: {}", format!("{:?}", state.status).to_lowercase());
+    println!("  Title:  {}", state.title);
+    println!("  Event:  {}", state.last_event_id);
+    println!("  Events: {}", response.event_count);
 }

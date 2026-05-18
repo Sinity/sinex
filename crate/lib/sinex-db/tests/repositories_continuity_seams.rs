@@ -306,6 +306,8 @@ async fn seam_classification_emits_recovered_partial(ctx: TestContext) -> TestRe
 }
 
 fn datetime(rfc3339: &str) -> OffsetDateTime {
-    OffsetDateTime::parse(rfc3339, &time::format_description::well_known::Rfc3339)
-        .expect("test datetime literal must be valid RFC3339")
+    match OffsetDateTime::parse(rfc3339, &time::format_description::well_known::Rfc3339) {
+        Ok(value) => value,
+        Err(error) => panic!("test datetime literal must be valid RFC3339: {error}"),
+    }
 }

@@ -30,6 +30,7 @@ pub mod content;
 pub mod coordination;
 pub mod dlq;
 pub mod documents;
+pub mod events;
 pub mod gitops;
 pub mod ingestors;
 pub mod lifecycle;
@@ -41,6 +42,7 @@ pub mod replay;
 pub mod shadow;
 pub mod sources;
 pub mod system;
+pub mod tasks;
 pub mod telemetry;
 
 /// Re-export all RPC types for convenience
@@ -52,6 +54,7 @@ pub mod prelude {
     pub use super::coordination::*;
     pub use super::dlq::*;
     pub use super::documents::*;
+    pub use super::events::*;
     pub use super::gitops::*;
     pub use super::ingestors::*;
     pub use super::lifecycle::*;
@@ -63,5 +66,6 @@ pub mod prelude {
     pub use super::shadow::*;
     pub use super::sources::*;
     pub use super::system::*;
+    pub use super::tasks::*;
     pub use super::telemetry::*;
 }

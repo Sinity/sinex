@@ -3471,6 +3471,27 @@
       "type_name": "sinex_primitives::events::payloads::clipboard::ClipboardSelectedPayload"
     },
     {
+      "subject": "event_payload:curation/curation.finalized/1.0.0",
+      "source": "curation",
+      "event_type": "curation.finalized",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::curation::CurationFinalizedPayload"
+    },
+    {
+      "subject": "event_payload:curation/curation.judgment/1.0.0",
+      "source": "curation",
+      "event_type": "curation.judgment",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::curation::CurationJudgmentPayload"
+    },
+    {
+      "subject": "event_payload:curation/curation.proposal/1.0.0",
+      "source": "curation",
+      "event_type": "curation.proposal",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::curation::CurationProposalPayload"
+    },
+    {
       "subject": "event_payload:dbus/bluetooth.device_changed/1.0.0",
       "source": "dbus",
       "event_type": "bluetooth.device_changed",
@@ -3714,6 +3735,34 @@
       "event_type": "transaction.posted",
       "version": "1.0.0",
       "type_name": "sinex_primitives::events::payloads::finance::LedgerTransactionPayload"
+    },
+    {
+      "subject": "event_payload:llm/llm.budget.ledger/1.0.0",
+      "source": "llm",
+      "event_type": "llm.budget.ledger",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::llm::LlmBudgetLedgerPayload"
+    },
+    {
+      "subject": "event_payload:llm/llm.prompt_template.registered/1.0.0",
+      "source": "llm",
+      "event_type": "llm.prompt_template.registered",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::llm::LlmPromptTemplateRegisteredPayload"
+    },
+    {
+      "subject": "event_payload:llm/llm.routing.decision/1.0.0",
+      "source": "llm",
+      "event_type": "llm.routing.decision",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::llm::LlmRoutingDecisionPayload"
+    },
+    {
+      "subject": "event_payload:llm/llm.routing_policy.registered/1.0.0",
+      "source": "llm",
+      "event_type": "llm.routing_policy.registered",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::llm::LlmRoutingPolicyRegisteredPayload"
     },
     {
       "subject": "event_payload:messenger/message.sent/1.0.0",
@@ -3994,6 +4043,20 @@
       "event_type": "unit.stopped",
       "version": "1.0.0",
       "type_name": "sinex_primitives::events::payloads::system::SystemdUnitStoppedPayload"
+    },
+    {
+      "subject": "event_payload:task/task.completed/1.0.0",
+      "source": "task",
+      "event_type": "task.completed",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::task_domain::TaskCompletedPayload"
+    },
+    {
+      "subject": "event_payload:task/task.created/1.0.0",
+      "source": "task",
+      "event_type": "task.created",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::task_domain::TaskCreatedPayload"
     },
     {
       "subject": "event_payload:terminal/shell.terminal_monitoring_started/1.0.0",

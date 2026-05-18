@@ -17,6 +17,11 @@ use sinex_primitives::rpc::{
         DlqListRequest, DlqListResponse, DlqPeekRequest, DlqPeekResponse, DlqPurgeRequest,
         DlqPurgeResponse, DlqRequeueRequest, DlqRequeueResponse,
     },
+    documents::{
+        DocumentsGetChunksRequest, DocumentsGetChunksResponse, DocumentsGetRequest,
+        DocumentsGetResponse, DocumentsSearchRequest, DocumentsSearchResponse,
+    },
+    events::{EventsAnnotateRequest, EventsAnnotateResponse},
     gitops::{
         DEFAULT_GITOPS_BRANCH, DEFAULT_GITOPS_PATH_PATTERN, DEFAULT_GITOPS_SYNC_FREQUENCY_MINUTES,
         GitOpsCreateSourceRequest, GitOpsCreateSourceResponse, GitOpsDeleteSourceRequest,
@@ -43,7 +48,19 @@ use sinex_primitives::rpc::{
         ReplayPreviewResponse, ReplayScope, ReplayState, ReplayStatusRequest, ReplayStatusResponse,
         ReplaySubmitRequest, ReplaySubmitResponse,
     },
+    sources::{
+        SourcesAnnotateRequest, SourcesAnnotateResponse, SourcesArchiveRequest,
+        SourcesArchiveResponse, SourcesContinuityRequest, SourcesContinuityResponse,
+        SourcesCoverageRequest, SourcesCoverageResponse, SourcesListRequest, SourcesListResponse,
+        SourcesReadinessGetRequest, SourcesReadinessGetResponse, SourcesReadinessListRequest,
+        SourcesReadinessListResponse, SourcesShowRequest, SourcesShowResponse, SourcesStageRequest,
+        SourcesStageResponse,
+    },
     system::{SystemHealthRequest, SystemHealthResponse},
+    tasks::{
+        TaskCompleteRequest, TaskCompleteResponse, TaskCreateRequest, TaskCreateResponse,
+        TaskStateGetRequest, TaskStateResponse,
+    },
     telemetry::{
         AssemblyStatsBucket, CommandFrequencyEntry, CurrentDeviceStateEntry, CurrentHealthEntry,
         FileActivityEntry, GatewayStatsBucket, IngestdBatchStatsBucket, IngestdValidationSnapshot,
@@ -63,6 +80,10 @@ use sinex_primitives::rpc::{
         TelemetryTimeRange, TelemetryWindowFocusRequest, TelemetryWindowFocusResponse,
         WindowFocusBucket,
     },
+};
+use sinex_primitives::sources::continuity::{
+    SourcesContinuityGetRequest, SourcesContinuityGetResponse, SourcesContinuityListRequest,
+    SourcesContinuityListResponse, SourcesExplainGapRequest, SourcesExplainGapResponse,
 };
 use sinex_primitives::temporal::Timestamp;
 
@@ -855,6 +876,212 @@ impl GatewayClient {
         serde_json::from_value(result).map_err(Into::into)
     }
 
+    /// Record an annotation against an event.
+    pub async fn events_annotate(
+        &self,
+        request: EventsAnnotateRequest,
+    ) -> Result<EventsAnnotateResponse> {
+        let result = self
+            .call_rpc(methods::EVENTS_ANNOTATE, serde_json::to_value(&request)?)
+            .await?;
+        serde_json::from_value(result).map_err(Into::into)
+    }
+
+    // ==================== Task Domain Commands ====================
+
+    /// Create a manual task declaration.
+    pub async fn tasks_create(&self, request: TaskCreateRequest) -> Result<TaskCreateResponse> {
+        let result = self
+            .call_rpc(methods::TASKS_CREATE, serde_json::to_value(&request)?)
+            .await?;
+        serde_json::from_value(result).map_err(Into::into)
+    }
+
+    /// Mark a task complete.
+    pub async fn tasks_complete(
+        &self,
+        request: TaskCompleteRequest,
+    ) -> Result<TaskCompleteResponse> {
+        let result = self
+            .call_rpc(methods::TASKS_COMPLETE, serde_json::to_value(&request)?)
+            .await?;
+        serde_json::from_value(result).map_err(Into::into)
+    }
+
+    /// Fetch current task state.
+    pub async fn tasks_state_get(&self, request: TaskStateGetRequest) -> Result<TaskStateResponse> {
+        let result = self
+            .call_rpc(methods::TASKS_STATE_GET, serde_json::to_value(&request)?)
+            .await?;
+        serde_json::from_value(result).map_err(Into::into)
+    }
+
+    // ==================== Source Material Commands ====================
+
+    pub async fn sources_stage(
+        &self,
+        request: SourcesStageRequest,
+    ) -> Result<SourcesStageResponse> {
+        let result = self
+            .call_rpc(methods::SOURCES_STAGE, serde_json::to_value(&request)?)
+            .await?;
+        serde_json::from_value(result).map_err(Into::into)
+    }
+
+    pub async fn sources_list(&self, request: SourcesListRequest) -> Result<SourcesListResponse> {
+        let result = self
+            .call_rpc(methods::SOURCES_LIST, serde_json::to_value(&request)?)
+            .await?;
+        serde_json::from_value(result).map_err(Into::into)
+    }
+
+    pub async fn sources_show(&self, request: SourcesShowRequest) -> Result<SourcesShowResponse> {
+        let result = self
+            .call_rpc(methods::SOURCES_SHOW, serde_json::to_value(&request)?)
+            .await?;
+        serde_json::from_value(result).map_err(Into::into)
+    }
+
+    pub async fn sources_coverage(
+        &self,
+        request: SourcesCoverageRequest,
+    ) -> Result<SourcesCoverageResponse> {
+        let result = self
+            .call_rpc(methods::SOURCES_COVERAGE, serde_json::to_value(&request)?)
+            .await?;
+        serde_json::from_value(result).map_err(Into::into)
+    }
+
+    pub async fn sources_annotate(
+        &self,
+        request: SourcesAnnotateRequest,
+    ) -> Result<SourcesAnnotateResponse> {
+        let result = self
+            .call_rpc(methods::SOURCES_ANNOTATE, serde_json::to_value(&request)?)
+            .await?;
+        serde_json::from_value(result).map_err(Into::into)
+    }
+
+    pub async fn sources_archive(
+        &self,
+        request: SourcesArchiveRequest,
+    ) -> Result<SourcesArchiveResponse> {
+        let result = self
+            .call_rpc(methods::SOURCES_ARCHIVE, serde_json::to_value(&request)?)
+            .await?;
+        serde_json::from_value(result).map_err(Into::into)
+    }
+
+    pub async fn sources_continuity(
+        &self,
+        request: SourcesContinuityRequest,
+    ) -> Result<SourcesContinuityResponse> {
+        let result = self
+            .call_rpc(methods::SOURCES_CONTINUITY, serde_json::to_value(&request)?)
+            .await?;
+        serde_json::from_value(result).map_err(Into::into)
+    }
+
+    pub async fn sources_continuity_get(
+        &self,
+        request: SourcesContinuityGetRequest,
+    ) -> Result<SourcesContinuityGetResponse> {
+        let result = self
+            .call_rpc(
+                methods::SOURCES_CONTINUITY_GET,
+                serde_json::to_value(&request)?,
+            )
+            .await?;
+        serde_json::from_value(result).map_err(Into::into)
+    }
+
+    pub async fn sources_continuity_list(
+        &self,
+        request: SourcesContinuityListRequest,
+    ) -> Result<SourcesContinuityListResponse> {
+        let result = self
+            .call_rpc(
+                methods::SOURCES_CONTINUITY_LIST,
+                serde_json::to_value(&request)?,
+            )
+            .await?;
+        serde_json::from_value(result).map_err(Into::into)
+    }
+
+    pub async fn sources_continuity_explain_gap(
+        &self,
+        request: SourcesExplainGapRequest,
+    ) -> Result<SourcesExplainGapResponse> {
+        let result = self
+            .call_rpc(
+                methods::SOURCES_CONTINUITY_EXPLAIN_GAP,
+                serde_json::to_value(&request)?,
+            )
+            .await?;
+        serde_json::from_value(result).map_err(Into::into)
+    }
+
+    pub async fn sources_readiness_get(
+        &self,
+        request: SourcesReadinessGetRequest,
+    ) -> Result<SourcesReadinessGetResponse> {
+        let result = self
+            .call_rpc(
+                methods::SOURCES_READINESS_GET,
+                serde_json::to_value(&request)?,
+            )
+            .await?;
+        serde_json::from_value(result).map_err(Into::into)
+    }
+
+    pub async fn sources_readiness_list(
+        &self,
+        request: SourcesReadinessListRequest,
+    ) -> Result<SourcesReadinessListResponse> {
+        let result = self
+            .call_rpc(
+                methods::SOURCES_READINESS_LIST,
+                serde_json::to_value(&request)?,
+            )
+            .await?;
+        serde_json::from_value(result).map_err(Into::into)
+    }
+
+    // ==================== Document Commands ====================
+
+    pub async fn documents_search(
+        &self,
+        request: DocumentsSearchRequest,
+    ) -> Result<DocumentsSearchResponse> {
+        let result = self
+            .call_rpc(methods::DOCUMENTS_SEARCH, serde_json::to_value(&request)?)
+            .await?;
+        serde_json::from_value(result).map_err(Into::into)
+    }
+
+    pub async fn documents_get(
+        &self,
+        request: DocumentsGetRequest,
+    ) -> Result<DocumentsGetResponse> {
+        let result = self
+            .call_rpc(methods::DOCUMENTS_GET, serde_json::to_value(&request)?)
+            .await?;
+        serde_json::from_value(result).map_err(Into::into)
+    }
+
+    pub async fn documents_get_chunks(
+        &self,
+        request: DocumentsGetChunksRequest,
+    ) -> Result<DocumentsGetChunksResponse> {
+        let result = self
+            .call_rpc(
+                methods::DOCUMENTS_GET_CHUNKS,
+                serde_json::to_value(&request)?,
+            )
+            .await?;
+        serde_json::from_value(result).map_err(Into::into)
+    }
+
     // ==================== Operations Log Commands ====================
 
     /// Start a new operation
@@ -867,7 +1094,7 @@ impl GatewayClient {
             "operation_type": operation_type,
             "scope": scope
         });
-        let result = self.call_rpc("ops.start", params).await?;
+        let result = self.call_rpc(methods::OPS_START, params).await?;
         serde_json::from_value(result).map_err(Into::into)
     }
 
@@ -883,7 +1110,7 @@ impl GatewayClient {
             "status": status,
             "limit": limit.unwrap_or(50)
         });
-        let result = self.call_rpc("ops.list", params).await?;
+        let result = self.call_rpc(methods::OPS_LIST, params).await?;
         let response: OpsListResponse = serde_json::from_value(result)?;
         Ok(response.operations)
     }
@@ -891,7 +1118,7 @@ impl GatewayClient {
     /// Get operation details
     pub async fn ops_get(&self, operation_id: &str) -> Result<OpsOperation> {
         let params = json!({ "operation_id": operation_id });
-        let result = self.call_rpc("ops.get", params).await?;
+        let result = self.call_rpc(methods::OPS_GET, params).await?;
         let response: OpsGetResponse = serde_json::from_value(result)?;
         Ok(response.operation)
     }
@@ -902,7 +1129,7 @@ impl GatewayClient {
             "operation_id": operation_id,
             "reason": reason
         });
-        self.call_rpc("ops.cancel", params).await?;
+        self.call_rpc(methods::OPS_CANCEL, params).await?;
         Ok(())
     }
 
@@ -927,7 +1154,7 @@ impl GatewayClient {
             limit: 100,
         };
         let result = self
-            .call_rpc("audit.get", serde_json::to_value(&request)?)
+            .call_rpc(methods::AUDIT_GET, serde_json::to_value(&request)?)
             .await?;
         let response: AuditGetResponse = serde_json::from_value(result)?;
         Ok(response)

@@ -235,10 +235,10 @@ pub fn test_parser_dispatch() -> (
     let calls = Arc::new(Mutex::new(Vec::new()));
     let calls_clone = calls.clone();
     let dispatch: ParserDispatchFn = Arc::new(move |source_id, bytes, material_id| {
-        calls_clone
+        let mut calls = calls_clone
             .lock()
-            .unwrap()
-            .push((source_id.to_string(), bytes.to_vec(), material_id));
+            .map_err(|_| "test parser dispatch call log lock poisoned".to_string())?;
+        calls.push((source_id.to_string(), bytes.to_vec(), material_id));
         Ok(ParseOutcome {
             events: vec![],
             parser_id: source_id.to_string(),

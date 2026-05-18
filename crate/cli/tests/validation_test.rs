@@ -144,7 +144,11 @@ async fn mcp_source_readiness_call_uses_gateway_fixture() -> TestResult<()> {
     .await?;
 
     assert_eq!(response["tool"], "sinex.source_readiness");
-    let sources = response["items"]["result"]["sources"].as_array().unwrap();
+    let Some(sources) = response["items"]["result"]["sources"].as_array() else {
+        return Err(color_eyre::eyre::eyre!(
+            "source readiness response did not contain a sources array"
+        ));
+    };
     assert_eq!(sources.len(), 1);
     assert_eq!(sources[0]["source_unit_id"], "terminal.atuin-history");
     assert_eq!(sources[0]["evidence"]["sample"], "[REDACTED]");
@@ -161,8 +165,27 @@ async fn mount_mcp_gateway_fixture() -> MockServer {
     Mock::given(method("POST"))
         .and(path("/"))
         .respond_with(|request: &wiremock::Request| {
-            let body: Value = serde_json::from_slice(&request.body).unwrap();
-            let result = match body["method"].as_str().unwrap() {
+            let Ok(body) = serde_json::from_slice::<Value>(&request.body) else {
+                return ResponseTemplate::new(400).set_body_json(json!({
+                    "jsonrpc": "2.0",
+                    "error": {
+                        "code": -32700,
+                        "message": "invalid JSON fixture request"
+                    },
+                    "id": null
+                }));
+            };
+            let Some(method) = body["method"].as_str() else {
+                return ResponseTemplate::new(400).set_body_json(json!({
+                    "jsonrpc": "2.0",
+                    "error": {
+                        "code": -32600,
+                        "message": "missing fixture RPC method"
+                    },
+                    "id": body["id"]
+                }));
+            };
+            let result = match method {
                 "events.query" => json!({
                     "type": "count",
                     "count": 1
@@ -221,7 +244,16 @@ async fn mount_mcp_gateway_fixture() -> MockServer {
                         "material_count": 3
                     }
                 }),
-                other => panic!("unexpected fixture RPC method: {other}"),
+                other => {
+                    return ResponseTemplate::new(400).set_body_json(json!({
+                        "jsonrpc": "2.0",
+                        "error": {
+                            "code": -32601,
+                            "message": format!("unexpected fixture RPC method: {other}")
+                        },
+                        "id": body["id"]
+                    }));
+                }
             };
 
             ResponseTemplate::new(200).set_body_json(json!({
