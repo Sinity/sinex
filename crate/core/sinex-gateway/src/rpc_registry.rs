@@ -23,6 +23,7 @@ use sinex_primitives::rpc::{
         SOURCES_LIST_METHOD, SOURCES_READINESS_GET_METHOD, SOURCES_READINESS_LIST_METHOD,
         SOURCES_SHOW_METHOD,
     },
+    system::SYSTEM_HEALTH_METHOD,
     tasks::{TASKS_COMPLETE_METHOD, TASKS_CREATE_METHOD, TASKS_STATE_GET_METHOD},
 };
 use sinex_primitives::{Result, error::SinexError};
@@ -154,6 +155,41 @@ impl RpcRegistry {
                     Box::pin(async move {
                         let request = decode_rpc_params(method.name, params)?;
                         let response = f(services.pool(), request, auth).await?;
+                        encode_rpc_response(method.name, &response)
+                    })
+                }),
+                required_role: method.role.into(),
+            },
+        );
+        self
+    }
+
+    /// Register a typed service-backed RPC handler.
+    pub(crate) fn service_typed_rpc<Req, Resp, F>(
+        mut self,
+        method: RpcMethod<Req, Resp>,
+        f: F,
+    ) -> Self
+    where
+        Req: DeserializeOwned + 'static,
+        Resp: Serialize + 'static,
+        F: for<'a> Fn(
+                &'a ServiceContainer,
+                Req,
+            ) -> Pin<Box<dyn Future<Output = Result<Resp>> + Send + 'a>>
+            + Send
+            + Sync
+            + 'static,
+    {
+        let f = Arc::new(f);
+        self.methods.insert(
+            method.name,
+            RegistryEntry {
+                handler: Arc::new(move |params, services, _auth| {
+                    let f = Arc::clone(&f);
+                    Box::pin(async move {
+                        let request = decode_rpc_params(method.name, params)?;
+                        let response = f(services, request).await?;
                         encode_rpc_response(method.name, &response)
                     })
                 }),
@@ -545,13 +581,7 @@ fn build_registry_impl() -> RpcRegistry {
                 Box::pin(async move { handle_system_version(services, params).await })
             },
         )
-        .register(
-            methods::SYSTEM_HEALTH,
-            Role::ReadOnly,
-            |params, services, _auth| {
-                Box::pin(async move { handle_system_health(services, params).await })
-            },
-        )
+        .service_typed_rpc(SYSTEM_HEALTH_METHOD, boxed!(handle_system_health))
         .register(
             methods::PRIVACY_PRIVATE_MODE_STATUS,
             Role::ReadOnly,
