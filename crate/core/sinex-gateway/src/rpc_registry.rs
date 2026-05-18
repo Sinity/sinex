@@ -405,7 +405,8 @@ fn build_registry_impl() -> RpcRegistry {
         handle_sources_continuity_list, handle_sources_coverage, handle_sources_list,
         handle_sources_presets_list, handle_sources_readiness_get, handle_sources_readiness_list,
         handle_sources_show, handle_sources_stage, handle_store_blob, handle_system_health,
-        handle_system_ping, handle_system_version, handle_telemetry_assembly_stats,
+        handle_system_ping, handle_system_version, handle_tasks_complete, handle_tasks_create,
+        handle_tasks_state_get, handle_telemetry_assembly_stats,
         handle_telemetry_command_frequency, handle_telemetry_current_device_state,
         handle_telemetry_current_health, handle_telemetry_file_activity,
         handle_telemetry_gateway_stats, handle_telemetry_ingestd_batch_stats,
@@ -466,6 +467,11 @@ fn build_registry_impl() -> RpcRegistry {
             methods::EVENTS_LINEAGE,
             Role::ReadOnly,
             boxed!(handle_events_lineage),
+        )
+        .pool_rpc(
+            methods::TASKS_STATE_GET,
+            Role::ReadOnly,
+            boxed!(handle_tasks_state_get),
         )
         // Coordination methods (ReadOnly)
         .coord_rpc(
@@ -715,6 +721,16 @@ fn build_registry_impl() -> RpcRegistry {
             methods::CURATION_JUDGMENTS_RECORD,
             Role::Write,
             boxed!(handle_curation_record_judgment, 3),
+        )
+        .pool_auth_rpc(
+            methods::TASKS_CREATE,
+            Role::Write,
+            boxed!(handle_tasks_create, 3),
+        )
+        .pool_auth_rpc(
+            methods::TASKS_COMPLETE,
+            Role::Write,
+            boxed!(handle_tasks_complete, 3),
         )
         // PKM methods (Write)
         .register(

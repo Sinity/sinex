@@ -6,11 +6,12 @@ use sinexctl::AdminCommands;
 use sinexctl::client::{ClientConfig, GatewayClient};
 use sinexctl::commands::{
     AnnotateCommand, AuditCommand, AutomataCommand, BlobCommands, CompletionsCommand,
-    ConfigCommands, ContextCommand, CoreCommands, DemoCommand, DlqCommands, DocumentsCommand,
-    ErrorsCommand, ExplainCommand, GatewayCommands, GitOpsCommands, IngestorsCommand,
-    LifecycleCommands, NodeCommands, NodesCommand, NowCommand, OpsCommands, PrivacyCommand,
-    QueryCommand, RecentCommand, ReplayCommands, ReportCommands, SourcesCommand, StatusCommand,
-    TelemetryCommands, ThroughputCommand, TraceCommand, TuiCommand, VerifyCommand, WatchCommand,
+    ConfigCommands, ContextCommand, CoreCommands, DeclareCommand, DemoCommand, DlqCommands,
+    DocumentsCommand, ErrorsCommand, ExplainCommand, GatewayCommands, GitOpsCommands,
+    IngestorsCommand, LifecycleCommands, NodeCommands, NodesCommand, NowCommand, OpsCommands,
+    PrivacyCommand, QueryCommand, RecentCommand, ReplayCommands, ReportCommands, SourcesCommand,
+    StatusCommand, TasksCommand, TelemetryCommands, ThroughputCommand, TraceCommand, TuiCommand,
+    VerifyCommand, WatchCommand,
 };
 use sinexctl::model::OutputFormat;
 use sinexctl::{Config, default_rpc_url, render_format_matrix_terminal, validate_format};
@@ -159,6 +160,12 @@ enum Commands {
 
     /// Source material inventory and staging
     Sources(SourcesCommand),
+
+    /// Manual canonical declarations
+    Declare(DeclareCommand),
+
+    /// Task lifecycle and projection commands
+    Tasks(TasksCommand),
 
     /// Document search, retrieval, and chunk browsing
     Documents(DocumentsCommand),
@@ -341,6 +348,8 @@ async fn main() -> color_eyre::Result<()> {
                 Commands::Config { .. } => unreachable!("Config command handled above"),
                 Commands::Demo(_) => unreachable!("Demo command handled above"),
                 Commands::Sources(cmd) => cmd.execute(&client, format).await?,
+                Commands::Declare(cmd) => cmd.execute(&client, format).await?,
+                Commands::Tasks(cmd) => cmd.execute(&client, format).await?,
                 Commands::Documents(cmd) => cmd.execute(&client, format).await?,
                 Commands::Lifecycle { cmd } => cmd.execute(&client, format).await?,
                 Commands::GitOps { cmd } => cmd.execute(&client, format).await?,
@@ -418,7 +427,7 @@ fn command_path(cmd: &Commands) -> String {
             OpsCommands::Get { .. } => "ops get".to_string(),
             OpsCommands::Cancel { .. } => "ops cancel".to_string(),
         },
-        Commands::Privacy(_) => "privacy private-mode".to_string(),
+        Commands::Privacy(cmd) => cmd.command_path().to_string(),
         Commands::Audit(_) => "audit".to_string(),
         Commands::Tui(_) => "tui".to_string(),
         Commands::Config { cmd } => match cmd {
@@ -448,6 +457,19 @@ fn command_path(cmd: &Commands) -> String {
                 SourcesSubcommand::Continuity(_) => "sources continuity".to_string(),
                 SourcesSubcommand::Readiness(_) => "sources readiness".to_string(),
                 SourcesSubcommand::ExplainGap(_) => "sources explain-gap".to_string(),
+            }
+        }
+        Commands::Declare(cmd) => {
+            use sinexctl::commands::declare::DeclareSubcommand;
+            match cmd.subcommand() {
+                DeclareSubcommand::Task(_) => "declare task".to_string(),
+            }
+        }
+        Commands::Tasks(cmd) => {
+            use sinexctl::commands::tasks::TasksSubcommand;
+            match cmd.subcommand() {
+                TasksSubcommand::Complete(_) => "tasks complete".to_string(),
+                TasksSubcommand::State(_) => "tasks state".to_string(),
             }
         }
         Commands::Lifecycle { cmd } => match cmd {
@@ -834,6 +856,28 @@ mod tests {
             (
                 vec!["sinexctl", "lifecycle", "tombstone", "list"],
                 "lifecycle tombstone list",
+            ),
+            (
+                vec!["sinexctl", "declare", "task", "--title", "fixture"],
+                "declare task",
+            ),
+            (
+                vec![
+                    "sinexctl",
+                    "tasks",
+                    "complete",
+                    "0196ed62-8f7a-7000-8000-000000000001",
+                ],
+                "tasks complete",
+            ),
+            (
+                vec![
+                    "sinexctl",
+                    "tasks",
+                    "state",
+                    "0196ed62-8f7a-7000-8000-000000000001",
+                ],
+                "tasks state",
             ),
             (
                 vec![

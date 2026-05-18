@@ -18,6 +18,11 @@ pub const EVENTS_LINEAGE: &str = "events.lineage";
 pub const CURATION_PROPOSALS_LIST: &str = "curation.proposals.list";
 pub const CURATION_JUDGMENTS_RECORD: &str = "curation.judgments.record";
 
+// Tasks
+pub const TASKS_CREATE: &str = "tasks.create";
+pub const TASKS_COMPLETE: &str = "tasks.complete";
+pub const TASKS_STATE_GET: &str = "tasks.state.get";
+
 // PKM
 pub const PKM_CREATE_NOTE: &str = "pkm.create_note";
 pub const PKM_CREATE_ENTITIES: &str = "pkm.create_entities_from_list";

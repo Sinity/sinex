@@ -101,6 +101,7 @@ pub fn build() -> HashMap<&'static str, FormatCapability> {
         "node status",
         FormatCapability::single_shot(TABLE_JSON_YAML),
     );
+    m.insert("ingestors", FormatCapability::single_shot(TABLE_JSON_YAML));
     m.insert("node drain", FormatCapability::single_shot(TABLE_JSON_YAML));
     m.insert(
         "node resume",
@@ -182,7 +183,15 @@ pub fn build() -> HashMap<&'static str, FormatCapability> {
 
     // ── Privacy ─────────────────────────────────────────────────────────────
     m.insert(
-        "privacy private-mode",
+        "privacy private-mode status",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
+    m.insert(
+        "privacy private-mode enable",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
+    m.insert(
+        "privacy private-mode disable",
         FormatCapability::single_shot(TABLE_JSON_YAML),
     );
 
@@ -221,6 +230,20 @@ pub fn build() -> HashMap<&'static str, FormatCapability> {
     );
     m.insert(
         "sources explain-gap",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
+
+    // ── Manual Declarations / Tasks ─────────────────────────────────────────
+    m.insert(
+        "declare task",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
+    m.insert(
+        "tasks complete",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
+    m.insert(
+        "tasks state",
         FormatCapability::single_shot(TABLE_JSON_YAML),
     );
     m.insert(
