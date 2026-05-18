@@ -222,7 +222,7 @@ fn private_mode_response(state: RuntimePrivateModeState) -> Result<Value> {
 mod tests {
     use super::*;
     use serde_json::json;
-    use xtask::sandbox::prelude::{TestContext, sinex_test};
+    use xtask::sandbox::prelude::sinex_test;
 
     #[sinex_test]
     async fn private_mode_status_defaults_disabled() -> xtask::sandbox::TestResult<()> {

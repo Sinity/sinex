@@ -1306,8 +1306,10 @@ fn scenario_setup_tokens(scenario: Option<&ScenarioAttr>) -> proc_macro2::TokenS
     let proof_reproducer = scenario
         .reproducer
         .as_ref()
-        .map(|reproducer| quote!(::std::option::Option::Some(::std::string::String::from(#reproducer))))
-        .unwrap_or_else(|| quote!(::std::option::Option::None));
+        .map_or_else(
+            || quote!(::std::option::Option::None),
+            |reproducer| quote!(::std::option::Option::Some(::std::string::String::from(#reproducer))),
+        );
     let reproducer = scenario
         .reproducer
         .as_ref()

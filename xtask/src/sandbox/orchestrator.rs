@@ -208,8 +208,7 @@ fn trailing_log_excerpt(content: &str, max_bytes: usize) -> (&str, bool) {
         .unwrap_or(content.len());
     let start = content[start..]
         .find('\n')
-        .map(|offset| start + offset + 1)
-        .unwrap_or(start);
+        .map_or(start, |offset| start + offset + 1);
     (&content[start..], true)
 }
 
