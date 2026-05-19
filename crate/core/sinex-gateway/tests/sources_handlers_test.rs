@@ -7,9 +7,7 @@ use sinex_gateway::rpc_server::RpcAuthContext;
 use sinex_gateway::service_container::ServiceContainer;
 use sinex_primitives::Timestamp;
 use sinex_primitives::domain::{SourceMaterialFormat, SourceMaterialTimingInfoType};
-use sinex_primitives::rpc::sources::{
-    SourcesListRequest, SourcesShowRequest, SourcesStageRequest,
-};
+use sinex_primitives::rpc::sources::{SourcesListRequest, SourcesShowRequest, SourcesStageRequest};
 use std::path::PathBuf;
 use xtask::sandbox::prelude::*;
 

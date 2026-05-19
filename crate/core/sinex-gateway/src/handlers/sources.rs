@@ -718,12 +718,9 @@ pub async fn handle_sources_archive(
     };
 
     let system_auth = crate::rpc_server::RpcAuthContext::system();
-    let lifecycle_result = crate::handlers::lifecycle::handle_lifecycle_archive(
-        pool,
-        lifecycle_req,
-        &system_auth,
-    )
-    .await;
+    let lifecycle_result =
+        crate::handlers::lifecycle::handle_lifecycle_archive(pool, lifecycle_req, &system_auth)
+            .await;
 
     match lifecycle_result {
         Ok(archive_resp) => {

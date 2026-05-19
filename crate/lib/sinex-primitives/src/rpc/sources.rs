@@ -110,23 +110,21 @@ use serde_json::Value as JsonValue;
 
 pub const SOURCE_MATERIAL_CONTRACT_METADATA_KEY: &str = "source_material_contract";
 
-pub const SOURCES_LIST_METHOD: RpcMethod<SourcesListRequest, SourcesListResponse> =
-    RpcMethod::new(
-        methods::SOURCES_LIST,
-        RpcRole::ReadOnly,
-        RpcDomain::Sources,
-        RpcStability::Experimental,
-        RpcMutability::ReadOnly,
-    );
+pub const SOURCES_LIST_METHOD: RpcMethod<SourcesListRequest, SourcesListResponse> = RpcMethod::new(
+    methods::SOURCES_LIST,
+    RpcRole::ReadOnly,
+    RpcDomain::Sources,
+    RpcStability::Experimental,
+    RpcMutability::ReadOnly,
+);
 
-pub const SOURCES_SHOW_METHOD: RpcMethod<SourcesShowRequest, SourcesShowResponse> =
-    RpcMethod::new(
-        methods::SOURCES_SHOW,
-        RpcRole::ReadOnly,
-        RpcDomain::Sources,
-        RpcStability::Experimental,
-        RpcMutability::ReadOnly,
-    );
+pub const SOURCES_SHOW_METHOD: RpcMethod<SourcesShowRequest, SourcesShowResponse> = RpcMethod::new(
+    methods::SOURCES_SHOW,
+    RpcRole::ReadOnly,
+    RpcDomain::Sources,
+    RpcStability::Experimental,
+    RpcMutability::ReadOnly,
+);
 
 pub const SOURCES_COVERAGE_METHOD: RpcMethod<SourcesCoverageRequest, SourcesCoverageResponse> =
     RpcMethod::new(
@@ -137,17 +135,21 @@ pub const SOURCES_COVERAGE_METHOD: RpcMethod<SourcesCoverageRequest, SourcesCove
         RpcMutability::ReadOnly,
     );
 
-pub const SOURCES_CONTINUITY_METHOD: RpcMethod<SourcesContinuityRequest, SourcesContinuityResponse> =
-    RpcMethod::new(
-        methods::SOURCES_CONTINUITY,
-        RpcRole::ReadOnly,
-        RpcDomain::Sources,
-        RpcStability::Experimental,
-        RpcMutability::ReadOnly,
-    );
+pub const SOURCES_CONTINUITY_METHOD: RpcMethod<
+    SourcesContinuityRequest,
+    SourcesContinuityResponse,
+> = RpcMethod::new(
+    methods::SOURCES_CONTINUITY,
+    RpcRole::ReadOnly,
+    RpcDomain::Sources,
+    RpcStability::Experimental,
+    RpcMutability::ReadOnly,
+);
 
-pub const SOURCES_CONTINUITY_LIST_METHOD:
-    RpcMethod<SourcesContinuityListRequest, SourcesContinuityListResponse> = RpcMethod::new(
+pub const SOURCES_CONTINUITY_LIST_METHOD: RpcMethod<
+    SourcesContinuityListRequest,
+    SourcesContinuityListResponse,
+> = RpcMethod::new(
     methods::SOURCES_CONTINUITY_LIST,
     RpcRole::ReadOnly,
     RpcDomain::Sources,
@@ -155,8 +157,10 @@ pub const SOURCES_CONTINUITY_LIST_METHOD:
     RpcMutability::ReadOnly,
 );
 
-pub const SOURCES_CONTINUITY_GET_METHOD:
-    RpcMethod<SourcesContinuityGetRequest, SourcesContinuityGetResponse> = RpcMethod::new(
+pub const SOURCES_CONTINUITY_GET_METHOD: RpcMethod<
+    SourcesContinuityGetRequest,
+    SourcesContinuityGetResponse,
+> = RpcMethod::new(
     methods::SOURCES_CONTINUITY_GET,
     RpcRole::ReadOnly,
     RpcDomain::Sources,
@@ -164,8 +168,10 @@ pub const SOURCES_CONTINUITY_GET_METHOD:
     RpcMutability::ReadOnly,
 );
 
-pub const SOURCES_CONTINUITY_EXPLAIN_GAP_METHOD:
-    RpcMethod<SourcesExplainGapRequest, SourcesExplainGapResponse> = RpcMethod::new(
+pub const SOURCES_CONTINUITY_EXPLAIN_GAP_METHOD: RpcMethod<
+    SourcesExplainGapRequest,
+    SourcesExplainGapResponse,
+> = RpcMethod::new(
     methods::SOURCES_CONTINUITY_EXPLAIN_GAP,
     RpcRole::ReadOnly,
     RpcDomain::Sources,
@@ -173,8 +179,10 @@ pub const SOURCES_CONTINUITY_EXPLAIN_GAP_METHOD:
     RpcMutability::ReadOnly,
 );
 
-pub const SOURCES_READINESS_LIST_METHOD:
-    RpcMethod<SourcesReadinessListRequest, SourcesReadinessListResponse> = RpcMethod::new(
+pub const SOURCES_READINESS_LIST_METHOD: RpcMethod<
+    SourcesReadinessListRequest,
+    SourcesReadinessListResponse,
+> = RpcMethod::new(
     methods::SOURCES_READINESS_LIST,
     RpcRole::ReadOnly,
     RpcDomain::Sources,
@@ -182,8 +190,10 @@ pub const SOURCES_READINESS_LIST_METHOD:
     RpcMutability::ReadOnly,
 );
 
-pub const SOURCES_READINESS_GET_METHOD:
-    RpcMethod<SourcesReadinessGetRequest, SourcesReadinessGetResponse> = RpcMethod::new(
+pub const SOURCES_READINESS_GET_METHOD: RpcMethod<
+    SourcesReadinessGetRequest,
+    SourcesReadinessGetResponse,
+> = RpcMethod::new(
     methods::SOURCES_READINESS_GET,
     RpcRole::ReadOnly,
     RpcDomain::Sources,

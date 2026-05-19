@@ -311,7 +311,6 @@ async fn main() -> color_eyre::Result<()> {
 
     match command {
         Commands::Config { cmd } => cmd.execute(format)?,
-        Commands::Privacy(cmd) => cmd.execute(format)?,
         Commands::Completions(cmd) => {
             let mut clap_cmd = Cli::command();
             cmd.execute(&mut clap_cmd)?;
@@ -342,7 +341,7 @@ async fn main() -> color_eyre::Result<()> {
                 Commands::Query(cmd) => cmd.execute(&client, format).await?,
                 Commands::Trace(cmd) => cmd.execute(&client, format).await?,
                 Commands::Ops { cmd } => cmd.execute(&client, format).await?,
-                Commands::Privacy(_) => unreachable!("Privacy command handled above"),
+                Commands::Privacy(cmd) => cmd.execute(&client, format).await?,
                 Commands::Audit(cmd) => cmd.execute(&client, format).await?,
                 Commands::Tui(cmd) => cmd.execute(&client).await?,
                 Commands::Config { .. } => unreachable!("Config command handled above"),

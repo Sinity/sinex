@@ -1303,13 +1303,10 @@ fn scenario_setup_tokens(scenario: Option<&ScenarioAttr>) -> proc_macro2::TokenS
     let proof_claim_ids = claim_ids.clone();
     let assertion_ids = string_vec_tokens(&scenario.assertion_ids);
     let proof_assertion_ids = assertion_ids.clone();
-    let proof_reproducer = scenario
-        .reproducer
-        .as_ref()
-        .map_or_else(
-            || quote!(::std::option::Option::None),
-            |reproducer| quote!(::std::option::Option::Some(::std::string::String::from(#reproducer))),
-        );
+    let proof_reproducer = scenario.reproducer.as_ref().map_or_else(
+        || quote!(::std::option::Option::None),
+        |reproducer| quote!(::std::option::Option::Some(::std::string::String::from(#reproducer))),
+    );
     let reproducer = scenario
         .reproducer
         .as_ref()

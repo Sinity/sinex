@@ -70,7 +70,9 @@ pub use documents::{handle_documents_get, handle_documents_get_chunks, handle_do
 pub use node_registry::{handle_nodes_health, handle_nodes_list_active};
 pub use pkm::{handle_create_entities, handle_create_note, handle_link_entities};
 pub use privacy::{
-    handle_private_mode_disable, handle_private_mode_enable, handle_private_mode_status,
+    handle_private_mode_disable, handle_private_mode_disable_service, handle_private_mode_enable,
+    handle_private_mode_enable_service, handle_private_mode_status,
+    handle_private_mode_status_service,
 };
 pub use sources::{
     handle_sources_annotate, handle_sources_archive, handle_sources_bindings_create,

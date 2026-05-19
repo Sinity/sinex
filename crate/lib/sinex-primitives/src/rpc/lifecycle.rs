@@ -27,14 +27,14 @@ pub struct TierStatus {
 // lifecycle.status
 // ─────────────────────────────────────────────────────────────
 
-pub const LIFECYCLE_STATUS_METHOD:
-    RpcMethod<LifecycleStatusRequest, LifecycleStatusResponse> = RpcMethod::new(
-    methods::LIFECYCLE_STATUS,
-    RpcRole::ReadOnly,
-    RpcDomain::Lifecycle,
-    RpcStability::Experimental,
-    RpcMutability::ReadOnly,
-);
+pub const LIFECYCLE_STATUS_METHOD: RpcMethod<LifecycleStatusRequest, LifecycleStatusResponse> =
+    RpcMethod::new(
+        methods::LIFECYCLE_STATUS,
+        RpcRole::ReadOnly,
+        RpcDomain::Lifecycle,
+        RpcStability::Experimental,
+        RpcMutability::ReadOnly,
+    );
 
 /// Request: lifecycle.status
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -53,14 +53,14 @@ pub struct LifecycleStatusResponse {
 // lifecycle.archive
 // ─────────────────────────────────────────────────────────────
 
-pub const LIFECYCLE_ARCHIVE_METHOD:
-    RpcMethod<LifecycleArchiveRequest, LifecycleArchiveResponse> = RpcMethod::new(
-    methods::LIFECYCLE_ARCHIVE,
-    RpcRole::Admin,
-    RpcDomain::Lifecycle,
-    RpcStability::Experimental,
-    RpcMutability::Mutating,
-);
+pub const LIFECYCLE_ARCHIVE_METHOD: RpcMethod<LifecycleArchiveRequest, LifecycleArchiveResponse> =
+    RpcMethod::new(
+        methods::LIFECYCLE_ARCHIVE,
+        RpcRole::Admin,
+        RpcDomain::Lifecycle,
+        RpcStability::Experimental,
+        RpcMutability::Mutating,
+    );
 
 /// Request: lifecycle.archive (Live → Archive)
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -104,17 +104,19 @@ pub struct LifecycleArchiveResponse {
 // lifecycle.restore
 // ─────────────────────────────────────────────────────────────
 
-pub const LIFECYCLE_RESTORE_METHOD:
-    RpcMethod<LifecycleRestoreRequest, LifecycleRestoreResponse> = RpcMethod::new(
-    methods::LIFECYCLE_RESTORE,
-    RpcRole::Admin,
-    RpcDomain::Lifecycle,
-    RpcStability::Experimental,
-    RpcMutability::Mutating,
-);
+pub const LIFECYCLE_RESTORE_METHOD: RpcMethod<LifecycleRestoreRequest, LifecycleRestoreResponse> =
+    RpcMethod::new(
+        methods::LIFECYCLE_RESTORE,
+        RpcRole::Admin,
+        RpcDomain::Lifecycle,
+        RpcStability::Experimental,
+        RpcMutability::Mutating,
+    );
 
-pub const LIFECYCLE_TOMBSTONE_CREATE_METHOD:
-    RpcMethod<TombstoneCreateRequest, TombstoneCreateResponse> = RpcMethod::new(
+pub const LIFECYCLE_TOMBSTONE_CREATE_METHOD: RpcMethod<
+    TombstoneCreateRequest,
+    TombstoneCreateResponse,
+> = RpcMethod::new(
     methods::LIFECYCLE_TOMBSTONE_CREATE,
     RpcRole::Admin,
     RpcDomain::Lifecycle,
@@ -122,8 +124,10 @@ pub const LIFECYCLE_TOMBSTONE_CREATE_METHOD:
     RpcMutability::Mutating,
 );
 
-pub const LIFECYCLE_TOMBSTONE_PREVIEW_METHOD:
-    RpcMethod<TombstonePreviewRequest, TombstonePreviewResponse> = RpcMethod::new(
+pub const LIFECYCLE_TOMBSTONE_PREVIEW_METHOD: RpcMethod<
+    TombstonePreviewRequest,
+    TombstonePreviewResponse,
+> = RpcMethod::new(
     methods::LIFECYCLE_TOMBSTONE_PREVIEW,
     RpcRole::Admin,
     RpcDomain::Lifecycle,
@@ -131,8 +135,10 @@ pub const LIFECYCLE_TOMBSTONE_PREVIEW_METHOD:
     RpcMutability::ReadOnly,
 );
 
-pub const LIFECYCLE_TOMBSTONE_APPROVE_METHOD:
-    RpcMethod<TombstoneApproveRequest, TombstoneApproveResponse> = RpcMethod::new(
+pub const LIFECYCLE_TOMBSTONE_APPROVE_METHOD: RpcMethod<
+    TombstoneApproveRequest,
+    TombstoneApproveResponse,
+> = RpcMethod::new(
     methods::LIFECYCLE_TOMBSTONE_APPROVE,
     RpcRole::Admin,
     RpcDomain::Lifecycle,
@@ -140,8 +146,10 @@ pub const LIFECYCLE_TOMBSTONE_APPROVE_METHOD:
     RpcMutability::Mutating,
 );
 
-pub const LIFECYCLE_TOMBSTONE_CANCEL_METHOD:
-    RpcMethod<TombstoneCancelRequest, TombstoneCancelResponse> = RpcMethod::new(
+pub const LIFECYCLE_TOMBSTONE_CANCEL_METHOD: RpcMethod<
+    TombstoneCancelRequest,
+    TombstoneCancelResponse,
+> = RpcMethod::new(
     methods::LIFECYCLE_TOMBSTONE_CANCEL,
     RpcRole::Admin,
     RpcDomain::Lifecycle,
@@ -149,17 +157,19 @@ pub const LIFECYCLE_TOMBSTONE_CANCEL_METHOD:
     RpcMutability::Mutating,
 );
 
-pub const LIFECYCLE_TOMBSTONE_LIST_METHOD:
-    RpcMethod<TombstoneListRequest, TombstoneListResponse> = RpcMethod::new(
-    methods::LIFECYCLE_TOMBSTONE_LIST,
-    RpcRole::Admin,
-    RpcDomain::Lifecycle,
-    RpcStability::Experimental,
-    RpcMutability::ReadOnly,
-);
+pub const LIFECYCLE_TOMBSTONE_LIST_METHOD: RpcMethod<TombstoneListRequest, TombstoneListResponse> =
+    RpcMethod::new(
+        methods::LIFECYCLE_TOMBSTONE_LIST,
+        RpcRole::Admin,
+        RpcDomain::Lifecycle,
+        RpcStability::Experimental,
+        RpcMutability::ReadOnly,
+    );
 
-pub const LIFECYCLE_TOMBSTONE_STATUS_METHOD:
-    RpcMethod<TombstoneStatusRequest, TombstoneStatusResponse> = RpcMethod::new(
+pub const LIFECYCLE_TOMBSTONE_STATUS_METHOD: RpcMethod<
+    TombstoneStatusRequest,
+    TombstoneStatusResponse,
+> = RpcMethod::new(
     methods::LIFECYCLE_TOMBSTONE_STATUS,
     RpcRole::Admin,
     RpcDomain::Lifecycle,

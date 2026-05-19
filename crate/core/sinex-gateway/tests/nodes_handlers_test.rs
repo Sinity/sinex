@@ -9,9 +9,7 @@ use sinex_gateway::handlers::{
 use sinex_primitives::Timestamp;
 use sinex_primitives::domain::OperationStatus;
 use sinex_primitives::nats::create_or_open_kv_store;
-use sinex_primitives::rpc::nodes::{
-    NodeDrainRequest, NodeResumeRequest, NodeSetHorizonRequest,
-};
+use sinex_primitives::rpc::nodes::{NodeDrainRequest, NodeResumeRequest, NodeSetHorizonRequest};
 use xtask::sandbox::prelude::*;
 
 async fn expect_single_control_message(
@@ -109,8 +107,7 @@ async fn nodes_set_horizon_publishes_command(ctx: TestContext) -> TestResult<()>
     };
 
     let result =
-        handle_nodes_set_horizon(&harness.client, &harness.env, request, &admin_auth())
-            .await?;
+        handle_nodes_set_horizon(&harness.client, &harness.env, request, &admin_auth()).await?;
     assert_eq!(result.status, OperationStatus::Pending);
     assert_eq!(result.node_id.as_str(), "test-node-789");
     assert_eq!(result.horizon, horizon);

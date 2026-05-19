@@ -998,3 +998,62 @@ async fn test_gateway_client_replay_submit_previews_before_execute() -> TestResu
     );
     Ok(())
 }
+
+#[sinex_test]
+async fn private_mode_enable_uses_typed_gateway_rpc() -> TestResult<()> {
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/"))
+        .respond_with(|req: &wiremock::Request| {
+            let body: serde_json::Value =
+                serde_json::from_slice(&req.body).expect("valid rpc body");
+            assert_eq!(body["method"], "privacy.private_mode.enable");
+            assert_eq!(body["params"]["actor"], "sinity");
+            assert_eq!(body["params"]["reason_class"], "policy_hold");
+            assert_eq!(body["params"]["source_classes"], json!(["desktop"]));
+
+            ResponseTemplate::new(200).set_body_json(json!({
+                "jsonrpc": "2.0",
+                "result": {
+                    "state": {
+                        "enabled": true,
+                        "reason_class": "policy_hold",
+                        "actor": "sinity",
+                        "started_at": "2026-05-19T04:00:00Z",
+                        "expires_at": null,
+                        "affected_source_classes": ["desktop"],
+                        "updated_by_operation_id": "00000000-0000-0000-0000-000000000135"
+                    }
+                },
+                "id": 1
+            }))
+        })
+        .mount(&mock_server)
+        .await;
+
+    let client = GatewayClient::new(ClientConfig {
+        url: mock_server.uri(),
+        token: Some("test-token".to_string()),
+        insecure: true,
+        retry_config: RetryConfig::builder().max_attempts(1).build(),
+        ..Default::default()
+    })?;
+
+    let response = client
+        .private_mode_enable(
+            "sinity".to_string(),
+            sinex_primitives::privacy::PrivateModeReasonClass::PolicyHold,
+            vec!["desktop".to_string()],
+        )
+        .await?;
+
+    assert!(response.state.enabled);
+    assert_eq!(response.state.actor, "sinity");
+    assert_eq!(response.state.affected_source_classes, vec!["desktop"]);
+    assert_eq!(
+        response.state.updated_by_operation_id.as_deref(),
+        Some("00000000-0000-0000-0000-000000000135")
+    );
+    Ok(())
+}
