@@ -13,6 +13,7 @@ use sinex_primitives::events::schema_registry::{
     SchemaBundle as PayloadSchemaBundle, SchemaBundleEntry as PayloadSchemaBundleEntry,
     generate_schema_bundle,
 };
+use sinex_primitives::rpc::method_catalog;
 use std::collections::{BTreeMap, BTreeSet};
 use std::process::Command;
 
@@ -129,6 +130,21 @@ pub enum DocsSubcommand {
         check: bool,
     },
 
+    /// Generate the public RPC method catalog from typed descriptors.
+    RpcCatalog {
+        /// Output file (default: docs/rpc-catalog.json)
+        #[arg(long)]
+        output: Option<std::path::PathBuf>,
+
+        /// Print to stdout instead of writing a file
+        #[arg(long)]
+        stdout: bool,
+
+        /// Exit non-zero if the generated output would change
+        #[arg(long, conflicts_with = "stdout")]
+        check: bool,
+    },
+
     /// Generate the live ast-grep rule catalog from `.config/ast-grep/rules/`.
     AstGrepCatalog {
         /// Output file (default: .config/ast-grep/README.md)
@@ -198,6 +214,11 @@ impl XtaskCommand for DocsCommand {
                 stdout,
                 check,
             } => execute_proof_catalog(output.as_deref(), *stdout, *check, ctx),
+            DocsSubcommand::RpcCatalog {
+                output,
+                stdout,
+                check,
+            } => execute_rpc_catalog(output.as_deref(), *stdout, *check, ctx),
             DocsSubcommand::AstGrepCatalog {
                 output,
                 stdout,
@@ -642,6 +663,7 @@ fn generated_surfaces(workspace: &std::path::Path) -> Result<Vec<GeneratedSurfac
     Ok(vec![
         generated_ast_grep_catalog_surface(workspace)?,
         generated_proof_catalog_surface(workspace)?,
+        generated_rpc_catalog_surface(workspace)?,
         generated_command_guide_surface(workspace),
         generated_command_reference_surface(workspace),
         generated_agents_surface(workspace)?,
@@ -715,6 +737,17 @@ fn generated_proof_catalog_surface(workspace: &std::path::Path) -> Result<Genera
         path: workspace.join("docs/proof-catalog.json"),
         content: render_proof_catalog_json(&catalog)?,
         regenerate_command: "xtask docs proof-catalog",
+    })
+}
+
+fn generated_rpc_catalog_surface(workspace: &std::path::Path) -> Result<GeneratedSurface> {
+    let mut rendered = serde_json::to_string_pretty(&method_catalog())?;
+    rendered.push('\n');
+    Ok(GeneratedSurface {
+        label: "RPC catalog",
+        path: workspace.join("docs/rpc-catalog.json"),
+        content: rendered,
+        regenerate_command: "xtask docs rpc-catalog",
     })
 }
 
@@ -804,6 +837,27 @@ fn execute_proof_catalog(
 ) -> Result<CommandResult> {
     let workspace = find_workspace_root(std::env::current_dir()?)?;
     let surface = generated_proof_catalog_surface(&workspace)?;
+    let dest = output.map_or(surface.path, std::path::Path::to_path_buf);
+
+    write_generated_output(
+        &dest,
+        &surface.content,
+        to_stdout,
+        check_only,
+        surface.label,
+        surface.regenerate_command,
+        ctx,
+    )
+}
+
+fn execute_rpc_catalog(
+    output: Option<&std::path::Path>,
+    to_stdout: bool,
+    check_only: bool,
+    ctx: &CommandContext,
+) -> Result<CommandResult> {
+    let workspace = find_workspace_root(std::env::current_dir()?)?;
+    let surface = generated_rpc_catalog_surface(&workspace)?;
     let dest = output.map_or(surface.path, std::path::Path::to_path_buf);
 
     write_generated_output(
