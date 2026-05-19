@@ -276,13 +276,13 @@ mod coverage_matrix {
     const SMOKE_MATRIX: &[SmokeMatrixEntry] = &[
         entry(
             "ai-session-chatgpt",
-            SmokeCoverage::ParserFixtureOnly,
-            "ai_session_parser_test.rs",
+            SmokeCoverage::ObligationHarness,
+            "production_path/ai_session.rs",
         ),
         entry(
             "ai-session-claude",
-            SmokeCoverage::ParserFixtureOnly,
-            "ai_session_parser_test.rs",
+            SmokeCoverage::ObligationHarness,
+            "production_path/ai_session.rs",
         ),
         entry(
             "browser.history",
@@ -556,6 +556,9 @@ mod coverage_matrix {
 
 #[path = "production_path/browser.rs"]
 mod browser;
+
+#[path = "production_path/ai_session.rs"]
+mod ai_session;
 
 #[path = "production_path/desktop.rs"]
 mod desktop;
