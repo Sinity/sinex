@@ -20,7 +20,9 @@ use sinex_primitives::rpc::{
         COORDINATION_GET_LEADER_METHOD, COORDINATION_INSTANCE_HEALTH_METHOD,
         COORDINATION_LIST_INSTANCES_METHOD,
     },
-    curation::{CURATION_JUDGMENTS_RECORD_METHOD, CURATION_PROPOSALS_LIST_METHOD},
+    curation::{
+        CURATION_FINALIZE_METHOD, CURATION_JUDGMENTS_RECORD_METHOD, CURATION_PROPOSALS_LIST_METHOD,
+    },
     dlq::{DLQ_LIST_METHOD, DLQ_PEEK_METHOD, DLQ_PURGE_METHOD, DLQ_REQUEUE_METHOD},
     documents::{DOCUMENTS_GET_CHUNKS_METHOD, DOCUMENTS_GET_METHOD, DOCUMENTS_SEARCH_METHOD},
     events::{EVENTS_ANNOTATE_METHOD, EVENTS_LINEAGE_METHOD, EVENTS_QUERY_METHOD},
@@ -697,15 +699,15 @@ fn build_registry_impl() -> RpcRegistry {
     use crate::handlers::{
         handle_audit_get, handle_automata_status, handle_coordination_get_leader,
         handle_coordination_instance_health, handle_coordination_list_instances,
-        handle_create_entities, handle_create_note, handle_curation_list_proposals,
-        handle_curation_record_judgment, handle_dlq_list, handle_dlq_peek, handle_dlq_purge,
-        handle_dlq_requeue, handle_documents_get, handle_documents_get_chunks,
-        handle_documents_search, handle_events_annotate, handle_events_lineage,
-        handle_events_query, handle_ingestors_status, handle_lifecycle_archive,
-        handle_lifecycle_restore, handle_lifecycle_status, handle_link_entities,
-        handle_nodes_drain, handle_nodes_health, handle_nodes_list, handle_nodes_list_active,
-        handle_nodes_resume, handle_nodes_set_horizon, handle_ops_cancel, handle_ops_get,
-        handle_ops_list, handle_ops_start, handle_private_mode_disable_service,
+        handle_create_entities, handle_create_note, handle_curation_finalize,
+        handle_curation_list_proposals, handle_curation_record_judgment, handle_dlq_list,
+        handle_dlq_peek, handle_dlq_purge, handle_dlq_requeue, handle_documents_get,
+        handle_documents_get_chunks, handle_documents_search, handle_events_annotate,
+        handle_events_lineage, handle_events_query, handle_ingestors_status,
+        handle_lifecycle_archive, handle_lifecycle_restore, handle_lifecycle_status,
+        handle_link_entities, handle_nodes_drain, handle_nodes_health, handle_nodes_list,
+        handle_nodes_list_active, handle_nodes_resume, handle_nodes_set_horizon, handle_ops_cancel,
+        handle_ops_get, handle_ops_list, handle_ops_start, handle_private_mode_disable_service,
         handle_private_mode_enable_service, handle_private_mode_status_service,
         handle_replay_approve_operation, handle_replay_cancel_operation,
         handle_replay_create_operation, handle_replay_execute_operation,
@@ -899,6 +901,7 @@ fn build_registry_impl() -> RpcRegistry {
             CURATION_JUDGMENTS_RECORD_METHOD,
             boxed!(handle_curation_record_judgment, 3),
         )
+        .pool_typed_rpc(CURATION_FINALIZE_METHOD, boxed!(handle_curation_finalize))
         .pool_auth_typed_rpc(TASKS_CREATE_METHOD, boxed!(handle_tasks_create, 3))
         .pool_auth_typed_rpc(TASKS_COMPLETE_METHOD, boxed!(handle_tasks_complete, 3))
         // PKM methods (Write)

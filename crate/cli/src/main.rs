@@ -480,6 +480,7 @@ fn command_path(cmd: &Commands) -> String {
             match cmd.subcommand() {
                 CurationSubcommand::Proposals(_) => "curation proposals".to_string(),
                 CurationSubcommand::Judge(_) => "curation judge".to_string(),
+                CurationSubcommand::Finalize(_) => "curation finalize".to_string(),
             }
         }
         Commands::Lifecycle { cmd } => match cmd {
@@ -904,6 +905,15 @@ mod tests {
                     "accept",
                 ],
                 "curation judge",
+            ),
+            (
+                vec![
+                    "sinexctl",
+                    "curation",
+                    "finalize",
+                    "0196ed62-8f7a-7000-8000-000000000002",
+                ],
+                "curation finalize",
             ),
             (
                 vec![

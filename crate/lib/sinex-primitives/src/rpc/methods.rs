@@ -17,6 +17,7 @@ pub const EVENTS_LINEAGE: &str = "events.lineage";
 // Curation
 pub const CURATION_PROPOSALS_LIST: &str = "curation.proposals.list";
 pub const CURATION_JUDGMENTS_RECORD: &str = "curation.judgments.record";
+pub const CURATION_FINALIZE: &str = "curation.finalize";
 
 // Tasks
 pub const TASKS_CREATE: &str = "tasks.create";
