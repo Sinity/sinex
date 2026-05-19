@@ -251,7 +251,7 @@ async fn tasks_list_rebuilds_and_filters_current_states(ctx: TestContext) -> Tes
             external_refs: Vec::new(),
             project_id: Some("sinex".to_string()),
             tags: vec!["work".to_string()],
-            due_at: None,
+            due_at: Some(sinex_primitives::Timestamp::UNIX_EPOCH),
             priority: None,
         },
         &auth,
@@ -320,6 +320,8 @@ async fn tasks_list_rebuilds_and_filters_current_states(ctx: TestContext) -> Tes
             status: Some(TaskStatus::Open),
             project_id: Some("sinex".to_string()),
             tag: Some("work".to_string()),
+            due_from: None,
+            due_until: None,
             limit: Some(10),
         },
     )
@@ -327,6 +329,18 @@ async fn tasks_list_rebuilds_and_filters_current_states(ctx: TestContext) -> Tes
     assert_eq!(open_only.total, 1);
     assert_eq!(open_only.tasks[0].task_id, open.state.task_id);
     assert_eq!(open_only.tasks[0].status, TaskStatus::Open);
+
+    let due_window = handle_tasks_list(
+        ctx.pool(),
+        TaskListRequest {
+            due_from: Some(sinex_primitives::Timestamp::UNIX_EPOCH),
+            due_until: Some(sinex_primitives::Timestamp::UNIX_EPOCH),
+            ..TaskListRequest::default()
+        },
+    )
+    .await?;
+    assert_eq!(due_window.total, 1);
+    assert_eq!(due_window.tasks[0].task_id, open.state.task_id);
 
     let limited = handle_tasks_list(
         ctx.pool(),
