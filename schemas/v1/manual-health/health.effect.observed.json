@@ -1,0 +1,71 @@
+{
+  "$defs": {
+    "DateTime": {
+      "description": "RFC 3339 formatted date-time string",
+      "format": "date-time",
+      "type": "string"
+    },
+    "HealthTimingQuality": {
+      "description": "Timing precision of a manually declared health observation.",
+      "enum": [
+        "exact",
+        "approximate",
+        "date_only",
+        "unknown"
+      ],
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Structured manual observation of an effect or state after intake (#1348).",
+  "properties": {
+    "confidence": {
+      "format": "double",
+      "type": [
+        "number",
+        "null"
+      ]
+    },
+    "effect": {
+      "type": "string"
+    },
+    "note_redacted": {
+      "type": "boolean"
+    },
+    "observation_id": {
+      "format": "uuid",
+      "type": "string"
+    },
+    "observed_at": {
+      "$ref": "#/$defs/DateTime"
+    },
+    "related_intake_id": {
+      "format": "uuid",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "severity": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "timing_quality": {
+      "$ref": "#/$defs/HealthTimingQuality"
+    }
+  },
+  "required": [
+    "observation_id",
+    "effect",
+    "observed_at",
+    "timing_quality",
+    "note_redacted"
+  ],
+  "title": "HealthEffectObservationRecordedPayload",
+  "type": "object",
+  "x-sinex-event-type": "health.effect.observed",
+  "x-sinex-source": "manual-health",
+  "x-sinex-version": "1.0.0"
+}

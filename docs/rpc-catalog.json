@@ -216,6 +216,24 @@
     "response_type": "sinex_primitives::rpc::gitops::GitOpsTriggerSyncResponse"
   },
   {
+    "name": "health.effect.record",
+    "role": "write",
+    "domain": "health",
+    "stability": "experimental",
+    "mutability": "mutating",
+    "request_type": "sinex_primitives::rpc::health::HealthEffectRecordRequest",
+    "response_type": "sinex_primitives::rpc::health::HealthDeclarationResponse<sinex_primitives::events::payloads::health::HealthEffectObservationRecordedPayload>"
+  },
+  {
+    "name": "health.intake.record",
+    "role": "write",
+    "domain": "health",
+    "stability": "experimental",
+    "mutability": "mutating",
+    "request_type": "sinex_primitives::rpc::health::HealthIntakeRecordRequest",
+    "response_type": "sinex_primitives::rpc::health::HealthDeclarationResponse<sinex_primitives::events::payloads::health::HealthSubstanceIntakeRecordedPayload>"
+  },
+  {
     "name": "ingestors.status",
     "role": "read_only",
     "domain": "ingestors",

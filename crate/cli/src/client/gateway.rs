@@ -42,6 +42,10 @@ use sinex_primitives::rpc::{
         GitOpsListSourcesResponse, GitOpsSourceInfo, GitOpsTriggerSyncRequest,
         GitOpsTriggerSyncResponse,
     },
+    health::{
+        HEALTH_EFFECT_RECORD_METHOD, HEALTH_INTAKE_RECORD_METHOD, HealthEffectRecordRequest,
+        HealthEffectRecordResponse, HealthIntakeRecordRequest, HealthIntakeRecordResponse,
+    },
     ingestors::{INGESTORS_STATUS_METHOD, IngestorsStatusRequest, IngestorsStatusResponse},
     lifecycle::{
         LIFECYCLE_ARCHIVE_METHOD, LIFECYCLE_RESTORE_METHOD, LIFECYCLE_STATUS_METHOD,
@@ -899,6 +903,22 @@ impl GatewayClient {
     /// Create a manual task declaration.
     pub async fn tasks_create(&self, request: TaskCreateRequest) -> Result<TaskCreateResponse> {
         self.call_typed(TASKS_CREATE_METHOD, &request).await
+    }
+
+    /// Record a structured health intake declaration.
+    pub async fn health_intake_record(
+        &self,
+        request: HealthIntakeRecordRequest,
+    ) -> Result<HealthIntakeRecordResponse> {
+        self.call_typed(HEALTH_INTAKE_RECORD_METHOD, &request).await
+    }
+
+    /// Record a structured health effect declaration.
+    pub async fn health_effect_record(
+        &self,
+        request: HealthEffectRecordRequest,
+    ) -> Result<HealthEffectRecordResponse> {
+        self.call_typed(HEALTH_EFFECT_RECORD_METHOD, &request).await
     }
 
     /// Mark a task complete.

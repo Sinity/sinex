@@ -1,0 +1,103 @@
+{
+  "$defs": {
+    "DateTime": {
+      "description": "RFC 3339 formatted date-time string",
+      "format": "date-time",
+      "type": "string"
+    },
+    "HealthQuantity": {
+      "description": "Numeric quantity with caller-supplied units and precision.",
+      "properties": {
+        "precision": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "unit": {
+          "type": "string"
+        },
+        "value": {
+          "format": "double",
+          "type": "number"
+        }
+      },
+      "required": [
+        "value",
+        "unit"
+      ],
+      "type": "object"
+    },
+    "HealthTimingQuality": {
+      "description": "Timing precision of a manually declared health observation.",
+      "enum": [
+        "exact",
+        "approximate",
+        "date_only",
+        "unknown"
+      ],
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Structured manual declaration of substance intake (#1348).",
+  "properties": {
+    "confidence": {
+      "format": "double",
+      "type": [
+        "number",
+        "null"
+      ]
+    },
+    "dose": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/HealthQuantity"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "form": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "intake_id": {
+      "format": "uuid",
+      "type": "string"
+    },
+    "note_redacted": {
+      "type": "boolean"
+    },
+    "occurred_at": {
+      "$ref": "#/$defs/DateTime"
+    },
+    "route": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "substance": {
+      "type": "string"
+    },
+    "timing_quality": {
+      "$ref": "#/$defs/HealthTimingQuality"
+    }
+  },
+  "required": [
+    "intake_id",
+    "substance",
+    "occurred_at",
+    "timing_quality",
+    "note_redacted"
+  ],
+  "title": "HealthSubstanceIntakeRecordedPayload",
+  "type": "object",
+  "x-sinex-event-type": "health.substance.intake_recorded",
+  "x-sinex-source": "manual-health",
+  "x-sinex-version": "1.0.0"
+}

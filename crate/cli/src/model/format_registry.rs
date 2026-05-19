@@ -293,6 +293,14 @@ pub fn build() -> HashMap<&'static str, FormatCapability> {
 
     // ── Manual Declarations / Tasks ─────────────────────────────────────────
     m.insert(
+        "declare health effect",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
+    m.insert(
+        "declare health intake",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
+    m.insert(
         "declare task",
         FormatCapability::single_shot(TABLE_JSON_YAML),
     );
@@ -691,6 +699,8 @@ fn effect_for_path(path: &str, capability: &FormatCapability) -> CommandEffect {
         "curation finalize",
         "curation judge",
         "declare",
+        "declare health effect",
+        "declare health intake",
         "declare task",
         "dlq purge",
         "dlq requeue",
@@ -753,6 +763,8 @@ fn mutation_guards_for_path(path: &str) -> &'static [CommandMutationGuard] {
         | "curation finalize"
         | "curation judge"
         | "declare"
+        | "declare health effect"
+        | "declare health intake"
         | "declare task"
         | "dlq requeue"
         | "git-ops create"
@@ -866,6 +878,8 @@ fn backing_rpc_methods_for_path(path: &str) -> &'static [&'static str] {
             methods::SOURCES_READINESS_LIST,
             methods::SOURCES_READINESS_GET,
         ],
+        "declare health effect" => &[methods::HEALTH_EFFECT_RECORD],
+        "declare health intake" => &[methods::HEALTH_INTAKE_RECORD],
         "declare task" => &[methods::TASKS_CREATE],
         "tasks cancel" => &[methods::TASKS_CANCEL],
         "tasks complete" => &[methods::TASKS_COMPLETE],
