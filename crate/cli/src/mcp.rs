@@ -15,6 +15,7 @@ use sinex_primitives::events::Event;
 use sinex_primitives::ids::Id;
 use sinex_primitives::query::{EventQuery, LineageDirection, LineageQuery};
 use sinex_primitives::rpc::automata::AutomataStatusResponse;
+use sinex_primitives::rpc::documents::DocumentsSearchRequest;
 use sinex_primitives::rpc::ingestors::IngestorsStatusResponse;
 use sinex_primitives::rpc::methods;
 use sinex_primitives::rpc::nodes::{NodesHealthResponse, NodesListActiveResponse};
@@ -171,6 +172,25 @@ struct ReplayStatusArgs {
 }
 
 #[derive(Debug, Deserialize, Serialize)]
+struct DocumentsSearchArgs {
+    query: String,
+    #[serde(default)]
+    kind: Option<String>,
+    #[serde(default)]
+    document_ids: Option<Vec<Uuid>>,
+    #[serde(default)]
+    natural_key_prefix: Option<String>,
+    #[serde(default)]
+    updated_after: Option<Timestamp>,
+    #[serde(default)]
+    updated_before: Option<Timestamp>,
+    #[serde(default)]
+    limit: Option<u32>,
+    #[serde(default)]
+    offset: Option<u64>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
 struct StatusWindowArgs {
     #[serde(default = "default_stale_after_secs")]
     stale_after_secs: u64,
@@ -283,6 +303,13 @@ pub fn tool_catalog() -> Vec<McpCatalogEntry> {
             kind: McpSurfaceKind::Tool,
             description: "Read-only current status for one replay operation.",
             backing_rpc_methods: &[methods::REPLAY_OPERATION_STATUS],
+            read_only: true,
+        },
+        McpCatalogEntry {
+            name: "sinex.documents_search",
+            kind: McpSurfaceKind::Tool,
+            description: "Read-only ranked document chunk search with raw text redacted.",
+            backing_rpc_methods: &[methods::DOCUMENTS_SEARCH],
             read_only: true,
         },
         McpCatalogEntry {
@@ -510,6 +537,37 @@ pub fn tools() -> Vec<McpTool> {
             }),
         },
         McpTool {
+            name: "sinex.documents_search",
+            description: "Read-only ranked document chunk search with raw text redacted.",
+            input_schema: json!({
+                "type": "object",
+                "required": ["query"],
+                "properties": {
+                    "query": { "type": "string" },
+                    "kind": { "type": "string" },
+                    "document_ids": {
+                        "type": "array",
+                        "items": { "type": "string", "format": "uuid" }
+                    },
+                    "natural_key_prefix": { "type": "string" },
+                    "updated_after": { "type": "string", "format": "date-time" },
+                    "updated_before": { "type": "string", "format": "date-time" },
+                    "limit": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 100,
+                        "default": 20
+                    },
+                    "offset": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "default": 0
+                    }
+                },
+                "additionalProperties": false
+            }),
+        },
+        McpTool {
             name: "sinex.automata_status",
             description: "Read-only derived-node automata liveness, checkpoint, and lag status.",
             input_schema: status_window_schema(),
@@ -687,6 +745,7 @@ pub async fn call_tool(client: &GatewayClient, name: &str, arguments: Value) -> 
         "sinex.task_state" => task_state(client, arguments).await,
         "sinex.replay_operations" => replay_operations(client, arguments).await,
         "sinex.replay_status" => replay_status(client, arguments).await,
+        "sinex.documents_search" => documents_search(client, arguments).await,
         "sinex.automata_status" => automata_status(client, arguments).await,
         "sinex.ingestors_status" => ingestors_status(client, arguments).await,
         "sinex.nodes_health" => nodes_health(client, arguments).await,
@@ -871,6 +930,27 @@ async fn replay_status(client: &GatewayClient, arguments: Value) -> Result<Value
     ))
 }
 
+async fn documents_search(client: &GatewayClient, arguments: Value) -> Result<Value> {
+    let args: DocumentsSearchArgs = serde_json::from_value(arguments)?;
+    let request = DocumentsSearchRequest {
+        query: args.query.clone(),
+        kind: args.kind.clone(),
+        document_ids: args.document_ids.clone(),
+        natural_key_prefix: args.natural_key_prefix.clone(),
+        updated_after: args.updated_after,
+        updated_before: args.updated_before,
+        limit: args.limit,
+        offset: args.offset,
+    };
+    let mut response = serde_json::to_value(client.documents_search(request).await?)?;
+    redact_document_text(&mut response);
+    Ok(envelope(
+        "sinex.documents_search",
+        json!(args),
+        json!({ "result": response }),
+    ))
+}
+
 async fn automata_status(client: &GatewayClient, arguments: Value) -> Result<Value> {
     let args: StatusWindowArgs = serde_json::from_value(arguments)?;
     let response: AutomataStatusResponse = client
@@ -1013,6 +1093,49 @@ fn redact_raw_samples(value: &mut Value) {
             }
             for field in fields.values_mut() {
                 redact_raw_samples(field);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn redact_document_text(value: &mut Value) {
+    match value {
+        Value::Array(items) => {
+            for item in items {
+                redact_document_text(item);
+            }
+        }
+        Value::Object(fields) => {
+            if fields.contains_key("text") {
+                fields.insert(
+                    "text".to_string(),
+                    json!({
+                        "redacted": true,
+                        "reason": "mcp_document_text_disabled"
+                    }),
+                );
+            }
+            if fields.contains_key("headline") {
+                fields.insert(
+                    "headline".to_string(),
+                    json!({
+                        "redacted": true,
+                        "reason": "mcp_document_text_disabled"
+                    }),
+                );
+            }
+            if fields.contains_key("side_data") {
+                fields.insert(
+                    "side_data".to_string(),
+                    json!({
+                        "redacted": true,
+                        "reason": "mcp_document_side_data_disabled"
+                    }),
+                );
+            }
+            for field in fields.values_mut() {
+                redact_document_text(field);
             }
         }
         _ => {}
