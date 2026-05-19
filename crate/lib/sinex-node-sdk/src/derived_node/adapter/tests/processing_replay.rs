@@ -1,4 +1,3 @@
-#[allow(unused_imports)]
 use super::*;
 #[sinex_test]
 async fn process_batch_halts_after_three_consecutive_checkpoint_save_failures(
