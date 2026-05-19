@@ -4,26 +4,19 @@
 
 use super::{
     Context, ExpectedReplayOutputs, OperationOutputEvent, REPLAY_OUTPUT_VISIBILITY_TIMEOUT,
-    ReplayExecutionEngine, Result, ScopeInvalidationBucket, StreamExt, eyre,
+    ReplayExecutionEngine, Result, ScopeInvalidationBucket, eyre,
 };
-use async_nats::jetstream;
 use sinex_db::repositories::{DbPoolExt, EventRepositoryTx};
 use sinex_node_sdk::derived_node::invalidation::{DerivedScopeInvalidation, INVALIDATION_SUBJECT};
-use sinex_node_sdk::runtime::stream::{
-    Checkpoint, MaterialReplayContext, NodeScanAck, NodeScanCommand, NodeScanProgress,
-    ReplayScopeFilters as NodeReplayScopeFilters, ResolvedReplayMaterial, ScanArgs, TimeHorizon,
-};
-use sinex_primitives::domain::{EventSource, EventType, NodeName, SourceIdentifier};
+use sinex_node_sdk::runtime::stream::ResolvedReplayMaterial;
+use sinex_primitives::domain::{EventSource, EventType, SourceIdentifier};
 use sinex_primitives::events::{Event as StoredEvent, Provenance};
-use sinex_primitives::{Id, SinexError, Timestamp, Uuid, transport};
+use sinex_primitives::{Id, Timestamp, Uuid, transport};
 use std::collections::{HashMap, HashSet};
-use std::sync::Arc;
 use std::time::Duration;
-use tracing::{debug, error, info, warn};
+use tracing::debug;
 
-use sinex_db::replay::state_machine::{
-    ReplayCheckpoint, ReplayOperation, ReplayScope, ReplayState, ReplayStateMachine,
-};
+use sinex_db::replay::state_machine::ReplayScope;
 
 impl ReplayExecutionEngine {
     pub(crate) async fn collect_scope_events(
