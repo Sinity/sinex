@@ -49,6 +49,7 @@ use sinex_primitives::rpc::{
     nodes::{NodeDrainRequest, NodeResumeRequest, NodeSetHorizonRequest},
     ops::{Operation as OpsOperation, OpsGetResponse, OpsListResponse, OpsStartResponse},
     replay::{
+        REPLAY_LIST_OPERATIONS_METHOD, REPLAY_OPERATION_STATUS_METHOD,
         ReplayApproveRequest, ReplayApproveResponse, ReplayCancelRequest, ReplayCancelResponse,
         ReplayCreateRequest, ReplayCreateResponse, ReplayExecuteRequest, ReplayExecuteResponse,
         ReplayListRequest, ReplayListResponse, ReplayOperation, ReplayPreviewRequest,
@@ -744,14 +745,8 @@ impl GatewayClient {
         let req = ReplayStatusRequest {
             operation_id: operation_id.to_string(),
         };
-        let result = self
-            .call_rpc(
-                methods::REPLAY_OPERATION_STATUS,
-                serde_json::to_value(&req)?,
-            )
-            .await?;
-
-        let response: ReplayStatusResponse = serde_json::from_value(result)?;
+        let response: ReplayStatusResponse =
+            self.call_typed(REPLAY_OPERATION_STATUS_METHOD, &req).await?;
         Ok(response.operation)
     }
 
@@ -772,11 +767,8 @@ impl GatewayClient {
             node: node.map(String::from),
             limit,
         };
-        let result = self
-            .call_rpc(methods::REPLAY_LIST_OPERATIONS, serde_json::to_value(&req)?)
-            .await?;
-
-        let response: ReplayListResponse = serde_json::from_value(result)?;
+        let response: ReplayListResponse =
+            self.call_typed(REPLAY_LIST_OPERATIONS_METHOD, &req).await?;
         Ok(response.operations)
     }
 

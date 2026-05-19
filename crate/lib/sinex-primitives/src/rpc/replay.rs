@@ -4,9 +4,28 @@
 //! The gateway uses sinex-db types internally; these are wire-compatible equivalents.
 
 use crate::domain::{NodeName, ReplayOutcome};
+use crate::rpc::{RpcDomain, RpcMethod, RpcMutability, RpcRole, RpcStability, methods};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
+
+pub const REPLAY_OPERATION_STATUS_METHOD: RpcMethod<ReplayStatusRequest, ReplayStatusResponse> =
+    RpcMethod::new(
+        methods::REPLAY_OPERATION_STATUS,
+        RpcRole::ReadOnly,
+        RpcDomain::Replay,
+        RpcStability::Experimental,
+        RpcMutability::ReadOnly,
+    );
+
+pub const REPLAY_LIST_OPERATIONS_METHOD: RpcMethod<ReplayListRequest, ReplayListResponse> =
+    RpcMethod::new(
+        methods::REPLAY_LIST_OPERATIONS,
+        RpcRole::ReadOnly,
+        RpcDomain::Replay,
+        RpcStability::Experimental,
+        RpcMutability::ReadOnly,
+    );
 
 /// Replay operation states with well-defined transitions.
 ///
