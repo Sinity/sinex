@@ -6,7 +6,8 @@ use serde_json::Value;
 use crate::events::{
     SourceMaterial,
     payloads::{
-        TaskCancelledPayload, TaskCompletedPayload, TaskCreatedPayload, TaskUpdatedPayload,
+        TaskCancelledPayload, TaskCompletedPayload, TaskCreatedPayload, TaskStatusChangedPayload,
+        TaskUpdatedPayload,
     },
 };
 use crate::rpc::{RpcDomain, RpcMethod, RpcMutability, RpcRole, RpcStability, methods};
@@ -37,6 +38,15 @@ pub const TASKS_UPDATE_METHOD: RpcMethod<TaskUpdateRequest, TaskUpdateResponse> 
     RpcStability::Experimental,
     RpcMutability::Mutating,
 );
+
+pub const TASKS_STATUS_SET_METHOD: RpcMethod<TaskStatusSetRequest, TaskStatusSetResponse> =
+    RpcMethod::new(
+        methods::TASKS_STATUS_SET,
+        RpcRole::Write,
+        RpcDomain::Tasks,
+        RpcStability::Experimental,
+        RpcMutability::Mutating,
+    );
 
 pub const TASKS_CANCEL_METHOD: RpcMethod<TaskCancelRequest, TaskCancelResponse> = RpcMethod::new(
     methods::TASKS_CANCEL,
@@ -119,6 +129,18 @@ pub struct TaskUpdateRequest {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct TaskStatusSetRequest {
+    pub task_id: Uuid,
+    pub status: TaskStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub changed_at: Option<Timestamp>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub external_version: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct TaskCancelRequest {
     pub task_id: Uuid,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -160,6 +182,7 @@ pub struct TaskEventResponse<T> {
 
 pub type TaskCreateResponse = TaskEventResponse<TaskCreatedPayload>;
 pub type TaskUpdateResponse = TaskEventResponse<TaskUpdatedPayload>;
+pub type TaskStatusSetResponse = TaskEventResponse<TaskStatusChangedPayload>;
 pub type TaskCompleteResponse = TaskEventResponse<TaskCompletedPayload>;
 pub type TaskCancelResponse = TaskEventResponse<TaskCancelledPayload>;
 

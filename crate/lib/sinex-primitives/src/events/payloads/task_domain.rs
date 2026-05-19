@@ -6,7 +6,7 @@ use sinex_macros::EventPayload;
 
 use crate::task_domain::{
     TaskCancelledInput, TaskCompletedInput, TaskCreatedInput, TaskExternalRef, TaskFieldUpdate,
-    TaskSourceSystem, TaskUpdatedInput,
+    TaskSourceSystem, TaskStatus, TaskStatusChangedInput, TaskUpdatedInput,
 };
 use crate::{Timestamp, Uuid};
 
@@ -87,6 +87,33 @@ impl From<TaskUpdatedPayload> for TaskUpdatedInput {
             due_at: payload.due_at,
             priority: payload.priority,
             external_refs: payload.external_refs,
+            reason: payload.reason,
+            external_version: payload.external_version,
+        }
+    }
+}
+
+/// Canonical non-terminal task status transition event.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
+#[event_payload(source = "task", event_type = "task.status_changed", version = "1.0.0")]
+pub struct TaskStatusChangedPayload {
+    pub task_id: Uuid,
+    pub status: TaskStatus,
+    pub changed_at: Timestamp,
+    pub actor: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub external_version: Option<String>,
+}
+
+impl From<TaskStatusChangedPayload> for TaskStatusChangedInput {
+    fn from(payload: TaskStatusChangedPayload) -> Self {
+        Self {
+            task_id: payload.task_id,
+            status: payload.status,
+            changed_at: payload.changed_at,
+            actor: payload.actor,
             reason: payload.reason,
             external_version: payload.external_version,
         }

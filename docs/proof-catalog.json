@@ -4066,6 +4066,13 @@
       "type_name": "sinex_primitives::events::payloads::task_domain::TaskCreatedPayload"
     },
     {
+      "subject": "event_payload:task/task.status_changed/1.0.0",
+      "source": "task",
+      "event_type": "task.status_changed",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::task_domain::TaskStatusChangedPayload"
+    },
+    {
       "subject": "event_payload:task/task.updated/1.0.0",
       "source": "task",
       "event_type": "task.updated",

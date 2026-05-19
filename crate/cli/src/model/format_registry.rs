@@ -314,6 +314,10 @@ pub fn build() -> HashMap<&'static str, FormatCapability> {
         FormatCapability::single_shot(TABLE_JSON_YAML),
     );
     m.insert(
+        "tasks status",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
+    m.insert(
         "curation proposals",
         FormatCapability::single_shot(TABLE_JSON_YAML),
     );
@@ -723,6 +727,7 @@ fn effect_for_path(path: &str, capability: &FormatCapability) -> CommandEffect {
         "state snapshot",
         "tasks cancel",
         "tasks complete",
+        "tasks status",
         "tasks update",
     ];
 
@@ -773,6 +778,7 @@ fn mutation_guards_for_path(path: &str) -> &'static [CommandMutationGuard] {
         | "sources stage"
         | "tasks cancel"
         | "tasks complete"
+        | "tasks status"
         | "tasks update" => &[RpcAuth],
         _ => &[],
     }
@@ -865,6 +871,7 @@ fn backing_rpc_methods_for_path(path: &str) -> &'static [&'static str] {
         "tasks complete" => &[methods::TASKS_COMPLETE],
         "tasks list" => &[methods::TASKS_LIST],
         "tasks state" => &[methods::TASKS_STATE_GET],
+        "tasks status" => &[methods::TASKS_STATUS_SET],
         "tasks update" => &[methods::TASKS_UPDATE],
         "curation proposals" => &[methods::CURATION_PROPOSALS_LIST],
         "curation judge" => &[methods::CURATION_JUDGMENTS_RECORD],

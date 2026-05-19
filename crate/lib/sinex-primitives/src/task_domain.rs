@@ -112,6 +112,7 @@ pub struct TaskState {
 pub enum TaskLifecycleInput {
     Created(TaskCreatedInput),
     Updated(TaskUpdatedInput),
+    StatusChanged(TaskStatusChangedInput),
     Completed(TaskCompletedInput),
     Cancelled(TaskCancelledInput),
 }
@@ -169,6 +170,18 @@ pub struct TaskUpdatedInput {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct TaskStatusChangedInput {
+    pub task_id: Uuid,
+    pub status: TaskStatus,
+    pub changed_at: Timestamp,
+    pub actor: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub external_version: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct TaskCompletedInput {
     pub task_id: Uuid,
     pub completed_at: Timestamp,
@@ -203,6 +216,9 @@ pub fn reduce_task_event(
         }
         TaskLifecycleInput::Updated(updated) => {
             reduce_updated(state, event_id, updated, observed_at)
+        }
+        TaskLifecycleInput::StatusChanged(status_changed) => {
+            reduce_status_changed(state, event_id, status_changed, observed_at)
         }
         TaskLifecycleInput::Completed(completed) => {
             reduce_completed(state, event_id, completed, observed_at)
@@ -332,6 +348,48 @@ fn reduce_completed(
     }
 
     state.status = TaskStatus::Completed;
+    state.last_event_id = event_id;
+    state.updated_at = observed_at;
+    state.state_hash = hash_task_state(&state);
+    Ok(state)
+}
+
+fn reduce_status_changed(
+    state: Option<TaskState>,
+    event_id: Uuid,
+    status_changed: TaskStatusChangedInput,
+    observed_at: Timestamp,
+) -> Result<TaskState> {
+    let mut state = state.ok_or_else(|| {
+        SinexError::validation("task.status_changed requires an existing task")
+            .with_context("task_id", status_changed.task_id.to_string())
+    })?;
+    if state.task_id != status_changed.task_id {
+        return Err(
+            SinexError::validation("task.status_changed task_id does not match state")
+                .with_context("state_task_id", state.task_id.to_string())
+                .with_context("event_task_id", status_changed.task_id.to_string()),
+        );
+    }
+    if status_changed.status.is_terminal() {
+        return Err(
+            SinexError::validation("task.status_changed cannot target a terminal status")
+                .with_context("task_id", status_changed.task_id.to_string())
+                .with_context("status", status_changed.status.to_string()),
+        );
+    }
+    if state.status.is_terminal() {
+        return Err(SinexError::validation("terminal task cannot change status")
+            .with_context("task_id", status_changed.task_id.to_string())
+            .with_context("status", format!("{:?}", state.status)));
+    }
+    if state.status == status_changed.status {
+        return Err(SinexError::validation("task already has requested status")
+            .with_context("task_id", status_changed.task_id.to_string())
+            .with_context("status", status_changed.status.to_string()));
+    }
+
+    state.status = status_changed.status;
     state.last_event_id = event_id;
     state.updated_at = observed_at;
     state.state_hash = hash_task_state(&state);

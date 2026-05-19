@@ -6,7 +6,7 @@ use color_eyre::eyre::eyre;
 use sinex_primitives::Uuid;
 use sinex_primitives::rpc::tasks::{
     TaskCancelRequest, TaskCompleteRequest, TaskListRequest, TaskListResponse, TaskStateGetRequest,
-    TaskStateResponse, TaskUpdateRequest,
+    TaskStateResponse, TaskStatusSetRequest, TaskUpdateRequest,
 };
 use sinex_primitives::task_domain::{TaskFieldUpdate, TaskStatus};
 
@@ -34,6 +34,7 @@ impl TasksCommand {
             TasksSubcommand::Complete(cmd) => cmd.execute(client, format).await,
             TasksSubcommand::List(cmd) => cmd.execute(client, format).await,
             TasksSubcommand::State(cmd) => cmd.execute(client, format).await,
+            TasksSubcommand::Status(cmd) => cmd.execute(client, format).await,
             TasksSubcommand::Update(cmd) => cmd.execute(client, format).await,
         }
     }
@@ -49,6 +50,8 @@ pub enum TasksSubcommand {
     List(TaskListCommand),
     /// Rebuild and show current task state.
     State(TaskStateCommand),
+    /// Set a non-terminal task status.
+    Status(TaskStatusCommand),
     /// Update task metadata.
     Update(TaskUpdateCommand),
 }
@@ -208,6 +211,46 @@ impl TaskUpdateCommand {
             })
             .await?;
         render_task_response(&response, format, "Task updated")
+    }
+}
+
+#[derive(Debug, Args)]
+pub struct TaskStatusCommand {
+    /// Task UUID.
+    task_id: String,
+
+    /// New non-terminal status: open, started, blocked, or deferred.
+    #[arg(long)]
+    status: String,
+
+    /// Status change reason or note.
+    #[arg(long)]
+    reason: Option<String>,
+
+    /// Status change time. Accepts RFC3339, YYYY-MM-DD, or relative forms.
+    #[arg(long)]
+    changed_at: Option<String>,
+}
+
+impl TaskStatusCommand {
+    async fn execute(&self, client: &GatewayClient, format: OutputFormat) -> Result<()> {
+        let task_id = parse_task_id(&self.task_id)?;
+        let status = parse_task_status(&self.status)?;
+        let changed_at = self
+            .changed_at
+            .as_deref()
+            .map(parse_time_input)
+            .transpose()?;
+        let response = client
+            .tasks_status_set(TaskStatusSetRequest {
+                task_id,
+                status,
+                changed_at,
+                reason: self.reason.clone(),
+                external_version: None,
+            })
+            .await?;
+        render_task_response(&response, format, "Task status changed")
     }
 }
 

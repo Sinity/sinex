@@ -98,10 +98,11 @@ use sinex_primitives::rpc::{
     },
     tasks::{
         TASKS_CANCEL_METHOD, TASKS_COMPLETE_METHOD, TASKS_CREATE_METHOD, TASKS_LIST_METHOD,
-        TASKS_STATE_GET_METHOD, TASKS_UPDATE_METHOD, TaskCancelRequest, TaskCancelResponse,
-        TaskCompleteRequest, TaskCompleteResponse, TaskCreateRequest, TaskCreateResponse,
-        TaskListRequest, TaskListResponse, TaskStateGetRequest, TaskStateResponse,
-        TaskUpdateRequest, TaskUpdateResponse,
+        TASKS_STATE_GET_METHOD, TASKS_STATUS_SET_METHOD, TASKS_UPDATE_METHOD, TaskCancelRequest,
+        TaskCancelResponse, TaskCompleteRequest, TaskCompleteResponse, TaskCreateRequest,
+        TaskCreateResponse, TaskListRequest, TaskListResponse, TaskStateGetRequest,
+        TaskStateResponse, TaskStatusSetRequest, TaskStatusSetResponse, TaskUpdateRequest,
+        TaskUpdateResponse,
     },
     telemetry::{
         AssemblyStatsBucket, CommandFrequencyEntry, CurrentDeviceStateEntry, CurrentHealthEntry,
@@ -895,6 +896,14 @@ impl GatewayClient {
     /// Update mutable task metadata.
     pub async fn tasks_update(&self, request: TaskUpdateRequest) -> Result<TaskUpdateResponse> {
         self.call_typed(TASKS_UPDATE_METHOD, &request).await
+    }
+
+    /// Set a non-terminal task status.
+    pub async fn tasks_status_set(
+        &self,
+        request: TaskStatusSetRequest,
+    ) -> Result<TaskStatusSetResponse> {
+        self.call_typed(TASKS_STATUS_SET_METHOD, &request).await
     }
 
     /// Fetch current task state.
