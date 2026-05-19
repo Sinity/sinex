@@ -9,6 +9,7 @@ use color_eyre::Result;
 use color_eyre::eyre::{WrapErr, eyre};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use sinex_primitives::Uuid;
 use sinex_primitives::domain::{EventSource, EventType};
 use sinex_primitives::events::Event;
 use sinex_primitives::ids::Id;
@@ -17,7 +18,9 @@ use sinex_primitives::rpc::methods;
 use sinex_primitives::rpc::privacy::PrivateModeStateResponse;
 use sinex_primitives::rpc::sources::{SourcesReadinessGetRequest, SourcesReadinessListRequest};
 use sinex_primitives::rpc::system::SystemHealthResponse;
-use sinex_primitives::rpc::tasks::{TaskListRequest, TaskListResponse};
+use sinex_primitives::rpc::tasks::{
+    TaskListRequest, TaskListResponse, TaskStateGetRequest, TaskStateResponse,
+};
 use sinex_primitives::task_domain::TaskStatus;
 use sinex_primitives::temporal::Timestamp;
 use std::io::{BufRead, Write};
@@ -130,6 +133,11 @@ struct TasksListArgs {
     limit: Option<u32>,
 }
 
+#[derive(Debug, Deserialize, Serialize)]
+struct TaskStateArgs {
+    task_id: Uuid,
+}
+
 const fn default_true() -> bool {
     true
 }
@@ -180,6 +188,13 @@ pub fn tool_catalog() -> Vec<McpCatalogEntry> {
             kind: McpSurfaceKind::Tool,
             description: "Read-only current task-state search and filtering.",
             backing_rpc_methods: &[methods::TASKS_LIST],
+            read_only: true,
+        },
+        McpCatalogEntry {
+            name: "sinex.task_state",
+            kind: McpSurfaceKind::Tool,
+            description: "Read-only current state for one task workflow object.",
+            backing_rpc_methods: &[methods::TASKS_STATE_GET],
             read_only: true,
         },
     ]
@@ -297,6 +312,18 @@ pub fn tools() -> Vec<McpTool> {
                 "additionalProperties": false
             }),
         },
+        McpTool {
+            name: "sinex.task_state",
+            description: "Read-only current state for one task workflow object.",
+            input_schema: json!({
+                "type": "object",
+                "required": ["task_id"],
+                "properties": {
+                    "task_id": { "type": "string", "format": "uuid" }
+                },
+                "additionalProperties": false
+            }),
+        },
     ]
 }
 
@@ -383,6 +410,7 @@ pub async fn call_tool(client: &GatewayClient, name: &str, arguments: Value) -> 
         "sinex.privacy_status" => privacy_status(client, arguments).await,
         "sinex.system_health" => system_health(client, arguments).await,
         "sinex.tasks_list" => tasks_list(client, arguments).await,
+        "sinex.task_state" => task_state(client, arguments).await,
         other => Err(eyre!("unknown MCP tool: {other}")),
     }
 }
@@ -497,6 +525,20 @@ async fn tasks_list(client: &GatewayClient, arguments: Value) -> Result<Value> {
     let response: TaskListResponse = client.tasks_list(request).await?;
     Ok(envelope(
         "sinex.tasks_list",
+        json!(args),
+        json!({ "result": response }),
+    ))
+}
+
+async fn task_state(client: &GatewayClient, arguments: Value) -> Result<Value> {
+    let args: TaskStateArgs = serde_json::from_value(arguments)?;
+    let response: TaskStateResponse = client
+        .tasks_state_get(TaskStateGetRequest {
+            task_id: args.task_id,
+        })
+        .await?;
+    Ok(envelope(
+        "sinex.task_state",
         json!(args),
         json!({ "result": response }),
     ))
