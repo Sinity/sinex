@@ -29,7 +29,10 @@ use sinex_primitives::rpc::{
         LIFECYCLE_TOMBSTONE_PREVIEW_METHOD, LIFECYCLE_TOMBSTONE_STATUS_METHOD,
     },
     methods,
-    nodes::{NODES_DRAIN_METHOD, NODES_RESUME_METHOD, NODES_SET_HORIZON_METHOD},
+    nodes::{
+        NODES_DRAIN_METHOD, NODES_HEALTH_METHOD, NODES_LIST_ACTIVE_METHOD, NODES_LIST_METHOD,
+        NODES_RESUME_METHOD, NODES_SET_HORIZON_METHOD,
+    },
     ops::{OPS_CANCEL_METHOD, OPS_GET_METHOD, OPS_LIST_METHOD, OPS_START_METHOD},
     privacy::{
         PRIVACY_PRIVATE_MODE_DISABLE_METHOD, PRIVACY_PRIVATE_MODE_ENABLE_METHOD,
@@ -423,6 +426,42 @@ impl RpcRegistry {
         self
     }
 
+    /// Register a typed NATS-backed RPC handler.
+    pub(crate) fn nats_typed_rpc<Req, Resp, F>(mut self, method: RpcMethod<Req, Resp>, f: F) -> Self
+    where
+        Req: DeserializeOwned + 'static,
+        Resp: Serialize + 'static,
+        F: for<'a> Fn(
+                &'a async_nats::Client,
+                &'a sinex_primitives::environment::SinexEnvironment,
+                Req,
+            ) -> Pin<Box<dyn Future<Output = Result<Resp>> + Send + 'a>>
+            + Send
+            + Sync
+            + 'static,
+    {
+        let f = Arc::new(f);
+        self.methods.insert(
+            method.name,
+            RegistryEntry {
+                handler: Arc::new(move |params, services, _auth| {
+                    let f = Arc::clone(&f);
+                    Box::pin(async move {
+                        let nats = services.nats_client().ok_or_else(|| {
+                            SinexError::configuration("NATS client is not available")
+                        })?;
+                        let env = services.environment();
+                        let request = decode_rpc_params(method.name, params)?;
+                        let response = f(nats, env, request).await?;
+                        encode_rpc_response(method.name, &response)
+                    })
+                }),
+                required_role: method.role.into(),
+            },
+        );
+        self
+    }
+
     /// Register a typed NATS-backed RPC handler with auth context.
     pub(crate) fn nats_auth_typed_rpc<Req, Resp, F>(
         mut self,
@@ -699,11 +738,7 @@ fn build_registry_impl() -> RpcRegistry {
         .service_typed_rpc(DLQ_LIST_METHOD, boxed!(handle_dlq_list))
         .service_typed_rpc(DLQ_PEEK_METHOD, boxed!(handle_dlq_peek))
         // Node listing (ReadOnly)
-        .nats_rpc(
-            methods::NODES_LIST,
-            Role::ReadOnly,
-            boxed!(handle_nodes_list, 3),
-        )
+        .nats_typed_rpc(NODES_LIST_METHOD, boxed!(handle_nodes_list, 3))
         // Replay status/list (ReadOnly)
         .replay_typed_rpc(
             REPLAY_OPERATION_STATUS_METHOD,
@@ -714,16 +749,8 @@ fn build_registry_impl() -> RpcRegistry {
             boxed!(handle_replay_list_operations, 3),
         )
         // Node registry status methods (ReadOnly)
-        .pool_rpc(
-            methods::NODES_LIST_ACTIVE,
-            Role::ReadOnly,
-            boxed!(handle_nodes_list_active),
-        )
-        .pool_rpc(
-            methods::NODES_HEALTH,
-            Role::ReadOnly,
-            boxed!(handle_nodes_health),
-        )
+        .pool_typed_rpc(NODES_LIST_ACTIVE_METHOD, boxed!(handle_nodes_list_active))
+        .pool_typed_rpc(NODES_HEALTH_METHOD, boxed!(handle_nodes_health))
         .pool_typed_rpc(AUTOMATA_STATUS_METHOD, boxed!(handle_automata_status))
         .pool_typed_rpc(INGESTORS_STATUS_METHOD, boxed!(handle_ingestors_status))
         // Source material inventory (ReadOnly)

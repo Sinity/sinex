@@ -75,8 +75,8 @@ fn is_missing_node_state_bucket(error: &async_nats::jetstream::context::KeyValue
 pub async fn handle_nodes_list(
     nats_client: &async_nats::Client,
     env: &SinexEnvironment,
-    _params: Value,
-) -> Result<Value> {
+    _request: NodesListRequest,
+) -> Result<NodesListResponse> {
     // Query node status from KV store
     let js = async_nats::jetstream::new(nats_client.clone());
 
@@ -87,10 +87,7 @@ pub async fn handle_nodes_list(
     let kv = match js.get_key_value(&kv_bucket_name).await {
         Ok(kv) => kv,
         Err(error) if is_missing_node_state_bucket(&error) => {
-            return serde_json::to_value(NodesListResponse { nodes: Vec::new() }).map_err(|e| {
-                SinexError::serialization("failed to serialize node list response")
-                    .with_std_error(&e)
-            });
+            return Ok(NodesListResponse { nodes: Vec::new() });
         }
         Err(error) => {
             return Err(SinexError::kv("Failed to open node state bucket")
@@ -139,9 +136,7 @@ pub async fn handle_nodes_list(
         nodes.push(state);
     }
 
-    serde_json::to_value(NodesListResponse { nodes }).map_err(|e| {
-        SinexError::serialization("failed to serialize node list response").with_std_error(&e)
-    })
+    Ok(NodesListResponse { nodes })
 }
 
 /// Handle POST /nodes/{id}/drain - pause node processing
