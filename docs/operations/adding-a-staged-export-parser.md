@@ -341,6 +341,67 @@ The pattern uses one inline `mod tests` per parser. Cover:
 See `crate/core/sinex-source-worker/src/sources/music.rs::tests`,
 `bookmark.rs::tests`, `messaging.rs::tests` for concrete examples.
 
+### 9a. Parser-family acceptance fixture
+
+Every #1070 parser child should include at least one representative
+`ParserFixtureHarness` fixture with a `FixtureAcceptanceContract`. That
+contract is the shared acceptance vocabulary for parser backlog work:
+
+```rust
+FixtureSpec {
+    name: "provider representative export".to_string(),
+    description: "representative parser-family fixture".to_string(),
+    input_shape_kind: InputShapeKind::StaticFile,
+    material_bytes: fixture_bytes,
+    material_path: None,
+    expectations: vec![FixtureExpectation {
+        index: 0,
+        assertions: vec![
+            FixtureAssertion::EventSource { expected: "<source>".to_string() },
+            FixtureAssertion::EventType { expected: "<event_type>".to_string() },
+            FixtureAssertion::Timestamp { value: expected_ts },
+            FixtureAssertion::Timing { expected: expected_timing },
+            FixtureAssertion::Anchor { expected: expected_anchor },
+            FixtureAssertion::OccurrenceKey {
+                expected_fields: vec![("<field>".to_string(), "<value>".to_string())],
+            },
+            FixtureAssertion::PrivacyContext { expected: ProcessingContext::Document },
+            FixtureAssertion::FieldPrivacyLogPresent,
+            FixtureAssertion::ParserMetadata {
+                parser_id: "<parser-id>".to_string(),
+                parser_version: "1.0.0".to_string(),
+            },
+        ],
+        golden_artifact: None,
+    }],
+    acceptance: Some(FixtureAcceptanceContract {
+        source_unit_id: "<source-unit-id>".to_string(),
+        proof_obligations: vec![
+            "timestamp_intrinsic".to_string(),
+            "anchor_<kind>".to_string(),
+        ],
+        require_timestamp: true,
+        require_timing: true,
+        require_anchor: true,
+        require_occurrence_identity: true,
+        require_privacy_context: true,
+        require_parser_metadata: true,
+        require_privacy_log_for_non_public: true,
+    }),
+    expect_no_intents: false,
+    expect_error: false,
+    expected_error_contains: None,
+    tags: vec!["parser-family".to_string()],
+}
+```
+
+When the source descriptor is available, call
+`spec.acceptance_failures(&parser.manifest(), Some(&SOURCE_UNIT_DESCRIPTOR))`
+and assert that it returns no failures. The harness also runs the same
+contract against the parser manifest during fixture execution, so missing
+timestamp, occurrence, privacy, event-pair, or proof-obligation evidence is
+visible as a fixture failure instead of a review-only checklist.
+
 ### 10. Verification
 
 ```bash

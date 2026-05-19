@@ -93,7 +93,8 @@ pub use declarative::{
 };
 pub use fingerprint::{DriftAccumulator, DriftEvent, SourceRecordFingerprint};
 pub use fixture::{
-    FixtureAssertion, FixtureExpectation, FixtureSpec, ParserFixtureHarness, ParserTestContext,
+    FixtureAcceptanceContract, FixtureAssertion, FixtureExpectation, FixtureSpec,
+    ParserFixtureHarness, ParserTestContext,
 };
 pub use weechat::{WeeChatLogConfig, WeeChatLogParser};
 
