@@ -2,19 +2,30 @@ use serde_json::json;
 use sinex_db::DbPoolExt;
 use sinex_gateway::handlers::{handle_curation_list_proposals, handle_curation_record_judgment};
 use sinex_gateway::rpc_server::RpcAuthContext;
+use sinex_primitives::JsonValue;
 use sinex_primitives::events::DynamicPayload;
-use sinex_primitives::events::payloads::{CurationJudgmentDecision, CurationProposalPayload};
+use sinex_primitives::events::payloads::{
+    CurationJudgmentActorKind, CurationJudgmentDecision, CurationProposalPayload,
+};
 use sinex_primitives::events::{EventPayload, payloads::CurationJudgmentPayload};
 use sinex_primitives::query::EventQueryResult;
-use sinex_primitives::{Id, JsonValue};
+use sinex_primitives::rpc::curation::{
+    CurationListProposalsRequest, CurationRecordJudgmentRequest,
+};
 use xtask::sandbox::prelude::*;
 
 #[sinex_test]
 async fn curation_list_proposals_returns_pending_events(ctx: TestContext) -> TestResult<()> {
     insert_fixture_proposal(&ctx).await?;
 
-    let value = handle_curation_list_proposals(ctx.pool(), json!({ "status": "pending" })).await?;
-    let result: EventQueryResult = serde_json::from_value(value)?;
+    let result = handle_curation_list_proposals(
+        ctx.pool(),
+        CurationListProposalsRequest {
+            status: "pending".to_string(),
+            ..Default::default()
+        },
+    )
+    .await?;
 
     match result {
         EventQueryResult::Events { events, .. } => {
@@ -40,27 +51,31 @@ async fn curation_record_judgment_persists_synthesis_event(ctx: TestContext) -> 
 
     let value = handle_curation_record_judgment(
         ctx.pool(),
-        json!({
-            "proposal_event_id": proposal_event_id,
-            "actor_kind": "test_fixture",
-            "decision": "accept",
-            "comment": "fixture accepted"
-        }),
+        CurationRecordJudgmentRequest {
+            proposal_event_id,
+            actor_kind: CurationJudgmentActorKind::TestFixture,
+            actor_id: None,
+            decision: CurationJudgmentDecision::Accept,
+            corrected_payload: None,
+            comment: Some("fixture accepted".to_string()),
+            authorization_context: None,
+        },
         &auth,
     )
     .await?;
 
-    let judgment: CurationJudgmentPayload = serde_json::from_value(value["judgment"].clone())?;
+    let judgment: CurationJudgmentPayload = value.judgment;
     assert_eq!(judgment.actor_id, auth.actor_id());
     assert_eq!(judgment.decision, CurationJudgmentDecision::Accept);
 
-    let event_id = value["event"]["id"]
-        .as_str()
+    let event_id = value
+        .event
+        .id
         .ok_or_else(|| color_eyre::eyre::eyre!("judgment response event missing id"))?;
     let persisted = ctx
         .pool()
         .events()
-        .get_by_id(Id::from_uuid(event_id.parse()?))
+        .get_by_id(event_id)
         .await?
         .ok_or_else(|| color_eyre::eyre::eyre!("judgment event not persisted"))?;
     assert_eq!(persisted.source.as_str(), "curation");
