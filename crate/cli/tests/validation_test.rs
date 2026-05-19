@@ -75,7 +75,8 @@ async fn mcp_lists_first_slice_read_only_tools() -> TestResult<()> {
             "sinex.system_health",
             "sinex.tasks_list",
             "sinex.task_state",
-            "sinex.automata_status"
+            "sinex.automata_status",
+            "sinex.ingestors_status"
         ]
     );
     assert_read_only_tool_names()?;
@@ -405,6 +406,33 @@ async fn mcp_automata_status_call_uses_gateway_fixture() -> TestResult<()> {
     Ok(())
 }
 
+#[sinex_test]
+async fn mcp_ingestors_status_call_uses_gateway_fixture() -> TestResult<()> {
+    let server = mount_mcp_gateway_fixture().await;
+    let client = fixture_gateway_client(&server)?;
+
+    let response = call_tool(
+        &client,
+        "sinex.ingestors_status",
+        json!({ "stale_after_secs": 120, "recent_window_secs": 60 }),
+    )
+    .await?;
+
+    assert_eq!(response["tool"], "sinex.ingestors_status");
+    assert_eq!(response["query"]["recent_window_secs"], 60);
+    assert_eq!(response["items"]["result"]["recent_window_secs"], 60);
+    assert_eq!(
+        response["items"]["result"]["ingestors"][0]["node_name"],
+        "terminal.atuin-history"
+    );
+    assert_eq!(
+        response["items"]["result"]["ingestors"][0]["current_health"],
+        "healthy"
+    );
+    assert_eq!(response["redaction"]["raw_samples"], false);
+    Ok(())
+}
+
 async fn mount_mcp_gateway_fixture() -> MockServer {
     let server = MockServer::start().await;
     Mock::given(method("POST"))
@@ -591,6 +619,32 @@ async fn mount_mcp_gateway_fixture() -> MockServer {
                             "recent_output_count": 4,
                             "last_output_at": "2026-05-19T11:59:40Z",
                             "last_replay_at": null
+                        }
+                    ]
+                }),
+                "ingestors.status" => json!({
+                    "generated_at": "2026-05-19T12:00:00Z",
+                    "stale_after_secs": body["params"]["stale_after_secs"].as_u64().unwrap_or(300),
+                    "recent_window_secs": body["params"]["recent_window_secs"].as_u64().unwrap_or(300),
+                    "ingestors": [
+                        {
+                            "node_name": "terminal.atuin-history",
+                            "version": "0.4.2",
+                            "description": "fixture ingestor",
+                            "manifest_status": "registered",
+                            "live": true,
+                            "service_name": "sinex-source-worker@terminal.atuin-history.service",
+                            "instance_id": "terminal-atuin-1",
+                            "source_run_id": null,
+                            "host": "test-host",
+                            "run_status": "healthy",
+                            "started_at": "2026-05-19T11:00:00Z",
+                            "last_heartbeat_at": "2026-05-19T11:59:59Z",
+                            "current_health": "healthy",
+                            "health_changed_at": "2026-05-19T11:55:00Z",
+                            "health_reason": "fixture",
+                            "recent_output_count": 8,
+                            "last_output_at": "2026-05-19T11:59:45Z"
                         }
                     ]
                 }),

@@ -15,6 +15,7 @@ use sinex_primitives::events::Event;
 use sinex_primitives::ids::Id;
 use sinex_primitives::query::{EventQuery, LineageDirection, LineageQuery};
 use sinex_primitives::rpc::automata::AutomataStatusResponse;
+use sinex_primitives::rpc::ingestors::IngestorsStatusResponse;
 use sinex_primitives::rpc::methods;
 use sinex_primitives::rpc::privacy::PrivateModeStateResponse;
 use sinex_primitives::rpc::sources::{SourcesReadinessGetRequest, SourcesReadinessListRequest};
@@ -140,7 +141,7 @@ struct TaskStateArgs {
 }
 
 #[derive(Debug, Deserialize, Serialize)]
-struct AutomataStatusArgs {
+struct StatusWindowArgs {
     #[serde(default = "default_stale_after_secs")]
     stale_after_secs: u64,
     #[serde(default = "default_recent_window_secs")]
@@ -219,6 +220,13 @@ pub fn tool_catalog() -> Vec<McpCatalogEntry> {
             kind: McpSurfaceKind::Tool,
             description: "Read-only derived-node automata liveness, checkpoint, and lag status.",
             backing_rpc_methods: &[methods::AUTOMATA_STATUS],
+            read_only: true,
+        },
+        McpCatalogEntry {
+            name: "sinex.ingestors_status",
+            kind: McpSurfaceKind::Tool,
+            description: "Read-only source-ingestor liveness, health, and emission status.",
+            backing_rpc_methods: &[methods::INGESTORS_STATUS],
             read_only: true,
         },
     ]
@@ -351,24 +359,33 @@ pub fn tools() -> Vec<McpTool> {
         McpTool {
             name: "sinex.automata_status",
             description: "Read-only derived-node automata liveness, checkpoint, and lag status.",
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "stale_after_secs": {
-                        "type": "integer",
-                        "minimum": 1,
-                        "default": 300
-                    },
-                    "recent_window_secs": {
-                        "type": "integer",
-                        "minimum": 1,
-                        "default": 300
-                    }
-                },
-                "additionalProperties": false
-            }),
+            input_schema: status_window_schema(),
+        },
+        McpTool {
+            name: "sinex.ingestors_status",
+            description: "Read-only source-ingestor liveness, health, and emission status.",
+            input_schema: status_window_schema(),
         },
     ]
+}
+
+fn status_window_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "stale_after_secs": {
+                "type": "integer",
+                "minimum": 1,
+                "default": 300
+            },
+            "recent_window_secs": {
+                "type": "integer",
+                "minimum": 1,
+                "default": 300
+            }
+        },
+        "additionalProperties": false
+    })
 }
 
 pub fn assert_read_only_tool_names() -> Result<()> {
@@ -456,6 +473,7 @@ pub async fn call_tool(client: &GatewayClient, name: &str, arguments: Value) -> 
         "sinex.tasks_list" => tasks_list(client, arguments).await,
         "sinex.task_state" => task_state(client, arguments).await,
         "sinex.automata_status" => automata_status(client, arguments).await,
+        "sinex.ingestors_status" => ingestors_status(client, arguments).await,
         other => Err(eyre!("unknown MCP tool: {other}")),
     }
 }
@@ -590,12 +608,24 @@ async fn task_state(client: &GatewayClient, arguments: Value) -> Result<Value> {
 }
 
 async fn automata_status(client: &GatewayClient, arguments: Value) -> Result<Value> {
-    let args: AutomataStatusArgs = serde_json::from_value(arguments)?;
+    let args: StatusWindowArgs = serde_json::from_value(arguments)?;
     let response: AutomataStatusResponse = client
         .automata_status(args.stale_after_secs, args.recent_window_secs)
         .await?;
     Ok(envelope(
         "sinex.automata_status",
+        json!(args),
+        json!({ "result": response }),
+    ))
+}
+
+async fn ingestors_status(client: &GatewayClient, arguments: Value) -> Result<Value> {
+    let args: StatusWindowArgs = serde_json::from_value(arguments)?;
+    let response: IngestorsStatusResponse = client
+        .ingestors_status(args.stale_after_secs, args.recent_window_secs)
+        .await?;
+    Ok(envelope(
+        "sinex.ingestors_status",
         json!(args),
         json!({ "result": response }),
     ))
