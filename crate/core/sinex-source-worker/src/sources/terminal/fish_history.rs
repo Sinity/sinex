@@ -175,22 +175,18 @@ impl MaterialParser for FishHistoryParser {
         let payload_json = serde_json::to_value(&payload)
             .map_err(|e| ParserError::Parse(format!("payload serialization failed: {e}")))?;
 
-        Ok(vec![ParsedEventIntent {
-            id: sinex_primitives::ids::Id::new(),
-            source_unit_id: ctx.source_unit_id.clone(),
-            parser_id: ParserId::from_static("fish-history"),
-            parser_version: "1.0.0".into(),
-            event_type: EventType::from_static("command.imported"),
-            event_source: EventSource::from_static("shell.history"),
-            payload: payload_json,
-            ts_orig,
-            timing,
-            anchor: record.anchor,
-            occurrence_key: None,
-            privacy_context: ProcessingContext::Command,
-            field_privacy_log: None,
-            synthesis_parents: None,
-        }])
+        Ok(vec![ParsedEventIntent::builder()
+            .source_unit_id(ctx.source_unit_id.clone())
+            .parser_id(ParserId::from_static("fish-history"))
+            .parser_version("1.0.0")
+            .event_type(EventType::from_static("command.imported"))
+            .event_source(EventSource::from_static("shell.history"))
+            .payload(payload_json)
+            .ts_orig(ts_orig)
+            .timing(timing)
+            .anchor(record.anchor)
+            .privacy_context(ProcessingContext::Command)
+            .build()])
     }
 
     fn baseline_adapter_config() -> serde_json::Value {
