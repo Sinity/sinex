@@ -356,6 +356,63 @@ impl EventMetrics {
         }]
     }
 
+    pub(crate) fn ingestion_history(&self, limit: u64) -> Vec<IngestionHistoryEntry> {
+        if limit == 0 {
+            return Vec::new();
+        }
+        let Some(timestamp) = self.last_updated() else {
+            return Vec::new();
+        };
+
+        let events_processed = self.events_processed.load(Ordering::Relaxed);
+        let processing_errors = self.processing_errors.load(Ordering::Relaxed);
+        let mut node_stats = HashMap::new();
+        node_stats.insert("events_processed".to_string(), events_processed);
+        node_stats.insert(
+            "events_created".to_string(),
+            self.events_created.load(Ordering::Relaxed),
+        );
+        node_stats.insert(
+            "events_modified".to_string(),
+            self.events_modified.load(Ordering::Relaxed),
+        );
+        node_stats.insert(
+            "events_deleted".to_string(),
+            self.events_deleted.load(Ordering::Relaxed),
+        );
+        node_stats.insert(
+            "events_moved".to_string(),
+            self.events_moved.load(Ordering::Relaxed),
+        );
+        node_stats.insert("processing_errors".to_string(), processing_errors);
+        let scan_report = ScanReport {
+            events_processed,
+            duration: std::time::Duration::ZERO,
+            final_checkpoint: Checkpoint::timestamp(timestamp, None),
+            time_range: Some((timestamp, timestamp)),
+            node_stats,
+            successful_targets: Vec::new(),
+            failed_targets: Vec::new(),
+            warnings: if processing_errors == 0 {
+                Vec::new()
+            } else {
+                vec![format!(
+                    "filesystem watcher observed {processing_errors} processing error(s)"
+                )]
+            },
+        };
+
+        vec![IngestionHistoryEntry {
+            id: format!("filesystem-watcher:{}", timestamp.format_rfc3339()),
+            started_at: timestamp,
+            completed_at: Some(timestamp),
+            events_generated: events_processed,
+            scan_report: Some(scan_report),
+            error: (processing_errors > 0)
+                .then(|| format!("{processing_errors} filesystem processing error(s) observed")),
+        }]
+    }
+
     fn last_updated(&self) -> Option<Timestamp> {
         *self
             .last_activity
@@ -1049,10 +1106,8 @@ impl ExplorationProvider for FilesystemNode {
         })
     }
 
-    fn get_ingestion_history(&self, _limit: u64) -> NodeResult<Vec<IngestionHistoryEntry>> {
-        Err(SinexError::invalid_state(
-            "ingestion history is not implemented for filesystem watcher sources",
-        ))
+    fn get_ingestion_history(&self, limit: u64) -> NodeResult<Vec<IngestionHistoryEntry>> {
+        Ok(self.metrics.ingestion_history(limit))
     }
 
     fn export_data(&self, _path: &SanitizedPath, _format: ExportFormat) -> NodeResult<()> {
@@ -2608,11 +2663,49 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn filesystem_node_reports_ingestion_history_unavailable() -> TestResult<()> {
+    async fn filesystem_node_reports_empty_ingestion_history_before_activity() -> TestResult<()> {
         let node = FilesystemNode::new();
-        let error = sinex_node_sdk::ExplorationProvider::get_ingestion_history(&node, 10)
-            .expect_err("filesystem node should not report empty ingestion history as success");
-        assert!(error.to_string().contains("not implemented"));
+        let history = sinex_node_sdk::ExplorationProvider::get_ingestion_history(&node, 10)?;
+        assert!(history.is_empty());
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn filesystem_node_reports_metric_backed_ingestion_history() -> TestResult<()> {
+        let node = FilesystemNode::new();
+        node.metrics.record_created();
+        node.metrics.record_error();
+
+        let history = sinex_node_sdk::ExplorationProvider::get_ingestion_history(&node, 10)?;
+        assert_eq!(history.len(), 1);
+        assert!(history[0].id.starts_with("filesystem-watcher:"));
+        assert_eq!(history[0].events_generated, 1);
+        assert_eq!(history[0].completed_at, Some(history[0].started_at));
+        assert!(
+            history[0]
+                .error
+                .as_ref()
+                .is_some_and(|error| error.contains("1 filesystem processing error"))
+        );
+        let report = history[0]
+            .scan_report
+            .as_ref()
+            .ok_or_else(|| SinexError::processing("missing filesystem history scan report"))?;
+        assert_eq!(report.events_processed, 1);
+        assert_eq!(
+            report.final_checkpoint,
+            Checkpoint::timestamp(history[0].started_at, None)
+        );
+        assert_eq!(
+            report.time_range,
+            Some((history[0].started_at, history[0].started_at))
+        );
+        assert!(
+            report
+                .node_stats
+                .get("processing_errors")
+                .is_some_and(|count| *count == 1)
+        );
         Ok(())
     }
 
@@ -2670,11 +2763,7 @@ mod tests {
         );
         assert!(state.last_updated.is_some());
         assert_eq!(state.recent_activity.len(), 1);
-        assert!(
-            state.recent_activity[0]
-                .description
-                .contains("1 error(s)")
-        );
+        assert!(state.recent_activity[0].description.contains("1 error(s)"));
         assert!(
             state.recent_activity[0]
                 .data
