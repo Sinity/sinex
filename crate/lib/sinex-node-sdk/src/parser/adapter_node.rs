@@ -92,6 +92,7 @@ use sinex_primitives::primitives::Uuid;
 use sinex_primitives::privacy::{
     RuntimePrivateModeState, load_private_mode_state, save_private_mode_state,
 };
+use sinex_primitives::rpc::sources::SourceCaveat;
 use sinex_primitives::temporal::Timestamp;
 
 use crate::NodeResult;
@@ -294,6 +295,19 @@ where
             let excess = self.recent_input_drifts.len() - MAX_RECENT_INPUT_DRIFTS;
             self.recent_input_drifts.drain(0..excess);
         }
+    }
+
+    /// Return readiness caveats for the latest checkpointed input-shape drift.
+    ///
+    /// Readiness consumers should summarize the latest observed drift rather
+    /// than reclassifying raw drift deltas independently. The bounded history
+    /// remains available for future operator listings.
+    #[must_use]
+    pub fn latest_input_drift_caveats(&self) -> Vec<SourceCaveat> {
+        self.recent_input_drifts
+            .last()
+            .map(DriftEvent::readiness_caveats)
+            .unwrap_or_default()
     }
 }
 
@@ -1263,6 +1277,7 @@ mod tests {
         RuntimePrivateModeState, load_private_mode_state, private_mode_state_path,
         save_private_mode_state,
     };
+    use sinex_primitives::rpc::sources::caveat_codes;
     use sinex_primitives::{HostName, JsonValue};
     use std::collections::HashMap;
     use tokio::sync::mpsc;
@@ -1745,6 +1760,55 @@ mod tests {
         }
 
         assert_eq!(state.recent_input_drifts.len(), MAX_RECENT_INPUT_DRIFTS);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn adapter_node_state_summarizes_latest_input_drift_caveats()
+    -> xtask::sandbox::TestResult<()> {
+        let source_unit_id = SourceUnitId::from_static("desktop.clipboard");
+        let mut state = AdapterNodeState::<u64>::default();
+
+        let additive = SourceRecordFingerprint::diff(
+            source_unit_id.clone(),
+            &SourceRecordFingerprint::from_json(&serde_json::json!({ "message": "hello" })),
+            &SourceRecordFingerprint::from_json(&serde_json::json!({
+                "message": "hello",
+                "window_title": "terminal"
+            })),
+        )
+        .ok_or_else(|| color_eyre::eyre::eyre!("additive drift should be detected"))?;
+        state.record_input_drift(additive);
+
+        let additive_caveats = state.latest_input_drift_caveats();
+        assert_eq!(additive_caveats.len(), 1);
+        assert_eq!(additive_caveats[0].code, caveat_codes::SOURCE_SHAPE_CHANGED);
+
+        let degraded = SourceRecordFingerprint::diff(
+            source_unit_id,
+            &SourceRecordFingerprint::from_json(&serde_json::json!({
+                "message": "hello",
+                "count": 1
+            })),
+            &SourceRecordFingerprint::from_json(&serde_json::json!({
+                "count": "1"
+            })),
+        )
+        .ok_or_else(|| color_eyre::eyre::eyre!("degraded drift should be detected"))?;
+        state.record_input_drift(degraded);
+
+        let degraded_caveats = state.latest_input_drift_caveats();
+        let degraded_codes: Vec<&str> = degraded_caveats
+            .iter()
+            .map(|caveat| caveat.code.as_str())
+            .collect();
+        assert_eq!(
+            degraded_codes,
+            vec![
+                caveat_codes::PARSER_FIELD_TYPE_CHANGED,
+                caveat_codes::PARSER_REQUIRED_FIELD_MISSING
+            ]
+        );
         Ok(())
     }
 }
