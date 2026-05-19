@@ -1,4 +1,4 @@
-//! Tests for `sinexctl admin snapshot`.
+//! Tests for `sinexctl admin snapshot` and the `sinexctl state` snapshot aliases.
 //!
 //! These tests exercise the snapshot command using a tempdir-based fake state
 //! directory.  They do NOT require a live Postgres or NATS instance — instead
@@ -202,6 +202,46 @@ async fn dry_run_non_postgres_components_do_not_require_database_url()
     assert!(
         output.status.success(),
         "non-postgres dry-run must not require DATABASE_URL\nstdout: {stdout}\nstderr: {stderr}"
+    );
+    assert!(
+        stdout.contains("dry-run"),
+        "stdout must mention dry-run mode\nstdout: {stdout}"
+    );
+    assert!(
+        !output_path.exists(),
+        "dry-run must NOT create an archive at {output_path:?}"
+    );
+
+    Ok(())
+}
+
+/// `sinexctl state snapshot` is the operator-facing route to the same
+/// implementation as `admin snapshot`.
+#[sinex_test]
+async fn state_snapshot_dry_run_uses_snapshot_implementation() -> xtask::sandbox::TestResult<()> {
+    let state_dir = make_fake_state_dir()?;
+    let output_dir = tempfile::tempdir()?;
+    let output_path = output_dir.path().join("state-alias.tar.zst");
+
+    let output = sinexctl_bin()
+        .args([
+            "state",
+            "snapshot",
+            "--output",
+            &output_path.to_string_lossy(),
+            "--dry-run",
+            "--state-dir",
+            &state_dir.path().to_string_lossy(),
+            "--components",
+            "nats,cas,state",
+        ])
+        .output()?;
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "state snapshot dry-run must use the snapshot implementation\nstdout: {stdout}\nstderr: {stderr}"
     );
     assert!(
         stdout.contains("dry-run"),

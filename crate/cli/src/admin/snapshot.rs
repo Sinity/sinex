@@ -62,16 +62,16 @@ impl Component {
 #[command(after_help = "\
 EXAMPLES:
     # Snapshot to /var/backup/sinex with defaults (zstd level 3, all components)
-    sinexctl admin snapshot --output /var/backup/sinex/2026-05-15.sinex.tar.zst
+    sinexctl state snapshot --output /var/backup/sinex/2026-05-15.sinex.tar.zst
 
     # Higher compression for archival
-    sinexctl admin snapshot --output /var/backup/sinex/latest.sinex.tar.zst --compression 15
+    sinexctl state snapshot --output /var/backup/sinex/latest.sinex.tar.zst --compression 15
 
     # Estimate sizes without writing anything
-    sinexctl admin snapshot --output /var/backup/sinex/latest.sinex.tar.zst --dry-run
+    sinexctl state snapshot --output /var/backup/sinex/latest.sinex.tar.zst --dry-run
 
     # Automatically stop services and snapshot postgres + CAS only
-    sinexctl admin snapshot --output /var/backup/sinex/pg-cas.tar.zst \\
+    sinexctl state snapshot --output /var/backup/sinex/pg-cas.tar.zst \\
         --components postgres,cas --auto-stop
 
 RESTORE:
@@ -127,7 +127,7 @@ pub struct AdminSnapshotCommand {
 #[derive(Debug, Parser)]
 #[command(after_help = "\
 EXAMPLES:
-    sinexctl admin snapshot-inspect --archive /var/backup/sinex/latest.sinex.tar.zst
+    sinexctl state inspect --archive /var/backup/sinex/latest.sinex.tar.zst
 
 NOTES:
     This reads manifest.json from the archive and checks that non-empty
@@ -143,7 +143,7 @@ pub struct AdminSnapshotInspectCommand {
 #[derive(Debug, Parser)]
 #[command(after_help = "\
 EXAMPLES:
-    sinexctl admin snapshot-restore --archive /var/backup/sinex/latest.sinex.tar.zst \\
+    sinexctl state restore --archive /var/backup/sinex/latest.sinex.tar.zst \\
         --target-dir /tmp/sinex-restore-drill --dry-run
 
 NOTES:

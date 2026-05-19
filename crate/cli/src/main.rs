@@ -12,8 +12,8 @@ use sinexctl::commands::{
     DlqCommands, DocumentsCommand, ErrorsCommand, ExplainCommand, GatewayCommands, GitOpsCommands,
     IngestorsCommand, LifecycleCommands, NodeCommands, NodesCommand, NowCommand, OpsCommands,
     PrivacyCommand, QueryCommand, RecentCommand, ReplayCommands, ReportCommands, SourcesCommand,
-    StatusCommand, TasksCommand, TelemetryCommands, ThroughputCommand, TraceCommand, TuiCommand,
-    VerifyCommand, WatchCommand,
+    StateCommands, StatusCommand, TasksCommand, TelemetryCommands, ThroughputCommand, TraceCommand,
+    TuiCommand, VerifyCommand, WatchCommand,
 };
 use sinexctl::fmt::format_yaml;
 use sinexctl::mcp::{McpCatalogEntry, tool_catalog as mcp_tool_catalog};
@@ -167,6 +167,12 @@ enum Commands {
 
     /// Source material inventory and staging
     Sources(SourcesCommand),
+
+    /// Runtime state snapshot and restore operations
+    State {
+        #[command(subcommand)]
+        cmd: StateCommands,
+    },
 
     /// Manual canonical declarations
     Declare(DeclareCommand),
@@ -329,6 +335,9 @@ async fn main() -> color_eyre::Result<()> {
         Commands::Blob { cmd } => cmd.execute(format).await?,
         // `sinexctl admin` commands are local operations — no gateway needed.
         Commands::Admin { cmd } => cmd.execute(format)?,
+        // `sinexctl state` snapshot/restore commands are local filesystem,
+        // database, and service operations that do not use gateway RPC.
+        Commands::State { cmd } => cmd.execute(format)?,
         // `sinexctl verify --source-units` (alone) is a static descriptor /
         // payload coverage check that does not need a gateway connection
         // or auth token. Short-circuit so it can be run in CI without
@@ -356,6 +365,7 @@ async fn main() -> color_eyre::Result<()> {
                 Commands::Tui(cmd) => cmd.execute(&client).await?,
                 Commands::Config { .. } => unreachable!("Config command handled above"),
                 Commands::Demo(_) => unreachable!("Demo command handled above"),
+                Commands::State { .. } => unreachable!("State command handled above"),
                 Commands::Sources(cmd) => cmd.execute(&client, format).await?,
                 Commands::Declare(cmd) => cmd.execute(&client, format).await?,
                 Commands::Tasks(cmd) => cmd.execute(&client, format).await?,
@@ -543,6 +553,11 @@ fn command_path(cmd: &Commands) -> String {
                 SourcesSubcommand::ExplainGap(_) => "sources explain-gap".to_string(),
             }
         }
+        Commands::State { cmd } => match cmd {
+            StateCommands::Snapshot(_) => "state snapshot".to_string(),
+            StateCommands::Inspect(_) => "state inspect".to_string(),
+            StateCommands::Restore(_) => "state restore".to_string(),
+        },
         Commands::Declare(cmd) => {
             use sinexctl::commands::declare::DeclareSubcommand;
             match cmd.subcommand() {
@@ -1050,6 +1065,39 @@ mod tests {
                     "0196ed62-8f7a-7000-8000-000000000001",
                 ],
                 "tasks state",
+            ),
+            (
+                vec![
+                    "sinexctl",
+                    "state",
+                    "snapshot",
+                    "--output",
+                    "/tmp/sinex-state.tar.zst",
+                ],
+                "state snapshot",
+            ),
+            (
+                vec![
+                    "sinexctl",
+                    "state",
+                    "inspect",
+                    "--archive",
+                    "/tmp/sinex-state.tar.zst",
+                ],
+                "state inspect",
+            ),
+            (
+                vec![
+                    "sinexctl",
+                    "state",
+                    "restore",
+                    "--archive",
+                    "/tmp/sinex-state.tar.zst",
+                    "--target-dir",
+                    "/tmp/sinex-restore",
+                    "--dry-run",
+                ],
+                "state restore",
             ),
             (
                 vec!["sinexctl", "curation", "proposals"],
