@@ -137,7 +137,8 @@ const PRIVATE_MODE_CONTROL_SUBJECT: &str = "sinex.control.privacy.private_mode";
 ///   "path": "/home/user/.weechat/logs/irc.log",
 ///   "binding_flags": { "private_mode_active": false },
 ///   "private_mode_state_dir": "/var/lib/sinex",
-///   "private_mode_source_class": "desktop"
+///   "private_mode_source_class": "desktop",
+///   "private_mode_fail_closed": true
 /// }
 /// ```
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -161,6 +162,15 @@ pub struct AdapterNodeConfig {
     /// Defaults to the prefix before the first `.` in the source-unit id.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub private_mode_source_class: Option<String>,
+
+    /// Whether unreadable or malformed private-mode state should suppress
+    /// acquisition. Defaults to fail-closed when `private_mode_state_dir` is set.
+    ///
+    /// Lower-sensitivity source units may set this to `false` deliberately, but
+    /// the unavailable-state caveat still reaches binding-aware parsers through
+    /// `private_mode_state_unavailable`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub private_mode_fail_closed: Option<bool>,
 }
 
 impl AdapterNodeConfig {
@@ -186,7 +196,22 @@ impl AdapterNodeConfig {
             return Ok(bc);
         };
 
-        let state = load_private_mode_state(state_dir)?;
+        let state = match load_private_mode_state(state_dir) {
+            Ok(state) => state,
+            Err(error) => {
+                tracing::warn!(
+                    source_unit_id,
+                    state_dir = %state_dir.display(),
+                    error = %error,
+                    "private-mode state unavailable for adapter-backed source unit"
+                );
+                bc = bc.with_flag("private_mode_state_unavailable", true);
+                if self.private_mode_fail_closed.unwrap_or(true) {
+                    bc = bc.with_flag("private_mode_active", true);
+                }
+                return Ok(bc);
+            }
+        };
         let source_class = self
             .private_mode_source_class
             .as_deref()
@@ -1235,7 +1260,8 @@ mod tests {
     use sinex_primitives::parser::{ParserId, ParserManifest, SourceUnitId};
     use sinex_primitives::privacy::ProcessingContext;
     use sinex_primitives::privacy::{
-        RuntimePrivateModeState, load_private_mode_state, save_private_mode_state,
+        RuntimePrivateModeState, load_private_mode_state, private_mode_state_path,
+        save_private_mode_state,
     };
     use sinex_primitives::{HostName, JsonValue};
     use std::collections::HashMap;
@@ -1496,6 +1522,51 @@ mod tests {
         let binding = config.to_binding_config_for_source("terminal.zsh-history")?;
 
         assert!(!binding.is_truthy("private_mode_active"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn adapter_node_config_fails_closed_when_private_mode_state_is_unavailable()
+    -> xtask::sandbox::TestResult<()> {
+        let dir = tempfile::tempdir()?;
+        let path = private_mode_state_path(dir.path());
+        let parent = path
+            .parent()
+            .ok_or_else(|| color_eyre::eyre::eyre!("private-mode path must have parent"))?;
+        tokio::fs::create_dir_all(parent).await?;
+        tokio::fs::write(&path, b"{not-json").await?;
+        let config = AdapterNodeConfig {
+            private_mode_state_dir: Some(dir.path().to_path_buf()),
+            ..Default::default()
+        };
+
+        let binding = config.to_binding_config_for_source("desktop.clipboard")?;
+
+        assert!(binding.is_truthy("private_mode_active"));
+        assert!(binding.is_truthy("private_mode_state_unavailable"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn adapter_node_config_fail_open_requires_explicit_low_sensitivity_choice()
+    -> xtask::sandbox::TestResult<()> {
+        let dir = tempfile::tempdir()?;
+        let path = private_mode_state_path(dir.path());
+        let parent = path
+            .parent()
+            .ok_or_else(|| color_eyre::eyre::eyre!("private-mode path must have parent"))?;
+        tokio::fs::create_dir_all(parent).await?;
+        tokio::fs::write(&path, b"{not-json").await?;
+        let config = AdapterNodeConfig {
+            private_mode_state_dir: Some(dir.path().to_path_buf()),
+            private_mode_fail_closed: Some(false),
+            ..Default::default()
+        };
+
+        let binding = config.to_binding_config_for_source("system.metrics")?;
+
+        assert!(!binding.is_truthy("private_mode_active"));
+        assert!(binding.is_truthy("private_mode_state_unavailable"));
         Ok(())
     }
 
