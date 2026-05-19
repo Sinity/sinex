@@ -5001,7 +5001,7 @@
     {
       "subject": "xtask_command:verify.source-worker",
       "path": "verify.source-worker",
-      "about": "Source-worker integrity gate: dispatch cleanliness, NixOS binding drift, ingestor-crate deletion, workspace member count, and parser registration smoke"
+      "about": "Source-worker evidence gate: NixOS binding drift, parser registration, and privacy invocation"
     }
   ],
   "scenarios": [

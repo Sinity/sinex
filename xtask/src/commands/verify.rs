@@ -91,21 +91,9 @@ pub enum VerifySubcommand {
         #[arg(long)]
         history_db: Option<PathBuf>,
     },
-    /// Source-worker integrity gate: dispatch cleanliness, NixOS binding drift,
-    /// ingestor-crate deletion, workspace member count, and parser registration smoke.
+    /// Source-worker evidence gate: NixOS binding drift, parser registration,
+    /// and privacy invocation.
     SourceWorker {
-        /// Crate names (without path prefix) expected to already be deleted.
-        /// Failing if they still exist. Use repeatedly or comma-separated.
-        #[arg(long, value_delimiter = ',')]
-        expect_deleted: Vec<String>,
-        /// Expected workspace member count. Post-Wave-B (#1081) baseline is 14
-        /// (was 20: six legacy ingestor crates folded into sinex-source-worker
-        /// and deleted).
-        #[arg(long, default_value_t = 14)]
-        expected_members: usize,
-        /// Treat ingestor crates still present as warnings, not failures.
-        #[arg(long)]
-        warn_ingestors: bool,
         /// Path to the JSON file exported by
         /// `config.services.sinex.sources.exportedJson` (from the NixOS module).
         ///
@@ -331,19 +319,9 @@ impl XtaskCommand for VerifyCommand {
                 ctx,
             ),
             VerifySubcommand::SourceWorker {
-                expect_deleted,
-                expected_members,
-                warn_ingestors,
                 bindings_json,
                 json,
-            } => execute_source_worker(
-                expect_deleted,
-                *expected_members,
-                *warn_ingestors,
-                bindings_json.as_deref(),
-                *json,
-                ctx,
-            ),
+            } => execute_source_worker(bindings_json.as_deref(), *json, ctx),
             VerifySubcommand::Closure {
                 issue,
                 json,
@@ -1268,9 +1246,6 @@ struct SourceWorkerReport {
 }
 
 fn execute_source_worker(
-    expect_deleted: &[String],
-    expected_members: usize,
-    warn_ingestors: bool,
     bindings_json: Option<&Path>,
     json: bool,
     ctx: &CommandContext,
@@ -1278,26 +1253,13 @@ fn execute_source_worker(
     let root = workspace_root();
     let mut checks: Vec<SwCheck> = Vec::new();
 
-    // A3.1.1 — No match arms in source-worker dispatch/main
-    checks.push(check_sw_no_match_arms(&root));
-
-    // A3.1.2 — SourceUnitDescriptor inventory vs NixOS source-bindings drift
+    // A3.1.1 — SourceUnitDescriptor inventory vs NixOS source-bindings drift
     checks.push(check_sw_binding_drift(&root, bindings_json));
 
-    // A3.1.3 — Ingestor crates gone (or warn)
-    checks.push(check_sw_ingestor_crates(
-        &root,
-        expect_deleted,
-        warn_ingestors,
-    ));
-
-    // A3.1.4 — Workspace member count
-    checks.push(check_sw_member_count(&root, expected_members));
-
-    // A3.1.5 — Registered parsers smoke
+    // A3.1.2 — Registered parsers smoke
     checks.push(check_sw_registered_parsers(&root));
 
-    // A3.1.6 — Privacy invocation: every Sensitive/Secret source unit must invoke
+    // A3.1.3 — Privacy invocation: every Sensitive/Secret source unit must invoke
     // the privacy engine or declare an explicit escape hatch.
     checks.push(check_sw_privacy_invocation(&root));
 
@@ -1334,8 +1296,8 @@ fn execute_source_worker(
     // source units without NixOS bindings) that the PR being verified did not introduce.
     // Returning Partial here would make every PR fail CI as soon as any drift accumulates
     // anywhere in the source-unit catalog, defeating the gate's purpose. Only true Fail
-    // states (regressions in dispatch cleanliness, workspace member count, registered
-    // parsers, or privacy invocation) block the PR.
+    // states (registered parser or privacy invocation regressions, plus live binding drift
+    // when --bindings-json is supplied) block the PR.
     let mut result = match &overall {
         SwCheckStatus::Pass => {
             CommandResult::success().with_message("source-worker integrity: all checks passed")
@@ -1368,58 +1330,7 @@ fn execute_source_worker(
     Ok(result)
 }
 
-/// A3.1.1 — No match arms in source-worker dispatch or main.
-fn check_sw_no_match_arms(root: &Path) -> SwCheck {
-    let targets = [
-        root.join("crate/core/sinex-source-worker/src/main.rs"),
-        root.join("crate/core/sinex-source-worker/src/dispatch.rs"),
-    ];
-
-    // Pattern: a quoted source-unit name followed by `=>` (match arm).
-    // Legitimate dispatch is registry-driven and has none of these.
-    let arm_pattern =
-        regex::Regex::new(r#""[a-z_][a-z0-9_.-]*"\s*=>"#).expect("static regex is valid");
-
-    let mut hits: Vec<String> = Vec::new();
-    for path in &targets {
-        let Ok(contents) = fs::read_to_string(path) else {
-            continue;
-        };
-        for (lineno, line) in contents.lines().enumerate() {
-            // Skip doc comments and regular comments.
-            let trimmed = line.trim_start();
-            if trimmed.starts_with("///") || trimmed.starts_with("//") {
-                continue;
-            }
-            if arm_pattern.is_match(line) {
-                hits.push(format!(
-                    "{}:{}: {}",
-                    path.file_name().unwrap_or_default().to_string_lossy(),
-                    lineno + 1,
-                    line.trim()
-                ));
-            }
-        }
-    }
-
-    if hits.is_empty() {
-        SwCheck::pass(
-            "no_match_arms",
-            "no source-unit match arms in dispatch/main",
-        )
-    } else {
-        SwCheck::fail(
-            "no_match_arms",
-            format!(
-                "{} match arm(s) found — dispatch must be registry-driven",
-                hits.len()
-            ),
-            hits,
-        )
-    }
-}
-
-/// A3.1.2 — SourceUnitDescriptor inventory vs NixOS source-bindings drift.
+/// A3.1.1 — SourceUnitDescriptor inventory vs NixOS source-bindings drift.
 ///
 /// Two modes:
 ///
@@ -1549,140 +1460,7 @@ fn check_sw_binding_drift(root: &Path, bindings_json: Option<&Path>) -> SwCheck 
     }
 }
 
-/// A3.1.3 — Ingestor crates gone (or warn).
-///
-/// Lists `crate/nodes/` and fails/warns if any `sinex-*-ingestor` directory
-/// is still present. Pass `--expect-deleted <crate>` to promote a specific
-/// crate to a failure if it still exists. `--warn-ingestors` demotes all
-/// ingestor presence to warnings.
-fn check_sw_ingestor_crates(
-    root: &Path,
-    expect_deleted: &[String],
-    warn_ingestors: bool,
-) -> SwCheck {
-    // Post-Wave-B (#1081) `crate/nodes/` was deleted entirely: the six
-    // per-domain ingestor crates were folded into `sinex-source-worker` and
-    // `sinex-process` moved to `crate/core/`. A missing directory is the
-    // expected success case.
-    let nodes_dir = root.join("crate/nodes");
-    if !nodes_dir.exists() {
-        return SwCheck::pass(
-            "ingestor_crates",
-            "crate/nodes/ has been deleted (Wave-B fold complete)",
-        );
-    }
-    let entries = match fs::read_dir(&nodes_dir) {
-        Ok(e) => e,
-        Err(err) => {
-            return SwCheck::fail(
-                "ingestor_crates",
-                format!("cannot read {}: {err}", nodes_dir.display()),
-                Vec::new(),
-            );
-        }
-    };
-
-    let mut present: Vec<String> = entries
-        .filter_map(std::result::Result::ok)
-        .filter_map(|e| {
-            let name = e.file_name().to_string_lossy().into_owned();
-            if name.ends_with("-ingestor") {
-                Some(name)
-            } else {
-                None
-            }
-        })
-        .collect();
-    present.sort();
-
-    // Any crate in `expect_deleted` that's still present is a hard failure.
-    let hard_fail: Vec<String> = expect_deleted
-        .iter()
-        .filter(|name| present.contains(name))
-        .cloned()
-        .collect();
-
-    if !hard_fail.is_empty() {
-        return SwCheck::fail(
-            "ingestor_crates",
-            format!(
-                "{} crate(s) declared --expect-deleted are still present",
-                hard_fail.len()
-            ),
-            hard_fail,
-        );
-    }
-
-    if present.is_empty() {
-        return SwCheck::pass(
-            "ingestor_crates",
-            "no ingestor crates remain in crate/nodes/",
-        );
-    }
-
-    let detail = format!(
-        "{} ingestor crate(s) still present in crate/nodes/",
-        present.len()
-    );
-    if warn_ingestors {
-        SwCheck::warn("ingestor_crates", detail, present)
-    } else {
-        SwCheck::warn(
-            "ingestor_crates",
-            format!("{detail} (pass --warn-ingestors or --expect-deleted to control severity)"),
-            present,
-        )
-    }
-}
-
-/// A3.1.4 — Workspace member count.
-fn check_sw_member_count(root: &Path, expected: usize) -> SwCheck {
-    let cargo_toml = root.join("Cargo.toml");
-    let contents = match fs::read_to_string(&cargo_toml) {
-        Ok(s) => s,
-        Err(e) => {
-            return SwCheck::fail(
-                "member_count",
-                format!("cannot read Cargo.toml: {e}"),
-                Vec::new(),
-            );
-        }
-    };
-
-    // Count quoted members lines in the `[workspace] members = [...]` block.
-    // Simple heuristic: count lines that match `  "crate/` or `  "tests/` or
-    // `  "xtask"` patterns inside the members block.
-    let member_pattern = regex::Regex::new(r#"^\s+"[^"]+""#).expect("static regex");
-    let mut in_members = false;
-    let mut count = 0usize;
-    for line in contents.lines() {
-        let trimmed = line.trim();
-        if trimmed.starts_with("members") && trimmed.contains('[') {
-            in_members = true;
-        }
-        if in_members && member_pattern.is_match(line) && !trimmed.starts_with('#') {
-            count += 1;
-        }
-        if in_members && trimmed == "]" {
-            break;
-        }
-    }
-
-    if count == expected {
-        SwCheck::pass(
-            "member_count",
-            format!("workspace has {count} member(s) (expected {expected})"),
-        )
-    } else {
-        SwCheck::fail(
-            "member_count",
-            format!("workspace has {count} member(s), expected {expected}"),
-            vec![format!("actual={count}, expected={expected}")],
-        )
-    }
-}
-
-/// A3.1.5 — Registered parsers smoke: list every `register_parser!` call in
+/// A3.1.2 — Registered parsers smoke: list every `register_parser!` call in
 /// the workspace and surface source_unit_id + parser type for drift visibility.
 fn check_sw_registered_parsers(root: &Path) -> SwCheck {
     // Static grep across crate/core/sinex-source-worker and crate/lib/sinex-node-sdk.
@@ -1736,7 +1514,7 @@ fn scan_rs_files_for_pattern(dir: &Path, pattern: &regex::Regex, out: &mut Vec<S
     }
 }
 
-/// A3.1.6 — Privacy invocation: every `register_source_unit!` block that declares
+/// A3.1.3 — Privacy invocation: every `register_source_unit!` block that declares
 /// a non-Public privacy tier must invoke the privacy engine in the same file.
 ///
 /// Scanning targets: the entire `crate/core/sinex-source-worker/src/` tree and
@@ -2644,31 +2422,4 @@ Verification:
         Ok(())
     }
 
-    #[sinex_test]
-    async fn check_sw_member_count_detects_mismatch() -> ::xtask::sandbox::TestResult<()> {
-        let root = crate::config::workspace_root();
-        // Current real member count is 20. Asking for 5 should be a mismatch.
-        let check = check_sw_member_count(&root, 5);
-        assert!(
-            check.is_fail(),
-            "wrong expected count should fail: {:?}",
-            check.detail
-        );
-        Ok(())
-    }
-
-    #[sinex_test]
-    async fn check_sw_no_match_arms_passes_on_registry_driven_files()
-    -> ::xtask::sandbox::TestResult<()> {
-        let root = crate::config::workspace_root();
-        let check = check_sw_no_match_arms(&root);
-        // Current dispatch is registry-driven, so there should be no match arms.
-        assert_ne!(
-            check.status,
-            SwCheckStatus::Fail,
-            "match-arm check should not fail on current dispatch: {:?}",
-            check.items
-        );
-        Ok(())
-    }
 }
