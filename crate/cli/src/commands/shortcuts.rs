@@ -79,12 +79,14 @@ impl StatusCommand {
             Ok(signal) => signals.push(signal),
             Err(warning) => {
                 warnings.push(warning.clone());
+                warnings.push(private_mode_unavailable_privacy_warning());
                 signals.push(RuntimeStatusSignal {
                     name: "private-mode".to_string(),
                     status: RuntimeStatusSignalStatus::Unknown,
                     source: "runtime private-mode state file".to_string(),
                     message: Some(warning.message),
                 });
+                signals.push(private_mode_unavailable_privacy_signal());
             }
         }
 
@@ -429,6 +431,24 @@ fn privacy_dlq_warning(total_messages: u64) -> Option<RuntimeStatusWarning> {
     })
 }
 
+fn private_mode_unavailable_privacy_signal() -> RuntimeStatusSignal {
+    RuntimeStatusSignal {
+        name: "privacy-private-mode".to_string(),
+        status: RuntimeStatusSignalStatus::Degraded,
+        source: "runtime private-mode fail-closed policy".to_string(),
+        message: Some(
+            "state unavailable; high-sensitivity live capture should fail closed".to_string(),
+        ),
+    }
+}
+
+fn private_mode_unavailable_privacy_warning() -> RuntimeStatusWarning {
+    RuntimeStatusWarning {
+        source: "privacy.private-mode".to_string(),
+        message: "private-mode state unavailable; high-sensitivity live capture is suppressed or degraded until state is readable".to_string(),
+    }
+}
+
 fn runtime_target_kind_label(kind: &RuntimeTargetKind) -> &'static str {
     match kind {
         RuntimeTargetKind::Unknown => "unknown",
@@ -442,7 +462,9 @@ fn runtime_target_kind_label(kind: &RuntimeTargetKind) -> &'static str {
 #[cfg(test)]
 mod status_tests {
     use super::*;
-    use sinex_primitives::privacy::{RuntimePrivateModeState, save_private_mode_state};
+    use sinex_primitives::privacy::{
+        PRIVATE_MODE_STATE_RELATIVE_PATH, RuntimePrivateModeState, save_private_mode_state,
+    };
     use xtask::sandbox::prelude::sinex_test;
 
     #[sinex_test]
@@ -477,6 +499,37 @@ mod status_tests {
             signal.message.as_deref(),
             Some("enabled (scope: desktop,weechat, actor: operator)")
         );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn private_mode_unavailable_status_reports_fail_closed_privacy_caveat()
+    -> xtask::sandbox::TestResult<()> {
+        let dir = tempfile::tempdir()?;
+        let state_path = dir.path().join(PRIVATE_MODE_STATE_RELATIVE_PATH);
+        std::fs::create_dir_all(state_path.parent().ok_or_else(|| {
+            color_eyre::eyre::eyre!("private-mode state path should have a parent")
+        })?)?;
+        std::fs::write(&state_path, b"{not-valid-json")?;
+
+        let warning = private_mode_signal(Some(dir.path()))
+            .expect_err("malformed private-mode state should be unavailable");
+        let privacy_signal = private_mode_unavailable_privacy_signal();
+        let privacy_warning = private_mode_unavailable_privacy_warning();
+
+        assert_eq!(warning.source, "private-mode");
+        assert_eq!(privacy_signal.name, "privacy-private-mode");
+        assert_eq!(privacy_signal.status, RuntimeStatusSignalStatus::Degraded);
+        assert!(
+            privacy_signal
+                .message
+                .as_deref()
+                .is_some_and(|message| message.contains("fail closed"))
+        );
+        assert_eq!(privacy_warning.source, "privacy.private-mode");
+        assert!(privacy_warning.message.contains("high-sensitivity"));
+        assert!(!privacy_warning.message.contains("payload"));
+        assert!(!privacy_warning.message.contains("sample"));
         Ok(())
     }
 
