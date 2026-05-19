@@ -1,6 +1,7 @@
 use sinex_primitives::events::EventPayload;
 use sinex_primitives::events::payloads::{
-    TaskCancelledPayload, TaskCompletedPayload, TaskCreatedPayload, TaskUpdatedPayload,
+    TaskCancelledPayload, TaskCompletedPayload, TaskCreatedPayload, TaskStatusChangedPayload,
+    TaskUpdatedPayload,
 };
 use sinex_primitives::task_domain::{
     TaskFieldUpdate, TaskLifecycleInput, TaskSourceSystem, TaskStatus, reduce_task_event,
@@ -27,6 +28,10 @@ async fn task_payloads_publish_stable_event_names() -> TestResult<()> {
     assert_eq!(TaskCreatedPayload::SOURCE.as_str(), "task");
     assert_eq!(TaskCreatedPayload::EVENT_TYPE.as_str(), "task.created");
     assert_eq!(TaskUpdatedPayload::EVENT_TYPE.as_str(), "task.updated");
+    assert_eq!(
+        TaskStatusChangedPayload::EVENT_TYPE.as_str(),
+        "task.status_changed"
+    );
     assert_eq!(TaskCompletedPayload::EVENT_TYPE.as_str(), "task.completed");
     assert_eq!(TaskCancelledPayload::EVENT_TYPE.as_str(), "task.cancelled");
     Ok(())
@@ -120,6 +125,43 @@ async fn task_reducer_projects_metadata_update() -> TestResult<()> {
     assert_eq!(updated.priority.as_deref(), Some("medium"));
     assert_eq!(updated.last_event_id, update_event_id);
     assert_ne!(updated.state_hash, open.state_hash);
+    Ok(())
+}
+
+#[sinex_test]
+async fn task_reducer_projects_non_terminal_status_change() -> TestResult<()> {
+    let task_id = Uuid::from_u128(42);
+    let create_event_id = Uuid::from_u128(100);
+    let status_event_id = Uuid::from_u128(101);
+    let created = created_payload(task_id);
+
+    let open = reduce_task_event(
+        None,
+        create_event_id,
+        TaskLifecycleInput::Created(created.into()),
+        Timestamp::UNIX_EPOCH,
+    )?;
+
+    let started = reduce_task_event(
+        Some(open.clone()),
+        status_event_id,
+        TaskLifecycleInput::StatusChanged(
+            TaskStatusChangedPayload {
+                task_id,
+                status: TaskStatus::Started,
+                changed_at: Timestamp::UNIX_EPOCH,
+                actor: "operator:test".to_string(),
+                reason: Some("started work".to_string()),
+                external_version: None,
+            }
+            .into(),
+        ),
+        Timestamp::UNIX_EPOCH,
+    )?;
+
+    assert_eq!(started.status, TaskStatus::Started);
+    assert_eq!(started.last_event_id, status_event_id);
+    assert_ne!(started.state_hash, open.state_hash);
     Ok(())
 }
 

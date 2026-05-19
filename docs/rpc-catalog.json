@@ -792,6 +792,15 @@
     "response_type": "sinex_primitives::rpc::tasks::TaskStateResponse"
   },
   {
+    "name": "tasks.status.set",
+    "role": "write",
+    "domain": "tasks",
+    "stability": "experimental",
+    "mutability": "mutating",
+    "request_type": "sinex_primitives::rpc::tasks::TaskStatusSetRequest",
+    "response_type": "sinex_primitives::rpc::tasks::TaskEventResponse<sinex_primitives::events::payloads::task_domain::TaskStatusChangedPayload>"
+  },
+  {
     "name": "tasks.update",
     "role": "write",
     "domain": "tasks",

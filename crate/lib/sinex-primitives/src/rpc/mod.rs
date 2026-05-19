@@ -261,6 +261,7 @@ pub fn method_catalog() -> Vec<RpcMethodInfo> {
         tasks::TASKS_CREATE_METHOD.info(),
         tasks::TASKS_LIST_METHOD.info(),
         tasks::TASKS_STATE_GET_METHOD.info(),
+        tasks::TASKS_STATUS_SET_METHOD.info(),
         tasks::TASKS_UPDATE_METHOD.info(),
         telemetry::TELEMETRY_ASSEMBLY_STATS_METHOD.info(),
         telemetry::TELEMETRY_COMMAND_FREQUENCY_METHOD.info(),

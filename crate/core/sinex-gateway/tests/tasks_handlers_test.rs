@@ -1,13 +1,13 @@
 use sinex_db::{DbPoolExt, SourceMaterialRecord};
 use sinex_gateway::handlers::{
     handle_tasks_cancel, handle_tasks_complete, handle_tasks_create, handle_tasks_list,
-    handle_tasks_state_get, handle_tasks_update,
+    handle_tasks_state_get, handle_tasks_status_set, handle_tasks_update,
 };
 use sinex_gateway::rpc_server::RpcAuthContext;
 use sinex_primitives::Id;
 use sinex_primitives::rpc::tasks::{
     TaskCancelRequest, TaskCompleteRequest, TaskCreateRequest, TaskListRequest,
-    TaskStateGetRequest, TaskUpdateRequest,
+    TaskStateGetRequest, TaskStatusSetRequest, TaskUpdateRequest,
 };
 use sinex_primitives::task_domain::{TaskFieldUpdate, TaskState, TaskStatus};
 use xtask::sandbox::prelude::*;
@@ -236,6 +236,62 @@ async fn tasks_update_rebuilds_mutated_state(ctx: TestContext) -> TestResult<()>
         .await?
         .ok_or_else(|| color_eyre::eyre::eyre!("update source material not persisted"))?;
     assert_eq!(material.metadata["task_transition"], "updated");
+    Ok(())
+}
+
+#[sinex_test]
+async fn tasks_status_set_rebuilds_non_terminal_state(ctx: TestContext) -> TestResult<()> {
+    let auth = RpcAuthContext::system();
+    let created = handle_tasks_create(
+        ctx.pool(),
+        TaskCreateRequest {
+            task_id: None,
+            title: "Status handler fixture".to_string(),
+            body: None,
+            external_refs: Vec::new(),
+            project_id: None,
+            tags: Vec::new(),
+            due_at: None,
+            priority: None,
+        },
+        &auth,
+    )
+    .await?;
+    let task_id = created.state.task_id;
+
+    let status_changed = handle_tasks_status_set(
+        ctx.pool(),
+        TaskStatusSetRequest {
+            task_id,
+            status: TaskStatus::Blocked,
+            changed_at: None,
+            reason: Some("waiting for input".to_string()),
+            external_version: None,
+        },
+        &auth,
+    )
+    .await?;
+    let state: TaskState = status_changed.state.clone();
+    assert_eq!(state.status, TaskStatus::Blocked);
+    assert_eq!(state.title, "Status handler fixture");
+
+    let rebuilt = handle_tasks_state_get(ctx.pool(), TaskStateGetRequest { task_id }).await?;
+    assert_eq!(rebuilt.event_count, 2);
+    let rebuilt_state: TaskState = rebuilt
+        .state
+        .ok_or_else(|| color_eyre::eyre::eyre!("rebuilt task response missing state"))?;
+    assert_eq!(rebuilt_state.status, TaskStatus::Blocked);
+    assert_eq!(rebuilt_state.state_hash, state.state_hash);
+
+    let material = ctx
+        .pool()
+        .source_materials()
+        .get_by_id(Id::<SourceMaterialRecord>::from_uuid(
+            status_changed.material_id.to_uuid(),
+        ))
+        .await?
+        .ok_or_else(|| color_eyre::eyre::eyre!("status source material not persisted"))?;
+    assert_eq!(material.metadata["task_transition"], "status_changed");
     Ok(())
 }
 

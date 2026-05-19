@@ -668,6 +668,13 @@
     },
     {
       "source": "task",
+      "event_type": "task.status_changed",
+      "version": "1.0.0",
+      "path": "task/task.status_changed.json",
+      "content_hash": "28976e84b5c0ec9bd955a756f77819b174a34414add500b7ba4ee862a1abdba2"
+    },
+    {
+      "source": "task",
       "event_type": "task.updated",
       "version": "1.0.0",
       "path": "task/task.updated.json",

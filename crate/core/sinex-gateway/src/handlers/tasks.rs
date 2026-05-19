@@ -6,16 +6,18 @@ use sinex_db::repositories::SourceMaterial as DbSourceMaterial;
 use sinex_primitives::events::EventPayload;
 use sinex_primitives::events::SourceMaterial;
 use sinex_primitives::events::payloads::{
-    TaskCancelledPayload, TaskCompletedPayload, TaskCreatedPayload, TaskUpdatedPayload,
+    TaskCancelledPayload, TaskCompletedPayload, TaskCreatedPayload, TaskStatusChangedPayload,
+    TaskUpdatedPayload,
 };
 use sinex_primitives::rpc::tasks::{
     TaskCancelRequest, TaskCancelResponse, TaskCompleteRequest, TaskCompleteResponse,
     TaskCreateRequest, TaskCreateResponse, TaskEventResponse, TaskListRequest, TaskListResponse,
-    TaskStateGetRequest, TaskStateResponse, TaskUpdateRequest, TaskUpdateResponse,
+    TaskStateGetRequest, TaskStateResponse, TaskStatusSetRequest, TaskStatusSetResponse,
+    TaskUpdateRequest, TaskUpdateResponse,
 };
 use sinex_primitives::task_domain::{
     TaskCancelledInput, TaskCompletedInput, TaskCreatedInput, TaskLifecycleInput, TaskSourceSystem,
-    TaskState, TaskUpdatedInput, reduce_task_event,
+    TaskState, TaskStatusChangedInput, TaskUpdatedInput, reduce_task_event,
 };
 use sinex_primitives::{Id, Result, SinexError, Timestamp, Uuid};
 use sqlx::PgPool;
@@ -233,6 +235,88 @@ pub async fn handle_tasks_update(
     })
 }
 
+pub async fn handle_tasks_status_set(
+    pool: &PgPool,
+    req: TaskStatusSetRequest,
+    auth: &RpcAuthContext,
+) -> Result<TaskStatusSetResponse> {
+    let prior_state = rebuild_task_state(pool, req.task_id)
+        .await?
+        .ok_or_else(|| {
+            SinexError::not_found("tasks.status.set: task not found")
+                .with_context("task_id", req.task_id.to_string())
+        })?;
+    if req.status.is_terminal() {
+        return Err(SinexError::validation(
+            "tasks.status.set: use complete/cancel for terminal status",
+        )
+        .with_context("task_id", req.task_id.to_string())
+        .with_context("status", req.status.to_string()));
+    }
+    if prior_state.status.is_terminal() {
+        return Err(
+            SinexError::validation("tasks.status.set: task is already terminal")
+                .with_context("task_id", req.task_id.to_string())
+                .with_context("status", format!("{:?}", prior_state.status)),
+        );
+    }
+    if prior_state.status == req.status {
+        return Err(
+            SinexError::validation("tasks.status.set: task already has requested status")
+                .with_context("task_id", req.task_id.to_string())
+                .with_context("status", req.status.to_string()),
+        );
+    }
+
+    let changed_at = req.changed_at.unwrap_or_else(Timestamp::now);
+    let material_id = register_task_material(
+        pool,
+        auth,
+        req.task_id,
+        "status_changed",
+        &prior_state.title,
+        req.reason.as_deref(),
+    )
+    .await?;
+    let payload = TaskStatusChangedPayload {
+        task_id: req.task_id,
+        status: req.status,
+        changed_at,
+        actor: auth.actor_id().to_string(),
+        reason: req.reason,
+        external_version: req.external_version,
+    };
+    let event = payload
+        .clone()
+        .from_material(Id::<SourceMaterial>::from_uuid(material_id))
+        .at_time(changed_at)
+        .build()?;
+    let inserted = pool.events().insert(event).await?;
+    let _inserted_id = inserted.id.ok_or_else(|| {
+        SinexError::invalid_state(
+            "tasks.status.set: persisted task.status_changed event missing id",
+        )
+    })?;
+    let state = rebuild_task_state(pool, payload.task_id)
+        .await?
+        .ok_or_else(|| {
+            SinexError::invalid_state(
+                "tasks.status.set: inserted task.status_changed event not queryable",
+            )
+            .with_context("task_id", payload.task_id.to_string())
+        })?;
+
+    Ok(TaskEventResponse {
+        payload,
+        event: serde_json::to_value(inserted).map_err(|error| {
+            SinexError::serialization("tasks.status.set: failed to serialize event")
+                .with_std_error(&error)
+        })?,
+        material_id: Id::<SourceMaterial>::from_uuid(material_id),
+        state,
+    })
+}
+
 pub async fn handle_tasks_cancel(
     pool: &PgPool,
     req: TaskCancelRequest,
@@ -406,7 +490,7 @@ async fn query_task_event_rows(pool: &PgPool, task_id: Uuid) -> Result<Vec<TaskE
             ts_orig as "ts_orig!: Timestamp"
         FROM core.events
         WHERE source = 'task'
-          AND event_type IN ('task.created', 'task.updated', 'task.completed', 'task.cancelled')
+          AND event_type IN ('task.created', 'task.updated', 'task.status_changed', 'task.completed', 'task.cancelled')
           AND payload->>'task_id' = $1
         ORDER BY ts_orig ASC, id ASC
         "#,
@@ -441,7 +525,7 @@ async fn query_all_task_event_rows(pool: &PgPool) -> Result<Vec<TaskEventRow>> {
             ts_orig as "ts_orig!: Timestamp"
         FROM core.events
         WHERE source = 'task'
-          AND event_type IN ('task.created', 'task.updated', 'task.completed', 'task.cancelled')
+          AND event_type IN ('task.created', 'task.updated', 'task.status_changed', 'task.completed', 'task.cancelled')
         ORDER BY payload->>'task_id' ASC, ts_orig ASC, id ASC
         "#
     )
@@ -534,6 +618,15 @@ fn reduce_task_rows(rows: Vec<TaskEventRow>) -> Result<Option<TaskState>> {
                             .with_std_error(&error)
                     })?;
                 TaskLifecycleInput::Updated(TaskUpdatedInput::from(payload))
+            }
+            "task.status_changed" => {
+                let payload: TaskStatusChangedPayload = serde_json::from_value(row.payload)
+                    .map_err(|error| {
+                        SinexError::serialization("invalid task.status_changed payload")
+                            .with_context("event_id", row.id.to_string())
+                            .with_std_error(&error)
+                    })?;
+                TaskLifecycleInput::StatusChanged(TaskStatusChangedInput::from(payload))
             }
             "task.cancelled" => {
                 let payload: TaskCancelledPayload =

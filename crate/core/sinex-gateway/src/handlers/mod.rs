@@ -89,7 +89,7 @@ pub use sources::{
 pub use system::{handle_system_health, handle_system_ping, handle_system_version};
 pub use tasks::{
     handle_tasks_cancel, handle_tasks_complete, handle_tasks_create, handle_tasks_list,
-    handle_tasks_state_get, handle_tasks_update,
+    handle_tasks_state_get, handle_tasks_status_set, handle_tasks_update,
 };
 pub use telemetry::{
     handle_telemetry_assembly_stats, handle_telemetry_command_frequency,
