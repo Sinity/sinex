@@ -1,0 +1,48 @@
+{
+  "$defs": {
+    "DateTime": {
+      "description": "RFC 3339 formatted date-time string",
+      "format": "date-time",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Raw lane outputs were discarded through an explicit operation.",
+  "properties": {
+    "discarded_at": {
+      "$ref": "#/$defs/DateTime"
+    },
+    "discarded_output_count": {
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "lane_id": {
+      "format": "uuid",
+      "type": "string"
+    },
+    "operation_id": {
+      "format": "uuid",
+      "type": "string"
+    },
+    "output_kind": {
+      "type": "string"
+    },
+    "reason": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "lane_id",
+    "output_kind",
+    "discarded_output_count",
+    "reason",
+    "operation_id",
+    "discarded_at"
+  ],
+  "title": "SemanticLaneOutputsDiscardedPayload",
+  "type": "object",
+  "x-sinex-event-type": "semantic.lane_outputs_discarded",
+  "x-sinex-source": "semantics",
+  "x-sinex-version": "1.0.0"
+}

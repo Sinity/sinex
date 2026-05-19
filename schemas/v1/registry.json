@@ -450,6 +450,41 @@
       "content_hash": "2c0b9e644f7c6a882f8dd052f21f10037197dddc950829f1b5a084127cdfb7e5"
     },
     {
+      "source": "semantics",
+      "event_type": "semantic.epoch_recorded",
+      "version": "1.0.0",
+      "path": "semantics/semantic.epoch_recorded.json",
+      "content_hash": "812868990c0ca11bb9d8fe6667745ff754f668c380caf20921f15bc576b13e38"
+    },
+    {
+      "source": "semantics",
+      "event_type": "semantic.lane_created",
+      "version": "1.0.0",
+      "path": "semantics/semantic.lane_created.json",
+      "content_hash": "da05f9b99d79a5d8cf8b7ca7a671acd27bbd69ef936338a7ea13f85718d43bff"
+    },
+    {
+      "source": "semantics",
+      "event_type": "semantic.lane_diff_recorded",
+      "version": "1.0.0",
+      "path": "semantics/semantic.lane_diff_recorded.json",
+      "content_hash": "6723456d378dfc6de7eca9f24491f71b834c2705b2e20f2532f8008fa2b0dd1f"
+    },
+    {
+      "source": "semantics",
+      "event_type": "semantic.lane_outputs_discarded",
+      "version": "1.0.0",
+      "path": "semantics/semantic.lane_outputs_discarded.json",
+      "content_hash": "e44f698ae0e262a7a5dd04bd665b359b09706307311e5c268149397f0bdbc7f1"
+    },
+    {
+      "source": "semantics",
+      "event_type": "semantic.lane_status_changed",
+      "version": "1.0.0",
+      "path": "semantics/semantic.lane_status_changed.json",
+      "content_hash": "2f4d2fa3f80fd52dd326b0958d8725d342c88b9d348df00cfdac313bf71e469f"
+    },
+    {
       "source": "shell.atuin",
       "event_type": "command.completed",
       "version": "1.0.0",
