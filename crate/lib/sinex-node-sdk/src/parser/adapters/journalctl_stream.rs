@@ -591,7 +591,7 @@ mod tests {
     // the broadcast channel directly to verify subscriber routing semantics.
     // =========================================================================
 
-    /// Build a SourceRecord from raw bytes — minimal helper for shared tests.
+    /// Build a `SourceRecord` from raw bytes — minimal helper for shared tests.
     fn make_record_bytes(bytes: &[u8]) -> SourceRecord {
         SourceRecord {
             material_id: dummy_material_id(),
@@ -710,12 +710,12 @@ mod tests {
 
         let bytes_a: Vec<_> = results_a
             .into_iter()
-            .filter_map(|r| r.ok())
+            .filter_map(std::result::Result::ok)
             .map(|r| r.bytes)
             .collect();
         let bytes_b: Vec<_> = results_b
             .into_iter()
-            .filter_map(|r| r.ok())
+            .filter_map(std::result::Result::ok)
             .map(|r| r.bytes)
             .collect();
 

@@ -2,7 +2,7 @@
 //!
 //! Each scenario asserts the *settlement outcome* the runtime should reach when a
 //! specific fault is injected into the boundary that owns it. Where the runtime
-//! wiring already exists (CheckpointManager CAS, ConfirmationBuffer TTL), the
+//! wiring already exists (`CheckpointManager` CAS, `ConfirmationBuffer` TTL), the
 //! test exercises the real primitive end-to-end. Where settlement vocabulary
 //! describes a runtime contract that is not yet fully wired (DLQ unavailable,
 //! NATS-down circuit breaker), the test exercises the `FailurePolicy` mapping

@@ -154,8 +154,8 @@ async fn test_fsck(_ctx: TestContext) -> TestResult<()> {
     // Add some files
     let mut keys = Vec::new();
     for i in 0..3 {
-        let file = temp_dir.path().join(format!("file_{}.txt", i));
-        let content = format!("Content {}", i);
+        let file = temp_dir.path().join(format!("file_{i}.txt"));
+        let content = format!("Content {i}");
         fs::write(&file, &content).await?;
         let key = content_store.store_file(&file).await?;
         assert_local_cas_content(&content_store, &key, content.as_bytes()).await?;
@@ -243,8 +243,8 @@ async fn test_concurrent_file_operations(_ctx: TestContext) -> TestResult<()> {
         let temp_path = temp_dir.path().to_path_buf();
 
         let handle = tokio::spawn(async move {
-            let file_path = temp_path.join(format!("concurrent_{}.txt", i));
-            let content = format!("Concurrent content {}", i);
+            let file_path = temp_path.join(format!("concurrent_{i}.txt"));
+            let content = format!("Concurrent content {i}");
 
             // Write file
             fs::write(&file_path, content.as_bytes()).await?;

@@ -85,7 +85,7 @@ impl IngestorNode for DrainTestIngestor {
     type Config = ();
     type State = ();
 
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "drain-test-ingestor"
     }
 

@@ -231,9 +231,7 @@ async fn supervised_panic_is_caught_and_health_updated() -> Result<(), Box<dyn s
             let count = Arc::clone(&call_count_clone);
             async move {
                 let n = count.fetch_add(1, Ordering::SeqCst);
-                if n == 0 {
-                    panic!("deliberate supervised panic");
-                }
+                assert!(n != 0, "deliberate supervised panic");
                 Ok(())
             }
         },

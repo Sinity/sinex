@@ -192,6 +192,7 @@ pub struct InstructionExpectationStatusPayload {
 
 /// Build a deterministic Hyprland workspace actuation attempt from current
 /// readiness and state observations.
+#[must_use]
 pub fn plan_hyprland_workspace_switch(
     instruction: &DesktopWorkspaceSwitchInstructionPayload,
     current_workspace_id: Option<i32>,
