@@ -1,17 +1,18 @@
 //! Replay-control RPC handlers (extracted from `rpc_handlers.rs` for symmetry
 //! with the other domain-specific handler modules per #1172).
 
-use crate::handlers::rpc_handlers::RpcParams;
 use crate::replay_control::ReplayControlClient;
 use crate::rpc_server::RpcAuthContext;
-use serde_json::Value;
 use sinex_db::replay::state_machine::{
-    ReplayOperation as DbReplayOperation, ReplayScope, ReplayState as DbReplayState,
+    ReplayOperation as DbReplayOperation, ReplayScope as DbReplayScope,
+    ReplayState as DbReplayState,
 };
 use sinex_primitives::rpc::replay::{
-    ReplayApproveResponse, ReplayCancelResponse, ReplayCreateResponse, ReplayExecuteResponse,
-    ReplayListRequest, ReplayListResponse, ReplayOperation, ReplayPreviewResponse,
-    ReplayState as RpcReplayState, ReplayStatusRequest, ReplayStatusResponse, ReplaySubmitResponse,
+    ReplayApproveRequest, ReplayApproveResponse, ReplayCancelRequest, ReplayCancelResponse,
+    ReplayCreateRequest, ReplayCreateResponse, ReplayExecuteRequest, ReplayExecuteResponse,
+    ReplayListRequest, ReplayListResponse, ReplayOperation, ReplayPreviewRequest,
+    ReplayPreviewResponse, ReplayScope as RpcReplayScope, ReplayState as RpcReplayState,
+    ReplayStatusRequest, ReplayStatusResponse, ReplaySubmitRequest, ReplaySubmitResponse,
 };
 use sinex_primitives::{Result, SinexError, Uuid};
 
@@ -26,140 +27,101 @@ fn parse_operation_uuid(raw: &str) -> Result<Uuid> {
 
 pub async fn handle_replay_create_operation(
     client: &ReplayControlClient,
-    params: Value,
+    req: ReplayCreateRequest,
     auth: &RpcAuthContext,
-) -> Result<Value> {
-    let params = RpcParams::new(&params);
-    let scope_val = params.require_value("scope")?.clone();
-    let scope: ReplayScope = serde_json::from_value(scope_val).map_err(|error| {
-        SinexError::serialization("Invalid replay scope payload").with_std_error(&error)
-    })?;
-
+) -> Result<ReplayCreateResponse> {
     let operation = client
-        .plan(auth.replay_actor(), scope)
+        .plan(auth.replay_actor(), db_replay_scope(req.scope)?)
         .await
         .map_err(|error| {
             SinexError::service("failed to plan replay operation").with_source(error)
         })?;
-    serde_json::to_value(ReplayCreateResponse {
+    Ok(ReplayCreateResponse {
         operation: into_replay_operation(operation)?,
-    })
-    .map_err(|error| {
-        SinexError::serialization("failed to serialize replay.create_operation response")
-            .with_std_error(&error)
     })
 }
 
 pub async fn handle_replay_preview_operation(
     client: &ReplayControlClient,
-    params: Value,
+    req: ReplayPreviewRequest,
     _auth: &RpcAuthContext,
-) -> Result<Value> {
-    let params = RpcParams::new(&params);
-    let operation_id = params.require_uuid("operation_id")?;
+) -> Result<ReplayPreviewResponse> {
+    let operation_id = parse_operation_uuid(&req.operation_id)?;
     let (operation, preview) = client.preview(operation_id).await.map_err(|error| {
         SinexError::service("failed to preview replay operation").with_source(error)
     })?;
-    serde_json::to_value(ReplayPreviewResponse {
+    Ok(ReplayPreviewResponse {
         operation: into_replay_operation(operation)?,
         preview,
-    })
-    .map_err(|error| {
-        SinexError::serialization("failed to serialize replay.preview_operation response")
-            .with_std_error(&error)
     })
 }
 
 pub async fn handle_replay_approve_operation(
     client: &ReplayControlClient,
-    params: Value,
+    req: ReplayApproveRequest,
     auth: &RpcAuthContext,
-) -> Result<Value> {
-    let params = RpcParams::new(&params);
-    let operation_id = params.require_uuid("operation_id")?;
+) -> Result<ReplayApproveResponse> {
+    let operation_id = parse_operation_uuid(&req.operation_id)?;
     let operation = client
         .approve(operation_id, auth.replay_actor())
         .await
         .map_err(|error| {
             SinexError::service("failed to approve replay operation").with_source(error)
         })?;
-    serde_json::to_value(ReplayApproveResponse {
+    Ok(ReplayApproveResponse {
         operation: into_replay_operation(operation)?,
-    })
-    .map_err(|error| {
-        SinexError::serialization("failed to serialize replay.approve_operation response")
-            .with_std_error(&error)
     })
 }
 
 pub async fn handle_replay_execute_operation(
     client: &ReplayControlClient,
-    params: Value,
+    req: ReplayExecuteRequest,
     auth: &RpcAuthContext,
-) -> Result<Value> {
-    let params = RpcParams::new(&params);
-    let operation_id = params.require_uuid("operation_id")?;
-    let dry_run = params.optional_bool("dry_run")?.unwrap_or(false);
+) -> Result<ReplayExecuteResponse> {
+    let operation_id = parse_operation_uuid(&req.operation_id)?;
     let operation = client
-        .execute(operation_id, auth.replay_actor(), dry_run)
+        .execute(operation_id, auth.replay_actor(), req.dry_run)
         .await
         .map_err(|error| {
             SinexError::service("failed to execute replay operation").with_source(error)
         })?;
-    serde_json::to_value(ReplayExecuteResponse {
+    Ok(ReplayExecuteResponse {
         operation: into_replay_operation(operation)?,
-    })
-    .map_err(|error| {
-        SinexError::serialization("failed to serialize replay.execute_operation response")
-            .with_std_error(&error)
     })
 }
 
 pub async fn handle_replay_submit_operation(
     client: &ReplayControlClient,
-    params: Value,
+    req: ReplaySubmitRequest,
     auth: &RpcAuthContext,
-) -> Result<Value> {
-    let params = RpcParams::new(&params);
-    let operation_id = params.require_uuid("operation_id")?;
+) -> Result<ReplaySubmitResponse> {
+    let operation_id = parse_operation_uuid(&req.operation_id)?;
     let operation = client
         .submit(operation_id, auth.replay_actor())
         .await
         .map_err(|error| {
             SinexError::service("failed to submit replay operation").with_source(error)
         })?;
-    serde_json::to_value(ReplaySubmitResponse {
+    Ok(ReplaySubmitResponse {
         operation: into_replay_operation(operation)?,
-    })
-    .map_err(|error| {
-        SinexError::serialization("failed to serialize replay.submit_operation response")
-            .with_std_error(&error)
     })
 }
 
 pub async fn handle_replay_cancel_operation(
     client: &ReplayControlClient,
-    params: Value,
+    req: ReplayCancelRequest,
     auth: &RpcAuthContext,
-) -> Result<Value> {
-    let params = RpcParams::new(&params);
-    let operation_id = params.require_uuid("operation_id")?;
-    let reason = params
-        .optional_str("reason")?
-        .map(std::string::ToString::to_string);
+) -> Result<ReplayCancelResponse> {
+    let operation_id = parse_operation_uuid(&req.operation_id)?;
     let operation = client
-        .cancel(operation_id, auth.replay_actor(), reason)
+        .cancel(operation_id, auth.replay_actor(), req.reason)
         .await
         .map_err(|error| {
             SinexError::service("failed to cancel replay operation").with_source(error)
         })?;
-    serde_json::to_value(ReplayCancelResponse {
+    Ok(ReplayCancelResponse {
         cancelled: true,
         operation: into_replay_operation(operation)?,
-    })
-    .map_err(|error| {
-        SinexError::serialization("failed to serialize replay.cancel_operation response")
-            .with_std_error(&error)
     })
 }
 
@@ -204,6 +166,56 @@ fn into_replay_operation(operation: DbReplayOperation) -> Result<ReplayOperation
     .map_err(|error| {
         SinexError::serialization("failed to deserialize replay operation into RPC contract")
             .with_std_error(&error)
+    })
+}
+
+fn db_replay_scope(scope: RpcReplayScope) -> Result<DbReplayScope> {
+    Ok(DbReplayScope {
+        node_id: scope.node_id,
+        time_window: scope
+            .time_window
+            .map(|(start, end)| {
+                Ok::<_, SinexError>((
+                    sinex_primitives::Timestamp::parse_rfc3339(&start).map_err(|error| {
+                        SinexError::validation("invalid replay scope start timestamp")
+                            .with_context("value", start)
+                            .with_std_error(&error)
+                    })?,
+                    sinex_primitives::Timestamp::parse_rfc3339(&end).map_err(|error| {
+                        SinexError::validation("invalid replay scope end timestamp")
+                            .with_context("value", end)
+                            .with_std_error(&error)
+                    })?,
+                ))
+            })
+            .transpose()?,
+        material_filter: scope
+            .material_filter
+            .map(|ids| {
+                ids.into_iter()
+                    .map(|raw| {
+                        raw.parse::<Uuid>().map_err(|error| {
+                            SinexError::validation("invalid replay material UUID")
+                                .with_context("value", raw)
+                                .with_std_error(&error)
+                        })
+                    })
+                    .collect::<Result<Vec<_>>>()
+            })
+            .transpose()?,
+        filters: scope.filters,
+        source_id: scope.source_unit_id.or(scope.parser_id),
+        source_material_id: scope
+            .source_material_id
+            .map(|raw| {
+                raw.parse::<Uuid>().map_err(|error| {
+                    SinexError::validation("invalid replay source material UUID")
+                        .with_context("value", raw)
+                        .with_std_error(&error)
+                })
+            })
+            .transpose()?,
+        source_version: scope.parser_version,
     })
 }
 

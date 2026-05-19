@@ -24,7 +24,12 @@ use sinex_primitives::rpc::{
     methods,
     nodes::{NODES_DRAIN_METHOD, NODES_RESUME_METHOD, NODES_SET_HORIZON_METHOD},
     ops::{OPS_CANCEL_METHOD, OPS_GET_METHOD, OPS_LIST_METHOD, OPS_START_METHOD},
-    replay::{REPLAY_LIST_OPERATIONS_METHOD, REPLAY_OPERATION_STATUS_METHOD},
+    replay::{
+        REPLAY_APPROVE_OPERATION_METHOD, REPLAY_CANCEL_OPERATION_METHOD,
+        REPLAY_CREATE_OPERATION_METHOD, REPLAY_EXECUTE_OPERATION_METHOD,
+        REPLAY_LIST_OPERATIONS_METHOD, REPLAY_OPERATION_STATUS_METHOD,
+        REPLAY_PREVIEW_OPERATION_METHOD, REPLAY_SUBMIT_OPERATION_METHOD,
+    },
     sources::{
         SOURCES_CONTINUITY_EXPLAIN_GAP_METHOD, SOURCES_CONTINUITY_GET_METHOD,
         SOURCES_CONTINUITY_LIST_METHOD, SOURCES_CONTINUITY_METHOD, SOURCES_COVERAGE_METHOD,
@@ -1007,38 +1012,32 @@ fn build_registry_impl() -> RpcRegistry {
             },
         )
         // Replay create/preview (Write - doesn't execute yet)
-        .replay_rpc(
-            methods::REPLAY_CREATE_OPERATION,
-            Role::Write,
+        .replay_typed_rpc(
+            REPLAY_CREATE_OPERATION_METHOD,
             boxed!(handle_replay_create_operation, 3),
         )
-        .replay_rpc(
-            methods::REPLAY_PREVIEW_OPERATION,
-            Role::Write,
+        .replay_typed_rpc(
+            REPLAY_PREVIEW_OPERATION_METHOD,
             boxed!(handle_replay_preview_operation, 3),
         )
         // ─────────────────────────────────────────────────────────────
         // Admin methods (requires Admin role - destructive operations)
         // ─────────────────────────────────────────────────────────────
         // Replay approve/execute/cancel (Admin - actually modifies data)
-        .replay_rpc(
-            methods::REPLAY_APPROVE_OPERATION,
-            Role::Admin,
+        .replay_typed_rpc(
+            REPLAY_APPROVE_OPERATION_METHOD,
             boxed!(handle_replay_approve_operation, 3),
         )
-        .replay_rpc(
-            methods::REPLAY_SUBMIT_OPERATION,
-            Role::Admin,
+        .replay_typed_rpc(
+            REPLAY_SUBMIT_OPERATION_METHOD,
             boxed!(handle_replay_submit_operation, 3),
         )
-        .replay_rpc(
-            methods::REPLAY_EXECUTE_OPERATION,
-            Role::Admin,
+        .replay_typed_rpc(
+            REPLAY_EXECUTE_OPERATION_METHOD,
             boxed!(handle_replay_execute_operation, 3),
         )
-        .replay_rpc(
-            methods::REPLAY_CANCEL_OPERATION,
-            Role::Admin,
+        .replay_typed_rpc(
+            REPLAY_CANCEL_OPERATION_METHOD,
             boxed!(handle_replay_cancel_operation, 3),
         )
         // DLQ mutation methods (Admin)

@@ -27,6 +27,60 @@ pub const REPLAY_LIST_OPERATIONS_METHOD: RpcMethod<ReplayListRequest, ReplayList
         RpcMutability::ReadOnly,
     );
 
+pub const REPLAY_CREATE_OPERATION_METHOD: RpcMethod<ReplayCreateRequest, ReplayCreateResponse> =
+    RpcMethod::new(
+        methods::REPLAY_CREATE_OPERATION,
+        RpcRole::Write,
+        RpcDomain::Replay,
+        RpcStability::Experimental,
+        RpcMutability::Mutating,
+    );
+
+pub const REPLAY_PREVIEW_OPERATION_METHOD: RpcMethod<ReplayPreviewRequest, ReplayPreviewResponse> =
+    RpcMethod::new(
+        methods::REPLAY_PREVIEW_OPERATION,
+        RpcRole::Write,
+        RpcDomain::Replay,
+        RpcStability::Experimental,
+        RpcMutability::Mutating,
+    );
+
+pub const REPLAY_APPROVE_OPERATION_METHOD: RpcMethod<ReplayApproveRequest, ReplayApproveResponse> =
+    RpcMethod::new(
+        methods::REPLAY_APPROVE_OPERATION,
+        RpcRole::Admin,
+        RpcDomain::Replay,
+        RpcStability::Experimental,
+        RpcMutability::Mutating,
+    );
+
+pub const REPLAY_SUBMIT_OPERATION_METHOD: RpcMethod<ReplaySubmitRequest, ReplaySubmitResponse> =
+    RpcMethod::new(
+        methods::REPLAY_SUBMIT_OPERATION,
+        RpcRole::Admin,
+        RpcDomain::Replay,
+        RpcStability::Experimental,
+        RpcMutability::Mutating,
+    );
+
+pub const REPLAY_EXECUTE_OPERATION_METHOD: RpcMethod<ReplayExecuteRequest, ReplayExecuteResponse> =
+    RpcMethod::new(
+        methods::REPLAY_EXECUTE_OPERATION,
+        RpcRole::Admin,
+        RpcDomain::Replay,
+        RpcStability::Experimental,
+        RpcMutability::Mutating,
+    );
+
+pub const REPLAY_CANCEL_OPERATION_METHOD: RpcMethod<ReplayCancelRequest, ReplayCancelResponse> =
+    RpcMethod::new(
+        methods::REPLAY_CANCEL_OPERATION,
+        RpcRole::Admin,
+        RpcDomain::Replay,
+        RpcStability::Experimental,
+        RpcMutability::Mutating,
+    );
+
 /// Replay operation states with well-defined transitions.
 ///
 /// This is the wire-serialization mirror of the authoritative
