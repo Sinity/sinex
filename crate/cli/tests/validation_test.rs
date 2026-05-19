@@ -74,7 +74,8 @@ async fn mcp_lists_first_slice_read_only_tools() -> TestResult<()> {
             "sinex.privacy_status",
             "sinex.system_health",
             "sinex.tasks_list",
-            "sinex.task_state"
+            "sinex.task_state",
+            "sinex.automata_status"
         ]
     );
     assert_read_only_tool_names()?;
@@ -377,6 +378,33 @@ async fn mcp_task_state_call_uses_gateway_fixture() -> TestResult<()> {
     Ok(())
 }
 
+#[sinex_test]
+async fn mcp_automata_status_call_uses_gateway_fixture() -> TestResult<()> {
+    let server = mount_mcp_gateway_fixture().await;
+    let client = fixture_gateway_client(&server)?;
+
+    let response = call_tool(
+        &client,
+        "sinex.automata_status",
+        json!({ "stale_after_secs": 120, "recent_window_secs": 60 }),
+    )
+    .await?;
+
+    assert_eq!(response["tool"], "sinex.automata_status");
+    assert_eq!(response["query"]["stale_after_secs"], 120);
+    assert_eq!(response["items"]["result"]["stale_after_secs"], 120);
+    assert_eq!(
+        response["items"]["result"]["automata"][0]["node_name"],
+        "session-detector"
+    );
+    assert_eq!(
+        response["items"]["result"]["automata"][0]["event_lag_p99_ms"],
+        42.0
+    );
+    assert_eq!(response["redaction"]["raw_samples"], false);
+    Ok(())
+}
+
 async fn mount_mcp_gateway_fixture() -> MockServer {
     let server = MockServer::start().await;
     Mock::given(method("POST"))
@@ -530,6 +558,41 @@ async fn mount_mcp_gateway_fixture() -> MockServer {
                     "task_id": body["params"]["task_id"].as_str().unwrap_or(fixture_task_id()),
                     "state": fixture_task_state(),
                     "event_count": 3
+                }),
+                "automata.status" => json!({
+                    "generated_at": "2026-05-19T12:00:00Z",
+                    "stale_after_secs": body["params"]["stale_after_secs"].as_u64().unwrap_or(300),
+                    "recent_window_secs": body["params"]["recent_window_secs"].as_u64().unwrap_or(300),
+                    "automata": [
+                        {
+                            "node_name": "session-detector",
+                            "version": "0.4.2",
+                            "description": "fixture automaton",
+                            "manifest_status": "registered",
+                            "live": true,
+                            "service_name": "sinex-process-session-detector.service",
+                            "instance_id": "session-detector-1",
+                            "source_run_id": null,
+                            "host": "test-host",
+                            "run_status": "healthy",
+                            "started_at": "2026-05-19T11:00:00Z",
+                            "last_heartbeat_at": "2026-05-19T11:59:59Z",
+                            "events_processed_current_run": 12,
+                            "checkpoint_kind": "nats_kv",
+                            "checkpoint_position": "seq:12",
+                            "checkpoint_revision": 2,
+                            "checkpoint_recorded_at": "2026-05-19T11:59:50Z",
+                            "pending_invalidation_count": 0,
+                            "error_rate_5m": 0.0,
+                            "event_lag_p50_ms": 12.0,
+                            "event_lag_p99_ms": 42.0,
+                            "tick_runtime_p99_ms": 7.5,
+                            "throughput_eps": 1.25,
+                            "recent_output_count": 4,
+                            "last_output_at": "2026-05-19T11:59:40Z",
+                            "last_replay_at": null
+                        }
+                    ]
                 }),
                 other => {
                     return ResponseTemplate::new(400).set_body_json(json!({

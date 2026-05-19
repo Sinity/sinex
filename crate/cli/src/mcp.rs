@@ -14,6 +14,7 @@ use sinex_primitives::domain::{EventSource, EventType};
 use sinex_primitives::events::Event;
 use sinex_primitives::ids::Id;
 use sinex_primitives::query::{EventQuery, LineageDirection, LineageQuery};
+use sinex_primitives::rpc::automata::AutomataStatusResponse;
 use sinex_primitives::rpc::methods;
 use sinex_primitives::rpc::privacy::PrivateModeStateResponse;
 use sinex_primitives::rpc::sources::{SourcesReadinessGetRequest, SourcesReadinessListRequest};
@@ -138,8 +139,24 @@ struct TaskStateArgs {
     task_id: Uuid,
 }
 
+#[derive(Debug, Deserialize, Serialize)]
+struct AutomataStatusArgs {
+    #[serde(default = "default_stale_after_secs")]
+    stale_after_secs: u64,
+    #[serde(default = "default_recent_window_secs")]
+    recent_window_secs: u64,
+}
+
 const fn default_true() -> bool {
     true
+}
+
+const fn default_stale_after_secs() -> u64 {
+    300
+}
+
+const fn default_recent_window_secs() -> u64 {
+    300
 }
 
 #[must_use]
@@ -195,6 +212,13 @@ pub fn tool_catalog() -> Vec<McpCatalogEntry> {
             kind: McpSurfaceKind::Tool,
             description: "Read-only current state for one task workflow object.",
             backing_rpc_methods: &[methods::TASKS_STATE_GET],
+            read_only: true,
+        },
+        McpCatalogEntry {
+            name: "sinex.automata_status",
+            kind: McpSurfaceKind::Tool,
+            description: "Read-only derived-node automata liveness, checkpoint, and lag status.",
+            backing_rpc_methods: &[methods::AUTOMATA_STATUS],
             read_only: true,
         },
     ]
@@ -324,6 +348,26 @@ pub fn tools() -> Vec<McpTool> {
                 "additionalProperties": false
             }),
         },
+        McpTool {
+            name: "sinex.automata_status",
+            description: "Read-only derived-node automata liveness, checkpoint, and lag status.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "stale_after_secs": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "default": 300
+                    },
+                    "recent_window_secs": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "default": 300
+                    }
+                },
+                "additionalProperties": false
+            }),
+        },
     ]
 }
 
@@ -411,6 +455,7 @@ pub async fn call_tool(client: &GatewayClient, name: &str, arguments: Value) -> 
         "sinex.system_health" => system_health(client, arguments).await,
         "sinex.tasks_list" => tasks_list(client, arguments).await,
         "sinex.task_state" => task_state(client, arguments).await,
+        "sinex.automata_status" => automata_status(client, arguments).await,
         other => Err(eyre!("unknown MCP tool: {other}")),
     }
 }
@@ -539,6 +584,18 @@ async fn task_state(client: &GatewayClient, arguments: Value) -> Result<Value> {
         .await?;
     Ok(envelope(
         "sinex.task_state",
+        json!(args),
+        json!({ "result": response }),
+    ))
+}
+
+async fn automata_status(client: &GatewayClient, arguments: Value) -> Result<Value> {
+    let args: AutomataStatusArgs = serde_json::from_value(arguments)?;
+    let response: AutomataStatusResponse = client
+        .automata_status(args.stale_after_secs, args.recent_window_secs)
+        .await?;
+    Ok(envelope(
+        "sinex.automata_status",
         json!(args),
         json!({ "result": response }),
     ))
