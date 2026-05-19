@@ -724,14 +724,16 @@ pub fn convergible_tables() -> Result<Vec<ConvergibleTable>, ApplyError> {
                 statement_fn: Events::create_node_run_foreign_key,
             }],
             // node_version was the predecessor to source_run_id.
-            columns_to_drop: &["node_version"],
+            // occurrence_id was removed when occurrence rows were folded back
+            // into material provenance identity: (source_material_id, anchor_byte).
+            columns_to_drop: &["node_version", "occurrence_id"],
             // audit.archived_events was created with LIKE core.events INCLUDING ALL.
             // LIKE only runs at CREATE TABLE time, so new columns added to core.events
             // must be explicitly propagated to the mirror.
             mirror: Some(MirrorSpec {
                 schema: "audit",
                 table: "archived_events",
-                columns_to_drop: &["node_version"],
+                columns_to_drop: &["node_version", "occurrence_id"],
                 // ts_coided is GENERATED ALWAYS AS in core.events, but must be a plain
                 // TIMESTAMPTZ in audit.archived_events (the expression is dropped by
                 // create_table_sql()). Skip it here — it already exists from LIKE
