@@ -1,14 +1,15 @@
 use sinex_db::{DbPoolExt, SourceMaterialRecord};
 use sinex_gateway::handlers::{
     handle_tasks_cancel, handle_tasks_complete, handle_tasks_create, handle_tasks_list,
-    handle_tasks_state_get,
+    handle_tasks_state_get, handle_tasks_update,
 };
 use sinex_gateway::rpc_server::RpcAuthContext;
 use sinex_primitives::Id;
 use sinex_primitives::rpc::tasks::{
-    TaskCancelRequest, TaskCompleteRequest, TaskCreateRequest, TaskListRequest, TaskStateGetRequest,
+    TaskCancelRequest, TaskCompleteRequest, TaskCreateRequest, TaskListRequest,
+    TaskStateGetRequest, TaskUpdateRequest,
 };
-use sinex_primitives::task_domain::{TaskState, TaskStatus};
+use sinex_primitives::task_domain::{TaskFieldUpdate, TaskState, TaskStatus};
 use xtask::sandbox::prelude::*;
 
 #[sinex_test]
@@ -170,6 +171,71 @@ async fn tasks_cancel_rebuilds_cancelled_state(ctx: TestContext) -> TestResult<(
         .await?
         .ok_or_else(|| color_eyre::eyre::eyre!("cancellation source material not persisted"))?;
     assert_eq!(material.metadata["task_transition"], "cancelled");
+    Ok(())
+}
+
+#[sinex_test]
+async fn tasks_update_rebuilds_mutated_state(ctx: TestContext) -> TestResult<()> {
+    let auth = RpcAuthContext::system();
+    let created = handle_tasks_create(
+        ctx.pool(),
+        TaskCreateRequest {
+            task_id: None,
+            title: "Update handler fixture".to_string(),
+            body: Some("old body".to_string()),
+            external_refs: Vec::new(),
+            project_id: Some("old-project".to_string()),
+            tags: vec!["old".to_string()],
+            due_at: None,
+            priority: Some("low".to_string()),
+        },
+        &auth,
+    )
+    .await?;
+    let task_id = created.state.task_id;
+
+    let updated = handle_tasks_update(
+        ctx.pool(),
+        TaskUpdateRequest {
+            task_id,
+            updated_at: None,
+            title: Some("Updated handler fixture".to_string()),
+            body: Some(TaskFieldUpdate::Clear),
+            project_id: Some(TaskFieldUpdate::Set("new-project".to_string())),
+            tags: Some(vec!["new".to_string(), "work".to_string()]),
+            due_at: None,
+            priority: Some(TaskFieldUpdate::Set("high".to_string())),
+            external_refs: None,
+            reason: Some("fixture update".to_string()),
+            external_version: None,
+        },
+        &auth,
+    )
+    .await?;
+    let state: TaskState = updated.state.clone();
+    assert_eq!(state.status, TaskStatus::Open);
+    assert_eq!(state.title, "Updated handler fixture");
+    assert_eq!(state.body, None);
+    assert_eq!(state.project_id.as_deref(), Some("new-project"));
+    assert_eq!(state.tags, vec!["new".to_string(), "work".to_string()]);
+    assert_eq!(state.priority.as_deref(), Some("high"));
+
+    let rebuilt = handle_tasks_state_get(ctx.pool(), TaskStateGetRequest { task_id }).await?;
+    assert_eq!(rebuilt.event_count, 2);
+    let rebuilt_state: TaskState = rebuilt
+        .state
+        .ok_or_else(|| color_eyre::eyre::eyre!("rebuilt task response missing state"))?;
+    assert_eq!(rebuilt_state.state_hash, state.state_hash);
+
+    let material = ctx
+        .pool()
+        .source_materials()
+        .get_by_id(Id::<SourceMaterialRecord>::from_uuid(
+            updated.material_id.to_uuid(),
+        ))
+        .await?
+        .ok_or_else(|| color_eyre::eyre::eyre!("update source material not persisted"))?;
+    assert_eq!(material.metadata["task_transition"], "updated");
     Ok(())
 }
 

@@ -6,9 +6,9 @@ use color_eyre::eyre::eyre;
 use sinex_primitives::Uuid;
 use sinex_primitives::rpc::tasks::{
     TaskCancelRequest, TaskCompleteRequest, TaskListRequest, TaskListResponse, TaskStateGetRequest,
-    TaskStateResponse,
+    TaskStateResponse, TaskUpdateRequest,
 };
-use sinex_primitives::task_domain::TaskStatus;
+use sinex_primitives::task_domain::{TaskFieldUpdate, TaskStatus};
 
 use crate::client::GatewayClient;
 use crate::commands::declare::render_task_response;
@@ -34,6 +34,7 @@ impl TasksCommand {
             TasksSubcommand::Complete(cmd) => cmd.execute(client, format).await,
             TasksSubcommand::List(cmd) => cmd.execute(client, format).await,
             TasksSubcommand::State(cmd) => cmd.execute(client, format).await,
+            TasksSubcommand::Update(cmd) => cmd.execute(client, format).await,
         }
     }
 }
@@ -48,6 +49,8 @@ pub enum TasksSubcommand {
     List(TaskListCommand),
     /// Rebuild and show current task state.
     State(TaskStateCommand),
+    /// Update task metadata.
+    Update(TaskUpdateCommand),
 }
 
 #[derive(Debug, Args)]
@@ -115,6 +118,96 @@ impl TaskCompleteCommand {
             })
             .await?;
         render_task_response(&response, format, "Task completed")
+    }
+}
+
+#[derive(Debug, Args)]
+pub struct TaskUpdateCommand {
+    /// Task UUID.
+    task_id: String,
+
+    /// Replace the task title.
+    #[arg(long)]
+    title: Option<String>,
+
+    /// Replace the task body or notes.
+    #[arg(long)]
+    body: Option<String>,
+
+    /// Clear the task body.
+    #[arg(long)]
+    clear_body: bool,
+
+    /// Replace the project identifier.
+    #[arg(long)]
+    project_id: Option<String>,
+
+    /// Clear the project identifier.
+    #[arg(long)]
+    clear_project_id: bool,
+
+    /// Replace the full tag set. Can be repeated.
+    #[arg(long = "tag")]
+    tags: Vec<String>,
+
+    /// Replace the due time/date. Accepts RFC3339, YYYY-MM-DD, or relative forms.
+    #[arg(long)]
+    due: Option<String>,
+
+    /// Clear the due time/date.
+    #[arg(long)]
+    clear_due: bool,
+
+    /// Replace the priority label.
+    #[arg(long)]
+    priority: Option<String>,
+
+    /// Clear the priority label.
+    #[arg(long)]
+    clear_priority: bool,
+
+    /// Update reason or note.
+    #[arg(long)]
+    reason: Option<String>,
+
+    /// Update event time. Accepts RFC3339, YYYY-MM-DD, or relative forms.
+    #[arg(long)]
+    updated_at: Option<String>,
+}
+
+impl TaskUpdateCommand {
+    async fn execute(&self, client: &GatewayClient, format: OutputFormat) -> Result<()> {
+        let task_id = parse_task_id(&self.task_id)?;
+        let updated_at = self
+            .updated_at
+            .as_deref()
+            .map(parse_time_input)
+            .transpose()?;
+        let due_at = self.due.as_deref().map(parse_time_input).transpose()?;
+        let response = client
+            .tasks_update(TaskUpdateRequest {
+                task_id,
+                updated_at,
+                title: self.title.clone(),
+                body: build_field_update(self.body.clone(), self.clear_body, "body")?,
+                project_id: build_field_update(
+                    self.project_id.clone(),
+                    self.clear_project_id,
+                    "project-id",
+                )?,
+                tags: (!self.tags.is_empty()).then(|| self.tags.clone()),
+                due_at: build_field_update(due_at, self.clear_due, "due")?,
+                priority: build_field_update(
+                    self.priority.clone(),
+                    self.clear_priority,
+                    "priority",
+                )?,
+                external_refs: None,
+                reason: self.reason.clone(),
+                external_version: None,
+            })
+            .await?;
+        render_task_response(&response, format, "Task updated")
     }
 }
 
@@ -199,6 +292,19 @@ fn parse_task_id(raw: &str) -> Result<Uuid> {
 fn parse_task_status(raw: &str) -> Result<TaskStatus> {
     raw.parse::<TaskStatus>()
         .map_err(|error| eyre!("invalid task status `{raw}`: {error}"))
+}
+
+fn build_field_update<T>(
+    value: Option<T>,
+    clear: bool,
+    field_name: &str,
+) -> Result<Option<TaskFieldUpdate<T>>> {
+    match (value, clear) {
+        (Some(_), true) => Err(eyre!("cannot both set and clear task {field_name}")),
+        (Some(value), false) => Ok(Some(TaskFieldUpdate::Set(value))),
+        (None, true) => Ok(Some(TaskFieldUpdate::Clear)),
+        (None, false) => Ok(None),
+    }
 }
 
 fn render_task_state_table(

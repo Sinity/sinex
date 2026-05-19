@@ -6,16 +6,16 @@ use sinex_db::repositories::SourceMaterial as DbSourceMaterial;
 use sinex_primitives::events::EventPayload;
 use sinex_primitives::events::SourceMaterial;
 use sinex_primitives::events::payloads::{
-    TaskCancelledPayload, TaskCompletedPayload, TaskCreatedPayload,
+    TaskCancelledPayload, TaskCompletedPayload, TaskCreatedPayload, TaskUpdatedPayload,
 };
 use sinex_primitives::rpc::tasks::{
     TaskCancelRequest, TaskCancelResponse, TaskCompleteRequest, TaskCompleteResponse,
     TaskCreateRequest, TaskCreateResponse, TaskEventResponse, TaskListRequest, TaskListResponse,
-    TaskStateGetRequest, TaskStateResponse,
+    TaskStateGetRequest, TaskStateResponse, TaskUpdateRequest, TaskUpdateResponse,
 };
 use sinex_primitives::task_domain::{
     TaskCancelledInput, TaskCompletedInput, TaskCreatedInput, TaskLifecycleInput, TaskSourceSystem,
-    TaskState, reduce_task_event,
+    TaskState, TaskUpdatedInput, reduce_task_event,
 };
 use sinex_primitives::{Id, Result, SinexError, Timestamp, Uuid};
 use sqlx::PgPool;
@@ -142,6 +142,90 @@ pub async fn handle_tasks_complete(
         payload,
         event: serde_json::to_value(inserted).map_err(|error| {
             SinexError::serialization("tasks.complete: failed to serialize event")
+                .with_std_error(&error)
+        })?,
+        material_id: Id::<SourceMaterial>::from_uuid(material_id),
+        state,
+    })
+}
+
+pub async fn handle_tasks_update(
+    pool: &PgPool,
+    req: TaskUpdateRequest,
+    auth: &RpcAuthContext,
+) -> Result<TaskUpdateResponse> {
+    let prior_state = rebuild_task_state(pool, req.task_id)
+        .await?
+        .ok_or_else(|| {
+            SinexError::not_found("tasks.update: task not found")
+                .with_context("task_id", req.task_id.to_string())
+        })?;
+    if prior_state.status.is_terminal() {
+        return Err(
+            SinexError::validation("tasks.update: task is already terminal")
+                .with_context("task_id", req.task_id.to_string())
+                .with_context("status", format!("{:?}", prior_state.status)),
+        );
+    }
+    if !task_update_request_has_changes(&req) {
+        return Err(
+            SinexError::validation("tasks.update: at least one field update is required")
+                .with_context("task_id", req.task_id.to_string()),
+        );
+    }
+    if let Some(title) = req.title.as_deref()
+        && title.trim().is_empty()
+    {
+        return Err(
+            SinexError::validation("tasks.update: title must not be empty")
+                .with_context("task_id", req.task_id.to_string()),
+        );
+    }
+
+    let updated_at = req.updated_at.unwrap_or_else(Timestamp::now);
+    let material_id = register_task_material(
+        pool,
+        auth,
+        req.task_id,
+        "updated",
+        &prior_state.title,
+        req.reason.as_deref(),
+    )
+    .await?;
+    let payload = TaskUpdatedPayload {
+        task_id: req.task_id,
+        updated_at,
+        actor: auth.actor_id().to_string(),
+        title: req.title.map(|title| title.trim().to_string()),
+        body: req.body,
+        project_id: req.project_id,
+        tags: req.tags,
+        due_at: req.due_at,
+        priority: req.priority,
+        external_refs: req.external_refs,
+        reason: req.reason,
+        external_version: req.external_version,
+    };
+    let event = payload
+        .clone()
+        .from_material(Id::<SourceMaterial>::from_uuid(material_id))
+        .at_time(updated_at)
+        .build()?;
+    let inserted = pool.events().insert(event).await?;
+    let _inserted_id = inserted.id.ok_or_else(|| {
+        SinexError::invalid_state("tasks.update: persisted task.updated event missing id")
+    })?;
+    let state = rebuild_task_state(pool, payload.task_id)
+        .await?
+        .ok_or_else(|| {
+            SinexError::invalid_state("tasks.update: inserted task.updated event not queryable")
+                .with_context("task_id", payload.task_id.to_string())
+        })?;
+
+    Ok(TaskEventResponse {
+        payload,
+        event: serde_json::to_value(inserted).map_err(|error| {
+            SinexError::serialization("tasks.update: failed to serialize event")
                 .with_std_error(&error)
         })?,
         material_id: Id::<SourceMaterial>::from_uuid(material_id),
@@ -316,7 +400,7 @@ async fn query_task_event_rows(pool: &PgPool, task_id: Uuid) -> Result<Vec<TaskE
             ts_orig as "ts_orig!: Timestamp"
         FROM core.events
         WHERE source = 'task'
-          AND event_type IN ('task.created', 'task.completed', 'task.cancelled')
+          AND event_type IN ('task.created', 'task.updated', 'task.completed', 'task.cancelled')
           AND payload->>'task_id' = $1
         ORDER BY ts_orig ASC, id ASC
         "#,
@@ -351,7 +435,7 @@ async fn query_all_task_event_rows(pool: &PgPool) -> Result<Vec<TaskEventRow>> {
             ts_orig as "ts_orig!: Timestamp"
         FROM core.events
         WHERE source = 'task'
-          AND event_type IN ('task.created', 'task.completed', 'task.cancelled')
+          AND event_type IN ('task.created', 'task.updated', 'task.completed', 'task.cancelled')
         ORDER BY payload->>'task_id' ASC, ts_orig ASC, id ASC
         "#
     )
@@ -436,6 +520,15 @@ fn reduce_task_rows(rows: Vec<TaskEventRow>) -> Result<Option<TaskState>> {
                     })?;
                 TaskLifecycleInput::Completed(TaskCompletedInput::from(payload))
             }
+            "task.updated" => {
+                let payload: TaskUpdatedPayload =
+                    serde_json::from_value(row.payload).map_err(|error| {
+                        SinexError::serialization("invalid task.updated payload")
+                            .with_context("event_id", row.id.to_string())
+                            .with_std_error(&error)
+                    })?;
+                TaskLifecycleInput::Updated(TaskUpdatedInput::from(payload))
+            }
             "task.cancelled" => {
                 let payload: TaskCancelledPayload =
                     serde_json::from_value(row.payload).map_err(|error| {
@@ -454,4 +547,14 @@ fn reduce_task_rows(rows: Vec<TaskEventRow>) -> Result<Option<TaskState>> {
         state = Some(reduce_task_event(state, row.id, input, row.ts_orig)?);
     }
     Ok(state)
+}
+
+fn task_update_request_has_changes(req: &TaskUpdateRequest) -> bool {
+    req.title.is_some()
+        || req.body.is_some()
+        || req.project_id.is_some()
+        || req.tags.is_some()
+        || req.due_at.is_some()
+        || req.priority.is_some()
+        || req.external_refs.is_some()
 }
