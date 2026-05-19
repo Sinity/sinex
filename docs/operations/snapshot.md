@@ -1,11 +1,13 @@
 # Sinex Snapshot Runbook
 
-`sinexctl admin snapshot` captures a point-in-time archive of the complete
+`sinexctl state snapshot` captures a point-in-time archive of the complete
 sinex runtime state surface — Postgres, NATS JetStream, CAS blob repository,
 and per-source-worker state — into a single zstd-compressed tar archive.
 
 This is a **quiesce-mode** backup: services must be stopped before the snapshot
 runs.  A live snapshot (`--mode live`) is not available in this MVP.
+The older `sinexctl admin snapshot*` paths remain as maintenance aliases; use
+the `sinexctl state ...` surface for operator runbooks.
 
 ## Quick start
 
@@ -14,16 +16,16 @@ runs.  A live snapshot (`--mode live`) is not available in this MVP.
 sudo systemctl stop 'sinex-*'
 
 # Create a snapshot (defaults: zstd level 3, all components)
-sinexctl admin snapshot --output /var/backup/sinex/$(date +%Y-%m-%d).sinex.tar.zst
+sinexctl state snapshot --output /var/backup/sinex/$(date +%Y-%m-%d).sinex.tar.zst
 
 # Estimate sizes without writing anything
-sinexctl admin snapshot --output /var/backup/sinex/check.tar.zst --dry-run
+sinexctl state snapshot --output /var/backup/sinex/check.tar.zst --dry-run
 ```
 
 ## Command reference
 
 ```
-sinexctl admin snapshot --output <path>
+sinexctl state snapshot --output <path>
   [--compression <1-19>]           # zstd level, default 3
   [--workers <N>]                  # zstd parallel workers, default all cores
   [--mode quiesce]                 # only quiesce supported in MVP
@@ -33,10 +35,10 @@ sinexctl admin snapshot --output <path>
   [--auto-stop]                    # stop sinex-* services automatically
   [--components postgres,nats,cas,state]  # subset, default all
 
-sinexctl admin snapshot-restore --archive <path> --target-dir <empty-dir> --dry-run
+sinexctl state restore --archive <path> --target-dir <empty-dir> --dry-run
   [--allow-non-empty-target]       # planning only; destructive restore still refuses ambiguity
 
-sinexctl admin snapshot-restore --archive <path> --target-dir <empty-dir>
+sinexctl state restore --archive <path> --target-dir <empty-dir>
   --confirm-restore
   [--allow-active-services]        # only for explicitly isolated drill targets
 ```
@@ -83,7 +85,7 @@ transport for off-host copies.
 Before a destructive restore, validate the archive and target with:
 
 ```bash
-sinexctl admin snapshot-restore \
+sinexctl state restore \
     --archive /var/backup/sinex/2026-05-15.sinex.tar.zst \
     --target-dir /tmp/sinex-restore-drill \
     --dry-run
@@ -106,10 +108,10 @@ drill directory. It does not permit destructive writes.
 ## Isolated restore drill execution
 
 For state-only or file-backed component archives (`state`, `cas`, `nats`),
-`snapshot-restore` can execute an isolated drill into an empty target directory:
+`state restore` can execute an isolated drill into an empty target directory:
 
 ```bash
-sinexctl admin snapshot-restore \
+sinexctl state restore \
     --archive /var/backup/sinex/2026-05-15.sinex.tar.zst \
     --target-dir /tmp/sinex-restore-drill \
     --confirm-restore
@@ -132,7 +134,7 @@ private-mode state presence.
 ## Restore procedure (manual for Postgres/live state)
 
 Postgres and live in-place restore remain manual. Use
-`snapshot-restore --dry-run` first, then execute the explicit steps below in a
+`state restore --dry-run` first, then execute the explicit steps below in a
 prepared maintenance window.
 
 ### 1. Stop services (if running)
@@ -162,7 +164,7 @@ tar -xaf /var/backup/sinex/2026-05-15.sinex.tar.zst -C "$RESTORE_DIR"
 Before extracting, the archive can be inspected directly:
 
 ```bash
-sinexctl admin snapshot-inspect \
+sinexctl state inspect \
     --archive /var/backup/sinex/2026-05-15.sinex.tar.zst
 ```
 
@@ -257,7 +259,7 @@ For a horizon-3 wipe (complete state replacement):
 1. Run `--dry-run` to confirm estimate and disk space.
 2. Stop services.
 3. Run the snapshot with a high compression level: `--compression 15`.
-4. Verify the manifest: `sinexctl admin snapshot-inspect --archive <archive>`.
+4. Verify the manifest: `sinexctl state inspect --archive <archive>`.
 5. Copy to off-machine storage (e.g., `rsync` to NAS or object storage).
 6. Proceed with the wipe only after confirming the archive is readable.
 
@@ -265,8 +267,9 @@ For a horizon-3 wipe (complete state replacement):
 
 - **No live mode** — services must be stopped.  A future `--mode live` option
   is deferred.
-- **No destructive restore execution** — `snapshot-restore --dry-run` validates
-  the archive and drill plan, but restore writes remain manual per this runbook.
+- **No in-place Postgres/live restore execution** — `state restore` can execute
+  isolated file-backed drills, but destructive live restore writes remain
+  manual per this runbook.
 - **No built-in archive encryption** — use filesystem-level, transport-level,
   or envelope encryption for archives that leave the host.
 - **No incremental snapshots** — each run is a full capture.

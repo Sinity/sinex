@@ -545,6 +545,21 @@ pub fn build() -> HashMap<&'static str, FormatCapability> {
         FormatCapability::single_shot(TABLE_JSON_YAML)
             .with_note("restore drill plan/execution and archive sensitivity classification"),
     );
+    m.insert(
+        "state snapshot",
+        FormatCapability::single_shot(TABLE_JSON_YAML)
+            .with_note("quiesce-mode snapshot of postgres + NATS + CAS + state"),
+    );
+    m.insert(
+        "state inspect",
+        FormatCapability::single_shot(TABLE_JSON_YAML)
+            .with_note("inspect snapshot manifest and archive member coverage"),
+    );
+    m.insert(
+        "state restore",
+        FormatCapability::single_shot(TABLE_JSON_YAML)
+            .with_note("restore drill plan/execution and archive sensitivity classification"),
+    );
 
     m
 }
@@ -616,7 +631,7 @@ fn family_for_path(path: &str) -> CommandFamily {
         "declare" | "tasks" | "curation" | "documents" | "annotate" => CommandFamily::Domain,
         "telemetry" | "throughput" => CommandFamily::Telemetry,
         "report" => CommandFamily::Report,
-        "admin" => CommandFamily::Admin,
+        "admin" | "state" => CommandFamily::Admin,
         _ => CommandFamily::Local,
     }
 }
@@ -672,6 +687,8 @@ fn effect_for_path(path: &str, capability: &FormatCapability) -> CommandEffect {
         "sources bindings create",
         "sources bindings update",
         "sources stage",
+        "state restore",
+        "state snapshot",
         "tasks complete",
     ];
 
@@ -686,7 +703,8 @@ fn mutation_guards_for_path(path: &str) -> &'static [CommandMutationGuard] {
     use CommandMutationGuard::{Confirmation, DryRun, LocalMaintenance, RpcAuth};
 
     match path {
-        "admin snapshot" => &[LocalMaintenance],
+        "admin snapshot" | "state snapshot" => &[LocalMaintenance],
+        "state restore" => &[DryRun, Confirmation, LocalMaintenance],
         "blob fsck" | "blob migrate" | "blob sweep-orphans" => &[DryRun, LocalMaintenance],
         "dlq purge" => &[RpcAuth, Confirmation],
         "lifecycle archive" | "lifecycle restore" | "replay plan" | "replay preview"
@@ -1116,6 +1134,9 @@ mod tests {
         assert_eq!(effect_for("replay preview"), Some(CommandEffect::Mutating));
         assert_eq!(effect_for("git-ops create"), Some(CommandEffect::Mutating));
         assert_eq!(effect_for("git-ops sync"), Some(CommandEffect::Mutating));
+        assert_eq!(effect_for("state inspect"), Some(CommandEffect::ReadOnly));
+        assert_eq!(effect_for("state restore"), Some(CommandEffect::Mutating));
+        assert_eq!(effect_for("state snapshot"), Some(CommandEffect::Mutating));
         Ok(())
     }
 
