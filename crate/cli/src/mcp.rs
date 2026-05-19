@@ -25,6 +25,10 @@ use sinex_primitives::rpc::tasks::{
     TaskListRequest, TaskListResponse, TaskStateGetRequest, TaskStateResponse,
 };
 use sinex_primitives::rpc::telemetry::IngestdValidationSnapshot;
+use sinex_primitives::sources::SourceFamily;
+use sinex_primitives::sources::continuity::{
+    SourcesContinuityGetRequest, SourcesContinuityListRequest,
+};
 use sinex_primitives::task_domain::TaskStatus;
 use sinex_primitives::temporal::Timestamp;
 use std::io::{BufRead, Write};
@@ -120,6 +124,14 @@ struct SourceReadinessArgs {
 }
 
 #[derive(Debug, Deserialize, Serialize)]
+struct SourceContinuityArgs {
+    #[serde(default)]
+    source_family: Option<SourceFamily>,
+    #[serde(default)]
+    since: Option<Timestamp>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
 struct TasksListArgs {
     #[serde(default)]
     query: Option<String>,
@@ -202,6 +214,16 @@ pub fn tool_catalog() -> Vec<McpCatalogEntry> {
             backing_rpc_methods: &[
                 methods::SOURCES_READINESS_LIST,
                 methods::SOURCES_READINESS_GET,
+            ],
+            read_only: true,
+        },
+        McpCatalogEntry {
+            name: "sinex.source_continuity",
+            kind: McpSurfaceKind::Tool,
+            description: "Read-only source continuity, seam, gap, and replayability report.",
+            backing_rpc_methods: &[
+                methods::SOURCES_CONTINUITY_LIST,
+                methods::SOURCES_CONTINUITY_GET,
             ],
             read_only: true,
         },
@@ -343,6 +365,18 @@ pub fn tools() -> Vec<McpTool> {
                     "source_identifier": { "type": "string" },
                     "stale_after_seconds": { "type": "integer", "minimum": 1 },
                     "include_caveats": { "type": "boolean", "default": true }
+                },
+                "additionalProperties": false
+            }),
+        },
+        McpTool {
+            name: "sinex.source_continuity",
+            description: "Read-only source continuity, seam, gap, and replayability report.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "source_family": { "type": "string" },
+                    "since": { "type": "string", "format": "date-time" }
                 },
                 "additionalProperties": false
             }),
@@ -573,6 +607,7 @@ pub async fn call_tool(client: &GatewayClient, name: &str, arguments: Value) -> 
         "sinex.search_events" => search_events(client, arguments).await,
         "sinex.trace_lineage" => trace_lineage(client, arguments).await,
         "sinex.source_readiness" => source_readiness(client, arguments).await,
+        "sinex.source_continuity" => source_continuity(client, arguments).await,
         "sinex.privacy_status" => privacy_status(client, arguments).await,
         "sinex.system_health" => system_health(client, arguments).await,
         "sinex.tasks_list" => tasks_list(client, arguments).await,
@@ -661,6 +696,29 @@ async fn source_readiness(client: &GatewayClient, arguments: Value) -> Result<Va
     }
 
     Ok(envelope("sinex.source_readiness", json!(args), payload))
+}
+
+async fn source_continuity(client: &GatewayClient, arguments: Value) -> Result<Value> {
+    let args: SourceContinuityArgs = serde_json::from_value(arguments)?;
+
+    let result = if let Some(source_family) = args.source_family.clone() {
+        if args.since.is_some() {
+            return Err(eyre!(
+                "sinex.source_continuity `since` is only supported when listing all families"
+            ));
+        }
+        let request = SourcesContinuityGetRequest { source_family };
+        serde_json::to_value(client.sources_continuity_get(request).await?)?
+    } else {
+        let request = SourcesContinuityListRequest { since: args.since };
+        serde_json::to_value(client.sources_continuity_list(request).await?)?
+    };
+
+    Ok(envelope(
+        "sinex.source_continuity",
+        json!(args),
+        json!({ "result": result }),
+    ))
 }
 
 async fn privacy_status(client: &GatewayClient, arguments: Value) -> Result<Value> {
