@@ -597,6 +597,8 @@ where
         let runtime_initialized = self.runtime.is_some();
         let node_name = self.node.name();
         let node_model = self.node.node_model();
+        let total_processed = self.persisted_state.events_processed;
+        let run_processed = self.run_events_processed;
         let health_status = self
             .health_reporter
             .as_ref()
@@ -620,13 +622,21 @@ where
             last_updated: None,
             lag_seconds: None,
             recent_activity: Vec::new(),
-            total_items: None,
+            total_items: Some(total_processed),
             metadata: [
                 (
                     "runtime_initialized".to_string(),
                     serde_json::json!(runtime_initialized),
                 ),
                 ("node_model".to_string(), serde_json::json!(node_model)),
+                (
+                    "total_processed".to_string(),
+                    serde_json::json!(total_processed),
+                ),
+                (
+                    "run_processed".to_string(),
+                    serde_json::json!(run_processed),
+                ),
             ]
             .into_iter()
             .chain(health_status.map(|status| {
