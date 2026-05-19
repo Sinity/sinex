@@ -15,7 +15,7 @@ use sinex_primitives::events::Event;
 use sinex_primitives::ids::Id;
 use sinex_primitives::query::{EventQuery, LineageDirection, LineageQuery};
 use sinex_primitives::rpc::automata::AutomataStatusResponse;
-use sinex_primitives::rpc::documents::DocumentsSearchRequest;
+use sinex_primitives::rpc::documents::{DocumentsGetRequest, DocumentsSearchRequest};
 use sinex_primitives::rpc::ingestors::IngestorsStatusResponse;
 use sinex_primitives::rpc::methods;
 use sinex_primitives::rpc::nodes::{NodesHealthResponse, NodesListActiveResponse};
@@ -191,6 +191,11 @@ struct DocumentsSearchArgs {
 }
 
 #[derive(Debug, Deserialize, Serialize)]
+struct DocumentsGetArgs {
+    document_id: Uuid,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
 struct StatusWindowArgs {
     #[serde(default = "default_stale_after_secs")]
     stale_after_secs: u64,
@@ -310,6 +315,13 @@ pub fn tool_catalog() -> Vec<McpCatalogEntry> {
             kind: McpSurfaceKind::Tool,
             description: "Read-only ranked document chunk search with raw text redacted.",
             backing_rpc_methods: &[methods::DOCUMENTS_SEARCH],
+            read_only: true,
+        },
+        McpCatalogEntry {
+            name: "sinex.documents_get",
+            kind: McpSurfaceKind::Tool,
+            description: "Read-only document metadata lookup with side data redacted.",
+            backing_rpc_methods: &[methods::DOCUMENTS_GET],
             read_only: true,
         },
         McpCatalogEntry {
@@ -568,6 +580,18 @@ pub fn tools() -> Vec<McpTool> {
             }),
         },
         McpTool {
+            name: "sinex.documents_get",
+            description: "Read-only document metadata lookup with side data redacted.",
+            input_schema: json!({
+                "type": "object",
+                "required": ["document_id"],
+                "properties": {
+                    "document_id": { "type": "string", "format": "uuid" }
+                },
+                "additionalProperties": false
+            }),
+        },
+        McpTool {
             name: "sinex.automata_status",
             description: "Read-only derived-node automata liveness, checkpoint, and lag status.",
             input_schema: status_window_schema(),
@@ -746,6 +770,7 @@ pub async fn call_tool(client: &GatewayClient, name: &str, arguments: Value) -> 
         "sinex.replay_operations" => replay_operations(client, arguments).await,
         "sinex.replay_status" => replay_status(client, arguments).await,
         "sinex.documents_search" => documents_search(client, arguments).await,
+        "sinex.documents_get" => documents_get(client, arguments).await,
         "sinex.automata_status" => automata_status(client, arguments).await,
         "sinex.ingestors_status" => ingestors_status(client, arguments).await,
         "sinex.nodes_health" => nodes_health(client, arguments).await,
@@ -951,6 +976,20 @@ async fn documents_search(client: &GatewayClient, arguments: Value) -> Result<Va
     ))
 }
 
+async fn documents_get(client: &GatewayClient, arguments: Value) -> Result<Value> {
+    let args: DocumentsGetArgs = serde_json::from_value(arguments)?;
+    let request = DocumentsGetRequest {
+        id: args.document_id,
+    };
+    let mut response = serde_json::to_value(client.documents_get(request).await?)?;
+    redact_document_side_data(&mut response);
+    Ok(envelope(
+        "sinex.documents_get",
+        json!(args),
+        json!({ "result": response }),
+    ))
+}
+
 async fn automata_status(client: &GatewayClient, arguments: Value) -> Result<Value> {
     let args: StatusWindowArgs = serde_json::from_value(arguments)?;
     let response: AutomataStatusResponse = client
@@ -1126,13 +1165,7 @@ fn redact_document_text(value: &mut Value) {
                 );
             }
             if fields.contains_key("side_data") {
-                fields.insert(
-                    "side_data".to_string(),
-                    json!({
-                        "redacted": true,
-                        "reason": "mcp_document_side_data_disabled"
-                    }),
-                );
+                fields.insert("side_data".to_string(), document_side_data_redaction());
             }
             for field in fields.values_mut() {
                 redact_document_text(field);
@@ -1140,6 +1173,32 @@ fn redact_document_text(value: &mut Value) {
         }
         _ => {}
     }
+}
+
+fn redact_document_side_data(value: &mut Value) {
+    match value {
+        Value::Array(items) => {
+            for item in items {
+                redact_document_side_data(item);
+            }
+        }
+        Value::Object(fields) => {
+            if fields.contains_key("side_data") {
+                fields.insert("side_data".to_string(), document_side_data_redaction());
+            }
+            for field in fields.values_mut() {
+                redact_document_side_data(field);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn document_side_data_redaction() -> Value {
+    json!({
+        "redacted": true,
+        "reason": "mcp_document_side_data_disabled"
+    })
 }
 
 fn envelope(tool: &str, query: Value, result: Value) -> Value {

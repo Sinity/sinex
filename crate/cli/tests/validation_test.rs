@@ -79,6 +79,7 @@ async fn mcp_lists_first_slice_read_only_tools() -> TestResult<()> {
             "sinex.replay_operations",
             "sinex.replay_status",
             "sinex.documents_search",
+            "sinex.documents_get",
             "sinex.automata_status",
             "sinex.ingestors_status",
             "sinex.nodes_health",
@@ -532,6 +533,32 @@ async fn mcp_documents_search_call_uses_gateway_fixture() -> TestResult<()> {
 }
 
 #[sinex_test]
+async fn mcp_documents_get_call_uses_gateway_fixture() -> TestResult<()> {
+    let server = mount_mcp_gateway_fixture().await;
+    let client = fixture_gateway_client(&server)?;
+
+    let response = call_tool(
+        &client,
+        "sinex.documents_get",
+        json!({ "document_id": fixture_document_id() }),
+    )
+    .await?;
+
+    assert_eq!(response["tool"], "sinex.documents_get");
+    assert_eq!(response["query"]["document_id"], fixture_document_id());
+    assert_eq!(response["items"]["result"]["id"], fixture_document_id());
+    assert_eq!(
+        response["items"]["result"]["side_data"]["reason"],
+        "mcp_document_side_data_disabled"
+    );
+    assert!(
+        !response.to_string().contains("ghp_fixture_secret"),
+        "MCP document get leaked raw document side data"
+    );
+    Ok(())
+}
+
+#[sinex_test]
 async fn mcp_automata_status_call_uses_gateway_fixture() -> TestResult<()> {
     let server = mount_mcp_gateway_fixture().await;
     let client = fixture_gateway_client(&server)?;
@@ -870,6 +897,19 @@ async fn mount_mcp_gateway_fixture() -> MockServer {
                         }
                     ],
                     "search_mode": "fts"
+                }),
+                "documents.get" => json!({
+                    "id": fixture_document_id(),
+                    "kind": "markdown",
+                    "natural_key": "notes/fixture.md",
+                    "extraction_version": 1,
+                    "chunk_count": 2,
+                    "text_byte_len": 128,
+                    "side_data": {
+                        "sample": "document side ghp_fixture_secret should not leak"
+                    },
+                    "created_at": "2026-05-19T11:00:00Z",
+                    "updated_at": "2026-05-19T11:45:00Z"
                 }),
                 "automata.status" => json!({
                     "generated_at": "2026-05-19T12:00:00Z",
