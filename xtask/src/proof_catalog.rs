@@ -343,6 +343,7 @@ pub fn validate_proof_catalog(catalog: &ProofCatalog) -> ProofCatalogValidation 
         }
     }
 
+    let mut local_source_unit_tags = BTreeMap::<&str, Vec<&str>>::new();
     for unit in &catalog.source_units {
         for obligation_id in &unit.proof_obligations {
             if obligation_id.starts_with("obligation:")
@@ -353,12 +354,20 @@ pub fn validate_proof_catalog(catalog: &ProofCatalog) -> ProofCatalogValidation 
                     unit.subject
                 ));
             } else if !obligation_id.starts_with("obligation:") {
-                warnings.push(format!(
-                    "{} carries local source-unit proof tag {obligation_id}",
-                    unit.subject
-                ));
+                local_source_unit_tags
+                    .entry(unit.subject.as_str())
+                    .or_default()
+                    .push(obligation_id);
             }
         }
+    }
+    for (subject, mut tags) in local_source_unit_tags {
+        tags.sort_unstable();
+        warnings.push(format!(
+            "{subject} carries {} local source-unit proof tag(s): {}",
+            tags.len(),
+            tags.join(", ")
+        ));
     }
 
     for exemption in &catalog.exemptions {
