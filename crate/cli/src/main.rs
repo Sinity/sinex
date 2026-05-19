@@ -1069,6 +1069,12 @@ mod tests {
             (vec!["sinexctl", "privacy", "audit"], "privacy audit"),
             (
                 vec![
+                    "sinexctl", "privacy", "export", "--since", "24h", "--source", "terminal",
+                ],
+                "privacy export",
+            ),
+            (
+                vec![
                     "sinexctl",
                     "state",
                     "snapshot",
