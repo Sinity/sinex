@@ -802,11 +802,11 @@ fn build_registry_impl() -> RpcRegistry {
         .pool_typed_rpc(SOURCES_SHOW_METHOD, boxed!(handle_sources_show))
         .pool_typed_rpc(SOURCES_COVERAGE_METHOD, boxed!(handle_sources_coverage))
         .pool_typed_rpc(SOURCES_CONTINUITY_METHOD, boxed!(handle_sources_continuity))
-        .pool_typed_rpc(
+        .service_typed_rpc(
             SOURCES_READINESS_LIST_METHOD,
             boxed!(handle_sources_readiness_list),
         )
-        .pool_typed_rpc(
+        .service_typed_rpc(
             SOURCES_READINESS_GET_METHOD,
             boxed!(handle_sources_readiness_get),
         )

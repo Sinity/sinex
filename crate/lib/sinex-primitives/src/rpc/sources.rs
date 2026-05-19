@@ -972,6 +972,8 @@ pub mod caveat_codes {
     pub const PARSER_JOBS_UNTRACKED: &str = "parser.jobs_untracked";
     /// Source bindings are declared in Nix configuration; no DB catalog (#1098).
     pub const BINDINGS_NOT_IN_DB: &str = "binding.not_in_db";
+    /// Runtime private-mode state could not be read, so readiness fails closed.
+    pub const POLICY_PRIVATE_MODE_STATE_UNAVAILABLE: &str = "policy.private_mode_state_unavailable";
 }
 
 /// A single caveat attached to a readiness report.
