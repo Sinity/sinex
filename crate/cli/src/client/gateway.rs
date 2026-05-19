@@ -11,6 +11,7 @@ use sinex_primitives::rpc::{
     JsonRpcError, RpcMethod,
     automata::{AUTOMATA_STATUS_METHOD, AutomataStatusRequest, AutomataStatusResponse},
     coordination::{
+        COORDINATION_INSTANCE_HEALTH_METHOD, COORDINATION_LIST_INSTANCES_METHOD,
         InstanceHealthRequest, InstanceHealthResponse, InstanceInfo, ListInstancesRequest,
         ListInstancesResponse,
     },
@@ -563,13 +564,8 @@ impl GatewayClient {
             }),
             ..Default::default()
         };
-        let result = self
-            .call_rpc(
-                methods::COORDINATION_LIST_INSTANCES,
-                serde_json::to_value(&req)?,
-            )
-            .await?;
-        let response: ListInstancesResponse = serde_json::from_value(result)?;
+        let response: ListInstancesResponse =
+            self.call_typed(COORDINATION_LIST_INSTANCES_METHOD, &req).await?;
         Ok(response.instances)
     }
 
@@ -578,13 +574,8 @@ impl GatewayClient {
         let req = InstanceHealthRequest {
             instance_id: node_id.into(),
         };
-        let result = self
-            .call_rpc(
-                methods::COORDINATION_INSTANCE_HEALTH,
-                serde_json::to_value(&req)?,
-            )
-            .await?;
-        serde_json::from_value(result).map_err(Into::into)
+        self.call_typed(COORDINATION_INSTANCE_HEALTH_METHOD, &req)
+            .await
     }
 
     /// Drain a node for maintenance

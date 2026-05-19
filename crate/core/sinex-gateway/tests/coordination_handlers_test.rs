@@ -1,11 +1,14 @@
 use async_nats::jetstream;
-use serde_json::json;
 use sinex_gateway::handlers::{
     handle_coordination_get_leader, handle_coordination_instance_health,
     handle_coordination_list_instances,
 };
 use sinex_primitives::coordination::{CoordinationKvClient, InstanceMetadata};
+use sinex_primitives::domain::NodeType;
 use sinex_primitives::error::ErrorClass;
+use sinex_primitives::rpc::coordination::{
+    GetLeaderRequest, InstanceHealthRequest, ListInstancesRequest,
+};
 use sinex_primitives::temporal;
 use xtask::sandbox::prelude::*;
 
@@ -36,15 +39,14 @@ async fn coordination_instance_health_uses_configured_stale_timeout(
 
     let response = handle_coordination_instance_health(
         &kv_client,
-        json!({ "instance_id": metadata.instance_id }),
+        InstanceHealthRequest {
+            instance_id: metadata.instance_id.into(),
+        },
     )
     .await?;
-    assert_eq!(response["healthy"].as_bool(), Some(true));
-    assert_eq!(
-        response["instance"]["instance_id"].as_str(),
-        Some("instance-a")
-    );
-    assert_eq!(response["last_error"], serde_json::Value::Null);
+    assert!(response.healthy);
+    assert_eq!(response.instance.instance_id.as_str(), "instance-a");
+    assert!(response.last_error.is_none());
 
     Ok(())
 }
@@ -54,10 +56,14 @@ async fn coordination_instance_health_rejects_missing_instance(ctx: TestContext)
     let ctx = ctx.with_nats().dedicated().await?;
     let kv_client = build_coordination_client(&ctx, "gateway-health-missing");
 
-    let error =
-        handle_coordination_instance_health(&kv_client, json!({ "instance_id": "missing" }))
-            .await
-            .expect_err("missing coordination instances must fail loudly");
+    let error = handle_coordination_instance_health(
+        &kv_client,
+        InstanceHealthRequest {
+            instance_id: "missing".into(),
+        },
+    )
+    .await
+    .expect_err("missing coordination instances must fail loudly");
     assert_eq!(error.error_class(), ErrorClass::DataError);
     assert!(error.to_string().contains("Instance not found"));
     assert!(error.to_string().contains("missing"));
@@ -90,32 +96,34 @@ async fn coordination_list_instances_marks_current_leader(ctx: TestContext) -> T
     kv_client.register_instance(&follower).await?;
     assert!(kv_client.acquire_leadership(&leader.instance_id).await?);
 
-    let listed = handle_coordination_list_instances(&kv_client, json!({})).await?;
-    let instances = listed["instances"]
-        .as_array()
-        .ok_or_else(|| color_eyre::eyre::eyre!("instances should serialize as an array"))?;
+    let listed = handle_coordination_list_instances(&kv_client, ListInstancesRequest::default()).await?;
+    let instances = listed.instances;
     assert_eq!(instances.len(), 2);
     assert!(
         instances.iter().any(|instance| {
-            instance["instance_id"].as_str() == Some("leader-a")
-                && instance["is_leader"].as_bool() == Some(true)
+            instance.instance_id.as_str() == "leader-a" && instance.is_leader
         }),
         "leader instance should be marked in list output"
     );
     assert!(
         instances.iter().any(|instance| {
-            instance["instance_id"].as_str() == Some("follower-b")
-                && instance["is_leader"].as_bool() == Some(false)
+            instance.instance_id.as_str() == "follower-b" && !instance.is_leader
         }),
         "non-leader instance should stay non-leader in list output"
     );
 
-    let leader_result = handle_coordination_get_leader(&kv_client, json!({})).await?;
-    assert_eq!(
-        leader_result["leader"]["instance_id"].as_str(),
-        Some("leader-a")
-    );
-    assert_eq!(leader_result["leader"]["is_leader"].as_bool(), Some(true));
+    let leader_result = handle_coordination_get_leader(
+        &kv_client,
+        GetLeaderRequest {
+            node_type: NodeType::Service,
+        },
+    )
+    .await?;
+    let leader = leader_result
+        .leader
+        .expect("leader should be present after acquire_leadership");
+    assert_eq!(leader.instance_id.as_str(), "leader-a");
+    assert!(leader.is_leader);
 
     Ok(())
 }
@@ -147,16 +155,12 @@ async fn coordination_list_instances_without_leader_marks_all_non_leader(
         })
         .await?;
 
-    let listed = handle_coordination_list_instances(&kv_client, json!({})).await?;
-    let instances = listed["instances"]
-        .as_array()
-        .ok_or_else(|| color_eyre::eyre::eyre!("instances should serialize as an array"))?;
+    let listed = handle_coordination_list_instances(&kv_client, ListInstancesRequest::default()).await?;
+    let instances = listed.instances;
 
     assert_eq!(instances.len(), 2);
     assert!(
-        instances
-            .iter()
-            .all(|instance| instance["is_leader"].as_bool() == Some(false)),
+        instances.iter().all(|instance| !instance.is_leader),
         "instances must not be marked as leader when no coordination leader exists"
     );
 
@@ -181,7 +185,7 @@ async fn coordination_list_instances_rejects_invalid_hostname_metadata(
         })
         .await?;
 
-    let error = handle_coordination_list_instances(&kv_client, json!({}))
+    let error = handle_coordination_list_instances(&kv_client, ListInstancesRequest::default())
         .await
         .expect_err("invalid coordination metadata must fail honestly");
     assert_eq!(error.error_class(), ErrorClass::DataError);
@@ -208,7 +212,9 @@ async fn coordination_instance_health_rejects_invalid_hostname_metadata(
 
     let error = handle_coordination_instance_health(
         &kv_client,
-        json!({ "instance_id": metadata.instance_id }),
+        InstanceHealthRequest {
+            instance_id: metadata.instance_id.into(),
+        },
     )
     .await
     .expect_err("invalid coordination metadata must fail honestly");
@@ -227,9 +233,14 @@ async fn coordination_get_leader_rejects_missing_leader_metadata(
 
     assert!(kv_client.acquire_leadership("leader-a").await?);
 
-    let error = handle_coordination_get_leader(&kv_client, json!({}))
-        .await
-        .expect_err("missing leader metadata must fail loudly");
+    let error = handle_coordination_get_leader(
+        &kv_client,
+        GetLeaderRequest {
+            node_type: NodeType::Service,
+        },
+    )
+    .await
+    .expect_err("missing leader metadata must fail loudly");
     assert_eq!(error.error_class(), ErrorClass::DataError);
     assert!(error.to_string().contains("Leader metadata missing"));
     assert!(error.to_string().contains("leader-a"));

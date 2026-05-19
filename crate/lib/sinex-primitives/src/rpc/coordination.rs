@@ -1,8 +1,36 @@
 //! Coordination types
 
 use crate::domain::{HostName, InstanceId, NodeType};
+use crate::rpc::{RpcDomain, RpcMethod, RpcMutability, RpcRole, RpcStability, methods};
 use crate::temporal::Timestamp;
 use serde::{Deserialize, Serialize};
+
+pub const COORDINATION_LIST_INSTANCES_METHOD:
+    RpcMethod<ListInstancesRequest, ListInstancesResponse> = RpcMethod::new(
+    methods::COORDINATION_LIST_INSTANCES,
+    RpcRole::ReadOnly,
+    RpcDomain::Coordination,
+    RpcStability::Experimental,
+    RpcMutability::ReadOnly,
+);
+
+pub const COORDINATION_GET_LEADER_METHOD: RpcMethod<GetLeaderRequest, GetLeaderResponse> =
+    RpcMethod::new(
+        methods::COORDINATION_GET_LEADER,
+        RpcRole::ReadOnly,
+        RpcDomain::Coordination,
+        RpcStability::Experimental,
+        RpcMutability::ReadOnly,
+    );
+
+pub const COORDINATION_INSTANCE_HEALTH_METHOD:
+    RpcMethod<InstanceHealthRequest, InstanceHealthResponse> = RpcMethod::new(
+    methods::COORDINATION_INSTANCE_HEALTH,
+    RpcRole::ReadOnly,
+    RpcDomain::Coordination,
+    RpcStability::Experimental,
+    RpcMutability::ReadOnly,
+);
 
 /// Instance info
 #[derive(Debug, Clone, Serialize, Deserialize)]
