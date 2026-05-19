@@ -1732,10 +1732,30 @@ fn extract_unit_id_from_contents(contents: &str) -> String {
 #[derive(Debug, Clone, Serialize)]
 struct ClosureCommandResult {
     command: String,
+    source: String,
     exit_code: i32,
     passed: bool,
     stdout_preview: String,
     stderr_preview: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct ClosureCommand {
+    command: String,
+    source: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct ClosureMatrixItem {
+    source: String,
+    status: String,
+    text: String,
+}
+
+#[derive(Debug, Clone, Default, Serialize)]
+struct ClosureEvidence {
+    commands: Vec<ClosureCommand>,
+    matrix_items: Vec<ClosureMatrixItem>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1746,7 +1766,9 @@ struct ClosureVerificationReport {
     commands_run: usize,
     commands_passed: usize,
     commands_failed: usize,
+    matrix_items_found: usize,
     overall_passed: bool,
+    evidence_sources: Vec<String>,
     results: Vec<ClosureCommandResult>,
 }
 
@@ -1756,21 +1778,16 @@ async fn execute_closure(
     dry_run: bool,
     ctx: &CommandContext,
 ) -> Result<CommandResult> {
-    // Fetch issue body via gh CLI.
-    let body = fetch_issue_body(issue)?;
+    let evidence = fetch_closure_evidence(issue)?;
+    let commands = &evidence.commands;
+    let evidence_sources = evidence
+        .commands
+        .iter()
+        .map(|command| command.source.clone())
+        .chain(evidence.matrix_items.iter().map(|item| item.source.clone()))
+        .collect::<Vec<_>>();
 
-    // Extract shell commands from:
-    // 1. Code blocks fenced with ```verify or ```bash labeled "verify"
-    // 2. Lines beginning with `$ ` inside any code block
-    let commands = extract_closure_commands(&body);
-
-    if commands.is_empty() {
-        if ctx.is_human() {
-            println!(
-                "Issue #{issue}: no explicit verification commands found in body.\n\
-                 No-op: the issue may be legitimately closed on a text-only decision."
-            );
-        }
+    if commands.is_empty() && evidence.matrix_items.is_empty() {
         let report = ClosureVerificationReport {
             issue,
             dry_run,
@@ -1778,27 +1795,41 @@ async fn execute_closure(
             commands_run: 0,
             commands_passed: 0,
             commands_failed: 0,
-            overall_passed: true,
+            matrix_items_found: 0,
+            overall_passed: false,
+            evidence_sources,
             results: Vec::new(),
         };
         if json {
             println!("{}", serde_json::to_string_pretty(&report)?);
         }
-        return Ok(CommandResult::success()
-            .with_message(format!("issue #{issue}: no verification commands to run"))
-            .with_data(serde_json::to_value(&report)?)
-            .with_duration(ctx.elapsed()));
+        return Ok(CommandResult::failure(crate::output::StructuredError::new(
+            "CLOSURE_VERIFICATION_MISSING_EVIDENCE",
+            format!(
+                "issue #{issue}: no verification commands or closure matrix found in issue body \
+                 or comments"
+            ),
+        ))
+        .with_message(format!(
+            "issue #{issue}: closure verification missing evidence"
+        ))
+        .with_data(serde_json::to_value(&report)?)
+        .with_duration(ctx.elapsed()));
     }
 
     if ctx.is_human() && !json {
         println!(
-            "Issue #{issue}: {} verification command(s) found",
-            commands.len()
+            "Issue #{issue}: {} verification command(s), {} closure matrix item(s) found",
+            commands.len(),
+            evidence.matrix_items.len()
         );
         if dry_run {
-            println!("Dry-run mode — printing commands without executing:");
-            for cmd in &commands {
-                println!("  $ {cmd}");
+            println!("Dry-run mode — printing evidence without executing commands:");
+            for command in commands {
+                println!("  [{}] $ {}", command.source, command.command);
+            }
+            for item in &evidence.matrix_items {
+                println!("  [{}] [{}] {}", item.source, item.status, item.text);
             }
         }
     }
@@ -1806,11 +1837,11 @@ async fn execute_closure(
     let mut results: Vec<ClosureCommandResult> = Vec::new();
 
     if !dry_run {
-        for cmd in &commands {
-            let outcome = run_shell_command(cmd);
+        for command in commands {
+            let outcome = run_shell_command(command);
             if ctx.is_human() && !json {
                 let tag = if outcome.passed { "PASS" } else { "FAIL" };
-                println!("[{tag}] $ {cmd}");
+                println!("[{tag}] [{}] $ {}", outcome.source, outcome.command);
                 if !outcome.passed && !outcome.stderr_preview.is_empty() {
                     println!("       stderr: {}", outcome.stderr_preview);
                 }
@@ -1831,7 +1862,9 @@ async fn execute_closure(
         commands_run,
         commands_passed,
         commands_failed,
+        matrix_items_found: evidence.matrix_items.len(),
         overall_passed,
+        evidence_sources,
         results,
     };
 
@@ -1865,23 +1898,70 @@ async fn execute_closure(
         .with_detail(format!("commands_run={commands_run}"))
         .with_detail(format!("passed={commands_passed}"))
         .with_detail(format!("failed={commands_failed}"))
+        .with_detail(format!("matrix_items={}", evidence.matrix_items.len()))
         .with_data(serde_json::to_value(&report)?)
         .with_duration(ctx.elapsed());
 
     Ok(result)
 }
 
-/// Fetch the body of a GitHub issue via the `gh` CLI.
-fn fetch_issue_body(issue: u64) -> Result<String> {
+#[derive(Debug, Deserialize)]
+struct ClosureIssuePayload {
+    #[serde(default)]
+    body: String,
+    #[serde(default)]
+    comments: Vec<ClosureIssueComment>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ClosureIssueComment {
+    #[serde(default)]
+    body: String,
+    #[serde(rename = "createdAt")]
+    created_at: String,
+}
+
+/// Fetch closure verification evidence from a GitHub issue body and comments.
+fn fetch_closure_evidence(issue: u64) -> Result<ClosureEvidence> {
+    let payload = fetch_issue_closure_payload(issue)?;
+    Ok(collect_closure_evidence(&payload))
+}
+
+fn collect_closure_evidence(payload: &ClosureIssuePayload) -> ClosureEvidence {
+    let mut evidence = ClosureEvidence::default();
+    evidence
+        .commands
+        .extend(extract_closure_command_entries(&payload.body, "body"));
+    evidence
+        .matrix_items
+        .extend(extract_closure_matrix_items(&payload.body, "body"));
+
+    for (index, comment) in payload.comments.iter().enumerate() {
+        let source = if comment.created_at.is_empty() {
+            format!("comment[{index}]")
+        } else {
+            format!("comment[{index}]@{}", comment.created_at)
+        };
+        evidence
+            .commands
+            .extend(extract_closure_command_entries(&comment.body, &source));
+        evidence
+            .matrix_items
+            .extend(extract_closure_matrix_items(&comment.body, &source));
+    }
+
+    evidence
+}
+
+/// Fetch issue body and comments via the `gh` CLI.
+fn fetch_issue_closure_payload(issue: u64) -> Result<ClosureIssuePayload> {
     let output = Command::new("gh")
         .args([
             "issue",
             "view",
             &issue.to_string(),
             "--json",
-            "body",
-            "--jq",
-            ".body",
+            "body,comments",
         ])
         .output();
 
@@ -1897,11 +1977,8 @@ fn fetch_issue_body(issue: u64) -> Result<String> {
             let stderr = String::from_utf8_lossy(&out.stderr);
             bail!("gh issue view #{issue} failed: {stderr}")
         }
-        Ok(out) => {
-            let body =
-                String::from_utf8(out.stdout).with_context(|| "gh output is not valid UTF-8")?;
-            Ok(body.trim().to_string())
-        }
+        Ok(out) => serde_json::from_slice(&out.stdout)
+            .with_context(|| "gh issue view output is not valid closure JSON"),
     }
 }
 
@@ -1914,6 +1991,13 @@ fn fetch_issue_body(issue: u64) -> Result<String> {
 /// 3. Lines in `Closure verification commands` sections (per CONTRIBUTING.md
 ///    policy) that look like shell commands.
 fn extract_closure_commands(body: &str) -> Vec<String> {
+    extract_closure_command_entries(body, "body")
+        .into_iter()
+        .map(|entry| entry.command)
+        .collect()
+}
+
+fn extract_closure_command_entries(body: &str, source: &str) -> Vec<ClosureCommand> {
     let mut commands: Vec<String> = Vec::new();
     let mut in_verify_section = false;
     let mut in_code_block = false;
@@ -1923,10 +2007,11 @@ fn extract_closure_commands(body: &str) -> Vec<String> {
         let trimmed = line.trim();
 
         // Detect section headings that indicate verification context.
-        if trimmed.starts_with('#') {
-            let heading_lower = trimmed.to_lowercase();
+        if !in_code_block && is_closure_evidence_heading(trimmed) {
+            let heading_lower = trimmed.trim_start_matches('#').trim().to_lowercase();
             in_verify_section =
                 heading_lower.contains("verif") || heading_lower.contains("closure");
+            continue;
         }
 
         // Code block start/end.
@@ -1959,20 +2044,135 @@ fn extract_closure_commands(body: &str) -> Vec<String> {
             // Bare `$ command` lines outside code blocks in a verify section.
             if let Some(cmd) = trimmed.strip_prefix("$ ") {
                 commands.push(cmd.to_string());
+            } else if let Some(cmd) = extract_inline_backtick_command(trimmed) {
+                commands.push(cmd);
             }
         }
     }
 
     commands
+        .into_iter()
+        .map(|command| ClosureCommand {
+            command,
+            source: source.to_string(),
+        })
+        .collect()
+}
+
+fn extract_closure_matrix_items(body: &str, source: &str) -> Vec<ClosureMatrixItem> {
+    let mut items = Vec::new();
+    let mut in_matrix_section = false;
+
+    for line in body.lines() {
+        let trimmed = line.trim();
+
+        if is_closure_evidence_heading(trimmed) {
+            let heading_lower = trimmed.trim_start_matches('#').trim().to_lowercase();
+            in_matrix_section = heading_lower.contains("acceptance")
+                || heading_lower.contains("closure")
+                || heading_lower.contains("criteria drift");
+            continue;
+        }
+
+        if !in_matrix_section {
+            continue;
+        }
+
+        let Some((status, text)) = parse_closure_matrix_line(trimmed) else {
+            continue;
+        };
+
+        items.push(ClosureMatrixItem {
+            source: source.to_string(),
+            status,
+            text,
+        });
+    }
+
+    items
+}
+
+fn is_closure_evidence_heading(line: &str) -> bool {
+    if line.starts_with('#') {
+        return true;
+    }
+
+    let lower = line.trim_end_matches(':').to_lowercase();
+    lower == "verification"
+        || lower == "verification run"
+        || lower == "verification commands"
+        || lower == "closure verification"
+        || lower == "closure verification commands"
+        || lower == "acceptance criteria drift"
+}
+
+fn extract_inline_backtick_command(line: &str) -> Option<String> {
+    let (_, rest) = line.split_once('`')?;
+    let (candidate, _) = rest.split_once('`')?;
+    let candidate = candidate.trim();
+    if looks_like_shell_command(candidate) {
+        Some(candidate.to_string())
+    } else {
+        None
+    }
+}
+
+fn looks_like_shell_command(candidate: &str) -> bool {
+    candidate.starts_with("xtask ")
+        || candidate == "xtask"
+        || candidate.starts_with("git ")
+        || candidate.starts_with("gh ")
+        || candidate.starts_with("rg ")
+        || candidate.starts_with("nix ")
+        || candidate.starts_with("SINEX_")
+}
+
+fn parse_closure_matrix_line(line: &str) -> Option<(String, String)> {
+    let body = line
+        .strip_prefix("- ")
+        .or_else(|| line.strip_prefix("* "))
+        .unwrap_or(line)
+        .trim();
+
+    if let Some(rest) = body
+        .strip_prefix("[x] ")
+        .or_else(|| body.strip_prefix("[X] "))
+    {
+        return Some(("checked".to_string(), rest.trim().to_string()));
+    }
+    if let Some(rest) = body.strip_prefix("[ ] ") {
+        let text = rest.trim();
+        let lower = text.to_lowercase();
+        let status = if lower.contains("defer") {
+            "deferred"
+        } else if lower.contains("misframed") {
+            "misframed"
+        } else {
+            "unchecked"
+        };
+        return Some((status.to_string(), text.to_string()));
+    }
+    if let Some(rest) = body.strip_prefix('✅') {
+        return Some(("satisfied".to_string(), rest.trim().to_string()));
+    }
+    if let Some(rest) = body.strip_prefix('⏭') {
+        return Some(("deferred".to_string(), rest.trim().to_string()));
+    }
+    if let Some(rest) = body.strip_prefix('❌') {
+        return Some(("failed".to_string(), rest.trim().to_string()));
+    }
+
+    None
 }
 
 /// Run a single shell command and capture its outcome.
-fn run_shell_command(cmd: &str) -> ClosureCommandResult {
-    let result = Command::new("sh").args(["-c", cmd]).output();
+fn run_shell_command(command: &ClosureCommand) -> ClosureCommandResult {
+    let result = Command::new("sh").args(["-c", &command.command]).output();
 
     match result {
         Err(e) => ClosureCommandResult {
-            command: cmd.to_string(),
+            command: command.command.clone(),
+            source: command.source.clone(),
             exit_code: -1,
             passed: false,
             stdout_preview: String::new(),
@@ -1984,7 +2184,8 @@ fn run_shell_command(cmd: &str) -> ClosureCommandResult {
             let stdout_preview = preview_output(&out.stdout, 200);
             let stderr_preview = preview_output(&out.stderr, 200);
             ClosureCommandResult {
-                command: cmd.to_string(),
+                command: command.command.clone(),
+                source: command.source.clone(),
                 exit_code,
                 passed,
                 stdout_preview,
@@ -2168,6 +2369,87 @@ mod tests {
         let cmds = extract_closure_commands(body);
         assert_eq!(cmds.len(), 1);
         assert_eq!(cmds[0], "xtask check");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn extract_closure_command_entries_preserve_source_location()
+    -> ::xtask::sandbox::TestResult<()> {
+        let body = "## Verification\n\n```bash\nxtask check -p xtask\n```\n";
+        let cmds = extract_closure_command_entries(body, "comment[0]@2026-05-19T00:00:00Z");
+        assert_eq!(cmds.len(), 1);
+        assert_eq!(cmds[0].command, "xtask check -p xtask");
+        assert_eq!(cmds[0].source, "comment[0]@2026-05-19T00:00:00Z");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn extract_closure_commands_finds_inline_comment_verification()
+    -> ::xtask::sandbox::TestResult<()> {
+        let body = "\
+Verification:
+
+- `SINEX_PREFLIGHT_SKIP_DISK_CHECK=1 xtask check -p sinexctl --allow-contended-host` - passed.
+- `xtask test -p sinexctl -E 'test(mcp)' --allow-contended-host` - passed.
+";
+        let cmds = extract_closure_commands(body);
+        assert_eq!(cmds.len(), 2);
+        assert!(cmds[0].starts_with("SINEX_PREFLIGHT_SKIP_DISK_CHECK=1 xtask check"));
+        assert!(cmds[1].starts_with("xtask test -p sinexctl"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn collect_closure_evidence_includes_comment_commands() -> ::xtask::sandbox::TestResult<()>
+    {
+        let payload = ClosureIssuePayload {
+            body: "## Summary\nNo command here.".to_string(),
+            comments: vec![ClosureIssueComment {
+                body: "## Verification\n\n```bash\nxtask check -p xtask\n```".to_string(),
+                created_at: "2026-05-19T00:00:00Z".to_string(),
+            }],
+        };
+        let evidence = collect_closure_evidence(&payload);
+        assert_eq!(evidence.commands.len(), 1);
+        assert_eq!(evidence.commands[0].command, "xtask check -p xtask");
+        assert_eq!(
+            evidence.commands[0].source,
+            "comment[0]@2026-05-19T00:00:00Z"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn collect_closure_evidence_is_empty_without_commands_or_matrix()
+    -> ::xtask::sandbox::TestResult<()> {
+        let payload = ClosureIssuePayload {
+            body: "## Summary\nText-only issue discussion.".to_string(),
+            comments: vec![ClosureIssueComment {
+                body: "Still no verification evidence.".to_string(),
+                created_at: String::new(),
+            }],
+        };
+        let evidence = collect_closure_evidence(&payload);
+        assert!(evidence.commands.is_empty());
+        assert!(evidence.matrix_items.is_empty());
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn extract_closure_matrix_items_reports_checkbox_status()
+    -> ::xtask::sandbox::TestResult<()> {
+        let body = "\
+## Acceptance Criteria Drift
+
+- [x] AC #1 satisfied by PR
+- [ ] AC #2 deferred to #123
+- [ ] AC #3 still unclear
+";
+        let items = extract_closure_matrix_items(body, "body");
+        assert_eq!(items.len(), 3);
+        assert_eq!(items[0].status, "checked");
+        assert_eq!(items[1].status, "deferred");
+        assert_eq!(items[2].status, "unchecked");
         Ok(())
     }
 
