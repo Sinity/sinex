@@ -60,7 +60,8 @@ use sinex_primitives::rpc::{
         SOURCES_CONTINUITY_EXPLAIN_GAP_METHOD, SOURCES_CONTINUITY_GET_METHOD,
         SOURCES_CONTINUITY_LIST_METHOD, SOURCES_CONTINUITY_METHOD, SOURCES_COVERAGE_METHOD,
         SOURCES_LIST_METHOD, SOURCES_READINESS_GET_METHOD, SOURCES_READINESS_LIST_METHOD,
-        SOURCES_SHOW_METHOD,
+        SOURCES_ANNOTATE_METHOD, SOURCES_ARCHIVE_METHOD, SOURCES_SHOW_METHOD,
+        SOURCES_STAGE_METHOD,
         SourcesAnnotateRequest, SourcesAnnotateResponse, SourcesArchiveRequest,
         SourcesArchiveResponse, SourcesContinuityRequest, SourcesContinuityResponse,
         SourcesCoverageRequest, SourcesCoverageResponse, SourcesListRequest, SourcesListResponse,
@@ -919,10 +920,7 @@ impl GatewayClient {
         &self,
         request: SourcesStageRequest,
     ) -> Result<SourcesStageResponse> {
-        let result = self
-            .call_rpc(methods::SOURCES_STAGE, serde_json::to_value(&request)?)
-            .await?;
-        serde_json::from_value(result).map_err(Into::into)
+        self.call_typed(SOURCES_STAGE_METHOD, &request).await
     }
 
     pub async fn sources_list(&self, request: SourcesListRequest) -> Result<SourcesListResponse> {
@@ -944,20 +942,14 @@ impl GatewayClient {
         &self,
         request: SourcesAnnotateRequest,
     ) -> Result<SourcesAnnotateResponse> {
-        let result = self
-            .call_rpc(methods::SOURCES_ANNOTATE, serde_json::to_value(&request)?)
-            .await?;
-        serde_json::from_value(result).map_err(Into::into)
+        self.call_typed(SOURCES_ANNOTATE_METHOD, &request).await
     }
 
     pub async fn sources_archive(
         &self,
         request: SourcesArchiveRequest,
     ) -> Result<SourcesArchiveResponse> {
-        let result = self
-            .call_rpc(methods::SOURCES_ARCHIVE, serde_json::to_value(&request)?)
-            .await?;
-        serde_json::from_value(result).map_err(Into::into)
+        self.call_typed(SOURCES_ARCHIVE_METHOD, &request).await
     }
 
     pub async fn sources_continuity(

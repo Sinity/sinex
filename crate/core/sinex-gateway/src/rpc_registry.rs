@@ -28,7 +28,8 @@ use sinex_primitives::rpc::{
         SOURCES_CONTINUITY_EXPLAIN_GAP_METHOD, SOURCES_CONTINUITY_GET_METHOD,
         SOURCES_CONTINUITY_LIST_METHOD, SOURCES_CONTINUITY_METHOD, SOURCES_COVERAGE_METHOD,
         SOURCES_LIST_METHOD, SOURCES_READINESS_GET_METHOD, SOURCES_READINESS_LIST_METHOD,
-        SOURCES_SHOW_METHOD,
+        SOURCES_ANNOTATE_METHOD, SOURCES_ARCHIVE_METHOD, SOURCES_SHOW_METHOD,
+        SOURCES_STAGE_METHOD,
     },
     system::{SYSTEM_HEALTH_METHOD, SYSTEM_PING_METHOD, SYSTEM_VERSION_METHOD},
     tasks::{TASKS_COMPLETE_METHOD, TASKS_CREATE_METHOD, TASKS_STATE_GET_METHOD},
@@ -896,13 +897,7 @@ fn build_registry_impl() -> RpcRegistry {
             },
         )
         // Source material staging (Write — registers new materials, uses services)
-        .register(
-            methods::SOURCES_STAGE,
-            Role::Write,
-            |params, services, auth| {
-                Box::pin(async move { handle_sources_stage(params, services, auth).await })
-            },
-        )
+        .service_auth_typed_rpc(SOURCES_STAGE_METHOD, boxed!(handle_sources_stage, 3))
         // Source binding management (Write)
         .pool_rpc(
             methods::SOURCES_BINDINGS_CREATE,
@@ -915,9 +910,8 @@ fn build_registry_impl() -> RpcRegistry {
             boxed!(handle_sources_bindings_resolve),
         )
         // Source annotation (Write — modifies metadata)
-        .pool_rpc(
-            methods::SOURCES_ANNOTATE,
-            Role::Write,
+        .pool_typed_rpc(
+            SOURCES_ANNOTATE_METHOD,
             boxed!(handle_sources_annotate),
         )
         // Node operations (Write - affects system but not destructive)
@@ -1025,9 +1019,8 @@ fn build_registry_impl() -> RpcRegistry {
         // Data lifecycle mutations (Admin - DESTRUCTIVE)
         .pool_auth_typed_rpc(LIFECYCLE_ARCHIVE_METHOD, boxed!(handle_lifecycle_archive, 3))
         // Source material archival (Admin — archives material + cascade)
-        .pool_rpc(
-            methods::SOURCES_ARCHIVE,
-            Role::Admin,
+        .pool_typed_rpc(
+            SOURCES_ARCHIVE_METHOD,
             boxed!(handle_sources_archive),
         )
         .pool_auth_typed_rpc(LIFECYCLE_RESTORE_METHOD, boxed!(handle_lifecycle_restore, 3))

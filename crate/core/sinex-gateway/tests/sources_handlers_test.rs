@@ -1,6 +1,5 @@
 //! Source material RPC handler tests.
 
-use serde_json::json;
 use sinex_db::repositories::DbPoolExt;
 use sinex_db::repositories::source_materials::TemporalLedgerEntry;
 use sinex_gateway::handlers;
@@ -9,7 +8,7 @@ use sinex_gateway::service_container::ServiceContainer;
 use sinex_primitives::Timestamp;
 use sinex_primitives::domain::{SourceMaterialFormat, SourceMaterialTimingInfoType};
 use sinex_primitives::rpc::sources::{
-    SourcesListRequest, SourcesShowRequest, SourcesStageResponse,
+    SourcesListRequest, SourcesShowRequest, SourcesStageRequest,
 };
 use std::path::PathBuf;
 use xtask::sandbox::prelude::*;
@@ -32,19 +31,20 @@ async fn sources_stage_list_and_show_surface_contract_metadata(ctx: TestContext)
     std::fs::write(&file_path, b"sqlite bytes")?;
     let file_path = file_path.to_string_lossy().to_string();
 
-    let stage_value = handlers::handle_sources_stage(
-        json!({
-            "file_path": file_path,
-            "format": "sqlite",
-            "timing_info_type": "intrinsic",
-            "reason": "continuous atuin history",
-            "tags": ["shell", "history"]
-        }),
+    let stage = handlers::handle_sources_stage(
         &services,
+        SourcesStageRequest {
+            file_path,
+            format: Some(SourceMaterialFormat::Sqlite),
+            timing_info_type: Some(SourceMaterialTimingInfoType::Intrinsic),
+            reason: Some("continuous atuin history".to_string()),
+            tags: vec!["shell".to_string(), "history".to_string()],
+            binding_name: None,
+            with_bytes: true,
+        },
         &auth,
     )
     .await?;
-    let stage: SourcesStageResponse = serde_json::from_value(stage_value)?;
 
     assert_eq!(stage.total_bytes, Some(12));
     assert_eq!(stage.contract.version, 1);
@@ -125,11 +125,16 @@ async fn sources_stage_rejects_non_file_material_formats(ctx: TestContext) -> Te
     let file_path = file_path.to_string_lossy().to_string();
 
     let error = handlers::handle_sources_stage(
-        json!({
-            "file_path": file_path,
-            "format": "directory"
-        }),
         &services,
+        SourcesStageRequest {
+            file_path,
+            format: Some(SourceMaterialFormat::Directory),
+            timing_info_type: None,
+            reason: None,
+            tags: Vec::new(),
+            binding_name: None,
+            with_bytes: true,
+        },
         &auth,
     )
     .await
@@ -155,11 +160,16 @@ async fn sources_list_respects_limit(ctx: TestContext) -> TestResult<()> {
         let file_path = dir.join(name);
         std::fs::write(&file_path, b"{}")?;
         handlers::handle_sources_stage(
-            json!({
-                "file_path": file_path.to_string_lossy().to_string(),
-                "format": "jsonl"
-            }),
             &services,
+            SourcesStageRequest {
+                file_path: file_path.to_string_lossy().to_string(),
+                format: Some(SourceMaterialFormat::Jsonl),
+                timing_info_type: None,
+                reason: None,
+                tags: Vec::new(),
+                binding_name: None,
+                with_bytes: true,
+            },
             &auth,
         )
         .await?;
