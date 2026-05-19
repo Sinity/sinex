@@ -28,6 +28,7 @@ use sinex_primitives::rpc::{
     events::{EVENTS_ANNOTATE_METHOD, EVENTS_LINEAGE_METHOD, EVENTS_QUERY_METHOD},
     health::{HEALTH_EFFECT_RECORD_METHOD, HEALTH_INTAKE_RECORD_METHOD},
     ingestors::INGESTORS_STATUS_METHOD,
+    instructions::INSTRUCTIONS_HYPRLAND_WORKSPACE_SWITCH_METHOD,
     lifecycle::{
         LIFECYCLE_ARCHIVE_METHOD, LIFECYCLE_RESTORE_METHOD, LIFECYCLE_STATUS_METHOD,
         LIFECYCLE_TOMBSTONE_APPROVE_METHOD, LIFECYCLE_TOMBSTONE_CANCEL_METHOD,
@@ -590,12 +591,12 @@ fn build_registry_impl() -> RpcRegistry {
         handle_dlq_peek, handle_dlq_purge, handle_dlq_requeue, handle_documents_get,
         handle_documents_get_chunks, handle_documents_search, handle_events_annotate,
         handle_events_lineage, handle_events_query, handle_health_effect_record,
-        handle_health_intake_record, handle_ingestors_status, handle_lifecycle_archive,
-        handle_lifecycle_restore, handle_lifecycle_status, handle_link_entities,
-        handle_llm_budget_report, handle_llm_prompts_list, handle_llm_route_explain,
-        handle_nodes_drain, handle_nodes_health, handle_nodes_list, handle_nodes_list_active,
-        handle_nodes_resume, handle_nodes_set_horizon, handle_ops_cancel, handle_ops_get,
-        handle_ops_list, handle_ops_start, handle_private_mode_disable_service,
+        handle_health_intake_record, handle_hyprland_workspace_switch, handle_ingestors_status,
+        handle_lifecycle_archive, handle_lifecycle_restore, handle_lifecycle_status,
+        handle_link_entities, handle_llm_budget_report, handle_llm_prompts_list,
+        handle_llm_route_explain, handle_nodes_drain, handle_nodes_health, handle_nodes_list,
+        handle_nodes_list_active, handle_nodes_resume, handle_nodes_set_horizon, handle_ops_cancel,
+        handle_ops_get, handle_ops_list, handle_ops_start, handle_private_mode_disable_service,
         handle_private_mode_enable_service, handle_private_mode_status_service,
         handle_replay_approve_operation, handle_replay_cancel_operation,
         handle_replay_create_operation, handle_replay_execute_operation,
@@ -819,6 +820,10 @@ fn build_registry_impl() -> RpcRegistry {
         .pool_auth_typed_rpc(TASKS_STATUS_SET_METHOD, boxed!(handle_tasks_status_set, 3))
         .pool_auth_typed_rpc(TASKS_COMPLETE_METHOD, boxed!(handle_tasks_complete, 3))
         .pool_auth_typed_rpc(TASKS_CANCEL_METHOD, boxed!(handle_tasks_cancel, 3))
+        .pool_auth_typed_rpc(
+            INSTRUCTIONS_HYPRLAND_WORKSPACE_SWITCH_METHOD,
+            boxed!(handle_hyprland_workspace_switch, 3),
+        )
         .pool_auth_typed_rpc(
             SEMANTIC_EPOCHS_CREATE_METHOD,
             boxed!(handle_semantic_epoch_create, 3),

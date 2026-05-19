@@ -1,0 +1,128 @@
+use sinex_db::{DbPoolExt, SourceMaterialRecord};
+use sinex_gateway::handlers::handle_hyprland_workspace_switch;
+use sinex_gateway::rpc_server::RpcAuthContext;
+use sinex_primitives::Id;
+use sinex_primitives::events::EventPayload;
+use sinex_primitives::events::payloads::{ActuationStatus, HyprlandWorkspaceSwitchedPayload};
+use sinex_primitives::rpc::instructions::HyprlandWorkspaceSwitchRequest;
+use tokio::{
+    io::{AsyncReadExt, AsyncWriteExt},
+    net::UnixListener,
+};
+use xtask::sandbox::prelude::*;
+
+#[sinex_test]
+async fn hyprland_workspace_switch_records_unavailable_without_observation(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let auth = RpcAuthContext::system();
+
+    let response = handle_hyprland_workspace_switch(
+        ctx.pool(),
+        HyprlandWorkspaceSwitchRequest {
+            instruction_id: None,
+            desired_workspace_id: 4,
+            deadline: None,
+            dry_run: false,
+            command_socket_path: None,
+        },
+        &auth,
+    )
+    .await?;
+
+    assert_eq!(response.instruction.desired_workspace_id, 4);
+    assert_eq!(response.instruction.actor_id, auth.actor_id());
+    assert!(!response.observation_ready);
+    assert_eq!(response.current_workspace_id, None);
+    assert_eq!(response.command_socket_response, None);
+    assert_eq!(response.attempt.status, ActuationStatus::Unavailable);
+    assert!(response.attempt.command_summary.command.is_none());
+
+    let material = ctx
+        .pool()
+        .source_materials()
+        .get_by_id(Id::<SourceMaterialRecord>::from_uuid(
+            response.material_id.to_uuid(),
+        ))
+        .await?
+        .ok_or_else(|| color_eyre::eyre::eyre!("instruction material not persisted"))?;
+    assert_eq!(material.staged_by.as_deref(), Some(auth.actor_id()));
+    assert_eq!(
+        material.metadata["instruction_target"],
+        "desktop.hyprland.workspace"
+    );
+
+    let instruction_event_id = response
+        .instruction_event
+        .id
+        .ok_or_else(|| color_eyre::eyre::eyre!("instruction event missing id"))?;
+    let attempt_parent = response
+        .attempt_event
+        .get_source_event_ids()
+        .and_then(|parents| parents.first().copied())
+        .ok_or_else(|| color_eyre::eyre::eyre!("attempt event missing instruction parent"))?;
+    assert_eq!(attempt_parent, instruction_event_id);
+    Ok(())
+}
+
+#[sinex_test]
+async fn hyprland_workspace_switch_dispatches_typed_command_when_observation_ready(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let material_id = ctx
+        .create_source_material(Some("hyprland-workspace-observation"))
+        .await?;
+    let observed = HyprlandWorkspaceSwitchedPayload {
+        from_workspace_id: 1,
+        to_workspace_id: 2,
+        monitor_id: 0,
+        active_window_id: None,
+    }
+    .from_material(material_id)
+    .build()?;
+    ctx.pool().events().insert(observed).await?;
+
+    let temp = tempfile::Builder::new()
+        .prefix("sinex-hypr-")
+        .tempdir_in("/tmp")?;
+    let socket_path = temp.path().join("hyprland-command.sock");
+    let listener = UnixListener::bind(&socket_path)?;
+    let server = tokio::spawn(async move {
+        let (_probe_stream, _) = listener.accept().await?;
+        let (mut stream, _) = listener.accept().await?;
+        let mut request = String::new();
+        stream.read_to_string(&mut request).await?;
+        stream.write_all(b"ok").await?;
+        Ok::<_, std::io::Error>(request)
+    });
+
+    let response = handle_hyprland_workspace_switch(
+        ctx.pool(),
+        HyprlandWorkspaceSwitchRequest {
+            instruction_id: None,
+            desired_workspace_id: 4,
+            deadline: None,
+            dry_run: false,
+            command_socket_path: Some(socket_path.display().to_string()),
+        },
+        &RpcAuthContext::system(),
+    )
+    .await?;
+    let request = server.await??;
+
+    assert_eq!(request, "dispatch workspace 4");
+    assert!(response.observation_ready);
+    assert_eq!(response.current_workspace_id, Some(2));
+    assert_eq!(response.attempt.status, ActuationStatus::Attempted);
+    assert_eq!(response.command_socket_response.as_deref(), Some("ok"));
+    assert_eq!(
+        response
+            .attempt
+            .command_summary
+            .command
+            .as_ref()
+            .map(|command| command.workspace_id),
+        Some(4)
+    );
+    Ok(())
+}

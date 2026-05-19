@@ -47,6 +47,10 @@ use sinex_primitives::rpc::{
         HealthEffectRecordResponse, HealthIntakeRecordRequest, HealthIntakeRecordResponse,
     },
     ingestors::{INGESTORS_STATUS_METHOD, IngestorsStatusRequest, IngestorsStatusResponse},
+    instructions::{
+        HyprlandWorkspaceSwitchRequest, HyprlandWorkspaceSwitchResponse,
+        INSTRUCTIONS_HYPRLAND_WORKSPACE_SWITCH_METHOD,
+    },
     lifecycle::{
         LIFECYCLE_ARCHIVE_METHOD, LIFECYCLE_RESTORE_METHOD, LIFECYCLE_STATUS_METHOD,
         LIFECYCLE_TOMBSTONE_APPROVE_METHOD, LIFECYCLE_TOMBSTONE_CANCEL_METHOD,
@@ -950,6 +954,16 @@ impl GatewayClient {
     /// List current task states.
     pub async fn tasks_list(&self, request: TaskListRequest) -> Result<TaskListResponse> {
         self.call_typed(TASKS_LIST_METHOD, &request).await
+    }
+
+    // ==================== Instruction Commands ====================
+
+    pub async fn instructions_hyprland_workspace_switch(
+        &self,
+        request: HyprlandWorkspaceSwitchRequest,
+    ) -> Result<HyprlandWorkspaceSwitchResponse> {
+        self.call_typed(INSTRUCTIONS_HYPRLAND_WORKSPACE_SWITCH_METHOD, &request)
+            .await
     }
 
     // ==================== Curation Commands ====================
