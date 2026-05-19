@@ -70,7 +70,9 @@ async fn mcp_lists_first_slice_read_only_tools() -> TestResult<()> {
         vec![
             "sinex.search_events",
             "sinex.trace_lineage",
-            "sinex.source_readiness"
+            "sinex.source_readiness",
+            "sinex.privacy_status",
+            "sinex.system_health"
         ]
     );
     assert_read_only_tool_names()?;
@@ -275,6 +277,45 @@ async fn mcp_source_readiness_call_uses_gateway_fixture() -> TestResult<()> {
     Ok(())
 }
 
+#[sinex_test]
+async fn mcp_privacy_status_call_uses_gateway_fixture() -> TestResult<()> {
+    let server = mount_mcp_gateway_fixture().await;
+    let client = fixture_gateway_client(&server)?;
+
+    let response = call_tool(&client, "sinex.privacy_status", json!({})).await?;
+
+    assert_eq!(response["tool"], "sinex.privacy_status");
+    assert_eq!(response["items"]["result"]["state"]["enabled"], true);
+    assert_eq!(
+        response["items"]["result"]["state"]["affected_source_classes"],
+        json!(["terminal"])
+    );
+    assert_eq!(response["redaction"]["raw_samples"], false);
+    assert!(
+        !response.to_string().contains("ghp_fixture_secret"),
+        "MCP privacy status leaked raw sensitive sample text"
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn mcp_system_health_call_uses_gateway_fixture() -> TestResult<()> {
+    let server = mount_mcp_gateway_fixture().await;
+    let client = fixture_gateway_client(&server)?;
+
+    let response = call_tool(&client, "sinex.system_health", json!({})).await?;
+
+    assert_eq!(response["tool"], "sinex.system_health");
+    assert_eq!(response["items"]["result"]["status"], "degraded");
+    assert_eq!(response["items"]["result"]["healthy"], false);
+    assert_eq!(
+        response["items"]["result"]["components"]["sse_confirmation"]["status"],
+        "degraded"
+    );
+    assert_eq!(response["redaction"]["raw_samples"], false);
+    Ok(())
+}
+
 async fn mount_mcp_gateway_fixture() -> MockServer {
     let server = MockServer::start().await;
     Mock::given(method("POST"))
@@ -371,6 +412,49 @@ async fn mount_mcp_gateway_fixture() -> MockServer {
                         "status": "available",
                         "cost": "local_fast",
                         "material_count": 3
+                    }
+                }),
+                "privacy.private_mode.status" => json!({
+                    "state": {
+                        "enabled": true,
+                        "reason_class": "operator_private",
+                        "actor": "operator",
+                        "started_at": "2026-05-19T10:00:00Z",
+                        "expires_at": null,
+                        "affected_source_classes": ["terminal"],
+                        "updated_by_operation_id": "op-private"
+                    }
+                }),
+                "system.health" => json!({
+                    "status": "degraded",
+                    "healthy": false,
+                    "serving": true,
+                    "degradation_reasons": ["confirmation fan-out degraded"],
+                    "components": {
+                        "database": {
+                            "status": "healthy",
+                            "connected": true,
+                            "latency_ms": 1.5,
+                            "detail": null
+                        },
+                        "nats": {
+                            "status": "healthy",
+                            "connected": true,
+                            "latency_ms": 2.0,
+                            "detail": null
+                        },
+                        "replay_control": {
+                            "status": "healthy",
+                            "enabled": true,
+                            "connected": true,
+                            "last_error": null
+                        },
+                        "sse_confirmation": {
+                            "status": "degraded",
+                            "connected": true,
+                            "latency_ms": null,
+                            "detail": "pending_retry=2 dropped=1"
+                        }
                     }
                 }),
                 other => {

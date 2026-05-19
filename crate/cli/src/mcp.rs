@@ -14,7 +14,9 @@ use sinex_primitives::events::Event;
 use sinex_primitives::ids::Id;
 use sinex_primitives::query::{EventQuery, LineageDirection, LineageQuery};
 use sinex_primitives::rpc::methods;
+use sinex_primitives::rpc::privacy::PrivateModeStateResponse;
 use sinex_primitives::rpc::sources::{SourcesReadinessGetRequest, SourcesReadinessListRequest};
+use sinex_primitives::rpc::system::SystemHealthResponse;
 use sinex_primitives::temporal::Timestamp;
 use std::io::{BufRead, Write};
 
@@ -139,6 +141,20 @@ pub fn tool_catalog() -> Vec<McpCatalogEntry> {
             ],
             read_only: true,
         },
+        McpCatalogEntry {
+            name: "sinex.privacy_status",
+            kind: McpSurfaceKind::Tool,
+            description: "Read-only runtime private-mode state.",
+            backing_rpc_methods: &[methods::PRIVACY_PRIVATE_MODE_STATUS],
+            read_only: true,
+        },
+        McpCatalogEntry {
+            name: "sinex.system_health",
+            kind: McpSurfaceKind::Tool,
+            description: "Read-only gateway and confirmation-path health summary.",
+            backing_rpc_methods: &[methods::SYSTEM_HEALTH],
+            read_only: true,
+        },
     ]
 }
 
@@ -208,6 +224,24 @@ pub fn tools() -> Vec<McpTool> {
                     "stale_after_seconds": { "type": "integer", "minimum": 1 },
                     "include_caveats": { "type": "boolean", "default": true }
                 },
+                "additionalProperties": false
+            }),
+        },
+        McpTool {
+            name: "sinex.privacy_status",
+            description: "Read-only runtime private-mode state.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {},
+                "additionalProperties": false
+            }),
+        },
+        McpTool {
+            name: "sinex.system_health",
+            description: "Read-only gateway and confirmation-path health summary.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {},
                 "additionalProperties": false
             }),
         },
@@ -294,6 +328,8 @@ pub async fn call_tool(client: &GatewayClient, name: &str, arguments: Value) -> 
         "sinex.search_events" => search_events(client, arguments).await,
         "sinex.trace_lineage" => trace_lineage(client, arguments).await,
         "sinex.source_readiness" => source_readiness(client, arguments).await,
+        "sinex.privacy_status" => privacy_status(client, arguments).await,
+        "sinex.system_health" => system_health(client, arguments).await,
         other => Err(eyre!("unknown MCP tool: {other}")),
     }
 }
@@ -372,6 +408,34 @@ async fn source_readiness(client: &GatewayClient, arguments: Value) -> Result<Va
     }
 
     Ok(envelope("sinex.source_readiness", json!(args), payload))
+}
+
+async fn privacy_status(client: &GatewayClient, arguments: Value) -> Result<Value> {
+    reject_non_empty_args("sinex.privacy_status", &arguments)?;
+    let response: PrivateModeStateResponse = client.private_mode_status().await?;
+    Ok(envelope(
+        "sinex.privacy_status",
+        json!({}),
+        json!({ "result": response }),
+    ))
+}
+
+async fn system_health(client: &GatewayClient, arguments: Value) -> Result<Value> {
+    reject_non_empty_args("sinex.system_health", &arguments)?;
+    let response: SystemHealthResponse = client.health().await?;
+    Ok(envelope(
+        "sinex.system_health",
+        json!({}),
+        json!({ "result": response }),
+    ))
+}
+
+fn reject_non_empty_args(tool: &str, arguments: &Value) -> Result<()> {
+    match arguments {
+        Value::Null => Ok(()),
+        Value::Object(fields) if fields.is_empty() => Ok(()),
+        _ => Err(eyre!("{tool} does not accept arguments")),
+    }
 }
 
 fn filter_readiness_by_source_unit(result: &mut Value, source_unit_id: &str) {
