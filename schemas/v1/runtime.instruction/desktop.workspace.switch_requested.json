@@ -1,0 +1,90 @@
+{
+  "$defs": {
+    "DateTime": {
+      "description": "RFC 3339 formatted date-time string",
+      "format": "date-time",
+      "type": "string"
+    },
+    "InstructionAuthorityClass": {
+      "description": "Authority class attached to an admitted instruction.",
+      "enum": [
+        "operator_direct",
+        "user_declared",
+        "deterministic_policy",
+        "approved_proposal",
+        "model_suggested"
+      ],
+      "type": "string"
+    },
+    "InstructionTarget": {
+      "description": "Narrow target classes that may be admitted as instructions.",
+      "enum": [
+        "desktop_hyprland_workspace"
+      ],
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Desired local desktop workspace state admitted by the operator plane.",
+  "properties": {
+    "actor_id": {
+      "type": "string"
+    },
+    "authority": {
+      "$ref": "#/$defs/InstructionAuthorityClass"
+    },
+    "deadline": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/DateTime"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "desired_event_source": {
+      "type": "string"
+    },
+    "desired_event_type": {
+      "type": "string"
+    },
+    "desired_workspace_id": {
+      "format": "int32",
+      "type": "integer"
+    },
+    "dry_run": {
+      "type": "boolean"
+    },
+    "idempotency_key": {
+      "type": "string"
+    },
+    "instruction_id": {
+      "format": "uuid",
+      "type": "string"
+    },
+    "safety_policy_ref": {
+      "type": "string"
+    },
+    "target": {
+      "$ref": "#/$defs/InstructionTarget"
+    }
+  },
+  "required": [
+    "instruction_id",
+    "target",
+    "desired_event_source",
+    "desired_event_type",
+    "desired_workspace_id",
+    "actor_id",
+    "authority",
+    "idempotency_key",
+    "dry_run",
+    "safety_policy_ref"
+  ],
+  "title": "DesktopWorkspaceSwitchInstructionPayload",
+  "type": "object",
+  "x-sinex-event-type": "desktop.workspace.switch_requested",
+  "x-sinex-source": "runtime.instruction",
+  "x-sinex-version": "1.0.0"
+}
