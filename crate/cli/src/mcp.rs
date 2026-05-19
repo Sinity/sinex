@@ -24,6 +24,7 @@ use sinex_primitives::rpc::system::SystemHealthResponse;
 use sinex_primitives::rpc::tasks::{
     TaskListRequest, TaskListResponse, TaskStateGetRequest, TaskStateResponse,
 };
+use sinex_primitives::rpc::telemetry::IngestdValidationSnapshot;
 use sinex_primitives::task_domain::TaskStatus;
 use sinex_primitives::temporal::Timestamp;
 use std::io::{BufRead, Write};
@@ -155,6 +156,16 @@ struct StaleAfterArgs {
     stale_after_secs: u64,
 }
 
+#[derive(Debug, Deserialize, Serialize)]
+struct TelemetryBucketsArgs {
+    #[serde(default)]
+    from: Option<String>,
+    #[serde(default)]
+    to: Option<String>,
+    #[serde(default)]
+    limit: Option<i64>,
+}
+
 const fn default_true() -> bool {
     true
 }
@@ -248,6 +259,20 @@ pub fn tool_catalog() -> Vec<McpCatalogEntry> {
             kind: McpSurfaceKind::Tool,
             description: "Read-only active runtime node presence.",
             backing_rpc_methods: &[methods::NODES_LIST_ACTIVE],
+            read_only: true,
+        },
+        McpCatalogEntry {
+            name: "sinex.ingestd_validation",
+            kind: McpSurfaceKind::Tool,
+            description: "Read-only latest ingestd validation and admission snapshot.",
+            backing_rpc_methods: &[methods::TELEMETRY_INGESTD_VALIDATION],
+            read_only: true,
+        },
+        McpCatalogEntry {
+            name: "sinex.ingestd_batch_stats",
+            kind: McpSurfaceKind::Tool,
+            description: "Read-only ingestd batch, latency, and validation telemetry buckets.",
+            backing_rpc_methods: &[methods::TELEMETRY_INGESTD_BATCH_STATS],
             read_only: true,
         },
     ]
@@ -397,7 +422,42 @@ pub fn tools() -> Vec<McpTool> {
             description: "Read-only active runtime node presence.",
             input_schema: stale_after_schema(),
         },
+        McpTool {
+            name: "sinex.ingestd_validation",
+            description: "Read-only latest ingestd validation and admission snapshot.",
+            input_schema: empty_object_schema(),
+        },
+        McpTool {
+            name: "sinex.ingestd_batch_stats",
+            description: "Read-only ingestd batch, latency, and validation telemetry buckets.",
+            input_schema: telemetry_buckets_schema(),
+        },
     ]
+}
+
+fn empty_object_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+    })
+}
+
+fn telemetry_buckets_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "from": { "type": "string", "format": "date-time" },
+            "to": { "type": "string", "format": "date-time" },
+            "limit": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 500,
+                "default": 50
+            }
+        },
+        "additionalProperties": false
+    })
 }
 
 fn stale_after_schema() -> Value {
@@ -521,6 +581,8 @@ pub async fn call_tool(client: &GatewayClient, name: &str, arguments: Value) -> 
         "sinex.ingestors_status" => ingestors_status(client, arguments).await,
         "sinex.nodes_health" => nodes_health(client, arguments).await,
         "sinex.nodes_active" => nodes_active(client, arguments).await,
+        "sinex.ingestd_validation" => ingestd_validation(client, arguments).await,
+        "sinex.ingestd_batch_stats" => ingestd_batch_stats(client, arguments).await,
         other => Err(eyre!("unknown MCP tool: {other}")),
     }
 }
@@ -695,6 +757,28 @@ async fn nodes_active(client: &GatewayClient, arguments: Value) -> Result<Value>
         "sinex.nodes_active",
         json!(args),
         json!({ "result": response }),
+    ))
+}
+
+async fn ingestd_validation(client: &GatewayClient, arguments: Value) -> Result<Value> {
+    reject_non_empty_args("sinex.ingestd_validation", &arguments)?;
+    let snapshot: Option<IngestdValidationSnapshot> = client.telemetry_ingestd_validation().await?;
+    Ok(envelope(
+        "sinex.ingestd_validation",
+        json!({}),
+        json!({ "snapshot": snapshot }),
+    ))
+}
+
+async fn ingestd_batch_stats(client: &GatewayClient, arguments: Value) -> Result<Value> {
+    let args: TelemetryBucketsArgs = serde_json::from_value(arguments)?;
+    let buckets = client
+        .telemetry_ingestd_batch_stats(args.from.clone(), args.to.clone(), args.limit)
+        .await?;
+    Ok(envelope(
+        "sinex.ingestd_batch_stats",
+        json!(args),
+        json!({ "buckets": buckets }),
     ))
 }
 
