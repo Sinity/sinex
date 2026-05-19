@@ -60,6 +60,7 @@ pub enum RpcDomain {
     Pkm,
     Privacy,
     Replay,
+    Semantic,
     Shadow,
     Sources,
     System,
@@ -165,6 +166,7 @@ pub mod ops;
 pub mod pkm;
 pub mod privacy;
 pub mod replay;
+pub mod semantic;
 pub mod shadow;
 pub mod sources;
 pub mod system;
@@ -238,6 +240,14 @@ pub fn method_catalog() -> Vec<RpcMethodInfo> {
         replay::REPLAY_OPERATION_STATUS_METHOD.info(),
         replay::REPLAY_PREVIEW_OPERATION_METHOD.info(),
         replay::REPLAY_SUBMIT_OPERATION_METHOD.info(),
+        semantic::SEMANTIC_EPOCHS_CREATE_METHOD.info(),
+        semantic::SEMANTIC_EPOCHS_LIST_METHOD.info(),
+        semantic::SEMANTIC_LANE_OUTPUTS_LIST_METHOD.info(),
+        semantic::SEMANTIC_LANES_CREATE_METHOD.info(),
+        semantic::SEMANTIC_LANES_DISCARD_METHOD.info(),
+        semantic::SEMANTIC_LANES_LIST_METHOD.info(),
+        semantic::SEMANTIC_LANES_SET_STATUS_METHOD.info(),
+        semantic::SEMANTIC_LANE_DIFFS_LIST_METHOD.info(),
         shadow::SHADOW_CREATE_METHOD.info(),
         shadow::SHADOW_DELETE_METHOD.info(),
         shadow::SHADOW_LIST_METHOD.info(),
@@ -306,6 +316,7 @@ pub mod prelude {
     pub use super::pkm::*;
     pub use super::privacy::*;
     pub use super::replay::*;
+    pub use super::semantic::*;
     pub use super::shadow::*;
     pub use super::sources::*;
     pub use super::system::*;

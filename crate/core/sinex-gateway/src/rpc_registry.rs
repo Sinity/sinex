@@ -51,6 +51,12 @@ use sinex_primitives::rpc::{
         REPLAY_LIST_OPERATIONS_METHOD, REPLAY_OPERATION_STATUS_METHOD,
         REPLAY_PREVIEW_OPERATION_METHOD, REPLAY_SUBMIT_OPERATION_METHOD,
     },
+    semantic::{
+        SEMANTIC_EPOCHS_CREATE_METHOD, SEMANTIC_EPOCHS_LIST_METHOD,
+        SEMANTIC_LANE_DIFFS_LIST_METHOD, SEMANTIC_LANE_OUTPUTS_LIST_METHOD,
+        SEMANTIC_LANES_CREATE_METHOD, SEMANTIC_LANES_DISCARD_METHOD, SEMANTIC_LANES_LIST_METHOD,
+        SEMANTIC_LANES_SET_STATUS_METHOD,
+    },
     shadow::{SHADOW_CREATE_METHOD, SHADOW_DELETE_METHOD, SHADOW_LIST_METHOD},
     sources::{
         SOURCES_ANNOTATE_METHOD, SOURCES_ARCHIVE_METHOD, SOURCES_BINDINGS_CREATE_METHOD,
@@ -719,9 +725,12 @@ fn build_registry_impl() -> RpcRegistry {
         handle_replay_create_operation, handle_replay_execute_operation,
         handle_replay_list_operations, handle_replay_operation_status,
         handle_replay_preview_operation, handle_replay_submit_operation, handle_retrieve_blob,
-        handle_shadow_create, handle_shadow_delete, handle_shadow_list, handle_sources_annotate,
-        handle_sources_archive, handle_sources_bindings_create, handle_sources_bindings_list,
-        handle_sources_bindings_resolve, handle_sources_continuity,
+        handle_semantic_epoch_create, handle_semantic_epoch_list, handle_semantic_lane_create,
+        handle_semantic_lane_diffs_list, handle_semantic_lane_discard,
+        handle_semantic_lane_outputs_list, handle_semantic_lane_set_status,
+        handle_semantic_lanes_list, handle_shadow_create, handle_shadow_delete, handle_shadow_list,
+        handle_sources_annotate, handle_sources_archive, handle_sources_bindings_create,
+        handle_sources_bindings_list, handle_sources_bindings_resolve, handle_sources_continuity,
         handle_sources_continuity_explain_gap, handle_sources_continuity_get,
         handle_sources_continuity_list, handle_sources_coverage, handle_sources_list,
         handle_sources_presets_list, handle_sources_readiness_get, handle_sources_readiness_list,
@@ -761,6 +770,22 @@ fn build_registry_impl() -> RpcRegistry {
         .pool_typed_rpc(EVENTS_LINEAGE_METHOD, boxed!(handle_events_lineage))
         .pool_typed_rpc(TASKS_LIST_METHOD, boxed!(handle_tasks_list))
         .pool_typed_rpc(TASKS_STATE_GET_METHOD, boxed!(handle_tasks_state_get))
+        .pool_typed_rpc(
+            SEMANTIC_EPOCHS_LIST_METHOD,
+            boxed!(handle_semantic_epoch_list),
+        )
+        .pool_typed_rpc(
+            SEMANTIC_LANES_LIST_METHOD,
+            boxed!(handle_semantic_lanes_list),
+        )
+        .pool_typed_rpc(
+            SEMANTIC_LANE_OUTPUTS_LIST_METHOD,
+            boxed!(handle_semantic_lane_outputs_list),
+        )
+        .pool_typed_rpc(
+            SEMANTIC_LANE_DIFFS_LIST_METHOD,
+            boxed!(handle_semantic_lane_diffs_list),
+        )
         // Coordination methods (ReadOnly)
         .coord_typed_rpc(
             COORDINATION_LIST_INSTANCES_METHOD,
@@ -917,6 +942,22 @@ fn build_registry_impl() -> RpcRegistry {
         .pool_auth_typed_rpc(TASKS_STATUS_SET_METHOD, boxed!(handle_tasks_status_set, 3))
         .pool_auth_typed_rpc(TASKS_COMPLETE_METHOD, boxed!(handle_tasks_complete, 3))
         .pool_auth_typed_rpc(TASKS_CANCEL_METHOD, boxed!(handle_tasks_cancel, 3))
+        .pool_auth_typed_rpc(
+            SEMANTIC_EPOCHS_CREATE_METHOD,
+            boxed!(handle_semantic_epoch_create, 3),
+        )
+        .pool_typed_rpc(
+            SEMANTIC_LANES_CREATE_METHOD,
+            boxed!(handle_semantic_lane_create),
+        )
+        .pool_typed_rpc(
+            SEMANTIC_LANES_SET_STATUS_METHOD,
+            boxed!(handle_semantic_lane_set_status),
+        )
+        .pool_typed_rpc(
+            SEMANTIC_LANES_DISCARD_METHOD,
+            boxed!(handle_semantic_lane_discard),
+        )
         .pool_auth_typed_rpc(
             HEALTH_INTAKE_RECORD_METHOD,
             boxed!(handle_health_intake_record, 3),

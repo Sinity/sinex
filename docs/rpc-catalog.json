@@ -567,6 +567,78 @@
     "response_type": "sinex_primitives::rpc::replay::ReplaySubmitResponse"
   },
   {
+    "name": "semantic.epochs.create",
+    "role": "write",
+    "domain": "semantic",
+    "stability": "experimental",
+    "mutability": "mutating",
+    "request_type": "sinex_primitives::rpc::semantic::SemanticEpochCreateRequest",
+    "response_type": "sinex_primitives::rpc::semantic::SemanticEpochRecordResponse"
+  },
+  {
+    "name": "semantic.epochs.list",
+    "role": "read_only",
+    "domain": "semantic",
+    "stability": "experimental",
+    "mutability": "read_only",
+    "request_type": "sinex_primitives::rpc::semantic::SemanticEpochListRequest",
+    "response_type": "sinex_primitives::rpc::semantic::SemanticEpochListResponse"
+  },
+  {
+    "name": "semantic.lane_outputs.list",
+    "role": "read_only",
+    "domain": "semantic",
+    "stability": "experimental",
+    "mutability": "read_only",
+    "request_type": "sinex_primitives::rpc::semantic::SemanticLaneOutputsListRequest",
+    "response_type": "sinex_primitives::rpc::semantic::SemanticLaneOutputsListResponse"
+  },
+  {
+    "name": "semantic.lanes.create",
+    "role": "write",
+    "domain": "semantic",
+    "stability": "experimental",
+    "mutability": "mutating",
+    "request_type": "sinex_primitives::rpc::semantic::SemanticLaneCreateRequest",
+    "response_type": "sinex_primitives::rpc::semantic::SemanticLaneRecordResponse"
+  },
+  {
+    "name": "semantic.lanes.discard",
+    "role": "write",
+    "domain": "semantic",
+    "stability": "experimental",
+    "mutability": "mutating",
+    "request_type": "sinex_primitives::rpc::semantic::SemanticLaneDiscardRequest",
+    "response_type": "sinex_primitives::rpc::semantic::SemanticLaneRecordResponse"
+  },
+  {
+    "name": "semantic.lanes.list",
+    "role": "read_only",
+    "domain": "semantic",
+    "stability": "experimental",
+    "mutability": "read_only",
+    "request_type": "sinex_primitives::rpc::semantic::SemanticLaneListRequest",
+    "response_type": "sinex_primitives::rpc::semantic::SemanticLaneListResponse"
+  },
+  {
+    "name": "semantic.lanes.set_status",
+    "role": "write",
+    "domain": "semantic",
+    "stability": "experimental",
+    "mutability": "mutating",
+    "request_type": "sinex_primitives::rpc::semantic::SemanticLaneSetStatusRequest",
+    "response_type": "sinex_primitives::rpc::semantic::SemanticLaneRecordResponse"
+  },
+  {
+    "name": "semantic.lane_diffs.list",
+    "role": "read_only",
+    "domain": "semantic",
+    "stability": "experimental",
+    "mutability": "read_only",
+    "request_type": "sinex_primitives::rpc::semantic::SemanticLaneDiffsListRequest",
+    "response_type": "sinex_primitives::rpc::semantic::SemanticLaneDiffsListResponse"
+  },
+  {
     "name": "shadow.create",
     "role": "admin",
     "domain": "shadow",

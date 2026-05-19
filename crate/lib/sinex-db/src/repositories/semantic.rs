@@ -155,6 +155,71 @@ impl SemanticRepository<'_> {
         .map_err(|error| db_error(error, "create semantic lane"))
     }
 
+    pub async fn list_epochs(&self, limit: i64) -> DbResult<Vec<records::SemanticEpochRecord>> {
+        let limit = clamp_limit(limit);
+        sqlx::query_as!(
+            records::SemanticEpochRecord,
+            r#"
+            SELECT
+                id,
+                name,
+                scope,
+                code_ref,
+                config_hash,
+                components,
+                prompt_set_hash,
+                model_config_hash,
+                created_by,
+                operation_id,
+                created_at as "created_at: Timestamp",
+                supersedes_epoch_id
+            FROM semantic.epochs
+            ORDER BY created_at DESC, id DESC
+            LIMIT $1
+            "#,
+            limit,
+        )
+        .fetch_all(self.pool)
+        .await
+        .map_err(|error| db_error(error, "list semantic epochs"))
+    }
+
+    pub async fn list_lanes(
+        &self,
+        status: Option<SemanticLaneStatus>,
+        limit: i64,
+    ) -> DbResult<Vec<records::SemanticLaneRecord>> {
+        let limit = clamp_limit(limit);
+        let status = status.map(status_string);
+        sqlx::query_as!(
+            records::SemanticLaneRecord,
+            r#"
+            SELECT
+                id,
+                name,
+                kind,
+                base_epoch_id,
+                candidate_epoch_id,
+                scope,
+                status,
+                purpose,
+                operation_id,
+                created_at as "created_at: Timestamp",
+                completed_at as "completed_at: Timestamp",
+                expires_at as "expires_at: Timestamp"
+            FROM semantic.lanes
+            WHERE ($1::text IS NULL OR status = $1)
+            ORDER BY created_at DESC, id DESC
+            LIMIT $2
+            "#,
+            status,
+            limit,
+        )
+        .fetch_all(self.pool)
+        .await
+        .map_err(|error| db_error(error, "list semantic lanes"))
+    }
+
     pub async fn set_lane_status(
         &self,
         lane_id: Uuid,
@@ -279,6 +344,70 @@ impl SemanticRepository<'_> {
         .map_err(|error| db_error(error, "count semantic lane outputs"))
     }
 
+    pub async fn list_lane_outputs(
+        &self,
+        lane_id: Uuid,
+        limit: i64,
+    ) -> DbResult<Vec<records::SemanticLaneOutputRecord>> {
+        let limit = clamp_limit(limit);
+        sqlx::query_as!(
+            records::SemanticLaneOutputRecord,
+            r#"
+            SELECT
+                lane_id,
+                output_kind,
+                output_key,
+                source_event_id,
+                source_material_id,
+                source_anchor,
+                output_hash,
+                payload,
+                metadata,
+                created_at as "created_at: Timestamp"
+            FROM semantic.lane_outputs
+            WHERE lane_id = $1
+            ORDER BY created_at DESC, output_kind, output_key
+            LIMIT $2
+            "#,
+            lane_id,
+            limit,
+        )
+        .fetch_all(self.pool)
+        .await
+        .map_err(|error| db_error(error, "list semantic lane outputs"))
+    }
+
+    pub async fn list_lane_diffs(
+        &self,
+        lane_id: Uuid,
+        limit: i64,
+    ) -> DbResult<Vec<records::SemanticLaneDiffRecord>> {
+        let limit = clamp_limit(limit);
+        sqlx::query_as!(
+            records::SemanticLaneDiffRecord,
+            r#"
+            SELECT
+                id,
+                baseline_lane_id,
+                candidate_lane_id,
+                diff_kind,
+                counts,
+                examples,
+                report_hash,
+                created_at as "created_at: Timestamp"
+            FROM semantic.lane_diffs
+            WHERE baseline_lane_id = $1 OR candidate_lane_id = $1
+            ORDER BY created_at DESC, id DESC
+            LIMIT $2
+            "#,
+            lane_id,
+            limit,
+        )
+        .fetch_all(self.pool)
+        .await
+        .map_err(|error| db_error(error, "list semantic lane diffs"))
+    }
+
     async fn upsert_lane_output(
         &self,
         lane_id: Uuid,
@@ -317,4 +446,21 @@ fn hash_json(value: &impl Serialize) -> DbResult<String> {
             .with_std_error(&error)
     })?;
     Ok(blake3::hash(&bytes).to_hex().to_string())
+}
+
+fn status_string(status: SemanticLaneStatus) -> String {
+    serde_json::to_value(status)
+        .ok()
+        .and_then(|value| value.as_str().map(str::to_string))
+        .unwrap_or_else(|| format!("{status:?}").to_lowercase())
+}
+
+const fn clamp_limit(limit: i64) -> i64 {
+    if limit < 1 {
+        1
+    } else if limit > 1000 {
+        1000
+    } else {
+        limit
+    }
 }

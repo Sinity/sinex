@@ -95,6 +95,16 @@ pub const SHADOW_CREATE: &str = "shadow.create";
 pub const SHADOW_LIST: &str = "shadow.list";
 pub const SHADOW_DELETE: &str = "shadow.delete";
 
+// Semantic epochs and shadow lanes
+pub const SEMANTIC_EPOCHS_CREATE: &str = "semantic.epochs.create";
+pub const SEMANTIC_EPOCHS_LIST: &str = "semantic.epochs.list";
+pub const SEMANTIC_LANES_CREATE: &str = "semantic.lanes.create";
+pub const SEMANTIC_LANES_LIST: &str = "semantic.lanes.list";
+pub const SEMANTIC_LANES_SET_STATUS: &str = "semantic.lanes.set_status";
+pub const SEMANTIC_LANES_DISCARD: &str = "semantic.lanes.discard";
+pub const SEMANTIC_LANE_OUTPUTS_LIST: &str = "semantic.lane_outputs.list";
+pub const SEMANTIC_LANE_DIFFS_LIST: &str = "semantic.lane_diffs.list";
+
 // Lifecycle
 pub const LIFECYCLE_STATUS: &str = "lifecycle.status";
 pub const LIFECYCLE_ARCHIVE: &str = "lifecycle.archive";

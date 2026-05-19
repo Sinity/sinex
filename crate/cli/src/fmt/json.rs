@@ -3,7 +3,7 @@ use serde::Serialize;
 use crate::Result;
 
 /// Format output as JSON (one object per line)
-pub fn format_json<T: Serialize>(value: &T) -> Result<String> {
+pub fn format_json<T: Serialize + ?Sized>(value: &T) -> Result<String> {
     serde_json::to_string(value).map_err(Into::into)
 }
 
