@@ -316,8 +316,8 @@ mod coverage_matrix {
         ),
         entry(
             "facebook-messenger-thread",
-            SmokeCoverage::ParserFixtureOnly,
-            "messaging_parser_test.rs",
+            SmokeCoverage::ObligationHarness,
+            "production_path/export_parsers.rs",
         ),
         blocked(
             "fs",
@@ -331,8 +331,8 @@ mod coverage_matrix {
         ),
         entry(
             "hledger-journal",
-            SmokeCoverage::ParserFixtureOnly,
-            "finance_parser_test.rs",
+            SmokeCoverage::ObligationHarness,
+            "production_path/export_parsers.rs",
         ),
         entry(
             "knowledgebase-vault",
@@ -346,8 +346,8 @@ mod coverage_matrix {
         ),
         entry(
             "raindrop-bookmarks",
-            SmokeCoverage::ParserFixtureOnly,
-            "bookmark_parser_test.rs",
+            SmokeCoverage::ObligationHarness,
+            "production_path/export_parsers.rs",
         ),
         entry(
             "reddit-gdpr-comments",
@@ -366,8 +366,8 @@ mod coverage_matrix {
         ),
         entry(
             "spotify-extended-history",
-            SmokeCoverage::ParserFixtureOnly,
-            "music_parser_test.rs",
+            SmokeCoverage::ObligationHarness,
+            "production_path/export_parsers.rs",
         ),
         entry(
             "system.dbus",
@@ -565,6 +565,9 @@ mod desktop;
 
 #[path = "production_path/document.rs"]
 mod document;
+
+#[path = "production_path/export_parsers.rs"]
+mod export_parsers;
 
 #[path = "production_path/fs.rs"]
 mod fs;
