@@ -600,6 +600,7 @@ mod coverage_matrix {
     enum SmokeCoverage {
         BinaryPath,
         ObligationHarness,
+        MonitorHarness,
         StructuralOnly,
         Blocked,
     }
@@ -720,8 +721,8 @@ mod coverage_matrix {
         ),
         entry(
             "system.monitor",
-            SmokeCoverage::StructuralOnly,
-            "production_path/system.rs",
+            SmokeCoverage::MonitorHarness,
+            "monitor_node.rs monitor_fire_once_opens_material_and_emits_event",
         ),
         entry(
             "system.systemd",
@@ -750,8 +751,8 @@ mod coverage_matrix {
         ),
         entry(
             "terminal.monitor",
-            SmokeCoverage::StructuralOnly,
-            "sources/terminal/monitor.rs tests",
+            SmokeCoverage::MonitorHarness,
+            "monitor_node.rs monitor_fire_once_opens_material_and_emits_event",
         ),
         entry(
             "terminal.text-history",
@@ -870,6 +871,14 @@ mod coverage_matrix {
                     "{} must have a parser factory for {:?} coverage",
                     entry.source_unit_id,
                     entry.coverage
+                );
+            }
+
+            if matches!(entry.coverage, SmokeCoverage::MonitorHarness) {
+                assert!(
+                    find_parser_factory(&id).is_none(),
+                    "{} monitor smoke entry must remain parserless",
+                    entry.source_unit_id
                 );
             }
 

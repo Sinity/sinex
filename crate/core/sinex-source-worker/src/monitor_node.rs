@@ -481,6 +481,14 @@ macro_rules! register_monitor_unit {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sinex_node_sdk::EventTransport;
+    use sinex_node_sdk::runtime::stream::{EventEmitter, NodeHandles, ServiceInfo};
+    use sinex_node_sdk::{CheckpointManager, NatsPublisher};
+    use sinex_primitives::domain::HostName;
+    use sinex_primitives::events::DynamicPayload;
+    use std::collections::HashMap;
+    use std::sync::Arc;
+    use tokio::sync::mpsc;
     use xtask::sandbox::prelude::*;
 
     /// Verify MonitorPhase variants are Debug + Clone.
@@ -557,5 +565,94 @@ mod tests {
         );
 
         Ok(())
+    }
+
+    #[sinex_test]
+    async fn monitor_fire_once_opens_material_and_emits_event(ctx: TestContext) -> TestResult<()> {
+        fn emit_test_monitor(
+            _runtime: NodeRuntimeState,
+            material_id: Id<SourceMaterial>,
+        ) -> futures::future::BoxFuture<'static, NodeResult<Vec<Event<JsonValue>>>> {
+            Box::pin(async move {
+                let event = DynamicPayload::new(
+                    "monitor.test",
+                    "monitor.test.started",
+                    serde_json::json!({ "ok": true }),
+                )
+                .from_material(material_id)
+                .build()?;
+                Ok(vec![event])
+            })
+        }
+
+        let ctx = ctx.with_nats().shared().await?;
+        let (runtime, mut events) = make_monitor_runtime(&ctx).await?;
+
+        fire_monitor_once("test.monitor", emit_test_monitor, &runtime).await?;
+
+        let event = events
+            .recv()
+            .await
+            .ok_or_else(|| color_eyre::eyre::eyre!("monitor event channel closed"))?;
+        assert_eq!(event.source.as_str(), "monitor.test");
+        assert_eq!(event.event_type.as_str(), "monitor.test.started");
+        assert!(
+            matches!(
+                event.provenance,
+                sinex_primitives::events::Provenance::Material { .. }
+            ),
+            "monitor events must use material provenance"
+        );
+        assert_eq!(event.payload["ok"], true);
+        Ok(())
+    }
+
+    async fn make_monitor_runtime(
+        ctx: &TestContext,
+    ) -> TestResult<(NodeRuntimeState, mpsc::Receiver<Event<JsonValue>>)> {
+        let kv = ctx.checkpoint_kv().await?;
+        let checkpoint_manager = Arc::new(CheckpointManager::new(
+            kv,
+            "monitor-fire-once-test".to_string(),
+            "test-group".to_string(),
+            format!("test-consumer-{}", Uuid::now_v7().simple()),
+        ));
+        let (event_sender, event_receiver) = mpsc::channel::<Event<JsonValue>>(8);
+        let emitter = EventEmitter::new(event_sender, false);
+        let publisher = Arc::new(NatsPublisher::new(ctx.nats_client()));
+        let handles = NodeHandles::new_edge(
+            checkpoint_manager,
+            emitter,
+            EventTransport::Nats(publisher),
+            None,
+            None,
+        );
+        let work_dir = tempfile::tempdir()?;
+        let work_dir_path = work_dir.keep();
+        let work_dir_utf8 =
+            camino::Utf8PathBuf::from_path_buf(work_dir_path.clone()).map_err(|path| {
+                color_eyre::eyre::eyre!("temporary work dir should be utf-8: {}", path.display())
+            })?;
+
+        Ok((
+            NodeRuntimeState::new(
+                ServiceInfo::new_with_runtime_identity(
+                    "monitor-fire-once-test".to_string(),
+                    "test.monitor".to_string(),
+                    Some("test.monitor".to_string()),
+                    Some("source-worker".to_string()),
+                    HostName::from_static("test-host"),
+                    work_dir_path,
+                    false,
+                    format!("instance-{}", Uuid::now_v7().simple()),
+                    env!("CARGO_PKG_VERSION").to_string(),
+                    None,
+                ),
+                handles,
+                HashMap::new(),
+                work_dir_utf8,
+            ),
+            event_receiver,
+        ))
     }
 }
