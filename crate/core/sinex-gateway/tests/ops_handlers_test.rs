@@ -4,15 +4,17 @@ use sinex_gateway::handlers::{
     handle_lifecycle_archive as handle_lifecycle_archive_typed,
     handle_ops_cancel as handle_ops_cancel_typed, handle_ops_get as handle_ops_get_typed,
     handle_ops_list as handle_ops_list_typed, handle_ops_start as handle_ops_start_typed,
-    handle_tombstone_create, handle_tombstone_status,
+    handle_tombstone_create as handle_tombstone_create_typed,
+    handle_tombstone_status as handle_tombstone_status_typed,
 };
 use sinex_gateway::rpc_server::RpcAuthContext;
 use sinex_gateway::{ReplayScope, ReplayState, ReplayStateMachine};
 use sinex_primitives::domain::{OperationStatus, ReplayOutcome};
 use sinex_primitives::events::DynamicPayload;
 use sinex_primitives::rpc::lifecycle::{
-    LifecycleArchiveRequest, LifecycleArchiveResponse, TombstoneCreateResponse,
-    TombstoneOperationState, TombstoneStatusResponse,
+    LifecycleArchiveRequest, LifecycleArchiveResponse, TombstoneCreateRequest,
+    TombstoneCreateResponse, TombstoneOperationState, TombstoneStatusRequest,
+    TombstoneStatusResponse,
 };
 use sinex_primitives::rpc::ops::{
     OpsCancelRequest, OpsCancelResponse, OpsGetRequest, OpsGetResponse, OpsListRequest,
@@ -66,6 +68,28 @@ async fn handle_ops_cancel(
     let request: OpsCancelRequest = serde_json::from_value(params)?;
     Ok(serde_json::to_value(
         handle_ops_cancel_typed(pool, request, auth).await?,
+    )?)
+}
+
+async fn handle_tombstone_create(
+    pool: &sqlx::PgPool,
+    params: serde_json::Value,
+    auth: &RpcAuthContext,
+) -> TestResult<serde_json::Value> {
+    let request: TombstoneCreateRequest = serde_json::from_value(params)?;
+    Ok(serde_json::to_value(
+        handle_tombstone_create_typed(pool, request, auth).await?,
+    )?)
+}
+
+async fn handle_tombstone_status(
+    pool: &sqlx::PgPool,
+    params: serde_json::Value,
+    auth: &RpcAuthContext,
+) -> TestResult<serde_json::Value> {
+    let request: TombstoneStatusRequest = serde_json::from_value(params)?;
+    Ok(serde_json::to_value(
+        handle_tombstone_status_typed(pool, request, auth).await?,
     )?)
 }
 

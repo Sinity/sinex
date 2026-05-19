@@ -24,6 +24,9 @@ use sinex_primitives::rpc::{
     ingestors::INGESTORS_STATUS_METHOD,
     lifecycle::{
         LIFECYCLE_ARCHIVE_METHOD, LIFECYCLE_RESTORE_METHOD, LIFECYCLE_STATUS_METHOD,
+        LIFECYCLE_TOMBSTONE_APPROVE_METHOD, LIFECYCLE_TOMBSTONE_CANCEL_METHOD,
+        LIFECYCLE_TOMBSTONE_CREATE_METHOD, LIFECYCLE_TOMBSTONE_LIST_METHOD,
+        LIFECYCLE_TOMBSTONE_PREVIEW_METHOD, LIFECYCLE_TOMBSTONE_STATUS_METHOD,
     },
     methods,
     nodes::{NODES_DRAIN_METHOD, NODES_RESUME_METHOD, NODES_SET_HORIZON_METHOD},
@@ -989,36 +992,28 @@ fn build_registry_impl() -> RpcRegistry {
         )
         .pool_auth_typed_rpc(LIFECYCLE_RESTORE_METHOD, boxed!(handle_lifecycle_restore, 3))
         // Two-step tombstone operations (SEC-003)
-        .pool_auth_rpc(
-            methods::LIFECYCLE_TOMBSTONE_CREATE,
-            Role::Admin,
+        .pool_auth_typed_rpc(
+            LIFECYCLE_TOMBSTONE_CREATE_METHOD,
             boxed!(handle_tombstone_create, 3),
         )
-        .pool_auth_rpc(
-            methods::LIFECYCLE_TOMBSTONE_PREVIEW,
-            Role::Admin,
+        .pool_auth_typed_rpc(
+            LIFECYCLE_TOMBSTONE_PREVIEW_METHOD,
             boxed!(handle_tombstone_preview, 3),
         )
-        .register(
-            methods::LIFECYCLE_TOMBSTONE_APPROVE,
-            Role::Admin,
-            |params, services, auth| {
-                Box::pin(async move { handle_tombstone_approve(params, services, auth).await })
-            },
+        .service_auth_typed_rpc(
+            LIFECYCLE_TOMBSTONE_APPROVE_METHOD,
+            boxed!(handle_tombstone_approve, 3),
         )
-        .pool_auth_rpc(
-            methods::LIFECYCLE_TOMBSTONE_CANCEL,
-            Role::Admin,
+        .pool_auth_typed_rpc(
+            LIFECYCLE_TOMBSTONE_CANCEL_METHOD,
             boxed!(handle_tombstone_cancel, 3),
         )
-        .pool_auth_rpc(
-            methods::LIFECYCLE_TOMBSTONE_LIST,
-            Role::Admin,
+        .pool_auth_typed_rpc(
+            LIFECYCLE_TOMBSTONE_LIST_METHOD,
             boxed!(handle_tombstone_list, 3),
         )
-        .pool_auth_rpc(
-            methods::LIFECYCLE_TOMBSTONE_STATUS,
-            Role::Admin,
+        .pool_auth_typed_rpc(
+            LIFECYCLE_TOMBSTONE_STATUS_METHOD,
             boxed!(handle_tombstone_status, 3),
         )
         // Shadow consumer mutations (Admin)
