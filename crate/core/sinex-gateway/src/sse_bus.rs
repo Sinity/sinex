@@ -119,6 +119,17 @@ struct IndexedEvents {
     duplicate_id_count: usize,
 }
 
+/// Operator-facing health snapshot for the confirmation fan-out path.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SseBusHealthSnapshot {
+    pub active_subscriptions: usize,
+    pub pending_retry_confirmations: usize,
+    pub dropped_confirmations_total: u64,
+    pub db_fetch_failures_total: u64,
+    pub malformed_confirmations_total: u64,
+    pub subscription_reconnects_total: u64,
+}
+
 fn remember_recent_event_id(state: &mut SubscriptionState, event_id: Id<Event<JsonValue>>) {
     if !state.recent_delivered_event_id_set.insert(event_id) {
         return;
@@ -227,6 +238,10 @@ pub struct SubscriptionBus {
     /// Tracks retry counts for confirmed event IDs that were not found in the DB.
     /// After `CONFIRMATION_RETRY_MAX_ATTEMPTS`, the ID is dropped with a warning.
     confirmation_retry_counts: Mutex<HashMap<Id<Event<JsonValue>>, u8>>,
+    dropped_confirmations_total: AtomicU64,
+    db_fetch_failures_total: AtomicU64,
+    malformed_confirmations_total: AtomicU64,
+    subscription_reconnects_total: AtomicU64,
 }
 
 impl Default for SubscriptionBus {
@@ -255,6 +270,10 @@ impl SubscriptionBus {
             next_sub_id: AtomicU64::new(1),
             active_subscriptions: AtomicUsize::new(0),
             confirmation_retry_counts: Mutex::new(HashMap::new()),
+            dropped_confirmations_total: AtomicU64::new(0),
+            db_fetch_failures_total: AtomicU64::new(0),
+            malformed_confirmations_total: AtomicU64::new(0),
+            subscription_reconnects_total: AtomicU64::new(0),
         }
     }
 
@@ -293,6 +312,23 @@ impl SubscriptionBus {
     #[must_use]
     pub fn active_count(&self) -> usize {
         self.active_subscriptions.load(Ordering::Acquire)
+    }
+
+    /// Snapshot confirmation fan-out health counters for operator status.
+    #[must_use]
+    pub fn health_snapshot(&self) -> SseBusHealthSnapshot {
+        SseBusHealthSnapshot {
+            active_subscriptions: self.active_count(),
+            pending_retry_confirmations: self.confirmation_retry_counts.lock().len(),
+            dropped_confirmations_total: self.dropped_confirmations_total.load(Ordering::Acquire),
+            db_fetch_failures_total: self.db_fetch_failures_total.load(Ordering::Acquire),
+            malformed_confirmations_total: self
+                .malformed_confirmations_total
+                .load(Ordering::Acquire),
+            subscription_reconnects_total: self
+                .subscription_reconnects_total
+                .load(Ordering::Acquire),
+        }
     }
 
     /// Run the bus loop. Blocks until the shutdown signal fires.
@@ -402,6 +438,8 @@ impl SubscriptionBus {
 
                     msg = sub.next() => {
                         let Some(msg) = msg else {
+                            self.subscription_reconnects_total
+                                .fetch_add(1, Ordering::Relaxed);
                             warn!(
                                 retry_delay_ms = SUBSCRIBE_RETRY_DELAY.as_millis(),
                                 "NATS subscription closed — SSE bus reconnecting"
@@ -424,6 +462,8 @@ impl SubscriptionBus {
                             }
                             Ok(None) => {}
                             Err(error) => {
+                                self.malformed_confirmations_total
+                                    .fetch_add(1, Ordering::Relaxed);
                                 warn!(
                                     error = %error,
                                     payload_len = msg.payload.len(),
@@ -524,6 +564,8 @@ impl SubscriptionBus {
                     retries = *entry,
                     "Dropping missed confirmation ID after max retries"
                 );
+                self.dropped_confirmations_total
+                    .fetch_add(1, Ordering::Relaxed);
                 retry_counts.remove(&id);
             } else {
                 id_buffer.push(id);
@@ -553,6 +595,7 @@ impl SubscriptionBus {
         let events = match pool.events().get_by_ids(&unique_ids).await {
             Ok(events) => events,
             Err(e) => {
+                self.db_fetch_failures_total.fetch_add(1, Ordering::Relaxed);
                 warn!(
                     ?e,
                     count = unique_ids.len(),
@@ -621,7 +664,8 @@ impl SubscriptionBus {
 #[cfg(test)]
 mod tests {
     use super::{
-        CLIENT_CHANNEL_CAPACITY, DeliveryOutcome, SseMessage, SubscriptionBus, SubscriptionSlot,
+        CLIENT_CHANNEL_CAPACITY, CONFIRMATION_RETRY_MAX_ATTEMPTS, DeliveryOutcome, SseMessage,
+        SubscriptionBus, SubscriptionSlot,
     };
     use serde_json::json;
     use sinex_db::DbPoolExt;
@@ -728,6 +772,29 @@ mod tests {
             vec![event_id],
             "SSE confirmation batches should stay buffered when DB fan-out fetch fails"
         );
+        assert_eq!(bus.health_snapshot().db_fetch_failures_total, 1);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn health_snapshot_reports_retry_and_drop_counters() -> TestResult<()> {
+        let bus = SubscriptionBus::new();
+        let event_id = Id::<Event<JsonValue>>::from_uuid(Uuid::now_v7());
+
+        let mut id_buffer = Vec::new();
+        bus.filter_retry_ids(vec![event_id], &mut id_buffer);
+        let snapshot = bus.health_snapshot();
+        assert_eq!(snapshot.pending_retry_confirmations, 1);
+        assert_eq!(snapshot.dropped_confirmations_total, 0);
+
+        for _ in 1..CONFIRMATION_RETRY_MAX_ATTEMPTS {
+            id_buffer.clear();
+            bus.filter_retry_ids(vec![event_id], &mut id_buffer);
+        }
+
+        let snapshot = bus.health_snapshot();
+        assert_eq!(snapshot.pending_retry_confirmations, 0);
+        assert_eq!(snapshot.dropped_confirmations_total, 1);
         Ok(())
     }
 

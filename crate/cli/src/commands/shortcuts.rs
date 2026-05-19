@@ -6,6 +6,7 @@ use color_eyre::Result;
 use console::style;
 use futures::StreamExt;
 use serde_json::json;
+use sinex_primitives::domain::HealthStatus;
 use sinex_primitives::privacy::{load_private_mode_state, resolve_private_mode_state_dir};
 use sinex_primitives::query::{
     EventQuery, EventQueryResult, PayloadFilter, SortDirection, SubscriptionFilter, TimeRange,
@@ -146,6 +147,19 @@ impl StatusCommand {
                     status: nats_status,
                     source: "system.health NATS active probe".to_string(),
                     message: nats_msg,
+                });
+
+                let sse = &health.components.sse_confirmation;
+                let sse_status = match sse.status {
+                    HealthStatus::Healthy => RuntimeStatusSignalStatus::Healthy,
+                    HealthStatus::Degraded => RuntimeStatusSignalStatus::Degraded,
+                    HealthStatus::Unhealthy => RuntimeStatusSignalStatus::Unhealthy,
+                };
+                signals.push(RuntimeStatusSignal {
+                    name: "confirmation-path".to_string(),
+                    status: sse_status,
+                    source: "system.health SSE confirmation probe".to_string(),
+                    message: sse.detail.clone(),
                 });
             }
             Err(e) => {

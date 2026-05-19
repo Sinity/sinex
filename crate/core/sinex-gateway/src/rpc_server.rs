@@ -1772,6 +1772,7 @@ pub async fn spawn(
     // SSE subscription bus — only if NATS is connected
     let (sse_bus, sse_bus_task) = if let Some(nats_client) = services.nats_client().cloned() {
         let bus = Arc::new(crate::sse_bus::SubscriptionBus::new());
+        services.attach_sse_bus(Arc::clone(&bus));
         let pool = services.pool().clone();
         let env = services.environment().clone();
         let bus_shutdown = shutdown_rx.clone();

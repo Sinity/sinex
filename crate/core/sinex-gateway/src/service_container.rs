@@ -11,7 +11,7 @@ use sinex_primitives::{
     Result as SinexResult, coordination::CoordinationKvClient, environment as sinex_environment,
     error::SinexError,
 };
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 use tracing::{info, warn};
 
@@ -26,6 +26,7 @@ pub struct ServiceContainer {
     pub coordination: Option<Arc<CoordinationKvClient>>,
     nats_client: Option<async_nats::Client>,
     env: sinex_primitives::environment::SinexEnvironment,
+    sse_bus: Arc<OnceLock<Arc<crate::sse_bus::SubscriptionBus>>>,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -33,6 +34,13 @@ pub struct ReplayControlStatus {
     pub enabled: bool,
     pub connected: bool,
     pub last_error: Option<ReplayControlError>,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct SseConfirmationStatus {
+    pub running: bool,
+    pub degraded: bool,
+    pub detail: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
@@ -190,6 +198,7 @@ impl ServiceContainer {
             coordination: coordination_client,
             nats_client,
             env,
+            sse_bus: Arc::new(OnceLock::new()),
         })
     }
 
@@ -209,6 +218,41 @@ impl ServiceContainer {
     #[must_use]
     pub fn state_dir(&self) -> &std::path::Path {
         &self.config.state_dir
+    }
+
+    /// Attach the SSE confirmation bus after runtime startup has constructed it.
+    pub(crate) fn attach_sse_bus(&self, bus: Arc<crate::sse_bus::SubscriptionBus>) {
+        let _ = self.sse_bus.set(bus);
+    }
+
+    /// Inspect confirmation fan-out health.
+    #[must_use]
+    pub fn sse_confirmation_status(&self) -> SseConfirmationStatus {
+        let Some(bus) = self.sse_bus.get() else {
+            return SseConfirmationStatus {
+                running: false,
+                degraded: true,
+                detail: "SSE confirmation bus not running".to_string(),
+            };
+        };
+        let snapshot = bus.health_snapshot();
+        let degraded = snapshot.pending_retry_confirmations > 0
+            || snapshot.dropped_confirmations_total > 0
+            || snapshot.db_fetch_failures_total > 0
+            || snapshot.malformed_confirmations_total > 0;
+        SseConfirmationStatus {
+            running: true,
+            degraded,
+            detail: format!(
+                "active_subscriptions={}, pending_retries={}, dropped_confirmations={}, db_fetch_failures={}, malformed_confirmations={}, reconnects={}",
+                snapshot.active_subscriptions,
+                snapshot.pending_retry_confirmations,
+                snapshot.dropped_confirmations_total,
+                snapshot.db_fetch_failures_total,
+                snapshot.malformed_confirmations_total,
+                snapshot.subscription_reconnects_total,
+            ),
+        }
     }
 
     /// Get a database pool for general operations
@@ -332,6 +376,7 @@ impl ServiceContainer {
 
         let nats = self.probe_nats_active().await;
         let replay = self.replay_control_status();
+        let sse_confirmation = self.sse_confirmation_status();
         let mut degradation_reasons = Vec::new();
 
         if !db_ok {
@@ -347,8 +392,13 @@ impl ServiceContainer {
                 "replay control unavailable".to_string()
             });
         }
+        if !sse_confirmation.running {
+            degradation_reasons.push("SSE confirmation bus not running".to_string());
+        } else if sse_confirmation.degraded {
+            degradation_reasons.push("SSE confirmation fan-out degraded".to_string());
+        }
 
-        let healthy = db_ok && nats.connected && replay.connected;
+        let healthy = db_ok && nats.connected && replay.connected && !sse_confirmation.degraded;
         // Gateway is ready to serve end-to-end RPC traffic only when both
         // the database (query/write path) and NATS (event publishing path)
         // are reachable. Replay control is coordination-only and does not
@@ -368,6 +418,7 @@ impl ServiceContainer {
             db_detail,
             nats,
             replay,
+            sse_confirmation,
             healthy,
             serving,
             degradation_reasons,
@@ -401,6 +452,8 @@ pub struct GatewayHealthReport {
     pub nats: NatsHealthProbe,
     /// Replay control bus status
     pub replay: ReplayControlStatus,
+    /// SSE confirmation fan-out status
+    pub sse_confirmation: SseConfirmationStatus,
     /// True only when the gateway and its coordination dependencies are fully healthy.
     pub healthy: bool,
     /// Whether the gateway is ready to serve end-to-end RPC traffic.
