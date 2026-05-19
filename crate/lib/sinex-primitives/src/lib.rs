@@ -28,6 +28,7 @@ pub mod query;
 pub mod rpc;
 pub mod runtime_target;
 pub mod schema_constraints;
+pub mod semantic;
 
 /// Re-exports used by macros generated from `sinex-macros`.
 /// Not part of the stable public surface; do not depend on this from
@@ -116,6 +117,7 @@ pub use runtime_target::{
     RuntimeTargetGatewayTokenRole, RuntimeTargetKind, RuntimeTargetNats, RuntimeTargetServices,
     RuntimeTargetState,
 };
+pub use semantic::*;
 pub use serde_json::Value as JsonValue;
 pub use task_domain::*;
 pub use temporal::{OffsetDateTime, now};
