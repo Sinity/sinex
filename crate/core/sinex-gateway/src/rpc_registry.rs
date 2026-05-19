@@ -33,6 +33,7 @@ use sinex_primitives::rpc::{
         LIFECYCLE_TOMBSTONE_CREATE_METHOD, LIFECYCLE_TOMBSTONE_LIST_METHOD,
         LIFECYCLE_TOMBSTONE_PREVIEW_METHOD, LIFECYCLE_TOMBSTONE_STATUS_METHOD,
     },
+    llm::{LLM_BUDGET_REPORT_METHOD, LLM_PROMPTS_LIST_METHOD, LLM_ROUTE_EXPLAIN_METHOD},
     nodes::{
         NODES_DRAIN_METHOD, NODES_HEALTH_METHOD, NODES_LIST_ACTIVE_METHOD, NODES_LIST_METHOD,
         NODES_RESUME_METHOD, NODES_SET_HORIZON_METHOD,
@@ -704,7 +705,8 @@ fn build_registry_impl() -> RpcRegistry {
         handle_documents_get_chunks, handle_documents_search, handle_events_annotate,
         handle_events_lineage, handle_events_query, handle_ingestors_status,
         handle_lifecycle_archive, handle_lifecycle_restore, handle_lifecycle_status,
-        handle_link_entities, handle_nodes_drain, handle_nodes_health, handle_nodes_list,
+        handle_link_entities, handle_llm_budget_report, handle_llm_prompts_list,
+        handle_llm_route_explain, handle_nodes_drain, handle_nodes_health, handle_nodes_list,
         handle_nodes_list_active, handle_nodes_resume, handle_nodes_set_horizon, handle_ops_cancel,
         handle_ops_get, handle_ops_list, handle_ops_start, handle_private_mode_disable_service,
         handle_private_mode_enable_service, handle_private_mode_status_service,
@@ -748,6 +750,9 @@ fn build_registry_impl() -> RpcRegistry {
             CURATION_PROPOSALS_LIST_METHOD,
             boxed!(handle_curation_list_proposals),
         )
+        .pool_typed_rpc(LLM_PROMPTS_LIST_METHOD, boxed!(handle_llm_prompts_list))
+        .pool_typed_rpc(LLM_ROUTE_EXPLAIN_METHOD, boxed!(handle_llm_route_explain))
+        .pool_typed_rpc(LLM_BUDGET_REPORT_METHOD, boxed!(handle_llm_budget_report))
         .pool_typed_rpc(EVENTS_LINEAGE_METHOD, boxed!(handle_events_lineage))
         .pool_typed_rpc(TASKS_STATE_GET_METHOD, boxed!(handle_tasks_state_get))
         // Coordination methods (ReadOnly)

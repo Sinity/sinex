@@ -19,6 +19,11 @@ pub const CURATION_PROPOSALS_LIST: &str = "curation.proposals.list";
 pub const CURATION_JUDGMENTS_RECORD: &str = "curation.judgments.record";
 pub const CURATION_FINALIZE: &str = "curation.finalize";
 
+// LLM prompt/router/budget
+pub const LLM_PROMPTS_LIST: &str = "llm.prompts.list";
+pub const LLM_ROUTE_EXPLAIN: &str = "llm.route.explain";
+pub const LLM_BUDGET_REPORT: &str = "llm.budget.report";
+
 // Tasks
 pub const TASKS_CREATE: &str = "tasks.create";
 pub const TASKS_COMPLETE: &str = "tasks.complete";

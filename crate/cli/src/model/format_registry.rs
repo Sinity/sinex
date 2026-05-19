@@ -317,6 +317,18 @@ pub fn build() -> HashMap<&'static str, FormatCapability> {
         FormatCapability::single_shot(TABLE_JSON_YAML),
     );
     m.insert(
+        "llm prompts",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
+    m.insert(
+        "llm route-explain",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
+    m.insert(
+        "llm budget-report",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
+    m.insert(
         "sources readiness",
         FormatCapability::single_shot(TABLE_JSON_YAML),
     );
@@ -637,7 +649,9 @@ fn family_for_path(path: &str) -> CommandFamily {
         "node" | "automata" | "ingestors" | "replay" | "dlq" | "ops" | "audit" | "lifecycle"
         | "git-ops" | "privacy" | "blob" => CommandFamily::Operate,
         "sources" => CommandFamily::Sources,
-        "declare" | "tasks" | "curation" | "documents" | "annotate" => CommandFamily::Domain,
+        "declare" | "tasks" | "curation" | "llm" | "documents" | "annotate" => {
+            CommandFamily::Domain
+        }
         "telemetry" | "throughput" => CommandFamily::Telemetry,
         "report" => CommandFamily::Report,
         "admin" | "state" => CommandFamily::Admin,
@@ -839,6 +853,9 @@ fn backing_rpc_methods_for_path(path: &str) -> &'static [&'static str] {
         "curation proposals" => &[methods::CURATION_PROPOSALS_LIST],
         "curation judge" => &[methods::CURATION_JUDGMENTS_RECORD],
         "curation finalize" => &[methods::CURATION_FINALIZE],
+        "llm prompts" => &[methods::LLM_PROMPTS_LIST],
+        "llm route-explain" => &[methods::LLM_ROUTE_EXPLAIN],
+        "llm budget-report" => &[methods::LLM_BUDGET_REPORT],
         "lifecycle status" => &[methods::LIFECYCLE_STATUS],
         "lifecycle archive" => &[methods::LIFECYCLE_ARCHIVE],
         "lifecycle restore" => &[methods::LIFECYCLE_RESTORE],
