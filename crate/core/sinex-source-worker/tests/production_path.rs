@@ -197,6 +197,34 @@ pub async fn _run_case(
     failures
 }
 
+/// Variant of `_run_case` for parsers whose production contract depends on
+/// `SourceRecord.logical_path`.
+pub async fn _run_case_with_logical_path(
+    source_unit_id: &str,
+    adapter_kind: AdapterKind,
+    fixture_data: &[u8],
+    logical_path: &str,
+    expected_event_types: &[&str],
+    obligation_names: &[&str],
+) -> Vec<String> {
+    let mut failures = Vec::new();
+    for &obligation in obligation_names {
+        let result = _run_obligation_with_logical_path(
+            obligation,
+            source_unit_id,
+            adapter_kind,
+            fixture_data,
+            logical_path,
+            expected_event_types,
+        )
+        .await;
+        if let Err(e) = result {
+            failures.push(format!("[{source_unit_id}] obligation '{obligation}': {e}"));
+        }
+    }
+    failures
+}
+
 async fn _run_obligation(
     obligation: &str,
     source_unit_id: &str,
@@ -240,6 +268,262 @@ async fn _run_obligation(
             "unknown obligation '{unknown}'; valid: initial_ingestion, replay, drain, isolation, privacy"
         )),
     }
+}
+
+async fn _run_obligation_with_logical_path(
+    obligation: &str,
+    source_unit_id: &str,
+    adapter_kind: AdapterKind,
+    fixture_data: &[u8],
+    logical_path: &str,
+    expected_event_types: &[&str],
+) -> Result<(), String> {
+    match obligation {
+        "initial_ingestion" => {
+            run_record_initial_ingestion(
+                source_unit_id,
+                fixture_data,
+                logical_path,
+                expected_event_types,
+            )
+            .await
+        }
+        "replay" => {
+            run_record_replay(
+                source_unit_id,
+                fixture_data,
+                logical_path,
+                expected_event_types,
+            )
+            .await
+        }
+        "drain" => obligations::drain::run(source_unit_id, adapter_kind, fixture_data).await,
+        "isolation" => {
+            obligations::isolation::run(source_unit_id, adapter_kind, fixture_data).await
+        }
+        "privacy" => {
+            run_record_privacy(
+                source_unit_id,
+                adapter_kind,
+                fixture_data,
+                logical_path,
+                expected_event_types,
+            )
+            .await
+        }
+        unknown => Err(format!(
+            "unknown obligation '{unknown}'; valid: initial_ingestion, replay, drain, isolation, privacy"
+        )),
+    }
+}
+
+async fn run_record_initial_ingestion(
+    source_unit_id: &str,
+    fixture_data: &[u8],
+    logical_path: &str,
+    expected_event_types: &[&str],
+) -> Result<(), String> {
+    let material_id = sinex_primitives::Uuid::now_v7();
+    let outcome = dispatch_record_fixture(source_unit_id, fixture_data, logical_path, material_id)
+        .await
+        .map_err(|e| format!("dispatch error for '{source_unit_id}': {e}"))?;
+
+    if outcome.events.is_empty() {
+        return Err(format!(
+            "initial ingestion for '{source_unit_id}': parser returned no events for fixture data ({} bytes)",
+            fixture_data.len()
+        ));
+    }
+
+    let produced_types: Vec<String> = outcome
+        .events
+        .iter()
+        .map(|e| e.event_type.as_str().to_string())
+        .collect();
+
+    for &expected in expected_event_types {
+        if !produced_types.iter().any(|t| t == expected) {
+            return Err(format!(
+                "initial ingestion for '{source_unit_id}': expected event type '{expected}' \
+                 not found in output. Produced: {produced_types:?}"
+            ));
+        }
+    }
+
+    Ok(())
+}
+
+async fn run_record_replay(
+    source_unit_id: &str,
+    fixture_data: &[u8],
+    logical_path: &str,
+    expected_event_types: &[&str],
+) -> Result<(), String> {
+    let material_id_1 = sinex_primitives::Uuid::now_v7();
+    let outcome_1 =
+        dispatch_record_fixture(source_unit_id, fixture_data, logical_path, material_id_1)
+            .await
+            .map_err(|e| format!("replay first dispatch error for '{source_unit_id}': {e}"))?;
+
+    let material_id_2 = sinex_primitives::Uuid::now_v7();
+    let outcome_2 =
+        dispatch_record_fixture(source_unit_id, fixture_data, logical_path, material_id_2)
+            .await
+            .map_err(|e| format!("replay second dispatch error for '{source_unit_id}': {e}"))?;
+
+    if material_id_1 == material_id_2 {
+        return Err("material IDs must differ between replay runs".into());
+    }
+
+    let types_1: Vec<&str> = outcome_1
+        .events
+        .iter()
+        .map(|e| e.event_type.as_str())
+        .collect();
+    let types_2: Vec<&str> = outcome_2
+        .events
+        .iter()
+        .map(|e| e.event_type.as_str())
+        .collect();
+    if types_1 != types_2 {
+        return Err(format!(
+            "replay for '{source_unit_id}': event types differ between runs. \
+             run1={types_1:?} run2={types_2:?}"
+        ));
+    }
+
+    for &expected in expected_event_types {
+        if !types_1.iter().any(|&t| t == expected) {
+            return Err(format!(
+                "replay for '{source_unit_id}': expected event type '{expected}' \
+                 missing from replay output. Got: {types_1:?}"
+            ));
+        }
+    }
+
+    Ok(())
+}
+
+async fn run_record_privacy(
+    source_unit_id: &str,
+    adapter_kind: AdapterKind,
+    fixture_data: &[u8],
+    logical_path: &str,
+    expected_event_types: &[&str],
+) -> Result<(), String> {
+    use sinex_primitives::privacy::{self, ProcessingContext};
+
+    run_record_initial_ingestion(
+        source_unit_id,
+        fixture_data,
+        logical_path,
+        expected_event_types,
+    )
+    .await
+    .map_err(|e| format!("privacy/clean-path: {e}"))?;
+
+    let secret_text = "export TOKEN=ghp_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+    let engine_result = privacy::engine()
+        .map_err(|e| format!("privacy engine init failed: {e}"))?
+        .process(secret_text, ProcessingContext::Command);
+
+    if !engine_result.any_matched() {
+        return Err(format!(
+            "privacy for '{source_unit_id}': privacy engine did not match decoy token"
+        ));
+    }
+
+    let redacted = engine_result.text.as_ref();
+    if redacted.contains("ghp_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA") {
+        return Err(format!(
+            "privacy for '{source_unit_id}': redacted text still contains decoy token"
+        ));
+    }
+
+    let material_id = sinex_primitives::Uuid::now_v7();
+    if let Ok(outcome) = dispatch_record_fixture(
+        source_unit_id,
+        redacted.as_bytes(),
+        logical_path,
+        material_id,
+    )
+    .await
+    {
+        for event in &outcome.events {
+            let payload_str = event.payload.to_string();
+            if payload_str.contains("ghp_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA") {
+                return Err(format!(
+                    "privacy for '{source_unit_id}': event payload contains raw decoy token \
+                     after redaction. Payload: {payload_str}"
+                ));
+            }
+        }
+    }
+
+    let _ = adapter_kind;
+    Ok(())
+}
+
+async fn dispatch_record_fixture(
+    source_unit_id: &str,
+    fixture_data: &[u8],
+    logical_path: &str,
+    material_id: sinex_primitives::Uuid,
+) -> Result<sinex_source_worker::dispatch::ParseOutcome, String> {
+    use camino::Utf8PathBuf;
+    use sinex_primitives::events::SourceMaterial;
+    use sinex_primitives::ids::Id;
+    use sinex_primitives::parser::{MaterialAnchor, ParserContext, SourceRecord, SourceUnitId};
+    use sinex_primitives::temporal::Timestamp;
+    use sinex_source_worker::dispatch::find_parser_factory;
+
+    let source_unit_id = SourceUnitId::new(source_unit_id)
+        .map_err(|e| format!("invalid source unit id '{source_unit_id}': {e}"))?;
+    let factory = find_parser_factory(&source_unit_id).ok_or_else(|| {
+        format!(
+            "source unit '{}' has no parser registered",
+            source_unit_id.as_str()
+        )
+    })?;
+    let mut parser = factory();
+    let material_id = Id::<SourceMaterial>::from_uuid(material_id);
+
+    let record = SourceRecord {
+        material_id,
+        anchor: MaterialAnchor::ByteRange {
+            start: 0,
+            len: fixture_data.len() as u64,
+        },
+        bytes: fixture_data.to_vec(),
+        logical_path: Some(Utf8PathBuf::from(logical_path)),
+        source_ts_hint: None,
+        metadata: serde_json::Value::Null,
+    };
+    let ctx = ParserContext {
+        source_unit_id,
+        source_material_id: material_id,
+        record_anchor: MaterialAnchor::ByteRange {
+            start: 0,
+            len: fixture_data.len() as u64,
+        },
+        operation_id: sinex_primitives::Uuid::now_v7(),
+        job_id: sinex_primitives::Uuid::now_v7(),
+        host: std::env::var("HOSTNAME")
+            .or_else(|_| std::env::var("HOST"))
+            .unwrap_or_else(|_| "unknown-host".to_string()),
+        acquisition_time: Timestamp::now(),
+    };
+    let manifest = parser.manifest();
+    let events = parser
+        .parse_record_erased(record, &ctx)
+        .await
+        .map_err(|e| format!("parse error: {e}"))?;
+
+    Ok(sinex_source_worker::dispatch::ParseOutcome {
+        events,
+        parser_id: manifest.parser_id.to_string(),
+        parser_version: manifest.parser_version,
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -326,8 +610,8 @@ mod coverage_matrix {
         ),
         entry(
             "git-commit-history",
-            SmokeCoverage::ParserFixtureOnly,
-            "sources/git.rs parser tests",
+            SmokeCoverage::ObligationHarness,
+            "production_path/path_sensitive.rs",
         ),
         entry(
             "hledger-journal",
@@ -336,8 +620,8 @@ mod coverage_matrix {
         ),
         entry(
             "knowledgebase-vault",
-            SmokeCoverage::ParserFixtureOnly,
-            "sources/knowledgebase.rs parser tests",
+            SmokeCoverage::ObligationHarness,
+            "production_path/path_sensitive.rs",
         ),
         entry(
             "noop",
@@ -574,6 +858,9 @@ mod fs;
 
 #[path = "production_path/health_exports.rs"]
 mod health_exports;
+
+#[path = "production_path/path_sensitive.rs"]
+mod path_sensitive;
 
 #[path = "production_path/social_exports.rs"]
 mod social_exports;
