@@ -693,8 +693,13 @@ fn resolve_fixable_diagnostic_count(ctx: &CommandContext) -> (Option<usize>, Opt
         return (None, None);
     }
 
-    match ctx.try_with_history_db(crate::history::HistoryDb::get_fixable_diagnostic_count) {
-        Some(Ok(count)) => (Some(count), None),
+    match ctx.try_with_history_db(|db| db.get_current_diagnostics(None, None, None, None, true)) {
+        Some(Ok(mut diagnostics)) => {
+            let workspace_root = crate::config::workspace_root();
+            diagnostics
+                .retain(|diagnostic| diagnostic.points_to_existing_file(&workspace_root));
+            (Some(diagnostics.len()), None)
+        }
         Some(Err(error)) => (
             None,
             Some(format!(

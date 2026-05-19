@@ -199,7 +199,9 @@ impl FixCommand {
             }
             return self.resolve_packages();
         };
-        let fixable = result?;
+        let mut fixable = result?;
+        let workspace_root = crate::config::workspace_root();
+        fixable.retain(|diagnostic| diagnostic.points_to_existing_file(&workspace_root));
 
         if fixable.is_empty() {
             if ctx.is_human() {
