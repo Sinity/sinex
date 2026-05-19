@@ -9,6 +9,7 @@ use crate::rpc_server::RpcAuthContext;
 use crate::service_container::ServiceContainer;
 use serde::{Serialize, de::DeserializeOwned};
 use serde_json::Value as JsonValue;
+use sinex_db::pkm::PkmService;
 use sinex_primitives::coordination::CoordinationKvClient;
 use sinex_primitives::rpc::{
     RpcMethod,
@@ -36,6 +37,7 @@ use sinex_primitives::rpc::{
         NODES_RESUME_METHOD, NODES_SET_HORIZON_METHOD,
     },
     ops::{OPS_CANCEL_METHOD, OPS_GET_METHOD, OPS_LIST_METHOD, OPS_START_METHOD},
+    pkm::{PKM_CREATE_ENTITIES_METHOD, PKM_CREATE_NOTE_METHOD, PKM_LINK_ENTITIES_METHOD},
     privacy::{
         PRIVACY_PRIVATE_MODE_DISABLE_METHOD, PRIVACY_PRIVATE_MODE_ENABLE_METHOD,
         PRIVACY_PRIVATE_MODE_STATUS_METHOD,
@@ -264,6 +266,42 @@ impl RpcRegistry {
                     Box::pin(async move {
                         let request = decode_rpc_params(method.name, params)?;
                         let response = f(services, request, auth).await?;
+                        encode_rpc_response(method.name, &response)
+                    })
+                }),
+                required_role: method.role.into(),
+            },
+        );
+        self
+    }
+
+    /// Register a typed PKM service-backed RPC handler with auth context.
+    pub(crate) fn pkm_auth_typed_rpc<Req, Resp, F>(
+        mut self,
+        method: RpcMethod<Req, Resp>,
+        f: F,
+    ) -> Self
+    where
+        Req: DeserializeOwned + 'static,
+        Resp: Serialize + 'static,
+        F: for<'a> Fn(
+                &'a PkmService,
+                Req,
+                &'a RpcAuthContext,
+            ) -> Pin<Box<dyn Future<Output = Result<Resp>> + Send + 'a>>
+            + Send
+            + Sync
+            + 'static,
+    {
+        let f = Arc::new(f);
+        self.methods.insert(
+            method.name,
+            RegistryEntry {
+                handler: Arc::new(move |params, services, auth| {
+                    let f = Arc::clone(&f);
+                    Box::pin(async move {
+                        let request = decode_rpc_params(method.name, params)?;
+                        let response = f(services.pkm.as_ref(), request, auth).await?;
                         encode_rpc_response(method.name, &response)
                     })
                 }),
@@ -864,33 +902,12 @@ fn build_registry_impl() -> RpcRegistry {
         .pool_auth_typed_rpc(TASKS_CREATE_METHOD, boxed!(handle_tasks_create, 3))
         .pool_auth_typed_rpc(TASKS_COMPLETE_METHOD, boxed!(handle_tasks_complete, 3))
         // PKM methods (Write)
-        .register(
-            methods::PKM_CREATE_NOTE,
-            Role::Write,
-            |params, services, auth| {
-                Box::pin(
-                    async move { handle_create_note(services.pkm.as_ref(), params, auth).await },
-                )
-            },
+        .pkm_auth_typed_rpc(PKM_CREATE_NOTE_METHOD, boxed!(handle_create_note, 3))
+        .pkm_auth_typed_rpc(
+            PKM_CREATE_ENTITIES_METHOD,
+            boxed!(handle_create_entities, 3),
         )
-        .register(
-            methods::PKM_CREATE_ENTITIES,
-            Role::Write,
-            |params, services, auth| {
-                Box::pin(async move {
-                    handle_create_entities(services.pkm.as_ref(), params, auth).await
-                })
-            },
-        )
-        .register(
-            methods::PKM_LINK_ENTITIES,
-            Role::Write,
-            |params, services, auth| {
-                Box::pin(
-                    async move { handle_link_entities(services.pkm.as_ref(), params, auth).await },
-                )
-            },
-        )
+        .pkm_auth_typed_rpc(PKM_LINK_ENTITIES_METHOD, boxed!(handle_link_entities, 3))
         // Content methods (Write)
         .service_auth_typed_rpc(CONTENT_STORE_BLOB_METHOD, boxed!(handle_store_blob, 3))
         .service_typed_rpc(CONTENT_RETRIEVE_BLOB_METHOD, boxed!(handle_retrieve_blob))
