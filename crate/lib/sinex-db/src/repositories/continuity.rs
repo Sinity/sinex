@@ -369,7 +369,6 @@ trait ChunkAccess {
     fn end_time(&self) -> Option<OffsetDateTime>;
     fn staged_at(&self) -> OffsetDateTime;
     fn status(&self) -> &str;
-    fn material_kind(&self) -> &str;
     fn timing(&self) -> &str;
     /// Operator-declared coverage contract for this chunk's source material.
     /// Defaults to `Unknown` when the registry row carries the legacy
@@ -616,9 +615,6 @@ impl ChunkAccess for Chunk {
     }
     fn status(&self) -> &str {
         &self.status
-    }
-    fn material_kind(&self) -> &str {
-        &self.material_kind
     }
     fn timing(&self) -> &str {
         &self.timing

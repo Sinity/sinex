@@ -5,7 +5,7 @@
 //! business logic (state transitions, validation, meta-JSON manipulation).
 
 use super::common::Repository;
-use crate::replay::state_machine::{MetaJson, ReplayScope, ReplayState};
+use crate::replay::state_machine::{ReplayScope, ReplayState};
 use serde_json::Value as JsonValue;
 use sinex_primitives::Timestamp;
 use sinex_primitives::domain::OperationStatus;
@@ -44,30 +44,6 @@ fn state_json_label(state: ReplayState) -> &'static str {
         ReplayState::Failed => "Failed",
         ReplayState::Cancelled => "Cancelled",
     }
-}
-
-fn map_state_to_status(state: &ReplayState) -> (&'static str, &'static str) {
-    match state {
-        ReplayState::Completed => ("success", "completed"),
-        ReplayState::Failed => ("failure", "failed"),
-        ReplayState::Cancelled => ("cancelled", "cancelled"),
-        ReplayState::Planning => ("running", "planning"),
-        ReplayState::Previewed => ("running", "previewed"),
-        ReplayState::Approved => ("running", "approved"),
-        ReplayState::Executing => ("running", "executing"),
-        ReplayState::Cancelling => ("running", "cancelling"),
-        ReplayState::Committing => ("running", "committing"),
-    }
-}
-
-fn duration_ms(created_at: Timestamp, finished_at: Timestamp) -> i32 {
-    let elapsed_ms = (finished_at - created_at).whole_milliseconds();
-    elapsed_ms.clamp(0, i128::from(i32::MAX)) as i32
-}
-
-fn meta_duration_ms(meta: &MetaJson) -> Option<i32> {
-    meta.finished_at
-        .map(|finished_at| duration_ms(meta.created_at, finished_at))
 }
 
 fn resolve_time_window(scope: &ReplayScope) -> (Timestamp, Timestamp) {
