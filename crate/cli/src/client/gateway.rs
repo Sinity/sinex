@@ -4,7 +4,7 @@ use std::time::Duration;
 use color_eyre::eyre::eyre;
 use reqwest::{ClientBuilder, StatusCode};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
-use serde_json::{Value, json};
+use serde_json::Value;
 use sinex_primitives::constants::env_vars;
 use sinex_primitives::domain::{EventSource, NodeType};
 use sinex_primitives::rpc::{
@@ -52,12 +52,15 @@ use sinex_primitives::rpc::{
     nodes::{NodeDrainRequest, NodeResumeRequest, NodeSetHorizonRequest},
     ops::{Operation as OpsOperation, OpsGetResponse, OpsListResponse, OpsStartResponse},
     replay::{
+        REPLAY_APPROVE_OPERATION_METHOD, REPLAY_CANCEL_OPERATION_METHOD,
+        REPLAY_CREATE_OPERATION_METHOD, REPLAY_EXECUTE_OPERATION_METHOD,
         REPLAY_LIST_OPERATIONS_METHOD, REPLAY_OPERATION_STATUS_METHOD,
-        ReplayApproveRequest, ReplayApproveResponse, ReplayCancelRequest, ReplayCancelResponse,
-        ReplayCreateRequest, ReplayCreateResponse, ReplayExecuteRequest, ReplayExecuteResponse,
-        ReplayListRequest, ReplayListResponse, ReplayOperation, ReplayPreviewRequest,
-        ReplayPreviewResponse, ReplayScope, ReplayState, ReplayStatusRequest, ReplayStatusResponse,
-        ReplaySubmitRequest, ReplaySubmitResponse,
+        REPLAY_PREVIEW_OPERATION_METHOD, REPLAY_SUBMIT_OPERATION_METHOD, ReplayApproveRequest,
+        ReplayApproveResponse, ReplayCancelRequest, ReplayCancelResponse, ReplayCreateRequest,
+        ReplayCreateResponse, ReplayExecuteRequest, ReplayExecuteResponse, ReplayListRequest,
+        ReplayListResponse, ReplayOperation, ReplayPreviewRequest, ReplayPreviewResponse,
+        ReplayScope, ReplayState, ReplayStatusRequest, ReplayStatusResponse, ReplaySubmitRequest,
+        ReplaySubmitResponse,
     },
     sources::{
         SOURCES_CONTINUITY_EXPLAIN_GAP_METHOD, SOURCES_CONTINUITY_GET_METHOD,
@@ -661,15 +664,8 @@ impl GatewayClient {
             },
         };
 
-        let result = self
-            .call_rpc(
-                methods::REPLAY_CREATE_OPERATION,
-                serde_json::to_value(&req)?,
-            )
-            .await?;
-
-        // Gateway returns { "operation": ReplayOperation }
-        let response: ReplayCreateResponse = serde_json::from_value(result)?;
+        let response: ReplayCreateResponse =
+            self.call_typed(REPLAY_CREATE_OPERATION_METHOD, &req).await?;
         Ok(response.operation)
     }
 
@@ -721,13 +717,8 @@ impl GatewayClient {
         let req = ReplaySubmitRequest {
             operation_id: operation_id.to_string(),
         };
-        let result = self
-            .call_rpc(
-                methods::REPLAY_SUBMIT_OPERATION,
-                serde_json::to_value(&req)?,
-            )
-            .await?;
-        let response: ReplaySubmitResponse = serde_json::from_value(result)?;
+        let response: ReplaySubmitResponse =
+            self.call_typed(REPLAY_SUBMIT_OPERATION_METHOD, &req).await?;
         Ok(response.operation)
     }
 
@@ -771,13 +762,8 @@ impl GatewayClient {
         let req = ReplayPreviewRequest {
             operation_id: operation_id.to_string(),
         };
-        let result = self
-            .call_rpc(
-                methods::REPLAY_PREVIEW_OPERATION,
-                serde_json::to_value(&req)?,
-            )
-            .await?;
-        let response: ReplayPreviewResponse = serde_json::from_value(result)?;
+        let response: ReplayPreviewResponse =
+            self.call_typed(REPLAY_PREVIEW_OPERATION_METHOD, &req).await?;
         Ok((response.operation, response.preview))
     }
 
@@ -786,13 +772,8 @@ impl GatewayClient {
         let req = ReplayApproveRequest {
             operation_id: operation_id.to_string(),
         };
-        let result = self
-            .call_rpc(
-                methods::REPLAY_APPROVE_OPERATION,
-                serde_json::to_value(&req)?,
-            )
-            .await?;
-        let response: ReplayApproveResponse = serde_json::from_value(result)?;
+        let response: ReplayApproveResponse =
+            self.call_typed(REPLAY_APPROVE_OPERATION_METHOD, &req).await?;
         Ok(response.operation)
     }
 
@@ -802,13 +783,8 @@ impl GatewayClient {
             operation_id: operation_id.to_string(),
             dry_run: false,
         };
-        let result = self
-            .call_rpc(
-                methods::REPLAY_EXECUTE_OPERATION,
-                serde_json::to_value(&req)?,
-            )
-            .await?;
-        let response: ReplayExecuteResponse = serde_json::from_value(result)?;
+        let response: ReplayExecuteResponse =
+            self.call_typed(REPLAY_EXECUTE_OPERATION_METHOD, &req).await?;
         Ok(response.operation)
     }
 
@@ -822,13 +798,8 @@ impl GatewayClient {
             operation_id: operation_id.to_string(),
             reason: reason.map(String::from),
         };
-        let result = self
-            .call_rpc(
-                methods::REPLAY_CANCEL_OPERATION,
-                serde_json::to_value(&req)?,
-            )
-            .await?;
-        let response: ReplayCancelResponse = serde_json::from_value(result)?;
+        let response: ReplayCancelResponse =
+            self.call_typed(REPLAY_CANCEL_OPERATION_METHOD, &req).await?;
         Ok(response.operation)
     }
 
