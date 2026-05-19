@@ -422,6 +422,27 @@
       "content_hash": "c411a527973678df4f45b65c547e45e2401a9ed5e514b388bf0f77b017257b40"
     },
     {
+      "source": "runtime.instruction",
+      "event_type": "actuation.attempted",
+      "version": "1.0.0",
+      "path": "runtime.instruction/actuation.attempted.json",
+      "content_hash": "125a246d4859a7350e170c6c771bd4cd7441031b6a163e89838d290b06df2ae2"
+    },
+    {
+      "source": "runtime.instruction",
+      "event_type": "desktop.workspace.switch_requested",
+      "version": "1.0.0",
+      "path": "runtime.instruction/desktop.workspace.switch_requested.json",
+      "content_hash": "6142c117f758773983f123302edbbc646dcc22974aaddf5f8c8d543c15319734"
+    },
+    {
+      "source": "runtime.instruction",
+      "event_type": "expectation.status",
+      "version": "1.0.0",
+      "path": "runtime.instruction/expectation.status.json",
+      "content_hash": "8d173ad051c27b15290561ec6d94aae716d8eb882ccf1435b4642cdf14038516"
+    },
+    {
       "source": "samsung-health",
       "event_type": "sleep.session",
       "version": "1.0.0",

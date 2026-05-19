@@ -3814,6 +3814,27 @@
       "type_name": "sinex_primitives::events::payloads::entity::EntityRelatedPayload"
     },
     {
+      "subject": "event_payload:runtime.instruction/actuation.attempted/1.0.0",
+      "source": "runtime.instruction",
+      "event_type": "actuation.attempted",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::instruction::ActuationAttemptPayload"
+    },
+    {
+      "subject": "event_payload:runtime.instruction/desktop.workspace.switch_requested/1.0.0",
+      "source": "runtime.instruction",
+      "event_type": "desktop.workspace.switch_requested",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::instruction::DesktopWorkspaceSwitchInstructionPayload"
+    },
+    {
+      "subject": "event_payload:runtime.instruction/expectation.status/1.0.0",
+      "source": "runtime.instruction",
+      "event_type": "expectation.status",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::instruction::InstructionExpectationStatusPayload"
+    },
+    {
       "subject": "event_payload:samsung-health/sleep.session/1.0.0",
       "source": "samsung-health",
       "event_type": "sleep.session",

@@ -1,0 +1,67 @@
+{
+  "$defs": {
+    "DateTime": {
+      "description": "RFC 3339 formatted date-time string",
+      "format": "date-time",
+      "type": "string"
+    },
+    "InstructionExpectationStatus": {
+      "description": "Reconciler status for the desired observation.",
+      "enum": [
+        "pending",
+        "already_satisfied",
+        "fulfilled",
+        "timed_out",
+        "contradicted",
+        "impossible",
+        "cancelled"
+      ],
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Reconciler output that ties desired state to ordinary observation events.",
+  "properties": {
+    "caveat": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "desired_event_source": {
+      "type": "string"
+    },
+    "desired_event_type": {
+      "type": "string"
+    },
+    "evaluated_at": {
+      "$ref": "#/$defs/DateTime"
+    },
+    "instruction_id": {
+      "format": "uuid",
+      "type": "string"
+    },
+    "matched_event_ids": {
+      "items": {
+        "format": "uuid",
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "status": {
+      "$ref": "#/$defs/InstructionExpectationStatus"
+    }
+  },
+  "required": [
+    "instruction_id",
+    "desired_event_source",
+    "desired_event_type",
+    "status",
+    "evaluated_at"
+  ],
+  "title": "InstructionExpectationStatusPayload",
+  "type": "object",
+  "x-sinex-event-type": "expectation.status",
+  "x-sinex-source": "runtime.instruction",
+  "x-sinex-version": "1.0.0"
+}
