@@ -2,6 +2,7 @@ use std::collections::HashMap;
 
 use super::OutputFormat;
 use serde::Serialize;
+use sinex_primitives::rpc::methods;
 
 /// Operator-facing command family used for UX grouping and projection routing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
@@ -34,6 +35,7 @@ pub struct CommandCatalogEntry {
     pub path: &'static str,
     pub family: CommandFamily,
     pub effect: CommandEffect,
+    pub backing_rpc_methods: &'static [&'static str],
     pub capability: FormatCapability,
 }
 
@@ -553,6 +555,7 @@ pub fn command_catalog() -> Vec<CommandCatalogEntry> {
             path,
             family: family_for_path(path),
             effect: effect_for_path(path, capability),
+            backing_rpc_methods: backing_rpc_methods_for_path(path),
             capability: capability.clone(),
         })
         .collect();
@@ -589,15 +592,19 @@ fn effect_for_path(path: &str, capability: &FormatCapability) -> CommandEffect {
     let mutating = [
         "admin snapshot",
         "annotate",
+        "blob fsck",
+        "blob migrate",
         "blob store",
+        "blob sweep-orphans",
         "curation finalize",
         "curation judge",
         "declare",
+        "declare task",
         "dlq purge",
         "dlq requeue",
-        "git-ops create-source",
-        "git-ops delete-source",
-        "git-ops trigger-sync",
+        "git-ops create",
+        "git-ops delete",
+        "git-ops sync",
         "lifecycle archive",
         "lifecycle restore",
         "lifecycle tombstone approve",
@@ -613,6 +620,8 @@ fn effect_for_path(path: &str, capability: &FormatCapability) -> CommandEffect {
         "replay approve",
         "replay cancel",
         "replay execute",
+        "replay plan",
+        "replay preview",
         "replay run",
         "replay submit",
         "shadow create",
@@ -623,13 +632,129 @@ fn effect_for_path(path: &str, capability: &FormatCapability) -> CommandEffect {
         "sources bindings update",
         "sources stage",
         "tasks complete",
-        "tasks create",
     ];
 
     if mutating.binary_search(&path).is_ok() {
         CommandEffect::Mutating
     } else {
         CommandEffect::ReadOnly
+    }
+}
+
+fn backing_rpc_methods_for_path(path: &str) -> &'static [&'static str] {
+    match path {
+        "gateway ping" => &[methods::SYSTEM_PING],
+        "gateway version" => &[methods::SYSTEM_VERSION],
+        "core health" => &[methods::SYSTEM_HEALTH],
+        "node list" | "nodes" => &[methods::COORDINATION_LIST_INSTANCES],
+        "status" => &[
+            methods::SYSTEM_VERSION,
+            methods::SYSTEM_HEALTH,
+            methods::COORDINATION_LIST_INSTANCES,
+            methods::DLQ_LIST,
+        ],
+        "now" => &[
+            methods::SYSTEM_HEALTH,
+            methods::COORDINATION_LIST_INSTANCES,
+            methods::TELEMETRY_RECENT_ACTIVITY,
+        ],
+        "tui" => &[
+            methods::SYSTEM_VERSION,
+            methods::COORDINATION_LIST_INSTANCES,
+            methods::DLQ_LIST,
+            methods::EVENTS_QUERY,
+        ],
+        "node status" => &[methods::COORDINATION_INSTANCE_HEALTH],
+        "ingestors" => &[methods::INGESTORS_STATUS],
+        "node drain" => &[methods::NODES_DRAIN],
+        "node resume" => &[methods::NODES_RESUME],
+        "node set-horizon" => &[methods::NODES_SET_HORIZON],
+        "automata" => &[methods::AUTOMATA_STATUS],
+        "replay plan" | "replay run" => &[methods::REPLAY_CREATE_OPERATION],
+        "replay preview" => &[methods::REPLAY_PREVIEW_OPERATION],
+        "replay approve" => &[methods::REPLAY_APPROVE_OPERATION],
+        "replay execute" => &[methods::REPLAY_EXECUTE_OPERATION],
+        "replay submit" => &[methods::REPLAY_SUBMIT_OPERATION],
+        "replay cancel" => &[methods::REPLAY_CANCEL_OPERATION],
+        "replay status" | "replay watch" => &[methods::REPLAY_OPERATION_STATUS],
+        "replay list" => &[methods::REPLAY_LIST_OPERATIONS],
+        "dlq list" => &[methods::DLQ_LIST],
+        "dlq peek" => &[methods::DLQ_PEEK],
+        "dlq requeue" => &[methods::DLQ_REQUEUE],
+        "dlq purge" => &[methods::DLQ_PURGE],
+        "query" | "recent" | "errors" | "context" | "report today" | "report yesterday"
+        | "report calendar" => &[methods::EVENTS_QUERY],
+        "verify" => &[
+            methods::SYSTEM_HEALTH,
+            methods::EVENTS_QUERY,
+            methods::TELEMETRY_THROUGHPUT,
+            methods::TELEMETRY_RECENT_ACTIVITY,
+        ],
+        "trace" | "explain" => &[methods::EVENTS_LINEAGE],
+        "watch" => &[],
+        "ops start" => &[methods::OPS_START],
+        "ops list" => &[methods::OPS_LIST],
+        "ops get" => &[methods::OPS_GET],
+        "ops cancel" => &[methods::OPS_CANCEL],
+        "privacy private-mode status" => &[methods::PRIVACY_PRIVATE_MODE_STATUS],
+        "privacy private-mode enable" => &[methods::PRIVACY_PRIVATE_MODE_ENABLE],
+        "privacy private-mode disable" => &[methods::PRIVACY_PRIVATE_MODE_DISABLE],
+        "audit" => &[methods::AUDIT_GET],
+        "annotate" => &[methods::EVENTS_ANNOTATE],
+        "sources stage" => &[methods::SOURCES_STAGE],
+        "sources list" => &[methods::SOURCES_LIST],
+        "sources show" => &[methods::SOURCES_SHOW],
+        "sources coverage" => &[methods::SOURCES_COVERAGE],
+        "sources annotate" => &[methods::SOURCES_ANNOTATE],
+        "sources archive" => &[methods::SOURCES_ARCHIVE],
+        "sources continuity" => &[
+            methods::SOURCES_CONTINUITY,
+            methods::SOURCES_CONTINUITY_LIST,
+            methods::SOURCES_CONTINUITY_GET,
+        ],
+        "sources explain-gap" => &[methods::SOURCES_CONTINUITY_EXPLAIN_GAP],
+        "sources readiness" => &[
+            methods::SOURCES_READINESS_LIST,
+            methods::SOURCES_READINESS_GET,
+        ],
+        "declare task" => &[methods::TASKS_CREATE],
+        "tasks complete" => &[methods::TASKS_COMPLETE],
+        "tasks state" => &[methods::TASKS_STATE_GET],
+        "curation proposals" => &[methods::CURATION_PROPOSALS_LIST],
+        "curation judge" => &[methods::CURATION_JUDGMENTS_RECORD],
+        "curation finalize" => &[methods::CURATION_FINALIZE],
+        "lifecycle status" => &[methods::LIFECYCLE_STATUS],
+        "lifecycle archive" => &[methods::LIFECYCLE_ARCHIVE],
+        "lifecycle restore" => &[methods::LIFECYCLE_RESTORE],
+        "lifecycle tombstone create" => &[methods::LIFECYCLE_TOMBSTONE_CREATE],
+        "lifecycle tombstone approve" => &[methods::LIFECYCLE_TOMBSTONE_APPROVE],
+        "lifecycle tombstone preview" => &[methods::LIFECYCLE_TOMBSTONE_PREVIEW],
+        "lifecycle tombstone cancel" => &[methods::LIFECYCLE_TOMBSTONE_CANCEL],
+        "lifecycle tombstone list" => &[methods::LIFECYCLE_TOMBSTONE_LIST],
+        "lifecycle tombstone status" => &[methods::LIFECYCLE_TOMBSTONE_STATUS],
+        "git-ops list" => &[methods::GITOPS_LIST_SOURCES],
+        "git-ops create" => &[methods::GITOPS_CREATE_SOURCE],
+        "git-ops delete" => &[methods::GITOPS_DELETE_SOURCE],
+        "git-ops sync" => &[methods::GITOPS_TRIGGER_SYNC],
+        "telemetry window-focus" => &[methods::TELEMETRY_WINDOW_FOCUS],
+        "telemetry command-frequency" => &[methods::TELEMETRY_COMMAND_FREQUENCY],
+        "telemetry file-activity" => &[methods::TELEMETRY_FILE_ACTIVITY],
+        "telemetry recent-activity" => &[methods::TELEMETRY_RECENT_ACTIVITY],
+        "telemetry system-state" => &[methods::TELEMETRY_SYSTEM_STATE],
+        "telemetry node-stats" => &[methods::TELEMETRY_NODE_STATS],
+        "telemetry stream-stats" => &[methods::TELEMETRY_STREAM_STATS],
+        "telemetry gateway-stats" => &[methods::TELEMETRY_GATEWAY_STATS],
+        "telemetry assembly-stats" => &[methods::TELEMETRY_ASSEMBLY_STATS],
+        "telemetry metric-counters" => &[methods::TELEMETRY_METRIC_COUNTERS],
+        "telemetry current-device-state" => &[methods::TELEMETRY_CURRENT_DEVICE_STATE],
+        "telemetry current-health" => &[methods::TELEMETRY_CURRENT_HEALTH],
+        "telemetry ingestd-batch-stats" => &[methods::TELEMETRY_INGESTD_BATCH_STATS],
+        "telemetry ingestd-validation" => &[methods::TELEMETRY_INGESTD_VALIDATION],
+        "throughput" => &[methods::TELEMETRY_THROUGHPUT],
+        "documents search" => &[methods::DOCUMENTS_SEARCH],
+        "documents get" => &[methods::DOCUMENTS_GET],
+        "documents chunks" => &[methods::DOCUMENTS_GET_CHUNKS],
+        _ => &[],
     }
 }
 
@@ -671,16 +796,17 @@ pub fn render_format_matrix() -> String {
     let rows = command_catalog();
 
     let mut out =
-        String::from("| Command | effect | table | json | yaml | dot | streaming | Note |\n");
-    out.push_str("|---------|--------|-------|------|------|-----|-----------|------|\n");
+        String::from("| Command | effect | rpc | table | json | yaml | dot | streaming | Note |\n");
+    out.push_str("|---------|--------|-----|-------|------|------|-----|-----------|------|\n");
 
     for entry in &rows {
         let cap = &entry.capability;
         let has = |f: OutputFormat| if cap.supports(f) { "✓" } else { "" };
         out.push_str(&format!(
-            "| `{}` | {} | {} | {} | {} | {} | {} | {} |\n",
+            "| `{}` | {} | {} | {} | {} | {} | {} | {} | {} |\n",
             entry.path,
             effect_label(entry.effect),
+            entry.backing_rpc_methods.join(", "),
             has(OutputFormat::Table),
             has(OutputFormat::Json),
             has(OutputFormat::Yaml),
@@ -706,7 +832,7 @@ pub fn render_format_matrix_terminal() -> String {
         .max(7);
     let effect_width = "read_only".len();
     let header = format!(
-        "{:<width$}  {:<effect_width$}  table  json   yaml   dot  stream  note",
+        "{:<width$}  {:<effect_width$}  rpc  table  json   yaml   dot  stream  note",
         "COMMAND",
         "EFFECT",
         width = cmd_width,
@@ -720,9 +846,14 @@ pub fn render_format_matrix_terminal() -> String {
         let cap = &entry.capability;
         let has = |f: OutputFormat| if cap.supports(f) { "  ✓  " } else { "     " };
         out.push_str(&format!(
-            "{:<width$}  {:<effect_width$} {}{}{}{}  {:<6}  {}\n",
+            "{:<width$}  {:<effect_width$}  {:<3}{}{}{}{}  {:<6}  {}\n",
             entry.path,
             effect_label(entry.effect),
+            if entry.backing_rpc_methods.is_empty() {
+                ""
+            } else {
+                "rpc"
+            },
             has(OutputFormat::Table),
             has(OutputFormat::Json),
             has(OutputFormat::Yaml),
@@ -749,6 +880,7 @@ fn effect_label(effect: CommandEffect) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sinex_primitives::rpc::{RpcMutability, method_catalog};
     use xtask::sandbox::prelude::sinex_test;
 
     #[sinex_test]
@@ -813,6 +945,7 @@ mod tests {
             assert!(entry["path"].as_str().is_some());
             assert!(entry["family"].as_str().is_some());
             assert!(entry["effect"].as_str().is_some());
+            assert!(entry["backing_rpc_methods"].as_array().is_some());
             assert!(entry["capability"]["supported"].as_array().is_some());
             assert!(entry["capability"]["streaming"].as_bool().is_some());
         }
@@ -841,6 +974,67 @@ mod tests {
             effect_for("curation finalize"),
             Some(CommandEffect::Mutating)
         );
+        assert_eq!(effect_for("replay plan"), Some(CommandEffect::Mutating));
+        assert_eq!(effect_for("replay preview"), Some(CommandEffect::Mutating));
+        assert_eq!(effect_for("git-ops create"), Some(CommandEffect::Mutating));
+        assert_eq!(effect_for("git-ops sync"), Some(CommandEffect::Mutating));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn command_catalog_backing_rpc_methods_are_known() -> xtask::sandbox::TestResult<()> {
+        let rpc_catalog = method_catalog()
+            .into_iter()
+            .map(|method| (method.name, method))
+            .collect::<std::collections::BTreeMap<_, _>>();
+
+        for entry in command_catalog() {
+            for method_name in entry.backing_rpc_methods {
+                assert!(
+                    rpc_catalog.contains_key(method_name),
+                    "command `{}` references unknown RPC method `{method_name}`",
+                    entry.path
+                );
+            }
+        }
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn command_catalog_effect_matches_backing_rpc_mutability()
+    -> xtask::sandbox::TestResult<()> {
+        let rpc_catalog = method_catalog()
+            .into_iter()
+            .map(|method| (method.name, method))
+            .collect::<std::collections::BTreeMap<_, _>>();
+
+        for entry in command_catalog() {
+            if entry.backing_rpc_methods.is_empty() {
+                continue;
+            }
+
+            let has_mutating_rpc = entry
+                .backing_rpc_methods
+                .iter()
+                .filter_map(|method_name| rpc_catalog.get(method_name))
+                .any(|method| method.mutability == RpcMutability::Mutating);
+
+            if has_mutating_rpc {
+                assert_eq!(
+                    entry.effect,
+                    CommandEffect::Mutating,
+                    "command `{}` must be mutating because at least one backing RPC mutates",
+                    entry.path
+                );
+            } else {
+                assert_ne!(
+                    entry.effect,
+                    CommandEffect::Mutating,
+                    "command `{}` is marked mutating but all backing RPC methods are read-only",
+                    entry.path
+                );
+            }
+        }
         Ok(())
     }
 
