@@ -176,12 +176,24 @@ mod binary_path {
         })
     }
 
+    fn append_only_node_config(path: &std::path::Path) -> serde_json::Value {
+        serde_json::json!({
+            "path": path,
+            "skip_empty": true,
+        })
+    }
+
     async fn write_weechat_fixture(log_path: &std::path::Path, message: &str) -> TestResult<()> {
         tokio::fs::write(
             log_path,
             format!("2024-01-15 14:23:45\tsinity\t{message}\n"),
         )
         .await?;
+        Ok(())
+    }
+
+    async fn write_bash_fixture(history_path: &std::path::Path, command: &str) -> TestResult<()> {
+        tokio::fs::write(history_path, format!("{command}\n")).await?;
         Ok(())
     }
 
@@ -299,6 +311,65 @@ mod binary_path {
         .fetch_one(ctx.pool())
         .await?;
         ctx.assert("suppressed private-mode scan persisted no irc.message events")
+            .eq(&count, &0)?;
+
+        stack.shutdown().await?;
+        Ok(())
+    }
+
+    #[sinex_test(timeout = 120)]
+    async fn bash_history_source_worker_private_mode_suppresses_before_acquisition(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        let ctx = ctx.with_nats().shared().await?;
+        let stack = TestCoreStack::new(&ctx).await?;
+
+        let tempdir = tempfile::tempdir()?;
+        let history_path = tempdir.path().join(".bash_history");
+        write_bash_fixture(
+            &history_path,
+            "echo private mode should suppress bash history",
+        )
+        .await?;
+        let worker_dir = tempdir.path().join("worker");
+        tokio::fs::create_dir_all(&worker_dir).await?;
+        let state_dir = tempdir.path().join("state");
+        save_private_mode_state(
+            &state_dir,
+            &RuntimePrivateModeState::enabled_by(
+                "test-operator",
+                vec!["terminal".to_string()],
+                Timestamp::UNIX_EPOCH,
+            ),
+        )?;
+
+        let mut node_config = append_only_node_config(&history_path);
+        node_config["private_mode_state_dir"] =
+            serde_json::Value::String(state_dir.display().to_string());
+
+        let mut config = TestSourceWorkerConfig::new("terminal.bash-history");
+        config.nats = ctx.nats_handle()?.connection_config();
+        config.database_url = ctx.database_url().to_string();
+        config.namespace = Some(ctx.pipeline_namespace().prefix().to_string());
+        config.work_dir = Some(worker_dir);
+        config.node_config = Some(node_config.to_string());
+
+        let output = run_test_source_worker_scan(config, &[], Some(&ctx)).await?;
+        ctx.assert("private-mode bash scan suppressed all events").that(
+            output.stdout.contains("Events processed: 0"),
+            "scan output should report no processed events when terminal private mode is active",
+        )?;
+
+        let count: i64 = sqlx::query_scalar(
+            r"
+            SELECT COUNT(*)::bigint
+            FROM core.events
+            WHERE source = 'shell.history' AND event_type = 'command.imported'
+            ",
+        )
+        .fetch_one(ctx.pool())
+        .await?;
+        ctx.assert("suppressed private-mode scan persisted no shell.history events")
             .eq(&count, &0)?;
 
         stack.shutdown().await?;
