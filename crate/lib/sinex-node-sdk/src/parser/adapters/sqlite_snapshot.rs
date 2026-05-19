@@ -66,11 +66,6 @@ use crate::acquisition_manager::AcquisitionManager;
 /// public type signature.
 const SNAPSHOT_SLICE_BYTES: usize = 256 * 1024;
 
-/// Default snapshot interval: 1 hour matches the default rotation-window
-/// max-age. Snapshots and rotations land at similar cadences, but on
-/// independent timers.
-pub const DEFAULT_SNAPSHOT_INTERVAL: Duration = Duration::from_hours(1);
-
 /// Per-source-unit snapshot configuration.
 ///
 /// Embedded as `snapshot` inside [`SqliteRowConfig`].  When `interval_seconds`
@@ -191,6 +186,7 @@ impl SqliteSnapshotLane {
 
     /// Number of snapshots successfully captured. Exposed for tests.
     #[must_use]
+    #[cfg(test)]
     pub const fn snapshots_captured(&self) -> u64 {
         self.snapshots_captured
     }
