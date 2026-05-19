@@ -76,7 +76,9 @@ async fn mcp_lists_first_slice_read_only_tools() -> TestResult<()> {
             "sinex.tasks_list",
             "sinex.task_state",
             "sinex.automata_status",
-            "sinex.ingestors_status"
+            "sinex.ingestors_status",
+            "sinex.nodes_health",
+            "sinex.nodes_active"
         ]
     );
     assert_read_only_tool_names()?;
@@ -433,6 +435,53 @@ async fn mcp_ingestors_status_call_uses_gateway_fixture() -> TestResult<()> {
     Ok(())
 }
 
+#[sinex_test]
+async fn mcp_nodes_health_call_uses_gateway_fixture() -> TestResult<()> {
+    let server = mount_mcp_gateway_fixture().await;
+    let client = fixture_gateway_client(&server)?;
+
+    let response = call_tool(
+        &client,
+        "sinex.nodes_health",
+        json!({ "stale_after_secs": 120 }),
+    )
+    .await?;
+
+    assert_eq!(response["tool"], "sinex.nodes_health");
+    assert_eq!(response["query"]["stale_after_secs"], 120);
+    assert_eq!(response["items"]["result"]["active_count"], 2);
+    assert_eq!(response["items"]["result"]["inactive_count"], 1);
+    assert_eq!(response["items"]["result"]["unique_nodes"], 3);
+    assert_eq!(response["redaction"]["raw_samples"], false);
+    Ok(())
+}
+
+#[sinex_test]
+async fn mcp_nodes_active_call_uses_gateway_fixture() -> TestResult<()> {
+    let server = mount_mcp_gateway_fixture().await;
+    let client = fixture_gateway_client(&server)?;
+
+    let response = call_tool(
+        &client,
+        "sinex.nodes_active",
+        json!({ "stale_after_secs": 120 }),
+    )
+    .await?;
+
+    assert_eq!(response["tool"], "sinex.nodes_active");
+    assert_eq!(response["query"]["stale_after_secs"], 120);
+    assert_eq!(
+        response["items"]["result"]["nodes"][0]["node_name"],
+        "terminal.atuin-history"
+    );
+    assert_eq!(
+        response["items"]["result"]["nodes"][0]["heartbeat_source"],
+        "run"
+    );
+    assert_eq!(response["redaction"]["raw_samples"], false);
+    Ok(())
+}
+
 async fn mount_mcp_gateway_fixture() -> MockServer {
     let server = MockServer::start().await;
     Mock::given(method("POST"))
@@ -645,6 +694,31 @@ async fn mount_mcp_gateway_fixture() -> MockServer {
                             "health_reason": "fixture",
                             "recent_output_count": 8,
                             "last_output_at": "2026-05-19T11:59:45Z"
+                        }
+                    ]
+                }),
+                "nodes.health" => json!({
+                    "active_count": 2,
+                    "inactive_count": 1,
+                    "unique_nodes": 3,
+                    "active_run_count": 2,
+                    "oldest_heartbeat": "2026-05-19T11:50:00Z"
+                }),
+                "nodes.list_active" => json!({
+                    "nodes": [
+                        {
+                            "node_name": "terminal.atuin-history",
+                            "node_type": "ingestor",
+                            "version": "0.4.2",
+                            "description": "fixture source worker",
+                            "service_name": "sinex-source-worker@terminal.atuin-history.service",
+                            "instance_id": "terminal-atuin-1",
+                            "source_run_id": null,
+                            "host": "test-host",
+                            "status": "healthy",
+                            "last_heartbeat_at": "2026-05-19T11:59:59Z",
+                            "started_at": "2026-05-19T11:00:00Z",
+                            "heartbeat_source": "run"
                         }
                     ]
                 }),

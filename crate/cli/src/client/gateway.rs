@@ -61,8 +61,14 @@ use sinex_primitives::rpc::{
         LlmBudgetReportRequest, LlmBudgetReportResponse, LlmPromptsListRequest,
         LlmRouteExplainRequest, LlmRouteExplainResponse,
     },
-    nodes::{NODES_DRAIN_METHOD, NODES_RESUME_METHOD, NODES_SET_HORIZON_METHOD},
-    nodes::{NodeDrainRequest, NodeResumeRequest, NodeSetHorizonRequest},
+    nodes::{
+        NODES_DRAIN_METHOD, NODES_HEALTH_METHOD, NODES_LIST_ACTIVE_METHOD, NODES_RESUME_METHOD,
+        NODES_SET_HORIZON_METHOD,
+    },
+    nodes::{
+        NodeDrainRequest, NodeResumeRequest, NodeSetHorizonRequest, NodesHealthRequest,
+        NodesHealthResponse, NodesListActiveRequest, NodesListActiveResponse,
+    },
     ops::{Operation as OpsOperation, OpsGetResponse, OpsListResponse, OpsStartResponse},
     privacy::{
         PRIVACY_PRIVATE_MODE_DISABLE_METHOD, PRIVACY_PRIVATE_MODE_ENABLE_METHOD,
@@ -587,6 +593,21 @@ impl GatewayClient {
             .call_typed(COORDINATION_LIST_INSTANCES_METHOD, &req)
             .await?;
         Ok(response.instances)
+    }
+
+    /// List active node presence from runtime registry state.
+    pub async fn nodes_list_active(
+        &self,
+        stale_after_secs: u64,
+    ) -> Result<NodesListActiveResponse> {
+        let req = NodesListActiveRequest { stale_after_secs };
+        self.call_typed(NODES_LIST_ACTIVE_METHOD, &req).await
+    }
+
+    /// Get aggregate node health from runtime registry state.
+    pub async fn nodes_health(&self, stale_after_secs: u64) -> Result<NodesHealthResponse> {
+        let req = NodesHealthRequest { stale_after_secs };
+        self.call_typed(NODES_HEALTH_METHOD, &req).await
     }
 
     /// Get node status
