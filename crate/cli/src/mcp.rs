@@ -19,6 +19,7 @@ use sinex_primitives::rpc::ingestors::IngestorsStatusResponse;
 use sinex_primitives::rpc::methods;
 use sinex_primitives::rpc::nodes::{NodesHealthResponse, NodesListActiveResponse};
 use sinex_primitives::rpc::privacy::PrivateModeStateResponse;
+use sinex_primitives::rpc::replay::ReplayState;
 use sinex_primitives::rpc::sources::{SourcesReadinessGetRequest, SourcesReadinessListRequest};
 use sinex_primitives::rpc::system::SystemHealthResponse;
 use sinex_primitives::rpc::tasks::{
@@ -155,6 +156,21 @@ struct TaskStateArgs {
 }
 
 #[derive(Debug, Deserialize, Serialize)]
+struct ReplayListArgs {
+    #[serde(default)]
+    state: Option<ReplayState>,
+    #[serde(default)]
+    node: Option<String>,
+    #[serde(default)]
+    limit: Option<i64>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+struct ReplayStatusArgs {
+    operation_id: String,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
 struct StatusWindowArgs {
     #[serde(default = "default_stale_after_secs")]
     stale_after_secs: u64,
@@ -253,6 +269,20 @@ pub fn tool_catalog() -> Vec<McpCatalogEntry> {
             kind: McpSurfaceKind::Tool,
             description: "Read-only current state for one task workflow object.",
             backing_rpc_methods: &[methods::TASKS_STATE_GET],
+            read_only: true,
+        },
+        McpCatalogEntry {
+            name: "sinex.replay_operations",
+            kind: McpSurfaceKind::Tool,
+            description: "Read-only replay operation list with state and node filters.",
+            backing_rpc_methods: &[methods::REPLAY_LIST_OPERATIONS],
+            read_only: true,
+        },
+        McpCatalogEntry {
+            name: "sinex.replay_status",
+            kind: McpSurfaceKind::Tool,
+            description: "Read-only current status for one replay operation.",
+            backing_rpc_methods: &[methods::REPLAY_OPERATION_STATUS],
             read_only: true,
         },
         McpCatalogEntry {
@@ -437,6 +467,49 @@ pub fn tools() -> Vec<McpTool> {
             }),
         },
         McpTool {
+            name: "sinex.replay_operations",
+            description: "Read-only replay operation list with state and node filters.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "state": {
+                        "type": "string",
+                        "enum": [
+                            "Planning",
+                            "Previewed",
+                            "Approved",
+                            "Executing",
+                            "Cancelling",
+                            "Committing",
+                            "Completed",
+                            "Failed",
+                            "Cancelled"
+                        ]
+                    },
+                    "node": { "type": "string" },
+                    "limit": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 500,
+                        "default": 50
+                    }
+                },
+                "additionalProperties": false
+            }),
+        },
+        McpTool {
+            name: "sinex.replay_status",
+            description: "Read-only current status for one replay operation.",
+            input_schema: json!({
+                "type": "object",
+                "required": ["operation_id"],
+                "properties": {
+                    "operation_id": { "type": "string" }
+                },
+                "additionalProperties": false
+            }),
+        },
+        McpTool {
             name: "sinex.automata_status",
             description: "Read-only derived-node automata liveness, checkpoint, and lag status.",
             input_schema: status_window_schema(),
@@ -612,6 +685,8 @@ pub async fn call_tool(client: &GatewayClient, name: &str, arguments: Value) -> 
         "sinex.system_health" => system_health(client, arguments).await,
         "sinex.tasks_list" => tasks_list(client, arguments).await,
         "sinex.task_state" => task_state(client, arguments).await,
+        "sinex.replay_operations" => replay_operations(client, arguments).await,
+        "sinex.replay_status" => replay_status(client, arguments).await,
         "sinex.automata_status" => automata_status(client, arguments).await,
         "sinex.ingestors_status" => ingestors_status(client, arguments).await,
         "sinex.nodes_health" => nodes_health(client, arguments).await,
@@ -771,6 +846,28 @@ async fn task_state(client: &GatewayClient, arguments: Value) -> Result<Value> {
         "sinex.task_state",
         json!(args),
         json!({ "result": response }),
+    ))
+}
+
+async fn replay_operations(client: &GatewayClient, arguments: Value) -> Result<Value> {
+    let args: ReplayListArgs = serde_json::from_value(arguments)?;
+    let operations = client
+        .replay_list_filtered(args.state, args.node.as_deref(), args.limit)
+        .await?;
+    Ok(envelope(
+        "sinex.replay_operations",
+        json!(args),
+        json!({ "operations": operations }),
+    ))
+}
+
+async fn replay_status(client: &GatewayClient, arguments: Value) -> Result<Value> {
+    let args: ReplayStatusArgs = serde_json::from_value(arguments)?;
+    let operation = client.replay_status(&args.operation_id).await?;
+    Ok(envelope(
+        "sinex.replay_status",
+        json!(args),
+        json!({ "operation": operation }),
     ))
 }
 

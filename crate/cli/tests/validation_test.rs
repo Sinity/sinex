@@ -76,6 +76,8 @@ async fn mcp_lists_first_slice_read_only_tools() -> TestResult<()> {
             "sinex.system_health",
             "sinex.tasks_list",
             "sinex.task_state",
+            "sinex.replay_operations",
+            "sinex.replay_status",
             "sinex.automata_status",
             "sinex.ingestors_status",
             "sinex.nodes_health",
@@ -437,6 +439,55 @@ async fn mcp_task_state_call_uses_gateway_fixture() -> TestResult<()> {
 }
 
 #[sinex_test]
+async fn mcp_replay_operations_call_uses_gateway_fixture() -> TestResult<()> {
+    let server = mount_mcp_gateway_fixture().await;
+    let client = fixture_gateway_client(&server)?;
+
+    let response = call_tool(
+        &client,
+        "sinex.replay_operations",
+        json!({
+            "state": "Planning",
+            "node": "terminal.atuin-history",
+            "limit": 5
+        }),
+    )
+    .await?;
+
+    assert_eq!(response["tool"], "sinex.replay_operations");
+    assert_eq!(response["query"]["state"], "Planning");
+    assert_eq!(
+        response["items"]["operations"][0]["operation_id"],
+        fixture_operation_id()
+    );
+    assert_eq!(response["items"]["operations"][0]["state"], "Planning");
+    assert_eq!(response["redaction"]["raw_samples"], false);
+    Ok(())
+}
+
+#[sinex_test]
+async fn mcp_replay_status_call_uses_gateway_fixture() -> TestResult<()> {
+    let server = mount_mcp_gateway_fixture().await;
+    let client = fixture_gateway_client(&server)?;
+
+    let response = call_tool(
+        &client,
+        "sinex.replay_status",
+        json!({ "operation_id": fixture_operation_id() }),
+    )
+    .await?;
+
+    assert_eq!(response["tool"], "sinex.replay_status");
+    assert_eq!(
+        response["items"]["operation"]["operation_id"],
+        fixture_operation_id()
+    );
+    assert_eq!(response["items"]["operation"]["state"], "Previewed");
+    assert_eq!(response["redaction"]["raw_samples"], false);
+    Ok(())
+}
+
+#[sinex_test]
 async fn mcp_automata_status_call_uses_gateway_fixture() -> TestResult<()> {
     let server = mount_mcp_gateway_fixture().await;
     let client = fixture_gateway_client(&server)?;
@@ -745,6 +796,16 @@ async fn mount_mcp_gateway_fixture() -> MockServer {
                     "state": fixture_task_state(),
                     "event_count": 3
                 }),
+                "replay.list_operations" => json!({
+                    "operations": [
+                        fixture_replay_operation(
+                            body["params"]["state"].as_str().unwrap_or("Planning")
+                        )
+                    ]
+                }),
+                "replay.operation_status" => json!({
+                    "operation": fixture_replay_operation("Previewed")
+                }),
                 "automata.status" => json!({
                     "generated_at": "2026-05-19T12:00:00Z",
                     "stale_after_secs": body["params"]["stale_after_secs"].as_u64().unwrap_or(300),
@@ -912,6 +973,47 @@ fn fixture_material_id() -> &'static str {
 
 fn fixture_task_id() -> &'static str {
     "018f4b6b-6a4d-7c80-8000-000000000003"
+}
+
+fn fixture_operation_id() -> &'static str {
+    "018f4b6b-6a4d-7c80-8000-000000000004"
+}
+
+fn fixture_replay_operation(state: &str) -> Value {
+    json!({
+        "operation_id": fixture_operation_id(),
+        "state": state,
+        "scope": {
+            "node_id": "terminal.atuin-history",
+            "time_window": null,
+            "material_filter": null,
+            "filters": {}
+        },
+        "preview_summary": {
+            "total_events": 12,
+            "time_window": {
+                "start": "2026-05-19T10:00:00Z",
+                "end": "2026-05-19T12:00:00Z"
+            }
+        },
+        "checkpoint": {
+            "processed_events": 3,
+            "total_events": 12,
+            "last_event_id": null,
+            "batch_number": 1,
+            "savepoint_id": null,
+            "updated_at": "2026-05-19T11:30:00Z"
+        },
+        "actor": "operator",
+        "created_at": "2026-05-19T10:00:00Z",
+        "approved_by": null,
+        "approved_at": null,
+        "executor_node": null,
+        "started_at": null,
+        "finished_at": null,
+        "outcome": null,
+        "error_details": null
+    })
 }
 
 fn fixture_continuity_report() -> Value {
