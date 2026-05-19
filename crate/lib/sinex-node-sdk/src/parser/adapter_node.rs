@@ -87,7 +87,7 @@ use sinex_primitives::events::Event;
 use sinex_primitives::events::SourceMaterial;
 use sinex_primitives::events::builder::{EventBuilder, NoProvenance};
 use sinex_primitives::ids::Id;
-use sinex_primitives::parser::{MaterialAnchor, ParsedEventIntent, ParserContext};
+use sinex_primitives::parser::{ParsedEventIntent, ParserContext};
 use sinex_primitives::primitives::Uuid;
 use sinex_primitives::privacy::{
     RuntimePrivateModeState, load_private_mode_state, save_private_mode_state,
@@ -1191,32 +1191,6 @@ fn merge_json_over(base: JsonValue, over: JsonValue) -> JsonValue {
     }
 }
 
-fn intent_to_event(
-    intent: ParsedEventIntent,
-    material_id: Id<SourceMaterial>,
-) -> Result<Event<JsonValue>, String> {
-    let anchor_byte: i64 = match &intent.anchor {
-        MaterialAnchor::ByteRange { start, .. } => *start as i64,
-        MaterialAnchor::Line { byte_start, .. } => *byte_start as i64,
-        MaterialAnchor::SqliteRow { rowid, .. } => *rowid,
-        MaterialAnchor::StreamFrame {
-            material_offset, ..
-        } => *material_offset as i64,
-        MaterialAnchor::DirectoryEntry { .. } | MaterialAnchor::GitObject { .. } => 0,
-    };
-
-    let builder: EventBuilder<JsonValue, NoProvenance> =
-        EventBuilder::new_internal(intent.event_source, intent.event_type, intent.payload);
-
-    let built = builder
-        .from_material(material_id, anchor_byte)
-        .at_time(intent.ts_orig)
-        .build()
-        .map_err(|e| format!("EventBuilder::build failed: {e}"))?;
-
-    Ok(built)
-}
-
 /// Convert a `ParsedEventIntent` to an `Event<JsonValue>`, overriding `anchor_byte`
 /// with the stream-acquirer byte offset rather than the anchor embedded in the intent.
 ///
@@ -1274,7 +1248,7 @@ mod tests {
     use futures::stream::{self, BoxStream};
     use sinex_primitives::domain::{EventSource, EventType};
     use sinex_primitives::events::Event;
-    use sinex_primitives::parser::{ParserId, ParserManifest, SourceUnitId};
+    use sinex_primitives::parser::{MaterialAnchor, ParserId, ParserManifest, SourceUnitId};
     use sinex_primitives::privacy::ProcessingContext;
     use sinex_primitives::privacy::{
         RuntimePrivateModeState, load_private_mode_state, private_mode_state_path,

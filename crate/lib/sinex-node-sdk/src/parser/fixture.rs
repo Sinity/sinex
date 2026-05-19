@@ -26,7 +26,6 @@ use std::collections::HashMap;
 
 use camino::Utf8PathBuf;
 use serde::{Deserialize, Serialize};
-use tempfile::TempDir;
 
 use sinex_primitives::Uuid;
 use sinex_primitives::events::SourceMaterial;
@@ -368,9 +367,6 @@ pub struct FixtureFailure {
 /// ).await?;
 /// ```
 pub struct ParserFixtureHarness {
-    /// Directory for temporary material files.
-    /// If None, a new temp dir is created per run.
-    temp_dir: Option<TempDir>,
     /// Loaded golden artifacts, keyed by path.
     golden_cache: HashMap<Utf8PathBuf, serde_json::Value>,
 }
@@ -386,18 +382,6 @@ impl ParserFixtureHarness {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            temp_dir: None,
-            golden_cache: HashMap::new(),
-        }
-    }
-
-    /// Create a harness with a specific temp directory.
-    ///
-    /// The caller is responsible for cleaning up the temp directory.
-    #[must_use]
-    pub fn with_temp_dir(temp_dir: TempDir) -> Self {
-        Self {
-            temp_dir: Some(temp_dir),
             golden_cache: HashMap::new(),
         }
     }
@@ -823,31 +807,6 @@ impl ParserFixtureHarness {
             failures,
             intents,
         }
-    }
-
-    /// Create a temporary file with the given bytes for use as source material.
-    #[allow(clippy::unwrap_used)]
-    fn create_temp_material(
-        &mut self,
-        name: &str,
-        bytes: &[u8],
-    ) -> Result<std::path::PathBuf, std::io::Error> {
-        use std::io::Write;
-
-        // Lazily create temp_dir if not already set.
-        if self.temp_dir.is_none() {
-            self.temp_dir = Some(tempfile::tempdir()?);
-        }
-
-        let dir = self.temp_dir.as_ref().unwrap().path();
-        let safe_name = name.replace(['/', '\\', ' '], "_");
-        let file_path = dir.join(safe_name);
-
-        let mut f = std::fs::File::create(&file_path)?;
-        f.write_all(bytes)?;
-        f.flush()?;
-
-        Ok(file_path)
     }
 
     /// Validate a negative fixture: run the adapter-parser pipeline and

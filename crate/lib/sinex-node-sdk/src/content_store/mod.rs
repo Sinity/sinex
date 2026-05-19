@@ -630,60 +630,6 @@ impl MaterialContentStore {
         Ok(path)
     }
 
-    async fn add_file_direct(
-        &self,
-        relative_path: &Utf8Path,
-        resolved_path: &Utf8Path,
-    ) -> NodeResult<ContentStoreKey> {
-        if !self.config.legacy_annex_enabled {
-            return Err(SinexError::processing(
-                "add_file_direct requires legacy_annex_enabled; use store_file_local_cas instead",
-            ));
-        }
-        let mut cmd = AsyncCommand::new("git-annex");
-        cmd.arg("add")
-            .arg("--json")
-            .arg(relative_path.as_str())
-            .current_dir(&self.config.root_path);
-        let output = run_command_async(cmd, "Failed to run git-annex add").await?;
-
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            let stderr_lower = stderr.to_lowercase();
-            if stderr_lower.contains("no space left") {
-                return Err(SinexError::processing(format!(
-                    "git-annex add failed: disk is full for {resolved_path:?}"
-                )));
-            }
-            if stderr_lower.contains("permission denied") {
-                return Err(SinexError::processing(format!(
-                    "git-annex add failed: permission denied for {resolved_path:?}"
-                )));
-            }
-            if stderr_lower.contains("annex") && stderr_lower.contains("corrupt") {
-                return Err(SinexError::processing(format!(
-                    "git-annex add failed due to possible corruption at {resolved_path:?}: {stderr}"
-                )));
-            }
-            return Err(SinexError::processing(format!(
-                "git-annex add failed: {stderr}"
-            )));
-        }
-
-        match parse_store_output_for_key(&output.stdout) {
-            Ok(Some(key)) => Ok(key),
-            Ok(None) => self.lookup_content_key(relative_path).await,
-            Err(error) => {
-                warn!(
-                    error = %error,
-                    output_preview = %String::from_utf8_lossy(&output.stdout[..output.stdout.len().min(160)]),
-                    "Failed to parse git-annex add JSON output; falling back to lookupkey"
-                );
-                self.lookup_content_key(relative_path).await
-            }
-        }
-    }
-
     /// Get the content-store key for a file.
     ///
     /// When `legacy_annex_enabled` is false, compute the BLAKE3 hash and
@@ -1123,47 +1069,6 @@ impl MaterialContentStore {
     }
 }
 
-fn parse_store_output_for_key(stdout: &[u8]) -> Result<Option<ContentStoreKey>, String> {
-    let output = std::str::from_utf8(stdout)
-        .map_err(|error| format!("git-annex add output was not valid UTF-8: {error}"))?;
-    let mut invalid_line: Option<String> = None;
-    for line in output.lines() {
-        let line = line.trim();
-        if line.is_empty() {
-            continue;
-        }
-        let parsed: JsonValue = match serde_json::from_str(line) {
-            Ok(parsed) => parsed,
-            Err(error) => {
-                invalid_line.get_or_insert_with(|| {
-                    format!(
-                        "git-annex add output contained invalid JSON line `{}`: {error}",
-                        line.chars().take(120).collect::<String>()
-                    )
-                });
-                continue;
-            }
-        };
-        let key = parsed.get("key").and_then(|value| value.as_str());
-        if let Some(key) = key {
-            match ContentStoreKey::parse(key) {
-                Ok(parsed_key) => return Ok(Some(parsed_key)),
-                Err(err) => {
-                    warn!(
-                        error = %err,
-                        raw_key = %key,
-                        "Failed to parse content-store key from add output"
-                    );
-                }
-            }
-        }
-    }
-    match invalid_line {
-        Some(error) => Err(error),
-        None => Ok(None),
-    }
-}
-
 fn parse_unused_output(stdout: &[u8]) -> Result<Vec<UnusedContentEntry>, String> {
     let output = std::str::from_utf8(stdout)
         .map_err(|error| format!("git-annex unused output was not valid UTF-8: {error}"))?;
@@ -1228,14 +1133,6 @@ mod tests {
     use xtask::sandbox::sinex_test;
 
     #[sinex_test]
-    async fn parse_store_output_for_key_reports_invalid_utf8() -> ::xtask::sandbox::TestResult<()> {
-        let error =
-            parse_store_output_for_key(&[0xff]).expect_err("invalid utf-8 must be reported");
-        assert!(error.contains("not valid UTF-8"));
-        Ok(())
-    }
-
-    #[sinex_test]
     async fn parse_unused_output_extracts_numbered_unused_entries()
     -> ::xtask::sandbox::TestResult<()> {
         let entries = parse_unused_output(
@@ -1258,30 +1155,6 @@ mod tests {
             .expect_err("non-numeric unused entry number must fail honestly");
 
         assert!(error.contains("valid u32"));
-        Ok(())
-    }
-
-    #[sinex_test]
-    async fn parse_store_output_for_key_reports_invalid_json_without_key()
-    -> ::xtask::sandbox::TestResult<()> {
-        let error =
-            parse_store_output_for_key(b"not-json\n").expect_err("invalid json must be reported");
-        assert!(error.contains("invalid JSON line"));
-        Ok(())
-    }
-
-    #[sinex_test]
-    async fn parse_store_output_for_key_prefers_valid_key_when_present()
-    -> ::xtask::sandbox::TestResult<()> {
-        let key = parse_store_output_for_key(
-            br#"{"note":"noise"}
-{"key":"SHA256E-s42--deadbeef.txt"}"#,
-        )
-        .expect("valid json output should parse")
-        .expect("valid content-store key should be returned");
-        assert_eq!(key.storage_backend(), "SHA256E");
-        assert_eq!(key.size, 42);
-        assert_eq!(key.digest, "deadbeef.txt");
         Ok(())
     }
 
