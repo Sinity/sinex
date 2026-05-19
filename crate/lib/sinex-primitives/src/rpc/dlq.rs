@@ -67,6 +67,14 @@ pub struct DlqMessagePeek {
     pub retry_count: u32,
     pub original_subject: Option<String>,
     pub payload_preview: String,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub payload_redacted: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub privacy_caveats: Vec<String>,
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 /// Response: dlq.peek
