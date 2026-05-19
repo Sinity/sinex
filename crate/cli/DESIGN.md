@@ -69,6 +69,7 @@ Every command declares its operator UX contract in the command catalog
 - `family`: which operator surface group the command belongs to
 - `effect`: whether the command is read-only, mutating, streaming, or local
 - `backing_rpc_methods`: exact typed gateway RPC methods used by the command
+- `required_rpc_role`: the highest gateway role required by backing RPC methods
 
 The historical format registry is now a compatibility projection of that
 catalog for validation and tests. New UX surfaces should read the catalog rather
