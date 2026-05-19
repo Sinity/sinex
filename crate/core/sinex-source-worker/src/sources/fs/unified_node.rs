@@ -339,7 +339,21 @@ impl EventMetrics {
     }
 
     pub(crate) fn recent_activity(&self) -> Vec<sinex_node_sdk::ActivityEntry> {
-        vec![]
+        let Some(timestamp) = self.last_updated() else {
+            return Vec::new();
+        };
+
+        let events_processed = self.events_processed.load(Ordering::Relaxed);
+        let processing_errors = self.processing_errors.load(Ordering::Relaxed);
+        vec![sinex_node_sdk::ActivityEntry {
+            timestamp,
+            description: format!(
+                "filesystem watcher observed {events_processed} event(s), {processing_errors} error(s)"
+            ),
+            data: Some(serde_json::Value::Object(
+                self.metadata().into_iter().collect(),
+            )),
+        }]
     }
 
     fn last_updated(&self) -> Option<Timestamp> {
@@ -2655,6 +2669,20 @@ mod tests {
                 .is_some_and(|count| count == 1)
         );
         assert!(state.last_updated.is_some());
+        assert_eq!(state.recent_activity.len(), 1);
+        assert!(
+            state.recent_activity[0]
+                .description
+                .contains("1 error(s)")
+        );
+        assert!(
+            state.recent_activity[0]
+                .data
+                .as_ref()
+                .and_then(|data| data.get("processing_errors"))
+                .and_then(serde_json::Value::as_u64)
+                .is_some_and(|count| count == 1)
+        );
         Ok(())
     }
 
