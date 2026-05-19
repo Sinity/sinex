@@ -33,7 +33,6 @@ use sinex_primitives::rpc::{
         LIFECYCLE_TOMBSTONE_CREATE_METHOD, LIFECYCLE_TOMBSTONE_LIST_METHOD,
         LIFECYCLE_TOMBSTONE_PREVIEW_METHOD, LIFECYCLE_TOMBSTONE_STATUS_METHOD,
     },
-    methods,
     nodes::{
         NODES_DRAIN_METHOD, NODES_HEALTH_METHOD, NODES_LIST_ACTIVE_METHOD, NODES_LIST_METHOD,
         NODES_RESUME_METHOD, NODES_SET_HORIZON_METHOD,
@@ -810,15 +809,15 @@ fn build_registry_impl() -> RpcRegistry {
             SOURCES_READINESS_GET_METHOD,
             boxed!(handle_sources_readiness_get),
         )
-        .pool_typed_rpc(
+        .service_typed_rpc(
             SOURCES_CONTINUITY_LIST_METHOD,
             boxed!(handle_sources_continuity_list),
         )
-        .pool_typed_rpc(
+        .service_typed_rpc(
             SOURCES_CONTINUITY_GET_METHOD,
             boxed!(handle_sources_continuity_get),
         )
-        .pool_typed_rpc(
+        .service_typed_rpc(
             SOURCES_CONTINUITY_EXPLAIN_GAP_METHOD,
             boxed!(handle_sources_continuity_explain_gap),
         )
