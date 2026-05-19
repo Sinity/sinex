@@ -1,6 +1,6 @@
-//! SQLite row fixture.
+//! `SQLite` row fixture.
 //!
-//! Creates a temporary SQLite database, applies the schema provided by the
+//! Creates a temporary `SQLite` database, applies the schema provided by the
 //! caller, inserts the given rows, and returns the database path.
 //!
 //! The `data` bytes for this fixture are expected to be newline-delimited
@@ -15,7 +15,7 @@ use super::{FixtureBinding, FixtureHandle};
 /// A row to insert: ordered column values as `(column_name, value)` pairs.
 pub type SqliteRow<'a> = &'a [(&'a str, &'a str)];
 
-/// Build a SQLite fixture from a table definition and rows.
+/// Build a `SQLite` fixture from a table definition and rows.
 ///
 /// - `table_ddl` — a CREATE TABLE statement executed before the rows.
 /// - `rows` — column-value pairs for each INSERT.
@@ -67,7 +67,7 @@ pub fn build(table_ddl: &str, rows: &[&[(&str, &str)]]) -> Result<FixtureHandle,
     ))
 }
 
-/// Build a SQLite fixture from raw INSERT statements embedded in `data` bytes.
+/// Build a `SQLite` fixture from raw INSERT statements embedded in `data` bytes.
 ///
 /// `data` should be UTF-8 newline-delimited SQL. The first non-empty line is
 /// expected to be a CREATE TABLE statement; subsequent lines are INSERT

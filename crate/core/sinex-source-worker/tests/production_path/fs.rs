@@ -9,10 +9,10 @@
 //! parser-dispatch obligations, which assume an adapter-backed
 //! `MaterialParser` reachable through dispatch.
 //!
-//! Until the follow-up "Extend FileDropAdapter / introduce FsWatcherAdapter"
+//! Until the follow-up "Extend `FileDropAdapter` / introduce `FsWatcherAdapter`"
 //! issue lands, the only obligations exercisable here are the structural ones
 //! that match `system.monitor`'s situation: descriptor registration and node-
-//! factory registration. The behavior obligations (initial_ingestion, replay,
+//! factory registration. The behavior obligations (`initial_ingestion`, replay,
 //! drain, isolation, privacy) require the adapter-backed flow.
 
 use xtask::sandbox::prelude::*;

@@ -1,4 +1,4 @@
-//! Integration tests for the Claude and ChatGPT AI-session parsers (#1068).
+//! Integration tests for the Claude and `ChatGPT` AI-session parsers (#1068).
 //!
 //! These tests exercise the parser logic end-to-end using synthetic JSON
 //! payloads that mirror the real GDPR/data-export formats.
@@ -95,7 +95,7 @@ async fn claude_parses_two_conversations_into_correct_intent_count() {
     ]);
     let bytes = serde_json::to_vec(&json).unwrap();
     let ctx = claude_ctx();
-    let intents = ClaudeSessionParser::default()
+    let intents = ClaudeSessionParser
         .parse_record(record_for(&bytes), &ctx)
         .await
         .unwrap();
@@ -108,7 +108,7 @@ async fn claude_parses_two_conversations_into_correct_intent_count() {
     assert_eq!(intents[0].event_type.as_static_str(), "ai.message");
 }
 
-/// session_id and message_id are preserved from the export.
+/// `session_id` and `message_id` are preserved from the export.
 #[tokio::test]
 async fn claude_preserves_session_id_and_message_id() {
     let json = serde_json::json!([{
@@ -123,7 +123,7 @@ async fn claude_preserves_session_id_and_message_id() {
     }]);
     let bytes = serde_json::to_vec(&json).unwrap();
     let ctx = claude_ctx();
-    let mut intents = ClaudeSessionParser::default()
+    let mut intents = ClaudeSessionParser
         .parse_record(record_for(&bytes), &ctx)
         .await
         .unwrap();
@@ -159,7 +159,7 @@ async fn claude_anchor_encodes_conv_and_msg_index() {
     ]);
     let bytes = serde_json::to_vec(&json).unwrap();
     let ctx = claude_ctx();
-    let intents = ClaudeSessionParser::default()
+    let intents = ClaudeSessionParser
         .parse_record(record_for(&bytes), &ctx)
         .await
         .unwrap();
@@ -180,7 +180,7 @@ async fn claude_anchor_encodes_conv_and_msg_index() {
     );
 }
 
-/// Occurrence key fields: [session_id, message_id] in order.
+/// Occurrence key fields: [`session_id`, `message_id`] in order.
 #[tokio::test]
 async fn claude_occurrence_key_fields_and_order() {
     let json = serde_json::json!([{
@@ -193,7 +193,7 @@ async fn claude_occurrence_key_fields_and_order() {
     }]);
     let bytes = serde_json::to_vec(&json).unwrap();
     let ctx = claude_ctx();
-    let intents = ClaudeSessionParser::default()
+    let intents = ClaudeSessionParser
         .parse_record(record_for(&bytes), &ctx)
         .await
         .unwrap();
@@ -218,19 +218,19 @@ async fn claude_falls_back_to_flat_text_field() {
     }]);
     let bytes = serde_json::to_vec(&json).unwrap();
     let ctx = claude_ctx();
-    let intents = ClaudeSessionParser::default()
+    let intents = ClaudeSessionParser
         .parse_record(record_for(&bytes), &ctx)
         .await
         .unwrap();
     assert_eq!(intents[0].payload["text"], "Fallback text only");
 }
 
-/// Non-JSON input → ParserError::Parse.
+/// Non-JSON input → `ParserError::Parse`.
 #[tokio::test]
 async fn claude_invalid_json_returns_parser_error() {
     let bytes = b"not json at all";
     let ctx = claude_ctx();
-    let result = ClaudeSessionParser::default()
+    let result = ClaudeSessionParser
         .parse_record(record_for(bytes), &ctx)
         .await;
     assert!(matches!(result, Err(ParserError::Parse(_))));
@@ -287,7 +287,7 @@ async fn chatgpt_parses_thread_into_intents() {
     let json = chatgpt_minimal_json();
     let bytes = serde_json::to_vec(&json).unwrap();
     let ctx = chatgpt_ctx();
-    let intents = ChatGptSessionParser::default()
+    let intents = ChatGptSessionParser
         .parse_record(record_for(&bytes), &ctx)
         .await
         .unwrap();
@@ -296,13 +296,13 @@ async fn chatgpt_parses_thread_into_intents() {
     assert_eq!(intents[0].event_type.as_static_str(), "ai.message");
 }
 
-/// session_id, message_id, role, text are all preserved.
+/// `session_id`, `message_id`, role, text are all preserved.
 #[tokio::test]
 async fn chatgpt_preserves_session_and_message_ids() {
     let json = chatgpt_minimal_json();
     let bytes = serde_json::to_vec(&json).unwrap();
     let ctx = chatgpt_ctx();
-    let intents = ChatGptSessionParser::default()
+    let intents = ChatGptSessionParser
         .parse_record(record_for(&bytes), &ctx)
         .await
         .unwrap();
@@ -312,13 +312,13 @@ async fn chatgpt_preserves_session_and_message_ids() {
     assert_eq!(intents[0].payload["text"], "Hello GPT");
 }
 
-/// model_slug from message metadata takes priority over conversation default.
+/// `model_slug` from message metadata takes priority over conversation default.
 #[tokio::test]
 async fn chatgpt_model_slug_from_metadata() {
     let json = chatgpt_minimal_json();
     let bytes = serde_json::to_vec(&json).unwrap();
     let ctx = chatgpt_ctx();
-    let intents = ChatGptSessionParser::default()
+    let intents = ChatGptSessionParser
         .parse_record(record_for(&bytes), &ctx)
         .await
         .unwrap();
@@ -357,7 +357,7 @@ async fn chatgpt_skips_non_text_content() {
     }]);
     let bytes = serde_json::to_vec(&json).unwrap();
     let ctx = chatgpt_ctx();
-    let intents = ChatGptSessionParser::default()
+    let intents = ChatGptSessionParser
         .parse_record(record_for(&bytes), &ctx)
         .await
         .unwrap();
@@ -365,24 +365,24 @@ async fn chatgpt_skips_non_text_content() {
     assert_eq!(intents[0].payload["text"], "actual text");
 }
 
-/// Non-JSON input → ParserError::Parse.
+/// Non-JSON input → `ParserError::Parse`.
 #[tokio::test]
 async fn chatgpt_invalid_json_returns_parser_error() {
     let bytes = b"{not valid}";
     let ctx = chatgpt_ctx();
-    let result = ChatGptSessionParser::default()
+    let result = ChatGptSessionParser
         .parse_record(record_for(bytes), &ctx)
         .await;
     assert!(matches!(result, Err(ParserError::Parse(_))));
 }
 
-/// Occurrence key fields: [session_id, message_id] in order.
+/// Occurrence key fields: [`session_id`, `message_id`] in order.
 #[tokio::test]
 async fn chatgpt_occurrence_key_fields_and_order() {
     let json = chatgpt_minimal_json();
     let bytes = serde_json::to_vec(&json).unwrap();
     let ctx = chatgpt_ctx();
-    let intents = ChatGptSessionParser::default()
+    let intents = ChatGptSessionParser
         .parse_record(record_for(&bytes), &ctx)
         .await
         .unwrap();
