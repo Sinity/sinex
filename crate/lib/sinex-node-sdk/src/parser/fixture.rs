@@ -942,14 +942,14 @@ impl FixtureSpec {
             });
         }
 
-        if let Some(descriptor) = descriptor {
-            if descriptor.id != contract.source_unit_id {
-                failures.push(FixtureFailure {
-                    intent_index: None,
-                    expected: format!("descriptor id={}", contract.source_unit_id),
-                    found: format!("descriptor id={}", descriptor.id),
-                });
-            }
+        if let Some(descriptor) = descriptor
+            && descriptor.id != contract.source_unit_id
+        {
+            failures.push(FixtureFailure {
+                intent_index: None,
+                expected: format!("descriptor id={}", contract.source_unit_id),
+                found: format!("descriptor id={}", descriptor.id),
+            });
         }
 
         for obligation in &contract.proof_obligations {

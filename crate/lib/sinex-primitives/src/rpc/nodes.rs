@@ -89,7 +89,7 @@ fn default_stale_after_secs() -> u64 {
 // nodes.list_active
 // ─────────────────────────────────────────────────────────────
 
-/// Request: nodes.list_active
+/// Request: `nodes.list_active`
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NodesListActiveRequest {
     #[serde(default = "default_stale_after_secs")]
@@ -104,7 +104,7 @@ impl Default for NodesListActiveRequest {
     }
 }
 
-/// Response: nodes.list_active
+/// Response: `nodes.list_active`
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NodesListActiveResponse {
     pub nodes: Vec<NodeInfo>,
