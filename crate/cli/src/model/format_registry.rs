@@ -1,9 +1,11 @@
 use std::collections::HashMap;
 
 use super::OutputFormat;
+use serde::Serialize;
 
 /// Operator-facing command family used for UX grouping and projection routing.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum CommandFamily {
     Gateway,
     Query,
@@ -16,11 +18,22 @@ pub enum CommandFamily {
     Admin,
 }
 
+/// Operator-facing command effect for parity checks across CLI, RPC, MCP, and docs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CommandEffect {
+    ReadOnly,
+    Mutating,
+    Streaming,
+    Local,
+}
+
 /// Consolidated operator command metadata.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct CommandCatalogEntry {
     pub path: &'static str,
     pub family: CommandFamily,
+    pub effect: CommandEffect,
     pub capability: FormatCapability,
 }
 
@@ -33,7 +46,7 @@ pub struct CommandCatalogEntry {
 /// The registry is consulted at dispatch time to reject unsupported `--format`
 /// combinations before the command executes, producing a clear error message
 /// instead of silent fallback or panic.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct FormatCapability {
     /// All formats this command handles correctly.
     pub supported: &'static [OutputFormat],
@@ -539,6 +552,7 @@ pub fn command_catalog() -> Vec<CommandCatalogEntry> {
         .map(|(&path, capability)| CommandCatalogEntry {
             path,
             family: family_for_path(path),
+            effect: effect_for_path(path, capability),
             capability: capability.clone(),
         })
         .collect();
@@ -560,6 +574,62 @@ fn family_for_path(path: &str) -> CommandFamily {
         "report" => CommandFamily::Report,
         "admin" => CommandFamily::Admin,
         _ => CommandFamily::Local,
+    }
+}
+
+fn effect_for_path(path: &str, capability: &FormatCapability) -> CommandEffect {
+    if capability.streaming {
+        return CommandEffect::Streaming;
+    }
+
+    if capability.supported.is_empty() {
+        return CommandEffect::Local;
+    }
+
+    let mutating = [
+        "admin snapshot",
+        "annotate",
+        "blob store",
+        "curation finalize",
+        "curation judge",
+        "declare",
+        "dlq purge",
+        "dlq requeue",
+        "git-ops create-source",
+        "git-ops delete-source",
+        "git-ops trigger-sync",
+        "lifecycle archive",
+        "lifecycle restore",
+        "lifecycle tombstone approve",
+        "lifecycle tombstone cancel",
+        "lifecycle tombstone create",
+        "node drain",
+        "node resume",
+        "node set-horizon",
+        "ops cancel",
+        "ops start",
+        "privacy private-mode disable",
+        "privacy private-mode enable",
+        "replay approve",
+        "replay cancel",
+        "replay execute",
+        "replay run",
+        "replay submit",
+        "shadow create",
+        "shadow delete",
+        "sources annotate",
+        "sources archive",
+        "sources bindings create",
+        "sources bindings update",
+        "sources stage",
+        "tasks complete",
+        "tasks create",
+    ];
+
+    if mutating.binary_search(&path).is_ok() {
+        CommandEffect::Mutating
+    } else {
+        CommandEffect::ReadOnly
     }
 }
 
@@ -711,6 +781,50 @@ mod tests {
                 entry.path
             );
         }
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn command_catalog_serializes_machine_readable_matrix() -> xtask::sandbox::TestResult<()>
+    {
+        let value = serde_json::to_value(command_catalog())?;
+        let entries = value
+            .as_array()
+            .ok_or_else(|| color_eyre::eyre::eyre!("command catalog must serialize as an array"))?;
+
+        assert_eq!(entries.len(), registry().len());
+        for entry in entries {
+            assert!(entry["path"].as_str().is_some());
+            assert!(entry["family"].as_str().is_some());
+            assert!(entry["effect"].as_str().is_some());
+            assert!(entry["capability"]["supported"].as_array().is_some());
+            assert!(entry["capability"]["streaming"].as_bool().is_some());
+        }
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn command_catalog_classifies_known_effects() -> xtask::sandbox::TestResult<()> {
+        let catalog = command_catalog();
+        let effect_for = |path: &str| {
+            catalog
+                .iter()
+                .find(|entry| entry.path == path)
+                .map(|entry| entry.effect)
+        };
+
+        assert_eq!(effect_for("query"), Some(CommandEffect::ReadOnly));
+        assert_eq!(effect_for("watch"), Some(CommandEffect::Streaming));
+        assert_eq!(effect_for("completions"), Some(CommandEffect::Local));
+        assert_eq!(effect_for("dlq requeue"), Some(CommandEffect::Mutating));
+        assert_eq!(
+            effect_for("privacy private-mode enable"),
+            Some(CommandEffect::Mutating)
+        );
+        assert_eq!(
+            effect_for("curation finalize"),
+            Some(CommandEffect::Mutating)
+        );
         Ok(())
     }
 
