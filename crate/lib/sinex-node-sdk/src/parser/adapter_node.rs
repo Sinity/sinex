@@ -137,6 +137,7 @@ const PRIVATE_MODE_CONTROL_SUBJECT: &str = "sinex.control.privacy.private_mode";
 /// {
 ///   "path": "/home/user/.weechat/logs/irc.log",
 ///   "binding_flags": { "private_mode_active": false },
+///   "continuous_poll_interval_secs": 30,
 ///   "private_mode_state_dir": "/var/lib/sinex",
 ///   "private_mode_source_class": "desktop",
 ///   "private_mode_fail_closed": true
@@ -153,6 +154,13 @@ pub struct AdapterNodeConfig {
     /// Optional runtime flags for `BindingConfig`-aware parsers.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub binding_flags: BTreeMap<String, bool>,
+
+    /// Poll interval for adapter-backed continuous mode.
+    ///
+    /// Adapters without native streaming are drained, then the node sleeps for
+    /// this interval before polling again. Defaults to 30 seconds.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub continuous_poll_interval_secs: Option<u64>,
 
     /// Optional state root used to derive `private_mode_active` from the
     /// persisted runtime private-mode file.
@@ -184,6 +192,17 @@ impl AdapterNodeConfig {
             bc = bc.with_flag(name, value);
         }
         bc
+    }
+
+    /// Continuous-mode poll interval, with validation for explicit values.
+    pub fn continuous_poll_interval(&self) -> Result<Duration, crate::SinexError> {
+        let seconds = self.continuous_poll_interval_secs.unwrap_or(30);
+        if seconds == 0 {
+            return Err(crate::SinexError::configuration(
+                "AdapterBackedIngestor continuous_poll_interval_secs must be greater than zero",
+            ));
+        }
+        Ok(Duration::from_secs(seconds))
     }
 
     /// Convert static binding flags and persisted private-mode state into a
@@ -389,6 +408,9 @@ where
     /// configured local state directory for this adapter-backed source unit.
     private_mode_control_task: Option<tokio::task::JoinHandle<()>>,
 
+    /// Sleep duration between continuous-mode adapter drains.
+    poll_interval: Duration,
+
     _phantom: PhantomData<()>,
 }
 
@@ -420,6 +442,7 @@ where
             snapshot_task: None,
             snapshot_shutdown: None,
             private_mode_control_task: None,
+            poll_interval: Duration::from_secs(30),
             _phantom: PhantomData,
         }
     }
@@ -856,6 +879,7 @@ where
 
         self.acquisition_manager = Some(Arc::new(acq));
         self.binding_config = config.to_binding_config_for_source(self.source_unit_id)?;
+        self.poll_interval = config.continuous_poll_interval()?;
         self.node_config = Some(config.clone());
         #[cfg(feature = "messaging")]
         if let Some(state_dir) = config.private_mode_state_dir.clone()
@@ -984,9 +1008,7 @@ where
         let wall_start = Instant::now();
         let mut total_emitted: u64 = 0;
 
-        // Poll interval for adapters without native streaming.
-        // TODO: make configurable via binding_flags or a dedicated config field.
-        let poll_interval = Duration::from_secs(30);
+        let poll_interval = self.poll_interval;
 
         info!(
             source_unit = self.source_unit_id,
@@ -1493,6 +1515,35 @@ mod tests {
         let binding = config.to_binding_config_for_source("desktop.clipboard")?;
 
         assert!(binding.is_truthy("private_mode_active"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn adapter_node_config_validates_continuous_poll_interval()
+    -> xtask::sandbox::TestResult<()> {
+        let default_config = AdapterNodeConfig::default();
+        assert_eq!(
+            default_config.continuous_poll_interval()?,
+            Duration::from_secs(30)
+        );
+
+        let custom_config = AdapterNodeConfig {
+            continuous_poll_interval_secs: Some(5),
+            ..Default::default()
+        };
+        assert_eq!(
+            custom_config.continuous_poll_interval()?,
+            Duration::from_secs(5)
+        );
+
+        let invalid_config = AdapterNodeConfig {
+            continuous_poll_interval_secs: Some(0),
+            ..Default::default()
+        };
+        let error = invalid_config
+            .continuous_poll_interval()
+            .expect_err("zero-second poll interval should fail configuration validation");
+        assert!(format!("{error:#}").contains("continuous_poll_interval_secs"));
         Ok(())
     }
 
