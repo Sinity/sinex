@@ -1,9 +1,9 @@
 use sinex_primitives::events::EventPayload;
 use sinex_primitives::events::payloads::{
-    TaskCancelledPayload, TaskCompletedPayload, TaskCreatedPayload,
+    TaskCancelledPayload, TaskCompletedPayload, TaskCreatedPayload, TaskUpdatedPayload,
 };
 use sinex_primitives::task_domain::{
-    TaskLifecycleInput, TaskSourceSystem, TaskStatus, reduce_task_event,
+    TaskFieldUpdate, TaskLifecycleInput, TaskSourceSystem, TaskStatus, reduce_task_event,
 };
 use sinex_primitives::{Timestamp, Uuid};
 use xtask::sandbox::prelude::*;
@@ -26,6 +26,7 @@ fn created_payload(task_id: Uuid) -> TaskCreatedPayload {
 async fn task_payloads_publish_stable_event_names() -> TestResult<()> {
     assert_eq!(TaskCreatedPayload::SOURCE.as_str(), "task");
     assert_eq!(TaskCreatedPayload::EVENT_TYPE.as_str(), "task.created");
+    assert_eq!(TaskUpdatedPayload::EVENT_TYPE.as_str(), "task.updated");
     assert_eq!(TaskCompletedPayload::EVENT_TYPE.as_str(), "task.completed");
     assert_eq!(TaskCancelledPayload::EVENT_TYPE.as_str(), "task.cancelled");
     Ok(())
@@ -70,6 +71,55 @@ async fn task_reducer_projects_create_then_complete() -> TestResult<()> {
     assert_eq!(completed.status, TaskStatus::Completed);
     assert_eq!(completed.last_event_id, complete_event_id);
     assert_ne!(completed.state_hash, open.state_hash);
+    Ok(())
+}
+
+#[sinex_test]
+async fn task_reducer_projects_metadata_update() -> TestResult<()> {
+    let task_id = Uuid::from_u128(42);
+    let create_event_id = Uuid::from_u128(100);
+    let update_event_id = Uuid::from_u128(101);
+    let created = created_payload(task_id);
+
+    let open = reduce_task_event(
+        None,
+        create_event_id,
+        TaskLifecycleInput::Created(created.into()),
+        Timestamp::UNIX_EPOCH,
+    )?;
+
+    let updated = reduce_task_event(
+        Some(open.clone()),
+        update_event_id,
+        TaskLifecycleInput::Updated(
+            TaskUpdatedPayload {
+                task_id,
+                updated_at: Timestamp::UNIX_EPOCH,
+                actor: "operator:test".to_string(),
+                title: Some("Pay tax and file archive".to_string()),
+                body: Some(TaskFieldUpdate::Clear),
+                project_id: Some(TaskFieldUpdate::Set("admin".to_string())),
+                tags: Some(vec!["admin".to_string(), "tax".to_string()]),
+                due_at: Some(TaskFieldUpdate::Clear),
+                priority: Some(TaskFieldUpdate::Set("medium".to_string())),
+                external_refs: None,
+                reason: Some("refined scope".to_string()),
+                external_version: None,
+            }
+            .into(),
+        ),
+        Timestamp::UNIX_EPOCH,
+    )?;
+
+    assert_eq!(updated.status, TaskStatus::Open);
+    assert_eq!(updated.title, "Pay tax and file archive");
+    assert_eq!(updated.body, None);
+    assert_eq!(updated.project_id.as_deref(), Some("admin"));
+    assert_eq!(updated.tags, vec!["admin", "tax"]);
+    assert_eq!(updated.due_at, None);
+    assert_eq!(updated.priority.as_deref(), Some("medium"));
+    assert_eq!(updated.last_event_id, update_event_id);
+    assert_ne!(updated.state_hash, open.state_hash);
     Ok(())
 }
 

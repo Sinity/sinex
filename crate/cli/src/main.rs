@@ -575,6 +575,7 @@ fn command_path(cmd: &Commands) -> String {
                 TasksSubcommand::Complete(_) => "tasks complete".to_string(),
                 TasksSubcommand::List(_) => "tasks list".to_string(),
                 TasksSubcommand::State(_) => "tasks state".to_string(),
+                TasksSubcommand::Update(_) => "tasks update".to_string(),
             }
         }
         Commands::Curation(cmd) => {

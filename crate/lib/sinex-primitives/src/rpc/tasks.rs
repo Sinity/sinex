@@ -5,10 +5,12 @@ use serde_json::Value;
 
 use crate::events::{
     SourceMaterial,
-    payloads::{TaskCancelledPayload, TaskCompletedPayload, TaskCreatedPayload},
+    payloads::{
+        TaskCancelledPayload, TaskCompletedPayload, TaskCreatedPayload, TaskUpdatedPayload,
+    },
 };
 use crate::rpc::{RpcDomain, RpcMethod, RpcMutability, RpcRole, RpcStability, methods};
-use crate::task_domain::{TaskExternalRef, TaskState, TaskStatus};
+use crate::task_domain::{TaskExternalRef, TaskFieldUpdate, TaskState, TaskStatus};
 use crate::{Id, Timestamp, Uuid};
 
 pub const TASKS_CREATE_METHOD: RpcMethod<TaskCreateRequest, TaskCreateResponse> = RpcMethod::new(
@@ -27,6 +29,14 @@ pub const TASKS_COMPLETE_METHOD: RpcMethod<TaskCompleteRequest, TaskCompleteResp
         RpcStability::Experimental,
         RpcMutability::Mutating,
     );
+
+pub const TASKS_UPDATE_METHOD: RpcMethod<TaskUpdateRequest, TaskUpdateResponse> = RpcMethod::new(
+    methods::TASKS_UPDATE,
+    RpcRole::Write,
+    RpcDomain::Tasks,
+    RpcStability::Experimental,
+    RpcMutability::Mutating,
+);
 
 pub const TASKS_CANCEL_METHOD: RpcMethod<TaskCancelRequest, TaskCancelResponse> = RpcMethod::new(
     methods::TASKS_CANCEL,
@@ -84,6 +94,31 @@ pub struct TaskCompleteRequest {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct TaskUpdateRequest {
+    pub task_id: Uuid,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub updated_at: Option<Timestamp>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub body: Option<TaskFieldUpdate<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_id: Option<TaskFieldUpdate<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tags: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub due_at: Option<TaskFieldUpdate<Timestamp>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub priority: Option<TaskFieldUpdate<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub external_refs: Option<Vec<TaskExternalRef>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub external_version: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct TaskCancelRequest {
     pub task_id: Uuid,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -120,6 +155,7 @@ pub struct TaskEventResponse<T> {
 }
 
 pub type TaskCreateResponse = TaskEventResponse<TaskCreatedPayload>;
+pub type TaskUpdateResponse = TaskEventResponse<TaskUpdatedPayload>;
 pub type TaskCompleteResponse = TaskEventResponse<TaskCompletedPayload>;
 pub type TaskCancelResponse = TaskEventResponse<TaskCancelledPayload>;
 

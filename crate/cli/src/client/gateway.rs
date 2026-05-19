@@ -98,9 +98,10 @@ use sinex_primitives::rpc::{
     },
     tasks::{
         TASKS_CANCEL_METHOD, TASKS_COMPLETE_METHOD, TASKS_CREATE_METHOD, TASKS_LIST_METHOD,
-        TASKS_STATE_GET_METHOD, TaskCancelRequest, TaskCancelResponse, TaskCompleteRequest,
-        TaskCompleteResponse, TaskCreateRequest, TaskCreateResponse, TaskListRequest,
-        TaskListResponse, TaskStateGetRequest, TaskStateResponse,
+        TASKS_STATE_GET_METHOD, TASKS_UPDATE_METHOD, TaskCancelRequest, TaskCancelResponse,
+        TaskCompleteRequest, TaskCompleteResponse, TaskCreateRequest, TaskCreateResponse,
+        TaskListRequest, TaskListResponse, TaskStateGetRequest, TaskStateResponse,
+        TaskUpdateRequest, TaskUpdateResponse,
     },
     telemetry::{
         AssemblyStatsBucket, CommandFrequencyEntry, CurrentDeviceStateEntry, CurrentHealthEntry,
@@ -889,6 +890,11 @@ impl GatewayClient {
     /// Mark a task cancelled.
     pub async fn tasks_cancel(&self, request: TaskCancelRequest) -> Result<TaskCancelResponse> {
         self.call_typed(TASKS_CANCEL_METHOD, &request).await
+    }
+
+    /// Update mutable task metadata.
+    pub async fn tasks_update(&self, request: TaskUpdateRequest) -> Result<TaskUpdateResponse> {
+        self.call_typed(TASKS_UPDATE_METHOD, &request).await
     }
 
     /// Fetch current task state.

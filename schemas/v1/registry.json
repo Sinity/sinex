@@ -667,6 +667,13 @@
       "content_hash": "d3fa1c79fc1cc0afca19c100fa1e1cdbf1351b860e302450ca74d731e191e069"
     },
     {
+      "source": "task",
+      "event_type": "task.updated",
+      "version": "1.0.0",
+      "path": "task/task.updated.json",
+      "content_hash": "d8f36c2440cc5499680dcd709a22ed1e1baf9d1b1353bc99cf6079e128342e14"
+    },
+    {
       "source": "terminal",
       "event_type": "shell.terminal_monitoring_started",
       "version": "1.0.0",

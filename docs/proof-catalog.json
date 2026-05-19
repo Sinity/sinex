@@ -4066,6 +4066,13 @@
       "type_name": "sinex_primitives::events::payloads::task_domain::TaskCreatedPayload"
     },
     {
+      "subject": "event_payload:task/task.updated/1.0.0",
+      "source": "task",
+      "event_type": "task.updated",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::task_domain::TaskUpdatedPayload"
+    },
+    {
       "subject": "event_payload:terminal/shell.terminal_monitoring_started/1.0.0",
       "source": "terminal",
       "event_type": "shell.terminal_monitoring_started",
