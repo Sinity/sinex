@@ -563,6 +563,22 @@ async fn mcp_documents_get_call_uses_gateway_fixture() -> TestResult<()> {
 }
 
 #[sinex_test]
+async fn mcp_semantic_epochs_call_uses_gateway_fixture() -> TestResult<()> {
+    let server = mount_mcp_gateway_fixture().await;
+    let client = fixture_gateway_client(&server)?;
+
+    let response = call_tool(&client, "sinex.semantic_epochs", json!({ "limit": 5 })).await?;
+
+    assert_eq!(response["tool"], "sinex.semantic_epochs");
+    assert_eq!(response["query"]["limit"], 5);
+    assert_eq!(
+        response["items"]["result"]["epochs"][0]["id"],
+        fixture_semantic_epoch_id()
+    );
+    Ok(())
+}
+
+#[sinex_test]
 async fn mcp_semantic_lanes_call_uses_gateway_fixture() -> TestResult<()> {
     let server = mount_mcp_gateway_fixture().await;
     let client = fixture_gateway_client(&server)?;
@@ -600,6 +616,27 @@ async fn mcp_semantic_lane_outputs_call_uses_gateway_fixture() -> TestResult<()>
     assert_eq!(
         response["items"]["result"]["outputs"][0]["output_key"],
         "entity:fixture"
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn mcp_semantic_lane_diffs_call_uses_gateway_fixture() -> TestResult<()> {
+    let server = mount_mcp_gateway_fixture().await;
+    let client = fixture_gateway_client(&server)?;
+
+    let response = call_tool(
+        &client,
+        "sinex.semantic_lane_diffs",
+        json!({ "lane_id": fixture_semantic_lane_id(), "limit": 5 }),
+    )
+    .await?;
+
+    assert_eq!(response["tool"], "sinex.semantic_lane_diffs");
+    assert_eq!(response["query"]["lane_id"], fixture_semantic_lane_id());
+    assert_eq!(
+        response["items"]["result"]["diffs"][0]["id"],
+        fixture_semantic_diff_id()
     );
     Ok(())
 }
