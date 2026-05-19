@@ -56,6 +56,11 @@ use sinex_primitives::rpc::{
         TombstonePreviewRequest, TombstonePreviewResponse, TombstoneStatusRequest,
         TombstoneStatusResponse,
     },
+    llm::{
+        LLM_BUDGET_REPORT_METHOD, LLM_PROMPTS_LIST_METHOD, LLM_ROUTE_EXPLAIN_METHOD,
+        LlmBudgetReportRequest, LlmBudgetReportResponse, LlmPromptsListRequest,
+        LlmRouteExplainRequest, LlmRouteExplainResponse,
+    },
     nodes::{NODES_DRAIN_METHOD, NODES_RESUME_METHOD, NODES_SET_HORIZON_METHOD},
     nodes::{NodeDrainRequest, NodeResumeRequest, NodeSetHorizonRequest},
     ops::{Operation as OpsOperation, OpsGetResponse, OpsListResponse, OpsStartResponse},
@@ -911,6 +916,29 @@ impl GatewayClient {
         request: CurationFinalizeRequest,
     ) -> Result<CurationFinalizeResponse> {
         self.call_typed(CURATION_FINALIZE_METHOD, &request).await
+    }
+
+    // ==================== LLM Prompt/Router/Budget Commands ====================
+
+    pub async fn llm_prompts_list(
+        &self,
+        request: LlmPromptsListRequest,
+    ) -> Result<EventQueryResult> {
+        self.call_typed(LLM_PROMPTS_LIST_METHOD, &request).await
+    }
+
+    pub async fn llm_route_explain(
+        &self,
+        request: LlmRouteExplainRequest,
+    ) -> Result<LlmRouteExplainResponse> {
+        self.call_typed(LLM_ROUTE_EXPLAIN_METHOD, &request).await
+    }
+
+    pub async fn llm_budget_report(
+        &self,
+        request: LlmBudgetReportRequest,
+    ) -> Result<LlmBudgetReportResponse> {
+        self.call_typed(LLM_BUDGET_REPORT_METHOD, &request).await
     }
 
     // ==================== Source Material Commands ====================

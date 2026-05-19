@@ -10,10 +10,10 @@ use sinexctl::commands::{
     AnnotateCommand, AuditCommand, AutomataCommand, BlobCommands, CompletionsCommand,
     ConfigCommands, ContextCommand, CoreCommands, CurationCommand, DeclareCommand, DemoCommand,
     DlqCommands, DocumentsCommand, ErrorsCommand, ExplainCommand, GatewayCommands, GitOpsCommands,
-    IngestorsCommand, LifecycleCommands, NodeCommands, NodesCommand, NowCommand, OpsCommands,
-    PrivacyCommand, QueryCommand, RecentCommand, ReplayCommands, ReportCommands, SourcesCommand,
-    StateCommands, StatusCommand, TasksCommand, TelemetryCommands, ThroughputCommand, TraceCommand,
-    TuiCommand, VerifyCommand, WatchCommand,
+    IngestorsCommand, LifecycleCommands, LlmCommand, NodeCommands, NodesCommand, NowCommand,
+    OpsCommands, PrivacyCommand, QueryCommand, RecentCommand, ReplayCommands, ReportCommands,
+    SourcesCommand, StateCommands, StatusCommand, TasksCommand, TelemetryCommands,
+    ThroughputCommand, TraceCommand, TuiCommand, VerifyCommand, WatchCommand,
 };
 use sinexctl::fmt::format_yaml;
 use sinexctl::mcp::{McpCatalogEntry, tool_catalog as mcp_tool_catalog};
@@ -182,6 +182,9 @@ enum Commands {
 
     /// Curation proposal and judgment commands
     Curation(CurationCommand),
+
+    /// LLM prompt, routing, and budget read surfaces
+    Llm(LlmCommand),
 
     /// Document search, retrieval, and chunk browsing
     Documents(DocumentsCommand),
@@ -370,6 +373,7 @@ async fn main() -> color_eyre::Result<()> {
                 Commands::Declare(cmd) => cmd.execute(&client, format).await?,
                 Commands::Tasks(cmd) => cmd.execute(&client, format).await?,
                 Commands::Curation(cmd) => cmd.execute(&client, format).await?,
+                Commands::Llm(cmd) => cmd.execute(&client, format).await?,
                 Commands::Documents(cmd) => cmd.execute(&client, format).await?,
                 Commands::Lifecycle { cmd } => cmd.execute(&client, format).await?,
                 Commands::GitOps { cmd } => cmd.execute(&client, format).await?,
@@ -577,6 +581,14 @@ fn command_path(cmd: &Commands) -> String {
                 CurationSubcommand::Proposals(_) => "curation proposals".to_string(),
                 CurationSubcommand::Judge(_) => "curation judge".to_string(),
                 CurationSubcommand::Finalize(_) => "curation finalize".to_string(),
+            }
+        }
+        Commands::Llm(cmd) => {
+            use sinexctl::commands::llm::LlmSubcommand;
+            match cmd.subcommand() {
+                LlmSubcommand::Prompts(_) => "llm prompts".to_string(),
+                LlmSubcommand::RouteExplain(_) => "llm route-explain".to_string(),
+                LlmSubcommand::BudgetReport(_) => "llm budget-report".to_string(),
             }
         }
         Commands::Lifecycle { cmd } => match cmd {
@@ -1129,6 +1141,23 @@ mod tests {
                     "0196ed62-8f7a-7000-8000-000000000002",
                 ],
                 "curation finalize",
+            ),
+            (vec!["sinexctl", "llm", "prompts"], "llm prompts"),
+            (
+                vec![
+                    "sinexctl",
+                    "llm",
+                    "route-explain",
+                    "--request-json",
+                    "{}",
+                    "--policy-json",
+                    "{}",
+                ],
+                "llm route-explain",
+            ),
+            (
+                vec!["sinexctl", "llm", "budget-report"],
+                "llm budget-report",
             ),
             (
                 vec![

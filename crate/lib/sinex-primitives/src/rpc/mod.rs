@@ -53,6 +53,7 @@ pub enum RpcDomain {
     GitOps,
     Ingestors,
     Lifecycle,
+    Llm,
     Nodes,
     Ops,
     Pkm,
@@ -155,6 +156,7 @@ pub mod events;
 pub mod gitops;
 pub mod ingestors;
 pub mod lifecycle;
+pub mod llm;
 pub mod methods;
 pub mod nodes;
 pub mod ops;
@@ -205,6 +207,9 @@ pub fn method_catalog() -> Vec<RpcMethodInfo> {
         lifecycle::LIFECYCLE_TOMBSTONE_LIST_METHOD.info(),
         lifecycle::LIFECYCLE_TOMBSTONE_PREVIEW_METHOD.info(),
         lifecycle::LIFECYCLE_TOMBSTONE_STATUS_METHOD.info(),
+        llm::LLM_BUDGET_REPORT_METHOD.info(),
+        llm::LLM_PROMPTS_LIST_METHOD.info(),
+        llm::LLM_ROUTE_EXPLAIN_METHOD.info(),
         nodes::NODES_DRAIN_METHOD.info(),
         nodes::NODES_HEALTH_METHOD.info(),
         nodes::NODES_LIST_ACTIVE_METHOD.info(),
@@ -285,6 +290,7 @@ pub mod prelude {
     pub use super::gitops::*;
     pub use super::ingestors::*;
     pub use super::lifecycle::*;
+    pub use super::llm::*;
     pub use super::methods;
     pub use super::nodes::*;
     pub use super::ops::*;

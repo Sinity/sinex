@@ -48,5 +48,20 @@ async fn rpc_catalog_contains_unique_typed_method_descriptors() -> TestResult<()
         "curation.finalize mutability"
     );
 
+    let route_explain = catalog
+        .iter()
+        .find(|method| method.name == "llm.route.explain")
+        .expect("llm.route.explain should be catalogued");
+    assert_eq!(
+        route_explain.role,
+        RpcRole::ReadOnly,
+        "llm.route.explain role"
+    );
+    assert_eq!(
+        route_explain.mutability,
+        RpcMutability::ReadOnly,
+        "llm.route.explain mutability"
+    );
+
     Ok(())
 }
