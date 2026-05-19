@@ -1066,6 +1066,7 @@ mod tests {
                 ],
                 "tasks state",
             ),
+            (vec!["sinexctl", "privacy", "audit"], "privacy audit"),
             (
                 vec![
                     "sinexctl",

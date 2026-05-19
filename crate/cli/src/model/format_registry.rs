@@ -243,6 +243,10 @@ pub fn build() -> HashMap<&'static str, FormatCapability> {
         "privacy private-mode disable",
         FormatCapability::single_shot(TABLE_JSON_YAML),
     );
+    m.insert(
+        "privacy audit",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
 
     // ── Audit ────────────────────────────────────────────────────────────────
     m.insert("audit", FormatCapability::single_shot(TABLE_JSON_YAML));
@@ -800,6 +804,11 @@ fn backing_rpc_methods_for_path(path: &str) -> &'static [&'static str] {
         "privacy private-mode status" => &[methods::PRIVACY_PRIVATE_MODE_STATUS],
         "privacy private-mode enable" => &[methods::PRIVACY_PRIVATE_MODE_ENABLE],
         "privacy private-mode disable" => &[methods::PRIVACY_PRIVATE_MODE_DISABLE],
+        "privacy audit" => &[
+            methods::PRIVACY_PRIVATE_MODE_STATUS,
+            methods::DLQ_LIST,
+            methods::SOURCES_READINESS_LIST,
+        ],
         "audit" => &[methods::AUDIT_GET],
         "annotate" => &[methods::EVENTS_ANNOTATE],
         "sources stage" => &[methods::SOURCES_STAGE],
@@ -1126,6 +1135,7 @@ mod tests {
             effect_for("privacy private-mode enable"),
             Some(CommandEffect::Mutating)
         );
+        assert_eq!(effect_for("privacy audit"), Some(CommandEffect::ReadOnly));
         assert_eq!(
             effect_for("curation finalize"),
             Some(CommandEffect::Mutating)
