@@ -477,8 +477,14 @@ mod tests {
     async fn test_frontmatter_extraction() -> TestResult<()> {
         let input = "---\ntitle: My Note\ntags: rust\n---\n\nBody text here.";
         let (fm, body) = extract_frontmatter(input);
-        assert_eq!(fm.get("title").map(std::string::String::as_str), Some("My Note"));
-        assert_eq!(fm.get("tags").map(std::string::String::as_str), Some("rust"));
+        assert_eq!(
+            fm.get("title").map(std::string::String::as_str),
+            Some("My Note")
+        );
+        assert_eq!(
+            fm.get("tags").map(std::string::String::as_str),
+            Some("rust")
+        );
         assert!(body.contains("Body text here"));
         Ok(())
     }

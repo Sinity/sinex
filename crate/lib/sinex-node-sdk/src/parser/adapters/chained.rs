@@ -501,7 +501,10 @@ mod tests {
 
         let stripped = strip_prefix(&rec);
         assert_eq!(
-            stripped.logical_path.as_deref().map(camino::Utf8Path::as_str),
+            stripped
+                .logical_path
+                .as_deref()
+                .map(camino::Utf8Path::as_str),
             Some("foo/bar.csv")
         );
         Ok(())

@@ -534,10 +534,9 @@ fn parse_lane_output_payload<T: serde::de::DeserializeOwned>(
     label: &str,
     payload: JsonValue,
 ) -> DbResult<T> {
-    serde_json::from_value(payload)
-        .map_err(|error| {
-            SinexError::serialization(format!("deserialize {label}")).with_std_error(&error)
-        })
+    serde_json::from_value(payload).map_err(|error| {
+        SinexError::serialization(format!("deserialize {label}")).with_std_error(&error)
+    })
 }
 
 fn status_string(status: SemanticLaneStatus) -> String {
