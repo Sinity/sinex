@@ -225,6 +225,14 @@ pub struct TaskListCommand {
     #[arg(long)]
     tag: Option<String>,
 
+    /// Include tasks due at or after this time/date.
+    #[arg(long)]
+    due_from: Option<String>,
+
+    /// Include tasks due at or before this time/date.
+    #[arg(long)]
+    due_until: Option<String>,
+
     /// Maximum number of task states to return.
     #[arg(long)]
     limit: Option<u32>,
@@ -232,11 +240,19 @@ pub struct TaskListCommand {
 
 impl TaskListCommand {
     async fn execute(&self, client: &GatewayClient, format: OutputFormat) -> Result<()> {
+        let due_from = self.due_from.as_deref().map(parse_time_input).transpose()?;
+        let due_until = self
+            .due_until
+            .as_deref()
+            .map(parse_time_input)
+            .transpose()?;
         let response = client
             .tasks_list(TaskListRequest {
                 status: self.status.as_deref().map(parse_task_status).transpose()?,
                 project_id: self.project_id.clone(),
                 tag: self.tag.clone(),
+                due_from,
+                due_until,
                 limit: self.limit,
             })
             .await?;

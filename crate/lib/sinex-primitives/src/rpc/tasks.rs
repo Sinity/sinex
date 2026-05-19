@@ -143,6 +143,10 @@ pub struct TaskListRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tag: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub due_from: Option<Timestamp>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub due_until: Option<Timestamp>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub limit: Option<u32>,
 }
 

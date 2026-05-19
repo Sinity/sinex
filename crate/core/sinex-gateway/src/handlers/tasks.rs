@@ -330,6 +330,12 @@ pub async fn handle_tasks_list(pool: &PgPool, req: TaskListRequest) -> Result<Ta
     if let Some(tag) = req.tag.as_deref().map(str::trim).filter(|v| !v.is_empty()) {
         states.retain(|state| state.tags.iter().any(|candidate| candidate == tag));
     }
+    if let Some(due_from) = req.due_from {
+        states.retain(|state| state.due_at.is_some_and(|due_at| due_at >= due_from));
+    }
+    if let Some(due_until) = req.due_until {
+        states.retain(|state| state.due_at.is_some_and(|due_at| due_at <= due_until));
+    }
 
     states.sort_by(|left, right| {
         right
