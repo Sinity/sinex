@@ -907,6 +907,27 @@ mod coverage_matrix {
 
         Ok(())
     }
+
+    #[sinex_test]
+    async fn source_worker_smoke_matrix_only_declares_known_blockers(
+        _ctx: TestContext,
+    ) -> TestResult<()> {
+        let blocked: BTreeMap<&'static str, &'static str> = SMOKE_MATRIX
+            .iter()
+            .filter_map(|entry| {
+                matches!(entry.coverage, SmokeCoverage::Blocked)
+                    .then_some((entry.source_unit_id, entry.blocker_issue.unwrap_or("")))
+            })
+            .collect();
+
+        assert_eq!(
+            blocked,
+            BTreeMap::from([("desktop.window-manager", "#1234"), ("fs", "#1224"),]),
+            "source-worker smoke blockers must stay explicit and issue-backed"
+        );
+
+        Ok(())
+    }
 }
 
 // ---------------------------------------------------------------------------
