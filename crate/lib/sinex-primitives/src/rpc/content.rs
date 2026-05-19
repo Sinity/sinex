@@ -2,6 +2,26 @@
 
 use serde::{Deserialize, Serialize};
 
+use super::{RpcDomain, RpcMethod, RpcMutability, RpcRole, RpcStability, methods};
+
+pub const CONTENT_STORE_BLOB_METHOD: RpcMethod<StoreBlobRequest, StoreBlobResponse> =
+    RpcMethod::new(
+        methods::CONTENT_STORE_BLOB,
+        RpcRole::Write,
+        RpcDomain::Content,
+        RpcStability::Experimental,
+        RpcMutability::Mutating,
+    );
+
+pub const CONTENT_RETRIEVE_BLOB_METHOD: RpcMethod<RetrieveBlobRequest, RetrieveBlobResponse> =
+    RpcMethod::new(
+        methods::CONTENT_RETRIEVE_BLOB,
+        RpcRole::ReadOnly,
+        RpcDomain::Content,
+        RpcStability::Experimental,
+        RpcMutability::ReadOnly,
+    );
+
 // ─────────────────────────────────────────────────────────────
 // content.store_blob
 // ─────────────────────────────────────────────────────────────

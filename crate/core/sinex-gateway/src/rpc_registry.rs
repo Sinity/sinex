@@ -14,6 +14,7 @@ use sinex_primitives::rpc::{
     RpcMethod,
     audit::AUDIT_GET_METHOD,
     automata::AUTOMATA_STATUS_METHOD,
+    content::{CONTENT_RETRIEVE_BLOB_METHOD, CONTENT_STORE_BLOB_METHOD},
     coordination::{
         COORDINATION_GET_LEADER_METHOD, COORDINATION_INSTANCE_HEALTH_METHOD,
         COORDINATION_LIST_INSTANCES_METHOD,
@@ -892,20 +893,8 @@ fn build_registry_impl() -> RpcRegistry {
             },
         )
         // Content methods (Write)
-        .register(
-            methods::CONTENT_STORE_BLOB,
-            Role::Write,
-            |params, services, auth| {
-                Box::pin(async move { handle_store_blob(services, params, auth).await })
-            },
-        )
-        .register(
-            methods::CONTENT_RETRIEVE_BLOB,
-            Role::ReadOnly,
-            |params, services, _auth| {
-                Box::pin(async move { handle_retrieve_blob(services, params).await })
-            },
-        )
+        .service_auth_typed_rpc(CONTENT_STORE_BLOB_METHOD, boxed!(handle_store_blob, 3))
+        .service_typed_rpc(CONTENT_RETRIEVE_BLOB_METHOD, boxed!(handle_retrieve_blob))
         // Source material staging (Write — registers new materials, uses services)
         .service_auth_typed_rpc(SOURCES_STAGE_METHOD, boxed!(handle_sources_stage, 3))
         // Source binding management (Write)
