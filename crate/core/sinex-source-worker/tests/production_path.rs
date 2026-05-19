@@ -351,13 +351,13 @@ mod coverage_matrix {
         ),
         entry(
             "reddit-gdpr-comments",
-            SmokeCoverage::ParserFixtureOnly,
-            "sources/social.rs parser tests",
+            SmokeCoverage::ObligationHarness,
+            "production_path/social_exports.rs",
         ),
         entry(
             "reddit-gdpr-posts",
-            SmokeCoverage::ParserFixtureOnly,
-            "sources/social.rs parser tests",
+            SmokeCoverage::ObligationHarness,
+            "production_path/social_exports.rs",
         ),
         entry(
             "sleep-merged-summary",
@@ -431,13 +431,13 @@ mod coverage_matrix {
         ),
         entry(
             "wykop-entries",
-            SmokeCoverage::ParserFixtureOnly,
-            "sources/social.rs parser tests",
+            SmokeCoverage::ObligationHarness,
+            "production_path/social_exports.rs",
         ),
         entry(
             "wykop-entry-comments",
-            SmokeCoverage::ParserFixtureOnly,
-            "sources/social.rs parser tests",
+            SmokeCoverage::ObligationHarness,
+            "production_path/social_exports.rs",
         ),
     ];
 
@@ -571,6 +571,9 @@ mod export_parsers;
 
 #[path = "production_path/fs.rs"]
 mod fs;
+
+#[path = "production_path/social_exports.rs"]
+mod social_exports;
 
 #[path = "production_path/system.rs"]
 mod system;
