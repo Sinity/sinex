@@ -393,7 +393,11 @@ fn command_path(cmd: &Commands) -> String {
             GatewayCommands::Ping => "gateway ping".to_string(),
             GatewayCommands::Version => "gateway version".to_string(),
         },
-        Commands::Blob { .. } => "blob sweep-orphans".to_string(),
+        Commands::Blob { cmd } => match cmd {
+            BlobCommands::SweepOrphans(_) => "blob sweep-orphans".to_string(),
+            BlobCommands::Fsck(_) => "blob fsck".to_string(),
+            BlobCommands::Migrate(_) => "blob migrate".to_string(),
+        },
         Commands::Core { .. } => "core health".to_string(),
         Commands::Node { cmd } => match cmd {
             NodeCommands::List { .. } => "node list".to_string(),
