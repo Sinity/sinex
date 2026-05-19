@@ -91,6 +91,28 @@ impl RuntimePrivateModeState {
     }
 
     #[must_use]
+    pub fn with_expires_at(mut self, expires_at: Option<Timestamp>) -> Self {
+        self.expires_at = expires_at;
+        self
+    }
+
+    #[must_use]
+    pub fn is_active_at(&self, now: Timestamp) -> bool {
+        self.enabled && self.expires_at.is_none_or(|expires_at| now < expires_at)
+    }
+
+    #[must_use]
+    pub fn effective_at(&self, now: Timestamp) -> Self {
+        if self.is_active_at(now) {
+            return self.clone();
+        }
+
+        let mut state = self.clone();
+        state.enabled = false;
+        state
+    }
+
+    #[must_use]
     pub fn disable(mut self) -> Self {
         self.enabled = false;
         self.expires_at = None;
@@ -189,6 +211,23 @@ mod tests {
 
         assert_eq!(loaded, state);
         assert!(private_mode_state_path(dir.path()).exists());
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn expired_private_mode_state_is_not_active() -> xtask::sandbox::TestResult<()> {
+        let active = RuntimePrivateModeState::enabled_by(
+            "sinity",
+            vec!["desktop".to_string()],
+            Timestamp::UNIX_EPOCH,
+        )
+        .with_expires_at(Timestamp::from_unix_timestamp(10));
+        let now = Timestamp::from_unix_timestamp(20).expect("valid timestamp expected");
+
+        assert!(!active.is_active_at(now));
+        let effective = active.effective_at(now);
+        assert!(!effective.enabled);
+        assert_eq!(effective.expires_at, Timestamp::from_unix_timestamp(10));
         Ok(())
     }
 }

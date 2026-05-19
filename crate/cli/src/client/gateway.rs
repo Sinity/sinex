@@ -1155,11 +1155,13 @@ impl GatewayClient {
         actor: String,
         reason_class: sinex_primitives::privacy::PrivateModeReasonClass,
         source_classes: Vec<String>,
+        expires_at: Option<sinex_primitives::temporal::Timestamp>,
     ) -> Result<PrivateModeStateResponse> {
         let req = PrivateModeEnableRequest {
             actor,
             reason_class,
             source_classes,
+            expires_at,
         };
         self.call_typed(PRIVACY_PRIVATE_MODE_ENABLE_METHOD, &req)
             .await

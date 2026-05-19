@@ -227,7 +227,10 @@ impl AdapterNodeConfig {
                 .affected_source_classes
                 .iter()
                 .any(|class| class == source_class || class == source_unit);
-        bc = bc.with_flag("private_mode_active", state.enabled && scoped);
+        bc = bc.with_flag(
+            "private_mode_active",
+            state.is_active_at(sinex_primitives::temporal::Timestamp::now()) && scoped,
+        );
         Ok(bc)
     }
 
@@ -1535,6 +1538,28 @@ mod tests {
         };
 
         let binding = config.to_binding_config_for_source("terminal.zsh-history")?;
+
+        assert!(!binding.is_truthy("private_mode_active"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn adapter_node_config_ignores_expired_private_mode_state()
+    -> xtask::sandbox::TestResult<()> {
+        let dir = tempfile::tempdir()?;
+        let state = RuntimePrivateModeState::enabled_by(
+            "sinity",
+            vec!["desktop".to_string()],
+            Timestamp::UNIX_EPOCH,
+        )
+        .with_expires_at(Timestamp::from_unix_timestamp(1));
+        save_private_mode_state(dir.path(), &state)?;
+        let config = AdapterNodeConfig {
+            private_mode_state_dir: Some(dir.path().to_path_buf()),
+            ..Default::default()
+        };
+
+        let binding = config.to_binding_config_for_source("desktop.clipboard")?;
 
         assert!(!binding.is_truthy("private_mode_active"));
         Ok(())

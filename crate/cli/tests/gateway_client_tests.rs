@@ -1058,6 +1058,7 @@ async fn private_mode_enable_uses_typed_gateway_rpc() -> TestResult<()> {
             "sinity".to_string(),
             sinex_primitives::privacy::PrivateModeReasonClass::PolicyHold,
             vec!["desktop".to_string()],
+            None,
         )
         .await?;
 

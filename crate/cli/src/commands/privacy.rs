@@ -10,6 +10,7 @@ use sinex_primitives::rpc::sources::{
     CaveatSeverity, SourceCaveat, SourceReadiness, SourceReadinessStatus,
     SourcesReadinessListRequest, SourcesReadinessListResponse,
 };
+use sinex_primitives::temporal::Timestamp;
 
 #[derive(Debug, Args)]
 #[command(after_help = "\
@@ -61,6 +62,10 @@ struct PrivateModeEnableArgs {
     /// Source class covered by private mode. Repeatable; omit for all classes.
     #[arg(long = "source-class")]
     source_classes: Vec<String>,
+
+    /// Optional RFC3339 expiry. Expired private-mode state is treated as disabled.
+    #[arg(long = "expires-at")]
+    expires_at: Option<String>,
 }
 
 #[derive(Debug, Args)]
@@ -106,6 +111,10 @@ impl PrivateModeCommand {
                         args.actor.clone(),
                         args.reason_class.clone(),
                         args.source_classes.clone(),
+                        args.expires_at
+                            .as_deref()
+                            .map(Timestamp::parse_rfc3339)
+                            .transpose()?,
                     )
                     .await?
                     .state
@@ -361,12 +370,17 @@ fn format_private_mode_state(state: &RuntimePrivateModeState) -> String {
         .started_at
         .as_ref()
         .map_or_else(|| "-".to_string(), ToString::to_string);
+    let expires = state
+        .expires_at
+        .as_ref()
+        .map_or_else(|| "-".to_string(), ToString::to_string);
     format!(
-        "Private mode: {}\nReason: {}\nActor: {}\nStarted: {}\nSource classes: {}",
+        "Private mode: {}\nReason: {}\nActor: {}\nStarted: {}\nExpires: {}\nSource classes: {}",
         if state.enabled { "enabled" } else { "disabled" },
         state.reason_class,
         state.actor,
         started,
+        expires,
         scope
     )
 }
