@@ -6,7 +6,8 @@ use color_eyre::eyre::eyre;
 use serde::de::DeserializeOwned;
 use sinex_primitives::query::EventQueryResult;
 use sinex_primitives::rpc::curation::{
-    CurationListProposalsRequest, CurationRecordJudgmentRequest, CurationRecordJudgmentResponse,
+    CurationFinalizeRequest, CurationFinalizeResponse, CurationListProposalsRequest,
+    CurationRecordJudgmentRequest, CurationRecordJudgmentResponse,
 };
 
 use crate::client::GatewayClient;
@@ -29,6 +30,7 @@ impl CurationCommand {
         match &self.cmd {
             CurationSubcommand::Proposals(cmd) => cmd.execute(client, format).await,
             CurationSubcommand::Judge(cmd) => cmd.execute(client, format).await,
+            CurationSubcommand::Finalize(cmd) => cmd.execute(client, format).await,
         }
     }
 }
@@ -39,6 +41,8 @@ pub enum CurationSubcommand {
     Proposals(CurationProposalsCommand),
     /// Record an authority judgment over a proposal event.
     Judge(CurationJudgeCommand),
+    /// Finalize an accepted or modified judgment.
+    Finalize(CurationFinalizeCommand),
 }
 
 #[derive(Debug, Args)]
@@ -113,9 +117,50 @@ impl CurationJudgeCommand {
     }
 }
 
+#[derive(Debug, Args)]
+pub struct CurationFinalizeCommand {
+    /// Judgment event UUID.
+    judgment_event_id: String,
+}
+
+impl CurationFinalizeCommand {
+    async fn execute(&self, client: &GatewayClient, format: OutputFormat) -> Result<()> {
+        let response = client
+            .curation_finalize(CurationFinalizeRequest {
+                judgment_event_id: self.judgment_event_id.clone(),
+            })
+            .await?;
+        render_finalization(&response, format)
+    }
+}
+
 fn parse_serde_enum<T: DeserializeOwned>(name: &str, raw: &str) -> Result<T> {
     serde_json::from_value(serde_json::Value::String(raw.to_string()))
         .map_err(|error| eyre!("invalid {name} `{raw}`: {error}"))
+}
+
+fn render_finalization(response: &CurationFinalizeResponse, format: OutputFormat) -> Result<()> {
+    match format {
+        OutputFormat::Json | OutputFormat::Dot => println!("{}", format_json(response)?),
+        OutputFormat::Yaml => println!("{}", format_yaml(response)?),
+        OutputFormat::Table => {
+            let event_id = response
+                .event
+                .id
+                .as_ref()
+                .map(ToString::to_string)
+                .unwrap_or_else(|| "<missing-id>".to_string());
+            println!("Curation finalization recorded");
+            println!("  Event:      {event_id}");
+            println!("  Proposal:   {}", response.finalized.proposal_id);
+            println!("  Judgment:   {}", response.finalized.judgment_id);
+            println!(
+                "  Output:     {}/{}",
+                response.finalized.output_source, response.finalized.output_event_type
+            );
+        }
+    }
+    Ok(())
 }
 
 fn render_proposals(response: &EventQueryResult, format: OutputFormat) -> Result<()> {

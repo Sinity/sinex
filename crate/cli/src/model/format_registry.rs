@@ -277,6 +277,10 @@ pub fn build() -> HashMap<&'static str, FormatCapability> {
         FormatCapability::single_shot(TABLE_JSON_YAML),
     );
     m.insert(
+        "curation finalize",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
+    m.insert(
         "sources readiness",
         FormatCapability::single_shot(TABLE_JSON_YAML),
     );

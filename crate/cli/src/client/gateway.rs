@@ -16,9 +16,9 @@ use sinex_primitives::rpc::{
         ListInstancesResponse,
     },
     curation::{
-        CURATION_JUDGMENTS_RECORD_METHOD, CURATION_PROPOSALS_LIST_METHOD,
-        CurationListProposalsRequest, CurationRecordJudgmentRequest,
-        CurationRecordJudgmentResponse,
+        CURATION_FINALIZE_METHOD, CURATION_JUDGMENTS_RECORD_METHOD, CURATION_PROPOSALS_LIST_METHOD,
+        CurationFinalizeRequest, CurationFinalizeResponse, CurationListProposalsRequest,
+        CurationRecordJudgmentRequest, CurationRecordJudgmentResponse,
     },
     dlq::{
         DLQ_LIST_METHOD, DLQ_PEEK_METHOD, DLQ_PURGE_METHOD, DLQ_REQUEUE_METHOD, DlqListRequest,
@@ -903,6 +903,14 @@ impl GatewayClient {
     ) -> Result<CurationRecordJudgmentResponse> {
         self.call_typed(CURATION_JUDGMENTS_RECORD_METHOD, &request)
             .await
+    }
+
+    /// Finalize an accepted or modified curation judgment.
+    pub async fn curation_finalize(
+        &self,
+        request: CurationFinalizeRequest,
+    ) -> Result<CurationFinalizeResponse> {
+        self.call_typed(CURATION_FINALIZE_METHOD, &request).await
     }
 
     // ==================== Source Material Commands ====================
