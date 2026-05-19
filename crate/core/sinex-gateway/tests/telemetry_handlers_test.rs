@@ -1,6 +1,7 @@
 //! Regression coverage for telemetry RPC handlers against the live read-model schema.
 
-use serde_json::json;
+use serde::de::DeserializeOwned;
+use serde_json::{Value, json};
 use sinex_db::DbPoolExt;
 use sinex_gateway::handlers::{
     handle_telemetry_assembly_stats, handle_telemetry_command_frequency,
@@ -13,14 +14,7 @@ use sinex_gateway::handlers::{
 };
 use sinex_primitives::error::ErrorClass;
 use sinex_primitives::events::DynamicPayload;
-use sinex_primitives::rpc::telemetry::{
-    TelemetryAssemblyStatsResponse, TelemetryCommandFrequencyResponse,
-    TelemetryCurrentDeviceStateResponse, TelemetryCurrentHealthResponse,
-    TelemetryFileActivityResponse, TelemetryGatewayStatsResponse,
-    TelemetryIngestdBatchStatsResponse, TelemetryIngestdValidationResponse,
-    TelemetryMetricCountersResponse, TelemetryNodeStatsResponse, TelemetryRecentActivityResponse,
-    TelemetryStreamStatsResponse, TelemetrySystemStateResponse, TelemetryWindowFocusResponse,
-};
+use sinex_primitives::rpc::telemetry::*;
 use time::format_description::well_known::Rfc3339;
 use xtask::sandbox::prelude::*;
 
@@ -66,6 +60,10 @@ async fn refresh_telemetry_read_models(ctx: &TestContext) -> TestResult<()> {
         .execute(ctx.pool())
         .await?;
     Ok(())
+}
+
+fn telemetry_request<T: DeserializeOwned>(value: Value) -> TestResult<T> {
+    Ok(serde_json::from_value(value)?)
 }
 
 #[sinex_test]
@@ -147,19 +145,21 @@ async fn telemetry_handlers_follow_current_read_model_schema(ctx: TestContext) -
 
     let params = json!({ "from": from, "to": to, "limit": 10 });
 
-    let window_focus: TelemetryWindowFocusResponse =
-        serde_json::from_value(handle_telemetry_window_focus(ctx.pool(), params.clone()).await?)?;
-    let command_frequency: TelemetryCommandFrequencyResponse = serde_json::from_value(
-        handle_telemetry_command_frequency(ctx.pool(), params.clone()).await?,
-    )?;
+    let window_focus: TelemetryWindowFocusResponse = handle_telemetry_window_focus(
+        ctx.pool(),
+        telemetry_request(params.clone())?,
+    )
+    .await?;
+    let command_frequency: TelemetryCommandFrequencyResponse =
+        handle_telemetry_command_frequency(ctx.pool(), telemetry_request(params.clone())?).await?;
     let file_activity: TelemetryFileActivityResponse =
-        serde_json::from_value(handle_telemetry_file_activity(ctx.pool(), params.clone()).await?)?;
-    let recent_activity: TelemetryRecentActivityResponse = serde_json::from_value(
-        handle_telemetry_recent_activity(ctx.pool(), json!({ "limit": 10 })).await?,
-    )?;
-    let system_state: TelemetrySystemStateResponse = serde_json::from_value(
-        handle_telemetry_system_state(ctx.pool(), json!({ "limit": 10 })).await?,
-    )?;
+        handle_telemetry_file_activity(ctx.pool(), telemetry_request(params.clone())?).await?;
+    let recent_activity: TelemetryRecentActivityResponse =
+        handle_telemetry_recent_activity(ctx.pool(), TelemetryLimitRequest { limit: Some(10) })
+            .await?;
+    let system_state: TelemetrySystemStateResponse =
+        handle_telemetry_system_state(ctx.pool(), telemetry_request(json!({ "limit": 10 }))?)
+            .await?;
 
     assert_eq!(window_focus.buckets.len(), 1);
     let focus = &window_focus.buckets[0];
@@ -293,14 +293,13 @@ async fn telemetry_handlers_bucket_activity_by_event_time(ctx: TestContext) -> T
     });
 
     let window_focus: TelemetryWindowFocusResponse =
-        serde_json::from_value(handle_telemetry_window_focus(ctx.pool(), params.clone()).await?)?;
-    let command_frequency: TelemetryCommandFrequencyResponse = serde_json::from_value(
-        handle_telemetry_command_frequency(ctx.pool(), params.clone()).await?,
-    )?;
+        handle_telemetry_window_focus(ctx.pool(), telemetry_request(params.clone())?).await?;
+    let command_frequency: TelemetryCommandFrequencyResponse =
+        handle_telemetry_command_frequency(ctx.pool(), telemetry_request(params.clone())?).await?;
     let file_activity: TelemetryFileActivityResponse =
-        serde_json::from_value(handle_telemetry_file_activity(ctx.pool(), params.clone()).await?)?;
+        handle_telemetry_file_activity(ctx.pool(), telemetry_request(params.clone())?).await?;
     let system_state: TelemetrySystemStateResponse =
-        serde_json::from_value(handle_telemetry_system_state(ctx.pool(), params).await?)?;
+        handle_telemetry_system_state(ctx.pool(), telemetry_request(params)?).await?;
 
     assert_eq!(window_focus.buckets.len(), 1);
     assert_eq!(window_focus.buckets[0].workspace.as_deref(), Some("42"));
@@ -462,25 +461,27 @@ async fn operator_telemetry_handlers_follow_read_model_schema(ctx: TestContext) 
 
     let params = json!({ "from": from, "to": to, "limit": 10 });
 
-    let current_health: TelemetryCurrentHealthResponse = serde_json::from_value(
-        handle_telemetry_current_health(ctx.pool(), json!({ "limit": 10 })).await?,
-    )?;
-    let current_device_state: TelemetryCurrentDeviceStateResponse = serde_json::from_value(
-        handle_telemetry_current_device_state(ctx.pool(), json!({ "limit": 10 })).await?,
-    )?;
+    let current_health: TelemetryCurrentHealthResponse =
+        handle_telemetry_current_health(ctx.pool(), TelemetryLimitRequest { limit: Some(10) })
+            .await?;
+    let current_device_state: TelemetryCurrentDeviceStateResponse =
+        handle_telemetry_current_device_state(
+            ctx.pool(),
+            TelemetryLimitRequest { limit: Some(10) },
+        )
+        .await?;
     let gateway_stats: TelemetryGatewayStatsResponse =
-        serde_json::from_value(handle_telemetry_gateway_stats(ctx.pool(), params.clone()).await?)?;
+        handle_telemetry_gateway_stats(ctx.pool(), telemetry_request(params.clone())?).await?;
     let stream_stats: TelemetryStreamStatsResponse =
-        serde_json::from_value(handle_telemetry_stream_stats(ctx.pool(), params.clone()).await?)?;
+        handle_telemetry_stream_stats(ctx.pool(), telemetry_request(params.clone())?).await?;
     let assembly_stats: TelemetryAssemblyStatsResponse =
-        serde_json::from_value(handle_telemetry_assembly_stats(ctx.pool(), params.clone()).await?)?;
+        handle_telemetry_assembly_stats(ctx.pool(), telemetry_request(params.clone())?).await?;
     let node_stats: TelemetryNodeStatsResponse =
-        serde_json::from_value(handle_telemetry_node_stats(ctx.pool(), params.clone()).await?)?;
-    let metric_counters: TelemetryMetricCountersResponse = serde_json::from_value(
-        handle_telemetry_metric_counters(ctx.pool(), params.clone()).await?,
-    )?;
+        handle_telemetry_node_stats(ctx.pool(), telemetry_request(params.clone())?).await?;
+    let metric_counters: TelemetryMetricCountersResponse =
+        handle_telemetry_metric_counters(ctx.pool(), telemetry_request(params.clone())?).await?;
     let ingestd_batch_stats: TelemetryIngestdBatchStatsResponse =
-        serde_json::from_value(handle_telemetry_ingestd_batch_stats(ctx.pool(), params).await?)?;
+        handle_telemetry_ingestd_batch_stats(ctx.pool(), telemetry_request(params)?).await?;
 
     assert_eq!(current_health.entries.len(), 1);
     assert_eq!(current_health.entries[0].source, "sinex");
@@ -549,9 +550,12 @@ async fn operator_telemetry_handlers_follow_read_model_schema(ctx: TestContext) 
 
 #[sinex_test]
 async fn telemetry_handlers_reject_non_positive_limits(ctx: TestContext) -> TestResult<()> {
-    let error = handle_telemetry_recent_activity(ctx.pool(), json!({ "limit": 0 }))
-        .await
-        .expect_err("non-positive telemetry limits must be rejected");
+    let error = handle_telemetry_recent_activity(
+        ctx.pool(),
+        TelemetryLimitRequest { limit: Some(0) },
+    )
+    .await
+    .expect_err("non-positive telemetry limits must be rejected");
     assert!(
         error
             .to_string()
@@ -565,10 +569,10 @@ async fn telemetry_handlers_reject_non_positive_limits(ctx: TestContext) -> Test
 async fn telemetry_handlers_reject_inverted_time_ranges(ctx: TestContext) -> TestResult<()> {
     let error = handle_telemetry_window_focus(
         ctx.pool(),
-        json!({
+        telemetry_request(json!({
             "from": "2026-01-02T00:00:00Z",
             "to": "2026-01-01T00:00:00Z"
-        }),
+        }))?,
     )
     .await
     .expect_err("inverted telemetry time ranges must be rejected");
@@ -581,10 +585,10 @@ async fn telemetry_handlers_reject_inverted_time_ranges(ctx: TestContext) -> Tes
 async fn telemetry_handlers_reject_invalid_timestamps(ctx: TestContext) -> TestResult<()> {
     let error = handle_telemetry_window_focus(
         ctx.pool(),
-        json!({
+        telemetry_request(json!({
             "from": "not-a-timestamp",
             "to": "2026-01-01T00:00:00Z"
-        }),
+        }))?,
     )
     .await
     .expect_err("invalid telemetry timestamps must be rejected");
@@ -621,7 +625,8 @@ async fn telemetry_ingestd_validation_returns_latest_snapshot(ctx: TestContext) 
     .await?;
 
     let response: TelemetryIngestdValidationResponse =
-        serde_json::from_value(handle_telemetry_ingestd_validation(ctx.pool(), json!({})).await?)?;
+        handle_telemetry_ingestd_validation(ctx.pool(), TelemetryIngestdValidationRequest {})
+            .await?;
     let snapshot = response
         .snapshot
         .expect("expected latest validation snapshot");
