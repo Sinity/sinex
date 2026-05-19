@@ -40,7 +40,6 @@ use serde::{Deserialize, Serialize};
 use sinex_node_sdk::parser::{DirectoryWalkAdapter, MaterialParser, ParserError, ParserResult};
 use sinex_primitives::{
     domain::{EventSource, EventType},
-    ids::Id,
     parser::{
         InputShapeKind, MaterialAnchor, OccurrenceKey, ParsedEventIntent, ParserContext, ParserId,
         ParserManifest, SourceRecord, SourceUnitId, TimingEvidence,
