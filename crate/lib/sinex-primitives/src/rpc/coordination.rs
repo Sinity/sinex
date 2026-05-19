@@ -5,8 +5,10 @@ use crate::rpc::{RpcDomain, RpcMethod, RpcMutability, RpcRole, RpcStability, met
 use crate::temporal::Timestamp;
 use serde::{Deserialize, Serialize};
 
-pub const COORDINATION_LIST_INSTANCES_METHOD:
-    RpcMethod<ListInstancesRequest, ListInstancesResponse> = RpcMethod::new(
+pub const COORDINATION_LIST_INSTANCES_METHOD: RpcMethod<
+    ListInstancesRequest,
+    ListInstancesResponse,
+> = RpcMethod::new(
     methods::COORDINATION_LIST_INSTANCES,
     RpcRole::ReadOnly,
     RpcDomain::Coordination,
@@ -23,8 +25,10 @@ pub const COORDINATION_GET_LEADER_METHOD: RpcMethod<GetLeaderRequest, GetLeaderR
         RpcMutability::ReadOnly,
     );
 
-pub const COORDINATION_INSTANCE_HEALTH_METHOD:
-    RpcMethod<InstanceHealthRequest, InstanceHealthResponse> = RpcMethod::new(
+pub const COORDINATION_INSTANCE_HEALTH_METHOD: RpcMethod<
+    InstanceHealthRequest,
+    InstanceHealthResponse,
+> = RpcMethod::new(
     methods::COORDINATION_INSTANCE_HEALTH,
     RpcRole::ReadOnly,
     RpcDomain::Coordination,

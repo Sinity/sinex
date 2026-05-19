@@ -86,9 +86,7 @@ pub async fn handle_coordination_instance_health(
                 last_error: None,
             })
         }
-        None => {
-            Err(SinexError::not_found("Instance not found")
-                .with_context("instance_id", req.instance_id.as_str()))
-        }
+        None => Err(SinexError::not_found("Instance not found")
+            .with_context("instance_id", req.instance_id.as_str())),
     }
 }

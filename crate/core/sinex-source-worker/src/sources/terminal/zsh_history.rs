@@ -289,18 +289,20 @@ impl ZshHistoryParser {
         let payload_json = serde_json::to_value(&payload)
             .map_err(|e| ParserError::Parse(format!("payload serialization failed: {e}")))?;
 
-        Ok(vec![ParsedEventIntent::builder()
-            .source_unit_id(ctx.source_unit_id.clone())
-            .parser_id(ParserId::from_static("zsh-history"))
-            .parser_version("1.0.0")
-            .event_type(EventType::from_static("command.imported"))
-            .event_source(EventSource::from_static("shell.history"))
-            .payload(payload_json)
-            .ts_orig(ts_orig)
-            .timing(timing)
-            .anchor(anchor)
-            .privacy_context(ProcessingContext::Command)
-            .build()])
+        Ok(vec![
+            ParsedEventIntent::builder()
+                .source_unit_id(ctx.source_unit_id.clone())
+                .parser_id(ParserId::from_static("zsh-history"))
+                .parser_version("1.0.0")
+                .event_type(EventType::from_static("command.imported"))
+                .event_source(EventSource::from_static("shell.history"))
+                .payload(payload_json)
+                .ts_orig(ts_orig)
+                .timing(timing)
+                .anchor(anchor)
+                .privacy_context(ProcessingContext::Command)
+                .build(),
+        ])
     }
 }
 

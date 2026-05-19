@@ -31,6 +31,10 @@ use sinex_primitives::rpc::{
     methods,
     nodes::{NODES_DRAIN_METHOD, NODES_RESUME_METHOD, NODES_SET_HORIZON_METHOD},
     ops::{OPS_CANCEL_METHOD, OPS_GET_METHOD, OPS_LIST_METHOD, OPS_START_METHOD},
+    privacy::{
+        PRIVACY_PRIVATE_MODE_DISABLE_METHOD, PRIVACY_PRIVATE_MODE_ENABLE_METHOD,
+        PRIVACY_PRIVATE_MODE_STATUS_METHOD,
+    },
     replay::{
         REPLAY_APPROVE_OPERATION_METHOD, REPLAY_CANCEL_OPERATION_METHOD,
         REPLAY_CREATE_OPERATION_METHOD, REPLAY_EXECUTE_OPERATION_METHOD,
@@ -38,11 +42,10 @@ use sinex_primitives::rpc::{
         REPLAY_PREVIEW_OPERATION_METHOD, REPLAY_SUBMIT_OPERATION_METHOD,
     },
     sources::{
-        SOURCES_CONTINUITY_EXPLAIN_GAP_METHOD, SOURCES_CONTINUITY_GET_METHOD,
-        SOURCES_CONTINUITY_LIST_METHOD, SOURCES_CONTINUITY_METHOD, SOURCES_COVERAGE_METHOD,
-        SOURCES_LIST_METHOD, SOURCES_READINESS_GET_METHOD, SOURCES_READINESS_LIST_METHOD,
-        SOURCES_ANNOTATE_METHOD, SOURCES_ARCHIVE_METHOD, SOURCES_SHOW_METHOD,
-        SOURCES_STAGE_METHOD,
+        SOURCES_ANNOTATE_METHOD, SOURCES_ARCHIVE_METHOD, SOURCES_CONTINUITY_EXPLAIN_GAP_METHOD,
+        SOURCES_CONTINUITY_GET_METHOD, SOURCES_CONTINUITY_LIST_METHOD, SOURCES_CONTINUITY_METHOD,
+        SOURCES_COVERAGE_METHOD, SOURCES_LIST_METHOD, SOURCES_READINESS_GET_METHOD,
+        SOURCES_READINESS_LIST_METHOD, SOURCES_SHOW_METHOD, SOURCES_STAGE_METHOD,
     },
     system::{SYSTEM_HEALTH_METHOD, SYSTEM_PING_METHOD, SYSTEM_VERSION_METHOD},
     tasks::{TASKS_COMPLETE_METHOD, TASKS_CREATE_METHOD, TASKS_STATE_GET_METHOD},
@@ -53,8 +56,7 @@ use sinex_primitives::rpc::{
         TELEMETRY_INGESTD_BATCH_STATS_METHOD, TELEMETRY_INGESTD_VALIDATION_METHOD,
         TELEMETRY_METRIC_COUNTERS_METHOD, TELEMETRY_NODE_STATS_METHOD,
         TELEMETRY_RECENT_ACTIVITY_METHOD, TELEMETRY_STREAM_STATS_METHOD,
-        TELEMETRY_SYSTEM_STATE_METHOD, TELEMETRY_THROUGHPUT_METHOD,
-        TELEMETRY_WINDOW_FOCUS_METHOD,
+        TELEMETRY_SYSTEM_STATE_METHOD, TELEMETRY_THROUGHPUT_METHOD, TELEMETRY_WINDOW_FOCUS_METHOD,
     },
 };
 use sinex_primitives::{Result, error::SinexError};
@@ -621,14 +623,14 @@ fn build_registry_impl() -> RpcRegistry {
         handle_lifecycle_restore, handle_lifecycle_status, handle_link_entities,
         handle_nodes_drain, handle_nodes_health, handle_nodes_list, handle_nodes_list_active,
         handle_nodes_resume, handle_nodes_set_horizon, handle_ops_cancel, handle_ops_get,
-        handle_ops_list, handle_ops_start, handle_private_mode_disable, handle_private_mode_enable,
-        handle_private_mode_status, handle_replay_approve_operation,
-        handle_replay_cancel_operation, handle_replay_create_operation,
-        handle_replay_execute_operation, handle_replay_list_operations,
-        handle_replay_operation_status, handle_replay_preview_operation,
-        handle_replay_submit_operation, handle_retrieve_blob, handle_shadow_create,
-        handle_shadow_delete, handle_shadow_list, handle_sources_annotate, handle_sources_archive,
-        handle_sources_bindings_create, handle_sources_bindings_list,
+        handle_ops_list, handle_ops_start, handle_private_mode_disable_service,
+        handle_private_mode_enable_service, handle_private_mode_status_service,
+        handle_replay_approve_operation, handle_replay_cancel_operation,
+        handle_replay_create_operation, handle_replay_execute_operation,
+        handle_replay_list_operations, handle_replay_operation_status,
+        handle_replay_preview_operation, handle_replay_submit_operation, handle_retrieve_blob,
+        handle_shadow_create, handle_shadow_delete, handle_shadow_list, handle_sources_annotate,
+        handle_sources_archive, handle_sources_bindings_create, handle_sources_bindings_list,
         handle_sources_bindings_resolve, handle_sources_continuity,
         handle_sources_continuity_explain_gap, handle_sources_continuity_get,
         handle_sources_continuity_list, handle_sources_coverage, handle_sources_list,
@@ -654,15 +656,9 @@ fn build_registry_impl() -> RpcRegistry {
         .service_typed_rpc(SYSTEM_PING_METHOD, boxed!(handle_system_ping))
         .service_typed_rpc(SYSTEM_VERSION_METHOD, boxed!(handle_system_version))
         .service_typed_rpc(SYSTEM_HEALTH_METHOD, boxed!(handle_system_health))
-        .register(
-            methods::PRIVACY_PRIVATE_MODE_STATUS,
-            Role::ReadOnly,
-            |params, services, _auth| {
-                Box::pin(
-                    async move { handle_private_mode_status(services.state_dir(), params).await },
-                )
-            },
-        )
+        .service_typed_rpc(PRIVACY_PRIVATE_MODE_STATUS_METHOD, |services, request| {
+            Box::pin(async move { handle_private_mode_status_service(services, request).await })
+        })
         // Composable event query methods (ReadOnly)
         .pool_typed_rpc(EVENTS_QUERY_METHOD, boxed!(handle_events_query))
         .pool_rpc(
@@ -690,7 +686,10 @@ fn build_registry_impl() -> RpcRegistry {
         // Document search methods (ReadOnly)
         .pool_typed_rpc(DOCUMENTS_SEARCH_METHOD, boxed!(handle_documents_search))
         .pool_typed_rpc(DOCUMENTS_GET_METHOD, boxed!(handle_documents_get))
-        .pool_typed_rpc(DOCUMENTS_GET_CHUNKS_METHOD, boxed!(handle_documents_get_chunks))
+        .pool_typed_rpc(
+            DOCUMENTS_GET_CHUNKS_METHOD,
+            boxed!(handle_documents_get_chunks),
+        )
         // Operations log read methods (ReadOnly)
         .pool_auth_typed_rpc(OPS_LIST_METHOD, boxed!(handle_ops_list, 3))
         .pool_auth_typed_rpc(OPS_GET_METHOD, boxed!(handle_ops_get, 3))
@@ -895,59 +894,23 @@ fn build_registry_impl() -> RpcRegistry {
             boxed!(handle_sources_bindings_resolve),
         )
         // Source annotation (Write — modifies metadata)
-        .pool_typed_rpc(
-            SOURCES_ANNOTATE_METHOD,
-            boxed!(handle_sources_annotate),
-        )
+        .pool_typed_rpc(SOURCES_ANNOTATE_METHOD, boxed!(handle_sources_annotate))
         // Node operations (Write - affects system but not destructive)
         .nats_auth_typed_rpc(NODES_DRAIN_METHOD, boxed!(handle_nodes_drain, 4))
         .nats_auth_typed_rpc(NODES_RESUME_METHOD, boxed!(handle_nodes_resume, 4))
-        .nats_auth_typed_rpc(NODES_SET_HORIZON_METHOD, boxed!(handle_nodes_set_horizon, 4))
+        .nats_auth_typed_rpc(
+            NODES_SET_HORIZON_METHOD,
+            boxed!(handle_nodes_set_horizon, 4),
+        )
         // Operations log write (Write)
         .pool_auth_typed_rpc(OPS_START_METHOD, boxed!(handle_ops_start, 3))
-        .register(
-            methods::PRIVACY_PRIVATE_MODE_ENABLE,
-            Role::Write,
-            |params, services, auth| {
-                Box::pin(async move {
-                    let nats = services.nats_client().ok_or_else(|| {
-                        SinexError::configuration(
-                            "NATS client is not available for private-mode broadcast",
-                        )
-                    })?;
-                    let control = Some((nats, services.environment()));
-                    handle_private_mode_enable(
-                        services.pool(),
-                        services.state_dir(),
-                        control,
-                        params,
-                        auth,
-                    )
-                    .await
-                })
-            },
+        .service_auth_typed_rpc(
+            PRIVACY_PRIVATE_MODE_ENABLE_METHOD,
+            boxed!(handle_private_mode_enable_service, 3),
         )
-        .register(
-            methods::PRIVACY_PRIVATE_MODE_DISABLE,
-            Role::Write,
-            |params, services, auth| {
-                Box::pin(async move {
-                    let nats = services.nats_client().ok_or_else(|| {
-                        SinexError::configuration(
-                            "NATS client is not available for private-mode broadcast",
-                        )
-                    })?;
-                    let control = Some((nats, services.environment()));
-                    handle_private_mode_disable(
-                        services.pool(),
-                        services.state_dir(),
-                        control,
-                        params,
-                        auth,
-                    )
-                    .await
-                })
-            },
+        .service_auth_typed_rpc(
+            PRIVACY_PRIVATE_MODE_DISABLE_METHOD,
+            boxed!(handle_private_mode_disable_service, 3),
         )
         // Replay create/preview (Write - doesn't execute yet)
         .replay_typed_rpc(
@@ -984,13 +947,16 @@ fn build_registry_impl() -> RpcRegistry {
         // Operations cancel (Admin)
         .pool_auth_typed_rpc(OPS_CANCEL_METHOD, boxed!(handle_ops_cancel, 3))
         // Data lifecycle mutations (Admin - DESTRUCTIVE)
-        .pool_auth_typed_rpc(LIFECYCLE_ARCHIVE_METHOD, boxed!(handle_lifecycle_archive, 3))
-        // Source material archival (Admin — archives material + cascade)
-        .pool_typed_rpc(
-            SOURCES_ARCHIVE_METHOD,
-            boxed!(handle_sources_archive),
+        .pool_auth_typed_rpc(
+            LIFECYCLE_ARCHIVE_METHOD,
+            boxed!(handle_lifecycle_archive, 3),
         )
-        .pool_auth_typed_rpc(LIFECYCLE_RESTORE_METHOD, boxed!(handle_lifecycle_restore, 3))
+        // Source material archival (Admin — archives material + cascade)
+        .pool_typed_rpc(SOURCES_ARCHIVE_METHOD, boxed!(handle_sources_archive))
+        .pool_auth_typed_rpc(
+            LIFECYCLE_RESTORE_METHOD,
+            boxed!(handle_lifecycle_restore, 3),
+        )
         // Two-step tombstone operations (SEC-003)
         .pool_auth_typed_rpc(
             LIFECYCLE_TOMBSTONE_CREATE_METHOD,

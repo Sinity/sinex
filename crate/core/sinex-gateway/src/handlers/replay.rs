@@ -148,8 +148,8 @@ pub async fn handle_replay_list_operations(
         .list(req.state.map(db_replay_state), req.node, req.limit)
         .await
         .map_err(|error| {
-        SinexError::service("failed to list replay operations").with_source(error)
-    })?;
+            SinexError::service("failed to list replay operations").with_source(error)
+        })?;
     Ok(ReplayListResponse {
         operations: operations
             .into_iter()

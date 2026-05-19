@@ -128,6 +128,7 @@ pub mod methods;
 pub mod nodes;
 pub mod ops;
 pub mod pkm;
+pub mod privacy;
 pub mod replay;
 pub mod shadow;
 pub mod sources;
@@ -152,6 +153,7 @@ pub mod prelude {
     pub use super::nodes::*;
     pub use super::ops::*;
     pub use super::pkm::*;
+    pub use super::privacy::*;
     pub use super::replay::*;
     pub use super::shadow::*;
     pub use super::sources::*;

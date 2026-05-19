@@ -13,9 +13,7 @@ use serde_json::json;
 use sinex_gateway::handlers::dlq::{handle_dlq_list, handle_dlq_purge, handle_dlq_requeue};
 use sinex_primitives::Timestamp;
 use sinex_primitives::error::{ErrorClass, SinexError};
-use sinex_primitives::rpc::dlq::{
-    DlqListRequest, DlqPurgeRequest, DlqRequeueRequest, DlqRequeueResponse,
-};
+use sinex_primitives::rpc::dlq::{DlqListRequest, DlqPurgeRequest, DlqRequeueRequest};
 use std::time::Duration;
 use xtask::sandbox::prelude::*;
 use xtask::sandbox::timing::{Timeouts, WaitHelpers};

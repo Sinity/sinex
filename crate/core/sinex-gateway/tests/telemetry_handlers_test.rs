@@ -145,11 +145,8 @@ async fn telemetry_handlers_follow_current_read_model_schema(ctx: TestContext) -
 
     let params = json!({ "from": from, "to": to, "limit": 10 });
 
-    let window_focus: TelemetryWindowFocusResponse = handle_telemetry_window_focus(
-        ctx.pool(),
-        telemetry_request(params.clone())?,
-    )
-    .await?;
+    let window_focus: TelemetryWindowFocusResponse =
+        handle_telemetry_window_focus(ctx.pool(), telemetry_request(params.clone())?).await?;
     let command_frequency: TelemetryCommandFrequencyResponse =
         handle_telemetry_command_frequency(ctx.pool(), telemetry_request(params.clone())?).await?;
     let file_activity: TelemetryFileActivityResponse =
@@ -550,12 +547,10 @@ async fn operator_telemetry_handlers_follow_read_model_schema(ctx: TestContext) 
 
 #[sinex_test]
 async fn telemetry_handlers_reject_non_positive_limits(ctx: TestContext) -> TestResult<()> {
-    let error = handle_telemetry_recent_activity(
-        ctx.pool(),
-        TelemetryLimitRequest { limit: Some(0) },
-    )
-    .await
-    .expect_err("non-positive telemetry limits must be rejected");
+    let error =
+        handle_telemetry_recent_activity(ctx.pool(), TelemetryLimitRequest { limit: Some(0) })
+            .await
+            .expect_err("non-positive telemetry limits must be rejected");
     assert!(
         error
             .to_string()

@@ -1,12 +1,12 @@
 //! System RPC handlers.
 
 use crate::service_container::{GatewayHealthReport, GatewayHealthStatus, ServiceContainer};
+use sinex_primitives::Result;
 use sinex_primitives::domain::HealthStatus;
 use sinex_primitives::rpc::system::{
     ComponentHealthReport, ComponentsHealth, ReplayControlHealth, SystemHealthRequest,
     SystemHealthResponse, SystemPingRequest, SystemVersionRequest,
 };
-use sinex_primitives::Result;
 
 pub async fn handle_system_ping(
     _services: &ServiceContainer,

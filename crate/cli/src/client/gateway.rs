@@ -15,7 +15,6 @@ use sinex_primitives::rpc::{
         InstanceHealthRequest, InstanceHealthResponse, InstanceInfo, ListInstancesRequest,
         ListInstancesResponse,
     },
-    nodes::{NODES_DRAIN_METHOD, NODES_RESUME_METHOD, NODES_SET_HORIZON_METHOD},
     dlq::{
         DLQ_LIST_METHOD, DLQ_PEEK_METHOD, DLQ_PURGE_METHOD, DLQ_REQUEUE_METHOD, DlqListRequest,
         DlqListResponse, DlqPeekRequest, DlqPeekResponse, DlqPurgeRequest, DlqPurgeResponse,
@@ -31,12 +30,12 @@ use sinex_primitives::rpc::{
         EventsAnnotateResponse,
     },
     gitops::{
-        GITOPS_CREATE_SOURCE_METHOD, GITOPS_DELETE_SOURCE_METHOD, GITOPS_LIST_SOURCES_METHOD,
-        GITOPS_TRIGGER_SYNC_METHOD,
         DEFAULT_GITOPS_BRANCH, DEFAULT_GITOPS_PATH_PATTERN, DEFAULT_GITOPS_SYNC_FREQUENCY_MINUTES,
-        GitOpsCreateSourceRequest, GitOpsCreateSourceResponse, GitOpsDeleteSourceRequest,
-        GitOpsDeleteSourceResponse, GitOpsListSourcesRequest, GitOpsListSourcesResponse,
-        GitOpsSourceInfo, GitOpsTriggerSyncRequest, GitOpsTriggerSyncResponse,
+        GITOPS_CREATE_SOURCE_METHOD, GITOPS_DELETE_SOURCE_METHOD, GITOPS_LIST_SOURCES_METHOD,
+        GITOPS_TRIGGER_SYNC_METHOD, GitOpsCreateSourceRequest, GitOpsCreateSourceResponse,
+        GitOpsDeleteSourceRequest, GitOpsDeleteSourceResponse, GitOpsListSourcesRequest,
+        GitOpsListSourcesResponse, GitOpsSourceInfo, GitOpsTriggerSyncRequest,
+        GitOpsTriggerSyncResponse,
     },
     ingestors::{INGESTORS_STATUS_METHOD, IngestorsStatusRequest, IngestorsStatusResponse},
     lifecycle::{
@@ -52,8 +51,14 @@ use sinex_primitives::rpc::{
         TombstonePreviewRequest, TombstonePreviewResponse, TombstoneStatusRequest,
         TombstoneStatusResponse,
     },
+    nodes::{NODES_DRAIN_METHOD, NODES_RESUME_METHOD, NODES_SET_HORIZON_METHOD},
     nodes::{NodeDrainRequest, NodeResumeRequest, NodeSetHorizonRequest},
     ops::{Operation as OpsOperation, OpsGetResponse, OpsListResponse, OpsStartResponse},
+    privacy::{
+        PRIVACY_PRIVATE_MODE_DISABLE_METHOD, PRIVACY_PRIVATE_MODE_ENABLE_METHOD,
+        PRIVACY_PRIVATE_MODE_STATUS_METHOD, PrivateModeDisableRequest, PrivateModeEnableRequest,
+        PrivateModeStateResponse, PrivateModeStatusRequest,
+    },
     replay::{
         REPLAY_APPROVE_OPERATION_METHOD, REPLAY_CANCEL_OPERATION_METHOD,
         REPLAY_CREATE_OPERATION_METHOD, REPLAY_EXECUTE_OPERATION_METHOD,
@@ -66,11 +71,10 @@ use sinex_primitives::rpc::{
         ReplaySubmitResponse,
     },
     sources::{
-        SOURCES_CONTINUITY_EXPLAIN_GAP_METHOD, SOURCES_CONTINUITY_GET_METHOD,
-        SOURCES_CONTINUITY_LIST_METHOD, SOURCES_CONTINUITY_METHOD, SOURCES_COVERAGE_METHOD,
-        SOURCES_LIST_METHOD, SOURCES_READINESS_GET_METHOD, SOURCES_READINESS_LIST_METHOD,
-        SOURCES_ANNOTATE_METHOD, SOURCES_ARCHIVE_METHOD, SOURCES_SHOW_METHOD,
-        SOURCES_STAGE_METHOD,
+        SOURCES_ANNOTATE_METHOD, SOURCES_ARCHIVE_METHOD, SOURCES_CONTINUITY_EXPLAIN_GAP_METHOD,
+        SOURCES_CONTINUITY_GET_METHOD, SOURCES_CONTINUITY_LIST_METHOD, SOURCES_CONTINUITY_METHOD,
+        SOURCES_COVERAGE_METHOD, SOURCES_LIST_METHOD, SOURCES_READINESS_GET_METHOD,
+        SOURCES_READINESS_LIST_METHOD, SOURCES_SHOW_METHOD, SOURCES_STAGE_METHOD,
         SourcesAnnotateRequest, SourcesAnnotateResponse, SourcesArchiveRequest,
         SourcesArchiveResponse, SourcesContinuityRequest, SourcesContinuityResponse,
         SourcesCoverageRequest, SourcesCoverageResponse, SourcesListRequest, SourcesListResponse,
@@ -566,8 +570,9 @@ impl GatewayClient {
             }),
             ..Default::default()
         };
-        let response: ListInstancesResponse =
-            self.call_typed(COORDINATION_LIST_INSTANCES_METHOD, &req).await?;
+        let response: ListInstancesResponse = self
+            .call_typed(COORDINATION_LIST_INSTANCES_METHOD, &req)
+            .await?;
         Ok(response.instances)
     }
 
@@ -657,8 +662,9 @@ impl GatewayClient {
             },
         };
 
-        let response: ReplayCreateResponse =
-            self.call_typed(REPLAY_CREATE_OPERATION_METHOD, &req).await?;
+        let response: ReplayCreateResponse = self
+            .call_typed(REPLAY_CREATE_OPERATION_METHOD, &req)
+            .await?;
         Ok(response.operation)
     }
 
@@ -710,8 +716,9 @@ impl GatewayClient {
         let req = ReplaySubmitRequest {
             operation_id: operation_id.to_string(),
         };
-        let response: ReplaySubmitResponse =
-            self.call_typed(REPLAY_SUBMIT_OPERATION_METHOD, &req).await?;
+        let response: ReplaySubmitResponse = self
+            .call_typed(REPLAY_SUBMIT_OPERATION_METHOD, &req)
+            .await?;
         Ok(response.operation)
     }
 
@@ -720,8 +727,9 @@ impl GatewayClient {
         let req = ReplayStatusRequest {
             operation_id: operation_id.to_string(),
         };
-        let response: ReplayStatusResponse =
-            self.call_typed(REPLAY_OPERATION_STATUS_METHOD, &req).await?;
+        let response: ReplayStatusResponse = self
+            .call_typed(REPLAY_OPERATION_STATUS_METHOD, &req)
+            .await?;
         Ok(response.operation)
     }
 
@@ -755,8 +763,9 @@ impl GatewayClient {
         let req = ReplayPreviewRequest {
             operation_id: operation_id.to_string(),
         };
-        let response: ReplayPreviewResponse =
-            self.call_typed(REPLAY_PREVIEW_OPERATION_METHOD, &req).await?;
+        let response: ReplayPreviewResponse = self
+            .call_typed(REPLAY_PREVIEW_OPERATION_METHOD, &req)
+            .await?;
         Ok((response.operation, response.preview))
     }
 
@@ -765,8 +774,9 @@ impl GatewayClient {
         let req = ReplayApproveRequest {
             operation_id: operation_id.to_string(),
         };
-        let response: ReplayApproveResponse =
-            self.call_typed(REPLAY_APPROVE_OPERATION_METHOD, &req).await?;
+        let response: ReplayApproveResponse = self
+            .call_typed(REPLAY_APPROVE_OPERATION_METHOD, &req)
+            .await?;
         Ok(response.operation)
     }
 
@@ -776,8 +786,9 @@ impl GatewayClient {
             operation_id: operation_id.to_string(),
             dry_run: false,
         };
-        let response: ReplayExecuteResponse =
-            self.call_typed(REPLAY_EXECUTE_OPERATION_METHOD, &req).await?;
+        let response: ReplayExecuteResponse = self
+            .call_typed(REPLAY_EXECUTE_OPERATION_METHOD, &req)
+            .await?;
         Ok(response.operation)
     }
 
@@ -791,8 +802,9 @@ impl GatewayClient {
             operation_id: operation_id.to_string(),
             reason: reason.map(String::from),
         };
-        let response: ReplayCancelResponse =
-            self.call_typed(REPLAY_CANCEL_OPERATION_METHOD, &req).await?;
+        let response: ReplayCancelResponse = self
+            .call_typed(REPLAY_CANCEL_OPERATION_METHOD, &req)
+            .await?;
         Ok(response.operation)
     }
 
@@ -941,7 +953,8 @@ impl GatewayClient {
         &self,
         request: SourcesReadinessGetRequest,
     ) -> Result<SourcesReadinessGetResponse> {
-        self.call_typed(SOURCES_READINESS_GET_METHOD, &request).await
+        self.call_typed(SOURCES_READINESS_GET_METHOD, &request)
+            .await
     }
 
     pub async fn sources_readiness_list(
@@ -972,8 +985,7 @@ impl GatewayClient {
         &self,
         request: DocumentsGetChunksRequest,
     ) -> Result<DocumentsGetChunksResponse> {
-        self.call_typed(DOCUMENTS_GET_CHUNKS_METHOD, &request)
-            .await
+        self.call_typed(DOCUMENTS_GET_CHUNKS_METHOD, &request).await
     }
 
     // ==================== Operations Log Commands ====================
@@ -1032,7 +1044,7 @@ impl GatewayClient {
             reason,
         };
         self.call_typed(sinex_primitives::rpc::ops::OPS_CANCEL_METHOD, &request)
-        .await?;
+            .await?;
         Ok(())
     }
 
@@ -1095,6 +1107,35 @@ impl GatewayClient {
     ) -> Result<LifecycleRestoreResponse> {
         let req = LifecycleRestoreRequest { event_ids, dry_run };
         self.call_typed(LIFECYCLE_RESTORE_METHOD, &req).await
+    }
+
+    // ==================== Privacy Commands ====================
+
+    pub async fn private_mode_status(&self) -> Result<PrivateModeStateResponse> {
+        let req = PrivateModeStatusRequest {};
+        self.call_typed(PRIVACY_PRIVATE_MODE_STATUS_METHOD, &req)
+            .await
+    }
+
+    pub async fn private_mode_enable(
+        &self,
+        actor: String,
+        reason_class: sinex_primitives::privacy::PrivateModeReasonClass,
+        source_classes: Vec<String>,
+    ) -> Result<PrivateModeStateResponse> {
+        let req = PrivateModeEnableRequest {
+            actor,
+            reason_class,
+            source_classes,
+        };
+        self.call_typed(PRIVACY_PRIVATE_MODE_ENABLE_METHOD, &req)
+            .await
+    }
+
+    pub async fn private_mode_disable(&self) -> Result<PrivateModeStateResponse> {
+        let req = PrivateModeDisableRequest {};
+        self.call_typed(PRIVACY_PRIVATE_MODE_DISABLE_METHOD, &req)
+            .await
     }
 
     // ==================== Two-Step Tombstone Commands (SEC-003) ====================
@@ -1164,8 +1205,7 @@ impl GatewayClient {
         limit: Option<i64>,
     ) -> Result<TombstoneListResponse> {
         let req = TombstoneListRequest { state, limit };
-        self.call_typed(LIFECYCLE_TOMBSTONE_LIST_METHOD, &req)
-            .await
+        self.call_typed(LIFECYCLE_TOMBSTONE_LIST_METHOD, &req).await
     }
 
     /// Get status of a specific tombstone operation
@@ -1183,8 +1223,9 @@ impl GatewayClient {
         limit: Option<i64>,
     ) -> Result<Vec<CurrentHealthEntry>> {
         let req = TelemetryCurrentHealthRequest { limit };
-        let response: TelemetryCurrentHealthResponse =
-            self.call_typed(TELEMETRY_CURRENT_HEALTH_METHOD, &req).await?;
+        let response: TelemetryCurrentHealthResponse = self
+            .call_typed(TELEMETRY_CURRENT_HEALTH_METHOD, &req)
+            .await?;
         Ok(response.entries)
     }
 
@@ -1244,8 +1285,9 @@ impl GatewayClient {
             time_range: TelemetryTimeRange { from, to },
             limit,
         };
-        let response: TelemetryFileActivityResponse =
-            self.call_typed(TELEMETRY_FILE_ACTIVITY_METHOD, &req).await?;
+        let response: TelemetryFileActivityResponse = self
+            .call_typed(TELEMETRY_FILE_ACTIVITY_METHOD, &req)
+            .await?;
         Ok(response.entries)
     }
 
@@ -1261,8 +1303,9 @@ impl GatewayClient {
         limit: Option<i64>,
     ) -> Result<Vec<RecentActivityEntry>> {
         let req = TelemetryRecentActivityRequest { limit };
-        let response: TelemetryRecentActivityResponse =
-            self.call_typed(TELEMETRY_RECENT_ACTIVITY_METHOD, &req).await?;
+        let response: TelemetryRecentActivityResponse = self
+            .call_typed(TELEMETRY_RECENT_ACTIVITY_METHOD, &req)
+            .await?;
         Ok(response.entries)
     }
 
@@ -1293,8 +1336,9 @@ impl GatewayClient {
             time_range: TelemetryTimeRange { from, to },
             limit,
         };
-        let response: TelemetryGatewayStatsResponse =
-            self.call_typed(TELEMETRY_GATEWAY_STATS_METHOD, &req).await?;
+        let response: TelemetryGatewayStatsResponse = self
+            .call_typed(TELEMETRY_GATEWAY_STATS_METHOD, &req)
+            .await?;
         Ok(response.buckets)
     }
 
@@ -1325,8 +1369,9 @@ impl GatewayClient {
             time_range: TelemetryTimeRange { from, to },
             limit,
         };
-        let response: TelemetryAssemblyStatsResponse =
-            self.call_typed(TELEMETRY_ASSEMBLY_STATS_METHOD, &req).await?;
+        let response: TelemetryAssemblyStatsResponse = self
+            .call_typed(TELEMETRY_ASSEMBLY_STATS_METHOD, &req)
+            .await?;
         Ok(response.buckets)
     }
 
@@ -1357,8 +1402,9 @@ impl GatewayClient {
             time_range: TelemetryTimeRange { from, to },
             limit,
         };
-        let response: TelemetryMetricCountersResponse =
-            self.call_typed(TELEMETRY_METRIC_COUNTERS_METHOD, &req).await?;
+        let response: TelemetryMetricCountersResponse = self
+            .call_typed(TELEMETRY_METRIC_COUNTERS_METHOD, &req)
+            .await?;
         Ok(response.buckets)
     }
 

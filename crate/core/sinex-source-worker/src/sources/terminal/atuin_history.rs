@@ -210,21 +210,23 @@ impl MaterialParser for AtuinHistoryParser {
         let payload_json = serde_json::to_value(&payload)
             .map_err(|e| ParserError::Parse(format!("payload serialization failed: {e}")))?;
 
-        Ok(vec![ParsedEventIntent::builder()
-            .source_unit_id(ctx.source_unit_id.clone())
-            .parser_id(ParserId::from_static("atuin-history"))
-            .parser_version("1.0.0")
-            .event_type(EventType::from_static("command.executed"))
-            .event_source(EventSource::from_static("shell.atuin"))
-            .payload(payload_json)
-            .ts_orig(ts_orig)
-            .timing(TimingEvidence::Intrinsic {
-                field: "timestamp".into(),
-                confidence: TimingConfidence::Intrinsic,
-            })
-            .anchor(record.anchor)
-            .privacy_context(ProcessingContext::Command)
-            .build()])
+        Ok(vec![
+            ParsedEventIntent::builder()
+                .source_unit_id(ctx.source_unit_id.clone())
+                .parser_id(ParserId::from_static("atuin-history"))
+                .parser_version("1.0.0")
+                .event_type(EventType::from_static("command.executed"))
+                .event_source(EventSource::from_static("shell.atuin"))
+                .payload(payload_json)
+                .ts_orig(ts_orig)
+                .timing(TimingEvidence::Intrinsic {
+                    field: "timestamp".into(),
+                    confidence: TimingConfidence::Intrinsic,
+                })
+                .anchor(record.anchor)
+                .privacy_context(ProcessingContext::Command)
+                .build(),
+        ])
     }
 
     fn baseline_adapter_config() -> serde_json::Value {

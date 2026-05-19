@@ -96,13 +96,14 @@ async fn coordination_list_instances_marks_current_leader(ctx: TestContext) -> T
     kv_client.register_instance(&follower).await?;
     assert!(kv_client.acquire_leadership(&leader.instance_id).await?);
 
-    let listed = handle_coordination_list_instances(&kv_client, ListInstancesRequest::default()).await?;
+    let listed =
+        handle_coordination_list_instances(&kv_client, ListInstancesRequest::default()).await?;
     let instances = listed.instances;
     assert_eq!(instances.len(), 2);
     assert!(
-        instances.iter().any(|instance| {
-            instance.instance_id.as_str() == "leader-a" && instance.is_leader
-        }),
+        instances
+            .iter()
+            .any(|instance| { instance.instance_id.as_str() == "leader-a" && instance.is_leader }),
         "leader instance should be marked in list output"
     );
     assert!(
@@ -155,7 +156,8 @@ async fn coordination_list_instances_without_leader_marks_all_non_leader(
         })
         .await?;
 
-    let listed = handle_coordination_list_instances(&kv_client, ListInstancesRequest::default()).await?;
+    let listed =
+        handle_coordination_list_instances(&kv_client, ListInstancesRequest::default()).await?;
     let instances = listed.instances;
 
     assert_eq!(instances.len(), 2);
