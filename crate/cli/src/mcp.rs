@@ -21,6 +21,10 @@ use sinex_primitives::rpc::methods;
 use sinex_primitives::rpc::nodes::{NodesHealthResponse, NodesListActiveResponse};
 use sinex_primitives::rpc::privacy::PrivateModeStateResponse;
 use sinex_primitives::rpc::replay::ReplayState;
+use sinex_primitives::rpc::semantic::{
+    SemanticEpochListRequest, SemanticLaneDiffsListRequest, SemanticLaneListRequest,
+    SemanticLaneOutputsListRequest,
+};
 use sinex_primitives::rpc::sources::{SourcesReadinessGetRequest, SourcesReadinessListRequest};
 use sinex_primitives::rpc::system::SystemHealthResponse;
 use sinex_primitives::rpc::tasks::{
@@ -33,6 +37,7 @@ use sinex_primitives::sources::continuity::{
 };
 use sinex_primitives::task_domain::TaskStatus;
 use sinex_primitives::temporal::Timestamp;
+use sinex_primitives::SemanticLaneStatus;
 use std::io::{BufRead, Write};
 
 pub const MCP_PROTOCOL_VERSION: &str = "2024-11-05";
@@ -196,6 +201,27 @@ struct DocumentsGetArgs {
 }
 
 #[derive(Debug, Deserialize, Serialize)]
+struct SemanticEpochsArgs {
+    #[serde(default)]
+    limit: Option<i64>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+struct SemanticLanesArgs {
+    #[serde(default)]
+    status: Option<SemanticLaneStatus>,
+    #[serde(default)]
+    limit: Option<i64>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+struct SemanticLaneRecordsArgs {
+    lane_id: Uuid,
+    #[serde(default)]
+    limit: Option<i64>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
 struct StatusWindowArgs {
     #[serde(default = "default_stale_after_secs")]
     stale_after_secs: u64,
@@ -322,6 +348,34 @@ pub fn tool_catalog() -> Vec<McpCatalogEntry> {
             kind: McpSurfaceKind::Tool,
             description: "Read-only document metadata lookup with side data redacted.",
             backing_rpc_methods: &[methods::DOCUMENTS_GET],
+            read_only: true,
+        },
+        McpCatalogEntry {
+            name: "sinex.semantic_epochs",
+            kind: McpSurfaceKind::Tool,
+            description: "Read-only semantic epoch registry listing.",
+            backing_rpc_methods: &[methods::SEMANTIC_EPOCHS_LIST],
+            read_only: true,
+        },
+        McpCatalogEntry {
+            name: "sinex.semantic_lanes",
+            kind: McpSurfaceKind::Tool,
+            description: "Read-only semantic lane registry listing.",
+            backing_rpc_methods: &[methods::SEMANTIC_LANES_LIST],
+            read_only: true,
+        },
+        McpCatalogEntry {
+            name: "sinex.semantic_lane_outputs",
+            kind: McpSurfaceKind::Tool,
+            description: "Read-only semantic lane output listing.",
+            backing_rpc_methods: &[methods::SEMANTIC_LANE_OUTPUTS_LIST],
+            read_only: true,
+        },
+        McpCatalogEntry {
+            name: "sinex.semantic_lane_diffs",
+            kind: McpSurfaceKind::Tool,
+            description: "Read-only semantic lane diff listing.",
+            backing_rpc_methods: &[methods::SEMANTIC_LANE_DIFFS_LIST],
             read_only: true,
         },
         McpCatalogEntry {
@@ -592,6 +646,49 @@ pub fn tools() -> Vec<McpTool> {
             }),
         },
         McpTool {
+            name: "sinex.semantic_epochs",
+            description: "Read-only semantic epoch registry listing.",
+            input_schema: limit_schema(100),
+        },
+        McpTool {
+            name: "sinex.semantic_lanes",
+            description: "Read-only semantic lane registry listing.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "status": {
+                        "type": "string",
+                        "enum": [
+                            "planned",
+                            "running",
+                            "completed",
+                            "compared",
+                            "promoted",
+                            "discarded",
+                            "expired"
+                        ]
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 1000,
+                        "default": 100
+                    }
+                },
+                "additionalProperties": false
+            }),
+        },
+        McpTool {
+            name: "sinex.semantic_lane_outputs",
+            description: "Read-only semantic lane output listing.",
+            input_schema: lane_records_schema(),
+        },
+        McpTool {
+            name: "sinex.semantic_lane_diffs",
+            description: "Read-only semantic lane diff listing.",
+            input_schema: lane_records_schema(),
+        },
+        McpTool {
             name: "sinex.automata_status",
             description: "Read-only derived-node automata liveness, checkpoint, and lag status.",
             input_schema: status_window_schema(),
@@ -628,6 +725,38 @@ fn empty_object_schema() -> Value {
     json!({
         "type": "object",
         "properties": {},
+        "additionalProperties": false
+    })
+}
+
+fn limit_schema(default_limit: i64) -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "limit": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 1000,
+                "default": default_limit
+            }
+        },
+        "additionalProperties": false
+    })
+}
+
+fn lane_records_schema() -> Value {
+    json!({
+        "type": "object",
+        "required": ["lane_id"],
+        "properties": {
+            "lane_id": { "type": "string", "format": "uuid" },
+            "limit": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 1000,
+                "default": 100
+            }
+        },
         "additionalProperties": false
     })
 }
@@ -771,6 +900,10 @@ pub async fn call_tool(client: &GatewayClient, name: &str, arguments: Value) -> 
         "sinex.replay_status" => replay_status(client, arguments).await,
         "sinex.documents_search" => documents_search(client, arguments).await,
         "sinex.documents_get" => documents_get(client, arguments).await,
+        "sinex.semantic_epochs" => semantic_epochs(client, arguments).await,
+        "sinex.semantic_lanes" => semantic_lanes(client, arguments).await,
+        "sinex.semantic_lane_outputs" => semantic_lane_outputs(client, arguments).await,
+        "sinex.semantic_lane_diffs" => semantic_lane_diffs(client, arguments).await,
         "sinex.automata_status" => automata_status(client, arguments).await,
         "sinex.ingestors_status" => ingestors_status(client, arguments).await,
         "sinex.nodes_health" => nodes_health(client, arguments).await,
@@ -985,6 +1118,65 @@ async fn documents_get(client: &GatewayClient, arguments: Value) -> Result<Value
     redact_document_side_data(&mut response);
     Ok(envelope(
         "sinex.documents_get",
+        json!(args),
+        json!({ "result": response }),
+    ))
+}
+
+async fn semantic_epochs(client: &GatewayClient, arguments: Value) -> Result<Value> {
+    let args: SemanticEpochsArgs = serde_json::from_value(arguments)?;
+    let response = client
+        .semantic_epochs_list(SemanticEpochListRequest {
+            limit: args.limit.unwrap_or(100),
+        })
+        .await?;
+    Ok(envelope(
+        "sinex.semantic_epochs",
+        json!(args),
+        json!({ "result": response }),
+    ))
+}
+
+async fn semantic_lanes(client: &GatewayClient, arguments: Value) -> Result<Value> {
+    let args: SemanticLanesArgs = serde_json::from_value(arguments)?;
+    let response = client
+        .semantic_lanes_list(SemanticLaneListRequest {
+            status: args.status,
+            limit: args.limit.unwrap_or(100),
+        })
+        .await?;
+    Ok(envelope(
+        "sinex.semantic_lanes",
+        json!(args),
+        json!({ "result": response }),
+    ))
+}
+
+async fn semantic_lane_outputs(client: &GatewayClient, arguments: Value) -> Result<Value> {
+    let args: SemanticLaneRecordsArgs = serde_json::from_value(arguments)?;
+    let response = client
+        .semantic_lane_outputs_list(SemanticLaneOutputsListRequest {
+            lane_id: args.lane_id,
+            limit: args.limit.unwrap_or(100),
+        })
+        .await?;
+    Ok(envelope(
+        "sinex.semantic_lane_outputs",
+        json!(args),
+        json!({ "result": response }),
+    ))
+}
+
+async fn semantic_lane_diffs(client: &GatewayClient, arguments: Value) -> Result<Value> {
+    let args: SemanticLaneRecordsArgs = serde_json::from_value(arguments)?;
+    let response = client
+        .semantic_lane_diffs_list(SemanticLaneDiffsListRequest {
+            lane_id: args.lane_id,
+            limit: args.limit.unwrap_or(100),
+        })
+        .await?;
+    Ok(envelope(
+        "sinex.semantic_lane_diffs",
         json!(args),
         json!({ "result": response }),
     ))
