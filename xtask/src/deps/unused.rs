@@ -164,6 +164,7 @@ impl UnusedDetector {
             if line.is_empty()
                 || line.starts_with("Analyzing")
                 || line.starts_with("cargo-machete found")
+                || line.starts_with("cargo-machete didn't find any unused dependencies")
                 || line.starts_with("Done")
             {
                 continue;
@@ -393,6 +394,17 @@ Done!
         assert_eq!(deps, vec!["serde", "tokio-test"]);
         assert!(!deps.contains(&"If you believe cargo-machete"));
         assert!(!deps.contains(&"ignored"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_parse_machete_text_output_accepts_clean_success_message() -> TestResult<()> {
+        let report = UnusedDetector::parse_machete_text_output(
+            "cargo-machete didn't find any unused dependencies in this directory. Good job!\n",
+        )?;
+
+        assert!(report.unused.is_empty());
+        assert_eq!(report.tool, "cargo-machete");
         Ok(())
     }
 

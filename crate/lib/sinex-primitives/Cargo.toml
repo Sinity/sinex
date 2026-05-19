@@ -50,7 +50,6 @@ sinex-macros = { path = "../sinex-macros" }
 
 # Domain dependencies
 uuid = { workspace = true, features = ["serde", "v4", "v7"] }
-rand = { workspace = true }
 bon = { workspace = true }
 notify = { workspace = true }
 tokio-retry = { workspace = true }
