@@ -601,7 +601,7 @@ mod coverage_matrix {
         BinaryPath,
         ObligationHarness,
         MonitorHarness,
-        StructuralOnly,
+        NoopHarness,
         Blocked,
     }
 
@@ -681,8 +681,8 @@ mod coverage_matrix {
         ),
         entry(
             "noop",
-            SmokeCoverage::StructuralOnly,
-            "registry_dispatch_test.rs",
+            SmokeCoverage::NoopHarness,
+            "noop.rs noop_source_unit_reports_zero_work",
         ),
         entry(
             "raindrop-bookmarks",
@@ -878,6 +878,19 @@ mod coverage_matrix {
                 assert!(
                     find_parser_factory(&id).is_none(),
                     "{} monitor smoke entry must remain parserless",
+                    entry.source_unit_id
+                );
+            }
+
+            if matches!(entry.coverage, SmokeCoverage::NoopHarness) {
+                assert!(
+                    find_parser_factory(&id).is_none(),
+                    "{} noop smoke entry must remain parserless",
+                    entry.source_unit_id
+                );
+                assert!(
+                    descriptor.event_types.is_empty(),
+                    "{} noop smoke entry must remain eventless",
                     entry.source_unit_id
                 );
             }
