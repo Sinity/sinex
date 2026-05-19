@@ -228,6 +228,50 @@ pub const SOURCES_ARCHIVE_METHOD: RpcMethod<SourcesArchiveRequest, SourcesArchiv
         RpcMutability::Mutating,
     );
 
+pub const SOURCES_PRESETS_LIST_METHOD: RpcMethod<
+    SourcesPresetsListRequest,
+    SourcesPresetsListResponse,
+> = RpcMethod::new(
+    methods::SOURCES_PRESETS_LIST,
+    RpcRole::ReadOnly,
+    RpcDomain::Sources,
+    RpcStability::Experimental,
+    RpcMutability::ReadOnly,
+);
+
+pub const SOURCES_BINDINGS_LIST_METHOD: RpcMethod<
+    SourcesBindingsListRequest,
+    SourcesBindingsListResponse,
+> = RpcMethod::new(
+    methods::SOURCES_BINDINGS_LIST,
+    RpcRole::ReadOnly,
+    RpcDomain::Sources,
+    RpcStability::Experimental,
+    RpcMutability::ReadOnly,
+);
+
+pub const SOURCES_BINDINGS_CREATE_METHOD: RpcMethod<
+    SourcesBindingsCreateRequest,
+    SourcesBindingsCreateResponse,
+> = RpcMethod::new(
+    methods::SOURCES_BINDINGS_CREATE,
+    RpcRole::Write,
+    RpcDomain::Sources,
+    RpcStability::Experimental,
+    RpcMutability::Mutating,
+);
+
+pub const SOURCES_BINDINGS_RESOLVE_METHOD: RpcMethod<
+    SourcesBindingsResolveRequest,
+    SourcesBindingsResolveResponse,
+> = RpcMethod::new(
+    methods::SOURCES_BINDINGS_RESOLVE,
+    RpcRole::Write,
+    RpcDomain::Sources,
+    RpcStability::Experimental,
+    RpcMutability::Mutating,
+);
+
 /// Versioned source-material metadata contract stored under
 /// `metadata.source_material_contract`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -524,6 +568,10 @@ pub struct SourcePresetDescriptor {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub resolver_preset: Option<String>,
 }
+
+/// Request: `sources.presets.list`
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct SourcesPresetsListRequest {}
 
 /// Response: `sources.presets.list`
 #[derive(Debug, Clone, Serialize, Deserialize)]
