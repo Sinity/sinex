@@ -5,14 +5,17 @@ use sinex_db::DbPoolExt;
 use sinex_db::repositories::SourceMaterial as DbSourceMaterial;
 use sinex_primitives::events::EventPayload;
 use sinex_primitives::events::SourceMaterial;
-use sinex_primitives::events::payloads::{TaskCompletedPayload, TaskCreatedPayload};
+use sinex_primitives::events::payloads::{
+    TaskCancelledPayload, TaskCompletedPayload, TaskCreatedPayload,
+};
 use sinex_primitives::rpc::tasks::{
-    TaskCompleteRequest, TaskCompleteResponse, TaskCreateRequest, TaskCreateResponse,
-    TaskEventResponse, TaskListRequest, TaskListResponse, TaskStateGetRequest, TaskStateResponse,
+    TaskCancelRequest, TaskCancelResponse, TaskCompleteRequest, TaskCompleteResponse,
+    TaskCreateRequest, TaskCreateResponse, TaskEventResponse, TaskListRequest, TaskListResponse,
+    TaskStateGetRequest, TaskStateResponse,
 };
 use sinex_primitives::task_domain::{
-    TaskCompletedInput, TaskCreatedInput, TaskLifecycleInput, TaskSourceSystem, TaskState,
-    reduce_task_event,
+    TaskCancelledInput, TaskCompletedInput, TaskCreatedInput, TaskLifecycleInput, TaskSourceSystem,
+    TaskState, reduce_task_event,
 };
 use sinex_primitives::{Id, Result, SinexError, Timestamp, Uuid};
 use sqlx::PgPool;
@@ -146,6 +149,69 @@ pub async fn handle_tasks_complete(
     })
 }
 
+pub async fn handle_tasks_cancel(
+    pool: &PgPool,
+    req: TaskCancelRequest,
+    auth: &RpcAuthContext,
+) -> Result<TaskCancelResponse> {
+    let prior_state = rebuild_task_state(pool, req.task_id)
+        .await?
+        .ok_or_else(|| {
+            SinexError::not_found("tasks.cancel: task not found")
+                .with_context("task_id", req.task_id.to_string())
+        })?;
+    if prior_state.status.is_terminal() {
+        return Err(
+            SinexError::validation("tasks.cancel: task is already terminal")
+                .with_context("task_id", req.task_id.to_string())
+                .with_context("status", format!("{:?}", prior_state.status)),
+        );
+    }
+
+    let cancelled_at = req.cancelled_at.unwrap_or_else(Timestamp::now);
+    let material_id = register_task_material(
+        pool,
+        auth,
+        req.task_id,
+        "cancelled",
+        &prior_state.title,
+        req.reason.as_deref(),
+    )
+    .await?;
+    let payload = TaskCancelledPayload {
+        task_id: req.task_id,
+        cancelled_at,
+        actor: auth.actor_id().to_string(),
+        reason: req.reason,
+        external_version: req.external_version,
+    };
+    let event = payload
+        .clone()
+        .from_material(Id::<SourceMaterial>::from_uuid(material_id))
+        .at_time(cancelled_at)
+        .build()?;
+    let inserted = pool.events().insert(event).await?;
+    let _inserted_id = inserted.id.ok_or_else(|| {
+        SinexError::invalid_state("tasks.cancel: persisted task.cancelled event missing id")
+    })?;
+    let state = rebuild_task_state(pool, payload.task_id)
+        .await?
+        .ok_or_else(|| {
+            SinexError::invalid_state("tasks.cancel: inserted task.cancelled event not queryable")
+                .with_context("task_id", payload.task_id.to_string())
+        })?;
+
+    Ok(TaskEventResponse {
+        payload,
+        event: serde_json::to_value(inserted).map_err(|error| {
+            SinexError::serialization("tasks.cancel: failed to serialize event")
+                .with_std_error(&error)
+        })?,
+        material_id: Id::<SourceMaterial>::from_uuid(material_id),
+        state,
+    })
+}
+
 pub async fn handle_tasks_state_get(
     pool: &PgPool,
     req: TaskStateGetRequest,
@@ -250,7 +316,7 @@ async fn query_task_event_rows(pool: &PgPool, task_id: Uuid) -> Result<Vec<TaskE
             ts_orig as "ts_orig!: Timestamp"
         FROM core.events
         WHERE source = 'task'
-          AND event_type IN ('task.created', 'task.completed')
+          AND event_type IN ('task.created', 'task.completed', 'task.cancelled')
           AND payload->>'task_id' = $1
         ORDER BY ts_orig ASC, id ASC
         "#,
@@ -285,7 +351,7 @@ async fn query_all_task_event_rows(pool: &PgPool) -> Result<Vec<TaskEventRow>> {
             ts_orig as "ts_orig!: Timestamp"
         FROM core.events
         WHERE source = 'task'
-          AND event_type IN ('task.created', 'task.completed')
+          AND event_type IN ('task.created', 'task.completed', 'task.cancelled')
         ORDER BY payload->>'task_id' ASC, ts_orig ASC, id ASC
         "#
     )
@@ -326,7 +392,7 @@ fn reduce_task_rows_by_id(rows: Vec<TaskEventRow>) -> Result<Vec<TaskState>> {
     grouped
         .into_values()
         .map(reduce_task_rows)
-        .filter_map(|result| result.transpose())
+        .filter_map(std::result::Result::transpose)
         .collect()
 }
 
@@ -369,6 +435,15 @@ fn reduce_task_rows(rows: Vec<TaskEventRow>) -> Result<Option<TaskState>> {
                             .with_std_error(&error)
                     })?;
                 TaskLifecycleInput::Completed(TaskCompletedInput::from(payload))
+            }
+            "task.cancelled" => {
+                let payload: TaskCancelledPayload =
+                    serde_json::from_value(row.payload).map_err(|error| {
+                        SinexError::serialization("invalid task.cancelled payload")
+                            .with_context("event_id", row.id.to_string())
+                            .with_std_error(&error)
+                    })?;
+                TaskLifecycleInput::Cancelled(TaskCancelledInput::from(payload))
             }
             other => {
                 return Err(SinexError::invalid_state("unexpected task event type")

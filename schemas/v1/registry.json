@@ -647,6 +647,13 @@
     },
     {
       "source": "task",
+      "event_type": "task.cancelled",
+      "version": "1.0.0",
+      "path": "task/task.cancelled.json",
+      "content_hash": "327d4fdae3fc3312c43be891a20b4ba4997be97fc0ff5b7fc48704501dcd9235"
+    },
+    {
+      "source": "task",
       "event_type": "task.completed",
       "version": "1.0.0",
       "path": "task/task.completed.json",

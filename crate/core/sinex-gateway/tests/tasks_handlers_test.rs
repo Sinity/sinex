@@ -1,11 +1,12 @@
 use sinex_db::{DbPoolExt, SourceMaterialRecord};
 use sinex_gateway::handlers::{
-    handle_tasks_complete, handle_tasks_create, handle_tasks_list, handle_tasks_state_get,
+    handle_tasks_cancel, handle_tasks_complete, handle_tasks_create, handle_tasks_list,
+    handle_tasks_state_get,
 };
 use sinex_gateway::rpc_server::RpcAuthContext;
 use sinex_primitives::Id;
 use sinex_primitives::rpc::tasks::{
-    TaskCompleteRequest, TaskCreateRequest, TaskListRequest, TaskStateGetRequest,
+    TaskCancelRequest, TaskCompleteRequest, TaskCreateRequest, TaskListRequest, TaskStateGetRequest,
 };
 use sinex_primitives::task_domain::{TaskState, TaskStatus};
 use xtask::sandbox::prelude::*;
@@ -118,6 +119,61 @@ async fn tasks_complete_rebuilds_completed_state(ctx: TestContext) -> TestResult
 }
 
 #[sinex_test]
+async fn tasks_cancel_rebuilds_cancelled_state(ctx: TestContext) -> TestResult<()> {
+    let auth = RpcAuthContext::system();
+    let created = handle_tasks_create(
+        ctx.pool(),
+        TaskCreateRequest {
+            task_id: None,
+            title: "Cancel handler fixture".to_string(),
+            body: None,
+            external_refs: Vec::new(),
+            project_id: None,
+            tags: Vec::new(),
+            due_at: None,
+            priority: None,
+        },
+        &auth,
+    )
+    .await?;
+    let task_id = created.state.task_id;
+
+    let cancelled = handle_tasks_cancel(
+        ctx.pool(),
+        TaskCancelRequest {
+            task_id,
+            cancelled_at: None,
+            reason: Some("fixture obsolete".to_string()),
+            external_version: None,
+        },
+        &auth,
+    )
+    .await?;
+    let state: TaskState = cancelled.state.clone();
+    assert_eq!(state.status, TaskStatus::Cancelled);
+    assert_eq!(state.title, "Cancel handler fixture");
+
+    let rebuilt = handle_tasks_state_get(ctx.pool(), TaskStateGetRequest { task_id }).await?;
+    assert_eq!(rebuilt.event_count, 2);
+    let rebuilt_state: TaskState = rebuilt
+        .state
+        .ok_or_else(|| color_eyre::eyre::eyre!("rebuilt task response missing state"))?;
+    assert_eq!(rebuilt_state.status, TaskStatus::Cancelled);
+    assert_eq!(rebuilt_state.state_hash, state.state_hash);
+
+    let material = ctx
+        .pool()
+        .source_materials()
+        .get_by_id(Id::<SourceMaterialRecord>::from_uuid(
+            cancelled.material_id.to_uuid(),
+        ))
+        .await?
+        .ok_or_else(|| color_eyre::eyre::eyre!("cancellation source material not persisted"))?;
+    assert_eq!(material.metadata["task_transition"], "cancelled");
+    Ok(())
+}
+
+#[sinex_test]
 async fn tasks_list_rebuilds_and_filters_current_states(ctx: TestContext) -> TestResult<()> {
     let auth = RpcAuthContext::system();
     let open = handle_tasks_create(
@@ -161,10 +217,36 @@ async fn tasks_list_rebuilds_and_filters_current_states(ctx: TestContext) -> Tes
         &auth,
     )
     .await?;
+    let cancelled = handle_tasks_create(
+        ctx.pool(),
+        TaskCreateRequest {
+            task_id: None,
+            title: "Cancelled list fixture".to_string(),
+            body: None,
+            external_refs: Vec::new(),
+            project_id: Some("sinex".to_string()),
+            tags: vec!["work".to_string(), "cancelled".to_string()],
+            due_at: None,
+            priority: None,
+        },
+        &auth,
+    )
+    .await?;
+    handle_tasks_cancel(
+        ctx.pool(),
+        TaskCancelRequest {
+            task_id: cancelled.state.task_id,
+            cancelled_at: None,
+            reason: Some("fixture cancelled".to_string()),
+            external_version: None,
+        },
+        &auth,
+    )
+    .await?;
 
     let all = handle_tasks_list(ctx.pool(), TaskListRequest::default()).await?;
-    assert_eq!(all.total, 2);
-    assert_eq!(all.event_count, 3);
+    assert_eq!(all.total, 3);
+    assert_eq!(all.event_count, 5);
 
     let open_only = handle_tasks_list(
         ctx.pool(),
@@ -188,7 +270,7 @@ async fn tasks_list_rebuilds_and_filters_current_states(ctx: TestContext) -> Tes
         },
     )
     .await?;
-    assert_eq!(limited.total, 2);
+    assert_eq!(limited.total, 3);
     assert_eq!(limited.tasks.len(), 1);
 
     Ok(())

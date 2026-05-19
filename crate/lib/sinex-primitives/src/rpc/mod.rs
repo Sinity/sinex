@@ -256,6 +256,7 @@ pub fn method_catalog() -> Vec<RpcMethodInfo> {
         system::SYSTEM_HEALTH_METHOD.info(),
         system::SYSTEM_PING_METHOD.info(),
         system::SYSTEM_VERSION_METHOD.info(),
+        tasks::TASKS_CANCEL_METHOD.info(),
         tasks::TASKS_COMPLETE_METHOD.info(),
         tasks::TASKS_CREATE_METHOD.info(),
         tasks::TASKS_LIST_METHOD.info(),

@@ -297,6 +297,10 @@ pub fn build() -> HashMap<&'static str, FormatCapability> {
         FormatCapability::single_shot(TABLE_JSON_YAML),
     );
     m.insert(
+        "tasks cancel",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
+    m.insert(
         "tasks complete",
         FormatCapability::single_shot(TABLE_JSON_YAML),
     );
@@ -713,6 +717,7 @@ fn effect_for_path(path: &str, capability: &FormatCapability) -> CommandEffect {
         "sources stage",
         "state restore",
         "state snapshot",
+        "tasks cancel",
         "tasks complete",
     ];
 
@@ -761,6 +766,7 @@ fn mutation_guards_for_path(path: &str) -> &'static [CommandMutationGuard] {
         | "sources bindings create"
         | "sources bindings update"
         | "sources stage"
+        | "tasks cancel"
         | "tasks complete" => &[RpcAuth],
         _ => &[],
     }
@@ -849,6 +855,7 @@ fn backing_rpc_methods_for_path(path: &str) -> &'static [&'static str] {
             methods::SOURCES_READINESS_GET,
         ],
         "declare task" => &[methods::TASKS_CREATE],
+        "tasks cancel" => &[methods::TASKS_CANCEL],
         "tasks complete" => &[methods::TASKS_COMPLETE],
         "tasks list" => &[methods::TASKS_LIST],
         "tasks state" => &[methods::TASKS_STATE_GET],
