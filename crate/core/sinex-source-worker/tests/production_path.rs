@@ -243,6 +243,314 @@ async fn _run_obligation(
 }
 
 // ---------------------------------------------------------------------------
+// Coverage matrix
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod coverage_matrix {
+    use std::collections::{BTreeMap, BTreeSet};
+
+    use sinex_primitives::parser::SourceUnitId;
+    use sinex_source_worker::dispatch::find_parser_factory;
+    use sinex_source_worker::node_factory::registered_node_factory_ids;
+    use sinex_source_worker::registry::SourceUnitRegistry;
+    use xtask::sandbox::prelude::*;
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    enum SmokeCoverage {
+        BinaryPath,
+        ObligationHarness,
+        ParserFixtureOnly,
+        StructuralOnly,
+        Blocked,
+    }
+
+    #[derive(Debug, Clone, Copy)]
+    struct SmokeMatrixEntry {
+        source_unit_id: &'static str,
+        coverage: SmokeCoverage,
+        evidence: &'static str,
+        blocker_issue: Option<&'static str>,
+    }
+
+    const SMOKE_MATRIX: &[SmokeMatrixEntry] = &[
+        entry(
+            "ai-session-chatgpt",
+            SmokeCoverage::ParserFixtureOnly,
+            "ai_session_parser_test.rs",
+        ),
+        entry(
+            "ai-session-claude",
+            SmokeCoverage::ParserFixtureOnly,
+            "ai_session_parser_test.rs",
+        ),
+        entry(
+            "browser.history",
+            SmokeCoverage::ObligationHarness,
+            "production_path/browser.rs",
+        ),
+        entry(
+            "desktop.activitywatch",
+            SmokeCoverage::ObligationHarness,
+            "production_path/desktop.rs",
+        ),
+        entry(
+            "desktop.clipboard",
+            SmokeCoverage::ObligationHarness,
+            "production_path/desktop.rs",
+        ),
+        blocked(
+            "desktop.window-manager",
+            "production_path/desktop.rs ignored Hyprland fixture",
+            "#1234",
+        ),
+        entry(
+            "docs-library-index",
+            SmokeCoverage::StructuralOnly,
+            "production_path/document.rs; DirectoryEntry anchor required",
+        ),
+        entry(
+            "document.staging",
+            SmokeCoverage::ObligationHarness,
+            "production_path/document.rs",
+        ),
+        entry(
+            "facebook-messenger-thread",
+            SmokeCoverage::ParserFixtureOnly,
+            "messaging_parser_test.rs",
+        ),
+        blocked(
+            "fs",
+            "production_path/fs.rs; native fs adapter fold pending",
+            "#1224",
+        ),
+        entry(
+            "git-commit-history",
+            SmokeCoverage::ParserFixtureOnly,
+            "sources/git.rs parser tests",
+        ),
+        entry(
+            "hledger-journal",
+            SmokeCoverage::ParserFixtureOnly,
+            "finance_parser_test.rs",
+        ),
+        entry(
+            "knowledgebase-vault",
+            SmokeCoverage::ParserFixtureOnly,
+            "sources/knowledgebase.rs parser tests",
+        ),
+        entry(
+            "noop",
+            SmokeCoverage::StructuralOnly,
+            "registry_dispatch_test.rs",
+        ),
+        entry(
+            "raindrop-bookmarks",
+            SmokeCoverage::ParserFixtureOnly,
+            "bookmark_parser_test.rs",
+        ),
+        entry(
+            "reddit-gdpr-comments",
+            SmokeCoverage::ParserFixtureOnly,
+            "sources/social.rs parser tests",
+        ),
+        entry(
+            "reddit-gdpr-posts",
+            SmokeCoverage::ParserFixtureOnly,
+            "sources/social.rs parser tests",
+        ),
+        entry(
+            "sleep-merged-summary",
+            SmokeCoverage::ParserFixtureOnly,
+            "sources/health.rs parser tests",
+        ),
+        entry(
+            "spotify-extended-history",
+            SmokeCoverage::ParserFixtureOnly,
+            "music_parser_test.rs",
+        ),
+        entry(
+            "system.dbus",
+            SmokeCoverage::ObligationHarness,
+            "production_path/system.rs",
+        ),
+        entry(
+            "system.journald",
+            SmokeCoverage::ObligationHarness,
+            "production_path/system.rs",
+        ),
+        entry(
+            "system.monitor",
+            SmokeCoverage::StructuralOnly,
+            "production_path/system.rs",
+        ),
+        entry(
+            "system.systemd",
+            SmokeCoverage::ObligationHarness,
+            "production_path/system.rs",
+        ),
+        entry(
+            "system.udev",
+            SmokeCoverage::ObligationHarness,
+            "production_path/system.rs",
+        ),
+        entry(
+            "terminal.atuin-history",
+            SmokeCoverage::ObligationHarness,
+            "production_path/terminal.rs",
+        ),
+        entry(
+            "terminal.bash-history",
+            SmokeCoverage::ObligationHarness,
+            "production_path/terminal.rs",
+        ),
+        entry(
+            "terminal.fish-history",
+            SmokeCoverage::ObligationHarness,
+            "production_path/terminal.rs",
+        ),
+        entry(
+            "terminal.monitor",
+            SmokeCoverage::StructuralOnly,
+            "sources/terminal/monitor.rs tests",
+        ),
+        entry(
+            "terminal.text-history",
+            SmokeCoverage::ObligationHarness,
+            "production_path/terminal.rs",
+        ),
+        entry(
+            "terminal.zsh-history",
+            SmokeCoverage::ObligationHarness,
+            "production_path/terminal.rs",
+        ),
+        entry(
+            "weechat",
+            SmokeCoverage::BinaryPath,
+            "production_path/obligations/initial_ingestion.rs binary_path",
+        ),
+        entry(
+            "wykop-entries",
+            SmokeCoverage::ParserFixtureOnly,
+            "sources/social.rs parser tests",
+        ),
+        entry(
+            "wykop-entry-comments",
+            SmokeCoverage::ParserFixtureOnly,
+            "sources/social.rs parser tests",
+        ),
+    ];
+
+    const fn entry(
+        source_unit_id: &'static str,
+        coverage: SmokeCoverage,
+        evidence: &'static str,
+    ) -> SmokeMatrixEntry {
+        SmokeMatrixEntry {
+            source_unit_id,
+            coverage,
+            evidence,
+            blocker_issue: None,
+        }
+    }
+
+    const fn blocked(
+        source_unit_id: &'static str,
+        evidence: &'static str,
+        blocker_issue: &'static str,
+    ) -> SmokeMatrixEntry {
+        SmokeMatrixEntry {
+            source_unit_id,
+            coverage: SmokeCoverage::Blocked,
+            evidence,
+            blocker_issue: Some(blocker_issue),
+        }
+    }
+
+    #[sinex_test]
+    async fn source_worker_smoke_matrix_covers_every_registered_factory(
+        _ctx: TestContext,
+    ) -> TestResult<()> {
+        let factory_ids: BTreeSet<String> = registered_node_factory_ids()
+            .into_iter()
+            .map(|id| id.as_str().to_string())
+            .collect();
+        let matrix_ids: BTreeSet<String> = SMOKE_MATRIX
+            .iter()
+            .map(|entry| entry.source_unit_id.to_string())
+            .collect();
+
+        let missing: Vec<&String> = factory_ids.difference(&matrix_ids).collect();
+        let stale: Vec<&String> = matrix_ids.difference(&factory_ids).collect();
+
+        assert!(
+            missing.is_empty(),
+            "source-worker node factories missing smoke-matrix entries: {missing:#?}"
+        );
+        assert!(
+            stale.is_empty(),
+            "smoke-matrix entries without a registered node factory: {stale:#?}"
+        );
+
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn source_worker_smoke_matrix_entries_are_actionable(
+        _ctx: TestContext,
+    ) -> TestResult<()> {
+        let registry = SourceUnitRegistry::from_inventory();
+        let mut seen = BTreeMap::new();
+
+        for entry in SMOKE_MATRIX {
+            assert!(
+                !entry.evidence.trim().is_empty(),
+                "{} must cite concrete smoke or fixture evidence",
+                entry.source_unit_id
+            );
+
+            if let Some(previous) = seen.insert(entry.source_unit_id, entry.evidence) {
+                panic!(
+                    "duplicate smoke-matrix entry for {}: {previous} and {}",
+                    entry.source_unit_id, entry.evidence
+                );
+            }
+
+            let id = SourceUnitId::new(entry.source_unit_id)?;
+            let descriptor = registry.find(&id).unwrap_or_else(|| {
+                panic!("{} descriptor must be registered", entry.source_unit_id)
+            });
+            assert_eq!(descriptor.id, entry.source_unit_id);
+
+            if matches!(
+                entry.coverage,
+                SmokeCoverage::BinaryPath
+                    | SmokeCoverage::ObligationHarness
+                    | SmokeCoverage::ParserFixtureOnly
+            ) {
+                assert!(
+                    find_parser_factory(&id).is_some(),
+                    "{} must have a parser factory for {:?} coverage",
+                    entry.source_unit_id,
+                    entry.coverage
+                );
+            }
+
+            if matches!(entry.coverage, SmokeCoverage::Blocked) {
+                let issue = entry.blocker_issue.unwrap_or("");
+                assert!(
+                    issue.starts_with('#'),
+                    "{} blocked smoke entry must cite a concrete issue",
+                    entry.source_unit_id
+                );
+            }
+        }
+
+        Ok(())
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Per-domain test modules (Wave B)
 // ---------------------------------------------------------------------------
 
