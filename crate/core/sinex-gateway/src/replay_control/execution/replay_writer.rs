@@ -5,23 +5,19 @@ use super::{
     Context, ReplayExecutionEngine, Result, ScopeInvalidationBucket, StreamExt, eyre,
     replay_scope_drift_error, stale_preview_missing_root_ids_error,
 };
-use async_nats::jetstream;
-use sinex_db::repositories::{DbPoolExt, EventRepositoryTx};
-use sinex_node_sdk::derived_node::invalidation::{DerivedScopeInvalidation, INVALIDATION_SUBJECT};
+use sinex_db::repositories::DbPoolExt;
 use sinex_node_sdk::runtime::stream::{
     Checkpoint, MaterialReplayContext, NodeScanAck, NodeScanCommand, NodeScanProgress,
-    ReplayScopeFilters as NodeReplayScopeFilters, ResolvedReplayMaterial, ScanArgs, TimeHorizon,
+    ReplayScopeFilters as NodeReplayScopeFilters, ScanArgs, TimeHorizon,
 };
-use sinex_primitives::domain::{EventSource, EventType, NodeName};
-use sinex_primitives::events::{Event as StoredEvent, Provenance};
-use sinex_primitives::{Id, SinexError, Timestamp, Uuid};
+use sinex_primitives::events::Provenance;
+use sinex_primitives::{SinexError, Timestamp, Uuid};
 use std::collections::{HashMap, HashSet};
-use std::sync::Arc;
 use std::time::Duration;
 use tracing::{debug, error, info, warn};
 
 use sinex_db::replay::state_machine::{
-    ReplayCheckpoint, ReplayOperation, ReplayScope, ReplayState, ReplayStateMachine,
+    ReplayCheckpoint, ReplayScope, ReplayState,
 };
 
 impl ReplayExecutionEngine {
