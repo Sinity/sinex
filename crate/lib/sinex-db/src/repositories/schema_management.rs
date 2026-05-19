@@ -80,6 +80,17 @@ pub struct SchemaSyncResult {
     pub unchanged: usize,
 }
 
+/// Active event schema retention horizon used by lifecycle TTL enforcement.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EventPayloadRetention {
+    /// Event source identifier.
+    pub source: EventSource,
+    /// Event type identifier.
+    pub event_type: EventType,
+    /// Retention horizon in seconds.
+    pub retention_seconds: i64,
+}
+
 /// Repository for event payload schema management
 pub struct SchemaManagementRepository<'a> {
     pool: &'a PgPool,
@@ -540,6 +551,34 @@ impl<'a> SchemaManagementRepository<'a> {
                 content_hash: row.content_hash,
                 is_active: row.is_active,
                 updated_at: row.updated_at,
+            })
+            .collect())
+    }
+
+    /// List active schemas that declare a positive retention horizon.
+    pub async fn list_with_retention(&self) -> DbResult<Vec<EventPayloadRetention>> {
+        let rows = sqlx::query!(
+            r#"
+            SELECT
+                source,
+                event_type,
+                retention_seconds as "retention_seconds!"
+            FROM sinex_schemas.event_payload_schemas
+            WHERE retention_seconds IS NOT NULL
+              AND is_active = true
+            ORDER BY source, event_type
+            "#
+        )
+        .fetch_all(self.pool)
+        .await
+        .map_err(|e| db_error(e, "list schemas with retention"))?;
+
+        Ok(rows
+            .into_iter()
+            .map(|row| EventPayloadRetention {
+                source: row.source.into(),
+                event_type: row.event_type.into(),
+                retention_seconds: row.retention_seconds,
             })
             .collect())
     }
