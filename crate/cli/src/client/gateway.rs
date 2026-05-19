@@ -80,7 +80,14 @@ use sinex_primitives::rpc::{
         AssemblyStatsBucket, CommandFrequencyEntry, CurrentDeviceStateEntry, CurrentHealthEntry,
         FileActivityEntry, GatewayStatsBucket, IngestdBatchStatsBucket, IngestdValidationSnapshot,
         MetricCounterBucket, NodeStatsBucket, RecentActivityEntry, StreamStatsBucket,
-        SystemStateBucket, TelemetryAssemblyStatsRequest, TelemetryAssemblyStatsResponse,
+        SystemStateBucket, TELEMETRY_ASSEMBLY_STATS_METHOD, TELEMETRY_COMMAND_FREQUENCY_METHOD,
+        TELEMETRY_CURRENT_DEVICE_STATE_METHOD, TELEMETRY_CURRENT_HEALTH_METHOD,
+        TELEMETRY_FILE_ACTIVITY_METHOD, TELEMETRY_GATEWAY_STATS_METHOD,
+        TELEMETRY_INGESTD_BATCH_STATS_METHOD, TELEMETRY_INGESTD_VALIDATION_METHOD,
+        TELEMETRY_METRIC_COUNTERS_METHOD, TELEMETRY_NODE_STATS_METHOD,
+        TELEMETRY_RECENT_ACTIVITY_METHOD, TELEMETRY_STREAM_STATS_METHOD,
+        TELEMETRY_SYSTEM_STATE_METHOD, TELEMETRY_THROUGHPUT_METHOD, TELEMETRY_WINDOW_FOCUS_METHOD,
+        TelemetryAssemblyStatsRequest, TelemetryAssemblyStatsResponse,
         TelemetryCommandFrequencyRequest, TelemetryCommandFrequencyResponse,
         TelemetryCurrentDeviceStateRequest, TelemetryCurrentDeviceStateResponse,
         TelemetryCurrentHealthRequest, TelemetryCurrentHealthResponse,
@@ -1268,13 +1275,8 @@ impl GatewayClient {
         limit: Option<i64>,
     ) -> Result<Vec<CurrentHealthEntry>> {
         let req = TelemetryCurrentHealthRequest { limit };
-        let result = self
-            .call_rpc(
-                methods::TELEMETRY_CURRENT_HEALTH,
-                serde_json::to_value(&req)?,
-            )
-            .await?;
-        let response: TelemetryCurrentHealthResponse = serde_json::from_value(result)?;
+        let response: TelemetryCurrentHealthResponse =
+            self.call_typed(TELEMETRY_CURRENT_HEALTH_METHOD, &req).await?;
         Ok(response.entries)
     }
 
@@ -1284,13 +1286,9 @@ impl GatewayClient {
         limit: Option<i64>,
     ) -> Result<Vec<CurrentDeviceStateEntry>> {
         let req = TelemetryCurrentDeviceStateRequest { limit };
-        let result = self
-            .call_rpc(
-                methods::TELEMETRY_CURRENT_DEVICE_STATE,
-                serde_json::to_value(&req)?,
-            )
+        let response: TelemetryCurrentDeviceStateResponse = self
+            .call_typed(TELEMETRY_CURRENT_DEVICE_STATE_METHOD, &req)
             .await?;
-        let response: TelemetryCurrentDeviceStateResponse = serde_json::from_value(result)?;
         Ok(response.entries)
     }
 
@@ -1305,10 +1303,8 @@ impl GatewayClient {
             time_range: TelemetryTimeRange { from, to },
             limit,
         };
-        let result = self
-            .call_rpc(methods::TELEMETRY_WINDOW_FOCUS, serde_json::to_value(&req)?)
-            .await?;
-        let response: TelemetryWindowFocusResponse = serde_json::from_value(result)?;
+        let response: TelemetryWindowFocusResponse =
+            self.call_typed(TELEMETRY_WINDOW_FOCUS_METHOD, &req).await?;
         Ok(response.buckets)
     }
 
@@ -1323,13 +1319,9 @@ impl GatewayClient {
             time_range: TelemetryTimeRange { from, to },
             limit,
         };
-        let result = self
-            .call_rpc(
-                methods::TELEMETRY_COMMAND_FREQUENCY,
-                serde_json::to_value(&req)?,
-            )
+        let response: TelemetryCommandFrequencyResponse = self
+            .call_typed(TELEMETRY_COMMAND_FREQUENCY_METHOD, &req)
             .await?;
-        let response: TelemetryCommandFrequencyResponse = serde_json::from_value(result)?;
         Ok(response.entries)
     }
 
@@ -1344,23 +1336,15 @@ impl GatewayClient {
             time_range: TelemetryTimeRange { from, to },
             limit,
         };
-        let result = self
-            .call_rpc(
-                methods::TELEMETRY_FILE_ACTIVITY,
-                serde_json::to_value(&req)?,
-            )
-            .await?;
-        let response: TelemetryFileActivityResponse = serde_json::from_value(result)?;
+        let response: TelemetryFileActivityResponse =
+            self.call_typed(TELEMETRY_FILE_ACTIVITY_METHOD, &req).await?;
         Ok(response.entries)
     }
 
     /// Query the per-source/component throughput summary (#1172 AC-8).
     pub async fn telemetry_throughput(&self) -> Result<TelemetryThroughputResponse> {
         let req = TelemetryThroughputRequest::default();
-        let result = self
-            .call_rpc(methods::TELEMETRY_THROUGHPUT, serde_json::to_value(&req)?)
-            .await?;
-        Ok(serde_json::from_value(result)?)
+        self.call_typed(TELEMETRY_THROUGHPUT_METHOD, &req).await
     }
 
     /// Query recent activity summary (hardcoded lookback window, no time params).
@@ -1369,13 +1353,8 @@ impl GatewayClient {
         limit: Option<i64>,
     ) -> Result<Vec<RecentActivityEntry>> {
         let req = TelemetryRecentActivityRequest { limit };
-        let result = self
-            .call_rpc(
-                methods::TELEMETRY_RECENT_ACTIVITY,
-                serde_json::to_value(&req)?,
-            )
-            .await?;
-        let response: TelemetryRecentActivityResponse = serde_json::from_value(result)?;
+        let response: TelemetryRecentActivityResponse =
+            self.call_typed(TELEMETRY_RECENT_ACTIVITY_METHOD, &req).await?;
         Ok(response.entries)
     }
 
@@ -1390,10 +1369,8 @@ impl GatewayClient {
             time_range: TelemetryTimeRange { from, to },
             limit,
         };
-        let result = self
-            .call_rpc(methods::TELEMETRY_SYSTEM_STATE, serde_json::to_value(&req)?)
-            .await?;
-        let response: TelemetrySystemStateResponse = serde_json::from_value(result)?;
+        let response: TelemetrySystemStateResponse =
+            self.call_typed(TELEMETRY_SYSTEM_STATE_METHOD, &req).await?;
         Ok(response.buckets)
     }
 
@@ -1408,13 +1385,8 @@ impl GatewayClient {
             time_range: TelemetryTimeRange { from, to },
             limit,
         };
-        let result = self
-            .call_rpc(
-                methods::TELEMETRY_GATEWAY_STATS,
-                serde_json::to_value(&req)?,
-            )
-            .await?;
-        let response: TelemetryGatewayStatsResponse = serde_json::from_value(result)?;
+        let response: TelemetryGatewayStatsResponse =
+            self.call_typed(TELEMETRY_GATEWAY_STATS_METHOD, &req).await?;
         Ok(response.buckets)
     }
 
@@ -1429,10 +1401,8 @@ impl GatewayClient {
             time_range: TelemetryTimeRange { from, to },
             limit,
         };
-        let result = self
-            .call_rpc(methods::TELEMETRY_STREAM_STATS, serde_json::to_value(&req)?)
-            .await?;
-        let response: TelemetryStreamStatsResponse = serde_json::from_value(result)?;
+        let response: TelemetryStreamStatsResponse =
+            self.call_typed(TELEMETRY_STREAM_STATS_METHOD, &req).await?;
         Ok(response.buckets)
     }
 
@@ -1447,13 +1417,8 @@ impl GatewayClient {
             time_range: TelemetryTimeRange { from, to },
             limit,
         };
-        let result = self
-            .call_rpc(
-                methods::TELEMETRY_ASSEMBLY_STATS,
-                serde_json::to_value(&req)?,
-            )
-            .await?;
-        let response: TelemetryAssemblyStatsResponse = serde_json::from_value(result)?;
+        let response: TelemetryAssemblyStatsResponse =
+            self.call_typed(TELEMETRY_ASSEMBLY_STATS_METHOD, &req).await?;
         Ok(response.buckets)
     }
 
@@ -1468,10 +1433,8 @@ impl GatewayClient {
             time_range: TelemetryTimeRange { from, to },
             limit,
         };
-        let result = self
-            .call_rpc(methods::TELEMETRY_NODE_STATS, serde_json::to_value(&req)?)
-            .await?;
-        let response: TelemetryNodeStatsResponse = serde_json::from_value(result)?;
+        let response: TelemetryNodeStatsResponse =
+            self.call_typed(TELEMETRY_NODE_STATS_METHOD, &req).await?;
         Ok(response.buckets)
     }
 
@@ -1486,13 +1449,8 @@ impl GatewayClient {
             time_range: TelemetryTimeRange { from, to },
             limit,
         };
-        let result = self
-            .call_rpc(
-                methods::TELEMETRY_METRIC_COUNTERS,
-                serde_json::to_value(&req)?,
-            )
-            .await?;
-        let response: TelemetryMetricCountersResponse = serde_json::from_value(result)?;
+        let response: TelemetryMetricCountersResponse =
+            self.call_typed(TELEMETRY_METRIC_COUNTERS_METHOD, &req).await?;
         Ok(response.buckets)
     }
 
@@ -1507,26 +1465,18 @@ impl GatewayClient {
             time_range: TelemetryTimeRange { from, to },
             limit,
         };
-        let result = self
-            .call_rpc(
-                methods::TELEMETRY_INGESTD_BATCH_STATS,
-                serde_json::to_value(&req)?,
-            )
+        let response: TelemetryIngestdBatchStatsResponse = self
+            .call_typed(TELEMETRY_INGESTD_BATCH_STATS_METHOD, &req)
             .await?;
-        let response: TelemetryIngestdBatchStatsResponse = serde_json::from_value(result)?;
         Ok(response.buckets)
     }
 
     /// Query the latest ingestd validation snapshot.
     pub async fn telemetry_ingestd_validation(&self) -> Result<Option<IngestdValidationSnapshot>> {
         let req = TelemetryIngestdValidationRequest::default();
-        let result = self
-            .call_rpc(
-                methods::TELEMETRY_INGESTD_VALIDATION,
-                serde_json::to_value(&req)?,
-            )
+        let response: TelemetryIngestdValidationResponse = self
+            .call_typed(TELEMETRY_INGESTD_VALIDATION_METHOD, &req)
             .await?;
-        let response: TelemetryIngestdValidationResponse = serde_json::from_value(result)?;
         Ok(response.snapshot)
     }
 

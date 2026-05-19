@@ -31,6 +31,16 @@ use sinex_primitives::rpc::{
     },
     system::{SYSTEM_HEALTH_METHOD, SYSTEM_PING_METHOD, SYSTEM_VERSION_METHOD},
     tasks::{TASKS_COMPLETE_METHOD, TASKS_CREATE_METHOD, TASKS_STATE_GET_METHOD},
+    telemetry::{
+        TELEMETRY_ASSEMBLY_STATS_METHOD, TELEMETRY_COMMAND_FREQUENCY_METHOD,
+        TELEMETRY_CURRENT_DEVICE_STATE_METHOD, TELEMETRY_CURRENT_HEALTH_METHOD,
+        TELEMETRY_FILE_ACTIVITY_METHOD, TELEMETRY_GATEWAY_STATS_METHOD,
+        TELEMETRY_INGESTD_BATCH_STATS_METHOD, TELEMETRY_INGESTD_VALIDATION_METHOD,
+        TELEMETRY_METRIC_COUNTERS_METHOD, TELEMETRY_NODE_STATS_METHOD,
+        TELEMETRY_RECENT_ACTIVITY_METHOD, TELEMETRY_STREAM_STATS_METHOD,
+        TELEMETRY_SYSTEM_STATE_METHOD, TELEMETRY_THROUGHPUT_METHOD,
+        TELEMETRY_WINDOW_FOCUS_METHOD,
+    },
 };
 use sinex_primitives::{Result, error::SinexError};
 use std::collections::HashMap;
@@ -729,79 +739,64 @@ fn build_registry_impl() -> RpcRegistry {
             boxed!(handle_sources_bindings_list),
         )
         // Telemetry read models (ReadOnly)
-        .pool_rpc(
-            methods::TELEMETRY_CURRENT_HEALTH,
-            Role::ReadOnly,
+        .pool_typed_rpc(
+            TELEMETRY_CURRENT_HEALTH_METHOD,
             boxed!(handle_telemetry_current_health),
         )
-        .pool_rpc(
-            methods::TELEMETRY_CURRENT_DEVICE_STATE,
-            Role::ReadOnly,
+        .pool_typed_rpc(
+            TELEMETRY_CURRENT_DEVICE_STATE_METHOD,
             boxed!(handle_telemetry_current_device_state),
         )
-        .pool_rpc(
-            methods::TELEMETRY_WINDOW_FOCUS,
-            Role::ReadOnly,
+        .pool_typed_rpc(
+            TELEMETRY_WINDOW_FOCUS_METHOD,
             boxed!(handle_telemetry_window_focus),
         )
-        .pool_rpc(
-            methods::TELEMETRY_COMMAND_FREQUENCY,
-            Role::ReadOnly,
+        .pool_typed_rpc(
+            TELEMETRY_COMMAND_FREQUENCY_METHOD,
             boxed!(handle_telemetry_command_frequency),
         )
-        .pool_rpc(
-            methods::TELEMETRY_FILE_ACTIVITY,
-            Role::ReadOnly,
+        .pool_typed_rpc(
+            TELEMETRY_FILE_ACTIVITY_METHOD,
             boxed!(handle_telemetry_file_activity),
         )
-        .pool_rpc(
-            methods::TELEMETRY_RECENT_ACTIVITY,
-            Role::ReadOnly,
+        .pool_typed_rpc(
+            TELEMETRY_RECENT_ACTIVITY_METHOD,
             boxed!(handle_telemetry_recent_activity),
         )
-        .pool_rpc(
-            methods::TELEMETRY_SYSTEM_STATE,
-            Role::ReadOnly,
+        .pool_typed_rpc(
+            TELEMETRY_SYSTEM_STATE_METHOD,
             boxed!(handle_telemetry_system_state),
         )
-        .pool_rpc(
-            methods::TELEMETRY_GATEWAY_STATS,
-            Role::ReadOnly,
+        .pool_typed_rpc(
+            TELEMETRY_GATEWAY_STATS_METHOD,
             boxed!(handle_telemetry_gateway_stats),
         )
-        .pool_rpc(
-            methods::TELEMETRY_STREAM_STATS,
-            Role::ReadOnly,
+        .pool_typed_rpc(
+            TELEMETRY_STREAM_STATS_METHOD,
             boxed!(handle_telemetry_stream_stats),
         )
-        .pool_rpc(
-            methods::TELEMETRY_ASSEMBLY_STATS,
-            Role::ReadOnly,
+        .pool_typed_rpc(
+            TELEMETRY_ASSEMBLY_STATS_METHOD,
             boxed!(handle_telemetry_assembly_stats),
         )
-        .pool_rpc(
-            methods::TELEMETRY_NODE_STATS,
-            Role::ReadOnly,
+        .pool_typed_rpc(
+            TELEMETRY_NODE_STATS_METHOD,
             boxed!(handle_telemetry_node_stats),
         )
-        .pool_rpc(
-            methods::TELEMETRY_METRIC_COUNTERS,
-            Role::ReadOnly,
+        .pool_typed_rpc(
+            TELEMETRY_METRIC_COUNTERS_METHOD,
             boxed!(handle_telemetry_metric_counters),
         )
-        .pool_rpc(
-            methods::TELEMETRY_INGESTD_BATCH_STATS,
-            Role::ReadOnly,
+        .pool_typed_rpc(
+            TELEMETRY_INGESTD_BATCH_STATS_METHOD,
             boxed!(handle_telemetry_ingestd_batch_stats),
         )
-        .pool_rpc(
-            methods::TELEMETRY_INGESTD_VALIDATION,
-            Role::ReadOnly,
+        .pool_typed_rpc(
+            TELEMETRY_INGESTD_VALIDATION_METHOD,
             boxed!(handle_telemetry_ingestd_validation),
         )
-        .pool_rpc(
-            methods::TELEMETRY_THROUGHPUT,
-            Role::ReadOnly,
+        .pool_typed_rpc(
+            TELEMETRY_THROUGHPUT_METHOD,
             boxed!(handle_telemetry_throughput),
         )
         // ─────────────────────────────────────────────────────────────
