@@ -6,8 +6,7 @@
 //! runners.
 
 use super::{
-    Node, NodeResult, NodeRunner, RunnerLifecycle, StreamExt, TASK_SHUTDOWN_GRACE_PERIOD, debug,
-    info, watch,
+    Node, NodeResult, NodeRunner, RunnerLifecycle, TASK_SHUTDOWN_GRACE_PERIOD, debug, info, watch,
 };
 
 impl<T: Node + 'static> NodeRunner<T> {

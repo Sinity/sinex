@@ -8,7 +8,7 @@
 use super::{
     CheckpointManager, DbPoolExt, Deserialize, Event, EventId, EventSource, EventType, HostName,
     Id, JsonValue, Node, NodeResult, NodeRunner, NonEmptyVec, OffsetKind, PgPool, Provenance,
-    ProvisionalEvent, ResolvedBatch, SinexError, SourceMaterial, StreamExt, Uuid,
+    ProvisionalEvent, ResolvedBatch, SinexError, SourceMaterial, Uuid,
 };
 
 impl<T: Node + 'static> NodeRunner<T> {
