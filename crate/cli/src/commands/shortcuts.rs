@@ -11,6 +11,9 @@ use sinex_primitives::query::{
     EventQuery, EventQueryResult, PayloadFilter, SortDirection, SubscriptionFilter, TimeRange,
 };
 use sinex_primitives::rpc::ingestors::EmitStallThresholds;
+use sinex_primitives::rpc::sources::{
+    SourceReadiness, SourceReadinessStatus, SourcesReadinessListRequest,
+};
 use sinex_primitives::temporal::Timestamp;
 use sinex_primitives::{
     RuntimeStatusSignal, RuntimeStatusSignalStatus, RuntimeStatusWarning, RuntimeTargetDescriptor,
@@ -250,6 +253,31 @@ impl StatusCommand {
             }
         }
 
+        match client
+            .sources_readiness_list(SourcesReadinessListRequest::default())
+            .await
+        {
+            Ok(response) => {
+                let summary = summarize_source_readiness(&response.sources);
+                signals.push(source_readiness_signal(&summary));
+                if let Some(warning) = source_readiness_warning(&summary) {
+                    warnings.push(warning);
+                }
+            }
+            Err(e) => {
+                warnings.push(RuntimeStatusWarning {
+                    source: "sources.readiness".to_string(),
+                    message: format!("capture-gap readiness unavailable: {e}"),
+                });
+                signals.push(RuntimeStatusSignal {
+                    name: "source-readiness".to_string(),
+                    status: RuntimeStatusSignalStatus::Unknown,
+                    source: "sources.readiness capture-gap probe".to_string(),
+                    message: Some("capture-gap readiness could not be inspected".to_string()),
+                });
+            }
+        }
+
         // Emit-rate stall detection for source units (issue #992).
         //
         // Heartbeats prove liveness, not productivity. Surface units that are
@@ -449,6 +477,103 @@ fn private_mode_unavailable_privacy_warning() -> RuntimeStatusWarning {
     }
 }
 
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+struct SourceReadinessSummary {
+    total: usize,
+    available: usize,
+    disabled: usize,
+    partial: usize,
+    stale: usize,
+    error: usize,
+    missing: usize,
+    blocked: usize,
+    unknown: usize,
+}
+
+impl SourceReadinessSummary {
+    fn degraded_count(self) -> usize {
+        self.partial + self.stale + self.error + self.missing + self.blocked + self.unknown
+    }
+
+    fn blocking_count(self) -> usize {
+        self.error + self.missing + self.blocked
+    }
+
+    fn status(self) -> RuntimeStatusSignalStatus {
+        if self.total == 0 {
+            RuntimeStatusSignalStatus::Unknown
+        } else if self.blocking_count() > 0 {
+            RuntimeStatusSignalStatus::Unhealthy
+        } else if self.degraded_count() > 0 {
+            RuntimeStatusSignalStatus::Degraded
+        } else {
+            RuntimeStatusSignalStatus::Healthy
+        }
+    }
+}
+
+fn summarize_source_readiness(sources: &[SourceReadiness]) -> SourceReadinessSummary {
+    let mut summary = SourceReadinessSummary {
+        total: sources.len(),
+        ..SourceReadinessSummary::default()
+    };
+
+    for source in sources {
+        match source.status {
+            SourceReadinessStatus::Available => summary.available += 1,
+            SourceReadinessStatus::Partial => summary.partial += 1,
+            SourceReadinessStatus::Stale => summary.stale += 1,
+            SourceReadinessStatus::Error => summary.error += 1,
+            SourceReadinessStatus::Missing => summary.missing += 1,
+            SourceReadinessStatus::Blocked => summary.blocked += 1,
+            SourceReadinessStatus::Disabled => summary.disabled += 1,
+            SourceReadinessStatus::Unknown => summary.unknown += 1,
+        }
+    }
+
+    summary
+}
+
+fn source_readiness_signal(summary: &SourceReadinessSummary) -> RuntimeStatusSignal {
+    let message = if summary.total == 0 {
+        "no source readiness records".to_string()
+    } else if summary.degraded_count() == 0 {
+        format!(
+            "{} source(s) available, {} disabled",
+            summary.available, summary.disabled
+        )
+    } else {
+        format!(
+            "{} degraded of {} source(s): partial={}, stale={}, error={}, missing={}, blocked={}, unknown={}",
+            summary.degraded_count(),
+            summary.total,
+            summary.partial,
+            summary.stale,
+            summary.error,
+            summary.missing,
+            summary.blocked,
+            summary.unknown
+        )
+    };
+
+    RuntimeStatusSignal {
+        name: "source-readiness".to_string(),
+        status: summary.status(),
+        source: "sources.readiness capture-gap probe".to_string(),
+        message: Some(message),
+    }
+}
+
+fn source_readiness_warning(summary: &SourceReadinessSummary) -> Option<RuntimeStatusWarning> {
+    (summary.degraded_count() > 0).then(|| RuntimeStatusWarning {
+        source: "sources.readiness".to_string(),
+        message: format!(
+            "capture readiness has {} degraded source(s); inspect sources readiness for caveats",
+            summary.degraded_count()
+        ),
+    })
+}
+
 fn runtime_target_kind_label(kind: &RuntimeTargetKind) -> &'static str {
     match kind {
         RuntimeTargetKind::Unknown => "unknown",
@@ -465,7 +590,26 @@ mod status_tests {
     use sinex_primitives::privacy::{
         PRIVATE_MODE_STATE_RELATIVE_PATH, RuntimePrivateModeState, save_private_mode_state,
     };
+    use sinex_primitives::rpc::sources::SourceReadinessCost;
     use xtask::sandbox::prelude::sinex_test;
+
+    fn readiness(status: SourceReadinessStatus) -> SourceReadiness {
+        SourceReadiness {
+            binding_id: None,
+            source_family: "test".to_string(),
+            source_unit_id: None,
+            parser_id: None,
+            source_identifier: format!("test.{status:?}"),
+            status,
+            cost: SourceReadinessCost::LocalFast,
+            freshness_seconds: None,
+            material_count: 1,
+            parsed_event_count: Some(1),
+            last_success_at: None,
+            caveats: Vec::new(),
+            evidence: serde_json::Value::Null,
+        }
+    }
 
     #[sinex_test]
     async fn private_mode_status_signal_defaults_disabled() -> xtask::sandbox::TestResult<()> {
@@ -556,6 +700,59 @@ mod status_tests {
         assert_eq!(warning.source, "privacy.dlq");
         assert!(!warning.message.contains("payload"));
         assert!(!warning.message.contains("sample"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn source_readiness_status_reports_capture_gap_counts() -> xtask::sandbox::TestResult<()>
+    {
+        let summary = summarize_source_readiness(&[
+            readiness(SourceReadinessStatus::Available),
+            readiness(SourceReadinessStatus::Disabled),
+            readiness(SourceReadinessStatus::Partial),
+            readiness(SourceReadinessStatus::Stale),
+            readiness(SourceReadinessStatus::Error),
+            readiness(SourceReadinessStatus::Missing),
+            readiness(SourceReadinessStatus::Blocked),
+            readiness(SourceReadinessStatus::Unknown),
+        ]);
+        let signal = source_readiness_signal(&summary);
+        let warning = source_readiness_warning(&summary)
+            .ok_or_else(|| color_eyre::eyre::eyre!("source readiness warning expected"))?;
+
+        assert_eq!(summary.degraded_count(), 6);
+        assert_eq!(summary.blocking_count(), 3);
+        assert_eq!(signal.name, "source-readiness");
+        assert_eq!(signal.status, RuntimeStatusSignalStatus::Unhealthy);
+        let message = signal.message.as_deref().ok_or_else(|| {
+            color_eyre::eyre::eyre!("source readiness signal should explain counts")
+        })?;
+        assert!(message.contains("partial=1"));
+        assert!(message.contains("stale=1"));
+        assert!(message.contains("error=1"));
+        assert!(message.contains("missing=1"));
+        assert!(message.contains("blocked=1"));
+        assert!(message.contains("unknown=1"));
+        assert_eq!(warning.source, "sources.readiness");
+        assert!(warning.message.contains("capture readiness"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn source_readiness_status_is_healthy_when_available_or_disabled()
+    -> xtask::sandbox::TestResult<()> {
+        let summary = summarize_source_readiness(&[
+            readiness(SourceReadinessStatus::Available),
+            readiness(SourceReadinessStatus::Disabled),
+        ]);
+        let signal = source_readiness_signal(&summary);
+
+        assert_eq!(signal.status, RuntimeStatusSignalStatus::Healthy);
+        assert!(source_readiness_warning(&summary).is_none());
+        assert_eq!(
+            signal.message.as_deref(),
+            Some("1 source(s) available, 1 disabled")
+        );
         Ok(())
     }
 }
