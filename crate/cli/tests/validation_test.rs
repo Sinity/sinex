@@ -78,6 +78,7 @@ async fn mcp_lists_first_slice_read_only_tools() -> TestResult<()> {
             "sinex.task_state",
             "sinex.replay_operations",
             "sinex.replay_status",
+            "sinex.documents_search",
             "sinex.automata_status",
             "sinex.ingestors_status",
             "sinex.nodes_health",
@@ -488,6 +489,49 @@ async fn mcp_replay_status_call_uses_gateway_fixture() -> TestResult<()> {
 }
 
 #[sinex_test]
+async fn mcp_documents_search_call_uses_gateway_fixture() -> TestResult<()> {
+    let server = mount_mcp_gateway_fixture().await;
+    let client = fixture_gateway_client(&server)?;
+
+    let response = call_tool(
+        &client,
+        "sinex.documents_search",
+        json!({
+            "query": "secret plan",
+            "kind": "markdown",
+            "natural_key_prefix": "notes/",
+            "limit": 5
+        }),
+    )
+    .await?;
+
+    assert_eq!(response["tool"], "sinex.documents_search");
+    assert_eq!(response["query"]["query"], "secret plan");
+    assert_eq!(response["items"]["result"]["search_mode"], "fts");
+    assert_eq!(
+        response["items"]["result"]["results"][0]["document_id"],
+        fixture_document_id()
+    );
+    assert_eq!(
+        response["items"]["result"]["results"][0]["text"]["reason"],
+        "mcp_document_text_disabled"
+    );
+    assert_eq!(
+        response["items"]["result"]["results"][0]["headline"]["reason"],
+        "mcp_document_text_disabled"
+    );
+    assert_eq!(
+        response["items"]["result"]["results"][0]["side_data"]["reason"],
+        "mcp_document_side_data_disabled"
+    );
+    assert!(
+        !response.to_string().contains("ghp_fixture_secret"),
+        "MCP document search leaked raw document text, headline, or side data"
+    );
+    Ok(())
+}
+
+#[sinex_test]
 async fn mcp_automata_status_call_uses_gateway_fixture() -> TestResult<()> {
     let server = mount_mcp_gateway_fixture().await;
     let client = fixture_gateway_client(&server)?;
@@ -806,6 +850,27 @@ async fn mount_mcp_gateway_fixture() -> MockServer {
                 "replay.operation_status" => json!({
                     "operation": fixture_replay_operation("Previewed")
                 }),
+                "documents.search" => json!({
+                    "results": [
+                        {
+                            "document_id": fixture_document_id(),
+                            "kind": "markdown",
+                            "natural_key": "notes/fixture.md",
+                            "chunk_index": 0,
+                            "headline": "<mark>secret</mark> ghp_fixture_secret",
+                            "text": "full document ghp_fixture_secret should not leak",
+                            "score": 0.875,
+                            "byte_offset_start": 0,
+                            "byte_offset_end": 48,
+                            "extraction_version": 1,
+                            "side_data": {
+                                "sample": "side ghp_fixture_secret should not leak"
+                            },
+                            "updated_at": "2026-05-19T11:45:00Z"
+                        }
+                    ],
+                    "search_mode": "fts"
+                }),
                 "automata.status" => json!({
                     "generated_at": "2026-05-19T12:00:00Z",
                     "stale_after_secs": body["params"]["stale_after_secs"].as_u64().unwrap_or(300),
@@ -977,6 +1042,10 @@ fn fixture_task_id() -> &'static str {
 
 fn fixture_operation_id() -> &'static str {
     "018f4b6b-6a4d-7c80-8000-000000000004"
+}
+
+fn fixture_document_id() -> &'static str {
+    "018f4b6b-6a4d-7c80-8000-000000000005"
 }
 
 fn fixture_replay_operation(state: &str) -> Value {
