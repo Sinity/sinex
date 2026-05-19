@@ -4969,6 +4969,11 @@
       "about": "Run perf only"
     },
     {
+      "subject": "xtask_command:verify.claims",
+      "path": "verify.claims",
+      "about": "Summarize executable proof claims, runner commands, and deferrals"
+    },
+    {
       "subject": "xtask_command:verify.closure",
       "path": "verify.closure",
       "about": "Operationalize the 2026-05-11 closure-verification policy: fetch an issue body via `gh`, extract AC checkboxes and shell code blocks marked `verify`, and run each command, reporting pass/fail per command"

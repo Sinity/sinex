@@ -12,7 +12,7 @@ use sinexctl::commands::{
     DlqCommands, DocumentsCommand, ErrorsCommand, ExplainCommand, GatewayCommands, GitOpsCommands,
     IngestorsCommand, LifecycleCommands, LlmCommand, NodeCommands, NodesCommand, NowCommand,
     OpsCommands, PrivacyCommand, QueryCommand, RecentCommand, ReplayCommands, ReportCommands,
-    SourcesCommand, StateCommands, StatusCommand, TasksCommand, TelemetryCommands,
+    SemanticCommand, SourcesCommand, StateCommands, StatusCommand, TasksCommand, TelemetryCommands,
     ThroughputCommand, TraceCommand, TuiCommand, VerifyCommand, WatchCommand,
 };
 use sinexctl::fmt::format_yaml;
@@ -182,6 +182,9 @@ enum Commands {
 
     /// Curation proposal and judgment commands
     Curation(CurationCommand),
+
+    /// Semantic epoch and shadow-lane commands
+    Semantics(SemanticCommand),
 
     /// LLM prompt, routing, and budget read surfaces
     Llm(LlmCommand),
@@ -373,6 +376,7 @@ async fn main() -> color_eyre::Result<()> {
                 Commands::Declare(cmd) => cmd.execute(&client, format).await?,
                 Commands::Tasks(cmd) => cmd.execute(&client, format).await?,
                 Commands::Curation(cmd) => cmd.execute(&client, format).await?,
+                Commands::Semantics(cmd) => cmd.execute(&client, format).await?,
                 Commands::Llm(cmd) => cmd.execute(&client, format).await?,
                 Commands::Documents(cmd) => cmd.execute(&client, format).await?,
                 Commands::Lifecycle { cmd } => cmd.execute(&client, format).await?,
@@ -592,6 +596,25 @@ fn command_path(cmd: &Commands) -> String {
                 CurationSubcommand::Proposals(_) => "curation proposals".to_string(),
                 CurationSubcommand::Judge(_) => "curation judge".to_string(),
                 CurationSubcommand::Finalize(_) => "curation finalize".to_string(),
+            }
+        }
+        Commands::Semantics(cmd) => {
+            use sinexctl::commands::semantic::{
+                SemanticEpochSubcommand, SemanticLaneSubcommand, SemanticSubcommand,
+            };
+            match cmd.subcommand() {
+                SemanticSubcommand::Epoch(epoch) => match epoch.subcommand() {
+                    SemanticEpochSubcommand::Create(_) => "semantics epoch create".to_string(),
+                    SemanticEpochSubcommand::List(_) => "semantics epoch list".to_string(),
+                },
+                SemanticSubcommand::Lane(lane) => match lane.subcommand() {
+                    SemanticLaneSubcommand::Create(_) => "semantics lane create".to_string(),
+                    SemanticLaneSubcommand::List(_) => "semantics lane list".to_string(),
+                    SemanticLaneSubcommand::Status(_) => "semantics lane status".to_string(),
+                    SemanticLaneSubcommand::Discard(_) => "semantics lane discard".to_string(),
+                    SemanticLaneSubcommand::Outputs(_) => "semantics lane outputs".to_string(),
+                    SemanticLaneSubcommand::Diffs(_) => "semantics lane diffs".to_string(),
+                },
             }
         }
         Commands::Llm(cmd) => {

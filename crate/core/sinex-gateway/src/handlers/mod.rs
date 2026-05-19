@@ -24,6 +24,7 @@ pub mod privacy;
 pub mod query;
 pub mod replay;
 pub mod rpc_handlers;
+pub mod semantic;
 pub mod shadow;
 pub mod sources;
 pub mod system;
@@ -64,6 +65,11 @@ pub use nodes::{
     handle_nodes_drain, handle_nodes_list, handle_nodes_resume, handle_nodes_set_horizon,
 };
 pub use ops::{handle_ops_cancel, handle_ops_get, handle_ops_list, handle_ops_start};
+pub use semantic::{
+    handle_semantic_epoch_create, handle_semantic_epoch_list, handle_semantic_lane_create,
+    handle_semantic_lane_diffs_list, handle_semantic_lane_discard,
+    handle_semantic_lane_outputs_list, handle_semantic_lane_set_status, handle_semantic_lanes_list,
+};
 pub use shadow::{handle_shadow_create, handle_shadow_delete, handle_shadow_list};
 
 pub use content::{handle_retrieve_blob, handle_store_blob};

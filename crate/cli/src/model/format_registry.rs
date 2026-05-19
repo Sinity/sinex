@@ -338,6 +338,38 @@ pub fn build() -> HashMap<&'static str, FormatCapability> {
         FormatCapability::single_shot(TABLE_JSON_YAML),
     );
     m.insert(
+        "semantics epoch create",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
+    m.insert(
+        "semantics epoch list",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
+    m.insert(
+        "semantics lane create",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
+    m.insert(
+        "semantics lane list",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
+    m.insert(
+        "semantics lane status",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
+    m.insert(
+        "semantics lane discard",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
+    m.insert(
+        "semantics lane outputs",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
+    m.insert(
+        "semantics lane diffs",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
+    m.insert(
         "llm prompts",
         FormatCapability::single_shot(TABLE_JSON_YAML),
     );
@@ -670,7 +702,7 @@ fn family_for_path(path: &str) -> CommandFamily {
         "node" | "automata" | "ingestors" | "replay" | "dlq" | "ops" | "audit" | "lifecycle"
         | "git-ops" | "privacy" | "blob" => CommandFamily::Operate,
         "sources" => CommandFamily::Sources,
-        "declare" | "tasks" | "curation" | "llm" | "documents" | "annotate" => {
+        "declare" | "tasks" | "curation" | "semantics" | "llm" | "documents" | "annotate" => {
             CommandFamily::Domain
         }
         "telemetry" | "throughput" => CommandFamily::Telemetry,
@@ -726,6 +758,10 @@ fn effect_for_path(path: &str, capability: &FormatCapability) -> CommandEffect {
         "replay preview",
         "replay run",
         "replay submit",
+        "semantics epoch create",
+        "semantics lane create",
+        "semantics lane discard",
+        "semantics lane status",
         "shadow create",
         "shadow delete",
         "sources annotate",
@@ -783,6 +819,10 @@ fn mutation_guards_for_path(path: &str) -> &'static [CommandMutationGuard] {
         | "replay cancel"
         | "replay execute"
         | "replay submit"
+        | "semantics epoch create"
+        | "semantics lane create"
+        | "semantics lane discard"
+        | "semantics lane status"
         | "sources annotate"
         | "sources archive"
         | "sources bindings create"
@@ -890,6 +930,14 @@ fn backing_rpc_methods_for_path(path: &str) -> &'static [&'static str] {
         "curation proposals" => &[methods::CURATION_PROPOSALS_LIST],
         "curation judge" => &[methods::CURATION_JUDGMENTS_RECORD],
         "curation finalize" => &[methods::CURATION_FINALIZE],
+        "semantics epoch create" => &[methods::SEMANTIC_EPOCHS_CREATE],
+        "semantics epoch list" => &[methods::SEMANTIC_EPOCHS_LIST],
+        "semantics lane create" => &[methods::SEMANTIC_LANES_CREATE],
+        "semantics lane list" => &[methods::SEMANTIC_LANES_LIST],
+        "semantics lane status" => &[methods::SEMANTIC_LANES_SET_STATUS],
+        "semantics lane discard" => &[methods::SEMANTIC_LANES_DISCARD],
+        "semantics lane outputs" => &[methods::SEMANTIC_LANE_OUTPUTS_LIST],
+        "semantics lane diffs" => &[methods::SEMANTIC_LANE_DIFFS_LIST],
         "llm prompts" => &[methods::LLM_PROMPTS_LIST],
         "llm route-explain" => &[methods::LLM_ROUTE_EXPLAIN],
         "llm budget-report" => &[methods::LLM_BUDGET_REPORT],

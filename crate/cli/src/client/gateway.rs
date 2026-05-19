@@ -90,6 +90,16 @@ use sinex_primitives::rpc::{
         ReplayScope, ReplayState, ReplayStatusRequest, ReplayStatusResponse, ReplaySubmitRequest,
         ReplaySubmitResponse,
     },
+    semantic::{
+        SEMANTIC_EPOCHS_CREATE_METHOD, SEMANTIC_EPOCHS_LIST_METHOD,
+        SEMANTIC_LANE_DIFFS_LIST_METHOD, SEMANTIC_LANE_OUTPUTS_LIST_METHOD,
+        SEMANTIC_LANES_CREATE_METHOD, SEMANTIC_LANES_DISCARD_METHOD, SEMANTIC_LANES_LIST_METHOD,
+        SEMANTIC_LANES_SET_STATUS_METHOD, SemanticEpochCreateRequest, SemanticEpochListRequest,
+        SemanticEpochListResponse, SemanticEpochRecordResponse, SemanticLaneCreateRequest,
+        SemanticLaneDiffsListRequest, SemanticLaneDiffsListResponse, SemanticLaneDiscardRequest,
+        SemanticLaneListRequest, SemanticLaneListResponse, SemanticLaneOutputsListRequest,
+        SemanticLaneOutputsListResponse, SemanticLaneRecordResponse, SemanticLaneSetStatusRequest,
+    },
     sources::{
         SOURCES_ANNOTATE_METHOD, SOURCES_ARCHIVE_METHOD, SOURCES_CONTINUITY_EXPLAIN_GAP_METHOD,
         SOURCES_CONTINUITY_GET_METHOD, SOURCES_CONTINUITY_LIST_METHOD, SOURCES_CONTINUITY_METHOD,
@@ -983,6 +993,70 @@ impl GatewayClient {
         request: CurationFinalizeRequest,
     ) -> Result<CurationFinalizeResponse> {
         self.call_typed(CURATION_FINALIZE_METHOD, &request).await
+    }
+
+    // ==================== Semantic Lane Commands ====================
+
+    pub async fn semantic_epoch_create(
+        &self,
+        request: SemanticEpochCreateRequest,
+    ) -> Result<SemanticEpochRecordResponse> {
+        self.call_typed(SEMANTIC_EPOCHS_CREATE_METHOD, &request)
+            .await
+    }
+
+    pub async fn semantic_epochs_list(
+        &self,
+        request: SemanticEpochListRequest,
+    ) -> Result<SemanticEpochListResponse> {
+        self.call_typed(SEMANTIC_EPOCHS_LIST_METHOD, &request).await
+    }
+
+    pub async fn semantic_lane_create(
+        &self,
+        request: SemanticLaneCreateRequest,
+    ) -> Result<SemanticLaneRecordResponse> {
+        self.call_typed(SEMANTIC_LANES_CREATE_METHOD, &request)
+            .await
+    }
+
+    pub async fn semantic_lanes_list(
+        &self,
+        request: SemanticLaneListRequest,
+    ) -> Result<SemanticLaneListResponse> {
+        self.call_typed(SEMANTIC_LANES_LIST_METHOD, &request).await
+    }
+
+    pub async fn semantic_lane_set_status(
+        &self,
+        request: SemanticLaneSetStatusRequest,
+    ) -> Result<SemanticLaneRecordResponse> {
+        self.call_typed(SEMANTIC_LANES_SET_STATUS_METHOD, &request)
+            .await
+    }
+
+    pub async fn semantic_lane_discard(
+        &self,
+        request: SemanticLaneDiscardRequest,
+    ) -> Result<SemanticLaneRecordResponse> {
+        self.call_typed(SEMANTIC_LANES_DISCARD_METHOD, &request)
+            .await
+    }
+
+    pub async fn semantic_lane_outputs_list(
+        &self,
+        request: SemanticLaneOutputsListRequest,
+    ) -> Result<SemanticLaneOutputsListResponse> {
+        self.call_typed(SEMANTIC_LANE_OUTPUTS_LIST_METHOD, &request)
+            .await
+    }
+
+    pub async fn semantic_lane_diffs_list(
+        &self,
+        request: SemanticLaneDiffsListRequest,
+    ) -> Result<SemanticLaneDiffsListResponse> {
+        self.call_typed(SEMANTIC_LANE_DIFFS_LIST_METHOD, &request)
+            .await
     }
 
     // ==================== LLM Prompt/Router/Budget Commands ====================
