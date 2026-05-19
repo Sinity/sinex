@@ -5,6 +5,7 @@ pub mod blob;
 pub mod completions;
 pub mod config;
 pub mod context;
+mod common;
 pub mod core;
 pub mod curation;
 pub mod declare;

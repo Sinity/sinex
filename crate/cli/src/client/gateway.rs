@@ -447,16 +447,6 @@ impl GatewayClient {
         Ok(())
     }
 
-    #[allow(clippy::needless_pass_by_value)]
-    fn expect_string_result(method: &str, result: Value) -> Result<String> {
-        result.as_str().map(ToOwned::to_owned).ok_or_else(|| {
-            GatewayRpcError::ProtocolViolation(format!(
-                "{method} returned non-string result: {result}"
-            ))
-            .into()
-        })
-    }
-
     /// Determine if an error is retryable (transient network/server issues)
     fn is_retryable_error(err: &color_eyre::Report) -> bool {
         if let Some(reqwest_err) = err.downcast_ref::<reqwest::Error>() {
