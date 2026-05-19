@@ -306,6 +306,33 @@
     "response_type": "sinex_primitives::rpc::lifecycle::TombstoneStatusResponse"
   },
   {
+    "name": "llm.budget.report",
+    "role": "read_only",
+    "domain": "llm",
+    "stability": "experimental",
+    "mutability": "read_only",
+    "request_type": "sinex_primitives::rpc::llm::LlmBudgetReportRequest",
+    "response_type": "sinex_primitives::rpc::llm::LlmBudgetReportResponse"
+  },
+  {
+    "name": "llm.prompts.list",
+    "role": "read_only",
+    "domain": "llm",
+    "stability": "experimental",
+    "mutability": "read_only",
+    "request_type": "sinex_primitives::rpc::llm::LlmPromptsListRequest",
+    "response_type": "sinex_primitives::query::EventQueryResult"
+  },
+  {
+    "name": "llm.route.explain",
+    "role": "read_only",
+    "domain": "llm",
+    "stability": "experimental",
+    "mutability": "read_only",
+    "request_type": "sinex_primitives::rpc::llm::LlmRouteExplainRequest",
+    "response_type": "sinex_primitives::rpc::llm::LlmRouteExplainResponse"
+  },
+  {
     "name": "nodes.drain",
     "role": "write",
     "domain": "nodes",
