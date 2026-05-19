@@ -72,7 +72,8 @@ async fn mcp_lists_first_slice_read_only_tools() -> TestResult<()> {
             "sinex.trace_lineage",
             "sinex.source_readiness",
             "sinex.privacy_status",
-            "sinex.system_health"
+            "sinex.system_health",
+            "sinex.tasks_list"
         ]
     );
     assert_read_only_tool_names()?;
@@ -316,6 +317,45 @@ async fn mcp_system_health_call_uses_gateway_fixture() -> TestResult<()> {
     Ok(())
 }
 
+#[sinex_test]
+async fn mcp_tasks_list_call_uses_gateway_fixture() -> TestResult<()> {
+    let server = mount_mcp_gateway_fixture().await;
+    let client = fixture_gateway_client(&server)?;
+
+    let response = call_tool(
+        &client,
+        "sinex.tasks_list",
+        json!({
+            "query": "mcp",
+            "status": "started",
+            "project_id": "sinex",
+            "tag": "mcp",
+            "due_from": "2026-05-19T00:00:00Z",
+            "due_until": "2026-05-20T00:00:00Z",
+            "limit": 10
+        }),
+    )
+    .await?;
+
+    assert_eq!(response["tool"], "sinex.tasks_list");
+    assert_eq!(response["query"]["status"], "started");
+    assert_eq!(response["items"]["result"]["total"], 1);
+    assert_eq!(
+        response["items"]["result"]["tasks"][0]["title"],
+        "Expose MCP task list"
+    );
+    assert_eq!(
+        response["items"]["result"]["tasks"][0]["project_id"],
+        "sinex"
+    );
+    assert_eq!(
+        response["items"]["result"]["tasks"][0]["tags"],
+        json!(["mcp"])
+    );
+    assert_eq!(response["redaction"]["raw_samples"], false);
+    Ok(())
+}
+
 async fn mount_mcp_gateway_fixture() -> MockServer {
     let server = MockServer::start().await;
     Mock::given(method("POST"))
@@ -456,6 +496,33 @@ async fn mount_mcp_gateway_fixture() -> MockServer {
                             "detail": "pending_retry=2 dropped=1"
                         }
                     }
+                }),
+                "tasks.list" => json!({
+                    "tasks": [
+                        {
+                            "task_id": "018f4b6b-6a4d-7c80-8000-000000000003",
+                            "status": "started",
+                            "title": "Expose MCP task list",
+                            "body": "Fixture operator task",
+                            "project_id": "sinex",
+                            "tags": ["mcp"],
+                            "due_at": "2026-05-19T18:00:00Z",
+                            "priority": "high",
+                            "external_refs": [
+                                {
+                                    "system": "github",
+                                    "external_id": "1105",
+                                    "version": null
+                                }
+                            ],
+                            "last_event_id": "018f4b6b-6a4d-7c80-8000-000000000004",
+                            "state_hash": "fixture-task-state",
+                            "updated_at": "2026-05-19T12:00:00Z"
+                        }
+                    ],
+                    "total": 1,
+                    "event_count": 3,
+                    "limit": 10
                 }),
                 other => {
                     return ResponseTemplate::new(400).set_body_json(json!({

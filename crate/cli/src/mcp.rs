@@ -17,6 +17,8 @@ use sinex_primitives::rpc::methods;
 use sinex_primitives::rpc::privacy::PrivateModeStateResponse;
 use sinex_primitives::rpc::sources::{SourcesReadinessGetRequest, SourcesReadinessListRequest};
 use sinex_primitives::rpc::system::SystemHealthResponse;
+use sinex_primitives::rpc::tasks::{TaskListRequest, TaskListResponse};
+use sinex_primitives::task_domain::TaskStatus;
 use sinex_primitives::temporal::Timestamp;
 use std::io::{BufRead, Write};
 
@@ -110,6 +112,24 @@ struct SourceReadinessArgs {
     include_caveats: bool,
 }
 
+#[derive(Debug, Deserialize, Serialize)]
+struct TasksListArgs {
+    #[serde(default)]
+    query: Option<String>,
+    #[serde(default)]
+    status: Option<TaskStatus>,
+    #[serde(default)]
+    project_id: Option<String>,
+    #[serde(default)]
+    tag: Option<String>,
+    #[serde(default)]
+    due_from: Option<Timestamp>,
+    #[serde(default)]
+    due_until: Option<Timestamp>,
+    #[serde(default)]
+    limit: Option<u32>,
+}
+
 const fn default_true() -> bool {
     true
 }
@@ -153,6 +173,13 @@ pub fn tool_catalog() -> Vec<McpCatalogEntry> {
             kind: McpSurfaceKind::Tool,
             description: "Read-only gateway and confirmation-path health summary.",
             backing_rpc_methods: &[methods::SYSTEM_HEALTH],
+            read_only: true,
+        },
+        McpCatalogEntry {
+            name: "sinex.tasks_list",
+            kind: McpSurfaceKind::Tool,
+            description: "Read-only current task-state search and filtering.",
+            backing_rpc_methods: &[methods::TASKS_LIST],
             read_only: true,
         },
     ]
@@ -245,6 +272,31 @@ pub fn tools() -> Vec<McpTool> {
                 "additionalProperties": false
             }),
         },
+        McpTool {
+            name: "sinex.tasks_list",
+            description: "Read-only current task-state search and filtering.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "query": { "type": "string" },
+                    "status": {
+                        "type": "string",
+                        "enum": ["open", "started", "blocked", "deferred", "completed", "cancelled"]
+                    },
+                    "project_id": { "type": "string" },
+                    "tag": { "type": "string" },
+                    "due_from": { "type": "string", "format": "date-time" },
+                    "due_until": { "type": "string", "format": "date-time" },
+                    "limit": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 500,
+                        "default": 100
+                    }
+                },
+                "additionalProperties": false
+            }),
+        },
     ]
 }
 
@@ -330,6 +382,7 @@ pub async fn call_tool(client: &GatewayClient, name: &str, arguments: Value) -> 
         "sinex.source_readiness" => source_readiness(client, arguments).await,
         "sinex.privacy_status" => privacy_status(client, arguments).await,
         "sinex.system_health" => system_health(client, arguments).await,
+        "sinex.tasks_list" => tasks_list(client, arguments).await,
         other => Err(eyre!("unknown MCP tool: {other}")),
     }
 }
@@ -426,6 +479,25 @@ async fn system_health(client: &GatewayClient, arguments: Value) -> Result<Value
     Ok(envelope(
         "sinex.system_health",
         json!({}),
+        json!({ "result": response }),
+    ))
+}
+
+async fn tasks_list(client: &GatewayClient, arguments: Value) -> Result<Value> {
+    let args: TasksListArgs = serde_json::from_value(arguments)?;
+    let request = TaskListRequest {
+        query: args.query.clone(),
+        status: args.status,
+        project_id: args.project_id.clone(),
+        tag: args.tag.clone(),
+        due_from: args.due_from,
+        due_until: args.due_until,
+        limit: args.limit,
+    };
+    let response: TaskListResponse = client.tasks_list(request).await?;
+    Ok(envelope(
+        "sinex.tasks_list",
+        json!(args),
         json!({ "result": response }),
     ))
 }
