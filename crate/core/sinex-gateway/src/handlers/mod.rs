@@ -2,9 +2,6 @@
 //!
 //! This module organizes handlers into domain-specific submodules.
 
-use serde::de::DeserializeOwned;
-use serde_json::Value;
-
 pub mod audit;
 pub mod automata;
 pub mod content;
@@ -41,7 +38,6 @@ pub use replay::{
     handle_replay_operation_status, handle_replay_preview_operation,
     handle_replay_submit_operation,
 };
-pub use rpc_handlers::*;
 
 // Re-export new domain-specific handler functions
 pub use audit::handle_audit_get;
@@ -110,14 +106,3 @@ pub use telemetry::{
     handle_telemetry_recent_activity, handle_telemetry_stream_stats, handle_telemetry_system_state,
     handle_telemetry_throughput, handle_telemetry_window_focus,
 };
-
-fn parse_default_on_null<T>(params: Value) -> Result<T, serde_json::Error>
-where
-    T: Default + DeserializeOwned,
-{
-    if params.is_null() {
-        Ok(T::default())
-    } else {
-        serde_json::from_value(params)
-    }
-}
