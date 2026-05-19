@@ -56,14 +56,10 @@ struct CoverageRow {
 // ── sources.stage ──────────────────────────────────────────────
 
 pub async fn handle_sources_stage(
-    params: Value,
     services: &crate::service_container::ServiceContainer,
+    req: SourcesStageRequest,
     _auth: &crate::rpc_server::RpcAuthContext,
-) -> Result<Value> {
-    let req: SourcesStageRequest = serde_json::from_value(params).map_err(|error| {
-        SinexError::serialization("Invalid sources.stage request").with_std_error(&error)
-    })?;
-
+) -> Result<SourcesStageResponse> {
     let pool = services.pool();
 
     let path = std::path::Path::new(&req.file_path);
@@ -228,10 +224,7 @@ pub async fn handle_sources_stage(
         contract,
     };
 
-    serde_json::to_value(response).map_err(|error| {
-        SinexError::serialization("Failed to serialize sources.stage response")
-            .with_std_error(&error)
-    })
+    Ok(response)
 }
 
 // ── sources.list ───────────────────────────────────────────────
@@ -560,11 +553,10 @@ pub async fn handle_sources_bindings_resolve(_pool: &PgPool, _params: Value) -> 
 /// Merges new annotations additively: new notes are appended to existing notes,
 /// new tags are merged (deduplicated). Declared temporal bounds replace existing
 /// values only when the request provides them.
-pub async fn handle_sources_annotate(pool: &PgPool, params: Value) -> Result<Value> {
-    let req: SourcesAnnotateRequest = serde_json::from_value(params).map_err(|error| {
-        SinexError::serialization("Invalid sources.annotate request").with_std_error(&error)
-    })?;
-
+pub async fn handle_sources_annotate(
+    pool: &PgPool,
+    req: SourcesAnnotateRequest,
+) -> Result<SourcesAnnotateResponse> {
     let material_id = Uuid::parse_str(&req.material_id).map_err(|error| {
         SinexError::validation("Invalid material_id UUID")
             .with_context("material_id", &req.material_id)
@@ -653,10 +645,7 @@ pub async fn handle_sources_annotate(pool: &PgPool, params: Value) -> Result<Val
         annotations,
     };
 
-    serde_json::to_value(response).map_err(|error| {
-        SinexError::serialization("Failed to serialize sources.annotate response")
-            .with_std_error(&error)
-    })
+    Ok(response)
 }
 
 // ── sources.archive ──────────────────────────────────────────────
@@ -666,11 +655,10 @@ pub async fn handle_sources_annotate(pool: &PgPool, params: Value) -> Result<Val
 /// Wraps the existing lifecycle archive infrastructure. Dry-run mode computes
 /// the cascade preview without actually archiving, letting the operator inspect
 /// the blast radius.
-pub async fn handle_sources_archive(pool: &PgPool, params: Value) -> Result<Value> {
-    let req: SourcesArchiveRequest = serde_json::from_value(params).map_err(|error| {
-        SinexError::serialization("Invalid sources.archive request").with_std_error(&error)
-    })?;
-
+pub async fn handle_sources_archive(
+    pool: &PgPool,
+    req: SourcesArchiveRequest,
+) -> Result<SourcesArchiveResponse> {
     let material_id = Uuid::parse_str(&req.material_id).map_err(|error| {
         SinexError::validation("Invalid material_id UUID")
             .with_context("material_id", &req.material_id)
@@ -715,10 +703,7 @@ pub async fn handle_sources_archive(pool: &PgPool, params: Value) -> Result<Valu
             dry_run: true,
             preview: Some(preview),
         };
-        return serde_json::to_value(response).map_err(|error| {
-            SinexError::serialization("Failed to serialize sources.archive response")
-                .with_std_error(&error)
-        });
+        return Ok(response);
     }
 
     // Execute the archive via the lifecycle handler logic.
@@ -749,10 +734,7 @@ pub async fn handle_sources_archive(pool: &PgPool, params: Value) -> Result<Valu
                 dry_run: false,
                 preview: None,
             };
-            serde_json::to_value(response).map_err(|error| {
-                SinexError::serialization("Failed to serialize sources.archive response")
-                    .with_std_error(&error)
-            })
+            Ok(response)
         }
         Err(error) => Err(error),
     }

@@ -191,6 +191,33 @@ pub const SOURCES_READINESS_GET_METHOD:
     RpcMutability::ReadOnly,
 );
 
+pub const SOURCES_STAGE_METHOD: RpcMethod<SourcesStageRequest, SourcesStageResponse> =
+    RpcMethod::new(
+        methods::SOURCES_STAGE,
+        RpcRole::Write,
+        RpcDomain::Sources,
+        RpcStability::Experimental,
+        RpcMutability::Mutating,
+    );
+
+pub const SOURCES_ANNOTATE_METHOD: RpcMethod<SourcesAnnotateRequest, SourcesAnnotateResponse> =
+    RpcMethod::new(
+        methods::SOURCES_ANNOTATE,
+        RpcRole::Write,
+        RpcDomain::Sources,
+        RpcStability::Experimental,
+        RpcMutability::Mutating,
+    );
+
+pub const SOURCES_ARCHIVE_METHOD: RpcMethod<SourcesArchiveRequest, SourcesArchiveResponse> =
+    RpcMethod::new(
+        methods::SOURCES_ARCHIVE,
+        RpcRole::Admin,
+        RpcDomain::Sources,
+        RpcStability::Experimental,
+        RpcMutability::Mutating,
+    );
+
 /// Versioned source-material metadata contract stored under
 /// `metadata.source_material_contract`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
