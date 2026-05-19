@@ -15,6 +15,7 @@ use sinex_primitives::{EntityRelationLaneOutputs, SemanticComponentVersion, Sema
 use std::path::{Path, PathBuf};
 
 use crate::client::GatewayClient;
+use crate::commands::common::parse_serde_enum;
 use crate::fmt::{format_json, format_yaml};
 use crate::model::OutputFormat;
 use crate::validation::parse_time_input;
@@ -453,11 +454,6 @@ fn scope(kind: &str, input_ids: &[String], input_set_hash: &str) -> SemanticScop
         input_ids: input_ids.to_vec(),
         input_set_hash: input_set_hash.to_string(),
     }
-}
-
-fn parse_serde_enum<T: DeserializeOwned>(name: &str, raw: &str) -> Result<T> {
-    serde_json::from_value(Value::String(raw.to_string()))
-        .map_err(|error| eyre!("invalid {name} `{raw}`: {error}"))
 }
 
 fn parse_json_opt<T: DeserializeOwned>(name: &str, raw: Option<&str>) -> Result<Option<T>> {
