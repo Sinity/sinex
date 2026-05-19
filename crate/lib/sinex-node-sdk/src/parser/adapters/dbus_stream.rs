@@ -34,7 +34,13 @@
 use async_trait::async_trait;
 use futures::stream::BoxStream;
 use serde::{Deserialize, Serialize};
-use std::str::FromStr;
+use std::{
+    str::FromStr,
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
+};
 
 use sinex_primitives::events::SourceMaterial;
 use sinex_primitives::ids::Id;
@@ -554,7 +560,7 @@ impl DbusStreamAdapter {
             .iter()
             .filter_map(|r| ParsedMatchRule::from_str(r).ok())
             .collect();
-        let mut frame_index: u64 = 0;
+        let frame_index = Arc::new(AtomicU64::new(0));
 
         let message_stream = backend.subscribe(bus, rules);
 
@@ -564,6 +570,7 @@ impl DbusStreamAdapter {
             // a message outside our rule set, drop it here so the parser
             // never sees it.
             let parsed_rules = parsed_rules.clone();
+            let frame_index = Arc::clone(&frame_index);
             async move {
                 let msg = match msg_result {
                     Ok(m) => m,
@@ -582,9 +589,8 @@ impl DbusStreamAdapter {
                 };
                 let anchor = MaterialAnchor::StreamFrame {
                     material_offset: 0,
-                    frame_index,
+                    frame_index: frame_index.fetch_add(1, Ordering::Relaxed),
                 };
-                frame_index += 1;
                 let metadata = serde_json::json!({
                     "interface": msg.interface,
                     "member": msg.member,
@@ -651,8 +657,11 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_dbus_anchor_is_stream_frame() -> xtask::sandbox::TestResult<()> {
-        let msgs = vec![make_msg("org.test.Iface", "Sig")];
+    async fn test_dbus_anchor_frame_index_is_monotonic() -> xtask::sandbox::TestResult<()> {
+        let msgs = vec![
+            make_msg("org.test.Iface", "First"),
+            make_msg("org.test.Iface", "Second"),
+        ];
         let config = DbusStreamConfig {
             bus: DbusBus::System,
             match_rules: vec!["type='signal',interface='org.test.Iface'".into()],
@@ -665,11 +674,15 @@ mod tests {
         );
 
         let records: Vec<_> = stream.collect().await;
-        assert_eq!(records.len(), 1);
-        let record = records.into_iter().next().unwrap().unwrap();
+        assert_eq!(records.len(), 2);
+        let records = records.into_iter().collect::<ParserResult<Vec<_>>>()?;
         assert!(matches!(
-            record.anchor,
+            records[0].anchor,
             MaterialAnchor::StreamFrame { frame_index: 0, .. }
+        ));
+        assert!(matches!(
+            records[1].anchor,
+            MaterialAnchor::StreamFrame { frame_index: 1, .. }
         ));
         Ok(())
     }
