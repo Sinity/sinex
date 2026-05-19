@@ -765,6 +765,15 @@
     "response_type": "sinex_primitives::rpc::tasks::TaskEventResponse<sinex_primitives::events::payloads::task_domain::TaskCreatedPayload>"
   },
   {
+    "name": "tasks.list",
+    "role": "read_only",
+    "domain": "tasks",
+    "stability": "experimental",
+    "mutability": "read_only",
+    "request_type": "sinex_primitives::rpc::tasks::TaskListRequest",
+    "response_type": "sinex_primitives::rpc::tasks::TaskListResponse"
+  },
+  {
     "name": "tasks.state.get",
     "role": "read_only",
     "domain": "tasks",

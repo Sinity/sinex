@@ -2,6 +2,7 @@
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use std::{fmt, str::FromStr};
 
 use crate::{Result, SinexError, Timestamp, Uuid};
 
@@ -24,6 +25,41 @@ impl TaskStatus {
     #[must_use]
     pub const fn is_terminal(self) -> bool {
         matches!(self, Self::Completed | Self::Cancelled)
+    }
+
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Open => "open",
+            Self::Started => "started",
+            Self::Blocked => "blocked",
+            Self::Deferred => "deferred",
+            Self::Completed => "completed",
+            Self::Cancelled => "cancelled",
+        }
+    }
+}
+
+impl fmt::Display for TaskStatus {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl FromStr for TaskStatus {
+    type Err = SinexError;
+
+    fn from_str(raw: &str) -> Result<Self> {
+        match raw.trim().to_ascii_lowercase().as_str() {
+            "open" => Ok(Self::Open),
+            "started" => Ok(Self::Started),
+            "blocked" => Ok(Self::Blocked),
+            "deferred" => Ok(Self::Deferred),
+            "completed" => Ok(Self::Completed),
+            "cancelled" => Ok(Self::Cancelled),
+            other => Err(SinexError::validation("unknown task status")
+                .with_context("status", other.to_string())),
+        }
     }
 }
 

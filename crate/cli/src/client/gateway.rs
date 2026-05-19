@@ -97,9 +97,9 @@ use sinex_primitives::rpc::{
         SystemHealthResponse, SystemPingRequest, SystemVersionRequest,
     },
     tasks::{
-        TASKS_COMPLETE_METHOD, TASKS_CREATE_METHOD, TASKS_STATE_GET_METHOD, TaskCompleteRequest,
-        TaskCompleteResponse, TaskCreateRequest, TaskCreateResponse, TaskStateGetRequest,
-        TaskStateResponse,
+        TASKS_COMPLETE_METHOD, TASKS_CREATE_METHOD, TASKS_LIST_METHOD, TASKS_STATE_GET_METHOD,
+        TaskCompleteRequest, TaskCompleteResponse, TaskCreateRequest, TaskCreateResponse,
+        TaskListRequest, TaskListResponse, TaskStateGetRequest, TaskStateResponse,
     },
     telemetry::{
         AssemblyStatsBucket, CommandFrequencyEntry, CurrentDeviceStateEntry, CurrentHealthEntry,
@@ -888,6 +888,11 @@ impl GatewayClient {
     /// Fetch current task state.
     pub async fn tasks_state_get(&self, request: TaskStateGetRequest) -> Result<TaskStateResponse> {
         self.call_typed(TASKS_STATE_GET_METHOD, &request).await
+    }
+
+    /// List current task states.
+    pub async fn tasks_list(&self, request: TaskListRequest) -> Result<TaskListResponse> {
+        self.call_typed(TASKS_LIST_METHOD, &request).await
     }
 
     // ==================== Curation Commands ====================

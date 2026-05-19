@@ -8,7 +8,7 @@ use sinex_primitives::events::SourceMaterial;
 use sinex_primitives::events::payloads::{TaskCompletedPayload, TaskCreatedPayload};
 use sinex_primitives::rpc::tasks::{
     TaskCompleteRequest, TaskCompleteResponse, TaskCreateRequest, TaskCreateResponse,
-    TaskEventResponse, TaskStateGetRequest, TaskStateResponse,
+    TaskEventResponse, TaskListRequest, TaskListResponse, TaskStateGetRequest, TaskStateResponse,
 };
 use sinex_primitives::task_domain::{
     TaskCompletedInput, TaskCreatedInput, TaskLifecycleInput, TaskSourceSystem, TaskState,
@@ -16,9 +16,14 @@ use sinex_primitives::task_domain::{
 };
 use sinex_primitives::{Id, Result, SinexError, Timestamp, Uuid};
 use sqlx::PgPool;
+use std::collections::HashMap;
 
 use crate::rpc_server::RpcAuthContext;
 
+const DEFAULT_TASK_LIST_LIMIT: u32 = 50;
+const MAX_TASK_LIST_LIMIT: u32 = 500;
+
+#[derive(Clone)]
 struct TaskEventRow {
     id: Uuid,
     event_type: String,
@@ -155,6 +160,44 @@ pub async fn handle_tasks_state_get(
     })
 }
 
+pub async fn handle_tasks_list(pool: &PgPool, req: TaskListRequest) -> Result<TaskListResponse> {
+    let limit = normalize_task_list_limit(req.limit)?;
+    let rows = query_all_task_event_rows(pool).await?;
+    let event_count = rows.len();
+    let mut states = reduce_task_rows_by_id(rows)?;
+
+    if let Some(status) = req.status {
+        states.retain(|state| state.status == status);
+    }
+    if let Some(project_id) = req
+        .project_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+    {
+        states.retain(|state| state.project_id.as_deref() == Some(project_id));
+    }
+    if let Some(tag) = req.tag.as_deref().map(str::trim).filter(|v| !v.is_empty()) {
+        states.retain(|state| state.tags.iter().any(|candidate| candidate == tag));
+    }
+
+    states.sort_by(|left, right| {
+        right
+            .updated_at
+            .cmp(&left.updated_at)
+            .then_with(|| left.task_id.cmp(&right.task_id))
+    });
+    let total = states.len();
+    states.truncate(limit as usize);
+
+    Ok(TaskListResponse {
+        tasks: states,
+        total,
+        event_count,
+        limit,
+    })
+}
+
 async fn register_task_material(
     pool: &PgPool,
     auth: &RpcAuthContext,
@@ -230,6 +273,79 @@ async fn query_task_event_rows(pool: &PgPool, task_id: Uuid) -> Result<Vec<TaskE
             ts_orig: row.ts_orig,
         })
         .collect())
+}
+
+async fn query_all_task_event_rows(pool: &PgPool) -> Result<Vec<TaskEventRow>> {
+    let rows = sqlx::query!(
+        r#"
+        SELECT
+            id as "id!: Uuid",
+            event_type,
+            payload,
+            ts_orig as "ts_orig!: Timestamp"
+        FROM core.events
+        WHERE source = 'task'
+          AND event_type IN ('task.created', 'task.completed')
+        ORDER BY payload->>'task_id' ASC, ts_orig ASC, id ASC
+        "#
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(|error| {
+        SinexError::database("failed to query task lifecycle events").with_std_error(&error)
+    })?;
+
+    Ok(rows
+        .into_iter()
+        .map(|row| TaskEventRow {
+            id: row.id,
+            event_type: row.event_type,
+            payload: row.payload,
+            ts_orig: row.ts_orig,
+        })
+        .collect())
+}
+
+fn normalize_task_list_limit(limit: Option<u32>) -> Result<u32> {
+    match limit {
+        Some(0) => Err(SinexError::validation(
+            "tasks.list: limit must be greater than zero",
+        )),
+        Some(value) => Ok(value.min(MAX_TASK_LIST_LIMIT)),
+        None => Ok(DEFAULT_TASK_LIST_LIMIT),
+    }
+}
+
+fn reduce_task_rows_by_id(rows: Vec<TaskEventRow>) -> Result<Vec<TaskState>> {
+    let mut grouped: HashMap<Uuid, Vec<TaskEventRow>> = HashMap::new();
+    for row in rows {
+        let task_id = task_id_from_payload(&row)?;
+        grouped.entry(task_id).or_default().push(row);
+    }
+
+    grouped
+        .into_values()
+        .map(reduce_task_rows)
+        .filter_map(|result| result.transpose())
+        .collect()
+}
+
+fn task_id_from_payload(row: &TaskEventRow) -> Result<Uuid> {
+    let raw = row
+        .payload
+        .get("task_id")
+        .and_then(Value::as_str)
+        .ok_or_else(|| {
+            SinexError::serialization("task lifecycle payload missing task_id")
+                .with_context("event_id", row.id.to_string())
+                .with_context("event_type", row.event_type.clone())
+        })?;
+    raw.parse::<Uuid>().map_err(|error| {
+        SinexError::serialization("task lifecycle payload has invalid task_id")
+            .with_context("event_id", row.id.to_string())
+            .with_context("task_id", raw.to_string())
+            .with_std_error(&error)
+    })
 }
 
 fn reduce_task_rows(rows: Vec<TaskEventRow>) -> Result<Option<TaskState>> {

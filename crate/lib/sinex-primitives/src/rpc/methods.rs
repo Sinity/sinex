@@ -28,6 +28,7 @@ pub const LLM_BUDGET_REPORT: &str = "llm.budget.report";
 pub const TASKS_CREATE: &str = "tasks.create";
 pub const TASKS_COMPLETE: &str = "tasks.complete";
 pub const TASKS_STATE_GET: &str = "tasks.state.get";
+pub const TASKS_LIST: &str = "tasks.list";
 
 // PKM
 pub const PKM_CREATE_NOTE: &str = "pkm.create_note";

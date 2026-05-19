@@ -8,7 +8,7 @@ use crate::events::{
     payloads::{TaskCompletedPayload, TaskCreatedPayload},
 };
 use crate::rpc::{RpcDomain, RpcMethod, RpcMutability, RpcRole, RpcStability, methods};
-use crate::task_domain::{TaskExternalRef, TaskState};
+use crate::task_domain::{TaskExternalRef, TaskState, TaskStatus};
 use crate::{Id, Timestamp, Uuid};
 
 pub const TASKS_CREATE_METHOD: RpcMethod<TaskCreateRequest, TaskCreateResponse> = RpcMethod::new(
@@ -36,6 +36,14 @@ pub const TASKS_STATE_GET_METHOD: RpcMethod<TaskStateGetRequest, TaskStateRespon
         RpcStability::Experimental,
         RpcMutability::ReadOnly,
     );
+
+pub const TASKS_LIST_METHOD: RpcMethod<TaskListRequest, TaskListResponse> = RpcMethod::new(
+    methods::TASKS_LIST,
+    RpcRole::ReadOnly,
+    RpcDomain::Tasks,
+    RpcStability::Experimental,
+    RpcMutability::ReadOnly,
+);
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct TaskCreateRequest {
@@ -72,6 +80,18 @@ pub struct TaskStateGetRequest {
     pub task_id: Uuid,
 }
 
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+pub struct TaskListRequest {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<TaskStatus>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tag: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limit: Option<u32>,
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct TaskEventResponse<T> {
     pub payload: T,
@@ -88,4 +108,12 @@ pub struct TaskStateResponse {
     pub task_id: Uuid,
     pub state: Option<TaskState>,
     pub event_count: usize,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct TaskListResponse {
+    pub tasks: Vec<TaskState>,
+    pub total: usize,
+    pub event_count: usize,
+    pub limit: u32,
 }

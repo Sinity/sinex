@@ -87,7 +87,9 @@ pub use sources::{
     handle_sources_show, handle_sources_stage,
 };
 pub use system::{handle_system_health, handle_system_ping, handle_system_version};
-pub use tasks::{handle_tasks_complete, handle_tasks_create, handle_tasks_state_get};
+pub use tasks::{
+    handle_tasks_complete, handle_tasks_create, handle_tasks_list, handle_tasks_state_get,
+};
 pub use telemetry::{
     handle_telemetry_assembly_stats, handle_telemetry_command_frequency,
     handle_telemetry_current_device_state, handle_telemetry_current_health,
