@@ -78,7 +78,9 @@ async fn mcp_lists_first_slice_read_only_tools() -> TestResult<()> {
             "sinex.automata_status",
             "sinex.ingestors_status",
             "sinex.nodes_health",
-            "sinex.nodes_active"
+            "sinex.nodes_active",
+            "sinex.ingestd_validation",
+            "sinex.ingestd_batch_stats"
         ]
     );
     assert_read_only_tool_names()?;
@@ -482,6 +484,52 @@ async fn mcp_nodes_active_call_uses_gateway_fixture() -> TestResult<()> {
     Ok(())
 }
 
+#[sinex_test]
+async fn mcp_ingestd_validation_call_uses_gateway_fixture() -> TestResult<()> {
+    let server = mount_mcp_gateway_fixture().await;
+    let client = fixture_gateway_client(&server)?;
+
+    let response = call_tool(&client, "sinex.ingestd_validation", json!({})).await?;
+
+    assert_eq!(response["tool"], "sinex.ingestd_validation");
+    assert_eq!(response["items"]["snapshot"]["batch_size"], 12);
+    assert_eq!(response["items"]["snapshot"]["validation_invalid"], 0);
+    assert_eq!(
+        response["items"]["snapshot"]["validation_coverage_pct"],
+        100.0
+    );
+    assert_eq!(response["redaction"]["raw_samples"], false);
+    Ok(())
+}
+
+#[sinex_test]
+async fn mcp_ingestd_batch_stats_call_uses_gateway_fixture() -> TestResult<()> {
+    let server = mount_mcp_gateway_fixture().await;
+    let client = fixture_gateway_client(&server)?;
+
+    let response = call_tool(
+        &client,
+        "sinex.ingestd_batch_stats",
+        json!({
+            "from": "2026-05-19T00:00:00Z",
+            "to": "2026-05-19T01:00:00Z",
+            "limit": 5
+        }),
+    )
+    .await?;
+
+    assert_eq!(response["tool"], "sinex.ingestd_batch_stats");
+    assert_eq!(response["query"]["limit"], 5);
+    assert_eq!(response["items"]["buckets"][0]["batch_count"], 3);
+    assert_eq!(response["items"]["buckets"][0]["validation_invalid"], 0);
+    assert_eq!(
+        response["items"]["buckets"][0]["avg_validation_coverage_pct"],
+        100.0
+    );
+    assert_eq!(response["redaction"]["raw_samples"], false);
+    Ok(())
+}
+
 async fn mount_mcp_gateway_fixture() -> MockServer {
     let server = MockServer::start().await;
     Mock::given(method("POST"))
@@ -719,6 +767,45 @@ async fn mount_mcp_gateway_fixture() -> MockServer {
                             "last_heartbeat_at": "2026-05-19T11:59:59Z",
                             "started_at": "2026-05-19T11:00:00Z",
                             "heartbeat_source": "run"
+                        }
+                    ]
+                }),
+                "telemetry.ingestd_validation" => json!({
+                    "snapshot": {
+                        "observed_at": "2026-05-19T11:59:59Z",
+                        "batch_size": 12,
+                        "fetch_to_ack_ms": 18,
+                        "events_deferred": 0,
+                        "events_failed": 0,
+                        "had_synthesis": false,
+                        "insert_path": "values",
+                        "validation_valid": 12,
+                        "validation_skipped": 0,
+                        "validation_no_schema": 0,
+                        "validation_schema_not_found": 0,
+                        "validation_invalid": 0,
+                        "validation_coverage_pct": 100.0,
+                        "suspicious_future_ts_orig": 0
+                    }
+                }),
+                "telemetry.ingestd_batch_stats" => json!({
+                    "buckets": [
+                        {
+                            "bucket": "2026-05-19T00:00:00Z",
+                            "avg_batch_size": 12.0,
+                            "max_batch_size": 18,
+                            "avg_latency_ms": 14.5,
+                            "max_latency_ms": 19.0,
+                            "total_deferred": 0,
+                            "total_failed": 0,
+                            "synthesis_batches": 0,
+                            "batch_count": 3,
+                            "validation_valid": 36,
+                            "validation_skipped": 0,
+                            "validation_no_schema": 0,
+                            "validation_schema_not_found": 0,
+                            "validation_invalid": 0,
+                            "avg_validation_coverage_pct": 100.0
                         }
                     ]
                 }),
