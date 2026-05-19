@@ -243,28 +243,25 @@ fn parse_claude_message(
         "conversation_name": conversation_name_opt,
     });
 
-    Ok(ParsedEventIntent {
-        id: sinex_primitives::ids::Id::new(),
-        source_unit_id: ctx.source_unit_id.clone(),
-        parser_id: ParserId::from_static("claude-ai-session"),
-        parser_version: "1.0.0".into(),
-        event_type: EventType::from_static("ai.message"),
-        event_source: EventSource::from_static("claude"),
-        payload,
-        ts_orig: message_ts,
-        timing: TimingEvidence::Intrinsic {
+    Ok(ParsedEventIntent::builder()
+        .source_unit_id(ctx.source_unit_id.clone())
+        .parser_id(ParserId::from_static("claude-ai-session"))
+        .parser_version("1.0.0")
+        .event_type(EventType::from_static("ai.message"))
+        .event_source(EventSource::from_static("claude"))
+        .payload(payload)
+        .ts_orig(message_ts)
+        .timing(TimingEvidence::Intrinsic {
             field: "created_at".into(),
             confidence: TimingConfidence::Intrinsic,
-        },
-        anchor: MaterialAnchor::ByteRange {
+        })
+        .anchor(MaterialAnchor::ByteRange {
             start: anchor(conv_index, msg_index),
             len: 1,
-        },
-        occurrence_key: Some(occurrence_key),
-        privacy_context: ProcessingContext::Document,
-        field_privacy_log: None,
-        synthesis_parents: None,
-    })
+        })
+        .occurrence_key(occurrence_key)
+        .privacy_context(ProcessingContext::Document)
+        .build())
 }
 
 // ---------------------------------------------------------------------------
@@ -539,28 +536,27 @@ fn parse_chatgpt_message(
         "model": model,
     });
 
-    Ok(Some(ParsedEventIntent {
-        id: sinex_primitives::ids::Id::new(),
-        source_unit_id: ctx.source_unit_id.clone(),
-        parser_id: ParserId::from_static("chatgpt-ai-session"),
-        parser_version: "1.0.0".into(),
-        event_type: EventType::from_static("ai.message"),
-        event_source: EventSource::from_static("chatgpt"),
-        payload,
-        ts_orig: message_ts,
-        timing: TimingEvidence::Intrinsic {
-            field: "create_time".into(),
-            confidence: TimingConfidence::Intrinsic,
-        },
-        anchor: MaterialAnchor::ByteRange {
-            start: anchor(conv_index, msg_index),
-            len: 1,
-        },
-        occurrence_key: Some(occurrence_key),
-        privacy_context: ProcessingContext::Document,
-        field_privacy_log: None,
-        synthesis_parents: None,
-    }))
+    Ok(Some(
+        ParsedEventIntent::builder()
+            .source_unit_id(ctx.source_unit_id.clone())
+            .parser_id(ParserId::from_static("chatgpt-ai-session"))
+            .parser_version("1.0.0")
+            .event_type(EventType::from_static("ai.message"))
+            .event_source(EventSource::from_static("chatgpt"))
+            .payload(payload)
+            .ts_orig(message_ts)
+            .timing(TimingEvidence::Intrinsic {
+                field: "create_time".into(),
+                confidence: TimingConfidence::Intrinsic,
+            })
+            .anchor(MaterialAnchor::ByteRange {
+                start: anchor(conv_index, msg_index),
+                len: 1,
+            })
+            .occurrence_key(occurrence_key)
+            .privacy_context(ProcessingContext::Document)
+            .build(),
+    ))
 }
 
 // ---------------------------------------------------------------------------

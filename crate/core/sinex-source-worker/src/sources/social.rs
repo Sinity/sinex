@@ -550,28 +550,25 @@ fn parse_wykop_entry_row(
         "photo_url": row.entry_photo_url,
     });
 
-    Ok(ParsedEventIntent {
-        id: sinex_primitives::ids::Id::new(),
-        source_unit_id: ctx.source_unit_id.clone(),
-        parser_id: ParserId::from_static("wykop-entries"),
-        parser_version: "1.0.0".into(),
-        event_type: EventType::from_static("social.entry.created"),
-        event_source: EventSource::from_static("wykop"),
-        payload,
-        ts_orig: created_at,
-        timing: TimingEvidence::Intrinsic {
+    Ok(ParsedEventIntent::builder()
+        .source_unit_id(ctx.source_unit_id.clone())
+        .parser_id(ParserId::from_static("wykop-entries"))
+        .parser_version("1.0.0")
+        .event_type(EventType::from_static("social.entry.created"))
+        .event_source(EventSource::from_static("wykop"))
+        .payload(payload)
+        .ts_orig(created_at)
+        .timing(TimingEvidence::Intrinsic {
             field: "entry_created_at".into(),
             confidence: TimingConfidence::Intrinsic,
-        },
-        anchor: MaterialAnchor::Line {
+        })
+        .anchor(MaterialAnchor::Line {
             byte_start: 0,
             line,
-        },
-        occurrence_key: Some(occurrence_key),
-        privacy_context: ProcessingContext::Document,
-        field_privacy_log: None,
-        synthesis_parents: None,
-    })
+        })
+        .occurrence_key(occurrence_key)
+        .privacy_context(ProcessingContext::Document)
+        .build())
 }
 
 // ---------------------------------------------------------------------------
@@ -739,28 +736,25 @@ fn parse_wykop_entry_comment_row(
         "photo_url": row.comment_photo_url,
     });
 
-    Ok(ParsedEventIntent {
-        id: sinex_primitives::ids::Id::new(),
-        source_unit_id: ctx.source_unit_id.clone(),
-        parser_id: ParserId::from_static("wykop-entry-comments"),
-        parser_version: "1.0.0".into(),
-        event_type: EventType::from_static("social.entry_comment.posted"),
-        event_source: EventSource::from_static("wykop"),
-        payload,
-        ts_orig: created_at,
-        timing: TimingEvidence::Intrinsic {
+    Ok(ParsedEventIntent::builder()
+        .source_unit_id(ctx.source_unit_id.clone())
+        .parser_id(ParserId::from_static("wykop-entry-comments"))
+        .parser_version("1.0.0")
+        .event_type(EventType::from_static("social.entry_comment.posted"))
+        .event_source(EventSource::from_static("wykop"))
+        .payload(payload)
+        .ts_orig(created_at)
+        .timing(TimingEvidence::Intrinsic {
             field: "comment_created_at".into(),
             confidence: TimingConfidence::Intrinsic,
-        },
-        anchor: MaterialAnchor::Line {
+        })
+        .anchor(MaterialAnchor::Line {
             byte_start: 0,
             line,
-        },
-        occurrence_key: Some(occurrence_key),
-        privacy_context: ProcessingContext::Document,
-        field_privacy_log: None,
-        synthesis_parents: None,
-    })
+        })
+        .occurrence_key(occurrence_key)
+        .privacy_context(ProcessingContext::Document)
+        .build())
 }
 
 // ---------------------------------------------------------------------------
