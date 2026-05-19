@@ -318,6 +318,64 @@ mod binary_path {
     }
 
     #[sinex_test(timeout = 120)]
+    async fn weechat_source_worker_malformed_private_mode_state_fails_closed(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        let ctx = ctx.with_nats().shared().await?;
+        let stack = TestCoreStack::new(&ctx).await?;
+
+        let tempdir = tempfile::tempdir()?;
+        let log_path = tempdir.path().join("weechat.log");
+        write_weechat_fixture(
+            &log_path,
+            "malformed private-mode state should suppress this",
+        )
+        .await?;
+        let worker_dir = tempdir.path().join("worker");
+        tokio::fs::create_dir_all(&worker_dir).await?;
+        let state_dir = tempdir.path().join("state");
+        let private_mode_path = sinex_primitives::privacy::private_mode_state_path(&state_dir);
+        let private_mode_parent = private_mode_path
+            .parent()
+            .ok_or_else(|| color_eyre::eyre::eyre!("private-mode state path must have parent"))?;
+        tokio::fs::create_dir_all(private_mode_parent).await?;
+        tokio::fs::write(&private_mode_path, b"{not-json").await?;
+
+        let mut node_config = weechat_node_config(&log_path);
+        node_config["private_mode_state_dir"] =
+            serde_json::Value::String(state_dir.display().to_string());
+
+        let mut config = TestSourceWorkerConfig::new("weechat");
+        config.nats = ctx.nats_handle()?.connection_config();
+        config.database_url = ctx.database_url().to_string();
+        config.namespace = Some(ctx.pipeline_namespace().prefix().to_string());
+        config.work_dir = Some(worker_dir);
+        config.node_config = Some(node_config.to_string());
+
+        let output = run_test_source_worker_scan(config, &[], Some(&ctx)).await?;
+        ctx.assert("malformed private-mode state suppressed all events")
+            .that(
+                output.stdout.contains("Events processed: 0"),
+                "scan output should report no processed events when private-mode state is unreadable",
+            )?;
+
+        let count: i64 = sqlx::query_scalar(
+            r"
+            SELECT COUNT(*)::bigint
+            FROM core.events
+            WHERE source = 'irc' AND event_type = 'irc.message'
+            ",
+        )
+        .fetch_one(ctx.pool())
+        .await?;
+        ctx.assert("fail-closed malformed state persisted no irc.message events")
+            .eq(&count, &0)?;
+
+        stack.shutdown().await?;
+        Ok(())
+    }
+
+    #[sinex_test(timeout = 120)]
     async fn bash_history_source_worker_private_mode_suppresses_before_acquisition(
         ctx: TestContext,
     ) -> TestResult<()> {
