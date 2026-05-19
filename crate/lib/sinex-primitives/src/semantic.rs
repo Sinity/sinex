@@ -151,7 +151,7 @@ impl SemanticRelationOutput {
 }
 
 /// Inputs to an entity/relation lane comparison.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct EntityRelationLaneOutputs {
     #[serde(default)]
     pub entities: Vec<SemanticEntityOutput>,

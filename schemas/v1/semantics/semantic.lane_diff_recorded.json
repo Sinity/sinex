@@ -1,0 +1,411 @@
+{
+  "$defs": {
+    "DateTime": {
+      "description": "RFC 3339 formatted date-time string",
+      "format": "date-time",
+      "type": "string"
+    },
+    "EntityRelationDiffCounts": {
+      "description": "Aggregate churn counts for an entity/relation lane diff.",
+      "properties": {
+        "entity_category_changed": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "entity_confidence_changed": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "entity_merge": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "entity_missing": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "entity_new": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "entity_split": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "relation_added": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "relation_predicate_changed": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "relation_removed": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "relation_weight_changed": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "entity_new",
+        "entity_missing",
+        "entity_split",
+        "entity_merge",
+        "entity_category_changed",
+        "entity_confidence_changed",
+        "relation_added",
+        "relation_removed",
+        "relation_predicate_changed",
+        "relation_weight_changed"
+      ],
+      "type": "object"
+    },
+    "EntityRelationDiffExample": {
+      "description": "One representative diff example.",
+      "oneOf": [
+        {
+          "properties": {
+            "canonical_name": {
+              "type": "string"
+            },
+            "entity_key": {
+              "type": "string"
+            },
+            "kind": {
+              "const": "entity_new",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "entity_key",
+            "canonical_name"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "canonical_name": {
+              "type": "string"
+            },
+            "entity_key": {
+              "type": "string"
+            },
+            "kind": {
+              "const": "entity_missing",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "entity_key",
+            "canonical_name"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "baseline_keys": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "candidate_keys": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "canonical_name": {
+              "type": "string"
+            },
+            "kind": {
+              "const": "entity_split",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "canonical_name",
+            "baseline_keys",
+            "candidate_keys"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "baseline_keys": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "candidate_keys": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "canonical_name": {
+              "type": "string"
+            },
+            "kind": {
+              "const": "entity_merge",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "canonical_name",
+            "baseline_keys",
+            "candidate_keys"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "baseline": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "candidate": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "entity_key": {
+              "type": "string"
+            },
+            "kind": {
+              "const": "entity_category_changed",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "entity_key"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "baseline": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "candidate": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "entity_key": {
+              "type": "string"
+            },
+            "kind": {
+              "const": "entity_confidence_changed",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "entity_key"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "relation_added",
+              "type": "string"
+            },
+            "predicate": {
+              "type": "string"
+            },
+            "relation_key": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "relation_key",
+            "predicate"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "relation_removed",
+              "type": "string"
+            },
+            "predicate": {
+              "type": "string"
+            },
+            "relation_key": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "relation_key",
+            "predicate"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "baseline": {
+              "type": "string"
+            },
+            "candidate": {
+              "type": "string"
+            },
+            "kind": {
+              "const": "relation_predicate_changed",
+              "type": "string"
+            },
+            "relation_key": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "relation_key",
+            "baseline",
+            "candidate"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "baseline": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "candidate": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "kind": {
+              "const": "relation_weight_changed",
+              "type": "string"
+            },
+            "relation_key": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "relation_key"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "EntityRelationDiffReport": {
+      "description": "Machine-readable entity/relation lane diff report.",
+      "properties": {
+        "baseline_epoch_id": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "candidate_epoch_id": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "counts": {
+          "$ref": "#/$defs/EntityRelationDiffCounts"
+        },
+        "examples": {
+          "items": {
+            "$ref": "#/$defs/EntityRelationDiffExample"
+          },
+          "type": "array"
+        },
+        "input_set_hash": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "baseline_epoch_id",
+        "candidate_epoch_id",
+        "input_set_hash",
+        "counts"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "A deterministic comparison report was recorded for two lanes.",
+  "properties": {
+    "baseline_lane_id": {
+      "format": "uuid",
+      "type": "string"
+    },
+    "candidate_lane_id": {
+      "format": "uuid",
+      "type": "string"
+    },
+    "created_at": {
+      "$ref": "#/$defs/DateTime"
+    },
+    "diff_id": {
+      "format": "uuid",
+      "type": "string"
+    },
+    "diff_kind": {
+      "type": "string"
+    },
+    "operation_id": {
+      "format": "uuid",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "report": {
+      "$ref": "#/$defs/EntityRelationDiffReport"
+    },
+    "report_hash": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "diff_id",
+    "baseline_lane_id",
+    "candidate_lane_id",
+    "diff_kind",
+    "report",
+    "report_hash",
+    "created_at"
+  ],
+  "title": "SemanticLaneDiffRecordedPayload",
+  "type": "object",
+  "x-sinex-event-type": "semantic.lane_diff_recorded",
+  "x-sinex-source": "semantics",
+  "x-sinex-version": "1.0.0"
+}

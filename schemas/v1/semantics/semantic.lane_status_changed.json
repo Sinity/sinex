@@ -1,0 +1,61 @@
+{
+  "$defs": {
+    "DateTime": {
+      "description": "RFC 3339 formatted date-time string",
+      "format": "date-time",
+      "type": "string"
+    },
+    "SemanticLaneStatus": {
+      "description": "Shadow-lane lifecycle state.",
+      "enum": [
+        "planned",
+        "running",
+        "completed",
+        "compared",
+        "promoted",
+        "discarded",
+        "expired"
+      ],
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "A semantic lane lifecycle transition was recorded.",
+  "properties": {
+    "changed_at": {
+      "$ref": "#/$defs/DateTime"
+    },
+    "lane_id": {
+      "format": "uuid",
+      "type": "string"
+    },
+    "new_status": {
+      "$ref": "#/$defs/SemanticLaneStatus"
+    },
+    "operation_id": {
+      "format": "uuid",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "previous_status": {
+      "$ref": "#/$defs/SemanticLaneStatus"
+    },
+    "reason": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "lane_id",
+    "previous_status",
+    "new_status",
+    "reason",
+    "changed_at"
+  ],
+  "title": "SemanticLaneStatusChangedPayload",
+  "type": "object",
+  "x-sinex-event-type": "semantic.lane_status_changed",
+  "x-sinex-source": "semantics",
+  "x-sinex-version": "1.0.0"
+}
