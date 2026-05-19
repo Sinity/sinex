@@ -22,6 +22,7 @@ use sinex_primitives::rpc::{
         LIFECYCLE_ARCHIVE_METHOD, LIFECYCLE_RESTORE_METHOD, LIFECYCLE_STATUS_METHOD,
     },
     methods,
+    nodes::{NODES_DRAIN_METHOD, NODES_RESUME_METHOD, NODES_SET_HORIZON_METHOD},
     ops::{OPS_CANCEL_METHOD, OPS_GET_METHOD, OPS_LIST_METHOD, OPS_START_METHOD},
     replay::{REPLAY_LIST_OPERATIONS_METHOD, REPLAY_OPERATION_STATUS_METHOD},
     sources::{
@@ -480,6 +481,47 @@ impl RpcRegistry {
         self
     }
 
+    /// Register a typed NATS-backed RPC handler with auth context.
+    pub(crate) fn nats_auth_typed_rpc<Req, Resp, F>(
+        mut self,
+        method: RpcMethod<Req, Resp>,
+        f: F,
+    ) -> Self
+    where
+        Req: DeserializeOwned + 'static,
+        Resp: Serialize + 'static,
+        F: for<'a> Fn(
+                &'a async_nats::Client,
+                &'a sinex_primitives::environment::SinexEnvironment,
+                Req,
+                &'a RpcAuthContext,
+            ) -> Pin<Box<dyn Future<Output = Result<Resp>> + Send + 'a>>
+            + Send
+            + Sync
+            + 'static,
+    {
+        let f = Arc::new(f);
+        self.methods.insert(
+            method.name,
+            RegistryEntry {
+                handler: Arc::new(move |params, services, auth| {
+                    let f = Arc::clone(&f);
+                    Box::pin(async move {
+                        let nats = services.nats_client().ok_or_else(|| {
+                            SinexError::configuration("NATS client is not available")
+                        })?;
+                        let env = services.environment();
+                        let request = decode_rpc_params(method.name, params)?;
+                        let response = f(nats, env, request, auth).await?;
+                        encode_rpc_response(method.name, &response)
+                    })
+                }),
+                required_role: method.role.into(),
+            },
+        );
+        self
+    }
+
     /// Register a coordination RPC handler
     ///
     /// Automatically extracts and validates `CoordinationKvClient` from `ServiceContainer`.
@@ -915,21 +957,9 @@ fn build_registry_impl() -> RpcRegistry {
             boxed!(handle_sources_annotate),
         )
         // Node operations (Write - affects system but not destructive)
-        .nats_auth_rpc(
-            methods::NODES_DRAIN,
-            Role::Write,
-            boxed!(handle_nodes_drain, 4),
-        )
-        .nats_auth_rpc(
-            methods::NODES_RESUME,
-            Role::Write,
-            boxed!(handle_nodes_resume, 4),
-        )
-        .nats_auth_rpc(
-            methods::NODES_SET_HORIZON,
-            Role::Write,
-            boxed!(handle_nodes_set_horizon, 4),
-        )
+        .nats_auth_typed_rpc(NODES_DRAIN_METHOD, boxed!(handle_nodes_drain, 4))
+        .nats_auth_typed_rpc(NODES_RESUME_METHOD, boxed!(handle_nodes_resume, 4))
+        .nats_auth_typed_rpc(NODES_SET_HORIZON_METHOD, boxed!(handle_nodes_set_horizon, 4))
         // Operations log write (Write)
         .pool_auth_typed_rpc(OPS_START_METHOD, boxed!(handle_ops_start, 3))
         .register(

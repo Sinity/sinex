@@ -6,7 +6,12 @@ use serde_json::json;
 use sinex_gateway::handlers::{
     handle_nodes_drain, handle_nodes_list, handle_nodes_resume, handle_nodes_set_horizon,
 };
+use sinex_primitives::Timestamp;
+use sinex_primitives::domain::OperationStatus;
 use sinex_primitives::nats::create_or_open_kv_store;
+use sinex_primitives::rpc::nodes::{
+    NodeDrainRequest, NodeResumeRequest, NodeSetHorizonRequest,
+};
 use xtask::sandbox::prelude::*;
 
 async fn expect_single_control_message(
@@ -48,14 +53,14 @@ async fn nodes_drain_publishes_command(ctx: TestContext) -> TestResult<()> {
         .nats_subject("sinex.control.nodes.test-node-123.drain");
     let mut sub = harness.client.subscribe(subject.clone()).await?;
 
-    let params = json!({
-        "node_id": "test-node-123",
-        "reason": "maintenance",
-    });
+    let request = NodeDrainRequest {
+        node_id: "test-node-123".into(),
+        reason: Some("maintenance".to_string()),
+    };
 
-    let result = handle_nodes_drain(&harness.client, &harness.env, params, &admin_auth()).await?;
-    assert_eq!(result["status"], "pending");
-    assert_eq!(result["node_id"], "test-node-123");
+    let result = handle_nodes_drain(&harness.client, &harness.env, request, &admin_auth()).await?;
+    assert_eq!(result.status, OperationStatus::Pending);
+    assert_eq!(result.node_id.as_str(), "test-node-123");
     let payload = expect_single_control_message(&mut sub, &subject).await?;
     assert_eq!(payload["action"], "drain");
     assert_eq!(payload["node_id"], "test-node-123");
@@ -73,13 +78,13 @@ async fn nodes_resume_publishes_command(ctx: TestContext) -> TestResult<()> {
         .nats_subject("sinex.control.nodes.test-node-456.resume");
     let mut sub = harness.client.subscribe(subject.clone()).await?;
 
-    let params = json!({
-        "node_id": "test-node-456",
-    });
+    let request = NodeResumeRequest {
+        node_id: "test-node-456".into(),
+    };
 
-    let result = handle_nodes_resume(&harness.client, &harness.env, params, &admin_auth()).await?;
-    assert_eq!(result["status"], "pending");
-    assert_eq!(result["node_id"], "test-node-456");
+    let result = handle_nodes_resume(&harness.client, &harness.env, request, &admin_auth()).await?;
+    assert_eq!(result.status, OperationStatus::Pending);
+    assert_eq!(result.node_id.as_str(), "test-node-456");
     let payload = expect_single_control_message(&mut sub, &subject).await?;
     assert_eq!(payload["action"], "resume");
     assert_eq!(payload["node_id"], "test-node-456");
@@ -90,35 +95,25 @@ async fn nodes_resume_publishes_command(ctx: TestContext) -> TestResult<()> {
 }
 
 #[sinex_test]
-async fn nodes_set_horizon_validates_timestamp(ctx: TestContext) -> TestResult<()> {
+async fn nodes_set_horizon_publishes_command(ctx: TestContext) -> TestResult<()> {
     let harness = NatsHarness::start(ctx).await?;
     let subject = harness
         .env
         .nats_subject("sinex.control.nodes.test-node-789.set-horizon");
     let mut sub = harness.client.subscribe(subject.clone()).await?;
 
-    let invalid_params = json!({
-        "node_id": "test-node-789",
-        "horizon": "not-a-timestamp",
-    });
-
-    let err =
-        handle_nodes_set_horizon(&harness.client, &harness.env, invalid_params, &admin_auth())
-            .await
-            .expect_err("invalid horizon should fail");
-    assert!(err.to_string().contains("Serialization"));
-
-    let valid_params = json!({
-        "node_id": "test-node-789",
-        "horizon": "2024-01-15T10:00:00Z",
-    });
+    let horizon = Timestamp::parse_rfc3339("2024-01-15T10:00:00Z")?;
+    let request = NodeSetHorizonRequest {
+        node_id: "test-node-789".into(),
+        horizon,
+    };
 
     let result =
-        handle_nodes_set_horizon(&harness.client, &harness.env, valid_params, &admin_auth())
+        handle_nodes_set_horizon(&harness.client, &harness.env, request, &admin_auth())
             .await?;
-    assert_eq!(result["status"], "pending");
-    assert_eq!(result["node_id"], "test-node-789");
-    assert_eq!(result["horizon"], "2024-01-15T10:00:00Z");
+    assert_eq!(result.status, OperationStatus::Pending);
+    assert_eq!(result.node_id.as_str(), "test-node-789");
+    assert_eq!(result.horizon, horizon);
     let payload = expect_single_control_message(&mut sub, &subject).await?;
     assert_eq!(payload["action"], "set_horizon");
     assert_eq!(payload["node_id"], "test-node-789");
