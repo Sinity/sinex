@@ -15,6 +15,11 @@ use sinex_primitives::rpc::{
         InstanceHealthRequest, InstanceHealthResponse, InstanceInfo, ListInstancesRequest,
         ListInstancesResponse,
     },
+    curation::{
+        CURATION_JUDGMENTS_RECORD_METHOD, CURATION_PROPOSALS_LIST_METHOD,
+        CurationListProposalsRequest, CurationRecordJudgmentRequest,
+        CurationRecordJudgmentResponse,
+    },
     dlq::{
         DLQ_LIST_METHOD, DLQ_PEEK_METHOD, DLQ_PURGE_METHOD, DLQ_REQUEUE_METHOD, DlqListRequest,
         DlqListResponse, DlqPeekRequest, DlqPeekResponse, DlqPurgeRequest, DlqPurgeResponse,
@@ -878,6 +883,26 @@ impl GatewayClient {
     /// Fetch current task state.
     pub async fn tasks_state_get(&self, request: TaskStateGetRequest) -> Result<TaskStateResponse> {
         self.call_typed(TASKS_STATE_GET_METHOD, &request).await
+    }
+
+    // ==================== Curation Commands ====================
+
+    /// List curation proposals.
+    pub async fn curation_proposals_list(
+        &self,
+        request: CurationListProposalsRequest,
+    ) -> Result<EventQueryResult> {
+        self.call_typed(CURATION_PROPOSALS_LIST_METHOD, &request)
+            .await
+    }
+
+    /// Record a judgment over a curation proposal event.
+    pub async fn curation_judgments_record(
+        &self,
+        request: CurationRecordJudgmentRequest,
+    ) -> Result<CurationRecordJudgmentResponse> {
+        self.call_typed(CURATION_JUDGMENTS_RECORD_METHOD, &request)
+            .await
     }
 
     // ==================== Source Material Commands ====================
