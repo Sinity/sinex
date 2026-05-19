@@ -7,19 +7,21 @@ use serde_json::Value;
 use sinex_db::DbPoolExt;
 use sinex_db::repositories::SourceMaterial;
 use sinex_primitives::domain::{SourceMaterialFormat, SourceMaterialTimingInfoType};
+use sinex_primitives::privacy::{RuntimePrivateModeState, load_private_mode_state};
 use sinex_primitives::rpc::sources::{
-    ContinuityContractStatus, CoverageGap, ReplayabilityStatus, SourceAnnotations,
-    SourceCoverageEntry, SourceMaterialDetail, SourceMaterialMetadataContract,
+    CaveatSeverity, ContinuityContractStatus, CoverageGap, ReplayabilityStatus, SourceAnnotations,
+    SourceCaveat, SourceCoverageEntry, SourceMaterialDetail, SourceMaterialMetadataContract,
     SourceMaterialStatistics, SourceMaterialSummary, SourceOrigin, SourcePolicyEvidence,
-    SourcePresetDescriptor, SourcesAnnotateRequest, SourcesAnnotateResponse, SourcesArchiveRequest,
-    SourcesArchiveResponse, SourcesBindingsCreateRequest, SourcesBindingsCreateResponse,
-    SourcesBindingsListRequest, SourcesBindingsListResponse, SourcesBindingsResolveRequest,
-    SourcesBindingsResolveResponse, SourcesContinuityRequest, SourcesContinuityResponse,
-    SourcesCoverageRequest, SourcesCoverageResponse, SourcesListRequest, SourcesListResponse,
-    SourcesPresetsListRequest, SourcesPresetsListResponse, SourcesReadinessGetRequest,
-    SourcesReadinessGetResponse, SourcesReadinessListRequest, SourcesReadinessListResponse,
-    SourcesShowRequest, SourcesShowResponse, SourcesStageRequest, SourcesStageResponse,
-    TemporalEvidenceSummary, bridge_material_presets, external_producer_presets,
+    SourcePresetDescriptor, SourceReadiness, SourceReadinessStatus, SourcesAnnotateRequest,
+    SourcesAnnotateResponse, SourcesArchiveRequest, SourcesArchiveResponse,
+    SourcesBindingsCreateRequest, SourcesBindingsCreateResponse, SourcesBindingsListRequest,
+    SourcesBindingsListResponse, SourcesBindingsResolveRequest, SourcesBindingsResolveResponse,
+    SourcesContinuityRequest, SourcesContinuityResponse, SourcesCoverageRequest,
+    SourcesCoverageResponse, SourcesListRequest, SourcesListResponse, SourcesPresetsListRequest,
+    SourcesPresetsListResponse, SourcesReadinessGetRequest, SourcesReadinessGetResponse,
+    SourcesReadinessListRequest, SourcesReadinessListResponse, SourcesShowRequest,
+    SourcesShowResponse, SourcesStageRequest, SourcesStageResponse, TemporalEvidenceSummary,
+    bridge_material_presets, caveat_codes, external_producer_presets,
 };
 use sinex_primitives::sources::continuity::{
     SourcesContinuityGetRequest, SourcesContinuityGetResponse, SourcesContinuityListRequest,
@@ -892,16 +894,18 @@ pub async fn handle_sources_continuity(
 // ── sources.readiness.list (#1099) ─────────────────────────────
 
 pub async fn handle_sources_readiness_list(
-    pool: &PgPool,
+    services: &crate::service_container::ServiceContainer,
     req: SourcesReadinessListRequest,
 ) -> Result<SourcesReadinessListResponse> {
-    let sources = pool
+    let mut sources = services
+        .pool()
         .source_materials()
         .list_source_readiness(req.source_family.as_deref(), req.stale_after_seconds)
         .await
         .map_err(|error| {
             SinexError::database("Failed to list source readiness").with_std_error(&error)
         })?;
+    apply_private_mode_readiness_overlay(services, &mut sources);
 
     Ok(SourcesReadinessListResponse { sources })
 }
@@ -909,10 +913,11 @@ pub async fn handle_sources_readiness_list(
 // ── sources.readiness.get (#1099) ──────────────────────────────
 
 pub async fn handle_sources_readiness_get(
-    pool: &PgPool,
+    services: &crate::service_container::ServiceContainer,
     req: SourcesReadinessGetRequest,
 ) -> Result<SourcesReadinessGetResponse> {
-    let readiness = pool
+    let mut readiness = services
+        .pool()
         .source_materials()
         .get_source_readiness(
             &req.source_identifier,
@@ -923,8 +928,75 @@ pub async fn handle_sources_readiness_get(
         .map_err(|error| {
             SinexError::database("Failed to get source readiness").with_std_error(&error)
         })?;
+    if let Some(row) = readiness.as_mut() {
+        apply_private_mode_readiness_overlay(services, std::slice::from_mut(row));
+    }
 
     Ok(SourcesReadinessGetResponse { readiness })
+}
+
+fn apply_private_mode_readiness_overlay(
+    services: &crate::service_container::ServiceContainer,
+    sources: &mut [SourceReadiness],
+) {
+    match load_private_mode_state(services.state_dir()) {
+        Ok(state) => apply_private_mode_state_readiness_overlay(sources, &state),
+        Err(error) => apply_private_mode_unavailable_readiness_overlay(sources, &error),
+    }
+}
+
+fn apply_private_mode_state_readiness_overlay(
+    sources: &mut [SourceReadiness],
+    state: &RuntimePrivateModeState,
+) {
+    if !state.enabled {
+        return;
+    }
+    for source in sources {
+        if private_mode_applies_to_readiness(source, state) {
+            source.status = SourceReadinessStatus::Blocked;
+            source.caveats.push(SourceCaveat {
+                code: caveat_codes::POLICY_RAW_MATERIAL_BLOCKED.to_string(),
+                severity: CaveatSeverity::Blocking,
+                message: format!(
+                    "Runtime private mode is enabled for source family '{}'.",
+                    source.source_family
+                ),
+                evidence_ref: state.updated_by_operation_id.clone(),
+            });
+        }
+    }
+}
+
+fn apply_private_mode_unavailable_readiness_overlay(
+    sources: &mut [SourceReadiness],
+    _error: &SinexError,
+) {
+    for source in sources {
+        source.status = SourceReadinessStatus::Blocked;
+        source.caveats.push(SourceCaveat {
+            code: caveat_codes::POLICY_PRIVATE_MODE_STATE_UNAVAILABLE.to_string(),
+            severity: CaveatSeverity::Blocking,
+            message: "Runtime private-mode state is unavailable; readiness is blocked fail-closed."
+                .to_string(),
+            evidence_ref: None,
+        });
+    }
+}
+
+fn private_mode_applies_to_readiness(
+    source: &SourceReadiness,
+    state: &RuntimePrivateModeState,
+) -> bool {
+    state.affected_source_classes.is_empty()
+        || state.affected_source_classes.iter().any(|scope| {
+            scope == &source.source_family
+                || source
+                    .source_unit_id
+                    .as_ref()
+                    .is_some_and(|source_unit_id| scope == source_unit_id.as_str())
+                || scope == &source.source_identifier
+        })
 }
 
 // ── sources.continuity.list / .get / .explain_gap (#1085) ────────
@@ -988,4 +1060,94 @@ pub async fn handle_sources_continuity_explain_gap(
         gap,
         explanation,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sinex_primitives::rpc::sources::SourceReadinessCost;
+    use sinex_primitives::temporal::Timestamp;
+    use xtask::sandbox::prelude::sinex_test;
+
+    fn readiness(source_family: &str, source_identifier: &str) -> SourceReadiness {
+        SourceReadiness {
+            binding_id: None,
+            source_family: source_family.to_string(),
+            source_unit_id: None,
+            parser_id: None,
+            source_identifier: source_identifier.to_string(),
+            status: SourceReadinessStatus::Available,
+            cost: SourceReadinessCost::LocalFast,
+            freshness_seconds: Some(1),
+            material_count: 1,
+            parsed_event_count: Some(1),
+            last_success_at: Some("1970-01-01 00:00:00 UTC".to_string()),
+            caveats: Vec::new(),
+            evidence: serde_json::Value::Null,
+        }
+    }
+
+    #[sinex_test]
+    async fn private_mode_readiness_overlay_blocks_matching_family()
+    -> xtask::sandbox::TestResult<()> {
+        let mut sources = vec![
+            readiness("desktop", "/capture/desktop"),
+            readiness("terminal", "/capture/terminal"),
+        ];
+        let mut state = RuntimePrivateModeState::enabled_by(
+            "operator",
+            vec!["desktop".to_string()],
+            Timestamp::UNIX_EPOCH,
+        );
+        state.updated_by_operation_id = Some("op-1".to_string());
+
+        apply_private_mode_state_readiness_overlay(&mut sources, &state);
+
+        assert_eq!(sources[0].status, SourceReadinessStatus::Blocked);
+        assert_eq!(
+            sources[0].caveats[0].code,
+            caveat_codes::POLICY_RAW_MATERIAL_BLOCKED
+        );
+        assert_eq!(sources[0].caveats[0].evidence_ref.as_deref(), Some("op-1"));
+        assert_eq!(sources[1].status, SourceReadinessStatus::Available);
+        assert!(sources[1].caveats.is_empty());
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn private_mode_readiness_overlay_blocks_all_when_scope_empty()
+    -> xtask::sandbox::TestResult<()> {
+        let mut sources = vec![
+            readiness("desktop", "/capture/desktop"),
+            readiness("terminal", "/capture/terminal"),
+        ];
+        let state =
+            RuntimePrivateModeState::enabled_by("operator", Vec::new(), Timestamp::UNIX_EPOCH);
+
+        apply_private_mode_state_readiness_overlay(&mut sources, &state);
+
+        assert!(
+            sources
+                .iter()
+                .all(|source| source.status == SourceReadinessStatus::Blocked)
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn private_mode_unavailable_readiness_overlay_blocks_fail_closed()
+    -> xtask::sandbox::TestResult<()> {
+        let mut sources = vec![readiness("desktop", "/capture/desktop")];
+        let error = SinexError::io("private-mode state unavailable");
+
+        apply_private_mode_unavailable_readiness_overlay(&mut sources, &error);
+
+        assert_eq!(sources[0].status, SourceReadinessStatus::Blocked);
+        assert_eq!(
+            sources[0].caveats[0].code,
+            caveat_codes::POLICY_PRIVATE_MODE_STATE_UNAVAILABLE
+        );
+        assert_eq!(sources[0].caveats[0].severity, CaveatSeverity::Blocking);
+        Ok(())
+    }
 }
