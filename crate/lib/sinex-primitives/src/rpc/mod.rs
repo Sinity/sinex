@@ -51,6 +51,7 @@ pub enum RpcDomain {
     Documents,
     Events,
     GitOps,
+    Health,
     Ingestors,
     Lifecycle,
     Llm,
@@ -154,6 +155,7 @@ pub mod dlq;
 pub mod documents;
 pub mod events;
 pub mod gitops;
+pub mod health;
 pub mod ingestors;
 pub mod lifecycle;
 pub mod llm;
@@ -197,6 +199,8 @@ pub fn method_catalog() -> Vec<RpcMethodInfo> {
         gitops::GITOPS_DELETE_SOURCE_METHOD.info(),
         gitops::GITOPS_LIST_SOURCES_METHOD.info(),
         gitops::GITOPS_TRIGGER_SYNC_METHOD.info(),
+        health::HEALTH_EFFECT_RECORD_METHOD.info(),
+        health::HEALTH_INTAKE_RECORD_METHOD.info(),
         ingestors::INGESTORS_STATUS_METHOD.info(),
         lifecycle::LIFECYCLE_ARCHIVE_METHOD.info(),
         lifecycle::LIFECYCLE_RESTORE_METHOD.info(),
@@ -292,6 +296,7 @@ pub mod prelude {
     pub use super::documents::*;
     pub use super::events::*;
     pub use super::gitops::*;
+    pub use super::health::*;
     pub use super::ingestors::*;
     pub use super::lifecycle::*;
     pub use super::llm::*;

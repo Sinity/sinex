@@ -12,6 +12,7 @@ pub mod coordination;
 pub mod curation;
 pub mod dlq;
 pub mod documents;
+pub mod health;
 pub mod ingestors;
 pub mod lifecycle;
 pub mod llm;
@@ -71,6 +72,7 @@ pub use coordination::{
     handle_coordination_list_instances,
 };
 pub use documents::{handle_documents_get, handle_documents_get_chunks, handle_documents_search};
+pub use health::{handle_health_effect_record, handle_health_intake_record};
 pub use node_registry::{handle_nodes_health, handle_nodes_list_active};
 pub use pkm::{handle_create_entities, handle_create_note, handle_link_entities};
 pub use privacy::{

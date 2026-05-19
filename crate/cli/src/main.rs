@@ -565,6 +565,13 @@ fn command_path(cmd: &Commands) -> String {
         Commands::Declare(cmd) => {
             use sinexctl::commands::declare::DeclareSubcommand;
             match cmd.subcommand() {
+                DeclareSubcommand::Health(health) => {
+                    use sinexctl::commands::declare::DeclareHealthSubcommand;
+                    match health.subcommand() {
+                        DeclareHealthSubcommand::Intake(_) => "declare health intake".to_string(),
+                        DeclareHealthSubcommand::Effect(_) => "declare health effect".to_string(),
+                    }
+                }
                 DeclareSubcommand::Task(_) => "declare task".to_string(),
             }
         }
@@ -1063,6 +1070,32 @@ mod tests {
             (
                 vec!["sinexctl", "declare", "task", "--title", "fixture"],
                 "declare task",
+            ),
+            (
+                vec![
+                    "sinexctl",
+                    "declare",
+                    "health",
+                    "intake",
+                    "--substance",
+                    "caffeine",
+                    "--at",
+                    "2026-05-19T10:00:00Z",
+                ],
+                "declare health intake",
+            ),
+            (
+                vec![
+                    "sinexctl",
+                    "declare",
+                    "health",
+                    "effect",
+                    "--effect",
+                    "calm",
+                    "--at",
+                    "2026-05-19T11:00:00Z",
+                ],
+                "declare health effect",
             ),
             (
                 vec![

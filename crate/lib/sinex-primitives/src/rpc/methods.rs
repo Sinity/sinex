@@ -33,6 +33,10 @@ pub const TASKS_CANCEL: &str = "tasks.cancel";
 pub const TASKS_STATE_GET: &str = "tasks.state.get";
 pub const TASKS_LIST: &str = "tasks.list";
 
+// Health declarations
+pub const HEALTH_INTAKE_RECORD: &str = "health.intake.record";
+pub const HEALTH_EFFECT_RECORD: &str = "health.effect.record";
+
 // PKM
 pub const PKM_CREATE_NOTE: &str = "pkm.create_note";
 pub const PKM_CREATE_ENTITIES: &str = "pkm.create_entities_from_list";

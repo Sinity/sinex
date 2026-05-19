@@ -3765,6 +3765,20 @@
       "type_name": "sinex_primitives::events::payloads::llm::LlmRoutingPolicyRegisteredPayload"
     },
     {
+      "subject": "event_payload:manual-health/health.effect.observed/1.0.0",
+      "source": "manual-health",
+      "event_type": "health.effect.observed",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::health::HealthEffectObservationRecordedPayload"
+    },
+    {
+      "subject": "event_payload:manual-health/health.substance.intake_recorded/1.0.0",
+      "source": "manual-health",
+      "event_type": "health.substance.intake_recorded",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::health::HealthSubstanceIntakeRecordedPayload"
+    },
+    {
       "subject": "event_payload:messenger/message.sent/1.0.0",
       "source": "messenger",
       "event_type": "message.sent",

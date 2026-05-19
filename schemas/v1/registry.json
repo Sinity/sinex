@@ -373,6 +373,20 @@
       "content_hash": "375e46b03d453802d50eacac813f16e4522de3f79781ac42b27e31f392612200"
     },
     {
+      "source": "manual-health",
+      "event_type": "health.effect.observed",
+      "version": "1.0.0",
+      "path": "manual-health/health.effect.observed.json",
+      "content_hash": "1bd219276fe3f1ac8bee63d24e5696257e995a748100f404fdc46bbab815cddc"
+    },
+    {
+      "source": "manual-health",
+      "event_type": "health.substance.intake_recorded",
+      "version": "1.0.0",
+      "path": "manual-health/health.substance.intake_recorded.json",
+      "content_hash": "86e239a4a3fbf02e78f1a4bdbfe2467607cf91246f37be5bea812f7804375164"
+    },
+    {
       "source": "messenger",
       "event_type": "message.sent",
       "version": "1.0.0",
