@@ -92,7 +92,14 @@ error: command `completions` does not support --format Dot; \
 
 ```bash
 sinexctl --list-formats   # full format-support matrix in terminal-friendly text
+sinexctl --list-formats --format json  # joined CLI/RPC/MCP operator catalog
+sinexctl --list-formats --format yaml  # same catalog for human patch review
 ```
+
+The JSON/YAML projection is a versioned operator-surface artifact with command
+rows, typed RPC descriptors, MCP surface rows, and the documented field lists
+for the generated projection. It is the machine-readable parity surface for
+catalog, docs, and future UI/MCP consumers.
 
 ### Extending the registry
 
