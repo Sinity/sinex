@@ -159,6 +159,8 @@ pub struct TaskStateGetRequest {
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub struct TaskListRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub query: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub status: Option<TaskStatus>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub project_id: Option<String>,

@@ -373,6 +373,7 @@ async fn tasks_list_rebuilds_and_filters_current_states(ctx: TestContext) -> Tes
     let open_only = handle_tasks_list(
         ctx.pool(),
         TaskListRequest {
+            query: None,
             status: Some(TaskStatus::Open),
             project_id: Some("sinex".to_string()),
             tag: Some("work".to_string()),
@@ -385,6 +386,17 @@ async fn tasks_list_rebuilds_and_filters_current_states(ctx: TestContext) -> Tes
     assert_eq!(open_only.total, 1);
     assert_eq!(open_only.tasks[0].task_id, open.state.task_id);
     assert_eq!(open_only.tasks[0].status, TaskStatus::Open);
+
+    let text_search = handle_tasks_list(
+        ctx.pool(),
+        TaskListRequest {
+            query: Some("cancelled".to_string()),
+            ..TaskListRequest::default()
+        },
+    )
+    .await?;
+    assert_eq!(text_search.total, 1);
+    assert_eq!(text_search.tasks[0].task_id, cancelled.state.task_id);
 
     let due_window = handle_tasks_list(
         ctx.pool(),

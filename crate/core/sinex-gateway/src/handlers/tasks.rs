@@ -400,6 +400,14 @@ pub async fn handle_tasks_list(pool: &PgPool, req: TaskListRequest) -> Result<Ta
     let event_count = rows.len();
     let mut states = reduce_task_rows_by_id(rows)?;
 
+    if let Some(query) = req
+        .query
+        .as_deref()
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+    {
+        states.retain(|state| task_state_matches_query(state, query));
+    }
     if let Some(status) = req.status {
         states.retain(|state| state.status == status);
     }
@@ -554,6 +562,39 @@ fn normalize_task_list_limit(limit: Option<u32>) -> Result<u32> {
         Some(value) => Ok(value.min(MAX_TASK_LIST_LIMIT)),
         None => Ok(DEFAULT_TASK_LIST_LIMIT),
     }
+}
+
+fn task_state_matches_query(state: &TaskState, query: &str) -> bool {
+    let query = query.to_ascii_lowercase();
+    string_matches_query(&state.title, &query)
+        || state
+            .body
+            .as_ref()
+            .is_some_and(|value| string_matches_query(value, &query))
+        || state
+            .project_id
+            .as_ref()
+            .is_some_and(|value| string_matches_query(value, &query))
+        || state
+            .priority
+            .as_ref()
+            .is_some_and(|value| string_matches_query(value, &query))
+        || state
+            .tags
+            .iter()
+            .any(|value| string_matches_query(value, &query))
+        || state.external_refs.iter().any(|external_ref| {
+            string_matches_query(&external_ref.system, &query)
+                || string_matches_query(&external_ref.external_id, &query)
+                || external_ref
+                    .version
+                    .as_ref()
+                    .is_some_and(|value| string_matches_query(value, &query))
+        })
+}
+
+fn string_matches_query(value: &str, query: &str) -> bool {
+    value.to_ascii_lowercase().contains(query)
 }
 
 fn reduce_task_rows_by_id(rows: Vec<TaskEventRow>) -> Result<Vec<TaskState>> {

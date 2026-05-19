@@ -256,6 +256,10 @@ impl TaskStatusCommand {
 
 #[derive(Debug, Args)]
 pub struct TaskListCommand {
+    /// Case-insensitive text search across task state fields.
+    #[arg(long)]
+    query: Option<String>,
+
     /// Filter by task lifecycle status.
     #[arg(long)]
     status: Option<String>,
@@ -291,6 +295,7 @@ impl TaskListCommand {
             .transpose()?;
         let response = client
             .tasks_list(TaskListRequest {
+                query: self.query.clone(),
                 status: self.status.as_deref().map(parse_task_status).transpose()?,
                 project_id: self.project_id.clone(),
                 tag: self.tag.clone(),
