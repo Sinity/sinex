@@ -831,12 +831,20 @@ pub fn render_format_matrix_terminal() -> String {
         .unwrap_or(10)
         .max(7);
     let effect_width = "read_only".len();
+    let rpc_width = rows
+        .iter()
+        .map(|entry| rpc_methods_label(entry).len())
+        .max()
+        .unwrap_or("rpc_methods".len())
+        .max("rpc_methods".len());
     let header = format!(
-        "{:<width$}  {:<effect_width$}  rpc  table  json   yaml   dot  stream  note",
+        "{:<width$}  {:<effect_width$}  {:<rpc_width$}  table  json   yaml   dot  stream  note",
         "COMMAND",
         "EFFECT",
+        "RPC_METHODS",
         width = cmd_width,
         effect_width = effect_width,
+        rpc_width = rpc_width,
     );
     let sep = "─".repeat(header.len());
 
@@ -846,14 +854,10 @@ pub fn render_format_matrix_terminal() -> String {
         let cap = &entry.capability;
         let has = |f: OutputFormat| if cap.supports(f) { "  ✓  " } else { "     " };
         out.push_str(&format!(
-            "{:<width$}  {:<effect_width$}  {:<3}{}{}{}{}  {:<6}  {}\n",
+            "{:<width$}  {:<effect_width$}  {:<rpc_width$}{}{}{}{}  {:<6}  {}\n",
             entry.path,
             effect_label(entry.effect),
-            if entry.backing_rpc_methods.is_empty() {
-                ""
-            } else {
-                "rpc"
-            },
+            rpc_methods_label(entry),
             has(OutputFormat::Table),
             has(OutputFormat::Json),
             has(OutputFormat::Yaml),
@@ -862,10 +866,19 @@ pub fn render_format_matrix_terminal() -> String {
             cap.note.unwrap_or(""),
             width = cmd_width,
             effect_width = effect_width,
+            rpc_width = rpc_width,
         ));
     }
 
     out
+}
+
+fn rpc_methods_label(entry: &CommandCatalogEntry) -> String {
+    if entry.backing_rpc_methods.is_empty() {
+        String::new()
+    } else {
+        entry.backing_rpc_methods.join(",")
+    }
 }
 
 fn effect_label(effect: CommandEffect) -> &'static str {

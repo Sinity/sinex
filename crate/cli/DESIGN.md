@@ -67,6 +67,8 @@ Every command declares its operator UX contract in the command catalog
 - `supported`: which [`OutputFormat`] values the command handles
 - `streaming`: whether the command emits an unbounded stream (NDJSON/YAML lines)
 - `family`: which operator surface group the command belongs to
+- `effect`: whether the command is read-only, mutating, streaming, or local
+- `backing_rpc_methods`: exact typed gateway RPC methods used by the command
 
 The historical format registry is now a compatibility projection of that
 catalog for validation and tests. New UX surfaces should read the catalog rather
@@ -94,7 +96,9 @@ sinexctl --list-formats   # full format-support matrix in terminal-friendly text
 When adding a new command:
 1. Add a leaf entry to `build()` in `format_registry.rs`.
 2. Add the corresponding arm to `command_path()` in `main.rs`.
-3. If the command is streaming, use `FormatCapability::streaming(...)`.
+3. Add any gateway methods to `backing_rpc_methods_for_path()`.
+4. If the command can mutate state, add it to `effect_for_path()`.
+5. If the command is streaming, use `FormatCapability::streaming(...)`.
 
 
 ## Pointers

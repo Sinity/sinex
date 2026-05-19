@@ -803,6 +803,14 @@ mod tests {
             output.contains("stream"),
             "matrix must mark `watch` as streaming"
         );
+        assert!(
+            output.contains("events.query"),
+            "matrix must expose exact backing RPC method names"
+        );
+        assert!(
+            output.contains("privacy.private_mode.enable"),
+            "matrix must expose privacy control RPC method names"
+        );
         Ok(())
     }
 
