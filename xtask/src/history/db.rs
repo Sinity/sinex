@@ -6254,7 +6254,11 @@ mod tests {
     async fn stored_diagnostic_existing_file_filter_uses_workspace_root() -> TestResult<()> {
         let dir = tempdir()?;
         let source_path = dir.path().join("crate/example/src/lib.rs");
-        std::fs::create_dir_all(source_path.parent().expect("source path should have parent"))?;
+        std::fs::create_dir_all(
+            source_path
+                .parent()
+                .expect("source path should have parent"),
+        )?;
         std::fs::write(&source_path, "pub fn live() {}\n")?;
 
         let live = StoredDiagnostic {

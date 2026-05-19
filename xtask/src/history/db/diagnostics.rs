@@ -256,10 +256,7 @@ impl HistoryDb {
         }
 
         if let Some(pattern) = file_pattern {
-            query.push_str(&format!(
-                " AND d.file_path LIKE ?{}",
-                params_vec.len() + 1
-            ));
+            query.push_str(&format!(" AND d.file_path LIKE ?{}", params_vec.len() + 1));
             params_vec.push(Box::new(format!("%{pattern}%")));
         }
 
