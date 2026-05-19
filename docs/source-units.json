@@ -7,6 +7,85 @@
   ],
   "source_units": [
     {
+      "subject": "source_unit:ai-session-chatgpt",
+      "id": "ai-session-chatgpt",
+      "domain": "ai_session",
+      "role": "source_adapter",
+      "modes": [
+        "historical"
+      ],
+      "acquisition_shape": "append_stream",
+      "material_policy": "source_material_provenance",
+      "checkpoint_policy": "append_stream_cursor",
+      "occurrence_policy": "uuid5:(session_id, message_id)",
+      "output_event_types": [
+        {
+          "source": "chatgpt",
+          "event_type": "ai.message"
+        }
+      ],
+      "privacy_context": "sensitive",
+      "retention_policy": "forever",
+      "resource_profile": "on_demand",
+      "access_policy": "personal_ai_conversations",
+      "service_policy": "invoked_on_demand",
+      "runner_pack": "source-worker",
+      "package_impact": "ai_session_chatgpt_source_unit",
+      "implementation_mode": "rust_in_pack:source-worker",
+      "proof_obligations": [
+        "timestamp_intrinsic",
+        "anchor_conv_msg_index",
+        "occurrence_key_session_id_message_id",
+        "text_privacy_context_document",
+        "mapping_walk_current_node_to_root"
+      ],
+      "crate_impact": "0",
+      "binary_impact": "0",
+      "nix_output_impact": "0",
+      "derivation_impact": "0",
+      "sqlx_validation_impact": "0",
+      "dedicated_build_rationale": null
+    },
+    {
+      "subject": "source_unit:ai-session-claude",
+      "id": "ai-session-claude",
+      "domain": "ai_session",
+      "role": "source_adapter",
+      "modes": [
+        "historical"
+      ],
+      "acquisition_shape": "append_stream",
+      "material_policy": "source_material_provenance",
+      "checkpoint_policy": "append_stream_cursor",
+      "occurrence_policy": "uuid5:(session_id, message_id)",
+      "output_event_types": [
+        {
+          "source": "claude",
+          "event_type": "ai.message"
+        }
+      ],
+      "privacy_context": "sensitive",
+      "retention_policy": "forever",
+      "resource_profile": "on_demand",
+      "access_policy": "personal_ai_conversations",
+      "service_policy": "invoked_on_demand",
+      "runner_pack": "source-worker",
+      "package_impact": "ai_session_claude_source_unit",
+      "implementation_mode": "rust_in_pack:source-worker",
+      "proof_obligations": [
+        "timestamp_intrinsic",
+        "anchor_conv_msg_index",
+        "occurrence_key_session_id_message_id",
+        "text_privacy_context_document"
+      ],
+      "crate_impact": "0",
+      "binary_impact": "0",
+      "nix_output_impact": "0",
+      "derivation_impact": "0",
+      "sqlx_validation_impact": "0",
+      "dedicated_build_rationale": null
+    },
+    {
       "subject": "source_unit:analytics",
       "id": "analytics",
       "domain": "derived",
@@ -316,6 +395,46 @@
       "dedicated_build_rationale": null
     },
     {
+      "subject": "source_unit:docs-library-index",
+      "id": "docs-library-index",
+      "domain": "library",
+      "role": "source_adapter",
+      "modes": [
+        "historical"
+      ],
+      "acquisition_shape": "append_stream",
+      "material_policy": "source_material_provenance",
+      "checkpoint_policy": "append_stream_cursor",
+      "occurrence_policy": "uuid5:(source_unit, path, content_hash)",
+      "output_event_types": [
+        {
+          "source": "docs-library",
+          "event_type": "document.indexed"
+        }
+      ],
+      "privacy_context": "sensitive",
+      "retention_policy": "forever",
+      "resource_profile": "on_demand",
+      "access_policy": "local_library_root",
+      "service_policy": "invoked_on_demand",
+      "runner_pack": "source-worker",
+      "package_impact": "docs_library_index_source_unit",
+      "implementation_mode": "rust_in_pack:source-worker",
+      "proof_obligations": [
+        "anchor_directory_entry",
+        "timestamp_inferred_mtime",
+        "occurrence_key_path_hash",
+        "filename_heuristics_best_effort",
+        "metadata_privacy_applied"
+      ],
+      "crate_impact": "0",
+      "binary_impact": "0",
+      "nix_output_impact": "0",
+      "derivation_impact": "0",
+      "sqlx_validation_impact": "0",
+      "dedicated_build_rationale": null
+    },
+    {
       "subject": "source_unit:document-parser",
       "id": "document-parser",
       "domain": "derived",
@@ -491,6 +610,45 @@
       "dedicated_build_rationale": null
     },
     {
+      "subject": "source_unit:facebook-messenger-thread",
+      "id": "facebook-messenger-thread",
+      "domain": "messaging",
+      "role": "source_adapter",
+      "modes": [
+        "historical"
+      ],
+      "acquisition_shape": "append_stream",
+      "material_policy": "source_material_provenance",
+      "checkpoint_policy": "append_stream_cursor",
+      "occurrence_policy": "uuid5:(thread_name, sender_name, timestamp_ms, text_hint)",
+      "output_event_types": [
+        {
+          "source": "messenger",
+          "event_type": "message.sent"
+        }
+      ],
+      "privacy_context": "sensitive",
+      "retention_policy": "forever",
+      "resource_profile": "on_demand",
+      "access_policy": "personal_private_messages",
+      "service_policy": "invoked_on_demand",
+      "runner_pack": "source-worker",
+      "package_impact": "facebook_messenger_thread_source_unit",
+      "implementation_mode": "rust_in_pack:source-worker",
+      "proof_obligations": [
+        "timestamp_intrinsic",
+        "media_and_reactions_summarized_to_count",
+        "anchor_message_index",
+        "occurrence_key_thread_sender_ts_texthint"
+      ],
+      "crate_impact": "0",
+      "binary_impact": "0",
+      "nix_output_impact": "0",
+      "derivation_impact": "0",
+      "sqlx_validation_impact": "0",
+      "dedicated_build_rationale": null
+    },
+    {
       "subject": "source_unit:fs",
       "id": "fs",
       "domain": "filesystem",
@@ -538,6 +696,45 @@
       "dedicated_build_rationale": null
     },
     {
+      "subject": "source_unit:git-commit-history",
+      "id": "git-commit-history",
+      "domain": "vcs",
+      "role": "source_adapter",
+      "modes": [
+        "historical"
+      ],
+      "acquisition_shape": "append_stream",
+      "material_policy": "source_material_provenance",
+      "checkpoint_policy": "append_stream_cursor",
+      "occurrence_policy": "uuid5:(commit_sha, repo_path)",
+      "output_event_types": [
+        {
+          "source": "git",
+          "event_type": "commit.created"
+        }
+      ],
+      "privacy_context": "sensitive",
+      "retention_policy": "forever",
+      "resource_profile": "on_demand",
+      "access_policy": "personal_git_history",
+      "service_policy": "invoked_on_demand",
+      "runner_pack": "source-worker",
+      "package_impact": "git_commit_history_source_unit",
+      "implementation_mode": "rust_in_pack:source-worker",
+      "proof_obligations": [
+        "timestamp_intrinsic",
+        "anchor_commit_index",
+        "occurrence_key_sha_repo",
+        "sensitive_email_in_payload"
+      ],
+      "crate_impact": "0",
+      "binary_impact": "0",
+      "nix_output_impact": "0",
+      "derivation_impact": "0",
+      "sqlx_validation_impact": "0",
+      "dedicated_build_rationale": null
+    },
+    {
       "subject": "source_unit:health",
       "id": "health",
       "domain": "derived",
@@ -564,6 +761,45 @@
       "package_impact": "no_new_output",
       "implementation_mode": "rust_in_pack:process",
       "proof_obligations": [],
+      "crate_impact": "0",
+      "binary_impact": "0",
+      "nix_output_impact": "0",
+      "derivation_impact": "0",
+      "sqlx_validation_impact": "0",
+      "dedicated_build_rationale": null
+    },
+    {
+      "subject": "source_unit:hledger-journal",
+      "id": "hledger-journal",
+      "domain": "finance",
+      "role": "source_adapter",
+      "modes": [
+        "historical"
+      ],
+      "acquisition_shape": "append_stream",
+      "material_policy": "source_material_provenance",
+      "checkpoint_policy": "append_stream_cursor",
+      "occurrence_policy": "uuid5:(date, description, first_explicit_posting_amount)",
+      "output_event_types": [
+        {
+          "source": "ledger",
+          "event_type": "transaction.posted"
+        }
+      ],
+      "privacy_context": "sensitive",
+      "retention_policy": "forever",
+      "resource_profile": "on_demand",
+      "access_policy": "personal_finance_data",
+      "service_policy": "invoked_on_demand",
+      "runner_pack": "source-worker",
+      "package_impact": "hledger_journal_source_unit",
+      "implementation_mode": "rust_in_pack:source-worker",
+      "proof_obligations": [
+        "timestamp_intrinsic",
+        "anchor_tx_index",
+        "occurrence_key_date_description_amount",
+        "implicit_posting_amount_none"
+      ],
       "crate_impact": "0",
       "binary_impact": "0",
       "nix_output_impact": "0",
@@ -606,6 +842,86 @@
       "dedicated_build_rationale": null
     },
     {
+      "subject": "source_unit:integration.polylogue",
+      "id": "integration.polylogue",
+      "domain": "integration",
+      "role": "source_adapter",
+      "modes": [
+        "continuous",
+        "historical"
+      ],
+      "acquisition_shape": "live_observation",
+      "material_policy": "source_material_provenance",
+      "checkpoint_policy": "live_observation_state",
+      "occurrence_policy": "uuid5:(content_hash, conversation_id)",
+      "output_event_types": [
+        {
+          "source": "integration.polylogue",
+          "event_type": "integration.polylogue.conversation_indexed"
+        }
+      ],
+      "privacy_context": "sensitive",
+      "retention_policy": "forever",
+      "resource_profile": "continuous",
+      "access_policy": "personal_ai_conversations",
+      "service_policy": "dedicated_instance:on-failure",
+      "runner_pack": "external",
+      "package_impact": "integration_polylogue_source_unit",
+      "implementation_mode": "external:polylogue-daemon",
+      "proof_obligations": [
+        "metadata_only_no_raw_text",
+        "content_hash_sha256_hex",
+        "occurrence_key_content_hash_conversation_id",
+        "external_producer_admitted_envelope"
+      ],
+      "crate_impact": "0",
+      "binary_impact": "0",
+      "nix_output_impact": "0",
+      "derivation_impact": "0",
+      "sqlx_validation_impact": "0",
+      "dedicated_build_rationale": null
+    },
+    {
+      "subject": "source_unit:knowledgebase-vault",
+      "id": "knowledgebase-vault",
+      "domain": "knowledge",
+      "role": "source_adapter",
+      "modes": [
+        "historical"
+      ],
+      "acquisition_shape": "append_stream",
+      "material_policy": "source_material_provenance",
+      "checkpoint_policy": "append_stream_cursor",
+      "occurrence_policy": "uuid5:(path, body_text_hash)",
+      "output_event_types": [
+        {
+          "source": "knowledgebase",
+          "event_type": "note.observed"
+        }
+      ],
+      "privacy_context": "sensitive",
+      "retention_policy": "forever",
+      "resource_profile": "on_demand",
+      "access_policy": "personal_knowledgebase",
+      "service_policy": "invoked_on_demand",
+      "runner_pack": "source-worker",
+      "package_impact": "knowledgebase_vault_source_unit",
+      "implementation_mode": "rust_in_pack:source-worker",
+      "proof_obligations": [
+        "timestamp_from_mtime_or_now",
+        "anchor_directory_entry_content_hash",
+        "occurrence_key_path_body_hash",
+        "front_matter_opaque_passthrough",
+        "personal_note_content_sensitive"
+      ],
+      "crate_impact": "0",
+      "binary_impact": "0",
+      "nix_output_impact": "0",
+      "derivation_impact": "0",
+      "sqlx_validation_impact": "0",
+      "dedicated_build_rationale": null
+    },
+    {
       "subject": "source_unit:noop",
       "id": "noop",
       "domain": "sinex",
@@ -627,6 +943,123 @@
       "package_impact": "noop_source_unit",
       "implementation_mode": "rust_in_pack:source-worker",
       "proof_obligations": [],
+      "crate_impact": "0",
+      "binary_impact": "0",
+      "nix_output_impact": "0",
+      "derivation_impact": "0",
+      "sqlx_validation_impact": "0",
+      "dedicated_build_rationale": null
+    },
+    {
+      "subject": "source_unit:raindrop-bookmarks",
+      "id": "raindrop-bookmarks",
+      "domain": "web",
+      "role": "source_adapter",
+      "modes": [
+        "historical"
+      ],
+      "acquisition_shape": "append_stream",
+      "material_policy": "source_material_provenance",
+      "checkpoint_policy": "append_stream_cursor",
+      "occurrence_policy": "uuid5:(raindrop_id, url, created)",
+      "output_event_types": [
+        {
+          "source": "raindrop",
+          "event_type": "bookmark.created"
+        }
+      ],
+      "privacy_context": "sensitive",
+      "retention_policy": "forever",
+      "resource_profile": "on_demand",
+      "access_policy": "personal_bookmarks",
+      "service_policy": "invoked_on_demand",
+      "runner_pack": "source-worker",
+      "package_impact": "raindrop_bookmarks_source_unit",
+      "implementation_mode": "rust_in_pack:source-worker",
+      "proof_obligations": [
+        "timestamp_intrinsic",
+        "anchor_csv_row",
+        "occurrence_key_id_url_created",
+        "cover_and_highlights_dropped"
+      ],
+      "crate_impact": "0",
+      "binary_impact": "0",
+      "nix_output_impact": "0",
+      "derivation_impact": "0",
+      "sqlx_validation_impact": "0",
+      "dedicated_build_rationale": null
+    },
+    {
+      "subject": "source_unit:reddit-gdpr-comments",
+      "id": "reddit-gdpr-comments",
+      "domain": "social",
+      "role": "source_adapter",
+      "modes": [
+        "historical"
+      ],
+      "acquisition_shape": "append_stream",
+      "material_policy": "source_material_provenance",
+      "checkpoint_policy": "append_stream_cursor",
+      "occurrence_policy": "uuid5:(reddit_id, subreddit)",
+      "output_event_types": [
+        {
+          "source": "reddit",
+          "event_type": "social.comment.posted"
+        }
+      ],
+      "privacy_context": "sensitive",
+      "retention_policy": "forever",
+      "resource_profile": "on_demand",
+      "access_policy": "personal_social_data",
+      "service_policy": "invoked_on_demand",
+      "runner_pack": "source-worker",
+      "package_impact": "reddit_gdpr_comments_source_unit",
+      "implementation_mode": "rust_in_pack:source-worker",
+      "proof_obligations": [
+        "timestamp_intrinsic",
+        "anchor_csv_row",
+        "occurrence_key_id_subreddit",
+        "ip_gildings_media_dropped"
+      ],
+      "crate_impact": "0",
+      "binary_impact": "0",
+      "nix_output_impact": "0",
+      "derivation_impact": "0",
+      "sqlx_validation_impact": "0",
+      "dedicated_build_rationale": null
+    },
+    {
+      "subject": "source_unit:reddit-gdpr-posts",
+      "id": "reddit-gdpr-posts",
+      "domain": "social",
+      "role": "source_adapter",
+      "modes": [
+        "historical"
+      ],
+      "acquisition_shape": "append_stream",
+      "material_policy": "source_material_provenance",
+      "checkpoint_policy": "append_stream_cursor",
+      "occurrence_policy": "uuid5:(reddit_id, subreddit)",
+      "output_event_types": [
+        {
+          "source": "reddit",
+          "event_type": "social.post.created"
+        }
+      ],
+      "privacy_context": "sensitive",
+      "retention_policy": "forever",
+      "resource_profile": "on_demand",
+      "access_policy": "personal_social_data",
+      "service_policy": "invoked_on_demand",
+      "runner_pack": "source-worker",
+      "package_impact": "reddit_gdpr_posts_source_unit",
+      "implementation_mode": "rust_in_pack:source-worker",
+      "proof_obligations": [
+        "timestamp_intrinsic",
+        "anchor_csv_row",
+        "occurrence_key_id_subreddit",
+        "ip_gildings_dropped"
+      ],
       "crate_impact": "0",
       "binary_impact": "0",
       "nix_output_impact": "0",
@@ -955,6 +1388,85 @@
       "package_impact": "no_new_output",
       "implementation_mode": "rust_in_every_sinex_binary",
       "proof_obligations": [],
+      "crate_impact": "0",
+      "binary_impact": "0",
+      "nix_output_impact": "0",
+      "derivation_impact": "0",
+      "sqlx_validation_impact": "0",
+      "dedicated_build_rationale": null
+    },
+    {
+      "subject": "source_unit:sleep-merged-summary",
+      "id": "sleep-merged-summary",
+      "domain": "health",
+      "role": "source_adapter",
+      "modes": [
+        "historical"
+      ],
+      "acquisition_shape": "append_stream",
+      "material_policy": "source_material_provenance",
+      "checkpoint_policy": "append_stream_cursor",
+      "occurrence_policy": "uuid5:(sh_datauuid)",
+      "output_event_types": [
+        {
+          "source": "samsung-health",
+          "event_type": "sleep.session"
+        }
+      ],
+      "privacy_context": "sensitive",
+      "retention_policy": "forever",
+      "resource_profile": "on_demand",
+      "access_policy": "personal_health_data",
+      "service_policy": "invoked_on_demand",
+      "runner_pack": "source-worker",
+      "package_impact": "sleep_merged_summary_source_unit",
+      "implementation_mode": "rust_in_pack:source-worker",
+      "proof_obligations": [
+        "timestamp_intrinsic",
+        "anchor_csv_row",
+        "occurrence_key_sh_datauuid",
+        "deltas_dropped"
+      ],
+      "crate_impact": "0",
+      "binary_impact": "0",
+      "nix_output_impact": "0",
+      "derivation_impact": "0",
+      "sqlx_validation_impact": "0",
+      "dedicated_build_rationale": null
+    },
+    {
+      "subject": "source_unit:spotify-extended-history",
+      "id": "spotify-extended-history",
+      "domain": "music",
+      "role": "source_adapter",
+      "modes": [
+        "historical"
+      ],
+      "acquisition_shape": "append_stream",
+      "material_policy": "source_material_provenance",
+      "checkpoint_policy": "append_stream_cursor",
+      "occurrence_policy": "uuid5:(spotify_track_uri | track_name+artist, started_at, played_ms)",
+      "output_event_types": [
+        {
+          "source": "spotify",
+          "event_type": "track.played"
+        }
+      ],
+      "privacy_context": "sensitive",
+      "retention_policy": "forever",
+      "resource_profile": "on_demand",
+      "access_policy": "personal_music_history",
+      "service_policy": "invoked_on_demand",
+      "runner_pack": "source-worker",
+      "package_impact": "spotify_extended_history_source_unit",
+      "implementation_mode": "rust_in_pack:source-worker",
+      "proof_obligations": [
+        "timestamp_intrinsic",
+        "skipped_provider_preserved",
+        "skipped_inferred_threshold_30s",
+        "occurrence_key_uri_or_name_tuple",
+        "ip_and_user_agent_dropped"
+      ],
       "crate_impact": "0",
       "binary_impact": "0",
       "nix_output_impact": "0",
@@ -1596,6 +2108,82 @@
       "derivation_impact": "0",
       "sqlx_validation_impact": "0",
       "dedicated_build_rationale": null
+    },
+    {
+      "subject": "source_unit:wykop-entries",
+      "id": "wykop-entries",
+      "domain": "social",
+      "role": "source_adapter",
+      "modes": [
+        "historical"
+      ],
+      "acquisition_shape": "append_stream",
+      "material_policy": "source_material_provenance",
+      "checkpoint_policy": "append_stream_cursor",
+      "occurrence_policy": "uuid5:(entry_id)",
+      "output_event_types": [
+        {
+          "source": "wykop",
+          "event_type": "social.entry.created"
+        }
+      ],
+      "privacy_context": "sensitive",
+      "retention_policy": "forever",
+      "resource_profile": "on_demand",
+      "access_policy": "personal_social_data",
+      "service_policy": "invoked_on_demand",
+      "runner_pack": "source-worker",
+      "package_impact": "wykop_entries_source_unit",
+      "implementation_mode": "rust_in_pack:source-worker",
+      "proof_obligations": [
+        "timestamp_intrinsic",
+        "anchor_jsonl_line",
+        "occurrence_key_entry_id"
+      ],
+      "crate_impact": "0",
+      "binary_impact": "0",
+      "nix_output_impact": "0",
+      "derivation_impact": "0",
+      "sqlx_validation_impact": "0",
+      "dedicated_build_rationale": null
+    },
+    {
+      "subject": "source_unit:wykop-entry-comments",
+      "id": "wykop-entry-comments",
+      "domain": "social",
+      "role": "source_adapter",
+      "modes": [
+        "historical"
+      ],
+      "acquisition_shape": "append_stream",
+      "material_policy": "source_material_provenance",
+      "checkpoint_policy": "append_stream_cursor",
+      "occurrence_policy": "uuid5:(comment_id)",
+      "output_event_types": [
+        {
+          "source": "wykop",
+          "event_type": "social.entry_comment.posted"
+        }
+      ],
+      "privacy_context": "sensitive",
+      "retention_policy": "forever",
+      "resource_profile": "on_demand",
+      "access_policy": "personal_social_data",
+      "service_policy": "invoked_on_demand",
+      "runner_pack": "source-worker",
+      "package_impact": "wykop_entry_comments_source_unit",
+      "implementation_mode": "rust_in_pack:source-worker",
+      "proof_obligations": [
+        "timestamp_intrinsic",
+        "anchor_jsonl_line",
+        "occurrence_key_comment_id"
+      ],
+      "crate_impact": "0",
+      "binary_impact": "0",
+      "nix_output_impact": "0",
+      "derivation_impact": "0",
+      "sqlx_validation_impact": "0",
+      "dedicated_build_rationale": null
     }
   ],
   "runner_packs": [
@@ -1605,6 +2193,14 @@
         "weechat.message"
       ],
       "shared_binary": "",
+      "source_unit_count": 1
+    },
+    {
+      "id": "external",
+      "source_unit_ids": [
+        "integration.polylogue"
+      ],
+      "shared_binary": "external",
       "source_unit_count": 1
     },
     {
@@ -1643,13 +2239,25 @@
     {
       "id": "source-worker",
       "source_unit_ids": [
+        "ai-session-chatgpt",
+        "ai-session-claude",
         "browser.history",
         "desktop.activitywatch",
         "desktop.clipboard",
         "desktop.window-manager",
+        "docs-library-index",
         "document.staging",
+        "facebook-messenger-thread",
         "fs",
+        "git-commit-history",
+        "hledger-journal",
+        "knowledgebase-vault",
         "noop",
+        "raindrop-bookmarks",
+        "reddit-gdpr-comments",
+        "reddit-gdpr-posts",
+        "sleep-merged-summary",
+        "spotify-extended-history",
         "system.dbus",
         "system.journald",
         "system.monitor",
@@ -1661,13 +2269,33 @@
         "terminal.monitor",
         "terminal.text-history",
         "terminal.zsh-history",
-        "weechat"
+        "weechat",
+        "wykop-entries",
+        "wykop-entry-comments"
       ],
       "shared_binary": "source-worker",
-      "source_unit_count": 19
+      "source_unit_count": 33
     }
   ],
   "services": [
+    {
+      "source_unit_id": "ai-session-chatgpt",
+      "service_name": "sinex-source@ai-session-chatgpt",
+      "runner_pack": "source-worker",
+      "binary": "source-worker",
+      "checkpoint_identity": "ai-session-chatgpt",
+      "control_identity": "ai-session-chatgpt",
+      "host_identity": "runtime_hostname"
+    },
+    {
+      "source_unit_id": "ai-session-claude",
+      "service_name": "sinex-source@ai-session-claude",
+      "runner_pack": "source-worker",
+      "binary": "source-worker",
+      "checkpoint_identity": "ai-session-claude",
+      "control_identity": "ai-session-claude",
+      "host_identity": "runtime_hostname"
+    },
     {
       "source_unit_id": "analytics",
       "service_name": "sinex-source@analytics",
@@ -1732,6 +2360,15 @@
       "host_identity": "runtime_hostname"
     },
     {
+      "source_unit_id": "docs-library-index",
+      "service_name": "sinex-source@docs-library-index",
+      "runner_pack": "source-worker",
+      "binary": "source-worker",
+      "checkpoint_identity": "docs-library-index",
+      "control_identity": "docs-library-index",
+      "host_identity": "runtime_hostname"
+    },
+    {
       "source_unit_id": "document-parser",
       "service_name": "sinex-source@document-parser",
       "runner_pack": "process",
@@ -1777,12 +2414,30 @@
       "host_identity": "runtime_hostname"
     },
     {
+      "source_unit_id": "facebook-messenger-thread",
+      "service_name": "sinex-source@facebook-messenger-thread",
+      "runner_pack": "source-worker",
+      "binary": "source-worker",
+      "checkpoint_identity": "facebook-messenger-thread",
+      "control_identity": "facebook-messenger-thread",
+      "host_identity": "runtime_hostname"
+    },
+    {
       "source_unit_id": "fs",
       "service_name": "sinex-source@fs",
       "runner_pack": "source-worker",
       "binary": "source-worker",
       "checkpoint_identity": "fs",
       "control_identity": "fs",
+      "host_identity": "runtime_hostname"
+    },
+    {
+      "source_unit_id": "git-commit-history",
+      "service_name": "sinex-source@git-commit-history",
+      "runner_pack": "source-worker",
+      "binary": "source-worker",
+      "checkpoint_identity": "git-commit-history",
+      "control_identity": "git-commit-history",
       "host_identity": "runtime_hostname"
     },
     {
@@ -1795,6 +2450,15 @@
       "host_identity": "runtime_hostname"
     },
     {
+      "source_unit_id": "hledger-journal",
+      "service_name": "sinex-source@hledger-journal",
+      "runner_pack": "source-worker",
+      "binary": "source-worker",
+      "checkpoint_identity": "hledger-journal",
+      "control_identity": "hledger-journal",
+      "host_identity": "runtime_hostname"
+    },
+    {
       "source_unit_id": "hourly-summarizer",
       "service_name": "sinex-source@hourly-summarizer",
       "runner_pack": "process",
@@ -1804,12 +2468,57 @@
       "host_identity": "runtime_hostname"
     },
     {
+      "source_unit_id": "integration.polylogue",
+      "service_name": "sinex-source@integration.polylogue",
+      "runner_pack": "external",
+      "binary": "external",
+      "checkpoint_identity": "integration.polylogue",
+      "control_identity": "integration.polylogue",
+      "host_identity": "runtime_hostname"
+    },
+    {
+      "source_unit_id": "knowledgebase-vault",
+      "service_name": "sinex-source@knowledgebase-vault",
+      "runner_pack": "source-worker",
+      "binary": "source-worker",
+      "checkpoint_identity": "knowledgebase-vault",
+      "control_identity": "knowledgebase-vault",
+      "host_identity": "runtime_hostname"
+    },
+    {
       "source_unit_id": "noop",
       "service_name": "sinex-source@noop",
       "runner_pack": "source-worker",
       "binary": "source-worker",
       "checkpoint_identity": "noop",
       "control_identity": "noop",
+      "host_identity": "runtime_hostname"
+    },
+    {
+      "source_unit_id": "raindrop-bookmarks",
+      "service_name": "sinex-source@raindrop-bookmarks",
+      "runner_pack": "source-worker",
+      "binary": "source-worker",
+      "checkpoint_identity": "raindrop-bookmarks",
+      "control_identity": "raindrop-bookmarks",
+      "host_identity": "runtime_hostname"
+    },
+    {
+      "source_unit_id": "reddit-gdpr-comments",
+      "service_name": "sinex-source@reddit-gdpr-comments",
+      "runner_pack": "source-worker",
+      "binary": "source-worker",
+      "checkpoint_identity": "reddit-gdpr-comments",
+      "control_identity": "reddit-gdpr-comments",
+      "host_identity": "runtime_hostname"
+    },
+    {
+      "source_unit_id": "reddit-gdpr-posts",
+      "service_name": "sinex-source@reddit-gdpr-posts",
+      "runner_pack": "source-worker",
+      "binary": "source-worker",
+      "checkpoint_identity": "reddit-gdpr-posts",
+      "control_identity": "reddit-gdpr-posts",
       "host_identity": "runtime_hostname"
     },
     {
@@ -1882,6 +2591,24 @@
       "binary": "<embedded>",
       "checkpoint_identity": "sinex-process-lifecycle",
       "control_identity": "sinex-process-lifecycle",
+      "host_identity": "runtime_hostname"
+    },
+    {
+      "source_unit_id": "sleep-merged-summary",
+      "service_name": "sinex-source@sleep-merged-summary",
+      "runner_pack": "source-worker",
+      "binary": "source-worker",
+      "checkpoint_identity": "sleep-merged-summary",
+      "control_identity": "sleep-merged-summary",
+      "host_identity": "runtime_hostname"
+    },
+    {
+      "source_unit_id": "spotify-extended-history",
+      "service_name": "sinex-source@spotify-extended-history",
+      "runner_pack": "source-worker",
+      "binary": "source-worker",
+      "checkpoint_identity": "spotify-extended-history",
+      "control_identity": "spotify-extended-history",
       "host_identity": "runtime_hostname"
     },
     {
@@ -2018,15 +2745,33 @@
       "checkpoint_identity": "weechat.message",
       "control_identity": "weechat.message",
       "host_identity": "runtime_hostname"
+    },
+    {
+      "source_unit_id": "wykop-entries",
+      "service_name": "sinex-source@wykop-entries",
+      "runner_pack": "source-worker",
+      "binary": "source-worker",
+      "checkpoint_identity": "wykop-entries",
+      "control_identity": "wykop-entries",
+      "host_identity": "runtime_hostname"
+    },
+    {
+      "source_unit_id": "wykop-entry-comments",
+      "service_name": "sinex-source@wykop-entry-comments",
+      "runner_pack": "source-worker",
+      "binary": "source-worker",
+      "checkpoint_identity": "wykop-entry-comments",
+      "control_identity": "wykop-entry-comments",
+      "host_identity": "runtime_hostname"
     }
   ],
   "package_impact": {
-    "total_source_units": 39,
-    "zero_crate_impact": 39,
-    "zero_binary_impact": 39,
-    "zero_nix_output_impact": 39,
-    "zero_derivation_impact": 39,
-    "zero_sqlx_validation_impact": 39,
+    "total_source_units": 54,
+    "zero_crate_impact": 54,
+    "zero_binary_impact": 54,
+    "zero_nix_output_impact": 54,
+    "zero_derivation_impact": 54,
+    "zero_sqlx_validation_impact": 54,
     "dedicated_build_rationales": []
   },
   "proof_obligations": [
@@ -2148,7 +2893,7 @@
       "schema": {
         "$defs": {
           "SqliteRowConfig": {
-            "description": "Configuration for [`SqliteRowAdapter`].",
+            "description": "Configuration for [`SqliteRowAdapter`].\n\n`Default` is hand-rolled to match the serde-default values: `read_only`\nand `immutable` are `true`, `batch_size` is `10_000`, etc. Deriving\n`Default` instead silently gives `batch_size = 0` / `read_only = false`\n— a regression that masked an adapter that returns zero rows.",
             "properties": {
               "batch_size": {
                 "default": 10000,
@@ -2157,9 +2902,14 @@
                 "minimum": 0,
                 "type": "integer"
               },
+              "immutable": {
+                "default": true,
+                "description": "When `read_only` is true, also pass `immutable=1` in the open URI.\n\n`immutable=1` tells `SQLite` the file will not change while open,\nwhich lets it skip WAL/-shm setup entirely. That's ideal for\nrarely-mutated source DBs (qutebrowser History between sessions,\nAtuin history sync intervals). But it FAILS to open the DB when a\nconcurrent writer holds the WAL active — observed on\n`aw-server-rust` where the `ActivityWatch` server keeps a live WAL\nopen and `immutable=1` opens return `SQLITE_CANTOPEN`.\n\nFor sources that share their DB with a continuously-writing\nservice, set `immutable = false`. `SQLite` then opens normally\nread-only and reads through WAL.\n\nDefault `true` preserves prior behavior for atuin / qutebrowser.",
+                "type": "boolean"
+              },
               "path": {
                 "default": "",
-                "description": "Path to the SQLite database file.\n\nWhen non-empty, overrides the path supplied to [`SqliteRowAdapter::new`].\nRequired when using the adapter via `register_adapter_ingestor!` (where\nthe adapter is constructed via `Default` and the path must come from\nthe node config JSON).",
+                "description": "Path to the `SQLite` database file.\n\nWhen non-empty, overrides the path supplied to [`SqliteRowAdapter::new`].\nRequired when using the adapter via `register_adapter_ingestor!` (where\nthe adapter is constructed via `Default` and the path must come from\nthe node config JSON).",
                 "type": "string"
               },
               "query": {
@@ -2168,13 +2918,21 @@
               },
               "read_only": {
                 "default": true,
-                "description": "Open the SQLite database read-only.\n\nBrowser-history and similar sources that share their DB with a\nlong-running writer (qutebrowser, chromium, atuin) must open\nread-only to avoid `attempt to write a readonly database` errors\nwhen the writer holds an exclusive lock. Cursor state lives in the\nSDK's checkpoint store, not in the DB, so read-only is safe by\ndefault.",
+                "description": "Open the `SQLite` database read-only.\n\nBrowser-history and similar sources that share their DB with a\nlong-running writer (qutebrowser, chromium, atuin) must open\nread-only to avoid `attempt to write a readonly database` errors\nwhen the writer holds an exclusive lock. Cursor state lives in the\nSDK's checkpoint store, not in the DB, so read-only is safe by\ndefault.",
                 "type": "boolean"
               },
               "rowid_column": {
                 "default": "rowid",
                 "description": "Rowid column to use for ordering and cursor advancement.",
                 "type": "string"
+              },
+              "snapshot": {
+                "$ref": "#/$defs/SqliteSnapshotConfig",
+                "default": {
+                  "dedup_by_content_hash": true,
+                  "interval_seconds": 0
+                },
+                "description": "Optional parallel **file-snapshot lane**: periodically capture the\n`SQLite` DB file itself as a single source material, separately from\nthe per-row stream.  Disabled by default (`interval_seconds: 0`).\n\nSee [`SqliteSnapshotConfig`] for tunables. When enabled, the hosting\n[`AdapterBackedIngestor`] spawns a tokio task that captures the file\nat the configured cadence; per-row events continue to flow through\nthe normal drain loop unaffected.\n\nOnly present when the `messaging` feature is enabled — the snapshot\nlane publishes source materials via the acquisition manager, which is\nitself behind `messaging`.\n\n[`AdapterBackedIngestor`]: crate::parser::adapter_node::AdapterBackedIngestor"
               },
               "table": {
                 "description": "Table name for anchor purposes.",
@@ -2185,6 +2943,24 @@
               "query",
               "table"
             ],
+            "type": "object"
+          },
+          "SqliteSnapshotConfig": {
+            "description": "Per-source-unit snapshot configuration.\n\nEmbedded as `snapshot` inside [`SqliteRowConfig`].  When `interval_seconds`\nis `0` the lane is disabled (the default) and no snapshots are produced.",
+            "properties": {
+              "dedup_by_content_hash": {
+                "default": true,
+                "description": "Skip snapshots whose content is byte-identical to the previously\ncaptured one. Defaults to `true`. Set `false` for sources that should\nproduce a snapshot every interval regardless of content (rare, but\nuseful for forensic timelines that need wall-clock anchors even when\nthe DB is idle).",
+                "type": "boolean"
+              },
+              "interval_seconds": {
+                "default": 0,
+                "description": "Polling interval in seconds. `0` disables the snapshot lane.",
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              }
+            },
             "type": "object"
           },
           "StaticFileConfig": {
@@ -2422,8 +3198,28 @@
     },
     "SqliteRowAdapter": {
       "schema": {
+        "$defs": {
+          "SqliteSnapshotConfig": {
+            "description": "Per-source-unit snapshot configuration.\n\nEmbedded as `snapshot` inside [`SqliteRowConfig`].  When `interval_seconds`\nis `0` the lane is disabled (the default) and no snapshots are produced.",
+            "properties": {
+              "dedup_by_content_hash": {
+                "default": true,
+                "description": "Skip snapshots whose content is byte-identical to the previously\ncaptured one. Defaults to `true`. Set `false` for sources that should\nproduce a snapshot every interval regardless of content (rare, but\nuseful for forensic timelines that need wall-clock anchors even when\nthe DB is idle).",
+                "type": "boolean"
+              },
+              "interval_seconds": {
+                "default": 0,
+                "description": "Polling interval in seconds. `0` disables the snapshot lane.",
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              }
+            },
+            "type": "object"
+          }
+        },
         "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "description": "Configuration for [`SqliteRowAdapter`].",
+        "description": "Configuration for [`SqliteRowAdapter`].\n\n`Default` is hand-rolled to match the serde-default values: `read_only`\nand `immutable` are `true`, `batch_size` is `10_000`, etc. Deriving\n`Default` instead silently gives `batch_size = 0` / `read_only = false`\n— a regression that masked an adapter that returns zero rows.",
         "properties": {
           "batch_size": {
             "default": 10000,
@@ -2432,9 +3228,14 @@
             "minimum": 0,
             "type": "integer"
           },
+          "immutable": {
+            "default": true,
+            "description": "When `read_only` is true, also pass `immutable=1` in the open URI.\n\n`immutable=1` tells `SQLite` the file will not change while open,\nwhich lets it skip WAL/-shm setup entirely. That's ideal for\nrarely-mutated source DBs (qutebrowser History between sessions,\nAtuin history sync intervals). But it FAILS to open the DB when a\nconcurrent writer holds the WAL active — observed on\n`aw-server-rust` where the `ActivityWatch` server keeps a live WAL\nopen and `immutable=1` opens return `SQLITE_CANTOPEN`.\n\nFor sources that share their DB with a continuously-writing\nservice, set `immutable = false`. `SQLite` then opens normally\nread-only and reads through WAL.\n\nDefault `true` preserves prior behavior for atuin / qutebrowser.",
+            "type": "boolean"
+          },
           "path": {
             "default": "",
-            "description": "Path to the SQLite database file.\n\nWhen non-empty, overrides the path supplied to [`SqliteRowAdapter::new`].\nRequired when using the adapter via `register_adapter_ingestor!` (where\nthe adapter is constructed via `Default` and the path must come from\nthe node config JSON).",
+            "description": "Path to the `SQLite` database file.\n\nWhen non-empty, overrides the path supplied to [`SqliteRowAdapter::new`].\nRequired when using the adapter via `register_adapter_ingestor!` (where\nthe adapter is constructed via `Default` and the path must come from\nthe node config JSON).",
             "type": "string"
           },
           "query": {
@@ -2443,13 +3244,21 @@
           },
           "read_only": {
             "default": true,
-            "description": "Open the SQLite database read-only.\n\nBrowser-history and similar sources that share their DB with a\nlong-running writer (qutebrowser, chromium, atuin) must open\nread-only to avoid `attempt to write a readonly database` errors\nwhen the writer holds an exclusive lock. Cursor state lives in the\nSDK's checkpoint store, not in the DB, so read-only is safe by\ndefault.",
+            "description": "Open the `SQLite` database read-only.\n\nBrowser-history and similar sources that share their DB with a\nlong-running writer (qutebrowser, chromium, atuin) must open\nread-only to avoid `attempt to write a readonly database` errors\nwhen the writer holds an exclusive lock. Cursor state lives in the\nSDK's checkpoint store, not in the DB, so read-only is safe by\ndefault.",
             "type": "boolean"
           },
           "rowid_column": {
             "default": "rowid",
             "description": "Rowid column to use for ordering and cursor advancement.",
             "type": "string"
+          },
+          "snapshot": {
+            "$ref": "#/$defs/SqliteSnapshotConfig",
+            "default": {
+              "dedup_by_content_hash": true,
+              "interval_seconds": 0
+            },
+            "description": "Optional parallel **file-snapshot lane**: periodically capture the\n`SQLite` DB file itself as a single source material, separately from\nthe per-row stream.  Disabled by default (`interval_seconds: 0`).\n\nSee [`SqliteSnapshotConfig`] for tunables. When enabled, the hosting\n[`AdapterBackedIngestor`] spawns a tokio task that captures the file\nat the configured cadence; per-row events continue to flow through\nthe normal drain loop unaffected.\n\nOnly present when the `messaging` feature is enabled — the snapshot\nlane publishes source materials via the acquisition manager, which is\nitself behind `messaging`.\n\n[`AdapterBackedIngestor`]: crate::parser::adapter_node::AdapterBackedIngestor"
           },
           "table": {
             "description": "Table name for anchor purposes.",
