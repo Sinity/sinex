@@ -235,7 +235,7 @@ mod tests {
                         break;
                     }
                 }
-                Ok(Some(Err(_))) | Ok(None) | Err(_) => break,
+                Ok(Some(Err(_)) | None) | Err(_) => break,
             }
         }
         if !got_event {

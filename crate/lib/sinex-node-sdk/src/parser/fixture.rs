@@ -1197,7 +1197,7 @@ mod tests {
             privacy_contexts: vec![ProcessingContext::Command],
             proof_obligations: PROOF_OBLIGATIONS
                 .iter()
-                .map(|item| item.to_string())
+                .map(std::string::ToString::to_string)
                 .collect(),
             description: "fixture parser".to_string(),
         }
@@ -1237,7 +1237,7 @@ mod tests {
                 source_unit_id: "fixture.source".to_string(),
                 proof_obligations: PROOF_OBLIGATIONS
                     .iter()
-                    .map(|item| item.to_string())
+                    .map(std::string::ToString::to_string)
                     .collect(),
                 require_timestamp: true,
                 require_timing: true,

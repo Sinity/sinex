@@ -85,7 +85,7 @@ async fn curation_record_judgment_persists_synthesis_event(ctx: TestContext) -> 
     assert_eq!(
         persisted
             .get_source_event_ids()
-            .map(|parents| parents.len()),
+            .map(<[sinex_db::Id<sinex_db::Event>]>::len),
         Some(1)
     );
     Ok(())

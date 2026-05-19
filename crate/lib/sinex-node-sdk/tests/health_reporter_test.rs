@@ -299,7 +299,7 @@ async fn health_reporter_emit_stall_degrades(ctx: TestContext) -> TestResult<()>
 
     // Pre-enable: status is Healthy because tracker is not installed; stall check
     // is a no-op.
-    clock.advance(Duration::from_secs(600));
+    clock.advance(Duration::from_mins(10));
     ctx.assert("no tracker -> healthy regardless of uptime")
         .eq(&reporter.current_status(), &ProcessStatus::Healthy)?;
 
@@ -337,7 +337,7 @@ async fn health_reporter_emit_stall_disabled(ctx: TestContext) -> TestResult<()>
     let reporter =
         create_reporter_with_clock("stall-disabled", observer, thresholds, clock.clone());
     let _tracker = reporter.enable_emit_stall_detection();
-    clock.advance(Duration::from_secs(86_400));
+    clock.advance(Duration::from_hours(24));
     ctx.assert("stall disabled -> healthy after a day without emits")
         .eq(&reporter.current_status(), &ProcessStatus::Healthy)?;
     Ok(())
@@ -360,11 +360,11 @@ async fn health_reporter_emit_stall_grace_period(ctx: TestContext) -> TestResult
     let reporter = create_reporter_with_clock("stall-grace", observer, thresholds, clock.clone());
     let _tracker = reporter.enable_emit_stall_detection();
 
-    clock.advance(Duration::from_secs(60));
+    clock.advance(Duration::from_mins(1));
     ctx.assert("within grace -> healthy")
         .eq(&reporter.current_status(), &ProcessStatus::Healthy)?;
 
-    clock.advance(Duration::from_secs(540)); // total: 600s, exactly at boundary
+    clock.advance(Duration::from_mins(9)); // total: 600s, exactly at boundary
     ctx.assert("at boundary -> degraded")
         .eq(&reporter.current_status(), &ProcessStatus::Degraded)?;
     Ok(())

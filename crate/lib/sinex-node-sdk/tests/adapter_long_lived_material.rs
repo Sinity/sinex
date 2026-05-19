@@ -2,11 +2,11 @@
 //!
 //! Before Slice A, `AdapterBackedIngestor::drain_adapter()` called
 //! `begin_material()` + `finalize()` on every drain invocation, producing one
-//! row in `raw.source_material_registry` per polling cycle (O(poll_count)).
+//! row in `raw.source_material_registry` per polling cycle (`O(poll_count)`).
 //!
 //! After Slice A, a single [`AppendStreamAcquirer`] is held across all drain
 //! cycles and auto-rotates at size / age thresholds, making registry growth
-//! O(rotation_count).
+//! `O(rotation_count)`.
 //!
 //! These tests verify that invariant directly against [`AppendStreamAcquirer`]
 //! (the same code path `AdapterBackedIngestor` uses internally) without
@@ -194,8 +194,7 @@ async fn appended_records_have_contiguous_byte_anchors(ctx: TestContext) -> Test
     for (anchor, record) in anchors.iter().zip(records.iter()) {
         assert!(
             anchor.offset_end > anchor.offset_start,
-            "anchor must be non-empty for record {:?}",
-            record
+            "anchor must be non-empty for record {record:?}"
         );
         let expected_len = record.len() as i64;
         assert_eq!(
