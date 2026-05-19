@@ -23,7 +23,7 @@ async fn blob_routes_do_not_persist_events(ctx: TestContext) -> TestResult<()> {
     let temp_dir = TempDir::new()?;
     let repo_path = Utf8PathBuf::from_path_buf(temp_dir.path().to_path_buf())
         .map_err(|_| color_eyre::eyre::eyre!("content-store path is not valid UTF-8"))?;
-    MaterialContentStore::init(&repo_path, Some("gateway-blob-forwarding")).await?;
+    MaterialContentStore::init_with_config(&repo_path, Some("gateway-blob-forwarding"), true).await?;
     env_guard.set("SINEX_CONTENT_STORE_PATH", repo_path.as_str());
     let _env_guard = env_guard;
 
