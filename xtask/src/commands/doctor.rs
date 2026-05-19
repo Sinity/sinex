@@ -8,7 +8,7 @@ use crate::tools::{ToolInfo, ToolManager};
 use color_eyre::eyre::{Result, WrapErr, eyre};
 use console::style;
 use serde::Serialize;
-use sinex_primitives::DeploymentReadinessDescriptor;
+use sinex_primitives::{DeploymentReadinessDescriptor, privacy::load_private_mode_state};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -52,6 +52,7 @@ pub struct DoctorCommand {
 pub(crate) struct DoctorReport {
     pub postgres: DoctorServiceCheck,
     pub nats: DoctorServiceCheck,
+    pub private_mode: DoctorServiceCheck,
     pub tools: Vec<ToolCheck>,
     pub environment: Option<serde_json::Value>,
     pub tls: Option<TlsCheck>,
@@ -599,6 +600,7 @@ fn read_proc_rss_mb(proc_dir: &Path) -> Option<f64> {
 /// Run diagnostics.
 fn execute_doctor(pipelines: bool, ctx: &CommandContext) -> Result<CommandResult> {
     let mut all_ok = true;
+    let cfg = config();
 
     let pg_probe = probe_postgres();
     let pg_msg = service_readiness_message(
@@ -652,8 +654,9 @@ fn execute_doctor(pipelines: bool, ctx: &CommandContext) -> Result<CommandResult
 
     let pipeline_smoke = pipeline_smoke_check(pipelines, &mut all_ok);
 
+    let private_mode = private_mode_check(&cfg.state_dir, &mut all_ok);
+
     // Collect environment configuration
-    let cfg = config();
     let environment = Some(serde_json::json!({
         "hostname": cfg.hostname,
         "state_dir": cfg.state_dir.display().to_string(),
@@ -676,6 +679,7 @@ fn execute_doctor(pipelines: bool, ctx: &CommandContext) -> Result<CommandResult
             available: nats_probe.ready(),
             message: nats_msg,
         },
+        private_mode,
         tools: tool_checks,
         environment,
         tls: tls_check,
@@ -700,6 +704,11 @@ fn execute_doctor(pipelines: bool, ctx: &CommandContext) -> Result<CommandResult
             "NATS",
             report.nats.available,
             report.nats.message.as_deref(),
+        );
+        print_check(
+            "Private mode",
+            report.private_mode.available,
+            report.private_mode.message.as_deref(),
         );
 
         // Tools
@@ -808,6 +817,36 @@ fn execute_doctor(pipelines: bool, ctx: &CommandContext) -> Result<CommandResult
     Ok(result
         .with_data(serde_json::to_value(&report)?)
         .with_duration(ctx.elapsed()))
+}
+
+fn private_mode_check(state_dir: &Path, all_ok: &mut bool) -> DoctorServiceCheck {
+    match load_private_mode_state(state_dir) {
+        Ok(state) if state.enabled => {
+            let scope = if state.affected_source_classes.is_empty() {
+                "all source classes".to_string()
+            } else {
+                state.affected_source_classes.join(",")
+            };
+            DoctorServiceCheck {
+                available: true,
+                message: Some(format!(
+                    "enabled for {scope}; actor={}, reason={}",
+                    state.actor, state.reason_class
+                )),
+            }
+        }
+        Ok(_) => DoctorServiceCheck {
+            available: true,
+            message: Some("disabled".to_string()),
+        },
+        Err(error) => {
+            *all_ok = false;
+            DoctorServiceCheck {
+                available: false,
+                message: Some(format!("private-mode state unavailable: {error}")),
+            }
+        }
+    }
 }
 
 fn pipeline_smoke_invocation(
