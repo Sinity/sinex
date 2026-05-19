@@ -27,6 +27,7 @@ use sinex_primitives::sources::continuity::{
     SourcesContinuityGetRequest, SourcesContinuityGetResponse, SourcesContinuityListRequest,
     SourcesContinuityListResponse, SourcesExplainGapRequest, SourcesExplainGapResponse,
 };
+use sinex_primitives::temporal::Timestamp;
 use sinex_primitives::{Result, SinexError};
 use sqlx::{FromRow, PgPool};
 use time::OffsetDateTime;
@@ -949,7 +950,7 @@ fn apply_private_mode_state_readiness_overlay(
     sources: &mut [SourceReadiness],
     state: &RuntimePrivateModeState,
 ) {
-    if !state.enabled {
+    if !state.is_active_at(Timestamp::now()) {
         return;
     }
     for source in sources {

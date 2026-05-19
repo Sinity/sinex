@@ -50,6 +50,9 @@ pub struct PrivateModeEnableRequest {
 
     #[serde(default)]
     pub source_classes: Vec<String>,
+
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expires_at: Option<crate::temporal::Timestamp>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -70,6 +73,7 @@ impl Default for PrivateModeEnableRequest {
             actor: default_actor(),
             reason_class: PrivateModeReasonClass::default(),
             source_classes: Vec::new(),
+            expires_at: None,
         }
     }
 }
