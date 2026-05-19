@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use super::OutputFormat;
 use serde::Serialize;
-use sinex_primitives::rpc::methods;
+use sinex_primitives::rpc::{RpcMethodInfo, RpcRole, method_catalog, methods};
 
 /// Operator-facing command family used for UX grouping and projection routing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
@@ -36,6 +36,7 @@ pub struct CommandCatalogEntry {
     pub family: CommandFamily,
     pub effect: CommandEffect,
     pub backing_rpc_methods: &'static [&'static str],
+    pub required_rpc_role: Option<RpcRole>,
     pub capability: FormatCapability,
 }
 
@@ -549,18 +550,46 @@ pub fn registry() -> &'static HashMap<&'static str, FormatCapability> {
 /// Return the consolidated operator command catalog.
 #[must_use]
 pub fn command_catalog() -> Vec<CommandCatalogEntry> {
+    let rpc_catalog = method_catalog();
     let mut entries: Vec<_> = registry()
         .iter()
-        .map(|(&path, capability)| CommandCatalogEntry {
-            path,
-            family: family_for_path(path),
-            effect: effect_for_path(path, capability),
-            backing_rpc_methods: backing_rpc_methods_for_path(path),
-            capability: capability.clone(),
+        .map(|(&path, capability)| {
+            let backing_rpc_methods = backing_rpc_methods_for_path(path);
+            CommandCatalogEntry {
+                path,
+                family: family_for_path(path),
+                effect: effect_for_path(path, capability),
+                backing_rpc_methods,
+                required_rpc_role: required_rpc_role(backing_rpc_methods, &rpc_catalog),
+                capability: capability.clone(),
+            }
         })
         .collect();
     entries.sort_by_key(|entry| entry.path);
     entries
+}
+
+fn required_rpc_role(
+    method_names: &[&'static str],
+    rpc_catalog: &[RpcMethodInfo],
+) -> Option<RpcRole> {
+    method_names
+        .iter()
+        .filter_map(|method_name| {
+            rpc_catalog
+                .iter()
+                .find(|method| method.name == *method_name)
+                .map(|method| method.role)
+        })
+        .max_by_key(|role| rpc_role_rank(*role))
+}
+
+const fn rpc_role_rank(role: RpcRole) -> u8 {
+    match role {
+        RpcRole::ReadOnly => 0,
+        RpcRole::Write => 1,
+        RpcRole::Admin => 2,
+    }
 }
 
 fn family_for_path(path: &str) -> CommandFamily {
@@ -795,17 +824,19 @@ pub fn validate_format(command_path: &str, format: OutputFormat) -> Result<(), S
 pub fn render_format_matrix() -> String {
     let rows = command_catalog();
 
-    let mut out =
-        String::from("| Command | effect | rpc | table | json | yaml | dot | streaming | Note |\n");
-    out.push_str("|---------|--------|-----|-------|------|------|-----|-----------|------|\n");
+    let mut out = String::from(
+        "| Command | effect | RPC role | RPC methods | table | json | yaml | dot | streaming | Note |\n",
+    );
+    out.push_str("|---------|--------|----------|-------------|-------|------|------|-----|-----------|------|\n");
 
     for entry in &rows {
         let cap = &entry.capability;
         let has = |f: OutputFormat| if cap.supports(f) { "✓" } else { "" };
         out.push_str(&format!(
-            "| `{}` | {} | {} | {} | {} | {} | {} | {} | {} |\n",
+            "| `{}` | {} | {} | {} | {} | {} | {} | {} | {} | {} |\n",
             entry.path,
             effect_label(entry.effect),
+            entry.required_rpc_role.map_or("", rpc_role_label),
             entry.backing_rpc_methods.join(", "),
             has(OutputFormat::Table),
             has(OutputFormat::Json),
@@ -831,6 +862,7 @@ pub fn render_format_matrix_terminal() -> String {
         .unwrap_or(10)
         .max(7);
     let effect_width = "read_only".len();
+    let role_width = "read_only".len();
     let rpc_width = rows
         .iter()
         .map(|entry| rpc_methods_label(entry).len())
@@ -838,12 +870,14 @@ pub fn render_format_matrix_terminal() -> String {
         .unwrap_or("rpc_methods".len())
         .max("rpc_methods".len());
     let header = format!(
-        "{:<width$}  {:<effect_width$}  {:<rpc_width$}  table  json   yaml   dot  stream  note",
+        "{:<width$}  {:<effect_width$}  {:<role_width$}  {:<rpc_width$}  table  json   yaml   dot  stream  note",
         "COMMAND",
         "EFFECT",
+        "RPC_ROLE",
         "RPC_METHODS",
         width = cmd_width,
         effect_width = effect_width,
+        role_width = role_width,
         rpc_width = rpc_width,
     );
     let sep = "─".repeat(header.len());
@@ -854,9 +888,10 @@ pub fn render_format_matrix_terminal() -> String {
         let cap = &entry.capability;
         let has = |f: OutputFormat| if cap.supports(f) { "  ✓  " } else { "     " };
         out.push_str(&format!(
-            "{:<width$}  {:<effect_width$}  {:<rpc_width$}{}{}{}{}  {:<6}  {}\n",
+            "{:<width$}  {:<effect_width$}  {:<role_width$}  {:<rpc_width$}{}{}{}{}  {:<6}  {}\n",
             entry.path,
             effect_label(entry.effect),
+            entry.required_rpc_role.map_or("", rpc_role_label),
             rpc_methods_label(entry),
             has(OutputFormat::Table),
             has(OutputFormat::Json),
@@ -866,6 +901,7 @@ pub fn render_format_matrix_terminal() -> String {
             cap.note.unwrap_or(""),
             width = cmd_width,
             effect_width = effect_width,
+            role_width = role_width,
             rpc_width = rpc_width,
         ));
     }
@@ -878,6 +914,14 @@ fn rpc_methods_label(entry: &CommandCatalogEntry) -> String {
         String::new()
     } else {
         entry.backing_rpc_methods.join(",")
+    }
+}
+
+fn rpc_role_label(role: RpcRole) -> &'static str {
+    match role {
+        RpcRole::ReadOnly => "read_only",
+        RpcRole::Write => "write",
+        RpcRole::Admin => "admin",
     }
 }
 
@@ -959,6 +1003,7 @@ mod tests {
             assert!(entry["family"].as_str().is_some());
             assert!(entry["effect"].as_str().is_some());
             assert!(entry["backing_rpc_methods"].as_array().is_some());
+            assert!(entry["required_rpc_role"].is_string() || entry["required_rpc_role"].is_null());
             assert!(entry["capability"]["supported"].as_array().is_some());
             assert!(entry["capability"]["streaming"].as_bool().is_some());
         }
@@ -1009,6 +1054,40 @@ mod tests {
                     entry.path
                 );
             }
+        }
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn command_catalog_required_role_matches_backing_rpc_methods()
+    -> xtask::sandbox::TestResult<()> {
+        let rpc_catalog = method_catalog()
+            .into_iter()
+            .map(|method| (method.name, method))
+            .collect::<std::collections::BTreeMap<_, _>>();
+
+        for entry in command_catalog() {
+            if entry.backing_rpc_methods.is_empty() {
+                assert_eq!(
+                    entry.required_rpc_role, None,
+                    "local command `{}` must not claim an RPC role",
+                    entry.path
+                );
+                continue;
+            }
+
+            let expected = entry
+                .backing_rpc_methods
+                .iter()
+                .filter_map(|method_name| rpc_catalog.get(method_name))
+                .map(|method| method.role)
+                .max_by_key(|role| rpc_role_rank(*role));
+
+            assert_eq!(
+                entry.required_rpc_role, expected,
+                "command `{}` must expose the maximum required backing RPC role",
+                entry.path
+            );
         }
         Ok(())
     }
