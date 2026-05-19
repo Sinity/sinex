@@ -10,6 +10,7 @@
 use async_trait::async_trait;
 use camino::Utf8PathBuf;
 use futures::stream::BoxStream;
+use notify::event::ModifyKind;
 use notify::{Event, EventKind, RecursiveMode, Watcher};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -127,33 +128,9 @@ fn build_file_drop_stream(
                     yield Err(ParserError::Adapter(format!("notify error: {e}")));
                 }
                 Ok(event) => {
-                    let kind = map_notify_kind(&event.kind);
-                    if let Some(kind) = kind
-                        && (event_filter.is_empty() || event_filter.contains(&kind)) {
-                            // Emit one record per affected path.
-                            if let Some(path) = event.paths.first().cloned() {
-                                let utf8_path = Utf8PathBuf::from_path_buf(path)
-                                    .unwrap_or_else(|p| {
-                                        Utf8PathBuf::from(p.to_string_lossy().to_string())
-                                    });
-                                let anchor = MaterialAnchor::DirectoryEntry {
-                                    path: utf8_path.clone(),
-                                    content_hash: None,
-                                };
-                                let metadata = serde_json::json!({
-                                    "event_kind": format!("{kind:?}"),
-                                    "path": utf8_path.as_str(),
-                                });
-                                yield Ok(SourceRecord {
-                                    material_id,
-                                    anchor,
-                                    bytes: utf8_path.as_str().as_bytes().to_vec(),
-                                    logical_path: Some(utf8_path),
-                                    source_ts_hint: None,
-                                    metadata,
-                                });
-                            }
-                        }
+                    for record in records_from_file_drop_event(material_id, &event, &event_filter) {
+                        yield Ok(record);
+                    }
                 }
             }
         }
@@ -169,12 +146,52 @@ fn build_file_drop_stream(
 fn map_notify_kind(kind: &EventKind) -> Option<FileDropEventKind> {
     match kind {
         EventKind::Create(_) => Some(FileDropEventKind::Created),
+        EventKind::Modify(ModifyKind::Name(_)) => Some(FileDropEventKind::Moved),
         EventKind::Modify(_) => Some(FileDropEventKind::Modified),
         EventKind::Remove(_) => Some(FileDropEventKind::Deleted),
         EventKind::Access(_) => None,
         EventKind::Other => None,
         EventKind::Any => None,
     }
+}
+
+fn records_from_file_drop_event(
+    material_id: Id<SourceMaterial>,
+    event: &Event,
+    event_filter: &[FileDropEventKind],
+) -> Vec<SourceRecord> {
+    let Some(kind) = map_notify_kind(&event.kind) else {
+        return Vec::new();
+    };
+    if !event_filter.is_empty() && !event_filter.contains(&kind) {
+        return Vec::new();
+    }
+
+    event
+        .paths
+        .iter()
+        .cloned()
+        .map(|path| {
+            let utf8_path = Utf8PathBuf::from_path_buf(path).unwrap_or_else(|path| {
+                Utf8PathBuf::from(path.to_string_lossy().to_string())
+            });
+            let metadata = serde_json::json!({
+                "event_kind": format!("{kind:?}"),
+                "path": utf8_path.as_str(),
+            });
+            SourceRecord {
+                material_id,
+                anchor: MaterialAnchor::DirectoryEntry {
+                    path: utf8_path.clone(),
+                    content_hash: None,
+                },
+                bytes: utf8_path.as_str().as_bytes().to_vec(),
+                logical_path: Some(utf8_path),
+                source_ts_hint: None,
+                metadata,
+            }
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -361,6 +378,56 @@ mod tests {
 
         // Wait briefly for a create event.
         let _ = tokio::time::timeout(Duration::from_secs(3), stream.next()).await;
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn file_drop_event_emits_one_record_per_affected_path()
+    -> xtask::sandbox::TestResult<()> {
+        let material_id = dummy_material_id();
+        let first = std::path::PathBuf::from("/tmp/sinex-file-drop-a");
+        let second = std::path::PathBuf::from("/tmp/sinex-file-drop-b");
+        let event = Event::new(EventKind::Create(notify::event::CreateKind::File))
+            .add_path(first.clone())
+            .add_path(second.clone());
+
+        let records = records_from_file_drop_event(material_id, &event, &[]);
+
+        assert_eq!(records.len(), 2);
+        assert_eq!(
+            records[0]
+                .logical_path
+                .as_deref()
+                .map(camino::Utf8Path::as_str),
+            Some("/tmp/sinex-file-drop-a")
+        );
+        assert_eq!(
+            records[1]
+                .logical_path
+                .as_deref()
+                .map(camino::Utf8Path::as_str),
+            Some("/tmp/sinex-file-drop-b")
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn file_drop_rename_events_are_moved_events() -> xtask::sandbox::TestResult<()> {
+        let material_id = dummy_material_id();
+        let event = Event::new(EventKind::Modify(ModifyKind::Name(
+            notify::event::RenameMode::Both,
+        )))
+        .add_path(std::path::PathBuf::from("/tmp/sinex-file-drop-before"))
+        .add_path(std::path::PathBuf::from("/tmp/sinex-file-drop-after"));
+
+        let moved_records =
+            records_from_file_drop_event(material_id, &event, &[FileDropEventKind::Moved]);
+        let modified_records =
+            records_from_file_drop_event(material_id, &event, &[FileDropEventKind::Modified]);
+
+        assert_eq!(moved_records.len(), 2);
+        assert!(modified_records.is_empty());
+        assert_eq!(moved_records[0].metadata["event_kind"], "Moved");
         Ok(())
     }
 }
