@@ -13,8 +13,11 @@ use sinexctl::commands::{
     StatusCommand, TasksCommand, TelemetryCommands, ThroughputCommand, TraceCommand, TuiCommand,
     VerifyCommand, WatchCommand,
 };
+use sinexctl::fmt::format_yaml;
 use sinexctl::model::OutputFormat;
-use sinexctl::{Config, default_rpc_url, render_format_matrix_terminal, validate_format};
+use sinexctl::{
+    Config, command_catalog, default_rpc_url, render_format_matrix_terminal, validate_format,
+};
 use std::path::PathBuf;
 
 /// Sinex control CLI
@@ -293,7 +296,7 @@ async fn main() -> color_eyre::Result<()> {
 
     // Handle --list-formats before requiring a subcommand.
     if cli.list_formats {
-        print!("{}", render_format_matrix_terminal());
+        print!("{}", render_list_formats(config.default_format)?);
         return Ok(());
     }
 
@@ -379,6 +382,18 @@ async fn main() -> color_eyre::Result<()> {
     }
 
     Ok(())
+}
+
+fn render_list_formats(format: OutputFormat) -> color_eyre::Result<String> {
+    match format {
+        OutputFormat::Table => Ok(render_format_matrix_terminal()),
+        OutputFormat::Json => Ok(format!(
+            "{}\n",
+            serde_json::to_string_pretty(&command_catalog())?
+        )),
+        OutputFormat::Yaml => Ok(format!("{}\n", format_yaml(&command_catalog())?)),
+        OutputFormat::Dot => Err(eyre!("--list-formats does not support --format dot")),
+    }
 }
 
 /// Derive the registry key for a [`Commands`] variant.
@@ -814,6 +829,42 @@ mod tests {
         assert!(
             output.contains("privacy.private_mode.enable"),
             "matrix must expose privacy control RPC method names"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn list_formats_json_outputs_machine_readable_catalog() -> TestResult<()> {
+        let output = render_list_formats(OutputFormat::Json)?;
+        let entries: Vec<serde_json::Value> = serde_json::from_str(&output)?;
+
+        let query = entries
+            .iter()
+            .find(|entry| entry["path"] == "query")
+            .expect("json list-formats output must include query");
+        assert_eq!(query["backing_rpc_methods"][0], "events.query");
+
+        let blob_fsck = entries
+            .iter()
+            .find(|entry| entry["path"] == "blob fsck")
+            .expect("json list-formats output must include blob fsck");
+        assert!(
+            blob_fsck["mutation_guards"]
+                .as_array()
+                .expect("mutation guards must be an array")
+                .iter()
+                .any(|guard| guard.as_str() == Some("dry_run")),
+            "json list-formats output must expose local mutation guards"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn list_formats_dot_is_rejected() -> TestResult<()> {
+        let err = render_list_formats(OutputFormat::Dot).unwrap_err();
+        assert!(
+            err.to_string().contains("--format dot"),
+            "dot rejection should name the unsupported format"
         );
         Ok(())
     }
