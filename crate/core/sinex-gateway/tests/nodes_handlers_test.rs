@@ -9,7 +9,9 @@ use sinex_gateway::handlers::{
 use sinex_primitives::Timestamp;
 use sinex_primitives::domain::OperationStatus;
 use sinex_primitives::nats::create_or_open_kv_store;
-use sinex_primitives::rpc::nodes::{NodeDrainRequest, NodeResumeRequest, NodeSetHorizonRequest};
+use sinex_primitives::rpc::nodes::{
+    NodeDrainRequest, NodeResumeRequest, NodeSetHorizonRequest, NodesListRequest,
+};
 use xtask::sandbox::prelude::*;
 
 async fn expect_single_control_message(
@@ -37,8 +39,8 @@ async fn expect_single_control_message(
 async fn nodes_list_returns_empty_when_no_bucket(ctx: TestContext) -> TestResult<()> {
     let harness = NatsHarness::start(ctx).await?;
 
-    let result = handle_nodes_list(&harness.client, &harness.env, json!({})).await?;
-    assert_eq!(result["nodes"].as_array().map_or(0, std::vec::Vec::len), 0);
+    let result = handle_nodes_list(&harness.client, &harness.env, NodesListRequest {}).await?;
+    assert_eq!(result.nodes.len(), 0);
 
     Ok(())
 }
@@ -139,7 +141,7 @@ async fn nodes_list_surfaces_invalid_state_json(ctx: TestContext) -> TestResult<
     )
     .await?;
 
-    let error = handle_nodes_list(&harness.client, &harness.env, json!({}))
+    let error = handle_nodes_list(&harness.client, &harness.env, NodesListRequest {})
         .await
         .expect_err("invalid node state should surface");
     assert!(error.to_string().contains("Node state is not valid JSON"));
@@ -152,7 +154,7 @@ async fn nodes_list_surfaces_bucket_open_failures(ctx: TestContext) -> TestResul
     let harness = NatsHarness::start(ctx).await?;
     harness.nats_handle()?.shutdown().await?;
 
-    let error = handle_nodes_list(&harness.client, &harness.env, json!({}))
+    let error = handle_nodes_list(&harness.client, &harness.env, NodesListRequest {})
         .await
         .expect_err("closed JetStream should surface instead of looking empty");
     assert!(
