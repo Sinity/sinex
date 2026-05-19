@@ -12,9 +12,11 @@ use sinex_primitives::rpc::sources::{
     SourceCoverageEntry, SourceMaterialDetail, SourceMaterialMetadataContract,
     SourceMaterialStatistics, SourceMaterialSummary, SourceOrigin, SourcePolicyEvidence,
     SourcePresetDescriptor, SourcesAnnotateRequest, SourcesAnnotateResponse, SourcesArchiveRequest,
-    SourcesArchiveResponse, SourcesBindingsListResponse, SourcesContinuityRequest,
-    SourcesContinuityResponse, SourcesCoverageRequest, SourcesCoverageResponse, SourcesListRequest,
-    SourcesListResponse, SourcesPresetsListResponse, SourcesReadinessGetRequest,
+    SourcesArchiveResponse, SourcesBindingsCreateRequest, SourcesBindingsCreateResponse,
+    SourcesBindingsListRequest, SourcesBindingsListResponse, SourcesBindingsResolveRequest,
+    SourcesBindingsResolveResponse, SourcesContinuityRequest, SourcesContinuityResponse,
+    SourcesCoverageRequest, SourcesCoverageResponse, SourcesListRequest, SourcesListResponse,
+    SourcesPresetsListRequest, SourcesPresetsListResponse, SourcesReadinessGetRequest,
     SourcesReadinessGetResponse, SourcesReadinessListRequest, SourcesReadinessListResponse,
     SourcesShowRequest, SourcesShowResponse, SourcesStageRequest, SourcesStageResponse,
     TemporalEvidenceSummary, bridge_material_presets, external_producer_presets,
@@ -476,16 +478,11 @@ fn builtin_presets() -> Vec<SourcePresetDescriptor> {
 }
 
 pub async fn handle_sources_presets_list(
-    _params: Value,
     _services: &crate::service_container::ServiceContainer,
-    _auth: &crate::rpc_server::RpcAuthContext,
-) -> Result<Value> {
+    _request: SourcesPresetsListRequest,
+) -> Result<SourcesPresetsListResponse> {
     let presets = builtin_presets();
-    let response = SourcesPresetsListResponse { presets };
-    serde_json::to_value(response).map_err(|error| {
-        SinexError::serialization("Failed to serialize sources.presets.list response")
-            .with_std_error(&error)
-    })
+    Ok(SourcesPresetsListResponse { presets })
 }
 
 #[cfg(test)]
@@ -520,19 +517,21 @@ mod preset_tests {
 
 // ── sources.bindings.list ───────────────────────────────────────
 
-pub async fn handle_sources_bindings_list(_pool: &PgPool, _params: Value) -> Result<Value> {
+pub async fn handle_sources_bindings_list(
+    _pool: &PgPool,
+    _request: SourcesBindingsListRequest,
+) -> Result<SourcesBindingsListResponse> {
     // Source bindings are Nix configuration (#1098), not a DB catalog.
     // The binding catalog DB tables were removed in #1160.
-    let response = SourcesBindingsListResponse { bindings: vec![] };
-    serde_json::to_value(response).map_err(|error| {
-        SinexError::serialization("Failed to serialize sources.bindings.list response")
-            .with_std_error(&error)
-    })
+    Ok(SourcesBindingsListResponse { bindings: vec![] })
 }
 
 // ── sources.bindings.create ─────────────────────────────────────
 
-pub async fn handle_sources_bindings_create(_pool: &PgPool, _params: Value) -> Result<Value> {
+pub async fn handle_sources_bindings_create(
+    _pool: &PgPool,
+    _request: SourcesBindingsCreateRequest,
+) -> Result<SourcesBindingsCreateResponse> {
     Err(SinexError::configuration(
         "Source bindings are Nix configuration (#1098), not a DB catalog. Bindings are declared in nixos/modules/source-bindings.nix.",
     ))
@@ -540,7 +539,10 @@ pub async fn handle_sources_bindings_create(_pool: &PgPool, _params: Value) -> R
 
 // ── sources.bindings.resolve ─────────────────────────────────────
 
-pub async fn handle_sources_bindings_resolve(_pool: &PgPool, _params: Value) -> Result<Value> {
+pub async fn handle_sources_bindings_resolve(
+    _pool: &PgPool,
+    _request: SourcesBindingsResolveRequest,
+) -> Result<SourcesBindingsResolveResponse> {
     Err(SinexError::configuration(
         "Source bindings are Nix configuration (#1098), not a DB catalog. Bindings are declared in nixos/modules/source-bindings.nix.",
     ))

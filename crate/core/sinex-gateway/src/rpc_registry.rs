@@ -46,9 +46,11 @@ use sinex_primitives::rpc::{
     },
     shadow::{SHADOW_CREATE_METHOD, SHADOW_DELETE_METHOD, SHADOW_LIST_METHOD},
     sources::{
-        SOURCES_ANNOTATE_METHOD, SOURCES_ARCHIVE_METHOD, SOURCES_CONTINUITY_EXPLAIN_GAP_METHOD,
-        SOURCES_CONTINUITY_GET_METHOD, SOURCES_CONTINUITY_LIST_METHOD, SOURCES_CONTINUITY_METHOD,
-        SOURCES_COVERAGE_METHOD, SOURCES_LIST_METHOD, SOURCES_READINESS_GET_METHOD,
+        SOURCES_ANNOTATE_METHOD, SOURCES_ARCHIVE_METHOD, SOURCES_BINDINGS_CREATE_METHOD,
+        SOURCES_BINDINGS_LIST_METHOD, SOURCES_BINDINGS_RESOLVE_METHOD,
+        SOURCES_CONTINUITY_EXPLAIN_GAP_METHOD, SOURCES_CONTINUITY_GET_METHOD,
+        SOURCES_CONTINUITY_LIST_METHOD, SOURCES_CONTINUITY_METHOD, SOURCES_COVERAGE_METHOD,
+        SOURCES_LIST_METHOD, SOURCES_PRESETS_LIST_METHOD, SOURCES_READINESS_GET_METHOD,
         SOURCES_READINESS_LIST_METHOD, SOURCES_SHOW_METHOD, SOURCES_STAGE_METHOD,
     },
     system::{SYSTEM_HEALTH_METHOD, SYSTEM_PING_METHOD, SYSTEM_VERSION_METHOD},
@@ -780,16 +782,12 @@ fn build_registry_impl() -> RpcRegistry {
             boxed!(handle_sources_continuity_explain_gap),
         )
         // Source presets and bindings (ReadOnly)
-        .register(
-            methods::SOURCES_PRESETS_LIST,
-            Role::ReadOnly,
-            |params, services, auth| {
-                Box::pin(async move { handle_sources_presets_list(params, services, auth).await })
-            },
+        .service_typed_rpc(
+            SOURCES_PRESETS_LIST_METHOD,
+            boxed!(handle_sources_presets_list),
         )
-        .pool_rpc(
-            methods::SOURCES_BINDINGS_LIST,
-            Role::ReadOnly,
+        .pool_typed_rpc(
+            SOURCES_BINDINGS_LIST_METHOD,
             boxed!(handle_sources_bindings_list),
         )
         // Telemetry read models (ReadOnly)
@@ -911,14 +909,12 @@ fn build_registry_impl() -> RpcRegistry {
         // Source material staging (Write — registers new materials, uses services)
         .service_auth_typed_rpc(SOURCES_STAGE_METHOD, boxed!(handle_sources_stage, 3))
         // Source binding management (Write)
-        .pool_rpc(
-            methods::SOURCES_BINDINGS_CREATE,
-            Role::Write,
+        .pool_typed_rpc(
+            SOURCES_BINDINGS_CREATE_METHOD,
             boxed!(handle_sources_bindings_create),
         )
-        .pool_rpc(
-            methods::SOURCES_BINDINGS_RESOLVE,
-            Role::Write,
+        .pool_typed_rpc(
+            SOURCES_BINDINGS_RESOLVE_METHOD,
             boxed!(handle_sources_bindings_resolve),
         )
         // Source annotation (Write — modifies metadata)
