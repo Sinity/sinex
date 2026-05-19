@@ -19,6 +19,7 @@ use sinex_primitives::rpc::{
         COORDINATION_GET_LEADER_METHOD, COORDINATION_INSTANCE_HEALTH_METHOD,
         COORDINATION_LIST_INSTANCES_METHOD,
     },
+    curation::{CURATION_JUDGMENTS_RECORD_METHOD, CURATION_PROPOSALS_LIST_METHOD},
     dlq::{DLQ_LIST_METHOD, DLQ_PEEK_METHOD, DLQ_PURGE_METHOD, DLQ_REQUEUE_METHOD},
     documents::{DOCUMENTS_GET_CHUNKS_METHOD, DOCUMENTS_GET_METHOD, DOCUMENTS_SEARCH_METHOD},
     events::{EVENTS_ANNOTATE_METHOD, EVENTS_LINEAGE_METHOD, EVENTS_QUERY_METHOD},
@@ -704,9 +705,8 @@ fn build_registry_impl() -> RpcRegistry {
         })
         // Composable event query methods (ReadOnly)
         .pool_typed_rpc(EVENTS_QUERY_METHOD, boxed!(handle_events_query))
-        .pool_rpc(
-            methods::CURATION_PROPOSALS_LIST,
-            Role::ReadOnly,
+        .pool_typed_rpc(
+            CURATION_PROPOSALS_LIST_METHOD,
             boxed!(handle_curation_list_proposals),
         )
         .pool_typed_rpc(EVENTS_LINEAGE_METHOD, boxed!(handle_events_lineage))
@@ -857,9 +857,8 @@ fn build_registry_impl() -> RpcRegistry {
         // ─────────────────────────────────────────────────────────────
         // Event annotations (#1172 AC-9)
         .pool_auth_typed_rpc(EVENTS_ANNOTATE_METHOD, boxed!(handle_events_annotate, 3))
-        .pool_auth_rpc(
-            methods::CURATION_JUDGMENTS_RECORD,
-            Role::Write,
+        .pool_auth_typed_rpc(
+            CURATION_JUDGMENTS_RECORD_METHOD,
             boxed!(handle_curation_record_judgment, 3),
         )
         .pool_auth_typed_rpc(TASKS_CREATE_METHOD, boxed!(handle_tasks_create, 3))

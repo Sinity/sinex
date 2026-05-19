@@ -1,64 +1,24 @@
 //! Curation proposal/judgment RPC handlers.
 
-use serde::Deserialize;
-use serde_json::{Value, json};
+use serde_json::json;
 use sinex_db::repositories::DbPoolExt;
 use sinex_primitives::domain::{EventSource, EventType};
-use sinex_primitives::events::payloads::{
-    CurationJudgmentActorKind, CurationJudgmentDecision, CurationJudgmentPayload,
-    CurationProposalPayload,
-};
+use sinex_primitives::events::payloads::{CurationJudgmentPayload, CurationProposalPayload};
 use sinex_primitives::events::{Event, EventPayload};
-use sinex_primitives::query::{EventQuery, PayloadFilter};
+use sinex_primitives::query::{EventQuery, EventQueryResult, PayloadFilter};
+use sinex_primitives::rpc::curation::{
+    CurationListProposalsRequest, CurationRecordJudgmentRequest, CurationRecordJudgmentResponse,
+};
 use sinex_primitives::{Id, JsonValue, Result, SinexError, Timestamp, Uuid};
 use sqlx::PgPool;
 use std::str::FromStr;
 
-use crate::handlers::parse_default_on_null;
 use crate::rpc_server::RpcAuthContext;
 
-#[derive(Debug, Clone, Deserialize)]
-pub struct CurationListProposalsRequest {
-    #[serde(default = "default_proposal_status")]
-    pub status: String,
-    #[serde(default = "default_limit")]
-    pub limit: i64,
-}
-
-impl Default for CurationListProposalsRequest {
-    fn default() -> Self {
-        Self {
-            status: default_proposal_status(),
-            limit: default_limit(),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct CurationRecordJudgmentRequest {
-    pub proposal_event_id: String,
-    pub actor_kind: CurationJudgmentActorKind,
-    #[serde(default)]
-    pub actor_id: Option<String>,
-    pub decision: CurationJudgmentDecision,
-    #[serde(default)]
-    pub corrected_payload: Option<Value>,
-    #[serde(default)]
-    pub comment: Option<String>,
-    #[serde(default)]
-    pub authorization_context: Option<Value>,
-}
-
-fn default_proposal_status() -> String {
-    "pending".to_string()
-}
-
-const fn default_limit() -> i64 {
-    100
-}
-
-pub async fn handle_curation_list_proposals(pool: &PgPool, params: Value) -> Result<Value> {
-    let req: CurationListProposalsRequest = parse_default_on_null(params)?;
+pub async fn handle_curation_list_proposals(
+    pool: &PgPool,
+    req: CurationListProposalsRequest,
+) -> Result<EventQueryResult> {
     let mut query = EventQuery {
         sources: vec![EventSource::from_static("curation")],
         event_types: vec![EventType::from_static("curation.proposal")],
@@ -70,22 +30,14 @@ pub async fn handle_curation_list_proposals(pool: &PgPool, params: Value) -> Res
     };
     query.validate()?;
 
-    let result = pool.events().query(query).await?;
-    serde_json::to_value(result).map_err(|error| {
-        SinexError::serialization("curation.proposals.list: failed to serialize response")
-            .with_std_error(&error)
-    })
+    pool.events().query(query).await
 }
 
 pub async fn handle_curation_record_judgment(
     pool: &PgPool,
-    params: Value,
+    req: CurationRecordJudgmentRequest,
     auth: &RpcAuthContext,
-) -> Result<Value> {
-    let req: CurationRecordJudgmentRequest = serde_json::from_value(params).map_err(|error| {
-        SinexError::serialization("curation.judgments.record: invalid request")
-            .with_std_error(&error)
-    })?;
+) -> Result<CurationRecordJudgmentResponse> {
     let proposal_event_uuid = Uuid::from_str(&req.proposal_event_id).map_err(|error| {
         SinexError::validation("curation.judgments.record: invalid proposal_event_id")
             .with_context("proposal_event_id", &req.proposal_event_id)
@@ -141,12 +93,8 @@ pub async fn handle_curation_record_judgment(
         .build()?;
     let inserted = pool.events().insert(event).await?;
 
-    serde_json::to_value(json!({
-        "judgment": judgment,
-        "event": inserted,
-    }))
-    .map_err(|error| {
-        SinexError::serialization("curation.judgments.record: failed to serialize response")
-            .with_std_error(&error)
+    Ok(CurationRecordJudgmentResponse {
+        judgment,
+        event: inserted,
     })
 }
