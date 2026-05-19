@@ -1016,3 +1016,26 @@ fn build_registry_impl() -> RpcRegistry {
         .service_typed_rpc(SHADOW_LIST_METHOD, boxed!(handle_shadow_list))
         .service_auth_typed_rpc(SHADOW_DELETE_METHOD, boxed!(handle_shadow_delete, 3))
 }
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn registry_build_surface_does_not_use_raw_registration_helpers() {
+        let source = include_str!("rpc_registry.rs");
+        let registry_impl = source
+            .split("fn build_registry_impl() -> RpcRegistry")
+            .nth(1)
+            .expect("registry implementation should exist")
+            .split("#[cfg(test)]")
+            .next()
+            .expect("test module marker should delimit registry implementation");
+
+        let forbidden = [".register(", "pool_rpc(", "pool_auth_rpc(", "nats_rpc("];
+        for pattern in forbidden {
+            assert!(
+                !registry_impl.contains(pattern),
+                "gateway registry build surface must use RpcMethod descriptor-backed typed helpers, found `{pattern}`"
+            );
+        }
+    }
+}
