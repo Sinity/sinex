@@ -7,6 +7,11 @@ use sinex_db::{CascadeSource, DbPoolExt, Event};
 use sinex_primitives::rpc::lifecycle::{
     LifecycleArchiveRequest, LifecycleArchiveResponse, LifecycleRestoreRequest,
     LifecycleRestoreResponse, LifecycleStatusRequest, LifecycleStatusResponse, TierStatus,
+    TombstoneApproveRequest, TombstoneApproveResponse, TombstoneCancelRequest,
+    TombstoneCancelResponse, TombstoneCascadeAnalysis, TombstoneCreateRequest,
+    TombstoneCreateResponse, TombstoneListRequest, TombstoneListResponse, TombstoneOperation,
+    TombstoneOperationPhase, TombstoneOperationState, TombstonePreviewRequest,
+    TombstonePreviewResponse, TombstoneStatusRequest, TombstoneStatusResponse,
 };
 use sinex_primitives::temporal::parse_duration;
 use sinex_primitives::{Id, SinexError, Timestamp, Uuid};
@@ -505,13 +510,6 @@ fn parse_duration_to_timestamp(duration_str: &str) -> Result<Option<Timestamp>> 
 // ─────────────────────────────────────────────────────────────
 
 use sinex_primitives::domain::OperationStatus;
-use sinex_primitives::rpc::lifecycle::{
-    TombstoneApproveRequest, TombstoneApproveResponse, TombstoneCancelRequest,
-    TombstoneCancelResponse, TombstoneCascadeAnalysis, TombstoneCreateRequest,
-    TombstoneCreateResponse, TombstoneListRequest, TombstoneListResponse, TombstoneOperation,
-    TombstoneOperationPhase, TombstoneOperationState, TombstonePreviewRequest,
-    TombstonePreviewResponse, TombstoneStatusRequest, TombstoneStatusResponse,
-};
 
 /// Default TTL for tombstone operations (1 hour)
 const TOMBSTONE_OPERATION_TTL_SECS: i64 = 3600;
@@ -688,10 +686,9 @@ async fn reconcile_tombstone_expiry(
 /// The operation must be approved within 1 hour or it expires.
 pub async fn handle_tombstone_create(
     pool: &PgPool,
-    params: Value,
+    request: TombstoneCreateRequest,
     auth: &crate::rpc_server::RpcAuthContext,
-) -> Result<Value> {
-    let request: TombstoneCreateRequest = serde_json::from_value(params)?;
+) -> Result<TombstoneCreateResponse> {
     let limit = require_positive_limit("lifecycle.tombstone.create", request.limit)?;
     reject_conflicting_explicit_event_filters(
         "lifecycle.tombstone.create",
@@ -801,8 +798,7 @@ pub async fn handle_tombstone_create(
         "Tombstone operation created (requires approval, persisted to DB)"
     );
 
-    let response = TombstoneCreateResponse { operation };
-    Ok(serde_json::to_value(response)?)
+    Ok(TombstoneCreateResponse { operation })
 }
 
 /// Handle lifecycle.tombstone.preview
@@ -810,11 +806,9 @@ pub async fn handle_tombstone_create(
 /// Returns the cascade analysis for an existing operation.
 pub async fn handle_tombstone_preview(
     pool: &PgPool,
-    params: Value,
+    request: TombstonePreviewRequest,
     _auth: &crate::rpc_server::RpcAuthContext,
-) -> Result<Value> {
-    let request: TombstonePreviewRequest = serde_json::from_value(params)?;
-
+) -> Result<TombstonePreviewResponse> {
     let record = pool
         .state()
         .get_tombstone_operation(&request.operation_id)
@@ -845,8 +839,7 @@ pub async fn handle_tombstone_preview(
         )));
     }
 
-    let response = TombstonePreviewResponse { operation };
-    Ok(serde_json::to_value(response)?)
+    Ok(TombstonePreviewResponse { operation })
 }
 
 /// Handle lifecycle.tombstone.approve
@@ -857,12 +850,11 @@ pub async fn handle_tombstone_preview(
 /// references — both the registry row and the underlying CAS blob.
 /// (#987 delete-on-tombstone for local CAS.)
 pub async fn handle_tombstone_approve(
-    params: Value,
     services: &crate::service_container::ServiceContainer,
+    request: TombstoneApproveRequest,
     auth: &crate::rpc_server::RpcAuthContext,
-) -> Result<Value> {
+) -> Result<TombstoneApproveResponse> {
     let pool = services.pool();
-    let request: TombstoneApproveRequest = serde_json::from_value(params)?;
 
     if !request.yes_i_understand_data_is_gone {
         return Err(SinexError::validation(
@@ -1188,8 +1180,7 @@ pub async fn handle_tombstone_approve(
         "💀 Tombstone operation completed (PERMANENT)"
     );
 
-    let response = TombstoneApproveResponse { operation };
-    Ok(serde_json::to_value(response)?)
+    Ok(TombstoneApproveResponse { operation })
 }
 
 /// Handle lifecycle.tombstone.cancel
@@ -1197,11 +1188,9 @@ pub async fn handle_tombstone_approve(
 /// Cancels a pending tombstone operation.
 pub async fn handle_tombstone_cancel(
     pool: &PgPool,
-    params: Value,
+    request: TombstoneCancelRequest,
     auth: &crate::rpc_server::RpcAuthContext,
-) -> Result<Value> {
-    let request: TombstoneCancelRequest = serde_json::from_value(params)?;
-
+) -> Result<TombstoneCancelResponse> {
     let record = pool
         .state()
         .get_tombstone_operation(&request.operation_id)
@@ -1268,11 +1257,10 @@ pub async fn handle_tombstone_cancel(
         "Tombstone operation cancelled"
     );
 
-    let response = TombstoneCancelResponse {
+    Ok(TombstoneCancelResponse {
         status: "cancelled".to_string(),
         operation_id: request.operation_id,
-    };
-    Ok(serde_json::to_value(response)?)
+    })
 }
 
 /// Handle lifecycle.tombstone.list
@@ -1280,11 +1268,9 @@ pub async fn handle_tombstone_cancel(
 /// Lists tombstone operations, optionally filtered by state.
 pub async fn handle_tombstone_list(
     pool: &PgPool,
-    params: Value,
+    request: TombstoneListRequest,
     _auth: &crate::rpc_server::RpcAuthContext,
-) -> Result<Value> {
-    let request: TombstoneListRequest = super::parse_default_on_null(params)?;
-
+) -> Result<TombstoneListResponse> {
     let limit = require_positive_limit("lifecycle.tombstone.list", request.limit.unwrap_or(100))?;
     let records = pool
         .state()
@@ -1317,8 +1303,7 @@ pub async fn handle_tombstone_list(
     // Sort by created_at descending (DB already returns in id DESC order, but created_at may differ)
     operations.sort_by(|a, b| b.created_at.cmp(&a.created_at));
 
-    let response = TombstoneListResponse { operations };
-    Ok(serde_json::to_value(response)?)
+    Ok(TombstoneListResponse { operations })
 }
 
 /// Handle lifecycle.tombstone.status
@@ -1326,11 +1311,9 @@ pub async fn handle_tombstone_list(
 /// Gets the status of a specific tombstone operation.
 pub async fn handle_tombstone_status(
     pool: &PgPool,
-    params: Value,
+    request: TombstoneStatusRequest,
     _auth: &crate::rpc_server::RpcAuthContext,
-) -> Result<Value> {
-    let request: TombstoneStatusRequest = serde_json::from_value(params)?;
-
+) -> Result<TombstoneStatusResponse> {
     let record = pool
         .state()
         .get_tombstone_operation(&request.operation_id)
@@ -1354,8 +1337,7 @@ pub async fn handle_tombstone_status(
     )
     .await?;
 
-    let response = TombstoneStatusResponse { operation };
-    Ok(serde_json::to_value(response)?)
+    Ok(TombstoneStatusResponse { operation })
 }
 
 #[cfg(test)]

@@ -41,6 +41,9 @@ use sinex_primitives::rpc::{
     ingestors::{INGESTORS_STATUS_METHOD, IngestorsStatusRequest, IngestorsStatusResponse},
     lifecycle::{
         LIFECYCLE_ARCHIVE_METHOD, LIFECYCLE_RESTORE_METHOD, LIFECYCLE_STATUS_METHOD,
+        LIFECYCLE_TOMBSTONE_APPROVE_METHOD, LIFECYCLE_TOMBSTONE_CANCEL_METHOD,
+        LIFECYCLE_TOMBSTONE_CREATE_METHOD, LIFECYCLE_TOMBSTONE_LIST_METHOD,
+        LIFECYCLE_TOMBSTONE_PREVIEW_METHOD, LIFECYCLE_TOMBSTONE_STATUS_METHOD,
         LifecycleArchiveRequest, LifecycleArchiveResponse, LifecycleRestoreRequest,
         LifecycleRestoreResponse, LifecycleStatusRequest, LifecycleStatusResponse,
         TombstoneApproveRequest, TombstoneApproveResponse, TombstoneCancelRequest,
@@ -49,7 +52,6 @@ use sinex_primitives::rpc::{
         TombstonePreviewRequest, TombstonePreviewResponse, TombstoneStatusRequest,
         TombstoneStatusResponse,
     },
-    methods,
     nodes::{NodeDrainRequest, NodeResumeRequest, NodeSetHorizonRequest},
     ops::{Operation as OpsOperation, OpsGetResponse, OpsListResponse, OpsStartResponse},
     replay::{
@@ -1113,13 +1115,8 @@ impl GatewayClient {
             limit,
             reason,
         };
-        let result = self
-            .call_rpc(
-                methods::LIFECYCLE_TOMBSTONE_CREATE,
-                serde_json::to_value(&req)?,
-            )
-            .await?;
-        serde_json::from_value(result).map_err(Into::into)
+        self.call_typed(LIFECYCLE_TOMBSTONE_CREATE_METHOD, &req)
+            .await
     }
 
     /// Preview cascade analysis for a tombstone operation
@@ -1128,13 +1125,8 @@ impl GatewayClient {
         operation_id: String,
     ) -> Result<TombstonePreviewResponse> {
         let req = TombstonePreviewRequest { operation_id };
-        let result = self
-            .call_rpc(
-                methods::LIFECYCLE_TOMBSTONE_PREVIEW,
-                serde_json::to_value(&req)?,
-            )
-            .await?;
-        serde_json::from_value(result).map_err(Into::into)
+        self.call_typed(LIFECYCLE_TOMBSTONE_PREVIEW_METHOD, &req)
+            .await
     }
 
     /// Approve and execute a tombstone operation (Step 2 - PERMANENT!)
@@ -1147,13 +1139,8 @@ impl GatewayClient {
             operation_id,
             yes_i_understand_data_is_gone: confirm,
         };
-        let result = self
-            .call_rpc(
-                methods::LIFECYCLE_TOMBSTONE_APPROVE,
-                serde_json::to_value(&req)?,
-            )
-            .await?;
-        serde_json::from_value(result).map_err(Into::into)
+        self.call_typed(LIFECYCLE_TOMBSTONE_APPROVE_METHOD, &req)
+            .await
     }
 
     /// Cancel a pending tombstone operation
@@ -1166,13 +1153,8 @@ impl GatewayClient {
             operation_id,
             reason,
         };
-        let result = self
-            .call_rpc(
-                methods::LIFECYCLE_TOMBSTONE_CANCEL,
-                serde_json::to_value(&req)?,
-            )
-            .await?;
-        serde_json::from_value(result).map_err(Into::into)
+        self.call_typed(LIFECYCLE_TOMBSTONE_CANCEL_METHOD, &req)
+            .await
     }
 
     /// List tombstone operations
@@ -1182,25 +1164,15 @@ impl GatewayClient {
         limit: Option<i64>,
     ) -> Result<TombstoneListResponse> {
         let req = TombstoneListRequest { state, limit };
-        let result = self
-            .call_rpc(
-                methods::LIFECYCLE_TOMBSTONE_LIST,
-                serde_json::to_value(&req)?,
-            )
-            .await?;
-        serde_json::from_value(result).map_err(Into::into)
+        self.call_typed(LIFECYCLE_TOMBSTONE_LIST_METHOD, &req)
+            .await
     }
 
     /// Get status of a specific tombstone operation
     pub async fn tombstone_status(&self, operation_id: String) -> Result<TombstoneStatusResponse> {
         let req = TombstoneStatusRequest { operation_id };
-        let result = self
-            .call_rpc(
-                methods::LIFECYCLE_TOMBSTONE_STATUS,
-                serde_json::to_value(&req)?,
-            )
-            .await?;
-        serde_json::from_value(result).map_err(Into::into)
+        self.call_typed(LIFECYCLE_TOMBSTONE_STATUS_METHOD, &req)
+            .await
     }
 
     // ==================== Telemetry Commands ====================
