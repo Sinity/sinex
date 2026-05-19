@@ -32,6 +32,9 @@ sinexctl admin snapshot --output <path>
   [--state-dir <path>]             # override SINEX_STATE_DIR (default /var/lib/sinex)
   [--auto-stop]                    # stop sinex-* services automatically
   [--components postgres,nats,cas,state]  # subset, default all
+
+sinexctl admin snapshot-restore --archive <path> --target-dir <empty-dir> --dry-run
+  [--allow-non-empty-target]       # planning only; destructive restore still refuses ambiguity
 ```
 
 ### Components
@@ -57,9 +60,50 @@ cas/
 state/                          -- remaining $STATE_DIR contents
 ```
 
+## Archive secrecy and key policy
+
+Snapshot archives are **secret** by default. A normal archive may contain event
+payloads, raw source material, NATS stream state, CAS blobs, runtime state,
+private-mode state, and source-unit identifiers. Treat the archive at least as
+sensitive as the live Sinex state directory and database.
+
+The snapshot command does not intentionally include TLS client keys, private
+keys, token files, age keys, SSH keys, password-store material, or other host
+credentials. That exclusion is a policy, not magic: if an operator stores keys
+inside `$SINEX_STATE_DIR` or one of the selected component roots, the archive
+inherits those secrets. Keep archives on encrypted storage and use encrypted
+transport for off-host copies.
+
+## Restore drill planning
+
+Before a destructive restore, validate the archive and target with:
+
+```bash
+sinexctl admin snapshot-restore \
+    --archive /var/backup/sinex/2026-05-15.sinex.tar.zst \
+    --target-dir /tmp/sinex-restore-drill \
+    --dry-run
+```
+
+The dry-run command does not extract or write restored state. It validates:
+
+- `manifest.json` is readable from the archive.
+- Non-empty component paths declared by the manifest are present in the tar.
+- The target path is an empty directory, or does not exist under an existing
+  parent directory.
+- Active `sinex-*` services are reported so destructive restore can quiesce
+  them first.
+- The restore drill comparison plan includes source-unit count, Postgres table
+  count, CAS blob count when present, and runtime private-mode state presence.
+
+`--allow-non-empty-target` is only for planning against an already-prepared
+drill directory. It does not permit destructive writes.
+
 ## Restore procedure (manual)
 
-MVP does not include a `restore` subcommand.  Restore is a manual procedure:
+MVP does not include destructive restore execution. `snapshot-restore --dry-run`
+is the supported restore drill planner; the actual restore remains a manual
+procedure:
 
 ### 1. Stop services (if running)
 
@@ -191,9 +235,10 @@ For a horizon-3 wipe (complete state replacement):
 
 - **No live mode** — services must be stopped.  A future `--mode live` option
   is deferred.
-- **No explicit restore subcommand** — restore is manual per this runbook.
-- **No encryption** — use filesystem-level or transport-level encryption for
-  archives that leave the host.
+- **No destructive restore execution** — `snapshot-restore --dry-run` validates
+  the archive and drill plan, but restore writes remain manual per this runbook.
+- **No built-in archive encryption** — use filesystem-level, transport-level,
+  or envelope encryption for archives that leave the host.
 - **No incremental snapshots** — each run is a full capture.
 
 ## See also

@@ -501,6 +501,11 @@ pub fn build() -> HashMap<&'static str, FormatCapability> {
         FormatCapability::single_shot(TABLE_JSON_YAML)
             .with_note("inspect snapshot manifest and archive member coverage"),
     );
+    m.insert(
+        "admin snapshot-restore",
+        FormatCapability::single_shot(TABLE_JSON_YAML)
+            .with_note("dry-run restore drill plan and archive sensitivity classification"),
+    );
 
     m
 }

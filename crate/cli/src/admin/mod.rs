@@ -12,8 +12,8 @@ use color_eyre::eyre::Result;
 use crate::fmt::CommandOutput;
 use crate::model::OutputFormat;
 use snapshot::{
-    AdminSnapshotCommand, AdminSnapshotInspectCommand, format_snapshot_inspect_result,
-    format_snapshot_result,
+    AdminSnapshotCommand, AdminSnapshotInspectCommand, AdminSnapshotRestoreCommand,
+    format_snapshot_inspect_result, format_snapshot_restore_plan_result, format_snapshot_result,
 };
 
 /// Admin subcommands.
@@ -23,6 +23,8 @@ pub enum AdminCommands {
     Snapshot(AdminSnapshotCommand),
     /// Inspect a snapshot archive manifest and member list.
     SnapshotInspect(AdminSnapshotInspectCommand),
+    /// Validate a snapshot restore drill plan without writing target state.
+    SnapshotRestore(AdminSnapshotRestoreCommand),
 }
 
 impl AdminCommands {
@@ -35,6 +37,10 @@ impl AdminCommands {
             Self::SnapshotInspect(cmd) => {
                 let result = cmd.execute()?;
                 CommandOutput::single(result, format_snapshot_inspect_result).display(&format)
+            }
+            Self::SnapshotRestore(cmd) => {
+                let result = cmd.execute()?;
+                CommandOutput::single(result, format_snapshot_restore_plan_result).display(&format)
             }
         }
     }
