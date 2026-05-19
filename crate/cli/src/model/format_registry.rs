@@ -350,6 +350,10 @@ pub fn build() -> HashMap<&'static str, FormatCapability> {
         FormatCapability::single_shot(TABLE_JSON_YAML),
     );
     m.insert(
+        "semantics lane compare",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
+    m.insert(
         "semantics lane list",
         FormatCapability::single_shot(TABLE_JSON_YAML),
     );
@@ -363,6 +367,10 @@ pub fn build() -> HashMap<&'static str, FormatCapability> {
     );
     m.insert(
         "semantics lane outputs",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
+    m.insert(
+        "semantics lane write-outputs",
         FormatCapability::single_shot(TABLE_JSON_YAML),
     );
     m.insert(
@@ -759,9 +767,11 @@ fn effect_for_path(path: &str, capability: &FormatCapability) -> CommandEffect {
         "replay run",
         "replay submit",
         "semantics epoch create",
+        "semantics lane compare",
         "semantics lane create",
         "semantics lane discard",
         "semantics lane status",
+        "semantics lane write-outputs",
         "shadow create",
         "shadow delete",
         "sources annotate",
@@ -820,9 +830,11 @@ fn mutation_guards_for_path(path: &str) -> &'static [CommandMutationGuard] {
         | "replay execute"
         | "replay submit"
         | "semantics epoch create"
+        | "semantics lane compare"
         | "semantics lane create"
         | "semantics lane discard"
         | "semantics lane status"
+        | "semantics lane write-outputs"
         | "sources annotate"
         | "sources archive"
         | "sources bindings create"
@@ -937,7 +949,9 @@ fn backing_rpc_methods_for_path(path: &str) -> &'static [&'static str] {
         "semantics lane status" => &[methods::SEMANTIC_LANES_SET_STATUS],
         "semantics lane discard" => &[methods::SEMANTIC_LANES_DISCARD],
         "semantics lane outputs" => &[methods::SEMANTIC_LANE_OUTPUTS_LIST],
+        "semantics lane write-outputs" => &[methods::SEMANTIC_LANE_OUTPUTS_WRITE],
         "semantics lane diffs" => &[methods::SEMANTIC_LANE_DIFFS_LIST],
+        "semantics lane compare" => &[methods::SEMANTIC_LANE_DIFFS_RECORD_ENTITY_RELATION],
         "llm prompts" => &[methods::LLM_PROMPTS_LIST],
         "llm route-explain" => &[methods::LLM_ROUTE_EXPLAIN],
         "llm budget-report" => &[methods::LLM_BUDGET_REPORT],

@@ -8,8 +8,9 @@ use crate::schema::{SemanticEpochs, records};
 use crate::{JsonValue, Timestamp};
 use serde::Serialize;
 use sinex_primitives::{
-    EntityRelationDiffReport, EntityRelationLaneOutputs, SemanticEpochRecord,
-    SemanticLaneRecord as PrimitiveSemanticLaneRecord, SemanticLaneStatus, Uuid,
+    EntityRelationDiffReport, EntityRelationLaneOutputs, SemanticEntityOutput,
+    SemanticEpochRecord, SemanticLaneRecord as PrimitiveSemanticLaneRecord, SemanticLaneStatus,
+    SemanticRelationOutput, SinexError, Uuid,
 };
 use sqlx::PgPool;
 
@@ -220,6 +221,33 @@ impl SemanticRepository<'_> {
         .map_err(|error| db_error(error, "list semantic lanes"))
     }
 
+    pub async fn get_lane(&self, lane_id: Uuid) -> DbResult<records::SemanticLaneRecord> {
+        sqlx::query_as!(
+            records::SemanticLaneRecord,
+            r#"
+            SELECT
+                id,
+                name,
+                kind,
+                base_epoch_id,
+                candidate_epoch_id,
+                scope,
+                status,
+                purpose,
+                operation_id,
+                created_at as "created_at: Timestamp",
+                completed_at as "completed_at: Timestamp",
+                expires_at as "expires_at: Timestamp"
+            FROM semantic.lanes
+            WHERE id = $1
+            "#,
+            lane_id,
+        )
+        .fetch_one(self.pool)
+        .await
+        .map_err(|error| db_error(error, "get semantic lane"))
+    }
+
     pub async fn set_lane_status(
         &self,
         lane_id: Uuid,
@@ -344,6 +372,61 @@ impl SemanticRepository<'_> {
         .map_err(|error| db_error(error, "count semantic lane outputs"))
     }
 
+    pub async fn read_entity_relation_outputs(
+        &self,
+        lane_id: Uuid,
+    ) -> DbResult<EntityRelationLaneOutputs> {
+        let rows = self.list_all_lane_outputs(lane_id).await?;
+        let mut outputs = EntityRelationLaneOutputs::default();
+        for row in rows {
+            match row.output_kind.as_str() {
+                "entity" => {
+                    outputs.entities.push(parse_lane_output_payload(
+                        "semantic entity lane output",
+                        row.payload,
+                    )?);
+                }
+                "relation" => {
+                    outputs.relations.push(parse_lane_output_payload(
+                        "semantic relation lane output",
+                        row.payload,
+                    )?);
+                }
+                _ => {}
+            }
+        }
+        Ok(outputs)
+    }
+
+    async fn list_all_lane_outputs(
+        &self,
+        lane_id: Uuid,
+    ) -> DbResult<Vec<records::SemanticLaneOutputRecord>> {
+        sqlx::query_as!(
+            records::SemanticLaneOutputRecord,
+            r#"
+            SELECT
+                lane_id,
+                output_kind,
+                output_key,
+                source_event_id,
+                source_material_id,
+                source_anchor,
+                output_hash,
+                payload,
+                metadata,
+                created_at as "created_at: Timestamp"
+            FROM semantic.lane_outputs
+            WHERE lane_id = $1
+            ORDER BY output_kind, output_key
+            "#,
+            lane_id,
+        )
+        .fetch_all(self.pool)
+        .await
+        .map_err(|error| db_error(error, "list all semantic lane outputs"))
+    }
+
     pub async fn list_lane_outputs(
         &self,
         lane_id: Uuid,
@@ -446,6 +529,16 @@ fn hash_json(value: &impl Serialize) -> DbResult<String> {
             .with_std_error(&error)
     })?;
     Ok(blake3::hash(&bytes).to_hex().to_string())
+}
+
+fn parse_lane_output_payload<T: serde::de::DeserializeOwned>(
+    label: &str,
+    payload: JsonValue,
+) -> DbResult<T> {
+    serde_json::from_value(payload)
+        .map_err(|error| {
+            SinexError::serialization(format!("deserialize {label}")).with_std_error(&error)
+        })
 }
 
 fn status_string(status: SemanticLaneStatus) -> String {

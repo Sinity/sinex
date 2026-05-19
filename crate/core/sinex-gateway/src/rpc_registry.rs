@@ -53,7 +53,8 @@ use sinex_primitives::rpc::{
     },
     semantic::{
         SEMANTIC_EPOCHS_CREATE_METHOD, SEMANTIC_EPOCHS_LIST_METHOD,
-        SEMANTIC_LANE_DIFFS_LIST_METHOD, SEMANTIC_LANE_OUTPUTS_LIST_METHOD,
+        SEMANTIC_LANE_DIFFS_LIST_METHOD, SEMANTIC_LANE_DIFFS_RECORD_ENTITY_RELATION_METHOD,
+        SEMANTIC_LANE_OUTPUTS_LIST_METHOD, SEMANTIC_LANE_OUTPUTS_WRITE_METHOD,
         SEMANTIC_LANES_CREATE_METHOD, SEMANTIC_LANES_DISCARD_METHOD, SEMANTIC_LANES_LIST_METHOD,
         SEMANTIC_LANES_SET_STATUS_METHOD,
     },
@@ -726,8 +727,9 @@ fn build_registry_impl() -> RpcRegistry {
         handle_replay_list_operations, handle_replay_operation_status,
         handle_replay_preview_operation, handle_replay_submit_operation, handle_retrieve_blob,
         handle_semantic_epoch_create, handle_semantic_epoch_list, handle_semantic_lane_create,
-        handle_semantic_lane_diffs_list, handle_semantic_lane_discard,
-        handle_semantic_lane_outputs_list, handle_semantic_lane_set_status,
+        handle_semantic_lane_diff_record_entity_relation, handle_semantic_lane_diffs_list,
+        handle_semantic_lane_discard, handle_semantic_lane_outputs_list,
+        handle_semantic_lane_outputs_write, handle_semantic_lane_set_status,
         handle_semantic_lanes_list, handle_shadow_create, handle_shadow_delete, handle_shadow_list,
         handle_sources_annotate, handle_sources_archive, handle_sources_bindings_create,
         handle_sources_bindings_list, handle_sources_bindings_resolve, handle_sources_continuity,
@@ -957,6 +959,14 @@ fn build_registry_impl() -> RpcRegistry {
         .pool_typed_rpc(
             SEMANTIC_LANES_DISCARD_METHOD,
             boxed!(handle_semantic_lane_discard),
+        )
+        .pool_typed_rpc(
+            SEMANTIC_LANE_OUTPUTS_WRITE_METHOD,
+            boxed!(handle_semantic_lane_outputs_write),
+        )
+        .pool_typed_rpc(
+            SEMANTIC_LANE_DIFFS_RECORD_ENTITY_RELATION_METHOD,
+            boxed!(handle_semantic_lane_diff_record_entity_relation),
         )
         .pool_auth_typed_rpc(
             HEALTH_INTAKE_RECORD_METHOD,

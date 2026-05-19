@@ -92,13 +92,16 @@ use sinex_primitives::rpc::{
     },
     semantic::{
         SEMANTIC_EPOCHS_CREATE_METHOD, SEMANTIC_EPOCHS_LIST_METHOD,
-        SEMANTIC_LANE_DIFFS_LIST_METHOD, SEMANTIC_LANE_OUTPUTS_LIST_METHOD,
+        SEMANTIC_LANE_DIFFS_LIST_METHOD, SEMANTIC_LANE_DIFFS_RECORD_ENTITY_RELATION_METHOD,
+        SEMANTIC_LANE_OUTPUTS_LIST_METHOD, SEMANTIC_LANE_OUTPUTS_WRITE_METHOD,
         SEMANTIC_LANES_CREATE_METHOD, SEMANTIC_LANES_DISCARD_METHOD, SEMANTIC_LANES_LIST_METHOD,
         SEMANTIC_LANES_SET_STATUS_METHOD, SemanticEpochCreateRequest, SemanticEpochListRequest,
         SemanticEpochListResponse, SemanticEpochRecordResponse, SemanticLaneCreateRequest,
+        SemanticLaneDiffRecordEntityRelationRequest, SemanticLaneDiffRecordResponse,
         SemanticLaneDiffsListRequest, SemanticLaneDiffsListResponse, SemanticLaneDiscardRequest,
         SemanticLaneListRequest, SemanticLaneListResponse, SemanticLaneOutputsListRequest,
-        SemanticLaneOutputsListResponse, SemanticLaneRecordResponse, SemanticLaneSetStatusRequest,
+        SemanticLaneOutputsListResponse, SemanticLaneOutputsWriteRequest,
+        SemanticLaneOutputsWriteResponse, SemanticLaneRecordResponse, SemanticLaneSetStatusRequest,
     },
     sources::{
         SOURCES_ANNOTATE_METHOD, SOURCES_ARCHIVE_METHOD, SOURCES_CONTINUITY_EXPLAIN_GAP_METHOD,
@@ -1051,11 +1054,27 @@ impl GatewayClient {
             .await
     }
 
+    pub async fn semantic_lane_outputs_write(
+        &self,
+        request: SemanticLaneOutputsWriteRequest,
+    ) -> Result<SemanticLaneOutputsWriteResponse> {
+        self.call_typed(SEMANTIC_LANE_OUTPUTS_WRITE_METHOD, &request)
+            .await
+    }
+
     pub async fn semantic_lane_diffs_list(
         &self,
         request: SemanticLaneDiffsListRequest,
     ) -> Result<SemanticLaneDiffsListResponse> {
         self.call_typed(SEMANTIC_LANE_DIFFS_LIST_METHOD, &request)
+            .await
+    }
+
+    pub async fn semantic_lane_diff_record_entity_relation(
+        &self,
+        request: SemanticLaneDiffRecordEntityRelationRequest,
+    ) -> Result<SemanticLaneDiffRecordResponse> {
+        self.call_typed(SEMANTIC_LANE_DIFFS_RECORD_ENTITY_RELATION_METHOD, &request)
             .await
     }
 

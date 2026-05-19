@@ -613,7 +613,11 @@ fn command_path(cmd: &Commands) -> String {
                     SemanticLaneSubcommand::Status(_) => "semantics lane status".to_string(),
                     SemanticLaneSubcommand::Discard(_) => "semantics lane discard".to_string(),
                     SemanticLaneSubcommand::Outputs(_) => "semantics lane outputs".to_string(),
+                    SemanticLaneSubcommand::WriteOutputs(_) => {
+                        "semantics lane write-outputs".to_string()
+                    }
                     SemanticLaneSubcommand::Diffs(_) => "semantics lane diffs".to_string(),
+                    SemanticLaneSubcommand::Compare(_) => "semantics lane compare".to_string(),
                 },
             }
         }

@@ -7,12 +7,12 @@ use serde::de::DeserializeOwned;
 use serde_json::Value;
 use sinex_primitives::rpc::semantic::{
     SemanticEpochCreateRequest, SemanticEpochListRequest, SemanticLaneCreateRequest,
-    SemanticLaneDiffsListRequest, SemanticLaneDiscardRequest, SemanticLaneListRequest,
-    SemanticLaneOutputsListRequest, SemanticLaneSetStatusRequest,
+    SemanticLaneDiffRecordEntityRelationRequest, SemanticLaneDiffsListRequest,
+    SemanticLaneDiscardRequest, SemanticLaneListRequest, SemanticLaneOutputsListRequest,
+    SemanticLaneOutputsWriteRequest, SemanticLaneSetStatusRequest,
 };
-use sinex_primitives::{
-    SemanticComponentVersion, SemanticScope, Uuid,
-};
+use sinex_primitives::{EntityRelationLaneOutputs, SemanticComponentVersion, SemanticScope, Uuid};
+use std::path::{Path, PathBuf};
 
 use crate::client::GatewayClient;
 use crate::fmt::{format_json, format_yaml};
@@ -170,7 +170,9 @@ impl SemanticLaneCommand {
             SemanticLaneSubcommand::Status(cmd) => cmd.execute(client, format).await,
             SemanticLaneSubcommand::Discard(cmd) => cmd.execute(client, format).await,
             SemanticLaneSubcommand::Outputs(cmd) => cmd.execute(client, format).await,
+            SemanticLaneSubcommand::WriteOutputs(cmd) => cmd.execute(client, format).await,
             SemanticLaneSubcommand::Diffs(cmd) => cmd.execute(client, format).await,
+            SemanticLaneSubcommand::Compare(cmd) => cmd.execute(client, format).await,
         }
     }
 
@@ -192,8 +194,12 @@ pub enum SemanticLaneSubcommand {
     Discard(SemanticLaneDiscardCommand),
     /// List lane outputs.
     Outputs(SemanticLaneOutputsCommand),
+    /// Write entity/relation outputs into a lane.
+    WriteOutputs(SemanticLaneWriteOutputsCommand),
     /// List recorded lane diffs.
     Diffs(SemanticLaneDiffsCommand),
+    /// Compare two entity/relation lanes and record a diff.
+    Compare(SemanticLaneCompareCommand),
 }
 
 #[derive(Debug, Args)]
@@ -349,6 +355,37 @@ impl SemanticLaneOutputsCommand {
 }
 
 #[derive(Debug, Args)]
+pub struct SemanticLaneWriteOutputsCommand {
+    /// Lane UUID.
+    lane_id: Uuid,
+
+    /// Entity/relation outputs JSON file.
+    #[arg(long, conflicts_with = "outputs_json")]
+    outputs_file: Option<PathBuf>,
+
+    /// Entity/relation outputs JSON document.
+    #[arg(long, conflicts_with = "outputs_file")]
+    outputs_json: Option<String>,
+}
+
+impl SemanticLaneWriteOutputsCommand {
+    async fn execute(&self, client: &GatewayClient, format: OutputFormat) -> Result<()> {
+        let outputs = read_outputs(self.outputs_file.as_deref(), self.outputs_json.as_deref())?;
+        let response = client
+            .semantic_lane_outputs_write(SemanticLaneOutputsWriteRequest {
+                lane_id: self.lane_id,
+                outputs,
+            })
+            .await?;
+        render_value(
+            "Semantic lane outputs written",
+            &serde_json::to_value(response)?,
+            format,
+        )
+    }
+}
+
+#[derive(Debug, Args)]
 pub struct SemanticLaneDiffsCommand {
     /// Lane UUID.
     lane_id: Uuid,
@@ -370,6 +407,46 @@ impl SemanticLaneDiffsCommand {
     }
 }
 
+#[derive(Debug, Args)]
+pub struct SemanticLaneCompareCommand {
+    /// Baseline lane UUID.
+    #[arg(long)]
+    baseline_lane_id: Uuid,
+
+    /// Candidate lane UUID.
+    #[arg(long)]
+    candidate_lane_id: Uuid,
+
+    /// Maximum representative examples to keep in the diff report.
+    #[arg(long, default_value = "20")]
+    max_examples: usize,
+
+    /// Leave candidate lane status unchanged instead of marking it compared.
+    #[arg(long)]
+    keep_status: bool,
+}
+
+impl SemanticLaneCompareCommand {
+    async fn execute(&self, client: &GatewayClient, format: OutputFormat) -> Result<()> {
+        let response = client
+            .semantic_lane_diff_record_entity_relation(
+                SemanticLaneDiffRecordEntityRelationRequest {
+                    diff_id: None,
+                    baseline_lane_id: self.baseline_lane_id,
+                    candidate_lane_id: self.candidate_lane_id,
+                    max_examples: self.max_examples,
+                    mark_candidate_compared: !self.keep_status,
+                },
+            )
+            .await?;
+        render_value(
+            "Semantic lane diff recorded",
+            &serde_json::to_value(response)?,
+            format,
+        )
+    }
+}
+
 fn scope(kind: &str, input_ids: &[String], input_set_hash: &str) -> SemanticScope {
     SemanticScope {
         kind: kind.to_string(),
@@ -386,6 +463,28 @@ fn parse_serde_enum<T: DeserializeOwned>(name: &str, raw: &str) -> Result<T> {
 fn parse_json_opt<T: DeserializeOwned>(name: &str, raw: Option<&str>) -> Result<Option<T>> {
     raw.map(|value| serde_json::from_str(value).map_err(|error| eyre!("invalid --{name}: {error}")))
         .transpose()
+}
+
+fn read_outputs(
+    outputs_file: Option<&Path>,
+    outputs_json: Option<&str>,
+) -> Result<EntityRelationLaneOutputs> {
+    let raw = match (outputs_file, outputs_json) {
+        (Some(path), None) => std::fs::read_to_string(path)
+            .map_err(|error| eyre!("failed to read outputs file `{}`: {error}", path.display()))?,
+        (None, Some(raw)) => raw.to_string(),
+        (None, None) => {
+            return Err(eyre!(
+                "provide --outputs-file or --outputs-json for lane outputs"
+            ));
+        }
+        (Some(_), Some(_)) => {
+            return Err(eyre!(
+                "provide only one of --outputs-file or --outputs-json"
+            ));
+        }
+    };
+    serde_json::from_str(&raw).map_err(|error| eyre!("invalid lane outputs JSON: {error}"))
 }
 
 fn render_value(label: &str, value: &Value, format: OutputFormat) -> Result<()> {
