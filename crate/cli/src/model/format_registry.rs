@@ -269,6 +269,14 @@ pub fn build() -> HashMap<&'static str, FormatCapability> {
         FormatCapability::single_shot(TABLE_JSON_YAML),
     );
     m.insert(
+        "curation proposals",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
+    m.insert(
+        "curation judge",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
+    m.insert(
         "sources readiness",
         FormatCapability::single_shot(TABLE_JSON_YAML),
     );
@@ -543,7 +551,7 @@ fn family_for_path(path: &str) -> CommandFamily {
         "node" | "automata" | "ingestors" | "replay" | "dlq" | "ops" | "audit" | "lifecycle"
         | "git-ops" | "privacy" | "blob" => CommandFamily::Operate,
         "sources" => CommandFamily::Sources,
-        "declare" | "tasks" | "documents" | "annotate" => CommandFamily::Domain,
+        "declare" | "tasks" | "curation" | "documents" | "annotate" => CommandFamily::Domain,
         "telemetry" | "throughput" => CommandFamily::Telemetry,
         "report" => CommandFamily::Report,
         "admin" => CommandFamily::Admin,

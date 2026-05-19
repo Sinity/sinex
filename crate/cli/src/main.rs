@@ -6,8 +6,8 @@ use sinexctl::AdminCommands;
 use sinexctl::client::{ClientConfig, GatewayClient};
 use sinexctl::commands::{
     AnnotateCommand, AuditCommand, AutomataCommand, BlobCommands, CompletionsCommand,
-    ConfigCommands, ContextCommand, CoreCommands, DeclareCommand, DemoCommand, DlqCommands,
-    DocumentsCommand, ErrorsCommand, ExplainCommand, GatewayCommands, GitOpsCommands,
+    ConfigCommands, ContextCommand, CoreCommands, CurationCommand, DeclareCommand, DemoCommand,
+    DlqCommands, DocumentsCommand, ErrorsCommand, ExplainCommand, GatewayCommands, GitOpsCommands,
     IngestorsCommand, LifecycleCommands, NodeCommands, NodesCommand, NowCommand, OpsCommands,
     PrivacyCommand, QueryCommand, RecentCommand, ReplayCommands, ReportCommands, SourcesCommand,
     StatusCommand, TasksCommand, TelemetryCommands, ThroughputCommand, TraceCommand, TuiCommand,
@@ -166,6 +166,9 @@ enum Commands {
 
     /// Task lifecycle and projection commands
     Tasks(TasksCommand),
+
+    /// Curation proposal and judgment commands
+    Curation(CurationCommand),
 
     /// Document search, retrieval, and chunk browsing
     Documents(DocumentsCommand),
@@ -349,6 +352,7 @@ async fn main() -> color_eyre::Result<()> {
                 Commands::Sources(cmd) => cmd.execute(&client, format).await?,
                 Commands::Declare(cmd) => cmd.execute(&client, format).await?,
                 Commands::Tasks(cmd) => cmd.execute(&client, format).await?,
+                Commands::Curation(cmd) => cmd.execute(&client, format).await?,
                 Commands::Documents(cmd) => cmd.execute(&client, format).await?,
                 Commands::Lifecycle { cmd } => cmd.execute(&client, format).await?,
                 Commands::GitOps { cmd } => cmd.execute(&client, format).await?,
@@ -469,6 +473,13 @@ fn command_path(cmd: &Commands) -> String {
             match cmd.subcommand() {
                 TasksSubcommand::Complete(_) => "tasks complete".to_string(),
                 TasksSubcommand::State(_) => "tasks state".to_string(),
+            }
+        }
+        Commands::Curation(cmd) => {
+            use sinexctl::commands::curation::CurationSubcommand;
+            match cmd.subcommand() {
+                CurationSubcommand::Proposals(_) => "curation proposals".to_string(),
+                CurationSubcommand::Judge(_) => "curation judge".to_string(),
             }
         }
         Commands::Lifecycle { cmd } => match cmd {
@@ -878,6 +889,21 @@ mod tests {
                     "0196ed62-8f7a-7000-8000-000000000001",
                 ],
                 "tasks state",
+            ),
+            (
+                vec!["sinexctl", "curation", "proposals"],
+                "curation proposals",
+            ),
+            (
+                vec![
+                    "sinexctl",
+                    "curation",
+                    "judge",
+                    "0196ed62-8f7a-7000-8000-000000000001",
+                    "--decision",
+                    "accept",
+                ],
+                "curation judge",
             ),
             (
                 vec![
