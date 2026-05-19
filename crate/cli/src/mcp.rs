@@ -316,7 +316,8 @@ async fn search_events(client: &GatewayClient, arguments: Value) -> Result<Value
     query.include_total_estimate = args.include_total_estimate;
     query.validate()?;
 
-    let result = client.query_events(query).await?;
+    let mut result = serde_json::to_value(client.query_events(query).await?)?;
+    redact_raw_samples(&mut result);
     Ok(envelope(
         "sinex.search_events",
         json!(args),
@@ -333,7 +334,8 @@ async fn trace_lineage(client: &GatewayClient, arguments: Value) -> Result<Value
     };
     query.validate()?;
 
-    let result = client.trace_lineage(query).await?;
+    let mut result = serde_json::to_value(client.trace_lineage(query).await?)?;
+    redact_raw_samples(&mut result);
     Ok(envelope(
         "sinex.trace_lineage",
         json!(args),
@@ -409,13 +411,50 @@ fn strip_caveats(value: &mut Value) {
     }
 }
 
+fn redact_raw_samples(value: &mut Value) {
+    match value {
+        Value::Array(items) => {
+            for item in items {
+                redact_raw_samples(item);
+            }
+        }
+        Value::Object(fields) => {
+            if fields.contains_key("payload") {
+                fields.insert(
+                    "payload".to_string(),
+                    json!({
+                        "redacted": true,
+                        "reason": "mcp_raw_samples_disabled"
+                    }),
+                );
+            }
+            if fields.contains_key("snippet") {
+                fields.insert("snippet".to_string(), json!("[REDACTED]"));
+            }
+            if fields.contains_key("metadata") {
+                fields.insert(
+                    "metadata".to_string(),
+                    json!({
+                        "redacted": true,
+                        "reason": "mcp_raw_samples_disabled"
+                    }),
+                );
+            }
+            for field in fields.values_mut() {
+                redact_raw_samples(field);
+            }
+        }
+        _ => {}
+    }
+}
+
 fn envelope(tool: &str, query: Value, result: Value) -> Value {
     json!({
         "tool": tool,
         "generated_at": Timestamp::now(),
         "query": query,
         "provenance_refs": [],
-        "caveats": [],
+        "caveats": ["mcp.raw_samples_redacted"],
         "redaction": {
             "mode": "gateway_default",
             "raw_samples": false
