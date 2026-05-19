@@ -3,14 +3,16 @@
 use sinex_db::repositories::{CreateSemanticEpoch, CreateSemanticLane, DbPoolExt};
 use sinex_primitives::rpc::semantic::{
     SemanticEpochCreateRequest, SemanticEpochListRequest, SemanticEpochListResponse,
-    SemanticEpochRecordResponse, SemanticLaneCreateRequest, SemanticLaneDiffsListRequest,
-    SemanticLaneDiffsListResponse, SemanticLaneDiscardRequest, SemanticLaneListRequest,
-    SemanticLaneListResponse, SemanticLaneOutputsListRequest, SemanticLaneOutputsListResponse,
-    SemanticLaneRecordResponse, SemanticLaneSetStatusRequest,
+    SemanticEpochRecordResponse, SemanticLaneCreateRequest,
+    SemanticLaneDiffRecordEntityRelationRequest, SemanticLaneDiffRecordResponse,
+    SemanticLaneDiffsListRequest, SemanticLaneDiffsListResponse, SemanticLaneDiscardRequest,
+    SemanticLaneListRequest, SemanticLaneListResponse, SemanticLaneOutputsListRequest,
+    SemanticLaneOutputsListResponse, SemanticLaneOutputsWriteRequest,
+    SemanticLaneOutputsWriteResponse, SemanticLaneRecordResponse, SemanticLaneSetStatusRequest,
 };
 use sinex_primitives::{
-    Result, SemanticEpochRecord, SemanticLaneRecord, SemanticLaneStatus, SinexError, Timestamp,
-    Uuid,
+    Result, SemanticEpochRecord, SemanticLaneRecord, SemanticLaneStatus, SemanticScope, SinexError,
+    Timestamp, Uuid, diff_entity_relation_lanes,
 };
 use sqlx::PgPool;
 
@@ -153,6 +155,20 @@ pub async fn handle_semantic_lane_outputs_list(
     })
 }
 
+pub async fn handle_semantic_lane_outputs_write(
+    pool: &PgPool,
+    req: SemanticLaneOutputsWriteRequest,
+) -> Result<SemanticLaneOutputsWriteResponse> {
+    let written = pool
+        .semantic()
+        .write_entity_relation_outputs(req.lane_id, &req.outputs)
+        .await?;
+    Ok(SemanticLaneOutputsWriteResponse {
+        lane_id: req.lane_id,
+        written,
+    })
+}
+
 pub async fn handle_semantic_lane_diffs_list(
     pool: &PgPool,
     req: SemanticLaneDiffsListRequest,
@@ -164,6 +180,70 @@ pub async fn handle_semantic_lane_diffs_list(
     Ok(SemanticLaneDiffsListResponse {
         lane_id: req.lane_id,
         diffs: serialize_records(diffs)?,
+    })
+}
+
+pub async fn handle_semantic_lane_diff_record_entity_relation(
+    pool: &PgPool,
+    req: SemanticLaneDiffRecordEntityRelationRequest,
+) -> Result<SemanticLaneDiffRecordResponse> {
+    let baseline_lane = pool.semantic().get_lane(req.baseline_lane_id).await?;
+    let candidate_lane = pool.semantic().get_lane(req.candidate_lane_id).await?;
+    let baseline_scope = parse_scope(&baseline_lane.scope)?;
+    let candidate_scope = parse_scope(&candidate_lane.scope)?;
+    if baseline_scope.input_set_hash != candidate_scope.input_set_hash {
+        return Err(SinexError::validation(
+            "semantic.lane_diffs.record_entity_relation: lane input_set_hash values differ",
+        )
+        .with_context("baseline_lane_id", req.baseline_lane_id.to_string())
+        .with_context("candidate_lane_id", req.candidate_lane_id.to_string()));
+    }
+
+    let baseline_outputs = pool
+        .semantic()
+        .read_entity_relation_outputs(req.baseline_lane_id)
+        .await?;
+    let candidate_outputs = pool
+        .semantic()
+        .read_entity_relation_outputs(req.candidate_lane_id)
+        .await?;
+    let report = diff_entity_relation_lanes(
+        baseline_lane.candidate_epoch_id,
+        candidate_lane.candidate_epoch_id,
+        candidate_scope.input_set_hash,
+        &baseline_outputs,
+        &candidate_outputs,
+        req.max_examples,
+    );
+    let diff = pool
+        .semantic()
+        .record_entity_relation_diff(
+            req.diff_id.unwrap_or_else(Uuid::now_v7),
+            req.baseline_lane_id,
+            req.candidate_lane_id,
+            &report,
+        )
+        .await?;
+    let candidate_lane = if req.mark_candidate_compared {
+        Some(
+            pool.semantic()
+                .set_lane_status(
+                    req.candidate_lane_id,
+                    SemanticLaneStatus::Compared,
+                    Some(Timestamp::now()),
+                )
+                .await?,
+        )
+    } else {
+        None
+    };
+
+    Ok(SemanticLaneDiffRecordResponse {
+        diff: serde_json::to_value(diff).map_err(serialize_error)?,
+        candidate_lane: candidate_lane
+            .map(serde_json::to_value)
+            .transpose()
+            .map_err(serialize_error)?,
     })
 }
 
@@ -188,6 +268,12 @@ fn validate_scope(method: &str, input_count: usize, input_set_hash: &str) -> Res
         )));
     }
     Ok(())
+}
+
+fn parse_scope(scope: &serde_json::Value) -> Result<SemanticScope> {
+    serde_json::from_value(scope.clone()).map_err(|error| {
+        SinexError::serialization("deserialize semantic lane scope").with_std_error(&error)
+    })
 }
 
 fn serialize_records<T: serde::Serialize>(records: Vec<T>) -> Result<Vec<serde_json::Value>> {

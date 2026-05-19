@@ -121,6 +121,8 @@ async fn semantic_repository_keeps_shadow_outputs_out_of_canonical_entities(
 
     assert_eq!(written, 2);
     assert_eq!(repo.count_lane_outputs(candidate_lane.id).await?, 2);
+    let read_outputs = repo.read_entity_relation_outputs(candidate_lane.id).await?;
+    assert_eq!(read_outputs, candidate_outputs);
 
     let canonical_count_after: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM core.entities")
         .fetch_one(&ctx.pool)

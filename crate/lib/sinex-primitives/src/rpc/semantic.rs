@@ -3,7 +3,8 @@
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    SemanticComponentVersion, SemanticLaneKind, SemanticLaneStatus, SemanticScope, Timestamp, Uuid,
+    EntityRelationLaneOutputs, SemanticComponentVersion, SemanticLaneKind, SemanticLaneStatus,
+    SemanticScope, Timestamp, Uuid,
 };
 
 use super::{RpcDomain, RpcMethod, RpcMutability, RpcRole, RpcStability, methods};
@@ -83,6 +84,17 @@ pub const SEMANTIC_LANE_OUTPUTS_LIST_METHOD: RpcMethod<
     RpcMutability::ReadOnly,
 );
 
+pub const SEMANTIC_LANE_OUTPUTS_WRITE_METHOD: RpcMethod<
+    SemanticLaneOutputsWriteRequest,
+    SemanticLaneOutputsWriteResponse,
+> = RpcMethod::new(
+    methods::SEMANTIC_LANE_OUTPUTS_WRITE,
+    RpcRole::Write,
+    RpcDomain::Semantic,
+    RpcStability::Experimental,
+    RpcMutability::Mutating,
+);
+
 pub const SEMANTIC_LANE_DIFFS_LIST_METHOD: RpcMethod<
     SemanticLaneDiffsListRequest,
     SemanticLaneDiffsListResponse,
@@ -92,6 +104,17 @@ pub const SEMANTIC_LANE_DIFFS_LIST_METHOD: RpcMethod<
     RpcDomain::Semantic,
     RpcStability::Experimental,
     RpcMutability::ReadOnly,
+);
+
+pub const SEMANTIC_LANE_DIFFS_RECORD_ENTITY_RELATION_METHOD: RpcMethod<
+    SemanticLaneDiffRecordEntityRelationRequest,
+    SemanticLaneDiffRecordResponse,
+> = RpcMethod::new(
+    methods::SEMANTIC_LANE_DIFFS_RECORD_ENTITY_RELATION,
+    RpcRole::Write,
+    RpcDomain::Semantic,
+    RpcStability::Experimental,
+    RpcMutability::Mutating,
 );
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -193,6 +216,24 @@ pub struct SemanticLaneDiffsListRequest {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SemanticLaneOutputsWriteRequest {
+    pub lane_id: Uuid,
+    pub outputs: EntityRelationLaneOutputs,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SemanticLaneDiffRecordEntityRelationRequest {
+    #[serde(default)]
+    pub diff_id: Option<Uuid>,
+    pub baseline_lane_id: Uuid,
+    pub candidate_lane_id: Uuid,
+    #[serde(default = "default_max_examples")]
+    pub max_examples: usize,
+    #[serde(default = "default_true")]
+    pub mark_candidate_compared: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SemanticEpochRecordResponse {
     pub epoch: serde_json::Value,
 }
@@ -219,11 +260,31 @@ pub struct SemanticLaneOutputsListResponse {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SemanticLaneOutputsWriteResponse {
+    pub lane_id: Uuid,
+    pub written: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SemanticLaneDiffsListResponse {
     pub lane_id: Uuid,
     pub diffs: Vec<serde_json::Value>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SemanticLaneDiffRecordResponse {
+    pub diff: serde_json::Value,
+    pub candidate_lane: Option<serde_json::Value>,
+}
+
 const fn default_limit() -> i64 {
     100
+}
+
+const fn default_max_examples() -> usize {
+    20
+}
+
+const fn default_true() -> bool {
+    true
 }

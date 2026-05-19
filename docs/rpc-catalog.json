@@ -585,6 +585,24 @@
     "response_type": "sinex_primitives::rpc::semantic::SemanticEpochListResponse"
   },
   {
+    "name": "semantic.lane_diffs.list",
+    "role": "read_only",
+    "domain": "semantic",
+    "stability": "experimental",
+    "mutability": "read_only",
+    "request_type": "sinex_primitives::rpc::semantic::SemanticLaneDiffsListRequest",
+    "response_type": "sinex_primitives::rpc::semantic::SemanticLaneDiffsListResponse"
+  },
+  {
+    "name": "semantic.lane_diffs.record_entity_relation",
+    "role": "write",
+    "domain": "semantic",
+    "stability": "experimental",
+    "mutability": "mutating",
+    "request_type": "sinex_primitives::rpc::semantic::SemanticLaneDiffRecordEntityRelationRequest",
+    "response_type": "sinex_primitives::rpc::semantic::SemanticLaneDiffRecordResponse"
+  },
+  {
     "name": "semantic.lane_outputs.list",
     "role": "read_only",
     "domain": "semantic",
@@ -592,6 +610,15 @@
     "mutability": "read_only",
     "request_type": "sinex_primitives::rpc::semantic::SemanticLaneOutputsListRequest",
     "response_type": "sinex_primitives::rpc::semantic::SemanticLaneOutputsListResponse"
+  },
+  {
+    "name": "semantic.lane_outputs.write",
+    "role": "write",
+    "domain": "semantic",
+    "stability": "experimental",
+    "mutability": "mutating",
+    "request_type": "sinex_primitives::rpc::semantic::SemanticLaneOutputsWriteRequest",
+    "response_type": "sinex_primitives::rpc::semantic::SemanticLaneOutputsWriteResponse"
   },
   {
     "name": "semantic.lanes.create",
@@ -628,15 +655,6 @@
     "mutability": "mutating",
     "request_type": "sinex_primitives::rpc::semantic::SemanticLaneSetStatusRequest",
     "response_type": "sinex_primitives::rpc::semantic::SemanticLaneRecordResponse"
-  },
-  {
-    "name": "semantic.lane_diffs.list",
-    "role": "read_only",
-    "domain": "semantic",
-    "stability": "experimental",
-    "mutability": "read_only",
-    "request_type": "sinex_primitives::rpc::semantic::SemanticLaneDiffsListRequest",
-    "response_type": "sinex_primitives::rpc::semantic::SemanticLaneDiffsListResponse"
   },
   {
     "name": "shadow.create",
