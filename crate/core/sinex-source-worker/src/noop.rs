@@ -106,16 +106,10 @@ impl IngestorNode for NoopSourceUnit {
         _state: &mut Self::State,
         _args: ScanArgs,
     ) -> NodeResult<ScanReport> {
-        Ok(ScanReport {
-            events_processed: 0,
-            duration: std::time::Duration::ZERO,
-            final_checkpoint: Checkpoint::None,
-            time_range: None,
-            node_stats: HashMap::new(),
-            failed_targets: Vec::new(),
-            successful_targets: Vec::new(),
-            warnings: Vec::new(),
-        })
+        Ok(empty_scan_report(
+            std::time::Duration::ZERO,
+            Checkpoint::None,
+        ))
     }
 
     async fn scan_historical(
@@ -125,16 +119,10 @@ impl IngestorNode for NoopSourceUnit {
         _until: TimeHorizon,
         _args: ScanArgs,
     ) -> NodeResult<ScanReport> {
-        Ok(ScanReport {
-            events_processed: 0,
-            duration: std::time::Duration::ZERO,
-            final_checkpoint: Checkpoint::None,
-            time_range: None,
-            node_stats: HashMap::new(),
-            failed_targets: Vec::new(),
-            successful_targets: Vec::new(),
-            warnings: Vec::new(),
-        })
+        Ok(empty_scan_report(
+            std::time::Duration::ZERO,
+            Checkpoint::None,
+        ))
     }
 
     async fn run_continuous(
@@ -161,15 +149,76 @@ impl IngestorNode for NoopSourceUnit {
             }
         }
 
-        Ok(ScanReport {
-            events_processed: 0,
-            duration: started_at.elapsed(),
-            final_checkpoint: start.checkpoint().clone(),
-            time_range: None,
-            node_stats: HashMap::new(),
-            failed_targets: Vec::new(),
-            successful_targets: Vec::new(),
-            warnings: Vec::new(),
-        })
+        Ok(empty_scan_report(
+            started_at.elapsed(),
+            start.checkpoint().clone(),
+        ))
+    }
+}
+
+fn empty_scan_report(duration: std::time::Duration, final_checkpoint: Checkpoint) -> ScanReport {
+    ScanReport {
+        events_processed: 0,
+        duration,
+        final_checkpoint,
+        time_range: None,
+        node_stats: HashMap::new(),
+        failed_targets: Vec::new(),
+        successful_targets: Vec::new(),
+        warnings: Vec::new(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use xtask::sandbox::prelude::*;
+
+    fn assert_noop_report(report: &ScanReport, expected_checkpoint: Checkpoint) {
+        assert_eq!(report.events_processed, 0);
+        assert_eq!(report.final_checkpoint, expected_checkpoint);
+        assert!(report.time_range.is_none());
+        assert!(report.node_stats.is_empty());
+        assert!(report.failed_targets.is_empty());
+        assert!(report.successful_targets.is_empty());
+        assert!(report.warnings.is_empty());
+    }
+
+    #[sinex_test]
+    async fn noop_source_unit_reports_zero_work(_ctx: TestContext) -> TestResult<()> {
+        let mut node = NoopSourceUnit;
+        let mut state = NoopState;
+
+        let snapshot = node.scan_snapshot(&mut state, ScanArgs::default()).await?;
+        assert_noop_report(&snapshot, Checkpoint::None);
+
+        let historical = node
+            .scan_historical(
+                &mut state,
+                Checkpoint::external(serde_json::json!(42), "unused start"),
+                TimeHorizon::Continuous,
+                ScanArgs::default(),
+            )
+            .await?;
+        assert_noop_report(&historical, Checkpoint::None);
+
+        let (tx, rx) = watch::channel(false);
+        tx.send(true)?;
+        let continuous = node
+            .run_continuous(
+                &mut state,
+                ContinuousStart::from_checkpoint(Checkpoint::external(
+                    serde_json::json!(7),
+                    "resume point",
+                )),
+                rx,
+            )
+            .await?;
+        assert_noop_report(
+            &continuous,
+            Checkpoint::external(serde_json::json!(7), "resume point"),
+        );
+
+        Ok(())
     }
 }
