@@ -17,6 +17,7 @@ use sinex_primitives::query::{EventQuery, LineageDirection, LineageQuery};
 use sinex_primitives::rpc::automata::AutomataStatusResponse;
 use sinex_primitives::rpc::ingestors::IngestorsStatusResponse;
 use sinex_primitives::rpc::methods;
+use sinex_primitives::rpc::nodes::{NodesHealthResponse, NodesListActiveResponse};
 use sinex_primitives::rpc::privacy::PrivateModeStateResponse;
 use sinex_primitives::rpc::sources::{SourcesReadinessGetRequest, SourcesReadinessListRequest};
 use sinex_primitives::rpc::system::SystemHealthResponse;
@@ -148,6 +149,12 @@ struct StatusWindowArgs {
     recent_window_secs: u64,
 }
 
+#[derive(Debug, Deserialize, Serialize)]
+struct StaleAfterArgs {
+    #[serde(default = "default_stale_after_secs")]
+    stale_after_secs: u64,
+}
+
 const fn default_true() -> bool {
     true
 }
@@ -227,6 +234,20 @@ pub fn tool_catalog() -> Vec<McpCatalogEntry> {
             kind: McpSurfaceKind::Tool,
             description: "Read-only source-ingestor liveness, health, and emission status.",
             backing_rpc_methods: &[methods::INGESTORS_STATUS],
+            read_only: true,
+        },
+        McpCatalogEntry {
+            name: "sinex.nodes_health",
+            kind: McpSurfaceKind::Tool,
+            description: "Read-only aggregate runtime node health.",
+            backing_rpc_methods: &[methods::NODES_HEALTH],
+            read_only: true,
+        },
+        McpCatalogEntry {
+            name: "sinex.nodes_active",
+            kind: McpSurfaceKind::Tool,
+            description: "Read-only active runtime node presence.",
+            backing_rpc_methods: &[methods::NODES_LIST_ACTIVE],
             read_only: true,
         },
     ]
@@ -366,7 +387,31 @@ pub fn tools() -> Vec<McpTool> {
             description: "Read-only source-ingestor liveness, health, and emission status.",
             input_schema: status_window_schema(),
         },
+        McpTool {
+            name: "sinex.nodes_health",
+            description: "Read-only aggregate runtime node health.",
+            input_schema: stale_after_schema(),
+        },
+        McpTool {
+            name: "sinex.nodes_active",
+            description: "Read-only active runtime node presence.",
+            input_schema: stale_after_schema(),
+        },
     ]
+}
+
+fn stale_after_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "stale_after_secs": {
+                "type": "integer",
+                "minimum": 1,
+                "default": 300
+            }
+        },
+        "additionalProperties": false
+    })
 }
 
 fn status_window_schema() -> Value {
@@ -474,6 +519,8 @@ pub async fn call_tool(client: &GatewayClient, name: &str, arguments: Value) -> 
         "sinex.task_state" => task_state(client, arguments).await,
         "sinex.automata_status" => automata_status(client, arguments).await,
         "sinex.ingestors_status" => ingestors_status(client, arguments).await,
+        "sinex.nodes_health" => nodes_health(client, arguments).await,
+        "sinex.nodes_active" => nodes_active(client, arguments).await,
         other => Err(eyre!("unknown MCP tool: {other}")),
     }
 }
@@ -626,6 +673,26 @@ async fn ingestors_status(client: &GatewayClient, arguments: Value) -> Result<Va
         .await?;
     Ok(envelope(
         "sinex.ingestors_status",
+        json!(args),
+        json!({ "result": response }),
+    ))
+}
+
+async fn nodes_health(client: &GatewayClient, arguments: Value) -> Result<Value> {
+    let args: StaleAfterArgs = serde_json::from_value(arguments)?;
+    let response: NodesHealthResponse = client.nodes_health(args.stale_after_secs).await?;
+    Ok(envelope(
+        "sinex.nodes_health",
+        json!(args),
+        json!({ "result": response }),
+    ))
+}
+
+async fn nodes_active(client: &GatewayClient, arguments: Value) -> Result<Value> {
+    let args: StaleAfterArgs = serde_json::from_value(arguments)?;
+    let response: NodesListActiveResponse = client.nodes_list_active(args.stale_after_secs).await?;
+    Ok(envelope(
+        "sinex.nodes_active",
         json!(args),
         json!({ "result": response }),
     ))
