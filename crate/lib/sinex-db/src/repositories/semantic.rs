@@ -1,0 +1,320 @@
+//! Repository for semantic epochs, shadow lanes, outputs, and diff reports.
+
+use crate::repositories::{
+    Repository,
+    common::{DbResult, EnhancedRepository, db_error},
+};
+use crate::schema::{SemanticEpochs, records};
+use crate::{JsonValue, Timestamp};
+use serde::Serialize;
+use sinex_primitives::{
+    EntityRelationDiffReport, EntityRelationLaneOutputs, SemanticEpochRecord,
+    SemanticLaneRecord as PrimitiveSemanticLaneRecord, SemanticLaneStatus, Uuid,
+};
+use sqlx::PgPool;
+
+pub struct SemanticRepository<'a> {
+    pool: &'a PgPool,
+}
+
+impl<'a> Repository<'a> for SemanticRepository<'a> {
+    fn new(pool: &'a PgPool) -> Self {
+        Self { pool }
+    }
+
+    fn pool(&self) -> &'a PgPool {
+        self.pool
+    }
+}
+
+impl<'a> EnhancedRepository<'a> for SemanticRepository<'a> {
+    type Table = SemanticEpochs;
+}
+
+#[derive(Debug, Clone)]
+pub struct CreateSemanticEpoch {
+    pub epoch: SemanticEpochRecord,
+    pub created_by: String,
+    pub operation_id: Option<Uuid>,
+    pub supersedes_epoch_id: Option<Uuid>,
+}
+
+#[derive(Debug, Clone)]
+pub struct CreateSemanticLane {
+    pub lane: PrimitiveSemanticLaneRecord,
+    pub operation_id: Option<Uuid>,
+    pub expires_at: Option<Timestamp>,
+}
+
+impl SemanticRepository<'_> {
+    pub async fn create_epoch(
+        &self,
+        input: CreateSemanticEpoch,
+    ) -> DbResult<records::SemanticEpochRecord> {
+        let scope = serde_json::to_value(&input.epoch.scope).map_err(|error| {
+            sinex_primitives::SinexError::serialization("serialize semantic epoch scope")
+                .with_std_error(&error)
+        })?;
+        let components = serde_json::to_value(&input.epoch.components).map_err(|error| {
+            sinex_primitives::SinexError::serialization("serialize semantic epoch components")
+                .with_std_error(&error)
+        })?;
+
+        sqlx::query_as!(
+            records::SemanticEpochRecord,
+            r#"
+            INSERT INTO semantic.epochs (
+                id, name, scope, code_ref, config_hash, components,
+                prompt_set_hash, model_config_hash, created_by, operation_id,
+                supersedes_epoch_id
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+            RETURNING
+                id,
+                name,
+                scope,
+                code_ref,
+                config_hash,
+                components,
+                prompt_set_hash,
+                model_config_hash,
+                created_by,
+                operation_id,
+                created_at as "created_at: Timestamp",
+                supersedes_epoch_id
+            "#,
+            input.epoch.epoch_id,
+            input.epoch.name,
+            scope,
+            input.epoch.code_ref,
+            input.epoch.config_hash,
+            components,
+            input.epoch.prompt_set_hash,
+            input.epoch.model_config_hash,
+            input.created_by,
+            input.operation_id,
+            input.supersedes_epoch_id,
+        )
+        .fetch_one(self.pool)
+        .await
+        .map_err(|error| db_error(error, "create semantic epoch"))
+    }
+
+    pub async fn create_lane(
+        &self,
+        input: CreateSemanticLane,
+    ) -> DbResult<records::SemanticLaneRecord> {
+        let scope = serde_json::to_value(&input.lane.scope).map_err(|error| {
+            sinex_primitives::SinexError::serialization("serialize semantic lane scope")
+                .with_std_error(&error)
+        })?;
+        let kind = serde_json::to_value(input.lane.kind)
+            .ok()
+            .and_then(|value| value.as_str().map(str::to_string))
+            .unwrap_or_else(|| format!("{:?}", input.lane.kind).to_lowercase());
+        let status = serde_json::to_value(input.lane.status)
+            .ok()
+            .and_then(|value| value.as_str().map(str::to_string))
+            .unwrap_or_else(|| format!("{:?}", input.lane.status).to_lowercase());
+
+        sqlx::query_as!(
+            records::SemanticLaneRecord,
+            r#"
+            INSERT INTO semantic.lanes (
+                id, name, kind, base_epoch_id, candidate_epoch_id, scope,
+                status, purpose, operation_id, expires_at
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+            RETURNING
+                id,
+                name,
+                kind,
+                base_epoch_id,
+                candidate_epoch_id,
+                scope,
+                status,
+                purpose,
+                operation_id,
+                created_at as "created_at: Timestamp",
+                completed_at as "completed_at: Timestamp",
+                expires_at as "expires_at: Timestamp"
+            "#,
+            input.lane.lane_id,
+            input.lane.name,
+            kind,
+            input.lane.base_epoch_id,
+            input.lane.candidate_epoch_id,
+            scope,
+            status,
+            input.lane.purpose,
+            input.operation_id,
+            input.expires_at.map(|timestamp| timestamp.inner()),
+        )
+        .fetch_one(self.pool)
+        .await
+        .map_err(|error| db_error(error, "create semantic lane"))
+    }
+
+    pub async fn set_lane_status(
+        &self,
+        lane_id: Uuid,
+        status: SemanticLaneStatus,
+        completed_at: Option<Timestamp>,
+    ) -> DbResult<records::SemanticLaneRecord> {
+        let status = serde_json::to_value(status)
+            .ok()
+            .and_then(|value| value.as_str().map(str::to_string))
+            .unwrap_or_else(|| format!("{status:?}").to_lowercase());
+
+        sqlx::query_as!(
+            records::SemanticLaneRecord,
+            r#"
+            UPDATE semantic.lanes
+            SET status = $2, completed_at = COALESCE($3, completed_at)
+            WHERE id = $1
+            RETURNING
+                id,
+                name,
+                kind,
+                base_epoch_id,
+                candidate_epoch_id,
+                scope,
+                status,
+                purpose,
+                operation_id,
+                created_at as "created_at: Timestamp",
+                completed_at as "completed_at: Timestamp",
+                expires_at as "expires_at: Timestamp"
+            "#,
+            lane_id,
+            status,
+            completed_at.map(|timestamp| timestamp.inner()),
+        )
+        .fetch_one(self.pool)
+        .await
+        .map_err(|error| db_error(error, "set semantic lane status"))
+    }
+
+    pub async fn write_entity_relation_outputs(
+        &self,
+        lane_id: Uuid,
+        outputs: &EntityRelationLaneOutputs,
+    ) -> DbResult<u64> {
+        let mut written = 0;
+        for entity in &outputs.entities {
+            let payload = serde_json::to_value(entity).map_err(|error| {
+                sinex_primitives::SinexError::serialization("serialize semantic entity output")
+                    .with_std_error(&error)
+            })?;
+            written += self
+                .upsert_lane_output(lane_id, "entity", &entity.entity_key, payload)
+                .await?;
+        }
+        for relation in &outputs.relations {
+            let payload = serde_json::to_value(relation).map_err(|error| {
+                sinex_primitives::SinexError::serialization("serialize semantic relation output")
+                    .with_std_error(&error)
+            })?;
+            written += self
+                .upsert_lane_output(lane_id, "relation", &relation.relation_key, payload)
+                .await?;
+        }
+        Ok(written)
+    }
+
+    pub async fn record_entity_relation_diff(
+        &self,
+        diff_id: Uuid,
+        baseline_lane_id: Uuid,
+        candidate_lane_id: Uuid,
+        report: &EntityRelationDiffReport,
+    ) -> DbResult<records::SemanticLaneDiffRecord> {
+        let counts = serde_json::to_value(&report.counts).map_err(|error| {
+            sinex_primitives::SinexError::serialization("serialize semantic lane diff counts")
+                .with_std_error(&error)
+        })?;
+        let examples = serde_json::to_value(&report.examples).map_err(|error| {
+            sinex_primitives::SinexError::serialization("serialize semantic lane diff examples")
+                .with_std_error(&error)
+        })?;
+        let report_hash = hash_json(report)?;
+
+        sqlx::query_as!(
+            records::SemanticLaneDiffRecord,
+            r#"
+            INSERT INTO semantic.lane_diffs (
+                id, baseline_lane_id, candidate_lane_id, diff_kind,
+                counts, examples, report_hash
+            )
+            VALUES ($1, $2, $3, 'entity_relation', $4, $5, $6)
+            RETURNING
+                id,
+                baseline_lane_id,
+                candidate_lane_id,
+                diff_kind,
+                counts,
+                examples,
+                report_hash,
+                created_at as "created_at: Timestamp"
+            "#,
+            diff_id,
+            baseline_lane_id,
+            candidate_lane_id,
+            counts,
+            examples,
+            report_hash,
+        )
+        .fetch_one(self.pool)
+        .await
+        .map_err(|error| db_error(error, "record semantic lane diff"))
+    }
+
+    pub async fn count_lane_outputs(&self, lane_id: Uuid) -> DbResult<i64> {
+        sqlx::query_scalar!(
+            r#"SELECT COUNT(*) as "count!" FROM semantic.lane_outputs WHERE lane_id = $1"#,
+            lane_id
+        )
+        .fetch_one(self.pool)
+        .await
+        .map_err(|error| db_error(error, "count semantic lane outputs"))
+    }
+
+    async fn upsert_lane_output(
+        &self,
+        lane_id: Uuid,
+        output_kind: &str,
+        output_key: &str,
+        payload: JsonValue,
+    ) -> DbResult<u64> {
+        let output_hash = hash_json(&payload)?;
+        let result = sqlx::query!(
+            r#"
+            INSERT INTO semantic.lane_outputs (
+                lane_id, output_kind, output_key, output_hash, payload
+            )
+            VALUES ($1, $2, $3, $4, $5)
+            ON CONFLICT (lane_id, output_kind, output_key)
+            DO UPDATE SET output_hash = EXCLUDED.output_hash,
+                          payload = EXCLUDED.payload,
+                          created_at = CURRENT_TIMESTAMP
+            "#,
+            lane_id,
+            output_kind,
+            output_key,
+            output_hash,
+            payload,
+        )
+        .execute(self.pool)
+        .await
+        .map_err(|error| db_error(error, "upsert semantic lane output"))?;
+        Ok(result.rows_affected())
+    }
+}
+
+fn hash_json(value: &impl Serialize) -> DbResult<String> {
+    let bytes = serde_json::to_vec(value).map_err(|error| {
+        sinex_primitives::SinexError::serialization("serialize semantic lane hash input")
+            .with_std_error(&error)
+    })?;
+    Ok(blake3::hash(&bytes).to_hex().to_string())
+}
