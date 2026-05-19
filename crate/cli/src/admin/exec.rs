@@ -47,11 +47,18 @@ pub fn pg_dump(database_url: &str, dump_path: &Path) -> Result<Vec<u8>> {
 /// Uses `psql` with `-t` (tuples only) and `-A` (unaligned) to produce
 /// `schema.table|count` lines.  Returns a map of `"schema.table" → count`.
 pub fn pg_row_counts(database_url: &str) -> Result<BTreeMap<String, i64>> {
+    pg_row_counts_with(database_url, None)
+}
+
+pub fn pg_row_counts_with(
+    database_url: &str,
+    psql_bin: Option<&Path>,
+) -> Result<BTreeMap<String, i64>> {
     let sql = "SELECT schemaname || '.' || relname, n_live_tup \
                FROM pg_stat_user_tables \
                ORDER BY 1;";
 
-    let output = Command::new("psql")
+    let output = Command::new(psql_bin.unwrap_or_else(|| Path::new("psql")))
         .args([
             "--tuples-only",
             "--no-align",
@@ -89,6 +96,89 @@ pub fn pg_row_counts(database_url: &str) -> Result<BTreeMap<String, i64>> {
         }
     }
     Ok(map)
+}
+
+/// Restore a custom-format `pg_dump` archive into `database_url`.
+pub fn pg_restore(
+    database_url: &str,
+    dump_path: &Path,
+    pg_restore_bin: Option<&Path>,
+) -> Result<()> {
+    let output = Command::new(pg_restore_bin.unwrap_or_else(|| Path::new("pg_restore")))
+        .args([
+            "--dbname",
+            database_url,
+            "--no-owner",
+            "--no-privileges",
+            dump_path
+                .to_str()
+                .ok_or_else(|| eyre!("dump path is not valid UTF-8"))?,
+        ])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .output()
+        .context("spawn pg_restore")?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        bail!(
+            "pg_restore failed (exit {}): {}",
+            output.status.code().unwrap_or(-1),
+            stderr.trim()
+        );
+    }
+
+    Ok(())
+}
+
+/// Query exact row counts for a known set of `schema.table` names.
+pub fn pg_exact_row_counts(
+    database_url: &str,
+    tables: impl IntoIterator<Item = String>,
+    psql_bin: Option<&Path>,
+) -> Result<BTreeMap<String, i64>> {
+    let mut counts = BTreeMap::new();
+    for table in tables {
+        let Some((schema, relation)) = table.split_once('.') else {
+            continue;
+        };
+        let sql = format!(
+            "SELECT count(*) FROM \"{}\".\"{}\";",
+            schema.replace('"', "\"\""),
+            relation.replace('"', "\"\"")
+        );
+        let output = Command::new(psql_bin.unwrap_or_else(|| Path::new("psql")))
+            .args([
+                "--tuples-only",
+                "--no-align",
+                "--command",
+                &sql,
+                database_url,
+            ])
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .output()
+            .with_context(|| format!("spawn psql for exact row count of {table}"))?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            bail!(
+                "psql exact row-count query failed for {table} (exit {}): {}",
+                output.status.code().unwrap_or(-1),
+                stderr.trim()
+            );
+        }
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let count = stdout
+            .trim()
+            .parse::<i64>()
+            .with_context(|| format!("parse exact row count for {table}"))?;
+        counts.insert(table, count);
+    }
+    Ok(counts)
 }
 
 /// Create a compressed tar archive at `output_path` from `staging_dir`.

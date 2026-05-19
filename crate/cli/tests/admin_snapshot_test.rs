@@ -7,6 +7,8 @@
 
 use assert_cmd::cargo;
 use std::fs;
+use std::os::unix::fs::PermissionsExt;
+use std::path::PathBuf;
 use std::process::Command;
 use tempfile::TempDir;
 use xtask::sandbox::prelude::*;
@@ -107,6 +109,61 @@ fn make_snapshot_archive() -> TestResult<(TempDir, std::path::PathBuf)> {
     let archive_path = dir.path().join("fixture.sinex.tar.zst");
     exec::tar_create_zstd(&staging, &archive_path, 1, 1)?;
     Ok((dir, archive_path))
+}
+
+fn make_postgres_snapshot_archive() -> TestResult<(TempDir, PathBuf)> {
+    use sinexctl::admin::manifest::{
+        ComponentExtras, ComponentRecord, PostgresExtras, SnapshotManifest, Totals,
+    };
+    use std::collections::BTreeMap;
+
+    let dir = tempfile::tempdir()?;
+    let staging = dir.path().join("staging");
+    fs::create_dir_all(staging.join("postgres"))?;
+    fs::write(
+        staging.join("postgres").join("sinex_prod.dump"),
+        b"custom pg dump fixture",
+    )?;
+
+    let mut row_counts = BTreeMap::new();
+    row_counts.insert("core.events".to_string(), 7);
+    let manifest = SnapshotManifest {
+        snapshot_id: "01970a7f-391b-7000-8000-000000000002".to_string(),
+        created_at: "2026-05-15T11:31:00Z".to_string(),
+        sinex_version: "0.1.0".to_string(),
+        git_sha: Some("abc1234".to_string()),
+        host: "sinnix-prime".to_string(),
+        mode: "quiesce".to_string(),
+        source_unit_ids: vec![],
+        components: vec![ComponentRecord {
+            name: "postgres".to_string(),
+            path: "postgres/sinex_prod.dump".to_string(),
+            bytes: 22,
+            blake3: "d".repeat(64),
+            extras: Some(ComponentExtras::Postgres(PostgresExtras { row_counts })),
+        }],
+        totals: Totals {
+            uncompressed_bytes: 22,
+            archive_bytes: Some(512),
+        },
+    };
+    fs::write(
+        staging.join("manifest.json"),
+        serde_json::to_vec_pretty(&manifest)?,
+    )?;
+
+    let archive_path = dir.path().join("postgres-fixture.sinex.tar.zst");
+    exec::tar_create_zstd(&staging, &archive_path, 1, 1)?;
+    Ok((dir, archive_path))
+}
+
+fn make_executable_script(dir: &TempDir, name: &str, body: &str) -> TestResult<PathBuf> {
+    let path = dir.path().join(name);
+    fs::write(&path, body)?;
+    let mut permissions = fs::metadata(&path)?.permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&path, permissions)?;
+    Ok(path)
 }
 
 // ── Dry-run test ─────────────────────────────────────────────────────────────
@@ -312,6 +369,9 @@ async fn snapshot_restore_dry_run_reports_plan_and_policy() -> xtask::sandbox::T
         allow_non_empty_target: false,
         confirm_restore: false,
         allow_active_services: false,
+        restore_database_url: None,
+        pg_restore_bin: None,
+        psql_bin: None,
     };
     let result = cmd.execute()?;
 
@@ -381,6 +441,9 @@ async fn snapshot_restore_dry_run_refuses_non_empty_target_without_override()
         allow_non_empty_target: false,
         confirm_restore: false,
         allow_active_services: false,
+        restore_database_url: None,
+        pg_restore_bin: None,
+        psql_bin: None,
     };
     let error = cmd
         .execute()
@@ -406,6 +469,9 @@ async fn snapshot_restore_execute_extracts_state_archive_into_empty_target()
         allow_non_empty_target: false,
         confirm_restore: true,
         allow_active_services: true,
+        restore_database_url: None,
+        pg_restore_bin: None,
+        psql_bin: None,
     };
     let result = cmd.execute()?;
 
@@ -456,6 +522,67 @@ async fn snapshot_restore_execute_extracts_state_archive_into_empty_target()
 }
 
 #[sinex_test]
+async fn snapshot_restore_executes_postgres_drill_with_row_count_check()
+-> xtask::sandbox::TestResult<()> {
+    let (_dir, archive_path) = make_postgres_snapshot_archive()?;
+    let target_parent = tempfile::tempdir()?;
+    let target = target_parent.path().join("postgres-restore-target");
+    let tools = tempfile::tempdir()?;
+    let pg_restore = make_executable_script(&tools, "pg_restore", "#!/bin/sh\nexit 0\n")?;
+    let psql = make_executable_script(&tools, "psql", "#!/bin/sh\nprintf '7\\n'\n")?;
+
+    let cmd = AdminSnapshotRestoreCommand {
+        archive: archive_path,
+        target_dir: target.clone(),
+        dry_run: false,
+        allow_non_empty_target: false,
+        confirm_restore: true,
+        allow_active_services: true,
+        restore_database_url: Some("postgresql://restore/sinex_drill".to_string()),
+        pg_restore_bin: Some(pg_restore),
+        psql_bin: Some(psql),
+    };
+    let result = cmd.execute()?;
+    let observed = result
+        .observed_checks
+        .as_ref()
+        .ok_or_else(|| color_eyre::eyre::eyre!("restore execution should report observations"))?;
+
+    assert_eq!(observed.postgres_row_counts.get("core.events"), Some(&7));
+    assert_eq!(observed.postgres_row_counts_match, Some(true));
+    assert!(target.join("postgres").join("sinex_prod.dump").exists());
+    Ok(())
+}
+
+#[sinex_test]
+async fn snapshot_restore_postgres_requires_target_database_url() -> xtask::sandbox::TestResult<()>
+{
+    let (_dir, archive_path) = make_postgres_snapshot_archive()?;
+    let target_parent = tempfile::tempdir()?;
+    let target = target_parent.path().join("postgres-restore-target");
+
+    let cmd = AdminSnapshotRestoreCommand {
+        archive: archive_path,
+        target_dir: target,
+        dry_run: false,
+        allow_non_empty_target: false,
+        confirm_restore: true,
+        allow_active_services: true,
+        restore_database_url: None,
+        pg_restore_bin: None,
+        psql_bin: None,
+    };
+    let error = cmd
+        .execute()
+        .expect_err("postgres restore execution should require a target database url");
+    assert!(
+        format!("{error:#}").contains("--restore-database-url"),
+        "error should explain restore database requirement: {error:#}"
+    );
+    Ok(())
+}
+
+#[sinex_test]
 async fn snapshot_restore_execute_requires_confirmation() -> xtask::sandbox::TestResult<()> {
     let (_dir, archive_path) = make_snapshot_archive()?;
     let target = tempfile::tempdir()?;
@@ -467,6 +594,9 @@ async fn snapshot_restore_execute_requires_confirmation() -> xtask::sandbox::Tes
         allow_non_empty_target: false,
         confirm_restore: false,
         allow_active_services: true,
+        restore_database_url: None,
+        pg_restore_bin: None,
+        psql_bin: None,
     };
     let error = cmd
         .execute()
