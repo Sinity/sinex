@@ -568,25 +568,22 @@ fn build_intent(
         fields: vec![("visit_id".to_string(), vid)],
     });
 
-    Ok(vec![ParsedEventIntent {
-        id: sinex_primitives::ids::Id::new(),
-        source_unit_id: ctx.source_unit_id.clone(),
-        parser_id: ParserId::from_static(PARSER_ID),
-        parser_version: PARSER_VERSION.into(),
-        event_type: EventType::from_static("page.visited"),
-        event_source: EventSource::from_static("webhistory"),
-        payload: serde_json::Value::Object(payload),
-        ts_orig: visit.visit_time,
-        timing: TimingEvidence::Intrinsic {
+    Ok(vec![ParsedEventIntent::builder()
+        .source_unit_id(ctx.source_unit_id.clone())
+        .parser_id(ParserId::from_static(PARSER_ID))
+        .parser_version(PARSER_VERSION)
+        .event_type(EventType::from_static("page.visited"))
+        .event_source(EventSource::from_static("webhistory"))
+        .payload(serde_json::Value::Object(payload))
+        .ts_orig(visit.visit_time)
+        .timing(TimingEvidence::Intrinsic {
             field: "visit_time".into(),
             confidence: TimingConfidence::Intrinsic,
-        },
-        anchor: record.anchor.clone(),
-        occurrence_key,
-        privacy_context: ProcessingContext::Clipboard,
-        field_privacy_log: None,
-        synthesis_parents: None,
-    }])
+        })
+        .anchor(record.anchor.clone())
+        .maybe_occurrence_key(occurrence_key)
+        .privacy_context(ProcessingContext::Clipboard)
+        .build()])
 }
 
 // ---------------------------------------------------------------------------
