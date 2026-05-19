@@ -1064,11 +1064,8 @@ fn observe_restored_target(
         source_unit_count: source_unit_ids.len(),
         source_unit_ids_match: source_unit_ids == manifest.source_unit_ids,
         cas_blob_count,
-        cas_blob_count_matches: expected_cas_blob_count.map(|expected| {
-            cas_blob_count
-                .map(|observed| observed == expected)
-                .unwrap_or(expected == 0)
-        }),
+        cas_blob_count_matches: expected_cas_blob_count
+            .map(|expected| cas_blob_count.map_or(expected == 0, |observed| observed == expected)),
         private_mode_state_present,
         private_mode_state_matches_manifest: private_mode_state_present
             == manifest_private_mode_state_present,

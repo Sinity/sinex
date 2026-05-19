@@ -73,7 +73,7 @@ pub struct CurationJudgeCommand {
     /// Proposal event UUID.
     proposal_event_id: String,
 
-    /// Actor kind: user, operator, deterministic_policy, or test_fixture.
+    /// Actor kind: user, operator, `deterministic_policy`, or `test_fixture`.
     #[arg(long, default_value = "operator")]
     actor_kind: String,
 
@@ -148,8 +148,7 @@ fn render_finalization(response: &CurationFinalizeResponse, format: OutputFormat
                 .event
                 .id
                 .as_ref()
-                .map(ToString::to_string)
-                .unwrap_or_else(|| "<missing-id>".to_string());
+                .map_or_else(|| "<missing-id>".to_string(), ToString::to_string);
             println!("Curation finalization recorded");
             println!("  Event:      {event_id}");
             println!("  Proposal:   {}", response.finalized.proposal_id);
@@ -175,8 +174,7 @@ fn render_proposals(response: &EventQueryResult, format: OutputFormat) -> Result
                         .event
                         .id
                         .as_ref()
-                        .map(ToString::to_string)
-                        .unwrap_or_else(|| "<missing-id>".to_string());
+                        .map_or_else(|| "<missing-id>".to_string(), ToString::to_string);
                     let kind = event
                         .event
                         .payload
@@ -207,8 +205,7 @@ fn render_judgment(response: &CurationRecordJudgmentResponse, format: OutputForm
                 .event
                 .id
                 .as_ref()
-                .map(ToString::to_string)
-                .unwrap_or_else(|| "<missing-id>".to_string());
+                .map_or_else(|| "<missing-id>".to_string(), ToString::to_string);
             println!("Curation judgment recorded");
             println!("  Event:    {event_id}");
             println!("  Proposal: {}", response.judgment.proposal_id);
