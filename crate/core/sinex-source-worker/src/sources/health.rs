@@ -37,10 +37,6 @@ struct SleepCsvRow {
     #[serde(default)]
     sh_duration_minutes: Option<f64>,
     #[serde(default)]
-    start_delta_minutes: Option<f64>,
-    #[serde(default)]
-    end_delta_minutes: Option<f64>,
-    #[serde(default)]
     sa_vs_sh_duration_minutes: Option<f64>,
     #[serde(default)]
     trimmed_event_count: u32,

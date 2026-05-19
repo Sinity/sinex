@@ -31,7 +31,6 @@ enum CompiledMatcher {
 
 struct CompiledRule {
     name: String,
-    category: RuleCategory,
     matcher: CompiledMatcher,
     strategy: Strategy,
     contexts: Vec<ProcessingContext>,
@@ -202,7 +201,6 @@ impl PrivacyEngine {
             })?;
             rules.push(CompiledRule {
                 name: def.name.clone(),
-                category: def.category,
                 matcher,
                 strategy: def.strategy.clone(),
                 contexts: def.contexts.clone(),

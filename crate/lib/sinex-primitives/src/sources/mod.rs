@@ -13,7 +13,7 @@
 pub mod continuity;
 
 use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use std::borrow::Cow;
 
 /// Coarse grouping of sources (e.g. "filesystem", "terminal", "browser").
@@ -27,7 +27,7 @@ pub struct SourceFamily(Cow<'static, str>);
 
 impl<'de> serde::Deserialize<'de> for SourceFamily {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let s = String::deserialize(deserializer)?;
+        let s = <String as serde::Deserialize>::deserialize(deserializer)?;
         Self::validate_str(&s).map_err(serde::de::Error::custom)?;
         Ok(Self(Cow::Owned(s)))
     }
