@@ -361,8 +361,8 @@ mod coverage_matrix {
         ),
         entry(
             "sleep-merged-summary",
-            SmokeCoverage::ParserFixtureOnly,
-            "sources/health.rs parser tests",
+            SmokeCoverage::ObligationHarness,
+            "production_path/health_exports.rs",
         ),
         entry(
             "spotify-extended-history",
@@ -571,6 +571,9 @@ mod export_parsers;
 
 #[path = "production_path/fs.rs"]
 mod fs;
+
+#[path = "production_path/health_exports.rs"]
+mod health_exports;
 
 #[path = "production_path/social_exports.rs"]
 mod social_exports;
