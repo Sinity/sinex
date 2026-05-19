@@ -1919,21 +1919,6 @@ fn fetch_issue_closure_payload(issue: u64) -> Result<ClosureIssuePayload> {
     }
 }
 
-/// Extract verification shell commands from an issue body.
-///
-/// Extracts from:
-/// 1. Fenced code blocks with `verify` or `bash` (or no language tag) that
-///    appear after a heading containing "verif" (case-insensitive).
-/// 2. Lines starting with `$ ` inside any code block in a verify context.
-/// 3. Lines in `Closure verification commands` sections (per CONTRIBUTING.md
-///    policy) that look like shell commands.
-fn extract_closure_commands(body: &str) -> Vec<String> {
-    extract_closure_command_entries(body, "body")
-        .into_iter()
-        .map(|entry| entry.command)
-        .collect()
-}
-
 fn extract_closure_command_entries(body: &str, source: &str) -> Vec<ClosureCommand> {
     let mut commands: Vec<String> = Vec::new();
     let mut in_verify_section = false;
@@ -2272,7 +2257,7 @@ mod tests {
     async fn extract_closure_commands_returns_empty_for_no_verify_section()
     -> ::xtask::sandbox::TestResult<()> {
         let body = "## Summary\nSome text.\n\n```bash\necho hello\n```\n";
-        let cmds = extract_closure_commands(body);
+        let cmds = extract_closure_command_entries(body, "body");
         assert!(
             cmds.is_empty(),
             "no verify section should yield no commands, got: {cmds:?}"
@@ -2284,28 +2269,28 @@ mod tests {
     async fn extract_closure_commands_finds_commands_in_verify_section()
     -> ::xtask::sandbox::TestResult<()> {
         let body = "## Closure verification commands\n\n```bash\ngit log --oneline -3\nxtask verify source-worker\n```\n";
-        let cmds = extract_closure_commands(body);
+        let cmds = extract_closure_command_entries(body, "body");
         assert_eq!(cmds.len(), 2, "expected 2 commands, got: {cmds:?}");
-        assert!(cmds[0].contains("git log"));
-        assert!(cmds[1].contains("xtask verify"));
+        assert!(cmds[0].command.contains("git log"));
+        assert!(cmds[1].command.contains("xtask verify"));
         Ok(())
     }
 
     #[sinex_test]
     async fn extract_closure_commands_strips_dollar_prompt() -> ::xtask::sandbox::TestResult<()> {
         let body = "## Verification\n\n```bash\n$ git show HEAD --stat\n```\n";
-        let cmds = extract_closure_commands(body);
+        let cmds = extract_closure_command_entries(body, "body");
         assert_eq!(cmds.len(), 1);
-        assert_eq!(cmds[0], "git show HEAD --stat");
+        assert_eq!(cmds[0].command, "git show HEAD --stat");
         Ok(())
     }
 
     #[sinex_test]
     async fn extract_closure_commands_ignores_comment_lines() -> ::xtask::sandbox::TestResult<()> {
         let body = "## Verification\n\n```bash\n# this is a comment\nxtask check\n```\n";
-        let cmds = extract_closure_commands(body);
+        let cmds = extract_closure_command_entries(body, "body");
         assert_eq!(cmds.len(), 1);
-        assert_eq!(cmds[0], "xtask check");
+        assert_eq!(cmds[0].command, "xtask check");
         Ok(())
     }
 
@@ -2329,10 +2314,14 @@ Verification:
 - `SINEX_PREFLIGHT_SKIP_DISK_CHECK=1 xtask check -p sinexctl --allow-contended-host` - passed.
 - `xtask test -p sinexctl -E 'test(mcp)' --allow-contended-host` - passed.
 ";
-        let cmds = extract_closure_commands(body);
+        let cmds = extract_closure_command_entries(body, "body");
         assert_eq!(cmds.len(), 2);
-        assert!(cmds[0].starts_with("SINEX_PREFLIGHT_SKIP_DISK_CHECK=1 xtask check"));
-        assert!(cmds[1].starts_with("xtask test -p sinexctl"));
+        assert!(
+            cmds[0]
+                .command
+                .starts_with("SINEX_PREFLIGHT_SKIP_DISK_CHECK=1 xtask check")
+        );
+        assert!(cmds[1].command.starts_with("xtask test -p sinexctl"));
         Ok(())
     }
 
