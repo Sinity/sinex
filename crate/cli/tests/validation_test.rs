@@ -193,9 +193,20 @@ async fn mcp_search_events_call_uses_gateway_fixture() -> TestResult<()> {
     .await?;
 
     assert_eq!(response["tool"], "sinex.search_events");
-    assert_eq!(response["items"]["result"]["type"], "count");
-    assert_eq!(response["items"]["result"]["count"], 1);
+    assert_eq!(response["items"]["result"]["type"], "events");
+    assert_eq!(
+        response["items"]["result"]["events"][0]["payload"]["reason"],
+        "mcp_raw_samples_disabled"
+    );
+    assert_eq!(
+        response["items"]["result"]["events"][0]["snippet"],
+        "[REDACTED]"
+    );
     assert_eq!(response["redaction"]["raw_samples"], false);
+    assert!(
+        !response.to_string().contains("ghp_fixture_secret"),
+        "MCP event search leaked raw payload or snippet text"
+    );
     Ok(())
 }
 
@@ -214,8 +225,20 @@ async fn mcp_trace_lineage_call_uses_gateway_fixture() -> TestResult<()> {
 
     assert_eq!(response["tool"], "sinex.trace_lineage");
     assert_eq!(response["items"]["result"]["root"]["id"], event_id);
+    assert_eq!(
+        response["items"]["result"]["root"]["payload"]["reason"],
+        "mcp_raw_samples_disabled"
+    );
     assert_eq!(response["items"]["result"]["ancestors"], json!([]));
+    assert_eq!(
+        response["items"]["result"]["material_links"][0]["metadata"]["reason"],
+        "mcp_raw_samples_disabled"
+    );
     assert_eq!(response["provenance_refs"], json!([]));
+    assert!(
+        !response.to_string().contains("ghp_fixture_secret"),
+        "MCP lineage leaked raw payload or material metadata text"
+    );
     Ok(())
 }
 
@@ -279,8 +302,12 @@ async fn mount_mcp_gateway_fixture() -> MockServer {
             };
             let result = match method {
                 "events.query" => json!({
-                    "type": "count",
-                    "count": 1
+                    "type": "events",
+                    "events": [
+                        fixture_sensitive_query_event()
+                    ],
+                    "next_cursor": null,
+                    "total_estimate": null
                 }),
                 "events.lineage" => {
                     let event_id = match body["params"]["event_id"].as_str() {
@@ -291,7 +318,17 @@ async fn mount_mcp_gateway_fixture() -> MockServer {
                         "root": fixture_event(&event_id),
                         "ancestors": [],
                         "descendants": [],
-                        "material_links": []
+                        "material_links": [
+                            {
+                                "from_material_id": fixture_material_id(),
+                                "to_material_id": fixture_material_id(),
+                                "relation_type": "fixture",
+                                "metadata": {
+                                    "raw_sample": "lineage ghp_fixture_secret should not leak"
+                                },
+                                "created_at": "2026-05-18T12:00:00Z"
+                            }
+                        ]
                     })
                 }
                 "sources.readiness.list" => json!({
@@ -381,7 +418,7 @@ fn fixture_event(event_id: &str) -> Value {
         "id": event_id,
         "source": "fixture",
         "event_type": "fixture.event",
-        "payload": { "summary": "[REDACTED]" },
+        "payload": { "summary": "raw lineage ghp_fixture_secret should not leak" },
         "ts_orig": "2026-05-18T12:00:00Z",
         "host": "test-host",
         "payload_schema_id": null,
@@ -392,4 +429,16 @@ fn fixture_event(event_id: &str) -> Value {
         "offset_kind": "byte",
         "associated_blob_ids": null
     })
+}
+
+fn fixture_sensitive_query_event() -> Value {
+    let mut event = fixture_event(fixture_event_id());
+    let Some(fields) = event.as_object_mut() else {
+        return event;
+    };
+    fields.insert(
+        "snippet".to_string(),
+        json!("search snippet ghp_fixture_secret should not leak"),
+    );
+    event
 }
