@@ -2,8 +2,7 @@
 //!
 //! Hosts the static helpers that build, sign, and publish control-plane NATS
 //! messages: scan acknowledgements, scan progress, drain completion signals,
-//! and the drain-command handler. Also includes JSON canonicalization and
-//! effective-config hashing used by registration.
+//! and the drain-command handler.
 
 #[cfg(feature = "messaging")]
 use super::super::control_protocol::NodeDrainComplete;
@@ -14,48 +13,9 @@ use crate::{NodeResult, SinexError};
 use sinex_db::DbPool as PgPool;
 use sinex_primitives::domain::NodeState;
 use sinex_primitives::transport;
-use std::collections::{BTreeMap, HashMap};
 use tracing::{info, warn};
 
 impl<T: Node + 'static> NodeRunner<T> {
-    pub(super) fn canonicalize_json(value: serde_json::Value) -> serde_json::Value {
-        match value {
-            serde_json::Value::Array(values) => {
-                serde_json::Value::Array(values.into_iter().map(Self::canonicalize_json).collect())
-            }
-            serde_json::Value::Object(map) => {
-                let ordered = map
-                    .into_iter()
-                    .map(|(key, value)| (key, Self::canonicalize_json(value)))
-                    .collect::<BTreeMap<_, _>>();
-                serde_json::Value::Object(ordered.into_iter().collect())
-            }
-            other => other,
-        }
-    }
-
-    pub(super) fn effective_config(
-        raw_config: &HashMap<String, serde_json::Value>,
-    ) -> NodeResult<(Option<String>, Option<serde_json::Value>)> {
-        if raw_config.is_empty() {
-            return Ok((None, None));
-        }
-
-        let config_value = serde_json::to_value(raw_config).map_err(|error| {
-            SinexError::configuration(format!(
-                "Failed to serialize effective runtime config: {error}"
-            ))
-        })?;
-        let canonical = Self::canonicalize_json(config_value);
-        let encoded = serde_json::to_vec(&canonical).map_err(|error| {
-            SinexError::configuration(format!(
-                "Failed to encode effective runtime config: {error}"
-            ))
-        })?;
-        let config_hash = blake3::hash(&encoded).to_hex().to_string();
-        Ok((Some(config_hash), Some(canonical)))
-    }
-
     pub(super) async fn publish_scan_ack(
         nats_client: &async_nats::Client,
         reply: Option<async_nats::Subject>,
