@@ -1,8 +1,13 @@
 use serde_json::{Value, json};
+use sinex_primitives::rpc::{RpcMutability, RpcRole, method_catalog};
 use sinex_primitives::temporal::{Duration, Timestamp};
 use sinexctl::client::{ClientConfig, GatewayClient};
-use sinexctl::mcp::{MCP_PROTOCOL_VERSION, assert_read_only_tool_names, call_tool, tools};
+use sinexctl::mcp::{
+    MCP_PROTOCOL_VERSION, McpSurfaceKind, assert_read_only_tool_names, call_tool, tool_catalog,
+    tools,
+};
 use sinexctl::validation::{parse_time_input, parse_time_input_with_now, validate_time_range};
+use std::collections::BTreeSet;
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 use xtask::sandbox::prelude::*;
@@ -78,6 +83,79 @@ async fn mcp_tool_schemas_are_closed_objects() -> TestResult<()> {
         assert_eq!(tool.input_schema["type"], "object");
         assert_eq!(tool.input_schema["additionalProperties"], false);
         assert!(tool.input_schema["properties"].is_object());
+    }
+    Ok(())
+}
+
+#[sinex_test]
+async fn mcp_catalog_exactly_covers_live_tools() -> TestResult<()> {
+    let tool_names = tools()
+        .iter()
+        .map(|tool| tool.name)
+        .collect::<BTreeSet<_>>();
+    let catalog_names = tool_catalog()
+        .iter()
+        .map(|entry| entry.name)
+        .collect::<BTreeSet<_>>();
+
+    assert_eq!(catalog_names, tool_names);
+    for entry in tool_catalog() {
+        assert_eq!(entry.kind, McpSurfaceKind::Tool);
+        assert!(entry.read_only, "MCP v1 catalog entry must be read-only");
+        assert!(
+            !entry.backing_rpc_methods.is_empty(),
+            "MCP entry `{}` must declare backing RPC descriptors",
+            entry.name
+        );
+    }
+    Ok(())
+}
+
+#[sinex_test]
+async fn mcp_catalog_backing_methods_are_typed_read_only_rpc() -> TestResult<()> {
+    let rpc_catalog = method_catalog()
+        .into_iter()
+        .map(|method| (method.name, method))
+        .collect::<std::collections::BTreeMap<_, _>>();
+
+    for entry in tool_catalog() {
+        for method_name in entry.backing_rpc_methods {
+            let method = rpc_catalog.get(method_name).ok_or_else(|| {
+                color_eyre::eyre::eyre!(
+                    "MCP entry `{}` references unknown RPC method `{method_name}`",
+                    entry.name
+                )
+            })?;
+            assert_eq!(
+                method.mutability,
+                RpcMutability::ReadOnly,
+                "MCP entry `{}` must not expose mutating RPC method `{method_name}`",
+                entry.name
+            );
+            assert_eq!(
+                method.role,
+                RpcRole::ReadOnly,
+                "MCP entry `{}` must not require elevated RPC role `{method_name}`",
+                entry.name
+            );
+        }
+    }
+    Ok(())
+}
+
+#[sinex_test]
+async fn mcp_catalog_serializes_as_machine_readable_matrix() -> TestResult<()> {
+    let value = serde_json::to_value(tool_catalog())?;
+    let entries = value
+        .as_array()
+        .ok_or_else(|| color_eyre::eyre::eyre!("MCP catalog must serialize as an array"))?;
+
+    assert_eq!(entries.len(), tools().len());
+    for entry in entries {
+        assert!(entry["name"].as_str().is_some());
+        assert_eq!(entry["kind"], "tool");
+        assert_eq!(entry["read_only"], true);
+        assert!(entry["backing_rpc_methods"].as_array().is_some());
     }
     Ok(())
 }

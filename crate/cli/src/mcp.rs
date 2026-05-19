@@ -13,6 +13,7 @@ use sinex_primitives::domain::{EventSource, EventType};
 use sinex_primitives::events::Event;
 use sinex_primitives::ids::Id;
 use sinex_primitives::query::{EventQuery, LineageDirection, LineageQuery};
+use sinex_primitives::rpc::methods;
 use sinex_primitives::rpc::sources::{SourcesReadinessGetRequest, SourcesReadinessListRequest};
 use sinex_primitives::temporal::Timestamp;
 use std::io::{BufRead, Write};
@@ -37,6 +38,21 @@ pub struct McpTool {
     pub description: &'static str,
     #[serde(rename = "inputSchema")]
     pub input_schema: Value,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct McpCatalogEntry {
+    pub name: &'static str,
+    pub kind: McpSurfaceKind,
+    pub description: &'static str,
+    pub backing_rpc_methods: &'static [&'static str],
+    pub read_only: bool,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum McpSurfaceKind {
+    Tool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -94,6 +110,36 @@ struct SourceReadinessArgs {
 
 const fn default_true() -> bool {
     true
+}
+
+#[must_use]
+pub fn tool_catalog() -> Vec<McpCatalogEntry> {
+    vec![
+        McpCatalogEntry {
+            name: "sinex.search_events",
+            kind: McpSurfaceKind::Tool,
+            description: "Read-only search over persisted Sinex events.",
+            backing_rpc_methods: &[methods::EVENTS_QUERY],
+            read_only: true,
+        },
+        McpCatalogEntry {
+            name: "sinex.trace_lineage",
+            kind: McpSurfaceKind::Tool,
+            description: "Read-only provenance trace for one event.",
+            backing_rpc_methods: &[methods::EVENTS_LINEAGE],
+            read_only: true,
+        },
+        McpCatalogEntry {
+            name: "sinex.source_readiness",
+            kind: McpSurfaceKind::Tool,
+            description: "Read-only source readiness, caveat, freshness, and cost report.",
+            backing_rpc_methods: &[
+                methods::SOURCES_READINESS_LIST,
+                methods::SOURCES_READINESS_GET,
+            ],
+            read_only: true,
+        },
+    ]
 }
 
 #[must_use]
