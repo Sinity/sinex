@@ -36,7 +36,7 @@ Use these when the local stack or a running process is part of the work.
 
 Reach for these after failures or when you need to understand impact and trends.
 
-- `xtask history diagnostics`: Query build diagnostics (warnings/errors). Use when a check or build failed and you want package-scoped errors, trends, or fixable subsets. Common forms: `xtask history diagnostics --level error`; `xtask history diagnostics --fixable`; `xtask history diagnostics --package sinex-primitives`.
+- `xtask history diagnostics`: Query build diagnostics (warnings/errors). Use when a check or build failed and you want package-scoped errors, trends, or fixable subsets. Common forms: `xtask history diagnostics --level error`; `xtask history diagnostics --command check --level warning`; `xtask history diagnostics --fixable`; `xtask history diagnostics --package sinex-primitives`. Notes: Use --command check to isolate the normal check surface after broader lint/build runs.
 - `xtask history tests analyze`: Comprehensive analysis of the most recent test run. Use when a test surface failed and you need buckets, flaky tests, slow tests, or captured output. Common forms: `xtask history tests analyze`; `xtask history tests failures --output`; `xtask history tests output test_name`.
 - `xtask analytics workspace-health`: Composite workspace health score (0-100) across build, test, and velocity dimensions (J1). Use when you want a compact signal about repo health or follow-up recommendations. Common forms: `xtask analytics workspace-health`; `xtask analytics recommend`.
 - `xtask deps impact`: Analyze rebuild impact of package changes. Use when a dependency change might widen the rebuild/test blast radius. Common forms: `xtask deps impact`; `xtask deps impact sinex-gateway`.
