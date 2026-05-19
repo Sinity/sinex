@@ -30,6 +30,8 @@ use sinex_primitives::rpc::{
         EventsAnnotateResponse,
     },
     gitops::{
+        GITOPS_CREATE_SOURCE_METHOD, GITOPS_DELETE_SOURCE_METHOD, GITOPS_LIST_SOURCES_METHOD,
+        GITOPS_TRIGGER_SYNC_METHOD,
         DEFAULT_GITOPS_BRANCH, DEFAULT_GITOPS_PATH_PATTERN, DEFAULT_GITOPS_SYNC_FREQUENCY_MINUTES,
         GitOpsCreateSourceRequest, GitOpsCreateSourceResponse, GitOpsDeleteSourceRequest,
         GitOpsDeleteSourceResponse, GitOpsListSourcesRequest, GitOpsListSourcesResponse,
@@ -452,10 +454,8 @@ impl GatewayClient {
     /// List configured gitops sources
     pub async fn gitops_list(&self, include_disabled: bool) -> Result<Vec<GitOpsSourceInfo>> {
         let req = GitOpsListSourcesRequest { include_disabled };
-        let result = self
-            .call_rpc(methods::GITOPS_LIST_SOURCES, serde_json::to_value(&req)?)
-            .await?;
-        let response: GitOpsListSourcesResponse = serde_json::from_value(result)?;
+        let response: GitOpsListSourcesResponse =
+            self.call_typed(GITOPS_LIST_SOURCES_METHOD, &req).await?;
         Ok(response.sources)
     }
 
@@ -474,10 +474,7 @@ impl GatewayClient {
             sync_frequency_minutes: sync_frequency_minutes
                 .unwrap_or(DEFAULT_GITOPS_SYNC_FREQUENCY_MINUTES),
         };
-        let result = self
-            .call_rpc(methods::GITOPS_CREATE_SOURCE, serde_json::to_value(&req)?)
-            .await?;
-        serde_json::from_value(result).map_err(Into::into)
+        self.call_typed(GITOPS_CREATE_SOURCE_METHOD, &req).await
     }
 
     /// Delete a gitops source
@@ -487,10 +484,8 @@ impl GatewayClient {
                 .parse()
                 .map_err(|e| color_eyre::eyre::eyre!("Invalid UUID: {}", e))?,
         };
-        let result = self
-            .call_rpc(methods::GITOPS_DELETE_SOURCE, serde_json::to_value(&req)?)
-            .await?;
-        let response: GitOpsDeleteSourceResponse = serde_json::from_value(result)?;
+        let response: GitOpsDeleteSourceResponse =
+            self.call_typed(GITOPS_DELETE_SOURCE_METHOD, &req).await?;
         Ok(response.deleted)
     }
 
@@ -501,10 +496,7 @@ impl GatewayClient {
                 .parse()
                 .map_err(|e| color_eyre::eyre::eyre!("Invalid UUID: {}", e))?,
         };
-        let result = self
-            .call_rpc(methods::GITOPS_TRIGGER_SYNC, serde_json::to_value(&req)?)
-            .await?;
-        serde_json::from_value(result).map_err(Into::into)
+        self.call_typed(GITOPS_TRIGGER_SYNC_METHOD, &req).await
     }
 
     // ==================== Gateway Commands ====================
