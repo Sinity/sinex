@@ -1,7 +1,8 @@
 # Read-Only MCP Server
 
-Status: architecture contract for #1105. Implementation first slice is tracked
-in #1351.
+Status: implemented read-only stdio surface for #1105, with the current tool
+inventory owned by `crate/cli/src/mcp.rs` and validated by
+`crate/cli/tests/validation_test.rs`.
 
 Sinex should expose a local MCP server for coding agents and analysis tools, but
 the first server is read-only. It is an evidence access surface, not a control
@@ -18,8 +19,10 @@ Allowed v1 behavior:
 - search events and source materials;
 - trace provenance and material evidence links;
 - return source readiness and continuity caveats;
-- build or fetch context-pack-like JSON once #1095 provides a read surface;
-- preview replay/workbench plans when the backing API is dry-run/read-only.
+- expose runtime privacy, health, node, ingestor, automata, replay, task,
+  document, semantic-lane, and ingestd telemetry read models;
+- fetch document metadata and ranked document search metadata with raw text and
+  side data redacted.
 
 Forbidden v1 behavior:
 
@@ -47,26 +50,42 @@ assumption.
 
 HTTP/SSE transport is a follow-up only when there is a real consumer.
 
-## Tool Set
-
-First slice:
+## Implemented Tool Set
 
 | Tool | Backend | Output contract |
 |------|---------|-----------------|
-| `sinex.search_events` | gateway event query or `sinexctl query --json` | events with ids, source/type, timestamps, payload summaries, caveats |
-| `sinex.trace_lineage` | gateway trace or `sinexctl trace --json` | event id, material/synthesis provenance, parent ids, material links |
+| `sinex.search_events` | `events.query` | events with ids, source/type, timestamps, and redacted payload/snippet summaries |
+| `sinex.trace_lineage` | `events.lineage` | event id, material/synthesis provenance, parent ids, redacted material links |
 | `sinex.source_readiness` | `sources.readiness.*` gateway methods | source family/unit status, caveat codes, stale/missing/error evidence |
+| `sinex.source_continuity` | `sources.continuity.*` | source-family continuity, gaps, seams, and replayability |
+| `sinex.privacy_status` | `privacy.private_mode.status` | runtime private-mode state |
+| `sinex.system_health` | `system.health` | gateway and confirmation-path health |
+| `sinex.tasks_list` | `tasks.list` | current task workflow search/filter results |
+| `sinex.task_state` | `tasks.state.get` | exact task workflow state by id |
+| `sinex.replay_operations` | `replay.list_operations` | replay operation list with filters |
+| `sinex.replay_status` | `replay.operation_status` | one replay operation state |
+| `sinex.documents_search` | `documents.search` | ranked document metadata with text/headline/side-data redacted |
+| `sinex.documents_get` | `documents.get` | document metadata with side-data redacted |
+| `sinex.semantic_epochs` | `semantic.epochs.list` | semantic epoch registry listing |
+| `sinex.semantic_lanes` | `semantic.lanes.list` | semantic lane registry listing |
+| `sinex.semantic_lane_outputs` | `semantic.lane_outputs.list` | isolated semantic lane output records |
+| `sinex.semantic_lane_diffs` | `semantic.lane_diffs.list` | semantic lane diff reports |
+| `sinex.automata_status` | `automata.status` | derived-node liveness, checkpoint, lag, and throughput |
+| `sinex.ingestors_status` | `ingestors.status` | source-ingestor liveness, health, and emission status |
+| `sinex.nodes_health` | `nodes.health` | aggregate runtime node health |
+| `sinex.nodes_active` | `nodes.list_active` | active runtime node presence |
+| `sinex.ingestd_validation` | `telemetry.ingestd_validation` | latest ingestd admission and validation snapshot |
+| `sinex.ingestd_batch_stats` | `telemetry.ingestd_batch_stats` | ingestd batch, latency, and validation telemetry buckets |
 
-Second slice, after backing surfaces exist:
+Deliberate omissions:
 
-| Tool | Backend |
-|------|---------|
-| `sinex.source_continuity` | #1085 continuity reports |
-| `sinex.get_recent_context` | `sinexctl context --json` or gateway equivalent |
-| `sinex.build_context_pack` | #1095 context-pack builder |
-| `sinex.material_show` | source-material show with policy-filtered samples |
-| `sinex.replay_preview` | #1060 dry-run replay planner |
-| `sinex.workbench_inspect` | #1062 read-only staged-material inspection |
+- no replay preview tool yet, because the shared descriptor is mutating/write
+  shaped even when used as a dry-run planner;
+- no document chunk-text tool, because `documents.get_chunks` returns raw text
+  by design and needs a separate redaction/policy shape before MCP exposure;
+- no material-show or workbench-inspect tool until their gateway read surfaces
+  can enforce the same redaction contract;
+- no context-pack tools until #1095 provides a stable read model.
 
 ## Common Response Shape
 
@@ -106,15 +125,17 @@ over natural-language selectors when the caller already has an ID.
 
 ## Verification
 
-Required for the first implementation PR:
+Required for MCP changes:
 
 - `list_tools` returns the expected tool names and JSON schemas.
-- Each first-slice tool has one fixture-backed call test.
+- Each tool has one fixture-backed call test when it is added.
 - The server starts over stdio without requiring a writable DB connection.
 - A grep or unit test proves no v1 tool registers write verbs such as `stage`,
   `publish`, `delete`, `archive`, `tombstone`, `finalize`, or `actuate`.
 - Sensitive sample fixtures return redaction/suppression metadata rather than
   raw secret text.
+- The MCP catalog maps every tool to typed read-only RPC descriptors, and tests
+  reject untyped raw-RPC usage in the MCP module.
 
 ## Follow-Ups
 
