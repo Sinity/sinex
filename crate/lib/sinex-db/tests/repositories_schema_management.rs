@@ -141,6 +141,75 @@ async fn list_schemas_for_source_returns_all(ctx: TestContext) -> TestResult<()>
 }
 
 #[sinex_test]
+async fn list_with_retention_returns_only_active_retention_rows(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let repo = ctx.pool.schemas();
+    let source = unique_schema_source("retention-source");
+    let active_event_type = unique_schema_event_type("retention.active");
+    let inactive_event_type = unique_schema_event_type("retention.inactive");
+    let no_retention_event_type = unique_schema_event_type("retention.none");
+
+    let active = repo
+        .register_schema(NewEventSchema {
+            source: source.clone(),
+            event_type: active_event_type.clone(),
+            schema_version: "1.0.0".to_string(),
+            schema_content: json!({ "type": "object" }),
+        })
+        .await?;
+    let inactive = repo
+        .register_schema(NewEventSchema {
+            source: source.clone(),
+            event_type: inactive_event_type,
+            schema_version: "1.0.0".to_string(),
+            schema_content: json!({ "type": "object", "properties": { "old": { "type": "boolean" } } }),
+        })
+        .await?;
+    repo.register_schema(NewEventSchema {
+        source: source.clone(),
+        event_type: no_retention_event_type,
+        schema_version: "1.0.0".to_string(),
+        schema_content: json!({ "type": "object", "properties": { "kept": { "type": "boolean" } } }),
+    })
+    .await?;
+
+    sqlx::query!(
+        r#"
+        UPDATE sinex_schemas.event_payload_schemas
+        SET retention_seconds = CASE
+                WHEN id = $1::uuid THEN 3600
+                WHEN id = $2::uuid THEN 60
+                ELSE retention_seconds
+            END,
+            is_active = CASE
+                WHEN id = $2::uuid THEN false
+                ELSE is_active
+            END
+        WHERE id IN ($1::uuid, $2::uuid)
+        "#,
+        active.id.to_uuid(),
+        inactive.id.to_uuid()
+    )
+    .execute(&ctx.pool)
+    .await?;
+
+    let rows = repo.list_with_retention().await?;
+    let row = rows
+        .iter()
+        .find(|row| row.source == source && row.event_type == active_event_type)
+        .expect("active retention row should be returned");
+
+    assert_eq!(row.retention_seconds, 3600);
+    assert!(
+        rows.iter()
+            .all(|row| row.source != source || row.event_type == active_event_type),
+        "inactive or NULL retention rows should not be returned"
+    );
+    Ok(())
+}
+
+#[sinex_test]
 async fn deprecating_schema_disables_active_version(ctx: TestContext) -> TestResult<()> {
     let repo = ctx.pool.schemas();
     let source = unique_schema_source("test-source");

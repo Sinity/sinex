@@ -42,7 +42,8 @@ pub use knowledge_graph::{
 pub use replay::ReplayRepository;
 pub use schema_cache::{CachedSchema, SchemaCacheRepository};
 pub use schema_management::{
-    NewEventSchema, SchemaManagementRepository, SchemaStatistics, ValidationError, ValidationResult,
+    EventPayloadRetention, NewEventSchema, SchemaManagementRepository, SchemaStatistics,
+    ValidationError, ValidationResult,
 };
 pub use semantic::{CreateSemanticEpoch, CreateSemanticLane, SemanticRepository};
 pub use source_materials::{

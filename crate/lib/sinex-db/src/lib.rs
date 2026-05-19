@@ -32,6 +32,7 @@ pub use pool::{
 };
 pub use query_helpers::{IdempotentTransaction, RetryConfig, with_retry_transaction_idempotent};
 pub use repositories::DbPoolExt;
+pub use repositories::EventPayloadRetention;
 pub use repositories::events::{CascadeSource, EventRepository};
 pub use repositories::events::{EventRecordExt, records_to_events};
 pub use schema_apply::{apply_schema, apply_schema_for_url};
