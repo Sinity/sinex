@@ -122,7 +122,8 @@ reports and delete raw lane outputs through an operation record.
    compare the same evidence.
 2. Create a semantic epoch for the candidate config.
 3. Create a shadow lane referencing the baseline and candidate epochs.
-4. Run candidate automata/parsers in lane mode and write outputs to
+4. Run candidate automata/parsers in lane mode, or import a deterministic
+   lane-output artifact from an external runner, and write outputs to
    `semantic.lane_outputs`.
 5. Compute deterministic diffs by output kind.
 6. Present comparison reports for review.
@@ -131,6 +132,14 @@ reports and delete raw lane outputs through an operation record.
 
 The hot ingestion path should not depend on this runtime. Shadow lanes are
 operator-initiated semantic experiments.
+
+The current first slice implements the registry, isolated output storage,
+explicit output writes, deterministic entity/relation diff recording, CLI/RPC
+inspection, and read-only MCP inspection. It intentionally does not yet ship an
+autonomous lane runner that invokes entity/relation automata in lane mode.
+Until that runner exists, `sinexctl semantics lane write-outputs` is the
+operator/import boundary for candidate outputs produced by a controlled
+external run.
 
 ## Comparison Reports
 
@@ -200,16 +209,33 @@ Why this target:
 Embedding-model comparison is second. It needs recorded model-effect policy and
 ranking fixtures before it can be honest.
 
-## CLI Sketch
+## Operator Surface
 
 ```text
 sinexctl semantics epoch create --name entity-v2 --scope scope.json --component entity-extractor=2.0
-sinexctl semantics lane create --shadow --base canonical --epoch <epoch-id> --scope scope.json
-sinexctl semantics lane run <lane-id> --automaton entity-extractor --automaton relation-extractor
-sinexctl semantics lane diff <lane-id> --against canonical --format json
+sinexctl semantics epoch list
+sinexctl semantics lane create --kind shadow --candidate-epoch-id <epoch-id> --scope scope.json
+sinexctl semantics lane list --status planned
+sinexctl semantics lane status <lane-id> --status running
+sinexctl semantics lane write-outputs <lane-id> --outputs-file lane-outputs.json
+sinexctl semantics lane outputs <lane-id> --format json
+sinexctl semantics lane compare --baseline-lane-id <baseline> --candidate-lane-id <candidate>
+sinexctl semantics lane diffs <lane-id> --format json
 sinexctl semantics lane promote <lane-id> --via-judgment <judgment-id>
 sinexctl semantics lane discard <lane-id> --reason "merge churn too high"
 ```
+
+`promote` is a future surface, not an implemented command. Promotion remains
+behind the proposal/judgment/finalizer authority boundary. The implemented
+discard command records a status transition and explicit discard reason; raw
+output deletion must stay an explicit operation.
+
+Read-only MCP exposes the same inspection vocabulary for agent use:
+
+- `sinex.semantic_epochs`
+- `sinex.semantic_lanes`
+- `sinex.semantic_lane_outputs`
+- `sinex.semantic_lane_diffs`
 
 ## Boundaries
 
