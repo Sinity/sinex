@@ -8,9 +8,8 @@ use crate::schema::{SemanticEpochs, records};
 use crate::{JsonValue, Timestamp};
 use serde::Serialize;
 use sinex_primitives::{
-    EntityRelationDiffReport, EntityRelationLaneOutputs, SemanticEntityOutput,
-    SemanticEpochRecord, SemanticLaneRecord as PrimitiveSemanticLaneRecord, SemanticLaneStatus,
-    SemanticRelationOutput, SinexError, Uuid,
+    EntityRelationDiffReport, EntityRelationLaneOutputs, SemanticEpochRecord,
+    SemanticLaneRecord as PrimitiveSemanticLaneRecord, SemanticLaneStatus, SinexError, Uuid,
 };
 use sqlx::PgPool;
 

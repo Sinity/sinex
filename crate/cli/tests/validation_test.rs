@@ -80,6 +80,10 @@ async fn mcp_lists_first_slice_read_only_tools() -> TestResult<()> {
             "sinex.replay_status",
             "sinex.documents_search",
             "sinex.documents_get",
+            "sinex.semantic_epochs",
+            "sinex.semantic_lanes",
+            "sinex.semantic_lane_outputs",
+            "sinex.semantic_lane_diffs",
             "sinex.automata_status",
             "sinex.ingestors_status",
             "sinex.nodes_health",
@@ -559,6 +563,48 @@ async fn mcp_documents_get_call_uses_gateway_fixture() -> TestResult<()> {
 }
 
 #[sinex_test]
+async fn mcp_semantic_lanes_call_uses_gateway_fixture() -> TestResult<()> {
+    let server = mount_mcp_gateway_fixture().await;
+    let client = fixture_gateway_client(&server)?;
+
+    let response = call_tool(
+        &client,
+        "sinex.semantic_lanes",
+        json!({ "status": "planned", "limit": 5 }),
+    )
+    .await?;
+
+    assert_eq!(response["tool"], "sinex.semantic_lanes");
+    assert_eq!(response["query"]["status"], "planned");
+    assert_eq!(
+        response["items"]["result"]["lanes"][0]["id"],
+        fixture_semantic_lane_id()
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn mcp_semantic_lane_outputs_call_uses_gateway_fixture() -> TestResult<()> {
+    let server = mount_mcp_gateway_fixture().await;
+    let client = fixture_gateway_client(&server)?;
+
+    let response = call_tool(
+        &client,
+        "sinex.semantic_lane_outputs",
+        json!({ "lane_id": fixture_semantic_lane_id(), "limit": 5 }),
+    )
+    .await?;
+
+    assert_eq!(response["tool"], "sinex.semantic_lane_outputs");
+    assert_eq!(response["query"]["lane_id"], fixture_semantic_lane_id());
+    assert_eq!(
+        response["items"]["result"]["outputs"][0]["output_key"],
+        "entity:fixture"
+    );
+    Ok(())
+}
+
+#[sinex_test]
 async fn mcp_automata_status_call_uses_gateway_fixture() -> TestResult<()> {
     let server = mount_mcp_gateway_fixture().await;
     let client = fixture_gateway_client(&server)?;
@@ -911,6 +957,70 @@ async fn mount_mcp_gateway_fixture() -> MockServer {
                     "created_at": "2026-05-19T11:00:00Z",
                     "updated_at": "2026-05-19T11:45:00Z"
                 }),
+                "semantic.epochs.list" => json!({
+                    "epochs": [
+                        {
+                            "id": fixture_semantic_epoch_id(),
+                            "name": "fixture-epoch",
+                            "scope": {
+                                "kind": "event_set",
+                                "input_ids": ["event:fixture"],
+                                "input_set_hash": "fixture-input-hash"
+                            },
+                            "code_ref": "fixture@sha",
+                            "config_hash": "fixture-config",
+                            "components": [],
+                            "prompt_set_hash": null,
+                            "model_config_hash": null,
+                            "created_by": "mcp-fixture",
+                            "operation_id": null,
+                            "created_at": "2026-05-19T11:30:00Z",
+                            "supersedes_epoch_id": null
+                        }
+                    ]
+                }),
+                "semantic.lanes.list" => json!({
+                    "lanes": [
+                        fixture_semantic_lane(body["params"]["status"].as_str().unwrap_or("planned"))
+                    ]
+                }),
+                "semantic.lane_outputs.list" => json!({
+                    "lane_id": body["params"]["lane_id"].as_str().unwrap_or(fixture_semantic_lane_id()),
+                    "outputs": [
+                        {
+                            "lane_id": fixture_semantic_lane_id(),
+                            "output_kind": "entity",
+                            "output_key": "entity:fixture",
+                            "source_event_id": null,
+                            "source_material_id": null,
+                            "source_anchor": null,
+                            "output_hash": "fixture-output-hash",
+                            "payload": {
+                                "entity_key": "entity:fixture",
+                                "canonical_name": "Fixture Entity",
+                                "entity_type": "project",
+                                "metadata": null
+                            },
+                            "metadata": {},
+                            "created_at": "2026-05-19T11:40:00Z"
+                        }
+                    ]
+                }),
+                "semantic.lane_diffs.list" => json!({
+                    "lane_id": body["params"]["lane_id"].as_str().unwrap_or(fixture_semantic_lane_id()),
+                    "diffs": [
+                        {
+                            "id": fixture_semantic_diff_id(),
+                            "baseline_lane_id": fixture_semantic_lane_id(),
+                            "candidate_lane_id": fixture_semantic_candidate_lane_id(),
+                            "diff_kind": "entity_relation",
+                            "counts": { "entity_new": 1 },
+                            "examples": [],
+                            "report_hash": "fixture-report-hash",
+                            "created_at": "2026-05-19T11:45:00Z"
+                        }
+                    ]
+                }),
                 "automata.status" => json!({
                     "generated_at": "2026-05-19T12:00:00Z",
                     "stale_after_secs": body["params"]["stale_after_secs"].as_u64().unwrap_or(300),
@@ -1088,6 +1198,22 @@ fn fixture_document_id() -> &'static str {
     "018f4b6b-6a4d-7c80-8000-000000000005"
 }
 
+fn fixture_semantic_epoch_id() -> &'static str {
+    "018f4b6b-6a4d-7c80-8000-000000000006"
+}
+
+fn fixture_semantic_lane_id() -> &'static str {
+    "018f4b6b-6a4d-7c80-8000-000000000007"
+}
+
+fn fixture_semantic_candidate_lane_id() -> &'static str {
+    "018f4b6b-6a4d-7c80-8000-000000000008"
+}
+
+fn fixture_semantic_diff_id() -> &'static str {
+    "018f4b6b-6a4d-7c80-8000-000000000009"
+}
+
 fn fixture_replay_operation(state: &str) -> Value {
     json!({
         "operation_id": fixture_operation_id(),
@@ -1122,6 +1248,27 @@ fn fixture_replay_operation(state: &str) -> Value {
         "finished_at": null,
         "outcome": null,
         "error_details": null
+    })
+}
+
+fn fixture_semantic_lane(status: &str) -> Value {
+    json!({
+        "id": fixture_semantic_lane_id(),
+        "name": "fixture-lane",
+        "kind": "shadow",
+        "base_epoch_id": null,
+        "candidate_epoch_id": fixture_semantic_epoch_id(),
+        "scope": {
+            "kind": "event_set",
+            "input_ids": ["event:fixture"],
+            "input_set_hash": "fixture-input-hash"
+        },
+        "status": status,
+        "purpose": "MCP fixture",
+        "operation_id": null,
+        "created_at": "2026-05-19T11:35:00Z",
+        "completed_at": null,
+        "expires_at": null
     })
 }
 
