@@ -1308,28 +1308,6 @@ impl HistoryDb {
         Ok(())
     }
 
-    /// Drop all known tables so the DB can be recreated from scratch.
-    fn drop_all_tables(&self) -> Result<()> {
-        self.conn.execute_batch(
-            r"
-            DROP TABLE IF EXISTS background_job_logs;
-            DROP TABLE IF EXISTS background_jobs;
-            DROP TABLE IF EXISTS trace_events;
-            DROP TABLE IF EXISTS invocation_eta_samples;
-            DROP TABLE IF EXISTS invocation_progress;
-            DROP TABLE IF EXISTS stage_timings;
-            DROP TABLE IF EXISTS invocation_packages;
-            DROP TABLE IF EXISTS build_diagnostics;
-            DROP TABLE IF EXISTS test_results;
-            DROP TABLE IF EXISTS exercise_results;
-            DROP TABLE IF EXISTS exercise_runs;
-            DROP TABLE IF EXISTS invocations;
-            DROP TABLE IF EXISTS metadata;
-            ",
-        )?;
-        Ok(())
-    }
-
     /// Check whether this database contains synthetic (seeded) data.
     pub fn check_synthetic(&self) -> Result<bool> {
         let exists = self
