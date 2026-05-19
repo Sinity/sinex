@@ -300,6 +300,7 @@ pub fn build() -> HashMap<&'static str, FormatCapability> {
         "tasks complete",
         FormatCapability::single_shot(TABLE_JSON_YAML),
     );
+    m.insert("tasks list", FormatCapability::single_shot(TABLE_JSON_YAML));
     m.insert(
         "tasks state",
         FormatCapability::single_shot(TABLE_JSON_YAML),
@@ -849,6 +850,7 @@ fn backing_rpc_methods_for_path(path: &str) -> &'static [&'static str] {
         ],
         "declare task" => &[methods::TASKS_CREATE],
         "tasks complete" => &[methods::TASKS_COMPLETE],
+        "tasks list" => &[methods::TASKS_LIST],
         "tasks state" => &[methods::TASKS_STATE_GET],
         "curation proposals" => &[methods::CURATION_PROPOSALS_LIST],
         "curation judge" => &[methods::CURATION_JUDGMENTS_RECORD],

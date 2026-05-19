@@ -60,7 +60,9 @@ use sinex_primitives::rpc::{
         SOURCES_READINESS_LIST_METHOD, SOURCES_SHOW_METHOD, SOURCES_STAGE_METHOD,
     },
     system::{SYSTEM_HEALTH_METHOD, SYSTEM_PING_METHOD, SYSTEM_VERSION_METHOD},
-    tasks::{TASKS_COMPLETE_METHOD, TASKS_CREATE_METHOD, TASKS_STATE_GET_METHOD},
+    tasks::{
+        TASKS_COMPLETE_METHOD, TASKS_CREATE_METHOD, TASKS_LIST_METHOD, TASKS_STATE_GET_METHOD,
+    },
     telemetry::{
         TELEMETRY_ASSEMBLY_STATS_METHOD, TELEMETRY_COMMAND_FREQUENCY_METHOD,
         TELEMETRY_CURRENT_DEVICE_STATE_METHOD, TELEMETRY_CURRENT_HEALTH_METHOD,
@@ -722,7 +724,7 @@ fn build_registry_impl() -> RpcRegistry {
         handle_sources_presets_list, handle_sources_readiness_get, handle_sources_readiness_list,
         handle_sources_show, handle_sources_stage, handle_store_blob, handle_system_health,
         handle_system_ping, handle_system_version, handle_tasks_complete, handle_tasks_create,
-        handle_tasks_state_get, handle_telemetry_assembly_stats,
+        handle_tasks_list, handle_tasks_state_get, handle_telemetry_assembly_stats,
         handle_telemetry_command_frequency, handle_telemetry_current_device_state,
         handle_telemetry_current_health, handle_telemetry_file_activity,
         handle_telemetry_gateway_stats, handle_telemetry_ingestd_batch_stats,
@@ -754,6 +756,7 @@ fn build_registry_impl() -> RpcRegistry {
         .pool_typed_rpc(LLM_ROUTE_EXPLAIN_METHOD, boxed!(handle_llm_route_explain))
         .pool_typed_rpc(LLM_BUDGET_REPORT_METHOD, boxed!(handle_llm_budget_report))
         .pool_typed_rpc(EVENTS_LINEAGE_METHOD, boxed!(handle_events_lineage))
+        .pool_typed_rpc(TASKS_LIST_METHOD, boxed!(handle_tasks_list))
         .pool_typed_rpc(TASKS_STATE_GET_METHOD, boxed!(handle_tasks_state_get))
         // Coordination methods (ReadOnly)
         .coord_typed_rpc(
