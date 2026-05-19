@@ -192,28 +192,27 @@ fn parse_row(
         "incognito_mode": row.incognito_mode,
     });
 
-    Ok(Some(ParsedEventIntent {
-        id: sinex_primitives::ids::Id::new(),
-        source_unit_id: ctx.source_unit_id.clone(),
-        parser_id: ParserId::from_static("spotify-extended-history"),
-        parser_version: "1.0.0".into(),
-        event_type: EventType::from_static("track.played"),
-        event_source: EventSource::from_static("spotify"),
-        payload,
-        ts_orig: started_at,
-        timing: TimingEvidence::Intrinsic {
-            field: "ts".into(),
-            confidence: TimingConfidence::Intrinsic,
-        },
-        anchor: MaterialAnchor::ByteRange {
-            start: index as u64,
-            len: 1,
-        },
-        occurrence_key: Some(occurrence_key),
-        privacy_context: ProcessingContext::Metadata,
-        field_privacy_log: None,
-        synthesis_parents: None,
-    }))
+    Ok(Some(
+        ParsedEventIntent::builder()
+            .source_unit_id(ctx.source_unit_id.clone())
+            .parser_id(ParserId::from_static("spotify-extended-history"))
+            .parser_version("1.0.0")
+            .event_type(EventType::from_static("track.played"))
+            .event_source(EventSource::from_static("spotify"))
+            .payload(payload)
+            .ts_orig(started_at)
+            .timing(TimingEvidence::Intrinsic {
+                field: "ts".into(),
+                confidence: TimingConfidence::Intrinsic,
+            })
+            .anchor(MaterialAnchor::ByteRange {
+                start: index as u64,
+                len: 1,
+            })
+            .occurrence_key(occurrence_key)
+            .privacy_context(ProcessingContext::Metadata)
+            .build(),
+    ))
 }
 
 fn parse_iso8601(raw: &str) -> ParserResult<Timestamp> {
