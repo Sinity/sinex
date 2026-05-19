@@ -350,22 +350,19 @@ impl MaterialParser for DocsLibraryParser {
             }
         };
 
-        let intent = ParsedEventIntent {
-            id: Id::new(),
-            source_unit_id: ctx.source_unit_id.clone(),
-            parser_id: ParserId::from_static("docs-library-index"),
-            parser_version: "1.0.0".into(),
-            event_type: EventType::from_static("document.indexed"),
-            event_source: EventSource::from_static("docs-library"),
-            payload,
-            ts_orig: mtime,
-            timing: mtime_confidence,
-            anchor: record.anchor.clone(),
-            occurrence_key: Some(occurrence_key),
-            privacy_context: ProcessingContext::Metadata,
-            field_privacy_log: None,
-            synthesis_parents: None,
-        };
+        let intent = ParsedEventIntent::builder()
+            .source_unit_id(ctx.source_unit_id.clone())
+            .parser_id(ParserId::from_static("docs-library-index"))
+            .parser_version("1.0.0")
+            .event_type(EventType::from_static("document.indexed"))
+            .event_source(EventSource::from_static("docs-library"))
+            .payload(payload)
+            .ts_orig(mtime)
+            .timing(mtime_confidence)
+            .anchor(record.anchor.clone())
+            .occurrence_key(occurrence_key)
+            .privacy_context(ProcessingContext::Metadata)
+            .build();
 
         Ok(vec![intent])
     }

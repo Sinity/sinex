@@ -20,7 +20,6 @@ use std::sync::OnceLock;
 
 use sinex_node_sdk::parser::{DirectoryWalkAdapter, MaterialParser, ParserError, ParserResult};
 use sinex_primitives::domain::{EventSource, EventType};
-use sinex_primitives::ids::Id;
 use sinex_primitives::parser::{
     InputShapeKind, MaterialAnchor, OccurrenceKey, ParsedEventIntent, ParserContext, ParserId,
     ParserManifest, SourceRecord, SourceUnitId, TimingConfidence, TimingEvidence,
@@ -327,22 +326,19 @@ impl MaterialParser for KnowledgebaseVaultParser {
             content_hash: Some(body_hash),
         };
 
-        let intent = ParsedEventIntent {
-            id: Id::new(),
-            source_unit_id: ctx.source_unit_id.clone(),
-            parser_id: ParserId::from_static("knowledgebase-vault"),
-            parser_version: "1.0.0".into(),
-            event_type: EventType::from_static(EVENT_TYPE),
-            event_source: EventSource::from_static(EVENT_SOURCE),
-            payload,
-            ts_orig,
-            timing,
-            anchor,
-            occurrence_key: Some(occurrence_key),
-            privacy_context: ProcessingContext::Document,
-            field_privacy_log: None,
-            synthesis_parents: None,
-        };
+        let intent = ParsedEventIntent::builder()
+            .source_unit_id(ctx.source_unit_id.clone())
+            .parser_id(ParserId::from_static("knowledgebase-vault"))
+            .parser_version("1.0.0")
+            .event_type(EventType::from_static(EVENT_TYPE))
+            .event_source(EventSource::from_static(EVENT_SOURCE))
+            .payload(payload)
+            .ts_orig(ts_orig)
+            .timing(timing)
+            .anchor(anchor)
+            .occurrence_key(occurrence_key)
+            .privacy_context(ProcessingContext::Document)
+            .build();
 
         Ok(vec![intent])
     }

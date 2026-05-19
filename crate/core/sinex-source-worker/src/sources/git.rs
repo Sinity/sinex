@@ -405,28 +405,25 @@ fn build_intent(
         "author_timestamp": ts_orig,
     });
 
-    Ok(ParsedEventIntent {
-        id: sinex_primitives::ids::Id::new(),
-        source_unit_id: ctx.source_unit_id.clone(),
-        parser_id: ParserId::from_static("git-commit-history"),
-        parser_version: "1.0.0".into(),
-        event_type: EventType::from_static("commit.created"),
-        event_source: EventSource::from_static("git"),
-        payload,
-        ts_orig,
-        timing: TimingEvidence::Intrinsic {
+    Ok(ParsedEventIntent::builder()
+        .source_unit_id(ctx.source_unit_id.clone())
+        .parser_id(ParserId::from_static("git-commit-history"))
+        .parser_version("1.0.0")
+        .event_type(EventType::from_static("commit.created"))
+        .event_source(EventSource::from_static("git"))
+        .payload(payload)
+        .ts_orig(ts_orig)
+        .timing(TimingEvidence::Intrinsic {
             field: "author_date".into(),
             confidence: TimingConfidence::Intrinsic,
-        },
-        anchor: MaterialAnchor::ByteRange {
+        })
+        .anchor(MaterialAnchor::ByteRange {
             start: index,
             len: 1,
-        },
-        occurrence_key: Some(occurrence_key),
-        privacy_context: ProcessingContext::Document,
-        field_privacy_log: None,
-        synthesis_parents: None,
-    })
+        })
+        .occurrence_key(occurrence_key)
+        .privacy_context(ProcessingContext::Document)
+        .build())
 }
 
 // ---------------------------------------------------------------------------

@@ -29,7 +29,6 @@ use sinex_primitives::{
         EventPayload,
         payloads::{KnowledgeTagAppliedPayload, document::DocumentIngestedPayload},
     },
-    ids::Id,
     parser::{
         InputShapeKind, ParsedEventIntent, ParserContext, ParserId, ParserManifest, SourceRecord,
         SourceUnitId, TimingEvidence,
@@ -173,24 +172,20 @@ impl MaterialParser for DocumentStagingParser {
             encoding: None,
         };
 
-        let material_intent = ParsedEventIntent {
-            id: Id::new(),
-            source_unit_id: SourceUnitId::from_static("document.staging"),
-            parser_id: ParserId::from_static("document-staging"),
-            parser_version: "1.0.0".into(),
-            event_type: payload.event_type(),
-            event_source: payload.event_source(),
-            payload: serde_json::to_value(&payload).map_err(|e| {
+        let material_intent = ParsedEventIntent::builder()
+            .source_unit_id(SourceUnitId::from_static("document.staging"))
+            .parser_id(ParserId::from_static("document-staging"))
+            .parser_version("1.0.0")
+            .event_type(payload.event_type())
+            .event_source(payload.event_source())
+            .payload(serde_json::to_value(&payload).map_err(|e| {
                 ParserError::Parse(format!("failed to serialize DocumentIngestedPayload: {e}"))
-            })?,
-            ts_orig: Timestamp::now(),
-            timing: TimingEvidence::StagedAtFallback,
-            anchor: record.anchor.clone(),
-            occurrence_key: None,
-            privacy_context: ProcessingContext::Metadata,
-            field_privacy_log: None,
-            synthesis_parents: None,
-        };
+            })?)
+            .ts_orig(Timestamp::now())
+            .timing(TimingEvidence::StagedAtFallback)
+            .anchor(record.anchor.clone())
+            .privacy_context(ProcessingContext::Metadata)
+            .build();
 
         let mut intents = vec![material_intent.clone()];
 
