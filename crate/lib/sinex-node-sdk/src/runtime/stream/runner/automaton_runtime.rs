@@ -6,10 +6,10 @@
 //! materialized inputs and feeds them into the node implementation.
 
 use super::{
-    Arc, CONFIRMED_EVENT_CHANNEL_CAPACITY, Checkpoint, DbPoolExt, EventTransport,
-    JetStreamEventConsumer, JetStreamEventConsumerConfig, LeaderState, Node, NodeResult,
-    NodeRunner, ProcessingModel, ProvisionalEvent, RunnerConfirmedEventHandler, ScanArgs,
-    SinexError, StreamExt, TimeHorizon, Uuid, debug, info, mpsc, systemd_notify, warn,
+    Arc, CONFIRMED_EVENT_CHANNEL_CAPACITY, Checkpoint, EventTransport, JetStreamEventConsumer,
+    JetStreamEventConsumerConfig, LeaderState, Node, NodeResult, NodeRunner, ProcessingModel,
+    ProvisionalEvent, RunnerConfirmedEventHandler, ScanArgs, SinexError, TimeHorizon, Uuid, debug,
+    info, mpsc, systemd_notify, warn,
 };
 
 impl<T: Node + 'static> NodeRunner<T> {
