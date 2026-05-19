@@ -35,6 +35,10 @@ sinexctl admin snapshot --output <path>
 
 sinexctl admin snapshot-restore --archive <path> --target-dir <empty-dir> --dry-run
   [--allow-non-empty-target]       # planning only; destructive restore still refuses ambiguity
+
+sinexctl admin snapshot-restore --archive <path> --target-dir <empty-dir>
+  --confirm-restore
+  [--allow-active-services]        # only for explicitly isolated drill targets
 ```
 
 ### Components
@@ -99,11 +103,37 @@ The dry-run command does not extract or write restored state. It validates:
 `--allow-non-empty-target` is only for planning against an already-prepared
 drill directory. It does not permit destructive writes.
 
-## Restore procedure (manual)
+## Isolated restore drill execution
 
-MVP does not include destructive restore execution. `snapshot-restore --dry-run`
-is the supported restore drill planner; the actual restore remains a manual
-procedure:
+For state-only or file-backed component archives (`state`, `cas`, `nats`),
+`snapshot-restore` can execute an isolated drill into an empty target directory:
+
+```bash
+sinexctl admin snapshot-restore \
+    --archive /var/backup/sinex/2026-05-15.sinex.tar.zst \
+    --target-dir /tmp/sinex-restore-drill \
+    --confirm-restore
+```
+
+Execution refuses to run unless:
+
+- `--confirm-restore` is present.
+- The target directory is empty, or does not yet exist under an existing parent.
+- Active `sinex-*` services are stopped, unless `--allow-active-services` is
+  explicitly passed for an isolated drill target.
+- The archive contains only file-backed components that this command can restore
+  (`state`, `cas`, `nats`). Archives with non-empty `postgres` components still
+  require the manual Postgres restore below.
+
+The JSON/YAML result includes `observed_checks` comparing the extracted target
+against the manifest: source-unit IDs, CAS blob count when present, and
+private-mode state presence.
+
+## Restore procedure (manual for Postgres/live state)
+
+Postgres and live in-place restore remain manual. Use
+`snapshot-restore --dry-run` first, then execute the explicit steps below in a
+prepared maintenance window.
 
 ### 1. Stop services (if running)
 

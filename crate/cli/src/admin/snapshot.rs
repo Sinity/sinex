@@ -147,10 +147,9 @@ EXAMPLES:
         --target-dir /tmp/sinex-restore-drill --dry-run
 
 NOTES:
-    This command is intentionally dry-run only in this slice. It validates the
-    archive, manifest paths, target directory, service state, sensitivity
-    classification, and the restore drill comparison plan. Destructive restore
-    execution remains a separate operator action.
+    Without --dry-run, this executes an isolated file-backed restore drill for
+    state, CAS, and NATS components only. Postgres restore execution remains
+    blocked until an empty target database and row-count comparison path exists.
 ")]
 pub struct AdminSnapshotRestoreCommand {
     /// Snapshot archive to validate for restore.
@@ -161,13 +160,21 @@ pub struct AdminSnapshotRestoreCommand {
     #[arg(long)]
     pub target_dir: PathBuf,
 
-    /// Required: plan and validate only; do not extract or write restored state.
-    #[arg(long, required = true)]
+    /// Plan and validate only; do not extract or write restored state.
+    #[arg(long)]
     pub dry_run: bool,
 
     /// Permit planning against a non-empty target directory.
     #[arg(long)]
     pub allow_non_empty_target: bool,
+
+    /// Confirm execution of an isolated restore drill into an empty target directory.
+    #[arg(long)]
+    pub confirm_restore: bool,
+
+    /// Permit isolated restore drill execution while sinex services are active.
+    #[arg(long)]
+    pub allow_active_services: bool,
 }
 
 fn parse_component_str(s: &str) -> std::result::Result<Component, String> {
@@ -227,6 +234,8 @@ pub struct SnapshotRestorePlanResult {
     pub key_policy: String,
     pub planned_steps: Vec<RestorePlanStep>,
     pub drill_checks: RestoreDrillChecks,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub observed_checks: Option<RestoreObservedChecks>,
     pub warnings: Vec<String>,
 }
 
@@ -245,6 +254,17 @@ pub struct RestoreDrillChecks {
     pub cas_blob_count: Option<u64>,
     pub private_mode_state_present: bool,
     pub missing_component_paths: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct RestoreObservedChecks {
+    pub target_entry_count: usize,
+    pub source_unit_count: usize,
+    pub source_unit_ids_match: bool,
+    pub cas_blob_count: Option<u64>,
+    pub cas_blob_count_matches: Option<bool>,
+    pub private_mode_state_present: bool,
+    pub private_mode_state_matches_manifest: bool,
 }
 
 // ── Entry point ─────────────────────────────────────────────────────────────
@@ -632,13 +652,6 @@ impl AdminSnapshotInspectCommand {
 
 impl AdminSnapshotRestoreCommand {
     pub fn execute(&self) -> Result<SnapshotRestorePlanResult> {
-        if !self.dry_run {
-            bail!(
-                "snapshot restore execution is not implemented in this slice; rerun with \
-                 --dry-run to validate the archive and restore drill plan"
-            );
-        }
-
         let inspect = inspect_snapshot_archive(&self.archive)?;
         if !inspect.missing_component_paths.is_empty() {
             bail!(
@@ -647,6 +660,9 @@ impl AdminSnapshotRestoreCommand {
             );
         }
 
+        let archive_entries = exec::tar_list_zstd(&self.archive)
+            .with_context(|| format!("list snapshot archive {}", self.archive.display()))?;
+        validate_archive_entries_safe(&archive_entries)?;
         let target_state = classify_restore_target(&self.target_dir)?;
         if !target_state.empty && !self.allow_non_empty_target {
             bail!(
@@ -656,8 +672,6 @@ impl AdminSnapshotRestoreCommand {
             );
         }
 
-        let archive_entries = exec::tar_list_zstd(&self.archive)
-            .with_context(|| format!("list snapshot archive {}", self.archive.display()))?;
         let active_services = exec::active_sinex_services();
         let mut warnings = Vec::new();
         if !active_services.is_empty() {
@@ -687,11 +701,16 @@ impl AdminSnapshotRestoreCommand {
             .map(|component| restore_step_for_component(component, &self.target_dir))
             .collect::<Vec<_>>();
         let drill_checks = restore_drill_checks(&inspect.manifest, &archive_entries);
+        let observed_checks = if self.dry_run {
+            None
+        } else {
+            Some(self.execute_restore_drill(&inspect, &archive_entries, &target_state)?)
+        };
 
         Ok(SnapshotRestorePlanResult {
             archive_path: self.archive.display().to_string(),
             snapshot_id: inspect.snapshot_id,
-            dry_run: true,
+            dry_run: self.dry_run,
             target_dir: self.target_dir.display().to_string(),
             target_empty: target_state.empty,
             active_services,
@@ -699,8 +718,69 @@ impl AdminSnapshotRestoreCommand {
             key_policy: SNAPSHOT_KEY_POLICY.to_string(),
             planned_steps,
             drill_checks,
+            observed_checks,
             warnings,
         })
+    }
+
+    fn execute_restore_drill(
+        &self,
+        inspect: &SnapshotInspectResult,
+        archive_entries: &[String],
+        target_state: &RestoreTargetState,
+    ) -> Result<RestoreObservedChecks> {
+        if !self.confirm_restore {
+            bail!(
+                "snapshot restore execution requires --confirm-restore; rerun with --dry-run to \
+                 inspect the plan without writing target state"
+            );
+        }
+        if !self.allow_active_services {
+            let active_services = exec::active_sinex_services();
+            if !active_services.is_empty() {
+                bail!(
+                    "sinex services are active; stop them before restore drill execution or pass \
+                     --allow-active-services for an explicitly isolated target"
+                );
+            }
+        }
+        if !target_state.empty {
+            bail!(
+                "restore execution requires an empty target directory; {} is not empty",
+                self.target_dir.display()
+            );
+        }
+
+        let unsupported = inspect
+            .manifest
+            .components
+            .iter()
+            .filter(|component| component.bytes > 0)
+            .filter(|component| !matches!(component.name.as_str(), "state" | "cas" | "nats"))
+            .map(|component| component.name.as_str())
+            .collect::<Vec<_>>();
+        if !unsupported.is_empty() {
+            bail!(
+                "restore execution for component(s) {} is not implemented yet; use --dry-run \
+                 for plan validation",
+                unsupported.join(", ")
+            );
+        }
+
+        std::fs::create_dir_all(&self.target_dir)
+            .with_context(|| format!("create restore target {}", self.target_dir.display()))?;
+        exec::tar_extract_zstd(&self.archive, &self.target_dir).with_context(|| {
+            format!(
+                "extract snapshot archive into {}",
+                self.target_dir.display()
+            )
+        })?;
+
+        Ok(observe_restored_target(
+            &inspect.manifest,
+            archive_entries,
+            &self.target_dir,
+        ))
     }
 }
 
@@ -828,6 +908,20 @@ fn read_snapshot_manifest_from_archive(archive_path: &Path) -> Result<SnapshotMa
         )))
 }
 
+fn validate_archive_entries_safe(entries: &[String]) -> Result<()> {
+    for entry in entries {
+        let path = Path::new(entry);
+        if path.is_absolute()
+            || path
+                .components()
+                .any(|c| matches!(c, std::path::Component::ParentDir))
+        {
+            bail!("snapshot archive contains unsafe member path: {entry}");
+        }
+    }
+    Ok(())
+}
+
 const SNAPSHOT_KEY_POLICY: &str = "archives exclude TLS/client/private keys by policy; if an \
 operator explicitly stores keys under the selected state directory, the archive inherits that \
 secret classification and must stay on encrypted storage";
@@ -941,6 +1035,43 @@ fn restore_drill_checks(
             "state/private-mode/state.json",
         ),
         missing_component_paths,
+    }
+}
+
+fn observe_restored_target(
+    manifest: &SnapshotManifest,
+    archive_entries: &[String],
+    target_dir: &Path,
+) -> RestoreObservedChecks {
+    let source_unit_ids = discover_source_unit_ids(&target_dir.join("state"));
+    let expected_cas_blob_count = manifest
+        .components
+        .iter()
+        .find_map(|component| match &component.extras {
+            Some(ComponentExtras::Cas(extras)) => Some(extras.blob_count),
+            _ => None,
+        });
+    let cas_blob_count = target_dir
+        .join("cas/blob-repository")
+        .exists()
+        .then(|| count_files_recursive(&target_dir.join("cas/blob-repository")));
+    let private_mode_state_present = target_dir.join("state/private-mode/state.json").exists();
+    let manifest_private_mode_state_present =
+        archive_path_contains(archive_entries, "state/private-mode/state.json");
+
+    RestoreObservedChecks {
+        target_entry_count: count_files_recursive(target_dir) as usize,
+        source_unit_count: source_unit_ids.len(),
+        source_unit_ids_match: source_unit_ids == manifest.source_unit_ids,
+        cas_blob_count,
+        cas_blob_count_matches: expected_cas_blob_count.map(|expected| {
+            cas_blob_count
+                .map(|observed| observed == expected)
+                .unwrap_or(expected == 0)
+        }),
+        private_mode_state_present,
+        private_mode_state_matches_manifest: private_mode_state_present
+            == manifest_private_mode_state_present,
     }
 }
 
@@ -1225,7 +1356,10 @@ pub fn format_snapshot_restore_plan_result(result: &SnapshotRestorePlanResult) -
     out.push_str(&format!("  Archive: {}\n", result.archive_path));
     out.push_str(&format!("  ID:      {}\n", result.snapshot_id));
     out.push_str(&format!("  Target:  {}\n", result.target_dir));
-    out.push_str(&format!("  Mode:    {}\n", "dry-run"));
+    out.push_str(&format!(
+        "  Mode:    {}\n",
+        if result.dry_run { "dry-run" } else { "execute" }
+    ));
     out.push_str(&format!(
         "  Target empty: {}\n",
         if result.target_empty { "yes" } else { "no" }
@@ -1266,6 +1400,39 @@ pub fn format_snapshot_restore_plan_result(result: &SnapshotRestorePlanResult) -
             "absent"
         }
     ));
+
+    if let Some(observed) = &result.observed_checks {
+        out.push_str("\n  Observed after restore:\n");
+        out.push_str(&format!(
+            "    target entries: {}\n",
+            observed.target_entry_count
+        ));
+        out.push_str(&format!(
+            "    source units: {} ({})\n",
+            observed.source_unit_count,
+            if observed.source_unit_ids_match {
+                "match"
+            } else {
+                "mismatch"
+            }
+        ));
+        if let Some(blob_count) = observed.cas_blob_count {
+            out.push_str(&format!("    CAS blobs: {blob_count}\n"));
+        }
+        out.push_str(&format!(
+            "    private mode state: {} ({})\n",
+            if observed.private_mode_state_present {
+                "present"
+            } else {
+                "absent"
+            },
+            if observed.private_mode_state_matches_manifest {
+                "matches manifest"
+            } else {
+                "manifest mismatch"
+            }
+        ));
+    }
 
     if !result.warnings.is_empty() {
         out.push_str("\n  Warnings:\n");
