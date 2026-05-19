@@ -81,6 +81,9 @@ pub const AUTOMATA_STATUS: &str = "automata.status";
 // Ingestors
 pub const INGESTORS_STATUS: &str = "ingestors.status";
 
+// Instructions
+pub const INSTRUCTIONS_HYPRLAND_WORKSPACE_SWITCH: &str = "instructions.hyprland.workspace_switch";
+
 // Ops
 pub const OPS_START: &str = "ops.start";
 pub const OPS_LIST: &str = "ops.list";
