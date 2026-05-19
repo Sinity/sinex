@@ -207,22 +207,14 @@ pub async fn _run_case_with_logical_path(
     expected_event_types: &[&str],
     obligation_names: &[&str],
 ) -> Vec<String> {
-    let mut failures = Vec::new();
-    for &obligation in obligation_names {
-        let result = _run_obligation_with_logical_path(
-            obligation,
-            source_unit_id,
-            adapter_kind,
-            fixture_data,
-            logical_path,
-            expected_event_types,
-        )
-        .await;
-        if let Err(e) = result {
-            failures.push(format!("[{source_unit_id}] obligation '{obligation}': {e}"));
-        }
-    }
-    failures
+    _run_case_with_record_fixture(
+        source_unit_id,
+        adapter_kind,
+        RecordFixtureSpec::byte_range(fixture_data, Some(logical_path)),
+        expected_event_types,
+        obligation_names,
+    )
+    .await
 }
 
 /// Variant of `_run_case` for directory-walk parsers whose production contract
@@ -236,15 +228,65 @@ pub async fn _run_case_with_directory_entry(
     expected_event_types: &[&str],
     obligation_names: &[&str],
 ) -> Vec<String> {
+    use camino::Utf8PathBuf;
+    use sinex_primitives::parser::MaterialAnchor;
+
+    let anchor = MaterialAnchor::DirectoryEntry {
+        path: Utf8PathBuf::from(directory_entry_path),
+        content_hash: content_hash.map(str::to_string),
+    };
+
+    _run_case_with_record_fixture(
+        source_unit_id,
+        adapter_kind,
+        RecordFixtureSpec {
+            fixture_data,
+            anchor,
+            logical_path: Some(directory_entry_path),
+            input_label: "directory entry fixture data",
+        },
+        expected_event_types,
+        obligation_names,
+    )
+    .await
+}
+
+#[derive(Clone)]
+struct RecordFixtureSpec<'a> {
+    fixture_data: &'a [u8],
+    anchor: sinex_primitives::parser::MaterialAnchor,
+    logical_path: Option<&'a str>,
+    input_label: &'static str,
+}
+
+impl<'a> RecordFixtureSpec<'a> {
+    fn byte_range(fixture_data: &'a [u8], logical_path: Option<&'a str>) -> Self {
+        Self {
+            fixture_data,
+            anchor: sinex_primitives::parser::MaterialAnchor::ByteRange {
+                start: 0,
+                len: fixture_data.len() as u64,
+            },
+            logical_path,
+            input_label: "fixture data",
+        }
+    }
+}
+
+async fn _run_case_with_record_fixture(
+    source_unit_id: &str,
+    adapter_kind: AdapterKind,
+    fixture: RecordFixtureSpec<'_>,
+    expected_event_types: &[&str],
+    obligation_names: &[&str],
+) -> Vec<String> {
     let mut failures = Vec::new();
     for &obligation in obligation_names {
-        let result = _run_obligation_with_directory_entry(
+        let result = _run_record_fixture_obligation(
             obligation,
             source_unit_id,
             adapter_kind,
-            fixture_data,
-            directory_entry_path,
-            content_hash,
+            fixture.clone(),
             expected_event_types,
         )
         .await;
@@ -300,46 +342,27 @@ async fn _run_obligation(
     }
 }
 
-async fn _run_obligation_with_logical_path(
+async fn _run_record_fixture_obligation(
     obligation: &str,
     source_unit_id: &str,
     adapter_kind: AdapterKind,
-    fixture_data: &[u8],
-    logical_path: &str,
+    fixture: RecordFixtureSpec<'_>,
     expected_event_types: &[&str],
 ) -> Result<(), String> {
     match obligation {
         "initial_ingestion" => {
-            run_record_initial_ingestion(
-                source_unit_id,
-                fixture_data,
-                logical_path,
-                expected_event_types,
-            )
-            .await
+            run_record_fixture_initial_ingestion(source_unit_id, fixture, expected_event_types)
+                .await
         }
-        "replay" => {
-            run_record_replay(
-                source_unit_id,
-                fixture_data,
-                logical_path,
-                expected_event_types,
-            )
-            .await
+        "replay" => run_record_fixture_replay(source_unit_id, fixture, expected_event_types).await,
+        "drain" => {
+            obligations::drain::run(source_unit_id, adapter_kind, fixture.fixture_data).await
         }
-        "drain" => obligations::drain::run(source_unit_id, adapter_kind, fixture_data).await,
         "isolation" => {
-            obligations::isolation::run(source_unit_id, adapter_kind, fixture_data).await
+            obligations::isolation::run(source_unit_id, adapter_kind, fixture.fixture_data).await
         }
         "privacy" => {
-            run_record_privacy(
-                source_unit_id,
-                adapter_kind,
-                fixture_data,
-                logical_path,
-                expected_event_types,
-            )
-            .await
+            run_record_fixture_privacy(source_unit_id, fixture, expected_event_types).await
         }
         unknown => Err(format!(
             "unknown obligation '{unknown}'; valid: initial_ingestion, replay, drain, isolation, privacy"
@@ -347,113 +370,17 @@ async fn _run_obligation_with_logical_path(
     }
 }
 
-async fn _run_obligation_with_directory_entry(
-    obligation: &str,
+async fn run_record_fixture_initial_ingestion(
     source_unit_id: &str,
-    adapter_kind: AdapterKind,
-    fixture_data: &[u8],
-    directory_entry_path: &str,
-    content_hash: Option<&str>,
-    expected_event_types: &[&str],
-) -> Result<(), String> {
-    match obligation {
-        "initial_ingestion" => {
-            run_directory_entry_initial_ingestion(
-                source_unit_id,
-                fixture_data,
-                directory_entry_path,
-                content_hash,
-                expected_event_types,
-            )
-            .await
-        }
-        "replay" => {
-            run_directory_entry_replay(
-                source_unit_id,
-                fixture_data,
-                directory_entry_path,
-                content_hash,
-                expected_event_types,
-            )
-            .await
-        }
-        "drain" => obligations::drain::run(source_unit_id, adapter_kind, fixture_data).await,
-        "isolation" => {
-            obligations::isolation::run(source_unit_id, adapter_kind, fixture_data).await
-        }
-        "privacy" => {
-            run_directory_entry_privacy(
-                source_unit_id,
-                adapter_kind,
-                fixture_data,
-                directory_entry_path,
-                content_hash,
-                expected_event_types,
-            )
-            .await
-        }
-        unknown => Err(format!(
-            "unknown obligation '{unknown}'; valid: initial_ingestion, replay, drain, isolation, privacy"
-        )),
-    }
-}
-
-async fn run_record_initial_ingestion(
-    source_unit_id: &str,
-    fixture_data: &[u8],
-    logical_path: &str,
+    fixture: RecordFixtureSpec<'_>,
     expected_event_types: &[&str],
 ) -> Result<(), String> {
     let material_id = sinex_primitives::Uuid::now_v7();
-    let outcome = dispatch_record_fixture(source_unit_id, fixture_data, logical_path, material_id)
-        .await
-        .map_err(|e| format!("dispatch error for '{source_unit_id}': {e}"))?;
-
-    if outcome.events.is_empty() {
-        return Err(format!(
-            "initial ingestion for '{source_unit_id}': parser returned no events for fixture data ({} bytes)",
-            fixture_data.len()
-        ));
-    }
-
-    let produced_types: Vec<String> = outcome
-        .events
-        .iter()
-        .map(|e| e.event_type.as_str().to_string())
-        .collect();
-
-    for &expected in expected_event_types {
-        if !produced_types.iter().any(|t| t == expected) {
-            return Err(format!(
-                "initial ingestion for '{source_unit_id}': expected event type '{expected}' \
-                 not found in output. Produced: {produced_types:?}"
-            ));
-        }
-    }
-
-    Ok(())
-}
-
-async fn run_directory_entry_initial_ingestion(
-    source_unit_id: &str,
-    fixture_data: &[u8],
-    directory_entry_path: &str,
-    content_hash: Option<&str>,
-    expected_event_types: &[&str],
-) -> Result<(), String> {
-    use camino::Utf8PathBuf;
-    use sinex_primitives::parser::MaterialAnchor;
-
-    let material_id = sinex_primitives::Uuid::now_v7();
-    let anchor = MaterialAnchor::DirectoryEntry {
-        path: Utf8PathBuf::from(directory_entry_path),
-        content_hash: content_hash.map(str::to_string),
-    };
     let outcome = dispatch_record_fixture_with_anchor(
         source_unit_id,
-        fixture_data,
-        anchor,
-        Some(directory_entry_path),
+        fixture.fixture_data,
+        fixture.anchor,
+        fixture.logical_path,
         material_id,
     )
     .await
@@ -461,8 +388,9 @@ async fn run_directory_entry_initial_ingestion(
 
     if outcome.events.is_empty() {
         return Err(format!(
-            "initial ingestion for '{source_unit_id}': parser returned no events for directory entry fixture data ({} bytes)",
-            fixture_data.len()
+            "initial ingestion for '{source_unit_id}': parser returned no events for {} ({} bytes)",
+            fixture.input_label,
+            fixture.fixture_data.len()
         ));
     }
 
@@ -484,92 +412,28 @@ async fn run_directory_entry_initial_ingestion(
     Ok(())
 }
 
-async fn run_record_replay(
+async fn run_record_fixture_replay(
     source_unit_id: &str,
-    fixture_data: &[u8],
-    logical_path: &str,
+    fixture: RecordFixtureSpec<'_>,
     expected_event_types: &[&str],
 ) -> Result<(), String> {
     let material_id_1 = sinex_primitives::Uuid::now_v7();
-    let outcome_1 =
-        dispatch_record_fixture(source_unit_id, fixture_data, logical_path, material_id_1)
-            .await
-            .map_err(|e| format!("replay first dispatch error for '{source_unit_id}': {e}"))?;
-
-    let material_id_2 = sinex_primitives::Uuid::now_v7();
-    let outcome_2 =
-        dispatch_record_fixture(source_unit_id, fixture_data, logical_path, material_id_2)
-            .await
-            .map_err(|e| format!("replay second dispatch error for '{source_unit_id}': {e}"))?;
-
-    if material_id_1 == material_id_2 {
-        return Err("material IDs must differ between replay runs".into());
-    }
-
-    let types_1: Vec<&str> = outcome_1
-        .events
-        .iter()
-        .map(|e| e.event_type.as_str())
-        .collect();
-    let types_2: Vec<&str> = outcome_2
-        .events
-        .iter()
-        .map(|e| e.event_type.as_str())
-        .collect();
-    if types_1 != types_2 {
-        return Err(format!(
-            "replay for '{source_unit_id}': event types differ between runs. \
-             run1={types_1:?} run2={types_2:?}"
-        ));
-    }
-
-    for &expected in expected_event_types {
-        if !types_1.contains(&expected) {
-            return Err(format!(
-                "replay for '{source_unit_id}': expected event type '{expected}' \
-                 missing from replay output. Got: {types_1:?}"
-            ));
-        }
-    }
-
-    Ok(())
-}
-
-async fn run_directory_entry_replay(
-    source_unit_id: &str,
-    fixture_data: &[u8],
-    directory_entry_path: &str,
-    content_hash: Option<&str>,
-    expected_event_types: &[&str],
-) -> Result<(), String> {
-    use camino::Utf8PathBuf;
-    use sinex_primitives::parser::MaterialAnchor;
-
-    let material_id_1 = sinex_primitives::Uuid::now_v7();
-    let anchor_1 = MaterialAnchor::DirectoryEntry {
-        path: Utf8PathBuf::from(directory_entry_path),
-        content_hash: content_hash.map(str::to_string),
-    };
     let outcome_1 = dispatch_record_fixture_with_anchor(
         source_unit_id,
-        fixture_data,
-        anchor_1,
-        Some(directory_entry_path),
+        fixture.fixture_data,
+        fixture.anchor.clone(),
+        fixture.logical_path,
         material_id_1,
     )
     .await
     .map_err(|e| format!("replay first dispatch error for '{source_unit_id}': {e}"))?;
 
     let material_id_2 = sinex_primitives::Uuid::now_v7();
-    let anchor_2 = MaterialAnchor::DirectoryEntry {
-        path: Utf8PathBuf::from(directory_entry_path),
-        content_hash: content_hash.map(str::to_string),
-    };
     let outcome_2 = dispatch_record_fixture_with_anchor(
         source_unit_id,
-        fixture_data,
-        anchor_2,
-        Some(directory_entry_path),
+        fixture.fixture_data,
+        fixture.anchor,
+        fixture.logical_path,
         material_id_2,
     )
     .await
@@ -608,23 +472,16 @@ async fn run_directory_entry_replay(
     Ok(())
 }
 
-async fn run_record_privacy(
+async fn run_record_fixture_privacy(
     source_unit_id: &str,
-    adapter_kind: AdapterKind,
-    fixture_data: &[u8],
-    logical_path: &str,
+    fixture: RecordFixtureSpec<'_>,
     expected_event_types: &[&str],
 ) -> Result<(), String> {
     use sinex_primitives::privacy::{self, ProcessingContext};
 
-    run_record_initial_ingestion(
-        source_unit_id,
-        fixture_data,
-        logical_path,
-        expected_event_types,
-    )
-    .await
-    .map_err(|e| format!("privacy/clean-path: {e}"))?;
+    run_record_fixture_initial_ingestion(source_unit_id, fixture.clone(), expected_event_types)
+        .await
+        .map_err(|e| format!("privacy/clean-path: {e}"))?;
 
     let secret_text = "export TOKEN=ghp_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
     let engine_result = privacy::engine()
@@ -645,79 +502,11 @@ async fn run_record_privacy(
     }
 
     let material_id = sinex_primitives::Uuid::now_v7();
-    if let Ok(outcome) = dispatch_record_fixture(
-        source_unit_id,
-        redacted.as_bytes(),
-        logical_path,
-        material_id,
-    )
-    .await
-    {
-        for event in &outcome.events {
-            let payload_str = event.payload.to_string();
-            if payload_str.contains("ghp_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA") {
-                return Err(format!(
-                    "privacy for '{source_unit_id}': event payload contains raw decoy token \
-                     after redaction. Payload: {payload_str}"
-                ));
-            }
-        }
-    }
-
-    let _ = adapter_kind;
-    Ok(())
-}
-
-async fn run_directory_entry_privacy(
-    source_unit_id: &str,
-    adapter_kind: AdapterKind,
-    fixture_data: &[u8],
-    directory_entry_path: &str,
-    content_hash: Option<&str>,
-    expected_event_types: &[&str],
-) -> Result<(), String> {
-    use camino::Utf8PathBuf;
-    use sinex_primitives::parser::MaterialAnchor;
-    use sinex_primitives::privacy::{self, ProcessingContext};
-
-    run_directory_entry_initial_ingestion(
-        source_unit_id,
-        fixture_data,
-        directory_entry_path,
-        content_hash,
-        expected_event_types,
-    )
-    .await
-    .map_err(|e| format!("privacy/clean-path: {e}"))?;
-
-    let secret_text = "export TOKEN=ghp_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
-    let engine_result = privacy::engine()
-        .map_err(|e| format!("privacy engine init failed: {e}"))?
-        .process(secret_text, ProcessingContext::Command);
-
-    if !engine_result.any_matched() {
-        return Err(format!(
-            "privacy for '{source_unit_id}': privacy engine did not match decoy token"
-        ));
-    }
-
-    let redacted = engine_result.text.as_ref();
-    if redacted.contains("ghp_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA") {
-        return Err(format!(
-            "privacy for '{source_unit_id}': redacted text still contains decoy token"
-        ));
-    }
-
-    let material_id = sinex_primitives::Uuid::now_v7();
-    let anchor = MaterialAnchor::DirectoryEntry {
-        path: Utf8PathBuf::from(directory_entry_path),
-        content_hash: content_hash.map(str::to_string),
-    };
     if let Ok(outcome) = dispatch_record_fixture_with_anchor(
         source_unit_id,
         redacted.as_bytes(),
-        anchor,
-        Some(directory_entry_path),
+        fixture.anchor,
+        fixture.logical_path,
         material_id,
     )
     .await
@@ -733,29 +522,7 @@ async fn run_directory_entry_privacy(
         }
     }
 
-    let _ = adapter_kind;
     Ok(())
-}
-
-async fn dispatch_record_fixture(
-    source_unit_id: &str,
-    fixture_data: &[u8],
-    logical_path: &str,
-    material_id: sinex_primitives::Uuid,
-) -> Result<sinex_source_worker::dispatch::ParseOutcome, String> {
-    use sinex_primitives::parser::MaterialAnchor;
-
-    dispatch_record_fixture_with_anchor(
-        source_unit_id,
-        fixture_data,
-        MaterialAnchor::ByteRange {
-            start: 0,
-            len: fixture_data.len() as u64,
-        },
-        Some(logical_path),
-        material_id,
-    )
-    .await
 }
 
 async fn dispatch_record_fixture_with_anchor(
