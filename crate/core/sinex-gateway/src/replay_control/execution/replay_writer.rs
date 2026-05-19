@@ -16,9 +16,7 @@ use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 use tracing::{debug, error, info, warn};
 
-use sinex_db::replay::state_machine::{
-    ReplayCheckpoint, ReplayScope, ReplayState,
-};
+use sinex_db::replay::state_machine::{ReplayCheckpoint, ReplayScope, ReplayState};
 
 impl ReplayExecutionEngine {
     /// Record replacement relations between archived (old) events and newly-created events.

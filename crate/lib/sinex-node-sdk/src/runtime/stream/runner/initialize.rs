@@ -8,8 +8,8 @@ use super::{
     Arc, CheckpointManager, DEFAULT_EVENT_CHANNEL_SIZE, Event, EventBatcherConfig, EventEmitter,
     EventTransport, HashMap, JsonValue, Node, NodeHandles, NodeInitContext, NodeResult, NodeRunner,
     NodeState, NodeType, PgPool, ProcessingModel, RunnerLifecycle, ServiceInfo, SinexError,
-    Utf8PathBuf, create_checkpoint_kv, info, maybe_start_schema_listener, mpsc, spawn_event_batcher,
-    watch,
+    Utf8PathBuf, create_checkpoint_kv, info, maybe_start_schema_listener, mpsc,
+    spawn_event_batcher, watch,
 };
 use sinex_primitives::domain::ServiceName;
 

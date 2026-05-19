@@ -172,9 +172,8 @@ fn records_from_file_drop_event(
         .iter()
         .cloned()
         .map(|path| {
-            let utf8_path = Utf8PathBuf::from_path_buf(path).unwrap_or_else(|path| {
-                Utf8PathBuf::from(path.to_string_lossy().to_string())
-            });
+            let utf8_path = Utf8PathBuf::from_path_buf(path)
+                .unwrap_or_else(|path| Utf8PathBuf::from(path.to_string_lossy().to_string()));
             let metadata = serde_json::json!({
                 "event_kind": format!("{kind:?}"),
                 "path": utf8_path.as_str(),
@@ -382,8 +381,8 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn file_drop_event_emits_one_record_per_affected_path()
-    -> xtask::sandbox::TestResult<()> {
+    async fn file_drop_event_emits_one_record_per_affected_path() -> xtask::sandbox::TestResult<()>
+    {
         let material_id = dummy_material_id();
         let first = std::path::PathBuf::from("/tmp/sinex-file-drop-a");
         let second = std::path::PathBuf::from("/tmp/sinex-file-drop-b");
