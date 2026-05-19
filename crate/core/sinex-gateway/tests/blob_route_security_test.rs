@@ -47,7 +47,7 @@ async fn blob_test_services(
     let repo_utf8 = Utf8PathBuf::from_path_buf(repo_path.clone())
         .map_err(|_| color_eyre::eyre::eyre!("content-store path is not valid UTF-8"))?;
 
-    MaterialContentStore::init(&repo_utf8, Some(repo_name)).await?;
+    MaterialContentStore::init_with_config(&repo_utf8, Some(repo_name), true).await?;
 
     let mut config = GatewayConfig::default().with_cli_overrides(
         Some(ctx.database_url().to_string()),

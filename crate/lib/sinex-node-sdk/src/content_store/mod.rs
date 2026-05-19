@@ -483,12 +483,6 @@ impl MaterialContentStore {
         Ok(())
     }
 
-    /// Initialize a content-store root with the current git-annex large-object backend.
-    #[deprecated(note = "Use `init_with_config` with explicit legacy_annex_enabled")]
-    pub async fn init(repo_path: &Utf8Path, description: Option<&str>) -> NodeResult<()> {
-        Self::init_with_config(repo_path, description, true).await
-    }
-
     fn require_utf8_path(path: impl AsRef<Path>) -> NodeResult<Utf8PathBuf> {
         Utf8PathBuf::from_path_buf(path.as_ref().to_path_buf()).map_err(|path| {
             SinexError::validation(format!(
