@@ -318,6 +318,7 @@ pub struct NodeArgs {
 }
 
 // Re-export commonly used types from dependencies
+#[cfg(feature = "messaging")]
 use sinex_primitives::domain::ServiceName;
 pub use sinex_primitives::error::{ErrorDetails, SinexError};
 pub use sinex_primitives::temporal::Timestamp;
