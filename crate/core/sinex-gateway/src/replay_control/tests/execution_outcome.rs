@@ -1,4 +1,3 @@
-#[allow(unused_imports)]
 use super::*;
 #[sinex_test]
 async fn replay_execution_records_outcome(ctx: TestContext) -> Result<()> {

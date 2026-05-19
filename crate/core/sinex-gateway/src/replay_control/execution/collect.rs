@@ -2,8 +2,6 @@
 //! abort handling for `ReplayExecutionEngine`. See `execution/mod.rs` for the
 //! engine type itself and the public-API entry points.
 
-#![allow(unused_imports)]
-
 use super::{
     Context, ExpectedReplayOutputs, OperationOutputEvent, REPLAY_OUTPUT_VISIBILITY_TIMEOUT,
     ReplayExecutionEngine, Result, ScopeInvalidationBucket, StreamExt, eyre,

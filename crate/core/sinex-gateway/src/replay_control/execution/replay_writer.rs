@@ -1,8 +1,6 @@
 //! Event-replacement recording and the replay scan/loop core for
 //! `ReplayExecutionEngine`. See `execution/mod.rs` for the engine type.
 
-#![allow(unused_imports)]
-
 use super::{
     Context, ReplayExecutionEngine, Result, ScopeInvalidationBucket, StreamExt, eyre,
     replay_scope_drift_error, stale_preview_missing_root_ids_error,

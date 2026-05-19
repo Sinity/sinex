@@ -228,13 +228,11 @@ impl HistoryDb {
         let mut query = String::from(LATEST_PER_PACKAGE_CTE_OPEN);
 
         // Command filter in CTE
-        let mut param_idx = 1;
         let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
 
         if let Some(cmd) = command_filter {
-            query.push_str(&format!(" AND i.command = ?{param_idx}"));
+            query.push_str(&format!(" AND i.command = ?{}", params_vec.len() + 1));
             params_vec.push(Box::new(cmd.to_string()));
-            param_idx += 1;
         }
 
         query.push_str(LATEST_PER_PACKAGE_CTE_CLOSE);
@@ -252,27 +250,29 @@ impl HistoryDb {
         );
 
         if let Some(level) = level_filter {
-            query.push_str(&format!(" AND d.level = ?{param_idx}"));
+            query.push_str(&format!(" AND d.level = ?{}", params_vec.len() + 1));
             params_vec.push(Box::new(level.to_string()));
-            param_idx += 1;
         }
 
         if let Some(pattern) = file_pattern {
-            query.push_str(&format!(" AND d.file_path LIKE ?{param_idx}"));
+            query.push_str(&format!(
+                " AND d.file_path LIKE ?{}",
+                params_vec.len() + 1
+            ));
             params_vec.push(Box::new(format!("%{pattern}%")));
-            param_idx += 1;
         }
 
         if let Some(pkg) = package_filter {
-            query.push_str(&format!(" AND d.package = ?{param_idx}"));
+            query.push_str(&format!(" AND d.package = ?{}", params_vec.len() + 1));
             params_vec.push(Box::new(pkg.to_string()));
-            param_idx += 1;
         }
 
         if fixable_only {
-            query.push_str(&format!(" AND d.fix_applicability = ?{param_idx}"));
+            query.push_str(&format!(
+                " AND d.fix_applicability = ?{}",
+                params_vec.len() + 1
+            ));
             params_vec.push(Box::new("MachineApplicable".to_string()));
-            let _ = param_idx; // suppress unused warning
         }
 
         query.push_str(" ORDER BY d.level ASC, d.package ASC, d.file_path ASC, d.line ASC");

@@ -1,4 +1,3 @@
-#[allow(unused_imports)]
 use super::*;
 #[sinex_test]
 async fn replay_execute_rejects_zero_event_preview_before_execution(
