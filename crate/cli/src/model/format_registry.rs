@@ -543,7 +543,7 @@ pub fn build() -> HashMap<&'static str, FormatCapability> {
     m.insert(
         "admin snapshot-restore",
         FormatCapability::single_shot(TABLE_JSON_YAML)
-            .with_note("dry-run restore drill plan and archive sensitivity classification"),
+            .with_note("restore drill plan/execution and archive sensitivity classification"),
     );
 
     m
