@@ -70,9 +70,6 @@ use std::sync::Arc;
 ///
 /// // 3-arg handler (pool_auth_rpc, nats_rpc)
 /// .pool_auth_rpc("method", Role::Admin, boxed!(handle_fn, 3))
-///
-/// // 4-arg handler (nats_auth_rpc)
-/// .nats_auth_rpc("method", Role::Admin, boxed!(handle_fn, 4))
 /// ```
 macro_rules! boxed {
     ($f:expr) => {
@@ -345,40 +342,6 @@ impl RpcRegistry {
         self
     }
 
-    /// Register a replay control RPC handler
-    ///
-    /// Automatically extracts and validates `ReplayControlClient` from `ServiceContainer`
-    /// and passes through the authenticated actor context.
-    pub(crate) fn replay_rpc<F>(mut self, method: &'static str, role: Role, f: F) -> Self
-    where
-        F: for<'a> Fn(
-                &'a ReplayControlClient,
-                JsonValue,
-                &'a RpcAuthContext,
-            ) -> Pin<Box<dyn Future<Output = Result<JsonValue>> + Send + 'a>>
-            + Send
-            + Sync
-            + 'static,
-    {
-        let f = Arc::new(f);
-        self.methods.insert(
-            method,
-            RegistryEntry {
-                handler: Arc::new(move |params, services, auth| {
-                    let f = Arc::clone(&f);
-                    Box::pin(async move {
-                        let client = services.replay_control.as_ref().ok_or_else(|| {
-                            SinexError::configuration("Replay control bus is not initialized")
-                        })?;
-                        f(client, params, auth).await
-                    })
-                }),
-                required_role: role,
-            },
-        );
-        self
-    }
-
     /// Register a typed replay-control RPC handler.
     ///
     /// The registry owns the JSON boundary and extracts the replay-control
@@ -455,41 +418,6 @@ impl RpcRegistry {
         self
     }
 
-    /// Register a NATS-backed RPC handler (with auth context)
-    ///
-    /// Automatically extracts NATS client and environment from `ServiceContainer`.
-    pub(crate) fn nats_auth_rpc<F>(mut self, method: &'static str, role: Role, f: F) -> Self
-    where
-        F: for<'a> Fn(
-                &'a async_nats::Client,
-                &'a sinex_primitives::environment::SinexEnvironment,
-                JsonValue,
-                &'a RpcAuthContext,
-            ) -> Pin<Box<dyn Future<Output = Result<JsonValue>> + Send + 'a>>
-            + Send
-            + Sync
-            + 'static,
-    {
-        let f = Arc::new(f);
-        self.methods.insert(
-            method,
-            RegistryEntry {
-                handler: Arc::new(move |params, services, auth| {
-                    let f = Arc::clone(&f);
-                    Box::pin(async move {
-                        let nats = services.nats_client().ok_or_else(|| {
-                            SinexError::configuration("NATS client is not available")
-                        })?;
-                        let env = services.environment();
-                        f(nats, env, params, auth).await
-                    })
-                }),
-                required_role: role,
-            },
-        );
-        self
-    }
-
     /// Register a typed NATS-backed RPC handler with auth context.
     pub(crate) fn nats_auth_typed_rpc<Req, Resp, F>(
         mut self,
@@ -526,44 +454,6 @@ impl RpcRegistry {
                     })
                 }),
                 required_role: method.role.into(),
-            },
-        );
-        self
-    }
-
-    /// Register a coordination RPC handler
-    ///
-    /// Automatically extracts and validates `CoordinationKvClient` from `ServiceContainer`.
-    pub(crate) fn coord_rpc<F>(mut self, method: &'static str, role: Role, f: F) -> Self
-    where
-        F: for<'a> Fn(
-                &'a CoordinationKvClient,
-                JsonValue,
-            ) -> Pin<Box<dyn Future<Output = Result<JsonValue>> + Send + 'a>>
-            + Send
-            + Sync
-            + 'static,
-    {
-        let f = Arc::new(f);
-        self.methods.insert(
-            method,
-            RegistryEntry {
-                handler: Arc::new(move |params, services, _auth| {
-                    let f = Arc::clone(&f);
-                    Box::pin(async move {
-                        let client = services
-                            .coordination
-                            .as_ref()
-                            .map(std::convert::AsRef::as_ref)
-                            .ok_or_else(|| {
-                                SinexError::configuration(
-                                    "Coordination client is not initialized (NATS connection required)"
-                                )
-                            })?;
-                        f(client, params).await
-                    })
-                }),
-                required_role: role,
             },
         );
         self
