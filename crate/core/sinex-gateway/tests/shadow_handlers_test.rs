@@ -1,12 +1,9 @@
 mod common;
 
 use common::{NatsHarness, admin_auth, ensure_events_stream};
-use serde_json::json;
 use sinex_gateway::handlers::{handle_shadow_create, handle_shadow_delete, handle_shadow_list};
 use sinex_primitives::error::ErrorClass;
-use sinex_primitives::rpc::shadow::{
-    ShadowCreateResponse, ShadowDeleteResponse, ShadowListResponse,
-};
+use sinex_primitives::rpc::shadow::{ShadowCreateRequest, ShadowDeleteRequest, ShadowListRequest};
 use xtask::sandbox::prelude::*;
 
 #[sinex_test]
@@ -15,10 +12,12 @@ async fn shadow_create_requires_dev_prefix(ctx: TestContext) -> TestResult<()> {
 
     let err = handle_shadow_create(
         &harness.services,
-        json!({
-            "consumer_name": "production-consumer",
-            "from_beginning": true
-        }),
+        ShadowCreateRequest {
+            consumer_name: "production-consumer".to_string(),
+            subject_filter: None,
+            from_beginning: true,
+            from_sequence: None,
+        },
     )
     .await
     .expect_err("consumer names without dev- prefix must fail");
@@ -36,37 +35,34 @@ async fn shadow_create_and_list(ctx: TestContext) -> TestResult<()> {
 
     let result = handle_shadow_create(
         &harness.services,
-        json!({
-            "consumer_name": "dev-test-123",
-            "subject_filter": harness.env.nats_subject("events.>"),
-            "from_beginning": true
-        }),
+        ShadowCreateRequest {
+            consumer_name: "dev-test-123".to_string(),
+            subject_filter: Some(harness.env.nats_subject("events.>")),
+            from_beginning: true,
+            from_sequence: None,
+        },
     )
     .await?;
 
-    let create_response: ShadowCreateResponse = serde_json::from_value(result)?;
-    assert_eq!(create_response.consumer.consumer_name, "dev-test-123");
-    assert_eq!(create_response.consumer.stream_name, stream_name);
+    assert_eq!(result.consumer.consumer_name, "dev-test-123");
+    assert_eq!(result.consumer.stream_name, stream_name);
 
-    let list_result = handle_shadow_list(&harness.services, json!({})).await?;
-    let list_response: ShadowListResponse = serde_json::from_value(list_result)?;
-    assert_eq!(list_response.consumers.len(), 1);
+    let list_result = handle_shadow_list(&harness.services, ShadowListRequest::default()).await?;
+    assert_eq!(list_result.consumers.len(), 1);
 
     let delete_result = handle_shadow_delete(
         &harness.services,
-        json!({
-            "consumer_name": "dev-test-123"
-        }),
+        ShadowDeleteRequest {
+            consumer_name: "dev-test-123".to_string(),
+        },
         &admin_auth(),
     )
     .await?;
 
-    let delete_response: ShadowDeleteResponse = serde_json::from_value(delete_result)?;
-    assert_eq!(delete_response.status, "success");
+    assert_eq!(delete_result.status, "success");
 
-    let list_result = handle_shadow_list(&harness.services, json!({})).await?;
-    let list_response: ShadowListResponse = serde_json::from_value(list_result)?;
-    assert!(list_response.consumers.is_empty());
+    let list_result = handle_shadow_list(&harness.services, ShadowListRequest::default()).await?;
+    assert!(list_result.consumers.is_empty());
 
     Ok(())
 }
@@ -78,10 +74,12 @@ async fn shadow_create_requires_subject_filter(ctx: TestContext) -> TestResult<(
 
     let err = handle_shadow_create(
         &harness.services,
-        json!({
-            "consumer_name": "dev-test-456",
-            "from_beginning": true
-        }),
+        ShadowCreateRequest {
+            consumer_name: "dev-test-456".to_string(),
+            subject_filter: None,
+            from_beginning: true,
+            from_sequence: None,
+        },
     )
     .await
     .expect_err("missing subject_filter must fail");
@@ -97,9 +95,9 @@ async fn shadow_delete_requires_dev_prefix(ctx: TestContext) -> TestResult<()> {
 
     let err = handle_shadow_delete(
         &harness.services,
-        json!({
-            "consumer_name": "production-consumer"
-        }),
+        ShadowDeleteRequest {
+            consumer_name: "production-consumer".to_string(),
+        },
         &admin_auth(),
     )
     .await

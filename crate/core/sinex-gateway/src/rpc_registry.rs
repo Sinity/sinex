@@ -44,6 +44,7 @@ use sinex_primitives::rpc::{
         REPLAY_LIST_OPERATIONS_METHOD, REPLAY_OPERATION_STATUS_METHOD,
         REPLAY_PREVIEW_OPERATION_METHOD, REPLAY_SUBMIT_OPERATION_METHOD,
     },
+    shadow::{SHADOW_CREATE_METHOD, SHADOW_DELETE_METHOD, SHADOW_LIST_METHOD},
     sources::{
         SOURCES_ANNOTATE_METHOD, SOURCES_ARCHIVE_METHOD, SOURCES_CONTINUITY_EXPLAIN_GAP_METHOD,
         SOURCES_CONTINUITY_GET_METHOD, SOURCES_CONTINUITY_LIST_METHOD, SOURCES_CONTINUITY_METHOD,
@@ -1010,25 +1011,7 @@ fn build_registry_impl() -> RpcRegistry {
             boxed!(handle_tombstone_status, 3),
         )
         // Shadow consumer mutations (Admin)
-        .register(
-            methods::SHADOW_CREATE,
-            Role::Admin,
-            |params, services, _auth| {
-                Box::pin(async move { handle_shadow_create(services, params).await })
-            },
-        )
-        .register(
-            methods::SHADOW_LIST,
-            Role::ReadOnly,
-            |params, services, _auth| {
-                Box::pin(async move { handle_shadow_list(services, params).await })
-            },
-        )
-        .register(
-            methods::SHADOW_DELETE,
-            Role::Admin,
-            |params, services, auth| {
-                Box::pin(async move { handle_shadow_delete(services, params, auth).await })
-            },
-        )
+        .service_typed_rpc(SHADOW_CREATE_METHOD, boxed!(handle_shadow_create))
+        .service_typed_rpc(SHADOW_LIST_METHOD, boxed!(handle_shadow_list))
+        .service_auth_typed_rpc(SHADOW_DELETE_METHOD, boxed!(handle_shadow_delete, 3))
 }

@@ -11,7 +11,6 @@
 
 use crate::service_container::ServiceContainer;
 use async_nats::jetstream;
-use serde_json::Value;
 use sinex_node_sdk::runtime::stream::{
     ShadowConsumerSpec, create_shadow_consumer, delete_consumer, list_consumers,
 };
@@ -28,14 +27,14 @@ pub use sinex_primitives::rpc::shadow::{
 ///
 /// This creates a durable consumer that receives copies of all events
 /// matching the filter without affecting production consumers.
-pub async fn handle_shadow_create(services: &ServiceContainer, params: Value) -> Result<Value> {
+pub async fn handle_shadow_create(
+    services: &ServiceContainer,
+    request: ShadowCreateRequest,
+) -> Result<ShadowCreateResponse> {
     let nats_client = services
         .nats_client()
         .ok_or_else(|| SinexError::configuration("NATS client is not available"))?;
     let env = services.environment();
-    let request: ShadowCreateRequest = serde_json::from_value(params).map_err(|error| {
-        SinexError::serialization("Invalid shadow.create parameters").with_std_error(&error)
-    })?;
 
     // Validate consumer name format (must start with "dev-" for safety)
     if !request.consumer_name.starts_with("dev-") {
@@ -86,7 +85,7 @@ pub async fn handle_shadow_create(services: &ServiceContainer, params: Value) ->
         "Created shadow consumer for The Tether"
     );
 
-    let response = ShadowCreateResponse {
+    Ok(ShadowCreateResponse {
         consumer: ShadowConsumerInfo {
             consumer_name: request.consumer_name,
             stream_name,
@@ -94,23 +93,18 @@ pub async fn handle_shadow_create(services: &ServiceContainer, params: Value) ->
             num_pending: info.num_pending,
             first_sequence: info.delivered.stream_sequence,
         },
-    };
-
-    serde_json::to_value(response).map_err(|error| {
-        SinexError::serialization("failed to serialize shadow.create response")
-            .with_std_error(&error)
     })
 }
 
 /// List active shadow consumers
-pub async fn handle_shadow_list(services: &ServiceContainer, params: Value) -> Result<Value> {
+pub async fn handle_shadow_list(
+    services: &ServiceContainer,
+    request: ShadowListRequest,
+) -> Result<ShadowListResponse> {
     let nats_client = services
         .nats_client()
         .ok_or_else(|| SinexError::configuration("NATS client is not available"))?;
     let env = services.environment();
-    let request: ShadowListRequest = super::parse_default_on_null(params).map_err(|error| {
-        SinexError::serialization("Invalid shadow.list parameters").with_std_error(&error)
-    })?;
 
     let js = jetstream::new(nats_client.clone());
     let stream_name = env.nats_stream_name("EVENTS");
@@ -145,12 +139,8 @@ pub async fn handle_shadow_list(services: &ServiceContainer, params: Value) -> R
         }
     }
 
-    let response = ShadowListResponse {
+    Ok(ShadowListResponse {
         consumers: shadow_consumers,
-    };
-
-    serde_json::to_value(response).map_err(|error| {
-        SinexError::serialization("failed to serialize shadow.list response").with_std_error(&error)
     })
 }
 
@@ -162,16 +152,13 @@ pub async fn handle_shadow_list(services: &ServiceContainer, params: Value) -> R
 /// The auth context is logged for audit purposes.
 pub async fn handle_shadow_delete(
     services: &ServiceContainer,
-    params: Value,
+    request: ShadowDeleteRequest,
     auth: &crate::rpc_server::RpcAuthContext,
-) -> Result<Value> {
+) -> Result<ShadowDeleteResponse> {
     let nats_client = services
         .nats_client()
         .ok_or_else(|| SinexError::configuration("NATS client is not available"))?;
     let env = services.environment();
-    let request: ShadowDeleteRequest = serde_json::from_value(params).map_err(|error| {
-        SinexError::serialization("Invalid shadow.delete parameters").with_std_error(&error)
-    })?;
 
     // Safety check: only allow deleting dev- prefixed consumers
     if !request.consumer_name.starts_with("dev-") {
@@ -197,13 +184,8 @@ pub async fn handle_shadow_delete(
         "Shadow consumer deleted"
     );
 
-    let response = ShadowDeleteResponse {
+    Ok(ShadowDeleteResponse {
         status: "success".to_string(),
         consumer_name: request.consumer_name,
-    };
-
-    serde_json::to_value(response).map_err(|error| {
-        SinexError::serialization("failed to serialize shadow.delete response")
-            .with_std_error(&error)
     })
 }
