@@ -1013,6 +1013,11 @@ fn apply_diagnostic_filters(
     });
 }
 
+fn retain_existing_file_diagnostics(diagnostics: &mut Vec<crate::history::StoredDiagnostic>) {
+    let workspace_root = crate::config::workspace_root();
+    diagnostics.retain(|diagnostic| diagnostic.points_to_existing_file(&workspace_root));
+}
+
 /// Format a file path + line for display (truncates long paths).
 fn format_file_loc(path: &Option<String>, line: Option<u32>) -> String {
     match (path, line) {
@@ -1151,6 +1156,7 @@ fn execute_diagnostics_current(
     ctx: &CommandContext,
 ) -> Result<CommandResult> {
     let mut diagnostics = db.get_current_diagnostics(level, file, package, command, fixable)?;
+    retain_existing_file_diagnostics(&mut diagnostics);
     apply_diagnostic_filters(
         &mut diagnostics,
         DiagnosticFilter::new(level, file, command, package, code, fixable),
@@ -1580,6 +1586,7 @@ fn execute_diagnostics_by_code(
     ctx: &CommandContext,
 ) -> Result<CommandResult> {
     let mut diagnostics = db.get_current_diagnostics(level, file, package, command, fixable)?;
+    retain_existing_file_diagnostics(&mut diagnostics);
     apply_diagnostic_filters(
         &mut diagnostics,
         DiagnosticFilter::new(level, file, command, package, code, fixable),

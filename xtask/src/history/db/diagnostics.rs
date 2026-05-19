@@ -1,6 +1,7 @@
 use color_eyre::eyre::{Context, Result};
 use rusqlite::{OptionalExtension, params};
 use serde::{Deserialize, Serialize};
+use std::path::Path;
 
 use super::{
     HistoryDb, InvocationStatus, LATEST_PER_PACKAGE_CTE_CLOSE, LATEST_PER_PACKAGE_CTE_OPEN,
@@ -676,6 +677,26 @@ pub struct StoredDiagnostic {
     pub source_command: Option<String>,
     /// When the source invocation ran
     pub source_time: Option<String>,
+}
+
+impl StoredDiagnostic {
+    /// Whether this diagnostic points at a file that still exists in the checkout.
+    ///
+    /// Diagnostics without a file path are kept: they may be command-level or
+    /// tool-level messages rather than source diagnostics. Relative paths are
+    /// interpreted under the supplied workspace root.
+    #[must_use]
+    pub fn points_to_existing_file(&self, workspace_root: &Path) -> bool {
+        let Some(file_path) = self.file_path.as_deref() else {
+            return true;
+        };
+        let path = Path::new(file_path);
+        if path.is_absolute() {
+            path.exists()
+        } else {
+            workspace_root.join(path).exists()
+        }
+    }
 }
 
 /// Aggregate diagnostic counts by level (used by `status --summary`).
