@@ -66,7 +66,7 @@ impl ReplayExecutionEngine {
         Ok(all_events)
     }
 
-    pub(crate) async fn collect_operation_output_events(
+    pub(super) async fn collect_operation_output_events(
         &self,
         pool: &sqlx::PgPool,
         operation_id: Uuid,

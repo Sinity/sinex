@@ -5,7 +5,6 @@ use serde::Deserialize;
 use sinex_db::replay::state_machine::{
     ReplayCheckpoint, ReplayOperation, ReplayState, ReplayStateMachine,
 };
-use sinex_db::repositories::DbPoolExt;
 use sinex_primitives::domain::{EventSource, EventType, NodeName};
 use sinex_primitives::environment::{SinexEnvironment, environment};
 use sinex_primitives::{SinexError, Timestamp, Uuid};
