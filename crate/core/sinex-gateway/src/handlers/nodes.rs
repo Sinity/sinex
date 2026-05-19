@@ -153,13 +153,10 @@ pub async fn handle_nodes_list(
 pub async fn handle_nodes_drain(
     nats_client: &async_nats::Client,
     env: &SinexEnvironment,
-    params: Value,
+    drain_params: NodeDrainRequest,
     auth: &crate::rpc_server::RpcAuthContext,
-) -> Result<Value> {
+) -> Result<NodeDrainResponse> {
     use tracing::info;
-
-    let drain_params: NodeDrainRequest = serde_json::from_value(params)
-        .map_err(|e| SinexError::serialization("invalid drain request").with_std_error(&e))?;
 
     info!(
         actor = %auth.actor_id(),
@@ -183,11 +180,10 @@ pub async fn handle_nodes_drain(
 
     publish_node_control(nats_client, subject, payload, "drain command").await?;
 
-    serde_json::to_value(NodeDrainResponse {
+    Ok(NodeDrainResponse {
         status: OperationStatus::Pending,
         node_id: drain_params.node_id,
     })
-    .map_err(|e| SinexError::serialization("failed to serialize drain response").with_std_error(&e))
 }
 
 /// Handle POST /nodes/{id}/resume - resume node processing
@@ -199,13 +195,10 @@ pub async fn handle_nodes_drain(
 pub async fn handle_nodes_resume(
     nats_client: &async_nats::Client,
     env: &SinexEnvironment,
-    params: Value,
+    resume_params: NodeResumeRequest,
     auth: &crate::rpc_server::RpcAuthContext,
-) -> Result<Value> {
+) -> Result<NodeResumeResponse> {
     use tracing::info;
-
-    let resume_params: NodeResumeRequest = serde_json::from_value(params)
-        .map_err(|e| SinexError::serialization("invalid resume request").with_std_error(&e))?;
 
     info!(
         actor = %auth.actor_id(),
@@ -227,12 +220,9 @@ pub async fn handle_nodes_resume(
 
     publish_node_control(nats_client, subject, payload, "resume command").await?;
 
-    serde_json::to_value(NodeResumeResponse {
+    Ok(NodeResumeResponse {
         status: OperationStatus::Pending,
         node_id: resume_params.node_id,
-    })
-    .map_err(|e| {
-        SinexError::serialization("failed to serialize resume response").with_std_error(&e)
     })
 }
 
@@ -245,13 +235,10 @@ pub async fn handle_nodes_resume(
 pub async fn handle_nodes_set_horizon(
     nats_client: &async_nats::Client,
     env: &SinexEnvironment,
-    params: Value,
+    horizon_params: NodeSetHorizonRequest,
     auth: &crate::rpc_server::RpcAuthContext,
-) -> Result<Value> {
+) -> Result<NodeSetHorizonResponse> {
     use tracing::info;
-
-    let horizon_params: NodeSetHorizonRequest = serde_json::from_value(params)
-        .map_err(|e| SinexError::serialization("invalid set-horizon request").with_std_error(&e))?;
 
     info!(
         actor = %auth.actor_id(),
@@ -275,12 +262,9 @@ pub async fn handle_nodes_set_horizon(
 
     publish_node_control(nats_client, subject, payload, "set-horizon command").await?;
 
-    serde_json::to_value(NodeSetHorizonResponse {
+    Ok(NodeSetHorizonResponse {
         status: OperationStatus::Pending,
         node_id: horizon_params.node_id,
         horizon: horizon_params.horizon,
-    })
-    .map_err(|e| {
-        SinexError::serialization("failed to serialize set-horizon response").with_std_error(&e)
     })
 }

@@ -14,6 +14,7 @@ use sinex_primitives::rpc::{
         InstanceHealthRequest, InstanceHealthResponse, InstanceInfo, ListInstancesRequest,
         ListInstancesResponse,
     },
+    nodes::{NODES_DRAIN_METHOD, NODES_RESUME_METHOD, NODES_SET_HORIZON_METHOD},
     dlq::{
         DLQ_LIST_METHOD, DLQ_PEEK_METHOD, DLQ_PURGE_METHOD, DLQ_REQUEUE_METHOD, DlqListRequest,
         DlqListResponse, DlqPeekRequest, DlqPeekResponse, DlqPurgeRequest, DlqPurgeResponse,
@@ -597,8 +598,7 @@ impl GatewayClient {
             node_id: node_id.into(),
             reason: reason.map(String::from),
         };
-        self.call_rpc(methods::NODES_DRAIN, serde_json::to_value(&req)?)
-            .await?;
+        self.call_typed(NODES_DRAIN_METHOD, &req).await?;
         Ok(())
     }
 
@@ -607,8 +607,7 @@ impl GatewayClient {
         let req = NodeResumeRequest {
             node_id: node_id.into(),
         };
-        self.call_rpc(methods::NODES_RESUME, serde_json::to_value(&req)?)
-            .await?;
+        self.call_typed(NODES_RESUME_METHOD, &req).await?;
         Ok(())
     }
 
@@ -620,8 +619,7 @@ impl GatewayClient {
             node_id: node_id.into(),
             horizon: horizon_ts,
         };
-        self.call_rpc(methods::NODES_SET_HORIZON, serde_json::to_value(&req)?)
-            .await?;
+        self.call_typed(NODES_SET_HORIZON_METHOD, &req).await?;
         Ok(())
     }
 

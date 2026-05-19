@@ -2,7 +2,33 @@
 
 use crate::Timestamp;
 use crate::domain::{NodeId, NodeState, OperationStatus};
+use crate::rpc::{RpcDomain, RpcMethod, RpcMutability, RpcRole, RpcStability, methods};
 use serde::{Deserialize, Serialize};
+
+pub const NODES_DRAIN_METHOD: RpcMethod<NodeDrainRequest, NodeDrainResponse> = RpcMethod::new(
+    methods::NODES_DRAIN,
+    RpcRole::Write,
+    RpcDomain::Nodes,
+    RpcStability::Experimental,
+    RpcMutability::Mutating,
+);
+
+pub const NODES_RESUME_METHOD: RpcMethod<NodeResumeRequest, NodeResumeResponse> = RpcMethod::new(
+    methods::NODES_RESUME,
+    RpcRole::Write,
+    RpcDomain::Nodes,
+    RpcStability::Experimental,
+    RpcMutability::Mutating,
+);
+
+pub const NODES_SET_HORIZON_METHOD: RpcMethod<NodeSetHorizonRequest, NodeSetHorizonResponse> =
+    RpcMethod::new(
+        methods::NODES_SET_HORIZON,
+        RpcRole::Write,
+        RpcDomain::Nodes,
+        RpcStability::Experimental,
+        RpcMutability::Mutating,
+    );
 
 /// Node status information
 #[derive(Debug, Clone, Serialize, Deserialize)]
