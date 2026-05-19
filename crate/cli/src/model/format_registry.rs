@@ -247,6 +247,11 @@ pub fn build() -> HashMap<&'static str, FormatCapability> {
         "privacy audit",
         FormatCapability::single_shot(TABLE_JSON_YAML),
     );
+    m.insert(
+        "privacy export",
+        FormatCapability::single_shot(TABLE_JSON_YAML)
+            .with_note("metadata-only export; raw payloads and snippets are omitted"),
+    );
 
     // ── Audit ────────────────────────────────────────────────────────────────
     m.insert("audit", FormatCapability::single_shot(TABLE_JSON_YAML));
@@ -809,6 +814,7 @@ fn backing_rpc_methods_for_path(path: &str) -> &'static [&'static str] {
             methods::DLQ_LIST,
             methods::SOURCES_READINESS_LIST,
         ],
+        "privacy export" => &[methods::EVENTS_QUERY],
         "audit" => &[methods::AUDIT_GET],
         "annotate" => &[methods::EVENTS_ANNOTATE],
         "sources stage" => &[methods::SOURCES_STAGE],
