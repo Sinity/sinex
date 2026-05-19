@@ -71,6 +71,7 @@ async fn mcp_lists_first_slice_read_only_tools() -> TestResult<()> {
             "sinex.search_events",
             "sinex.trace_lineage",
             "sinex.source_readiness",
+            "sinex.source_continuity",
             "sinex.privacy_status",
             "sinex.system_health",
             "sinex.tasks_list",
@@ -282,6 +283,58 @@ async fn mcp_source_readiness_call_uses_gateway_fixture() -> TestResult<()> {
         !response.to_string().contains("ghp_fixture_secret"),
         "MCP fixture response leaked raw sensitive sample text"
     );
+    Ok(())
+}
+
+#[sinex_test]
+async fn mcp_source_continuity_list_call_uses_gateway_fixture() -> TestResult<()> {
+    let server = mount_mcp_gateway_fixture().await;
+    let client = fixture_gateway_client(&server)?;
+
+    let response = call_tool(
+        &client,
+        "sinex.source_continuity",
+        json!({ "since": "2026-05-19T00:00:00Z" }),
+    )
+    .await?;
+
+    assert_eq!(response["tool"], "sinex.source_continuity");
+    assert_eq!(response["query"]["since"], "2026-05-19T00:00:00Z");
+    assert_eq!(
+        response["items"]["result"]["reports"][0]["source_family"],
+        "terminal"
+    );
+    assert_eq!(
+        response["items"]["result"]["reports"][0]["gaps"][0]["kind"],
+        "private_mode"
+    );
+    assert_eq!(response["redaction"]["raw_samples"], false);
+    Ok(())
+}
+
+#[sinex_test]
+async fn mcp_source_continuity_get_call_uses_gateway_fixture() -> TestResult<()> {
+    let server = mount_mcp_gateway_fixture().await;
+    let client = fixture_gateway_client(&server)?;
+
+    let response = call_tool(
+        &client,
+        "sinex.source_continuity",
+        json!({ "source_family": "terminal" }),
+    )
+    .await?;
+
+    assert_eq!(response["tool"], "sinex.source_continuity");
+    assert_eq!(response["query"]["source_family"], "terminal");
+    assert_eq!(
+        response["items"]["result"]["report"]["source_family"],
+        "terminal"
+    );
+    assert_eq!(
+        response["items"]["result"]["report"]["replayability"]["raw_bytes_preserved"],
+        true
+    );
+    assert_eq!(response["redaction"]["raw_samples"], false);
     Ok(())
 }
 
@@ -628,6 +681,14 @@ async fn mount_mcp_gateway_fixture() -> MockServer {
                         "material_count": 3
                     }
                 }),
+                "sources.continuity.list" => json!({
+                    "reports": [
+                        fixture_continuity_report()
+                    ]
+                }),
+                "sources.continuity.get" => json!({
+                    "report": fixture_continuity_report()
+                }),
                 "privacy.private_mode.status" => json!({
                     "state": {
                         "enabled": true,
@@ -851,6 +912,35 @@ fn fixture_material_id() -> &'static str {
 
 fn fixture_task_id() -> &'static str {
     "018f4b6b-6a4d-7c80-8000-000000000003"
+}
+
+fn fixture_continuity_report() -> Value {
+    json!({
+        "source_family": "terminal",
+        "coverage_contract": "continuous",
+        "is_declared": true,
+        "replayability": {
+            "raw_bytes_preserved": true,
+            "timing_quality": true,
+            "anchor_stability": true,
+            "parser_determinism": true,
+            "privacy_safe_replay": true,
+            "weak_points": []
+        },
+        "seams": [],
+        "gaps": [
+            {
+                "from_ts": "2026-05-19T10:00:00Z",
+                "to_ts": "2026-05-19T10:30:00Z",
+                "kind": "private_mode",
+                "attribution": "fixture private mode"
+            }
+        ],
+        "earliest_ts": "2026-05-19T09:00:00Z",
+        "latest_ts": "2026-05-19T12:00:00Z",
+        "material_count": 3,
+        "event_count": 42
+    })
 }
 
 fn fixture_event(event_id: &str) -> Value {
