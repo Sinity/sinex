@@ -14,6 +14,10 @@ use sinex_primitives::rpc::{
     RpcMethod,
     audit::AUDIT_GET_METHOD,
     automata::AUTOMATA_STATUS_METHOD,
+    coordination::{
+        COORDINATION_GET_LEADER_METHOD, COORDINATION_INSTANCE_HEALTH_METHOD,
+        COORDINATION_LIST_INSTANCES_METHOD,
+    },
     dlq::{DLQ_LIST_METHOD, DLQ_PEEK_METHOD, DLQ_PURGE_METHOD, DLQ_REQUEUE_METHOD},
     documents::{DOCUMENTS_GET_CHUNKS_METHOD, DOCUMENTS_GET_METHOD, DOCUMENTS_SEARCH_METHOD},
     events::{EVENTS_ANNOTATE_METHOD, EVENTS_LINEAGE_METHOD, EVENTS_QUERY_METHOD},
@@ -565,6 +569,50 @@ impl RpcRegistry {
         self
     }
 
+    /// Register a typed coordination RPC handler.
+    pub(crate) fn coord_typed_rpc<Req, Resp, F>(
+        mut self,
+        method: RpcMethod<Req, Resp>,
+        f: F,
+    ) -> Self
+    where
+        Req: DeserializeOwned + 'static,
+        Resp: Serialize + 'static,
+        F: for<'a> Fn(
+                &'a CoordinationKvClient,
+                Req,
+            ) -> Pin<Box<dyn Future<Output = Result<Resp>> + Send + 'a>>
+            + Send
+            + Sync
+            + 'static,
+    {
+        let f = Arc::new(f);
+        self.methods.insert(
+            method.name,
+            RegistryEntry {
+                handler: Arc::new(move |params, services, _auth| {
+                    let f = Arc::clone(&f);
+                    Box::pin(async move {
+                        let client = services
+                            .coordination
+                            .as_ref()
+                            .map(std::convert::AsRef::as_ref)
+                            .ok_or_else(|| {
+                                SinexError::configuration(
+                                    "Coordination client is not initialized (NATS connection required)"
+                                )
+                            })?;
+                        let request = decode_rpc_params(method.name, params)?;
+                        let response = f(client, request).await?;
+                        encode_rpc_response(method.name, &response)
+                    })
+                }),
+                required_role: method.role.into(),
+            },
+        );
+        self
+    }
+
     /// Returns a map of method names to their required roles.
     #[must_use]
     pub fn method_roles(&self) -> HashMap<&'static str, Role> {
@@ -732,19 +780,16 @@ fn build_registry_impl() -> RpcRegistry {
         .pool_typed_rpc(EVENTS_LINEAGE_METHOD, boxed!(handle_events_lineage))
         .pool_typed_rpc(TASKS_STATE_GET_METHOD, boxed!(handle_tasks_state_get))
         // Coordination methods (ReadOnly)
-        .coord_rpc(
-            methods::COORDINATION_LIST_INSTANCES,
-            Role::ReadOnly,
+        .coord_typed_rpc(
+            COORDINATION_LIST_INSTANCES_METHOD,
             boxed!(handle_coordination_list_instances),
         )
-        .coord_rpc(
-            methods::COORDINATION_GET_LEADER,
-            Role::ReadOnly,
+        .coord_typed_rpc(
+            COORDINATION_GET_LEADER_METHOD,
             boxed!(handle_coordination_get_leader),
         )
-        .coord_rpc(
-            methods::COORDINATION_INSTANCE_HEALTH,
-            Role::ReadOnly,
+        .coord_typed_rpc(
+            COORDINATION_INSTANCE_HEALTH_METHOD,
             boxed!(handle_coordination_instance_health),
         )
         // Audit trail methods (ReadOnly)
