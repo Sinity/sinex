@@ -155,7 +155,10 @@ pub use health_reporter::{EmitTracker, HealthMetrics, HealthReporter, HealthThre
 #[cfg(feature = "messaging")]
 pub use heartbeat::{HeartbeatCounterHandle, HeartbeatEmitter, HeartbeatLogSink, HeartbeatMetrics};
 #[cfg(feature = "messaging")]
-pub use hyprland::{HyprlandCommandSocketResponse, dispatch_hyprland_workspace_command};
+pub use hyprland::{
+    HyprlandCommandSocketProbe, HyprlandCommandSocketResponse, dispatch_hyprland_workspace_command,
+    probe_hyprland_command_socket,
+};
 pub use ids::{deterministic_event_id, deterministic_material_event_id};
 #[cfg(feature = "messaging")]
 pub use ingestor_node::{IngestorNode, IngestorNodeAdapter, IngestorState};
