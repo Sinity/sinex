@@ -73,7 +73,8 @@ async fn mcp_lists_first_slice_read_only_tools() -> TestResult<()> {
             "sinex.source_readiness",
             "sinex.privacy_status",
             "sinex.system_health",
-            "sinex.tasks_list"
+            "sinex.tasks_list",
+            "sinex.task_state"
         ]
     );
     assert_read_only_tool_names()?;
@@ -356,6 +357,26 @@ async fn mcp_tasks_list_call_uses_gateway_fixture() -> TestResult<()> {
     Ok(())
 }
 
+#[sinex_test]
+async fn mcp_task_state_call_uses_gateway_fixture() -> TestResult<()> {
+    let server = mount_mcp_gateway_fixture().await;
+    let client = fixture_gateway_client(&server)?;
+    let task_id = fixture_task_id();
+
+    let response = call_tool(&client, "sinex.task_state", json!({ "task_id": task_id })).await?;
+
+    assert_eq!(response["tool"], "sinex.task_state");
+    assert_eq!(response["query"]["task_id"], task_id);
+    assert_eq!(response["items"]["result"]["task_id"], task_id);
+    assert_eq!(response["items"]["result"]["event_count"], 3);
+    assert_eq!(
+        response["items"]["result"]["state"]["title"],
+        "Expose MCP task list"
+    );
+    assert_eq!(response["redaction"]["raw_samples"], false);
+    Ok(())
+}
+
 async fn mount_mcp_gateway_fixture() -> MockServer {
     let server = MockServer::start().await;
     Mock::given(method("POST"))
@@ -499,30 +520,16 @@ async fn mount_mcp_gateway_fixture() -> MockServer {
                 }),
                 "tasks.list" => json!({
                     "tasks": [
-                        {
-                            "task_id": "018f4b6b-6a4d-7c80-8000-000000000003",
-                            "status": "started",
-                            "title": "Expose MCP task list",
-                            "body": "Fixture operator task",
-                            "project_id": "sinex",
-                            "tags": ["mcp"],
-                            "due_at": "2026-05-19T18:00:00Z",
-                            "priority": "high",
-                            "external_refs": [
-                                {
-                                    "system": "github",
-                                    "external_id": "1105",
-                                    "version": null
-                                }
-                            ],
-                            "last_event_id": "018f4b6b-6a4d-7c80-8000-000000000004",
-                            "state_hash": "fixture-task-state",
-                            "updated_at": "2026-05-19T12:00:00Z"
-                        }
+                        fixture_task_state()
                     ],
                     "total": 1,
                     "event_count": 3,
                     "limit": 10
+                }),
+                "tasks.state.get" => json!({
+                    "task_id": body["params"]["task_id"].as_str().unwrap_or(fixture_task_id()),
+                    "state": fixture_task_state(),
+                    "event_count": 3
                 }),
                 other => {
                     return ResponseTemplate::new(400).set_body_json(json!({
@@ -564,6 +571,10 @@ fn fixture_material_id() -> &'static str {
     "018f4b6b-6a4d-7c80-8000-000000000002"
 }
 
+fn fixture_task_id() -> &'static str {
+    "018f4b6b-6a4d-7c80-8000-000000000003"
+}
+
 fn fixture_event(event_id: &str) -> Value {
     json!({
         "id": event_id,
@@ -579,6 +590,29 @@ fn fixture_event(event_id: &str) -> Value {
         "offset_end": 12,
         "offset_kind": "byte",
         "associated_blob_ids": null
+    })
+}
+
+fn fixture_task_state() -> Value {
+    json!({
+        "task_id": fixture_task_id(),
+        "status": "started",
+        "title": "Expose MCP task list",
+        "body": "Fixture operator task",
+        "project_id": "sinex",
+        "tags": ["mcp"],
+        "due_at": "2026-05-19T18:00:00Z",
+        "priority": "high",
+        "external_refs": [
+            {
+                "system": "github",
+                "external_id": "1105",
+                "version": null
+            }
+        ],
+        "last_event_id": "018f4b6b-6a4d-7c80-8000-000000000004",
+        "state_hash": "fixture-task-state",
+        "updated_at": "2026-05-19T12:00:00Z"
     })
 }
 
