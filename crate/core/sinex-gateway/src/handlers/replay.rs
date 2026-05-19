@@ -6,14 +6,23 @@ use crate::replay_control::ReplayControlClient;
 use crate::rpc_server::RpcAuthContext;
 use serde_json::Value;
 use sinex_db::replay::state_machine::{
-    ReplayOperation as DbReplayOperation, ReplayScope, ReplayState,
+    ReplayOperation as DbReplayOperation, ReplayScope, ReplayState as DbReplayState,
 };
 use sinex_primitives::rpc::replay::{
     ReplayApproveResponse, ReplayCancelResponse, ReplayCreateResponse, ReplayExecuteResponse,
-    ReplayListResponse, ReplayOperation, ReplayPreviewResponse, ReplayStatusResponse,
-    ReplaySubmitResponse,
+    ReplayListRequest, ReplayListResponse, ReplayOperation, ReplayPreviewResponse,
+    ReplayState as RpcReplayState, ReplayStatusRequest, ReplayStatusResponse, ReplaySubmitResponse,
 };
-use sinex_primitives::{Result, SinexError};
+use sinex_primitives::{Result, SinexError, Uuid};
+
+fn parse_operation_uuid(raw: &str) -> Result<Uuid> {
+    raw.parse::<Uuid>().map_err(|error| {
+        SinexError::validation("invalid UUIDv7 parameter")
+            .with_context("parameter", "operation_id")
+            .with_context("value", raw)
+            .with_std_error(&error)
+    })
+}
 
 pub async fn handle_replay_create_operation(
     client: &ReplayControlClient,
@@ -156,47 +165,34 @@ pub async fn handle_replay_cancel_operation(
 
 pub async fn handle_replay_operation_status(
     client: &ReplayControlClient,
-    params: Value,
+    req: ReplayStatusRequest,
     _auth: &RpcAuthContext,
-) -> Result<Value> {
-    let params = RpcParams::new(&params);
-    let operation_id = params.require_uuid("operation_id")?;
+) -> Result<ReplayStatusResponse> {
+    let operation_id = parse_operation_uuid(&req.operation_id)?;
     let operation = client.status(operation_id).await.map_err(|error| {
         SinexError::service("failed to fetch replay operation status").with_source(error)
     })?;
-    serde_json::to_value(ReplayStatusResponse {
+    Ok(ReplayStatusResponse {
         operation: into_replay_operation(operation)?,
-    })
-    .map_err(|error| {
-        SinexError::serialization("failed to serialize replay.operation_status response")
-            .with_std_error(&error)
     })
 }
 
 pub async fn handle_replay_list_operations(
     client: &ReplayControlClient,
-    params: Value,
+    req: ReplayListRequest,
     _auth: &RpcAuthContext,
-) -> Result<Value> {
-    let params = RpcParams::new(&params);
-    let state = params
-        .optional_str("state")?
-        .map(parse_replay_state)
-        .transpose()?;
-    let node = params.optional_str("node")?.map(String::from);
-    let limit = params.optional_i64("limit")?;
-    let operations = client.list(state, node, limit).await.map_err(|error| {
+) -> Result<ReplayListResponse> {
+    let operations = client
+        .list(req.state.map(db_replay_state), req.node, req.limit)
+        .await
+        .map_err(|error| {
         SinexError::service("failed to list replay operations").with_source(error)
     })?;
-    serde_json::to_value(ReplayListResponse {
+    Ok(ReplayListResponse {
         operations: operations
             .into_iter()
             .map(into_replay_operation)
             .collect::<Result<Vec<_>>>()?,
-    })
-    .map_err(|error| {
-        SinexError::serialization("failed to serialize replay.list_operations response")
-            .with_std_error(&error)
     })
 }
 
@@ -211,17 +207,31 @@ fn into_replay_operation(operation: DbReplayOperation) -> Result<ReplayOperation
     })
 }
 
-pub(crate) fn parse_replay_state(value: &str) -> Result<ReplayState> {
+fn db_replay_state(state: RpcReplayState) -> DbReplayState {
+    match state {
+        RpcReplayState::Planning => DbReplayState::Planning,
+        RpcReplayState::Previewed => DbReplayState::Previewed,
+        RpcReplayState::Approved => DbReplayState::Approved,
+        RpcReplayState::Executing => DbReplayState::Executing,
+        RpcReplayState::Cancelling => DbReplayState::Cancelling,
+        RpcReplayState::Committing => DbReplayState::Committing,
+        RpcReplayState::Completed => DbReplayState::Completed,
+        RpcReplayState::Failed => DbReplayState::Failed,
+        RpcReplayState::Cancelled => DbReplayState::Cancelled,
+    }
+}
+
+pub(crate) fn parse_replay_state(value: &str) -> Result<DbReplayState> {
     match value.to_lowercase().as_str() {
-        "planning" => Ok(ReplayState::Planning),
-        "previewed" => Ok(ReplayState::Previewed),
-        "approved" => Ok(ReplayState::Approved),
-        "executing" => Ok(ReplayState::Executing),
-        "cancelling" => Ok(ReplayState::Cancelling),
-        "committing" => Ok(ReplayState::Committing),
-        "completed" => Ok(ReplayState::Completed),
-        "failed" => Ok(ReplayState::Failed),
-        "cancelled" => Ok(ReplayState::Cancelled),
+        "planning" => Ok(DbReplayState::Planning),
+        "previewed" => Ok(DbReplayState::Previewed),
+        "approved" => Ok(DbReplayState::Approved),
+        "executing" => Ok(DbReplayState::Executing),
+        "cancelling" => Ok(DbReplayState::Cancelling),
+        "committing" => Ok(DbReplayState::Committing),
+        "completed" => Ok(DbReplayState::Completed),
+        "failed" => Ok(DbReplayState::Failed),
+        "cancelled" => Ok(DbReplayState::Cancelled),
         other => Err(SinexError::validation("unknown replay state").with_context("state", other)),
     }
 }
@@ -234,10 +244,10 @@ mod tests {
     #[sinex_test]
     async fn parse_replay_state_accepts_known_variants() -> TestResult<()> {
         let states = [
-            ("planning", ReplayState::Planning),
-            ("PREVIEWED", ReplayState::Previewed),
-            ("Approved", ReplayState::Approved),
-            ("cancelling", ReplayState::Cancelling),
+            ("planning", DbReplayState::Planning),
+            ("PREVIEWED", DbReplayState::Previewed),
+            ("Approved", DbReplayState::Approved),
+            ("cancelling", DbReplayState::Cancelling),
         ];
         for (input, expected) in states {
             assert_eq!(parse_replay_state(input).unwrap(), expected);

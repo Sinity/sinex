@@ -23,6 +23,7 @@ use sinex_primitives::rpc::{
     },
     methods,
     ops::{OPS_CANCEL_METHOD, OPS_GET_METHOD, OPS_LIST_METHOD, OPS_START_METHOD},
+    replay::{REPLAY_LIST_OPERATIONS_METHOD, REPLAY_OPERATION_STATUS_METHOD},
     sources::{
         SOURCES_CONTINUITY_EXPLAIN_GAP_METHOD, SOURCES_CONTINUITY_GET_METHOD,
         SOURCES_CONTINUITY_LIST_METHOD, SOURCES_CONTINUITY_METHOD, SOURCES_COVERAGE_METHOD,
@@ -367,6 +368,48 @@ impl RpcRegistry {
         self
     }
 
+    /// Register a typed replay-control RPC handler.
+    ///
+    /// The registry owns the JSON boundary and extracts the replay-control
+    /// client from the service container before invoking the typed handler.
+    pub(crate) fn replay_typed_rpc<Req, Resp, F>(
+        mut self,
+        method: RpcMethod<Req, Resp>,
+        f: F,
+    ) -> Self
+    where
+        Req: DeserializeOwned + 'static,
+        Resp: Serialize + 'static,
+        F: for<'a> Fn(
+                &'a ReplayControlClient,
+                Req,
+                &'a RpcAuthContext,
+            ) -> Pin<Box<dyn Future<Output = Result<Resp>> + Send + 'a>>
+            + Send
+            + Sync
+            + 'static,
+    {
+        let f = Arc::new(f);
+        self.methods.insert(
+            method.name,
+            RegistryEntry {
+                handler: Arc::new(move |params, services, auth| {
+                    let f = Arc::clone(&f);
+                    Box::pin(async move {
+                        let request = decode_rpc_params(method.name, params)?;
+                        let client = services.replay_control.as_ref().ok_or_else(|| {
+                            SinexError::configuration("Replay control bus is not initialized")
+                        })?;
+                        let response = f(client, request, auth).await?;
+                        encode_rpc_response(method.name, &response)
+                    })
+                }),
+                required_role: method.role.into(),
+            },
+        );
+        self
+    }
+
     /// Register a NATS-backed RPC handler (no auth context)
     ///
     /// Automatically extracts NATS client and environment from `ServiceContainer`.
@@ -677,14 +720,12 @@ fn build_registry_impl() -> RpcRegistry {
             boxed!(handle_nodes_list, 3),
         )
         // Replay status/list (ReadOnly)
-        .replay_rpc(
-            methods::REPLAY_OPERATION_STATUS,
-            Role::ReadOnly,
+        .replay_typed_rpc(
+            REPLAY_OPERATION_STATUS_METHOD,
             boxed!(handle_replay_operation_status, 3),
         )
-        .replay_rpc(
-            methods::REPLAY_LIST_OPERATIONS,
-            Role::ReadOnly,
+        .replay_typed_rpc(
+            REPLAY_LIST_OPERATIONS_METHOD,
             boxed!(handle_replay_list_operations, 3),
         )
         // Node registry status methods (ReadOnly)
