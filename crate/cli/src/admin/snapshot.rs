@@ -139,6 +139,37 @@ pub struct AdminSnapshotInspectCommand {
     pub archive: PathBuf,
 }
 
+/// Validate a snapshot archive restore plan without writing target state.
+#[derive(Debug, Parser)]
+#[command(after_help = "\
+EXAMPLES:
+    sinexctl admin snapshot-restore --archive /var/backup/sinex/latest.sinex.tar.zst \\
+        --target-dir /tmp/sinex-restore-drill --dry-run
+
+NOTES:
+    This command is intentionally dry-run only in this slice. It validates the
+    archive, manifest paths, target directory, service state, sensitivity
+    classification, and the restore drill comparison plan. Destructive restore
+    execution remains a separate operator action.
+")]
+pub struct AdminSnapshotRestoreCommand {
+    /// Snapshot archive to validate for restore.
+    #[arg(long)]
+    pub archive: PathBuf,
+
+    /// Empty target directory intended for the restore drill.
+    #[arg(long)]
+    pub target_dir: PathBuf,
+
+    /// Required: plan and validate only; do not extract or write restored state.
+    #[arg(long, required = true)]
+    pub dry_run: bool,
+
+    /// Permit planning against a non-empty target directory.
+    #[arg(long)]
+    pub allow_non_empty_target: bool,
+}
+
 fn parse_component_str(s: &str) -> std::result::Result<Component, String> {
     Component::from_str(s).map_err(|e| e.to_string())
 }
@@ -181,6 +212,39 @@ pub struct SnapshotInspectResult {
     pub components: Vec<ComponentSummary>,
     pub missing_component_paths: Vec<String>,
     pub manifest: SnapshotManifest,
+}
+
+/// Operator-facing restore drill plan produced by `admin snapshot-restore`.
+#[derive(Debug, Serialize)]
+pub struct SnapshotRestorePlanResult {
+    pub archive_path: String,
+    pub snapshot_id: String,
+    pub dry_run: bool,
+    pub target_dir: String,
+    pub target_empty: bool,
+    pub active_services: Vec<String>,
+    pub archive_sensitivity: String,
+    pub key_policy: String,
+    pub planned_steps: Vec<RestorePlanStep>,
+    pub drill_checks: RestoreDrillChecks,
+    pub warnings: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct RestorePlanStep {
+    pub component: String,
+    pub action: String,
+    pub archive_path: String,
+    pub target_path: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct RestoreDrillChecks {
+    pub source_unit_count: usize,
+    pub postgres_table_count: usize,
+    pub cas_blob_count: Option<u64>,
+    pub private_mode_state_present: bool,
+    pub missing_component_paths: Vec<String>,
 }
 
 // ── Entry point ─────────────────────────────────────────────────────────────
@@ -566,6 +630,80 @@ impl AdminSnapshotInspectCommand {
     }
 }
 
+impl AdminSnapshotRestoreCommand {
+    pub fn execute(&self) -> Result<SnapshotRestorePlanResult> {
+        if !self.dry_run {
+            bail!(
+                "snapshot restore execution is not implemented in this slice; rerun with \
+                 --dry-run to validate the archive and restore drill plan"
+            );
+        }
+
+        let inspect = inspect_snapshot_archive(&self.archive)?;
+        if !inspect.missing_component_paths.is_empty() {
+            bail!(
+                "snapshot archive is incomplete; missing manifest paths: {}",
+                inspect.missing_component_paths.join(", ")
+            );
+        }
+
+        let target_state = classify_restore_target(&self.target_dir)?;
+        if !target_state.empty && !self.allow_non_empty_target {
+            bail!(
+                "restore target {} is not empty; choose an empty drill target or pass \
+                 --allow-non-empty-target for planning only",
+                self.target_dir.display()
+            );
+        }
+
+        let archive_entries = exec::tar_list_zstd(&self.archive)
+            .with_context(|| format!("list snapshot archive {}", self.archive.display()))?;
+        let active_services = exec::active_sinex_services();
+        let mut warnings = Vec::new();
+        if !active_services.is_empty() {
+            warnings.push(format!(
+                "{} active sinex service(s) detected; destructive restore must quiesce services \
+                 before writing target state",
+                active_services.len()
+            ));
+        }
+        if !target_state.exists {
+            warnings.push(format!(
+                "target directory {} does not exist and would be created by a restore drill",
+                self.target_dir.display()
+            ));
+        }
+        if !target_state.empty {
+            warnings.push(format!(
+                "target directory {} is non-empty; dry-run did not write to it",
+                self.target_dir.display()
+            ));
+        }
+
+        let planned_steps = inspect
+            .manifest
+            .components
+            .iter()
+            .map(|component| restore_step_for_component(component, &self.target_dir))
+            .collect::<Vec<_>>();
+        let drill_checks = restore_drill_checks(&inspect.manifest, &archive_entries);
+
+        Ok(SnapshotRestorePlanResult {
+            archive_path: self.archive.display().to_string(),
+            snapshot_id: inspect.snapshot_id,
+            dry_run: true,
+            target_dir: self.target_dir.display().to_string(),
+            target_empty: target_state.empty,
+            active_services,
+            archive_sensitivity: classify_archive_sensitivity(&inspect.manifest).to_string(),
+            key_policy: SNAPSHOT_KEY_POLICY.to_string(),
+            planned_steps,
+            drill_checks,
+            warnings,
+        })
+    }
+}
+
 // ── Helpers ────────────────────────────────────────────────────────────────
 
 fn gen_snapshot_id() -> String {
@@ -688,6 +826,143 @@ fn read_snapshot_manifest_from_archive(archive_path: &Path) -> Result<SnapshotMa
             "read manifest.json from {}",
             archive_path.display()
         )))
+}
+
+const SNAPSHOT_KEY_POLICY: &str = "archives exclude TLS/client/private keys by policy; if an \
+operator explicitly stores keys under the selected state directory, the archive inherits that \
+secret classification and must stay on encrypted storage";
+
+struct RestoreTargetState {
+    exists: bool,
+    empty: bool,
+}
+
+fn classify_restore_target(target_dir: &Path) -> Result<RestoreTargetState> {
+    if !target_dir.exists() {
+        let parent = target_dir
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+            .unwrap_or_else(|| Path::new("."));
+        if !parent.exists() {
+            bail!(
+                "restore target parent directory does not exist: {}",
+                parent.display()
+            );
+        }
+        return Ok(RestoreTargetState {
+            exists: false,
+            empty: true,
+        });
+    }
+
+    if !target_dir.is_dir() {
+        bail!(
+            "restore target exists but is not a directory: {}",
+            target_dir.display()
+        );
+    }
+
+    let empty = std::fs::read_dir(target_dir)
+        .with_context(|| format!("read restore target {}", target_dir.display()))?
+        .next()
+        .is_none();
+    Ok(RestoreTargetState {
+        exists: true,
+        empty,
+    })
+}
+
+fn restore_step_for_component(component: &ComponentRecord, target_dir: &Path) -> RestorePlanStep {
+    let (action, target_path) = match component.name.as_str() {
+        "postgres" => (
+            "pg_restore into empty target database after schema owner preparation".to_string(),
+            "postgres://<target>/sinex_prod".to_string(),
+        ),
+        "nats" => (
+            "extract JetStream state into target NATS state root while services are stopped"
+                .to_string(),
+            target_dir.join("nats").display().to_string(),
+        ),
+        "cas" => (
+            "extract CAS blob repository and verify blob count/checksum manifest".to_string(),
+            target_dir.join("blob-repository").display().to_string(),
+        ),
+        "state" => (
+            "extract runtime state files and compare private-mode/source-unit surfaces".to_string(),
+            target_dir.display().to_string(),
+        ),
+        other => (
+            format!("inspect unrecognized component `{other}` before restore"),
+            target_dir.join(other).display().to_string(),
+        ),
+    };
+
+    RestorePlanStep {
+        component: component.name.clone(),
+        action,
+        archive_path: component.path.clone(),
+        target_path,
+    }
+}
+
+fn restore_drill_checks(
+    manifest: &SnapshotManifest,
+    archive_entries: &[String],
+) -> RestoreDrillChecks {
+    let postgres_table_count = manifest
+        .components
+        .iter()
+        .find_map(|component| match &component.extras {
+            Some(ComponentExtras::Postgres(extras)) => Some(extras.row_counts.len()),
+            _ => None,
+        })
+        .unwrap_or(0);
+    let cas_blob_count = manifest
+        .components
+        .iter()
+        .find_map(|component| match &component.extras {
+            Some(ComponentExtras::Cas(extras)) => Some(extras.blob_count),
+            _ => None,
+        });
+    let missing_component_paths = manifest
+        .components
+        .iter()
+        .filter(|component| component.bytes > 0)
+        .filter(|component| !archive_path_contains(archive_entries, &component.path))
+        .map(|component| component.path.clone())
+        .collect();
+
+    RestoreDrillChecks {
+        source_unit_count: manifest.source_unit_ids.len(),
+        postgres_table_count,
+        cas_blob_count,
+        private_mode_state_present: archive_path_contains(
+            archive_entries,
+            "state/private-mode/state.json",
+        ),
+        missing_component_paths,
+    }
+}
+
+fn classify_archive_sensitivity(manifest: &SnapshotManifest) -> &'static str {
+    let has_postgres = manifest
+        .components
+        .iter()
+        .any(|component| component.name == "postgres" && component.bytes > 0);
+    let has_cas = manifest
+        .components
+        .iter()
+        .any(|component| component.name == "cas" && component.bytes > 0);
+    let has_state = manifest
+        .components
+        .iter()
+        .any(|component| component.name == "state" && component.bytes > 0);
+
+    if has_postgres || has_cas || has_state {
+        "secret: contains event payloads, raw material, runtime state, or operator privacy state"
+    } else {
+        "restricted: manifest-only or empty component archive"
+    }
 }
 
 fn archive_path_contains(entries: &[String], wanted: &str) -> bool {
@@ -939,5 +1214,65 @@ pub fn format_snapshot_inspect_result(result: &SnapshotInspectResult) -> String 
             out.push_str(&format!("    {path}\n"));
         }
     }
+    out
+}
+
+/// Render snapshot restore dry-run plan as a human-readable table string.
+#[must_use]
+pub fn format_snapshot_restore_plan_result(result: &SnapshotRestorePlanResult) -> String {
+    let mut out = String::new();
+    out.push_str("Sinex Snapshot Restore Plan\n");
+    out.push_str(&format!("  Archive: {}\n", result.archive_path));
+    out.push_str(&format!("  ID:      {}\n", result.snapshot_id));
+    out.push_str(&format!("  Target:  {}\n", result.target_dir));
+    out.push_str(&format!("  Mode:    {}\n", "dry-run"));
+    out.push_str(&format!(
+        "  Target empty: {}\n",
+        if result.target_empty { "yes" } else { "no" }
+    ));
+    out.push_str(&format!("  Sensitivity: {}\n", result.archive_sensitivity));
+    out.push_str(&format!("  Key policy: {}\n", result.key_policy));
+    out.push_str(&format!(
+        "  Active services: {}\n",
+        result.active_services.len()
+    ));
+
+    out.push_str("\n  Planned steps:\n");
+    for step in &result.planned_steps {
+        out.push_str(&format!(
+            "    {:8}  {} -> {}\n",
+            step.component, step.archive_path, step.target_path
+        ));
+        out.push_str(&format!("              {}\n", step.action));
+    }
+
+    out.push_str("\n  Drill checks:\n");
+    out.push_str(&format!(
+        "    source units: {}\n",
+        result.drill_checks.source_unit_count
+    ));
+    out.push_str(&format!(
+        "    postgres tables: {}\n",
+        result.drill_checks.postgres_table_count
+    ));
+    if let Some(blob_count) = result.drill_checks.cas_blob_count {
+        out.push_str(&format!("    CAS blobs: {blob_count}\n"));
+    }
+    out.push_str(&format!(
+        "    private mode state: {}\n",
+        if result.drill_checks.private_mode_state_present {
+            "present"
+        } else {
+            "absent"
+        }
+    ));
+
+    if !result.warnings.is_empty() {
+        out.push_str("\n  Warnings:\n");
+        for warning in &result.warnings {
+            out.push_str(&format!("    {warning}\n"));
+        }
+    }
+
     out
 }

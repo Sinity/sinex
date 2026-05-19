@@ -12,7 +12,9 @@ use tempfile::TempDir;
 use xtask::sandbox::prelude::*;
 
 use sinexctl::admin::exec;
-use sinexctl::admin::snapshot::{AdminSnapshotCommand, AdminSnapshotInspectCommand, Component};
+use sinexctl::admin::snapshot::{
+    AdminSnapshotCommand, AdminSnapshotInspectCommand, AdminSnapshotRestoreCommand, Component,
+};
 
 /// Helper: build a fake state directory with recognizable fixture files.
 fn make_fake_state_dir() -> TestResult<TempDir> {
@@ -63,6 +65,14 @@ fn make_snapshot_archive() -> TestResult<(TempDir, std::path::PathBuf)> {
     fs::write(
         staging.join("state").join("checkpoint.bin"),
         b"checkpoint-data",
+    )?;
+    fs::create_dir_all(staging.join("state").join("private-mode"))?;
+    fs::write(
+        staging
+            .join("state")
+            .join("private-mode")
+            .join("state.json"),
+        br#"{"enabled":false}"#,
     )?;
 
     let manifest = SnapshotManifest {
@@ -241,6 +251,92 @@ async fn snapshot_inspect_reports_manifest_and_archive_paths() -> xtask::sandbox
         "json output should include the manifest snapshot id\nstdout: {stdout}"
     );
 
+    Ok(())
+}
+
+/// `admin snapshot-restore --dry-run` validates archive structure and returns
+/// a non-destructive restore drill plan.
+#[sinex_test]
+async fn snapshot_restore_dry_run_reports_plan_and_policy() -> xtask::sandbox::TestResult<()> {
+    let (_dir, archive_path) = make_snapshot_archive()?;
+    let target = tempfile::tempdir()?;
+
+    let cmd = AdminSnapshotRestoreCommand {
+        archive: archive_path.clone(),
+        target_dir: target.path().to_path_buf(),
+        dry_run: true,
+        allow_non_empty_target: false,
+    };
+    let result = cmd.execute()?;
+
+    assert_eq!(result.snapshot_id, "01970a7f-391b-7000-8000-000000000001");
+    assert!(result.dry_run);
+    assert!(result.target_empty);
+    assert_eq!(result.planned_steps.len(), 1);
+    assert_eq!(result.planned_steps[0].component, "state");
+    assert!(
+        result.archive_sensitivity.contains("secret"),
+        "archive sensitivity should classify state snapshots as secret"
+    );
+    assert!(
+        result.key_policy.contains("exclude"),
+        "key policy should explain key inclusion/exclusion"
+    );
+    assert!(result.drill_checks.private_mode_state_present);
+
+    let output = sinexctl_bin()
+        .args([
+            "admin",
+            "snapshot-restore",
+            "--archive",
+            &archive_path.to_string_lossy(),
+            "--target-dir",
+            &target.path().to_string_lossy(),
+            "--dry-run",
+            "--format",
+            "json",
+        ])
+        .output()?;
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "snapshot-restore dry-run must exit 0\nstdout: {stdout}\nstderr: {stderr}"
+    );
+    assert!(
+        stdout.contains("\"archive_sensitivity\""),
+        "json output should include archive sensitivity\nstdout: {stdout}"
+    );
+    assert!(
+        stdout.contains("\"key_policy\""),
+        "json output should include key policy\nstdout: {stdout}"
+    );
+
+    Ok(())
+}
+
+/// Restore planning refuses an ambiguous non-empty target unless explicitly
+/// allowed, even though dry-run itself writes nothing.
+#[sinex_test]
+async fn snapshot_restore_dry_run_refuses_non_empty_target_without_override()
+-> xtask::sandbox::TestResult<()> {
+    let (_dir, archive_path) = make_snapshot_archive()?;
+    let target = tempfile::tempdir()?;
+    fs::write(target.path().join("existing"), b"do-not-overwrite")?;
+
+    let cmd = AdminSnapshotRestoreCommand {
+        archive: archive_path,
+        target_dir: target.path().to_path_buf(),
+        dry_run: true,
+        allow_non_empty_target: false,
+    };
+    let error = cmd
+        .execute()
+        .expect_err("non-empty restore target should require an explicit override");
+    assert!(
+        format!("{error:#}").contains("not empty"),
+        "error should mention non-empty target: {error:#}"
+    );
     Ok(())
 }
 

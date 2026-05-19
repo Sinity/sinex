@@ -532,6 +532,7 @@ fn command_path(cmd: &Commands) -> String {
             match cmd {
                 AdminCommands::Snapshot(_) => "admin snapshot".to_string(),
                 AdminCommands::SnapshotInspect(_) => "admin snapshot-inspect".to_string(),
+                AdminCommands::SnapshotRestore(_) => "admin snapshot-restore".to_string(),
             }
         }
     }
