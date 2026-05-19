@@ -29,6 +29,16 @@ pub enum CommandEffect {
     Local,
 }
 
+/// Safety mechanism declared for commands that can mutate state.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CommandMutationGuard {
+    RpcAuth,
+    DryRun,
+    Confirmation,
+    LocalMaintenance,
+}
+
 /// Consolidated operator command metadata.
 #[derive(Debug, Clone, Serialize)]
 pub struct CommandCatalogEntry {
@@ -37,6 +47,7 @@ pub struct CommandCatalogEntry {
     pub effect: CommandEffect,
     pub backing_rpc_methods: &'static [&'static str],
     pub required_rpc_role: Option<RpcRole>,
+    pub mutation_guards: &'static [CommandMutationGuard],
     pub capability: FormatCapability,
 }
 
@@ -561,6 +572,7 @@ pub fn command_catalog() -> Vec<CommandCatalogEntry> {
                 effect: effect_for_path(path, capability),
                 backing_rpc_methods,
                 required_rpc_role: required_rpc_role(backing_rpc_methods, &rpc_catalog),
+                mutation_guards: mutation_guards_for_path(path),
                 capability: capability.clone(),
             }
         })
@@ -667,6 +679,48 @@ fn effect_for_path(path: &str, capability: &FormatCapability) -> CommandEffect {
         CommandEffect::Mutating
     } else {
         CommandEffect::ReadOnly
+    }
+}
+
+fn mutation_guards_for_path(path: &str) -> &'static [CommandMutationGuard] {
+    use CommandMutationGuard::{Confirmation, DryRun, LocalMaintenance, RpcAuth};
+
+    match path {
+        "admin snapshot" => &[LocalMaintenance],
+        "blob fsck" | "blob migrate" | "blob sweep-orphans" => &[DryRun, LocalMaintenance],
+        "dlq purge" => &[RpcAuth, Confirmation],
+        "lifecycle archive" | "lifecycle restore" | "replay plan" | "replay preview"
+        | "replay run" => &[RpcAuth, DryRun],
+        "lifecycle tombstone approve" => &[RpcAuth, Confirmation],
+        "annotate"
+        | "curation finalize"
+        | "curation judge"
+        | "declare"
+        | "declare task"
+        | "dlq requeue"
+        | "git-ops create"
+        | "git-ops delete"
+        | "git-ops sync"
+        | "lifecycle tombstone cancel"
+        | "lifecycle tombstone create"
+        | "node drain"
+        | "node resume"
+        | "node set-horizon"
+        | "ops cancel"
+        | "ops start"
+        | "privacy private-mode disable"
+        | "privacy private-mode enable"
+        | "replay approve"
+        | "replay cancel"
+        | "replay execute"
+        | "replay submit"
+        | "sources annotate"
+        | "sources archive"
+        | "sources bindings create"
+        | "sources bindings update"
+        | "sources stage"
+        | "tasks complete" => &[RpcAuth],
+        _ => &[],
     }
 }
 
@@ -825,18 +879,19 @@ pub fn render_format_matrix() -> String {
     let rows = command_catalog();
 
     let mut out = String::from(
-        "| Command | effect | RPC role | RPC methods | table | json | yaml | dot | streaming | Note |\n",
+        "| Command | effect | RPC role | mutation guards | RPC methods | table | json | yaml | dot | streaming | Note |\n",
     );
-    out.push_str("|---------|--------|----------|-------------|-------|------|------|-----|-----------|------|\n");
+    out.push_str("|---------|--------|----------|-----------------|-------------|-------|------|------|-----|-----------|------|\n");
 
     for entry in &rows {
         let cap = &entry.capability;
         let has = |f: OutputFormat| if cap.supports(f) { "✓" } else { "" };
         out.push_str(&format!(
-            "| `{}` | {} | {} | {} | {} | {} | {} | {} | {} | {} |\n",
+            "| `{}` | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |\n",
             entry.path,
             effect_label(entry.effect),
             entry.required_rpc_role.map_or("", rpc_role_label),
+            mutation_guards_label(entry),
             entry.backing_rpc_methods.join(", "),
             has(OutputFormat::Table),
             has(OutputFormat::Json),
@@ -863,6 +918,12 @@ pub fn render_format_matrix_terminal() -> String {
         .max(7);
     let effect_width = "read_only".len();
     let role_width = "read_only".len();
+    let guard_width = rows
+        .iter()
+        .map(|entry| mutation_guards_label(entry).len())
+        .max()
+        .unwrap_or("guards".len())
+        .max("guards".len());
     let rpc_width = rows
         .iter()
         .map(|entry| rpc_methods_label(entry).len())
@@ -870,14 +931,16 @@ pub fn render_format_matrix_terminal() -> String {
         .unwrap_or("rpc_methods".len())
         .max("rpc_methods".len());
     let header = format!(
-        "{:<width$}  {:<effect_width$}  {:<role_width$}  {:<rpc_width$}  table  json   yaml   dot  stream  note",
+        "{:<width$}  {:<effect_width$}  {:<role_width$}  {:<guard_width$}  {:<rpc_width$}  table  json   yaml   dot  stream  note",
         "COMMAND",
         "EFFECT",
         "RPC_ROLE",
+        "GUARDS",
         "RPC_METHODS",
         width = cmd_width,
         effect_width = effect_width,
         role_width = role_width,
+        guard_width = guard_width,
         rpc_width = rpc_width,
     );
     let sep = "─".repeat(header.len());
@@ -888,10 +951,11 @@ pub fn render_format_matrix_terminal() -> String {
         let cap = &entry.capability;
         let has = |f: OutputFormat| if cap.supports(f) { "  ✓  " } else { "     " };
         out.push_str(&format!(
-            "{:<width$}  {:<effect_width$}  {:<role_width$}  {:<rpc_width$}{}{}{}{}  {:<6}  {}\n",
+            "{:<width$}  {:<effect_width$}  {:<role_width$}  {:<guard_width$}  {:<rpc_width$}{}{}{}{}  {:<6}  {}\n",
             entry.path,
             effect_label(entry.effect),
             entry.required_rpc_role.map_or("", rpc_role_label),
+            mutation_guards_label(entry),
             rpc_methods_label(entry),
             has(OutputFormat::Table),
             has(OutputFormat::Json),
@@ -902,6 +966,7 @@ pub fn render_format_matrix_terminal() -> String {
             width = cmd_width,
             effect_width = effect_width,
             role_width = role_width,
+            guard_width = guard_width,
             rpc_width = rpc_width,
         ));
     }
@@ -915,6 +980,20 @@ fn rpc_methods_label(entry: &CommandCatalogEntry) -> String {
     } else {
         entry.backing_rpc_methods.join(",")
     }
+}
+
+fn mutation_guards_label(entry: &CommandCatalogEntry) -> String {
+    entry
+        .mutation_guards
+        .iter()
+        .map(|guard| match guard {
+            CommandMutationGuard::RpcAuth => "rpc_auth",
+            CommandMutationGuard::DryRun => "dry_run",
+            CommandMutationGuard::Confirmation => "confirmation",
+            CommandMutationGuard::LocalMaintenance => "local_maintenance",
+        })
+        .collect::<Vec<_>>()
+        .join(",")
 }
 
 fn rpc_role_label(role: RpcRole) -> &'static str {
@@ -1004,6 +1083,7 @@ mod tests {
             assert!(entry["effect"].as_str().is_some());
             assert!(entry["backing_rpc_methods"].as_array().is_some());
             assert!(entry["required_rpc_role"].is_string() || entry["required_rpc_role"].is_null());
+            assert!(entry["mutation_guards"].as_array().is_some());
             assert!(entry["capability"]["supported"].as_array().is_some());
             assert!(entry["capability"]["streaming"].as_bool().is_some());
         }
@@ -1036,6 +1116,70 @@ mod tests {
         assert_eq!(effect_for("replay preview"), Some(CommandEffect::Mutating));
         assert_eq!(effect_for("git-ops create"), Some(CommandEffect::Mutating));
         assert_eq!(effect_for("git-ops sync"), Some(CommandEffect::Mutating));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn command_catalog_mutating_entries_declare_guards() -> xtask::sandbox::TestResult<()> {
+        for entry in command_catalog() {
+            if entry.effect != CommandEffect::Mutating {
+                assert!(
+                    entry.mutation_guards.is_empty(),
+                    "non-mutating command `{}` must not declare mutation guards",
+                    entry.path
+                );
+                continue;
+            }
+
+            assert!(
+                !entry.mutation_guards.is_empty(),
+                "mutating command `{}` must declare at least one mutation guard",
+                entry.path
+            );
+        }
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn command_catalog_rpc_mutations_declare_rpc_auth() -> xtask::sandbox::TestResult<()> {
+        for entry in command_catalog() {
+            if entry.effect != CommandEffect::Mutating || entry.backing_rpc_methods.is_empty() {
+                continue;
+            }
+
+            assert!(
+                entry
+                    .mutation_guards
+                    .contains(&CommandMutationGuard::RpcAuth),
+                "mutating RPC-backed command `{}` must declare rpc_auth",
+                entry.path
+            );
+        }
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn command_catalog_local_mutations_declare_operator_guard()
+    -> xtask::sandbox::TestResult<()> {
+        for entry in command_catalog() {
+            if entry.effect != CommandEffect::Mutating || !entry.backing_rpc_methods.is_empty() {
+                continue;
+            }
+
+            let has_local_guard = entry.mutation_guards.iter().any(|guard| {
+                matches!(
+                    guard,
+                    CommandMutationGuard::DryRun
+                        | CommandMutationGuard::Confirmation
+                        | CommandMutationGuard::LocalMaintenance
+                )
+            });
+            assert!(
+                has_local_guard,
+                "local mutating command `{}` must declare a dry-run, confirmation, or local-maintenance guard",
+                entry.path
+            );
+        }
         Ok(())
     }
 

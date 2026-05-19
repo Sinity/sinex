@@ -70,6 +70,8 @@ Every command declares its operator UX contract in the command catalog
 - `effect`: whether the command is read-only, mutating, streaming, or local
 - `backing_rpc_methods`: exact typed gateway RPC methods used by the command
 - `required_rpc_role`: the highest gateway role required by backing RPC methods
+- `mutation_guards`: safety mechanisms declared for mutating commands, such as
+  gateway auth, dry-run mode, confirmation, or direct local-maintenance scope
 
 The historical format registry is now a compatibility projection of that
 catalog for validation and tests. New UX surfaces should read the catalog rather
@@ -99,7 +101,9 @@ When adding a new command:
 2. Add the corresponding arm to `command_path()` in `main.rs`.
 3. Add any gateway methods to `backing_rpc_methods_for_path()`.
 4. If the command can mutate state, add it to `effect_for_path()`.
-5. If the command is streaming, use `FormatCapability::streaming(...)`.
+5. If the command can mutate state, add its guard to
+   `mutation_guards_for_path()`.
+6. If the command is streaming, use `FormatCapability::streaming(...)`.
 
 
 ## Pointers
