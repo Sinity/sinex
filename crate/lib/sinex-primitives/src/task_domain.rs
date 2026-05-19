@@ -112,6 +112,7 @@ pub struct TaskState {
 pub enum TaskLifecycleInput {
     Created(TaskCreatedInput),
     Completed(TaskCompletedInput),
+    Cancelled(TaskCancelledInput),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -144,6 +145,17 @@ pub struct TaskCompletedInput {
     pub external_version: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct TaskCancelledInput {
+    pub task_id: Uuid,
+    pub cancelled_at: Timestamp,
+    pub actor: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub external_version: Option<String>,
+}
+
 /// Apply one lifecycle input to a rebuildable task state.
 pub fn reduce_task_event(
     state: Option<TaskState>,
@@ -157,6 +169,9 @@ pub fn reduce_task_event(
         }
         TaskLifecycleInput::Completed(completed) => {
             reduce_completed(state, event_id, completed, observed_at)
+        }
+        TaskLifecycleInput::Cancelled(cancelled) => {
+            reduce_cancelled(state, event_id, cancelled, observed_at)
         }
     }
 }
@@ -222,6 +237,38 @@ fn reduce_completed(
     }
 
     state.status = TaskStatus::Completed;
+    state.last_event_id = event_id;
+    state.updated_at = observed_at;
+    state.state_hash = hash_task_state(&state);
+    Ok(state)
+}
+
+fn reduce_cancelled(
+    state: Option<TaskState>,
+    event_id: Uuid,
+    cancelled: TaskCancelledInput,
+    observed_at: Timestamp,
+) -> Result<TaskState> {
+    let mut state = state.ok_or_else(|| {
+        SinexError::validation("task.cancelled requires an existing task")
+            .with_context("task_id", cancelled.task_id.to_string())
+    })?;
+    if state.task_id != cancelled.task_id {
+        return Err(
+            SinexError::validation("task.cancelled task_id does not match state")
+                .with_context("state_task_id", state.task_id.to_string())
+                .with_context("event_task_id", cancelled.task_id.to_string()),
+        );
+    }
+    if state.status.is_terminal() {
+        return Err(
+            SinexError::validation("terminal task cannot transition to cancelled")
+                .with_context("task_id", cancelled.task_id.to_string())
+                .with_context("status", format!("{:?}", state.status)),
+        );
+    }
+
+    state.status = TaskStatus::Cancelled;
     state.last_event_id = event_id;
     state.updated_at = observed_at;
     state.state_hash = hash_task_state(&state);

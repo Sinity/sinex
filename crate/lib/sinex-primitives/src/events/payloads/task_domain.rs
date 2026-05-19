@@ -4,7 +4,9 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use sinex_macros::EventPayload;
 
-use crate::task_domain::{TaskCompletedInput, TaskCreatedInput, TaskExternalRef, TaskSourceSystem};
+use crate::task_domain::{
+    TaskCancelledInput, TaskCompletedInput, TaskCreatedInput, TaskExternalRef, TaskSourceSystem,
+};
 use crate::{Timestamp, Uuid};
 
 /// Canonical task creation lifecycle event.
@@ -62,6 +64,31 @@ impl From<TaskCompletedPayload> for TaskCompletedInput {
         Self {
             task_id: payload.task_id,
             completed_at: payload.completed_at,
+            actor: payload.actor,
+            reason: payload.reason,
+            external_version: payload.external_version,
+        }
+    }
+}
+
+/// Canonical task cancellation lifecycle event.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
+#[event_payload(source = "task", event_type = "task.cancelled", version = "1.0.0")]
+pub struct TaskCancelledPayload {
+    pub task_id: Uuid,
+    pub cancelled_at: Timestamp,
+    pub actor: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub external_version: Option<String>,
+}
+
+impl From<TaskCancelledPayload> for TaskCancelledInput {
+    fn from(payload: TaskCancelledPayload) -> Self {
+        Self {
+            task_id: payload.task_id,
+            cancelled_at: payload.cancelled_at,
             actor: payload.actor,
             reason: payload.reason,
             external_version: payload.external_version,

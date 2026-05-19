@@ -5,7 +5,7 @@ use serde_json::Value;
 
 use crate::events::{
     SourceMaterial,
-    payloads::{TaskCompletedPayload, TaskCreatedPayload},
+    payloads::{TaskCancelledPayload, TaskCompletedPayload, TaskCreatedPayload},
 };
 use crate::rpc::{RpcDomain, RpcMethod, RpcMutability, RpcRole, RpcStability, methods};
 use crate::task_domain::{TaskExternalRef, TaskState, TaskStatus};
@@ -27,6 +27,14 @@ pub const TASKS_COMPLETE_METHOD: RpcMethod<TaskCompleteRequest, TaskCompleteResp
         RpcStability::Experimental,
         RpcMutability::Mutating,
     );
+
+pub const TASKS_CANCEL_METHOD: RpcMethod<TaskCancelRequest, TaskCancelResponse> = RpcMethod::new(
+    methods::TASKS_CANCEL,
+    RpcRole::Write,
+    RpcDomain::Tasks,
+    RpcStability::Experimental,
+    RpcMutability::Mutating,
+);
 
 pub const TASKS_STATE_GET_METHOD: RpcMethod<TaskStateGetRequest, TaskStateResponse> =
     RpcMethod::new(
@@ -76,6 +84,17 @@ pub struct TaskCompleteRequest {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct TaskCancelRequest {
+    pub task_id: Uuid,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cancelled_at: Option<Timestamp>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub external_version: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct TaskStateGetRequest {
     pub task_id: Uuid,
 }
@@ -102,6 +121,7 @@ pub struct TaskEventResponse<T> {
 
 pub type TaskCreateResponse = TaskEventResponse<TaskCreatedPayload>;
 pub type TaskCompleteResponse = TaskEventResponse<TaskCompletedPayload>;
+pub type TaskCancelResponse = TaskEventResponse<TaskCancelledPayload>;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct TaskStateResponse {

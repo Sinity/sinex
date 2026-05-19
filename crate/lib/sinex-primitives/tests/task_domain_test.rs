@@ -1,5 +1,7 @@
 use sinex_primitives::events::EventPayload;
-use sinex_primitives::events::payloads::{TaskCompletedPayload, TaskCreatedPayload};
+use sinex_primitives::events::payloads::{
+    TaskCancelledPayload, TaskCompletedPayload, TaskCreatedPayload,
+};
 use sinex_primitives::task_domain::{
     TaskLifecycleInput, TaskSourceSystem, TaskStatus, reduce_task_event,
 };
@@ -25,6 +27,7 @@ async fn task_payloads_publish_stable_event_names() -> TestResult<()> {
     assert_eq!(TaskCreatedPayload::SOURCE.as_str(), "task");
     assert_eq!(TaskCreatedPayload::EVENT_TYPE.as_str(), "task.created");
     assert_eq!(TaskCompletedPayload::EVENT_TYPE.as_str(), "task.completed");
+    assert_eq!(TaskCancelledPayload::EVENT_TYPE.as_str(), "task.cancelled");
     Ok(())
 }
 
@@ -67,6 +70,42 @@ async fn task_reducer_projects_create_then_complete() -> TestResult<()> {
     assert_eq!(completed.status, TaskStatus::Completed);
     assert_eq!(completed.last_event_id, complete_event_id);
     assert_ne!(completed.state_hash, open.state_hash);
+    Ok(())
+}
+
+#[sinex_test]
+async fn task_reducer_projects_cancelled_state() -> TestResult<()> {
+    let task_id = Uuid::from_u128(42);
+    let create_event_id = Uuid::from_u128(100);
+    let cancel_event_id = Uuid::from_u128(102);
+    let created = created_payload(task_id);
+
+    let open = reduce_task_event(
+        None,
+        create_event_id,
+        TaskLifecycleInput::Created(created.into()),
+        Timestamp::UNIX_EPOCH,
+    )?;
+
+    let cancelled = reduce_task_event(
+        Some(open.clone()),
+        cancel_event_id,
+        TaskLifecycleInput::Cancelled(
+            TaskCancelledPayload {
+                task_id,
+                cancelled_at: Timestamp::UNIX_EPOCH,
+                actor: "operator:test".to_string(),
+                reason: Some("obsolete".to_string()),
+                external_version: None,
+            }
+            .into(),
+        ),
+        Timestamp::UNIX_EPOCH,
+    )?;
+
+    assert_eq!(cancelled.status, TaskStatus::Cancelled);
+    assert_eq!(cancelled.last_event_id, cancel_event_id);
+    assert_ne!(cancelled.state_hash, open.state_hash);
     Ok(())
 }
 

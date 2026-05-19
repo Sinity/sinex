@@ -61,7 +61,8 @@ use sinex_primitives::rpc::{
     },
     system::{SYSTEM_HEALTH_METHOD, SYSTEM_PING_METHOD, SYSTEM_VERSION_METHOD},
     tasks::{
-        TASKS_COMPLETE_METHOD, TASKS_CREATE_METHOD, TASKS_LIST_METHOD, TASKS_STATE_GET_METHOD,
+        TASKS_CANCEL_METHOD, TASKS_COMPLETE_METHOD, TASKS_CREATE_METHOD, TASKS_LIST_METHOD,
+        TASKS_STATE_GET_METHOD,
     },
     telemetry::{
         TELEMETRY_ASSEMBLY_STATS_METHOD, TELEMETRY_COMMAND_FREQUENCY_METHOD,
@@ -723,17 +724,17 @@ fn build_registry_impl() -> RpcRegistry {
         handle_sources_continuity_list, handle_sources_coverage, handle_sources_list,
         handle_sources_presets_list, handle_sources_readiness_get, handle_sources_readiness_list,
         handle_sources_show, handle_sources_stage, handle_store_blob, handle_system_health,
-        handle_system_ping, handle_system_version, handle_tasks_complete, handle_tasks_create,
-        handle_tasks_list, handle_tasks_state_get, handle_telemetry_assembly_stats,
-        handle_telemetry_command_frequency, handle_telemetry_current_device_state,
-        handle_telemetry_current_health, handle_telemetry_file_activity,
-        handle_telemetry_gateway_stats, handle_telemetry_ingestd_batch_stats,
-        handle_telemetry_ingestd_validation, handle_telemetry_metric_counters,
-        handle_telemetry_node_stats, handle_telemetry_recent_activity,
-        handle_telemetry_stream_stats, handle_telemetry_system_state, handle_telemetry_throughput,
-        handle_telemetry_window_focus, handle_tombstone_approve, handle_tombstone_cancel,
-        handle_tombstone_create, handle_tombstone_list, handle_tombstone_preview,
-        handle_tombstone_status,
+        handle_system_ping, handle_system_version, handle_tasks_cancel, handle_tasks_complete,
+        handle_tasks_create, handle_tasks_list, handle_tasks_state_get,
+        handle_telemetry_assembly_stats, handle_telemetry_command_frequency,
+        handle_telemetry_current_device_state, handle_telemetry_current_health,
+        handle_telemetry_file_activity, handle_telemetry_gateway_stats,
+        handle_telemetry_ingestd_batch_stats, handle_telemetry_ingestd_validation,
+        handle_telemetry_metric_counters, handle_telemetry_node_stats,
+        handle_telemetry_recent_activity, handle_telemetry_stream_stats,
+        handle_telemetry_system_state, handle_telemetry_throughput, handle_telemetry_window_focus,
+        handle_tombstone_approve, handle_tombstone_cancel, handle_tombstone_create,
+        handle_tombstone_list, handle_tombstone_preview, handle_tombstone_status,
     };
 
     RpcRegistry::new()
@@ -911,6 +912,7 @@ fn build_registry_impl() -> RpcRegistry {
         .pool_typed_rpc(CURATION_FINALIZE_METHOD, boxed!(handle_curation_finalize))
         .pool_auth_typed_rpc(TASKS_CREATE_METHOD, boxed!(handle_tasks_create, 3))
         .pool_auth_typed_rpc(TASKS_COMPLETE_METHOD, boxed!(handle_tasks_complete, 3))
+        .pool_auth_typed_rpc(TASKS_CANCEL_METHOD, boxed!(handle_tasks_cancel, 3))
         // PKM methods (Write)
         .pkm_auth_typed_rpc(PKM_CREATE_NOTE_METHOD, boxed!(handle_create_note, 3))
         .pkm_auth_typed_rpc(

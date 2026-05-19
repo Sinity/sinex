@@ -5,7 +5,8 @@ use color_eyre::Result;
 use color_eyre::eyre::eyre;
 use sinex_primitives::Uuid;
 use sinex_primitives::rpc::tasks::{
-    TaskCompleteRequest, TaskListRequest, TaskListResponse, TaskStateGetRequest, TaskStateResponse,
+    TaskCancelRequest, TaskCompleteRequest, TaskListRequest, TaskListResponse, TaskStateGetRequest,
+    TaskStateResponse,
 };
 use sinex_primitives::task_domain::TaskStatus;
 
@@ -29,6 +30,7 @@ impl TasksCommand {
 
     pub async fn execute(&self, client: &GatewayClient, format: OutputFormat) -> Result<()> {
         match &self.cmd {
+            TasksSubcommand::Cancel(cmd) => cmd.execute(client, format).await,
             TasksSubcommand::Complete(cmd) => cmd.execute(client, format).await,
             TasksSubcommand::List(cmd) => cmd.execute(client, format).await,
             TasksSubcommand::State(cmd) => cmd.execute(client, format).await,
@@ -38,12 +40,48 @@ impl TasksCommand {
 
 #[derive(Debug, Subcommand)]
 pub enum TasksSubcommand {
+    /// Mark a task cancelled.
+    Cancel(TaskCancelCommand),
     /// Mark a task completed.
     Complete(TaskCompleteCommand),
     /// List current task states.
     List(TaskListCommand),
     /// Rebuild and show current task state.
     State(TaskStateCommand),
+}
+
+#[derive(Debug, Args)]
+pub struct TaskCancelCommand {
+    /// Task UUID.
+    task_id: String,
+
+    /// Cancellation reason or note.
+    #[arg(long)]
+    reason: Option<String>,
+
+    /// Cancellation time. Accepts RFC3339, YYYY-MM-DD, or relative forms.
+    #[arg(long)]
+    cancelled_at: Option<String>,
+}
+
+impl TaskCancelCommand {
+    async fn execute(&self, client: &GatewayClient, format: OutputFormat) -> Result<()> {
+        let cancelled_at = self
+            .cancelled_at
+            .as_deref()
+            .map(parse_time_input)
+            .transpose()?;
+        let task_id = parse_task_id(&self.task_id)?;
+        let response = client
+            .tasks_cancel(TaskCancelRequest {
+                task_id,
+                cancelled_at,
+                reason: self.reason.clone(),
+                external_version: None,
+            })
+            .await?;
+        render_task_response(&response, format, "Task cancelled")
+    }
 }
 
 #[derive(Debug, Args)]

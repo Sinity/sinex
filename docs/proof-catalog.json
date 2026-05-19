@@ -4045,6 +4045,13 @@
       "type_name": "sinex_primitives::events::payloads::system::SystemdUnitStoppedPayload"
     },
     {
+      "subject": "event_payload:task/task.cancelled/1.0.0",
+      "source": "task",
+      "event_type": "task.cancelled",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::task_domain::TaskCancelledPayload"
+    },
+    {
       "subject": "event_payload:task/task.completed/1.0.0",
       "source": "task",
       "event_type": "task.completed",

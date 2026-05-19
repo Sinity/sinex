@@ -571,6 +571,7 @@ fn command_path(cmd: &Commands) -> String {
         Commands::Tasks(cmd) => {
             use sinexctl::commands::tasks::TasksSubcommand;
             match cmd.subcommand() {
+                TasksSubcommand::Cancel(_) => "tasks cancel".to_string(),
                 TasksSubcommand::Complete(_) => "tasks complete".to_string(),
                 TasksSubcommand::List(_) => "tasks list".to_string(),
                 TasksSubcommand::State(_) => "tasks state".to_string(),

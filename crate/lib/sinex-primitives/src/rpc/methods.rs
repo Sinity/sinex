@@ -27,6 +27,7 @@ pub const LLM_BUDGET_REPORT: &str = "llm.budget.report";
 // Tasks
 pub const TASKS_CREATE: &str = "tasks.create";
 pub const TASKS_COMPLETE: &str = "tasks.complete";
+pub const TASKS_CANCEL: &str = "tasks.cancel";
 pub const TASKS_STATE_GET: &str = "tasks.state.get";
 pub const TASKS_LIST: &str = "tasks.list";
 
