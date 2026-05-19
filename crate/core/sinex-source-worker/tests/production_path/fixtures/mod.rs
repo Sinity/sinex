@@ -39,6 +39,7 @@ pub struct FixtureHandle {
 impl FixtureHandle {
     /// Construct a fixture handle from a binding and a set of owned resources
     /// whose Drop impls perform cleanup.
+    #[must_use]
     pub fn new(binding: FixtureBinding, resources: Vec<Box<dyn std::any::Any + Send>>) -> Self {
         Self {
             binding,
@@ -55,6 +56,7 @@ impl FixtureHandle {
     }
 
     /// Convenience: no external resources needed (in-memory only).
+    #[must_use]
     pub fn in_memory(binding: FixtureBinding) -> Self {
         Self::new(binding, vec![])
     }

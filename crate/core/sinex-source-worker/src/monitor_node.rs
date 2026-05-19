@@ -488,13 +488,13 @@ mod tests {
     async fn test_monitor_phase_clone_all_variants() -> TestResult<()> {
         let start = MonitorPhase::ServiceStart;
         let interval = MonitorPhase::PerInterval {
-            period: Duration::from_secs(60),
+            period: Duration::from_mins(1),
         };
         let shutdown = MonitorPhase::ServiceShutdown;
 
         assert!(matches!(start.clone(), MonitorPhase::ServiceStart));
         assert!(
-            matches!(interval.clone(), MonitorPhase::PerInterval { period } if period == Duration::from_secs(60))
+            matches!(interval.clone(), MonitorPhase::PerInterval { period } if period == Duration::from_mins(1))
         );
         assert!(matches!(shutdown.clone(), MonitorPhase::ServiceShutdown));
 

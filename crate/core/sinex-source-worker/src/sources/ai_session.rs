@@ -700,7 +700,7 @@ mod tests {
         ]);
         let bytes = serde_json::to_vec(&json).unwrap();
         let ctx = claude_ctx();
-        let intents = ClaudeSessionParser::default()
+        let intents = ClaudeSessionParser
             .parse_record(record_for(&bytes), &ctx)
             .await
             .unwrap();
@@ -728,7 +728,7 @@ mod tests {
         }]);
         let bytes = serde_json::to_vec(&json).unwrap();
         let ctx = claude_ctx();
-        let mut intents = ClaudeSessionParser::default()
+        let mut intents = ClaudeSessionParser
             .parse_record(record_for(&bytes), &ctx)
             .await
             .unwrap();
@@ -764,7 +764,7 @@ mod tests {
         ]);
         let bytes = serde_json::to_vec(&json).unwrap();
         let ctx = claude_ctx();
-        let intents = ClaudeSessionParser::default()
+        let intents = ClaudeSessionParser
             .parse_record(record_for(&bytes), &ctx)
             .await
             .unwrap();
@@ -801,7 +801,7 @@ mod tests {
         }]);
         let bytes = serde_json::to_vec(&json).unwrap();
         let ctx = claude_ctx();
-        let intents = ClaudeSessionParser::default()
+        let intents = ClaudeSessionParser
             .parse_record(record_for(&bytes), &ctx)
             .await
             .unwrap();
@@ -826,7 +826,7 @@ mod tests {
         }]);
         let bytes = serde_json::to_vec(&json).unwrap();
         let ctx = claude_ctx();
-        let intents = ClaudeSessionParser::default()
+        let intents = ClaudeSessionParser
             .parse_record(record_for(&bytes), &ctx)
             .await
             .unwrap();
@@ -838,7 +838,7 @@ mod tests {
     async fn claude_invalid_json_returns_parser_error() -> TestResult<()> {
         let bytes = b"not json at all";
         let ctx = claude_ctx();
-        let result = ClaudeSessionParser::default()
+        let result = ClaudeSessionParser
             .parse_record(record_for(bytes), &ctx)
             .await;
         assert!(matches!(result, Err(ParserError::Parse(_))));
@@ -899,7 +899,7 @@ mod tests {
         let json = chatgpt_minimal_json();
         let bytes = serde_json::to_vec(&json).unwrap();
         let ctx = chatgpt_ctx();
-        let intents = ChatGptSessionParser::default()
+        let intents = ChatGptSessionParser
             .parse_record(record_for(&bytes), &ctx)
             .await
             .unwrap();
@@ -915,7 +915,7 @@ mod tests {
         let json = chatgpt_minimal_json();
         let bytes = serde_json::to_vec(&json).unwrap();
         let ctx = chatgpt_ctx();
-        let intents = ChatGptSessionParser::default()
+        let intents = ChatGptSessionParser
             .parse_record(record_for(&bytes), &ctx)
             .await
             .unwrap();
@@ -932,7 +932,7 @@ mod tests {
         let json = chatgpt_minimal_json();
         let bytes = serde_json::to_vec(&json).unwrap();
         let ctx = chatgpt_ctx();
-        let intents = ChatGptSessionParser::default()
+        let intents = ChatGptSessionParser
             .parse_record(record_for(&bytes), &ctx)
             .await
             .unwrap();
@@ -972,7 +972,7 @@ mod tests {
         }]);
         let bytes = serde_json::to_vec(&json).unwrap();
         let ctx = chatgpt_ctx();
-        let intents = ChatGptSessionParser::default()
+        let intents = ChatGptSessionParser
             .parse_record(record_for(&bytes), &ctx)
             .await
             .unwrap();
@@ -986,7 +986,7 @@ mod tests {
     async fn chatgpt_invalid_json_returns_parser_error() -> TestResult<()> {
         let bytes = b"{not valid}";
         let ctx = chatgpt_ctx();
-        let result = ChatGptSessionParser::default()
+        let result = ChatGptSessionParser
             .parse_record(record_for(bytes), &ctx)
             .await;
         assert!(matches!(result, Err(ParserError::Parse(_))));
@@ -998,7 +998,7 @@ mod tests {
         let json = chatgpt_minimal_json();
         let bytes = serde_json::to_vec(&json).unwrap();
         let ctx = chatgpt_ctx();
-        let intents = ChatGptSessionParser::default()
+        let intents = ChatGptSessionParser
             .parse_record(record_for(&bytes), &ctx)
             .await
             .unwrap();

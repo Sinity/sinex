@@ -1,15 +1,15 @@
 //! Wave B production-path obligation tests for terminal source units.
 //!
 //! Source units covered:
-//! - `terminal.atuin-history`  (SqliteRowAdapter + AtuinHistoryParser)
-//! - `terminal.bash-history`   (AppendOnlyFileAdapter + BashHistoryParser)
-//! - `terminal.zsh-history`    (AppendOnlyFileAdapter + ZshHistoryParser)
-//! - `terminal.text-history`   (AppendOnlyFileAdapter + TextHistoryParser)
-//! - `terminal.fish-history`   (SqliteRowAdapter + FishHistoryParser)
+//! - `terminal.atuin-history`  (`SqliteRowAdapter` + `AtuinHistoryParser`)
+//! - `terminal.bash-history`   (`AppendOnlyFileAdapter` + `BashHistoryParser`)
+//! - `terminal.zsh-history`    (`AppendOnlyFileAdapter` + `ZshHistoryParser`)
+//! - `terminal.text-history`   (`AppendOnlyFileAdapter` + `TextHistoryParser`)
+//! - `terminal.fish-history`   (`SqliteRowAdapter` + `FishHistoryParser`)
 //!
 //! SQLite-backed fixtures (atuin, fish) pass pre-serialised JSON rows
 //! as fixture bytes, matching what `SqliteRowAdapter` would produce.
-//! AppendOnlyFile fixtures (bash, zsh, text) pass plain-text lines.
+//! `AppendOnlyFile` fixtures (bash, zsh, text) pass plain-text lines.
 
 #[cfg(test)]
 mod tests {
@@ -19,12 +19,12 @@ mod tests {
     // Fixtures
     // -------------------------------------------------------------------------
 
-    /// Atuin SQLite row serialised as JSON.
+    /// Atuin `SQLite` row serialised as JSON.
     /// Fields match what `SqliteRowAdapter` produces from the `history` table:
     /// id, command, cwd, session, hostname, timestamp (ns), duration (ns), exit.
     const ATUIN_FIXTURE: &[u8] = br#"{"id":"01HW0000000000000000000001","command":"echo hello","cwd":"/home/sinity","session":"01HW0000000000000000000002","hostname":"sinnix-prime","timestamp":1700000000000000000,"duration":12345678,"exit":0}"#;
 
-    /// Fish SQLite row serialised as JSON.
+    /// Fish `SQLite` row serialised as JSON.
     /// Fields: command (required), when (optional Unix seconds).
     const FISH_FIXTURE: &[u8] = br#"{"ROWID":1,"command":"git status","when":1700000000}"#;
 

@@ -132,7 +132,7 @@ pub async fn run(
 mod canary {
     use xtask::sandbox::prelude::*;
 
-    /// WeeChat log line that the declarative `WeeChatMessageRecord` parser
+    /// `WeeChat` log line that the declarative `WeeChatMessageRecord` parser
     /// accepts. Must match the tab-separated format:
     /// `YYYY-MM-DD HH:MM:SS\tnick\tmessage`
     const WEECHAT_FIXTURE_LINE: &[u8] = b"2024-01-15 14:23:45\tsinity\thello from harness canary";

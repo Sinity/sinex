@@ -1,11 +1,11 @@
 //! Wave B production-path obligation tests for desktop source units.
 //!
 //! Source units covered:
-//! - `desktop.activitywatch`   (SqliteRowAdapter + ActivityWatchParser)
-//! - `desktop.clipboard`       (ClipboardPollingAdapter + ClipboardParser)
-//! - `desktop.window-manager`  (UnixSocketStreamAdapter + HyprlandParser)
+//! - `desktop.activitywatch`   (`SqliteRowAdapter` + `ActivityWatchParser`)
+//! - `desktop.clipboard`       (`ClipboardPollingAdapter` + `ClipboardParser`)
+//! - `desktop.window-manager`  (`UnixSocketStreamAdapter` + `HyprlandParser`)
 //!
-//! `desktop.activitywatch` uses pre-serialised JSON rows (as SqliteRowAdapter produces).
+//! `desktop.activitywatch` uses pre-serialised JSON rows (as `SqliteRowAdapter` produces).
 //! `desktop.clipboard` passes raw UTF-8 text bytes.
 //! `desktop.window-manager` requires a live Unix socket (Hyprland IPC); those tests
 //! are marked `#[ignore]` and tracked in #1234.
@@ -18,15 +18,15 @@ mod tests {
     // Fixtures
     // -------------------------------------------------------------------------
 
-    /// ActivityWatch SQLite row for a window-watcher event, serialised as JSON.
-    /// Fields: bucket_id (bucket name, determines event type), started_at (ISO8601),
+    /// `ActivityWatch` `SQLite` row for a window-watcher event, serialised as JSON.
+    /// Fields: `bucket_id` (bucket name, determines event type), `started_at` (ISO8601),
     /// duration (fractional seconds), data (JSON object with app/title).
     const AW_WINDOW_FIXTURE: &[u8] = br#"{"bucket_id":"aw-watcher-window_sinnix-prime","started_at":"2024-01-15T14:23:45.000000+00:00","duration":12.5,"data":{"app":"kitty","title":"~/project/sinex"}}"#;
 
-    /// ActivityWatch SQLite row for an AFK-watcher event.
+    /// `ActivityWatch` `SQLite` row for an AFK-watcher event.
     const AW_AFW_FIXTURE: &[u8] = br#"{"bucket_id":"aw-watcher-afk_sinnix-prime","started_at":"2024-01-15T14:23:50.000000+00:00","duration":5.0,"data":{"status":"not-afk"}}"#;
 
-    /// ActivityWatch SQLite row for a web-watcher event.
+    /// `ActivityWatch` `SQLite` row for a web-watcher event.
     const AW_WEB_FIXTURE: &[u8] = br#"{"bucket_id":"aw-watcher-web-firefox","started_at":"2024-01-15T14:24:00.000000+00:00","duration":30.0,"data":{"url":"https://example.com","title":"Example Domain"}}"#;
 
     /// Clipboard text payload — plain UTF-8 content.
