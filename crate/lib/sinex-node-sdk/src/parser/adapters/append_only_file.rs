@@ -400,7 +400,10 @@ mod tests {
         if cfg!(unix) {
             // Inode should be embedded in metadata on every record so
             // cursor_after can round-trip it.
-            let ino = rec.metadata.get(ADAPTER_INODE_KEY).and_then(serde_json::Value::as_u64);
+            let ino = rec
+                .metadata
+                .get(ADAPTER_INODE_KEY)
+                .and_then(serde_json::Value::as_u64);
             assert!(ino.is_some(), "expected inode in metadata on unix");
         }
         Ok(())

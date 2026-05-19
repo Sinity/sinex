@@ -9,6 +9,7 @@ use color_eyre::Result;
 use color_eyre::eyre::{WrapErr, eyre};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use sinex_primitives::SemanticLaneStatus;
 use sinex_primitives::Uuid;
 use sinex_primitives::domain::{EventSource, EventType};
 use sinex_primitives::events::Event;
@@ -37,7 +38,6 @@ use sinex_primitives::sources::continuity::{
 };
 use sinex_primitives::task_domain::TaskStatus;
 use sinex_primitives::temporal::Timestamp;
-use sinex_primitives::SemanticLaneStatus;
 use std::io::{BufRead, Write};
 
 pub const MCP_PROTOCOL_VERSION: &str = "2024-11-05";
