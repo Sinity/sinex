@@ -188,6 +188,15 @@ fn format_dlq_messages_table(messages: &[DlqMessagePeek]) -> String {
             output.push_str(&format!("  Original subject: {orig}\n"));
         }
         output.push_str(&format!("  Preview: {}\n", msg.payload_preview));
+        if msg.payload_redacted {
+            output.push_str("  Privacy: redacted\n");
+        }
+        if !msg.privacy_caveats.is_empty() {
+            output.push_str(&format!(
+                "  Privacy caveats: {}\n",
+                msg.privacy_caveats.join(", ")
+            ));
+        }
         if i < messages.len() - 1 {
             output.push_str(&format!("{}\n", "─".repeat(80)));
         }
