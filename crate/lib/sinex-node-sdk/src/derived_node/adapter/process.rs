@@ -278,7 +278,7 @@ where
                         // into a hot loop. The error still propagates so the
                         // caller can record the failure.
                         if let Some(drain) = self.shutdown_tx.as_ref() {
-                            drain.request_drain_and_warn(self.node.name());
+                            let _ = drain.request_drain_and_warn(self.node.name());
                         }
                         error!(
                             target: "sinex_metrics",
@@ -296,7 +296,7 @@ where
                         // Same shape as HaltNode — request drain, then return
                         // the error so the in-flight batch unwinds.
                         if let Some(drain) = self.shutdown_tx.as_ref() {
-                            drain.request_drain_and_warn(self.node.name());
+                            let _ = drain.request_drain_and_warn(self.node.name());
                         }
                         error!(
                             target: "sinex_metrics",

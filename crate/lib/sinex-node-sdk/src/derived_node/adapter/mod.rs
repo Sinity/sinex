@@ -204,7 +204,7 @@ where
     /// Signal shutdown.
     pub fn signal_shutdown(&self) {
         if let Some(tx) = &self.shutdown_tx {
-            tx.request_drain_and_warn(self.node.name());
+            let _ = tx.request_drain_and_warn(self.node.name());
         }
     }
 
