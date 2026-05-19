@@ -217,17 +217,33 @@ impl StatusCommand {
                     source: "gateway dlq probe".to_string(),
                     message: Some(format!("{} messages", stats.total_messages)),
                 });
+                if let Some(signal) = privacy_dlq_signal(stats.total_messages) {
+                    signals.push(signal);
+                }
+                if let Some(warning) = privacy_dlq_warning(stats.total_messages) {
+                    warnings.push(warning);
+                }
             }
             Err(e) => {
                 warnings.push(RuntimeStatusWarning {
                     source: "dlq".to_string(),
                     message: format!("error: {e}"),
                 });
+                warnings.push(RuntimeStatusWarning {
+                    source: "privacy.dlq".to_string(),
+                    message: format!("DLQ privacy posture unknown: {e}"),
+                });
                 signals.push(RuntimeStatusSignal {
                     name: "dlq".to_string(),
                     status: RuntimeStatusSignalStatus::Unknown,
                     source: "gateway dlq probe".to_string(),
                     message: Some(e.to_string()),
+                });
+                signals.push(RuntimeStatusSignal {
+                    name: "privacy-dlq".to_string(),
+                    status: RuntimeStatusSignalStatus::Unknown,
+                    source: "gateway dlq privacy probe".to_string(),
+                    message: Some("DLQ backlog could not be inspected".to_string()),
                 });
             }
         }
@@ -395,6 +411,24 @@ fn private_mode_signal(
     })
 }
 
+fn privacy_dlq_signal(total_messages: u64) -> Option<RuntimeStatusSignal> {
+    (total_messages > 0).then(|| RuntimeStatusSignal {
+        name: "privacy-dlq".to_string(),
+        status: RuntimeStatusSignalStatus::Degraded,
+        source: "gateway dlq privacy probe".to_string(),
+        message: Some(format!(
+            "{total_messages} raw DLQ message(s) require sanitized inspection"
+        )),
+    })
+}
+
+fn privacy_dlq_warning(total_messages: u64) -> Option<RuntimeStatusWarning> {
+    (total_messages > 0).then(|| RuntimeStatusWarning {
+        source: "privacy.dlq".to_string(),
+        message: "raw DLQ backlog present; inspect via redacted dlq.peek previews only".to_string(),
+    })
+}
+
 fn runtime_target_kind_label(kind: &RuntimeTargetKind) -> &'static str {
     match kind {
         RuntimeTargetKind::Unknown => "unknown",
@@ -443,6 +477,32 @@ mod status_tests {
             signal.message.as_deref(),
             Some("enabled (scope: desktop,weechat, actor: operator)")
         );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn privacy_dlq_status_is_quiet_when_backlog_empty() -> xtask::sandbox::TestResult<()> {
+        assert!(privacy_dlq_signal(0).is_none());
+        assert!(privacy_dlq_warning(0).is_none());
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn privacy_dlq_status_reports_sanitized_backlog() -> xtask::sandbox::TestResult<()> {
+        let signal = privacy_dlq_signal(3)
+            .ok_or_else(|| color_eyre::eyre::eyre!("privacy DLQ signal expected"))?;
+        let warning = privacy_dlq_warning(3)
+            .ok_or_else(|| color_eyre::eyre::eyre!("privacy DLQ warning expected"))?;
+
+        assert_eq!(signal.name, "privacy-dlq");
+        assert_eq!(signal.status, RuntimeStatusSignalStatus::Degraded);
+        assert_eq!(
+            signal.message.as_deref(),
+            Some("3 raw DLQ message(s) require sanitized inspection")
+        );
+        assert_eq!(warning.source, "privacy.dlq");
+        assert!(!warning.message.contains("payload"));
+        assert!(!warning.message.contains("sample"));
         Ok(())
     }
 }
