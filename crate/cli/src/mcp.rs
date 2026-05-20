@@ -165,6 +165,10 @@ struct TasksListArgs {
     #[serde(default)]
     query: Option<String>,
     #[serde(default)]
+    external_system: Option<String>,
+    #[serde(default)]
+    external_id: Option<String>,
+    #[serde(default)]
     status: Option<TaskStatus>,
     #[serde(default)]
     project_id: Option<String>,
@@ -1856,6 +1860,8 @@ async fn tasks_list(client: &GatewayClient, arguments: Value) -> Result<Value> {
     let args: TasksListArgs = serde_json::from_value(arguments)?;
     let request = TaskListRequest {
         query: args.query.clone(),
+        external_system: args.external_system.clone(),
+        external_id: args.external_id.clone(),
         status: args.status,
         project_id: args.project_id.clone(),
         tag: args.tag.clone(),

@@ -11,7 +11,7 @@ use sinex_primitives::rpc::tasks::{
 use sinex_primitives::task_domain::{TaskFieldUpdate, TaskStatus};
 
 use crate::client::GatewayClient;
-use crate::commands::declare::render_task_response;
+use crate::commands::declare::{parse_task_external_ref, render_task_response};
 use crate::fmt::{format_json, format_yaml};
 use crate::model::OutputFormat;
 use crate::validation::parse_time_input;
@@ -176,6 +176,10 @@ pub struct TaskUpdateCommand {
     /// Update event time. Accepts RFC3339, YYYY-MM-DD, or relative forms.
     #[arg(long)]
     updated_at: Option<String>,
+
+    /// Replace external refs with system:id or system:id:version entries. Can be repeated.
+    #[arg(long = "external-ref")]
+    external_refs: Vec<String>,
 }
 
 impl TaskUpdateCommand {
@@ -187,6 +191,16 @@ impl TaskUpdateCommand {
             .map(parse_time_input)
             .transpose()?;
         let due_at = self.due.as_deref().map(parse_time_input).transpose()?;
+        let external_refs = if self.external_refs.is_empty() {
+            None
+        } else {
+            Some(
+                self.external_refs
+                    .iter()
+                    .map(|raw| parse_task_external_ref(raw))
+                    .collect::<Result<Vec<_>>>()?,
+            )
+        };
         let response = client
             .tasks_update(TaskUpdateRequest {
                 task_id,
@@ -205,7 +219,7 @@ impl TaskUpdateCommand {
                     self.clear_priority,
                     "priority",
                 )?,
-                external_refs: None,
+                external_refs,
                 reason: self.reason.clone(),
                 external_version: None,
             })
@@ -272,6 +286,14 @@ pub struct TaskListCommand {
     #[arg(long)]
     tag: Option<String>,
 
+    /// Filter by external ref system.
+    #[arg(long)]
+    external_system: Option<String>,
+
+    /// Filter by external ref id.
+    #[arg(long)]
+    external_id: Option<String>,
+
     /// Include tasks due at or after this time/date.
     #[arg(long)]
     due_from: Option<String>,
@@ -296,6 +318,8 @@ impl TaskListCommand {
         let response = client
             .tasks_list(TaskListRequest {
                 query: self.query.clone(),
+                external_system: self.external_system.clone(),
+                external_id: self.external_id.clone(),
                 status: self.status.as_deref().map(parse_task_status).transpose()?,
                 project_id: self.project_id.clone(),
                 tag: self.tag.clone(),
