@@ -110,6 +110,71 @@ async fn test_deps_duplicates_json_includes_version_roots() -> ::xtask::sandbox:
 }
 
 #[sinex_test]
+async fn test_deps_tree_omits_disabled_optional_backend() -> ::xtask::sandbox::TestResult<()> {
+    let output = xtask_command()?
+        .arg("deps")
+        .arg("tree")
+        .arg("--package")
+        .arg("sinexctl")
+        .arg("--depth")
+        .arg("4")
+        .arg("--json")
+        .output()?;
+
+    assert!(
+        output.status.success(),
+        "deps tree for sinexctl failed. Stderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let parsed: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+    let tree = parsed["data"]["tree"]
+        .as_str()
+        .ok_or_else(|| color_eyre::eyre::eyre!("deps tree JSON data.tree should be a string"))?;
+
+    assert!(
+        !tree.contains("ratatui-termwiz"),
+        "tree should not report ratatui's disabled termwiz backend as an active dependency"
+    );
+    assert!(
+        !tree.contains("termwiz"),
+        "tree should not report the disabled termwiz backend closure"
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn test_deps_duplicates_ignore_inactive_optional_versions() -> ::xtask::sandbox::TestResult<()>
+{
+    let output = xtask_command()?
+        .arg("deps")
+        .arg("duplicates")
+        .arg("--json")
+        .output()?;
+
+    assert!(
+        output.status.success(),
+        "deps duplicates --json failed. Stderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let parsed: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+    let duplicates = parsed["data"]["duplicates"]
+        .as_array()
+        .ok_or_else(|| color_eyre::eyre::eyre!("data.duplicates should be an array"))?;
+    let names = duplicates
+        .iter()
+        .filter_map(|duplicate| duplicate["name"].as_str())
+        .collect::<Vec<_>>();
+
+    for inactive_name in ["bit-set", "bit-vec", "fixedbitset"] {
+        assert!(
+            !names.contains(&inactive_name),
+            "inactive optional dependency '{inactive_name}' should not be reported as duplicate debt"
+        );
+    }
+    Ok(())
+}
+
+#[sinex_test]
 async fn test_deps_timings_invalid_top() -> ::xtask::sandbox::TestResult<()> {
     let Err(error) = Cli::try_parse_from(["xtask", "deps", "timings", "--top", "invalid"]) else {
         return Err(color_eyre::eyre::eyre!(

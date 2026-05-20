@@ -3,9 +3,14 @@
 use color_eyre::eyre::{Result, WrapErr};
 use guppy::MetadataCommand;
 use guppy::PackageId;
-use guppy::graph::{DependencyDirection, PackageGraph};
+use guppy::graph::PackageGraph;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
+
+use crate::deps::active::{
+    active_direct_dependencies, active_package_ids_for_package, cargo_set_package_ids,
+    workspace_cargo_set,
+};
 
 /// Workspace analyzer using guppy
 pub struct WorkspaceAnalyzer {
@@ -155,36 +160,12 @@ impl WorkspaceAnalyzer {
                 .metadata(package_id)
                 .context("Failed to get package metadata")?;
 
-            // Query all forward dependencies (what this package depends on)
-            let query = self
-                .graph
-                .query_forward(std::iter::once(package_id))
-                .context("Failed to create forward dependency query")?;
-
-            // Resolve the query to get all dependencies
-            let package_set = query.resolve();
-
-            // A single PackageLink can carry the same dep through multiple kinds
-            // (e.g. crate is both a normal and dev dep). Emit one row per
-            // kind so downstream consumers can filter.
-            for link in package_set.links(DependencyDirection::Forward) {
-                let from_pkg = link.from();
-                let to_pkg = link.to();
-                let from_name = from_pkg.name();
-                let to_name = to_pkg.name();
-                for (req, kind) in [
-                    (link.normal(), "normal"),
-                    (link.build(), "build"),
-                    (link.dev(), "dev"),
-                ] {
-                    if req.is_present() {
-                        dependencies.push(DependencyInfo {
-                            dependent: from_name.to_string(),
-                            dependency: to_name.to_string(),
-                            kind: kind.to_string(),
-                        });
-                    }
-                }
+            for dependency in active_direct_dependencies(&self.graph, package_id, true)? {
+                dependencies.push(DependencyInfo {
+                    dependent: _package.name().to_string(),
+                    dependency: dependency.name,
+                    kind: dependency.kind.to_string(),
+                });
             }
         }
 
@@ -213,9 +194,13 @@ impl WorkspaceAnalyzer {
         // Map package name -> version -> package IDs for that version.
         let mut version_map: BTreeMap<String, BTreeMap<String, Vec<PackageId>>> = BTreeMap::new();
         let workspace_roots_by_package = self.workspace_roots_by_reached_package()?;
+        let active_package_ids = cargo_set_package_ids(&workspace_cargo_set(&self.graph, true)?);
 
-        // Iterate over all packages in the graph
         for package in self.graph.packages() {
+            if !active_package_ids.contains(package.id()) {
+                continue;
+            }
+
             let name = package.name().to_string();
             let version = package.version().to_string();
 
@@ -268,15 +253,12 @@ impl WorkspaceAnalyzer {
                 .graph
                 .metadata(workspace_id)
                 .context("Failed to get workspace package metadata")?;
-            let resolved = self
-                .graph
-                .query_forward(std::iter::once(workspace_id))
-                .context("Failed to create workspace root dependency query")?
-                .resolve();
+            let active_package_ids =
+                active_package_ids_for_package(&self.graph, workspace_id, true)?;
 
-            for reached_id in resolved.package_ids(DependencyDirection::Forward) {
+            for reached_id in active_package_ids {
                 roots_by_package
-                    .entry(reached_id.clone())
+                    .entry(reached_id)
                     .or_default()
                     .push(package.name().to_string());
             }

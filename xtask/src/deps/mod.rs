@@ -8,6 +8,7 @@ use clap::Subcommand;
 use color_eyre::eyre::{Result, WrapErr, bail};
 
 // Submodules
+pub(crate) mod active;
 pub mod analyzer; // Created in P1.W3.T2
 pub mod reports; // Created in P1.W3.T3
 pub mod timing;
