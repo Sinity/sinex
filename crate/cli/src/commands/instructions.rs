@@ -14,11 +14,6 @@ use crate::model::OutputFormat;
 use crate::validation::parse_time_input;
 
 #[derive(Debug, Args)]
-#[command(after_help = "\
-EXAMPLES:
-    sinexctl instructions hyprland-workspace --workspace 4 --socket-path /run/user/1000/hypr/.../.socket.sock
-    sinexctl instructions hyprland-workspace --workspace 4 --dry-run -f json
-")]
 pub struct InstructionsCommand {
     #[command(subcommand)]
     cmd: InstructionsSubcommand,
@@ -44,6 +39,12 @@ pub enum InstructionsSubcommand {
 }
 
 #[derive(Debug, Args)]
+#[command(after_help = "\
+EXAMPLES:
+    sinexctl instructions hyprland-workspace --workspace 4
+    sinexctl instructions hyprland-workspace --workspace 4 --socket-path /run/user/1000/hypr/.../.socket.sock
+    sinexctl instructions hyprland-workspace --workspace 4 --dry-run -f json
+")]
 pub struct HyprlandWorkspaceCommand {
     /// Desired Hyprland workspace id.
     #[arg(long, short = 'w')]
@@ -62,6 +63,8 @@ pub struct HyprlandWorkspaceCommand {
     dry_run: bool,
 
     /// Hyprland command socket path used for live dispatch.
+    ///
+    /// Omit to resolve from XDG_RUNTIME_DIR and HYPRLAND_INSTANCE_SIGNATURE.
     #[arg(long = "socket-path")]
     socket_path: Option<String>,
 }
