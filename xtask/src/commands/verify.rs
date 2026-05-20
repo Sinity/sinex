@@ -1303,9 +1303,9 @@ fn execute_source_worker(
         checks: checks.clone(),
     };
 
-    if json {
+    if json && !ctx.is_json() {
         println!("{}", serde_json::to_string_pretty(&report)?);
-    } else if ctx.is_human() {
+    } else if !json && ctx.is_human() {
         for check in &checks {
             let tag = match check.status {
                 SwCheckStatus::Pass => "PASS",
@@ -1353,6 +1353,11 @@ fn execute_source_worker(
         ))
         .with_data(serde_json::to_value(&report)?)
         .with_duration(ctx.elapsed());
+
+    if json && !ctx.is_json() {
+        result.data = None;
+        result = result.with_silent();
+    }
 
     Ok(result)
 }
@@ -1770,10 +1775,10 @@ async fn execute_closure(
             evidence_sources,
             results: Vec::new(),
         };
-        if json {
+        if json && !ctx.is_json() {
             println!("{}", serde_json::to_string_pretty(&report)?);
         }
-        return Ok(CommandResult::failure(crate::output::StructuredError::new(
+        let mut result = CommandResult::failure(crate::output::StructuredError::new(
             "CLOSURE_VERIFICATION_MISSING_EVIDENCE",
             format!(
                 "issue #{issue}: no verification commands or closure matrix found in issue body \
@@ -1784,7 +1789,12 @@ async fn execute_closure(
             "issue #{issue}: closure verification missing evidence"
         ))
         .with_data(serde_json::to_value(&report)?)
-        .with_duration(ctx.elapsed()));
+        .with_duration(ctx.elapsed());
+        if json && !ctx.is_json() {
+            result.data = None;
+            result = result.with_silent();
+        }
+        return Ok(result);
     }
 
     if ctx.is_human() && !json {
@@ -1838,7 +1848,7 @@ async fn execute_closure(
         results,
     };
 
-    if json {
+    if json && !ctx.is_json() {
         println!("{}", serde_json::to_string_pretty(&report)?);
     } else if ctx.is_human() && !dry_run {
         println!(
@@ -1871,6 +1881,11 @@ async fn execute_closure(
         .with_detail(format!("matrix_items={}", evidence.matrix_items.len()))
         .with_data(serde_json::to_value(&report)?)
         .with_duration(ctx.elapsed());
+
+    if json && !ctx.is_json() {
+        result.data = None;
+        result = result.with_silent();
+    }
 
     Ok(result)
 }
@@ -2377,6 +2392,25 @@ mod tests {
                 .is_some_and(|items| !items.is_empty())
         );
         assert!(data["errors"].as_array().is_some_and(Vec::is_empty));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn source_worker_json_mode_returns_enveloped_data() -> ::xtask::sandbox::TestResult<()> {
+        let ctx = CommandContext::new(
+            crate::output::OutputWriter::new(crate::output::OutputFormat::Json),
+            false,
+            None,
+            "verify",
+        );
+        let result = execute_source_worker(None, true, &ctx)?;
+
+        assert!(matches!(result.status, Status::Success));
+        let data = result.data.as_ref().ok_or_else(|| {
+            color_eyre::eyre::eyre!("source-worker result missing structured data")
+        })?;
+        assert_eq!(data["overall"], "pass");
+        assert_eq!(data["checks"].as_array().map(Vec::len), Some(3));
         Ok(())
     }
 
