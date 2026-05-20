@@ -202,6 +202,11 @@ pub fn run_changed_strict(
 
     let mut package_results = Vec::with_capacity(pkg_list.len());
     let mut all_ok = true;
+    let child_history_dir = tempfile::Builder::new()
+        .prefix("changed-strict-history.")
+        .tempdir()
+        .map_err(|e| eyre!("failed to create changed-strict child history dir: {e}"))?;
+    let child_history_db = child_history_dir.path().join("xtask-history.db");
 
     for pkg in &pkg_list {
         let mut args = vec!["check".to_string(), "-p".to_string(), pkg.clone()];
@@ -210,6 +215,7 @@ pub fn run_changed_strict(
         let output = Command::new(xtask_bin)
             .args(&args)
             .current_dir(workspace_root)
+            .env("XTASK_HISTORY_DB", &child_history_db)
             .output()
             .map_err(|e| eyre!("failed to spawn xtask check -p {pkg}: {e}"))?;
 
