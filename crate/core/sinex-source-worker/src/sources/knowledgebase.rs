@@ -109,7 +109,7 @@ fn parse_front_matter(fm: &str) -> serde_json::Value {
     if fm.trim().is_empty() {
         return serde_json::Value::Object(serde_json::Map::new());
     }
-    match serde_yaml::from_str::<serde_json::Value>(fm) {
+    match serde_yml::from_str::<serde_json::Value>(fm) {
         Ok(v) => v,
         Err(_) => serde_json::Value::Object(serde_json::Map::new()),
     }

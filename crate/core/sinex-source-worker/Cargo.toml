@@ -88,7 +88,7 @@ workspace = true
 [dependencies.regex]
 workspace = true
 
-[dependencies.serde_yaml]
+[dependencies.serde_yml]
 workspace = true
 
 [dependencies.sinex-primitives]

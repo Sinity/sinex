@@ -25,7 +25,7 @@ rg "serde_yaml|serde_yml|yaml-rust|figment|Figment|Env::|Toml::|Yaml::|Json::" C
 | proc-macro crate | `sinex-macros`: `color-eyre`, `tokio`, `xtask-macros` | likely stale dev/runtime deps | Remove if proc-macro tests still compile without them. | Macro crate owner. | `xtask check -p sinex-macros`; trybuild/proc-macro tests |
 | node crates | repeated `clap`, `color-eyre`, `tokio`, `async-trait`, plus source-specific leftovers | production/runtime | Treat as an SDK-entrypoint cleanup train. Many node crates likely retained old standalone CLI deps after `node_entrypoint!`; remove crate by crate with node checks, not all at once. `human-panic` was removed in the dependency-compaction wave. | Node SDK/runtime owners. | `xtask check -p <node-crate>`; node smoke tests where present |
 | fuzz/test crates | fuzz `arbitrary`; e2e `parking_lot`, `tokio-stream`; workspace tests `time` | fuzz/test | Verify scanner false positives against fuzz/test targets. Keep with explicit ignore if generated fuzz/test macros need them; otherwise remove. | Test/fuzz owners. | `cargo machete --with-metadata`; targeted test/fuzz compile |
-| YAML output and manifests | `serde_yaml` in `sinexctl` and `xtask` | direct production/devtool | Keep for now with policy: YAML is a supported CLI output and xtask manifest/stack-plan format. Replacement is not a blind removal; it needs compatibility tests for supported YAML shape. | #775 / follow-up YAML policy slice. | CLI YAML tests; xtask docs/git-stack tests |
+| YAML output, manifests, and source front matter | `serde_yml` in `sinexctl`, `xtask`, and `sinex-source-worker` | direct production/devtool | Standardized on the workspace `serde_yml` crate. Do not reintroduce deprecated `serde_yaml` without compatibility evidence and a deliberate policy decision. | #775 / follow-up YAML policy slice. | CLI YAML tests; xtask docs/git-stack tests; knowledgebase front-matter parser tests |
 | duplicate versions | crypto/rand stack, `darling`, `dashmap`, `hashbrown`/`foldhash`, HTTP/reqwest/tower stack, `sysinfo`, `thiserror`, `toml`, `unicode-width`, `webpki-roots`, `which`, `whoami` | transitive and some direct | Do not churn all duplicates at once. Classify into direct-upgrade candidates vs transitive-only duplication. Prefer dependency upgrades where there is a single owning direct dependency. | Dependency owner per family. | `cargo tree --duplicates`; package checks for touched owners |
 
 ## Policy
@@ -33,9 +33,10 @@ rg "serde_yaml|serde_yml|yaml-rust|figment|Figment|Env::|Toml::|Yaml::|Json::" C
 - `cargo machete` findings are candidates, not proof.
 - A dependency can close one of four ways: removed, deliberately adopted,
   isolated behind a feature/crate boundary, or kept with an explicit proof/ignore.
-- YAML support is an operator/API compatibility surface. Replacing `serde_yaml`
-  must preserve the documented YAML output and manifest formats or explicitly
-  narrow them in the CLI/docs.
+- YAML support is an operator/API compatibility surface. The workspace standard
+  is `serde_yml`; changes must preserve the documented YAML output,
+  manifest/stack-plan formats, and source front-matter parsing semantics or
+  explicitly narrow them in the CLI/docs.
 - Duplicate-version cleanup should happen by family. A PR that updates one
   direct dependency should state which duplicate family it reduced and which
   duplicates remain transitive-only.
