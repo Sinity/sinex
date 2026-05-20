@@ -120,6 +120,33 @@ async fn mcp_tool_schemas_are_closed_objects() -> TestResult<()> {
 }
 
 #[sinex_test]
+async fn mcp_docs_tool_table_matches_live_tools() -> TestResult<()> {
+    let docs_path =
+        workspace_root_from_manifest_dir()?.join("docs/architecture/mcp-readonly-server.md");
+    let docs = std::fs::read_to_string(&docs_path)?;
+    let documented = docs
+        .lines()
+        .filter_map(|line| {
+            line.strip_prefix("| `sinex.")
+                .and_then(|rest| rest.split_once('`'))
+                .map(|(suffix, _)| format!("sinex.{suffix}"))
+        })
+        .collect::<BTreeSet<_>>();
+    let live = tools()
+        .into_iter()
+        .map(|tool| tool.name.to_string())
+        .collect::<BTreeSet<_>>();
+
+    assert_eq!(
+        documented,
+        live,
+        "MCP docs tool table must match live tools in {}",
+        docs_path.display()
+    );
+    Ok(())
+}
+
+#[sinex_test]
 async fn mcp_catalog_exactly_covers_live_tools() -> TestResult<()> {
     let tool_names = tools()
         .iter()
@@ -141,6 +168,15 @@ async fn mcp_catalog_exactly_covers_live_tools() -> TestResult<()> {
         );
     }
     Ok(())
+}
+
+fn workspace_root_from_manifest_dir() -> TestResult<std::path::PathBuf> {
+    let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    manifest_dir
+        .parent()
+        .and_then(std::path::Path::parent)
+        .map(std::path::Path::to_path_buf)
+        .ok_or_else(|| color_eyre::eyre::eyre!("cannot resolve workspace root from manifest dir"))
 }
 
 #[sinex_test]
