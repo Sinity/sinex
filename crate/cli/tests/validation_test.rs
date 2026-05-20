@@ -116,7 +116,13 @@ async fn mcp_lists_first_slice_read_only_tools() -> TestResult<()> {
             "sinex.ops_get",
             "sinex.lifecycle_status",
             "sinex.gitops_sources",
-            "sinex.audit_trail"
+            "sinex.audit_trail",
+            "sinex.coordination_instances",
+            "sinex.coordination_leader",
+            "sinex.coordination_instance_health",
+            "sinex.shadow_consumers",
+            "sinex.system_ping",
+            "sinex.system_version"
         ]
     );
     assert_read_only_tool_names()?;
@@ -1381,6 +1387,116 @@ async fn mcp_audit_trail_call_uses_gateway_fixture() -> TestResult<()> {
     Ok(())
 }
 
+#[sinex_test]
+async fn mcp_coordination_instances_call_uses_gateway_fixture() -> TestResult<()> {
+    let server = mount_mcp_gateway_fixture().await;
+    let client = fixture_gateway_client(&server)?;
+
+    let response = call_tool(
+        &client,
+        "sinex.coordination_instances",
+        json!({ "node_type": "service" }),
+    )
+    .await?;
+
+    assert_eq!(response["tool"], "sinex.coordination_instances");
+    assert_eq!(response["query"]["node_type"], "service");
+    assert_eq!(
+        response["items"]["result"]["instances"][0]["instance_id"],
+        fixture_instance_id()
+    );
+    assert_eq!(response["redaction"]["raw_samples"], false);
+    Ok(())
+}
+
+#[sinex_test]
+async fn mcp_coordination_leader_call_uses_gateway_fixture() -> TestResult<()> {
+    let server = mount_mcp_gateway_fixture().await;
+    let client = fixture_gateway_client(&server)?;
+
+    let response = call_tool(
+        &client,
+        "sinex.coordination_leader",
+        json!({ "node_type": "service" }),
+    )
+    .await?;
+
+    assert_eq!(response["tool"], "sinex.coordination_leader");
+    assert_eq!(
+        response["items"]["result"]["leader"]["instance_id"],
+        fixture_instance_id()
+    );
+    assert_eq!(response["redaction"]["raw_samples"], false);
+    Ok(())
+}
+
+#[sinex_test]
+async fn mcp_coordination_instance_health_call_uses_gateway_fixture() -> TestResult<()> {
+    let server = mount_mcp_gateway_fixture().await;
+    let client = fixture_gateway_client(&server)?;
+
+    let response = call_tool(
+        &client,
+        "sinex.coordination_instance_health",
+        json!({ "instance_id": fixture_instance_id() }),
+    )
+    .await?;
+
+    assert_eq!(response["tool"], "sinex.coordination_instance_health");
+    assert_eq!(response["query"]["instance_id"], fixture_instance_id());
+    assert_eq!(response["items"]["result"]["healthy"], true);
+    assert_eq!(response["redaction"]["raw_samples"], false);
+    Ok(())
+}
+
+#[sinex_test]
+async fn mcp_shadow_consumers_call_uses_gateway_fixture() -> TestResult<()> {
+    let server = mount_mcp_gateway_fixture().await;
+    let client = fixture_gateway_client(&server)?;
+
+    let response = call_tool(
+        &client,
+        "sinex.shadow_consumers",
+        json!({ "prefix": "dev-fixture" }),
+    )
+    .await?;
+
+    assert_eq!(response["tool"], "sinex.shadow_consumers");
+    assert_eq!(response["query"]["prefix"], "dev-fixture");
+    assert_eq!(
+        response["items"]["result"]["consumers"][0]["consumer_name"],
+        "dev-fixture"
+    );
+    assert_eq!(response["redaction"]["raw_samples"], false);
+    Ok(())
+}
+
+#[sinex_test]
+async fn mcp_system_ping_call_uses_gateway_fixture() -> TestResult<()> {
+    let server = mount_mcp_gateway_fixture().await;
+    let client = fixture_gateway_client(&server)?;
+
+    let response = call_tool(&client, "sinex.system_ping", json!({})).await?;
+
+    assert_eq!(response["tool"], "sinex.system_ping");
+    assert_eq!(response["items"]["result"], "pong");
+    assert_eq!(response["redaction"]["raw_samples"], false);
+    Ok(())
+}
+
+#[sinex_test]
+async fn mcp_system_version_call_uses_gateway_fixture() -> TestResult<()> {
+    let server = mount_mcp_gateway_fixture().await;
+    let client = fixture_gateway_client(&server)?;
+
+    let response = call_tool(&client, "sinex.system_version", json!({})).await?;
+
+    assert_eq!(response["tool"], "sinex.system_version");
+    assert_eq!(response["items"]["result"], "0.4.2");
+    assert_eq!(response["redaction"]["raw_samples"], false);
+    Ok(())
+}
+
 fn telemetry_window_args() -> Value {
     json!({
         "from": "2026-05-19T00:00:00Z",
@@ -2200,6 +2316,32 @@ async fn mount_mcp_gateway_fixture() -> MockServer {
                     "next_cursor": null,
                     "has_more": false
                 }),
+                "coordination.list_instances" => json!({
+                    "instances": [
+                        fixture_instance(true)
+                    ]
+                }),
+                "coordination.get_leader" => json!({
+                    "leader": fixture_instance(true)
+                }),
+                "coordination.instance_health" => json!({
+                    "instance": fixture_instance(true),
+                    "healthy": true,
+                    "last_error": null
+                }),
+                "shadow.list" => json!({
+                    "consumers": [
+                        {
+                            "consumer_name": "dev-fixture",
+                            "stream_name": "EVENTS",
+                            "subject_filter": "sinex.events.raw.fixture",
+                            "num_pending": 2,
+                            "first_sequence": 10
+                        }
+                    ]
+                }),
+                "system.ping" => json!("pong"),
+                "system.version" => json!("0.4.2"),
                 other => {
                     return ResponseTemplate::new(400).set_body_json(json!({
                         "jsonrpc": "2.0",
@@ -2266,6 +2408,20 @@ fn fixture_semantic_candidate_lane_id() -> &'static str {
 
 fn fixture_semantic_diff_id() -> &'static str {
     "018f4b6b-6a4d-7c80-8000-000000000009"
+}
+
+fn fixture_instance_id() -> &'static str {
+    "gateway-fixture"
+}
+
+fn fixture_instance(is_leader: bool) -> Value {
+    json!({
+        "instance_id": fixture_instance_id(),
+        "node_type": "service",
+        "hostname": "test-host",
+        "last_heartbeat": "2026-05-19T12:00:00Z",
+        "is_leader": is_leader
+    })
 }
 
 fn fixture_operation() -> Value {
