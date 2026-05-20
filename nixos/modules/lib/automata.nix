@@ -17,6 +17,7 @@ rec {
     (mkSpec "dailySummarizer" "daily_summarizer" "sinex-daily-summarizer" "daily" "daily-summarizer" "Sinex daily activity summarizer")
     (mkSpec "documentParser" "document_parser" "sinex-document-parser" "document-parser" "document-parser" "Sinex document parser automaton")
     (mkSpec "tagApplier" "tag_applier" "sinex-tag-applier" "tag-applier" "tag-applier" "Sinex rule-based tag applier automaton")
+    (mkSpec "instructionReconciler" "instruction_reconciler" "sinex-instruction-reconciler" "instruction-reconciler" "instruction-reconciler" "Sinex instruction expectation reconciler")
     (mkSpec "entityExtractor" "entity_extractor" "sinex-entity-extractor" "entity-extractor" "entity-extractor" "Sinex entity extractor automaton")
     (mkSpec "entityResolver" "entity_resolver" "sinex-entity-resolver" "entity-resolver" "entity-resolver" "Sinex entity resolver automaton")
     (mkSpec "relationExtractor" "relation_extractor" "sinex-relation-extractor" "relation-extractor" "relation-extractor" "Sinex relation extractor automaton")

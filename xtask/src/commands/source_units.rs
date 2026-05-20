@@ -829,6 +829,9 @@ fn static_emitter_event_pairs(
         ][..],
         "health" => &[("health-aggregator", "health.aggregated_report")][..],
         "hourly-summarizer" => &[("derived.hourly-summarizer", "activity.summary.hourly")][..],
+        "instruction-expectation-reconciler" => {
+            &[("runtime.instruction", "expectation.status")][..]
+        }
         "session-detector" => &[("derived.session-detector", "activity.session.boundary")][..],
         "relation-extractor" => &[("relation-extractor", "entity.related")][..],
         "system.monitor" => &[("system", "monitoring.started")][..],
