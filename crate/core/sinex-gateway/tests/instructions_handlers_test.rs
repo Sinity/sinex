@@ -186,6 +186,73 @@ async fn hyprland_workspace_switch_noops_when_already_satisfied(
 }
 
 #[sinex_test]
+async fn hyprland_workspace_switch_dry_run_records_plan_without_dispatch(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let material_id = ctx
+        .create_source_material(Some("hyprland-workspace-observation"))
+        .await?;
+    let observed = HyprlandWorkspaceSwitchedPayload {
+        from_workspace_id: 1,
+        to_workspace_id: 2,
+        monitor_id: 0,
+        active_window_id: None,
+    }
+    .from_material(material_id)
+    .build()?;
+    ctx.pool().events().insert(observed).await?;
+
+    let response = handle_hyprland_workspace_switch(
+        ctx.pool(),
+        HyprlandWorkspaceSwitchRequest {
+            instruction_id: None,
+            desired_workspace_id: 4,
+            deadline: None,
+            dry_run: true,
+            command_socket_path: None,
+        },
+        &RpcAuthContext::system(),
+    )
+    .await?;
+
+    assert!(response.observation_ready);
+    assert_eq!(response.current_workspace_id, Some(2));
+    assert_eq!(response.attempt.status, ActuationStatus::DryRun);
+    assert_eq!(response.command_socket_response, None);
+    assert_eq!(
+        response
+            .attempt
+            .command_summary
+            .command
+            .as_ref()
+            .map(|command| command.workspace_id),
+        Some(4)
+    );
+
+    let persisted_attempt = ctx
+        .pool()
+        .events()
+        .get_by_id(
+            response
+                .attempt_event
+                .id
+                .ok_or_else(|| color_eyre::eyre::eyre!("attempt event missing id"))?,
+        )
+        .await?
+        .ok_or_else(|| color_eyre::eyre::eyre!("attempt event not persisted"))?;
+    assert_eq!(
+        persisted_attempt.payload["status"],
+        serde_json::json!("dry_run")
+    );
+    assert_eq!(
+        persisted_attempt.payload["command_summary"]["command"]["workspace_id"],
+        serde_json::json!(4)
+    );
+    assert!(persisted_attempt.payload["error"].is_null());
+    Ok(())
+}
+
+#[sinex_test]
 async fn hyprland_workspace_switch_records_failed_attempt_on_socket_rejection(
     ctx: TestContext,
 ) -> TestResult<()> {
