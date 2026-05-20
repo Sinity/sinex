@@ -14,6 +14,7 @@ use notify::event::ModifyKind;
 use notify::{Event, EventKind, RecursiveMode, Watcher};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use tokio::sync::mpsc;
 
 use sinex_primitives::events::SourceMaterial;
@@ -60,6 +61,17 @@ pub struct FileDropConfig {
     #[serde(default)]
     pub recursive: bool,
 
+    /// Maximum relative path depth to emit under a watched directory.
+    ///
+    /// `0` means direct children of a watched directory only, `1` includes one
+    /// nested directory level, and `None` leaves depth unbounded.
+    #[serde(default)]
+    pub max_depth: Option<usize>,
+
+    /// Directory names to suppress before records leave the adapter.
+    #[serde(default)]
+    pub ignored_directory_names: Vec<String>,
+
     /// Which event kinds to report. If empty, all kinds are reported.
     #[serde(default)]
     pub events: Vec<FileDropEventKind>,
@@ -83,6 +95,7 @@ impl InputShapeAdapter for FileDropAdapter {
     ) -> ParserResult<BoxStream<'static, ParserResult<SourceRecord>>> {
         let (tx, rx) = mpsc::channel::<notify::Result<Event>>(256);
         let event_filter = config.events.clone();
+        let path_filter = FileDropPathFilter::from_config(config);
 
         // Build watcher on the current thread; it sends events to the channel.
         let mut watcher = notify::recommended_watcher(move |res: notify::Result<Event>| {
@@ -103,7 +116,7 @@ impl InputShapeAdapter for FileDropAdapter {
                 .map_err(|e| ParserError::Adapter(format!("failed to watch {path}: {e}")))?;
         }
 
-        let stream = build_file_drop_stream(material_id, rx, event_filter, watcher);
+        let stream = build_file_drop_stream(material_id, rx, event_filter, path_filter, watcher);
         Ok(stream)
     }
 
@@ -117,6 +130,7 @@ fn build_file_drop_stream(
     material_id: Id<SourceMaterial>,
     mut rx: mpsc::Receiver<notify::Result<Event>>,
     event_filter: Vec<FileDropEventKind>,
+    path_filter: FileDropPathFilter,
     _watcher: impl Watcher + 'static, // keep alive until stream ends
 ) -> BoxStream<'static, ParserResult<SourceRecord>> {
     let stream = async_stream::stream! {
@@ -128,7 +142,12 @@ fn build_file_drop_stream(
                     yield Err(ParserError::Adapter(format!("notify error: {e}")));
                 }
                 Ok(event) => {
-                    for record in records_from_file_drop_event(material_id, &event, &event_filter) {
+                    for record in records_from_file_drop_event(
+                        material_id,
+                        &event,
+                        &event_filter,
+                        &path_filter,
+                    ) {
                         yield Ok(record);
                     }
                 }
@@ -159,6 +178,7 @@ fn records_from_file_drop_event(
     material_id: Id<SourceMaterial>,
     event: &Event,
     event_filter: &[FileDropEventKind],
+    path_filter: &FileDropPathFilter,
 ) -> Vec<SourceRecord> {
     let Some(kind) = map_notify_kind(&event.kind) else {
         return Vec::new();
@@ -171,14 +191,17 @@ fn records_from_file_drop_event(
         .paths
         .iter()
         .cloned()
-        .map(|path| {
+        .filter_map(|path| {
             let utf8_path = Utf8PathBuf::from_path_buf(path)
                 .unwrap_or_else(|path| Utf8PathBuf::from(path.to_string_lossy().to_string()));
+            if !path_filter.includes(&utf8_path) {
+                return None;
+            }
             let metadata = serde_json::json!({
                 "event_kind": format!("{kind:?}"),
                 "path": utf8_path.as_str(),
             });
-            SourceRecord {
+            Some(SourceRecord {
                 material_id,
                 anchor: MaterialAnchor::DirectoryEntry {
                     path: utf8_path.clone(),
@@ -188,9 +211,63 @@ fn records_from_file_drop_event(
                 logical_path: Some(utf8_path),
                 source_ts_hint: None,
                 metadata,
-            }
+            })
         })
         .collect()
+}
+
+#[derive(Debug, Clone)]
+struct FileDropPathFilter {
+    watch_roots: Vec<Utf8PathBuf>,
+    max_depth: Option<usize>,
+    ignored_directory_names: HashSet<String>,
+}
+
+impl FileDropPathFilter {
+    fn from_config(config: &FileDropConfig) -> Self {
+        Self {
+            watch_roots: config.watch_paths.clone(),
+            max_depth: config.max_depth,
+            ignored_directory_names: config.ignored_directory_names.iter().cloned().collect(),
+        }
+    }
+
+    #[cfg(test)]
+    fn unrestricted() -> Self {
+        Self {
+            watch_roots: Vec::new(),
+            max_depth: None,
+            ignored_directory_names: HashSet::new(),
+        }
+    }
+
+    fn includes(&self, path: &Utf8PathBuf) -> bool {
+        if self.has_ignored_component(path) {
+            return false;
+        }
+
+        let Some(max_depth) = self.max_depth else {
+            return true;
+        };
+
+        self.relative_depth(path)
+            .is_none_or(|depth| depth <= max_depth)
+    }
+
+    fn has_ignored_component(&self, path: &Utf8PathBuf) -> bool {
+        !self.ignored_directory_names.is_empty()
+            && path
+                .components()
+                .any(|component| self.ignored_directory_names.contains(component.as_str()))
+    }
+
+    fn relative_depth(&self, path: &Utf8PathBuf) -> Option<usize> {
+        self.watch_roots
+            .iter()
+            .filter_map(|root| path.strip_prefix(root).ok())
+            .map(|relative| relative.components().count().saturating_sub(1))
+            .min()
+    }
 }
 
 #[cfg(test)]
@@ -213,6 +290,8 @@ mod tests {
         let config = FileDropConfig {
             watch_paths: vec![Utf8PathBuf::from_path_buf(dir.path().to_owned()).unwrap()],
             recursive: false,
+            max_depth: None,
+            ignored_directory_names: Vec::new(),
             events: vec![FileDropEventKind::Created],
         };
 
@@ -299,6 +378,8 @@ mod tests {
                 "/nonexistent/directory/that/does/not/exist",
             )],
             recursive: false,
+            max_depth: None,
+            ignored_directory_names: Vec::new(),
             events: vec![],
         };
         assert!(
@@ -318,6 +399,8 @@ mod tests {
         let config = FileDropConfig {
             watch_paths: vec![Utf8PathBuf::from_path_buf(dir.path().to_owned()).unwrap()],
             recursive: false,
+            max_depth: None,
+            ignored_directory_names: Vec::new(),
             events: vec![],
         };
         // Open with a cursor — should not error.
@@ -335,6 +418,8 @@ mod tests {
         let config = FileDropConfig {
             watch_paths: vec![Utf8PathBuf::from_path_buf(dir.path().to_owned()).unwrap()],
             recursive: false,
+            max_depth: None,
+            ignored_directory_names: Vec::new(),
             events: vec![FileDropEventKind::Created],
         };
 
@@ -362,6 +447,8 @@ mod tests {
         let config = FileDropConfig {
             watch_paths: vec![Utf8PathBuf::from_path_buf(dir.path().to_owned()).unwrap()],
             recursive: false,
+            max_depth: None,
+            ignored_directory_names: Vec::new(),
             events: vec![FileDropEventKind::Created],
         };
 
@@ -390,7 +477,12 @@ mod tests {
             .add_path(first.clone())
             .add_path(second.clone());
 
-        let records = records_from_file_drop_event(material_id, &event, &[]);
+        let records = records_from_file_drop_event(
+            material_id,
+            &event,
+            &[],
+            &FileDropPathFilter::unrestricted(),
+        );
 
         assert_eq!(records.len(), 2);
         assert_eq!(
@@ -419,14 +511,98 @@ mod tests {
         .add_path(std::path::PathBuf::from("/tmp/sinex-file-drop-before"))
         .add_path(std::path::PathBuf::from("/tmp/sinex-file-drop-after"));
 
-        let moved_records =
-            records_from_file_drop_event(material_id, &event, &[FileDropEventKind::Moved]);
-        let modified_records =
-            records_from_file_drop_event(material_id, &event, &[FileDropEventKind::Modified]);
+        let moved_records = records_from_file_drop_event(
+            material_id,
+            &event,
+            &[FileDropEventKind::Moved],
+            &FileDropPathFilter::unrestricted(),
+        );
+        let modified_records = records_from_file_drop_event(
+            material_id,
+            &event,
+            &[FileDropEventKind::Modified],
+            &FileDropPathFilter::unrestricted(),
+        );
 
         assert_eq!(moved_records.len(), 2);
         assert!(modified_records.is_empty());
         assert_eq!(moved_records[0].metadata["event_kind"], "Moved");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn file_drop_ignored_directory_names_suppress_records() -> xtask::sandbox::TestResult<()>
+    {
+        let material_id = dummy_material_id();
+        let root = Utf8PathBuf::from("/tmp/sinex-file-drop-root");
+        let filter = FileDropPathFilter::from_config(&FileDropConfig {
+            watch_paths: vec![root.clone()],
+            recursive: true,
+            max_depth: None,
+            ignored_directory_names: vec!["target".to_string(), ".git".to_string()],
+            events: vec![],
+        });
+        let event = Event::new(EventKind::Modify(notify::event::ModifyKind::Data(
+            notify::event::DataChange::Content,
+        )))
+        .add_path(std::path::PathBuf::from(
+            "/tmp/sinex-file-drop-root/src/lib.rs",
+        ))
+        .add_path(std::path::PathBuf::from(
+            "/tmp/sinex-file-drop-root/target/debug/build.rs",
+        ))
+        .add_path(std::path::PathBuf::from(
+            "/tmp/sinex-file-drop-root/.git/config",
+        ));
+
+        let records = records_from_file_drop_event(material_id, &event, &[], &filter);
+
+        assert_eq!(records.len(), 1);
+        assert_eq!(
+            records[0]
+                .logical_path
+                .as_deref()
+                .map(camino::Utf8Path::as_str),
+            Some("/tmp/sinex-file-drop-root/src/lib.rs")
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn file_drop_max_depth_bounds_recursive_records() -> xtask::sandbox::TestResult<()> {
+        let material_id = dummy_material_id();
+        let filter = FileDropPathFilter::from_config(&FileDropConfig {
+            watch_paths: vec![Utf8PathBuf::from("/tmp/sinex-file-drop-root")],
+            recursive: true,
+            max_depth: Some(1),
+            ignored_directory_names: Vec::new(),
+            events: vec![],
+        });
+        let event = Event::new(EventKind::Create(notify::event::CreateKind::File))
+            .add_path(std::path::PathBuf::from(
+                "/tmp/sinex-file-drop-root/direct.txt",
+            ))
+            .add_path(std::path::PathBuf::from(
+                "/tmp/sinex-file-drop-root/one/nested.txt",
+            ))
+            .add_path(std::path::PathBuf::from(
+                "/tmp/sinex-file-drop-root/one/two/too-deep.txt",
+            ));
+
+        let records = records_from_file_drop_event(material_id, &event, &[], &filter);
+
+        let paths = records
+            .iter()
+            .filter_map(|record| record.logical_path.as_ref())
+            .map(|path| path.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            paths,
+            vec![
+                "/tmp/sinex-file-drop-root/direct.txt",
+                "/tmp/sinex-file-drop-root/one/nested.txt"
+            ]
+        );
         Ok(())
     }
 }
