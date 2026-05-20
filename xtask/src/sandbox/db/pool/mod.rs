@@ -13,13 +13,12 @@ use sqlx::Row;
 use sqlx::postgres::PgConnection;
 use std::collections::HashMap;
 use std::fs::{self, OpenOptions};
-use std::os::fd::AsRawFd;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use nix::errno::Errno;
-use nix::fcntl::{FlockArg, flock};
+use nix::fcntl::{Flock, FlockArg};
 
 // ── Submodules ──────────────────────────────────────────────────────────────
 
@@ -87,7 +86,7 @@ pub struct ProcessSerialTestGuard {
 /// tests really serialize at workspace scope.
 pub struct WorkspaceSerialTestGuard {
     _process_guard: tokio::sync::MutexGuard<'static, ()>,
-    _lock_file: std::fs::File,
+    _lock_file: Flock<std::fs::File>,
 }
 
 fn serial_test_lock_path() -> PathBuf {
@@ -115,25 +114,28 @@ pub async fn acquire_workspace_test_guard() -> TestResult<WorkspaceSerialTestGua
             .wrap_err_with(|| format!("failed to create {}", parent.display()))?;
     }
 
-    let lock_file = OpenOptions::new()
+    let mut lock_file = OpenOptions::new()
         .create(true)
         .write(true)
         .truncate(false)
         .open(&lock_path)
         .wrap_err_with(|| format!("failed to open {}", lock_path.display()))?;
 
-    loop {
-        match flock(lock_file.as_raw_fd(), FlockArg::LockExclusiveNonblock) {
-            Ok(()) => break,
-            Err(Errno::EWOULDBLOCK) => tokio::time::sleep(SERIAL_TEST_LOCK_POLL_INTERVAL).await,
-            Err(error) => {
+    let lock_file = loop {
+        match Flock::lock(lock_file, FlockArg::LockExclusiveNonblock) {
+            Ok(lock) => break lock,
+            Err((unlocked_file, Errno::EWOULDBLOCK)) => {
+                lock_file = unlocked_file;
+                tokio::time::sleep(SERIAL_TEST_LOCK_POLL_INTERVAL).await;
+            }
+            Err((_unlocked_file, error)) => {
                 return Err(eyre!(
                     "failed to acquire serial test lock {}: {error}",
                     lock_path.display()
                 ));
             }
         }
-    }
+    };
 
     Ok(WorkspaceSerialTestGuard {
         _process_guard: process_guard,

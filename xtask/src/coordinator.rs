@@ -20,11 +20,10 @@
 //! 6. **Start** — No running job → start new.
 
 use color_eyre::eyre::{Result, WrapErr, bail, eyre};
-use nix::fcntl::{FlockArg, flock};
+use nix::fcntl::{Flock, FlockArg};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::fs;
-use std::os::fd::AsRawFd;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -199,7 +198,7 @@ impl JobCoordinator {
             .open(&lock_path)
             .with_context(|| format!("failed to open lock file: {}", lock_path.display()))?;
 
-        lock_exclusive_retry(lock_file.as_raw_fd())
+        let _lock_file = lock_exclusive_retry(lock_file)
             .with_context(|| format!("failed to acquire lock: {}", lock_path.display()))?;
 
         // R1: Compute scoped fingerprint (per-package when -p is specified, whole-workspace otherwise)
@@ -331,7 +330,7 @@ impl JobCoordinator {
             .truncate(false)
             .open(&lock_path)?;
 
-        lock_exclusive_retry(lock_file.as_raw_fd())?;
+        let _lock_file = lock_exclusive_retry(lock_file)?;
 
         let state = read_state(&state_path)?;
 
@@ -603,7 +602,7 @@ impl JobCoordinator {
             .truncate(false)
             .open(&lock_path)?;
 
-        lock_exclusive_retry(lock_file.as_raw_fd())?;
+        let _lock_file = lock_exclusive_retry(lock_file)?;
 
         if let Some(mut state) = read_state(&state_path)? {
             state.job_id = job_id;
@@ -629,7 +628,7 @@ impl JobCoordinator {
             .truncate(false)
             .open(&lock_path)?;
 
-        lock_exclusive_retry(lock_file.as_raw_fd())?;
+        let _lock_file = lock_exclusive_retry(lock_file)?;
 
         let Some(state) = read_state(&state_path)? else {
             return Ok(false);
@@ -654,19 +653,20 @@ impl JobCoordinator {
 /// `flock(LOCK_EX)` blocks indefinitely; in a multi-process environment
 /// a stuck holder would cause all callers to hang forever. We use the
 /// non-blocking variant and retry up to ~500 ms before returning an error.
-fn lock_exclusive_retry(fd: std::os::unix::io::RawFd) -> Result<()> {
+fn lock_exclusive_retry(mut file: fs::File) -> Result<Flock<fs::File>> {
     const MAX_RETRIES: u32 = 10;
     const RETRY_INTERVAL: std::time::Duration = std::time::Duration::from_millis(50);
     for i in 0..MAX_RETRIES {
-        match flock(fd, FlockArg::LockExclusiveNonblock) {
-            Ok(()) => return Ok(()),
-            Err(nix::errno::Errno::EWOULDBLOCK) if i + 1 < MAX_RETRIES => {
+        match Flock::lock(file, FlockArg::LockExclusiveNonblock) {
+            Ok(lock) => return Ok(lock),
+            Err((unlocked_file, nix::errno::Errno::EWOULDBLOCK)) if i + 1 < MAX_RETRIES => {
+                file = unlocked_file;
                 std::thread::sleep(RETRY_INTERVAL);
             }
-            Err(nix::errno::Errno::EWOULDBLOCK) => {
+            Err((_unlocked_file, nix::errno::Errno::EWOULDBLOCK)) => {
                 bail!("coordinator: could not acquire lock after {MAX_RETRIES} retries (500 ms)");
             }
-            Err(e) => return Err(e).wrap_err("coordinator: flock failed"),
+            Err((_unlocked_file, e)) => return Err(e).wrap_err("coordinator: flock failed"),
         }
     }
     unreachable!()
