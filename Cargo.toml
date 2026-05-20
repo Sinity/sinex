@@ -148,17 +148,10 @@ license = "MIT"
 [workspace.metadata.crane]
 name = "sinex"
 
-# cargo-machete false positives (deps used in build.rs, conditional, platform-specific)
+# cargo-machete false positive: binary logging setup goes through shared service helpers.
 [workspace.metadata.cargo-machete]
 ignored = [
-    "prost",              # sinex-ingestd: build.rs
-    "tonic-build",        # sinex-node-sdk: build.rs
-    "sinex-test-utils",   # dev-dependencies in multiple crates
-    "tracing-subscriber", # binary crates logging setup
-    "xterm-query",        # sinex-terminal-ingestor: conditional
-    "battery",            # sinex-system-ingestor: platform-specific
-    "procfs",             # sinex-system-ingestor: platform-specific
-    "systemstat",         # sinex-system-ingestor: platform-specific
+    "tracing-subscriber",
 ]
 
 [workspace.dependencies]
