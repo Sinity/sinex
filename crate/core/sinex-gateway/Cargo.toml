@@ -175,7 +175,8 @@ workspace = true
 features = [
     "json",
     "http2",
-    "rustls-tls",
+    "query",
+    "rustls",
     "stream",
 ]
 
