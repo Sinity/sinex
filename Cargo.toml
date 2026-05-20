@@ -223,7 +223,7 @@ bon = "3.9"
 indexmap = "2.0"
 dashmap = "6.1"
 governor = "0.10"
-petgraph = "0.7"
+petgraph = "0.8"
 
 # Retry logic
 tokio-retry = "0.3"
