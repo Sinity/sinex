@@ -108,7 +108,10 @@ async fn mcp_lists_first_slice_read_only_tools() -> TestResult<()> {
             "sinex.llm_budget_report",
             "sinex.curation_proposals",
             "sinex.dlq_stats",
-            "sinex.dlq_peek"
+            "sinex.dlq_peek",
+            "sinex.source_materials",
+            "sinex.source_material",
+            "sinex.source_coverage"
         ]
     );
     assert_read_only_tool_names()?;
@@ -1209,6 +1212,67 @@ async fn mcp_dlq_peek_call_uses_gateway_fixture() -> TestResult<()> {
     Ok(())
 }
 
+#[sinex_test]
+async fn mcp_source_materials_call_uses_gateway_fixture() -> TestResult<()> {
+    let server = mount_mcp_gateway_fixture().await;
+    let client = fixture_gateway_client(&server)?;
+
+    let response = call_tool(
+        &client,
+        "sinex.source_materials",
+        json!({ "status": "completed", "limit": 2 }),
+    )
+    .await?;
+
+    assert_eq!(response["tool"], "sinex.source_materials");
+    assert_eq!(response["query"]["status"], "completed");
+    assert_eq!(
+        response["items"]["result"]["materials"][0]["id"],
+        fixture_material_id()
+    );
+    assert_eq!(response["redaction"]["raw_samples"], false);
+    Ok(())
+}
+
+#[sinex_test]
+async fn mcp_source_material_call_uses_gateway_fixture() -> TestResult<()> {
+    let server = mount_mcp_gateway_fixture().await;
+    let client = fixture_gateway_client(&server)?;
+
+    let response = call_tool(
+        &client,
+        "sinex.source_material",
+        json!({ "material_id": fixture_material_id() }),
+    )
+    .await?;
+
+    assert_eq!(response["tool"], "sinex.source_material");
+    assert_eq!(response["query"]["material_id"], fixture_material_id());
+    assert_eq!(
+        response["items"]["result"]["material"]["metadata"]["redacted"],
+        true
+    );
+    assert_eq!(response["redaction"]["raw_samples"], false);
+    Ok(())
+}
+
+#[sinex_test]
+async fn mcp_source_coverage_call_uses_gateway_fixture() -> TestResult<()> {
+    let server = mount_mcp_gateway_fixture().await;
+    let client = fixture_gateway_client(&server)?;
+
+    let response = call_tool(&client, "sinex.source_coverage", json!({})).await?;
+
+    assert_eq!(response["tool"], "sinex.source_coverage");
+    assert_eq!(response["items"]["result"]["sources"][0]["event_count"], 42);
+    assert_eq!(
+        response["items"]["result"]["sources"][0]["material_count"],
+        3
+    );
+    assert_eq!(response["redaction"]["raw_samples"], false);
+    Ok(())
+}
+
 fn telemetry_window_args() -> Value {
     json!({
         "from": "2026-05-19T00:00:00Z",
@@ -1918,6 +1982,60 @@ async fn mount_mcp_gateway_fixture() -> MockServer {
                             "payload_preview": "[REDACTED]",
                             "payload_redacted": true,
                             "privacy_caveats": ["secret_redacted"]
+                        }
+                    ]
+                }),
+                "sources.list" => json!({
+                    "materials": [
+                        {
+                            "id": fixture_material_id(),
+                            "material_kind": "local_cas",
+                            "source_identifier": "/realm/data/captures/fixture.jsonl",
+                            "status": "completed",
+                            "timing_info_type": "point",
+                            "format": "jsonl",
+                            "contract_version": 1,
+                            "staged_at": "2026-05-19T12:00:00Z",
+                            "staged_by": "fixture",
+                            "size_bytes": 1024,
+                            "mime_type": "application/jsonl"
+                        }
+                    ]
+                }),
+                "sources.show" => json!({
+                    "material": {
+                        "id": fixture_material_id(),
+                        "material_kind": "local_cas",
+                        "source_identifier": "/realm/data/captures/fixture.jsonl",
+                        "status": "completed",
+                        "timing_info_type": "point",
+                        "metadata": {
+                            "secret_note": "ghp_fixture_secret should not leak"
+                        },
+                        "contract": null,
+                        "temporal_evidence": {
+                            "ledger_entries": 1,
+                            "source_types": ["fixture"]
+                        },
+                        "staged_at": "2026-05-19T12:00:00Z",
+                        "start_time": "2026-05-19T12:00:00Z",
+                        "end_time": "2026-05-19T12:01:00Z",
+                        "staged_by": "fixture",
+                        "staged_on_host": "test-host",
+                        "optional_blob_id": null,
+                        "total_bytes": 1024,
+                        "event_count": 42
+                    }
+                }),
+                "sources.coverage" => json!({
+                    "sources": [
+                        {
+                            "source_identifier": "/realm/data/captures/fixture.jsonl",
+                            "material_kind": "local_cas",
+                            "earliest_ts": "2026-05-19T12:00:00Z",
+                            "latest_ts": "2026-05-19T12:30:00Z",
+                            "event_count": 42,
+                            "material_count": 3
                         }
                     ]
                 }),

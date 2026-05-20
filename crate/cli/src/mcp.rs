@@ -30,7 +30,10 @@ use sinex_primitives::rpc::semantic::{
     SemanticEpochListRequest, SemanticLaneDiffsListRequest, SemanticLaneListRequest,
     SemanticLaneOutputsListRequest,
 };
-use sinex_primitives::rpc::sources::{SourcesReadinessGetRequest, SourcesReadinessListRequest};
+use sinex_primitives::rpc::sources::{
+    SourcesCoverageRequest, SourcesListRequest, SourcesReadinessGetRequest,
+    SourcesReadinessListRequest, SourcesShowRequest,
+};
 use sinex_primitives::rpc::system::SystemHealthResponse;
 use sinex_primitives::rpc::tasks::{
     TaskListRequest, TaskListResponse, TaskStateGetRequest, TaskStateResponse,
@@ -281,6 +284,19 @@ struct CurationProposalsArgs {
 struct DlqPeekArgs {
     #[serde(default = "default_dlq_limit")]
     limit: usize,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+struct SourceMaterialsArgs {
+    #[serde(default)]
+    status: Option<String>,
+    #[serde(default)]
+    limit: Option<i64>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+struct SourceMaterialArgs {
+    material_id: String,
 }
 
 const fn default_true() -> bool {
@@ -605,6 +621,27 @@ pub fn tool_catalog() -> Vec<McpCatalogEntry> {
             kind: McpSurfaceKind::Tool,
             description: "Read-only sanitized raw-ingest DLQ message previews.",
             backing_rpc_methods: &[methods::DLQ_PEEK],
+            read_only: true,
+        },
+        McpCatalogEntry {
+            name: "sinex.source_materials",
+            kind: McpSurfaceKind::Tool,
+            description: "Read-only staged source-material catalog listing.",
+            backing_rpc_methods: &[methods::SOURCES_LIST],
+            read_only: true,
+        },
+        McpCatalogEntry {
+            name: "sinex.source_material",
+            kind: McpSurfaceKind::Tool,
+            description: "Read-only staged source-material detail.",
+            backing_rpc_methods: &[methods::SOURCES_SHOW],
+            read_only: true,
+        },
+        McpCatalogEntry {
+            name: "sinex.source_coverage",
+            kind: McpSurfaceKind::Tool,
+            description: "Read-only source-material coverage buckets.",
+            backing_rpc_methods: &[methods::SOURCES_COVERAGE],
             read_only: true,
         },
     ]
@@ -1043,6 +1080,40 @@ pub fn tools() -> Vec<McpTool> {
                 "additionalProperties": false
             }),
         },
+        McpTool {
+            name: "sinex.source_materials",
+            description: "Read-only staged source-material catalog listing.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "status": { "type": "string" },
+                    "limit": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 1000,
+                        "default": 100
+                    }
+                },
+                "additionalProperties": false
+            }),
+        },
+        McpTool {
+            name: "sinex.source_material",
+            description: "Read-only staged source-material detail with metadata redacted.",
+            input_schema: json!({
+                "type": "object",
+                "required": ["material_id"],
+                "properties": {
+                    "material_id": { "type": "string", "format": "uuid" }
+                },
+                "additionalProperties": false
+            }),
+        },
+        McpTool {
+            name: "sinex.source_coverage",
+            description: "Read-only source-material coverage buckets.",
+            input_schema: empty_object_schema(),
+        },
     ]
 }
 
@@ -1254,6 +1325,9 @@ pub async fn call_tool(client: &GatewayClient, name: &str, arguments: Value) -> 
         "sinex.curation_proposals" => curation_proposals(client, arguments).await,
         "sinex.dlq_stats" => dlq_stats(client, arguments).await,
         "sinex.dlq_peek" => dlq_peek(client, arguments).await,
+        "sinex.source_materials" => source_materials(client, arguments).await,
+        "sinex.source_material" => source_material(client, arguments).await,
+        "sinex.source_coverage" => source_coverage(client, arguments).await,
         other => Err(eyre!("unknown MCP tool: {other}")),
     }
 }
@@ -1814,6 +1888,48 @@ async fn dlq_peek(client: &GatewayClient, arguments: Value) -> Result<Value> {
     Ok(envelope(
         "sinex.dlq_peek",
         json!(args),
+        json!({ "result": response }),
+    ))
+}
+
+async fn source_materials(client: &GatewayClient, arguments: Value) -> Result<Value> {
+    let args: SourceMaterialsArgs = serde_json::from_value(arguments)?;
+    let response = client
+        .sources_list(SourcesListRequest {
+            status: args.status.clone(),
+            limit: args.limit,
+        })
+        .await?;
+    Ok(envelope(
+        "sinex.source_materials",
+        json!(args),
+        json!({ "result": response }),
+    ))
+}
+
+async fn source_material(client: &GatewayClient, arguments: Value) -> Result<Value> {
+    let args: SourceMaterialArgs = serde_json::from_value(arguments)?;
+    let mut response = serde_json::to_value(
+        client
+            .sources_show(SourcesShowRequest {
+                material_id: args.material_id.clone(),
+            })
+            .await?,
+    )?;
+    redact_raw_samples(&mut response);
+    Ok(envelope(
+        "sinex.source_material",
+        json!(args),
+        json!({ "result": response }),
+    ))
+}
+
+async fn source_coverage(client: &GatewayClient, arguments: Value) -> Result<Value> {
+    reject_non_empty_args("sinex.source_coverage", &arguments)?;
+    let response = client.sources_coverage(SourcesCoverageRequest {}).await?;
+    Ok(envelope(
+        "sinex.source_coverage",
+        json!({}),
         json!({ "result": response }),
     ))
 }
