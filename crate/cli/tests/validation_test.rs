@@ -62,13 +62,19 @@ async fn validate_time_range_rejects_inverted_and_equal_bounds() -> TestResult<(
 
 #[sinex_test]
 async fn mcp_tool_order_matches_catalog_order() -> TestResult<()> {
-    let tool_names = tools().iter().map(|tool| tool.name).collect::<Vec<_>>();
-    let catalog_names = tool_catalog()
-        .iter()
-        .map(|entry| entry.name)
-        .collect::<Vec<_>>();
+    let live_tools = tools();
+    let catalog = tool_catalog();
+    let tool_names = live_tools.iter().map(|tool| tool.name).collect::<Vec<_>>();
+    let catalog_names = catalog.iter().map(|entry| entry.name).collect::<Vec<_>>();
 
     assert_eq!(tool_names, catalog_names);
+    for (tool, entry) in live_tools.iter().zip(catalog.iter()) {
+        assert_eq!(
+            tool.description, entry.description,
+            "MCP tool `{}` must use catalog-owned description",
+            tool.name
+        );
+    }
     assert_read_only_tool_names()?;
     Ok(())
 }
