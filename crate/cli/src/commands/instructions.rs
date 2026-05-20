@@ -64,7 +64,7 @@ pub struct HyprlandWorkspaceCommand {
 
     /// Hyprland command socket path used for live dispatch.
     ///
-    /// Omit to resolve from XDG_RUNTIME_DIR and HYPRLAND_INSTANCE_SIGNATURE.
+    /// Omit to resolve from `XDG_RUNTIME_DIR` and `HYPRLAND_INSTANCE_SIGNATURE`.
     #[arg(long = "socket-path")]
     socket_path: Option<String>,
 }

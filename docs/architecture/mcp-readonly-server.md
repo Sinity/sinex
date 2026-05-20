@@ -98,6 +98,8 @@ HTTP/SSE transport is a follow-up only when there is a real consumer.
 | `sinex.source_materials` | `sources.list` | staged source-material catalog listing |
 | `sinex.source_material` | `sources.show` | staged source-material detail with metadata redacted |
 | `sinex.source_coverage` | `sources.coverage` | source-material coverage buckets |
+| `sinex.source_presets` | `sources.presets.list` | built-in source resolver preset catalog |
+| `sinex.source_bindings` | `sources.bindings.list` | configured source binding listing |
 | `sinex.ops_list` | `ops.list` | operations log listing |
 | `sinex.ops_get` | `ops.get` | operation detail lookup |
 | `sinex.lifecycle_status` | `lifecycle.status` | data lifecycle tier status |
