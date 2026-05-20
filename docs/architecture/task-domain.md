@@ -18,8 +18,9 @@ and first implementation slice.
 | Reducer | Shared domain reducer projects current task state. |
 | KG | Optional semantic links to projects/entities/files; not lifecycle owner. |
 
-Task state uses the reducer contract in `domain-reducers.md`. Task-specific code
-owns lifecycle semantics and typed validation.
+Task state uses the reducer contract in `domain-reducers.md`. Its typed reducer
+metadata is exported as `TASK_REDUCER_SPEC`; task-specific code owns lifecycle
+semantics and typed validation.
 
 ## Event Families
 
