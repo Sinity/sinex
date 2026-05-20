@@ -33,7 +33,7 @@ A `SourceUnitDescriptor` declares:
 | `runtime_shape` | `Continuous`, `OnDemand`, or `Scheduled`. |
 | `horizons` | Which time horizons the binary serves: `Continuous`, `Historical`, or both. |
 | `retention` | `Forever`, `Days`, or `Tiered` retention policy. |
-| `proof_obligations` | Proof-catalog scenarios that must pass for promotion. |
+| `proof_obligations` | Catalog-backed obligation IDs plus descriptor-local verification tags; only `obligation:*` entries are hard catalog references. |
 | `occurrence_identity` | `Uuid5From(…)`, `Natural`, or `Anchor`. |
 
 ## Folded sub-issues
@@ -61,11 +61,12 @@ evidence; the row stream remains canonical event provenance.
 ## Registration
 
 `SourceUnitDescriptor` is **semantic-only** — it describes the (source, event_type)
-contract, privacy tier, retention policy, and proof obligations. Deployment-shape
-fields (`runner_pack`, `runtime_shape`, `checkpoint_family`, `package_impact`,
-`implementation_mode`, `build_impact`) live on a paired `SourceUnitBinding`,
-keyed by `source_unit_id` (FK to the descriptor's `id`). See `proof.rs` and
-`docs/design/event-taxonomy-v2.md` Section 9 for the split rationale.
+contract, privacy tier, retention policy, and verification tags/catalog
+obligations. Deployment-shape fields (`runner_pack`, `runtime_shape`,
+`checkpoint_family`, `package_impact`, `implementation_mode`, `build_impact`)
+live on a paired `SourceUnitBinding`, keyed by `source_unit_id` (FK to the
+descriptor's `id`). See `proof.rs` and `docs/design/event-taxonomy-v2.md`
+Section 9 for the split rationale.
 
 ```rust
 use sinex_primitives::{register_source_unit, register_source_unit_binding};
@@ -129,8 +130,8 @@ A new ingestor must not merge until:
 
 1. Its `SourceUnitDescriptor` is filled in (every field, no defaults).
 2. The declared `event_types` resolve to live `EventPayload` constants.
-3. The declared `proof_obligations` resolve to known proof-catalog
-   obligations.
+3. Declared `obligation:*` entries resolve to known proof-catalog obligations;
+   descriptor-local tags remain advisory verification metadata.
 4. Any `required` obligation has a runner binding and a checkable command.
 5. Scenario metadata separates catalog-backed `claim:*` IDs from free-form
    assertion IDs.
@@ -141,7 +142,7 @@ A new ingestor must not merge until:
 Cross-reference enforcement is the job of `xtask docs proof-catalog --check`
 and `xtask docs check`. The descriptor itself is the source of truth for the
 source-unit contract, while the generated proof catalog is the cross-reference
-surface that prevents proof obligations from becoming unchecked prose.
+surface that prevents required catalog obligations from becoming unchecked prose.
 
 ## Status of acceptance criteria
 
