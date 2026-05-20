@@ -90,7 +90,8 @@ async fn mcp_lists_first_slice_read_only_tools() -> TestResult<()> {
             "sinex.nodes_active",
             "sinex.ingestd_validation",
             "sinex.ingestd_batch_stats",
-            "sinex.throughput"
+            "sinex.throughput",
+            "sinex.recent_activity"
         ]
     );
     assert_read_only_tool_names()?;
@@ -813,6 +814,21 @@ async fn mcp_throughput_call_uses_gateway_fixture() -> TestResult<()> {
     Ok(())
 }
 
+#[sinex_test]
+async fn mcp_recent_activity_call_uses_gateway_fixture() -> TestResult<()> {
+    let server = mount_mcp_gateway_fixture().await;
+    let client = fixture_gateway_client(&server)?;
+
+    let response = call_tool(&client, "sinex.recent_activity", json!({ "limit": 7 })).await?;
+
+    assert_eq!(response["tool"], "sinex.recent_activity");
+    assert_eq!(response["query"]["limit"], 7);
+    assert_eq!(response["items"]["entries"][0]["activity_type"], "command");
+    assert_eq!(response["items"]["entries"][0]["context"], "terminal");
+    assert_eq!(response["redaction"]["raw_samples"], false);
+    Ok(())
+}
+
 async fn mount_mcp_gateway_fixture() -> MockServer {
     let server = MockServer::start().await;
     Mock::given(method("POST"))
@@ -1223,6 +1239,16 @@ async fn mount_mcp_gateway_fixture() -> MockServer {
                             "component": "ingestd",
                             "eps_1h": 0.05,
                             "eps_24h": 0.02
+                        }
+                    ]
+                }),
+                "telemetry.recent_activity" => json!({
+                    "entries": [
+                        {
+                            "activity_type": "command",
+                            "context": "terminal",
+                            "detail": "fixture recent activity",
+                            "timestamp": "2026-05-19T12:00:00Z"
                         }
                     ]
                 }),
