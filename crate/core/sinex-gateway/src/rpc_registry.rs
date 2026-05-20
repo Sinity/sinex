@@ -55,8 +55,9 @@ use sinex_primitives::rpc::{
     semantic::{
         SEMANTIC_EPOCHS_CREATE_METHOD, SEMANTIC_EPOCHS_LIST_METHOD,
         SEMANTIC_LANE_DIFFS_LIST_METHOD, SEMANTIC_LANE_DIFFS_RECORD_ENTITY_RELATION_METHOD,
-        SEMANTIC_LANE_OUTPUTS_LIST_METHOD, SEMANTIC_LANE_OUTPUTS_WRITE_METHOD,
-        SEMANTIC_LANES_CREATE_METHOD, SEMANTIC_LANES_DISCARD_METHOD, SEMANTIC_LANES_LIST_METHOD,
+        SEMANTIC_LANE_OUTPUTS_LIST_METHOD, SEMANTIC_LANE_OUTPUTS_SEED_CANONICAL_GRAPH_METHOD,
+        SEMANTIC_LANE_OUTPUTS_WRITE_METHOD, SEMANTIC_LANES_CREATE_METHOD,
+        SEMANTIC_LANES_DISCARD_METHOD, SEMANTIC_LANES_LIST_METHOD,
         SEMANTIC_LANES_SET_STATUS_METHOD,
     },
     shadow::{SHADOW_CREATE_METHOD, SHADOW_DELETE_METHOD, SHADOW_LIST_METHOD},
@@ -605,10 +606,11 @@ fn build_registry_impl() -> RpcRegistry {
         handle_semantic_epoch_create, handle_semantic_epoch_list, handle_semantic_lane_create,
         handle_semantic_lane_diff_record_entity_relation, handle_semantic_lane_diffs_list,
         handle_semantic_lane_discard, handle_semantic_lane_outputs_list,
-        handle_semantic_lane_outputs_write, handle_semantic_lane_set_status,
-        handle_semantic_lanes_list, handle_shadow_create, handle_shadow_delete, handle_shadow_list,
-        handle_sources_annotate, handle_sources_archive, handle_sources_bindings_create,
-        handle_sources_bindings_list, handle_sources_bindings_resolve, handle_sources_continuity,
+        handle_semantic_lane_outputs_seed_canonical_graph, handle_semantic_lane_outputs_write,
+        handle_semantic_lane_set_status, handle_semantic_lanes_list, handle_shadow_create,
+        handle_shadow_delete, handle_shadow_list, handle_sources_annotate, handle_sources_archive,
+        handle_sources_bindings_create, handle_sources_bindings_list,
+        handle_sources_bindings_resolve, handle_sources_continuity,
         handle_sources_continuity_explain_gap, handle_sources_continuity_get,
         handle_sources_continuity_list, handle_sources_coverage, handle_sources_list,
         handle_sources_presets_list, handle_sources_readiness_get, handle_sources_readiness_list,
@@ -843,6 +845,10 @@ fn build_registry_impl() -> RpcRegistry {
         .pool_typed_rpc(
             SEMANTIC_LANE_OUTPUTS_WRITE_METHOD,
             boxed!(handle_semantic_lane_outputs_write),
+        )
+        .pool_typed_rpc(
+            SEMANTIC_LANE_OUTPUTS_SEED_CANONICAL_GRAPH_METHOD,
+            boxed!(handle_semantic_lane_outputs_seed_canonical_graph),
         )
         .pool_typed_rpc(
             SEMANTIC_LANE_DIFFS_RECORD_ENTITY_RELATION_METHOD,

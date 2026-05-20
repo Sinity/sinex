@@ -1,13 +1,16 @@
+use sinex_db::DbPoolExt;
 use sinex_gateway::handlers::{
     handle_semantic_epoch_create, handle_semantic_lane_create,
     handle_semantic_lane_diff_record_entity_relation, handle_semantic_lane_discard,
-    handle_semantic_lane_outputs_list, handle_semantic_lane_outputs_write,
+    handle_semantic_lane_outputs_list, handle_semantic_lane_outputs_seed_canonical_graph,
+    handle_semantic_lane_outputs_write,
 };
 use sinex_gateway::rpc_server::RpcAuthContext;
 use sinex_primitives::rpc::semantic::{
     SemanticEpochCreateRequest, SemanticLaneCreateRequest,
     SemanticLaneDiffRecordEntityRelationRequest, SemanticLaneDiscardRequest,
-    SemanticLaneOutputsListRequest, SemanticLaneOutputsWriteRequest,
+    SemanticLaneOutputsListRequest, SemanticLaneOutputsSeedCanonicalGraphRequest,
+    SemanticLaneOutputsWriteRequest,
 };
 use sinex_primitives::{
     EntityRelationLaneOutputs, SemanticComponentVersion, SemanticEntityOutput, SemanticLaneKind,
@@ -21,6 +24,104 @@ fn semantic_scope() -> SemanticScope {
         input_ids: vec!["event:alpha".to_string(), "event:beta".to_string()],
         input_set_hash: "gateway-semantic-input-set".to_string(),
     }
+}
+
+#[sinex_test]
+async fn semantic_lane_seed_canonical_graph_writes_isolated_outputs(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let auth = RpcAuthContext::system();
+    let source = ctx
+        .pool()
+        .knowledge_graph()
+        .create_entity(sinex_db::repositories::CreateEntity::person("Seed Alice"))
+        .await?;
+    let target = ctx
+        .pool()
+        .knowledge_graph()
+        .create_entity(sinex_db::repositories::CreateEntity::project(
+            "Seed Project",
+        ))
+        .await?;
+    ctx.pool()
+        .knowledge_graph()
+        .create_relation(sinex_db::repositories::CreateEntityRelation::new(
+            source.id, target.id, "works_on",
+        ))
+        .await?;
+
+    let scope = semantic_scope();
+    let epoch = handle_semantic_epoch_create(
+        ctx.pool(),
+        SemanticEpochCreateRequest {
+            epoch_id: Some(Uuid::from_u128(0x1346_0000_0000_0000_0000_0000_0000_0011)),
+            name: "canonical-graph-seed".to_string(),
+            scope: scope.clone(),
+            code_ref: Some("test@canonical-graph".to_string()),
+            config_hash: "canonical-graph-config".to_string(),
+            components: Vec::new(),
+            prompt_set_hash: None,
+            model_config_hash: None,
+            created_by: None,
+            operation_id: None,
+            supersedes_epoch_id: None,
+        },
+        &auth,
+    )
+    .await?;
+    let epoch_id: Uuid = epoch.epoch["id"]
+        .as_str()
+        .ok_or_else(|| color_eyre::eyre::eyre!("epoch response missing id"))?
+        .parse()?;
+    let lane = handle_semantic_lane_create(
+        ctx.pool(),
+        SemanticLaneCreateRequest {
+            lane_id: Some(Uuid::from_u128(0x1346_0000_0000_0000_0000_0000_0000_0012)),
+            name: "canonical-graph-lane".to_string(),
+            kind: SemanticLaneKind::Canonical,
+            base_epoch_id: None,
+            candidate_epoch_id: epoch_id,
+            scope,
+            purpose: "gateway canonical graph seed regression".to_string(),
+            operation_id: None,
+            expires_at: None,
+        },
+    )
+    .await?;
+    let lane_id: Uuid = lane.lane["id"]
+        .as_str()
+        .ok_or_else(|| color_eyre::eyre::eyre!("lane response missing id"))?
+        .parse()?;
+
+    let seeded = handle_semantic_lane_outputs_seed_canonical_graph(
+        ctx.pool(),
+        SemanticLaneOutputsSeedCanonicalGraphRequest { lane_id },
+    )
+    .await?;
+    assert_eq!(seeded.written, 3);
+
+    let outputs = handle_semantic_lane_outputs_list(
+        ctx.pool(),
+        SemanticLaneOutputsListRequest { lane_id, limit: 10 },
+    )
+    .await?;
+    assert_eq!(outputs.outputs.len(), 3);
+    assert!(
+        outputs
+            .outputs
+            .iter()
+            .any(|output| output["output_kind"] == "entity"
+                && output["payload"]["canonical_name"] == "seed_alice")
+    );
+    assert!(
+        outputs
+            .outputs
+            .iter()
+            .any(|output| output["output_kind"] == "relation"
+                && output["payload"]["predicate"] == "works_on")
+    );
+
+    Ok(())
 }
 
 fn lane_outputs(entity_key: &str, relation_key: &str) -> EntityRelationLaneOutputs {

@@ -99,16 +99,18 @@ use sinex_primitives::rpc::{
     semantic::{
         SEMANTIC_EPOCHS_CREATE_METHOD, SEMANTIC_EPOCHS_LIST_METHOD,
         SEMANTIC_LANE_DIFFS_LIST_METHOD, SEMANTIC_LANE_DIFFS_RECORD_ENTITY_RELATION_METHOD,
-        SEMANTIC_LANE_OUTPUTS_LIST_METHOD, SEMANTIC_LANE_OUTPUTS_WRITE_METHOD,
-        SEMANTIC_LANES_CREATE_METHOD, SEMANTIC_LANES_DISCARD_METHOD, SEMANTIC_LANES_LIST_METHOD,
+        SEMANTIC_LANE_OUTPUTS_LIST_METHOD, SEMANTIC_LANE_OUTPUTS_SEED_CANONICAL_GRAPH_METHOD,
+        SEMANTIC_LANE_OUTPUTS_WRITE_METHOD, SEMANTIC_LANES_CREATE_METHOD,
+        SEMANTIC_LANES_DISCARD_METHOD, SEMANTIC_LANES_LIST_METHOD,
         SEMANTIC_LANES_SET_STATUS_METHOD, SemanticEpochCreateRequest, SemanticEpochListRequest,
         SemanticEpochListResponse, SemanticEpochRecordResponse, SemanticLaneCreateRequest,
         SemanticLaneDiffRecordEntityRelationRequest, SemanticLaneDiffRecordResponse,
         SemanticLaneDiffsListRequest, SemanticLaneDiffsListResponse, SemanticLaneDiscardRequest,
         SemanticLaneDiscardResponse, SemanticLaneListRequest, SemanticLaneListResponse,
         SemanticLaneOutputsListRequest, SemanticLaneOutputsListResponse,
-        SemanticLaneOutputsWriteRequest, SemanticLaneOutputsWriteResponse,
-        SemanticLaneRecordResponse, SemanticLaneSetStatusRequest,
+        SemanticLaneOutputsSeedCanonicalGraphRequest,
+        SemanticLaneOutputsSeedCanonicalGraphResponse, SemanticLaneOutputsWriteRequest,
+        SemanticLaneOutputsWriteResponse, SemanticLaneRecordResponse, SemanticLaneSetStatusRequest,
     },
     shadow::{SHADOW_LIST_METHOD, ShadowListRequest, ShadowListResponse},
     sources::{
@@ -1120,6 +1122,14 @@ impl GatewayClient {
         request: SemanticLaneOutputsWriteRequest,
     ) -> Result<SemanticLaneOutputsWriteResponse> {
         self.call_typed(SEMANTIC_LANE_OUTPUTS_WRITE_METHOD, &request)
+            .await
+    }
+
+    pub async fn semantic_lane_outputs_seed_canonical_graph(
+        &self,
+        request: SemanticLaneOutputsSeedCanonicalGraphRequest,
+    ) -> Result<SemanticLaneOutputsSeedCanonicalGraphResponse> {
+        self.call_typed(SEMANTIC_LANE_OUTPUTS_SEED_CANONICAL_GRAPH_METHOD, &request)
             .await
     }
 

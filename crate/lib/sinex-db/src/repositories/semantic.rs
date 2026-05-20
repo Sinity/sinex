@@ -8,8 +8,9 @@ use crate::schema::{SemanticEpochs, records};
 use crate::{JsonValue, Timestamp};
 use serde::Serialize;
 use sinex_primitives::{
-    EntityRelationDiffReport, EntityRelationLaneOutputs, SemanticEpochRecord,
-    SemanticLaneRecord as PrimitiveSemanticLaneRecord, SemanticLaneStatus, SinexError, Uuid,
+    EntityRelationDiffReport, EntityRelationLaneOutputs, SemanticEntityOutput, SemanticEpochRecord,
+    SemanticLaneRecord as PrimitiveSemanticLaneRecord, SemanticLaneStatus, SemanticRelationOutput,
+    SinexError, Uuid,
 };
 use sqlx::PgPool;
 
@@ -371,6 +372,88 @@ impl SemanticRepository<'_> {
                 .await?;
         }
         Ok(written)
+    }
+
+    pub async fn seed_entity_relation_outputs_from_canonical_graph(
+        &self,
+        lane_id: Uuid,
+    ) -> DbResult<u64> {
+        let entity_rows = sqlx::query!(
+            r#"
+            SELECT
+                id as "id!: Uuid",
+                entity_type,
+                name,
+                canonical_name,
+                aliases,
+                properties,
+                confidence_score
+            FROM core.entities
+            WHERE is_merged = false
+            ORDER BY id
+            "#
+        )
+        .fetch_all(self.pool)
+        .await
+        .map_err(|error| db_error(error, "read canonical entities for semantic lane"))?;
+
+        let relation_rows = sqlx::query!(
+            r#"
+            SELECT
+                r.id as "id!: Uuid",
+                r.from_entity_id as "from_entity_id!: Uuid",
+                r.to_entity_id as "to_entity_id!: Uuid",
+                r.relation_type,
+                r.properties,
+                r.confidence_score
+            FROM core.entity_relations r
+            JOIN core.entities source_entity
+              ON source_entity.id = r.from_entity_id
+             AND source_entity.is_merged = false
+            JOIN core.entities target_entity
+              ON target_entity.id = r.to_entity_id
+             AND target_entity.is_merged = false
+            WHERE r.is_active = true
+            ORDER BY r.id
+            "#
+        )
+        .fetch_all(self.pool)
+        .await
+        .map_err(|error| db_error(error, "read canonical relations for semantic lane"))?;
+
+        let outputs = EntityRelationLaneOutputs {
+            entities: entity_rows
+                .into_iter()
+                .map(|row| SemanticEntityOutput {
+                    entity_key: row.id.to_string(),
+                    canonical_name: row.canonical_name,
+                    entity_type: row.entity_type,
+                    category: None,
+                    confidence: Some(row.confidence_score),
+                    metadata: serde_json::json!({
+                        "name": row.name,
+                        "aliases": row.aliases,
+                        "properties": row.properties,
+                        "source": "core.entities",
+                    }),
+                })
+                .collect(),
+            relations: relation_rows
+                .into_iter()
+                .map(|row| SemanticRelationOutput {
+                    relation_key: row.id.to_string(),
+                    source_entity_key: row.from_entity_id.to_string(),
+                    target_entity_key: row.to_entity_id.to_string(),
+                    predicate: row.relation_type,
+                    weight: Some(row.confidence_score),
+                    metadata: serde_json::json!({
+                        "properties": row.properties,
+                        "source": "core.entity_relations",
+                    }),
+                })
+                .collect(),
+        };
+        self.write_entity_relation_outputs(lane_id, &outputs).await
     }
 
     pub async fn record_entity_relation_diff(

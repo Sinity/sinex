@@ -626,6 +626,9 @@ fn command_path(cmd: &Commands) -> String {
                     SemanticLaneSubcommand::Status(_) => "semantics lane status".to_string(),
                     SemanticLaneSubcommand::Discard(_) => "semantics lane discard".to_string(),
                     SemanticLaneSubcommand::Outputs(_) => "semantics lane outputs".to_string(),
+                    SemanticLaneSubcommand::SeedCanonicalGraph(_) => {
+                        "semantics lane seed-canonical-graph".to_string()
+                    }
                     SemanticLaneSubcommand::WriteOutputs(_) => {
                         "semantics lane write-outputs".to_string()
                     }
@@ -1246,6 +1249,16 @@ mod tests {
             (
                 vec!["sinexctl", "llm", "budget-report"],
                 "llm budget-report",
+            ),
+            (
+                vec![
+                    "sinexctl",
+                    "semantics",
+                    "lane",
+                    "seed-canonical-graph",
+                    "0196ed62-8f7a-7000-8000-000000000001",
+                ],
+                "semantics lane seed-canonical-graph",
             ),
             (
                 vec![
