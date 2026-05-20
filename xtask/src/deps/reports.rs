@@ -98,6 +98,13 @@ pub fn write_duplicates_report<W: Write>(
                         } else {
                             writeln!(writer, "      roots: {}", detail.workspace_roots.join(", "))?;
                         }
+                        if !detail.direct_workspace_roots.is_empty() {
+                            writeln!(
+                                writer,
+                                "      direct: {}",
+                                detail.direct_workspace_roots.join(", ")
+                            )?;
+                        }
                     }
                 }
 

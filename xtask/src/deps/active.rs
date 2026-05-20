@@ -11,6 +11,7 @@ use std::collections::BTreeSet;
 /// Direct dependency edge that Cargo would actually build.
 #[derive(Debug, Clone)]
 pub(crate) struct ActiveDependencyEdge {
+    pub(crate) package_id: PackageId,
     pub(crate) name: String,
     pub(crate) kind: &'static str,
 }
@@ -96,30 +97,46 @@ pub(crate) fn active_direct_dependencies(
 
     for link in cargo_set.target_links() {
         if link.from().id() == package_id {
-            dependencies.insert((link.to().name().to_string(), "normal"));
+            dependencies.insert((
+                link.to().id().clone(),
+                link.to().name().to_string(),
+                "normal",
+            ));
         }
     }
 
     for link in cargo_set.host_links() {
         if link.from().id() == package_id {
-            dependencies.insert((link.to().name().to_string(), "host"));
+            dependencies.insert((link.to().id().clone(), link.to().name().to_string(), "host"));
         }
     }
 
     for link in cargo_set.build_dep_links() {
         if link.from().id() == package_id {
-            dependencies.insert((link.to().name().to_string(), "build"));
+            dependencies.insert((
+                link.to().id().clone(),
+                link.to().name().to_string(),
+                "build",
+            ));
         }
     }
 
     for link in cargo_set.proc_macro_links() {
         if link.from().id() == package_id {
-            dependencies.insert((link.to().name().to_string(), "proc-macro"));
+            dependencies.insert((
+                link.to().id().clone(),
+                link.to().name().to_string(),
+                "proc-macro",
+            ));
         }
     }
 
     Ok(dependencies
         .into_iter()
-        .map(|(name, kind)| ActiveDependencyEdge { name, kind })
+        .map(|(package_id, name, kind)| ActiveDependencyEdge {
+            package_id,
+            name,
+            kind,
+        })
         .collect())
 }

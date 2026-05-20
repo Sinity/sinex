@@ -57,6 +57,8 @@ pub struct DuplicateVersionDetail {
     pub version: String,
     /// Workspace packages whose dependency closure reaches this version.
     pub workspace_roots: Vec<String>,
+    /// Workspace packages that directly request this exact version.
+    pub direct_workspace_roots: Vec<String>,
 }
 
 impl WorkspaceAnalyzer {
@@ -194,6 +196,7 @@ impl WorkspaceAnalyzer {
         // Map package name -> version -> package IDs for that version.
         let mut version_map: BTreeMap<String, BTreeMap<String, Vec<PackageId>>> = BTreeMap::new();
         let workspace_roots_by_package = self.workspace_roots_by_reached_package()?;
+        let direct_roots_by_package = self.workspace_direct_roots_by_package()?;
         let active_package_ids = cargo_set_package_ids(&workspace_cargo_set(&self.graph, true)?);
 
         for package in self.graph.packages() {
@@ -227,6 +230,10 @@ impl WorkspaceAnalyzer {
                             &package_ids,
                             &workspace_roots_by_package,
                         ),
+                        direct_workspace_roots: self.workspace_roots_for_package_ids(
+                            &package_ids,
+                            &direct_roots_by_package,
+                        ),
                     });
                 }
 
@@ -259,6 +266,31 @@ impl WorkspaceAnalyzer {
             for reached_id in active_package_ids {
                 roots_by_package
                     .entry(reached_id)
+                    .or_default()
+                    .push(package.name().to_string());
+            }
+        }
+
+        for roots in roots_by_package.values_mut() {
+            roots.sort();
+            roots.dedup();
+        }
+
+        Ok(roots_by_package)
+    }
+
+    fn workspace_direct_roots_by_package(&self) -> Result<BTreeMap<PackageId, Vec<String>>> {
+        let workspace = self.graph.workspace();
+        let mut roots_by_package: BTreeMap<PackageId, Vec<String>> = BTreeMap::new();
+
+        for workspace_id in workspace.member_ids() {
+            let package = self
+                .graph
+                .metadata(workspace_id)
+                .context("Failed to get workspace package metadata")?;
+            for dependency in active_direct_dependencies(&self.graph, workspace_id, true)? {
+                roots_by_package
+                    .entry(dependency.package_id)
                     .or_default()
                     .push(package.name().to_string());
             }
