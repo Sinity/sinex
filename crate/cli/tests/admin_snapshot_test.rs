@@ -14,6 +14,7 @@ use tempfile::TempDir;
 use xtask::sandbox::prelude::*;
 
 use sinexctl::admin::exec;
+use sinexctl::admin::manifest::ComponentExtras;
 use sinexctl::admin::snapshot::{
     AdminSnapshotCommand, AdminSnapshotInspectCommand, AdminSnapshotRestoreCommand, Component,
 };
@@ -329,6 +330,119 @@ async fn dry_run_non_postgres_components_do_not_require_database_url()
         !output_path.exists(),
         "dry-run must NOT create an archive at {output_path:?}"
     );
+
+    Ok(())
+}
+
+/// Non-Postgres archive creation preserves the component paths declared in
+/// the manifest, including nested NATS and CAS state roots.
+#[sinex_test]
+async fn snapshot_archive_preserves_component_paths_and_nats_member_manifest()
+-> xtask::sandbox::TestResult<()> {
+    let state_dir = make_fake_state_dir()?;
+    let output_dir = tempfile::tempdir()?;
+    let output_path = output_dir.path().join("test.tar.zst");
+    let tools = tempfile::tempdir()?;
+    let _systemctl = make_executable_script(&tools, "systemctl", "#!/bin/sh\nexit 0\n")?;
+    let path = format!(
+        "{}:{}",
+        tools.path().display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+
+    let output = sinexctl_bin()
+        .env("PATH", path)
+        .args([
+            "admin",
+            "snapshot",
+            "--output",
+            &output_path.to_string_lossy(),
+            "--state-dir",
+            &state_dir.path().to_string_lossy(),
+            "--components",
+            "nats,cas,state",
+            "--compression",
+            "1",
+            "--workers",
+            "1",
+        ])
+        .output()?;
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "snapshot archive creation must exit 0\nstdout: {stdout}\nstderr: {stderr}"
+    );
+    assert!(output_path.exists(), "snapshot archive should be created");
+
+    let inspect = AdminSnapshotInspectCommand {
+        archive: output_path.clone(),
+    }
+    .execute()?;
+    assert!(
+        inspect.missing_component_paths.is_empty(),
+        "archive should contain every non-empty manifest component path: {:?}",
+        inspect.missing_component_paths
+    );
+    let nats_record = inspect
+        .manifest
+        .components
+        .iter()
+        .find(|component| component.name == "nats")
+        .ok_or_else(|| color_eyre::eyre::eyre!("snapshot should include nats component"))?;
+    assert_eq!(nats_record.path, "nats/jetstream/");
+    let nats_member_paths = match &nats_record.extras {
+        Some(ComponentExtras::Nats(extras)) => &extras.member_paths,
+        other => {
+            return Err(color_eyre::eyre::eyre!(
+                "nats component should carry member paths, got {other:?}"
+            ));
+        }
+    };
+    assert_eq!(
+        nats_member_paths,
+        &vec!["meta.inf".to_string()],
+        "nats member manifest should be relative to the JetStream root"
+    );
+
+    let target_parent = tempfile::tempdir()?;
+    let target = target_parent.path().join("restore-target");
+    let restore = AdminSnapshotRestoreCommand {
+        archive: output_path,
+        target_dir: target.clone(),
+        dry_run: false,
+        allow_non_empty_target: false,
+        confirm_restore: true,
+        allow_active_services: true,
+        restore_database_url: None,
+        pg_restore_bin: None,
+        psql_bin: None,
+    }
+    .execute()?;
+
+    assert!(
+        target
+            .join("nats")
+            .join("jetstream")
+            .join("meta.inf")
+            .exists()
+    );
+    assert!(
+        target
+            .join("cas")
+            .join("blob-repository")
+            .join("blob1.bin")
+            .exists()
+    );
+    let observed = restore
+        .observed_checks
+        .as_ref()
+        .ok_or_else(|| color_eyre::eyre::eyre!("restore execution should report observations"))?;
+    assert!(observed.nats_state_present);
+    assert_eq!(observed.nats_member_count, Some(1));
+    assert_eq!(observed.nats_member_paths_match, Some(true));
+    assert_eq!(observed.component_blake3_matches.get("nats"), Some(&true));
+    assert_eq!(observed.component_blake3_matches.get("cas"), Some(&true));
 
     Ok(())
 }
