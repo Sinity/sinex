@@ -90,7 +90,14 @@ pub async fn handle_hyprland_workspace_switch(
         } else {
             match dispatch_hyprland_workspace_command(socket_path, &command).await {
                 Ok(response) => {
-                    command_socket_response = Some(response.response);
+                    let socket_response = response.response;
+                    if socket_response.trim() != "ok" {
+                        attempt.status = ActuationStatus::Failed;
+                        attempt.error = Some(format!(
+                            "Hyprland command socket rejected workspace dispatch: {socket_response}"
+                        ));
+                    }
+                    command_socket_response = Some(socket_response);
                 }
                 Err(error) => {
                     attempt.status = ActuationStatus::Failed;
