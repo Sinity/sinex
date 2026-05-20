@@ -151,6 +151,22 @@ mod help_tests {
     }
 
     #[sinex_test]
+    async fn test_instructions_hyprland_help_mentions_default_socket_resolution() -> TestResult<()>
+    {
+        sinexctl()
+            .args(["instructions", "hyprland-workspace", "--help"])
+            .assert()
+            .success()
+            .stdout(predicate::str::contains(
+                "sinexctl instructions hyprland-workspace --workspace 4\n",
+            ))
+            .stdout(predicate::str::contains("--socket-path"))
+            .stdout(predicate::str::contains("XDG_RUNTIME_DIR"))
+            .stdout(predicate::str::contains("HYPRLAND_INSTANCE_SIGNATURE"));
+        Ok(())
+    }
+
+    #[sinex_test]
     async fn test_config_help() -> TestResult<()> {
         sinexctl()
             .args(["config", "--help"])
