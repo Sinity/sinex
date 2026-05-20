@@ -103,6 +103,12 @@ HTTP/SSE transport is a follow-up only when there is a real consumer.
 | `sinex.lifecycle_status` | `lifecycle.status` | data lifecycle tier status |
 | `sinex.gitops_sources` | `gitops.list_sources` | GitOps schema source listing |
 | `sinex.audit_trail` | `audit.get` | audit trail for one operation |
+| `sinex.coordination_instances` | `coordination.list_instances` | coordination instance listing |
+| `sinex.coordination_leader` | `coordination.get_leader` | coordination leader lookup |
+| `sinex.coordination_instance_health` | `coordination.instance_health` | coordination instance health lookup |
+| `sinex.shadow_consumers` | `shadow.list` | shadow consumer listing |
+| `sinex.system_ping` | `system.ping` | gateway ping |
+| `sinex.system_version` | `system.version` | gateway package version |
 
 Deliberate omissions:
 

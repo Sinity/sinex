@@ -325,6 +325,28 @@ struct GitOpsSourcesArgs {
     include_disabled: bool,
 }
 
+#[derive(Debug, Deserialize, Serialize)]
+struct CoordinationInstancesArgs {
+    #[serde(default)]
+    node_type: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+struct CoordinationLeaderArgs {
+    node_type: String,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+struct CoordinationInstanceHealthArgs {
+    instance_id: String,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+struct ShadowConsumersArgs {
+    #[serde(default)]
+    prefix: Option<String>,
+}
+
 const fn default_true() -> bool {
     true
 }
@@ -703,6 +725,48 @@ pub fn tool_catalog() -> Vec<McpCatalogEntry> {
             kind: McpSurfaceKind::Tool,
             description: "Read-only audit trail for one operation.",
             backing_rpc_methods: &[methods::AUDIT_GET],
+            read_only: true,
+        },
+        McpCatalogEntry {
+            name: "sinex.coordination_instances",
+            kind: McpSurfaceKind::Tool,
+            description: "Read-only coordination instance listing.",
+            backing_rpc_methods: &[methods::COORDINATION_LIST_INSTANCES],
+            read_only: true,
+        },
+        McpCatalogEntry {
+            name: "sinex.coordination_leader",
+            kind: McpSurfaceKind::Tool,
+            description: "Read-only coordination leader lookup.",
+            backing_rpc_methods: &[methods::COORDINATION_GET_LEADER],
+            read_only: true,
+        },
+        McpCatalogEntry {
+            name: "sinex.coordination_instance_health",
+            kind: McpSurfaceKind::Tool,
+            description: "Read-only coordination instance health lookup.",
+            backing_rpc_methods: &[methods::COORDINATION_INSTANCE_HEALTH],
+            read_only: true,
+        },
+        McpCatalogEntry {
+            name: "sinex.shadow_consumers",
+            kind: McpSurfaceKind::Tool,
+            description: "Read-only shadow consumer listing.",
+            backing_rpc_methods: &[methods::SHADOW_LIST],
+            read_only: true,
+        },
+        McpCatalogEntry {
+            name: "sinex.system_ping",
+            kind: McpSurfaceKind::Tool,
+            description: "Read-only gateway ping.",
+            backing_rpc_methods: &[methods::SYSTEM_PING],
+            read_only: true,
+        },
+        McpCatalogEntry {
+            name: "sinex.system_version",
+            kind: McpSurfaceKind::Tool,
+            description: "Read-only gateway package version.",
+            backing_rpc_methods: &[methods::SYSTEM_VERSION],
             read_only: true,
         },
     ]
@@ -1233,6 +1297,68 @@ pub fn tools() -> Vec<McpTool> {
                 "additionalProperties": false
             }),
         },
+        McpTool {
+            name: "sinex.coordination_instances",
+            description: "Read-only coordination instance listing.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "node_type": {
+                        "type": "string",
+                        "enum": ["ingestor", "automaton", "service"]
+                    }
+                },
+                "additionalProperties": false
+            }),
+        },
+        McpTool {
+            name: "sinex.coordination_leader",
+            description: "Read-only coordination leader lookup.",
+            input_schema: json!({
+                "type": "object",
+                "required": ["node_type"],
+                "properties": {
+                    "node_type": {
+                        "type": "string",
+                        "enum": ["ingestor", "automaton", "service"]
+                    }
+                },
+                "additionalProperties": false
+            }),
+        },
+        McpTool {
+            name: "sinex.coordination_instance_health",
+            description: "Read-only coordination instance health lookup.",
+            input_schema: json!({
+                "type": "object",
+                "required": ["instance_id"],
+                "properties": {
+                    "instance_id": { "type": "string" }
+                },
+                "additionalProperties": false
+            }),
+        },
+        McpTool {
+            name: "sinex.shadow_consumers",
+            description: "Read-only shadow consumer listing.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "prefix": { "type": "string" }
+                },
+                "additionalProperties": false
+            }),
+        },
+        McpTool {
+            name: "sinex.system_ping",
+            description: "Read-only gateway ping.",
+            input_schema: empty_object_schema(),
+        },
+        McpTool {
+            name: "sinex.system_version",
+            description: "Read-only gateway package version.",
+            input_schema: empty_object_schema(),
+        },
     ]
 }
 
@@ -1452,6 +1578,14 @@ pub async fn call_tool(client: &GatewayClient, name: &str, arguments: Value) -> 
         "sinex.lifecycle_status" => lifecycle_status(client, arguments).await,
         "sinex.gitops_sources" => gitops_sources(client, arguments).await,
         "sinex.audit_trail" => audit_trail(client, arguments).await,
+        "sinex.coordination_instances" => coordination_instances(client, arguments).await,
+        "sinex.coordination_leader" => coordination_leader(client, arguments).await,
+        "sinex.coordination_instance_health" => {
+            coordination_instance_health(client, arguments).await
+        }
+        "sinex.shadow_consumers" => shadow_consumers(client, arguments).await,
+        "sinex.system_ping" => system_ping(client, arguments).await,
+        "sinex.system_version" => system_version(client, arguments).await,
         other => Err(eyre!("unknown MCP tool: {other}")),
     }
 }
@@ -2106,6 +2240,72 @@ async fn audit_trail(client: &GatewayClient, arguments: Value) -> Result<Value> 
     Ok(envelope(
         "sinex.audit_trail",
         json!(args),
+        json!({ "result": response }),
+    ))
+}
+
+async fn coordination_instances(client: &GatewayClient, arguments: Value) -> Result<Value> {
+    let args: CoordinationInstancesArgs = serde_json::from_value(arguments)?;
+    let response = client
+        .coordination_list_instances(args.node_type.clone())
+        .await?;
+    Ok(envelope(
+        "sinex.coordination_instances",
+        json!(args),
+        json!({ "result": response }),
+    ))
+}
+
+async fn coordination_leader(client: &GatewayClient, arguments: Value) -> Result<Value> {
+    let args: CoordinationLeaderArgs = serde_json::from_value(arguments)?;
+    let response = client
+        .coordination_get_leader(args.node_type.clone())
+        .await?;
+    Ok(envelope(
+        "sinex.coordination_leader",
+        json!(args),
+        json!({ "result": response }),
+    ))
+}
+
+async fn coordination_instance_health(client: &GatewayClient, arguments: Value) -> Result<Value> {
+    let args: CoordinationInstanceHealthArgs = serde_json::from_value(arguments)?;
+    let response = client
+        .coordination_instance_health(args.instance_id.clone())
+        .await?;
+    Ok(envelope(
+        "sinex.coordination_instance_health",
+        json!(args),
+        json!({ "result": response }),
+    ))
+}
+
+async fn shadow_consumers(client: &GatewayClient, arguments: Value) -> Result<Value> {
+    let args: ShadowConsumersArgs = serde_json::from_value(arguments)?;
+    let response = client.shadow_list(args.prefix.clone()).await?;
+    Ok(envelope(
+        "sinex.shadow_consumers",
+        json!(args),
+        json!({ "result": response }),
+    ))
+}
+
+async fn system_ping(client: &GatewayClient, arguments: Value) -> Result<Value> {
+    reject_non_empty_args("sinex.system_ping", &arguments)?;
+    let response = client.system_ping().await?;
+    Ok(envelope(
+        "sinex.system_ping",
+        json!({}),
+        json!({ "result": response }),
+    ))
+}
+
+async fn system_version(client: &GatewayClient, arguments: Value) -> Result<Value> {
+    reject_non_empty_args("sinex.system_version", &arguments)?;
+    let response = client.system_version().await?;
+    Ok(envelope(
+        "sinex.system_version",
+        json!({}),
         json!({ "result": response }),
     ))
 }

@@ -6,12 +6,13 @@ use reqwest::{ClientBuilder, StatusCode};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::Value;
 use sinex_primitives::constants::env_vars;
-use sinex_primitives::domain::{EventSource, NodeType};
+use sinex_primitives::domain::{EventSource, InstanceId, NodeType};
 use sinex_primitives::rpc::{
     JsonRpcError, RpcMethod,
     automata::{AUTOMATA_STATUS_METHOD, AutomataStatusRequest, AutomataStatusResponse},
     coordination::{
-        COORDINATION_INSTANCE_HEALTH_METHOD, COORDINATION_LIST_INSTANCES_METHOD,
+        COORDINATION_GET_LEADER_METHOD, COORDINATION_INSTANCE_HEALTH_METHOD,
+        COORDINATION_LIST_INSTANCES_METHOD, GetLeaderRequest, GetLeaderResponse,
         InstanceHealthRequest, InstanceHealthResponse, InstanceInfo, ListInstancesRequest,
         ListInstancesResponse,
     },
@@ -107,6 +108,7 @@ use sinex_primitives::rpc::{
         SemanticLaneOutputsListResponse, SemanticLaneOutputsWriteRequest,
         SemanticLaneOutputsWriteResponse, SemanticLaneRecordResponse, SemanticLaneSetStatusRequest,
     },
+    shadow::{SHADOW_LIST_METHOD, ShadowListRequest, ShadowListResponse},
     sources::{
         SOURCES_ANNOTATE_METHOD, SOURCES_ARCHIVE_METHOD, SOURCES_CONTINUITY_EXPLAIN_GAP_METHOD,
         SOURCES_CONTINUITY_GET_METHOD, SOURCES_CONTINUITY_LIST_METHOD, SOURCES_CONTINUITY_METHOD,
@@ -489,6 +491,59 @@ impl GatewayClient {
         let response: GitOpsListSourcesResponse =
             self.call_typed(GITOPS_LIST_SOURCES_METHOD, &req).await?;
         Ok(response.sources)
+    }
+
+    /// List coordination instances.
+    pub async fn coordination_list_instances(
+        &self,
+        node_type: Option<String>,
+    ) -> Result<ListInstancesResponse> {
+        let request = ListInstancesRequest {
+            node_type: node_type
+                .map(|value| serde_json::from_value(Value::String(value)))
+                .transpose()?,
+        };
+        self.call_typed(COORDINATION_LIST_INSTANCES_METHOD, &request)
+            .await
+    }
+
+    /// Get the current coordination leader for a node type.
+    pub async fn coordination_get_leader(&self, node_type: String) -> Result<GetLeaderResponse> {
+        let request = GetLeaderRequest {
+            node_type: serde_json::from_value(Value::String(node_type))?,
+        };
+        self.call_typed(COORDINATION_GET_LEADER_METHOD, &request)
+            .await
+    }
+
+    /// Get coordination health for one instance.
+    pub async fn coordination_instance_health(
+        &self,
+        instance_id: String,
+    ) -> Result<InstanceHealthResponse> {
+        let request = InstanceHealthRequest {
+            instance_id: InstanceId::new(instance_id),
+        };
+        self.call_typed(COORDINATION_INSTANCE_HEALTH_METHOD, &request)
+            .await
+    }
+
+    /// List read-only shadow consumers.
+    pub async fn shadow_list(&self, prefix: Option<String>) -> Result<ShadowListResponse> {
+        let request = ShadowListRequest { prefix };
+        self.call_typed(SHADOW_LIST_METHOD, &request).await
+    }
+
+    /// Basic gateway ping.
+    pub async fn system_ping(&self) -> Result<String> {
+        self.call_typed(SYSTEM_PING_METHOD, &SystemPingRequest {})
+            .await
+    }
+
+    /// Gateway package version.
+    pub async fn system_version(&self) -> Result<String> {
+        self.call_typed(SYSTEM_VERSION_METHOD, &SystemVersionRequest {})
+            .await
     }
 
     /// Create a new gitops source
