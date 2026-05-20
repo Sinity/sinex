@@ -80,6 +80,8 @@ HTTP/SSE transport is a follow-up only when there is a real consumer.
 | `sinex.recent_activity` | `telemetry.recent_activity` | recent activity summary for local agent context |
 | `sinex.command_frequency` | `telemetry.command_frequency` | command-frequency telemetry for shell context |
 | `sinex.file_activity` | `telemetry.file_activity` | file-activity telemetry for project context |
+| `sinex.system_state` | `telemetry.system_state` | CPU, memory, disk, and unit telemetry buckets |
+| `sinex.window_focus` | `telemetry.window_focus` | desktop window focus telemetry buckets |
 
 Deliberate omissions:
 

@@ -454,6 +454,20 @@ pub fn tool_catalog() -> Vec<McpCatalogEntry> {
             backing_rpc_methods: &[methods::TELEMETRY_FILE_ACTIVITY],
             read_only: true,
         },
+        McpCatalogEntry {
+            name: "sinex.system_state",
+            kind: McpSurfaceKind::Tool,
+            description: "Read-only CPU, memory, disk, and unit telemetry buckets.",
+            backing_rpc_methods: &[methods::TELEMETRY_SYSTEM_STATE],
+            read_only: true,
+        },
+        McpCatalogEntry {
+            name: "sinex.window_focus",
+            kind: McpSurfaceKind::Tool,
+            description: "Read-only desktop window focus telemetry buckets.",
+            backing_rpc_methods: &[methods::TELEMETRY_WINDOW_FOCUS],
+            read_only: true,
+        },
     ]
 }
 
@@ -772,6 +786,16 @@ pub fn tools() -> Vec<McpTool> {
             description: "Read-only file-activity telemetry for project context.",
             input_schema: telemetry_buckets_schema(),
         },
+        McpTool {
+            name: "sinex.system_state",
+            description: "Read-only CPU, memory, disk, and unit telemetry buckets.",
+            input_schema: telemetry_buckets_schema(),
+        },
+        McpTool {
+            name: "sinex.window_focus",
+            description: "Read-only desktop window focus telemetry buckets.",
+            input_schema: telemetry_buckets_schema(),
+        },
     ]
 }
 
@@ -968,6 +992,8 @@ pub async fn call_tool(client: &GatewayClient, name: &str, arguments: Value) -> 
         "sinex.recent_activity" => recent_activity(client, arguments).await,
         "sinex.command_frequency" => command_frequency(client, arguments).await,
         "sinex.file_activity" => file_activity(client, arguments).await,
+        "sinex.system_state" => system_state(client, arguments).await,
+        "sinex.window_focus" => window_focus(client, arguments).await,
         other => Err(eyre!("unknown MCP tool: {other}")),
     }
 }
@@ -1347,6 +1373,30 @@ async fn file_activity(client: &GatewayClient, arguments: Value) -> Result<Value
         "sinex.file_activity",
         json!(args),
         json!({ "entries": entries }),
+    ))
+}
+
+async fn system_state(client: &GatewayClient, arguments: Value) -> Result<Value> {
+    let args: TelemetryBucketsArgs = serde_json::from_value(arguments)?;
+    let buckets = client
+        .telemetry_system_state(args.from.clone(), args.to.clone(), args.limit)
+        .await?;
+    Ok(envelope(
+        "sinex.system_state",
+        json!(args),
+        json!({ "buckets": buckets }),
+    ))
+}
+
+async fn window_focus(client: &GatewayClient, arguments: Value) -> Result<Value> {
+    let args: TelemetryBucketsArgs = serde_json::from_value(arguments)?;
+    let buckets = client
+        .telemetry_window_focus(args.from.clone(), args.to.clone(), args.limit)
+        .await?;
+    Ok(envelope(
+        "sinex.window_focus",
+        json!(args),
+        json!({ "buckets": buckets }),
     ))
 }
 
