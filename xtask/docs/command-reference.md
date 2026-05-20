@@ -644,6 +644,7 @@ Analyze workspace dependency structure and impact
 | `unused` | Detect unused dependencies |
 | `timings` | Analyze build timings |
 | `impact` | Analyze rebuild impact of package changes |
+| `update` | Update Cargo.lock through the xtask dependency surface |
 | `graph` | Visualize dependency graph |
 
 ### `xtask deps list`
@@ -712,6 +713,20 @@ Analyze rebuild impact of package changes
 | Flag | Value | Required | Description |
 |---|---|---|---|
 | `--package` | yes | no | Target package to analyze (defaults to all) |
+
+
+### `xtask deps update`
+
+Update Cargo.lock through the xtask dependency surface
+
+**Arguments**
+
+| Flag | Value | Required | Description |
+|---|---|---|---|
+| `-p, --package` | yes | no | Package spec to update; forwarded as repeated `cargo update -p <SPEC>` |
+| `--recursive` | no | no | Update dependencies recursively for the selected packages |
+| `--dry-run` | no | no | Preview the update without writing Cargo.lock |
+| `--all` | no | no | Update the whole lockfile instead of named packages |
 
 
 ### `xtask deps graph`
