@@ -29,7 +29,7 @@ use sinex_node_sdk::{
 };
 use sinex_node_sdk::{ExplorationProvider, ExportFormat, IngestionHistoryEntry, SourceState};
 use sinex_primitives::{
-    Seconds, Uuid,
+    Uuid,
     domain::{HostName, RecordedPath, SanitizedPath, SourceIdentifier},
     events::{
         EventPayload,
@@ -70,7 +70,6 @@ use validator::ValidationError;
 const DEFAULT_MAX_CAPTURE_BYTES: Bytes = Bytes::from_mebibytes(10); // 10MB
 const DEFAULT_MAX_DEPTH: usize = 10; // Maximum directory traversal depth
 const DEFAULT_MAX_WATCHES: usize = 524_288; // Align with the documented/recommended Linux inotify limit
-const DEFAULT_POLL_INTERVAL_SECS: Seconds = Seconds::from_secs(5);
 const FS_WATCH_CHANNEL_SIZE: usize = 10_000; // Buffer size for filesystem event channel (high-volume burst protection)
 const FS_CAPTURE_CHUNK_SIZE: usize = 64 * 1024;
 const FS_READ_RETRY_ATTEMPTS: u32 = 3; // Number of retry attempts for transient file read errors
@@ -164,10 +163,6 @@ pub struct FilesystemConfig {
     #[serde(default = "default_max_watches")]
     pub max_watches: usize,
 
-    /// Poll interval retained for backwards config compatibility; poll fallback is no longer automatic
-    #[serde(default = "default_poll_interval_secs")]
-    pub poll_interval_secs: Seconds,
-
     /// Directory names that should be excluded from recursive watch planning and historical scans
     #[serde(default = "default_ignored_directory_names")]
     pub ignored_directory_names: Vec<String>,
@@ -179,10 +174,6 @@ pub struct FilesystemConfig {
 
 fn default_max_watches() -> usize {
     DEFAULT_MAX_WATCHES
-}
-
-fn default_poll_interval_secs() -> Seconds {
-    DEFAULT_POLL_INTERVAL_SECS
 }
 
 fn default_ignored_directory_names() -> Vec<String> {
@@ -200,7 +191,6 @@ impl Default for FilesystemConfig {
             follow_symlinks: false,
             max_capture_bytes: DEFAULT_MAX_CAPTURE_BYTES,
             max_watches: DEFAULT_MAX_WATCHES,
-            poll_interval_secs: DEFAULT_POLL_INTERVAL_SECS,
             ignored_directory_names: default_ignored_directory_names(),
             material_metadata_policy: sinex_node_sdk::MaterialMetadataPolicy::default(),
         }
@@ -232,12 +222,6 @@ impl FilesystemConfig {
         if !(1..=524_288).contains(&self.max_watches) {
             return Err(SinexError::configuration(
                 "Max watches must be between 1 and 524288".to_string(),
-            ));
-        }
-
-        if !(1..=3600).contains(&self.poll_interval_secs.as_secs()) {
-            return Err(SinexError::configuration(
-                "Poll interval must be between 1 and 3600 seconds".to_string(),
             ));
         }
 
