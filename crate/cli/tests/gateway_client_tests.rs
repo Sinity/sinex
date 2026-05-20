@@ -504,12 +504,9 @@ async fn test_gateway_client_rejects_non_string_ping_result() -> TestResult<()> 
     let result = client.ping().await;
 
     assert!(result.is_err());
-    assert!(
-        result
-            .unwrap_err()
-            .to_string()
-            .contains("ping returned non-string result")
-    );
+    let error = result.unwrap_err().to_string();
+    assert!(error.contains("failed to decode system.ping response"));
+    assert!(error.contains("expected a string"));
     Ok(())
 }
 
