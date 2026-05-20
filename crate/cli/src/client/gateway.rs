@@ -105,9 +105,10 @@ use sinex_primitives::rpc::{
         SemanticEpochListResponse, SemanticEpochRecordResponse, SemanticLaneCreateRequest,
         SemanticLaneDiffRecordEntityRelationRequest, SemanticLaneDiffRecordResponse,
         SemanticLaneDiffsListRequest, SemanticLaneDiffsListResponse, SemanticLaneDiscardRequest,
-        SemanticLaneListRequest, SemanticLaneListResponse, SemanticLaneOutputsListRequest,
-        SemanticLaneOutputsListResponse, SemanticLaneOutputsWriteRequest,
-        SemanticLaneOutputsWriteResponse, SemanticLaneRecordResponse, SemanticLaneSetStatusRequest,
+        SemanticLaneDiscardResponse, SemanticLaneListRequest, SemanticLaneListResponse,
+        SemanticLaneOutputsListRequest, SemanticLaneOutputsListResponse,
+        SemanticLaneOutputsWriteRequest, SemanticLaneOutputsWriteResponse,
+        SemanticLaneRecordResponse, SemanticLaneSetStatusRequest,
     },
     shadow::{SHADOW_LIST_METHOD, ShadowListRequest, ShadowListResponse},
     sources::{
@@ -1101,7 +1102,7 @@ impl GatewayClient {
     pub async fn semantic_lane_discard(
         &self,
         request: SemanticLaneDiscardRequest,
-    ) -> Result<SemanticLaneRecordResponse> {
+    ) -> Result<SemanticLaneDiscardResponse> {
         self.call_typed(SEMANTIC_LANES_DISCARD_METHOD, &request)
             .await
     }

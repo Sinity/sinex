@@ -287,6 +287,65 @@ impl SemanticRepository<'_> {
         .map_err(|error| db_error(error, "set semantic lane status"))
     }
 
+    pub async fn discard_lane_outputs(
+        &self,
+        lane_id: Uuid,
+        completed_at: Timestamp,
+    ) -> DbResult<(records::SemanticLaneRecord, u64)> {
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|error| db_error(error, "begin semantic lane discard transaction"))?;
+
+        let status = status_string(SemanticLaneStatus::Discarded);
+        let lane = sqlx::query_as!(
+            records::SemanticLaneRecord,
+            r#"
+            UPDATE semantic.lanes
+            SET status = $2, completed_at = $3
+            WHERE id = $1
+            RETURNING
+                id,
+                name,
+                kind,
+                base_epoch_id,
+                candidate_epoch_id,
+                scope,
+                status,
+                purpose,
+                operation_id,
+                created_at as "created_at: Timestamp",
+                completed_at as "completed_at: Timestamp",
+                expires_at as "expires_at: Timestamp"
+            "#,
+            lane_id,
+            status,
+            completed_at.inner(),
+        )
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(|error| db_error(error, "mark semantic lane discarded"))?;
+
+        let discarded_outputs = sqlx::query!(
+            r#"
+            DELETE FROM semantic.lane_outputs
+            WHERE lane_id = $1
+            "#,
+            lane_id,
+        )
+        .execute(&mut *tx)
+        .await
+        .map_err(|error| db_error(error, "delete discarded semantic lane outputs"))?
+        .rows_affected();
+
+        tx.commit()
+            .await
+            .map_err(|error| db_error(error, "commit semantic lane discard transaction"))?;
+
+        Ok((lane, discarded_outputs))
+    }
+
     pub async fn write_entity_relation_outputs(
         &self,
         lane_id: Uuid,
