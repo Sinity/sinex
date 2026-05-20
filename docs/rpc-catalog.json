@@ -243,6 +243,15 @@
     "response_type": "sinex_primitives::rpc::ingestors::IngestorsStatusResponse"
   },
   {
+    "name": "instructions.hyprland.workspace_switch",
+    "role": "write",
+    "domain": "instructions",
+    "stability": "experimental",
+    "mutability": "mutating",
+    "request_type": "sinex_primitives::rpc::instructions::HyprlandWorkspaceSwitchRequest",
+    "response_type": "sinex_primitives::rpc::instructions::HyprlandWorkspaceSwitchResponse"
+  },
+  {
     "name": "lifecycle.archive",
     "role": "admin",
     "domain": "lifecycle",
