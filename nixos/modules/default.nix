@@ -1156,14 +1156,6 @@ in
                     otherwise consume watch budget without adding useful user signal.
                   '';
                 };
-                pollIntervalSec = mkOption {
-                  type = positive;
-                  default = 5;
-                  description = ''
-                    Legacy compatibility field for older filesystem node configs.
-                    Automatic recursive poll fallback is no longer used.
-                  '';
-                };
                 instances = mkOption { type = nullOr positive; default = null; description = "Instance override (null ⇒ inherit defaults)."; };
                 batch = mkOption {
                   type = nullOr (batchModule { defaultSize = 100; defaultTimeout = 5; });
