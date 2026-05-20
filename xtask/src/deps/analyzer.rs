@@ -212,6 +212,7 @@ impl WorkspaceAnalyzer {
     pub fn find_duplicates(&self) -> Result<Vec<DuplicateDependency>> {
         // Map package name -> version -> package IDs for that version.
         let mut version_map: BTreeMap<String, BTreeMap<String, Vec<PackageId>>> = BTreeMap::new();
+        let workspace_roots_by_package = self.workspace_roots_by_reached_package()?;
 
         // Iterate over all packages in the graph
         for package in self.graph.packages() {
@@ -237,7 +238,10 @@ impl WorkspaceAnalyzer {
                 for (version, package_ids) in versions_by_id {
                     version_details.push(DuplicateVersionDetail {
                         version,
-                        workspace_roots: self.workspace_roots_for_package_ids(&package_ids)?,
+                        workspace_roots: self.workspace_roots_for_package_ids(
+                            &package_ids,
+                            &workspace_roots_by_package,
+                        ),
                     });
                 }
 
@@ -255,9 +259,9 @@ impl WorkspaceAnalyzer {
         Ok(duplicates)
     }
 
-    fn workspace_roots_for_package_ids(&self, package_ids: &[PackageId]) -> Result<Vec<String>> {
+    fn workspace_roots_by_reached_package(&self) -> Result<BTreeMap<PackageId, Vec<String>>> {
         let workspace = self.graph.workspace();
-        let mut roots = Vec::new();
+        let mut roots_by_package: BTreeMap<PackageId, Vec<String>> = BTreeMap::new();
 
         for workspace_id in workspace.member_ids() {
             let package = self
@@ -270,22 +274,38 @@ impl WorkspaceAnalyzer {
                 .context("Failed to create workspace root dependency query")?
                 .resolve();
 
-            let reaches_version = package_ids.iter().try_fold(false, |reaches, package_id| {
-                if reaches {
-                    Ok(true)
-                } else {
-                    resolved.contains(package_id)
-                }
-            })?;
+            for reached_id in resolved.package_ids(DependencyDirection::Forward) {
+                roots_by_package
+                    .entry(reached_id.clone())
+                    .or_default()
+                    .push(package.name().to_string());
+            }
+        }
 
-            if reaches_version {
-                roots.push(package.name().to_string());
+        for roots in roots_by_package.values_mut() {
+            roots.sort();
+            roots.dedup();
+        }
+
+        Ok(roots_by_package)
+    }
+
+    fn workspace_roots_for_package_ids(
+        &self,
+        package_ids: &[PackageId],
+        roots_by_package: &BTreeMap<PackageId, Vec<String>>,
+    ) -> Vec<String> {
+        let mut roots = Vec::new();
+
+        for package_id in package_ids {
+            if let Some(package_roots) = roots_by_package.get(package_id) {
+                roots.extend(package_roots.iter().cloned());
             }
         }
 
         roots.sort();
         roots.dedup();
-        Ok(roots)
+        roots
     }
 }
 
