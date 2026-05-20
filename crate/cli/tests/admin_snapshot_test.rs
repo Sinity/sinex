@@ -104,6 +104,7 @@ fn make_snapshot_archive() -> TestResult<(TempDir, std::path::PathBuf)> {
             .join("state.json"),
         br#"{"enabled":false}"#,
     )?;
+    let state_blake3 = snapshot_component_blake3(&staging.join("state"))?;
 
     let manifest = SnapshotManifest {
         snapshot_id: "01970a7f-391b-7000-8000-000000000001".to_string(),
@@ -117,7 +118,7 @@ fn make_snapshot_archive() -> TestResult<(TempDir, std::path::PathBuf)> {
             name: "state".to_string(),
             path: "state/".to_string(),
             bytes: 15,
-            blake3: "c".repeat(64),
+            blake3: state_blake3,
             extras: None,
         }],
         totals: Totals {
@@ -148,6 +149,7 @@ fn make_postgres_snapshot_archive() -> TestResult<(TempDir, PathBuf)> {
         staging.join("postgres").join("sinex_prod.dump"),
         b"custom pg dump fixture",
     )?;
+    let postgres_blake3 = blake3::hash(b"custom pg dump fixture").to_hex().to_string();
 
     let mut row_counts = BTreeMap::new();
     row_counts.insert("core.events".to_string(), 7);
@@ -163,7 +165,7 @@ fn make_postgres_snapshot_archive() -> TestResult<(TempDir, PathBuf)> {
             name: "postgres".to_string(),
             path: "postgres/sinex_prod.dump".to_string(),
             bytes: 22,
-            blake3: "d".repeat(64),
+            blake3: postgres_blake3,
             extras: Some(ComponentExtras::Postgres(PostgresExtras { row_counts })),
         }],
         totals: Totals {
@@ -188,6 +190,41 @@ fn make_executable_script(dir: &TempDir, name: &str, body: &str) -> TestResult<P
     permissions.set_mode(0o755);
     fs::set_permissions(&path, permissions)?;
     Ok(path)
+}
+
+fn snapshot_component_blake3(path: &std::path::Path) -> TestResult<String> {
+    let mut entries = collect_snapshot_component_files(path, path)?;
+    entries.sort_by(|(left, _), (right, _)| left.cmp(right));
+
+    let mut hasher = blake3::Hasher::new();
+    for (relative_path, absolute_path) in entries {
+        let file_data = fs::read(absolute_path)?;
+        let file_hash = blake3::hash(&file_data);
+        hasher.update(relative_path.as_bytes());
+        hasher.update(file_hash.as_bytes());
+    }
+    Ok(hasher.finalize().to_hex().to_string())
+}
+
+fn collect_snapshot_component_files(
+    base: &std::path::Path,
+    dir: &std::path::Path,
+) -> TestResult<Vec<(String, PathBuf)>> {
+    let mut out = Vec::new();
+    for entry in fs::read_dir(dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        if path.is_symlink() {
+            continue;
+        }
+        if path.is_file() {
+            let relative_path = path.strip_prefix(base)?.to_string_lossy().to_string();
+            out.push((relative_path, path));
+        } else if path.is_dir() {
+            out.extend(collect_snapshot_component_files(base, &path)?);
+        }
+    }
+    Ok(out)
 }
 
 // ── Dry-run test ─────────────────────────────────────────────────────────────
@@ -556,6 +593,11 @@ async fn snapshot_restore_execute_extracts_state_archive_into_empty_target()
     assert!(observed.private_mode_state_present);
     assert!(observed.private_mode_state_matches_manifest);
     assert!(observed.source_unit_ids_match);
+    assert_eq!(
+        observed.component_blake3_matches.get("state"),
+        Some(&true),
+        "restore execution should compare restored state content hash with the manifest"
+    );
 
     let binary_target = target_parent.path().join("binary-target");
     let output = sinexctl_bin()
@@ -614,6 +656,11 @@ async fn snapshot_restore_executes_postgres_drill_with_row_count_check()
 
     assert_eq!(observed.postgres_row_counts.get("core.events"), Some(&7));
     assert_eq!(observed.postgres_row_counts_match, Some(true));
+    assert_eq!(
+        observed.component_blake3_matches.get("postgres"),
+        Some(&true),
+        "restore execution should compare restored postgres dump hash with the manifest"
+    );
     assert!(target.join("postgres").join("sinex_prod.dump").exists());
     Ok(())
 }
