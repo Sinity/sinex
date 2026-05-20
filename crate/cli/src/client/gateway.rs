@@ -110,16 +110,18 @@ use sinex_primitives::rpc::{
     },
     shadow::{SHADOW_LIST_METHOD, ShadowListRequest, ShadowListResponse},
     sources::{
-        SOURCES_ANNOTATE_METHOD, SOURCES_ARCHIVE_METHOD, SOURCES_CONTINUITY_EXPLAIN_GAP_METHOD,
-        SOURCES_CONTINUITY_GET_METHOD, SOURCES_CONTINUITY_LIST_METHOD, SOURCES_CONTINUITY_METHOD,
-        SOURCES_COVERAGE_METHOD, SOURCES_LIST_METHOD, SOURCES_READINESS_GET_METHOD,
+        SOURCES_ANNOTATE_METHOD, SOURCES_ARCHIVE_METHOD, SOURCES_BINDINGS_LIST_METHOD,
+        SOURCES_CONTINUITY_EXPLAIN_GAP_METHOD, SOURCES_CONTINUITY_GET_METHOD,
+        SOURCES_CONTINUITY_LIST_METHOD, SOURCES_CONTINUITY_METHOD, SOURCES_COVERAGE_METHOD,
+        SOURCES_LIST_METHOD, SOURCES_PRESETS_LIST_METHOD, SOURCES_READINESS_GET_METHOD,
         SOURCES_READINESS_LIST_METHOD, SOURCES_SHOW_METHOD, SOURCES_STAGE_METHOD,
         SourcesAnnotateRequest, SourcesAnnotateResponse, SourcesArchiveRequest,
-        SourcesArchiveResponse, SourcesContinuityRequest, SourcesContinuityResponse,
-        SourcesCoverageRequest, SourcesCoverageResponse, SourcesListRequest, SourcesListResponse,
-        SourcesReadinessGetRequest, SourcesReadinessGetResponse, SourcesReadinessListRequest,
-        SourcesReadinessListResponse, SourcesShowRequest, SourcesShowResponse, SourcesStageRequest,
-        SourcesStageResponse,
+        SourcesArchiveResponse, SourcesBindingsListRequest, SourcesBindingsListResponse,
+        SourcesContinuityRequest, SourcesContinuityResponse, SourcesCoverageRequest,
+        SourcesCoverageResponse, SourcesListRequest, SourcesListResponse,
+        SourcesPresetsListRequest, SourcesPresetsListResponse, SourcesReadinessGetRequest,
+        SourcesReadinessGetResponse, SourcesReadinessListRequest, SourcesReadinessListResponse,
+        SourcesShowRequest, SourcesShowResponse, SourcesStageRequest, SourcesStageResponse,
     },
     system::{
         SYSTEM_HEALTH_METHOD, SYSTEM_PING_METHOD, SYSTEM_VERSION_METHOD, SystemHealthRequest,
@@ -1174,6 +1176,26 @@ impl GatewayClient {
         request: SourcesCoverageRequest,
     ) -> Result<SourcesCoverageResponse> {
         self.call_typed(SOURCES_COVERAGE_METHOD, &request).await
+    }
+
+    pub async fn sources_presets_list(&self) -> Result<SourcesPresetsListResponse> {
+        self.call_typed(SOURCES_PRESETS_LIST_METHOD, &SourcesPresetsListRequest {})
+            .await
+    }
+
+    pub async fn sources_bindings_list(
+        &self,
+        source_family: Option<String>,
+        include_disabled: bool,
+    ) -> Result<SourcesBindingsListResponse> {
+        self.call_typed(
+            SOURCES_BINDINGS_LIST_METHOD,
+            &SourcesBindingsListRequest {
+                source_family,
+                include_disabled,
+            },
+        )
+        .await
     }
 
     pub async fn sources_annotate(

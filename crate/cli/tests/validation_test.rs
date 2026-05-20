@@ -112,6 +112,8 @@ async fn mcp_lists_first_slice_read_only_tools() -> TestResult<()> {
             "sinex.source_materials",
             "sinex.source_material",
             "sinex.source_coverage",
+            "sinex.source_presets",
+            "sinex.source_bindings",
             "sinex.ops_list",
             "sinex.ops_get",
             "sinex.lifecycle_status",
@@ -1285,6 +1287,45 @@ async fn mcp_source_coverage_call_uses_gateway_fixture() -> TestResult<()> {
 }
 
 #[sinex_test]
+async fn mcp_source_presets_call_uses_gateway_fixture() -> TestResult<()> {
+    let server = mount_mcp_gateway_fixture().await;
+    let client = fixture_gateway_client(&server)?;
+
+    let response = call_tool(&client, "sinex.source_presets", json!({})).await?;
+
+    assert_eq!(response["tool"], "sinex.source_presets");
+    assert_eq!(
+        response["items"]["result"]["presets"][0]["name"],
+        "terminal.atuin.default"
+    );
+    assert_eq!(response["redaction"]["raw_samples"], false);
+    Ok(())
+}
+
+#[sinex_test]
+async fn mcp_source_bindings_call_uses_gateway_fixture() -> TestResult<()> {
+    let server = mount_mcp_gateway_fixture().await;
+    let client = fixture_gateway_client(&server)?;
+
+    let response = call_tool(
+        &client,
+        "sinex.source_bindings",
+        json!({ "source_family": "terminal", "include_disabled": true }),
+    )
+    .await?;
+
+    assert_eq!(response["tool"], "sinex.source_bindings");
+    assert_eq!(response["query"]["source_family"], "terminal");
+    assert_eq!(response["query"]["include_disabled"], true);
+    assert_eq!(
+        response["items"]["result"]["bindings"][0]["id"],
+        "terminal-atuin-history"
+    );
+    assert_eq!(response["redaction"]["raw_samples"], false);
+    Ok(())
+}
+
+#[sinex_test]
 async fn mcp_ops_list_call_uses_gateway_fixture() -> TestResult<()> {
     let server = mount_mcp_gateway_fixture().await;
     let client = fixture_gateway_client(&server)?;
@@ -2260,6 +2301,33 @@ async fn mount_mcp_gateway_fixture() -> MockServer {
                             "latest_ts": "2026-05-19T12:30:00Z",
                             "event_count": 42,
                             "material_count": 3
+                        }
+                    ]
+                }),
+                "sources.presets.list" => json!({
+                    "presets": [
+                        {
+                            "name": "terminal.atuin.default",
+                            "description": "Fixture Atuin history preset",
+                            "source_family": "terminal",
+                            "input_shape_kind": "sqlite",
+                            "material_format_hint": "sqlite",
+                            "resolver_preset": "atuin-history"
+                        }
+                    ]
+                }),
+                "sources.bindings.list" => json!({
+                    "bindings": [
+                        {
+                            "id": "terminal-atuin-history",
+                            "name": "Atuin history",
+                            "source_family": "terminal",
+                            "binding_mode": "nix",
+                            "input_shape_kind": "sqlite",
+                            "enabled": true,
+                            "status": "configured",
+                            "last_error": null,
+                            "created_at": "2026-05-19T12:00:00Z"
                         }
                     ]
                 }),

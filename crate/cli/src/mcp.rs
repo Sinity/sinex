@@ -300,6 +300,14 @@ struct SourceMaterialArgs {
 }
 
 #[derive(Debug, Deserialize, Serialize)]
+struct SourceBindingsArgs {
+    #[serde(default)]
+    source_family: Option<String>,
+    #[serde(default)]
+    include_disabled: bool,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
 struct OpsListArgs {
     #[serde(default)]
     operation_type: Option<String>,
@@ -690,6 +698,20 @@ pub fn tool_catalog() -> Vec<McpCatalogEntry> {
             kind: McpSurfaceKind::Tool,
             description: "Read-only source-material coverage buckets.",
             backing_rpc_methods: &[methods::SOURCES_COVERAGE],
+            read_only: true,
+        },
+        McpCatalogEntry {
+            name: "sinex.source_presets",
+            kind: McpSurfaceKind::Tool,
+            description: "Read-only built-in source resolver preset catalog.",
+            backing_rpc_methods: &[methods::SOURCES_PRESETS_LIST],
+            read_only: true,
+        },
+        McpCatalogEntry {
+            name: "sinex.source_bindings",
+            kind: McpSurfaceKind::Tool,
+            description: "Read-only configured source binding listing.",
+            backing_rpc_methods: &[methods::SOURCES_BINDINGS_LIST],
             read_only: true,
         },
         McpCatalogEntry {
@@ -1240,6 +1262,23 @@ pub fn tools() -> Vec<McpTool> {
             input_schema: empty_object_schema(),
         },
         McpTool {
+            name: "sinex.source_presets",
+            description: "Read-only built-in source resolver preset catalog.",
+            input_schema: empty_object_schema(),
+        },
+        McpTool {
+            name: "sinex.source_bindings",
+            description: "Read-only configured source binding listing.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "source_family": { "type": "string" },
+                    "include_disabled": { "type": "boolean", "default": false }
+                },
+                "additionalProperties": false
+            }),
+        },
+        McpTool {
             name: "sinex.ops_list",
             description: "Read-only operations log listing.",
             input_schema: json!({
@@ -1573,6 +1612,8 @@ pub async fn call_tool(client: &GatewayClient, name: &str, arguments: Value) -> 
         "sinex.source_materials" => source_materials(client, arguments).await,
         "sinex.source_material" => source_material(client, arguments).await,
         "sinex.source_coverage" => source_coverage(client, arguments).await,
+        "sinex.source_presets" => source_presets(client, arguments).await,
+        "sinex.source_bindings" => source_bindings(client, arguments).await,
         "sinex.ops_list" => ops_list(client, arguments).await,
         "sinex.ops_get" => ops_get(client, arguments).await,
         "sinex.lifecycle_status" => lifecycle_status(client, arguments).await,
@@ -2188,6 +2229,28 @@ async fn source_coverage(client: &GatewayClient, arguments: Value) -> Result<Val
     Ok(envelope(
         "sinex.source_coverage",
         json!({}),
+        json!({ "result": response }),
+    ))
+}
+
+async fn source_presets(client: &GatewayClient, arguments: Value) -> Result<Value> {
+    reject_non_empty_args("sinex.source_presets", &arguments)?;
+    let response = client.sources_presets_list().await?;
+    Ok(envelope(
+        "sinex.source_presets",
+        json!({}),
+        json!({ "result": response }),
+    ))
+}
+
+async fn source_bindings(client: &GatewayClient, arguments: Value) -> Result<Value> {
+    let args: SourceBindingsArgs = serde_json::from_value(arguments)?;
+    let response = client
+        .sources_bindings_list(args.source_family.clone(), args.include_disabled)
+        .await?;
+    Ok(envelope(
+        "sinex.source_bindings",
+        json!(args),
         json!({ "result": response }),
     ))
 }
