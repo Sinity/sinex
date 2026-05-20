@@ -37,6 +37,7 @@ directories         = "5.0"
 rustls              = "0.23"
 ratatui             = { version = "0.30", default-features = false, features = ["crossterm", "underline-color"] }
 crossterm           = "0.29"
+walkdir             = "2.5"
 
 [dependencies.sinex-primitives]
 path = "../lib/sinex-primitives"
