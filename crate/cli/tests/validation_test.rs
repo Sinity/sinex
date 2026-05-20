@@ -89,6 +89,7 @@ async fn mcp_lists_first_slice_read_only_tools() -> TestResult<()> {
             "sinex.ingestors_status",
             "sinex.nodes_health",
             "sinex.nodes_active",
+            "sinex.nodes_registry",
             "sinex.ingestd_validation",
             "sinex.ingestd_batch_stats",
             "sinex.throughput",
@@ -839,6 +840,23 @@ async fn mcp_nodes_active_call_uses_gateway_fixture() -> TestResult<()> {
         response["items"]["result"]["nodes"][0]["heartbeat_source"],
         "run"
     );
+    assert_eq!(response["redaction"]["raw_samples"], false);
+    Ok(())
+}
+
+#[sinex_test]
+async fn mcp_nodes_registry_call_uses_gateway_fixture() -> TestResult<()> {
+    let server = mount_mcp_gateway_fixture().await;
+    let client = fixture_gateway_client(&server)?;
+
+    let response = call_tool(&client, "sinex.nodes_registry", json!({})).await?;
+
+    assert_eq!(response["tool"], "sinex.nodes_registry");
+    assert_eq!(
+        response["items"]["result"]["nodes"][0]["node_id"],
+        "terminal.atuin-history"
+    );
+    assert_eq!(response["items"]["result"]["nodes"][0]["state"], "running");
     assert_eq!(response["redaction"]["raw_samples"], false);
     Ok(())
 }
@@ -1970,6 +1988,16 @@ async fn mount_mcp_gateway_fixture() -> MockServer {
                             "last_heartbeat_at": "2026-05-19T11:59:59Z",
                             "started_at": "2026-05-19T11:00:00Z",
                             "heartbeat_source": "run"
+                        }
+                    ]
+                }),
+                "nodes.list" => json!({
+                    "nodes": [
+                        {
+                            "node_id": "terminal.atuin-history",
+                            "state": "running",
+                            "last_heartbeat": "2026-05-19T11:59:59Z",
+                            "processing_horizon": "2026-05-19T12:00:00Z"
                         }
                     ]
                 }),
