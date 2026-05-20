@@ -111,7 +111,11 @@ async fn mcp_lists_first_slice_read_only_tools() -> TestResult<()> {
             "sinex.dlq_peek",
             "sinex.source_materials",
             "sinex.source_material",
-            "sinex.source_coverage"
+            "sinex.source_coverage",
+            "sinex.ops_list",
+            "sinex.ops_get",
+            "sinex.lifecycle_status",
+            "sinex.gitops_sources"
         ]
     );
     assert_read_only_tool_names()?;
@@ -1273,6 +1277,86 @@ async fn mcp_source_coverage_call_uses_gateway_fixture() -> TestResult<()> {
     Ok(())
 }
 
+#[sinex_test]
+async fn mcp_ops_list_call_uses_gateway_fixture() -> TestResult<()> {
+    let server = mount_mcp_gateway_fixture().await;
+    let client = fixture_gateway_client(&server)?;
+
+    let response = call_tool(
+        &client,
+        "sinex.ops_list",
+        json!({ "operation_type": "replay", "limit": 2 }),
+    )
+    .await?;
+
+    assert_eq!(response["tool"], "sinex.ops_list");
+    assert_eq!(response["query"]["operation_type"], "replay");
+    assert_eq!(
+        response["items"]["result"]["operations"][0]["operation_type"],
+        "replay"
+    );
+    assert_eq!(response["redaction"]["raw_samples"], false);
+    Ok(())
+}
+
+#[sinex_test]
+async fn mcp_ops_get_call_uses_gateway_fixture() -> TestResult<()> {
+    let server = mount_mcp_gateway_fixture().await;
+    let client = fixture_gateway_client(&server)?;
+
+    let response = call_tool(
+        &client,
+        "sinex.ops_get",
+        json!({ "operation_id": fixture_operation_id() }),
+    )
+    .await?;
+
+    assert_eq!(response["tool"], "sinex.ops_get");
+    assert_eq!(response["query"]["operation_id"], fixture_operation_id());
+    assert_eq!(
+        response["items"]["result"]["operation"]["id"],
+        fixture_operation_id()
+    );
+    assert_eq!(response["redaction"]["raw_samples"], false);
+    Ok(())
+}
+
+#[sinex_test]
+async fn mcp_lifecycle_status_call_uses_gateway_fixture() -> TestResult<()> {
+    let server = mount_mcp_gateway_fixture().await;
+    let client = fixture_gateway_client(&server)?;
+
+    let response = call_tool(&client, "sinex.lifecycle_status", json!({})).await?;
+
+    assert_eq!(response["tool"], "sinex.lifecycle_status");
+    assert_eq!(response["items"]["result"]["total_events"], 42);
+    assert_eq!(response["items"]["result"]["tiers"][0]["tier"], "live");
+    assert_eq!(response["redaction"]["raw_samples"], false);
+    Ok(())
+}
+
+#[sinex_test]
+async fn mcp_gitops_sources_call_uses_gateway_fixture() -> TestResult<()> {
+    let server = mount_mcp_gateway_fixture().await;
+    let client = fixture_gateway_client(&server)?;
+
+    let response = call_tool(
+        &client,
+        "sinex.gitops_sources",
+        json!({ "include_disabled": true }),
+    )
+    .await?;
+
+    assert_eq!(response["tool"], "sinex.gitops_sources");
+    assert_eq!(response["query"]["include_disabled"], true);
+    assert_eq!(
+        response["items"]["result"]["sources"][0]["repository_url"],
+        "https://example.invalid/sinex-schemas.git"
+    );
+    assert_eq!(response["redaction"]["raw_samples"], false);
+    Ok(())
+}
+
 fn telemetry_window_args() -> Value {
     json!({
         "from": "2026-05-19T00:00:00Z",
@@ -2039,6 +2123,40 @@ async fn mount_mcp_gateway_fixture() -> MockServer {
                         }
                     ]
                 }),
+                "ops.list" => json!({
+                    "operations": [
+                        fixture_operation()
+                    ]
+                }),
+                "ops.get" => json!({
+                    "operation": fixture_operation()
+                }),
+                "lifecycle.status" => json!({
+                    "tiers": [
+                        {
+                            "tier": "live",
+                            "event_count": 42,
+                            "oldest_ts": "2026-05-19T12:00:00Z",
+                            "newest_ts": "2026-05-19T12:30:00Z",
+                            "distinct_sources": 7
+                        }
+                    ],
+                    "total_events": 42
+                }),
+                "gitops.list_sources" => json!({
+                    "sources": [
+                        {
+                            "id": "018f4b6b-6a4d-7c80-8000-000000000012",
+                            "repository_url": "https://example.invalid/sinex-schemas.git",
+                            "branch": "main",
+                            "path_pattern": "schemas/**/*.json",
+                            "sync_enabled": true,
+                            "last_sync_at": "2026-05-19T12:00:00Z",
+                            "last_sync_commit": "abcdef123456",
+                            "sync_frequency_minutes": 60
+                        }
+                    ]
+                }),
                 other => {
                     return ResponseTemplate::new(400).set_body_json(json!({
                         "jsonrpc": "2.0",
@@ -2105,6 +2223,23 @@ fn fixture_semantic_candidate_lane_id() -> &'static str {
 
 fn fixture_semantic_diff_id() -> &'static str {
     "018f4b6b-6a4d-7c80-8000-000000000009"
+}
+
+fn fixture_operation() -> Value {
+    json!({
+        "id": fixture_operation_id(),
+        "operation_type": "replay",
+        "operator": "fixture",
+        "scope": {
+            "node_id": "terminal.atuin-history"
+        },
+        "result_status": "running",
+        "result_message": null,
+        "preview_summary": {
+            "total_events": 12
+        },
+        "duration_ms": 42
+    })
 }
 
 fn fixture_replay_operation(state: &str) -> Value {
