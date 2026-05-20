@@ -91,7 +91,9 @@ async fn mcp_lists_first_slice_read_only_tools() -> TestResult<()> {
             "sinex.ingestd_validation",
             "sinex.ingestd_batch_stats",
             "sinex.throughput",
-            "sinex.recent_activity"
+            "sinex.recent_activity",
+            "sinex.command_frequency",
+            "sinex.file_activity"
         ]
     );
     assert_read_only_tool_names()?;
@@ -829,6 +831,57 @@ async fn mcp_recent_activity_call_uses_gateway_fixture() -> TestResult<()> {
     Ok(())
 }
 
+#[sinex_test]
+async fn mcp_command_frequency_call_uses_gateway_fixture() -> TestResult<()> {
+    let server = mount_mcp_gateway_fixture().await;
+    let client = fixture_gateway_client(&server)?;
+
+    let response = call_tool(
+        &client,
+        "sinex.command_frequency",
+        json!({
+            "from": "2026-05-19T00:00:00Z",
+            "to": "2026-05-19T01:00:00Z",
+            "limit": 3
+        }),
+    )
+    .await?;
+
+    assert_eq!(response["tool"], "sinex.command_frequency");
+    assert_eq!(response["query"]["limit"], 3);
+    assert_eq!(response["items"]["entries"][0]["command"], "xtask");
+    assert_eq!(response["items"]["entries"][0]["total_executions"], 12);
+    assert_eq!(response["redaction"]["raw_samples"], false);
+    Ok(())
+}
+
+#[sinex_test]
+async fn mcp_file_activity_call_uses_gateway_fixture() -> TestResult<()> {
+    let server = mount_mcp_gateway_fixture().await;
+    let client = fixture_gateway_client(&server)?;
+
+    let response = call_tool(
+        &client,
+        "sinex.file_activity",
+        json!({
+            "from": "2026-05-19T00:00:00Z",
+            "to": "2026-05-19T01:00:00Z",
+            "limit": 3
+        }),
+    )
+    .await?;
+
+    assert_eq!(response["tool"], "sinex.file_activity");
+    assert_eq!(response["query"]["limit"], 3);
+    assert_eq!(
+        response["items"]["entries"][0]["directory"],
+        "/realm/project/sinex"
+    );
+    assert_eq!(response["items"]["entries"][0]["total_events"], 9);
+    assert_eq!(response["redaction"]["raw_samples"], false);
+    Ok(())
+}
+
 async fn mount_mcp_gateway_fixture() -> MockServer {
     let server = MockServer::start().await;
     Mock::given(method("POST"))
@@ -1249,6 +1302,29 @@ async fn mount_mcp_gateway_fixture() -> MockServer {
                             "context": "terminal",
                             "detail": "fixture recent activity",
                             "timestamp": "2026-05-19T12:00:00Z"
+                        }
+                    ]
+                }),
+                "telemetry.command_frequency" => json!({
+                    "entries": [
+                        {
+                            "command": "xtask",
+                            "shell": "zsh",
+                            "total_executions": 12,
+                            "successful_executions": 11,
+                            "failed_executions": 1,
+                            "avg_duration_ms": 42.0
+                        }
+                    ]
+                }),
+                "telemetry.file_activity" => json!({
+                    "entries": [
+                        {
+                            "bucket": "2026-05-19T12:00:00Z",
+                            "directory": "/realm/project/sinex",
+                            "event_type": "modified",
+                            "total_events": 9,
+                            "unique_files": 4
                         }
                     ]
                 }),

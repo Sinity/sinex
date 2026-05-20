@@ -440,6 +440,20 @@ pub fn tool_catalog() -> Vec<McpCatalogEntry> {
             backing_rpc_methods: &[methods::TELEMETRY_RECENT_ACTIVITY],
             read_only: true,
         },
+        McpCatalogEntry {
+            name: "sinex.command_frequency",
+            kind: McpSurfaceKind::Tool,
+            description: "Read-only command-frequency telemetry for shell context.",
+            backing_rpc_methods: &[methods::TELEMETRY_COMMAND_FREQUENCY],
+            read_only: true,
+        },
+        McpCatalogEntry {
+            name: "sinex.file_activity",
+            kind: McpSurfaceKind::Tool,
+            description: "Read-only file-activity telemetry for project context.",
+            backing_rpc_methods: &[methods::TELEMETRY_FILE_ACTIVITY],
+            read_only: true,
+        },
     ]
 }
 
@@ -748,6 +762,16 @@ pub fn tools() -> Vec<McpTool> {
             description: "Read-only recent activity summary for agent context.",
             input_schema: limit_schema(20),
         },
+        McpTool {
+            name: "sinex.command_frequency",
+            description: "Read-only command-frequency telemetry for shell context.",
+            input_schema: telemetry_buckets_schema(),
+        },
+        McpTool {
+            name: "sinex.file_activity",
+            description: "Read-only file-activity telemetry for project context.",
+            input_schema: telemetry_buckets_schema(),
+        },
     ]
 }
 
@@ -942,6 +966,8 @@ pub async fn call_tool(client: &GatewayClient, name: &str, arguments: Value) -> 
         "sinex.ingestd_batch_stats" => ingestd_batch_stats(client, arguments).await,
         "sinex.throughput" => throughput(client, arguments).await,
         "sinex.recent_activity" => recent_activity(client, arguments).await,
+        "sinex.command_frequency" => command_frequency(client, arguments).await,
+        "sinex.file_activity" => file_activity(client, arguments).await,
         other => Err(eyre!("unknown MCP tool: {other}")),
     }
 }
@@ -1295,6 +1321,30 @@ async fn recent_activity(client: &GatewayClient, arguments: Value) -> Result<Val
     let entries = client.telemetry_recent_activity(args.limit).await?;
     Ok(envelope(
         "sinex.recent_activity",
+        json!(args),
+        json!({ "entries": entries }),
+    ))
+}
+
+async fn command_frequency(client: &GatewayClient, arguments: Value) -> Result<Value> {
+    let args: TelemetryBucketsArgs = serde_json::from_value(arguments)?;
+    let entries = client
+        .telemetry_command_frequency(args.from.clone(), args.to.clone(), args.limit)
+        .await?;
+    Ok(envelope(
+        "sinex.command_frequency",
+        json!(args),
+        json!({ "entries": entries }),
+    ))
+}
+
+async fn file_activity(client: &GatewayClient, arguments: Value) -> Result<Value> {
+    let args: TelemetryBucketsArgs = serde_json::from_value(arguments)?;
+    let entries = client
+        .telemetry_file_activity(args.from.clone(), args.to.clone(), args.limit)
+        .await?;
+    Ok(envelope(
+        "sinex.file_activity",
         json!(args),
         json!({ "entries": entries }),
     ))
