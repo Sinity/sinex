@@ -1,7 +1,3 @@
-mod build {
-    include!(concat!(env!("OUT_DIR"), "/shadow.rs"));
-}
-
 use clap::{Parser, ValueEnum};
 use color_eyre::eyre::Result;
 use sinex_ingestd::{IngestService, IngestdConfig};
@@ -18,7 +14,7 @@ static GLOBAL: MiMalloc = MiMalloc;
 #[derive(Parser, Debug)]
 #[command(
     author,
-    version = build::CLAP_LONG_VERSION,
+    version,
     about = "Sinex ingestion daemon - central hub for event ingestion"
 )]
 struct Args {

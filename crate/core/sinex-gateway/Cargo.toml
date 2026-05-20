@@ -4,12 +4,8 @@ name = "sinex-gateway"
 [dependencies]
 subtle         = "2"
 tokio-rustls   = "0.26"
-shadow-rs      = { workspace = true }
 sinex-primitives = { path = "../../lib/sinex-primitives", features = ["nats"] }
 sinex-db = { path = "../../lib/sinex-db" }
-
-[package.metadata.cargo-machete]
-ignored = ["shadow-rs"]
 
 [dev-dependencies]
 tempfile = { workspace = true }
@@ -196,8 +192,6 @@ features = [
 [dev-dependencies.sinex-schema]
 path = "../../lib/sinex-schema"
 
-[build-dependencies]
-shadow-rs = { workspace = true }
 
 [lints]
 workspace = true

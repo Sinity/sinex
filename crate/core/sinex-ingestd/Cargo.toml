@@ -7,10 +7,6 @@ name = "sinex-ingestd"
 
 [dependencies]
 libc = { workspace = true }
-shadow-rs = { workspace = true }
-
-[package.metadata.cargo-machete]
-ignored = ["shadow-rs"]
 
 [package.version]
 workspace = true
@@ -153,8 +149,6 @@ features = [
     "testing",
 ]
 
-[build-dependencies]
-shadow-rs = { workspace = true }
 
 [lints]
 workspace = true
