@@ -61,75 +61,14 @@ async fn validate_time_range_rejects_inverted_and_equal_bounds() -> TestResult<(
 }
 
 #[sinex_test]
-async fn mcp_lists_first_slice_read_only_tools() -> TestResult<()> {
-    let tools = tools();
-    let names = tools.iter().map(|tool| tool.name).collect::<Vec<_>>();
+async fn mcp_tool_order_matches_catalog_order() -> TestResult<()> {
+    let tool_names = tools().iter().map(|tool| tool.name).collect::<Vec<_>>();
+    let catalog_names = tool_catalog()
+        .iter()
+        .map(|entry| entry.name)
+        .collect::<Vec<_>>();
 
-    assert_eq!(
-        names,
-        vec![
-            "sinex.search_events",
-            "sinex.trace_lineage",
-            "sinex.source_readiness",
-            "sinex.source_continuity",
-            "sinex.source_gap_explain",
-            "sinex.source_identifier_continuity",
-            "sinex.privacy_status",
-            "sinex.system_health",
-            "sinex.tasks_list",
-            "sinex.task_state",
-            "sinex.replay_operations",
-            "sinex.replay_status",
-            "sinex.documents_search",
-            "sinex.documents_get",
-            "sinex.semantic_epochs",
-            "sinex.semantic_lanes",
-            "sinex.semantic_lane_outputs",
-            "sinex.semantic_lane_diffs",
-            "sinex.automata_status",
-            "sinex.ingestors_status",
-            "sinex.nodes_health",
-            "sinex.nodes_active",
-            "sinex.nodes_registry",
-            "sinex.ingestd_validation",
-            "sinex.ingestd_batch_stats",
-            "sinex.throughput",
-            "sinex.recent_activity",
-            "sinex.command_frequency",
-            "sinex.file_activity",
-            "sinex.system_state",
-            "sinex.window_focus",
-            "sinex.current_health",
-            "sinex.current_device_state",
-            "sinex.gateway_stats",
-            "sinex.stream_stats",
-            "sinex.assembly_stats",
-            "sinex.node_stats",
-            "sinex.metric_counters",
-            "sinex.llm_prompts",
-            "sinex.llm_route_explain",
-            "sinex.llm_budget_report",
-            "sinex.curation_proposals",
-            "sinex.dlq_stats",
-            "sinex.dlq_peek",
-            "sinex.source_materials",
-            "sinex.source_material",
-            "sinex.source_coverage",
-            "sinex.source_presets",
-            "sinex.source_bindings",
-            "sinex.ops_list",
-            "sinex.ops_get",
-            "sinex.lifecycle_status",
-            "sinex.gitops_sources",
-            "sinex.audit_trail",
-            "sinex.coordination_instances",
-            "sinex.coordination_leader",
-            "sinex.coordination_instance_health",
-            "sinex.shadow_consumers",
-            "sinex.system_ping",
-            "sinex.system_version"
-        ]
-    );
+    assert_eq!(tool_names, catalog_names);
     assert_read_only_tool_names()?;
     Ok(())
 }
@@ -185,6 +124,35 @@ async fn mcp_omits_raw_content_read_methods_until_redacted_variants_exist() -> T
     assert!(
         !backing_methods.contains(methods::DOCUMENTS_GET_CHUNKS),
         "MCP must not expose raw document chunk text without a redacted read contract"
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn mcp_covers_or_explicitly_omits_safe_read_only_rpc_methods() -> TestResult<()> {
+    let exposed_methods = tool_catalog()
+        .into_iter()
+        .flat_map(|entry| entry.backing_rpc_methods.iter().copied())
+        .collect::<BTreeSet<_>>();
+    let explicitly_omitted = BTreeSet::from([
+        methods::CONTENT_RETRIEVE_BLOB,
+        methods::DOCUMENTS_GET_CHUNKS,
+    ]);
+
+    let missing = method_catalog()
+        .into_iter()
+        .filter(|method| {
+            method.role == RpcRole::ReadOnly
+                && method.mutability == RpcMutability::ReadOnly
+                && !exposed_methods.contains(method.name)
+                && !explicitly_omitted.contains(method.name)
+        })
+        .map(|method| method.name)
+        .collect::<Vec<_>>();
+
+    assert!(
+        missing.is_empty(),
+        "MCP must expose safe read-only RPC methods or list a deliberate omission: {missing:?}"
     );
     Ok(())
 }
