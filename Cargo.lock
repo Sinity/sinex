@@ -239,7 +239,7 @@ dependencies = [
  "bytes",
  "futures-util",
  "memchr",
- "nkeys 0.4.5",
+ "nkeys",
  "nuid",
  "pin-project",
  "portable-atomic",
@@ -3150,22 +3150,6 @@ dependencies = [
 
 [[package]]
 name = "nkeys"
-version = "0.3.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "aad178aad32087b19042ee36dfd450b73f5f934fbfb058b59b198684dfec4c47"
-dependencies = [
- "byteorder",
- "data-encoding",
- "ed25519",
- "ed25519-dalek",
- "getrandom 0.2.16",
- "log",
- "rand 0.8.5",
- "signatory",
-]
-
-[[package]]
-name = "nkeys"
 version = "0.4.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "879011babc47a1c7fdf5a935ae3cfe94f34645ca0cac1c7f6424b36fc743d1bf"
@@ -5400,7 +5384,7 @@ dependencies = [
  "humantime",
  "indexmap 2.12.0",
  "inventory",
- "nkeys 0.3.2",
+ "nkeys",
  "notify",
  "percent-encoding",
  "proptest",
