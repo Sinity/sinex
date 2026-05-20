@@ -46,6 +46,7 @@ pub async fn handle_documents_search(
         offset: req.offset.map(|v| v as i64),
     };
 
+    let requested_offset = req.offset.unwrap_or(0);
     let results = pool.documents().search(&query).await?;
 
     let search_mode = match results.search_mode {
@@ -54,6 +55,14 @@ pub async fn handle_documents_search(
     };
 
     let response = DocumentsSearchResponse {
+        has_more: results.has_more,
+        next_offset: results
+            .has_more
+            .then_some(requested_offset + results.results.len() as u64),
+        empty_reason: results
+            .empty_reason
+            .as_ref()
+            .map(|reason| reason.as_str().to_string()),
         results: results
             .results
             .into_iter()

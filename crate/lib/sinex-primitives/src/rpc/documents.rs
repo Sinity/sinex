@@ -84,6 +84,15 @@ pub struct DocumentsSearchResponse {
     pub results: Vec<DocumentsSearchResult>,
     /// `"fts"` or `"trigram_fallback"`.
     pub search_mode: String,
+    /// True when another page can be requested with `next_offset`.
+    #[serde(default)]
+    pub has_more: bool,
+    /// Offset to pass on the next request when `has_more` is true.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub next_offset: Option<u64>,
+    /// `"no_indexed_text"` or `"no_match"` when `results` is empty.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub empty_reason: Option<String>,
 }
 
 /// Request for `documents.get`.
