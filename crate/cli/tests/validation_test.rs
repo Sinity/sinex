@@ -102,7 +102,10 @@ async fn mcp_lists_first_slice_read_only_tools() -> TestResult<()> {
             "sinex.stream_stats",
             "sinex.assembly_stats",
             "sinex.node_stats",
-            "sinex.metric_counters"
+            "sinex.metric_counters",
+            "sinex.llm_prompts",
+            "sinex.llm_route_explain",
+            "sinex.llm_budget_report"
         ]
     );
     assert_read_only_tool_names()?;
@@ -1089,11 +1092,98 @@ async fn mcp_metric_counters_call_uses_gateway_fixture() -> TestResult<()> {
     Ok(())
 }
 
+#[sinex_test]
+async fn mcp_llm_prompts_call_uses_gateway_fixture() -> TestResult<()> {
+    let server = mount_mcp_gateway_fixture().await;
+    let client = fixture_gateway_client(&server)?;
+
+    let response = call_tool(
+        &client,
+        "sinex.llm_prompts",
+        json!({ "status": "active", "limit": 2 }),
+    )
+    .await?;
+
+    assert_eq!(response["tool"], "sinex.llm_prompts");
+    assert_eq!(response["query"]["status"], "active");
+    assert_eq!(
+        response["items"]["result"]["events"][0]["payload"]["redacted"],
+        true
+    );
+    assert_eq!(response["redaction"]["raw_samples"], false);
+    Ok(())
+}
+
+#[sinex_test]
+async fn mcp_llm_route_explain_call_uses_gateway_fixture() -> TestResult<()> {
+    let server = mount_mcp_gateway_fixture().await;
+    let client = fixture_gateway_client(&server)?;
+
+    let response = call_tool(&client, "sinex.llm_route_explain", fixture_llm_route_args()).await?;
+
+    assert_eq!(response["tool"], "sinex.llm_route_explain");
+    assert_eq!(
+        response["query"]["request"]["task_kind"],
+        "entity-extraction"
+    );
+    assert_eq!(
+        response["items"]["result"]["decision"]["model"],
+        "fixture-model"
+    );
+    assert_eq!(response["redaction"]["raw_samples"], false);
+    Ok(())
+}
+
+#[sinex_test]
+async fn mcp_llm_budget_report_call_uses_gateway_fixture() -> TestResult<()> {
+    let server = mount_mcp_gateway_fixture().await;
+    let client = fixture_gateway_client(&server)?;
+
+    let response = call_tool(&client, "sinex.llm_budget_report", json!({ "limit": 5 })).await?;
+
+    assert_eq!(response["tool"], "sinex.llm_budget_report");
+    assert_eq!(response["query"]["limit"], 5);
+    assert_eq!(response["items"]["result"]["total_rows"], 1);
+    assert_eq!(response["items"]["result"]["prompt_tokens"], 12);
+    assert_eq!(response["redaction"]["raw_samples"], false);
+    Ok(())
+}
+
 fn telemetry_window_args() -> Value {
     json!({
         "from": "2026-05-19T00:00:00Z",
         "to": "2026-05-19T01:00:00Z",
         "limit": 3
+    })
+}
+
+fn fixture_llm_route_args() -> Value {
+    json!({
+        "request": {
+            "task_kind": "entity-extraction",
+            "prompt_id": "extract-entities",
+            "input_hash": "input-hash",
+            "privacy_route": "remote_allowed",
+            "bucket_key": "fixture"
+        },
+        "policy": {
+            "policy_id": "entity-policy",
+            "task_kind": "entity-extraction",
+            "prompt_id": "extract-entities",
+            "prompt_version": "2026-05-19",
+            "fallback_order": [
+                {
+                    "provider": "fixture-provider",
+                    "model": "fixture-model",
+                    "tier": null,
+                    "is_local": false
+                }
+            ],
+            "replay_policy": "record",
+            "privacy_policy_ref": "privacy.llm.fixture",
+            "rollout": null,
+            "active": true
+        }
     })
 }
 
@@ -1658,6 +1748,73 @@ async fn mount_mcp_gateway_fixture() -> MockServer {
                             "sample_count": 5
                         }
                     ]
+                }),
+                "llm.prompts.list" => json!({
+                    "type": "events",
+                    "events": [
+                        {
+                            "id": fixture_event_id(),
+                            "source": "llm",
+                            "event_type": "llm.prompt_template.registered",
+                            "payload": {
+                                "prompt_id": "extract-entities",
+                                "version": "2026-05-19",
+                                "body_storage_ref": "prompt body ghp_fixture_secret should not leak"
+                            },
+                            "ts_orig": "2026-05-19T12:00:00Z",
+                            "host": "test-host",
+                            "payload_schema_id": null,
+                            "source_material_id": fixture_material_id(),
+                            "anchor_byte": 0,
+                            "offset_start": 0,
+                            "offset_end": 12,
+                            "offset_kind": "byte",
+                            "associated_blob_ids": null
+                        }
+                    ],
+                    "next_cursor": null,
+                    "total_estimate": null
+                }),
+                "llm.route.explain" => json!({
+                    "decision": {
+                        "routing_decision_id": "018f4b6b-6a4d-7c80-8000-000000000010",
+                        "policy_id": "entity-policy",
+                        "task_kind": "entity-extraction",
+                        "prompt_id": "extract-entities",
+                        "prompt_version": "2026-05-19",
+                        "provider": "fixture-provider",
+                        "model": "fixture-model",
+                        "experiment_id": null,
+                        "bucket_key": "fixture",
+                        "decision_reason": "fixture route"
+                    }
+                }),
+                "llm.budget.report" => json!({
+                    "rows": [
+                        {
+                            "budget_ledger_id": "018f4b6b-6a4d-7c80-8000-000000000011",
+                            "routing_decision_id": "018f4b6b-6a4d-7c80-8000-000000000010",
+                            "caller": "fixture",
+                            "task_kind": "entity-extraction",
+                            "provider": "fixture-provider",
+                            "model": "fixture-model",
+                            "prompt_tokens": 12,
+                            "completion_tokens": 8,
+                            "cost_estimate_microusd": 100,
+                            "runtime_ms": 25,
+                            "status": "success",
+                            "failure_class": null,
+                            "recorded_at": "2026-05-19T12:00:00Z"
+                        }
+                    ],
+                    "total_rows": 1,
+                    "success_count": 1,
+                    "failure_count": 0,
+                    "rejected_count": 0,
+                    "prompt_tokens": 12,
+                    "completion_tokens": 8,
+                    "cost_estimate_microusd": 100,
+                    "runtime_ms": 25
                 }),
                 other => {
                     return ResponseTemplate::new(400).set_body_json(json!({

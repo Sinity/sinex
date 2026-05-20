@@ -18,6 +18,9 @@ use sinex_primitives::query::{EventQuery, LineageDirection, LineageQuery};
 use sinex_primitives::rpc::automata::AutomataStatusResponse;
 use sinex_primitives::rpc::documents::{DocumentsGetRequest, DocumentsSearchRequest};
 use sinex_primitives::rpc::ingestors::IngestorsStatusResponse;
+use sinex_primitives::rpc::llm::{
+    LlmBudgetReportRequest, LlmPromptsListRequest, LlmRouteExplainRequest,
+};
 use sinex_primitives::rpc::methods;
 use sinex_primitives::rpc::nodes::{NodesHealthResponse, NodesListActiveResponse};
 use sinex_primitives::rpc::privacy::PrivateModeStateResponse;
@@ -251,6 +254,20 @@ struct TelemetryLimitArgs {
     limit: Option<i64>,
 }
 
+#[derive(Debug, Deserialize, Serialize)]
+struct LlmPromptsArgs {
+    #[serde(default)]
+    status: Option<String>,
+    #[serde(default = "default_llm_limit")]
+    limit: i64,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+struct LlmBudgetArgs {
+    #[serde(default = "default_llm_limit")]
+    limit: i64,
+}
+
 const fn default_true() -> bool {
     true
 }
@@ -261,6 +278,10 @@ const fn default_stale_after_secs() -> u64 {
 
 const fn default_recent_window_secs() -> u64 {
     300
+}
+
+const fn default_llm_limit() -> i64 {
+    100
 }
 
 #[must_use]
@@ -515,6 +536,27 @@ pub fn tool_catalog() -> Vec<McpCatalogEntry> {
             kind: McpSurfaceKind::Tool,
             description: "Read-only named metric counter telemetry buckets.",
             backing_rpc_methods: &[methods::TELEMETRY_METRIC_COUNTERS],
+            read_only: true,
+        },
+        McpCatalogEntry {
+            name: "sinex.llm_prompts",
+            kind: McpSurfaceKind::Tool,
+            description: "Read-only LLM prompt-template registry events.",
+            backing_rpc_methods: &[methods::LLM_PROMPTS_LIST],
+            read_only: true,
+        },
+        McpCatalogEntry {
+            name: "sinex.llm_route_explain",
+            kind: McpSurfaceKind::Tool,
+            description: "Read-only deterministic LLM routing explanation.",
+            backing_rpc_methods: &[methods::LLM_ROUTE_EXPLAIN],
+            read_only: true,
+        },
+        McpCatalogEntry {
+            name: "sinex.llm_budget_report",
+            kind: McpSurfaceKind::Tool,
+            description: "Read-only LLM budget-ledger usage report.",
+            backing_rpc_methods: &[methods::LLM_BUDGET_REPORT],
             read_only: true,
         },
     ]
@@ -880,6 +922,41 @@ pub fn tools() -> Vec<McpTool> {
             description: "Read-only named metric counter telemetry buckets.",
             input_schema: telemetry_buckets_schema(),
         },
+        McpTool {
+            name: "sinex.llm_prompts",
+            description: "Read-only LLM prompt-template registry events.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "status": { "type": "string" },
+                    "limit": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 1000,
+                        "default": 100
+                    }
+                },
+                "additionalProperties": false
+            }),
+        },
+        McpTool {
+            name: "sinex.llm_route_explain",
+            description: "Read-only deterministic LLM routing explanation.",
+            input_schema: json!({
+                "type": "object",
+                "required": ["request", "policy"],
+                "properties": {
+                    "request": { "type": "object" },
+                    "policy": { "type": "object" }
+                },
+                "additionalProperties": false
+            }),
+        },
+        McpTool {
+            name: "sinex.llm_budget_report",
+            description: "Read-only LLM budget-ledger usage report.",
+            input_schema: limit_schema(100),
+        },
     ]
 }
 
@@ -1085,6 +1162,9 @@ pub async fn call_tool(client: &GatewayClient, name: &str, arguments: Value) -> 
         "sinex.assembly_stats" => assembly_stats(client, arguments).await,
         "sinex.node_stats" => node_stats(client, arguments).await,
         "sinex.metric_counters" => metric_counters(client, arguments).await,
+        "sinex.llm_prompts" => llm_prompts(client, arguments).await,
+        "sinex.llm_route_explain" => llm_route_explain(client, arguments).await,
+        "sinex.llm_budget_report" => llm_budget_report(client, arguments).await,
         other => Err(eyre!("unknown MCP tool: {other}")),
     }
 }
@@ -1568,6 +1648,46 @@ async fn metric_counters(client: &GatewayClient, arguments: Value) -> Result<Val
         "sinex.metric_counters",
         json!(args),
         json!({ "buckets": buckets }),
+    ))
+}
+
+async fn llm_prompts(client: &GatewayClient, arguments: Value) -> Result<Value> {
+    let args: LlmPromptsArgs = serde_json::from_value(arguments)?;
+    let mut response = serde_json::to_value(
+        client
+            .llm_prompts_list(LlmPromptsListRequest {
+                status: args.status.clone(),
+                limit: args.limit,
+            })
+            .await?,
+    )?;
+    redact_raw_samples(&mut response);
+    Ok(envelope(
+        "sinex.llm_prompts",
+        json!(args),
+        json!({ "result": response }),
+    ))
+}
+
+async fn llm_route_explain(client: &GatewayClient, arguments: Value) -> Result<Value> {
+    let request: LlmRouteExplainRequest = serde_json::from_value(arguments.clone())?;
+    let response = client.llm_route_explain(request).await?;
+    Ok(envelope(
+        "sinex.llm_route_explain",
+        arguments,
+        json!({ "result": response }),
+    ))
+}
+
+async fn llm_budget_report(client: &GatewayClient, arguments: Value) -> Result<Value> {
+    let args: LlmBudgetArgs = serde_json::from_value(arguments)?;
+    let response = client
+        .llm_budget_report(LlmBudgetReportRequest { limit: args.limit })
+        .await?;
+    Ok(envelope(
+        "sinex.llm_budget_report",
+        json!(args),
+        json!({ "result": response }),
     ))
 }
 
