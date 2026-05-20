@@ -49,7 +49,15 @@ pub struct DoctorCommand {
 
 /// Diagnose rust-analyzer process footprint and local workspace contract.
 #[derive(clap::Args)]
-pub struct RaDiagnoseCommand;
+pub struct RaDiagnoseCommand {
+    /// Also run rust-analyzer's batch diagnostics subcommand.
+    #[arg(long)]
+    pub collect_diagnostics: bool,
+
+    /// Minimum severity for --collect-diagnostics.
+    #[arg(long, default_value = "warning")]
+    pub severity: String,
+}
 
 /// Doctor report structures
 #[derive(Debug, Serialize)]
@@ -126,6 +134,8 @@ struct RustAnalyzerDoctorReport {
     process_count: usize,
     total_rss_mb: f64,
     processes: Vec<RustAnalyzerProcess>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    cli_diagnostics: Option<RustAnalyzerCliDiagnosticScan>,
     warnings: Vec<String>,
 }
 
@@ -151,6 +161,28 @@ struct RustAnalyzerProcess {
     pid: u32,
     rss_mb: f64,
     command: String,
+}
+
+#[derive(Debug, Serialize)]
+struct RustAnalyzerCliDiagnosticScan {
+    command: Vec<String>,
+    exit_code: Option<i32>,
+    diagnostics: Vec<RustAnalyzerCliDiagnostic>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    stderr: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+struct RustAnalyzerCliDiagnostic {
+    crate_name: String,
+    file: String,
+    severity: String,
+    diagnostic_kind: String,
+    line: u32,
+    col: u32,
+    end_line: u32,
+    end_col: u32,
+    message: String,
 }
 
 impl TlsCheck {
@@ -378,7 +410,7 @@ impl XtaskCommand for DoctorCommand {
         }
 
         if self.rust_analyzer {
-            let rust_analyzer = execute_rust_analyzer_check()?;
+            let rust_analyzer = execute_rust_analyzer_check(false, "warning")?;
             let rust_analyzer_value = serde_json::to_value(&rust_analyzer)?;
             merge_result_data(&mut result, "rust_analyzer", rust_analyzer_value);
             if !rust_analyzer.warnings.is_empty() && result.status == Status::Success {
@@ -487,12 +519,12 @@ impl XtaskCommand for DoctorCommand {
 }
 
 impl XtaskCommand for RaDiagnoseCommand {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "ra-diagnose"
     }
 
     async fn execute(&self, ctx: &CommandContext) -> Result<CommandResult> {
-        let report = execute_rust_analyzer_check()?;
+        let report = execute_rust_analyzer_check(self.collect_diagnostics, &self.severity)?;
         if ctx.is_human() {
             print_rust_analyzer_report(&report);
         }
@@ -542,7 +574,10 @@ async fn execute_test_db_check(_ctx: &CommandContext) -> Result<TestDbDoctorRepo
     Ok(TestDbDoctorReport { footprint, dev_shm })
 }
 
-fn execute_rust_analyzer_check() -> Result<RustAnalyzerDoctorReport> {
+fn execute_rust_analyzer_check(
+    collect_diagnostics: bool,
+    severity: &str,
+) -> Result<RustAnalyzerDoctorReport> {
     let root = crate::config::workspace_root();
     let config_path = root.join("rust-analyzer.toml");
     let config = analyze_rust_analyzer_config(&config_path)?;
@@ -574,6 +609,18 @@ fn execute_rust_analyzer_check() -> Result<RustAnalyzerDoctorReport> {
             "rust-analyzer.toml is missing; rust-analyzer may index the full workspace".to_string(),
         ),
     }
+    let cli_diagnostics = if collect_diagnostics {
+        let scan = run_rust_analyzer_cli_diagnostics(&root, severity)?;
+        if scan.exit_code != Some(0) {
+            warnings.push(format!(
+                "rust-analyzer diagnostics exited with {:?}; see cli_diagnostics.stderr",
+                scan.exit_code
+            ));
+        }
+        Some(scan)
+    } else {
+        None
+    };
 
     Ok(RustAnalyzerDoctorReport {
         config_path: config_path.display().to_string(),
@@ -583,6 +630,7 @@ fn execute_rust_analyzer_check() -> Result<RustAnalyzerDoctorReport> {
         process_count: processes.len(),
         total_rss_mb,
         processes,
+        cli_diagnostics,
         warnings,
     })
 }
@@ -780,6 +828,103 @@ fn read_proc_rss_mb(proc_dir: &Path) -> Option<f64> {
         .nth(1)
         .and_then(|value| value.parse::<f64>().ok())?;
     Some(kb / 1024.0)
+}
+
+fn run_rust_analyzer_cli_diagnostics(
+    root: &Path,
+    severity: &str,
+) -> Result<RustAnalyzerCliDiagnosticScan> {
+    let command = vec![
+        "rust-analyzer".to_string(),
+        "diagnostics".to_string(),
+        root.display().to_string(),
+        "--disable-build-scripts".to_string(),
+        "--severity".to_string(),
+        severity.to_string(),
+    ];
+    let output = std::process::Command::new("rust-analyzer")
+        .args([
+            "diagnostics",
+            &root.display().to_string(),
+            "--disable-build-scripts",
+            "--severity",
+            severity,
+        ])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .output()
+        .wrap_err("spawn rust-analyzer diagnostics")?;
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = truncate_report_text(String::from_utf8_lossy(&output.stderr).trim(), 4096);
+
+    Ok(RustAnalyzerCliDiagnosticScan {
+        command,
+        exit_code: output.status.code(),
+        diagnostics: parse_rust_analyzer_cli_diagnostics(&stdout),
+        stderr: (!stderr.is_empty()).then_some(stderr),
+    })
+}
+
+fn parse_rust_analyzer_cli_diagnostics(output: &str) -> Vec<RustAnalyzerCliDiagnostic> {
+    output
+        .lines()
+        .filter_map(parse_rust_analyzer_cli_diagnostic_line)
+        .collect()
+}
+
+fn parse_rust_analyzer_cli_diagnostic_line(line: &str) -> Option<RustAnalyzerCliDiagnostic> {
+    let line = line.trim_matches(|ch: char| ch.is_control() || ch.is_whitespace());
+    let line = line.strip_prefix("at crate ")?;
+    let (crate_name, rest) = line.split_once(", file ")?;
+    let (file, rest) = rest.split_once(": ")?;
+    let (severity, rest) = rest.split_once(' ')?;
+    let (diagnostic_kind, rest) = rest.split_once(" from LineCol { ")?;
+    let (start, rest) = rest.split_once(" } to LineCol { ")?;
+    let (end, message) = rest.split_once(" }: ")?;
+    let (line, col) = parse_line_col(start)?;
+    let (end_line, end_col) = parse_line_col(end)?;
+
+    Some(RustAnalyzerCliDiagnostic {
+        crate_name: crate_name.to_string(),
+        file: file.to_string(),
+        severity: severity.to_string(),
+        diagnostic_kind: diagnostic_kind.to_string(),
+        line,
+        col,
+        end_line,
+        end_col,
+        message: message.to_string(),
+    })
+}
+
+fn parse_line_col(value: &str) -> Option<(u32, u32)> {
+    let mut line = None;
+    let mut col = None;
+    for part in value.split(',') {
+        let (key, raw_value) = part.trim().split_once(": ")?;
+        match key {
+            "line" => line = raw_value.parse().ok(),
+            "col" => col = raw_value.parse().ok(),
+            _ => {}
+        }
+    }
+    Some((line?, col?))
+}
+
+fn truncate_report_text(value: &str, max_len: usize) -> String {
+    if value.len() <= max_len {
+        return value.to_string();
+    }
+
+    let mut end = 0;
+    for (idx, _) in value.char_indices() {
+        if idx > max_len {
+            break;
+        }
+        end = idx;
+    }
+    format!("{}... [truncated]", &value[..end])
 }
 
 /// Run diagnostics.
@@ -1171,6 +1316,23 @@ fn print_rust_analyzer_report(report: &RustAnalyzerDoctorReport) {
             "    pid {:<8} {:>7.0} MB  {}",
             process.pid, process.rss_mb, process.command
         );
+    }
+    if let Some(scan) = &report.cli_diagnostics {
+        println!(
+            "  CLI diagnostics:   {} diagnostic(s), exit {:?}",
+            scan.diagnostics.len(),
+            scan.exit_code
+        );
+        for diagnostic in scan.diagnostics.iter().take(5) {
+            println!(
+                "    {}:{}:{} {} {}",
+                diagnostic.file,
+                diagnostic.line + 1,
+                diagnostic.col + 1,
+                diagnostic.severity,
+                diagnostic.message
+            );
+        }
     }
     for warning in &report.warnings {
         println!("  {} {warning}", style("⚠").yellow());

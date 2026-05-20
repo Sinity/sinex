@@ -149,9 +149,14 @@ const GUIDE_SECTIONS: &[GuideSection] = &[
                 path: "ra-diagnose",
                 fallback_summary: "Inspect rust-analyzer workspace health",
                 when: "rust-analyzer is slow, memory-heavy, duplicated, or suspected of ignoring the local workspace contract",
-                examples: &["xtask ra-diagnose", "xtask --json ra-diagnose"],
+                examples: &[
+                    "xtask ra-diagnose",
+                    "xtask --json ra-diagnose",
+                    "xtask --json ra-diagnose --collect-diagnostics",
+                ],
                 notes: &[
                     "This command reuses the rust-analyzer contract checks surfaced by `xtask doctor --rust-analyzer`.",
+                    "Use --collect-diagnostics only when you want rust-analyzer's batch diagnostics subcommand; the default remains a cheap process/config probe.",
                 ],
             },
             GuideEntry {
