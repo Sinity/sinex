@@ -10,7 +10,7 @@ use std::time::Instant;
 use clap::Parser;
 use color_eyre::Result;
 use rand::rngs::SmallRng;
-use rand::{RngExt, SeedableRng};
+use rand::{Rng, SeedableRng};
 use serde_json::json;
 use sinex_db::repositories::{SourceMaterial, StreamBatchRow};
 use sinex_db::{DbPoolExt, create_pool};

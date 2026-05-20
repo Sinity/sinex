@@ -13,7 +13,7 @@
 //! - Stage timings: clippy ~18s ±10%, preflight ~0.3s
 
 use color_eyre::eyre::Result;
-use rand::{Rng, RngExt};
+use rand::Rng;
 use rusqlite::params;
 
 use crate::history::HistoryDb;
