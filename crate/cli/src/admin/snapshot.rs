@@ -276,6 +276,8 @@ pub struct RestoreObservedChecks {
     pub target_entry_count: usize,
     pub source_unit_count: usize,
     pub source_unit_ids_match: bool,
+    pub component_blake3: BTreeMap<String, String>,
+    pub component_blake3_matches: BTreeMap<String, bool>,
     pub postgres_row_counts: BTreeMap<String, i64>,
     pub postgres_row_counts_match: Option<bool>,
     pub cas_blob_count: Option<u64>,
@@ -1118,6 +1120,8 @@ fn observe_restored_target(
             Some(ComponentExtras::Cas(extras)) => Some(extras.blob_count),
             _ => None,
         });
+    let component_blake3 = observed_component_blake3(manifest, target_dir);
+    let component_blake3_matches = expected_component_blake3_matches(manifest, &component_blake3);
     let cas_blob_count = target_dir
         .join("cas/blob-repository")
         .exists()
@@ -1130,6 +1134,8 @@ fn observe_restored_target(
         target_entry_count: count_files_recursive(target_dir) as usize,
         source_unit_count: source_unit_ids.len(),
         source_unit_ids_match: source_unit_ids == manifest.source_unit_ids,
+        component_blake3,
+        component_blake3_matches,
         postgres_row_counts: postgres_row_counts.clone().unwrap_or_default(),
         postgres_row_counts_match: expected_postgres_row_counts.map(|expected| {
             postgres_row_counts
@@ -1143,6 +1149,57 @@ fn observe_restored_target(
         private_mode_state_matches_manifest: private_mode_state_present
             == manifest_private_mode_state_present,
     }
+}
+
+fn observed_component_blake3(
+    manifest: &SnapshotManifest,
+    target_dir: &Path,
+) -> BTreeMap<String, String> {
+    manifest
+        .components
+        .iter()
+        .filter(|component| component.bytes > 0)
+        .filter_map(|component| {
+            let observed = match component.name.as_str() {
+                "postgres" => blake3_file(&target_dir.join(&component.path)).ok(),
+                "state" | "cas" | "nats" => {
+                    let component_root = target_dir.join(&component.name);
+                    component_root
+                        .exists()
+                        .then(|| blake3_dir(&component_root).ok())
+                        .flatten()
+                }
+                other => {
+                    let component_root = target_dir.join(other);
+                    component_root
+                        .exists()
+                        .then(|| blake3_dir(&component_root).ok())
+                        .flatten()
+                }
+            }?;
+            Some((component.name.clone(), observed))
+        })
+        .collect()
+}
+
+fn expected_component_blake3_matches(
+    manifest: &SnapshotManifest,
+    observed: &BTreeMap<String, String>,
+) -> BTreeMap<String, bool> {
+    manifest
+        .components
+        .iter()
+        .filter(|component| component.bytes > 0)
+        .filter(|component| !matches!(component.blake3.as_str(), "absent" | "dry-run" | "error"))
+        .map(|component| {
+            (
+                component.name.clone(),
+                observed
+                    .get(&component.name)
+                    .is_some_and(|actual| actual == &component.blake3),
+            )
+        })
+        .collect()
 }
 
 fn expected_postgres_row_counts(manifest: &SnapshotManifest) -> Option<&BTreeMap<String, i64>> {
@@ -1482,6 +1539,17 @@ pub fn format_snapshot_restore_plan_result(result: &SnapshotRestorePlanResult) -
         ));
         if let Some(blob_count) = observed.cas_blob_count {
             out.push_str(&format!("    CAS blobs: {blob_count}\n"));
+        }
+        if !observed.component_blake3_matches.is_empty() {
+            let matched = observed
+                .component_blake3_matches
+                .values()
+                .filter(|matches| **matches)
+                .count();
+            out.push_str(&format!(
+                "    component hashes: {matched}/{} match\n",
+                observed.component_blake3_matches.len()
+            ));
         }
         if let Some(matches) = observed.postgres_row_counts_match {
             out.push_str(&format!(
