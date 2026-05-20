@@ -89,7 +89,8 @@ async fn mcp_lists_first_slice_read_only_tools() -> TestResult<()> {
             "sinex.nodes_health",
             "sinex.nodes_active",
             "sinex.ingestd_validation",
-            "sinex.ingestd_batch_stats"
+            "sinex.ingestd_batch_stats",
+            "sinex.throughput"
         ]
     );
     assert_read_only_tool_names()?;
@@ -788,6 +789,30 @@ async fn mcp_ingestd_batch_stats_call_uses_gateway_fixture() -> TestResult<()> {
     Ok(())
 }
 
+#[sinex_test]
+async fn mcp_throughput_call_uses_gateway_fixture() -> TestResult<()> {
+    let server = mount_mcp_gateway_fixture().await;
+    let client = fixture_gateway_client(&server)?;
+
+    let response = call_tool(&client, "sinex.throughput", json!({})).await?;
+
+    assert_eq!(response["tool"], "sinex.throughput");
+    assert_eq!(
+        response["items"]["result"]["per_source"][0]["source"],
+        "terminal"
+    );
+    assert_eq!(
+        response["items"]["result"]["per_source"][0]["events_last_1h"],
+        120
+    );
+    assert_eq!(
+        response["items"]["result"]["per_component"][0]["component"],
+        "ingestd"
+    );
+    assert_eq!(response["redaction"]["raw_samples"], false);
+    Ok(())
+}
+
 async fn mount_mcp_gateway_fixture() -> MockServer {
     let server = MockServer::start().await;
     Mock::given(method("POST"))
@@ -1180,6 +1205,24 @@ async fn mount_mcp_gateway_fixture() -> MockServer {
                             "validation_schema_not_found": 0,
                             "validation_invalid": 0,
                             "avg_validation_coverage_pct": 100.0
+                        }
+                    ]
+                }),
+                "telemetry.throughput" => json!({
+                    "per_source": [
+                        {
+                            "source": "terminal",
+                            "events_last_1h": 120,
+                            "events_last_24h": 1440,
+                            "eps_1h": 0.0333333333,
+                            "eps_24h": 0.0166666667
+                        }
+                    ],
+                    "per_component": [
+                        {
+                            "component": "ingestd",
+                            "eps_1h": 0.05,
+                            "eps_24h": 0.02
                         }
                     ]
                 }),
