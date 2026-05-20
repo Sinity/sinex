@@ -4,6 +4,8 @@ use sinex_db::repositories::schema_management::NewEventSchema;
 use sinex_primitives::domain::{EventSource, EventType};
 use sinex_primitives::events::schema_registry::SchemaBundleEntry;
 use uuid::Uuid;
+// `#[sinex_test]` consumes these signature types before the unused-import lint sees them.
+#[allow(unused_imports)]
 use xtask::sandbox::prelude::{TestContext, TestResult};
 use xtask::sandbox::sinex_test;
 

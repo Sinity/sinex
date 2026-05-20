@@ -84,10 +84,7 @@ pub async fn handle_hyprland_workspace_switch(
         };
 
         let probe = probe_hyprland_command_socket(&socket_path).await;
-        if !probe.available {
-            attempt.status = ActuationStatus::Unavailable;
-            attempt.error = probe.caveat;
-        } else {
+        if probe.available {
             match dispatch_hyprland_workspace_command(&socket_path, &command).await {
                 Ok(response) => {
                     let socket_response = response.response;
@@ -104,6 +101,9 @@ pub async fn handle_hyprland_workspace_switch(
                     attempt.error = Some(error.to_string());
                 }
             }
+        } else {
+            attempt.status = ActuationStatus::Unavailable;
+            attempt.error = probe.caveat;
         }
     }
 
