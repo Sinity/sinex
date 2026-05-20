@@ -84,6 +84,11 @@ HTTP/SSE transport is a follow-up only when there is a real consumer.
 | `sinex.window_focus` | `telemetry.window_focus` | desktop window focus telemetry buckets |
 | `sinex.current_health` | `telemetry.current_health` | current health telemetry rows |
 | `sinex.current_device_state` | `telemetry.current_device_state` | current device-state telemetry rows |
+| `sinex.gateway_stats` | `telemetry.gateway_stats` | gateway request and latency telemetry buckets |
+| `sinex.stream_stats` | `telemetry.stream_stats` | JetStream fill and message telemetry buckets |
+| `sinex.assembly_stats` | `telemetry.assembly_stats` | material assembly telemetry buckets |
+| `sinex.node_stats` | `telemetry.node_stats` | node processing telemetry buckets |
+| `sinex.metric_counters` | `telemetry.metric_counters` | named metric counter telemetry buckets |
 
 Deliberate omissions:
 
