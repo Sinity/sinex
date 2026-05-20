@@ -116,13 +116,16 @@ exists. Until then:
 | Mode | Policy |
 | --- | --- |
 | Import source material | Supported first: Taskwarrior exports are staged material. |
-| External id mirror | Preserve Taskwarrior UUID/status/version as `external_refs`. |
+| External id mirror | Preserve Taskwarrior UUID/status/version as `external_refs`; current-state queries can filter by external system/id. |
 | Projection export | Safe when Sinex is canonical for the exported subset. |
 | Peer canonical mirror | Requires explicit authority and conflict policy. |
 | Bidirectional sync | Out of scope for v1. |
 
 Taskwarrior must not become the hidden task ontology. It is an adapter over the
-task domain.
+task domain. A canonical task creation must not silently duplicate an existing
+task with the same `(external_ref.system, external_ref.external_id)` pair;
+importers should list by external identity, then update the matching Sinex task
+or create a new one when no match exists.
 
 ## Relations
 

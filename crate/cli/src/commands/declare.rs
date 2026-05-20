@@ -9,6 +9,7 @@ use sinex_primitives::rpc::health::{
     HealthDeclarationResponse, HealthEffectRecordRequest, HealthIntakeRecordRequest,
 };
 use sinex_primitives::rpc::tasks::{TaskCreateRequest, TaskEventResponse};
+use sinex_primitives::task_domain::TaskExternalRef;
 
 use crate::client::GatewayClient;
 use crate::fmt::{format_json, format_yaml};
@@ -215,6 +216,10 @@ pub struct DeclareTaskCommand {
     /// Priority label.
     #[arg(long)]
     priority: Option<String>,
+
+    /// External task identity as system:id or system:id:version. Can be repeated.
+    #[arg(long = "external-ref")]
+    external_refs: Vec<String>,
 }
 
 impl DeclareTaskCommand {
@@ -224,12 +229,17 @@ impl DeclareTaskCommand {
             return Err(eyre!("task --title must not be empty"));
         }
         let due_at = self.due.as_deref().map(parse_time_input).transpose()?;
+        let external_refs = self
+            .external_refs
+            .iter()
+            .map(|raw| parse_task_external_ref(raw))
+            .collect::<Result<Vec<_>>>()?;
         let response = client
             .tasks_create(TaskCreateRequest {
                 task_id: None,
                 title: title.to_string(),
                 body: self.body.clone(),
-                external_refs: Vec::new(),
+                external_refs,
                 project_id: self.project_id.clone(),
                 tags: self.tags.clone(),
                 due_at,
@@ -238,6 +248,26 @@ impl DeclareTaskCommand {
             .await?;
         render_task_response(&response, format, "Task declared")
     }
+}
+
+pub(crate) fn parse_task_external_ref(raw: &str) -> Result<TaskExternalRef> {
+    let mut parts = raw.splitn(3, ':');
+    let system = parts.next().unwrap_or_default().trim();
+    let external_id = parts.next().unwrap_or_default().trim();
+    let version = parts
+        .next()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    if system.is_empty() || external_id.is_empty() {
+        return Err(eyre!(
+            "external ref must be `system:id` or `system:id:version`"
+        ));
+    }
+    Ok(TaskExternalRef {
+        system: system.to_string(),
+        external_id: external_id.to_string(),
+        version: version.map(ToString::to_string),
+    })
 }
 
 pub(crate) fn render_task_response<T>(
