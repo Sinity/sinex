@@ -105,7 +105,10 @@ async fn mcp_lists_first_slice_read_only_tools() -> TestResult<()> {
             "sinex.metric_counters",
             "sinex.llm_prompts",
             "sinex.llm_route_explain",
-            "sinex.llm_budget_report"
+            "sinex.llm_budget_report",
+            "sinex.curation_proposals",
+            "sinex.dlq_stats",
+            "sinex.dlq_peek"
         ]
     );
     assert_read_only_tool_names()?;
@@ -1149,6 +1152,63 @@ async fn mcp_llm_budget_report_call_uses_gateway_fixture() -> TestResult<()> {
     Ok(())
 }
 
+#[sinex_test]
+async fn mcp_curation_proposals_call_uses_gateway_fixture() -> TestResult<()> {
+    let server = mount_mcp_gateway_fixture().await;
+    let client = fixture_gateway_client(&server)?;
+
+    let response = call_tool(
+        &client,
+        "sinex.curation_proposals",
+        json!({ "status": "pending", "limit": 4 }),
+    )
+    .await?;
+
+    assert_eq!(response["tool"], "sinex.curation_proposals");
+    assert_eq!(response["query"]["status"], "pending");
+    assert_eq!(
+        response["items"]["result"]["events"][0]["payload"]["redacted"],
+        true
+    );
+    assert_eq!(response["redaction"]["raw_samples"], false);
+    Ok(())
+}
+
+#[sinex_test]
+async fn mcp_dlq_stats_call_uses_gateway_fixture() -> TestResult<()> {
+    let server = mount_mcp_gateway_fixture().await;
+    let client = fixture_gateway_client(&server)?;
+
+    let response = call_tool(&client, "sinex.dlq_stats", json!({})).await?;
+
+    assert_eq!(response["tool"], "sinex.dlq_stats");
+    assert_eq!(response["items"]["result"]["total_messages"], 2);
+    assert_eq!(response["items"]["result"]["total_bytes"], 512);
+    assert_eq!(response["redaction"]["raw_samples"], false);
+    Ok(())
+}
+
+#[sinex_test]
+async fn mcp_dlq_peek_call_uses_gateway_fixture() -> TestResult<()> {
+    let server = mount_mcp_gateway_fixture().await;
+    let client = fixture_gateway_client(&server)?;
+
+    let response = call_tool(&client, "sinex.dlq_peek", json!({ "limit": 2 })).await?;
+
+    assert_eq!(response["tool"], "sinex.dlq_peek");
+    assert_eq!(response["query"]["limit"], 2);
+    assert_eq!(
+        response["items"]["result"]["messages"][0]["payload_redacted"],
+        true
+    );
+    assert_eq!(
+        response["items"]["result"]["messages"][0]["privacy_caveats"][0],
+        "secret_redacted"
+    );
+    assert_eq!(response["redaction"]["raw_samples"], false);
+    Ok(())
+}
+
 fn telemetry_window_args() -> Value {
     json!({
         "from": "2026-05-19T00:00:00Z",
@@ -1815,6 +1875,51 @@ async fn mount_mcp_gateway_fixture() -> MockServer {
                     "completion_tokens": 8,
                     "cost_estimate_microusd": 100,
                     "runtime_ms": 25
+                }),
+                "curation.proposals.list" => json!({
+                    "type": "events",
+                    "events": [
+                        {
+                            "id": fixture_event_id(),
+                            "source": "curation",
+                            "event_type": "curation.proposal",
+                            "payload": {
+                                "proposal_kind": "entity_relation",
+                                "status": "pending",
+                                "candidate": "fixture relation ghp_fixture_secret should not leak"
+                            },
+                            "ts_orig": "2026-05-19T12:00:00Z",
+                            "host": "test-host",
+                            "payload_schema_id": null,
+                            "source_material_id": fixture_material_id(),
+                            "anchor_byte": 0,
+                            "offset_start": 0,
+                            "offset_end": 12,
+                            "offset_kind": "byte",
+                            "associated_blob_ids": null
+                        }
+                    ],
+                    "next_cursor": null,
+                    "total_estimate": null
+                }),
+                "dlq.list" => json!({
+                    "total_messages": 2,
+                    "total_bytes": 512,
+                    "first_seq": 10,
+                    "last_seq": 11
+                }),
+                "dlq.peek" => json!({
+                    "messages": [
+                        {
+                            "subject": "sinex.events.dlq",
+                            "sequence": 10,
+                            "retry_count": 3,
+                            "original_subject": "sinex.events.raw.fixture",
+                            "payload_preview": "[REDACTED]",
+                            "payload_redacted": true,
+                            "privacy_caveats": ["secret_redacted"]
+                        }
+                    ]
                 }),
                 other => {
                     return ResponseTemplate::new(400).set_body_json(json!({
