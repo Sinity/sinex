@@ -2,9 +2,10 @@
 
 use color_eyre::eyre::{Result, WrapErr};
 use guppy::MetadataCommand;
+use guppy::PackageId;
 use guppy::graph::{DependencyDirection, PackageGraph};
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet};
+use std::collections::BTreeMap;
 
 /// Workspace analyzer using guppy
 pub struct WorkspaceAnalyzer {
@@ -40,6 +41,17 @@ pub struct DuplicateDependency {
     pub name: String,
     /// List of versions present
     pub versions: Vec<String>,
+    /// Per-version reachability from workspace roots.
+    pub version_details: Vec<DuplicateVersionDetail>,
+}
+
+/// Reachability detail for one version of a duplicate dependency.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DuplicateVersionDetail {
+    /// Package version.
+    pub version: String,
+    /// Workspace packages whose dependency closure reaches this version.
+    pub workspace_roots: Vec<String>,
 }
 
 impl WorkspaceAnalyzer {
@@ -198,28 +210,41 @@ impl WorkspaceAnalyzer {
     /// # Ok::<(), color_eyre::eyre::Report>(())
     /// ```
     pub fn find_duplicates(&self) -> Result<Vec<DuplicateDependency>> {
-        // Map package name -> set of versions
-        let mut version_map: HashMap<String, HashSet<String>> = HashMap::new();
+        // Map package name -> version -> package IDs for that version.
+        let mut version_map: BTreeMap<String, BTreeMap<String, Vec<PackageId>>> = BTreeMap::new();
 
         // Iterate over all packages in the graph
         for package in self.graph.packages() {
             let name = package.name().to_string();
             let version = package.version().to_string();
 
-            version_map.entry(name).or_default().insert(version);
+            version_map
+                .entry(name)
+                .or_default()
+                .entry(version)
+                .or_default()
+                .push(package.id().clone());
         }
 
         // Find packages with multiple versions
         let mut duplicates = Vec::new();
 
-        for (name, versions) in version_map {
-            if versions.len() > 1 {
-                let mut versions_vec: Vec<String> = versions.into_iter().collect();
-                versions_vec.sort(); // Sort for consistent output
+        for (name, versions_by_id) in version_map {
+            if versions_by_id.len() > 1 {
+                let versions_vec: Vec<String> = versions_by_id.keys().cloned().collect();
+                let mut version_details = Vec::with_capacity(versions_by_id.len());
+
+                for (version, package_ids) in versions_by_id {
+                    version_details.push(DuplicateVersionDetail {
+                        version,
+                        workspace_roots: self.workspace_roots_for_package_ids(&package_ids)?,
+                    });
+                }
 
                 duplicates.push(DuplicateDependency {
                     name,
                     versions: versions_vec,
+                    version_details,
                 });
             }
         }
@@ -228,6 +253,39 @@ impl WorkspaceAnalyzer {
         duplicates.sort_by(|a, b| a.name.cmp(&b.name));
 
         Ok(duplicates)
+    }
+
+    fn workspace_roots_for_package_ids(&self, package_ids: &[PackageId]) -> Result<Vec<String>> {
+        let workspace = self.graph.workspace();
+        let mut roots = Vec::new();
+
+        for workspace_id in workspace.member_ids() {
+            let package = self
+                .graph
+                .metadata(workspace_id)
+                .context("Failed to get workspace package metadata")?;
+            let resolved = self
+                .graph
+                .query_forward(std::iter::once(workspace_id))
+                .context("Failed to create workspace root dependency query")?
+                .resolve();
+
+            let reaches_version = package_ids.iter().try_fold(false, |reaches, package_id| {
+                if reaches {
+                    Ok(true)
+                } else {
+                    resolved.contains(package_id)
+                }
+            })?;
+
+            if reaches_version {
+                roots.push(package.name().to_string());
+            }
+        }
+
+        roots.sort();
+        roots.dedup();
+        Ok(roots)
     }
 }
 

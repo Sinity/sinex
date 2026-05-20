@@ -72,6 +72,44 @@ async fn test_deps_duplicates_threshold_filters_report() -> ::xtask::sandbox::Te
 }
 
 #[sinex_test]
+async fn test_deps_duplicates_json_includes_version_roots() -> ::xtask::sandbox::TestResult<()> {
+    let output = xtask_command()?
+        .arg("deps")
+        .arg("duplicates")
+        .arg("--json")
+        .output()?;
+
+    assert!(
+        output.status.success(),
+        "deps duplicates --json failed. Stderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let parsed: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+    let duplicates = parsed["data"]["duplicates"]
+        .as_array()
+        .ok_or_else(|| color_eyre::eyre::eyre!("data.duplicates should be an array"))?;
+    let duplicate = duplicates
+        .iter()
+        .find(|duplicate| duplicate["version_details"].is_array())
+        .ok_or_else(|| color_eyre::eyre::eyre!("expected at least one duplicate detail"))?;
+    let details = duplicate["version_details"]
+        .as_array()
+        .ok_or_else(|| color_eyre::eyre::eyre!("version_details should be an array"))?;
+
+    assert!(
+        details.len() >= 2,
+        "duplicate version details should include each duplicate version"
+    );
+    assert!(
+        details.iter().any(|detail| detail["workspace_roots"]
+            .as_array()
+            .is_some_and(|roots| !roots.is_empty())),
+        "at least one duplicate version should be reachable from a workspace root"
+    );
+    Ok(())
+}
+
+#[sinex_test]
 async fn test_deps_timings_invalid_top() -> ::xtask::sandbox::TestResult<()> {
     let Err(error) = Cli::try_parse_from(["xtask", "deps", "timings", "--top", "invalid"]) else {
         return Err(color_eyre::eyre::eyre!(

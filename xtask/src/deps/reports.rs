@@ -91,8 +91,13 @@ pub fn write_duplicates_report<W: Write>(
                         dup.name,
                         dup.versions.len()
                     )?;
-                    for version in &dup.versions {
-                        writeln!(writer, "    - {version}")?;
+                    for detail in &dup.version_details {
+                        writeln!(writer, "    - {}", detail.version)?;
+                        if detail.workspace_roots.is_empty() {
+                            writeln!(writer, "      roots: <none>")?;
+                        } else {
+                            writeln!(writer, "      roots: {}", detail.workspace_roots.join(", "))?;
+                        }
                     }
                 }
 
