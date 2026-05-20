@@ -33,8 +33,8 @@ Every staged-export parser is built from four pieces:
 
 3. **A source-unit descriptor + binding** — the `register_source_unit!`
    and `register_source_unit_binding!` macros in the same source file.
-   These declare identity, privacy tier, retention, proof obligations,
-   and runtime shape.
+   These declare identity, privacy tier, retention, verification
+   tags/catalog obligations, and runtime shape.
 
 4. **The registration triple** — `register_adapter_ingestor!(source_unit_id,
    <Adapter>, <Parser>)` wires the parser into both the replay dispatch
@@ -275,7 +275,7 @@ register_source_unit! {
             "timestamp_intrinsic",
             "anchor_<your_anchor_kind>",
             "occurrence_key_<your_key_shape>",
-            // any per-parser invariants you claim
+            // any descriptor-local parser invariants you want surfaced
         ],
         occurrence_identity: OccurrenceIdentity::Uuid5From(
             "(<tuple-description>)",
@@ -399,7 +399,7 @@ When the source descriptor is available, call
 `spec.acceptance_failures(&parser.manifest(), Some(&SOURCE_UNIT_DESCRIPTOR))`
 and assert that it returns no failures. The harness also runs the same
 contract against the parser manifest during fixture execution, so missing
-timestamp, occurrence, privacy, event-pair, or proof-obligation evidence is
+timestamp, occurrence, privacy, event-pair, or verification-tag evidence is
 visible as a fixture failure instead of a review-only checklist.
 
 ### 10. Verification
@@ -413,10 +413,9 @@ xtask test -p sinex-source-worker \
   --allow-contended-host
 ```
 
-All inline tests should pass. The `xtask docs check` will flag the new
-parser's proof_obligations as unknown — that's a pre-existing pattern
-for all the other source units; obligation-catalog wiring is tracked
-separately.
+All inline tests should pass. `obligation:*` entries are checked against the
+proof catalog; descriptor-local strings are advisory verification tags and
+should describe parser-local invariants rather than global gates.
 
 ## What this guide intentionally does not cover
 
