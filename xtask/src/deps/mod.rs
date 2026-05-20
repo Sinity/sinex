@@ -168,11 +168,22 @@ impl DepsCommand {
                 }
 
                 let rendered = AsciiRenderer::new(&graph, package.clone(), *depth)
+                    .with_style(!ctx.is_json())
                     .render()
                     .context("Failed to render dependency tree")?;
 
+                let data = if ctx.is_json() {
+                    serde_json::json!({
+                        "tree": rendered,
+                        "package": package,
+                        "depth": depth,
+                    })
+                } else {
+                    serde_json::Value::String(rendered)
+                };
+
                 Ok(CommandResult::success()
-                    .with_data(serde_json::Value::String(rendered))
+                    .with_data(data)
                     .with_silent()
                     .with_duration(ctx.elapsed()))
             }
