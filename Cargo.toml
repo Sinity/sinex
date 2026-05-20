@@ -221,7 +221,7 @@ bon = "3.9"
 
 # Data structures
 indexmap = "2.0"
-dashmap = "5.5"
+dashmap = "6.1"
 governor = "0.10"
 petgraph = "0.7"
 
