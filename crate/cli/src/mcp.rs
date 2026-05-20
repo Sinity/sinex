@@ -23,7 +23,9 @@ use sinex_primitives::rpc::llm::{
     LlmBudgetReportRequest, LlmPromptsListRequest, LlmRouteExplainRequest,
 };
 use sinex_primitives::rpc::methods;
-use sinex_primitives::rpc::nodes::{NodesHealthResponse, NodesListActiveResponse};
+use sinex_primitives::rpc::nodes::{
+    NodesHealthResponse, NodesListActiveResponse, NodesListResponse,
+};
 use sinex_primitives::rpc::privacy::PrivateModeStateResponse;
 use sinex_primitives::rpc::replay::ReplayState;
 use sinex_primitives::rpc::semantic::{
@@ -543,6 +545,13 @@ pub fn tool_catalog() -> Vec<McpCatalogEntry> {
             kind: McpSurfaceKind::Tool,
             description: "Read-only active runtime node presence.",
             backing_rpc_methods: &[methods::NODES_LIST_ACTIVE],
+            read_only: true,
+        },
+        McpCatalogEntry {
+            name: "sinex.nodes_registry",
+            kind: McpSurfaceKind::Tool,
+            description: "Read-only persisted node state registry.",
+            backing_rpc_methods: &[methods::NODES_LIST],
             read_only: true,
         },
         McpCatalogEntry {
@@ -1106,6 +1115,11 @@ pub fn tools() -> Vec<McpTool> {
             input_schema: stale_after_schema(),
         },
         McpTool {
+            name: "sinex.nodes_registry",
+            description: "Read-only persisted node state registry.",
+            input_schema: empty_object_schema(),
+        },
+        McpTool {
             name: "sinex.ingestd_validation",
             description: "Read-only latest ingestd validation and admission snapshot.",
             input_schema: empty_object_schema(),
@@ -1615,6 +1629,7 @@ pub async fn call_tool(client: &GatewayClient, name: &str, arguments: Value) -> 
         "sinex.ingestors_status" => ingestors_status(client, arguments).await,
         "sinex.nodes_health" => nodes_health(client, arguments).await,
         "sinex.nodes_active" => nodes_active(client, arguments).await,
+        "sinex.nodes_registry" => nodes_registry(client, arguments).await,
         "sinex.ingestd_validation" => ingestd_validation(client, arguments).await,
         "sinex.ingestd_batch_stats" => ingestd_batch_stats(client, arguments).await,
         "sinex.throughput" => throughput(client, arguments).await,
@@ -1981,6 +1996,16 @@ async fn nodes_active(client: &GatewayClient, arguments: Value) -> Result<Value>
     Ok(envelope(
         "sinex.nodes_active",
         json!(args),
+        json!({ "result": response }),
+    ))
+}
+
+async fn nodes_registry(client: &GatewayClient, arguments: Value) -> Result<Value> {
+    reject_non_empty_args("sinex.nodes_registry", &arguments)?;
+    let response: NodesListResponse = client.nodes_list().await?;
+    Ok(envelope(
+        "sinex.nodes_registry",
+        json!({}),
         json!({ "result": response }),
     ))
 }

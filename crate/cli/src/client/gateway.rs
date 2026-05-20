@@ -71,12 +71,13 @@ use sinex_primitives::rpc::{
         LlmRouteExplainRequest, LlmRouteExplainResponse,
     },
     nodes::{
-        NODES_DRAIN_METHOD, NODES_HEALTH_METHOD, NODES_LIST_ACTIVE_METHOD, NODES_RESUME_METHOD,
-        NODES_SET_HORIZON_METHOD,
+        NODES_DRAIN_METHOD, NODES_HEALTH_METHOD, NODES_LIST_ACTIVE_METHOD, NODES_LIST_METHOD,
+        NODES_RESUME_METHOD, NODES_SET_HORIZON_METHOD,
     },
     nodes::{
         NodeDrainRequest, NodeResumeRequest, NodeSetHorizonRequest, NodesHealthRequest,
-        NodesHealthResponse, NodesListActiveRequest, NodesListActiveResponse,
+        NodesHealthResponse, NodesListActiveRequest, NodesListActiveResponse, NodesListRequest,
+        NodesListResponse,
     },
     ops::{Operation as OpsOperation, OpsGetResponse, OpsListResponse, OpsStartResponse},
     privacy::{
@@ -662,6 +663,12 @@ impl GatewayClient {
     ) -> Result<NodesListActiveResponse> {
         let req = NodesListActiveRequest { stale_after_secs };
         self.call_typed(NODES_LIST_ACTIVE_METHOD, &req).await
+    }
+
+    /// List persisted node states from coordination KV state.
+    pub async fn nodes_list(&self) -> Result<NodesListResponse> {
+        self.call_typed(NODES_LIST_METHOD, &NodesListRequest {})
+            .await
     }
 
     /// Get aggregate node health from runtime registry state.
