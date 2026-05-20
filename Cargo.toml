@@ -251,7 +251,7 @@ walkdir = "2.5"
 clap_complete = "4.5"
 serde_yml = "0.0.12"
 console = "0.15"
-tabled = "0.17"
+tabled = "0.20"
 
 # File system watching
 notify = "8.2"
