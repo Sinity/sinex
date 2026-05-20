@@ -336,6 +336,46 @@ async fn state_snapshot_dry_run_uses_snapshot_implementation() -> xtask::sandbox
     Ok(())
 }
 
+/// Live snapshots are intentionally unsupported until there is a real hot
+/// capture implementation. The binary path must fail closed rather than
+/// silently running the quiesce-mode code with a misleading mode label.
+#[sinex_test]
+async fn state_snapshot_live_mode_fails_closed() -> xtask::sandbox::TestResult<()> {
+    let output_dir = tempfile::tempdir()?;
+    let output_path = output_dir.path().join("state-live.tar.zst");
+
+    let output = sinexctl_bin()
+        .args([
+            "state",
+            "snapshot",
+            "--output",
+            &output_path.to_string_lossy(),
+            "--dry-run",
+            "--mode",
+            "live",
+            "--components",
+            "nats,cas,state",
+        ])
+        .output()?;
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !output.status.success(),
+        "live snapshot mode must fail closed until implemented\nstdout: {stdout}\nstderr: {stderr}"
+    );
+    assert!(
+        stderr.contains("only mode=quiesce is supported"),
+        "stderr should explain the unsupported live mode\nstdout: {stdout}\nstderr: {stderr}"
+    );
+    assert!(
+        !output_path.exists(),
+        "unsupported live mode must not create an archive at {output_path:?}"
+    );
+
+    Ok(())
+}
+
 /// `admin snapshot-inspect` reads manifest.json from the compressed archive
 /// and validates that non-empty manifest component paths exist in the tar.
 #[sinex_test]
