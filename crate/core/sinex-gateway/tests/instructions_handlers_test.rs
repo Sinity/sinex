@@ -126,3 +126,85 @@ async fn hyprland_workspace_switch_dispatches_typed_command_when_observation_rea
     );
     Ok(())
 }
+
+#[sinex_test]
+async fn hyprland_workspace_switch_records_failed_attempt_on_socket_rejection(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let material_id = ctx
+        .create_source_material(Some("hyprland-workspace-observation"))
+        .await?;
+    let observed = HyprlandWorkspaceSwitchedPayload {
+        from_workspace_id: 1,
+        to_workspace_id: 2,
+        monitor_id: 0,
+        active_window_id: None,
+    }
+    .from_material(material_id)
+    .build()?;
+    ctx.pool().events().insert(observed).await?;
+
+    let temp = tempfile::Builder::new()
+        .prefix("sinex-hypr-")
+        .tempdir_in("/tmp")?;
+    let socket_path = temp.path().join("hyprland-command.sock");
+    let listener = UnixListener::bind(&socket_path)?;
+    let server = tokio::spawn(async move {
+        let (_probe_stream, _) = listener.accept().await?;
+        let (mut stream, _) = listener.accept().await?;
+        let mut request = String::new();
+        stream.read_to_string(&mut request).await?;
+        stream.write_all(b"unknown dispatcher").await?;
+        Ok::<_, std::io::Error>(request)
+    });
+
+    let response = handle_hyprland_workspace_switch(
+        ctx.pool(),
+        HyprlandWorkspaceSwitchRequest {
+            instruction_id: None,
+            desired_workspace_id: 4,
+            deadline: None,
+            dry_run: false,
+            command_socket_path: Some(socket_path.display().to_string()),
+        },
+        &RpcAuthContext::system(),
+    )
+    .await?;
+    let request = server.await??;
+
+    assert_eq!(request, "dispatch workspace 4");
+    assert_eq!(response.attempt.status, ActuationStatus::Failed);
+    assert_eq!(
+        response.command_socket_response.as_deref(),
+        Some("unknown dispatcher")
+    );
+    assert!(
+        response
+            .attempt
+            .error
+            .as_deref()
+            .is_some_and(|error| error.contains("rejected workspace dispatch"))
+    );
+
+    let persisted_attempt = ctx
+        .pool()
+        .events()
+        .get_by_id(
+            response
+                .attempt_event
+                .id
+                .ok_or_else(|| color_eyre::eyre::eyre!("attempt event missing id"))?,
+        )
+        .await?
+        .ok_or_else(|| color_eyre::eyre::eyre!("attempt event not persisted"))?;
+    assert_eq!(
+        persisted_attempt.payload["status"],
+        serde_json::json!("failed")
+    );
+    assert!(
+        persisted_attempt.payload["error"]
+            .as_str()
+            .is_some_and(|error| error.contains("rejected workspace dispatch"))
+    );
+    Ok(())
+}
