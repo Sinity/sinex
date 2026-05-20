@@ -28,7 +28,7 @@ validator = { workspace = true, features = ["derive"] }
 tracing = { workspace = true }
 color-eyre = { workspace = true }
 gethostname = { workspace = true }
-blake3 = "1.5"
+blake3 = { workspace = true }
 sha2 = "0.10"
 num-traits = "0.2"
 ahash = { workspace = true }

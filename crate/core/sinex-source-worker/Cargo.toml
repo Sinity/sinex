@@ -21,7 +21,7 @@ workspace = true
 workspace = true
 
 [dependencies]
-human-panic = "2.0"
+human-panic = { workspace = true }
 
 [dependencies.mimalloc]
 workspace = true

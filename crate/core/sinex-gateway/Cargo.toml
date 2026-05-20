@@ -5,8 +5,8 @@ name = "sinex-gateway"
 socket2        = "0.5"
 subtle         = "2"
 tokio-rustls   = "0.26"
-human-panic    = "2.0"
-shadow-rs      = "0.35"
+human-panic    = { workspace = true }
+shadow-rs      = { workspace = true }
 sinex-primitives = { path = "../../lib/sinex-primitives", features = ["nats"] }
 sinex-db = { path = "../../lib/sinex-db" }
 
@@ -14,8 +14,8 @@ sinex-db = { path = "../../lib/sinex-db" }
 ignored = ["shadow-rs"]
 
 [dev-dependencies]
-tempfile = "3.10"
-which    = "6"
+tempfile = { workspace = true }
+which    = { workspace = true }
 rcgen    = { workspace = true }
 bytes    = "1.5"
 uuid     = { workspace = true }
@@ -199,7 +199,7 @@ features = [
 path = "../../lib/sinex-schema"
 
 [build-dependencies]
-shadow-rs = "0.35"
+shadow-rs = { workspace = true }
 
 [lints]
 workspace = true
