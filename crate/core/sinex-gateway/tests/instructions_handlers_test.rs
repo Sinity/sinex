@@ -208,3 +208,60 @@ async fn hyprland_workspace_switch_records_failed_attempt_on_socket_rejection(
     );
     Ok(())
 }
+
+#[sinex_serial_test]
+async fn hyprland_workspace_switch_resolves_default_socket_from_runtime_env(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let material_id = ctx
+        .create_source_material(Some("hyprland-workspace-observation"))
+        .await?;
+    let observed = HyprlandWorkspaceSwitchedPayload {
+        from_workspace_id: 1,
+        to_workspace_id: 2,
+        monitor_id: 0,
+        active_window_id: None,
+    }
+    .from_material(material_id)
+    .build()?;
+    ctx.pool().events().insert(observed).await?;
+
+    let temp = tempfile::Builder::new()
+        .prefix("sinex-hypr-runtime-")
+        .tempdir_in("/tmp")?;
+    let instance_dir = temp.path().join("hypr/instance-1");
+    std::fs::create_dir_all(&instance_dir)?;
+    let socket_path = instance_dir.join(".socket.sock");
+    let listener = UnixListener::bind(&socket_path)?;
+    let server = tokio::spawn(async move {
+        let (_probe_stream, _) = listener.accept().await?;
+        let (mut stream, _) = listener.accept().await?;
+        let mut request = String::new();
+        stream.read_to_string(&mut request).await?;
+        stream.write_all(b"ok").await?;
+        Ok::<_, std::io::Error>(request)
+    });
+
+    let mut env = EnvGuard::new();
+    env.set("XDG_RUNTIME_DIR", temp.path().display().to_string());
+    env.set("HYPRLAND_INSTANCE_SIGNATURE", "instance-1");
+
+    let response = handle_hyprland_workspace_switch(
+        ctx.pool(),
+        HyprlandWorkspaceSwitchRequest {
+            instruction_id: None,
+            desired_workspace_id: 4,
+            deadline: None,
+            dry_run: false,
+            command_socket_path: None,
+        },
+        &RpcAuthContext::system(),
+    )
+    .await?;
+    let request = server.await??;
+
+    assert_eq!(request, "dispatch workspace 4");
+    assert_eq!(response.attempt.status, ActuationStatus::Attempted);
+    assert_eq!(response.command_socket_response.as_deref(), Some("ok"));
+    Ok(())
+}
