@@ -97,7 +97,12 @@ async fn mcp_lists_first_slice_read_only_tools() -> TestResult<()> {
             "sinex.system_state",
             "sinex.window_focus",
             "sinex.current_health",
-            "sinex.current_device_state"
+            "sinex.current_device_state",
+            "sinex.gateway_stats",
+            "sinex.stream_stats",
+            "sinex.assembly_stats",
+            "sinex.node_stats",
+            "sinex.metric_counters"
         ]
     );
     assert_read_only_tool_names()?;
@@ -969,6 +974,93 @@ async fn mcp_current_device_state_call_uses_gateway_fixture() -> TestResult<()> 
     Ok(())
 }
 
+#[sinex_test]
+async fn mcp_gateway_stats_call_uses_gateway_fixture() -> TestResult<()> {
+    let server = mount_mcp_gateway_fixture().await;
+    let client = fixture_gateway_client(&server)?;
+
+    let response = call_tool(&client, "sinex.gateway_stats", telemetry_window_args()).await?;
+
+    assert_eq!(response["tool"], "sinex.gateway_stats");
+    assert_eq!(response["query"]["limit"], 3);
+    assert_eq!(response["items"]["buckets"][0]["source"], "gateway");
+    assert_eq!(response["items"]["buckets"][0]["stat_events"], 4);
+    assert_eq!(response["redaction"]["raw_samples"], false);
+    Ok(())
+}
+
+#[sinex_test]
+async fn mcp_stream_stats_call_uses_gateway_fixture() -> TestResult<()> {
+    let server = mount_mcp_gateway_fixture().await;
+    let client = fixture_gateway_client(&server)?;
+
+    let response = call_tool(&client, "sinex.stream_stats", telemetry_window_args()).await?;
+
+    assert_eq!(response["tool"], "sinex.stream_stats");
+    assert_eq!(response["query"]["limit"], 3);
+    assert_eq!(response["items"]["buckets"][0]["stream_name"], "EVENTS");
+    assert_eq!(response["items"]["buckets"][0]["sample_count"], 2);
+    assert_eq!(response["redaction"]["raw_samples"], false);
+    Ok(())
+}
+
+#[sinex_test]
+async fn mcp_assembly_stats_call_uses_gateway_fixture() -> TestResult<()> {
+    let server = mount_mcp_gateway_fixture().await;
+    let client = fixture_gateway_client(&server)?;
+
+    let response = call_tool(&client, "sinex.assembly_stats", telemetry_window_args()).await?;
+
+    assert_eq!(response["tool"], "sinex.assembly_stats");
+    assert_eq!(response["query"]["limit"], 3);
+    assert_eq!(response["items"]["buckets"][0]["total_completed"], 7);
+    assert_eq!(response["items"]["buckets"][0]["sample_count"], 3);
+    assert_eq!(response["redaction"]["raw_samples"], false);
+    Ok(())
+}
+
+#[sinex_test]
+async fn mcp_node_stats_call_uses_gateway_fixture() -> TestResult<()> {
+    let server = mount_mcp_gateway_fixture().await;
+    let client = fixture_gateway_client(&server)?;
+
+    let response = call_tool(&client, "sinex.node_stats", telemetry_window_args()).await?;
+
+    assert_eq!(response["tool"], "sinex.node_stats");
+    assert_eq!(response["query"]["limit"], 3);
+    assert_eq!(response["items"]["buckets"][0]["node_type"], "ingestor");
+    assert_eq!(
+        response["items"]["buckets"][0]["total_events_processed"],
+        42
+    );
+    assert_eq!(response["redaction"]["raw_samples"], false);
+    Ok(())
+}
+
+#[sinex_test]
+async fn mcp_metric_counters_call_uses_gateway_fixture() -> TestResult<()> {
+    let server = mount_mcp_gateway_fixture().await;
+    let client = fixture_gateway_client(&server)?;
+
+    let response = call_tool(&client, "sinex.metric_counters", telemetry_window_args()).await?;
+
+    assert_eq!(response["tool"], "sinex.metric_counters");
+    assert_eq!(response["query"]["limit"], 3);
+    assert_eq!(response["items"]["buckets"][0]["component"], "ingestd");
+    assert_eq!(response["items"]["buckets"][0]["metric_name"], "events");
+    assert_eq!(response["items"]["buckets"][0]["total_value"], 99);
+    assert_eq!(response["redaction"]["raw_samples"], false);
+    Ok(())
+}
+
+fn telemetry_window_args() -> Value {
+    json!({
+        "from": "2026-05-19T00:00:00Z",
+        "to": "2026-05-19T01:00:00Z",
+        "limit": 3
+    })
+}
+
 async fn mount_mcp_gateway_fixture() -> MockServer {
     let server = MockServer::start().await;
     Mock::given(method("POST"))
@@ -1462,6 +1554,72 @@ async fn mount_mcp_gateway_fixture() -> MockServer {
                             "state": "active",
                             "sub_state": "running",
                             "last_update": "2026-05-19T12:00:00Z"
+                        }
+                    ]
+                }),
+                "telemetry.gateway_stats" => json!({
+                    "buckets": [
+                        {
+                            "bucket": "2026-05-19T12:00:00Z",
+                            "source": "gateway",
+                            "stat_events": 4,
+                            "avg_total_requests": 12.0,
+                            "total_rate_limited": 1,
+                            "avg_latency_ms": 3.5,
+                            "max_p99_latency_ms": 9.0
+                        }
+                    ]
+                }),
+                "telemetry.stream_stats" => json!({
+                    "buckets": [
+                        {
+                            "bucket": "2026-05-19T12:00:00Z",
+                            "stream_name": "EVENTS",
+                            "avg_fill_pct": 12.0,
+                            "max_fill_pct": 20.0,
+                            "avg_messages": 128.0,
+                            "max_messages": 256,
+                            "sample_count": 2
+                        }
+                    ]
+                }),
+                "telemetry.assembly_stats" => json!({
+                    "buckets": [
+                        {
+                            "bucket": "2026-05-19T12:00:00Z",
+                            "max_active_assemblies": 2,
+                            "total_completed": 7,
+                            "total_cancelled": 0,
+                            "total_failed": 1,
+                            "total_timed_out": 0,
+                            "avg_duration_ms": 22.0,
+                            "sample_count": 3
+                        }
+                    ]
+                }),
+                "telemetry.node_stats" => json!({
+                    "buckets": [
+                        {
+                            "bucket": "2026-05-19T12:00:00Z",
+                            "node_type": "ingestor",
+                            "total_events_processed": 42,
+                            "total_events_dropped": 0,
+                            "avg_latency_ms": 5.5,
+                            "max_queue_depth": 1,
+                            "total_errors": 0,
+                            "sample_count": 4
+                        }
+                    ]
+                }),
+                "telemetry.metric_counters" => json!({
+                    "buckets": [
+                        {
+                            "bucket": "2026-05-19T12:00:00Z",
+                            "component": "ingestd",
+                            "metric_name": "events",
+                            "total_value": 99,
+                            "max_value": 20,
+                            "sample_count": 5
                         }
                     ]
                 }),

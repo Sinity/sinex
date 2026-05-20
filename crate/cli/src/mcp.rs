@@ -482,6 +482,41 @@ pub fn tool_catalog() -> Vec<McpCatalogEntry> {
             backing_rpc_methods: &[methods::TELEMETRY_CURRENT_DEVICE_STATE],
             read_only: true,
         },
+        McpCatalogEntry {
+            name: "sinex.gateway_stats",
+            kind: McpSurfaceKind::Tool,
+            description: "Read-only gateway request and latency telemetry buckets.",
+            backing_rpc_methods: &[methods::TELEMETRY_GATEWAY_STATS],
+            read_only: true,
+        },
+        McpCatalogEntry {
+            name: "sinex.stream_stats",
+            kind: McpSurfaceKind::Tool,
+            description: "Read-only JetStream fill and message telemetry buckets.",
+            backing_rpc_methods: &[methods::TELEMETRY_STREAM_STATS],
+            read_only: true,
+        },
+        McpCatalogEntry {
+            name: "sinex.assembly_stats",
+            kind: McpSurfaceKind::Tool,
+            description: "Read-only material assembly telemetry buckets.",
+            backing_rpc_methods: &[methods::TELEMETRY_ASSEMBLY_STATS],
+            read_only: true,
+        },
+        McpCatalogEntry {
+            name: "sinex.node_stats",
+            kind: McpSurfaceKind::Tool,
+            description: "Read-only node processing telemetry buckets.",
+            backing_rpc_methods: &[methods::TELEMETRY_NODE_STATS],
+            read_only: true,
+        },
+        McpCatalogEntry {
+            name: "sinex.metric_counters",
+            kind: McpSurfaceKind::Tool,
+            description: "Read-only named metric counter telemetry buckets.",
+            backing_rpc_methods: &[methods::TELEMETRY_METRIC_COUNTERS],
+            read_only: true,
+        },
     ]
 }
 
@@ -820,6 +855,31 @@ pub fn tools() -> Vec<McpTool> {
             description: "Read-only current device-state telemetry rows.",
             input_schema: limit_schema(50),
         },
+        McpTool {
+            name: "sinex.gateway_stats",
+            description: "Read-only gateway request and latency telemetry buckets.",
+            input_schema: telemetry_buckets_schema(),
+        },
+        McpTool {
+            name: "sinex.stream_stats",
+            description: "Read-only JetStream fill and message telemetry buckets.",
+            input_schema: telemetry_buckets_schema(),
+        },
+        McpTool {
+            name: "sinex.assembly_stats",
+            description: "Read-only material assembly telemetry buckets.",
+            input_schema: telemetry_buckets_schema(),
+        },
+        McpTool {
+            name: "sinex.node_stats",
+            description: "Read-only node processing telemetry buckets.",
+            input_schema: telemetry_buckets_schema(),
+        },
+        McpTool {
+            name: "sinex.metric_counters",
+            description: "Read-only named metric counter telemetry buckets.",
+            input_schema: telemetry_buckets_schema(),
+        },
     ]
 }
 
@@ -1020,6 +1080,11 @@ pub async fn call_tool(client: &GatewayClient, name: &str, arguments: Value) -> 
         "sinex.window_focus" => window_focus(client, arguments).await,
         "sinex.current_health" => current_health(client, arguments).await,
         "sinex.current_device_state" => current_device_state(client, arguments).await,
+        "sinex.gateway_stats" => gateway_stats(client, arguments).await,
+        "sinex.stream_stats" => stream_stats(client, arguments).await,
+        "sinex.assembly_stats" => assembly_stats(client, arguments).await,
+        "sinex.node_stats" => node_stats(client, arguments).await,
+        "sinex.metric_counters" => metric_counters(client, arguments).await,
         other => Err(eyre!("unknown MCP tool: {other}")),
     }
 }
@@ -1443,6 +1508,66 @@ async fn current_device_state(client: &GatewayClient, arguments: Value) -> Resul
         "sinex.current_device_state",
         json!(args),
         json!({ "entries": entries }),
+    ))
+}
+
+async fn gateway_stats(client: &GatewayClient, arguments: Value) -> Result<Value> {
+    let args: TelemetryBucketsArgs = serde_json::from_value(arguments)?;
+    let buckets = client
+        .telemetry_gateway_stats(args.from.clone(), args.to.clone(), args.limit)
+        .await?;
+    Ok(envelope(
+        "sinex.gateway_stats",
+        json!(args),
+        json!({ "buckets": buckets }),
+    ))
+}
+
+async fn stream_stats(client: &GatewayClient, arguments: Value) -> Result<Value> {
+    let args: TelemetryBucketsArgs = serde_json::from_value(arguments)?;
+    let buckets = client
+        .telemetry_stream_stats(args.from.clone(), args.to.clone(), args.limit)
+        .await?;
+    Ok(envelope(
+        "sinex.stream_stats",
+        json!(args),
+        json!({ "buckets": buckets }),
+    ))
+}
+
+async fn assembly_stats(client: &GatewayClient, arguments: Value) -> Result<Value> {
+    let args: TelemetryBucketsArgs = serde_json::from_value(arguments)?;
+    let buckets = client
+        .telemetry_assembly_stats(args.from.clone(), args.to.clone(), args.limit)
+        .await?;
+    Ok(envelope(
+        "sinex.assembly_stats",
+        json!(args),
+        json!({ "buckets": buckets }),
+    ))
+}
+
+async fn node_stats(client: &GatewayClient, arguments: Value) -> Result<Value> {
+    let args: TelemetryBucketsArgs = serde_json::from_value(arguments)?;
+    let buckets = client
+        .telemetry_node_stats(args.from.clone(), args.to.clone(), args.limit)
+        .await?;
+    Ok(envelope(
+        "sinex.node_stats",
+        json!(args),
+        json!({ "buckets": buckets }),
+    ))
+}
+
+async fn metric_counters(client: &GatewayClient, arguments: Value) -> Result<Value> {
+    let args: TelemetryBucketsArgs = serde_json::from_value(arguments)?;
+    let buckets = client
+        .telemetry_metric_counters(args.from.clone(), args.to.clone(), args.limit)
+        .await?;
+    Ok(envelope(
+        "sinex.metric_counters",
+        json!(args),
+        json!({ "buckets": buckets }),
     ))
 }
 
