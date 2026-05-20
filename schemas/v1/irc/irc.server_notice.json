@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "message": {
+      "type": "string"
+    },
+    "nick": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "nick",
+    "message"
+  ],
+  "title": "IrcServerNoticePayload",
+  "type": "object",
+  "x-sinex-event-type": "irc.server_notice",
+  "x-sinex-source": "irc",
+  "x-sinex-version": "1.0.0"
+}
