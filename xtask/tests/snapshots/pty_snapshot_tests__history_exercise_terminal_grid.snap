@@ -10,5 +10,5 @@ expression: screen
 
 Failed exercises in run [FIXED_TIME]00Z:
   ✗ t2.progress-render: progress snapshot mismatch
-✓ history (0.00s)
+✓ history ([DURATION])
 1 exercise run(s) shown

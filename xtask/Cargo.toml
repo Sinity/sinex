@@ -110,7 +110,7 @@ blake3 = { workspace = true }
 shadow-rs = { workspace = true }
 
 [dev-dependencies]
-vt100 = "0.15"
+vt100 = "0.16"
 
 [lints]
 workspace = true
