@@ -1921,3 +1921,138 @@ async fn test_rust_analyzer_process_matcher_ignores_flag_names() -> ::xtask::san
     ));
     Ok(())
 }
+
+#[sinex_test]
+async fn test_rust_analyzer_config_summary_accepts_workspace_contract()
+-> ::xtask::sandbox::TestResult<()> {
+    let value = toml::from_str::<toml::Value>(
+        r#"
+numThreads = 6
+
+[cargo]
+allTargets = false
+
+[cachePriming]
+enable = false
+
+[check]
+workspace = false
+
+[files]
+excludeDirs = [".sinex", "target", ".direnv"]
+
+[lru]
+capacity = 1024
+
+[procMacro]
+enable = true
+attributes.enable = false
+
+[diagnostics]
+disabled = ["unresolved-proc-macro"]
+"#,
+    )?;
+
+    let summary = summarize_rust_analyzer_config(&value);
+
+    assert!(summary.parse_ok);
+    assert_eq!(summary.num_threads, Some(6));
+    assert_eq!(summary.cargo_all_targets, Some(false));
+    assert_eq!(summary.cache_priming_enable, Some(false));
+    assert_eq!(summary.check_workspace, Some(false));
+    assert_eq!(summary.lru_capacity, Some(1024));
+    assert_eq!(summary.proc_macro_enable, Some(true));
+    assert_eq!(summary.proc_macro_attributes_enable, Some(false));
+    assert!(summary.warnings.is_empty());
+    Ok(())
+}
+
+#[sinex_test]
+async fn test_rust_analyzer_config_summary_warns_on_expensive_defaults()
+-> ::xtask::sandbox::TestResult<()> {
+    let value = toml::from_str::<toml::Value>(
+        r#"
+numThreads = 24
+
+[cargo]
+allTargets = true
+
+[cachePriming]
+enable = true
+
+[check]
+workspace = true
+
+[files]
+excludeDirs = ["target"]
+
+[lru]
+capacity = 4096
+
+[procMacro]
+enable = false
+attributes.enable = true
+
+[diagnostics]
+disabled = []
+"#,
+    )?;
+
+    let summary = summarize_rust_analyzer_config(&value);
+
+    assert!(
+        summary
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("numThreads"))
+    );
+    assert!(
+        summary
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("cargo.allTargets"))
+    );
+    assert!(
+        summary
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("cachePriming.enable"))
+    );
+    assert!(
+        summary
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("check.workspace"))
+    );
+    assert!(
+        summary
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("lru.capacity"))
+    );
+    assert!(
+        summary
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("procMacro.enable"))
+    );
+    assert!(
+        summary
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("procMacro.attributes.enable"))
+    );
+    assert!(
+        summary
+            .warnings
+            .iter()
+            .any(|warning| warning.contains(".sinex"))
+    );
+    assert!(
+        summary
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("unresolved-proc-macro"))
+    );
+    Ok(())
+}

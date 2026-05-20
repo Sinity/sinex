@@ -31,7 +31,7 @@ pub use build::BuildCommand;
 pub use check::CheckCommand;
 pub use deps::DepsCommand;
 pub use docs::DocsCommand;
-pub use doctor::DoctorCommand;
+pub use doctor::{DoctorCommand, RaDiagnoseCommand};
 pub use exercise::ExerciseCommand;
 pub use fix::FixCommand;
 pub use git_stack::GitStackCommand;

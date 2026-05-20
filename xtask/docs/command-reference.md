@@ -35,6 +35,7 @@ Regenerate with `xtask docs sync` or `xtask docs command-reference`; verify drif
 | `analytics` | `xtask analytics` — developer intelligence analytics |
 | `git-stack` | Plan and materialize PR-sized git branch stacks from the current commit graph |
 | `doctor` | Probe developer-environment health and deployment readiness |
+| `ra-diagnose` | Diagnose rust-analyzer process footprint and local workspace contract |
 | `privacy` | Run privacy-engine catalog, test, key, and config utilities |
 | `schema` | Schema verification command group |
 | `verify` | Verify phase plans and performance contracts |
@@ -1335,6 +1336,11 @@ Probe developer-environment health and deployment readiness
 | `--reclaim` | no | no | Reclaim stale target-dir artifacts (cargo-sweep + incremental/ prune) |
 | `--test-db` | no | no | Inspect managed test database footprint and /dev/shm headroom |
 | `--rust-analyzer` | no | no | Inspect rust-analyzer process footprint and local config |
+
+
+## `xtask ra-diagnose`
+
+Diagnose rust-analyzer process footprint and local workspace contract
 
 
 ## `xtask privacy`

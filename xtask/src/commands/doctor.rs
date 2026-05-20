@@ -47,6 +47,10 @@ pub struct DoctorCommand {
     pub rust_analyzer: bool,
 }
 
+/// Diagnose rust-analyzer process footprint and local workspace contract.
+#[derive(clap::Args)]
+pub struct RaDiagnoseCommand;
+
 /// Doctor report structures
 #[derive(Debug, Serialize)]
 pub(crate) struct DoctorReport {
@@ -116,10 +120,29 @@ struct DevShmSnapshot {
 struct RustAnalyzerDoctorReport {
     config_path: String,
     config_present: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    config: Option<RustAnalyzerConfigSummary>,
     target_dir: String,
     process_count: usize,
     total_rss_mb: f64,
     processes: Vec<RustAnalyzerProcess>,
+    warnings: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+struct RustAnalyzerConfigSummary {
+    parse_ok: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    parse_error: Option<String>,
+    num_threads: Option<i64>,
+    cargo_all_targets: Option<bool>,
+    cache_priming_enable: Option<bool>,
+    check_workspace: Option<bool>,
+    lru_capacity: Option<i64>,
+    proc_macro_enable: Option<bool>,
+    proc_macro_attributes_enable: Option<bool>,
+    files_exclude_dirs: Vec<String>,
+    diagnostics_disabled: Vec<String>,
     warnings: Vec<String>,
 }
 
@@ -463,6 +486,33 @@ impl XtaskCommand for DoctorCommand {
     }
 }
 
+impl XtaskCommand for RaDiagnoseCommand {
+    fn name(&self) -> &str {
+        "ra-diagnose"
+    }
+
+    async fn execute(&self, ctx: &CommandContext) -> Result<CommandResult> {
+        let report = execute_rust_analyzer_check()?;
+        if ctx.is_human() {
+            print_rust_analyzer_report(&report);
+        }
+
+        let status = if report.warnings.is_empty() {
+            CommandResult::success()
+        } else {
+            CommandResult::partial()
+        };
+        Ok(status
+            .with_warnings(report.warnings.clone())
+            .with_data(serde_json::to_value(&report)?)
+            .with_duration(ctx.elapsed()))
+    }
+
+    fn metadata(&self) -> CommandMetadata {
+        CommandMetadata::diagnostics()
+    }
+}
+
 fn merge_result_data(result: &mut CommandResult, key: &str, value: serde_json::Value) {
     let existing_data = result.data.take();
     result.data = Some(match existing_data {
@@ -495,6 +545,7 @@ async fn execute_test_db_check(_ctx: &CommandContext) -> Result<TestDbDoctorRepo
 fn execute_rust_analyzer_check() -> Result<RustAnalyzerDoctorReport> {
     let root = crate::config::workspace_root();
     let config_path = root.join("rust-analyzer.toml");
+    let config = analyze_rust_analyzer_config(&config_path)?;
     let target_dir = std::env::var("CARGO_TARGET_DIR").map_or_else(
         |_| crate::config::workspace_target_dir_for(&root),
         PathBuf::from,
@@ -517,16 +568,150 @@ fn execute_rust_analyzer_check() -> Result<RustAnalyzerDoctorReport> {
             "rust-analyzer RSS is {total_rss_mb:.0} MB; consider checking editor duplicate sessions"
         ));
     }
+    match config.as_ref() {
+        Some(config) => warnings.extend(config.warnings.clone()),
+        None => warnings.push(
+            "rust-analyzer.toml is missing; rust-analyzer may index the full workspace".to_string(),
+        ),
+    }
 
     Ok(RustAnalyzerDoctorReport {
         config_path: config_path.display().to_string(),
         config_present: config_path.is_file(),
+        config,
         target_dir: target_dir.display().to_string(),
         process_count: processes.len(),
         total_rss_mb,
         processes,
         warnings,
     })
+}
+
+fn analyze_rust_analyzer_config(path: &Path) -> Result<Option<RustAnalyzerConfigSummary>> {
+    if !path.is_file() {
+        return Ok(None);
+    }
+
+    let contents = std::fs::read_to_string(path)
+        .with_context(|| format!("failed to read {}", path.display()))?;
+    let parsed = match toml::from_str::<toml::Value>(&contents) {
+        Ok(value) => value,
+        Err(error) => {
+            return Ok(Some(RustAnalyzerConfigSummary {
+                parse_ok: false,
+                parse_error: Some(error.to_string()),
+                num_threads: None,
+                cargo_all_targets: None,
+                cache_priming_enable: None,
+                check_workspace: None,
+                lru_capacity: None,
+                proc_macro_enable: None,
+                proc_macro_attributes_enable: None,
+                files_exclude_dirs: Vec::new(),
+                diagnostics_disabled: Vec::new(),
+                warnings: vec![format!(
+                    "rust-analyzer.toml is malformed; rust-analyzer will ignore the local contract: {error}"
+                )],
+            }));
+        }
+    };
+
+    Ok(Some(summarize_rust_analyzer_config(&parsed)))
+}
+
+fn summarize_rust_analyzer_config(value: &toml::Value) -> RustAnalyzerConfigSummary {
+    let num_threads = toml_i64(value, &["numThreads"]);
+    let cargo_all_targets = toml_bool(value, &["cargo", "allTargets"]);
+    let cache_priming_enable = toml_bool(value, &["cachePriming", "enable"]);
+    let check_workspace = toml_bool(value, &["check", "workspace"]);
+    let lru_capacity = toml_i64(value, &["lru", "capacity"]);
+    let proc_macro_enable = toml_bool(value, &["procMacro", "enable"]);
+    let proc_macro_attributes_enable = toml_bool(value, &["procMacro", "attributes", "enable"]);
+    let files_exclude_dirs = toml_string_array(value, &["files", "excludeDirs"]);
+    let diagnostics_disabled = toml_string_array(value, &["diagnostics", "disabled"]);
+
+    let mut warnings = Vec::new();
+    if !matches!(num_threads, Some(1..=8)) {
+        warnings.push("rust-analyzer numThreads should be set between 1 and 8".to_string());
+    }
+    if cargo_all_targets != Some(false) {
+        warnings.push("rust-analyzer cargo.allTargets should stay false".to_string());
+    }
+    if cache_priming_enable != Some(false) {
+        warnings.push("rust-analyzer cachePriming.enable should stay false".to_string());
+    }
+    if check_workspace != Some(false) {
+        warnings.push("rust-analyzer check.workspace should stay false".to_string());
+    }
+    if !matches!(lru_capacity, Some(1..=2048)) {
+        warnings.push("rust-analyzer lru.capacity should be capped at 2048 or lower".to_string());
+    }
+    if proc_macro_enable != Some(true) {
+        warnings
+            .push("rust-analyzer procMacro.enable should stay true for derives/sqlx".to_string());
+    }
+    if proc_macro_attributes_enable != Some(false) {
+        warnings.push("rust-analyzer procMacro.attributes.enable should stay false".to_string());
+    }
+    for required in [".sinex", "target", ".direnv"] {
+        if !files_exclude_dirs.iter().any(|dir| dir == required) {
+            warnings.push(format!(
+                "rust-analyzer files.excludeDirs should include {required}"
+            ));
+        }
+    }
+    if !diagnostics_disabled
+        .iter()
+        .any(|disabled| disabled == "unresolved-proc-macro")
+    {
+        warnings.push(
+            "rust-analyzer diagnostics.disabled should include unresolved-proc-macro".to_string(),
+        );
+    }
+
+    RustAnalyzerConfigSummary {
+        parse_ok: true,
+        parse_error: None,
+        num_threads,
+        cargo_all_targets,
+        cache_priming_enable,
+        check_workspace,
+        lru_capacity,
+        proc_macro_enable,
+        proc_macro_attributes_enable,
+        files_exclude_dirs,
+        diagnostics_disabled,
+        warnings,
+    }
+}
+
+fn toml_at<'a>(value: &'a toml::Value, path: &[&str]) -> Option<&'a toml::Value> {
+    let mut current = value;
+    for segment in path {
+        current = current.get(*segment)?;
+    }
+    Some(current)
+}
+
+fn toml_bool(value: &toml::Value, path: &[&str]) -> Option<bool> {
+    toml_at(value, path).and_then(toml::Value::as_bool)
+}
+
+fn toml_i64(value: &toml::Value, path: &[&str]) -> Option<i64> {
+    toml_at(value, path).and_then(toml::Value::as_integer)
+}
+
+fn toml_string_array(value: &toml::Value, path: &[&str]) -> Vec<String> {
+    toml_at(value, path)
+        .and_then(toml::Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(toml::Value::as_str)
+                .map(ToString::to_string)
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 fn collect_rust_analyzer_processes() -> Result<Vec<RustAnalyzerProcess>> {
@@ -964,6 +1149,19 @@ fn print_rust_analyzer_report(report: &RustAnalyzerDoctorReport) {
         }
     );
     println!("  Target dir:         {}", report.target_dir);
+    if let Some(config) = &report.config {
+        if config.parse_ok {
+            println!(
+                "  Contract:           numThreads={:?}, allTargets={:?}, check.workspace={:?}, lru={:?}",
+                config.num_threads,
+                config.cargo_all_targets,
+                config.check_workspace,
+                config.lru_capacity
+            );
+        } else if let Some(error) = config.parse_error.as_deref() {
+            println!("  Contract:           parse failed ({error})");
+        }
+    }
     println!(
         "  Processes:          {} ({:.0} MB RSS total)",
         report.process_count, report.total_rss_mb
