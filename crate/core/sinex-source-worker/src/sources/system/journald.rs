@@ -343,14 +343,10 @@ mod tests {
         let line = "";
         let records = records_from_journal_lines(mid, &[line]);
 
-        let mut parser = JournaldParser;
-        let ctx = make_ctx(mid);
-
-        // Empty / invalid JSON should fail parse — that's OK; the harness skips errors.
-        let result = parser
-            .parse_record(records[0].as_ref().unwrap().clone(), &ctx)
-            .await;
-        assert!(result.is_err() || result.unwrap().is_empty());
+        assert!(
+            records.is_empty(),
+            "journal helper should mirror live stream filtering for empty lines"
+        );
         Ok(())
     }
 }
