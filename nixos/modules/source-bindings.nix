@@ -59,7 +59,7 @@ let
       sourceFamily = mkOption {
         type = types.str;
         description = "Logical source family identifier.";
-        example = "terminal.atuin";
+        example = "terminal.atuin-history";
       };
       bindingMode = mkOption {
         type = bindingModeType;
@@ -144,7 +144,7 @@ in
           resolverPreset = "atuin.default";
           inputShapeKind = "SqliteQuery";
           parserId = "shell.atuin";
-          sourceUnitId = "terminal.atuin";
+          sourceUnitId = "terminal.atuin-history";
           privacyPolicyId = "allowPlaintext";
         };
       };

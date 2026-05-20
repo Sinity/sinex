@@ -1367,7 +1367,9 @@ fn execute_source_worker(
 ///
 /// In live mode the check fails on rust-only IDs (descriptors without a host
 /// binding) and warns on nix-only IDs (host bindings without a Rust
-/// descriptor).  In static mode both directions are warn-only.
+/// descriptor). Static mode only checks the Nix module's examples for unresolved
+/// descriptor references; it is not a host inventory and should not report every
+/// descriptor as rust-only.
 fn check_sw_binding_drift(root: &Path, bindings_json: Option<&Path>) -> SwCheck {
     // Collect Nix-side source-unit IDs.
     let (nix_ids, mode_label): (BTreeSet<String>, &str) = if let Some(json_path) = bindings_json {
@@ -1430,7 +1432,11 @@ fn check_sw_binding_drift(root: &Path, bindings_json: Option<&Path>) -> SwCheck 
         .collect();
 
     let nix_only: Vec<String> = nix_ids.difference(&rust_ids).cloned().collect();
-    let rust_only: Vec<String> = rust_ids.difference(&nix_ids).cloned().collect();
+    let rust_only: Vec<String> = if bindings_json.is_some() {
+        rust_ids.difference(&nix_ids).cloned().collect()
+    } else {
+        Vec::new()
+    };
 
     if nix_only.is_empty() && rust_only.is_empty() {
         return SwCheck::pass(
