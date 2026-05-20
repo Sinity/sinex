@@ -76,6 +76,7 @@ HTTP/SSE transport is a follow-up only when there is a real consumer.
 | `sinex.nodes_active` | `nodes.list_active` | active runtime node presence |
 | `sinex.ingestd_validation` | `telemetry.ingestd_validation` | latest ingestd admission and validation snapshot |
 | `sinex.ingestd_batch_stats` | `telemetry.ingestd_batch_stats` | ingestd batch, latency, and validation telemetry buckets |
+| `sinex.throughput` | `telemetry.throughput` | per-source and per-component event/request throughput summary |
 
 Deliberate omissions:
 

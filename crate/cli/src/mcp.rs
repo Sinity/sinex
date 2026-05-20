@@ -420,6 +420,13 @@ pub fn tool_catalog() -> Vec<McpCatalogEntry> {
             backing_rpc_methods: &[methods::TELEMETRY_INGESTD_BATCH_STATS],
             read_only: true,
         },
+        McpCatalogEntry {
+            name: "sinex.throughput",
+            kind: McpSurfaceKind::Tool,
+            description: "Read-only per-source and per-component throughput summary.",
+            backing_rpc_methods: &[methods::TELEMETRY_THROUGHPUT],
+            read_only: true,
+        },
     ]
 }
 
@@ -718,6 +725,15 @@ pub fn tools() -> Vec<McpTool> {
             description: "Read-only ingestd batch, latency, and validation telemetry buckets.",
             input_schema: telemetry_buckets_schema(),
         },
+        McpTool {
+            name: "sinex.throughput",
+            description: "Read-only per-source and per-component throughput summary.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {},
+                "additionalProperties": false
+            }),
+        },
     ]
 }
 
@@ -910,6 +926,7 @@ pub async fn call_tool(client: &GatewayClient, name: &str, arguments: Value) -> 
         "sinex.nodes_active" => nodes_active(client, arguments).await,
         "sinex.ingestd_validation" => ingestd_validation(client, arguments).await,
         "sinex.ingestd_batch_stats" => ingestd_batch_stats(client, arguments).await,
+        "sinex.throughput" => throughput(client, arguments).await,
         other => Err(eyre!("unknown MCP tool: {other}")),
     }
 }
@@ -1245,6 +1262,16 @@ async fn ingestd_batch_stats(client: &GatewayClient, arguments: Value) -> Result
         "sinex.ingestd_batch_stats",
         json!(args),
         json!({ "buckets": buckets }),
+    ))
+}
+
+async fn throughput(client: &GatewayClient, arguments: Value) -> Result<Value> {
+    reject_non_empty_args("sinex.throughput", &arguments)?;
+    let response = client.telemetry_throughput().await?;
+    Ok(envelope(
+        "sinex.throughput",
+        json!({}),
+        json!({ "result": response }),
     ))
 }
 
