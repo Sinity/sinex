@@ -57,6 +57,11 @@ determine how source bytes are presented to the parser.
 
 For most export-style sources, `StaticFileAdapter` is the right choice —
 exports are committed snapshots, not streams.
+Static JSON, CSV, and TSV files now expose adapter-level structural
+fingerprints, so upstream export-shape changes feed the shared drift substrate
+before parser defaults or nulls silently hide the problem. Composed adapters
+preserve child fingerprints through `ChainedAdapter`: the primary leg is used
+when present, with secondary as fallback.
 
 ## Step-by-step
 
