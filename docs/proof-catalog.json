@@ -5083,7 +5083,7 @@
     {
       "subject": "xtask_command:verify.claims",
       "path": "verify.claims",
-      "about": "Summarize executable proof claims, runner commands, and deferrals"
+      "about": "Summarize executable verification claims, runner commands, and deferrals"
     },
     {
       "subject": "xtask_command:verify.closure",
