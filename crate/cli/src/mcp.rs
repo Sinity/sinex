@@ -468,6 +468,20 @@ pub fn tool_catalog() -> Vec<McpCatalogEntry> {
             backing_rpc_methods: &[methods::TELEMETRY_WINDOW_FOCUS],
             read_only: true,
         },
+        McpCatalogEntry {
+            name: "sinex.current_health",
+            kind: McpSurfaceKind::Tool,
+            description: "Read-only current health telemetry rows.",
+            backing_rpc_methods: &[methods::TELEMETRY_CURRENT_HEALTH],
+            read_only: true,
+        },
+        McpCatalogEntry {
+            name: "sinex.current_device_state",
+            kind: McpSurfaceKind::Tool,
+            description: "Read-only current device-state telemetry rows.",
+            backing_rpc_methods: &[methods::TELEMETRY_CURRENT_DEVICE_STATE],
+            read_only: true,
+        },
     ]
 }
 
@@ -796,6 +810,16 @@ pub fn tools() -> Vec<McpTool> {
             description: "Read-only desktop window focus telemetry buckets.",
             input_schema: telemetry_buckets_schema(),
         },
+        McpTool {
+            name: "sinex.current_health",
+            description: "Read-only current health telemetry rows.",
+            input_schema: limit_schema(50),
+        },
+        McpTool {
+            name: "sinex.current_device_state",
+            description: "Read-only current device-state telemetry rows.",
+            input_schema: limit_schema(50),
+        },
     ]
 }
 
@@ -994,6 +1018,8 @@ pub async fn call_tool(client: &GatewayClient, name: &str, arguments: Value) -> 
         "sinex.file_activity" => file_activity(client, arguments).await,
         "sinex.system_state" => system_state(client, arguments).await,
         "sinex.window_focus" => window_focus(client, arguments).await,
+        "sinex.current_health" => current_health(client, arguments).await,
+        "sinex.current_device_state" => current_device_state(client, arguments).await,
         other => Err(eyre!("unknown MCP tool: {other}")),
     }
 }
@@ -1397,6 +1423,26 @@ async fn window_focus(client: &GatewayClient, arguments: Value) -> Result<Value>
         "sinex.window_focus",
         json!(args),
         json!({ "buckets": buckets }),
+    ))
+}
+
+async fn current_health(client: &GatewayClient, arguments: Value) -> Result<Value> {
+    let args: TelemetryLimitArgs = serde_json::from_value(arguments)?;
+    let entries = client.telemetry_current_health(args.limit).await?;
+    Ok(envelope(
+        "sinex.current_health",
+        json!(args),
+        json!({ "entries": entries }),
+    ))
+}
+
+async fn current_device_state(client: &GatewayClient, arguments: Value) -> Result<Value> {
+    let args: TelemetryLimitArgs = serde_json::from_value(arguments)?;
+    let entries = client.telemetry_current_device_state(args.limit).await?;
+    Ok(envelope(
+        "sinex.current_device_state",
+        json!(args),
+        json!({ "entries": entries }),
     ))
 }
 

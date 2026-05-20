@@ -95,7 +95,9 @@ async fn mcp_lists_first_slice_read_only_tools() -> TestResult<()> {
             "sinex.command_frequency",
             "sinex.file_activity",
             "sinex.system_state",
-            "sinex.window_focus"
+            "sinex.window_focus",
+            "sinex.current_health",
+            "sinex.current_device_state"
         ]
     );
     assert_read_only_tool_names()?;
@@ -933,6 +935,40 @@ async fn mcp_window_focus_call_uses_gateway_fixture() -> TestResult<()> {
     Ok(())
 }
 
+#[sinex_test]
+async fn mcp_current_health_call_uses_gateway_fixture() -> TestResult<()> {
+    let server = mount_mcp_gateway_fixture().await;
+    let client = fixture_gateway_client(&server)?;
+
+    let response = call_tool(&client, "sinex.current_health", json!({ "limit": 4 })).await?;
+
+    assert_eq!(response["tool"], "sinex.current_health");
+    assert_eq!(response["query"]["limit"], 4);
+    assert_eq!(response["items"]["entries"][0]["source"], "sinex");
+    assert_eq!(response["items"]["entries"][0]["event_type"], "health");
+    assert_eq!(response["items"]["entries"][0]["status"], "healthy");
+    assert_eq!(response["redaction"]["raw_samples"], false);
+    Ok(())
+}
+
+#[sinex_test]
+async fn mcp_current_device_state_call_uses_gateway_fixture() -> TestResult<()> {
+    let server = mount_mcp_gateway_fixture().await;
+    let client = fixture_gateway_client(&server)?;
+
+    let response = call_tool(&client, "sinex.current_device_state", json!({ "limit": 4 })).await?;
+
+    assert_eq!(response["tool"], "sinex.current_device_state");
+    assert_eq!(response["query"]["limit"], 4);
+    assert_eq!(
+        response["items"]["entries"][0]["unit_name"],
+        "sinex-gateway"
+    );
+    assert_eq!(response["items"]["entries"][0]["state"], "active");
+    assert_eq!(response["redaction"]["raw_samples"], false);
+    Ok(())
+}
+
 async fn mount_mcp_gateway_fixture() -> MockServer {
     let server = MockServer::start().await;
     Mock::given(method("POST"))
@@ -1403,6 +1439,29 @@ async fn mount_mcp_gateway_fixture() -> MockServer {
                             "window_id": "0xabc",
                             "last_focus_time": "2026-05-19T12:00:00Z",
                             "focus_event_count": 6
+                        }
+                    ]
+                }),
+                "telemetry.current_health" => json!({
+                    "entries": [
+                        {
+                            "source": "sinex",
+                            "event_type": "health",
+                            "component": "gateway",
+                            "status": "healthy",
+                            "reason": "fixture",
+                            "last_update": "2026-05-19T12:00:00Z"
+                        }
+                    ]
+                }),
+                "telemetry.current_device_state" => json!({
+                    "entries": [
+                        {
+                            "unit_name": "sinex-gateway",
+                            "unit_type": "service",
+                            "state": "active",
+                            "sub_state": "running",
+                            "last_update": "2026-05-19T12:00:00Z"
                         }
                     ]
                 }),
