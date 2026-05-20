@@ -2,7 +2,9 @@ use serde_json::json;
 use sinex_db::repositories::DbPoolExt;
 use sinex_db::repositories::schema_management::NewEventSchema;
 use sinex_primitives::domain::{EventSource, EventType};
+use sinex_primitives::events::schema_registry::SchemaBundleEntry;
 use uuid::Uuid;
+use xtask::sandbox::prelude::{TestContext, TestResult};
 use xtask::sandbox::sinex_test;
 
 fn unique_schema_source(prefix: &str) -> EventSource {
@@ -441,5 +443,63 @@ async fn sync_schema_bundle_converges_same_version_content_drift(
     assert_eq!(active.content_hash, discovered_entry.content_hash);
     assert_eq!(active.schema_content, discovered_entry.schema_content);
     assert!(active.is_active);
+    Ok(())
+}
+
+#[sinex_test]
+async fn concurrent_schema_bundle_sync_is_idempotent(ctx: TestContext) -> color_eyre::Result<()> {
+    let source = unique_schema_source("sync-concurrent-source");
+    let event_type = unique_schema_event_type("sync.concurrent.event");
+    let entry = SchemaBundleEntry::new(
+        source.to_string(),
+        event_type.to_string(),
+        "1.0.0".to_string(),
+        json!({
+            "type": "object",
+            "properties": { "value": { "type": "string" } },
+            "required": ["value"]
+        }),
+    )?;
+
+    let pool_a = ctx.pool.clone();
+    let pool_b = ctx.pool.clone();
+    let entry_a = entry.clone();
+    let entry_b = entry.clone();
+
+    let (result_a, result_b) = tokio::join!(
+        async move { pool_a.schemas().sync_schema_bundle([entry_a]).await },
+        async move { pool_b.schemas().sync_schema_bundle([entry_b]).await }
+    );
+
+    let result_a = result_a?;
+    let result_b = result_b?;
+    assert_eq!(result_a.discovered, 1);
+    assert_eq!(result_b.discovered, 1);
+    assert!(
+        (1..=2).contains(&(result_a.created + result_b.created)),
+        "at least one caller should create-attempt the new schema"
+    );
+    assert_eq!(result_a.updated + result_b.updated, 0);
+
+    let active = ctx
+        .pool
+        .schemas()
+        .get_active_schema(source.as_str(), event_type.as_str())
+        .await?;
+    assert_eq!(active.content_hash, entry.content_hash);
+    assert!(active.is_active);
+
+    let count = sqlx::query_scalar!(
+        r#"
+        SELECT COUNT(*) as "count!"
+        FROM sinex_schemas.event_payload_schemas
+        WHERE content_hash = $1
+        "#,
+        entry.content_hash
+    )
+    .fetch_one(&ctx.pool)
+    .await?;
+    assert_eq!(count, 1);
+
     Ok(())
 }

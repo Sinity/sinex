@@ -856,7 +856,7 @@ impl<'a> SchemaManagementRepository<'a> {
     async fn insert_new_schema(&self, candidate: &SchemaCandidate) -> DbResult<Uuid> {
         let id = Uuid::now_v7();
 
-        sqlx::query!(
+        let row = sqlx::query!(
             r#"
             INSERT INTO sinex_schemas.event_payload_schemas (
                 id, source, event_type, schema_version, schema_content,
@@ -864,6 +864,10 @@ impl<'a> SchemaManagementRepository<'a> {
             ) VALUES (
                 $1::uuid, $2, $3, $4, $5, $6, true, NOW()
             )
+            ON CONFLICT (content_hash) DO UPDATE
+            SET is_active = true,
+                updated_at = NOW()
+            RETURNING id as "id!: Uuid"
             "#,
             id,
             candidate.schema.source.as_str(),
@@ -872,11 +876,11 @@ impl<'a> SchemaManagementRepository<'a> {
             &candidate.schema.schema_content,
             candidate.content_hash.as_str(),
         )
-        .execute(self.pool)
+        .fetch_one(self.pool)
         .await
         .map_err(|e| db_error(e, "insert new schema"))?;
 
-        Ok(id)
+        Ok(row.id)
     }
 }
 
