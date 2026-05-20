@@ -212,7 +212,7 @@ crc32fast = "1.5"
 glob = "0.3"
 globset = "0.4"
 git2 = "0.19"
-toml = "0.8"
+toml = "0.9"
 ahash = "0.8"
 mimalloc = { version = "0.1", default-features = false }
 
