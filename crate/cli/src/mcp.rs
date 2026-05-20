@@ -245,6 +245,12 @@ struct TelemetryBucketsArgs {
     limit: Option<i64>,
 }
 
+#[derive(Debug, Deserialize, Serialize)]
+struct TelemetryLimitArgs {
+    #[serde(default)]
+    limit: Option<i64>,
+}
+
 const fn default_true() -> bool {
     true
 }
@@ -425,6 +431,13 @@ pub fn tool_catalog() -> Vec<McpCatalogEntry> {
             kind: McpSurfaceKind::Tool,
             description: "Read-only per-source and per-component throughput summary.",
             backing_rpc_methods: &[methods::TELEMETRY_THROUGHPUT],
+            read_only: true,
+        },
+        McpCatalogEntry {
+            name: "sinex.recent_activity",
+            kind: McpSurfaceKind::Tool,
+            description: "Read-only recent activity summary for agent context.",
+            backing_rpc_methods: &[methods::TELEMETRY_RECENT_ACTIVITY],
             read_only: true,
         },
     ]
@@ -728,11 +741,12 @@ pub fn tools() -> Vec<McpTool> {
         McpTool {
             name: "sinex.throughput",
             description: "Read-only per-source and per-component throughput summary.",
-            input_schema: json!({
-                "type": "object",
-                "properties": {},
-                "additionalProperties": false
-            }),
+            input_schema: empty_object_schema(),
+        },
+        McpTool {
+            name: "sinex.recent_activity",
+            description: "Read-only recent activity summary for agent context.",
+            input_schema: limit_schema(20),
         },
     ]
 }
@@ -927,6 +941,7 @@ pub async fn call_tool(client: &GatewayClient, name: &str, arguments: Value) -> 
         "sinex.ingestd_validation" => ingestd_validation(client, arguments).await,
         "sinex.ingestd_batch_stats" => ingestd_batch_stats(client, arguments).await,
         "sinex.throughput" => throughput(client, arguments).await,
+        "sinex.recent_activity" => recent_activity(client, arguments).await,
         other => Err(eyre!("unknown MCP tool: {other}")),
     }
 }
@@ -1272,6 +1287,16 @@ async fn throughput(client: &GatewayClient, arguments: Value) -> Result<Value> {
         "sinex.throughput",
         json!({}),
         json!({ "result": response }),
+    ))
+}
+
+async fn recent_activity(client: &GatewayClient, arguments: Value) -> Result<Value> {
+    let args: TelemetryLimitArgs = serde_json::from_value(arguments)?;
+    let entries = client.telemetry_recent_activity(args.limit).await?;
+    Ok(envelope(
+        "sinex.recent_activity",
+        json!(args),
+        json!({ "entries": entries }),
     ))
 }
 
