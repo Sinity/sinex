@@ -28,6 +28,17 @@ rg "serde_yaml|serde_yml|yaml-rust|figment|Figment|Env::|Toml::|Yaml::|Json::" C
 | YAML output, manifests, and source front matter | `serde_yml` in `sinexctl`, `xtask`, and `sinex-source-worker` | direct production/devtool | Standardized on the workspace `serde_yml` crate. Do not reintroduce deprecated `serde_yaml` without compatibility evidence and a deliberate policy decision. | #775 / follow-up YAML policy slice. | CLI YAML tests; xtask docs/git-stack tests; knowledgebase front-matter parser tests |
 | duplicate versions | crypto/rand stack, `darling`, `dashmap`, `hashbrown`/`foldhash`, HTTP/reqwest/tower stack, `sysinfo`, `thiserror`, `toml`, `unicode-width`, `webpki-roots`, `which`, `whoami` | transitive and some direct | Do not churn all duplicates at once. Classify into direct-upgrade candidates vs transitive-only duplication. Prefer dependency upgrades where there is a single owning direct dependency. | Dependency owner per family. | `cargo tree --duplicates`; package checks for touched owners |
 
+## Classified Non-Wins
+
+These probes were checked during the 2026-05 dependency-compaction wave and
+should not be retried as blind patch bumps:
+
+| Candidate | Result | Why not |
+| --- | --- | --- |
+| `rusqlite` 0.32 -> 0.39 | rejected | Pulls `libsqlite3-sys` 0.37, which conflicts with SQLx 0.8's `libsqlite3-sys` 0.28 `links = "sqlite3"` requirement. This needs an SQLx-aligned SQLite native-link update, not an isolated rusqlite bump. |
+| `async-nats` 0.47 -> 0.48 | rejected for dependency compaction | Compiles, but duplicate count increases from 15 to 17 by adding `rand` 0.10, `rand_core` 0.10, `chacha20` 0.10, and `cpufeatures` 0.3 lanes. Revisit only for async-nats functionality or once the wider random/crypto stack is ready to move. |
+| `dashmap` 6.1 -> 6.2 | neutral | Compiles, but still depends on `hashbrown` 0.14 and does not reduce the duplicate graph. A future meaningful cleanup likely needs DashMap 7 after it leaves RC or a different state-map strategy. |
+
 ## Policy
 
 - `cargo machete` findings are candidates, not proof.
