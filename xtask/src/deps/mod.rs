@@ -193,11 +193,21 @@ impl DepsCommand {
                 // Filter by threshold
                 duplicates.retain(|d| d.versions.len() >= *threshold);
 
+                if ctx.is_json() {
+                    return Ok(CommandResult::success()
+                        .with_data(serde_json::json!({
+                            "duplicates": duplicates,
+                            "count": duplicates.len(),
+                            "threshold": threshold,
+                        }))
+                        .with_silent()
+                        .with_duration(ctx.elapsed()));
+                }
+
                 // Write report to buffer
                 let mut buffer = Vec::new();
                 write_duplicates_report(&mut buffer, &duplicates, OutputFormat::Human)?;
                 let rendered = String::from_utf8(buffer)?;
-
                 Ok(CommandResult::success()
                     .with_data(serde_json::Value::String(rendered))
                     .with_silent()
