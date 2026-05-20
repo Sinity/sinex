@@ -33,8 +33,8 @@ use sinex_primitives::rpc::semantic::{
     SemanticLaneOutputsListRequest,
 };
 use sinex_primitives::rpc::sources::{
-    SourcesCoverageRequest, SourcesListRequest, SourcesReadinessGetRequest,
-    SourcesReadinessListRequest, SourcesShowRequest,
+    SourcesContinuityRequest, SourcesCoverageRequest, SourcesListRequest,
+    SourcesReadinessGetRequest, SourcesReadinessListRequest, SourcesShowRequest,
 };
 use sinex_primitives::rpc::system::SystemHealthResponse;
 use sinex_primitives::rpc::tasks::{
@@ -151,6 +151,13 @@ struct SourceContinuityArgs {
 struct SourceGapExplainArgs {
     source_family: SourceFamily,
     at: Timestamp,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+struct SourceIdentifierContinuityArgs {
+    source_identifier: String,
+    #[serde(default)]
+    material_kind: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -433,6 +440,13 @@ pub fn tool_catalog() -> Vec<McpCatalogEntry> {
             kind: McpSurfaceKind::Tool,
             description: "Read-only attribution for a source-family coverage gap.",
             backing_rpc_methods: &[methods::SOURCES_CONTINUITY_EXPLAIN_GAP],
+            read_only: true,
+        },
+        McpCatalogEntry {
+            name: "sinex.source_identifier_continuity",
+            kind: McpSurfaceKind::Tool,
+            description: "Read-only continuity report for one source identifier.",
+            backing_rpc_methods: &[methods::SOURCES_CONTINUITY],
             read_only: true,
         },
         McpCatalogEntry {
@@ -906,6 +920,19 @@ pub fn tools() -> Vec<McpTool> {
                 "properties": {
                     "source_family": { "type": "string" },
                     "at": { "type": "string", "format": "date-time" }
+                },
+                "additionalProperties": false
+            }),
+        },
+        McpTool {
+            name: "sinex.source_identifier_continuity",
+            description: "Read-only continuity report for one source identifier.",
+            input_schema: json!({
+                "type": "object",
+                "required": ["source_identifier"],
+                "properties": {
+                    "source_identifier": { "type": "string" },
+                    "material_kind": { "type": "string" }
                 },
                 "additionalProperties": false
             }),
@@ -1613,6 +1640,9 @@ pub async fn call_tool(client: &GatewayClient, name: &str, arguments: Value) -> 
         "sinex.source_readiness" => source_readiness(client, arguments).await,
         "sinex.source_continuity" => source_continuity(client, arguments).await,
         "sinex.source_gap_explain" => source_gap_explain(client, arguments).await,
+        "sinex.source_identifier_continuity" => {
+            source_identifier_continuity(client, arguments).await
+        }
         "sinex.privacy_status" => privacy_status(client, arguments).await,
         "sinex.system_health" => system_health(client, arguments).await,
         "sinex.tasks_list" => tasks_list(client, arguments).await,
@@ -1782,6 +1812,21 @@ async fn source_gap_explain(client: &GatewayClient, arguments: Value) -> Result<
         .await?;
     Ok(envelope(
         "sinex.source_gap_explain",
+        json!(args),
+        json!({ "result": response }),
+    ))
+}
+
+async fn source_identifier_continuity(client: &GatewayClient, arguments: Value) -> Result<Value> {
+    let args: SourceIdentifierContinuityArgs = serde_json::from_value(arguments)?;
+    let response = client
+        .sources_continuity(SourcesContinuityRequest {
+            source_identifier: args.source_identifier.clone(),
+            material_kind: args.material_kind.clone(),
+        })
+        .await?;
+    Ok(envelope(
+        "sinex.source_identifier_continuity",
         json!(args),
         json!({ "result": response }),
     ))

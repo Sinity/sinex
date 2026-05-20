@@ -73,6 +73,7 @@ async fn mcp_lists_first_slice_read_only_tools() -> TestResult<()> {
             "sinex.source_readiness",
             "sinex.source_continuity",
             "sinex.source_gap_explain",
+            "sinex.source_identifier_continuity",
             "sinex.privacy_status",
             "sinex.system_health",
             "sinex.tasks_list",
@@ -443,6 +444,39 @@ async fn mcp_source_gap_explain_call_uses_gateway_fixture() -> TestResult<()> {
             .as_str()
             .unwrap_or_default()
             .contains("coverage gap")
+    );
+    assert_eq!(response["redaction"]["raw_samples"], false);
+    Ok(())
+}
+
+#[sinex_test]
+async fn mcp_source_identifier_continuity_call_uses_gateway_fixture() -> TestResult<()> {
+    let server = mount_mcp_gateway_fixture().await;
+    let client = fixture_gateway_client(&server)?;
+
+    let response = call_tool(
+        &client,
+        "sinex.source_identifier_continuity",
+        json!({
+            "source_identifier": "/realm/data/captures/fixture.jsonl",
+            "material_kind": "local_cas"
+        }),
+    )
+    .await?;
+
+    assert_eq!(response["tool"], "sinex.source_identifier_continuity");
+    assert_eq!(
+        response["query"]["source_identifier"],
+        "/realm/data/captures/fixture.jsonl"
+    );
+    assert_eq!(response["query"]["material_kind"], "local_cas");
+    assert_eq!(
+        response["items"]["result"]["source_identifier"],
+        "/realm/data/captures/fixture.jsonl"
+    );
+    assert_eq!(
+        response["items"]["result"]["replayability"]["replayable"],
+        true
     );
     assert_eq!(response["redaction"]["raw_samples"], false);
     Ok(())
@@ -1720,6 +1754,29 @@ async fn mount_mcp_gateway_fixture() -> MockServer {
                         "status": "available",
                         "cost": "local_fast",
                         "material_count": 3
+                    }
+                }),
+                "sources.continuity" => json!({
+                    "source_identifier": body["params"]["source_identifier"].as_str().unwrap_or("/realm/data/captures/fixture.jsonl"),
+                    "coverage_gaps": [
+                        {
+                            "gap_start": "2026-05-19T10:00:00Z",
+                            "gap_end": "2026-05-19T10:30:00Z",
+                            "gap_duration_seconds": 1800,
+                            "gap_type": "temporal"
+                        }
+                    ],
+                    "contract_status": {
+                        "has_coverage_contract": true,
+                        "expected_interval_seconds": 60,
+                        "actual_coverage_percent": 99.1,
+                        "breaches": []
+                    },
+                    "replayability": {
+                        "replayable": true,
+                        "reason": null,
+                        "material_count": 3,
+                        "events_count": 42
                     }
                 }),
                 "sources.continuity.list" => json!({
