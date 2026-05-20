@@ -119,6 +119,9 @@ Deliberate omissions:
 
 - no replay preview tool yet, because the shared descriptor is mutating/write
   shaped even when used as a dry-run planner;
+- no raw blob retrieval tool, because `content.retrieve_blob` returns raw
+  material content and needs a redacted/policy-shaped variant before MCP
+  exposure;
 - no document chunk-text tool, because `documents.get_chunks` returns raw text
   by design and needs a separate redaction/policy shape before MCP exposure;
 - no workbench-inspect tool until its gateway read surface can enforce the same
