@@ -72,6 +72,7 @@ async fn mcp_lists_first_slice_read_only_tools() -> TestResult<()> {
             "sinex.trace_lineage",
             "sinex.source_readiness",
             "sinex.source_continuity",
+            "sinex.source_gap_explain",
             "sinex.privacy_status",
             "sinex.system_health",
             "sinex.tasks_list",
@@ -412,6 +413,35 @@ async fn mcp_source_continuity_get_call_uses_gateway_fixture() -> TestResult<()>
     assert_eq!(
         response["items"]["result"]["report"]["replayability"]["raw_bytes_preserved"],
         true
+    );
+    assert_eq!(response["redaction"]["raw_samples"], false);
+    Ok(())
+}
+
+#[sinex_test]
+async fn mcp_source_gap_explain_call_uses_gateway_fixture() -> TestResult<()> {
+    let server = mount_mcp_gateway_fixture().await;
+    let client = fixture_gateway_client(&server)?;
+
+    let response = call_tool(
+        &client,
+        "sinex.source_gap_explain",
+        json!({
+            "source_family": "terminal",
+            "at": "2026-05-19T12:05:00Z"
+        }),
+    )
+    .await?;
+
+    assert_eq!(response["tool"], "sinex.source_gap_explain");
+    assert_eq!(response["query"]["source_family"], "terminal");
+    assert_eq!(response["query"]["at"], "2026-05-19T12:05:00Z");
+    assert_eq!(response["items"]["result"]["gap"]["kind"], "private_mode");
+    assert!(
+        response["items"]["result"]["explanation"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("coverage gap")
     );
     assert_eq!(response["redaction"]["raw_samples"], false);
     Ok(())
@@ -1681,6 +1711,17 @@ async fn mount_mcp_gateway_fixture() -> MockServer {
                 }),
                 "sources.continuity.get" => json!({
                     "report": fixture_continuity_report()
+                }),
+                "sources.continuity.explain_gap" => json!({
+                    "source_family": body["params"]["source_family"].as_str().unwrap_or("terminal"),
+                    "at": body["params"]["at"].as_str().unwrap_or("2026-05-19T12:05:00Z"),
+                    "gap": {
+                        "from_ts": "2026-05-19T10:00:00Z",
+                        "to_ts": "2026-05-19T10:30:00Z",
+                        "kind": "private_mode",
+                        "attribution": "fixture private mode"
+                    },
+                    "explanation": "At 2026-05-19T12:05:00Z, terminal was inside a coverage gap: fixture private mode"
                 }),
                 "privacy.private_mode.status" => json!({
                     "state": {

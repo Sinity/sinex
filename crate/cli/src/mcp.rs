@@ -41,7 +41,7 @@ use sinex_primitives::rpc::tasks::{
 use sinex_primitives::rpc::telemetry::IngestdValidationSnapshot;
 use sinex_primitives::sources::SourceFamily;
 use sinex_primitives::sources::continuity::{
-    SourcesContinuityGetRequest, SourcesContinuityListRequest,
+    SourcesContinuityGetRequest, SourcesContinuityListRequest, SourcesExplainGapRequest,
 };
 use sinex_primitives::task_domain::TaskStatus;
 use sinex_primitives::temporal::Timestamp;
@@ -143,6 +143,12 @@ struct SourceContinuityArgs {
     source_family: Option<SourceFamily>,
     #[serde(default)]
     since: Option<Timestamp>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+struct SourceGapExplainArgs {
+    source_family: SourceFamily,
+    at: Timestamp,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -418,6 +424,13 @@ pub fn tool_catalog() -> Vec<McpCatalogEntry> {
                 methods::SOURCES_CONTINUITY_LIST,
                 methods::SOURCES_CONTINUITY_GET,
             ],
+            read_only: true,
+        },
+        McpCatalogEntry {
+            name: "sinex.source_gap_explain",
+            kind: McpSurfaceKind::Tool,
+            description: "Read-only attribution for a source-family coverage gap.",
+            backing_rpc_methods: &[methods::SOURCES_CONTINUITY_EXPLAIN_GAP],
             read_only: true,
         },
         McpCatalogEntry {
@@ -871,6 +884,19 @@ pub fn tools() -> Vec<McpTool> {
                 "properties": {
                     "source_family": { "type": "string" },
                     "since": { "type": "string", "format": "date-time" }
+                },
+                "additionalProperties": false
+            }),
+        },
+        McpTool {
+            name: "sinex.source_gap_explain",
+            description: "Read-only attribution for a source-family coverage gap.",
+            input_schema: json!({
+                "type": "object",
+                "required": ["source_family", "at"],
+                "properties": {
+                    "source_family": { "type": "string" },
+                    "at": { "type": "string", "format": "date-time" }
                 },
                 "additionalProperties": false
             }),
@@ -1572,6 +1598,7 @@ pub async fn call_tool(client: &GatewayClient, name: &str, arguments: Value) -> 
         "sinex.trace_lineage" => trace_lineage(client, arguments).await,
         "sinex.source_readiness" => source_readiness(client, arguments).await,
         "sinex.source_continuity" => source_continuity(client, arguments).await,
+        "sinex.source_gap_explain" => source_gap_explain(client, arguments).await,
         "sinex.privacy_status" => privacy_status(client, arguments).await,
         "sinex.system_health" => system_health(client, arguments).await,
         "sinex.tasks_list" => tasks_list(client, arguments).await,
@@ -1727,6 +1754,21 @@ async fn source_continuity(client: &GatewayClient, arguments: Value) -> Result<V
         "sinex.source_continuity",
         json!(args),
         json!({ "result": result }),
+    ))
+}
+
+async fn source_gap_explain(client: &GatewayClient, arguments: Value) -> Result<Value> {
+    let args: SourceGapExplainArgs = serde_json::from_value(arguments)?;
+    let response = client
+        .sources_continuity_explain_gap(SourcesExplainGapRequest {
+            source_family: args.source_family.clone(),
+            at: args.at,
+        })
+        .await?;
+    Ok(envelope(
+        "sinex.source_gap_explain",
+        json!(args),
+        json!({ "result": response }),
     ))
 }
 
