@@ -10,6 +10,7 @@ use color_eyre::eyre::{Context, Result, bail, eyre};
 use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
+use walkdir::{DirEntry, WalkDir};
 
 use crate::admin::exec;
 use crate::admin::manifest::{
@@ -1190,57 +1191,41 @@ fn normalize_archive_path(path: &str) -> String {
 
 /// Estimate total bytes under a directory tree (best-effort, ignores errors).
 fn estimate_dir_bytes(dir: &Path) -> u64 {
-    let mut total = 0u64;
-    if let Ok(mut entries) = std::fs::read_dir(dir) {
-        while let Some(Ok(entry)) = entries.next() {
-            let p = entry.path();
-            if p.is_symlink() {
-                continue;
-            }
-            if p.is_file() {
-                total += p.metadata().map_or(0, |m| m.len());
-            } else if p.is_dir() {
-                total += estimate_dir_bytes(&p);
-            }
-        }
-    }
-    total
+    walk_files(dir, false)
+        .map(|entry| entry.metadata().map_or(0, |metadata| metadata.len()))
+        .sum()
 }
 
 fn estimate_dir_bytes_skip(dir: &Path, skip: &[&str]) -> u64 {
-    let mut total = 0u64;
-    if let Ok(entries) = std::fs::read_dir(dir) {
-        for entry in entries.flatten() {
-            let fname = entry.file_name();
-            let fname_str = fname.to_string_lossy();
-            if skip.iter().any(|s| *s == fname_str.as_ref()) {
-                continue;
-            }
-            let p = entry.path();
-            if p.is_file() {
-                total += p.metadata().map_or(0, |m| m.len());
-            } else if p.is_dir() {
-                total += estimate_dir_bytes(&p);
-            }
-        }
-    }
-    total
+    WalkDir::new(dir)
+        .follow_links(true)
+        .into_iter()
+        .filter_entry(|entry| !is_skipped_top_level(entry, skip))
+        .filter_map(std::result::Result::ok)
+        .filter(|entry| entry.file_type().is_file())
+        .map(|entry| entry.metadata().map_or(0, |metadata| metadata.len()))
+        .sum()
 }
 
 /// Count files recursively under a directory (for CAS blob count).
 fn count_files_recursive(dir: &Path) -> u64 {
-    let mut count = 0u64;
-    if let Ok(entries) = std::fs::read_dir(dir) {
-        for entry in entries.flatten() {
-            let p = entry.path();
-            if p.is_file() {
-                count += 1;
-            } else if p.is_dir() {
-                count += count_files_recursive(&p);
-            }
-        }
-    }
-    count
+    walk_files(dir, true).count() as u64
+}
+
+fn walk_files(dir: &Path, follow_links: bool) -> impl Iterator<Item = DirEntry> {
+    WalkDir::new(dir)
+        .follow_links(follow_links)
+        .into_iter()
+        .filter_map(std::result::Result::ok)
+        .filter(|entry| entry.file_type().is_file())
+}
+
+fn is_skipped_top_level(entry: &DirEntry, skip: &[&str]) -> bool {
+    entry.depth() == 1
+        && entry
+            .file_name()
+            .to_str()
+            .is_some_and(|name| skip.contains(&name))
 }
 
 /// Get available disk space at a path (Linux-only via `statvfs`).
