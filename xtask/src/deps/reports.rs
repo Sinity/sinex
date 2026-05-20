@@ -232,7 +232,11 @@ pub fn write_timing_report_to_buffer<W: Write>(
 
     writeln!(writer, "Top {top} slowest crates:")?;
     for (i, crate_info) in report.crate_times.iter().take(top).enumerate() {
-        let percent = (crate_info.duration_secs / report.total_time_secs) * 100.0;
+        let percent = if report.total_time_secs > 0.0 {
+            (crate_info.duration_secs / report.total_time_secs) * 100.0
+        } else {
+            0.0
+        };
         writeln!(
             writer,
             "  {}. {} - {:.2}s ({:.1}%)",
