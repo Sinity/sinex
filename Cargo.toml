@@ -259,7 +259,10 @@ trybuild = { version = "1.0", features = ["diff"] }
 # System
 gethostname = "0.4"
 clap = { version = "4.5.42", features = ["derive", "env"] }
-which = "5.0"
+which = "6.0"
+semver = { version = "1.0", features = ["serde"] }
+human-panic = "2.0"
+shadow-rs = "0.35"
 
 # Configuration and validation
 regex = "1.11.1"

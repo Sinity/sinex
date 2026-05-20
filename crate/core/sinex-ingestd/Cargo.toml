@@ -7,8 +7,8 @@ name = "sinex-ingestd"
 
 [dependencies]
 libc = "0.2"
-human-panic = "2.0"
-shadow-rs = "0.35"
+human-panic = { workspace = true }
+shadow-rs = { workspace = true }
 
 [package.metadata.cargo-machete]
 ignored = ["shadow-rs"]
@@ -155,7 +155,7 @@ features = [
 ]
 
 [build-dependencies]
-shadow-rs = "0.35"
+shadow-rs = { workspace = true }
 
 [lints]
 workspace = true

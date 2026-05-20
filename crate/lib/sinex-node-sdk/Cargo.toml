@@ -4,17 +4,17 @@ version = "0.4.2"
 edition = "2024"
 
 [dependencies]
-futures = "0.3"
-sd-notify = "0.4"
-parking_lot = "0.12"
-blake3 = "1.5"
+futures = { workspace = true }
+sd-notify = { workspace = true }
+parking_lot = { workspace = true }
+blake3 = { workspace = true }
 sysinfo = "0.31"
 url = "2.5"
-which = "6.0"
+which = { workspace = true }
 urlencoding = "2.1"
 libc = "0.2"
-semver = { version = "1.0", features = ["serde"] }
-shadow-rs = "0.35"
+semver = { workspace = true }
+shadow-rs = { workspace = true }
 
 # Sinex crates
 sinex-primitives = { path = "../sinex-primitives", features = ["sqlx", "nats"] }
@@ -101,16 +101,16 @@ version = "3.4"
 [dependencies.async-stream]
 version = "0.3"
 [dependencies.human-panic]
-version = "2.0"
+workspace = true
 [build-dependencies]
-shadow-rs = "0.35"
+shadow-rs = { workspace = true }
 
 [build-dependencies.time]
 workspace = true
 
 [dev-dependencies]
-tempfile = "3.13"
-proptest = "1"
+tempfile = { workspace = true }
+proptest = { workspace = true }
 xtask = { path = "../../../xtask" }
 sinex-primitives = { path = "../sinex-primitives", features = ["testing"] }
 sinex-macros = { path = "../sinex-macros" }
