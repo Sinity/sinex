@@ -469,12 +469,12 @@ impl<'a> DocumentSearchRepository<'a> {
             format!("WHERE {}", predicates.join(" AND "))
         };
         let sql = format!(
-            r#"
+            r"
             SELECT COUNT(*) AS count
             FROM core.document_chunks dc
             JOIN core.documents d ON d.id = dc.document_id
             {where_clause}
-            "#
+            "
         );
 
         let mut q = sqlx::query_scalar::<_, i64>(&sql);
