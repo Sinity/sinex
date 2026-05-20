@@ -52,6 +52,8 @@ pub struct ComponentRecord {
 pub enum ComponentExtras {
     /// `PostgreSQL` row counts per table.
     Postgres(PostgresExtras),
+    /// NATS `JetStream` state member paths.
+    Nats(NatsExtras),
     /// CAS blob count.
     Cas(CasExtras),
 }
@@ -60,6 +62,12 @@ pub enum ComponentExtras {
 pub struct PostgresExtras {
     /// Live row count estimates keyed by `schema.table`.
     pub row_counts: std::collections::BTreeMap<String, i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NatsExtras {
+    /// Files observed under the captured `JetStream` state root.
+    pub member_paths: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
