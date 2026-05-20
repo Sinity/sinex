@@ -12,7 +12,7 @@ sysinfo = { workspace = true }
 url = "2.5"
 which = { workspace = true }
 urlencoding = "2.1"
-libc = "0.2"
+libc = { workspace = true }
 semver = { workspace = true }
 shadow-rs = { workspace = true }
 

@@ -6,7 +6,7 @@ path = "src/main.rs"
 name = "sinex-ingestd"
 
 [dependencies]
-libc = "0.2"
+libc = { workspace = true }
 human-panic = { workspace = true }
 shadow-rs = { workspace = true }
 

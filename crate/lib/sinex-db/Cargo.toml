@@ -29,7 +29,7 @@ tracing = { workspace = true }
 color-eyre = { workspace = true }
 gethostname = { workspace = true }
 blake3 = { workspace = true }
-sha2 = "0.10"
+sha2 = { workspace = true }
 num-traits = "0.2"
 ahash = { workspace = true }
 memchr = "2"
