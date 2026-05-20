@@ -92,6 +92,9 @@ HTTP/SSE transport is a follow-up only when there is a real consumer.
 | `sinex.llm_prompts` | `llm.prompts.list` | LLM prompt-template registry events |
 | `sinex.llm_route_explain` | `llm.route.explain` | deterministic LLM routing explanation |
 | `sinex.llm_budget_report` | `llm.budget.report` | LLM budget-ledger usage report |
+| `sinex.curation_proposals` | `curation.proposals.list` | curation proposal event listing |
+| `sinex.dlq_stats` | `dlq.list` | raw-ingest DLQ stream statistics |
+| `sinex.dlq_peek` | `dlq.peek` | sanitized raw-ingest DLQ message previews |
 
 Deliberate omissions:
 

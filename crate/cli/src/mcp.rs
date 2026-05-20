@@ -16,6 +16,7 @@ use sinex_primitives::events::Event;
 use sinex_primitives::ids::Id;
 use sinex_primitives::query::{EventQuery, LineageDirection, LineageQuery};
 use sinex_primitives::rpc::automata::AutomataStatusResponse;
+use sinex_primitives::rpc::curation::CurationListProposalsRequest;
 use sinex_primitives::rpc::documents::{DocumentsGetRequest, DocumentsSearchRequest};
 use sinex_primitives::rpc::ingestors::IngestorsStatusResponse;
 use sinex_primitives::rpc::llm::{
@@ -268,6 +269,20 @@ struct LlmBudgetArgs {
     limit: i64,
 }
 
+#[derive(Debug, Deserialize, Serialize)]
+struct CurationProposalsArgs {
+    #[serde(default = "default_curation_status")]
+    status: String,
+    #[serde(default = "default_curation_limit")]
+    limit: i64,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+struct DlqPeekArgs {
+    #[serde(default = "default_dlq_limit")]
+    limit: usize,
+}
+
 const fn default_true() -> bool {
     true
 }
@@ -282,6 +297,18 @@ const fn default_recent_window_secs() -> u64 {
 
 const fn default_llm_limit() -> i64 {
     100
+}
+
+fn default_curation_status() -> String {
+    "pending".to_string()
+}
+
+const fn default_curation_limit() -> i64 {
+    100
+}
+
+const fn default_dlq_limit() -> usize {
+    10
 }
 
 #[must_use]
@@ -557,6 +584,27 @@ pub fn tool_catalog() -> Vec<McpCatalogEntry> {
             kind: McpSurfaceKind::Tool,
             description: "Read-only LLM budget-ledger usage report.",
             backing_rpc_methods: &[methods::LLM_BUDGET_REPORT],
+            read_only: true,
+        },
+        McpCatalogEntry {
+            name: "sinex.curation_proposals",
+            kind: McpSurfaceKind::Tool,
+            description: "Read-only curation proposal event listing.",
+            backing_rpc_methods: &[methods::CURATION_PROPOSALS_LIST],
+            read_only: true,
+        },
+        McpCatalogEntry {
+            name: "sinex.dlq_stats",
+            kind: McpSurfaceKind::Tool,
+            description: "Read-only raw-ingest DLQ stream statistics.",
+            backing_rpc_methods: &[methods::DLQ_LIST],
+            read_only: true,
+        },
+        McpCatalogEntry {
+            name: "sinex.dlq_peek",
+            kind: McpSurfaceKind::Tool,
+            description: "Read-only sanitized raw-ingest DLQ message previews.",
+            backing_rpc_methods: &[methods::DLQ_PEEK],
             read_only: true,
         },
     ]
@@ -957,6 +1005,44 @@ pub fn tools() -> Vec<McpTool> {
             description: "Read-only LLM budget-ledger usage report.",
             input_schema: limit_schema(100),
         },
+        McpTool {
+            name: "sinex.curation_proposals",
+            description: "Read-only curation proposal event listing.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "status": { "type": "string", "default": "pending" },
+                    "limit": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 1000,
+                        "default": 100
+                    }
+                },
+                "additionalProperties": false
+            }),
+        },
+        McpTool {
+            name: "sinex.dlq_stats",
+            description: "Read-only raw-ingest DLQ stream statistics.",
+            input_schema: empty_object_schema(),
+        },
+        McpTool {
+            name: "sinex.dlq_peek",
+            description: "Read-only sanitized raw-ingest DLQ message previews.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "limit": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 100,
+                        "default": 10
+                    }
+                },
+                "additionalProperties": false
+            }),
+        },
     ]
 }
 
@@ -1165,6 +1251,9 @@ pub async fn call_tool(client: &GatewayClient, name: &str, arguments: Value) -> 
         "sinex.llm_prompts" => llm_prompts(client, arguments).await,
         "sinex.llm_route_explain" => llm_route_explain(client, arguments).await,
         "sinex.llm_budget_report" => llm_budget_report(client, arguments).await,
+        "sinex.curation_proposals" => curation_proposals(client, arguments).await,
+        "sinex.dlq_stats" => dlq_stats(client, arguments).await,
+        "sinex.dlq_peek" => dlq_peek(client, arguments).await,
         other => Err(eyre!("unknown MCP tool: {other}")),
     }
 }
@@ -1686,6 +1775,44 @@ async fn llm_budget_report(client: &GatewayClient, arguments: Value) -> Result<V
         .await?;
     Ok(envelope(
         "sinex.llm_budget_report",
+        json!(args),
+        json!({ "result": response }),
+    ))
+}
+
+async fn curation_proposals(client: &GatewayClient, arguments: Value) -> Result<Value> {
+    let args: CurationProposalsArgs = serde_json::from_value(arguments)?;
+    let mut response = serde_json::to_value(
+        client
+            .curation_proposals_list(CurationListProposalsRequest {
+                status: args.status.clone(),
+                limit: args.limit,
+            })
+            .await?,
+    )?;
+    redact_raw_samples(&mut response);
+    Ok(envelope(
+        "sinex.curation_proposals",
+        json!(args),
+        json!({ "result": response }),
+    ))
+}
+
+async fn dlq_stats(client: &GatewayClient, arguments: Value) -> Result<Value> {
+    reject_non_empty_args("sinex.dlq_stats", &arguments)?;
+    let response = client.dlq_list().await?;
+    Ok(envelope(
+        "sinex.dlq_stats",
+        json!({}),
+        json!({ "result": response }),
+    ))
+}
+
+async fn dlq_peek(client: &GatewayClient, arguments: Value) -> Result<Value> {
+    let args: DlqPeekArgs = serde_json::from_value(arguments)?;
+    let response = client.dlq_peek(Some(args.limit)).await?;
+    Ok(envelope(
+        "sinex.dlq_peek",
         json!(args),
         json!({ "result": response }),
     ))
