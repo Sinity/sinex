@@ -299,6 +299,27 @@ struct SourceMaterialArgs {
     material_id: String,
 }
 
+#[derive(Debug, Deserialize, Serialize)]
+struct OpsListArgs {
+    #[serde(default)]
+    operation_type: Option<String>,
+    #[serde(default)]
+    status: Option<String>,
+    #[serde(default)]
+    limit: Option<i64>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+struct OpsGetArgs {
+    operation_id: String,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+struct GitOpsSourcesArgs {
+    #[serde(default)]
+    include_disabled: bool,
+}
+
 const fn default_true() -> bool {
     true
 }
@@ -642,6 +663,34 @@ pub fn tool_catalog() -> Vec<McpCatalogEntry> {
             kind: McpSurfaceKind::Tool,
             description: "Read-only source-material coverage buckets.",
             backing_rpc_methods: &[methods::SOURCES_COVERAGE],
+            read_only: true,
+        },
+        McpCatalogEntry {
+            name: "sinex.ops_list",
+            kind: McpSurfaceKind::Tool,
+            description: "Read-only operations log listing.",
+            backing_rpc_methods: &[methods::OPS_LIST],
+            read_only: true,
+        },
+        McpCatalogEntry {
+            name: "sinex.ops_get",
+            kind: McpSurfaceKind::Tool,
+            description: "Read-only operation detail lookup.",
+            backing_rpc_methods: &[methods::OPS_GET],
+            read_only: true,
+        },
+        McpCatalogEntry {
+            name: "sinex.lifecycle_status",
+            kind: McpSurfaceKind::Tool,
+            description: "Read-only data lifecycle tier status.",
+            backing_rpc_methods: &[methods::LIFECYCLE_STATUS],
+            read_only: true,
+        },
+        McpCatalogEntry {
+            name: "sinex.gitops_sources",
+            kind: McpSurfaceKind::Tool,
+            description: "Read-only GitOps schema source listing.",
+            backing_rpc_methods: &[methods::GITOPS_LIST_SOURCES],
             read_only: true,
         },
     ]
@@ -1114,6 +1163,52 @@ pub fn tools() -> Vec<McpTool> {
             description: "Read-only source-material coverage buckets.",
             input_schema: empty_object_schema(),
         },
+        McpTool {
+            name: "sinex.ops_list",
+            description: "Read-only operations log listing.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "operation_type": { "type": "string" },
+                    "status": { "type": "string" },
+                    "limit": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 1000,
+                        "default": 50
+                    }
+                },
+                "additionalProperties": false
+            }),
+        },
+        McpTool {
+            name: "sinex.ops_get",
+            description: "Read-only operation detail lookup.",
+            input_schema: json!({
+                "type": "object",
+                "required": ["operation_id"],
+                "properties": {
+                    "operation_id": { "type": "string", "format": "uuid" }
+                },
+                "additionalProperties": false
+            }),
+        },
+        McpTool {
+            name: "sinex.lifecycle_status",
+            description: "Read-only data lifecycle tier status.",
+            input_schema: empty_object_schema(),
+        },
+        McpTool {
+            name: "sinex.gitops_sources",
+            description: "Read-only GitOps schema source listing.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "include_disabled": { "type": "boolean", "default": false }
+                },
+                "additionalProperties": false
+            }),
+        },
     ]
 }
 
@@ -1328,6 +1423,10 @@ pub async fn call_tool(client: &GatewayClient, name: &str, arguments: Value) -> 
         "sinex.source_materials" => source_materials(client, arguments).await,
         "sinex.source_material" => source_material(client, arguments).await,
         "sinex.source_coverage" => source_coverage(client, arguments).await,
+        "sinex.ops_list" => ops_list(client, arguments).await,
+        "sinex.ops_get" => ops_get(client, arguments).await,
+        "sinex.lifecycle_status" => lifecycle_status(client, arguments).await,
+        "sinex.gitops_sources" => gitops_sources(client, arguments).await,
         other => Err(eyre!("unknown MCP tool: {other}")),
     }
 }
@@ -1931,6 +2030,48 @@ async fn source_coverage(client: &GatewayClient, arguments: Value) -> Result<Val
         "sinex.source_coverage",
         json!({}),
         json!({ "result": response }),
+    ))
+}
+
+async fn ops_list(client: &GatewayClient, arguments: Value) -> Result<Value> {
+    let args: OpsListArgs = serde_json::from_value(arguments)?;
+    let response = client
+        .ops_list(args.operation_type.clone(), args.status.clone(), args.limit)
+        .await?;
+    Ok(envelope(
+        "sinex.ops_list",
+        json!(args),
+        json!({ "result": { "operations": response } }),
+    ))
+}
+
+async fn ops_get(client: &GatewayClient, arguments: Value) -> Result<Value> {
+    let args: OpsGetArgs = serde_json::from_value(arguments)?;
+    let response = client.ops_get(&args.operation_id).await?;
+    Ok(envelope(
+        "sinex.ops_get",
+        json!(args),
+        json!({ "result": { "operation": response } }),
+    ))
+}
+
+async fn lifecycle_status(client: &GatewayClient, arguments: Value) -> Result<Value> {
+    reject_non_empty_args("sinex.lifecycle_status", &arguments)?;
+    let response = client.lifecycle_status().await?;
+    Ok(envelope(
+        "sinex.lifecycle_status",
+        json!({}),
+        json!({ "result": response }),
+    ))
+}
+
+async fn gitops_sources(client: &GatewayClient, arguments: Value) -> Result<Value> {
+    let args: GitOpsSourcesArgs = serde_json::from_value(arguments)?;
+    let response = client.gitops_list(args.include_disabled).await?;
+    Ok(envelope(
+        "sinex.gitops_sources",
+        json!(args),
+        json!({ "result": { "sources": response } }),
     ))
 }
 
