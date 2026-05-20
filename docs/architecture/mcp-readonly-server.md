@@ -95,6 +95,9 @@ HTTP/SSE transport is a follow-up only when there is a real consumer.
 | `sinex.curation_proposals` | `curation.proposals.list` | curation proposal event listing |
 | `sinex.dlq_stats` | `dlq.list` | raw-ingest DLQ stream statistics |
 | `sinex.dlq_peek` | `dlq.peek` | sanitized raw-ingest DLQ message previews |
+| `sinex.source_materials` | `sources.list` | staged source-material catalog listing |
+| `sinex.source_material` | `sources.show` | staged source-material detail with metadata redacted |
+| `sinex.source_coverage` | `sources.coverage` | source-material coverage buckets |
 
 Deliberate omissions:
 
