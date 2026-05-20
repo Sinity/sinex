@@ -2,7 +2,7 @@
 name = "sinex-gateway"
 
 [dependencies]
-socket2        = "0.5"
+socket2        = "0.6"
 subtle         = "2"
 tokio-rustls   = "0.26"
 human-panic    = { workspace = true }
