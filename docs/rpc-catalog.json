@@ -645,7 +645,7 @@
     "stability": "experimental",
     "mutability": "mutating",
     "request_type": "sinex_primitives::rpc::semantic::SemanticLaneDiscardRequest",
-    "response_type": "sinex_primitives::rpc::semantic::SemanticLaneRecordResponse"
+    "response_type": "sinex_primitives::rpc::semantic::SemanticLaneDiscardResponse"
   },
   {
     "name": "semantic.lanes.list",

@@ -64,7 +64,7 @@ pub const SEMANTIC_LANES_SET_STATUS_METHOD: RpcMethod<
 
 pub const SEMANTIC_LANES_DISCARD_METHOD: RpcMethod<
     SemanticLaneDiscardRequest,
-    SemanticLaneRecordResponse,
+    SemanticLaneDiscardResponse,
 > = RpcMethod::new(
     methods::SEMANTIC_LANES_DISCARD,
     RpcRole::Write,
@@ -246,6 +246,12 @@ pub struct SemanticEpochListResponse {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SemanticLaneRecordResponse {
     pub lane: serde_json::Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SemanticLaneDiscardResponse {
+    pub lane: serde_json::Value,
+    pub discarded_outputs: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

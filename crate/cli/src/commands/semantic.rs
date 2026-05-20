@@ -329,7 +329,11 @@ impl SemanticLaneDiscardCommand {
                 lane_id: self.lane_id,
             })
             .await?;
-        render_value("Semantic lane discarded", &response.lane, format)
+        render_value(
+            "Semantic lane discarded",
+            &serde_json::to_value(response)?,
+            format,
+        )
     }
 }
 

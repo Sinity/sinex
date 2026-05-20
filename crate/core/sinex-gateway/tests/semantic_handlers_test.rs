@@ -1,11 +1,13 @@
 use sinex_gateway::handlers::{
     handle_semantic_epoch_create, handle_semantic_lane_create,
-    handle_semantic_lane_diff_record_entity_relation, handle_semantic_lane_outputs_write,
+    handle_semantic_lane_diff_record_entity_relation, handle_semantic_lane_discard,
+    handle_semantic_lane_outputs_list, handle_semantic_lane_outputs_write,
 };
 use sinex_gateway::rpc_server::RpcAuthContext;
 use sinex_primitives::rpc::semantic::{
     SemanticEpochCreateRequest, SemanticLaneCreateRequest,
-    SemanticLaneDiffRecordEntityRelationRequest, SemanticLaneOutputsWriteRequest,
+    SemanticLaneDiffRecordEntityRelationRequest, SemanticLaneDiscardRequest,
+    SemanticLaneOutputsListRequest, SemanticLaneOutputsWriteRequest,
 };
 use sinex_primitives::{
     EntityRelationLaneOutputs, SemanticComponentVersion, SemanticEntityOutput, SemanticLaneKind,
@@ -186,6 +188,37 @@ async fn semantic_shadow_lane_handlers_do_not_mutate_canonical_graph(
         .await?;
     assert_eq!(semantic_output_count, 4);
     assert_eq!(semantic_diff_count, 1);
+
+    let discard = handle_semantic_lane_discard(
+        ctx.pool(),
+        SemanticLaneDiscardRequest {
+            lane_id: candidate_lane_id,
+        },
+    )
+    .await?;
+    assert_eq!(discard.discarded_outputs, 2);
+    assert_eq!(discard.lane["status"], "discarded");
+
+    let candidate_outputs = handle_semantic_lane_outputs_list(
+        ctx.pool(),
+        SemanticLaneOutputsListRequest {
+            lane_id: candidate_lane_id,
+            limit: 100,
+        },
+    )
+    .await?;
+    assert!(
+        candidate_outputs.outputs.is_empty(),
+        "discard must remove raw candidate lane outputs"
+    );
+    let semantic_output_count_after_discard: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM semantic.lane_outputs")
+            .fetch_one(ctx.pool())
+            .await?;
+    assert_eq!(
+        semantic_output_count_after_discard, 2,
+        "discard must leave unrelated baseline lane outputs intact"
+    );
 
     let canonical_entities_after: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM core.entities")
         .fetch_one(ctx.pool())
