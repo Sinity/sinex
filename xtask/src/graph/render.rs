@@ -321,6 +321,7 @@ pub struct AsciiRenderer {
     graph: WorkspaceGraph,
     focus: Option<String>,
     depth: usize,
+    styled: bool,
 }
 
 impl AsciiRenderer {
@@ -330,7 +331,14 @@ impl AsciiRenderer {
             graph: graph.clone(),
             focus,
             depth,
+            styled: true,
         }
+    }
+
+    /// Enable or disable ANSI styling in the rendered tree.
+    pub fn with_style(mut self, styled: bool) -> Self {
+        self.styled = styled;
+        self
     }
 
     /// Style a package name with optional focus highlight (cyan + bold)
@@ -342,6 +350,10 @@ impl AsciiRenderer {
     /// # Returns
     /// The styled string with ANSI color codes (or plain string if not focus)
     fn style_package(&self, name: &str, is_focus: bool) -> String {
+        if !self.styled {
+            return name.to_string();
+        }
+
         if is_focus {
             // Cyan + bold for focus package: \x1b[1;36m = bold cyan, \x1b[0m = reset
             format!("\x1b[1;36m{name}\x1b[0m")
@@ -358,6 +370,10 @@ impl AsciiRenderer {
     /// # Returns
     /// The styled string with ANSI gray color codes
     fn style_tree_chars(&self, chars: &str) -> String {
+        if !self.styled {
+            return chars.to_string();
+        }
+
         // Gray (bright black) color: \x1b[90m = bright black, \x1b[0m = reset
         format!("\x1b[90m{chars}\x1b[0m")
     }

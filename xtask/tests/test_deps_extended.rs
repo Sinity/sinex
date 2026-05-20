@@ -23,9 +23,9 @@ async fn test_deps_tree_zero_depth_reports_truncation() -> ::xtask::sandbox::Tes
         String::from_utf8_lossy(&output.stderr)
     );
     let parsed: serde_json::Value = serde_json::from_slice(&output.stdout)?;
-    let tree = parsed["data"]
+    let tree = parsed["data"]["tree"]
         .as_str()
-        .ok_or_else(|| color_eyre::eyre::eyre!("deps tree JSON data should be a string"))?;
+        .ok_or_else(|| color_eyre::eyre::eyre!("deps tree JSON data.tree should be a string"))?;
 
     assert!(
         tree.contains("xtask"),
@@ -35,6 +35,7 @@ async fn test_deps_tree_zero_depth_reports_truncation() -> ::xtask::sandbox::Tes
         tree.contains("(max depth)"),
         "tree should make depth truncation visible"
     );
+    assert_eq!(parsed["data"]["depth"].as_u64(), Some(0));
     Ok(())
 }
 
