@@ -8,7 +8,7 @@ futures = { workspace = true }
 sd-notify = { workspace = true }
 parking_lot = { workspace = true }
 blake3 = { workspace = true }
-sysinfo = "0.31"
+sysinfo = { workspace = true }
 url = "2.5"
 which = { workspace = true }
 urlencoding = "2.1"
