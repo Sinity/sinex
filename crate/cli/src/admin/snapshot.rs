@@ -76,9 +76,11 @@ EXAMPLES:
         --components postgres,cas --auto-stop
 
 RESTORE:
-    Restore is manual:
-        tar -xf <archive> --use-compress-program=zstd -C /tmp/restore/
-        pg_restore -d sinex_prod /tmp/restore/postgres/sinex_prod.dump
+    Inspect and drill before any live restore:
+        sinexctl state inspect --archive <archive>
+        sinexctl state restore --archive <archive> --target-dir /tmp/restore-drill --dry-run
+        sinexctl state restore --archive <archive> --target-dir /tmp/restore-drill \\
+            --confirm-restore --allow-active-services
     See docs/operations/snapshot.md for the full restore runbook.
 ")]
 pub struct AdminSnapshotCommand {
@@ -1410,7 +1412,7 @@ pub fn format_snapshot_inspect_result(result: &SnapshotInspectResult) -> String 
     out
 }
 
-/// Render snapshot restore dry-run plan as a human-readable table string.
+/// Render a snapshot restore plan or execution result as a human-readable table string.
 #[must_use]
 pub fn format_snapshot_restore_plan_result(result: &SnapshotRestorePlanResult) -> String {
     let mut out = String::new();

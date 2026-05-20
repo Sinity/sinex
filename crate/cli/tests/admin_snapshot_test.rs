@@ -58,6 +58,30 @@ fn sinexctl_bin() -> Command {
     Command::new(cargo::cargo_bin!("sinexctl"))
 }
 
+#[sinex_test]
+async fn state_snapshot_help_points_to_restore_drill() -> TestResult<()> {
+    let output = sinexctl_bin()
+        .args(["state", "snapshot", "--help"])
+        .output()?;
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        output.status.success(),
+        "state snapshot help must exit 0\nstdout: {stdout}\nstderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        stdout.contains("sinexctl state restore --archive <archive>"),
+        "help should point operators at the restore drill command\nstdout: {stdout}"
+    );
+    assert!(
+        !stdout.contains("Restore is manual"),
+        "help must not claim restore remains manual\nstdout: {stdout}"
+    );
+
+    Ok(())
+}
+
 fn make_snapshot_archive() -> TestResult<(TempDir, std::path::PathBuf)> {
     use sinexctl::admin::manifest::{ComponentRecord, SnapshotManifest, Totals};
 
