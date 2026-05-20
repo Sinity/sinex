@@ -199,6 +199,33 @@ async fn test_deps_list_json_contract() -> ::xtask::sandbox::TestResult<()> {
     Ok(())
 }
 
+/// JSON contract for `xtask deps duplicates --json`.
+#[sinex_test]
+async fn test_deps_duplicates_json_contract() -> ::xtask::sandbox::TestResult<()> {
+    let output = xtask_command()?
+        .args(["deps", "duplicates", "--threshold", "1000", "--json"])
+        .output()?;
+
+    assert!(
+        output.status.success(),
+        "deps duplicates --json should exit 0"
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let json: Value =
+        serde_json::from_str(&stdout).map_err(|e| color_eyre::eyre::eyre!("invalid JSON: {e}"))?;
+
+    assert_eq!(json["command"], "deps", "envelope.command");
+    assert_eq!(json["data"]["threshold"], 1000, "data.threshold");
+    assert_eq!(json["data"]["count"], 0, "data.count");
+    assert!(
+        json["data"]["duplicates"]
+            .as_array()
+            .is_some_and(Vec::is_empty),
+        "data.duplicates should be an empty array at threshold 1000"
+    );
+    Ok(())
+}
+
 fn check_commands_help(commands: &[Value], parent_path: &[&str]) -> color_eyre::Result<()> {
     for cmd in commands {
         let name = cmd

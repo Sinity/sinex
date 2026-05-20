@@ -54,13 +54,18 @@ async fn test_deps_duplicates_threshold_filters_report() -> ::xtask::sandbox::Te
         String::from_utf8_lossy(&output.stderr)
     );
     let parsed: serde_json::Value = serde_json::from_slice(&output.stdout)?;
-    let report = parsed["data"].as_str().ok_or_else(|| {
-        color_eyre::eyre::eyre!("deps duplicates JSON data should be a rendered report")
-    })?;
-
+    let data = parsed["data"]
+        .as_object()
+        .ok_or_else(|| color_eyre::eyre::eyre!("deps duplicates JSON data should be an object"))?;
+    assert_eq!(data.get("threshold"), Some(&serde_json::json!(1000)));
+    assert_eq!(data.get("count"), Some(&serde_json::json!(0)));
+    let duplicates = data
+        .get("duplicates")
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| color_eyre::eyre::eyre!("data.duplicates should be an array"))?;
     assert!(
-        report.contains("No duplicate dependencies found"),
-        "high threshold should filter every duplicate from the report"
+        duplicates.is_empty(),
+        "high threshold should filter every duplicate from the structured report"
     );
     Ok(())
 }
