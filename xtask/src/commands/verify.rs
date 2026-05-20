@@ -380,7 +380,7 @@ fn execute_claims(
     json: bool,
     include_advisory: bool,
     include_deferrals: bool,
-    _ctx: &CommandContext,
+    ctx: &CommandContext,
 ) -> Result<CommandResult> {
     let catalog = crate::proof_catalog::build_proof_catalog(&workspace_root())?;
     let validation = crate::proof_catalog::validate_proof_catalog(&catalog);
@@ -440,9 +440,11 @@ fn execute_claims(
         ),
     };
 
-    if json {
+    let summary_data = serde_json::to_value(&summary)?;
+
+    if json && !ctx.is_json() {
         println!("{}", serde_json::to_string_pretty(&summary)?);
-    } else {
+    } else if !json && ctx.is_human() {
         println!("Proof claims");
         println!("  required:  {}", summary.required.len());
         println!("  advisory:  {}", summary.advisory.len());
@@ -480,14 +482,22 @@ fn execute_claims(
         }
     }
 
-    if summary.errors.is_empty() {
-        Ok(CommandResult::success().with_message("proof claims catalog is valid"))
+    let result = if summary.errors.is_empty() {
+        CommandResult::success().with_message("proof claims catalog is valid")
     } else {
-        Ok(CommandResult::failure(crate::output::StructuredError::new(
+        CommandResult::failure(crate::output::StructuredError::new(
             "PROOF_CLAIMS_INVALID",
             "proof claims catalog has errors",
         ))
-        .with_message("proof claims catalog has errors"))
+        .with_message("proof claims catalog has errors")
+    };
+
+    if ctx.is_json() {
+        Ok(result.with_data(summary_data))
+    } else if json {
+        Ok(result.with_silent())
+    } else {
+        Ok(result)
     }
 }
 
@@ -2342,6 +2352,31 @@ mod tests {
         assert_eq!(cmds.len(), 1);
         assert_eq!(cmds[0].command, "xtask check -p xtask");
         assert_eq!(cmds[0].source, "comment[0]@2026-05-19T00:00:00Z");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn claims_json_mode_returns_enveloped_data() -> ::xtask::sandbox::TestResult<()> {
+        let ctx = CommandContext::new(
+            crate::output::OutputWriter::new(crate::output::OutputFormat::Json),
+            false,
+            None,
+            "verify",
+        );
+        let result = execute_claims(true, false, false, &ctx)?;
+
+        assert!(matches!(result.status, Status::Success));
+        let data = result
+            .data
+            .as_ref()
+            .ok_or_else(|| color_eyre::eyre::eyre!("claims result missing structured data"))?;
+        assert_eq!(data["schema_version"], 1);
+        assert!(
+            data["required"]
+                .as_array()
+                .is_some_and(|items| !items.is_empty())
+        );
+        assert!(data["errors"].as_array().is_some_and(Vec::is_empty));
         Ok(())
     }
 
