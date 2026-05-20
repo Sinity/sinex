@@ -1,6 +1,6 @@
 //! IRC event payloads.
 //!
-//! These payloads mirror the normalized shape emitted by the WeeChat log
+//! These payloads mirror the normalized shape emitted by the `WeeChat` log
 //! parser: every line carries a nick/sentinel and message text, while join and
 //! part events may additionally expose a channel.
 
