@@ -91,7 +91,6 @@ struct Args {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    human_panic::setup_panic!();
     color_eyre::install()?;
     let args = Args::parse();
 

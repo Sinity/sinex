@@ -99,9 +99,6 @@ sysinfo = { workspace = true }
 # Pretty table output
 tabled = { workspace = true }
 
-# Better panic messages for users
-human-panic = { workspace = true }
-
 # Build-time metadata (git hash, build time)
 shadow-rs = { workspace = true }
 
