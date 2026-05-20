@@ -3,7 +3,10 @@
 use serde_json::json;
 use sinex_db::DbPoolExt;
 use sinex_db::repositories::SourceMaterial as DbSourceMaterial;
-use sinex_node_sdk::{dispatch_hyprland_workspace_command, probe_hyprland_command_socket};
+use sinex_node_sdk::{
+    dispatch_hyprland_workspace_command, probe_hyprland_command_socket,
+    resolve_hyprland_command_socket_path,
+};
 use sinex_primitives::events::payloads::{
     ActuationAttemptPayload, ActuationStatus, DesktopWorkspaceSwitchInstructionPayload,
     HyprlandWorkspaceSwitchedPayload, plan_hyprland_workspace_switch,
@@ -57,15 +60,12 @@ pub async fn handle_hyprland_workspace_switch(
     if attempt.status == ActuationStatus::Attempted
         && let Some(command) = attempt.command_summary.command.clone()
     {
-        let Some(socket_path) = req
-            .command_socket_path
-            .as_deref()
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
+        let Some(socket_path) =
+            resolve_hyprland_command_socket_path(req.command_socket_path.as_deref())
         else {
             attempt.status = ActuationStatus::Unavailable;
             attempt.error = Some(
-                "Hyprland command socket path is required for live workspace dispatch".to_string(),
+                "Hyprland command socket path is required for live workspace dispatch; pass command_socket_path or set XDG_RUNTIME_DIR and HYPRLAND_INSTANCE_SIGNATURE".to_string(),
             );
             return persist_attempt(
                 pool,
@@ -83,12 +83,12 @@ pub async fn handle_hyprland_workspace_switch(
             .await;
         };
 
-        let probe = probe_hyprland_command_socket(socket_path).await;
+        let probe = probe_hyprland_command_socket(&socket_path).await;
         if !probe.available {
             attempt.status = ActuationStatus::Unavailable;
             attempt.error = probe.caveat;
         } else {
-            match dispatch_hyprland_workspace_command(socket_path, &command).await {
+            match dispatch_hyprland_workspace_command(&socket_path, &command).await {
                 Ok(response) => {
                     let socket_response = response.response;
                     if socket_response.trim() != "ok" {

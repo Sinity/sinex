@@ -157,7 +157,7 @@ pub use heartbeat::{HeartbeatCounterHandle, HeartbeatEmitter, HeartbeatLogSink, 
 #[cfg(feature = "messaging")]
 pub use hyprland::{
     HyprlandCommandSocketProbe, HyprlandCommandSocketResponse, dispatch_hyprland_workspace_command,
-    probe_hyprland_command_socket,
+    probe_hyprland_command_socket, resolve_hyprland_command_socket_path,
 };
 pub use ids::{deterministic_event_id, deterministic_material_event_id};
 #[cfg(feature = "messaging")]
