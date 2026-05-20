@@ -434,7 +434,10 @@ fn execute_claims(
         deferred,
         exemptions,
         errors: validation.errors,
-        warnings: validation.warnings,
+        warnings: visible_claim_warnings(
+            validation.warnings,
+            include_advisory || include_deferrals,
+        ),
     };
 
     if json {
@@ -486,6 +489,20 @@ fn execute_claims(
         ))
         .with_message("proof claims catalog has errors"))
     }
+}
+
+fn visible_claim_warnings(warnings: Vec<String>, include_demoted_detail: bool) -> Vec<String> {
+    if include_demoted_detail {
+        return warnings;
+    }
+    warnings
+        .into_iter()
+        .filter(|warning| !is_local_source_unit_tag_warning(warning))
+        .collect()
+}
+
+fn is_local_source_unit_tag_warning(warning: &str) -> bool {
+    warning.contains(" local source-unit proof tag")
 }
 
 fn default_phase_manifest_path() -> PathBuf {
@@ -2184,6 +2201,23 @@ mod tests {
         assert!(rendered.contains("verify_perf_overall_pass 1"));
         assert!(rendered.contains("verify_perf_scenario_pass{scenario=\"t=12\"} 1"));
         assert!(rendered.contains("verify_perf_median_ms{scenario=\"t=12\"} 100.000000"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn claim_warnings_hide_local_tags_until_demoted_detail_requested()
+    -> ::xtask::sandbox::TestResult<()> {
+        let warnings = vec![
+            "source_unit:terminal carries 2 local source-unit proof tag(s): anchor, timestamp"
+                .to_string(),
+            "required proof subject `runtime_unit:*` has no runner binding".to_string(),
+        ];
+
+        assert_eq!(
+            visible_claim_warnings(warnings.clone(), false),
+            vec!["required proof subject `runtime_unit:*` has no runner binding".to_string()]
+        );
+        assert_eq!(visible_claim_warnings(warnings.clone(), true), warnings);
         Ok(())
     }
 
