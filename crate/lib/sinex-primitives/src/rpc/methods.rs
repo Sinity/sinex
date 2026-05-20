@@ -107,6 +107,8 @@ pub const SEMANTIC_LANES_SET_STATUS: &str = "semantic.lanes.set_status";
 pub const SEMANTIC_LANES_DISCARD: &str = "semantic.lanes.discard";
 pub const SEMANTIC_LANE_OUTPUTS_LIST: &str = "semantic.lane_outputs.list";
 pub const SEMANTIC_LANE_OUTPUTS_WRITE: &str = "semantic.lane_outputs.write";
+pub const SEMANTIC_LANE_OUTPUTS_SEED_CANONICAL_GRAPH: &str =
+    "semantic.lane_outputs.seed_canonical_graph";
 pub const SEMANTIC_LANE_DIFFS_LIST: &str = "semantic.lane_diffs.list";
 pub const SEMANTIC_LANE_DIFFS_RECORD_ENTITY_RELATION: &str =
     "semantic.lane_diffs.record_entity_relation";

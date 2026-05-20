@@ -9,7 +9,8 @@ use sinex_primitives::rpc::semantic::{
     SemanticEpochCreateRequest, SemanticEpochListRequest, SemanticLaneCreateRequest,
     SemanticLaneDiffRecordEntityRelationRequest, SemanticLaneDiffsListRequest,
     SemanticLaneDiscardRequest, SemanticLaneListRequest, SemanticLaneOutputsListRequest,
-    SemanticLaneOutputsWriteRequest, SemanticLaneSetStatusRequest,
+    SemanticLaneOutputsSeedCanonicalGraphRequest, SemanticLaneOutputsWriteRequest,
+    SemanticLaneSetStatusRequest,
 };
 use sinex_primitives::{EntityRelationLaneOutputs, SemanticComponentVersion, SemanticScope, Uuid};
 use std::path::{Path, PathBuf};
@@ -171,6 +172,7 @@ impl SemanticLaneCommand {
             SemanticLaneSubcommand::Status(cmd) => cmd.execute(client, format).await,
             SemanticLaneSubcommand::Discard(cmd) => cmd.execute(client, format).await,
             SemanticLaneSubcommand::Outputs(cmd) => cmd.execute(client, format).await,
+            SemanticLaneSubcommand::SeedCanonicalGraph(cmd) => cmd.execute(client, format).await,
             SemanticLaneSubcommand::WriteOutputs(cmd) => cmd.execute(client, format).await,
             SemanticLaneSubcommand::Diffs(cmd) => cmd.execute(client, format).await,
             SemanticLaneSubcommand::Compare(cmd) => cmd.execute(client, format).await,
@@ -195,6 +197,8 @@ pub enum SemanticLaneSubcommand {
     Discard(SemanticLaneDiscardCommand),
     /// List lane outputs.
     Outputs(SemanticLaneOutputsCommand),
+    /// Seed lane outputs from the current canonical entity/relation graph.
+    SeedCanonicalGraph(SemanticLaneSeedCanonicalGraphCommand),
     /// Write entity/relation outputs into a lane.
     WriteOutputs(SemanticLaneWriteOutputsCommand),
     /// List recorded lane diffs.
@@ -356,6 +360,29 @@ impl SemanticLaneOutputsCommand {
             })
             .await?;
         render_values("Semantic lane outputs", &response.outputs, format)
+    }
+}
+
+#[derive(Debug, Args)]
+pub struct SemanticLaneSeedCanonicalGraphCommand {
+    /// Lane UUID.
+    lane_id: Uuid,
+}
+
+impl SemanticLaneSeedCanonicalGraphCommand {
+    async fn execute(&self, client: &GatewayClient, format: OutputFormat) -> Result<()> {
+        let response = client
+            .semantic_lane_outputs_seed_canonical_graph(
+                SemanticLaneOutputsSeedCanonicalGraphRequest {
+                    lane_id: self.lane_id,
+                },
+            )
+            .await?;
+        render_value(
+            "Semantic lane seeded from canonical graph",
+            &serde_json::to_value(response)?,
+            format,
+        )
     }
 }
 

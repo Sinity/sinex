@@ -1,4 +1,6 @@
-use sinex_db::repositories::{CreateSemanticEpoch, CreateSemanticLane, DbPoolExt};
+use sinex_db::repositories::{
+    CreateEntity, CreateEntityRelation, CreateSemanticEpoch, CreateSemanticLane, DbPoolExt,
+};
 use sinex_primitives::{
     EntityRelationLaneOutputs, SemanticComponentVersion, SemanticEntityOutput, SemanticEpochRecord,
     SemanticLaneKind, SemanticLaneRecord, SemanticLaneStatus, SemanticRelationOutput,
@@ -173,6 +175,64 @@ async fn semantic_repository_keeps_shadow_outputs_out_of_canonical_entities(
     assert_eq!(discarded_outputs, 2);
     assert_eq!(repo.count_lane_outputs(candidate_lane.id).await?, 0);
     assert_eq!(repo.list_lane_diffs(candidate_lane.id, 10).await?.len(), 1);
+
+    Ok(())
+}
+
+#[sinex_test]
+async fn semantic_repository_seeds_lane_from_canonical_graph(ctx: TestContext) -> TestResult<()> {
+    let repo = ctx.pool.semantic();
+    let source = ctx
+        .pool
+        .knowledge_graph()
+        .create_entity(CreateEntity::person("Canonical Alice"))
+        .await?;
+    let target = ctx
+        .pool
+        .knowledge_graph()
+        .create_entity(CreateEntity::project("Canonical Project"))
+        .await?;
+    ctx.pool
+        .knowledge_graph()
+        .create_relation(CreateEntityRelation::new(source.id, target.id, "works_on"))
+        .await?;
+
+    let epoch = repo
+        .create_epoch(CreateSemanticEpoch {
+            epoch: epoch(11, "canonical", "canonical-hash"),
+            created_by: "test".to_string(),
+            operation_id: None,
+            supersedes_epoch_id: None,
+        })
+        .await?;
+    let lane = repo
+        .create_lane(CreateSemanticLane {
+            lane: lane(12, "canonical", SemanticLaneKind::Canonical, None, epoch.id),
+            operation_id: None,
+            expires_at: None,
+        })
+        .await?;
+
+    let written = repo
+        .seed_entity_relation_outputs_from_canonical_graph(lane.id)
+        .await?;
+    assert_eq!(written, 3);
+
+    let outputs = repo.read_entity_relation_outputs(lane.id).await?;
+    assert_eq!(outputs.entities.len(), 2);
+    assert_eq!(outputs.relations.len(), 1);
+    assert!(
+        outputs
+            .entities
+            .iter()
+            .any(|entity| entity.canonical_name == "canonical_alice")
+    );
+    assert!(
+        outputs
+            .relations
+            .iter()
+            .any(|relation| relation.predicate == "works_on")
+    );
 
     Ok(())
 }

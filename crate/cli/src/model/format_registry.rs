@@ -375,6 +375,10 @@ pub fn build() -> HashMap<&'static str, FormatCapability> {
         FormatCapability::single_shot(TABLE_JSON_YAML),
     );
     m.insert(
+        "semantics lane seed-canonical-graph",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
+    m.insert(
         "semantics lane write-outputs",
         FormatCapability::single_shot(TABLE_JSON_YAML),
     );
@@ -775,6 +779,7 @@ fn effect_for_path(path: &str, capability: &FormatCapability) -> CommandEffect {
         "semantics lane compare",
         "semantics lane create",
         "semantics lane discard",
+        "semantics lane seed-canonical-graph",
         "semantics lane status",
         "semantics lane write-outputs",
         "shadow create",
@@ -839,6 +844,7 @@ fn mutation_guards_for_path(path: &str) -> &'static [CommandMutationGuard] {
         | "semantics lane compare"
         | "semantics lane create"
         | "semantics lane discard"
+        | "semantics lane seed-canonical-graph"
         | "semantics lane status"
         | "semantics lane write-outputs"
         | "sources annotate"
@@ -956,6 +962,9 @@ fn backing_rpc_methods_for_path(path: &str) -> &'static [&'static str] {
         "semantics lane status" => &[methods::SEMANTIC_LANES_SET_STATUS],
         "semantics lane discard" => &[methods::SEMANTIC_LANES_DISCARD],
         "semantics lane outputs" => &[methods::SEMANTIC_LANE_OUTPUTS_LIST],
+        "semantics lane seed-canonical-graph" => {
+            &[methods::SEMANTIC_LANE_OUTPUTS_SEED_CANONICAL_GRAPH]
+        }
         "semantics lane write-outputs" => &[methods::SEMANTIC_LANE_OUTPUTS_WRITE],
         "semantics lane diffs" => &[methods::SEMANTIC_LANE_DIFFS_LIST],
         "semantics lane compare" => &[methods::SEMANTIC_LANE_DIFFS_RECORD_ENTITY_RELATION],
