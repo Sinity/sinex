@@ -4,10 +4,33 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::{fmt, str::FromStr};
 
+use crate::domain_reducer::{
+    DomainProjectionSpec, ProjectionConflictPolicy, ProjectionOrderingPolicy,
+    ProjectionOutputShape, ProjectionSettlementPolicy,
+};
 use crate::{Result, SinexError, Timestamp, Uuid};
 
 pub const TASK_REDUCER_DOMAIN_ID: &str = "tasks.current";
 pub const TASK_REDUCER_SEMANTICS_VERSION: &str = "1.0.0";
+pub const TASK_OBJECT_KIND: &str = "task";
+pub const TASK_REDUCER_INPUT_EVENT_TYPES: &[&str] = &[
+    "task.created",
+    "task.updated",
+    "task.status_changed",
+    "task.completed",
+    "task.cancelled",
+];
+pub const TASK_REDUCER_SPEC: DomainProjectionSpec = DomainProjectionSpec {
+    domain_id: TASK_REDUCER_DOMAIN_ID,
+    semantics_version: TASK_REDUCER_SEMANTICS_VERSION,
+    object_kind: TASK_OBJECT_KIND,
+    input_event_types: TASK_REDUCER_INPUT_EVENT_TYPES,
+    object_key_policy: "payload.task_id",
+    ordering_policy: ProjectionOrderingPolicy::TsOrigThenEventId,
+    settlement_policy: ProjectionSettlementPolicy::RebuildOnInputChange,
+    conflict_policy: ProjectionConflictPolicy::RejectInvalidTransition,
+    output_shape: ProjectionOutputShape::TypedState,
+};
 
 /// Current lifecycle state projected for a task object.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
