@@ -102,6 +102,7 @@ HTTP/SSE transport is a follow-up only when there is a real consumer.
 | `sinex.ops_get` | `ops.get` | operation detail lookup |
 | `sinex.lifecycle_status` | `lifecycle.status` | data lifecycle tier status |
 | `sinex.gitops_sources` | `gitops.list_sources` | GitOps schema source listing |
+| `sinex.audit_trail` | `audit.get` | audit trail for one operation |
 
 Deliberate omissions:
 
@@ -109,8 +110,8 @@ Deliberate omissions:
   shaped even when used as a dry-run planner;
 - no document chunk-text tool, because `documents.get_chunks` returns raw text
   by design and needs a separate redaction/policy shape before MCP exposure;
-- no material-show or workbench-inspect tool until their gateway read surfaces
-  can enforce the same redaction contract;
+- no workbench-inspect tool until its gateway read surface can enforce the same
+  redaction contract as the source-material detail tool;
 - no context-pack tools until #1095 provides a stable read model.
 
 ## Common Response Shape

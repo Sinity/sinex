@@ -315,6 +315,11 @@ struct OpsGetArgs {
 }
 
 #[derive(Debug, Deserialize, Serialize)]
+struct AuditTrailArgs {
+    operation_id: String,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
 struct GitOpsSourcesArgs {
     #[serde(default)]
     include_disabled: bool,
@@ -691,6 +696,13 @@ pub fn tool_catalog() -> Vec<McpCatalogEntry> {
             kind: McpSurfaceKind::Tool,
             description: "Read-only GitOps schema source listing.",
             backing_rpc_methods: &[methods::GITOPS_LIST_SOURCES],
+            read_only: true,
+        },
+        McpCatalogEntry {
+            name: "sinex.audit_trail",
+            kind: McpSurfaceKind::Tool,
+            description: "Read-only audit trail for one operation.",
+            backing_rpc_methods: &[methods::AUDIT_GET],
             read_only: true,
         },
     ]
@@ -1209,6 +1221,18 @@ pub fn tools() -> Vec<McpTool> {
                 "additionalProperties": false
             }),
         },
+        McpTool {
+            name: "sinex.audit_trail",
+            description: "Read-only audit trail for one operation.",
+            input_schema: json!({
+                "type": "object",
+                "required": ["operation_id"],
+                "properties": {
+                    "operation_id": { "type": "string", "format": "uuid" }
+                },
+                "additionalProperties": false
+            }),
+        },
     ]
 }
 
@@ -1427,6 +1451,7 @@ pub async fn call_tool(client: &GatewayClient, name: &str, arguments: Value) -> 
         "sinex.ops_get" => ops_get(client, arguments).await,
         "sinex.lifecycle_status" => lifecycle_status(client, arguments).await,
         "sinex.gitops_sources" => gitops_sources(client, arguments).await,
+        "sinex.audit_trail" => audit_trail(client, arguments).await,
         other => Err(eyre!("unknown MCP tool: {other}")),
     }
 }
@@ -2072,6 +2097,16 @@ async fn gitops_sources(client: &GatewayClient, arguments: Value) -> Result<Valu
         "sinex.gitops_sources",
         json!(args),
         json!({ "result": { "sources": response } }),
+    ))
+}
+
+async fn audit_trail(client: &GatewayClient, arguments: Value) -> Result<Value> {
+    let args: AuditTrailArgs = serde_json::from_value(arguments)?;
+    let response = client.audit_get(&args.operation_id).await?;
+    Ok(envelope(
+        "sinex.audit_trail",
+        json!(args),
+        json!({ "result": response }),
     ))
 }
 

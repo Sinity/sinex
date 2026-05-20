@@ -115,7 +115,8 @@ async fn mcp_lists_first_slice_read_only_tools() -> TestResult<()> {
             "sinex.ops_list",
             "sinex.ops_get",
             "sinex.lifecycle_status",
-            "sinex.gitops_sources"
+            "sinex.gitops_sources",
+            "sinex.audit_trail"
         ]
     );
     assert_read_only_tool_names()?;
@@ -1357,6 +1358,29 @@ async fn mcp_gitops_sources_call_uses_gateway_fixture() -> TestResult<()> {
     Ok(())
 }
 
+#[sinex_test]
+async fn mcp_audit_trail_call_uses_gateway_fixture() -> TestResult<()> {
+    let server = mount_mcp_gateway_fixture().await;
+    let client = fixture_gateway_client(&server)?;
+
+    let response = call_tool(
+        &client,
+        "sinex.audit_trail",
+        json!({ "operation_id": fixture_operation_id() }),
+    )
+    .await?;
+
+    assert_eq!(response["tool"], "sinex.audit_trail");
+    assert_eq!(response["query"]["operation_id"], fixture_operation_id());
+    assert_eq!(
+        response["items"]["result"]["audit_trail"]["operation"]["id"],
+        fixture_operation_id()
+    );
+    assert_eq!(response["items"]["result"]["event_count"], 1);
+    assert_eq!(response["redaction"]["raw_samples"], false);
+    Ok(())
+}
+
 fn telemetry_window_args() -> Value {
     json!({
         "from": "2026-05-19T00:00:00Z",
@@ -2156,6 +2180,25 @@ async fn mount_mcp_gateway_fixture() -> MockServer {
                             "sync_frequency_minutes": 60
                         }
                     ]
+                }),
+                "audit.get" => json!({
+                    "audit_trail": {
+                        "operation": fixture_operation(),
+                        "affected_events": [
+                            {
+                                "id": fixture_event_id(),
+                                "source": "fixture",
+                                "event_type": "fixture.event",
+                                "ts_orig": "2026-05-19T12:00:00Z",
+                                "ts_coided": "2026-05-19T12:00:01Z",
+                                "tier": "live",
+                                "provenance_operation_id": fixture_operation_id()
+                            }
+                        ]
+                    },
+                    "event_count": 1,
+                    "next_cursor": null,
+                    "has_more": false
                 }),
                 other => {
                     return ResponseTemplate::new(400).set_body_json(json!({
