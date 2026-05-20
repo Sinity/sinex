@@ -1342,6 +1342,13 @@ Probe developer-environment health and deployment readiness
 
 Diagnose rust-analyzer process footprint and local workspace contract
 
+**Arguments**
+
+| Flag | Value | Required | Description |
+|---|---|---|---|
+| `--collect-diagnostics` | no | no | Also run rust-analyzer's batch diagnostics subcommand |
+| `--severity` | yes | no | Minimum severity for --collect-diagnostics |
+
 
 ## `xtask privacy`
 

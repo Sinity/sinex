@@ -2056,3 +2056,27 @@ disabled = []
     );
     Ok(())
 }
+
+#[sinex_test]
+async fn test_rust_analyzer_cli_diagnostic_parser_reads_batch_output()
+-> ::xtask::sandbox::TestResult<()> {
+    let output = r#"at crate sinexctl, file /realm/project/sinex/crate/cli/src/lib.rs: Warning RustcLint("unused_variables") from LineCol { line: 12, col: 4 } to LineCol { line: 12, col: 10 }: unused variable"#;
+
+    let diagnostics = parse_rust_analyzer_cli_diagnostics(output);
+
+    assert_eq!(diagnostics.len(), 1);
+    let diagnostic = &diagnostics[0];
+    assert_eq!(diagnostic.crate_name, "sinexctl");
+    assert_eq!(diagnostic.file, "/realm/project/sinex/crate/cli/src/lib.rs");
+    assert_eq!(diagnostic.severity, "Warning");
+    assert_eq!(
+        diagnostic.diagnostic_kind,
+        "RustcLint(\"unused_variables\")"
+    );
+    assert_eq!(diagnostic.line, 12);
+    assert_eq!(diagnostic.col, 4);
+    assert_eq!(diagnostic.end_line, 12);
+    assert_eq!(diagnostic.end_col, 10);
+    assert_eq!(diagnostic.message, "unused variable");
+    Ok(())
+}
