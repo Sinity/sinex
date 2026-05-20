@@ -89,6 +89,9 @@ HTTP/SSE transport is a follow-up only when there is a real consumer.
 | `sinex.assembly_stats` | `telemetry.assembly_stats` | material assembly telemetry buckets |
 | `sinex.node_stats` | `telemetry.node_stats` | node processing telemetry buckets |
 | `sinex.metric_counters` | `telemetry.metric_counters` | named metric counter telemetry buckets |
+| `sinex.llm_prompts` | `llm.prompts.list` | LLM prompt-template registry events |
+| `sinex.llm_route_explain` | `llm.route.explain` | deterministic LLM routing explanation |
+| `sinex.llm_budget_report` | `llm.budget.report` | LLM budget-ledger usage report |
 
 Deliberate omissions:
 
