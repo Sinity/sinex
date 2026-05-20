@@ -78,6 +78,8 @@ HTTP/SSE transport is a follow-up only when there is a real consumer.
 | `sinex.ingestd_batch_stats` | `telemetry.ingestd_batch_stats` | ingestd batch, latency, and validation telemetry buckets |
 | `sinex.throughput` | `telemetry.throughput` | per-source and per-component event/request throughput summary |
 | `sinex.recent_activity` | `telemetry.recent_activity` | recent activity summary for local agent context |
+| `sinex.command_frequency` | `telemetry.command_frequency` | command-frequency telemetry for shell context |
+| `sinex.file_activity` | `telemetry.file_activity` | file-activity telemetry for project context |
 
 Deliberate omissions:
 
