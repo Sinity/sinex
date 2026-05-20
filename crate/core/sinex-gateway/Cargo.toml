@@ -17,7 +17,7 @@ ignored = ["shadow-rs"]
 tempfile = { workspace = true }
 which    = { workspace = true }
 rcgen    = { workspace = true }
-bytes    = "1.5"
+bytes    = { workspace = true }
 uuid     = { workspace = true }
 
 [features]
