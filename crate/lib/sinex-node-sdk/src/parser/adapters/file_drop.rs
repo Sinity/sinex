@@ -187,7 +187,7 @@ fn records_from_file_drop_event(
         return Vec::new();
     }
 
-    event
+    let paths = event
         .paths
         .iter()
         .cloned()
@@ -197,11 +197,35 @@ fn records_from_file_drop_event(
             if !path_filter.includes(&utf8_path) {
                 return None;
             }
+            Some(utf8_path)
+        })
+        .collect::<Vec<_>>();
+    let rename_pair = if kind == FileDropEventKind::Moved && paths.len() == 2 {
+        Some((paths[0].clone(), paths[1].clone()))
+    } else {
+        None
+    };
+
+    paths
+        .into_iter()
+        .enumerate()
+        .map(|(index, utf8_path)| {
             let metadata = serde_json::json!({
                 "event_kind": format!("{kind:?}"),
                 "path": utf8_path.as_str(),
             });
-            Some(SourceRecord {
+            let mut metadata = metadata;
+            if let Some((from_path, to_path)) = &rename_pair
+                && let Some(object) = metadata.as_object_mut()
+            {
+                object.insert("move_from_path".into(), from_path.as_str().into());
+                object.insert("move_to_path".into(), to_path.as_str().into());
+                object.insert(
+                    "move_role".into(),
+                    if index == 0 { "from" } else { "to" }.into(),
+                );
+            }
+            SourceRecord {
                 material_id,
                 anchor: MaterialAnchor::DirectoryEntry {
                     path: utf8_path.clone(),
@@ -211,7 +235,7 @@ fn records_from_file_drop_event(
                 logical_path: Some(utf8_path),
                 source_ts_hint: None,
                 metadata,
-            })
+            }
         })
         .collect()
 }
@@ -527,6 +551,16 @@ mod tests {
         assert_eq!(moved_records.len(), 2);
         assert!(modified_records.is_empty());
         assert_eq!(moved_records[0].metadata["event_kind"], "Moved");
+        assert_eq!(
+            moved_records[0].metadata["move_from_path"],
+            "/tmp/sinex-file-drop-before"
+        );
+        assert_eq!(
+            moved_records[0].metadata["move_to_path"],
+            "/tmp/sinex-file-drop-after"
+        );
+        assert_eq!(moved_records[0].metadata["move_role"], "from");
+        assert_eq!(moved_records[1].metadata["move_role"], "to");
         Ok(())
     }
 
