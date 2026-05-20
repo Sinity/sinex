@@ -1,5 +1,5 @@
 use serde_json::{Value, json};
-use sinex_primitives::rpc::{RpcMutability, RpcRole, method_catalog};
+use sinex_primitives::rpc::{RpcMutability, RpcRole, method_catalog, methods};
 use sinex_primitives::temporal::{Duration, Timestamp};
 use sinexctl::client::{ClientConfig, GatewayClient};
 use sinexctl::mcp::{
@@ -167,6 +167,24 @@ async fn mcp_docs_tool_table_matches_live_tools() -> TestResult<()> {
         live,
         "MCP docs tool table must match live tools in {}",
         docs_path.display()
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn mcp_omits_raw_content_read_methods_until_redacted_variants_exist() -> TestResult<()> {
+    let backing_methods = tool_catalog()
+        .into_iter()
+        .flat_map(|entry| entry.backing_rpc_methods.iter().copied())
+        .collect::<BTreeSet<_>>();
+
+    assert!(
+        !backing_methods.contains(methods::CONTENT_RETRIEVE_BLOB),
+        "MCP must not expose raw blob retrieval without a redacted read contract"
+    );
+    assert!(
+        !backing_methods.contains(methods::DOCUMENTS_GET_CHUNKS),
+        "MCP must not expose raw document chunk text without a redacted read contract"
     );
     Ok(())
 }
