@@ -93,7 +93,9 @@ async fn mcp_lists_first_slice_read_only_tools() -> TestResult<()> {
             "sinex.throughput",
             "sinex.recent_activity",
             "sinex.command_frequency",
-            "sinex.file_activity"
+            "sinex.file_activity",
+            "sinex.system_state",
+            "sinex.window_focus"
         ]
     );
     assert_read_only_tool_names()?;
@@ -882,6 +884,55 @@ async fn mcp_file_activity_call_uses_gateway_fixture() -> TestResult<()> {
     Ok(())
 }
 
+#[sinex_test]
+async fn mcp_system_state_call_uses_gateway_fixture() -> TestResult<()> {
+    let server = mount_mcp_gateway_fixture().await;
+    let client = fixture_gateway_client(&server)?;
+
+    let response = call_tool(
+        &client,
+        "sinex.system_state",
+        json!({
+            "from": "2026-05-19T00:00:00Z",
+            "to": "2026-05-19T01:00:00Z",
+            "limit": 3
+        }),
+    )
+    .await?;
+
+    assert_eq!(response["tool"], "sinex.system_state");
+    assert_eq!(response["query"]["limit"], 3);
+    assert_eq!(response["items"]["buckets"][0]["sample_count"], 5);
+    assert_eq!(response["items"]["buckets"][0]["avg_memory_percent"], 42.5);
+    assert_eq!(response["redaction"]["raw_samples"], false);
+    Ok(())
+}
+
+#[sinex_test]
+async fn mcp_window_focus_call_uses_gateway_fixture() -> TestResult<()> {
+    let server = mount_mcp_gateway_fixture().await;
+    let client = fixture_gateway_client(&server)?;
+
+    let response = call_tool(
+        &client,
+        "sinex.window_focus",
+        json!({
+            "from": "2026-05-19T00:00:00Z",
+            "to": "2026-05-19T01:00:00Z",
+            "limit": 3
+        }),
+    )
+    .await?;
+
+    assert_eq!(response["tool"], "sinex.window_focus");
+    assert_eq!(response["query"]["limit"], 3);
+    assert_eq!(response["items"]["buckets"][0]["workspace"], "4");
+    assert_eq!(response["items"]["buckets"][0]["window_class"], "kitty");
+    assert_eq!(response["items"]["buckets"][0]["focus_event_count"], 6);
+    assert_eq!(response["redaction"]["raw_samples"], false);
+    Ok(())
+}
+
 async fn mount_mcp_gateway_fixture() -> MockServer {
     let server = MockServer::start().await;
     Mock::given(method("POST"))
@@ -1325,6 +1376,33 @@ async fn mount_mcp_gateway_fixture() -> MockServer {
                             "event_type": "modified",
                             "total_events": 9,
                             "unique_files": 4
+                        }
+                    ]
+                }),
+                "telemetry.system_state" => json!({
+                    "buckets": [
+                        {
+                            "bucket": "2026-05-19T12:00:00Z",
+                            "avg_cpu_percent": 12.5,
+                            "max_cpu_percent": 25.0,
+                            "avg_memory_percent": 42.5,
+                            "max_memory_percent": 50.0,
+                            "avg_disk_percent": 60.0,
+                            "current_active_units": 8,
+                            "sample_count": 5
+                        }
+                    ]
+                }),
+                "telemetry.window_focus" => json!({
+                    "buckets": [
+                        {
+                            "bucket": "2026-05-19T12:00:00Z",
+                            "workspace": "4",
+                            "window_class": "kitty",
+                            "window_title": "sinex",
+                            "window_id": "0xabc",
+                            "last_focus_time": "2026-05-19T12:00:00Z",
+                            "focus_event_count": 6
                         }
                     ]
                 }),
