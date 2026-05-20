@@ -20,9 +20,6 @@ workspace = true
 [package.license]
 workspace = true
 
-[dependencies]
-human-panic = { workspace = true }
-
 [dependencies.mimalloc]
 workspace = true
 

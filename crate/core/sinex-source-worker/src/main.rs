@@ -117,8 +117,6 @@ fn registered_factory_ids_for_display() -> String {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    human_panic::setup_panic!();
-
     let raw_args: Vec<std::ffi::OsString> = std::env::args_os().collect();
     let (source_unit_name, filtered_args) = extract_source_unit(raw_args);
 

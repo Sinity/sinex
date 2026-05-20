@@ -114,7 +114,6 @@ fn load_gateway_config(database_url: Option<String>) -> Result<GatewayConfig> {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    human_panic::setup_panic!();
     color_eyre::install()?;
 
     let cli = Cli::parse();

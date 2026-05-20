@@ -1172,8 +1172,6 @@ macro_rules! node_entrypoint {
     ($node_type:ty) => {
         #[tokio::main]
         async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
-            human_panic::setup_panic!();
-
             use clap::Parser;
             use $crate::node_cli::{NodeCli, NodeCliRunner};
 
@@ -1188,8 +1186,6 @@ macro_rules! node_entrypoint {
     ($node_type:ty, $node_expr:expr) => {
         #[tokio::main]
         async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
-            human_panic::setup_panic!();
-
             use clap::Parser;
             use $crate::node_cli::{NodeCli, NodeCliRunner};
 

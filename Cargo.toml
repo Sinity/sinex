@@ -280,7 +280,6 @@ gethostname = "1.1"
 clap = { version = "4.5.42", features = ["derive", "env"] }
 which = "6.0"
 semver = { version = "1.0", features = ["serde"] }
-human-panic = "2.0"
 shadow-rs = "0.35"
 sysinfo = "0.38"
 
