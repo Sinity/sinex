@@ -86,8 +86,7 @@ version = "0.10"
 default-features = false
 features = ["std"]
 [dependencies.nix]
-version = "0.28"
-features = ["fs", "resource"]
+workspace = true
 [dependencies.globset]
 workspace = true
 [dependencies.notify]

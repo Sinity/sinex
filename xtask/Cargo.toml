@@ -46,12 +46,7 @@ time        = { workspace = true }
 # Hot reload and orchestration
 notify = { workspace = true }
 notify-debouncer-mini = "0.7"
-nix = { version = "0.27", features = [
-    "fs",
-    "signal",
-    "process",
-    "term",
-] }
+nix = { workspace = true }
 reqwest = { workspace = true, features = [
     "json",
     "rustls-tls",

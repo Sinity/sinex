@@ -228,6 +228,13 @@ petgraph = "0.8"
 # Retry logic
 tokio-retry = "0.3"
 parking_lot = "0.12"
+nix = { version = "0.29", features = [
+    "fs",
+    "process",
+    "resource",
+    "signal",
+    "term",
+] }
 
 # Message bus
 async-nats = "0.47"
