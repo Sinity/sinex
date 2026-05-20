@@ -82,6 +82,25 @@ impl SearchMode {
     }
 }
 
+/// Why an otherwise-valid document search returned no rows.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SearchEmptyReason {
+    /// The requested document scope has no indexed chunks.
+    NoIndexedText,
+    /// Indexed chunks exist in scope, but neither FTS nor trigram matched.
+    NoMatch,
+}
+
+impl SearchEmptyReason {
+    #[must_use]
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            SearchEmptyReason::NoIndexedText => "no_indexed_text",
+            SearchEmptyReason::NoMatch => "no_match",
+        }
+    }
+}
+
 /// A single ranked chunk result.
 #[derive(Debug, Clone)]
 pub struct DocumentSearchResult {
@@ -106,6 +125,8 @@ pub struct DocumentSearchResult {
 pub struct DocumentSearchResults {
     pub results: Vec<DocumentSearchResult>,
     pub search_mode: SearchMode,
+    pub has_more: bool,
+    pub empty_reason: Option<SearchEmptyReason>,
 }
 
 // ---------------------------------------------------------------------------
@@ -141,18 +162,31 @@ impl<'a> DocumentSearchRepository<'a> {
             .max(1);
         let offset = query.offset.unwrap_or(0).max(0);
 
-        let fts_results = self.search_fts(query, limit, offset).await?;
+        let fetch_limit = limit + 1;
+        let fts_results = self.search_fts(query, fetch_limit, offset).await?;
         if !fts_results.is_empty() {
-            return Ok(DocumentSearchResults {
-                results: fts_results,
-                search_mode: SearchMode::Fts,
-            });
+            return Ok(finalize_search_page(fts_results, SearchMode::Fts, limit));
         }
 
-        let trgm_results = self.search_trigram(query, limit, offset).await?;
+        let trgm_results = self.search_trigram(query, fetch_limit, offset).await?;
+        if !trgm_results.is_empty() {
+            return Ok(finalize_search_page(
+                trgm_results,
+                SearchMode::TrigramFallback,
+                limit,
+            ));
+        }
+
+        let empty_reason = if self.count_indexed_chunks_in_scope(query).await? == 0 {
+            SearchEmptyReason::NoIndexedText
+        } else {
+            SearchEmptyReason::NoMatch
+        };
         Ok(DocumentSearchResults {
-            results: trgm_results,
+            results: Vec::new(),
             search_mode: SearchMode::TrigramFallback,
+            has_more: false,
+            empty_reason: Some(empty_reason),
         })
     }
 
@@ -405,6 +439,64 @@ impl<'a> DocumentSearchRepository<'a> {
         rows.into_iter().map(Self::map_search_row).collect()
     }
 
+    async fn count_indexed_chunks_in_scope(&self, query: &DocumentSearchQuery) -> DbResult<i64> {
+        let mut predicates = Vec::new();
+        let mut bind_index: u32 = 1;
+
+        if query.kind.is_some() {
+            predicates.push(format!("d.kind = ${bind_index}"));
+            bind_index += 1;
+        }
+        if query.updated_after.is_some() {
+            predicates.push(format!("d.updated_at >= ${bind_index}"));
+            bind_index += 1;
+        }
+        if query.updated_before.is_some() {
+            predicates.push(format!("d.updated_at <= ${bind_index}"));
+            bind_index += 1;
+        }
+        if query.document_ids.is_some() {
+            predicates.push(format!("d.id = ANY(${bind_index}::uuid[])"));
+            bind_index += 1;
+        }
+        if query.natural_key_prefix.is_some() {
+            predicates.push(format!("d.natural_key LIKE (${bind_index} || '%')"));
+        }
+
+        let where_clause = if predicates.is_empty() {
+            String::new()
+        } else {
+            format!("WHERE {}", predicates.join(" AND "))
+        };
+        let sql = format!(
+            r#"
+            SELECT COUNT(*) AS count
+            FROM core.document_chunks dc
+            JOIN core.documents d ON d.id = dc.document_id
+            {where_clause}
+            "#
+        );
+
+        let mut q = sqlx::query_scalar::<_, i64>(&sql);
+        if let Some(ref kind) = query.kind {
+            q = q.bind(kind);
+        }
+        if let Some(ref ts) = query.updated_after {
+            q = q.bind(time::OffsetDateTime::from(*ts));
+        }
+        if let Some(ref ts) = query.updated_before {
+            q = q.bind(time::OffsetDateTime::from(*ts));
+        }
+        if let Some(ref ids) = query.document_ids {
+            q = q.bind(ids.as_slice());
+        }
+        if let Some(ref prefix) = query.natural_key_prefix {
+            q = q.bind(prefix);
+        }
+
+        q.fetch_one(self.pool).await.map_err(Into::into)
+    }
+
     fn map_search_row(row: sqlx::postgres::PgRow) -> DbResult<DocumentSearchResult> {
         Ok(DocumentSearchResult {
             document_id: row.try_get::<Uuid, _>("document_id")?,
@@ -422,5 +514,22 @@ impl<'a> DocumentSearchRepository<'a> {
                 .try_get::<time::OffsetDateTime, _>("updated_at")
                 .map(Timestamp::from)?,
         })
+    }
+}
+
+fn finalize_search_page(
+    mut results: Vec<DocumentSearchResult>,
+    search_mode: SearchMode,
+    limit: i64,
+) -> DocumentSearchResults {
+    let has_more = results.len() > limit as usize;
+    if has_more {
+        results.truncate(limit as usize);
+    }
+    DocumentSearchResults {
+        results,
+        search_mode,
+        has_more,
+        empty_reason: None,
     }
 }

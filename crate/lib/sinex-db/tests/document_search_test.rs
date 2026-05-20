@@ -5,7 +5,7 @@
 //! projection trigger) and then exercises FTS, trigram fallback, metadata
 //! filters, and pagination.
 
-use sinex_db::repositories::{DbPoolExt, DocumentSearchQuery};
+use sinex_db::repositories::{DbPoolExt, DocumentSearchQuery, SearchEmptyReason};
 use sinex_primitives::Uuid;
 use xtask::sandbox::prelude::*;
 
@@ -388,6 +388,14 @@ async fn document_search_pagination_non_overlap(ctx: TestContext) -> TestResult<
         })
         .await?;
 
+    assert!(
+        page1.has_more,
+        "page 1 should advertise another page when more rows exist"
+    );
+    assert!(
+        page2.has_more,
+        "page 2 should advertise another page when more rows exist"
+    );
     let p1_indices: std::collections::HashSet<i32> =
         page1.results.iter().map(|r| r.chunk_index).collect();
     let p2_indices: std::collections::HashSet<i32> =
@@ -399,6 +407,52 @@ async fn document_search_pagination_non_overlap(ctx: TestContext) -> TestResult<
         "page 1 and page 2 must not overlap"
     );
     assert!(!page1.results.is_empty(), "page 1 should have results");
+    Ok(())
+}
+
+#[sinex_test]
+async fn document_search_empty_reason_distinguishes_no_match_from_no_index(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let doc_id = Uuid::now_v7();
+    seed_document(&ctx, doc_id, "dendron_markdown", "notes/no-match").await?;
+    seed_chunk(&ctx, doc_id, 0, "indexed text about deterministic systems").await?;
+
+    let repo = ctx.pool.documents();
+    let no_match = repo
+        .search(&DocumentSearchQuery {
+            query: "quantum".to_string(),
+            kind: Some("dendron_markdown".to_string()),
+            document_ids: Some(vec![doc_id]),
+            natural_key_prefix: None,
+            updated_after: None,
+            updated_before: None,
+            limit: Some(10),
+            offset: Some(0),
+        })
+        .await?;
+    assert!(no_match.results.is_empty());
+    assert_eq!(no_match.empty_reason, Some(SearchEmptyReason::NoMatch));
+    assert!(!no_match.has_more);
+
+    let no_indexed_text = repo
+        .search(&DocumentSearchQuery {
+            query: "anything".to_string(),
+            kind: Some("dendron_markdown".to_string()),
+            document_ids: Some(vec![Uuid::now_v7()]),
+            natural_key_prefix: None,
+            updated_after: None,
+            updated_before: None,
+            limit: Some(10),
+            offset: Some(0),
+        })
+        .await?;
+    assert!(no_indexed_text.results.is_empty());
+    assert_eq!(
+        no_indexed_text.empty_reason,
+        Some(SearchEmptyReason::NoIndexedText)
+    );
+    assert!(!no_indexed_text.has_more);
     Ok(())
 }
 
