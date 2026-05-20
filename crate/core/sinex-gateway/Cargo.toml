@@ -171,8 +171,7 @@ features = [
 ]
 
 [dependencies.reqwest]
-version = "0.12"
-default-features = false
+workspace = true
 features = [
     "json",
     "http2",
