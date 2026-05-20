@@ -6,7 +6,7 @@ use guppy::graph::cargo::{CargoOptions, CargoResolverVersion, CargoSet};
 use guppy::graph::feature::StandardFeatures;
 use guppy::graph::{DependencyDirection, PackageGraph};
 use guppy::platform::PlatformSpec;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// Direct dependency edge that Cargo would actually build.
 #[derive(Debug, Clone)]
@@ -84,6 +84,34 @@ pub(crate) fn cargo_set_package_ids(cargo_set: &CargoSet<'_>) -> BTreeSet<Packag
     }
 
     package_ids
+}
+
+/// Active immediate dependents for every package in the resolved workspace graph.
+pub(crate) fn active_direct_dependents_by_package(
+    graph: &PackageGraph,
+    include_dev: bool,
+) -> Result<BTreeMap<PackageId, Vec<String>>> {
+    let cargo_set = workspace_cargo_set(graph, include_dev)?;
+    let mut dependents_by_package: BTreeMap<PackageId, Vec<String>> = BTreeMap::new();
+
+    for link in cargo_set
+        .target_links()
+        .chain(cargo_set.host_links())
+        .chain(cargo_set.build_dep_links())
+        .chain(cargo_set.proc_macro_links())
+    {
+        dependents_by_package
+            .entry(link.to().id().clone())
+            .or_default()
+            .push(format!("{} {}", link.from().name(), link.from().version()));
+    }
+
+    for dependents in dependents_by_package.values_mut() {
+        dependents.sort();
+        dependents.dedup();
+    }
+
+    Ok(dependents_by_package)
 }
 
 /// Direct dependency package names active for a package's default feature set.

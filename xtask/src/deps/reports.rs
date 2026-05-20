@@ -105,6 +105,13 @@ pub fn write_duplicates_report<W: Write>(
                                 detail.direct_workspace_roots.join(", ")
                             )?;
                         }
+                        if !detail.direct_dependents.is_empty() {
+                            writeln!(
+                                writer,
+                                "      dependents: {}",
+                                detail.direct_dependents.join(", ")
+                            )?;
+                        }
                     }
                 }
 

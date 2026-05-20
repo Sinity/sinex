@@ -112,6 +112,12 @@ async fn test_deps_duplicates_json_includes_version_roots() -> ::xtask::sandbox:
             .all(|detail| detail["direct_workspace_roots"].is_array()),
         "duplicate version details should distinguish direct workspace roots"
     );
+    assert!(
+        details
+            .iter()
+            .all(|detail| detail["direct_dependents"].is_array()),
+        "duplicate version details should include immediate active dependents"
+    );
     Ok(())
 }
 
@@ -144,6 +150,40 @@ async fn test_deps_duplicates_json_identifies_direct_roots() -> ::xtask::sandbox
                 }))
         ),
         "at least one duplicate should name a first-party manifest root that directly requests it"
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn test_deps_duplicates_json_identifies_direct_dependents() -> ::xtask::sandbox::TestResult<()>
+{
+    let output = xtask_command()?
+        .arg("deps")
+        .arg("duplicates")
+        .arg("--json")
+        .output()?;
+
+    assert!(
+        output.status.success(),
+        "deps duplicates --json failed. Stderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let parsed: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+    let duplicates = parsed["data"]["duplicates"]
+        .as_array()
+        .ok_or_else(|| color_eyre::eyre::eyre!("data.duplicates should be an array"))?;
+
+    assert!(
+        duplicates.iter().any(
+            |duplicate| duplicate["version_details"]
+                .as_array()
+                .is_some_and(|details| details.iter().any(|detail| {
+                    detail["direct_dependents"]
+                        .as_array()
+                        .is_some_and(|dependents| !dependents.is_empty())
+                }))
+        ),
+        "at least one duplicate version should name the active packages that immediately depend on it"
     );
     Ok(())
 }

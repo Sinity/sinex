@@ -8,8 +8,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 use crate::deps::active::{
-    active_direct_dependencies, active_package_ids_for_package, cargo_set_package_ids,
-    workspace_cargo_set,
+    active_direct_dependencies, active_direct_dependents_by_package,
+    active_package_ids_for_package, cargo_set_package_ids, workspace_cargo_set,
 };
 
 /// Workspace analyzer using guppy
@@ -59,6 +59,8 @@ pub struct DuplicateVersionDetail {
     pub workspace_roots: Vec<String>,
     /// Workspace packages that directly request this exact version.
     pub direct_workspace_roots: Vec<String>,
+    /// Active packages that immediately depend on this exact version.
+    pub direct_dependents: Vec<String>,
 }
 
 impl WorkspaceAnalyzer {
@@ -197,6 +199,7 @@ impl WorkspaceAnalyzer {
         let mut version_map: BTreeMap<String, BTreeMap<String, Vec<PackageId>>> = BTreeMap::new();
         let workspace_roots_by_package = self.workspace_roots_by_reached_package()?;
         let direct_roots_by_package = self.workspace_direct_roots_by_package()?;
+        let direct_dependents_by_package = active_direct_dependents_by_package(&self.graph, true)?;
         let active_package_ids = cargo_set_package_ids(&workspace_cargo_set(&self.graph, true)?);
 
         for package in self.graph.packages() {
@@ -233,6 +236,10 @@ impl WorkspaceAnalyzer {
                         direct_workspace_roots: self.workspace_roots_for_package_ids(
                             &package_ids,
                             &direct_roots_by_package,
+                        ),
+                        direct_dependents: self.workspace_roots_for_package_ids(
+                            &package_ids,
+                            &direct_dependents_by_package,
                         ),
                     });
                 }
