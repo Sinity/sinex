@@ -5135,7 +5135,6 @@ dependencies = [
  "sinex-node-sdk",
  "sinex-primitives",
  "sinex-schema",
- "socket2 0.6.3",
  "sqlx",
  "subtle",
  "tempfile",
