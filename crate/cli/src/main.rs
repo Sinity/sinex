@@ -10,10 +10,11 @@ use sinexctl::commands::{
     AnnotateCommand, AuditCommand, AutomataCommand, BlobCommands, CompletionsCommand,
     ConfigCommands, ContextCommand, CoreCommands, CurationCommand, DeclareCommand, DemoCommand,
     DlqCommands, DocumentsCommand, ErrorsCommand, ExplainCommand, GatewayCommands, GitOpsCommands,
-    IngestorsCommand, LifecycleCommands, LlmCommand, NodeCommands, NodesCommand, NowCommand,
-    OpsCommands, PrivacyCommand, QueryCommand, RecentCommand, ReplayCommands, ReportCommands,
-    SemanticCommand, SourcesCommand, StateCommands, StatusCommand, TasksCommand, TelemetryCommands,
-    ThroughputCommand, TraceCommand, TuiCommand, VerifyCommand, WatchCommand,
+    IngestorsCommand, InstructionsCommand, LifecycleCommands, LlmCommand, NodeCommands,
+    NodesCommand, NowCommand, OpsCommands, PrivacyCommand, QueryCommand, RecentCommand,
+    ReplayCommands, ReportCommands, SemanticCommand, SourcesCommand, StateCommands, StatusCommand,
+    TasksCommand, TelemetryCommands, ThroughputCommand, TraceCommand, TuiCommand, VerifyCommand,
+    WatchCommand,
 };
 use sinexctl::fmt::format_yaml;
 use sinexctl::mcp::{McpCatalogEntry, tool_catalog as mcp_tool_catalog};
@@ -176,6 +177,9 @@ enum Commands {
 
     /// Manual canonical declarations
     Declare(DeclareCommand),
+
+    /// Local desired-state instructions and actuator dispatch.
+    Instructions(InstructionsCommand),
 
     /// Task lifecycle and projection commands
     Tasks(TasksCommand),
@@ -374,6 +378,7 @@ async fn main() -> color_eyre::Result<()> {
                 Commands::State { .. } => unreachable!("State command handled above"),
                 Commands::Sources(cmd) => cmd.execute(&client, format).await?,
                 Commands::Declare(cmd) => cmd.execute(&client, format).await?,
+                Commands::Instructions(cmd) => cmd.execute(&client, format).await?,
                 Commands::Tasks(cmd) => cmd.execute(&client, format).await?,
                 Commands::Curation(cmd) => cmd.execute(&client, format).await?,
                 Commands::Semantics(cmd) => cmd.execute(&client, format).await?,
@@ -577,6 +582,14 @@ fn command_path(cmd: &Commands) -> String {
                     }
                 }
                 DeclareSubcommand::Task(_) => "declare task".to_string(),
+            }
+        }
+        Commands::Instructions(cmd) => {
+            use sinexctl::commands::instructions::InstructionsSubcommand;
+            match cmd.subcommand() {
+                InstructionsSubcommand::HyprlandWorkspace(_) => {
+                    "instructions hyprland-workspace".to_string()
+                }
             }
         }
         Commands::Tasks(cmd) => {
@@ -1148,6 +1161,17 @@ mod tests {
                     "sinexctl", "privacy", "export", "--since", "24h", "--source", "terminal",
                 ],
                 "privacy export",
+            ),
+            (
+                vec![
+                    "sinexctl",
+                    "instructions",
+                    "hyprland-workspace",
+                    "--workspace",
+                    "4",
+                    "--dry-run",
+                ],
+                "instructions hyprland-workspace",
             ),
             (
                 vec![
