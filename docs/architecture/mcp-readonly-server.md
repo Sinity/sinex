@@ -58,6 +58,7 @@ HTTP/SSE transport is a follow-up only when there is a real consumer.
 | `sinex.trace_lineage` | `events.lineage` | event id, material/synthesis provenance, parent ids, redacted material links |
 | `sinex.source_readiness` | `sources.readiness.*` gateway methods | source family/unit status, caveat codes, stale/missing/error evidence |
 | `sinex.source_continuity` | `sources.continuity.*` | source-family continuity, gaps, seams, and replayability |
+| `sinex.source_gap_explain` | `sources.continuity.explain_gap` | source-family coverage-gap attribution at a timestamp |
 | `sinex.privacy_status` | `privacy.private_mode.status` | runtime private-mode state |
 | `sinex.system_health` | `system.health` | gateway and confirmation-path health |
 | `sinex.tasks_list` | `tasks.list` | current task workflow search/filter results |
