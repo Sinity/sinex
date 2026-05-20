@@ -14,7 +14,7 @@ use async_nats::{
     },
 };
 use color_eyre::eyre::{Result, WrapErr, eyre};
-use rand::RngExt;
+use rand::Rng;
 use sinex_primitives::nats::NatsConnectionConfig;
 use tempfile::TempDir;
 use tokio::{
