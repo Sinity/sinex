@@ -97,7 +97,7 @@ regex = { workspace = true }
 # Macros
 xtask-macros = { path = "./macros" }
 
-sysinfo = "0.38.0"
+sysinfo = { workspace = true }
 
 # Shell-style command composition
 
