@@ -2103,53 +2103,46 @@ async fn recent_activity(client: &GatewayClient, arguments: Value) -> Result<Val
     ))
 }
 
-async fn command_frequency(client: &GatewayClient, arguments: Value) -> Result<Value> {
-    let args: TelemetryBucketsArgs = serde_json::from_value(arguments)?;
-    let entries = client
-        .telemetry_command_frequency(args.from.clone(), args.to.clone(), args.limit)
-        .await?;
-    Ok(envelope(
-        "sinex.command_frequency",
-        json!(args),
-        json!({ "entries": entries }),
-    ))
+macro_rules! telemetry_bucket_tool {
+    ($fn_name:ident, $tool_name:literal, $client_method:ident, $result_key:literal) => {
+        async fn $fn_name(client: &GatewayClient, arguments: Value) -> Result<Value> {
+            let args: TelemetryBucketsArgs = serde_json::from_value(arguments)?;
+            let result = client
+                .$client_method(args.from.clone(), args.to.clone(), args.limit)
+                .await?;
+            Ok(envelope(
+                $tool_name,
+                json!(args),
+                json!({ $result_key: result }),
+            ))
+        }
+    };
 }
 
-async fn file_activity(client: &GatewayClient, arguments: Value) -> Result<Value> {
-    let args: TelemetryBucketsArgs = serde_json::from_value(arguments)?;
-    let entries = client
-        .telemetry_file_activity(args.from.clone(), args.to.clone(), args.limit)
-        .await?;
-    Ok(envelope(
-        "sinex.file_activity",
-        json!(args),
-        json!({ "entries": entries }),
-    ))
-}
-
-async fn system_state(client: &GatewayClient, arguments: Value) -> Result<Value> {
-    let args: TelemetryBucketsArgs = serde_json::from_value(arguments)?;
-    let buckets = client
-        .telemetry_system_state(args.from.clone(), args.to.clone(), args.limit)
-        .await?;
-    Ok(envelope(
-        "sinex.system_state",
-        json!(args),
-        json!({ "buckets": buckets }),
-    ))
-}
-
-async fn window_focus(client: &GatewayClient, arguments: Value) -> Result<Value> {
-    let args: TelemetryBucketsArgs = serde_json::from_value(arguments)?;
-    let buckets = client
-        .telemetry_window_focus(args.from.clone(), args.to.clone(), args.limit)
-        .await?;
-    Ok(envelope(
-        "sinex.window_focus",
-        json!(args),
-        json!({ "buckets": buckets }),
-    ))
-}
+telemetry_bucket_tool!(
+    command_frequency,
+    "sinex.command_frequency",
+    telemetry_command_frequency,
+    "entries"
+);
+telemetry_bucket_tool!(
+    file_activity,
+    "sinex.file_activity",
+    telemetry_file_activity,
+    "entries"
+);
+telemetry_bucket_tool!(
+    system_state,
+    "sinex.system_state",
+    telemetry_system_state,
+    "buckets"
+);
+telemetry_bucket_tool!(
+    window_focus,
+    "sinex.window_focus",
+    telemetry_window_focus,
+    "buckets"
+);
 
 async fn current_health(client: &GatewayClient, arguments: Value) -> Result<Value> {
     let args: TelemetryLimitArgs = serde_json::from_value(arguments)?;
@@ -2171,65 +2164,36 @@ async fn current_device_state(client: &GatewayClient, arguments: Value) -> Resul
     ))
 }
 
-async fn gateway_stats(client: &GatewayClient, arguments: Value) -> Result<Value> {
-    let args: TelemetryBucketsArgs = serde_json::from_value(arguments)?;
-    let buckets = client
-        .telemetry_gateway_stats(args.from.clone(), args.to.clone(), args.limit)
-        .await?;
-    Ok(envelope(
-        "sinex.gateway_stats",
-        json!(args),
-        json!({ "buckets": buckets }),
-    ))
-}
-
-async fn stream_stats(client: &GatewayClient, arguments: Value) -> Result<Value> {
-    let args: TelemetryBucketsArgs = serde_json::from_value(arguments)?;
-    let buckets = client
-        .telemetry_stream_stats(args.from.clone(), args.to.clone(), args.limit)
-        .await?;
-    Ok(envelope(
-        "sinex.stream_stats",
-        json!(args),
-        json!({ "buckets": buckets }),
-    ))
-}
-
-async fn assembly_stats(client: &GatewayClient, arguments: Value) -> Result<Value> {
-    let args: TelemetryBucketsArgs = serde_json::from_value(arguments)?;
-    let buckets = client
-        .telemetry_assembly_stats(args.from.clone(), args.to.clone(), args.limit)
-        .await?;
-    Ok(envelope(
-        "sinex.assembly_stats",
-        json!(args),
-        json!({ "buckets": buckets }),
-    ))
-}
-
-async fn node_stats(client: &GatewayClient, arguments: Value) -> Result<Value> {
-    let args: TelemetryBucketsArgs = serde_json::from_value(arguments)?;
-    let buckets = client
-        .telemetry_node_stats(args.from.clone(), args.to.clone(), args.limit)
-        .await?;
-    Ok(envelope(
-        "sinex.node_stats",
-        json!(args),
-        json!({ "buckets": buckets }),
-    ))
-}
-
-async fn metric_counters(client: &GatewayClient, arguments: Value) -> Result<Value> {
-    let args: TelemetryBucketsArgs = serde_json::from_value(arguments)?;
-    let buckets = client
-        .telemetry_metric_counters(args.from.clone(), args.to.clone(), args.limit)
-        .await?;
-    Ok(envelope(
-        "sinex.metric_counters",
-        json!(args),
-        json!({ "buckets": buckets }),
-    ))
-}
+telemetry_bucket_tool!(
+    gateway_stats,
+    "sinex.gateway_stats",
+    telemetry_gateway_stats,
+    "buckets"
+);
+telemetry_bucket_tool!(
+    stream_stats,
+    "sinex.stream_stats",
+    telemetry_stream_stats,
+    "buckets"
+);
+telemetry_bucket_tool!(
+    assembly_stats,
+    "sinex.assembly_stats",
+    telemetry_assembly_stats,
+    "buckets"
+);
+telemetry_bucket_tool!(
+    node_stats,
+    "sinex.node_stats",
+    telemetry_node_stats,
+    "buckets"
+);
+telemetry_bucket_tool!(
+    metric_counters,
+    "sinex.metric_counters",
+    telemetry_metric_counters,
+    "buckets"
+);
 
 async fn llm_prompts(client: &GatewayClient, arguments: Value) -> Result<Value> {
     let args: LlmPromptsArgs = serde_json::from_value(arguments)?;
