@@ -4966,6 +4966,11 @@
       "about": "Test input text against the privacy engine"
     },
     {
+      "subject": "xtask_command:ra-diagnose",
+      "path": "ra-diagnose",
+      "about": "Diagnose rust-analyzer process footprint and local workspace contract"
+    },
+    {
       "subject": "xtask_command:reset",
       "path": "reset",
       "about": "Reset developer state for a fresh start"
