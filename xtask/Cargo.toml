@@ -16,27 +16,27 @@ clap = { workspace = true, features = [
     "derive",
 ] }
 color-eyre = { workspace = true }
-walkdir = "2.5"
+walkdir = { workspace = true }
 which = { workspace = true }
-sha2 = "0.10"
+sha2 = { workspace = true }
 
-clap_complete = "4.5"
+clap_complete = { workspace = true }
 tempfile = { workspace = true }
 serde = { workspace = true, features = [
     "derive",
 ] }
 serde_json = { workspace = true }
-serde_yml = "0.0.12"
+serde_yml = { workspace = true }
 
 rusqlite = { workspace = true }
-console = "0.15"
+console = { workspace = true }
 quick-xml = "0.38"
 num_cpus = "1.16"
-dirs = "5.0"
+dirs = { workspace = true }
 toml = { workspace = true }
 gethostname = { workspace = true }
 guppy = "0.17"
-libc = "0.2"
+libc = { workspace = true }
 
 # TLS certificate generation
 rcgen       = { workspace = true, features = ["pem", "x509-parser"] }
@@ -97,7 +97,7 @@ sysinfo = { workspace = true }
 # Shell-style command composition
 
 # Pretty table output
-tabled = "0.17"
+tabled = { workspace = true }
 
 # Better panic messages for users
 human-panic = { workspace = true }

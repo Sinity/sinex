@@ -253,6 +253,12 @@ tokio-stream = "0.1"
 futures = "0.3"
 dirs = "5.0"
 base64 = "0.22"
+libc = "0.2"
+walkdir = "2.5"
+clap_complete = "4.5"
+serde_yml = "0.0.12"
+console = "0.15"
+tabled = "0.17"
 
 # File system watching
 notify = "8.2"

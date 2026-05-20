@@ -32,7 +32,7 @@ url = { workspace = true, features = ["serde"] }
 tokio = { workspace = true, features = ["sync", "time"] }
 indexmap = { workspace = true, features = ["serde"] }
 displaydoc = "0.2"
-serde_path_to_error = "0.1"
+serde_path_to_error = { workspace = true }
 tracing = { workspace = true }
 regex = { workspace = true }
 
@@ -42,7 +42,7 @@ base64 = { workspace = true }
 blake3 = { workspace = true }
 toml = { workspace = true }
 validator = { workspace = true, features = ["derive"] }
-unicode-normalization = "0.1"
+unicode-normalization = { workspace = true }
 inventory = { workspace = true }
 
 # Macros

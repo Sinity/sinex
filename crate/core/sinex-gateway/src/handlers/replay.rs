@@ -233,6 +233,7 @@ fn db_replay_state(state: RpcReplayState) -> DbReplayState {
     }
 }
 
+#[cfg(any(feature = "test-support", test))]
 pub(crate) fn parse_replay_state(value: &str) -> Result<DbReplayState> {
     match value.to_lowercase().as_str() {
         "planning" => Ok(DbReplayState::Planning),
