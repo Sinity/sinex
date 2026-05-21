@@ -61,6 +61,8 @@ async fn test_deps_duplicates_threshold_filters_report() -> ::xtask::sandbox::Te
     assert_eq!(data.get("threshold"), Some(&serde_json::json!(1000)));
     assert_eq!(data.get("direct_only"), Some(&serde_json::json!(false)));
     assert_eq!(data.get("transitive_only"), Some(&serde_json::json!(false)));
+    assert_eq!(data.get("direct_count"), Some(&serde_json::json!(0)));
+    assert_eq!(data.get("transitive_count"), Some(&serde_json::json!(0)));
     assert_eq!(data.get("count"), Some(&serde_json::json!(0)));
     let duplicates = data
         .get("duplicates")
@@ -188,6 +190,24 @@ async fn test_deps_duplicates_json_classifies_direct_debt() -> ::xtask::sandbox:
             duplicate["name"].as_str().unwrap_or("<unknown>")
         );
     }
+    let direct_count = duplicates
+        .iter()
+        .filter(|duplicate| duplicate["direct_workspace_debt"] == serde_json::json!(true))
+        .count();
+    let transitive_count = duplicates
+        .iter()
+        .filter(|duplicate| duplicate["transitive_only"] == serde_json::json!(true))
+        .count();
+    assert_eq!(
+        parsed["data"]["direct_count"].as_u64(),
+        Some(direct_count as u64),
+        "data.direct_count should summarize unfiltered direct-workspace duplicate debt"
+    );
+    assert_eq!(
+        parsed["data"]["transitive_count"].as_u64(),
+        Some(transitive_count as u64),
+        "data.transitive_count should summarize unfiltered transitive duplicate debt"
+    );
     Ok(())
 }
 

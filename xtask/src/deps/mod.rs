@@ -236,6 +236,14 @@ impl DepsCommand {
 
                 // Filter by threshold
                 duplicates.retain(|d| d.versions.len() >= *threshold);
+                let direct_count = duplicates
+                    .iter()
+                    .filter(|duplicate| duplicate.direct_workspace_debt)
+                    .count();
+                let transitive_count = duplicates
+                    .iter()
+                    .filter(|duplicate| duplicate.transitive_only)
+                    .count();
                 if *direct_only {
                     duplicates.retain(|d| d.direct_workspace_debt);
                 }
@@ -249,6 +257,8 @@ impl DepsCommand {
                             "duplicates": duplicates,
                             "count": duplicates.len(),
                             "threshold": threshold,
+                            "direct_count": direct_count,
+                            "transitive_count": transitive_count,
                             "direct_only": direct_only,
                             "transitive_only": transitive_only,
                         }))
