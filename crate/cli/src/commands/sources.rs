@@ -7,13 +7,15 @@ use sinex_primitives::rpc::sources::{
 };
 
 use sinex_primitives::Timestamp;
+use sinex_primitives::parser::SourceUnitId;
 use sinex_primitives::rpc::sources::{
     SourceReadiness, SourceReadinessStatus, SourcesReadinessGetRequest,
     SourcesReadinessGetResponse, SourcesReadinessListRequest, SourcesReadinessListResponse,
 };
 use sinex_primitives::rpc::sources::{
     SourcesAnnotateRequest, SourcesAnnotateResponse, SourcesArchiveRequest, SourcesArchiveResponse,
-    SourcesContinuityRequest, SourcesContinuityResponse,
+    SourcesContinuityRequest, SourcesContinuityResponse, SourcesDriftListRequest,
+    SourcesDriftListResponse,
 };
 use sinex_primitives::sources::SourceFamily;
 use sinex_primitives::sources::continuity::{
@@ -73,6 +75,7 @@ impl SourcesCommand {
             SourcesSubcommand::Archive(cmd) => cmd.execute(client, format).await,
             SourcesSubcommand::Continuity(cmd) => cmd.execute(client, format).await,
             SourcesSubcommand::Readiness(cmd) => cmd.execute(client, format).await,
+            SourcesSubcommand::Drift(cmd) => cmd.execute(client, format).await,
             SourcesSubcommand::ExplainGap(cmd) => cmd.execute(client, format).await,
         }
     }
@@ -96,6 +99,8 @@ pub enum SourcesSubcommand {
     Continuity(ContinuityCommand),
     /// Report source readiness, cost, freshness, and caveats
     Readiness(ReadinessCommand),
+    /// List recent source-shape drift observed by adapter-backed source units
+    Drift(DriftCommand),
     /// Explain a coverage gap at a specific timestamp
     #[command(name = "explain-gap")]
     ExplainGap(ExplainGapCommand),
@@ -971,4 +976,70 @@ fn format_readiness_detail(r: &SourceReadiness) -> String {
         }
     }
     lines.join("\n")
+}
+
+// ── Drift (#1103) ─────────────────────────────────────────────────────
+
+/// List recent source-shape drift observed by adapter-backed source units
+#[derive(Debug, Args)]
+pub struct DriftCommand {
+    /// Optional source-unit id filter.
+    #[arg(long = "source-unit")]
+    source_unit_id: Option<String>,
+
+    /// Maximum number of drift observations to return.
+    #[arg(long, default_value_t = 50)]
+    limit: usize,
+}
+
+impl DriftCommand {
+    async fn execute(&self, client: &GatewayClient, format: OutputFormat) -> Result<()> {
+        let source_unit_id = self
+            .source_unit_id
+            .as_deref()
+            .map(SourceUnitId::new)
+            .transpose()?;
+        let req = SourcesDriftListRequest {
+            source_unit_id,
+            limit: Some(self.limit),
+        };
+        let body: SourcesDriftListResponse = client.sources_drift_list(req).await?;
+        CommandOutput::single(body, format_drift_list).display(&format)?;
+        Ok(())
+    }
+}
+
+fn format_drift_list(response: &SourcesDriftListResponse) -> String {
+    use tabled::{builder::Builder, settings::Style};
+
+    if response.drifts.is_empty() {
+        return "No checkpointed source-shape drift found.".to_string();
+    }
+
+    let mut builder = Builder::new();
+    builder.push_record([
+        "SOURCE UNIT",
+        "FORMAT",
+        "OBSERVED",
+        "ADDED",
+        "REMOVED",
+        "TYPE CHANGES",
+        "CHECKPOINT",
+    ]);
+
+    for drift in &response.drifts {
+        builder.push_record([
+            drift.source_unit_id.as_str().to_string(),
+            drift.format.clone(),
+            drift.observed_at.clone(),
+            drift.added_keys.len().to_string(),
+            drift.removed_keys.len().to_string(),
+            drift.type_changes.len().to_string(),
+            drift.checkpoint_key.clone(),
+        ]);
+    }
+
+    let mut table = builder.build();
+    table.with(Style::rounded());
+    table.to_string()
 }
