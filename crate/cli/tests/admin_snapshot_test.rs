@@ -384,6 +384,17 @@ async fn snapshot_archive_preserves_component_paths_and_nats_member_manifest()
         "archive should contain every non-empty manifest component path: {:?}",
         inspect.missing_component_paths
     );
+    assert_eq!(inspect.state_source_unit_count, Some(2));
+    assert_eq!(inspect.state_private_mode_state_present, Some(false));
+    let inspect_table = sinexctl::admin::snapshot::format_snapshot_inspect_result(&inspect);
+    assert!(
+        inspect_table.contains("State source units: 2"),
+        "inspect table should summarize state source units\n{inspect_table}"
+    );
+    assert!(
+        inspect_table.contains("Private-mode state: absent"),
+        "inspect table should summarize private-mode state presence\n{inspect_table}"
+    );
     let nats_record = inspect
         .manifest
         .components
