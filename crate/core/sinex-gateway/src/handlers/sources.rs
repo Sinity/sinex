@@ -1107,10 +1107,10 @@ fn extract_checkpoint_drifts(
     };
 
     let parsed_key = sinex_node_sdk::checkpoint::parse_checkpoint_key(checkpoint_key);
-    let (_, consumer_group, consumer_name) = parsed_key
-        .as_ref()
-        .map(|(node, group, consumer)| (node.as_str(), group.clone(), consumer.clone()))
-        .unwrap_or(("", String::new(), String::new()));
+    let (_, consumer_group, consumer_name) = parsed_key.as_ref().map_or(
+        ("", String::new(), String::new()),
+        |(node, group, consumer)| (node.as_str(), group.clone(), consumer.clone()),
+    );
 
     raw_drifts
         .iter()

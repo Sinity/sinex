@@ -474,7 +474,7 @@ fn run_update(
     let output = crate::process::ProcessBuilder::cargo()
         .args(args.iter().map(String::as_str))
         .with_description("cargo update")
-        .with_timeout(Duration::from_secs(60 * 15))
+        .with_timeout(Duration::from_mins(15))
         .run_capture()
         .context("failed to run cargo update")?;
     if output.exit_code != 0 {
