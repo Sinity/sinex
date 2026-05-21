@@ -109,6 +109,7 @@ use async_trait::async_trait;
 use futures::stream::BoxStream;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
+use std::{error::Error, fmt};
 
 use sinex_primitives::events::SourceMaterial;
 use sinex_primitives::ids::Id;
@@ -117,43 +118,72 @@ use sinex_primitives::parser::{
 };
 
 /// Error type for parser and adapter operations.
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug)]
 pub enum ParserError {
-    #[error("adapter error: {0}")]
     Adapter(String),
 
-    #[error("parse error: {0}")]
     Parse(String),
 
-    #[error("cursor error: {0}")]
     Cursor(String),
 
-    #[error("I/O error: {0}")]
-    Io(#[from] std::io::Error),
+    Io(std::io::Error),
 
     /// `SinexError` raised by code the parser calls (privacy engine, validators,
     /// inner SDK helpers). Converted via `?` so parsers don't have to
     /// `.map_err(|e| ParserError::Parse(e.to_string()))` everywhere.
-    #[error("{0}")]
-    Sinex(#[from] sinex_primitives::SinexError),
+    Sinex(sinex_primitives::SinexError),
 
-    #[error("invalid input: {0}")]
     InvalidInput(String),
 
-    #[error("configuration error: {0}")]
     Config(String),
 
-    #[error("material not found: {0}")]
     MaterialNotFound(String),
 
-    #[error("field error: {0}")]
     Field(String),
 
-    #[error("decode error: {0}")]
     Decode(String),
 
-    #[error("privacy engine error: {0}")]
     Privacy(String),
+}
+
+impl fmt::Display for ParserError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Adapter(message) => write!(f, "adapter error: {message}"),
+            Self::Parse(message) => write!(f, "parse error: {message}"),
+            Self::Cursor(message) => write!(f, "cursor error: {message}"),
+            Self::Io(error) => write!(f, "I/O error: {error}"),
+            Self::Sinex(error) => write!(f, "{error}"),
+            Self::InvalidInput(message) => write!(f, "invalid input: {message}"),
+            Self::Config(message) => write!(f, "configuration error: {message}"),
+            Self::MaterialNotFound(message) => write!(f, "material not found: {message}"),
+            Self::Field(message) => write!(f, "field error: {message}"),
+            Self::Decode(message) => write!(f, "decode error: {message}"),
+            Self::Privacy(message) => write!(f, "privacy engine error: {message}"),
+        }
+    }
+}
+
+impl Error for ParserError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::Io(error) => Some(error),
+            Self::Sinex(error) => Some(error),
+            _ => None,
+        }
+    }
+}
+
+impl From<std::io::Error> for ParserError {
+    fn from(error: std::io::Error) -> Self {
+        Self::Io(error)
+    }
+}
+
+impl From<sinex_primitives::SinexError> for ParserError {
+    fn from(error: sinex_primitives::SinexError) -> Self {
+        Self::Sinex(error)
+    }
 }
 
 /// Result type for parser substrate operations.

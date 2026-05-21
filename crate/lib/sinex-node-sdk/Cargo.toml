@@ -29,8 +29,6 @@ preflight = []
 
 [dependencies.camino]
 workspace = true
-[dependencies.thiserror]
-workspace = true
 [dependencies.bon]
 workspace = true
 [dependencies.async-trait]
