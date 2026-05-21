@@ -20,6 +20,9 @@ use sinex_node_sdk::{
         AcquisitionManager, BufferedAppendStreamWriterConfig, RotationPolicy, SourceRecordAnchor,
     },
     ingestor_node::IngestorNode,
+    parser::{
+        FileDropWatchBudget, FileDropWatchMode, FileDropWatchSurvey, choose_file_drop_watch_plan,
+    },
     runtime::stream::{
         Checkpoint, ContinuousStart, MaterialReplayContext, NodeCapabilities, NodeRuntimeState,
         ResolvedReplayMaterial, ScanArgs, ScanReport, ServiceInfo, TimeHorizon,
@@ -49,6 +52,7 @@ use sinex_primitives::{
 use std::{
     collections::{HashMap, HashSet},
     fs::Metadata as StdMetadata,
+    num::NonZeroUsize,
     path::{Path, PathBuf},
     sync::{
         Arc, Mutex as StdMutex,
@@ -82,7 +86,6 @@ const FS_OBSERVATION_BATCH_COALESCE_WINDOW: std::time::Duration =
     std::time::Duration::from_millis(20);
 const FS_OBSERVATION_WRITER_CHANNEL_CAPACITY: usize = 256;
 const DEFAULT_IGNORED_DIRECTORY_NAMES: &[&str] = &[".git", ".direnv", "node_modules", "target"];
-const INOTIFY_MAX_USER_WATCHES_PATH: &str = "/proc/sys/fs/inotify/max_user_watches";
 const MATERIAL_REASON_CREATED: &str = "fs-watcher:file-created";
 const MATERIAL_REASON_MODIFIED: &str = "fs-watcher:file-modified";
 const MATERIAL_REASON_DELETED: &str = "fs-watcher:file-deleted";
@@ -112,27 +115,7 @@ impl WatchStrategy {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct WatchBudget {
-    configured_max_watches: usize,
-    effective_max_watches: usize,
-    kernel_max_watches: Option<usize>,
-}
-
-impl WatchBudget {
-    fn detect(configured_max_watches: usize) -> Self {
-        let kernel_max_watches = read_kernel_inotify_watch_limit();
-        let effective_max_watches = kernel_max_watches.map_or(configured_max_watches, |limit| {
-            limit.min(configured_max_watches)
-        });
-
-        Self {
-            configured_max_watches,
-            effective_max_watches,
-            kernel_max_watches,
-        }
-    }
-}
+type WatchBudget = FileDropWatchBudget;
 
 enum ActiveWatcher {
     NativeRecursive {
@@ -1338,53 +1321,28 @@ fn choose_watch_strategy(
     survey: &WatchTreeSurvey,
     budget: WatchBudget,
 ) -> NodeResult<WatchStrategy> {
-    let needs_filtered_plan = survey.accessible_watch_count > budget.effective_max_watches
-        || survey.unreadable_directories > 0
-        || survey.ignored_directories > 0;
+    let plan = choose_file_drop_watch_plan(
+        FileDropWatchSurvey {
+            accessible_watch_count: survey.accessible_watch_count,
+            filtered_watch_count: survey.filtered_watch_count,
+            unreadable_directories: survey.unreadable_directories,
+            ignored_directories: survey.ignored_directories,
+        },
+        budget,
+    )
+    .map_err(|error| {
+        SinexError::configuration(
+            "Filesystem watch budget exceeded even after applying filtered native watch planning",
+        )
+        .with_context("reason", error.to_string())
+    })?;
 
-    if !needs_filtered_plan {
-        return Ok(WatchStrategy::NativeRecursive);
-    }
-
-    if survey.filtered_watch_count <= budget.effective_max_watches {
-        return Ok(WatchStrategy::NativeFiltered {
+    match plan.mode {
+        FileDropWatchMode::NativeRecursive => Ok(WatchStrategy::NativeRecursive),
+        FileDropWatchMode::NativeFiltered => Ok(WatchStrategy::NativeFiltered {
             filtered_targets: survey.filtered_targets.clone(),
-        });
+        }),
     }
-
-    let mut error = SinexError::configuration(
-        "Filesystem watch budget exceeded even after applying filtered native watch planning",
-    )
-    .with_context(
-        "configured_max_watches",
-        budget.configured_max_watches.to_string(),
-    )
-    .with_context(
-        "effective_max_watches",
-        budget.effective_max_watches.to_string(),
-    )
-    .with_context(
-        "accessible_watch_count",
-        survey.accessible_watch_count.to_string(),
-    )
-    .with_context(
-        "filtered_watch_count",
-        survey.filtered_watch_count.to_string(),
-    )
-    .with_context(
-        "unreadable_directories",
-        survey.unreadable_directories.to_string(),
-    )
-    .with_context(
-        "ignored_directories",
-        survey.ignored_directories.to_string(),
-    );
-
-    if let Some(kernel_max_watches) = budget.kernel_max_watches {
-        error = error.with_context("kernel_max_user_watches", kernel_max_watches.to_string());
-    }
-
-    Err(error)
 }
 
 fn notify_error_is_skippable_filtered_target(error: &notify::Error) -> bool {
@@ -2221,7 +2179,7 @@ fn log_watch_strategy(
             "Filesystem watch budget exceeds the current kernel inotify limit; the effective limit is clamped by the host"
         );
     }
-    if survey.accessible_watch_count > budget.effective_max_watches {
+    if survey.accessible_watch_count > budget.effective_max_watches.get() {
         warn!(
             path = %path.display(),
             accessible_watch_count = survey.accessible_watch_count,
@@ -2253,14 +2211,6 @@ fn log_watch_strategy(
         watcher_mode,
         "Watching path"
     );
-}
-
-fn read_kernel_inotify_watch_limit() -> Option<usize> {
-    std::fs::read_to_string(INOTIFY_MAX_USER_WATCHES_PATH)
-        .ok()?
-        .trim()
-        .parse::<usize>()
-        .ok()
 }
 
 fn handle_watcher_callback(
@@ -2359,7 +2309,11 @@ fn prepare_watch_root(
         ctx.follow_symlinks,
         &ctx.ignored_directory_names,
     )?;
-    let budget = WatchBudget::detect(ctx.max_watches);
+    let configured_max_watches = NonZeroUsize::new(ctx.max_watches).ok_or_else(|| {
+        SinexError::configuration("filesystem max_watches must be greater than zero")
+            .with_context("max_watches", ctx.max_watches.to_string())
+    })?;
+    let budget = WatchBudget::detect(configured_max_watches);
     let strategy = choose_watch_strategy(&survey, budget)?;
     Ok((canonical, canonical_root, survey, strategy, budget))
 }
@@ -2910,11 +2864,10 @@ mod tests {
             filtered_targets: vec![PathBuf::from("/tmp"), PathBuf::from("/tmp/notes")],
             ..WatchTreeSurvey::default()
         };
-        let budget = WatchBudget {
-            configured_max_watches: 8,
-            effective_max_watches: 4,
-            kernel_max_watches: Some(4),
-        };
+        let budget = WatchBudget::from_limits(
+            NonZeroUsize::new(8).expect("fixture watch limit should be non-zero"),
+            Some(NonZeroUsize::new(4).expect("fixture kernel limit should be non-zero")),
+        );
 
         let strategy = choose_watch_strategy(&survey, budget)?;
         assert!(matches!(strategy, WatchStrategy::NativeFiltered { .. }));
@@ -2929,11 +2882,10 @@ mod tests {
             filtered_watch_count: 5,
             ..WatchTreeSurvey::default()
         };
-        let budget = WatchBudget {
-            configured_max_watches: 8,
-            effective_max_watches: 4,
-            kernel_max_watches: Some(4),
-        };
+        let budget = WatchBudget::from_limits(
+            NonZeroUsize::new(8).expect("fixture watch limit should be non-zero"),
+            Some(NonZeroUsize::new(4).expect("fixture kernel limit should be non-zero")),
+        );
 
         let error = choose_watch_strategy(&survey, budget)
             .expect_err("oversized filtered plan should fail honestly");
