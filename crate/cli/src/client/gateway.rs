@@ -100,8 +100,8 @@ use sinex_primitives::rpc::{
         SEMANTIC_EPOCHS_CREATE_METHOD, SEMANTIC_EPOCHS_LIST_METHOD,
         SEMANTIC_LANE_DIFFS_LIST_METHOD, SEMANTIC_LANE_DIFFS_RECORD_ENTITY_RELATION_METHOD,
         SEMANTIC_LANE_OUTPUTS_LIST_METHOD, SEMANTIC_LANE_OUTPUTS_SEED_CANONICAL_GRAPH_METHOD,
-        SEMANTIC_LANE_OUTPUTS_WRITE_METHOD, SEMANTIC_LANES_CREATE_METHOD,
-        SEMANTIC_LANES_DISCARD_METHOD, SEMANTIC_LANES_LIST_METHOD,
+        SEMANTIC_LANE_OUTPUTS_SEED_ENTITY_EVENTS_METHOD, SEMANTIC_LANE_OUTPUTS_WRITE_METHOD,
+        SEMANTIC_LANES_CREATE_METHOD, SEMANTIC_LANES_DISCARD_METHOD, SEMANTIC_LANES_LIST_METHOD,
         SEMANTIC_LANES_SET_STATUS_METHOD, SemanticEpochCreateRequest, SemanticEpochListRequest,
         SemanticEpochListResponse, SemanticEpochRecordResponse, SemanticLaneCreateRequest,
         SemanticLaneDiffRecordEntityRelationRequest, SemanticLaneDiffRecordResponse,
@@ -109,7 +109,8 @@ use sinex_primitives::rpc::{
         SemanticLaneDiscardResponse, SemanticLaneListRequest, SemanticLaneListResponse,
         SemanticLaneOutputsListRequest, SemanticLaneOutputsListResponse,
         SemanticLaneOutputsSeedCanonicalGraphRequest,
-        SemanticLaneOutputsSeedCanonicalGraphResponse, SemanticLaneOutputsWriteRequest,
+        SemanticLaneOutputsSeedCanonicalGraphResponse, SemanticLaneOutputsSeedEntityEventsRequest,
+        SemanticLaneOutputsSeedEntityEventsResponse, SemanticLaneOutputsWriteRequest,
         SemanticLaneOutputsWriteResponse, SemanticLaneRecordResponse, SemanticLaneSetStatusRequest,
     },
     shadow::{SHADOW_LIST_METHOD, ShadowListRequest, ShadowListResponse},
@@ -1151,6 +1152,14 @@ impl GatewayClient {
         request: SemanticLaneOutputsSeedCanonicalGraphRequest,
     ) -> Result<SemanticLaneOutputsSeedCanonicalGraphResponse> {
         self.call_typed(SEMANTIC_LANE_OUTPUTS_SEED_CANONICAL_GRAPH_METHOD, &request)
+            .await
+    }
+
+    pub async fn semantic_lane_outputs_seed_entity_events(
+        &self,
+        request: SemanticLaneOutputsSeedEntityEventsRequest,
+    ) -> Result<SemanticLaneOutputsSeedEntityEventsResponse> {
+        self.call_typed(SEMANTIC_LANE_OUTPUTS_SEED_ENTITY_EVENTS_METHOD, &request)
             .await
     }
 

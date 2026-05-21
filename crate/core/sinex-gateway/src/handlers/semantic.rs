@@ -9,6 +9,7 @@ use sinex_primitives::rpc::semantic::{
     SemanticLaneDiscardResponse, SemanticLaneListRequest, SemanticLaneListResponse,
     SemanticLaneOutputsListRequest, SemanticLaneOutputsListResponse,
     SemanticLaneOutputsSeedCanonicalGraphRequest, SemanticLaneOutputsSeedCanonicalGraphResponse,
+    SemanticLaneOutputsSeedEntityEventsRequest, SemanticLaneOutputsSeedEntityEventsResponse,
     SemanticLaneOutputsWriteRequest, SemanticLaneOutputsWriteResponse, SemanticLaneRecordResponse,
     SemanticLaneSetStatusRequest,
 };
@@ -180,6 +181,20 @@ pub async fn handle_semantic_lane_outputs_seed_canonical_graph(
         .seed_entity_relation_outputs_from_canonical_graph(req.lane_id)
         .await?;
     Ok(SemanticLaneOutputsSeedCanonicalGraphResponse {
+        lane_id: req.lane_id,
+        written,
+    })
+}
+
+pub async fn handle_semantic_lane_outputs_seed_entity_events(
+    pool: &PgPool,
+    req: SemanticLaneOutputsSeedEntityEventsRequest,
+) -> Result<SemanticLaneOutputsSeedEntityEventsResponse> {
+    let written = pool
+        .semantic()
+        .seed_entity_relation_outputs_from_event_scope(req.lane_id)
+        .await?;
+    Ok(SemanticLaneOutputsSeedEntityEventsResponse {
         lane_id: req.lane_id,
         written,
     })

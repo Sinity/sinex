@@ -67,7 +67,8 @@ pub use semantic::{
     handle_semantic_epoch_create, handle_semantic_epoch_list, handle_semantic_lane_create,
     handle_semantic_lane_diff_record_entity_relation, handle_semantic_lane_diffs_list,
     handle_semantic_lane_discard, handle_semantic_lane_outputs_list,
-    handle_semantic_lane_outputs_seed_canonical_graph, handle_semantic_lane_outputs_write,
+    handle_semantic_lane_outputs_seed_canonical_graph,
+    handle_semantic_lane_outputs_seed_entity_events, handle_semantic_lane_outputs_write,
     handle_semantic_lane_set_status, handle_semantic_lanes_list,
 };
 pub use shadow::{handle_shadow_create, handle_shadow_delete, handle_shadow_list};

@@ -10,7 +10,8 @@ use serde::Serialize;
 use sinex_primitives::{
     EntityRelationDiffReport, EntityRelationLaneOutputs, SemanticEntityOutput, SemanticEpochRecord,
     SemanticLaneRecord as PrimitiveSemanticLaneRecord, SemanticLaneStatus, SemanticRelationOutput,
-    SinexError, Uuid,
+    SemanticScope, SinexError, Uuid,
+    events::{EntityRelatedPayload, EntityResolvedPayload},
 };
 use sqlx::PgPool;
 
@@ -359,7 +360,7 @@ impl SemanticRepository<'_> {
                     .with_std_error(&error)
             })?;
             written += self
-                .upsert_lane_output(lane_id, "entity", &entity.entity_key, payload)
+                .upsert_lane_output(lane_id, "entity", &entity.entity_key, payload, None, None)
                 .await?;
         }
         for relation in &outputs.relations {
@@ -368,7 +369,14 @@ impl SemanticRepository<'_> {
                     .with_std_error(&error)
             })?;
             written += self
-                .upsert_lane_output(lane_id, "relation", &relation.relation_key, payload)
+                .upsert_lane_output(
+                    lane_id,
+                    "relation",
+                    &relation.relation_key,
+                    payload,
+                    None,
+                    None,
+                )
                 .await?;
         }
         Ok(written)
@@ -454,6 +462,114 @@ impl SemanticRepository<'_> {
                 .collect(),
         };
         self.write_entity_relation_outputs(lane_id, &outputs).await
+    }
+
+    pub async fn seed_entity_relation_outputs_from_event_scope(
+        &self,
+        lane_id: Uuid,
+    ) -> DbResult<u64> {
+        let lane = self.get_lane(lane_id).await?;
+        let scope = parse_scope_value(&lane.scope)?;
+        if scope.kind != "event_set" {
+            return Err(SinexError::validation(
+                "semantic lane event seeding requires an event_set scope",
+            )
+            .with_context("lane_id", lane_id.to_string())
+            .with_context("scope_kind", scope.kind));
+        }
+
+        let event_ids = parse_scope_event_ids(&scope)?;
+        let event_types = vec!["entity.resolved".to_string(), "entity.related".to_string()];
+        let rows = sqlx::query!(
+            r#"
+            SELECT
+                id as "id!: Uuid",
+                event_type,
+                payload
+            FROM core.events
+            WHERE id = ANY($1)
+              AND event_type = ANY($2)
+            ORDER BY id
+            "#,
+            &event_ids,
+            &event_types,
+        )
+        .fetch_all(self.pool)
+        .await
+        .map_err(|error| db_error(error, "read entity events for semantic lane"))?;
+
+        let mut written = 0;
+        for row in rows {
+            match row.event_type.as_str() {
+                "entity.resolved" => {
+                    let payload: EntityResolvedPayload = parse_lane_output_payload(
+                        "entity.resolved event payload",
+                        row.payload.clone(),
+                    )?;
+                    let output = SemanticEntityOutput {
+                        entity_key: payload.entity_id.to_string(),
+                        canonical_name: payload.canonical_name,
+                        entity_type: payload.entity_type.to_string(),
+                        category: None,
+                        confidence: None,
+                        metadata: serde_json::json!({
+                            "original_name": payload.original_name,
+                            "source": "core.events",
+                            "event_type": row.event_type,
+                        }),
+                    };
+                    let output_key = output.entity_key.clone();
+                    let output_payload = serde_json::to_value(output).map_err(|error| {
+                        SinexError::serialization("serialize semantic event entity output")
+                            .with_std_error(&error)
+                    })?;
+                    written += self
+                        .upsert_lane_output(
+                            lane_id,
+                            "entity",
+                            &output_key,
+                            output_payload,
+                            Some(row.id),
+                            Some(serde_json::json!({"producer": "entity_events"})),
+                        )
+                        .await?;
+                }
+                "entity.related" => {
+                    let payload: EntityRelatedPayload = parse_lane_output_payload(
+                        "entity.related event payload",
+                        row.payload.clone(),
+                    )?;
+                    let output = SemanticRelationOutput {
+                        relation_key: row.id.to_string(),
+                        source_entity_key: payload.source_entity_id.to_string(),
+                        target_entity_key: payload.target_entity_id.to_string(),
+                        predicate: payload.relation_type.to_string(),
+                        weight: Some(payload.confidence),
+                        metadata: serde_json::json!({
+                            "source": "core.events",
+                            "event_type": row.event_type,
+                        }),
+                    };
+                    let output_key = output.relation_key.clone();
+                    let output_payload = serde_json::to_value(output).map_err(|error| {
+                        SinexError::serialization("serialize semantic event relation output")
+                            .with_std_error(&error)
+                    })?;
+                    written += self
+                        .upsert_lane_output(
+                            lane_id,
+                            "relation",
+                            &output_key,
+                            output_payload,
+                            Some(row.id),
+                            Some(serde_json::json!({"producer": "entity_events"})),
+                        )
+                        .await?;
+                }
+                _ => {}
+            }
+        }
+        Ok(written)
     }
 
     pub async fn record_entity_relation_diff(
@@ -638,24 +754,31 @@ impl SemanticRepository<'_> {
         output_kind: &str,
         output_key: &str,
         payload: JsonValue,
+        source_event_id: Option<Uuid>,
+        metadata: Option<JsonValue>,
     ) -> DbResult<u64> {
         let output_hash = hash_json(&payload)?;
+        let metadata = metadata.unwrap_or_else(|| serde_json::json!({}));
         let result = sqlx::query!(
             r#"
             INSERT INTO semantic.lane_outputs (
-                lane_id, output_kind, output_key, output_hash, payload
+                lane_id, output_kind, output_key, source_event_id, output_hash, payload, metadata
             )
-            VALUES ($1, $2, $3, $4, $5)
+            VALUES ($1, $2, $3, $4, $5, $6, $7)
             ON CONFLICT (lane_id, output_kind, output_key)
             DO UPDATE SET output_hash = EXCLUDED.output_hash,
+                          source_event_id = EXCLUDED.source_event_id,
                           payload = EXCLUDED.payload,
+                          metadata = EXCLUDED.metadata,
                           created_at = CURRENT_TIMESTAMP
             "#,
             lane_id,
             output_kind,
             output_key,
+            source_event_id,
             output_hash,
             payload,
+            metadata,
         )
         .execute(self.pool)
         .await
@@ -679,6 +802,26 @@ fn parse_lane_output_payload<T: serde::de::DeserializeOwned>(
     serde_json::from_value(payload).map_err(|error| {
         SinexError::serialization(format!("deserialize {label}")).with_std_error(&error)
     })
+}
+
+fn parse_scope_value(scope: &JsonValue) -> DbResult<SemanticScope> {
+    serde_json::from_value(scope.clone()).map_err(|error| {
+        SinexError::serialization("deserialize semantic lane scope").with_std_error(&error)
+    })
+}
+
+fn parse_scope_event_ids(scope: &SemanticScope) -> DbResult<Vec<Uuid>> {
+    let mut event_ids = Vec::with_capacity(scope.input_ids.len());
+    for input_id in &scope.input_ids {
+        let raw = input_id.strip_prefix("event:").unwrap_or(input_id);
+        let event_id = Uuid::parse_str(raw).map_err(|error| {
+            SinexError::validation("semantic lane scope contains invalid event id")
+                .with_context("input_id", input_id)
+                .with_source(error.to_string())
+        })?;
+        event_ids.push(event_id);
+    }
+    Ok(event_ids)
 }
 
 fn status_string(status: SemanticLaneStatus) -> String {

@@ -630,6 +630,9 @@ fn command_path(cmd: &Commands) -> String {
                     SemanticLaneSubcommand::SeedCanonicalGraph(_) => {
                         "semantics lane seed-canonical-graph".to_string()
                     }
+                    SemanticLaneSubcommand::SeedEntityEvents(_) => {
+                        "semantics lane seed-entity-events".to_string()
+                    }
                     SemanticLaneSubcommand::WriteOutputs(_) => {
                         "semantics lane write-outputs".to_string()
                     }
