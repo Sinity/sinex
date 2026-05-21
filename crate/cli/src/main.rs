@@ -563,6 +563,7 @@ fn command_path(cmd: &Commands) -> String {
                 SourcesSubcommand::Archive(_) => "sources archive".to_string(),
                 SourcesSubcommand::Continuity(_) => "sources continuity".to_string(),
                 SourcesSubcommand::Readiness(_) => "sources readiness".to_string(),
+                SourcesSubcommand::Drift(_) => "sources drift".to_string(),
                 SourcesSubcommand::ExplainGap(_) => "sources explain-gap".to_string(),
             }
         }

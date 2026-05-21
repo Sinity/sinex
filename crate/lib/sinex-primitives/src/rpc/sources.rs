@@ -201,6 +201,15 @@ pub const SOURCES_READINESS_GET_METHOD: RpcMethod<
     RpcMutability::ReadOnly,
 );
 
+pub const SOURCES_DRIFT_LIST_METHOD: RpcMethod<SourcesDriftListRequest, SourcesDriftListResponse> =
+    RpcMethod::new(
+        methods::SOURCES_DRIFT_LIST,
+        RpcRole::ReadOnly,
+        RpcDomain::Sources,
+        RpcStability::Experimental,
+        RpcMutability::ReadOnly,
+    );
+
 pub const SOURCES_STAGE_METHOD: RpcMethod<SourcesStageRequest, SourcesStageResponse> =
     RpcMethod::new(
         methods::SOURCES_STAGE,
@@ -1081,4 +1090,58 @@ pub struct SourcesReadinessGetResponse {
     /// `None` when no material has been registered for the requested source.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub readiness: Option<SourceReadiness>,
+}
+
+// ─────────────────────────────────────────────────────────────
+// sources.drift.list — checkpointed source-shape drift (#1103)
+// ─────────────────────────────────────────────────────────────
+
+/// Request: `sources.drift.list`
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+pub struct SourcesDriftListRequest {
+    /// Optional source-unit filter.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_unit_id: Option<SourceUnitId>,
+    /// Maximum drift observations to return. Defaults to 50.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limit: Option<usize>,
+}
+
+/// One scalar type-change observed in a source-shape drift event.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct SourceShapeTypeChange {
+    pub key: String,
+    pub previous_type: String,
+    pub current_type: String,
+}
+
+/// Checkpointed source-shape drift observed by an adapter-backed source unit.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct SourceShapeDriftObservation {
+    /// Checkpoint KV key that supplied this observation.
+    pub checkpoint_key: String,
+    /// Source unit that reported the drift.
+    pub source_unit_id: SourceUnitId,
+    /// Checkpoint consumer group, when recoverable from the KV key.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub consumer_group: Option<String>,
+    /// Checkpoint consumer name, when recoverable from the KV key.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub consumer_name: Option<String>,
+    pub previous_hash: String,
+    pub current_hash: String,
+    pub format: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub added_keys: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub removed_keys: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub type_changes: Vec<SourceShapeTypeChange>,
+    pub observed_at: String,
+}
+
+/// Response: `sources.drift.list`
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct SourcesDriftListResponse {
+    pub drifts: Vec<SourceShapeDriftObservation>,
 }

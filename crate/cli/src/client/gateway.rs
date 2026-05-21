@@ -117,12 +117,13 @@ use sinex_primitives::rpc::{
         SOURCES_ANNOTATE_METHOD, SOURCES_ARCHIVE_METHOD, SOURCES_BINDINGS_LIST_METHOD,
         SOURCES_CONTINUITY_EXPLAIN_GAP_METHOD, SOURCES_CONTINUITY_GET_METHOD,
         SOURCES_CONTINUITY_LIST_METHOD, SOURCES_CONTINUITY_METHOD, SOURCES_COVERAGE_METHOD,
-        SOURCES_LIST_METHOD, SOURCES_PRESETS_LIST_METHOD, SOURCES_READINESS_GET_METHOD,
-        SOURCES_READINESS_LIST_METHOD, SOURCES_SHOW_METHOD, SOURCES_STAGE_METHOD,
-        SourcesAnnotateRequest, SourcesAnnotateResponse, SourcesArchiveRequest,
-        SourcesArchiveResponse, SourcesBindingsListRequest, SourcesBindingsListResponse,
-        SourcesContinuityRequest, SourcesContinuityResponse, SourcesCoverageRequest,
-        SourcesCoverageResponse, SourcesListRequest, SourcesListResponse,
+        SOURCES_DRIFT_LIST_METHOD, SOURCES_LIST_METHOD, SOURCES_PRESETS_LIST_METHOD,
+        SOURCES_READINESS_GET_METHOD, SOURCES_READINESS_LIST_METHOD, SOURCES_SHOW_METHOD,
+        SOURCES_STAGE_METHOD, SourcesAnnotateRequest, SourcesAnnotateResponse,
+        SourcesArchiveRequest, SourcesArchiveResponse, SourcesBindingsListRequest,
+        SourcesBindingsListResponse, SourcesContinuityRequest, SourcesContinuityResponse,
+        SourcesCoverageRequest, SourcesCoverageResponse, SourcesDriftListRequest,
+        SourcesDriftListResponse, SourcesListRequest, SourcesListResponse,
         SourcesPresetsListRequest, SourcesPresetsListResponse, SourcesReadinessGetRequest,
         SourcesReadinessGetResponse, SourcesReadinessListRequest, SourcesReadinessListResponse,
         SourcesShowRequest, SourcesShowResponse, SourcesStageRequest, SourcesStageResponse,
@@ -1275,6 +1276,13 @@ impl GatewayClient {
     ) -> Result<SourcesReadinessListResponse> {
         self.call_typed(SOURCES_READINESS_LIST_METHOD, &request)
             .await
+    }
+
+    pub async fn sources_drift_list(
+        &self,
+        request: SourcesDriftListRequest,
+    ) -> Result<SourcesDriftListResponse> {
+        self.call_typed(SOURCES_DRIFT_LIST_METHOD, &request).await
     }
 
     // ==================== Document Commands ====================
