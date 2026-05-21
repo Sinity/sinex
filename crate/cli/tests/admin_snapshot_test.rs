@@ -704,6 +704,11 @@ async fn snapshot_restore_execute_extracts_state_archive_into_empty_target()
         .observed_checks
         .as_ref()
         .ok_or_else(|| color_eyre::eyre::eyre!("restore execution should report observations"))?;
+    assert!(observed.checks_passed);
+    assert!(
+        observed.failed_checks.is_empty(),
+        "successful restore drill should report no failed checks"
+    );
     assert!(observed.private_mode_state_present);
     assert!(observed.private_mode_state_matches_manifest);
     assert!(observed.source_unit_ids_match);
@@ -738,6 +743,10 @@ async fn snapshot_restore_execute_extracts_state_archive_into_empty_target()
         stdout.contains("\"observed_checks\""),
         "json output should include observed restore checks\nstdout: {stdout}"
     );
+    assert!(
+        stdout.contains("\"checks_passed\":true"),
+        "json output should include aggregate restore verdict\nstdout: {stdout}"
+    );
     Ok(())
 }
 
@@ -768,6 +777,8 @@ async fn snapshot_restore_executes_postgres_drill_with_row_count_check()
         .as_ref()
         .ok_or_else(|| color_eyre::eyre::eyre!("restore execution should report observations"))?;
 
+    assert!(observed.checks_passed);
+    assert!(observed.failed_checks.is_empty());
     assert_eq!(observed.postgres_row_counts.get("core.events"), Some(&7));
     assert_eq!(observed.postgres_row_counts_match, Some(true));
     assert_eq!(

@@ -276,6 +276,8 @@ pub struct RestoreDrillChecks {
 #[derive(Debug, Serialize)]
 pub struct RestoreObservedChecks {
     pub target_entry_count: usize,
+    pub checks_passed: bool,
+    pub failed_checks: Vec<String>,
     pub source_unit_count: usize,
     pub source_unit_ids_match: bool,
     pub component_blake3: BTreeMap<String, String>,
@@ -1160,33 +1162,82 @@ fn observe_restored_target(
     let private_mode_state_present = target_dir.join("state/private-mode/state.json").exists();
     let manifest_private_mode_state_present =
         archive_path_contains(archive_entries, "state/private-mode/state.json");
+    let source_unit_ids_match = source_unit_ids == manifest.source_unit_ids;
+    let postgres_row_counts_match = expected_postgres_row_counts.map(|expected| {
+        postgres_row_counts
+            .as_ref()
+            .is_some_and(|observed| observed == expected)
+    });
+    let nats_member_paths_match = expected_nats_member_paths.map(|expected| {
+        nats_member_paths
+            .as_ref()
+            .is_some_and(|observed| observed == expected)
+    });
+    let cas_blob_count_matches = expected_cas_blob_count
+        .map(|expected| cas_blob_count.map_or(expected == 0, |observed| observed == expected));
+    let private_mode_state_matches_manifest =
+        private_mode_state_present == manifest_private_mode_state_present;
+    let failed_checks = restore_failed_checks(RestoreFailedCheckInput {
+        source_unit_ids_match,
+        component_blake3_matches: &component_blake3_matches,
+        postgres_row_counts_match,
+        nats_member_paths_match,
+        cas_blob_count_matches,
+        private_mode_state_matches_manifest,
+    });
 
     RestoreObservedChecks {
         target_entry_count: count_files_recursive(target_dir) as usize,
+        checks_passed: failed_checks.is_empty(),
+        failed_checks,
         source_unit_count: source_unit_ids.len(),
-        source_unit_ids_match: source_unit_ids == manifest.source_unit_ids,
+        source_unit_ids_match,
         component_blake3,
         component_blake3_matches,
         postgres_row_counts: postgres_row_counts.clone().unwrap_or_default(),
-        postgres_row_counts_match: expected_postgres_row_counts.map(|expected| {
-            postgres_row_counts
-                .as_ref()
-                .is_some_and(|observed| observed == expected)
-        }),
+        postgres_row_counts_match,
         nats_state_present,
         nats_member_count,
-        nats_member_paths_match: expected_nats_member_paths.map(|expected| {
-            nats_member_paths
-                .as_ref()
-                .is_some_and(|observed| observed == expected)
-        }),
+        nats_member_paths_match,
         cas_blob_count,
-        cas_blob_count_matches: expected_cas_blob_count
-            .map(|expected| cas_blob_count.map_or(expected == 0, |observed| observed == expected)),
+        cas_blob_count_matches,
         private_mode_state_present,
-        private_mode_state_matches_manifest: private_mode_state_present
-            == manifest_private_mode_state_present,
+        private_mode_state_matches_manifest,
     }
+}
+
+struct RestoreFailedCheckInput<'a> {
+    source_unit_ids_match: bool,
+    component_blake3_matches: &'a BTreeMap<String, bool>,
+    postgres_row_counts_match: Option<bool>,
+    nats_member_paths_match: Option<bool>,
+    cas_blob_count_matches: Option<bool>,
+    private_mode_state_matches_manifest: bool,
+}
+
+fn restore_failed_checks(input: RestoreFailedCheckInput<'_>) -> Vec<String> {
+    let mut failed = Vec::new();
+    if !input.source_unit_ids_match {
+        failed.push("source_unit_ids_match".to_string());
+    }
+    for (component, matched) in input.component_blake3_matches {
+        if !matched {
+            failed.push(format!("component_blake3_matches.{component}"));
+        }
+    }
+    if input.postgres_row_counts_match == Some(false) {
+        failed.push("postgres_row_counts_match".to_string());
+    }
+    if input.nats_member_paths_match == Some(false) {
+        failed.push("nats_member_paths_match".to_string());
+    }
+    if input.cas_blob_count_matches == Some(false) {
+        failed.push("cas_blob_count_matches".to_string());
+    }
+    if !input.private_mode_state_matches_manifest {
+        failed.push("private_mode_state_matches_manifest".to_string());
+    }
+    failed
 }
 
 fn observed_component_blake3(
@@ -1578,6 +1629,20 @@ pub fn format_snapshot_restore_plan_result(result: &SnapshotRestorePlanResult) -
 
     if let Some(observed) = &result.observed_checks {
         out.push_str("\n  Observed after restore:\n");
+        out.push_str(&format!(
+            "    checks: {}\n",
+            if observed.checks_passed {
+                "passed"
+            } else {
+                "failed"
+            }
+        ));
+        if !observed.failed_checks.is_empty() {
+            out.push_str(&format!(
+                "    failed checks: {}\n",
+                observed.failed_checks.join(", ")
+            ));
+        }
         out.push_str(&format!(
             "    target entries: {}\n",
             observed.target_entry_count
