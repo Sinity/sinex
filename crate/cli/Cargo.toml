@@ -86,9 +86,6 @@ workspace = true
 [dependencies.color-eyre]
 workspace = true
 
-[dependencies.thiserror]
-workspace = true
-
 [dependencies.tracing]
 workspace = true
 
