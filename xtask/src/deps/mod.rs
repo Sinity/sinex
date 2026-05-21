@@ -46,8 +46,12 @@ pub enum DepsCommand {
         threshold: usize,
 
         /// Only report duplicates directly requested by workspace manifests
-        #[arg(long)]
+        #[arg(long, conflicts_with = "transitive_only")]
         direct_only: bool,
+
+        /// Only report duplicates introduced through transitive dependencies
+        #[arg(long, conflicts_with = "direct_only")]
+        transitive_only: bool,
     },
 
     /// Detect unused dependencies
@@ -216,6 +220,7 @@ impl DepsCommand {
             Self::Duplicates {
                 threshold,
                 direct_only,
+                transitive_only,
             } => {
                 use crate::deps::analyzer::WorkspaceAnalyzer;
                 use crate::deps::reports::{OutputFormat, write_duplicates_report};
@@ -234,6 +239,9 @@ impl DepsCommand {
                 if *direct_only {
                     duplicates.retain(|d| d.direct_workspace_debt);
                 }
+                if *transitive_only {
+                    duplicates.retain(|d| d.transitive_only);
+                }
 
                 if ctx.is_json() {
                     return Ok(CommandResult::success()
@@ -242,6 +250,7 @@ impl DepsCommand {
                             "count": duplicates.len(),
                             "threshold": threshold,
                             "direct_only": direct_only,
+                            "transitive_only": transitive_only,
                         }))
                         .with_silent()
                         .with_duration(ctx.elapsed()));
