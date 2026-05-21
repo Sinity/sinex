@@ -134,9 +134,6 @@ workspace = true
 [dependencies.tracing-subscriber]
 workspace = true
 
-[dependencies.thiserror]
-workspace = true
-
 [dependencies.governor]
 workspace = true
 
