@@ -216,21 +216,41 @@ pub struct ClientConfig {
     pub retry_config: RetryConfig,
 }
 
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug)]
 pub(crate) enum GatewayRpcError {
-    #[error("HTTP {status} from gateway: {body}")]
-    HttpStatus { status: StatusCode, body: String },
-    #[error("RPC error {code}: {message}{details}")]
+    HttpStatus {
+        status: StatusCode,
+        body: String,
+    },
     JsonRpc {
         code: i32,
         message: String,
         details: String,
     },
-    #[error("RPC response missing result field")]
     MissingResult,
-    #[error("RPC protocol violation: {0}")]
     ProtocolViolation(String),
 }
+
+impl std::fmt::Display for GatewayRpcError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::HttpStatus { status, body } => {
+                write!(f, "HTTP {status} from gateway: {body}")
+            }
+            Self::JsonRpc {
+                code,
+                message,
+                details,
+            } => write!(f, "RPC error {code}: {message}{details}"),
+            Self::MissingResult => f.write_str("RPC response missing result field"),
+            Self::ProtocolViolation(message) => {
+                write!(f, "RPC protocol violation: {message}")
+            }
+        }
+    }
+}
+
+impl std::error::Error for GatewayRpcError {}
 
 #[derive(Serialize)]
 struct JsonRpcRequest<'a> {
