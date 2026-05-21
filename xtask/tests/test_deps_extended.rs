@@ -60,6 +60,7 @@ async fn test_deps_duplicates_threshold_filters_report() -> ::xtask::sandbox::Te
         .ok_or_else(|| color_eyre::eyre::eyre!("deps duplicates JSON data should be an object"))?;
     assert_eq!(data.get("threshold"), Some(&serde_json::json!(1000)));
     assert_eq!(data.get("direct_only"), Some(&serde_json::json!(false)));
+    assert_eq!(data.get("transitive_only"), Some(&serde_json::json!(false)));
     assert_eq!(data.get("count"), Some(&serde_json::json!(0)));
     let duplicates = data
         .get("duplicates")
@@ -216,6 +217,58 @@ async fn test_deps_duplicates_direct_only_filters_transitive_only()
             .iter()
             .all(|duplicate| duplicate["direct_workspace_debt"] == serde_json::json!(true)),
         "--direct-only should only return duplicates directly requested by workspace manifests"
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn test_deps_duplicates_transitive_only_filters_direct_debt()
+-> ::xtask::sandbox::TestResult<()> {
+    let output = xtask_command()?
+        .arg("deps")
+        .arg("duplicates")
+        .arg("--transitive-only")
+        .arg("--json")
+        .output()?;
+
+    assert!(
+        output.status.success(),
+        "deps duplicates --transitive-only --json failed. Stderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let parsed: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+    assert_eq!(parsed["data"]["transitive_only"], serde_json::json!(true));
+    let duplicates = parsed["data"]["duplicates"]
+        .as_array()
+        .ok_or_else(|| color_eyre::eyre::eyre!("data.duplicates should be an array"))?;
+
+    assert!(
+        duplicates
+            .iter()
+            .all(|duplicate| duplicate["transitive_only"] == serde_json::json!(true)),
+        "--transitive-only should only return duplicates without direct workspace roots"
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn test_deps_duplicates_direct_and_transitive_only_conflict()
+-> ::xtask::sandbox::TestResult<()> {
+    let Err(error) = Cli::try_parse_from([
+        "xtask",
+        "deps",
+        "duplicates",
+        "--direct-only",
+        "--transitive-only",
+    ]) else {
+        return Err(color_eyre::eyre::eyre!(
+            "--direct-only and --transitive-only should conflict"
+        ));
+    };
+    let rendered = error.to_string();
+    assert!(
+        rendered.contains("cannot be used with") || rendered.contains("conflict"),
+        "unexpected clap conflict error: {rendered}"
     );
     Ok(())
 }

@@ -220,6 +220,10 @@ async fn test_deps_duplicates_json_contract() -> ::xtask::sandbox::TestResult<()
         json["data"]["direct_only"], false,
         "data.direct_only should default false"
     );
+    assert_eq!(
+        json["data"]["transitive_only"], false,
+        "data.transitive_only should default false"
+    );
     assert_eq!(json["data"]["count"], 0, "data.count");
     assert!(
         json["data"]["duplicates"]
