@@ -2,7 +2,7 @@
 
 use crate::register_parser;
 use sinex_node_sdk::parser::{
-    FileDropAdapter, FileDropRecordMetadata, MaterialParser, ParserError,
+    FileDropAdapter, FileDropEventKind, FileDropRecordMetadata, MaterialParser, ParserError,
 };
 use sinex_primitives::domain::{EventSource, EventType};
 use sinex_primitives::events::enums::{DeviceType, UdevAction};
@@ -155,12 +155,14 @@ impl MaterialParser for UdevParser {
         let metadata = FileDropRecordMetadata::from_value(&record.metadata).ok();
         let event_kind = metadata
             .as_ref()
-            .map_or("Created", |metadata| metadata.event_kind.as_str());
+            .map_or(Some(FileDropEventKind::Created), |metadata| {
+                metadata.event_kind()
+            });
 
         let action = match event_kind {
-            "Created" => UdevAction::Add,
-            "Deleted" => UdevAction::Remove,
-            "Modified" => UdevAction::Change,
+            Some(FileDropEventKind::Created) => UdevAction::Add,
+            Some(FileDropEventKind::Deleted) => UdevAction::Remove,
+            Some(FileDropEventKind::Modified) => UdevAction::Change,
             _ => UdevAction::Other,
         };
 

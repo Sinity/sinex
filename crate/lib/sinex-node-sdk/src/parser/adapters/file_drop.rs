@@ -50,6 +50,16 @@ impl FileDropEventKind {
             Self::Moved => "Moved",
         }
     }
+
+    fn from_metadata_label(label: &str) -> Option<Self> {
+        match label {
+            "Created" => Some(Self::Created),
+            "Modified" => Some(Self::Modified),
+            "Deleted" => Some(Self::Deleted),
+            "Moved" => Some(Self::Moved),
+            _ => None,
+        }
+    }
 }
 
 /// Role of a path inside a paired file move notification.
@@ -65,6 +75,14 @@ impl FileDropMoveRole {
         match self {
             Self::From => "from",
             Self::To => "to",
+        }
+    }
+
+    fn from_metadata_label(label: &str) -> Option<Self> {
+        match label {
+            "from" => Some(Self::From),
+            "to" => Some(Self::To),
+            _ => None,
         }
     }
 }
@@ -87,6 +105,18 @@ impl FileDropRecordMetadata {
         serde_json::from_value(value.clone()).map_err(|error| {
             ParserError::Parse(format!("invalid file-drop record metadata: {error}"))
         })
+    }
+
+    #[must_use]
+    pub fn event_kind(&self) -> Option<FileDropEventKind> {
+        FileDropEventKind::from_metadata_label(&self.event_kind)
+    }
+
+    #[must_use]
+    pub fn move_role(&self) -> Option<FileDropMoveRole> {
+        self.move_role
+            .as_deref()
+            .and_then(FileDropMoveRole::from_metadata_label)
     }
 
     fn new(kind: FileDropEventKind, path: &Utf8PathBuf) -> Self {
@@ -793,6 +823,30 @@ mod tests {
         assert_eq!(metadata["move_from_path"], "/tmp/sinex-file-drop-before");
         assert_eq!(metadata["move_to_path"], "/tmp/sinex-file-drop-after");
         assert_eq!(metadata["move_role"], "to");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn file_drop_record_metadata_parses_typed_labels() -> xtask::sandbox::TestResult<()> {
+        let metadata = FileDropRecordMetadata::from_value(&serde_json::json!({
+            "event_kind": "Moved",
+            "path": "/tmp/sinex-file-drop-after",
+            "move_from_path": "/tmp/sinex-file-drop-before",
+            "move_to_path": "/tmp/sinex-file-drop-after",
+            "move_role": "to",
+        }))?;
+
+        assert_eq!(metadata.event_kind(), Some(FileDropEventKind::Moved));
+        assert_eq!(metadata.move_role(), Some(FileDropMoveRole::To));
+
+        let unknown = FileDropRecordMetadata::from_value(&serde_json::json!({
+            "event_kind": "Renamed",
+            "path": "/tmp/sinex-file-drop-after",
+            "move_role": "sideways",
+        }))?;
+
+        assert_eq!(unknown.event_kind(), None);
+        assert_eq!(unknown.move_role(), None);
         Ok(())
     }
 
