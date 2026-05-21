@@ -16,6 +16,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::num::NonZeroUsize;
+use std::path::PathBuf;
 use tokio::sync::mpsc;
 
 use sinex_primitives::events::SourceMaterial;
@@ -86,7 +87,7 @@ pub struct FileDropConfig {
 /// native watcher may need. `filtered_watch_count` is the smaller target count
 /// after applying adapter policy such as ignored directory names and depth
 /// limits.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct FileDropWatchSurvey {
     pub accessible_watch_count: usize,
     pub filtered_watch_count: usize,
@@ -94,6 +95,9 @@ pub struct FileDropWatchSurvey {
     pub unreadable_directories: usize,
     #[serde(default)]
     pub ignored_directories: usize,
+    /// Concrete non-recursive targets for filtered native watch mode.
+    #[serde(default)]
+    pub filtered_targets: Vec<PathBuf>,
 }
 
 /// Effective watch budget after host/kernel limits are accounted for.
@@ -796,6 +800,7 @@ mod tests {
             filtered_watch_count: 3,
             unreadable_directories: 0,
             ignored_directories: 0,
+            ..FileDropWatchSurvey::default()
         };
         let budget = FileDropWatchBudget::from_limits(NonZeroUsize::new(4).unwrap(), None);
 
@@ -815,6 +820,7 @@ mod tests {
             filtered_watch_count: 4,
             unreadable_directories: 0,
             ignored_directories: 1,
+            filtered_targets: vec![PathBuf::from("/tmp/sinex-file-drop-root")],
         };
         let budget = FileDropWatchBudget::from_limits(
             NonZeroUsize::new(8).unwrap(),
@@ -838,6 +844,7 @@ mod tests {
             filtered_watch_count: 5,
             unreadable_directories: 1,
             ignored_directories: 2,
+            ..FileDropWatchSurvey::default()
         };
         let budget = FileDropWatchBudget::from_limits(
             NonZeroUsize::new(8).unwrap(),

@@ -91,14 +91,7 @@ const MATERIAL_REASON_MODIFIED: &str = "fs-watcher:file-modified";
 const MATERIAL_REASON_DELETED: &str = "fs-watcher:file-deleted";
 const MATERIAL_REASON_MOVED: &str = "fs-watcher:file-moved";
 
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-struct WatchTreeSurvey {
-    accessible_watch_count: usize,
-    filtered_watch_count: usize,
-    unreadable_directories: usize,
-    ignored_directories: usize,
-    filtered_targets: Vec<PathBuf>,
-}
+type WatchTreeSurvey = FileDropWatchSurvey;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum WatchStrategy {
@@ -1321,16 +1314,7 @@ fn choose_watch_strategy(
     survey: &WatchTreeSurvey,
     budget: WatchBudget,
 ) -> NodeResult<WatchStrategy> {
-    let plan = choose_file_drop_watch_plan(
-        FileDropWatchSurvey {
-            accessible_watch_count: survey.accessible_watch_count,
-            filtered_watch_count: survey.filtered_watch_count,
-            unreadable_directories: survey.unreadable_directories,
-            ignored_directories: survey.ignored_directories,
-        },
-        budget,
-    )
-    .map_err(|error| {
+    let plan = choose_file_drop_watch_plan(survey.clone(), budget).map_err(|error| {
         SinexError::configuration(
             "Filesystem watch budget exceeded even after applying filtered native watch planning",
         )
