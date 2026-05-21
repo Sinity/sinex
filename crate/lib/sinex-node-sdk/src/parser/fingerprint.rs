@@ -44,6 +44,7 @@ use sinex_primitives::temporal::Timestamp;
 const MAX_JSON_FINGERPRINT_DEPTH: usize = 8;
 const MAX_JSON_FINGERPRINT_FIELDS: usize = 512;
 const MAX_DELIMITED_FINGERPRINT_FIELDS: usize = 512;
+const MAX_DIRECTORY_MANIFEST_FIELDS: usize = 512;
 
 // =============================================================================
 // SourceRecordFingerprint
@@ -204,6 +205,42 @@ impl SourceRecordFingerprint {
         let mut fingerprint = fp;
         fingerprint.blake3_hash = fingerprint.compute_hash();
         Ok(fingerprint)
+    }
+
+    /// Creates a fingerprint from a directory manifest.
+    ///
+    /// The manifest stores relative file paths as keys and coarse file kinds
+    /// as types. It intentionally records filesystem shape only: path presence
+    /// and extension class, not file contents.
+    #[must_use]
+    pub fn from_directory_manifest<I, P, T>(entries: I) -> Self
+    where
+        I: IntoIterator<Item = (P, T)>,
+        P: Into<String>,
+        T: Into<String>,
+    {
+        let mut keys = Vec::new();
+        let mut type_map = BTreeMap::new();
+
+        for (path, file_kind) in entries.into_iter().take(MAX_DIRECTORY_MANIFEST_FIELDS) {
+            let key = normalize_directory_manifest_path(path.into());
+            keys.push(key.clone());
+            type_map.insert(key, file_kind.into());
+        }
+
+        keys.sort();
+        keys.dedup();
+
+        let fp = Self {
+            format: "directory_manifest".to_string(),
+            keys: keys.clone(),
+            type_map: type_map.clone(),
+            blake3_hash: String::new(),
+        };
+
+        let mut fingerprint = fp;
+        fingerprint.blake3_hash = fingerprint.compute_hash();
+        fingerprint
     }
 
     /// Creates a fingerprint from a `SourceRecord`.
@@ -762,6 +799,10 @@ fn normalize_delimited_header(idx: usize, header: &str) -> String {
     } else {
         trimmed.to_string()
     }
+}
+
+fn normalize_directory_manifest_path(path: String) -> String {
+    path.trim_start_matches("./").replace('\\', "/")
 }
 
 fn infer_text_type(value: &str) -> String {
