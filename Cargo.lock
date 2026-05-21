@@ -4993,7 +4993,6 @@ dependencies = [
  "sinex-primitives",
  "sinex-schema",
  "sqlx",
- "thiserror 2.0.18",
  "time",
  "tokio",
  "tracing",

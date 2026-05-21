@@ -23,7 +23,6 @@ sqlx = { workspace = true, features = [
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 uuid = { workspace = true, features = ["serde", "v4", "v7"] }
-thiserror = { workspace = true }
 validator = { workspace = true, features = ["derive"] }
 tracing = { workspace = true }
 color-eyre = { workspace = true }

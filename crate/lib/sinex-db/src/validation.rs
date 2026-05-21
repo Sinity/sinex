@@ -25,7 +25,6 @@ use sinex_primitives::events::payloads::shell::{
 use sqlx::FromRow;
 use std::collections::HashSet;
 use std::sync::Arc;
-use thiserror::Error;
 use tracing::{info, warn};
 use uuid::Uuid;
 
@@ -36,26 +35,60 @@ pub const DEFAULT_MAX_PAYLOAD_BYTES: usize = 512 * 1024; // 512 KiB
 const MAX_ID_DRIFT_SECS: i64 = 5 * 60; // 5 minutes
 const MAX_FUTURE_TS_ORIG_SECS: i64 = 60 * 60; // 1 hour
 /// Structured validation errors surfaced to tests.
-#[derive(Debug, Error, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum ValidationError {
-    #[error("Missing required field '{field}'")]
-    MissingField { field: String },
-    #[error("Invalid type for field '{field}': expected {expected}, got {actual}")]
+    MissingField {
+        field: String,
+    },
     InvalidType {
         field: String,
         expected: String,
         actual: String,
     },
-    #[error("Invalid value for field '{field}': {reason}")]
-    InvalidValue { field: String, reason: String },
-    #[error("Security validation failed: {0}")]
+    InvalidValue {
+        field: String,
+        reason: String,
+    },
     SecurityValidation(String),
-    #[error("Payload too large: {size} bytes (max {max})")]
-    PayloadTooLarge { size: usize, max: usize },
-    #[error("Schema violation: {message}")]
-    SchemaViolation { message: String },
+    PayloadTooLarge {
+        size: usize,
+        max: usize,
+    },
+    SchemaViolation {
+        message: String,
+    },
 }
 pub type ValidationResult = std::result::Result<(), ValidationError>;
+
+impl std::fmt::Display for ValidationError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::MissingField { field } => write!(f, "Missing required field '{field}'"),
+            Self::InvalidType {
+                field,
+                expected,
+                actual,
+            } => write!(
+                f,
+                "Invalid type for field '{field}': expected {expected}, got {actual}"
+            ),
+            Self::InvalidValue { field, reason } => {
+                write!(f, "Invalid value for field '{field}': {reason}")
+            }
+            Self::SecurityValidation(message) => {
+                write!(f, "Security validation failed: {message}")
+            }
+            Self::PayloadTooLarge { size, max } => {
+                write!(f, "Payload too large: {size} bytes (max {max})")
+            }
+            Self::SchemaViolation { message } => {
+                write!(f, "Schema violation: {message}")
+            }
+        }
+    }
+}
+
+impl std::error::Error for ValidationError {}
 
 impl From<ValidationError> for sinex_primitives::error::SinexError {
     fn from(err: ValidationError) -> Self {
