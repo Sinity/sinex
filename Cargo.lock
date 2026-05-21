@@ -5371,7 +5371,6 @@ dependencies = [
  "libc",
  "predicates",
  "proptest",
- "rand 0.9.4",
  "ratatui",
  "reqwest",
  "rustls",
