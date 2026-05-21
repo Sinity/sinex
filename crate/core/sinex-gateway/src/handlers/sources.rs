@@ -1181,12 +1181,9 @@ fn apply_shape_drift_readiness_overlay(
     drifts: &[SourceShapeDriftObservation],
 ) {
     for source in sources {
-        let Some(source_unit_id) = source.source_unit_id.as_ref() else {
-            continue;
-        };
         let Some(drift) = drifts
             .iter()
-            .filter(|drift| &drift.source_unit_id == source_unit_id)
+            .filter(|drift| drift_matches_readiness_source(drift, source))
             .min_by(|lhs, rhs| compare_drift_observations_newest_first(lhs, rhs))
         else {
             continue;
@@ -1209,6 +1206,21 @@ fn apply_shape_drift_readiness_overlay(
             source.status = SourceReadinessStatus::Partial;
         }
     }
+}
+
+fn drift_matches_readiness_source(
+    drift: &SourceShapeDriftObservation,
+    source: &SourceReadiness,
+) -> bool {
+    if let Some(source_unit_id) = source.source_unit_id.as_ref() {
+        return &drift.source_unit_id == source_unit_id;
+    }
+
+    drift
+        .source_unit_id
+        .as_str()
+        .split_once('.')
+        .is_some_and(|(family, _)| family == source.source_family)
 }
 
 fn apply_private_mode_state_readiness_overlay(
@@ -1808,6 +1820,40 @@ mod tests {
             caveat_codes::SOURCE_SHAPE_CHANGED
         );
         assert_eq!(sources[0].caveats[0].severity, CaveatSeverity::Info);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn source_shape_drift_readiness_overlay_matches_family_when_unit_unknown()
+    -> xtask::sandbox::TestResult<()> {
+        let mut sources = vec![
+            readiness("browser", "history.csv"),
+            readiness("terminal", "history.txt"),
+        ];
+
+        let drifts = vec![SourceShapeDriftObservation {
+            checkpoint_key: "source-worker.default.host-a".to_string(),
+            source_unit_id: sinex_primitives::parser::SourceUnitId::new("browser.history")?,
+            consumer_group: Some("default".to_string()),
+            consumer_name: Some("host-a".to_string()),
+            previous_hash: "old".to_string(),
+            current_hash: "new".to_string(),
+            format: "csv".to_string(),
+            added_keys: Vec::new(),
+            removed_keys: vec!["visit_id".to_string()],
+            type_changes: Vec::new(),
+            observed_at: "2026-05-21T10:00:00Z".to_string(),
+        }];
+
+        apply_shape_drift_readiness_overlay(&mut sources, &drifts);
+
+        assert_eq!(sources[0].status, SourceReadinessStatus::Partial);
+        assert_eq!(
+            sources[0].caveats[0].code,
+            caveat_codes::PARSER_REQUIRED_FIELD_MISSING
+        );
+        assert_eq!(sources[1].status, SourceReadinessStatus::Available);
+        assert!(sources[1].caveats.is_empty());
         Ok(())
     }
 
