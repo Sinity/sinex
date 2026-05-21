@@ -1,7 +1,9 @@
 //! `system.udev` — stream udev device events via `FileDropAdapter` over `/sys`.
 
 use crate::register_parser;
-use sinex_node_sdk::parser::{FileDropAdapter, MaterialParser, ParserError};
+use sinex_node_sdk::parser::{
+    FileDropAdapter, FileDropRecordMetadata, MaterialParser, ParserError,
+};
 use sinex_primitives::domain::{EventSource, EventType};
 use sinex_primitives::events::enums::{DeviceType, UdevAction};
 use sinex_primitives::events::payloads::system::{
@@ -150,11 +152,10 @@ impl MaterialParser for UdevParser {
             Err(e) => return Err(ParserError::Privacy(format!("privacy engine: {e}"))),
         };
 
-        let event_kind = record
-            .metadata
-            .get("event_kind")
-            .and_then(|v| v.as_str())
-            .unwrap_or("Created");
+        let metadata = FileDropRecordMetadata::from_value(&record.metadata).ok();
+        let event_kind = metadata
+            .as_ref()
+            .map_or("Created", |metadata| metadata.event_kind.as_str());
 
         let action = match event_kind {
             "Created" => UdevAction::Add,
@@ -374,6 +375,21 @@ mod tests {
 
         assert_eq!(intents.len(), 1);
         assert_eq!(intents[0].event_type.as_str(), "device.disconnected");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_udev_parser_defaults_legacy_untyped_metadata_to_created() -> TestResult<()> {
+        let mid = Id::<SourceMaterial>::new();
+        let mut record = make_udev_record(mid, "/sys/bus/usb/devices/1-3", "Deleted");
+        record.metadata = serde_json::json!({});
+
+        let mut parser = UdevParser;
+        let ctx = make_ctx(mid);
+        let intents = parser.parse_record(record, &ctx).await.unwrap();
+
+        assert_eq!(intents.len(), 1);
+        assert_eq!(intents[0].event_type.as_str(), "device.connected");
         Ok(())
     }
 
