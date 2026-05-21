@@ -56,6 +56,8 @@ pub enum ComponentExtras {
     Nats(NatsExtras),
     /// CAS blob count.
     Cas(CasExtras),
+    /// Runtime state metadata.
+    State(StateExtras),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -74,6 +76,14 @@ pub struct NatsExtras {
 pub struct CasExtras {
     /// Number of blobs in the repository.
     pub blob_count: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StateExtras {
+    /// Source units discovered from the captured state surface.
+    pub source_unit_ids: Vec<String>,
+    /// Whether runtime private-mode state was present in the captured state.
+    pub private_mode_state_present: bool,
 }
 
 /// Aggregate size totals for the snapshot.

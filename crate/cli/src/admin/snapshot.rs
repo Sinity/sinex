@@ -15,7 +15,7 @@ use walkdir::{DirEntry, WalkDir};
 use crate::admin::exec;
 use crate::admin::manifest::{
     CasExtras, ComponentExtras, ComponentRecord, NatsExtras, PostgresExtras, SnapshotManifest,
-    Totals,
+    StateExtras, Totals,
 };
 use crate::admin::staging::StagingDir;
 
@@ -450,7 +450,13 @@ impl AdminSnapshotCommand {
         }
 
         if component_set.contains("state") {
-            let record = self.capture_state_component(state_dir, staging, self.dry_run)?;
+            let source_unit_ids = discover_source_unit_ids(state_dir);
+            let private_mode_state_present = state_dir.join("private-mode/state.json").exists();
+            let mut record = self.capture_state_component(state_dir, staging, self.dry_run)?;
+            record.extras = Some(ComponentExtras::State(StateExtras {
+                source_unit_ids,
+                private_mode_state_present,
+            }));
             component_records.push(record);
         }
 
@@ -1118,9 +1124,8 @@ fn restore_drill_checks(
         postgres_table_count,
         nats_member_count,
         cas_blob_count,
-        private_mode_state_present: archive_path_contains(
-            archive_entries,
-            "state/private-mode/state.json",
+        private_mode_state_present: expected_private_mode_state_present(manifest).unwrap_or_else(
+            || archive_path_contains(archive_entries, "state/private-mode/state.json"),
         ),
         missing_component_paths,
     }
@@ -1160,8 +1165,8 @@ fn observe_restored_target(
         .exists()
         .then(|| count_files_recursive(&target_dir.join("cas/blob-repository")));
     let private_mode_state_present = target_dir.join("state/private-mode/state.json").exists();
-    let manifest_private_mode_state_present =
-        archive_path_contains(archive_entries, "state/private-mode/state.json");
+    let manifest_private_mode_state_present = expected_private_mode_state_present(manifest)
+        .unwrap_or_else(|| archive_path_contains(archive_entries, "state/private-mode/state.json"));
     let source_unit_ids_match = source_unit_ids == manifest.source_unit_ids;
     let postgres_row_counts_match = expected_postgres_row_counts.map(|expected| {
         postgres_row_counts
@@ -1312,6 +1317,16 @@ fn component_member_paths(root: &Path) -> Vec<String> {
         .collect();
     members.sort();
     members
+}
+
+fn expected_private_mode_state_present(manifest: &SnapshotManifest) -> Option<bool> {
+    manifest
+        .components
+        .iter()
+        .find_map(|component| match &component.extras {
+            Some(ComponentExtras::State(extras)) => Some(extras.private_mode_state_present),
+            _ => None,
+        })
 }
 
 fn classify_archive_sensitivity(manifest: &SnapshotManifest) -> &'static str {

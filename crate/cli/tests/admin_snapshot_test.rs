@@ -404,6 +404,28 @@ async fn snapshot_archive_preserves_component_paths_and_nats_member_manifest()
         &vec!["meta.inf".to_string()],
         "nats member manifest should be relative to the JetStream root"
     );
+    let state_record = inspect
+        .manifest
+        .components
+        .iter()
+        .find(|component| component.name == "state")
+        .ok_or_else(|| color_eyre::eyre::eyre!("snapshot should include state component"))?;
+    let state_extras = match &state_record.extras {
+        Some(ComponentExtras::State(extras)) => extras,
+        other => {
+            return Err(color_eyre::eyre::eyre!(
+                "state component should carry runtime-state metadata, got {other:?}"
+            ));
+        }
+    };
+    assert_eq!(
+        state_extras.source_unit_ids,
+        vec![
+            "desktop.clipboard".to_string(),
+            "terminal.atuin-history".to_string()
+        ]
+    );
+    assert!(!state_extras.private_mode_state_present);
 
     let target_parent = tempfile::tempdir()?;
     let target = target_parent.path().join("restore-target");
@@ -994,7 +1016,8 @@ fn assert_snapshot_id_is_uuidv7(id: &str) -> TestResult<()> {
 #[sinex_test]
 async fn manifest_round_trips_through_serde() -> xtask::sandbox::TestResult<()> {
     use sinexctl::admin::manifest::{
-        CasExtras, ComponentExtras, ComponentRecord, PostgresExtras, SnapshotManifest, Totals,
+        CasExtras, ComponentExtras, ComponentRecord, PostgresExtras, SnapshotManifest, StateExtras,
+        Totals,
     };
     use std::collections::BTreeMap;
 
@@ -1027,9 +1050,19 @@ async fn manifest_round_trips_through_serde() -> xtask::sandbox::TestResult<()> 
                 blake3: "b".repeat(64),
                 extras: Some(ComponentExtras::Cas(CasExtras { blob_count: 2 })),
             },
+            ComponentRecord {
+                name: "state".to_string(),
+                path: "state/".to_string(),
+                bytes: 256,
+                blake3: "c".repeat(64),
+                extras: Some(ComponentExtras::State(StateExtras {
+                    source_unit_ids: vec!["desktop.clipboard".to_string()],
+                    private_mode_state_present: true,
+                })),
+            },
         ],
         totals: Totals {
-            uncompressed_bytes: 12346702,
+            uncompressed_bytes: 12346958,
             archive_bytes: Some(3_000_000),
         },
     };
@@ -1039,7 +1072,19 @@ async fn manifest_round_trips_through_serde() -> xtask::sandbox::TestResult<()> 
 
     assert_eq!(back.snapshot_id, "test-id");
     assert_eq!(back.source_unit_ids.len(), 2);
-    assert_eq!(back.components.len(), 2);
+    assert_eq!(back.components.len(), 3);
+    let state = back
+        .components
+        .iter()
+        .find(|component| component.name == "state")
+        .expect("state component should round-trip");
+    match &state.extras {
+        Some(ComponentExtras::State(extras)) => {
+            assert_eq!(extras.source_unit_ids, ["desktop.clipboard"]);
+            assert!(extras.private_mode_state_present);
+        }
+        other => panic!("state component extras should round-trip, got {other:?}"),
+    }
     assert_eq!(back.totals.archive_bytes, Some(3_000_000));
 
     Ok(())
