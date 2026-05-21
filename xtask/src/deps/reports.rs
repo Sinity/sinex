@@ -87,9 +87,15 @@ pub fn write_duplicates_report<W: Write>(
                 for dup in duplicates {
                     writeln!(
                         writer,
-                        "  {} has {} versions:",
+                        "  {} has {} versions ({}, {} direct workspace roots):",
                         dup.name,
-                        dup.versions.len()
+                        dup.versions.len(),
+                        if dup.direct_workspace_debt {
+                            "direct workspace debt"
+                        } else {
+                            "transitive only"
+                        },
+                        dup.direct_workspace_root_count
                     )?;
                     for detail in &dup.version_details {
                         writeln!(writer, "    - {}", detail.version)?;

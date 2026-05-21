@@ -44,6 +44,10 @@ pub enum DepsCommand {
         /// Minimum number of versions to report
         #[arg(long, default_value = "2")]
         threshold: usize,
+
+        /// Only report duplicates directly requested by workspace manifests
+        #[arg(long)]
+        direct_only: bool,
     },
 
     /// Detect unused dependencies
@@ -209,7 +213,10 @@ impl DepsCommand {
                     .with_duration(ctx.elapsed()))
             }
 
-            Self::Duplicates { threshold } => {
+            Self::Duplicates {
+                threshold,
+                direct_only,
+            } => {
                 use crate::deps::analyzer::WorkspaceAnalyzer;
                 use crate::deps::reports::{OutputFormat, write_duplicates_report};
 
@@ -224,6 +231,9 @@ impl DepsCommand {
 
                 // Filter by threshold
                 duplicates.retain(|d| d.versions.len() >= *threshold);
+                if *direct_only {
+                    duplicates.retain(|d| d.direct_workspace_debt);
+                }
 
                 if ctx.is_json() {
                     return Ok(CommandResult::success()
@@ -231,6 +241,7 @@ impl DepsCommand {
                             "duplicates": duplicates,
                             "count": duplicates.len(),
                             "threshold": threshold,
+                            "direct_only": direct_only,
                         }))
                         .with_silent()
                         .with_duration(ctx.elapsed()));

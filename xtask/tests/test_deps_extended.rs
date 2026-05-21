@@ -59,6 +59,7 @@ async fn test_deps_duplicates_threshold_filters_report() -> ::xtask::sandbox::Te
         .as_object()
         .ok_or_else(|| color_eyre::eyre::eyre!("deps duplicates JSON data should be an object"))?;
     assert_eq!(data.get("threshold"), Some(&serde_json::json!(1000)));
+    assert_eq!(data.get("direct_only"), Some(&serde_json::json!(false)));
     assert_eq!(data.get("count"), Some(&serde_json::json!(0)));
     let duplicates = data
         .get("duplicates")
@@ -92,6 +93,18 @@ async fn test_deps_duplicates_json_includes_version_roots() -> ::xtask::sandbox:
         .iter()
         .find(|duplicate| duplicate["version_details"].is_array())
         .ok_or_else(|| color_eyre::eyre::eyre!("expected at least one duplicate detail"))?;
+    assert!(
+        duplicate["direct_workspace_debt"].is_boolean(),
+        "duplicate should expose whether first-party manifests directly request it"
+    );
+    assert!(
+        duplicate["transitive_only"].is_boolean(),
+        "duplicate should expose whether it is transitive-only"
+    );
+    assert!(
+        duplicate["direct_workspace_root_count"].is_number(),
+        "duplicate should expose a direct workspace root count"
+    );
     let details = duplicate["version_details"]
         .as_array()
         .ok_or_else(|| color_eyre::eyre::eyre!("version_details should be an array"))?;
@@ -117,6 +130,92 @@ async fn test_deps_duplicates_json_includes_version_roots() -> ::xtask::sandbox:
             .iter()
             .all(|detail| detail["direct_dependents"].is_array()),
         "duplicate version details should include immediate active dependents"
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn test_deps_duplicates_json_classifies_direct_debt() -> ::xtask::sandbox::TestResult<()> {
+    let output = xtask_command()?
+        .arg("deps")
+        .arg("duplicates")
+        .arg("--json")
+        .output()?;
+
+    assert!(
+        output.status.success(),
+        "deps duplicates --json failed. Stderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let parsed: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+    let duplicates = parsed["data"]["duplicates"]
+        .as_array()
+        .ok_or_else(|| color_eyre::eyre::eyre!("data.duplicates should be an array"))?;
+
+    for duplicate in duplicates {
+        let details = duplicate["version_details"]
+            .as_array()
+            .ok_or_else(|| color_eyre::eyre::eyre!("version_details should be an array"))?;
+        let mut direct_roots = std::collections::BTreeSet::new();
+        for detail in details {
+            for root in detail["direct_workspace_roots"]
+                .as_array()
+                .ok_or_else(|| color_eyre::eyre::eyre!("direct_workspace_roots should be array"))?
+            {
+                direct_roots.insert(root.as_str().ok_or_else(|| {
+                    color_eyre::eyre::eyre!("direct_workspace_roots should contain strings")
+                })?);
+            }
+        }
+        let has_direct_roots = !direct_roots.is_empty();
+        assert_eq!(
+            duplicate["direct_workspace_debt"].as_bool(),
+            Some(has_direct_roots),
+            "{} direct_workspace_debt should match per-version roots",
+            duplicate["name"].as_str().unwrap_or("<unknown>")
+        );
+        assert_eq!(
+            duplicate["transitive_only"].as_bool(),
+            Some(!has_direct_roots),
+            "{} transitive_only should be inverse direct_workspace_debt",
+            duplicate["name"].as_str().unwrap_or("<unknown>")
+        );
+        assert_eq!(
+            duplicate["direct_workspace_root_count"].as_u64(),
+            Some(direct_roots.len() as u64),
+            "{} direct_workspace_root_count should count unique direct roots",
+            duplicate["name"].as_str().unwrap_or("<unknown>")
+        );
+    }
+    Ok(())
+}
+
+#[sinex_test]
+async fn test_deps_duplicates_direct_only_filters_transitive_only()
+-> ::xtask::sandbox::TestResult<()> {
+    let output = xtask_command()?
+        .arg("deps")
+        .arg("duplicates")
+        .arg("--direct-only")
+        .arg("--json")
+        .output()?;
+
+    assert!(
+        output.status.success(),
+        "deps duplicates --direct-only --json failed. Stderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let parsed: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+    assert_eq!(parsed["data"]["direct_only"], serde_json::json!(true));
+    let duplicates = parsed["data"]["duplicates"]
+        .as_array()
+        .ok_or_else(|| color_eyre::eyre::eyre!("data.duplicates should be an array"))?;
+
+    assert!(
+        duplicates
+            .iter()
+            .all(|duplicate| duplicate["direct_workspace_debt"] == serde_json::json!(true)),
+        "--direct-only should only return duplicates directly requested by workspace manifests"
     );
     Ok(())
 }

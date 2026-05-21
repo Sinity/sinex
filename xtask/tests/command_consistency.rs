@@ -216,6 +216,10 @@ async fn test_deps_duplicates_json_contract() -> ::xtask::sandbox::TestResult<()
 
     assert_eq!(json["command"], "deps", "envelope.command");
     assert_eq!(json["data"]["threshold"], 1000, "data.threshold");
+    assert_eq!(
+        json["data"]["direct_only"], false,
+        "data.direct_only should default false"
+    );
     assert_eq!(json["data"]["count"], 0, "data.count");
     assert!(
         json["data"]["duplicates"]
