@@ -44,18 +44,41 @@ use sinex_primitives::{
     validation::validate_path,
 };
 use std::collections::HashMap;
+use std::{error::Error, fmt};
 use validator::Validate;
 
-#[derive(thiserror::Error, Debug)]
+#[derive(Debug)]
 pub enum ConfigError {
-    #[error("IO error: {0}")]
-    Io(#[from] std::io::Error),
+    Io(std::io::Error),
 
-    #[error("Validation error: {0}")]
     Validation(String),
 
-    #[error("Missing required field: {0}")]
     MissingField(String),
+}
+
+impl fmt::Display for ConfigError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Io(error) => write!(f, "IO error: {error}"),
+            Self::Validation(message) => write!(f, "Validation error: {message}"),
+            Self::MissingField(field) => write!(f, "Missing required field: {field}"),
+        }
+    }
+}
+
+impl Error for ConfigError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::Io(error) => Some(error),
+            _ => None,
+        }
+    }
+}
+
+impl From<std::io::Error> for ConfigError {
+    fn from(error: std::io::Error) -> Self {
+        Self::Io(error)
+    }
 }
 
 impl From<ConfigError> for sinex_primitives::error::SinexError {

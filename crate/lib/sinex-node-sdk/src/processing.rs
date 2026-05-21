@@ -1,23 +1,47 @@
 #[cfg(feature = "messaging")]
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
-use thiserror::Error;
+use std::{error::Error, fmt};
 
 use crate::SinexError;
 
 /// Errors returned by node processing logic before transport/runtime handling.
-#[derive(Debug, Error)]
+#[derive(Debug)]
 pub enum NodeLogicError {
-    #[error("Processing error: {0}")]
     Processing(String),
 
-    #[error("Serialization error: {0}")]
-    Serialization(#[from] serde_json::Error),
+    Serialization(serde_json::Error),
 
-    #[error("Input parsing error: {0}")]
     InputParsing(String),
 
-    #[error("Output serialization error: {0}")]
     OutputSerialization(String),
+}
+
+impl fmt::Display for NodeLogicError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Processing(message) => write!(f, "Processing error: {message}"),
+            Self::Serialization(error) => write!(f, "Serialization error: {error}"),
+            Self::InputParsing(message) => write!(f, "Input parsing error: {message}"),
+            Self::OutputSerialization(message) => {
+                write!(f, "Output serialization error: {message}")
+            }
+        }
+    }
+}
+
+impl Error for NodeLogicError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::Serialization(error) => Some(error),
+            _ => None,
+        }
+    }
+}
+
+impl From<serde_json::Error> for NodeLogicError {
+    fn from(error: serde_json::Error) -> Self {
+        Self::Serialization(error)
+    }
 }
 
 impl NodeLogicError {
