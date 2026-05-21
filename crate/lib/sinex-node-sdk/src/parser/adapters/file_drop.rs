@@ -15,6 +15,7 @@ use notify::{Event, EventKind, RecursiveMode, Watcher};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
+use std::num::NonZeroUsize;
 use tokio::sync::mpsc;
 
 use sinex_primitives::events::SourceMaterial;
@@ -22,6 +23,8 @@ use sinex_primitives::ids::Id;
 use sinex_primitives::parser::{InputShapeKind, MaterialAnchor, SourceRecord};
 
 use crate::parser::{InputShapeAdapter, ParserError, ParserResult};
+
+const INOTIFY_MAX_USER_WATCHES_PATH: &str = "/proc/sys/fs/inotify/max_user_watches";
 
 // =============================================================================
 // FileDropEventKind
@@ -75,6 +78,130 @@ pub struct FileDropConfig {
     /// Which event kinds to report. If empty, all kinds are reported.
     #[serde(default)]
     pub events: Vec<FileDropEventKind>,
+}
+
+/// Directory survey used to choose a native filesystem watch strategy.
+///
+/// `accessible_watch_count` is the number of directory watches a recursive
+/// native watcher may need. `filtered_watch_count` is the smaller target count
+/// after applying adapter policy such as ignored directory names and depth
+/// limits.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct FileDropWatchSurvey {
+    pub accessible_watch_count: usize,
+    pub filtered_watch_count: usize,
+    #[serde(default)]
+    pub unreadable_directories: usize,
+    #[serde(default)]
+    pub ignored_directories: usize,
+}
+
+/// Effective watch budget after host/kernel limits are accounted for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct FileDropWatchBudget {
+    pub configured_max_watches: NonZeroUsize,
+    pub effective_max_watches: NonZeroUsize,
+    #[serde(default)]
+    pub kernel_max_watches: Option<NonZeroUsize>,
+}
+
+impl FileDropWatchBudget {
+    /// Builds a budget from a configured limit and an optional observed kernel
+    /// limit.
+    #[must_use]
+    pub fn from_limits(
+        configured_max_watches: NonZeroUsize,
+        kernel_max_watches: Option<NonZeroUsize>,
+    ) -> Self {
+        let effective_max_watches = kernel_max_watches.map_or(configured_max_watches, |limit| {
+            configured_max_watches.min(limit)
+        });
+
+        Self {
+            configured_max_watches,
+            effective_max_watches,
+            kernel_max_watches,
+        }
+    }
+
+    /// Detects the host inotify limit from `/proc/sys/fs/inotify/max_user_watches`.
+    ///
+    /// Non-Linux hosts, unreadable procfs files, and malformed values simply
+    /// leave `kernel_max_watches` empty; the configured limit remains effective.
+    #[must_use]
+    pub fn detect(configured_max_watches: NonZeroUsize) -> Self {
+        Self::from_limits(configured_max_watches, read_kernel_inotify_watch_limit())
+    }
+}
+
+/// Native watcher mode selected for a surveyed file-drop tree.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum FileDropWatchMode {
+    NativeRecursive,
+    NativeFiltered,
+}
+
+impl FileDropWatchMode {
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::NativeRecursive => "native-recursive",
+            Self::NativeFiltered => "native-filtered",
+        }
+    }
+}
+
+/// Decision result for native file-drop watching.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct FileDropWatchPlan {
+    pub mode: FileDropWatchMode,
+    pub survey: FileDropWatchSurvey,
+    pub budget: FileDropWatchBudget,
+    pub effective_watch_count: usize,
+}
+
+/// Selects recursive native watching or filtered native watching for a surveyed
+/// directory tree.
+pub fn choose_file_drop_watch_plan(
+    survey: FileDropWatchSurvey,
+    budget: FileDropWatchBudget,
+) -> ParserResult<FileDropWatchPlan> {
+    let needs_filtered_plan = survey.accessible_watch_count > budget.effective_max_watches.get()
+        || survey.unreadable_directories > 0
+        || survey.ignored_directories > 0;
+
+    if !needs_filtered_plan {
+        return Ok(FileDropWatchPlan {
+            mode: FileDropWatchMode::NativeRecursive,
+            effective_watch_count: survey.accessible_watch_count,
+            survey,
+            budget,
+        });
+    }
+
+    if survey.filtered_watch_count <= budget.effective_max_watches.get() {
+        return Ok(FileDropWatchPlan {
+            mode: FileDropWatchMode::NativeFiltered,
+            effective_watch_count: survey.filtered_watch_count,
+            survey,
+            budget,
+        });
+    }
+
+    let mut message = format!(
+        "file-drop watch budget exceeded after filtered planning: configured_max_watches={}, effective_max_watches={}, accessible_watch_count={}, filtered_watch_count={}, unreadable_directories={}, ignored_directories={}",
+        budget.configured_max_watches,
+        budget.effective_max_watches,
+        survey.accessible_watch_count,
+        survey.filtered_watch_count,
+        survey.unreadable_directories,
+        survey.ignored_directories
+    );
+    if let Some(kernel_max_watches) = budget.kernel_max_watches {
+        message.push_str(&format!(", kernel_max_user_watches={kernel_max_watches}"));
+    }
+    Err(ParserError::Adapter(message))
 }
 
 /// No cursor for [`FileDropAdapter`] — live streams are anchor-only.
@@ -172,6 +299,14 @@ fn map_notify_kind(kind: &EventKind) -> Option<FileDropEventKind> {
         EventKind::Other => None,
         EventKind::Any => None,
     }
+}
+
+fn read_kernel_inotify_watch_limit() -> Option<NonZeroUsize> {
+    std::fs::read_to_string(INOTIFY_MAX_USER_WATCHES_PATH)
+        .ok()?
+        .trim()
+        .parse::<NonZeroUsize>()
+        .ok()
 }
 
 fn records_from_file_drop_event(
@@ -637,6 +772,85 @@ mod tests {
                 "/tmp/sinex-file-drop-root/one/nested.txt"
             ]
         );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn file_drop_watch_budget_clamps_to_kernel_limit() -> xtask::sandbox::TestResult<()> {
+        let budget = FileDropWatchBudget::from_limits(
+            NonZeroUsize::new(8).unwrap(),
+            Some(NonZeroUsize::new(4).unwrap()),
+        );
+
+        assert_eq!(budget.configured_max_watches.get(), 8);
+        assert_eq!(budget.effective_max_watches.get(), 4);
+        assert_eq!(budget.kernel_max_watches.map(NonZeroUsize::get), Some(4));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn file_drop_watch_plan_uses_recursive_when_budget_suffices()
+    -> xtask::sandbox::TestResult<()> {
+        let survey = FileDropWatchSurvey {
+            accessible_watch_count: 3,
+            filtered_watch_count: 3,
+            unreadable_directories: 0,
+            ignored_directories: 0,
+        };
+        let budget = FileDropWatchBudget::from_limits(NonZeroUsize::new(4).unwrap(), None);
+
+        let plan = choose_file_drop_watch_plan(survey, budget)?;
+
+        assert_eq!(plan.mode, FileDropWatchMode::NativeRecursive);
+        assert_eq!(plan.mode.as_str(), "native-recursive");
+        assert_eq!(plan.effective_watch_count, 3);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn file_drop_watch_plan_switches_to_filtered_for_policy_or_budget()
+    -> xtask::sandbox::TestResult<()> {
+        let survey = FileDropWatchSurvey {
+            accessible_watch_count: 6,
+            filtered_watch_count: 4,
+            unreadable_directories: 0,
+            ignored_directories: 1,
+        };
+        let budget = FileDropWatchBudget::from_limits(
+            NonZeroUsize::new(8).unwrap(),
+            Some(NonZeroUsize::new(4).unwrap()),
+        );
+
+        let plan = choose_file_drop_watch_plan(survey, budget)?;
+
+        assert_eq!(plan.mode, FileDropWatchMode::NativeFiltered);
+        assert_eq!(plan.mode.as_str(), "native-filtered");
+        assert_eq!(plan.effective_watch_count, 4);
+        assert_eq!(plan.budget.effective_max_watches.get(), 4);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn file_drop_watch_plan_errors_when_filtered_plan_still_exceeds_budget()
+    -> xtask::sandbox::TestResult<()> {
+        let survey = FileDropWatchSurvey {
+            accessible_watch_count: 8,
+            filtered_watch_count: 5,
+            unreadable_directories: 1,
+            ignored_directories: 2,
+        };
+        let budget = FileDropWatchBudget::from_limits(
+            NonZeroUsize::new(8).unwrap(),
+            Some(NonZeroUsize::new(4).unwrap()),
+        );
+
+        let error = choose_file_drop_watch_plan(survey, budget)
+            .expect_err("oversized filtered plans should fail");
+        let message = error.to_string();
+
+        assert!(message.contains("kernel_max_user_watches=4"));
+        assert!(message.contains("effective_max_watches=4"));
+        assert!(message.contains("filtered_watch_count=5"));
         Ok(())
     }
 }

@@ -63,6 +63,10 @@ pub use adapters::{
     FileDropConfig,
     FileDropCursor,
     FileDropEventKind,
+    FileDropWatchBudget,
+    FileDropWatchMode,
+    FileDropWatchPlan,
+    FileDropWatchSurvey,
     FileFingerprint,
     JOURNALCTL_BROADCAST_CAPACITY,
     JournalctlCursor,
@@ -83,6 +87,7 @@ pub use adapters::{
     UnixSocketStreamCursor,
     all_adapter_schemas,
     chained_classify_record,
+    choose_file_drop_watch_plan,
     records_from_journal_lines,
 };
 pub use declarative::{
