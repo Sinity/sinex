@@ -82,6 +82,19 @@ pub fn write_duplicates_report<W: Write>(
                     "Duplicate dependencies ({} total):",
                     duplicates.len()
                 )?;
+                let direct_count = duplicates
+                    .iter()
+                    .filter(|duplicate| duplicate.direct_workspace_debt)
+                    .count();
+                let transitive_count = duplicates
+                    .iter()
+                    .filter(|duplicate| duplicate.transitive_only)
+                    .count();
+                writeln!(
+                    writer,
+                    "  {} direct workspace debt, {} transitive only",
+                    direct_count, transitive_count
+                )?;
                 writeln!(writer)?;
 
                 for dup in duplicates {
@@ -124,8 +137,10 @@ pub fn write_duplicates_report<W: Write>(
                 writeln!(writer)?;
                 writeln!(
                     writer,
-                    "Total: {} packages with duplicates",
-                    duplicates.len()
+                    "Total: {} packages with duplicates ({} direct, {} transitive)",
+                    duplicates.len(),
+                    direct_count,
+                    transitive_count
                 )?;
             }
         }
