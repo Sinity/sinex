@@ -83,6 +83,12 @@ pub struct FileDropRecordMetadata {
 }
 
 impl FileDropRecordMetadata {
+    pub fn from_value(value: &serde_json::Value) -> ParserResult<Self> {
+        serde_json::from_value(value.clone()).map_err(|error| {
+            ParserError::Parse(format!("invalid file-drop record metadata: {error}"))
+        })
+    }
+
     fn new(kind: FileDropEventKind, path: &Utf8PathBuf) -> Self {
         Self {
             event_kind: kind.metadata_label().to_string(),
