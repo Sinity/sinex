@@ -62,6 +62,11 @@ fingerprints, so upstream export-shape changes feed the shared drift substrate
 before parser defaults or nulls silently hide the problem. Composed adapters
 preserve child fingerprints through `ChainedAdapter`: the primary leg is used
 when present, with secondary as fallback.
+Directory walks expose a `directory_manifest` fingerprint: relative file-path
+presence plus extension class for every matched entry, with nested JSON/CSV/TSV
+child shape hashes folded into the manifest entry. That means a provider can
+add/remove files, rename export files, or change a CSV/JSON shape inside a
+stable path and the adapter-level drift path will still see the change.
 
 ## Step-by-step
 
