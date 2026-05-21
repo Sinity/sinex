@@ -41,6 +41,75 @@ pub enum FileDropEventKind {
     Moved,
 }
 
+impl FileDropEventKind {
+    fn metadata_label(self) -> &'static str {
+        match self {
+            Self::Created => "Created",
+            Self::Modified => "Modified",
+            Self::Deleted => "Deleted",
+            Self::Moved => "Moved",
+        }
+    }
+}
+
+/// Role of a path inside a paired file move notification.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum FileDropMoveRole {
+    From,
+    To,
+}
+
+impl FileDropMoveRole {
+    fn metadata_label(self) -> &'static str {
+        match self {
+            Self::From => "from",
+            Self::To => "to",
+        }
+    }
+}
+
+/// Metadata emitted with every [`FileDropAdapter`] record.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct FileDropRecordMetadata {
+    pub event_kind: String,
+    pub path: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub move_from_path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub move_to_path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub move_role: Option<String>,
+}
+
+impl FileDropRecordMetadata {
+    fn new(kind: FileDropEventKind, path: &Utf8PathBuf) -> Self {
+        Self {
+            event_kind: kind.metadata_label().to_string(),
+            path: path.as_str().to_string(),
+            move_from_path: None,
+            move_to_path: None,
+            move_role: None,
+        }
+    }
+
+    fn with_move_pair(
+        mut self,
+        from_path: &Utf8PathBuf,
+        to_path: &Utf8PathBuf,
+        role: FileDropMoveRole,
+    ) -> Self {
+        self.move_from_path = Some(from_path.as_str().to_string());
+        self.move_to_path = Some(to_path.as_str().to_string());
+        self.move_role = Some(role.metadata_label().to_string());
+        self
+    }
+
+    fn into_json(self) -> serde_json::Value {
+        serde_json::json!(self)
+    }
+}
+
 // =============================================================================
 // FileDropAdapter
 // =============================================================================
@@ -349,19 +418,16 @@ fn records_from_file_drop_event(
         .into_iter()
         .enumerate()
         .map(|(index, utf8_path)| {
-            let metadata = serde_json::json!({
-                "event_kind": format!("{kind:?}"),
-                "path": utf8_path.as_str(),
-            });
-            let mut metadata = metadata;
-            if let Some((from_path, to_path)) = &rename_pair
-                && let Some(object) = metadata.as_object_mut()
-            {
-                object.insert("move_from_path".into(), from_path.as_str().into());
-                object.insert("move_to_path".into(), to_path.as_str().into());
-                object.insert(
-                    "move_role".into(),
-                    if index == 0 { "from" } else { "to" }.into(),
+            let mut metadata = FileDropRecordMetadata::new(kind, &utf8_path);
+            if let Some((from_path, to_path)) = &rename_pair {
+                metadata = metadata.with_move_pair(
+                    from_path,
+                    to_path,
+                    if index == 0 {
+                        FileDropMoveRole::From
+                    } else {
+                        FileDropMoveRole::To
+                    },
                 );
             }
             SourceRecord {
@@ -373,7 +439,7 @@ fn records_from_file_drop_event(
                 bytes: utf8_path.as_str().as_bytes().to_vec(),
                 logical_path: Some(utf8_path),
                 source_ts_hint: None,
-                metadata,
+                metadata: metadata.into_json(),
             }
         })
         .collect()
@@ -700,6 +766,27 @@ mod tests {
         );
         assert_eq!(moved_records[0].metadata["move_role"], "from");
         assert_eq!(moved_records[1].metadata["move_role"], "to");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn file_drop_record_metadata_keeps_stable_json_shape() -> xtask::sandbox::TestResult<()> {
+        let metadata = FileDropRecordMetadata::new(
+            FileDropEventKind::Moved,
+            &Utf8PathBuf::from("/tmp/sinex-file-drop-after"),
+        )
+        .with_move_pair(
+            &Utf8PathBuf::from("/tmp/sinex-file-drop-before"),
+            &Utf8PathBuf::from("/tmp/sinex-file-drop-after"),
+            FileDropMoveRole::To,
+        )
+        .into_json();
+
+        assert_eq!(metadata["event_kind"], "Moved");
+        assert_eq!(metadata["path"], "/tmp/sinex-file-drop-after");
+        assert_eq!(metadata["move_from_path"], "/tmp/sinex-file-drop-before");
+        assert_eq!(metadata["move_to_path"], "/tmp/sinex-file-drop-after");
+        assert_eq!(metadata["move_role"], "to");
         Ok(())
     }
 
