@@ -249,6 +249,7 @@ pub fn method_catalog() -> Vec<RpcMethodInfo> {
         semantic::SEMANTIC_LANE_DIFFS_RECORD_ENTITY_RELATION_METHOD.info(),
         semantic::SEMANTIC_LANE_OUTPUTS_LIST_METHOD.info(),
         semantic::SEMANTIC_LANE_OUTPUTS_SEED_CANONICAL_GRAPH_METHOD.info(),
+        semantic::SEMANTIC_LANE_OUTPUTS_SEED_ENTITY_EVENTS_METHOD.info(),
         semantic::SEMANTIC_LANE_OUTPUTS_WRITE_METHOD.info(),
         semantic::SEMANTIC_LANES_CREATE_METHOD.info(),
         semantic::SEMANTIC_LANES_DISCARD_METHOD.info(),
