@@ -792,6 +792,15 @@
     "response_type": "sinex_primitives::rpc::sources::SourcesCoverageResponse"
   },
   {
+    "name": "sources.drift.list",
+    "role": "read_only",
+    "domain": "sources",
+    "stability": "experimental",
+    "mutability": "read_only",
+    "request_type": "sinex_primitives::rpc::sources::SourcesDriftListRequest",
+    "response_type": "sinex_primitives::rpc::sources::SourcesDriftListResponse"
+  },
+  {
     "name": "sources.list",
     "role": "read_only",
     "domain": "sources",

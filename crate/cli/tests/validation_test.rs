@@ -387,6 +387,33 @@ async fn mcp_source_continuity_list_call_uses_gateway_fixture() -> TestResult<()
 }
 
 #[sinex_test]
+async fn mcp_source_drift_call_uses_gateway_fixture() -> TestResult<()> {
+    let server = mount_mcp_gateway_fixture().await;
+    let client = fixture_gateway_client(&server)?;
+
+    let response = call_tool(
+        &client,
+        "sinex.source_drift",
+        json!({
+            "source_unit_id": "browser.history",
+            "limit": 5
+        }),
+    )
+    .await?;
+
+    assert_eq!(response["tool"], "sinex.source_drift");
+    assert_eq!(
+        response["items"]["result"]["drifts"][0]["source_unit_id"],
+        "browser.history"
+    );
+    assert_eq!(
+        response["items"]["result"]["drifts"][0]["type_changes"][0]["key"],
+        "visit_time"
+    );
+    Ok(())
+}
+
+#[sinex_test]
 async fn mcp_source_continuity_get_call_uses_gateway_fixture() -> TestResult<()> {
     let server = mount_mcp_gateway_fixture().await;
     let client = fixture_gateway_client(&server)?;
@@ -1778,6 +1805,29 @@ async fn mount_mcp_gateway_fixture() -> MockServer {
                 }),
                 "sources.continuity.get" => json!({
                     "report": fixture_continuity_report()
+                }),
+                "sources.drift.list" => json!({
+                    "drifts": [
+                        {
+                            "checkpoint_key": "source-worker.default.fixture",
+                            "source_unit_id": body["params"]["source_unit_id"].as_str().unwrap_or("browser.history"),
+                            "consumer_group": "default",
+                            "consumer_name": "fixture",
+                            "previous_hash": "shape-old",
+                            "current_hash": "shape-new",
+                            "format": "sqlite",
+                            "added_keys": ["visit_duration"],
+                            "removed_keys": [],
+                            "type_changes": [
+                                {
+                                    "key": "visit_time",
+                                    "previous_type": "number",
+                                    "current_type": "string"
+                                }
+                            ],
+                            "observed_at": "2026-05-21T07:00:00Z"
+                        }
+                    ]
                 }),
                 "sources.continuity.explain_gap" => json!({
                     "source_family": body["params"]["source_family"].as_str().unwrap_or("terminal"),

@@ -14,6 +14,7 @@ use sinex_primitives::Uuid;
 use sinex_primitives::domain::{EventSource, EventType};
 use sinex_primitives::events::Event;
 use sinex_primitives::ids::Id;
+use sinex_primitives::parser::SourceUnitId;
 use sinex_primitives::query::{EventQuery, LineageDirection, LineageQuery};
 use sinex_primitives::rpc::automata::AutomataStatusResponse;
 use sinex_primitives::rpc::curation::CurationListProposalsRequest;
@@ -33,7 +34,7 @@ use sinex_primitives::rpc::semantic::{
     SemanticLaneOutputsListRequest,
 };
 use sinex_primitives::rpc::sources::{
-    SourcesContinuityRequest, SourcesCoverageRequest, SourcesListRequest,
+    SourcesContinuityRequest, SourcesCoverageRequest, SourcesDriftListRequest, SourcesListRequest,
     SourcesReadinessGetRequest, SourcesReadinessListRequest, SourcesShowRequest,
 };
 use sinex_primitives::rpc::system::SystemHealthResponse;
@@ -160,6 +161,14 @@ struct SourceContinuityArgs {
     source_family: Option<SourceFamily>,
     #[serde(default)]
     since: Option<Timestamp>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+struct SourceDriftArgs {
+    #[serde(default)]
+    source_unit_id: Option<String>,
+    #[serde(default)]
+    limit: Option<usize>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -452,6 +461,13 @@ pub fn tool_catalog() -> Vec<McpCatalogEntry> {
                 methods::SOURCES_CONTINUITY_LIST,
                 methods::SOURCES_CONTINUITY_GET,
             ],
+            read_only: true,
+        },
+        McpCatalogEntry {
+            name: "sinex.source_drift",
+            kind: McpSurfaceKind::Tool,
+            description: "Read-only checkpointed source-shape drift observations.",
+            backing_rpc_methods: &[methods::SOURCES_DRIFT_LIST],
             read_only: true,
         },
         McpCatalogEntry {
@@ -922,6 +938,22 @@ pub fn tools() -> Vec<McpTool> {
                 "properties": {
                     "source_family": { "type": "string" },
                     "since": { "type": "string", "format": "date-time" }
+                },
+                "additionalProperties": false
+            }),
+        ),
+        mcp_tool(
+            "sinex.source_drift",
+            json!({
+                "type": "object",
+                "properties": {
+                    "source_unit_id": { "type": "string" },
+                    "limit": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 500,
+                        "default": 50
+                    }
                 },
                 "additionalProperties": false
             }),
@@ -1508,6 +1540,7 @@ pub async fn call_tool(client: &GatewayClient, name: &str, arguments: Value) -> 
         "sinex.trace_lineage" => trace_lineage(client, arguments).await,
         "sinex.source_readiness" => source_readiness(client, arguments).await,
         "sinex.source_continuity" => source_continuity(client, arguments).await,
+        "sinex.source_drift" => source_drift(client, arguments).await,
         "sinex.source_gap_explain" => source_gap_explain(client, arguments).await,
         "sinex.source_identifier_continuity" => {
             source_identifier_continuity(client, arguments).await
@@ -1666,6 +1699,25 @@ async fn source_continuity(client: &GatewayClient, arguments: Value) -> Result<V
 
     Ok(envelope(
         "sinex.source_continuity",
+        json!(args),
+        json!({ "result": result }),
+    ))
+}
+
+async fn source_drift(client: &GatewayClient, arguments: Value) -> Result<Value> {
+    let args: SourceDriftArgs = serde_json::from_value(arguments)?;
+    let request = SourcesDriftListRequest {
+        source_unit_id: args
+            .source_unit_id
+            .as_deref()
+            .map(SourceUnitId::new)
+            .transpose()?,
+        limit: args.limit,
+    };
+    let result = serde_json::to_value(client.sources_drift_list(request).await?)?;
+
+    Ok(envelope(
+        "sinex.source_drift",
         json!(args),
         json!({ "result": result }),
     ))
