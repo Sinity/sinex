@@ -231,6 +231,8 @@ pub struct SnapshotInspectResult {
     pub archive_entries: usize,
     pub source_unit_count: usize,
     pub source_unit_ids: Vec<String>,
+    pub state_source_unit_count: Option<usize>,
+    pub state_private_mode_state_present: Option<bool>,
     pub component_count: usize,
     pub components: Vec<ComponentSummary>,
     pub missing_component_paths: Vec<String>,
@@ -954,6 +956,13 @@ fn inspect_snapshot_archive(archive_path: &Path) -> Result<SnapshotInspectResult
             blake3: component.blake3.clone(),
         })
         .collect();
+    let state_extras = manifest
+        .components
+        .iter()
+        .find_map(|component| match &component.extras {
+            Some(ComponentExtras::State(extras)) => Some(extras),
+            _ => None,
+        });
 
     Ok(SnapshotInspectResult {
         archive_path: archive_path.display().to_string(),
@@ -966,6 +975,9 @@ fn inspect_snapshot_archive(archive_path: &Path) -> Result<SnapshotInspectResult
         archive_entries: entries.len(),
         source_unit_count: manifest.source_unit_ids.len(),
         source_unit_ids: manifest.source_unit_ids.clone(),
+        state_source_unit_count: state_extras.map(|extras| extras.source_unit_ids.len()),
+        state_private_mode_state_present: state_extras
+            .map(|extras| extras.private_mode_state_present),
         component_count: manifest.components.len(),
         components,
         missing_component_paths,
@@ -1566,6 +1578,21 @@ pub fn format_snapshot_inspect_result(result: &SnapshotInspectResult) -> String 
     out.push_str(&format!("  Host:    {}\n", result.host));
     out.push_str(&format!("  Entries: {}\n", result.archive_entries));
     out.push_str(&format!("  Source units: {}\n", result.source_unit_count));
+    if let Some(state_source_unit_count) = result.state_source_unit_count {
+        out.push_str(&format!(
+            "  State source units: {state_source_unit_count}\n"
+        ));
+    }
+    if let Some(private_mode_state_present) = result.state_private_mode_state_present {
+        out.push_str(&format!(
+            "  Private-mode state: {}\n",
+            if private_mode_state_present {
+                "present"
+            } else {
+                "absent"
+            }
+        ));
+    }
     out.push_str("\n  Components:\n");
     for component in &result.components {
         out.push_str(&format!(
