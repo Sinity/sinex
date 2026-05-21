@@ -9,7 +9,7 @@ use sinex_primitives::rpc::sources::{
 use sinex_primitives::Timestamp;
 use sinex_primitives::parser::SourceUnitId;
 use sinex_primitives::rpc::sources::{
-    SourceReadiness, SourceReadinessStatus, SourcesReadinessGetRequest,
+    CaveatSeverity, SourceReadiness, SourceReadinessStatus, SourcesReadinessGetRequest,
     SourcesReadinessGetResponse, SourcesReadinessListRequest, SourcesReadinessListResponse,
 };
 use sinex_primitives::rpc::sources::{
@@ -1019,6 +1019,8 @@ fn format_drift_list(response: &SourcesDriftListResponse) -> String {
     let mut builder = Builder::new();
     builder.push_record([
         "SOURCE UNIT",
+        "IMPACT",
+        "CAVEATS",
         "FORMAT",
         "OBSERVED",
         "ADDED",
@@ -1028,8 +1030,24 @@ fn format_drift_list(response: &SourcesDriftListResponse) -> String {
     ]);
 
     for drift in &response.drifts {
+        let caveats = drift.readiness_caveats();
+        let impact = strongest_caveat_severity(&caveats).map_or_else(
+            || "none".to_string(),
+            |severity| severity_label(severity).to_string(),
+        );
+        let caveat_codes = if caveats.is_empty() {
+            "none".to_string()
+        } else {
+            caveats
+                .iter()
+                .map(|caveat| caveat.code.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        };
         builder.push_record([
             drift.source_unit_id.as_str().to_string(),
+            impact,
+            caveat_codes,
             drift.format.clone(),
             drift.observed_at.clone(),
             drift.added_keys.len().to_string(),
@@ -1042,4 +1060,71 @@ fn format_drift_list(response: &SourcesDriftListResponse) -> String {
     let mut table = builder.build();
     table.with(Style::rounded());
     table.to_string()
+}
+
+fn strongest_caveat_severity(
+    caveats: &[sinex_primitives::rpc::sources::SourceCaveat],
+) -> Option<CaveatSeverity> {
+    caveats
+        .iter()
+        .map(|caveat| caveat.severity)
+        .max_by_key(|severity| caveat_severity_rank(*severity))
+}
+
+const fn caveat_severity_rank(severity: CaveatSeverity) -> u8 {
+    match severity {
+        CaveatSeverity::Info => 0,
+        CaveatSeverity::Warning => 1,
+        CaveatSeverity::Degraded => 2,
+        CaveatSeverity::Blocking => 3,
+    }
+}
+
+const fn severity_label(severity: CaveatSeverity) -> &'static str {
+    match severity {
+        CaveatSeverity::Info => "info",
+        CaveatSeverity::Warning => "warning",
+        CaveatSeverity::Degraded => "degraded",
+        CaveatSeverity::Blocking => "blocking",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sinex_primitives::rpc::sources::{
+        SourceShapeDriftObservation, SourceShapeTypeChange, caveat_codes,
+    };
+    use xtask::sandbox::prelude::*;
+
+    #[sinex_test]
+    async fn drift_table_surfaces_readiness_impact() -> TestResult<()> {
+        let response = SourcesDriftListResponse {
+            drifts: vec![SourceShapeDriftObservation {
+                checkpoint_key: "source-worker.default.fixture".to_string(),
+                source_unit_id: SourceUnitId::from_static("browser.history"),
+                consumer_group: Some("default".to_string()),
+                consumer_name: Some("fixture".to_string()),
+                previous_hash: "shape-old".to_string(),
+                current_hash: "shape-new".to_string(),
+                format: "sqlite_schema".to_string(),
+                added_keys: Vec::new(),
+                removed_keys: vec!["visit_id".to_string()],
+                type_changes: vec![SourceShapeTypeChange {
+                    key: "visit_time".to_string(),
+                    previous_type: "number".to_string(),
+                    current_type: "string".to_string(),
+                }],
+                observed_at: "2026-05-21T07:00:00Z".to_string(),
+            }],
+        };
+
+        let table = format_drift_list(&response);
+
+        assert!(table.contains("IMPACT"));
+        assert!(table.contains("degraded"));
+        assert!(table.contains(caveat_codes::PARSER_FIELD_TYPE_CHANGED));
+        assert!(table.contains(caveat_codes::PARSER_REQUIRED_FIELD_MISSING));
+        Ok(())
+    }
 }
