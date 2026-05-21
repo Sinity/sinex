@@ -46,6 +46,12 @@ pub struct DuplicateDependency {
     pub name: String,
     /// List of versions present
     pub versions: Vec<String>,
+    /// Whether any workspace manifest directly requests at least one reported version.
+    pub direct_workspace_debt: bool,
+    /// Number of workspace packages that directly request any reported version.
+    pub direct_workspace_root_count: usize,
+    /// Whether this duplicate is only introduced transitively.
+    pub transitive_only: bool,
     /// Per-version reachability from workspace roots.
     pub version_details: Vec<DuplicateVersionDetail>,
 }
@@ -243,10 +249,16 @@ impl WorkspaceAnalyzer {
                         ),
                     });
                 }
+                let direct_workspace_roots = Self::direct_workspace_roots(&version_details);
+                let direct_workspace_root_count = direct_workspace_roots.len();
+                let direct_workspace_debt = direct_workspace_root_count > 0;
 
                 duplicates.push(DuplicateDependency {
                     name,
                     versions: versions_vec,
+                    direct_workspace_debt,
+                    direct_workspace_root_count,
+                    transitive_only: !direct_workspace_debt,
                     version_details,
                 });
             }
@@ -256,6 +268,18 @@ impl WorkspaceAnalyzer {
         duplicates.sort_by(|a, b| a.name.cmp(&b.name));
 
         Ok(duplicates)
+    }
+
+    fn direct_workspace_roots(version_details: &[DuplicateVersionDetail]) -> Vec<String> {
+        let mut roots = Vec::new();
+
+        for detail in version_details {
+            roots.extend(detail.direct_workspace_roots.iter().cloned());
+        }
+
+        roots.sort();
+        roots.dedup();
+        roots
     }
 
     fn workspace_roots_by_reached_package(&self) -> Result<BTreeMap<PackageId, Vec<String>>> {
