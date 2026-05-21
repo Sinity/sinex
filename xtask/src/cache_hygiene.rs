@@ -38,6 +38,13 @@ pub const AUTO_RECLAIM_PERCENT: f64 = 85.0;
 /// Threshold above which any heavy command refuses to run.
 pub const REFUSE_PERCENT: f64 = 90.0;
 
+/// Absolute free-space floor for refusing work.
+///
+/// Percentage-only refusal is too blunt on large filesystems: a multi-terabyte
+/// mount can be above `REFUSE_PERCENT` while still having hundreds of GiB free,
+/// which is enough headroom for Sinex build and test artifacts.
+pub const REFUSE_MIN_FREE_GB: f64 = 50.0;
+
 #[derive(Debug, Clone)]
 pub struct DiskUsage {
     pub mount: String,
@@ -58,7 +65,7 @@ impl DiskUsage {
     }
     #[must_use]
     pub fn refuse(&self) -> bool {
-        self.percent_used >= REFUSE_PERCENT
+        self.percent_used >= REFUSE_PERCENT && self.free_gb < REFUSE_MIN_FREE_GB
     }
 }
 
@@ -272,6 +279,34 @@ mod tests {
         let u = disk_usage(Path::new("/tmp"))?;
         assert!(u.total_gb > 0.0);
         assert!(u.percent_used >= 0.0 && u.percent_used <= 100.0);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn disk_refusal_requires_percent_and_low_absolute_free_space()
+    -> xtask::sandbox::TestResult<()> {
+        let large_mount = DiskUsage {
+            mount: "/realm".to_string(),
+            total_gb: 4096.0,
+            used_gb: 3738.0,
+            free_gb: 358.0,
+            percent_used: 91.3,
+        };
+        assert!(large_mount.should_auto_reclaim());
+        assert!(
+            !large_mount.refuse(),
+            "large mounts with hundreds of GiB free should not require \
+             SINEX_PREFLIGHT_SKIP_DISK_CHECK"
+        );
+
+        let nearly_full_mount = DiskUsage {
+            mount: "/cache".to_string(),
+            total_gb: 500.0,
+            used_gb: 460.0,
+            free_gb: 40.0,
+            percent_used: 92.0,
+        };
+        assert!(nearly_full_mount.refuse());
         Ok(())
     }
 }
