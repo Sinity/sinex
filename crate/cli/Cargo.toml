@@ -26,7 +26,6 @@ workspace = true
 workspace = true
 
 [dependencies]
-rand                = { workspace = true }
 blake3              = { workspace = true }
 libc                = { workspace = true }
 clap_complete       = { workspace = true }
