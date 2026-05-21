@@ -1,5 +1,6 @@
 //! Doctor command - health check for Postgres, NATS, tools, and TLS
 
+use crate::cargo_diagnostics::CompilerDiagnostic;
 use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskCommand};
 use crate::config::config;
 use crate::infra::probe::{probe_nats, probe_postgres};
@@ -136,6 +137,8 @@ struct RustAnalyzerDoctorReport {
     processes: Vec<RustAnalyzerProcess>,
     #[serde(skip_serializing_if = "Option::is_none")]
     cli_diagnostics: Option<RustAnalyzerCliDiagnosticScan>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    history_recorded_diagnostics: Option<usize>,
     warnings: Vec<String>,
 }
 
@@ -524,7 +527,16 @@ impl XtaskCommand for RaDiagnoseCommand {
     }
 
     async fn execute(&self, ctx: &CommandContext) -> Result<CommandResult> {
-        let report = execute_rust_analyzer_check(self.collect_diagnostics, &self.severity)?;
+        let mut report = execute_rust_analyzer_check(self.collect_diagnostics, &self.severity)?;
+        if let Some(scan) = &report.cli_diagnostics {
+            let diagnostics = scan
+                .diagnostics
+                .iter()
+                .map(rust_analyzer_diagnostic_to_compiler_diagnostic)
+                .collect::<Vec<_>>();
+            ctx.record_diagnostics(&diagnostics)?;
+            report.history_recorded_diagnostics = Some(diagnostics.len());
+        }
         if ctx.is_human() {
             print_rust_analyzer_report(&report);
         }
@@ -631,6 +643,7 @@ fn execute_rust_analyzer_check(
         total_rss_mb,
         processes,
         cli_diagnostics,
+        history_recorded_diagnostics: None,
         warnings,
     })
 }
@@ -910,6 +923,30 @@ fn parse_line_col(value: &str) -> Option<(u32, u32)> {
         }
     }
     Some((line?, col?))
+}
+
+fn rust_analyzer_diagnostic_to_compiler_diagnostic(
+    diagnostic: &RustAnalyzerCliDiagnostic,
+) -> CompilerDiagnostic {
+    CompilerDiagnostic {
+        level: diagnostic.severity.to_lowercase(),
+        code: Some(diagnostic.diagnostic_kind.clone()),
+        message: diagnostic.message.clone(),
+        file_path: Some(diagnostic.file.clone()),
+        line: Some(diagnostic.line + 1),
+        column: Some(diagnostic.col + 1),
+        rendered: Some(format!(
+            "{}:{}:{}: {}: {} [{}]",
+            diagnostic.file,
+            diagnostic.line + 1,
+            diagnostic.col + 1,
+            diagnostic.severity.to_lowercase(),
+            diagnostic.message,
+            diagnostic.diagnostic_kind
+        )),
+        package: Some(diagnostic.crate_name.clone()),
+        ..CompilerDiagnostic::default()
+    }
 }
 
 fn truncate_report_text(value: &str, max_len: usize) -> String {
@@ -1332,6 +1369,9 @@ fn print_rust_analyzer_report(report: &RustAnalyzerDoctorReport) {
                 diagnostic.severity,
                 diagnostic.message
             );
+        }
+        if let Some(recorded) = report.history_recorded_diagnostics {
+            println!("  History:           recorded {recorded} RA diagnostic(s)");
         }
     }
     for warning in &report.warnings {

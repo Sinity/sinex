@@ -2080,3 +2080,42 @@ async fn test_rust_analyzer_cli_diagnostic_parser_reads_batch_output()
     assert_eq!(diagnostic.message, "unused variable");
     Ok(())
 }
+
+#[sinex_test]
+async fn test_rust_analyzer_cli_diagnostic_maps_to_history_shape()
+-> ::xtask::sandbox::TestResult<()> {
+    let diagnostic = RustAnalyzerCliDiagnostic {
+        crate_name: "sinexctl".to_string(),
+        file: "/realm/project/sinex/crate/cli/src/lib.rs".to_string(),
+        severity: "Warning".to_string(),
+        diagnostic_kind: "RustcLint(\"unused_variables\")".to_string(),
+        line: 12,
+        col: 4,
+        end_line: 12,
+        end_col: 10,
+        message: "unused variable".to_string(),
+    };
+
+    let stored = rust_analyzer_diagnostic_to_compiler_diagnostic(&diagnostic);
+
+    assert_eq!(stored.level, "warning");
+    assert_eq!(
+        stored.code.as_deref(),
+        Some("RustcLint(\"unused_variables\")")
+    );
+    assert_eq!(stored.message, "unused variable");
+    assert_eq!(
+        stored.file_path.as_deref(),
+        Some("/realm/project/sinex/crate/cli/src/lib.rs")
+    );
+    assert_eq!(stored.line, Some(13));
+    assert_eq!(stored.column, Some(5));
+    assert_eq!(stored.package.as_deref(), Some("sinexctl"));
+    assert!(
+        stored
+            .rendered
+            .as_deref()
+            .is_some_and(|rendered| rendered.contains("unused variable"))
+    );
+    Ok(())
+}
