@@ -63,6 +63,8 @@ pub use adapters::{
     FileDropConfig,
     FileDropCursor,
     FileDropEventKind,
+    FileDropMoveRole,
+    FileDropRecordMetadata,
     FileDropWatchBudget,
     FileDropWatchMode,
     FileDropWatchPlan,
