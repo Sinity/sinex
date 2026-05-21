@@ -1140,6 +1140,78 @@ pub struct SourceShapeDriftObservation {
     pub observed_at: String,
 }
 
+impl SourceShapeDriftObservation {
+    /// Convert this checkpointed drift observation into readiness caveats.
+    #[must_use]
+    pub fn readiness_caveats(&self) -> Vec<SourceCaveat> {
+        source_shape_drift_readiness_caveats(
+            &self.source_unit_id,
+            &self.current_hash,
+            self.added_keys.len(),
+            self.removed_keys.len(),
+            self.type_changes.len(),
+        )
+    }
+}
+
+/// Build the canonical readiness caveats for source-shape drift.
+///
+/// Added fields are advisory because existing parser mappings can usually
+/// ignore them. Removed fields and type changes are degraded because they are
+/// the shapes most likely to produce missing/defaulted parsed values.
+#[must_use]
+pub fn source_shape_drift_readiness_caveats(
+    source_unit_id: &SourceUnitId,
+    current_hash: &str,
+    added_key_count: usize,
+    removed_key_count: usize,
+    type_change_count: usize,
+) -> Vec<SourceCaveat> {
+    let mut caveats = Vec::new();
+    let evidence_ref = Some(format!("drift:{current_hash}"));
+
+    if type_change_count > 0 {
+        caveats.push(SourceCaveat {
+            code: caveat_codes::PARSER_FIELD_TYPE_CHANGED.to_string(),
+            severity: CaveatSeverity::Degraded,
+            message: format!(
+                "{} input field type(s) changed for source unit {}.",
+                type_change_count,
+                source_unit_id.as_str()
+            ),
+            evidence_ref: evidence_ref.clone(),
+        });
+    }
+
+    if removed_key_count > 0 {
+        caveats.push(SourceCaveat {
+            code: caveat_codes::PARSER_REQUIRED_FIELD_MISSING.to_string(),
+            severity: CaveatSeverity::Degraded,
+            message: format!(
+                "{} previously observed input field(s) are missing for source unit {}.",
+                removed_key_count,
+                source_unit_id.as_str()
+            ),
+            evidence_ref: evidence_ref.clone(),
+        });
+    }
+
+    if added_key_count > 0 && caveats.is_empty() {
+        caveats.push(SourceCaveat {
+            code: caveat_codes::SOURCE_SHAPE_CHANGED.to_string(),
+            severity: CaveatSeverity::Info,
+            message: format!(
+                "{} new input field(s) observed for source unit {}.",
+                added_key_count,
+                source_unit_id.as_str()
+            ),
+            evidence_ref,
+        });
+    }
+
+    caveats
+}
+
 /// Response: `sources.drift.list`
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct SourcesDriftListResponse {

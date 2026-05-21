@@ -38,7 +38,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 
 use sinex_primitives::parser::SourceUnitId;
-use sinex_primitives::rpc::sources::{CaveatSeverity, SourceCaveat, caveat_codes};
+use sinex_primitives::rpc::sources::{SourceCaveat, source_shape_drift_readiness_caveats};
 use sinex_primitives::temporal::Timestamp;
 
 const MAX_JSON_FINGERPRINT_DEPTH: usize = 8;
@@ -703,49 +703,13 @@ impl DriftEvent {
     /// are the shapes most likely to produce missing/defaulted parsed values.
     #[must_use]
     pub fn readiness_caveats(&self) -> Vec<SourceCaveat> {
-        let mut caveats = Vec::new();
-        let evidence_ref = Some(format!("drift:{}", self.current_hash));
-
-        if !self.type_changes.is_empty() {
-            caveats.push(SourceCaveat {
-                code: caveat_codes::PARSER_FIELD_TYPE_CHANGED.to_string(),
-                severity: CaveatSeverity::Degraded,
-                message: format!(
-                    "{} input field type(s) changed for source unit {}.",
-                    self.type_changes.len(),
-                    self.source_unit_id.as_str()
-                ),
-                evidence_ref: evidence_ref.clone(),
-            });
-        }
-
-        if !self.removed_keys.is_empty() {
-            caveats.push(SourceCaveat {
-                code: caveat_codes::PARSER_REQUIRED_FIELD_MISSING.to_string(),
-                severity: CaveatSeverity::Degraded,
-                message: format!(
-                    "{} previously observed input field(s) are missing for source unit {}.",
-                    self.removed_keys.len(),
-                    self.source_unit_id.as_str()
-                ),
-                evidence_ref: evidence_ref.clone(),
-            });
-        }
-
-        if !self.added_keys.is_empty() && caveats.is_empty() {
-            caveats.push(SourceCaveat {
-                code: caveat_codes::SOURCE_SHAPE_CHANGED.to_string(),
-                severity: CaveatSeverity::Info,
-                message: format!(
-                    "{} new input field(s) observed for source unit {}.",
-                    self.added_keys.len(),
-                    self.source_unit_id.as_str()
-                ),
-                evidence_ref,
-            });
-        }
-
-        caveats
+        source_shape_drift_readiness_caveats(
+            &self.source_unit_id,
+            &self.current_hash,
+            self.added_keys.len(),
+            self.removed_keys.len(),
+            self.type_changes.len(),
+        )
     }
 
     /// Serializes this event as a JSON payload suitable for a parser-emitted event.
@@ -846,6 +810,7 @@ fn normalize_sqlite_declared_type(declared_type: &str) -> String {
 mod tests {
     use super::*;
     use serde_json::json;
+    use sinex_primitives::rpc::sources::{CaveatSeverity, caveat_codes};
     use xtask::sandbox::prelude::sinex_test;
 
     #[sinex_test]

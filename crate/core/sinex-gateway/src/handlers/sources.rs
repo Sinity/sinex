@@ -912,6 +912,7 @@ pub async fn handle_sources_readiness_list(
             SinexError::database("Failed to list source readiness").with_std_error(&error)
         })?;
     apply_private_mode_readiness_overlay(services, &mut sources);
+    apply_checkpoint_drift_readiness_overlay(services, &mut sources).await;
 
     Ok(SourcesReadinessListResponse { sources })
 }
@@ -936,6 +937,7 @@ pub async fn handle_sources_readiness_get(
         })?;
     if let Some(row) = readiness.as_mut() {
         apply_private_mode_readiness_overlay(services, std::slice::from_mut(row));
+        apply_checkpoint_drift_readiness_overlay(services, std::slice::from_mut(row)).await;
     }
 
     Ok(SourcesReadinessGetResponse { readiness })
@@ -947,6 +949,20 @@ pub async fn handle_sources_drift_list(
     services: &crate::service_container::ServiceContainer,
     req: SourcesDriftListRequest,
 ) -> Result<SourcesDriftListResponse> {
+    let mut drifts = load_checkpoint_drifts(services).await?;
+    if let Some(source_unit_id) = req.source_unit_id {
+        drifts.retain(|drift| drift.source_unit_id == source_unit_id);
+    }
+    drifts.sort_by(compare_drift_observations_newest_first);
+    let limit = req.limit.unwrap_or(50).min(500);
+    drifts.truncate(limit);
+
+    Ok(SourcesDriftListResponse { drifts })
+}
+
+async fn load_checkpoint_drifts(
+    services: &crate::service_container::ServiceContainer,
+) -> Result<Vec<SourceShapeDriftObservation>> {
     let nats_client = services
         .nats_client()
         .ok_or_else(|| SinexError::configuration("NATS client is not available"))?;
@@ -955,7 +971,7 @@ pub async fn handle_sources_drift_list(
     let kv = match js.get_key_value(&bucket).await {
         Ok(kv) => kv,
         Err(error) if is_missing_checkpoint_bucket(&error) => {
-            return Ok(SourcesDriftListResponse { drifts: Vec::new() });
+            return Ok(Vec::new());
         }
         Err(error) => {
             return Err(SinexError::kv("Failed to open checkpoint bucket")
@@ -991,18 +1007,16 @@ pub async fn handle_sources_drift_list(
         drifts.extend(extract_checkpoint_drifts(&key, checkpoint.data.as_ref())?);
     }
 
-    if let Some(source_unit_id) = req.source_unit_id {
-        drifts.retain(|drift| drift.source_unit_id == source_unit_id);
-    }
-    drifts.sort_by(|lhs, rhs| {
-        rhs.observed_at
-            .cmp(&lhs.observed_at)
-            .then_with(|| rhs.checkpoint_key.cmp(&lhs.checkpoint_key))
-    });
-    let limit = req.limit.unwrap_or(50).min(500);
-    drifts.truncate(limit);
+    Ok(drifts)
+}
 
-    Ok(SourcesDriftListResponse { drifts })
+fn compare_drift_observations_newest_first(
+    lhs: &SourceShapeDriftObservation,
+    rhs: &SourceShapeDriftObservation,
+) -> std::cmp::Ordering {
+    rhs.observed_at
+        .cmp(&lhs.observed_at)
+        .then_with(|| rhs.checkpoint_key.cmp(&lhs.checkpoint_key))
 }
 
 fn is_missing_checkpoint_bucket(error: &async_nats::jetstream::context::KeyValueError) -> bool {
@@ -1137,6 +1151,63 @@ fn apply_private_mode_readiness_overlay(
     match load_private_mode_state(services.state_dir()) {
         Ok(state) => apply_private_mode_state_readiness_overlay(sources, &state),
         Err(error) => apply_private_mode_unavailable_readiness_overlay(sources, &error),
+    }
+}
+
+async fn apply_checkpoint_drift_readiness_overlay(
+    services: &crate::service_container::ServiceContainer,
+    sources: &mut [SourceReadiness],
+) {
+    if services.nats_client().is_none() {
+        return;
+    }
+
+    match load_checkpoint_drifts(services).await {
+        Ok(mut drifts) => {
+            drifts.sort_by(compare_drift_observations_newest_first);
+            apply_shape_drift_readiness_overlay(sources, &drifts);
+        }
+        Err(error) => {
+            tracing::warn!(
+                error = %error,
+                "failed to load checkpointed source-shape drift for readiness overlay"
+            );
+        }
+    }
+}
+
+fn apply_shape_drift_readiness_overlay(
+    sources: &mut [SourceReadiness],
+    drifts: &[SourceShapeDriftObservation],
+) {
+    for source in sources {
+        let Some(source_unit_id) = source.source_unit_id.as_ref() else {
+            continue;
+        };
+        let Some(drift) = drifts
+            .iter()
+            .filter(|drift| &drift.source_unit_id == source_unit_id)
+            .min_by(|lhs, rhs| compare_drift_observations_newest_first(lhs, rhs))
+        else {
+            continue;
+        };
+
+        let mut has_degraded_drift = false;
+        for caveat in drift.readiness_caveats() {
+            has_degraded_drift |= matches!(
+                caveat.severity,
+                CaveatSeverity::Degraded | CaveatSeverity::Blocking
+            );
+            if !source.caveats.iter().any(|existing| {
+                existing.code == caveat.code && existing.evidence_ref == caveat.evidence_ref
+            }) {
+                source.caveats.push(caveat);
+            }
+        }
+
+        if has_degraded_drift && source.status == SourceReadinessStatus::Available {
+            source.status = SourceReadinessStatus::Partial;
+        }
     }
 }
 
@@ -1634,6 +1705,109 @@ mod tests {
         )?;
 
         assert!(drifts.is_empty());
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn source_shape_drift_readiness_overlay_adds_latest_degraded_caveats()
+    -> xtask::sandbox::TestResult<()> {
+        let source_unit_id = sinex_primitives::parser::SourceUnitId::new("browser.history")?;
+        let mut sources = vec![readiness("browser", "history.sqlite")];
+        sources[0].source_unit_id = Some(source_unit_id.clone());
+
+        let drifts = vec![
+            SourceShapeDriftObservation {
+                checkpoint_key: "source-worker.default.host-a".to_string(),
+                source_unit_id: source_unit_id.clone(),
+                consumer_group: Some("default".to_string()),
+                consumer_name: Some("host-a".to_string()),
+                previous_hash: "old-1".to_string(),
+                current_hash: "new-1".to_string(),
+                format: "sqlite_schema".to_string(),
+                added_keys: vec!["title".to_string()],
+                removed_keys: Vec::new(),
+                type_changes: Vec::new(),
+                observed_at: "2026-05-21T09:00:00Z".to_string(),
+            },
+            SourceShapeDriftObservation {
+                checkpoint_key: "source-worker.default.host-a".to_string(),
+                source_unit_id,
+                consumer_group: Some("default".to_string()),
+                consumer_name: Some("host-a".to_string()),
+                previous_hash: "old-2".to_string(),
+                current_hash: "new-2".to_string(),
+                format: "sqlite_schema".to_string(),
+                added_keys: Vec::new(),
+                removed_keys: vec!["visit_id".to_string()],
+                type_changes: vec![SourceShapeTypeChange {
+                    key: "visit_time".to_string(),
+                    previous_type: "integer".to_string(),
+                    current_type: "text".to_string(),
+                }],
+                observed_at: "2026-05-21T10:00:00Z".to_string(),
+            },
+        ];
+
+        apply_shape_drift_readiness_overlay(&mut sources, &drifts);
+
+        assert_eq!(sources[0].status, SourceReadinessStatus::Partial);
+        let codes = sources[0]
+            .caveats
+            .iter()
+            .map(|caveat| caveat.code.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            codes,
+            [
+                caveat_codes::PARSER_FIELD_TYPE_CHANGED,
+                caveat_codes::PARSER_REQUIRED_FIELD_MISSING
+            ]
+        );
+        assert!(
+            sources[0]
+                .caveats
+                .iter()
+                .all(|caveat| caveat.severity == CaveatSeverity::Degraded)
+        );
+        assert!(
+            sources[0]
+                .caveats
+                .iter()
+                .all(|caveat| caveat.evidence_ref.as_deref() == Some("drift:new-2"))
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn source_shape_drift_readiness_overlay_keeps_additive_drift_available()
+    -> xtask::sandbox::TestResult<()> {
+        let source_unit_id = sinex_primitives::parser::SourceUnitId::new("browser.history")?;
+        let mut sources = vec![readiness("browser", "history.csv")];
+        sources[0].source_unit_id = Some(source_unit_id.clone());
+
+        let drifts = vec![SourceShapeDriftObservation {
+            checkpoint_key: "source-worker.default.host-a".to_string(),
+            source_unit_id,
+            consumer_group: Some("default".to_string()),
+            consumer_name: Some("host-a".to_string()),
+            previous_hash: "old".to_string(),
+            current_hash: "new".to_string(),
+            format: "csv".to_string(),
+            added_keys: vec!["title".to_string()],
+            removed_keys: Vec::new(),
+            type_changes: Vec::new(),
+            observed_at: "2026-05-21T10:00:00Z".to_string(),
+        }];
+
+        apply_shape_drift_readiness_overlay(&mut sources, &drifts);
+
+        assert_eq!(sources[0].status, SourceReadinessStatus::Available);
+        assert_eq!(sources[0].caveats.len(), 1);
+        assert_eq!(
+            sources[0].caveats[0].code,
+            caveat_codes::SOURCE_SHAPE_CHANGED
+        );
+        assert_eq!(sources[0].caveats[0].severity, CaveatSeverity::Info);
         Ok(())
     }
 
