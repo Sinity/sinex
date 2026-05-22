@@ -38,7 +38,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 
 use sinex_primitives::parser::SourceUnitId;
-use sinex_primitives::rpc::sources::{SourceCaveat, source_shape_drift_readiness_caveats};
+use sinex_primitives::rpc::sources::{
+    SourceCaveat, source_shape_drift_readiness_caveats,
+    source_shape_drift_readiness_caveats_with_required_fields,
+};
 use sinex_primitives::temporal::Timestamp;
 
 const MAX_JSON_FINGERPRINT_DEPTH: usize = 8;
@@ -712,6 +715,23 @@ impl DriftEvent {
         )
     }
 
+    /// Convert this drift observation into readiness caveats while honoring
+    /// parser-declared required input keys.
+    #[must_use]
+    pub fn readiness_caveats_with_required_fields(
+        &self,
+        required_input_keys: &[String],
+    ) -> Vec<SourceCaveat> {
+        source_shape_drift_readiness_caveats_with_required_fields(
+            &self.source_unit_id,
+            &self.current_hash,
+            self.added_keys.len(),
+            &self.removed_keys,
+            self.type_changes.len(),
+            required_input_keys,
+        )
+    }
+
     /// Serializes this event as a JSON payload suitable for a parser-emitted event.
     #[must_use]
     pub fn to_payload(&self) -> serde_json::Value {
@@ -1267,6 +1287,16 @@ mod tests {
             degraded_caveats
                 .iter()
                 .all(|caveat| caveat.severity == CaveatSeverity::Degraded)
+        );
+
+        let required_caveats =
+            degraded.readiness_caveats_with_required_fields(&["/name".to_string()]);
+        assert!(
+            required_caveats.iter().any(|caveat| {
+                caveat.code == caveat_codes::PARSER_REQUIRED_FIELD_MISSING
+                    && caveat.severity == CaveatSeverity::Blocking
+            }),
+            "required input removal should block readiness: {required_caveats:?}"
         );
         Ok(())
     }
