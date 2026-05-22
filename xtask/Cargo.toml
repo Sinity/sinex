@@ -76,7 +76,7 @@ sinex-node-sdk = { path = "../crate/lib/sinex-node-sdk" }
 sinex-source-worker = { path = "../crate/core/sinex-source-worker" }
 sinex-process = { path = "../crate/core/sinex-process" }
 url = { workspace = true }
-rand = { workspace = true }
+fastrand = { workspace = true }
 tokio-stream = { workspace = true }
 uuid = { workspace = true }
 bon = { workspace = true }

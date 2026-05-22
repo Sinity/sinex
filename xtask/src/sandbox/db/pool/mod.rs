@@ -1418,7 +1418,7 @@ impl DatabasePool {
         const MAX_ATTEMPTS: usize = 100;
 
         let pid = std::process::id();
-        let random_offset = rand::random::<u64>() as usize;
+        let random_offset = fastrand::usize(..);
         let start_index = (pid as usize + random_offset) % self.slots.len();
         slog!(
             Level::Debug,
