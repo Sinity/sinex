@@ -376,13 +376,49 @@ impl SourceRecordFingerprint {
                     }
                 }
             }
-            JsonValue::Array(_) => {
-                // Arrays are represented by the field that owns them. We do
-                // not index elements because array cardinality is data, not
-                // source shape.
+            JsonValue::Array(items) => {
+                // Top-level export files are often arrays of homogeneous row
+                // objects. Record their element object keys under /[] so drift
+                // can detect a field disappearing without making array length
+                // or element index part of the shape.
+                if path.is_empty() {
+                    Self::extract_top_level_array_object_types(
+                        items, depth, keys, type_map, max_fields,
+                    );
+                } else {
+                    // Nested arrays are represented by the field that owns
+                    // them. We do not index elements because array cardinality
+                    // is data, not source shape.
+                }
             }
             _ => {
                 // Scalar values: no keys to extract.
+            }
+        }
+    }
+
+    fn extract_top_level_array_object_types(
+        items: &[JsonValue],
+        depth: usize,
+        keys: &mut Vec<String>,
+        type_map: &mut BTreeMap<String, String>,
+        max_fields: usize,
+    ) {
+        let element_path = join_json_pointer("", "[]");
+        for item in items {
+            let JsonValue::Object(map) = item else {
+                continue;
+            };
+            for (key, val) in map {
+                if keys.len() >= max_fields {
+                    return;
+                }
+                let child_path = join_json_pointer(&element_path, key);
+                keys.push(child_path.clone());
+                merge_inferred_type(type_map, child_path.clone(), Self::infer_type(val));
+                if val.is_object() {
+                    Self::extract_types_at(val, &child_path, depth + 1, keys, type_map, max_fields);
+                }
             }
         }
     }
@@ -784,6 +820,18 @@ fn join_json_pointer(parent: &str, key: &str) -> String {
         format!("/{escaped}")
     } else {
         format!("{parent}/{escaped}")
+    }
+}
+
+fn merge_inferred_type(type_map: &mut BTreeMap<String, String>, key: String, inferred: String) {
+    match type_map.get_mut(&key) {
+        Some(existing) if *existing != inferred => {
+            *existing = "mixed".to_string();
+        }
+        Some(_) => {}
+        None => {
+            type_map.insert(key, inferred);
+        }
     }
 }
 
@@ -1388,6 +1436,40 @@ mod tests {
 
         assert_eq!(fp.format, "json");
         assert!(fp.keys.is_empty());
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_top_level_array_of_objects_records_element_keys() -> xtask::sandbox::TestResult<()>
+    {
+        let value = json!([
+            {
+                "ts": "2026-01-01T00:00:00Z",
+                "ms_played": 1000,
+                "track": { "uri": "spotify:track:1" }
+            },
+            {
+                "ts": "2026-01-01T00:01:00Z",
+                "ms_played": "2000",
+                "platform": "linux"
+            }
+        ]);
+        let fp = SourceRecordFingerprint::from_json(&value);
+
+        assert_eq!(fp.format, "json");
+        assert_eq!(
+            fp.keys,
+            vec![
+                "/[]/ms_played",
+                "/[]/platform",
+                "/[]/track",
+                "/[]/track/uri",
+                "/[]/ts"
+            ]
+        );
+        assert_eq!(fp.type_map["/[]/ts"], "string");
+        assert_eq!(fp.type_map["/[]/ms_played"], "mixed");
+        assert_eq!(fp.type_map["/[]/track/uri"], "string");
         Ok(())
     }
 
