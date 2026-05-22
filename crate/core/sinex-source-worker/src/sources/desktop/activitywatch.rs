@@ -303,6 +303,21 @@ impl MaterialParser for ActivityWatchParser {
         Ok(vec![intent])
     }
 
+    fn required_input_keys(&self) -> Vec<String> {
+        [
+            "buckets.id",
+            "buckets.name",
+            "events.bucketrow",
+            "events.data",
+            "events.endtime",
+            "events.id",
+            "events.starttime",
+        ]
+        .into_iter()
+        .map(str::to_string)
+        .collect()
+    }
+
     fn baseline_adapter_config() -> serde_json::Value {
         // Actual aw-server-rust schema:
         //   events:  id, bucketrow (FK → buckets.id), starttime, endtime, data
