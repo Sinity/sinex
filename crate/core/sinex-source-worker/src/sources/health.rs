@@ -118,6 +118,13 @@ impl MaterialParser for SleepMergedSummaryParser {
         }
         Ok(intents)
     }
+
+    fn required_input_keys(&self) -> Vec<String> {
+        ["sh_datauuid", "start_local", "end_local"]
+            .into_iter()
+            .map(str::to_owned)
+            .collect()
+    }
 }
 
 fn parse_row(row: SleepCsvRow, line: u64, ctx: &ParserContext) -> ParserResult<ParsedEventIntent> {
