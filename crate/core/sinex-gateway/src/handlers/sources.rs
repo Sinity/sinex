@@ -1061,6 +1061,8 @@ struct RawDriftEvent {
     removed_keys: Vec<String>,
     #[serde(default)]
     type_changes: Vec<RawTypeChange>,
+    #[serde(default)]
+    required_input_keys: Vec<String>,
     observed_at: serde_json::Value,
 }
 
@@ -1135,6 +1137,7 @@ fn extract_checkpoint_drifts(
                     .into_iter()
                     .map(RawTypeChange::into_rpc)
                     .collect(),
+                required_input_keys: raw.required_input_keys,
                 observed_at: raw
                     .observed_at
                     .as_str()
@@ -1676,6 +1679,7 @@ mod tests {
                             "format": "csv",
                             "added_keys": ["url"],
                             "removed_keys": ["visit_id"],
+                            "required_input_keys": ["visit_id"],
                             "type_changes": [
                                 ["title", "string", "null"],
                                 {
@@ -1699,6 +1703,7 @@ mod tests {
         assert_eq!(drift.consumer_name.as_deref(), Some("host-a"));
         assert_eq!(drift.added_keys, ["url"]);
         assert_eq!(drift.removed_keys, ["visit_id"]);
+        assert_eq!(drift.required_input_keys, ["visit_id"]);
         assert_eq!(drift.type_changes.len(), 2);
         assert_eq!(drift.type_changes[0].key, "title");
         assert_eq!(drift.type_changes[0].previous_type, "string");
@@ -1739,6 +1744,7 @@ mod tests {
                 added_keys: vec!["title".to_string()],
                 removed_keys: Vec::new(),
                 type_changes: Vec::new(),
+                required_input_keys: Vec::new(),
                 observed_at: "2026-05-21T09:00:00Z".to_string(),
             },
             SourceShapeDriftObservation {
@@ -1756,6 +1762,7 @@ mod tests {
                     previous_type: "integer".to_string(),
                     current_type: "text".to_string(),
                 }],
+                required_input_keys: Vec::new(),
                 observed_at: "2026-05-21T10:00:00Z".to_string(),
             },
         ];
@@ -1808,6 +1815,7 @@ mod tests {
             added_keys: vec!["title".to_string()],
             removed_keys: Vec::new(),
             type_changes: Vec::new(),
+            required_input_keys: Vec::new(),
             observed_at: "2026-05-21T10:00:00Z".to_string(),
         }];
 
@@ -1842,6 +1850,7 @@ mod tests {
             added_keys: Vec::new(),
             removed_keys: vec!["visit_id".to_string()],
             type_changes: Vec::new(),
+            required_input_keys: Vec::new(),
             observed_at: "2026-05-21T10:00:00Z".to_string(),
         }];
 
@@ -1854,6 +1863,42 @@ mod tests {
         );
         assert_eq!(sources[1].status, SourceReadinessStatus::Available);
         assert!(sources[1].caveats.is_empty());
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn source_shape_drift_readiness_overlay_blocks_required_input_removal()
+    -> xtask::sandbox::TestResult<()> {
+        let source_unit_id = sinex_primitives::parser::SourceUnitId::new("browser.history")?;
+        let mut sources = vec![readiness("browser", "history.sqlite")];
+        sources[0].source_unit_id = Some(source_unit_id.clone());
+
+        let drifts = vec![SourceShapeDriftObservation {
+            checkpoint_key: "source-worker.default.host-a".to_string(),
+            source_unit_id,
+            consumer_group: Some("default".to_string()),
+            consumer_name: Some("host-a".to_string()),
+            previous_hash: "old".to_string(),
+            current_hash: "new".to_string(),
+            format: "sqlite_schema".to_string(),
+            added_keys: Vec::new(),
+            removed_keys: vec!["visit_id".to_string()],
+            type_changes: Vec::new(),
+            required_input_keys: vec!["visit_id".to_string()],
+            observed_at: "2026-05-21T10:00:00Z".to_string(),
+        }];
+
+        apply_shape_drift_readiness_overlay(&mut sources, &drifts);
+
+        assert_eq!(sources[0].status, SourceReadinessStatus::Partial);
+        assert!(
+            sources[0].caveats.iter().any(|caveat| {
+                caveat.code == caveat_codes::PARSER_REQUIRED_FIELD_MISSING
+                    && caveat.severity == CaveatSeverity::Blocking
+            }),
+            "expected required input removal to surface as blocking: {:?}",
+            sources[0].caveats
+        );
         Ok(())
     }
 

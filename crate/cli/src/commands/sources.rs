@@ -1115,6 +1115,7 @@ mod tests {
                     previous_type: "number".to_string(),
                     current_type: "string".to_string(),
                 }],
+                required_input_keys: vec!["visit_id".to_string()],
                 observed_at: "2026-05-21T07:00:00Z".to_string(),
             }],
         };
@@ -1122,7 +1123,7 @@ mod tests {
         let table = format_drift_list(&response);
 
         assert!(table.contains("IMPACT"));
-        assert!(table.contains("degraded"));
+        assert!(table.contains("blocking"));
         assert!(table.contains(caveat_codes::PARSER_FIELD_TYPE_CHANGED));
         assert!(table.contains(caveat_codes::PARSER_REQUIRED_FIELD_MISSING));
         Ok(())

@@ -1137,6 +1137,13 @@ pub struct SourceShapeDriftObservation {
     pub removed_keys: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub type_changes: Vec<SourceShapeTypeChange>,
+    /// Parser-declared input keys that must be present for this drift surface.
+    ///
+    /// When populated by the producer, [`readiness_caveats`](Self::readiness_caveats)
+    /// can distinguish removed optional/previously-observed keys from removed
+    /// parser-required input keys.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub required_input_keys: Vec<String>,
     pub observed_at: String,
 }
 
@@ -1144,13 +1151,7 @@ impl SourceShapeDriftObservation {
     /// Convert this checkpointed drift observation into readiness caveats.
     #[must_use]
     pub fn readiness_caveats(&self) -> Vec<SourceCaveat> {
-        source_shape_drift_readiness_caveats(
-            &self.source_unit_id,
-            &self.current_hash,
-            self.added_keys.len(),
-            self.removed_keys.len(),
-            self.type_changes.len(),
-        )
+        self.readiness_caveats_with_required_fields(&self.required_input_keys)
     }
 
     /// Convert this drift observation into readiness caveats while honoring
