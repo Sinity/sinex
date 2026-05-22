@@ -540,6 +540,10 @@ impl MaterialParser for WykopEntryParser {
         }
         Ok(intents)
     }
+
+    fn required_input_keys(&self) -> Vec<String> {
+        vec!["/[]/entry_id".into(), "/[]/entry_created_at".into()]
+    }
 }
 
 fn parse_wykop_entry_row(
@@ -725,6 +729,10 @@ impl MaterialParser for WykopEntryCommentParser {
             )?);
         }
         Ok(intents)
+    }
+
+    fn required_input_keys(&self) -> Vec<String> {
+        vec!["/[]/comment_id".into(), "/[]/comment_created_at".into()]
     }
 }
 

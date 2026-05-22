@@ -86,6 +86,11 @@ impl InputShapeAdapter for StaticFileAdapter {
             Some("tsv") => SourceRecordFingerprint::from_tsv_bytes(&bytes)
                 .map(Some)
                 .map_err(|e| ParserError::Adapter(format!("failed to fingerprint TSV file: {e}"))),
+            Some("jsonl") => SourceRecordFingerprint::from_jsonl_bytes(&bytes)
+                .map(Some)
+                .map_err(|e| {
+                    ParserError::Adapter(format!("failed to fingerprint JSONL file: {e}"))
+                }),
             Some("json") => {
                 let value = serde_json::from_slice(&bytes).map_err(|e| {
                     ParserError::Adapter(format!("failed to fingerprint JSON file: {e}"))
@@ -280,6 +285,32 @@ mod tests {
         assert!(fingerprint.keys.contains(&"/profile/name".to_string()));
         assert_eq!(fingerprint.type_map["/id"], "integer");
         assert_eq!(fingerprint.type_map["/profile/name"], "string");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn static_file_jsonl_input_fingerprint_reports_row_shape()
+    -> xtask::sandbox::TestResult<()> {
+        let mut f = Builder::new().suffix(".jsonl").tempfile().unwrap();
+        f.write_all(
+            br#"{"id":1,"created_at":"2026-01-01"}
+{"id":2,"created_at":"2026-01-02","score":7}
+"#,
+        )
+        .unwrap();
+        let path = f.path().to_str().unwrap().to_string();
+
+        let adapter = StaticFileAdapter;
+        let config = StaticFileConfig { path };
+        let fingerprint = adapter
+            .input_fingerprint(&config)
+            .unwrap()
+            .expect("JSONL static files should expose a structural fingerprint");
+
+        assert_eq!(fingerprint.format, "jsonl");
+        assert!(fingerprint.keys.contains(&"/[]/id".to_string()));
+        assert!(fingerprint.keys.contains(&"/[]/created_at".to_string()));
+        assert!(fingerprint.keys.contains(&"/[]/score".to_string()));
         Ok(())
     }
 
