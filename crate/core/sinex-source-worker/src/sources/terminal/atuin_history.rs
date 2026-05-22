@@ -229,6 +229,13 @@ impl MaterialParser for AtuinHistoryParser {
         ])
     }
 
+    fn required_input_keys(&self) -> Vec<String> {
+        ["history.command", "history.timestamp"]
+            .into_iter()
+            .map(str::to_owned)
+            .collect()
+    }
+
     fn baseline_adapter_config() -> serde_json::Value {
         // Atuin's history table has columns (id, timestamp, duration, exit,
         // command, cwd, session, hostname, deleted_at). SqliteRowAdapter
