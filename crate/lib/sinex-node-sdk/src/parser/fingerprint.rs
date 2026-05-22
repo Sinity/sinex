@@ -39,8 +39,7 @@ use serde_json::Value as JsonValue;
 
 use sinex_primitives::parser::SourceUnitId;
 use sinex_primitives::rpc::sources::{
-    SourceCaveat, source_shape_drift_readiness_caveats,
-    source_shape_drift_readiness_caveats_with_required_fields,
+    SourceCaveat, source_shape_drift_readiness_caveats_with_required_fields,
 };
 use sinex_primitives::temporal::Timestamp;
 
@@ -655,6 +654,7 @@ fn build_drift_event_from_parts(
         added_keys,
         removed_keys,
         type_changes,
+        required_input_keys: Vec::new(),
         observed_at: Timestamp::now(),
     }
 }
@@ -696,6 +696,10 @@ pub struct DriftEvent {
     /// Type changes for keys that exist in both: (key, `old_type`, `new_type`).
     pub type_changes: Vec<(String, String, String)>,
 
+    /// Parser-declared input keys required by the producer, when known.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub required_input_keys: Vec<String>,
+
     /// When this drift was observed.
     pub observed_at: Timestamp,
 }
@@ -708,13 +712,7 @@ impl DriftEvent {
     /// are the shapes most likely to produce missing/defaulted parsed values.
     #[must_use]
     pub fn readiness_caveats(&self) -> Vec<SourceCaveat> {
-        source_shape_drift_readiness_caveats(
-            &self.source_unit_id,
-            &self.current_hash,
-            self.added_keys.len(),
-            self.removed_keys.len(),
-            self.type_changes.len(),
-        )
+        self.readiness_caveats_with_required_fields(&self.required_input_keys)
     }
 
     /// Convert this drift observation into readiness caveats while honoring
@@ -763,6 +761,7 @@ impl DriftEvent {
                     "current_type": new,
                 }))
                 .collect::<Vec<_>>(),
+            "required_input_keys": self.required_input_keys,
             "observed_at": self.observed_at.format_rfc3339(),
         })
     }

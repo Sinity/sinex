@@ -90,6 +90,10 @@ fn parser_spec_is_built_from_struct_attrs() {
     assert_eq!(spec.event_type.as_str(), "test.event");
     assert_eq!(spec.fields.len(), 1);
     assert!(spec.fields[0].required);
+    let parser = MinimalRecord {
+        value: String::new(),
+    };
+    assert_eq!(parser.required_input_keys(), vec!["/value"]);
 }
 
 // ---------------------------------------------------------------------------

@@ -318,6 +318,10 @@ fn derive_source_record_inner(input: &DeriveInput) -> syn::Result<TokenStream> {
                     }
                 }
 
+                fn required_input_keys(&self) -> Vec<String> {
+                    Self::parser_spec().required_input_keys()
+                }
+
                 #parse_record_impl
             }
 
