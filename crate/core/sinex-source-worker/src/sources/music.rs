@@ -152,6 +152,10 @@ impl MaterialParser for SpotifyHistoryParser {
 
         Ok(intents)
     }
+
+    fn required_input_keys(&self) -> Vec<String> {
+        vec!["/[]/ts".to_owned()]
+    }
 }
 
 fn parse_row(
