@@ -152,6 +152,13 @@ impl MaterialParser for RedditCommentParser {
         }
         Ok(intents)
     }
+
+    fn required_input_keys(&self) -> Vec<String> {
+        ["id", "date", "subreddit"]
+            .into_iter()
+            .map(str::to_owned)
+            .collect()
+    }
 }
 
 fn parse_reddit_comment_row(
@@ -339,6 +346,13 @@ impl MaterialParser for RedditPostParser {
             intents.push(parse_reddit_post_row(row, (row_index + 1) as u64, ctx)?);
         }
         Ok(intents)
+    }
+
+    fn required_input_keys(&self) -> Vec<String> {
+        ["id", "date", "subreddit"]
+            .into_iter()
+            .map(str::to_owned)
+            .collect()
     }
 }
 
