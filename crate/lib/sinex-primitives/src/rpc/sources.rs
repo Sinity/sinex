@@ -1152,6 +1152,23 @@ impl SourceShapeDriftObservation {
             self.type_changes.len(),
         )
     }
+
+    /// Convert this drift observation into readiness caveats while honoring
+    /// parser-declared required input keys.
+    #[must_use]
+    pub fn readiness_caveats_with_required_fields(
+        &self,
+        required_input_keys: &[String],
+    ) -> Vec<SourceCaveat> {
+        source_shape_drift_readiness_caveats_with_required_fields(
+            &self.source_unit_id,
+            &self.current_hash,
+            self.added_keys.len(),
+            &self.removed_keys,
+            self.type_changes.len(),
+            required_input_keys,
+        )
+    }
 }
 
 /// Build the canonical readiness caveats for source-shape drift.
@@ -1210,6 +1227,111 @@ pub fn source_shape_drift_readiness_caveats(
     }
 
     caveats
+}
+
+/// Build readiness caveats for source-shape drift using parser-declared
+/// required input keys when they are available.
+///
+/// This is the fail-closed policy surface for parser manifests: removed fields
+/// that were only previously observed degrade readiness, while removed fields
+/// that the parser declares as required block readiness.
+#[must_use]
+pub fn source_shape_drift_readiness_caveats_with_required_fields(
+    source_unit_id: &SourceUnitId,
+    current_hash: &str,
+    added_key_count: usize,
+    removed_keys: &[String],
+    type_change_count: usize,
+    required_input_keys: &[String],
+) -> Vec<SourceCaveat> {
+    let mut caveats = Vec::new();
+    let evidence_ref = Some(format!("drift:{current_hash}"));
+    let required_missing = removed_required_input_keys(removed_keys, required_input_keys);
+
+    if type_change_count > 0 {
+        caveats.push(SourceCaveat {
+            code: caveat_codes::PARSER_FIELD_TYPE_CHANGED.to_string(),
+            severity: CaveatSeverity::Degraded,
+            message: format!(
+                "{} input field type(s) changed for source unit {}.",
+                type_change_count,
+                source_unit_id.as_str()
+            ),
+            evidence_ref: evidence_ref.clone(),
+        });
+    }
+
+    if !removed_keys.is_empty() {
+        let (severity, message) = if required_missing.is_empty() {
+            (
+                CaveatSeverity::Degraded,
+                format!(
+                    "{} previously observed input field(s) are missing for source unit {}.",
+                    removed_keys.len(),
+                    source_unit_id.as_str()
+                ),
+            )
+        } else {
+            (
+                CaveatSeverity::Blocking,
+                format!(
+                    "{} required input field(s) are missing for source unit {}: {}.",
+                    required_missing.len(),
+                    source_unit_id.as_str(),
+                    summarize_field_names(&required_missing)
+                ),
+            )
+        };
+        caveats.push(SourceCaveat {
+            code: caveat_codes::PARSER_REQUIRED_FIELD_MISSING.to_string(),
+            severity,
+            message,
+            evidence_ref: evidence_ref.clone(),
+        });
+    }
+
+    if added_key_count > 0 && caveats.is_empty() {
+        caveats.push(SourceCaveat {
+            code: caveat_codes::SOURCE_SHAPE_CHANGED.to_string(),
+            severity: CaveatSeverity::Info,
+            message: format!(
+                "{} new input field(s) observed for source unit {}.",
+                added_key_count,
+                source_unit_id.as_str()
+            ),
+            evidence_ref,
+        });
+    }
+
+    caveats
+}
+
+fn removed_required_input_keys(
+    removed_keys: &[String],
+    required_input_keys: &[String],
+) -> Vec<String> {
+    required_input_keys
+        .iter()
+        .filter(|required| removed_keys.iter().any(|removed| removed == *required))
+        .cloned()
+        .collect()
+}
+
+fn summarize_field_names(fields: &[String]) -> String {
+    const MAX_FIELD_NAMES: usize = 5;
+
+    let shown = fields
+        .iter()
+        .take(MAX_FIELD_NAMES)
+        .map(String::as_str)
+        .collect::<Vec<_>>()
+        .join(", ");
+    let hidden = fields.len().saturating_sub(MAX_FIELD_NAMES);
+    if hidden == 0 {
+        shown
+    } else {
+        format!("{shown}, +{hidden} more")
+    }
 }
 
 /// Response: `sources.drift.list`
