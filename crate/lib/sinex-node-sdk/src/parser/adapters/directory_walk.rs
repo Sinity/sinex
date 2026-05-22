@@ -231,7 +231,7 @@ impl DirectoryWalkAdapter {
             |extension| format!("extension:{extension}"),
         );
         match extension.as_deref() {
-            Some(extension @ ("csv" | "tsv" | "json")) => {
+            Some(extension @ ("csv" | "tsv" | "json" | "jsonl")) => {
                 match structured_file_shape_hash(path, extension) {
                     Some(hash) => format!("{base_kind};shape:{hash}"),
                     None => format!("{base_kind};shape:unavailable"),
@@ -247,6 +247,7 @@ fn structured_file_shape_hash(path: &Utf8Path, extension: &str) -> Option<String
     let fingerprint = match extension {
         "csv" => SourceRecordFingerprint::from_csv_bytes(&bytes).ok()?,
         "tsv" => SourceRecordFingerprint::from_tsv_bytes(&bytes).ok()?,
+        "jsonl" => SourceRecordFingerprint::from_jsonl_bytes(&bytes).ok()?,
         "json" => {
             let value = serde_json::from_slice(&bytes).ok()?;
             SourceRecordFingerprint::from_json(&value)
@@ -615,13 +616,18 @@ mod tests {
         write!(csv, "id,name\n1,Alice").unwrap();
         let mut json = std::fs::File::create(sub.join("profile.JSON")).unwrap();
         write!(json, "{{\"id\":1}}").unwrap();
+        let mut jsonl = std::fs::File::create(sub.join("events.jsonl")).unwrap();
+        writeln!(jsonl, "{{\"event_id\":1}}").unwrap();
 
         let adapter = DirectoryWalkAdapter;
         let config = simple_config(vec![root]);
         let fingerprint = adapter.input_fingerprint(&config)?.unwrap();
 
         assert_eq!(fingerprint.format, "directory_manifest");
-        assert_eq!(fingerprint.keys, vec!["events.csv", "sub/profile.JSON"]);
+        assert_eq!(
+            fingerprint.keys,
+            vec!["events.csv", "sub/events.jsonl", "sub/profile.JSON"]
+        );
         assert!(
             fingerprint
                 .type_map
@@ -633,6 +639,12 @@ mod tests {
                 .type_map
                 .get("sub/profile.JSON")
                 .is_some_and(|kind| kind.starts_with("extension:json;shape:"))
+        );
+        assert!(
+            fingerprint
+                .type_map
+                .get("sub/events.jsonl")
+                .is_some_and(|kind| kind.starts_with("extension:jsonl;shape:"))
         );
         Ok(())
     }

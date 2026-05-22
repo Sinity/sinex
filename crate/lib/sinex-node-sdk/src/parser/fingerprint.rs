@@ -143,6 +143,47 @@ impl SourceRecordFingerprint {
         Self::from_delimited_bytes("tsv", b'\t', bytes)
     }
 
+    /// Creates a fingerprint from JSON Lines bytes.
+    ///
+    /// Each non-empty line is parsed as one JSON value. Object field paths are
+    /// recorded under `/[]/...`, matching top-level JSON array exports while
+    /// preserving the fact that this source was JSONL in the fingerprint hash.
+    pub fn from_jsonl_bytes(bytes: &[u8]) -> Result<Self, serde_json::Error> {
+        let mut keys = Vec::new();
+        let mut type_map = BTreeMap::new();
+
+        for line in bytes.split(|byte| *byte == b'\n') {
+            if line.iter().all(u8::is_ascii_whitespace) {
+                continue;
+            }
+            let value: JsonValue = serde_json::from_slice(line)?;
+            Self::extract_top_level_array_object_types(
+                &[value],
+                0,
+                &mut keys,
+                &mut type_map,
+                MAX_JSON_FINGERPRINT_FIELDS,
+            );
+            if keys.len() >= MAX_JSON_FINGERPRINT_FIELDS {
+                break;
+            }
+        }
+
+        keys.sort();
+        keys.dedup();
+
+        let fp = Self {
+            format: "jsonl".to_string(),
+            keys: keys.clone(),
+            type_map: type_map.clone(),
+            blake3_hash: String::new(),
+        };
+
+        let mut fingerprint = fp;
+        fingerprint.blake3_hash = fingerprint.compute_hash();
+        Ok(fingerprint)
+    }
+
     /// Creates a fingerprint from the declared `SQLite` table/column shape.
     ///
     /// The fingerprint records table names, column names, declared types,
@@ -999,6 +1040,26 @@ mod tests {
         let fp2 = SourceRecordFingerprint::from_json(&value2);
 
         assert_ne!(fp1.hash(), fp2.hash());
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_from_jsonl_bytes_records_row_object_keys() -> xtask::sandbox::TestResult<()> {
+        let fp = SourceRecordFingerprint::from_jsonl_bytes(
+            br#"{"entry_id":1,"entry_created_at":"2026-01-01 00:00:00","content":"a"}
+
+{"entry_id":2,"entry_created_at":"2026-01-02 00:00:00","votes_score":3}
+"#,
+        )?;
+
+        assert_eq!(fp.format, "jsonl");
+        assert!(fp.keys.contains(&"/[]/entry_id".to_string()));
+        assert!(fp.keys.contains(&"/[]/entry_created_at".to_string()));
+        assert!(fp.keys.contains(&"/[]/content".to_string()));
+        assert!(fp.keys.contains(&"/[]/votes_score".to_string()));
+        assert_eq!(fp.type_map["/[]/entry_id"], "integer");
+        assert_eq!(fp.type_map["/[]/entry_created_at"], "string");
+        assert_eq!(fp.type_map["/[]/votes_score"], "integer");
         Ok(())
     }
 
