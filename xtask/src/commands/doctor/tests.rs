@@ -2156,9 +2156,19 @@ async fn test_rust_analyzer_cli_stderr_summary_buckets_failures() -> ::xtask::sa
         ]
     );
     assert_eq!(summary.cyclic_dependency_warnings, 1);
+    assert_eq!(
+        summary.cyclic_dependency_edges,
+        vec!["sinex_gateway->sinex_gateway"]
+    );
     assert_eq!(summary.internal_errors, 2);
+    assert_eq!(
+        summary.internal_error_kinds,
+        vec!["overloaded_deref", "unexpected_pattern_type"]
+    );
     assert_eq!(summary.other_warnings, 1);
+    assert_eq!(summary.other_warning_samples.len(), 1);
     assert_eq!(summary.other_errors, 1);
+    assert_eq!(summary.other_error_samples.len(), 1);
     Ok(())
 }
 

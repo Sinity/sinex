@@ -182,9 +182,13 @@ struct RustAnalyzerCliDiagnosticScan {
 struct RustAnalyzerCliStderrSummary {
     categories: Vec<&'static str>,
     cyclic_dependency_warnings: usize,
+    cyclic_dependency_edges: Vec<String>,
     internal_errors: usize,
+    internal_error_kinds: Vec<&'static str>,
     other_warnings: usize,
+    other_warning_samples: Vec<String>,
     other_errors: usize,
+    other_error_samples: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -916,21 +920,38 @@ const fn rust_analyzer_cli_scan_status(
 
 fn summarize_rust_analyzer_cli_stderr(stderr: &str) -> Option<RustAnalyzerCliStderrSummary> {
     let mut cyclic_dependency_warnings = 0;
+    let mut cyclic_dependency_edges = Vec::new();
     let mut internal_errors = 0;
+    let mut internal_error_kinds = Vec::new();
     let mut other_warnings = 0;
+    let mut other_warning_samples = Vec::new();
     let mut other_errors = 0;
+    let mut other_error_samples = Vec::new();
 
     for line in stderr.lines() {
         if line.contains(" WARN cyclic deps:") {
             cyclic_dependency_warnings += 1;
+            if let Some(edge) = parse_rust_analyzer_cyclic_dependency_edge(line) {
+                push_unique_capped(&mut cyclic_dependency_edges, edge, 16);
+            }
         } else if line.contains(" WARN ") {
             other_warnings += 1;
+            push_unique_capped(&mut other_warning_samples, line.to_string(), 3);
         } else if line.contains(" ERROR ") && rust_analyzer_internal_error_line(line) {
             internal_errors += 1;
+            if let Some(kind) = rust_analyzer_internal_error_kind(line)
+                && !internal_error_kinds.contains(&kind)
+            {
+                internal_error_kinds.push(kind);
+            }
         } else if line.contains(" ERROR ") {
             other_errors += 1;
+            push_unique_capped(&mut other_error_samples, line.to_string(), 3);
         }
     }
+
+    cyclic_dependency_edges.sort();
+    internal_error_kinds.sort();
 
     let mut categories = Vec::new();
     if cyclic_dependency_warnings > 0 {
@@ -949,14 +970,52 @@ fn summarize_rust_analyzer_cli_stderr(stderr: &str) -> Option<RustAnalyzerCliStd
     (!categories.is_empty()).then_some(RustAnalyzerCliStderrSummary {
         categories,
         cyclic_dependency_warnings,
+        cyclic_dependency_edges,
         internal_errors,
+        internal_error_kinds,
         other_warnings,
+        other_warning_samples,
         other_errors,
+        other_error_samples,
     })
 }
 
 fn rust_analyzer_internal_error_line(line: &str) -> bool {
-    line.contains("pattern has unexpected type") || line.contains("Overloaded deref on type")
+    rust_analyzer_internal_error_kind(line).is_some()
+}
+
+fn rust_analyzer_internal_error_kind(line: &str) -> Option<&'static str> {
+    if line.contains("pattern has unexpected type") {
+        Some("unexpected_pattern_type")
+    } else if line.contains("Overloaded deref on type") {
+        Some("overloaded_deref")
+    } else {
+        None
+    }
+}
+
+fn parse_rust_analyzer_cyclic_dependency_edge(line: &str) -> Option<String> {
+    let (_, raw_edge) = line.split_once(" WARN cyclic deps: ")?;
+    let (from, to) = raw_edge.split_once(" -> ")?;
+    Some(format!(
+        "{}->{}",
+        rust_analyzer_crate_name_from_cycle_node(from)?,
+        rust_analyzer_crate_name_from_cycle_node(to)?
+    ))
+}
+
+fn rust_analyzer_crate_name_from_cycle_node(node: &str) -> Option<&str> {
+    let name = node.split_once('(').map_or(node, |(name, _)| name).trim();
+    (!name.is_empty()).then_some(name)
+}
+
+fn push_unique_capped<T>(items: &mut Vec<T>, item: T, cap: usize)
+where
+    T: PartialEq,
+{
+    if items.len() < cap && !items.contains(&item) {
+        items.push(item);
+    }
 }
 
 fn parse_rust_analyzer_cli_diagnostics(output: &str) -> Vec<RustAnalyzerCliDiagnostic> {
@@ -1450,6 +1509,18 @@ fn print_rust_analyzer_report(report: &RustAnalyzerDoctorReport) {
                 summary.other_warnings,
                 summary.other_errors
             );
+            if !summary.cyclic_dependency_edges.is_empty() {
+                println!(
+                    "  RA cycle edges:    {}",
+                    summary.cyclic_dependency_edges.join(", ")
+                );
+            }
+            if !summary.internal_error_kinds.is_empty() {
+                println!(
+                    "  RA internal kinds: {}",
+                    summary.internal_error_kinds.join(", ")
+                );
+            }
         }
         for diagnostic in scan.diagnostics.iter().take(5) {
             println!(
