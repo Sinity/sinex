@@ -171,9 +171,20 @@ struct RustAnalyzerCliDiagnosticScan {
     command: Vec<String>,
     exit_code: Option<i32>,
     status: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    stderr_summary: Option<RustAnalyzerCliStderrSummary>,
     diagnostics: Vec<RustAnalyzerCliDiagnostic>,
     #[serde(skip_serializing_if = "Option::is_none")]
     stderr: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+struct RustAnalyzerCliStderrSummary {
+    categories: Vec<&'static str>,
+    cyclic_dependency_warnings: usize,
+    internal_errors: usize,
+    other_warnings: usize,
+    other_errors: usize,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -625,9 +636,14 @@ fn execute_rust_analyzer_check(
     let cli_diagnostics = if collect_diagnostics {
         let scan = run_rust_analyzer_cli_diagnostics(&root, severity)?;
         if scan.exit_code != Some(0) {
+            let categories = scan
+                .stderr_summary
+                .as_ref()
+                .map(|summary| format!(" ({})", summary.categories.join(", ")))
+                .unwrap_or_default();
             warnings.push(format!(
-                "rust-analyzer diagnostics exited with {:?}; see cli_diagnostics.stderr",
-                scan.exit_code
+                "rust-analyzer diagnostics exited with {:?}{categories}; see cli_diagnostics.stderr",
+                scan.exit_code,
             ));
         }
         Some(scan)
@@ -874,11 +890,13 @@ fn run_rust_analyzer_cli_diagnostics(
 
     let diagnostics = parse_rust_analyzer_cli_diagnostics(&stdout);
     let status = rust_analyzer_cli_scan_status(output.status.code(), diagnostics.len());
+    let stderr_summary = summarize_rust_analyzer_cli_stderr(&stderr);
 
     Ok(RustAnalyzerCliDiagnosticScan {
         command,
         exit_code: output.status.code(),
         status,
+        stderr_summary,
         diagnostics,
         stderr: (!stderr.is_empty()).then_some(stderr),
     })
@@ -894,6 +912,51 @@ const fn rust_analyzer_cli_scan_status(
         (_, 0) => "failed",
         (_, _) => "partial",
     }
+}
+
+fn summarize_rust_analyzer_cli_stderr(stderr: &str) -> Option<RustAnalyzerCliStderrSummary> {
+    let mut cyclic_dependency_warnings = 0;
+    let mut internal_errors = 0;
+    let mut other_warnings = 0;
+    let mut other_errors = 0;
+
+    for line in stderr.lines() {
+        if line.contains(" WARN cyclic deps:") {
+            cyclic_dependency_warnings += 1;
+        } else if line.contains(" WARN ") {
+            other_warnings += 1;
+        } else if line.contains(" ERROR ") && rust_analyzer_internal_error_line(line) {
+            internal_errors += 1;
+        } else if line.contains(" ERROR ") {
+            other_errors += 1;
+        }
+    }
+
+    let mut categories = Vec::new();
+    if cyclic_dependency_warnings > 0 {
+        categories.push("cyclic_dependencies");
+    }
+    if internal_errors > 0 {
+        categories.push("rust_analyzer_internal_errors");
+    }
+    if other_warnings > 0 {
+        categories.push("other_warnings");
+    }
+    if other_errors > 0 {
+        categories.push("other_errors");
+    }
+
+    (!categories.is_empty()).then_some(RustAnalyzerCliStderrSummary {
+        categories,
+        cyclic_dependency_warnings,
+        internal_errors,
+        other_warnings,
+        other_errors,
+    })
+}
+
+fn rust_analyzer_internal_error_line(line: &str) -> bool {
+    line.contains("pattern has unexpected type") || line.contains("Overloaded deref on type")
 }
 
 fn parse_rust_analyzer_cli_diagnostics(output: &str) -> Vec<RustAnalyzerCliDiagnostic> {
@@ -1378,6 +1441,16 @@ fn print_rust_analyzer_report(report: &RustAnalyzerDoctorReport) {
             scan.exit_code,
             scan.status
         );
+        if let Some(summary) = &scan.stderr_summary {
+            println!(
+                "  RA stderr:         categories [{}], cyclic {}, internal {}, other warn {}, other error {}",
+                summary.categories.join(", "),
+                summary.cyclic_dependency_warnings,
+                summary.internal_errors,
+                summary.other_warnings,
+                summary.other_errors
+            );
+        }
         for diagnostic in scan.diagnostics.iter().take(5) {
             println!(
                 "    {}:{}:{} {} {}",
