@@ -26,7 +26,6 @@ serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 gethostname = { workspace = true }
 schemars = { workspace = true }
-thiserror = { workspace = true }
 camino = { workspace = true, features = ["serde1"] }
 url = { workspace = true, features = ["serde"] }
 tokio = { workspace = true, features = ["sync", "time"] }
