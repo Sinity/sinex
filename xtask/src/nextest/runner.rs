@@ -101,7 +101,7 @@ fn prepare_invocation_scoped_nextest_config(
     history_invocation_id: Option<i64>,
 ) -> Result<InvocationScopedNextestConfig> {
     let scope = history_invocation_id.map_or_else(
-        || format!("pid-{}-{:016x}", std::process::id(), rand::random::<u64>()),
+        || format!("pid-{}-{:016x}", std::process::id(), fastrand::u64(..)),
         |id| format!("invocation-{id}"),
     );
     let run_dir = crate::config::workspace_state_root()
