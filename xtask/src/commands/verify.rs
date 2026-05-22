@@ -445,7 +445,7 @@ fn execute_claims(
     if json && !ctx.is_json() {
         println!("{}", serde_json::to_string_pretty(&summary)?);
     } else if !json && ctx.is_human() {
-        println!("Proof claims");
+        println!("Verification claims");
         println!("  required:  {}", summary.required.len());
         println!("  advisory:  {}", summary.advisory.len());
         println!("  deferred:  {}", summary.deferred.len());
