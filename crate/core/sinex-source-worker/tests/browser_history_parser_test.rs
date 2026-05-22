@@ -4,11 +4,12 @@
 //! include the required `source_file` field for `SQLite` and JSONL material.
 
 use camino::Utf8PathBuf;
-use sinex_node_sdk::parser::MaterialParser;
+use sinex_node_sdk::parser::{MaterialParser, SourceRecordFingerprint};
 use sinex_primitives::{
     Uuid,
     ids::Id,
     parser::{MaterialAnchor, ParserContext, SourceRecord, SourceUnitId},
+    rpc::sources::{CaveatSeverity, caveat_codes},
     temporal::Timestamp,
 };
 use sinex_source_worker::sources::browser::history::BrowserHistoryParser;
@@ -71,4 +72,47 @@ async fn jsonl_dump_payload_includes_source_file_without_secondary_prefix() {
         intents[0].payload["source_file"],
         "exports/browser-history.jsonl"
     );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn qutebrowser_required_schema_removal_blocks_readiness() {
+    let before = rusqlite::Connection::open_in_memory().unwrap();
+    before
+        .execute_batch(
+            "CREATE TABLE History (
+                url TEXT NOT NULL,
+                title TEXT,
+                atime INTEGER NOT NULL,
+                redirect INTEGER
+            );",
+        )
+        .unwrap();
+    let after = rusqlite::Connection::open_in_memory().unwrap();
+    after
+        .execute_batch(
+            "CREATE TABLE History (
+                url TEXT NOT NULL,
+                title TEXT,
+                redirect INTEGER
+            );",
+        )
+        .unwrap();
+
+    let before = SourceRecordFingerprint::from_sqlite_connection(&before).unwrap();
+    let after = SourceRecordFingerprint::from_sqlite_connection(&after).unwrap();
+    let mut drift = SourceRecordFingerprint::diff(
+        SourceUnitId::from_static("browser.history"),
+        &before,
+        &after,
+    )
+    .expect("removing atime should produce SQLite schema drift");
+    drift.required_input_keys = BrowserHistoryParser.required_input_keys();
+
+    let caveats = drift.readiness_caveats();
+
+    assert!(caveats.iter().any(|caveat| {
+        caveat.code == caveat_codes::PARSER_REQUIRED_FIELD_MISSING
+            && caveat.severity == CaveatSeverity::Blocking
+            && caveat.message.contains("History.atime")
+    }));
 }
