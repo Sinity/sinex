@@ -170,6 +170,7 @@ struct RustAnalyzerProcess {
 struct RustAnalyzerCliDiagnosticScan {
     command: Vec<String>,
     exit_code: Option<i32>,
+    status: &'static str,
     diagnostics: Vec<RustAnalyzerCliDiagnostic>,
     #[serde(skip_serializing_if = "Option::is_none")]
     stderr: Option<String>,
@@ -871,12 +872,28 @@ fn run_rust_analyzer_cli_diagnostics(
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = truncate_report_text(String::from_utf8_lossy(&output.stderr).trim(), 4096);
 
+    let diagnostics = parse_rust_analyzer_cli_diagnostics(&stdout);
+    let status = rust_analyzer_cli_scan_status(output.status.code(), diagnostics.len());
+
     Ok(RustAnalyzerCliDiagnosticScan {
         command,
         exit_code: output.status.code(),
-        diagnostics: parse_rust_analyzer_cli_diagnostics(&stdout),
+        status,
+        diagnostics,
         stderr: (!stderr.is_empty()).then_some(stderr),
     })
+}
+
+const fn rust_analyzer_cli_scan_status(
+    exit_code: Option<i32>,
+    diagnostic_count: usize,
+) -> &'static str {
+    match (exit_code, diagnostic_count) {
+        (Some(0), 0) => "clean",
+        (Some(0), _) => "diagnostics",
+        (_, 0) => "failed",
+        (_, _) => "partial",
+    }
 }
 
 fn parse_rust_analyzer_cli_diagnostics(output: &str) -> Vec<RustAnalyzerCliDiagnostic> {
@@ -1356,9 +1373,10 @@ fn print_rust_analyzer_report(report: &RustAnalyzerDoctorReport) {
     }
     if let Some(scan) = &report.cli_diagnostics {
         println!(
-            "  CLI diagnostics:   {} diagnostic(s), exit {:?}",
+            "  CLI diagnostics:   {} diagnostic(s), exit {:?}, {}",
             scan.diagnostics.len(),
-            scan.exit_code
+            scan.exit_code,
+            scan.status
         );
         for diagnostic in scan.diagnostics.iter().take(5) {
             println!(
