@@ -2119,3 +2119,15 @@ async fn test_rust_analyzer_cli_diagnostic_maps_to_history_shape()
     );
     Ok(())
 }
+
+#[sinex_test]
+async fn test_rust_analyzer_cli_scan_status_classifies_partial_results()
+-> ::xtask::sandbox::TestResult<()> {
+    assert_eq!(rust_analyzer_cli_scan_status(Some(0), 0), "clean");
+    assert_eq!(rust_analyzer_cli_scan_status(Some(0), 2), "diagnostics");
+    assert_eq!(rust_analyzer_cli_scan_status(Some(1), 0), "failed");
+    assert_eq!(rust_analyzer_cli_scan_status(Some(1), 2), "partial");
+    assert_eq!(rust_analyzer_cli_scan_status(None, 0), "failed");
+    assert_eq!(rust_analyzer_cli_scan_status(None, 2), "partial");
+    Ok(())
+}
