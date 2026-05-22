@@ -33,6 +33,8 @@ pub use private_mode::{
 
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
+use std::error::Error as StdError;
+use std::fmt;
 use std::sync::OnceLock;
 
 // ─── Global engine ───────────────────────────────────────────
@@ -542,22 +544,51 @@ impl MaterialCaptureClass {
 // ─── Error ───────────────────────────────────────────────────
 
 /// Errors from the privacy engine.
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug)]
 pub enum PrivacyError {
-    #[error(transparent)]
-    Config(#[from] PrivacyConfigError),
-    #[error("invalid regex pattern in rule '{rule}': {source}")]
+    Config(PrivacyConfigError),
     InvalidPattern { rule: String, source: regex::Error },
-    #[error("encryption failed: {0}")]
     EncryptionFailed(String),
-    #[error("decryption failed: {0}")]
     DecryptionFailed(String),
-    #[error("no privacy key configured")]
     NoKey,
-    #[error("invalid token format: {0}")]
     InvalidToken(String),
-    #[error("invalid key: {0}")]
     InvalidKey(String),
+}
+
+impl fmt::Display for PrivacyError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Config(inner) => write!(f, "{inner}"),
+            Self::InvalidPattern { rule, source } => {
+                write!(f, "invalid regex pattern in rule '{rule}': {source}")
+            }
+            Self::EncryptionFailed(message) => write!(f, "encryption failed: {message}"),
+            Self::DecryptionFailed(message) => write!(f, "decryption failed: {message}"),
+            Self::NoKey => f.write_str("no privacy key configured"),
+            Self::InvalidToken(message) => write!(f, "invalid token format: {message}"),
+            Self::InvalidKey(message) => write!(f, "invalid key: {message}"),
+        }
+    }
+}
+
+impl StdError for PrivacyError {
+    fn source(&self) -> Option<&(dyn StdError + 'static)> {
+        match self {
+            Self::Config(source) => Some(source),
+            Self::InvalidPattern { source, .. } => Some(source),
+            Self::EncryptionFailed(_)
+            | Self::DecryptionFailed(_)
+            | Self::NoKey
+            | Self::InvalidToken(_)
+            | Self::InvalidKey(_) => None,
+        }
+    }
+}
+
+impl From<PrivacyConfigError> for PrivacyError {
+    fn from(err: PrivacyConfigError) -> Self {
+        Self::Config(err)
+    }
 }
 
 impl From<PrivacyError> for crate::error::SinexError {

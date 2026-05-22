@@ -6,6 +6,8 @@
 //! 3. Built-in defaults
 
 use std::collections::HashMap;
+use std::error::Error as StdError;
+use std::fmt;
 use std::path::{Path, PathBuf};
 
 use serde::de::DeserializeOwned;
@@ -390,20 +392,54 @@ impl PrivacyConfig {
 }
 
 /// Errors from config file loading.
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug)]
 pub enum PrivacyConfigError {
-    #[error("failed to read privacy config at {path}: {source}")]
     Io {
         path: PathBuf,
         source: std::io::Error,
     },
-    #[error("failed to parse privacy config at {path}: {source}")]
     Parse {
         path: PathBuf,
         source: toml::de::Error,
     },
-    #[error("invalid privacy environment override {var}: {reason}")]
-    InvalidEnv { var: String, reason: String },
+    InvalidEnv {
+        var: String,
+        reason: String,
+    },
+}
+
+impl fmt::Display for PrivacyConfigError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Io { path, source } => {
+                write!(
+                    f,
+                    "failed to read privacy config at {}: {source}",
+                    path.display()
+                )
+            }
+            Self::Parse { path, source } => {
+                write!(
+                    f,
+                    "failed to parse privacy config at {}: {source}",
+                    path.display()
+                )
+            }
+            Self::InvalidEnv { var, reason } => {
+                write!(f, "invalid privacy environment override {var}: {reason}")
+            }
+        }
+    }
+}
+
+impl StdError for PrivacyConfigError {
+    fn source(&self) -> Option<&(dyn StdError + 'static)> {
+        match self {
+            Self::Io { source, .. } => Some(source),
+            Self::Parse { source, .. } => Some(source),
+            Self::InvalidEnv { .. } => None,
+        }
+    }
 }
 
 impl From<PrivacyConfigError> for crate::error::SinexError {
