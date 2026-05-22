@@ -297,6 +297,17 @@ pub trait MaterialParser: Send + Sync {
     /// Return the parser's static manifest.
     fn manifest(&self) -> ParserManifest;
 
+    /// Parser-declared source-record keys that must be present for the parser
+    /// to interpret records correctly.
+    ///
+    /// Imperative parsers can override this when they have a stable structural
+    /// input contract. Generated declarative parsers derive it from their
+    /// [`DeclarativeParserSpec`].
+    #[must_use]
+    fn required_input_keys(&self) -> Vec<String> {
+        Vec::new()
+    }
+
     /// Parse a single source record into zero or more event intents.
     async fn parse_record(
         &mut self,
