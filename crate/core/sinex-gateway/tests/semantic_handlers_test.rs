@@ -1,16 +1,18 @@
-use sinex_db::DbPoolExt;
+use sinex_db::{DbPoolExt, Event, Provenance};
 use sinex_gateway::handlers::{
     handle_semantic_epoch_create, handle_semantic_lane_create,
     handle_semantic_lane_diff_record_entity_relation, handle_semantic_lane_discard,
     handle_semantic_lane_outputs_list, handle_semantic_lane_outputs_seed_canonical_graph,
-    handle_semantic_lane_outputs_write,
+    handle_semantic_lane_outputs_seed_entity_events, handle_semantic_lane_outputs_write,
 };
 use sinex_gateway::rpc_server::RpcAuthContext;
+use sinex_primitives::domain::{EntityTypeName, RelationType};
+use sinex_primitives::events::{EntityRelatedPayload, EntityResolvedPayload};
 use sinex_primitives::rpc::semantic::{
     SemanticEpochCreateRequest, SemanticLaneCreateRequest,
     SemanticLaneDiffRecordEntityRelationRequest, SemanticLaneDiscardRequest,
     SemanticLaneOutputsListRequest, SemanticLaneOutputsSeedCanonicalGraphRequest,
-    SemanticLaneOutputsWriteRequest,
+    SemanticLaneOutputsSeedEntityEventsRequest, SemanticLaneOutputsWriteRequest,
 };
 use sinex_primitives::{
     EntityRelationLaneOutputs, SemanticComponentVersion, SemanticEntityOutput, SemanticLaneKind,
@@ -120,6 +122,173 @@ async fn semantic_lane_seed_canonical_graph_writes_isolated_outputs(
             .any(|output| output["output_kind"] == "relation"
                 && output["payload"]["predicate"] == "works_on")
     );
+
+    Ok(())
+}
+
+#[sinex_test]
+async fn semantic_lane_seed_entity_events_writes_provenanced_outputs(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let auth = RpcAuthContext::system();
+    let source_entity_id = Uuid::from_u128(0x1346_0000_0000_0000_0000_0000_0000_0021);
+    let target_entity_id = Uuid::from_u128(0x1346_0000_0000_0000_0000_0000_0000_0022);
+    let material_record = ctx
+        .pool()
+        .source_materials()
+        .register_in_flight(
+            sinex_db::repositories::source_materials::material_types::STREAM,
+            Some("gateway-semantic-entity-events"),
+            serde_json::json!({ "test": true }),
+        )
+        .await?;
+    let material_id =
+        sinex_primitives::Id::<sinex_db::models::SourceMaterial>::from_uuid(material_record.id);
+
+    let source_event = ctx
+        .pool()
+        .events()
+        .insert(
+            Event::builder(EntityResolvedPayload {
+                entity_id: source_entity_id,
+                canonical_name: "gateway_alice".to_string(),
+                entity_type: EntityTypeName::new("person"),
+                original_name: "Gateway Alice".to_string(),
+            })
+            .with_provenance(Provenance::from_material(material_id, 0, None, None))
+            .build()
+            .expect("valid semantic entity event"),
+        )
+        .await?;
+    let target_event = ctx
+        .pool()
+        .events()
+        .insert(
+            Event::builder(EntityResolvedPayload {
+                entity_id: target_entity_id,
+                canonical_name: "gateway_project".to_string(),
+                entity_type: EntityTypeName::new("project"),
+                original_name: "Gateway Project".to_string(),
+            })
+            .with_provenance(Provenance::from_material(material_id, 1, None, None))
+            .build()
+            .expect("valid semantic entity event"),
+        )
+        .await?;
+    let relation_event = ctx
+        .pool()
+        .events()
+        .insert(
+            Event::builder(EntityRelatedPayload {
+                source_entity_id,
+                target_entity_id,
+                relation_type: RelationType::new("works_on"),
+                confidence: 0.8,
+            })
+            .with_provenance(Provenance::from_material(material_id, 2, None, None))
+            .build()
+            .expect("valid semantic relation event"),
+        )
+        .await?;
+
+    let event_scope = SemanticScope {
+        kind: "event_set".to_string(),
+        input_ids: vec![
+            format!(
+                "event:{}",
+                source_event
+                    .id
+                    .as_ref()
+                    .ok_or_else(|| color_eyre::eyre::eyre!("source event missing id"))?
+                    .as_uuid()
+            ),
+            format!(
+                "event:{}",
+                target_event
+                    .id
+                    .as_ref()
+                    .ok_or_else(|| color_eyre::eyre::eyre!("target event missing id"))?
+                    .as_uuid()
+            ),
+            format!(
+                "event:{}",
+                relation_event
+                    .id
+                    .as_ref()
+                    .ok_or_else(|| color_eyre::eyre::eyre!("relation event missing id"))?
+                    .as_uuid()
+            ),
+        ],
+        input_set_hash: "gateway-entity-event-scope".to_string(),
+    };
+    let epoch = handle_semantic_epoch_create(
+        ctx.pool(),
+        SemanticEpochCreateRequest {
+            epoch_id: Some(Uuid::from_u128(0x1346_0000_0000_0000_0000_0000_0000_0023)),
+            name: "entity-event-seed".to_string(),
+            scope: event_scope.clone(),
+            code_ref: Some("test@entity-events".to_string()),
+            config_hash: "entity-events-config".to_string(),
+            components: Vec::new(),
+            prompt_set_hash: None,
+            model_config_hash: None,
+            created_by: None,
+            operation_id: None,
+            supersedes_epoch_id: None,
+        },
+        &auth,
+    )
+    .await?;
+    let epoch_id: Uuid = epoch.epoch["id"]
+        .as_str()
+        .ok_or_else(|| color_eyre::eyre::eyre!("epoch response missing id"))?
+        .parse()?;
+    let lane = handle_semantic_lane_create(
+        ctx.pool(),
+        SemanticLaneCreateRequest {
+            lane_id: Some(Uuid::from_u128(0x1346_0000_0000_0000_0000_0000_0000_0024)),
+            name: "entity-event-lane".to_string(),
+            kind: SemanticLaneKind::Shadow,
+            base_epoch_id: None,
+            candidate_epoch_id: epoch_id,
+            scope: event_scope,
+            purpose: "gateway entity event seed regression".to_string(),
+            operation_id: None,
+            expires_at: None,
+        },
+    )
+    .await?;
+    let lane_id: Uuid = lane.lane["id"]
+        .as_str()
+        .ok_or_else(|| color_eyre::eyre::eyre!("lane response missing id"))?
+        .parse()?;
+
+    let seeded = handle_semantic_lane_outputs_seed_entity_events(
+        ctx.pool(),
+        SemanticLaneOutputsSeedEntityEventsRequest { lane_id },
+    )
+    .await?;
+    assert_eq!(seeded.written, 3);
+
+    let outputs = handle_semantic_lane_outputs_list(
+        ctx.pool(),
+        SemanticLaneOutputsListRequest { lane_id, limit: 10 },
+    )
+    .await?;
+    assert_eq!(outputs.outputs.len(), 3);
+    assert!(outputs.outputs.iter().any(|output| {
+        output["output_kind"] == "entity"
+            && output["source_event_id"]
+                == serde_json::json!(source_event.id.as_ref().expect("source id").as_uuid())
+            && output["payload"]["canonical_name"] == "gateway_alice"
+    }));
+    assert!(outputs.outputs.iter().any(|output| {
+        output["output_kind"] == "relation"
+            && output["source_event_id"]
+                == serde_json::json!(relation_event.id.as_ref().expect("relation id").as_uuid())
+            && output["payload"]["predicate"] == "works_on"
+            && output["metadata"]["producer"] == "entity_events"
+    }));
 
     Ok(())
 }
