@@ -2131,3 +2131,44 @@ async fn test_rust_analyzer_cli_scan_status_classifies_partial_results()
     assert_eq!(rust_analyzer_cli_scan_status(None, 2), "partial");
     Ok(())
 }
+
+#[sinex_test]
+async fn test_rust_analyzer_cli_stderr_summary_buckets_failures() -> ::xtask::sandbox::TestResult<()>
+{
+    let stderr = r#"
+2026-05-22T06:29:21.645151397+02:00  WARN cyclic deps: sinex_gateway(Idx::<CrateBuilder>(38)) -> sinex_gateway(Idx::<CrateBuilder>(38))
+2026-05-22T06:29:47.951700288+02:00 ERROR pattern has unexpected type: pat: Pat { ty: str }
+2026-05-22T06:29:49.34967273+02:00 ERROR Overloaded deref on type str is not a projection
+2026-05-22T06:29:50.00000000+02:00  WARN some other warning
+2026-05-22T06:29:51.00000000+02:00 ERROR some other failure
+"#;
+
+    let summary = summarize_rust_analyzer_cli_stderr(stderr)
+        .expect("stderr summary should classify non-empty RA warnings/errors");
+
+    assert_eq!(
+        summary.categories,
+        vec![
+            "cyclic_dependencies",
+            "rust_analyzer_internal_errors",
+            "other_warnings",
+            "other_errors",
+        ]
+    );
+    assert_eq!(summary.cyclic_dependency_warnings, 1);
+    assert_eq!(summary.internal_errors, 2);
+    assert_eq!(summary.other_warnings, 1);
+    assert_eq!(summary.other_errors, 1);
+    Ok(())
+}
+
+#[sinex_test]
+async fn test_rust_analyzer_cli_stderr_summary_omits_empty_output()
+-> ::xtask::sandbox::TestResult<()> {
+    assert_eq!(summarize_rust_analyzer_cli_stderr(""), None);
+    assert_eq!(
+        summarize_rust_analyzer_cli_stderr("informational line"),
+        None
+    );
+    Ok(())
+}
