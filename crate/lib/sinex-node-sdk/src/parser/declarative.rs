@@ -100,6 +100,29 @@ pub struct DeclarativeParserSpec {
     pub discriminator: Option<Discriminator>,
 }
 
+impl DeclarativeParserSpec {
+    /// Return the input-shape keys that this parser requires to be present.
+    ///
+    /// The returned keys use the same vocabulary as
+    /// [`SourceRecordFingerprint`](crate::parser::SourceRecordFingerprint):
+    /// JSON Pointer paths for JSON records, column names for named tabular
+    /// records, and `column_N` for positional columns without a declared
+    /// header. Raw-line fields do not produce a structural key because the
+    /// fingerprint for opaque line material has no removable field shape.
+    #[must_use]
+    pub fn required_input_keys(&self) -> Vec<String> {
+        let mut keys = self
+            .fields
+            .iter()
+            .filter(|field| field.required)
+            .filter_map(FieldSpec::input_shape_key)
+            .collect::<Vec<_>>();
+        keys.sort();
+        keys.dedup();
+        keys
+    }
+}
+
 // =============================================================================
 // Extension A — Discriminator spec
 // =============================================================================
@@ -213,6 +236,19 @@ pub struct FieldSpec {
     /// The semantics depend on [`StatefulCarryPolicy`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub carry: Option<CarrySpec>,
+}
+
+impl FieldSpec {
+    /// Return this field's source-record structural key, if it has one.
+    #[must_use]
+    pub fn input_shape_key(&self) -> Option<String> {
+        match &self.source {
+            FieldSource::JsonPointer { pointer } => Some(pointer.clone()),
+            FieldSource::ColumnIndex { index } => Some(format!("column_{index}")),
+            FieldSource::ColumnName { name } => Some(name.clone()),
+            FieldSource::RawLine => None,
+        }
+    }
 }
 
 // =============================================================================
@@ -862,6 +898,82 @@ mod tests {
             fields: vec![],
             discriminator: None,
         }
+    }
+
+    #[sinex_test]
+    async fn required_input_keys_follow_declared_field_sources() -> xtask::sandbox::TestResult<()> {
+        let mut spec = minimal_spec();
+        spec.fields = vec![
+            FieldSpec {
+                name: "command".into(),
+                source: FieldSource::JsonPointer {
+                    pointer: "/cmd".into(),
+                },
+                field_type: FieldType::String,
+                required: true,
+                default: None,
+                skip_payload: false,
+                privacy_context: None,
+                occurrence_key: false,
+                timestamp: None,
+                suppress_if: None,
+                carry: None,
+            },
+            FieldSpec {
+                name: "optional".into(),
+                source: FieldSource::JsonPointer {
+                    pointer: "/optional".into(),
+                },
+                field_type: FieldType::String,
+                required: false,
+                default: None,
+                skip_payload: false,
+                privacy_context: None,
+                occurrence_key: false,
+                timestamp: None,
+                suppress_if: None,
+                carry: None,
+            },
+            FieldSpec {
+                name: "line".into(),
+                source: FieldSource::RawLine,
+                field_type: FieldType::String,
+                required: true,
+                default: None,
+                skip_payload: false,
+                privacy_context: None,
+                occurrence_key: false,
+                timestamp: None,
+                suppress_if: None,
+                carry: None,
+            },
+        ];
+
+        assert_eq!(spec.required_input_keys(), vec!["/cmd"]);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn positional_required_input_key_uses_fingerprint_column_name()
+    -> xtask::sandbox::TestResult<()> {
+        let mut spec = minimal_spec();
+        spec.input_format = InputFormat::TabSeparated;
+        spec.fields.push(FieldSpec {
+            name: "command".into(),
+            source: FieldSource::ColumnIndex { index: 2 },
+            field_type: FieldType::String,
+            required: true,
+            default: None,
+            skip_payload: false,
+            privacy_context: None,
+            occurrence_key: false,
+            timestamp: None,
+            suppress_if: None,
+            carry: None,
+        });
+
+        assert_eq!(spec.required_input_keys(), vec!["column_2"]);
+        Ok(())
     }
 
     #[sinex_test]

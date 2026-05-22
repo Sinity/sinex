@@ -44,6 +44,8 @@ use sinex_primitives::rpc::sources::{
 };
 use sinex_primitives::temporal::Timestamp;
 
+use crate::parser::DeclarativeParserSpec;
+
 const MAX_JSON_FINGERPRINT_DEPTH: usize = 8;
 const MAX_JSON_FINGERPRINT_FIELDS: usize = 512;
 const MAX_DELIMITED_FINGERPRINT_FIELDS: usize = 512;
@@ -732,6 +734,16 @@ impl DriftEvent {
         )
     }
 
+    /// Convert this drift observation into readiness caveats using the
+    /// required input keys declared by a declarative parser spec.
+    #[must_use]
+    pub fn readiness_caveats_for_declarative_parser(
+        &self,
+        spec: &DeclarativeParserSpec,
+    ) -> Vec<SourceCaveat> {
+        self.readiness_caveats_with_required_fields(&spec.required_input_keys())
+    }
+
     /// Serializes this event as a JSON payload suitable for a parser-emitted event.
     #[must_use]
     pub fn to_payload(&self) -> serde_json::Value {
@@ -829,7 +841,11 @@ fn normalize_sqlite_declared_type(declared_type: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::parser::{FieldSource, FieldSpec, FieldType, InputFormat};
     use serde_json::json;
+    use sinex_primitives::domain::{EventSource, EventType};
+    use sinex_primitives::parser::{ParserId, SourceUnitId};
+    use sinex_primitives::privacy::ProcessingContext;
     use sinex_primitives::rpc::sources::{CaveatSeverity, caveat_codes};
     use xtask::sandbox::prelude::sinex_test;
 
@@ -1297,6 +1313,40 @@ mod tests {
                     && caveat.severity == CaveatSeverity::Blocking
             }),
             "required input removal should block readiness: {required_caveats:?}"
+        );
+
+        let spec = DeclarativeParserSpec {
+            parser_id: ParserId::from_static("test-parser"),
+            parser_version: "1.0.0".to_string(),
+            source_unit_id: SourceUnitId::from_static("test.unit"),
+            event_source: EventSource::from_static("test"),
+            event_type: EventType::from_static("test.event"),
+            default_privacy_context: ProcessingContext::Metadata,
+            input_format: InputFormat::Json,
+            fields: vec![FieldSpec {
+                name: "name".to_string(),
+                source: FieldSource::JsonPointer {
+                    pointer: "/name".to_string(),
+                },
+                field_type: FieldType::String,
+                required: true,
+                default: None,
+                skip_payload: false,
+                privacy_context: None,
+                occurrence_key: false,
+                timestamp: None,
+                suppress_if: None,
+                carry: None,
+            }],
+            discriminator: None,
+        };
+        let spec_caveats = degraded.readiness_caveats_for_declarative_parser(&spec);
+        assert!(
+            spec_caveats.iter().any(|caveat| {
+                caveat.code == caveat_codes::PARSER_REQUIRED_FIELD_MISSING
+                    && caveat.severity == CaveatSeverity::Blocking
+            }),
+            "declarative required input removal should block readiness: {spec_caveats:?}"
         );
         Ok(())
     }
