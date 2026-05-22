@@ -279,6 +279,13 @@ impl MaterialParser for JournaldParser {
 
         Ok(vec![intent])
     }
+
+    fn required_input_keys(&self) -> Vec<String> {
+        ["/MESSAGE", "/__CURSOR", "/__REALTIME_TIMESTAMP"]
+            .into_iter()
+            .map(str::to_string)
+            .collect()
+    }
 }
 
 // Register for dispatch (replay path).
