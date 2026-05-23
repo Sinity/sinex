@@ -1,17 +1,11 @@
 //! Filesystem source unit (`fs`).
 //!
-//! Moved from the legacy `sinex-fs-ingestor` crate during Wave B. The
-//! imperative [`FilesystemNode`] implementation is too large and too kernel-
-//! adjacent (inotify watcher ownership, watch-budget planning, dual-shape
-//! content/observation material) to slot into the SDK adapter framework, so
-//! `fs` follows the "honest exception" pattern established by
-//! [`crate::noop::NoopSourceUnit`], `terminal.monitor`, and `system.monitor`:
-//! a raw [`sinex_node_sdk::IngestorNode`] registered via
-//! [`register_node_factory!`].
-//!
-//! A follow-up issue tracks extending `FileDropAdapter` (or introducing a
-//! dedicated `FsWatcherAdapter`) so a future revision can fold this into the
-//! adapter framework alongside the other Wave-B source units.
+//! Moved from the legacy `sinex-fs-ingestor` crate during Wave B. The runtime
+//! still uses the imperative [`FilesystemNode`] for inotify watcher ownership,
+//! watch-budget planning, and dual-shape content/observation material. The
+//! parser half now has an adapter-compatible [`FilesystemParser`] registered
+//! for dispatch, so the remaining fold is a runtime factory parity question
+//! rather than an unmodeled parser contract.
 
 pub mod parser;
 pub mod unified_node;
