@@ -180,6 +180,12 @@ pub fn build() -> HashMap<&'static str, FormatCapability> {
     m.insert("ops get", FormatCapability::single_shot(TABLE_JSON_YAML));
     m.insert("ops cancel", FormatCapability::single_shot(TABLE_JSON_YAML));
 
+    // ── Privacy ─────────────────────────────────────────────────────────────
+    m.insert(
+        "privacy private-mode",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
+
     // ── Audit ────────────────────────────────────────────────────────────────
     m.insert("audit", FormatCapability::single_shot(TABLE_JSON_YAML));
     m.insert("annotate", FormatCapability::single_shot(TABLE_JSON_YAML));
@@ -444,6 +450,11 @@ pub fn build() -> HashMap<&'static str, FormatCapability> {
         "admin snapshot",
         FormatCapability::single_shot(TABLE_JSON_YAML)
             .with_note("quiesce-mode snapshot of postgres + NATS + CAS + state"),
+    );
+    m.insert(
+        "admin snapshot-inspect",
+        FormatCapability::single_shot(TABLE_JSON_YAML)
+            .with_note("inspect snapshot manifest and archive member coverage"),
     );
 
     m

@@ -10,6 +10,7 @@ use sinex_ingestd::admission::{AdmissionDecision, AdmissionRejectionKind, Admiss
 use sinex_primitives::domain::HostName;
 use sinex_primitives::events::Event;
 use sinex_primitives::events::admission::{AdmittedEventIntent, CURRENT_ENVELOPE_VERSION};
+use sinex_primitives::events::payloads::PolylogueConversationIndexedPayload;
 use sinex_primitives::{DynamicPayload, Id, JsonValue, Uuid};
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -300,5 +301,79 @@ async fn external_producer_json_fixture_parses(ctx: TestContext) -> TestResult<(
     assert_eq!(intent.events.len(), 1);
     assert_eq!(intent.events[0].source.as_str(), "external.source");
     assert_eq!(intent.events[0].event_type.as_str(), "external.type");
+    Ok(())
+}
+
+#[sinex_test]
+async fn polylogue_external_producer_metadata_fixture_admits(ctx: TestContext) -> TestResult<()> {
+    let service = admission_service(&ctx);
+    let material_id = Id::<sinex_primitives::events::SourceMaterial>::from_uuid(Uuid::now_v7());
+    let payload = PolylogueConversationIndexedPayload {
+        conversation_id: "claude-code:session-018f".into(),
+        provider: "claude_code".into(),
+        title: Some("source-worker drain review".into()),
+        tags: vec!["sinex".into(), "review".into()],
+        content_hash: "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+            .into(),
+        created_at: sinex_primitives::Timestamp::now(),
+        updated_at: sinex_primitives::Timestamp::now(),
+        message_count: 42,
+        cost_usd: Some(0.12),
+        model_slug: Some("claude-opus-4-5".into()),
+    };
+    let payload_json = serde_json::to_value(payload)?;
+
+    let rendered_payload = serde_json::to_string(&payload_json)?;
+    assert!(
+        !rendered_payload.contains("messages"),
+        "Polylogue bridge fixture must stay metadata-only"
+    );
+    assert!(
+        !rendered_payload.contains("raw_text"),
+        "Polylogue bridge fixture must not carry raw conversation text"
+    );
+
+    let mut event = DynamicPayload::new(
+        "integration.polylogue",
+        "integration.polylogue.conversation_indexed",
+        payload_json,
+    )
+    .from_material(material_id)
+    .build()?
+    .to_json_event()?;
+    event.id = Some(Id::from_uuid(Uuid::now_v7()));
+
+    let intent = AdmittedEventIntent::new(
+        "integration.polylogue",
+        "polylogue-bridge",
+        "0.1.0",
+        vec![event],
+        HostName::from_static("polylogue-host"),
+    );
+
+    let payload = serde_json::to_vec(&intent)?;
+    let decisions = service.admit_intent_bytes(&payload).await?;
+
+    assert_eq!(decisions.len(), 1);
+    match &decisions[0] {
+        AdmissionDecision::Admitted(admitted) => {
+            assert_eq!(admitted.event.source.as_str(), "integration.polylogue");
+            assert_eq!(
+                admitted.event.event_type.as_str(),
+                "integration.polylogue.conversation_indexed"
+            );
+            assert_eq!(
+                admitted.event.payload["raw_text_included"],
+                serde_json::Value::Null
+            );
+            assert_eq!(admitted.event.payload["message_count"], 42);
+            assert_eq!(admitted.event.payload["provider"], "claude_code");
+            assert_eq!(
+                admitted.event.payload["conversation_id"],
+                "claude-code:session-018f"
+            );
+        }
+        other => panic!("expected Polylogue fixture admission, got {other:?}"),
+    }
     Ok(())
 }

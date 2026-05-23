@@ -7,6 +7,7 @@ use sinex_primitives::domain::SanitizedPath;
 use sinex_primitives::env as shared_env;
 use sinex_primitives::error::SinexError;
 use sinex_primitives::nats::NatsConnectionConfig;
+use sinex_primitives::privacy::resolve_private_mode_state_dir;
 use std::num::NonZeroU32;
 use std::path::PathBuf;
 use std::time::Duration;
@@ -46,6 +47,10 @@ pub struct GatewayConfig {
     /// Content-store root path.
     #[serde(default = "default_content_store_path")]
     pub content_store_path: String,
+
+    /// Runtime state root used for gateway-owned local state.
+    #[serde(default = "default_state_dir")]
+    pub state_dir: PathBuf,
 
     /// Bearer token used for RPC authentication.
     #[serde(default)]
@@ -189,6 +194,10 @@ fn default_content_store_path() -> String {
     )
 }
 
+fn default_state_dir() -> PathBuf {
+    resolve_private_mode_state_dir(None)
+}
+
 fn default_pool_max_connections() -> u32 {
     PoolConfig::default().max_connections
 }
@@ -279,6 +288,7 @@ impl Default for GatewayConfig {
             pool_min_connections: default_pool_min_connections(),
             pool_acquire_timeout_secs: default_pool_acquire_timeout_secs(),
             content_store_path: default_content_store_path(),
+            state_dir: default_state_dir(),
             rpc_token: None,
             rpc_token_file: None,
             admin_token_file: None,
@@ -543,6 +553,7 @@ impl GatewayConfig {
         self.database_url = env_string_override("DATABASE_URL", self.database_url.clone())?;
         self.content_store_path =
             env_string_override("SINEX_CONTENT_STORE_PATH", self.content_store_path.clone())?;
+        self.state_dir = env_path_override("SINEX_STATE_DIR", self.state_dir.clone())?;
         self.rpc_token = shared_env::strict_var("SINEX_RPC_TOKEN")?
             .map(|v| v.trim().to_string())
             .or(self.rpc_token.take());
@@ -646,6 +657,10 @@ fn env_string_override(name: &str, current: String) -> Result<String, SinexError
 
 fn env_option_override(name: &str, current: Option<String>) -> Result<Option<String>, SinexError> {
     Ok(shared_env::strict_var(name)?.or(current))
+}
+
+fn env_path_override(name: &str, current: PathBuf) -> Result<PathBuf, SinexError> {
+    Ok(shared_env::strict_var(name)?.map_or(current, PathBuf::from))
 }
 
 fn env_u32_override(name: &str, current: u32) -> Result<u32, SinexError> {

@@ -40,6 +40,10 @@ use serde_json::Value as JsonValue;
 use sinex_primitives::parser::SourceUnitId;
 use sinex_primitives::temporal::Timestamp;
 
+const MAX_JSON_FINGERPRINT_DEPTH: usize = 8;
+const MAX_JSON_FINGERPRINT_FIELDS: usize = 512;
+const MAX_DELIMITED_FINGERPRINT_FIELDS: usize = 512;
+
 // =============================================================================
 // SourceRecordFingerprint
 // =============================================================================
@@ -69,15 +73,17 @@ impl SourceRecordFingerprint {
     /// Creates a fingerprint from a JSON value.
     ///
     /// Recursively infers types from the JSON structure. The result is stable
-    /// across different orderings of the same keys.
+    /// across different orderings of the same keys. Object paths use JSON
+    /// Pointer syntax (`/message/content`) so nested drift is visible without
+    /// storing raw sample values.
     ///
     /// # Examples
     ///
     /// ```ignore
     /// let fp = SourceRecordFingerprint::from_json(&json!({"name": "foo", "id": 42}));
-    /// assert_eq!(fp.keys, vec!["id", "name"]);  // sorted
-    /// assert_eq!(fp.type_map["name"], "string");
-    /// assert_eq!(fp.type_map["id"], "integer");
+    /// assert_eq!(fp.keys, vec!["/id", "/name"]);  // sorted
+    /// assert_eq!(fp.type_map["/name"], "string");
+    /// assert_eq!(fp.type_map["/id"], "integer");
     /// ```
     #[must_use]
     pub fn from_json(value: &JsonValue) -> Self {
@@ -99,6 +105,106 @@ impl SourceRecordFingerprint {
         fingerprint
     }
 
+    /// Creates a fingerprint from a CSV record.
+    ///
+    /// Header names are the shape keys. Value samples are only used for coarse
+    /// type inference and are not retained in the fingerprint.
+    #[must_use]
+    pub fn from_csv_record(headers: &[String], fields: &[String]) -> Self {
+        Self::from_delimited_record("csv", headers, fields)
+    }
+
+    /// Creates a fingerprint from a TSV record.
+    ///
+    /// Header names are the shape keys. Value samples are only used for coarse
+    /// type inference and are not retained in the fingerprint.
+    #[must_use]
+    pub fn from_tsv_record(headers: &[String], fields: &[String]) -> Self {
+        Self::from_delimited_record("tsv", headers, fields)
+    }
+
+    /// Creates a fingerprint from CSV bytes by reading the header row and first
+    /// data row. Empty inputs and header-only inputs still produce a stable
+    /// structural fingerprint of the visible columns.
+    pub fn from_csv_bytes(bytes: &[u8]) -> Result<Self, csv::Error> {
+        Self::from_delimited_bytes("csv", b',', bytes)
+    }
+
+    /// Creates a fingerprint from TSV bytes by reading the header row and first
+    /// data row. Empty inputs and header-only inputs still produce a stable
+    /// structural fingerprint of the visible columns.
+    pub fn from_tsv_bytes(bytes: &[u8]) -> Result<Self, csv::Error> {
+        Self::from_delimited_bytes("tsv", b'\t', bytes)
+    }
+
+    /// Creates a fingerprint from the declared SQLite table/column shape.
+    ///
+    /// The fingerprint records table names, column names, declared types,
+    /// not-null flags, and primary-key positions. It never reads row values.
+    pub fn from_sqlite_connection(conn: &rusqlite::Connection) -> rusqlite::Result<Self> {
+        let mut table_stmt = conn.prepare(
+            r"
+            SELECT name
+            FROM sqlite_master
+            WHERE type = 'table'
+              AND name NOT LIKE 'sqlite_%'
+            ORDER BY name
+            ",
+        )?;
+        let table_names = table_stmt
+            .query_map([], |row| row.get::<_, String>(0))?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+
+        let mut keys = Vec::new();
+        let mut type_map = BTreeMap::new();
+        for table_name in table_names {
+            let table_key = format!("table:{table_name}");
+            keys.push(table_key.clone());
+            type_map.insert(table_key, "table".to_string());
+
+            let quoted = quote_sqlite_identifier(&table_name);
+            let mut column_stmt = conn.prepare(&format!("PRAGMA table_info({quoted})"))?;
+            let columns = column_stmt
+                .query_map([], |row| {
+                    Ok(SqliteColumnShape {
+                        name: row.get(1)?,
+                        declared_type: row.get::<_, String>(2)?,
+                        not_null: row.get::<_, i64>(3)? != 0,
+                        primary_key_position: row.get(5)?,
+                    })
+                })?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+
+            for column in columns {
+                let key = format!("{table_name}.{}", column.name);
+                keys.push(key.clone());
+                type_map.insert(
+                    key,
+                    format!(
+                        "{};not_null={};pk={}",
+                        normalize_sqlite_declared_type(&column.declared_type),
+                        column.not_null,
+                        column.primary_key_position
+                    ),
+                );
+            }
+        }
+
+        keys.sort();
+        keys.dedup();
+
+        let fp = Self {
+            format: "sqlite_schema".to_string(),
+            keys: keys.clone(),
+            type_map: type_map.clone(),
+            blake3_hash: String::new(),
+        };
+
+        let mut fingerprint = fp;
+        fingerprint.blake3_hash = fingerprint.compute_hash();
+        Ok(fingerprint)
+    }
+
     /// Creates a fingerprint from a `SourceRecord`.
     ///
     /// Dispatches based on record format (currently only JSON is fully supported).
@@ -118,28 +224,125 @@ impl SourceRecordFingerprint {
         }
     }
 
-    /// Extracts field names and their inferred types from a JSON value.
+    fn from_delimited_bytes(format: &str, delimiter: u8, bytes: &[u8]) -> Result<Self, csv::Error> {
+        if bytes.iter().all(u8::is_ascii_whitespace) {
+            return Ok(Self::from_delimited_record(format, &[], &[]));
+        }
+
+        let mut reader = csv::ReaderBuilder::new()
+            .delimiter(delimiter)
+            .flexible(true)
+            .from_reader(bytes);
+        let headers = reader
+            .headers()?
+            .iter()
+            .map(str::to_string)
+            .collect::<Vec<_>>();
+        let mut records = reader.records();
+        let fields = match records.next().transpose()? {
+            Some(record) => record.iter().map(str::to_string).collect::<Vec<_>>(),
+            None => Vec::new(),
+        };
+        Ok(Self::from_delimited_record(format, &headers, &fields))
+    }
+
+    fn from_delimited_record(format: &str, headers: &[String], fields: &[String]) -> Self {
+        let mut type_map = BTreeMap::new();
+        let mut keys = Vec::new();
+
+        for (idx, header) in headers
+            .iter()
+            .take(MAX_DELIMITED_FINGERPRINT_FIELDS)
+            .enumerate()
+        {
+            let key = normalize_delimited_header(idx, header);
+            keys.push(key.clone());
+            let inferred = fields
+                .get(idx)
+                .map_or_else(|| "missing".to_string(), |value| infer_text_type(value));
+            type_map.insert(key, inferred);
+        }
+
+        let remaining_capacity = MAX_DELIMITED_FINGERPRINT_FIELDS.saturating_sub(keys.len());
+        for idx in headers.len()..headers.len().saturating_add(remaining_capacity) {
+            if let Some(value) = fields.get(idx) {
+                let key = format!("__extra_{idx}");
+                keys.push(key.clone());
+                type_map.insert(key, infer_text_type(value));
+            }
+        }
+
+        keys.sort();
+        keys.dedup();
+
+        let fp = Self {
+            format: format.to_string(),
+            keys: keys.clone(),
+            type_map: type_map.clone(),
+            blake3_hash: String::new(),
+        };
+
+        let mut fingerprint = fp;
+        fingerprint.blake3_hash = fingerprint.compute_hash();
+        fingerprint
+    }
+
+    /// Extracts JSON Pointer paths and their inferred types from a JSON value.
     fn extract_types(value: &JsonValue) -> (Vec<String>, BTreeMap<String, String>) {
         let mut keys = Vec::new();
         let mut type_map = BTreeMap::new();
+        Self::extract_types_at(
+            value,
+            "",
+            0,
+            &mut keys,
+            &mut type_map,
+            MAX_JSON_FINGERPRINT_FIELDS,
+        );
+        (keys, type_map)
+    }
 
+    fn extract_types_at(
+        value: &JsonValue,
+        path: &str,
+        depth: usize,
+        keys: &mut Vec<String>,
+        type_map: &mut BTreeMap<String, String>,
+        max_fields: usize,
+    ) {
+        if depth >= MAX_JSON_FINGERPRINT_DEPTH || keys.len() >= max_fields {
+            return;
+        }
         match value {
             JsonValue::Object(map) => {
                 for (key, val) in map {
-                    keys.push(key.clone());
-                    type_map.insert(key.clone(), Self::infer_type(val));
+                    if keys.len() >= max_fields {
+                        break;
+                    }
+                    let child_path = join_json_pointer(path, key);
+                    keys.push(child_path.clone());
+                    type_map.insert(child_path.clone(), Self::infer_type(val));
+                    if val.is_object() {
+                        Self::extract_types_at(
+                            val,
+                            &child_path,
+                            depth + 1,
+                            keys,
+                            type_map,
+                            max_fields,
+                        );
+                    }
                 }
             }
             JsonValue::Array(_) => {
-                // For arrays, we don't index individual elements;
-                // we just note it's an array.
+                // Arrays are represented by the field that owns them. We do
+                // not index elements because array cardinality is data, not
+                // source shape.
             }
             _ => {
                 // Scalar values: no keys to extract.
             }
         }
-
-        (keys, type_map)
     }
 
     /// Infers the JSON type of a value.
@@ -194,6 +397,29 @@ impl SourceRecordFingerprint {
     #[must_use]
     pub fn hash(&self) -> &str {
         &self.blake3_hash
+    }
+
+    /// Builds a drift event between two already-observed fingerprints.
+    ///
+    /// This is useful for runtimes that persist the previous fingerprint in
+    /// checkpoint state rather than keeping a live [`DriftAccumulator`].
+    #[must_use]
+    pub fn diff(
+        source_unit_id: SourceUnitId,
+        previous: &SourceRecordFingerprint,
+        current: &SourceRecordFingerprint,
+    ) -> Option<DriftEvent> {
+        if previous.hash() == current.hash() {
+            return None;
+        }
+
+        Some(build_drift_event_from_parts(
+            source_unit_id,
+            previous.hash().to_string(),
+            previous.keys.clone(),
+            previous.type_map.clone(),
+            current,
+        ))
     }
 }
 
@@ -326,52 +552,67 @@ impl DriftAccumulator {
 
         let previous_hash = self.last_hash.clone().unwrap_or_default();
 
-        // Compute key deltas.
-        let current_key_set: std::collections::HashSet<_> = current.keys.iter().cloned().collect();
-        let previous_key_set: std::collections::HashSet<_> =
-            previous_keys.iter().cloned().collect();
+        build_drift_event_from_parts(
+            self.source_unit_id.clone(),
+            previous_hash,
+            previous_keys,
+            previous_types,
+            current,
+        )
+    }
+}
 
-        let added_keys: Vec<_> = current_key_set
-            .difference(&previous_key_set)
-            .cloned()
-            .collect();
+fn build_drift_event_from_parts(
+    source_unit_id: SourceUnitId,
+    previous_hash: String,
+    previous_keys: Vec<String>,
+    previous_types: BTreeMap<String, String>,
+    current: &SourceRecordFingerprint,
+) -> DriftEvent {
+    let current_key_set: std::collections::HashSet<_> = current.keys.iter().cloned().collect();
+    let previous_key_set: std::collections::HashSet<_> = previous_keys.iter().cloned().collect();
 
-        let removed_keys: Vec<_> = previous_key_set
-            .difference(&current_key_set)
-            .cloned()
-            .collect();
+    let mut added_keys: Vec<_> = current_key_set
+        .difference(&previous_key_set)
+        .cloned()
+        .collect();
+    added_keys.sort();
 
-        // Compute type changes for keys that exist in both.
-        let mut type_changes = vec![];
-        for key in &previous_keys {
-            if current_key_set.contains(key) {
-                let prev_type = previous_types
-                    .get(key)
-                    .cloned()
-                    .unwrap_or_else(|| "unknown".to_string());
-                let curr_type = current
-                    .type_map
-                    .get(key)
-                    .cloned()
-                    .unwrap_or_else(|| "unknown".to_string());
-                if prev_type != curr_type {
-                    type_changes.push((key.clone(), prev_type, curr_type));
-                }
+    let mut removed_keys: Vec<_> = previous_key_set
+        .difference(&current_key_set)
+        .cloned()
+        .collect();
+    removed_keys.sort();
+
+    let mut type_changes = vec![];
+    for key in &previous_keys {
+        if current_key_set.contains(key) {
+            let prev_type = previous_types
+                .get(key)
+                .cloned()
+                .unwrap_or_else(|| "unknown".to_string());
+            let curr_type = current
+                .type_map
+                .get(key)
+                .cloned()
+                .unwrap_or_else(|| "unknown".to_string());
+            if prev_type != curr_type {
+                type_changes.push((key.clone(), prev_type, curr_type));
             }
         }
+    }
 
-        DriftEvent {
-            source_unit_id: self.source_unit_id.clone(),
-            previous_hash,
-            current_hash: current.hash().to_string(),
-            format: current.format.clone(),
-            previous_keys,
-            current_keys: current.keys.clone(),
-            added_keys,
-            removed_keys,
-            type_changes,
-            observed_at: Timestamp::now(),
-        }
+    DriftEvent {
+        source_unit_id,
+        previous_hash,
+        current_hash: current.hash().to_string(),
+        format: current.format.clone(),
+        previous_keys,
+        current_keys: current.keys.clone(),
+        added_keys,
+        removed_keys,
+        type_changes,
+        observed_at: Timestamp::now(),
     }
 }
 
@@ -452,6 +693,61 @@ fn current_unix_timestamp() -> u64 {
         .map_or(0, |d| d.as_secs())
 }
 
+fn join_json_pointer(parent: &str, key: &str) -> String {
+    let escaped = key.replace('~', "~0").replace('/', "~1");
+    if parent.is_empty() {
+        format!("/{escaped}")
+    } else {
+        format!("{parent}/{escaped}")
+    }
+}
+
+fn normalize_delimited_header(idx: usize, header: &str) -> String {
+    let trimmed = header.trim();
+    if trimmed.is_empty() {
+        format!("column_{idx}")
+    } else {
+        trimmed.to_string()
+    }
+}
+
+fn infer_text_type(value: &str) -> String {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return "empty".to_string();
+    }
+    if trimmed.eq_ignore_ascii_case("true") || trimmed.eq_ignore_ascii_case("false") {
+        return "boolean".to_string();
+    }
+    if trimmed.parse::<i64>().is_ok() || trimmed.parse::<u64>().is_ok() {
+        return "integer".to_string();
+    }
+    if trimmed.parse::<f64>().is_ok() {
+        return "number".to_string();
+    }
+    "string".to_string()
+}
+
+struct SqliteColumnShape {
+    name: String,
+    declared_type: String,
+    not_null: bool,
+    primary_key_position: i64,
+}
+
+fn quote_sqlite_identifier(identifier: &str) -> String {
+    format!("\"{}\"", identifier.replace('"', "\"\""))
+}
+
+fn normalize_sqlite_declared_type(declared_type: &str) -> String {
+    let trimmed = declared_type.trim();
+    if trimmed.is_empty() {
+        "untyped".to_string()
+    } else {
+        trimmed.to_ascii_lowercase()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -464,9 +760,9 @@ mod tests {
         let fp = SourceRecordFingerprint::from_json(&value);
 
         assert_eq!(fp.format, "json");
-        assert_eq!(fp.keys, vec!["age", "name"]); // sorted
-        assert_eq!(fp.type_map["name"], "string");
-        assert_eq!(fp.type_map["age"], "integer");
+        assert_eq!(fp.keys, vec!["/age", "/name"]); // sorted
+        assert_eq!(fp.type_map["/name"], "string");
+        assert_eq!(fp.type_map["/age"], "integer");
         Ok(())
     }
 
@@ -475,8 +771,8 @@ mod tests {
         let value = json!({"name": "Bob", "email": null});
         let fp = SourceRecordFingerprint::from_json(&value);
 
-        assert_eq!(fp.keys, vec!["email", "name"]);
-        assert_eq!(fp.type_map["email"], "null");
+        assert_eq!(fp.keys, vec!["/email", "/name"]);
+        assert_eq!(fp.type_map["/email"], "null");
         Ok(())
     }
 
@@ -492,12 +788,37 @@ mod tests {
         });
         let fp = SourceRecordFingerprint::from_json(&value);
 
-        assert_eq!(fp.type_map["text"], "string");
-        assert_eq!(fp.type_map["count"], "integer");
-        assert_eq!(fp.type_map["active"], "boolean");
-        assert_eq!(fp.type_map["nested"], "object");
-        assert_eq!(fp.type_map["items"], "array");
-        assert_eq!(fp.type_map["nullable"], "null");
+        assert_eq!(fp.type_map["/text"], "string");
+        assert_eq!(fp.type_map["/count"], "integer");
+        assert_eq!(fp.type_map["/active"], "boolean");
+        assert_eq!(fp.type_map["/nested"], "object");
+        assert_eq!(fp.type_map["/nested/key"], "string");
+        assert_eq!(fp.type_map["/items"], "array");
+        assert_eq!(fp.type_map["/nullable"], "null");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_from_json_uses_nested_json_pointer_paths() -> xtask::sandbox::TestResult<()> {
+        let value = json!({
+            "message": {
+                "content": "hello",
+                "meta/with~escape": {
+                    "tokens": 12
+                }
+            },
+            "session_id": "abc"
+        });
+        let fp = SourceRecordFingerprint::from_json(&value);
+
+        assert!(fp.keys.contains(&"/message/content".to_string()));
+        assert!(fp.keys.contains(&"/message/meta~1with~0escape".to_string()));
+        assert!(
+            fp.keys
+                .contains(&"/message/meta~1with~0escape/tokens".to_string())
+        );
+        assert_eq!(fp.type_map["/message/content"], "string");
+        assert_eq!(fp.type_map["/message/meta~1with~0escape/tokens"], "integer");
         Ok(())
     }
 
@@ -536,6 +857,132 @@ mod tests {
         let fp2 = SourceRecordFingerprint::from_json(&value2);
 
         assert_ne!(fp1.hash(), fp2.hash());
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_from_csv_bytes_infers_header_shape() -> xtask::sandbox::TestResult<()> {
+        let fp =
+            SourceRecordFingerprint::from_csv_bytes(b"id,name,active,score\n42,Alice,true,98.5\n")?;
+
+        assert_eq!(fp.format, "csv");
+        assert_eq!(fp.keys, vec!["active", "id", "name", "score"]);
+        assert_eq!(fp.type_map["id"], "integer");
+        assert_eq!(fp.type_map["name"], "string");
+        assert_eq!(fp.type_map["active"], "boolean");
+        assert_eq!(fp.type_map["score"], "number");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_from_tsv_bytes_detects_missing_and_extra_columns()
+    -> xtask::sandbox::TestResult<()> {
+        let fp = SourceRecordFingerprint::from_tsv_bytes(b"id\tname\n42\tAlice\tunexpected\n")?;
+
+        assert_eq!(fp.format, "tsv");
+        assert_eq!(fp.keys, vec!["__extra_2", "id", "name"]);
+        assert_eq!(fp.type_map["__extra_2"], "string");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_from_csv_bytes_handles_empty_input() -> xtask::sandbox::TestResult<()> {
+        let fp = SourceRecordFingerprint::from_csv_bytes(b"  \n\t")?;
+
+        assert_eq!(fp.format, "csv");
+        assert!(fp.keys.is_empty());
+        assert!(fp.type_map.is_empty());
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_csv_drift_reports_header_and_type_changes() -> xtask::sandbox::TestResult<()> {
+        let source_unit = SourceUnitId::from_static("test.csv");
+        let mut acc = DriftAccumulator::new(source_unit)
+            .with_emit_every_n_records(1)
+            .with_cooldown_secs(0);
+        let fp1 = SourceRecordFingerprint::from_csv_bytes(b"id,name,score\n42,Alice,98.5\n")?;
+        let fp2 = SourceRecordFingerprint::from_csv_bytes(b"id,full_name,score\n42,Alice,high\n")?;
+
+        acc.observe(&fp1);
+        let drift = acc.observe(&fp2).expect("csv shape drift should emit");
+
+        assert_eq!(drift.format, "csv");
+        assert_eq!(drift.added_keys, vec!["full_name"]);
+        assert_eq!(drift.removed_keys, vec!["name"]);
+        assert_eq!(
+            drift.type_changes,
+            vec![(
+                "score".to_string(),
+                "number".to_string(),
+                "string".to_string()
+            )]
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_from_sqlite_connection_fingerprints_table_columns()
+    -> xtask::sandbox::TestResult<()> {
+        let conn = rusqlite::Connection::open_in_memory()?;
+        conn.execute(
+            "CREATE TABLE history (
+                id INTEGER PRIMARY KEY,
+                command TEXT NOT NULL,
+                ts_ms INTEGER
+            )",
+            [],
+        )?;
+
+        let fp = SourceRecordFingerprint::from_sqlite_connection(&conn)?;
+
+        assert_eq!(fp.format, "sqlite_schema");
+        assert!(fp.keys.contains(&"table:history".to_string()));
+        assert!(fp.keys.contains(&"history.command".to_string()));
+        assert_eq!(fp.type_map["history.command"], "text;not_null=true;pk=0");
+        assert_eq!(fp.type_map["history.id"], "integer;not_null=false;pk=1");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_sqlite_schema_drift_reports_column_change() -> xtask::sandbox::TestResult<()> {
+        let source_unit = SourceUnitId::from_static("test.sqlite");
+        let mut acc = DriftAccumulator::new(source_unit)
+            .with_emit_every_n_records(1)
+            .with_cooldown_secs(0);
+
+        let conn1 = rusqlite::Connection::open_in_memory()?;
+        conn1.execute(
+            "CREATE TABLE history (id INTEGER PRIMARY KEY, command TEXT)",
+            [],
+        )?;
+        let conn2 = rusqlite::Connection::open_in_memory()?;
+        conn2.execute(
+            "CREATE TABLE history (
+                id INTEGER PRIMARY KEY,
+                command BLOB,
+                exit_code INTEGER
+            )",
+            [],
+        )?;
+
+        let fp1 = SourceRecordFingerprint::from_sqlite_connection(&conn1)?;
+        let fp2 = SourceRecordFingerprint::from_sqlite_connection(&conn2)?;
+        acc.observe(&fp1);
+        let drift = acc
+            .observe(&fp2)
+            .expect("sqlite schema shape drift should emit");
+
+        assert_eq!(drift.format, "sqlite_schema");
+        assert_eq!(drift.added_keys, vec!["history.exit_code"]);
+        assert_eq!(
+            drift.type_changes,
+            vec![(
+                "history.command".to_string(),
+                "text;not_null=false;pk=0".to_string(),
+                "blob;not_null=false;pk=0".to_string()
+            )]
+        );
         Ok(())
     }
 
@@ -591,7 +1038,7 @@ mod tests {
         assert!(event.is_some());
 
         let drift = event.unwrap();
-        assert_eq!(drift.added_keys, vec!["name".to_string()]);
+        assert_eq!(drift.added_keys, vec!["/name".to_string()]);
         assert!(drift.removed_keys.is_empty());
         assert!(drift.type_changes.is_empty());
         Ok(())
@@ -654,8 +1101,8 @@ mod tests {
         let event = acc.observe(&fp2).unwrap();
 
         assert_eq!(event.source_unit_id, source_unit);
-        assert_eq!(event.added_keys, vec!["c"]);
-        assert_eq!(event.removed_keys, vec!["b"]);
+        assert_eq!(event.added_keys, vec!["/c"]);
+        assert_eq!(event.removed_keys, vec!["/b"]);
         // "a" should have no type change (integer -> integer).
         assert!(event.type_changes.is_empty());
         Ok(())
@@ -680,10 +1127,39 @@ mod tests {
         assert_eq!(
             event.type_changes[0],
             (
-                "count".to_string(),
+                "/count".to_string(),
                 "integer".to_string(),
                 "string".to_string()
             )
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_fingerprint_diff_matches_drift_payload() -> xtask::sandbox::TestResult<()> {
+        let source_unit = SourceUnitId::from_static("test.unit");
+        let fp1 = SourceRecordFingerprint::from_json(&json!({"count": 42, "name": "old"}));
+        let fp2 = SourceRecordFingerprint::from_json(&json!({"count": "42", "enabled": true}));
+
+        let drift = SourceRecordFingerprint::diff(source_unit.clone(), &fp1, &fp2)
+            .expect("different fingerprints should report drift");
+
+        assert_eq!(drift.source_unit_id, source_unit);
+        assert_eq!(drift.previous_hash, fp1.hash());
+        assert_eq!(drift.current_hash, fp2.hash());
+        assert_eq!(drift.added_keys, vec!["/enabled"]);
+        assert_eq!(drift.removed_keys, vec!["/name"]);
+        assert_eq!(
+            drift.type_changes,
+            vec![(
+                "/count".to_string(),
+                "integer".to_string(),
+                "string".to_string()
+            )]
+        );
+        assert!(
+            SourceRecordFingerprint::diff(SourceUnitId::from_static("test.unit"), &fp1, &fp1)
+                .is_none()
         );
         Ok(())
     }
@@ -704,7 +1180,7 @@ mod tests {
         let payload = event.to_payload();
         assert!(payload.is_object());
         assert_eq!(payload["format"], "json");
-        assert_eq!(payload["added_keys"], serde_json::json!(["y"]));
+        assert_eq!(payload["added_keys"], serde_json::json!(["/y"]));
         Ok(())
     }
 

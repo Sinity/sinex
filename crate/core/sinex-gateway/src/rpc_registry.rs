@@ -391,7 +391,8 @@ fn build_registry_impl() -> RpcRegistry {
         handle_lifecycle_restore, handle_lifecycle_status, handle_link_entities,
         handle_nodes_drain, handle_nodes_health, handle_nodes_list, handle_nodes_list_active,
         handle_nodes_resume, handle_nodes_set_horizon, handle_ops_cancel, handle_ops_get,
-        handle_ops_list, handle_ops_start, handle_replay_approve_operation,
+        handle_ops_list, handle_ops_start, handle_private_mode_disable, handle_private_mode_enable,
+        handle_private_mode_status, handle_replay_approve_operation,
         handle_replay_cancel_operation, handle_replay_create_operation,
         handle_replay_execute_operation, handle_replay_list_operations,
         handle_replay_operation_status, handle_replay_preview_operation,
@@ -438,6 +439,15 @@ fn build_registry_impl() -> RpcRegistry {
             Role::ReadOnly,
             |params, services, _auth| {
                 Box::pin(async move { handle_system_health(services, params).await })
+            },
+        )
+        .register(
+            methods::PRIVACY_PRIVATE_MODE_STATUS,
+            Role::ReadOnly,
+            |params, services, _auth| {
+                Box::pin(
+                    async move { handle_private_mode_status(services.state_dir(), params).await },
+                )
             },
         )
         // Composable event query methods (ReadOnly)
@@ -781,6 +791,50 @@ fn build_registry_impl() -> RpcRegistry {
         )
         // Operations log write (Write)
         .pool_auth_rpc(methods::OPS_START, Role::Write, boxed!(handle_ops_start, 3))
+        .register(
+            methods::PRIVACY_PRIVATE_MODE_ENABLE,
+            Role::Write,
+            |params, services, auth| {
+                Box::pin(async move {
+                    let nats = services.nats_client().ok_or_else(|| {
+                        SinexError::configuration(
+                            "NATS client is not available for private-mode broadcast",
+                        )
+                    })?;
+                    let control = Some((nats, services.environment()));
+                    handle_private_mode_enable(
+                        services.pool(),
+                        services.state_dir(),
+                        control,
+                        params,
+                        auth,
+                    )
+                    .await
+                })
+            },
+        )
+        .register(
+            methods::PRIVACY_PRIVATE_MODE_DISABLE,
+            Role::Write,
+            |params, services, auth| {
+                Box::pin(async move {
+                    let nats = services.nats_client().ok_or_else(|| {
+                        SinexError::configuration(
+                            "NATS client is not available for private-mode broadcast",
+                        )
+                    })?;
+                    let control = Some((nats, services.environment()));
+                    handle_private_mode_disable(
+                        services.pool(),
+                        services.state_dir(),
+                        control,
+                        params,
+                        auth,
+                    )
+                    .await
+                })
+            },
+        )
         // Replay create/preview (Write - doesn't execute yet)
         .replay_rpc(
             methods::REPLAY_CREATE_OPERATION,

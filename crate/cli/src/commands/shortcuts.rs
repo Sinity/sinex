@@ -6,12 +6,17 @@ use color_eyre::Result;
 use console::style;
 use futures::StreamExt;
 use serde_json::json;
+use sinex_primitives::privacy::{load_private_mode_state, resolve_private_mode_state_dir};
 use sinex_primitives::query::{
     EventQuery, EventQueryResult, PayloadFilter, SortDirection, SubscriptionFilter, TimeRange,
 };
 use sinex_primitives::rpc::ingestors::EmitStallThresholds;
 use sinex_primitives::temporal::Timestamp;
-use sinex_primitives::{RuntimeTargetDescriptor, RuntimeTargetKind};
+use sinex_primitives::{
+    RuntimeStatusSignal, RuntimeStatusSignalStatus, RuntimeStatusWarning, RuntimeTargetDescriptor,
+    RuntimeTargetKind,
+};
+use std::path::Path;
 
 use crate::client::{GatewayClient, gateway::SseClientMessage};
 
@@ -34,10 +39,7 @@ impl StatusCommand {
         runtime_target: Option<&RuntimeTargetDescriptor>,
         format: OutputFormat,
     ) -> Result<()> {
-        use sinex_primitives::{
-            RuntimeStatusSignal, RuntimeStatusSignalStatus, RuntimeStatusSnapshot,
-            RuntimeStatusWarning,
-        };
+        use sinex_primitives::RuntimeStatusSnapshot;
 
         let target = runtime_target
             .cloned()
@@ -72,6 +74,19 @@ impl StatusCommand {
             }
         };
         signals.push(gateway_signal);
+
+        match private_mode_signal(target.state.state_dir.as_deref()) {
+            Ok(signal) => signals.push(signal),
+            Err(warning) => {
+                warnings.push(warning.clone());
+                signals.push(RuntimeStatusSignal {
+                    name: "private-mode".to_string(),
+                    status: RuntimeStatusSignalStatus::Unknown,
+                    source: "runtime private-mode state file".to_string(),
+                    message: Some(warning.message),
+                });
+            }
+        }
 
         // DB pool health + NATS connection status (via system.health RPC)
         match client.health().await {
@@ -348,6 +363,38 @@ impl StatusCommand {
     }
 }
 
+fn private_mode_signal(
+    state_dir: Option<&Path>,
+) -> std::result::Result<RuntimeStatusSignal, RuntimeStatusWarning> {
+    let state_dir = resolve_private_mode_state_dir(state_dir.map(Path::to_path_buf));
+    let state = load_private_mode_state(&state_dir).map_err(|e| RuntimeStatusWarning {
+        source: "private-mode".to_string(),
+        message: format!("state unavailable at {}: {e}", state_dir.display()),
+    })?;
+    let scope = if state.affected_source_classes.is_empty() {
+        "all".to_string()
+    } else {
+        state.affected_source_classes.join(",")
+    };
+    let status = if state.enabled {
+        RuntimeStatusSignalStatus::Degraded
+    } else {
+        RuntimeStatusSignalStatus::Healthy
+    };
+    let message = if state.enabled {
+        format!("enabled (scope: {scope}, actor: {})", state.actor)
+    } else {
+        "disabled".to_string()
+    };
+
+    Ok(RuntimeStatusSignal {
+        name: "private-mode".to_string(),
+        status,
+        source: "runtime private-mode state file".to_string(),
+        message: Some(message),
+    })
+}
+
 fn runtime_target_kind_label(kind: &RuntimeTargetKind) -> &'static str {
     match kind {
         RuntimeTargetKind::Unknown => "unknown",
@@ -355,6 +402,48 @@ fn runtime_target_kind_label(kind: &RuntimeTargetKind) -> &'static str {
         RuntimeTargetKind::DeployedHost => "deployed_host",
         RuntimeTargetKind::Vm => "vm",
         RuntimeTargetKind::Test => "test",
+    }
+}
+
+#[cfg(test)]
+mod status_tests {
+    use super::*;
+    use sinex_primitives::privacy::{RuntimePrivateModeState, save_private_mode_state};
+    use xtask::sandbox::prelude::sinex_test;
+
+    #[sinex_test]
+    async fn private_mode_status_signal_defaults_disabled() -> xtask::sandbox::TestResult<()> {
+        let dir = tempfile::tempdir()?;
+        let signal = private_mode_signal(Some(dir.path())).map_err(|warning| {
+            color_eyre::eyre::eyre!("unexpected private-mode warning: {}", warning.message)
+        })?;
+
+        assert_eq!(signal.name, "private-mode");
+        assert_eq!(signal.status, RuntimeStatusSignalStatus::Healthy);
+        assert_eq!(signal.message.as_deref(), Some("disabled"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn private_mode_status_signal_reports_enabled_scope() -> xtask::sandbox::TestResult<()> {
+        let dir = tempfile::tempdir()?;
+        let state = RuntimePrivateModeState::enabled_by(
+            "operator",
+            vec!["desktop".to_string(), "weechat".to_string()],
+            Timestamp::UNIX_EPOCH,
+        );
+        save_private_mode_state(dir.path(), &state)?;
+
+        let signal = private_mode_signal(Some(dir.path())).map_err(|warning| {
+            color_eyre::eyre::eyre!("unexpected private-mode warning: {}", warning.message)
+        })?;
+
+        assert_eq!(signal.status, RuntimeStatusSignalStatus::Degraded);
+        assert_eq!(
+            signal.message.as_deref(),
+            Some("enabled (scope: desktop,weechat, actor: operator)")
+        );
+        Ok(())
     }
 }
 

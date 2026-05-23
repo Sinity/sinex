@@ -2,7 +2,7 @@
 //!
 //! These tests exercise the snapshot command using a tempdir-based fake state
 //! directory.  They do NOT require a live Postgres or NATS instance — instead
-//! they pass a deliberately invalid DATABASE_URL to verify that pg_dump
+//! they pass a deliberately invalid `DATABASE_URL` to verify that `pg_dump`
 //! failure is surfaced cleanly, or they exercise only the `--dry-run` path.
 
 use assert_cmd::cargo;
@@ -11,7 +11,8 @@ use std::process::Command;
 use tempfile::TempDir;
 use xtask::sandbox::sinex_test;
 
-use sinexctl::admin::snapshot::{AdminSnapshotCommand, Component};
+use sinexctl::admin::exec;
+use sinexctl::admin::snapshot::{AdminSnapshotCommand, AdminSnapshotInspectCommand, Component};
 
 /// Helper: build a fake state directory with recognizable fixture files.
 fn make_fake_state_dir() -> TempDir {
@@ -35,11 +36,66 @@ fn make_fake_state_dir() -> TempDir {
     fs::create_dir_all(&spool).unwrap();
     fs::write(spool.join("checkpoint.bin"), b"checkpoint-data").unwrap();
 
+    fs::write(
+        root.join("source-units.json"),
+        r#"{
+          "source_units": [
+            { "id": "terminal.atuin-history" },
+            { "id": "desktop.clipboard" },
+            { "id": "desktop.clipboard" }
+          ]
+        }"#,
+    )
+    .unwrap();
+
     dir
 }
 
 fn sinexctl_bin() -> Command {
     Command::new(cargo::cargo_bin!("sinexctl"))
+}
+
+fn make_snapshot_archive() -> (TempDir, std::path::PathBuf) {
+    use sinexctl::admin::manifest::{ComponentRecord, SnapshotManifest, Totals};
+
+    let dir = tempfile::tempdir().expect("archive tempdir");
+    let staging = dir.path().join("staging");
+    fs::create_dir_all(staging.join("state")).unwrap();
+    fs::write(
+        staging.join("state").join("checkpoint.bin"),
+        b"checkpoint-data",
+    )
+    .unwrap();
+
+    let manifest = SnapshotManifest {
+        snapshot_id: "01970a7f-391b-7000-8000-000000000001".to_string(),
+        created_at: "2026-05-15T11:30:00Z".to_string(),
+        sinex_version: "0.1.0".to_string(),
+        git_sha: Some("abc1234".to_string()),
+        host: "sinnix-prime".to_string(),
+        mode: "quiesce".to_string(),
+        source_unit_ids: vec!["terminal.atuin-history".to_string()],
+        components: vec![ComponentRecord {
+            name: "state".to_string(),
+            path: "state/".to_string(),
+            bytes: 15,
+            blake3: "c".repeat(64),
+            extras: None,
+        }],
+        totals: Totals {
+            uncompressed_bytes: 15,
+            archive_bytes: Some(512),
+        },
+    };
+    fs::write(
+        staging.join("manifest.json"),
+        serde_json::to_vec_pretty(&manifest).unwrap(),
+    )
+    .unwrap();
+
+    let archive_path = dir.path().join("fixture.sinex.tar.zst");
+    exec::tar_create_zstd(&staging, &archive_path, 1, 1).expect("create snapshot fixture archive");
+    (dir, archive_path)
 }
 
 // ── Dry-run test ─────────────────────────────────────────────────────────────
@@ -108,6 +164,93 @@ async fn dry_run_reports_estimates_and_creates_no_archive() -> xtask::sandbox::T
     Ok(())
 }
 
+/// Non-Postgres component subsets do not need DATABASE_URL, even on the binary
+/// path. This keeps state-only forensic snapshots usable when Postgres is the
+/// broken component being investigated.
+#[sinex_test]
+async fn dry_run_non_postgres_components_do_not_require_database_url()
+-> xtask::sandbox::TestResult<()> {
+    let state_dir = make_fake_state_dir();
+    let output_dir = tempfile::tempdir().expect("output tempdir");
+    let output_path = output_dir.path().join("test.tar.zst");
+
+    let output = sinexctl_bin()
+        .args([
+            "admin",
+            "snapshot",
+            "--output",
+            output_path.to_str().unwrap(),
+            "--dry-run",
+            "--state-dir",
+            state_dir.path().to_str().unwrap(),
+            "--components",
+            "nats,cas,state",
+        ])
+        .output()
+        .expect("run sinexctl admin snapshot --dry-run without DATABASE_URL");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "non-postgres dry-run must not require DATABASE_URL\nstdout: {stdout}\nstderr: {stderr}"
+    );
+    assert!(
+        stdout.contains("dry-run"),
+        "stdout must mention dry-run mode\nstdout: {stdout}"
+    );
+    assert!(
+        !output_path.exists(),
+        "dry-run must NOT create an archive at {output_path:?}"
+    );
+
+    Ok(())
+}
+
+/// `admin snapshot-inspect` reads manifest.json from the compressed archive
+/// and validates that non-empty manifest component paths exist in the tar.
+#[sinex_test]
+async fn snapshot_inspect_reports_manifest_and_archive_paths() -> xtask::sandbox::TestResult<()> {
+    let (_dir, archive_path) = make_snapshot_archive();
+
+    let cmd = AdminSnapshotInspectCommand {
+        archive: archive_path.clone(),
+    };
+    let result = cmd.execute().expect("inspect fixture archive");
+
+    assert_eq!(result.snapshot_id, "01970a7f-391b-7000-8000-000000000001");
+    assert_eq!(result.source_unit_count, 1);
+    assert_eq!(result.component_count, 1);
+    assert!(
+        result.missing_component_paths.is_empty(),
+        "fixture archive should contain every non-empty manifest path"
+    );
+
+    let output = sinexctl_bin()
+        .args([
+            "admin",
+            "snapshot-inspect",
+            "--archive",
+            archive_path.to_str().unwrap(),
+            "--format",
+            "json",
+        ])
+        .output()
+        .expect("run sinexctl admin snapshot-inspect");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "snapshot-inspect must exit 0\nstdout: {stdout}\nstderr: {stderr}"
+    );
+    assert!(
+        stdout.contains("\"snapshot_id\":\"01970a7f-391b-7000-8000-000000000001\""),
+        "json output should include the manifest snapshot id\nstdout: {stdout}"
+    );
+
+    Ok(())
+}
+
 // ── Staging cleanup on pg_dump failure ──────────────────────────────────────
 
 /// When pg_dump fails (bad DATABASE_URL), staging must be cleaned up and the
@@ -171,7 +314,10 @@ async fn staging_cleaned_up_on_pg_dump_failure() -> xtask::sandbox::TestResult<(
 #[sinex_test]
 async fn component_all_covers_all_four() -> xtask::sandbox::TestResult<()> {
     let all = Component::all();
-    let names: Vec<&str> = all.iter().map(|c| c.name()).collect();
+    let names: Vec<&str> = all
+        .iter()
+        .map(sinexctl::admin::snapshot::Component::name)
+        .collect();
     for expected in &["postgres", "nats", "cas", "state"] {
         assert!(
             names.contains(expected),
@@ -196,7 +342,7 @@ async fn library_dry_run_returns_valid_result() -> xtask::sandbox::TestResult<()
         workers: 0,
         mode: "quiesce".to_string(),
         dry_run: true,
-        database_url: Some("postgresql://sinex:sinex@localhost/sinex_prod".to_string()),
+        database_url: None,
         state_dir: Some(state_dir.path().to_path_buf()),
         auto_stop: false,
         components: vec![Component::Nats, Component::Cas, Component::State],
@@ -217,6 +363,13 @@ async fn library_dry_run_returns_valid_result() -> xtask::sandbox::TestResult<()
     assert!(
         !result.components_captured.is_empty(),
         "dry-run must return at least one component record"
+    );
+    assert_eq!(
+        result.source_unit_ids,
+        vec![
+            "desktop.clipboard".to_string(),
+            "terminal.atuin-history".to_string()
+        ]
     );
 
     // Nats, CAS, and state should all appear.
@@ -263,6 +416,10 @@ async fn manifest_round_trips_through_serde() -> xtask::sandbox::TestResult<()> 
         git_sha: Some("abc1234".to_string()),
         host: "sinnix-prime".to_string(),
         mode: "quiesce".to_string(),
+        source_unit_ids: vec![
+            "desktop.clipboard".to_string(),
+            "terminal.atuin-history".to_string(),
+        ],
         components: vec![
             ComponentRecord {
                 name: "postgres".to_string(),
@@ -289,6 +446,7 @@ async fn manifest_round_trips_through_serde() -> xtask::sandbox::TestResult<()> 
     let back: SnapshotManifest = serde_json::from_str(&json).expect("deserialise manifest");
 
     assert_eq!(back.snapshot_id, "test-id");
+    assert_eq!(back.source_unit_ids.len(), 2);
     assert_eq!(back.components.len(), 2);
     assert_eq!(back.totals.archive_bytes, Some(3_000_000));
 

@@ -11,13 +11,18 @@ use color_eyre::eyre::Result;
 
 use crate::fmt::CommandOutput;
 use crate::model::OutputFormat;
-use snapshot::{AdminSnapshotCommand, format_snapshot_result};
+use snapshot::{
+    AdminSnapshotCommand, AdminSnapshotInspectCommand, format_snapshot_inspect_result,
+    format_snapshot_result,
+};
 
 /// Admin subcommands.
 #[derive(Debug, Subcommand)]
 pub enum AdminCommands {
     /// Create a quiesce-mode snapshot of the complete sinex runtime state.
     Snapshot(AdminSnapshotCommand),
+    /// Inspect a snapshot archive manifest and member list.
+    SnapshotInspect(AdminSnapshotInspectCommand),
 }
 
 impl AdminCommands {
@@ -26,6 +31,10 @@ impl AdminCommands {
             Self::Snapshot(cmd) => {
                 let result = cmd.execute()?;
                 CommandOutput::single(result, format_snapshot_result).display(&format)
+            }
+            Self::SnapshotInspect(cmd) => {
+                let result = cmd.execute()?;
+                CommandOutput::single(result, format_snapshot_inspect_result).display(&format)
             }
         }
     }
