@@ -67,7 +67,7 @@ struct MinimalRecord {
 }
 
 #[sinex_test]
-async fn minimal_record_round_trip(_ctx: TestContext) -> TestResult<()> {
+async fn minimal_record_round_trip() -> TestResult<()> {
     let mut parser = MinimalRecord {
         value: String::new(),
     };
@@ -85,7 +85,7 @@ async fn minimal_record_round_trip(_ctx: TestContext) -> TestResult<()> {
 }
 
 #[sinex_test]
-async fn parser_spec_is_built_from_struct_attrs(_ctx: TestContext) -> TestResult<()> {
+async fn parser_spec_is_built_from_struct_attrs() -> TestResult<()> {
     let spec = MinimalRecord::parser_spec();
     assert_eq!(spec.parser_id.as_str(), "minimal-test");
     assert_eq!(spec.source_unit_id.as_str(), "test.minimal");
@@ -136,7 +136,7 @@ struct AtuinHistoryTestRecord {
 }
 
 #[sinex_test]
-async fn atuin_shape_extracts_payload_with_privacy_log(_ctx: TestContext) -> TestResult<()> {
+async fn atuin_shape_extracts_payload_with_privacy_log() -> TestResult<()> {
     let mut parser = AtuinHistoryTestRecord {
         rowid: 0,
         session: String::new(),
@@ -197,7 +197,7 @@ async fn atuin_shape_extracts_payload_with_privacy_log(_ctx: TestContext) -> Tes
 // ---------------------------------------------------------------------------
 
 #[sinex_test]
-async fn missing_optional_field_uses_default(_ctx: TestContext) -> TestResult<()> {
+async fn missing_optional_field_uses_default() -> TestResult<()> {
     let mut parser = AtuinHistoryTestRecord {
         rowid: 0,
         session: String::new(),
@@ -226,7 +226,7 @@ async fn missing_optional_field_uses_default(_ctx: TestContext) -> TestResult<()
 // ---------------------------------------------------------------------------
 
 #[sinex_test]
-async fn missing_required_field_errors(_ctx: TestContext) -> TestResult<()> {
+async fn missing_required_field_errors() -> TestResult<()> {
     let mut parser = MinimalRecord {
         value: String::new(),
     };
@@ -263,7 +263,7 @@ struct TabRecord {
 }
 
 #[sinex_test]
-async fn tab_separated_with_column_index_extracts_correctly(_ctx: TestContext) -> TestResult<()> {
+async fn tab_separated_with_column_index_extracts_correctly() -> TestResult<()> {
     let mut parser = TabRecord {
         timestamp: String::new(),
         prefix: String::new(),
@@ -310,7 +310,7 @@ struct SuppressRecord {
 }
 
 #[sinex_test]
-async fn suppress_if_drops_field_when_flag_set(_ctx: TestContext) -> TestResult<()> {
+async fn suppress_if_drops_field_when_flag_set() -> TestResult<()> {
     let spec = SuppressRecord::parser_spec();
 
     // With the flag on, the cmd field should be suppressed.
@@ -338,7 +338,7 @@ async fn suppress_if_drops_field_when_flag_set(_ctx: TestContext) -> TestResult<
 }
 
 #[sinex_test]
-async fn derived_parser_honors_binding_aware_entrypoint(_ctx: TestContext) -> TestResult<()> {
+async fn derived_parser_honors_binding_aware_entrypoint() -> TestResult<()> {
     let mut parser = SuppressRecord { cmd: String::new() };
 
     let binding = BindingConfig::new().with_flag("private_mode_active", true);
@@ -368,7 +368,7 @@ async fn derived_parser_honors_binding_aware_entrypoint(_ctx: TestContext) -> Te
 // ---------------------------------------------------------------------------
 
 #[sinex_test]
-async fn manifest_reflects_spec_metadata(_ctx: TestContext) -> TestResult<()> {
+async fn manifest_reflects_spec_metadata() -> TestResult<()> {
     let parser = MinimalRecord {
         value: String::new(),
     };
@@ -414,7 +414,7 @@ struct FsDispatchRecord {
 }
 
 #[sinex_test]
-async fn discriminator_selects_event_type_created(_ctx: TestContext) -> TestResult<()> {
+async fn discriminator_selects_event_type_created() -> TestResult<()> {
     let mut parser = FsDispatchRecord {
         kind: String::new(),
         path: String::new(),
@@ -435,7 +435,7 @@ async fn discriminator_selects_event_type_created(_ctx: TestContext) -> TestResu
 }
 
 #[sinex_test]
-async fn discriminator_selects_event_type_deleted(_ctx: TestContext) -> TestResult<()> {
+async fn discriminator_selects_event_type_deleted() -> TestResult<()> {
     let mut parser = FsDispatchRecord {
         kind: String::new(),
         path: String::new(),
@@ -453,7 +453,7 @@ async fn discriminator_selects_event_type_deleted(_ctx: TestContext) -> TestResu
 }
 
 #[sinex_test]
-async fn discriminator_on_unknown_skip_emits_no_events(_ctx: TestContext) -> TestResult<()> {
+async fn discriminator_on_unknown_skip_emits_no_events() -> TestResult<()> {
     let mut parser = FsDispatchRecord {
         kind: String::new(),
         path: String::new(),
@@ -475,7 +475,7 @@ async fn discriminator_on_unknown_skip_emits_no_events(_ctx: TestContext) -> Tes
 }
 
 #[sinex_test]
-async fn discriminator_spec_is_built_from_attrs(_ctx: TestContext) -> TestResult<()> {
+async fn discriminator_spec_is_built_from_attrs() -> TestResult<()> {
     let spec = FsDispatchRecord::parser_spec();
     let disc = spec
         .discriminator
@@ -491,7 +491,7 @@ async fn discriminator_spec_is_built_from_attrs(_ctx: TestContext) -> TestResult
 }
 
 #[sinex_test]
-async fn discriminator_manifest_includes_all_event_types(_ctx: TestContext) -> TestResult<()> {
+async fn discriminator_manifest_includes_all_event_types() -> TestResult<()> {
     let parser = FsDispatchRecord {
         kind: String::new(),
         path: String::new(),
@@ -540,7 +540,7 @@ struct AwDispatchRecord {
 }
 
 #[sinex_test]
-async fn discriminator_on_unknown_error_fails_record(_ctx: TestContext) -> TestResult<()> {
+async fn discriminator_on_unknown_error_fails_record() -> TestResult<()> {
     let mut parser = AwDispatchRecord {
         bucket_kind: String::new(),
         title: String::new(),
@@ -556,7 +556,7 @@ async fn discriminator_on_unknown_error_fails_record(_ctx: TestContext) -> TestR
 }
 
 #[sinex_test]
-async fn discriminator_afk_dispatch(_ctx: TestContext) -> TestResult<()> {
+async fn discriminator_afk_dispatch() -> TestResult<()> {
     let mut parser = AwDispatchRecord {
         bucket_kind: String::new(),
         title: String::new(),
@@ -611,7 +611,7 @@ struct ZshCarryRecord {
 }
 
 #[sinex_test]
-async fn carry_producer_sets_state_and_consumer_receives_it(_ctx: TestContext) -> TestResult<()> {
+async fn carry_producer_sets_state_and_consumer_receives_it() -> TestResult<()> {
     let spec = ZshCarryRecord::parser_spec();
     let mut stateful = StatefulDeclarativeParser::new(spec.clone());
     let binding = sinex_node_sdk::parser::BindingConfig::default();
@@ -637,7 +637,7 @@ async fn carry_producer_sets_state_and_consumer_receives_it(_ctx: TestContext) -
 }
 
 #[sinex_test]
-async fn carry_spec_is_built_from_field_attr(_ctx: TestContext) -> TestResult<()> {
+async fn carry_spec_is_built_from_field_attr() -> TestResult<()> {
     let spec = ZshCarryRecord::parser_spec();
     let ts_field = spec
         .fields
@@ -654,7 +654,7 @@ async fn carry_spec_is_built_from_field_attr(_ctx: TestContext) -> TestResult<()
 }
 
 #[sinex_test]
-async fn stateful_parser_reset_clears_carry_state(_ctx: TestContext) -> TestResult<()> {
+async fn stateful_parser_reset_clears_carry_state() -> TestResult<()> {
     let spec = ZshCarryRecord::parser_spec();
     let mut stateful = StatefulDeclarativeParser::new(spec.clone());
     let binding = sinex_node_sdk::parser::BindingConfig::default();
