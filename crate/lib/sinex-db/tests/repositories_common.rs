@@ -86,5 +86,24 @@ async fn table_def_constants_match_expectations() -> TestResult<()> {
     assert_eq!(EntityRelations::table_name(), "entity_relations");
     assert_eq!(EntityRelations::schema_name(), "core");
     assert_eq!(EntityRelations::primary_key(), "id");
+
+    assert_eq!(SemanticEpochs::table_name(), "epochs");
+    assert_eq!(SemanticEpochs::schema_name(), "semantic");
+    assert_eq!(SemanticEpochs::primary_key(), "id");
+
+    assert_eq!(SemanticLanes::table_name(), "lanes");
+    assert_eq!(SemanticLanes::schema_name(), "semantic");
+    assert_eq!(SemanticLanes::primary_key(), "id");
+
+    assert_eq!(SemanticLaneOutputs::table_name(), "lane_outputs");
+    assert_eq!(SemanticLaneOutputs::schema_name(), "semantic");
+    assert_eq!(
+        SemanticLaneOutputs::primary_key(),
+        "(lane_id, output_kind, output_key)"
+    );
+
+    assert_eq!(SemanticLaneDiffs::table_name(), "lane_diffs");
+    assert_eq!(SemanticLaneDiffs::schema_name(), "semantic");
+    assert_eq!(SemanticLaneDiffs::primary_key(), "id");
     Ok(())
 }

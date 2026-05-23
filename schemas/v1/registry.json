@@ -373,6 +373,20 @@
       "content_hash": "375e46b03d453802d50eacac813f16e4522de3f79781ac42b27e31f392612200"
     },
     {
+      "source": "manual-health",
+      "event_type": "health.effect.observed",
+      "version": "1.0.0",
+      "path": "manual-health/health.effect.observed.json",
+      "content_hash": "1bd219276fe3f1ac8bee63d24e5696257e995a748100f404fdc46bbab815cddc"
+    },
+    {
+      "source": "manual-health",
+      "event_type": "health.substance.intake_recorded",
+      "version": "1.0.0",
+      "path": "manual-health/health.substance.intake_recorded.json",
+      "content_hash": "86e239a4a3fbf02e78f1a4bdbfe2467607cf91246f37be5bea812f7804375164"
+    },
+    {
       "source": "messenger",
       "event_type": "message.sent",
       "version": "1.0.0",
@@ -408,11 +422,67 @@
       "content_hash": "c411a527973678df4f45b65c547e45e2401a9ed5e514b388bf0f77b017257b40"
     },
     {
+      "source": "runtime.instruction",
+      "event_type": "actuation.attempted",
+      "version": "1.0.0",
+      "path": "runtime.instruction/actuation.attempted.json",
+      "content_hash": "125a246d4859a7350e170c6c771bd4cd7441031b6a163e89838d290b06df2ae2"
+    },
+    {
+      "source": "runtime.instruction",
+      "event_type": "desktop.workspace.switch_requested",
+      "version": "1.0.0",
+      "path": "runtime.instruction/desktop.workspace.switch_requested.json",
+      "content_hash": "6142c117f758773983f123302edbbc646dcc22974aaddf5f8c8d543c15319734"
+    },
+    {
+      "source": "runtime.instruction",
+      "event_type": "expectation.status",
+      "version": "1.0.0",
+      "path": "runtime.instruction/expectation.status.json",
+      "content_hash": "8d173ad051c27b15290561ec6d94aae716d8eb882ccf1435b4642cdf14038516"
+    },
+    {
       "source": "samsung-health",
       "event_type": "sleep.session",
       "version": "1.0.0",
       "path": "samsung-health/sleep.session.json",
       "content_hash": "2c0b9e644f7c6a882f8dd052f21f10037197dddc950829f1b5a084127cdfb7e5"
+    },
+    {
+      "source": "semantics",
+      "event_type": "semantic.epoch_recorded",
+      "version": "1.0.0",
+      "path": "semantics/semantic.epoch_recorded.json",
+      "content_hash": "812868990c0ca11bb9d8fe6667745ff754f668c380caf20921f15bc576b13e38"
+    },
+    {
+      "source": "semantics",
+      "event_type": "semantic.lane_created",
+      "version": "1.0.0",
+      "path": "semantics/semantic.lane_created.json",
+      "content_hash": "da05f9b99d79a5d8cf8b7ca7a671acd27bbd69ef936338a7ea13f85718d43bff"
+    },
+    {
+      "source": "semantics",
+      "event_type": "semantic.lane_diff_recorded",
+      "version": "1.0.0",
+      "path": "semantics/semantic.lane_diff_recorded.json",
+      "content_hash": "6723456d378dfc6de7eca9f24491f71b834c2705b2e20f2532f8008fa2b0dd1f"
+    },
+    {
+      "source": "semantics",
+      "event_type": "semantic.lane_outputs_discarded",
+      "version": "1.0.0",
+      "path": "semantics/semantic.lane_outputs_discarded.json",
+      "content_hash": "e44f698ae0e262a7a5dd04bd665b359b09706307311e5c268149397f0bdbc7f1"
+    },
+    {
+      "source": "semantics",
+      "event_type": "semantic.lane_status_changed",
+      "version": "1.0.0",
+      "path": "semantics/semantic.lane_status_changed.json",
+      "content_hash": "2f4d2fa3f80fd52dd326b0958d8725d342c88b9d348df00cfdac313bf71e469f"
     },
     {
       "source": "shell.atuin",
@@ -647,6 +717,13 @@
     },
     {
       "source": "task",
+      "event_type": "task.cancelled",
+      "version": "1.0.0",
+      "path": "task/task.cancelled.json",
+      "content_hash": "327d4fdae3fc3312c43be891a20b4ba4997be97fc0ff5b7fc48704501dcd9235"
+    },
+    {
+      "source": "task",
       "event_type": "task.completed",
       "version": "1.0.0",
       "path": "task/task.completed.json",
@@ -658,6 +735,20 @@
       "version": "1.0.0",
       "path": "task/task.created.json",
       "content_hash": "d3fa1c79fc1cc0afca19c100fa1e1cdbf1351b860e302450ca74d731e191e069"
+    },
+    {
+      "source": "task",
+      "event_type": "task.status_changed",
+      "version": "1.0.0",
+      "path": "task/task.status_changed.json",
+      "content_hash": "28976e84b5c0ec9bd955a756f77819b174a34414add500b7ba4ee862a1abdba2"
+    },
+    {
+      "source": "task",
+      "event_type": "task.updated",
+      "version": "1.0.0",
+      "path": "task/task.updated.json",
+      "content_hash": "d8f36c2440cc5499680dcd709a22ed1e1baf9d1b1353bc99cf6079e128342e14"
     },
     {
       "source": "terminal",

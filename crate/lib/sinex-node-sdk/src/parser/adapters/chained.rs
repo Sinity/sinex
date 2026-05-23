@@ -318,7 +318,7 @@ mod tests {
             _config: &Self::Config,
             cursor: Option<Self::Cursor>,
         ) -> ParserResult<BoxStream<'static, ParserResult<SourceRecord>>> {
-            let start = cursor.map(|c| c.next_frame as usize).unwrap_or(0);
+            let start = cursor.map_or(0, |c| c.next_frame as usize);
             let records: Vec<_> = self.records[start..].to_vec();
             let s = stream::iter(records.into_iter().map(Ok));
             Ok(Box::pin(s))
@@ -501,7 +501,7 @@ mod tests {
 
         let stripped = strip_prefix(&rec);
         assert_eq!(
-            stripped.logical_path.as_deref().map(|p| p.as_str()),
+            stripped.logical_path.as_deref().map(camino::Utf8Path::as_str),
             Some("foo/bar.csv")
         );
         Ok(())

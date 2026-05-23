@@ -137,6 +137,18 @@ pub enum VerifySubcommand {
         #[arg(long)]
         dry_run: bool,
     },
+    /// Summarize executable proof claims, runner commands, and deferrals.
+    Claims {
+        /// Emit JSON output.
+        #[arg(long)]
+        json: bool,
+        /// Show advisory obligations as well as required obligations.
+        #[arg(long)]
+        advisory: bool,
+        /// Include deferred obligations and exemptions.
+        #[arg(long)]
+        deferrals: bool,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -337,6 +349,11 @@ impl XtaskCommand for VerifyCommand {
                 json,
                 dry_run,
             } => execute_closure(*issue, *json, *dry_run, ctx).await,
+            VerifySubcommand::Claims {
+                json,
+                advisory,
+                deferrals,
+            } => execute_claims(*json, *advisory, *deferrals, ctx),
         }
     }
 
@@ -348,6 +365,148 @@ impl XtaskCommand for VerifyCommand {
             track_in_history: true,
             history_access: crate::command::HistoryAccessMode::ReadWrite,
         }
+    }
+}
+
+#[derive(Debug, Serialize)]
+struct ClaimVerificationSummary {
+    schema_version: u32,
+    required: Vec<ClaimVerificationItem>,
+    advisory: Vec<ClaimVerificationItem>,
+    deferred: Vec<ClaimVerificationItem>,
+    exemptions: Vec<ClaimExemptionItem>,
+    errors: Vec<String>,
+    warnings: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct ClaimVerificationItem {
+    obligation_id: String,
+    claim_id: String,
+    subject: String,
+    runner_binding_id: String,
+    command: String,
+    reason: String,
+}
+
+#[derive(Debug, Serialize)]
+struct ClaimExemptionItem {
+    exemption_id: String,
+    subject: String,
+    obligation_id: String,
+    reason: String,
+    expires: Option<String>,
+}
+
+fn execute_claims(
+    json: bool,
+    include_advisory: bool,
+    include_deferrals: bool,
+    _ctx: &CommandContext,
+) -> Result<CommandResult> {
+    let catalog = crate::proof_catalog::build_proof_catalog(&workspace_root())?;
+    let validation = crate::proof_catalog::validate_proof_catalog(&catalog);
+    let runner_by_id = catalog
+        .runner_bindings
+        .iter()
+        .map(|runner| (runner.id, runner.command))
+        .collect::<BTreeMap<_, _>>();
+
+    let mut required = Vec::new();
+    let mut advisory = Vec::new();
+    let mut deferred = Vec::new();
+
+    for obligation in &catalog.obligations {
+        let command = runner_by_id
+            .get(obligation.runner_binding_id)
+            .copied()
+            .unwrap_or("<missing-runner-command>");
+        let item = ClaimVerificationItem {
+            obligation_id: obligation.id.to_string(),
+            claim_id: obligation.claim_id.to_string(),
+            subject: obligation.subject.as_str().to_string(),
+            runner_binding_id: obligation.runner_binding_id.to_string(),
+            command: command.to_string(),
+            reason: obligation.reason.to_string(),
+        };
+
+        match obligation.level {
+            sinex_primitives::ProofObligationLevel::Required => required.push(item),
+            sinex_primitives::ProofObligationLevel::Advisory => advisory.push(item),
+            sinex_primitives::ProofObligationLevel::Deferred => deferred.push(item),
+        }
+    }
+
+    let exemptions = catalog
+        .exemptions
+        .iter()
+        .map(|exemption| ClaimExemptionItem {
+            exemption_id: exemption.id.to_string(),
+            subject: exemption.subject.as_str().to_string(),
+            obligation_id: exemption.obligation_id.to_string(),
+            reason: exemption.reason.to_string(),
+            expires: exemption.expires.map(str::to_string),
+        })
+        .collect::<Vec<_>>();
+
+    let summary = ClaimVerificationSummary {
+        schema_version: catalog.schema_version,
+        required,
+        advisory,
+        deferred,
+        exemptions,
+        errors: validation.errors,
+        warnings: validation.warnings,
+    };
+
+    if json {
+        println!("{}", serde_json::to_string_pretty(&summary)?);
+    } else {
+        println!("Proof claims");
+        println!("  required:  {}", summary.required.len());
+        println!("  advisory:  {}", summary.advisory.len());
+        println!("  deferred:  {}", summary.deferred.len());
+        println!("  exemptions: {}", summary.exemptions.len());
+        println!("  errors:    {}", summary.errors.len());
+        println!("  warnings:  {}", summary.warnings.len());
+        for item in &summary.required {
+            println!(
+                "  required  {}  {}  {}",
+                item.obligation_id, item.claim_id, item.command
+            );
+        }
+        if include_advisory {
+            for item in &summary.advisory {
+                println!(
+                    "  advisory  {}  {}  {}",
+                    item.obligation_id, item.claim_id, item.command
+                );
+            }
+        }
+        if include_deferrals {
+            for item in &summary.deferred {
+                println!(
+                    "  deferred  {}  {}  {}",
+                    item.obligation_id, item.claim_id, item.command
+                );
+            }
+            for item in &summary.exemptions {
+                println!(
+                    "  exempt    {}  {}  {}",
+                    item.exemption_id, item.obligation_id, item.reason
+                );
+            }
+        }
+    }
+
+    if summary.errors.is_empty() {
+        Ok(CommandResult::success().with_message("proof claims catalog is valid"))
+    } else {
+        Ok(CommandResult::failure(crate::output::StructuredError::new(
+            "PROOF_CLAIMS_INVALID",
+            "proof claims catalog has errors",
+        ))
+        .with_message("proof claims catalog has errors"))
     }
 }
 

@@ -3,8 +3,8 @@ use crate::schema::{
     BinarySchemaVersion, Blobs, DocumentChunks, Documents, EmbeddingCache, EmbeddingModels,
     Entities, EntityRelations, EventAnnotations, EventClusterMembers, EventClusters,
     EventEmbeddings, EventPayloadSchemas, EventReplacements, EventTombstones, Events, Manifests,
-    OperationsLog, Runs, SourceMaterialLinks, SourceMaterialRegistry, TaggedItems, Tags,
-    TemporalLedger,
+    OperationsLog, Runs, SemanticEpochs, SemanticLaneDiffs, SemanticLaneOutputs, SemanticLanes,
+    SourceMaterialLinks, SourceMaterialRegistry, TaggedItems, Tags, TemporalLedger,
 };
 use crate::schema_registry;
 use sea_query::{IndexCreateStatement, PostgresQueryBuilder, TableCreateStatement};
@@ -730,6 +730,10 @@ async fn create_tables(pool: &PgPool) -> Result<(), ApplyError> {
         render_table(&TemporalLedger::create_table_statement()),
         render_table(&Entities::create_table_statement()),
         render_table(&EntityRelations::create_table_statement()),
+        render_table(&SemanticEpochs::create_table_statement()),
+        render_table(&SemanticLanes::create_table_statement()),
+        render_table(&SemanticLaneOutputs::create_table_statement()),
+        render_table(&SemanticLaneDiffs::create_table_statement()),
         render_table(&TaggedItems::create_table_statement()),
         render_table(&EventAnnotations::create_table_statement()),
         render_table(&EmbeddingCache::create_table_statement()),
@@ -799,6 +803,10 @@ async fn create_indexes(pool: &PgPool) -> Result<(), ApplyError> {
     index_sql.extend(Entities::create_gin_indexes_sql());
     index_sql.extend(Entities::create_trigram_indexes_sql());
     index_sql.extend(render_indexes(EntityRelations::create_indexes()));
+    index_sql.extend(render_indexes(SemanticEpochs::create_indexes()));
+    index_sql.extend(render_indexes(SemanticLanes::create_indexes()));
+    index_sql.extend(render_indexes(SemanticLaneOutputs::create_indexes()));
+    index_sql.extend(render_indexes(SemanticLaneDiffs::create_indexes()));
     index_sql.extend(render_indexes(TaggedItems::create_indexes()));
     index_sql.extend(render_indexes(EventAnnotations::create_indexes()));
     index_sql.extend(EventAnnotations::create_gin_indexes_sql());

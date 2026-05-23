@@ -1,8 +1,8 @@
 //! Tests for the entity resolver — the second stage of the entity intelligence pipeline.
 //!
-//! Verifies deterministic UUIDv5 identity assignment, type-aware canonicalization,
+//! Verifies deterministic `UUIDv5` identity assignment, type-aware canonicalization,
 //! deduplication via the persistent `known_entities` map, and `WindowedNode` semantics
-//! (accumulate stages a pending payload, window_complete flips, emit returns + clears it).
+//! (accumulate stages a pending payload, `window_complete` flips, emit returns + clears it).
 
 use sinex_node_sdk::WindowedNode;
 use sinex_node_sdk::derived_node::DerivedTriggerContext;
@@ -53,7 +53,7 @@ async fn drive(
 
 #[sinex_test]
 async fn accumulate_stages_pending_and_window_completes() -> TestResult<()> {
-    let mut resolver = EntityResolver::default();
+    let mut resolver = EntityResolver;
     let mut state = ResolverState::default();
 
     let ctx = make_context();
@@ -68,7 +68,7 @@ async fn accumulate_stages_pending_and_window_completes() -> TestResult<()> {
 
 #[sinex_test]
 async fn emit_clears_pending_and_returns_resolved_payload() -> TestResult<()> {
-    let mut resolver = EntityResolver::default();
+    let mut resolver = EntityResolver;
     let mut state = ResolverState::default();
 
     let Some(payload) = drive(&mut resolver, &mut state, extracted("tool", "git")).await? else {
@@ -85,7 +85,7 @@ async fn emit_clears_pending_and_returns_resolved_payload() -> TestResult<()> {
 
 #[sinex_test]
 async fn duplicate_entity_skipped_via_dedup_map() -> TestResult<()> {
-    let mut resolver = EntityResolver::default();
+    let mut resolver = EntityResolver;
     let mut state = ResolverState::default();
 
     let Some(_) = drive(&mut resolver, &mut state, extracted("tool", "git")).await? else {
@@ -107,7 +107,7 @@ async fn duplicate_entity_skipped_via_dedup_map() -> TestResult<()> {
 #[sinex_test]
 async fn identity_is_deterministic_uuidv5() -> TestResult<()> {
     let payload_a = {
-        let mut r = EntityResolver::default();
+        let mut r = EntityResolver;
         let mut s = ResolverState::default();
         let Some(payload) = drive(&mut r, &mut s, extracted("tool", "git")).await? else {
             return Err(color_eyre::eyre::eyre!(
@@ -117,7 +117,7 @@ async fn identity_is_deterministic_uuidv5() -> TestResult<()> {
         payload
     };
     let payload_b = {
-        let mut r = EntityResolver::default();
+        let mut r = EntityResolver;
         let mut s = ResolverState::default();
         let Some(payload) = drive(&mut r, &mut s, extracted("tool", "git")).await? else {
             return Err(color_eyre::eyre::eyre!(
@@ -139,7 +139,7 @@ async fn identity_is_deterministic_uuidv5() -> TestResult<()> {
 
 #[sinex_test]
 async fn tool_canonicalization_lowercases_and_trims() -> TestResult<()> {
-    let mut resolver = EntityResolver::default();
+    let mut resolver = EntityResolver;
     let mut state = ResolverState::default();
     let Some(out) = drive(&mut resolver, &mut state, extracted("tool", "  GIT  ")).await? else {
         return Err(color_eyre::eyre::eyre!(
@@ -153,7 +153,7 @@ async fn tool_canonicalization_lowercases_and_trims() -> TestResult<()> {
 
 #[sinex_test]
 async fn url_canonicalization_normalizes_host() -> TestResult<()> {
-    let mut resolver = EntityResolver::default();
+    let mut resolver = EntityResolver;
     let mut state = ResolverState::default();
     let Some(out) = drive(
         &mut resolver,
@@ -172,7 +172,7 @@ async fn url_canonicalization_normalizes_host() -> TestResult<()> {
 
 #[sinex_test]
 async fn file_canonicalization_preserves_path_case() -> TestResult<()> {
-    let mut resolver = EntityResolver::default();
+    let mut resolver = EntityResolver;
     let mut state = ResolverState::default();
     let Some(out) = drive(
         &mut resolver,
@@ -191,7 +191,7 @@ async fn file_canonicalization_preserves_path_case() -> TestResult<()> {
 
 #[sinex_test]
 async fn different_types_with_same_name_are_distinct_entities() -> TestResult<()> {
-    let mut resolver = EntityResolver::default();
+    let mut resolver = EntityResolver;
     let mut state = ResolverState::default();
 
     let Some(tool) = drive(&mut resolver, &mut state, extracted("tool", "git")).await? else {
@@ -212,7 +212,7 @@ async fn different_types_with_same_name_are_distinct_entities() -> TestResult<()
 
 #[sinex_test]
 async fn emit_returns_none_when_no_pending() -> TestResult<()> {
-    let mut resolver = EntityResolver::default();
+    let mut resolver = EntityResolver;
     let mut state = ResolverState::default();
     let ctx = make_context();
     let result = resolver.emit(&mut state, &ctx).await?;

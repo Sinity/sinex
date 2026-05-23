@@ -293,7 +293,19 @@ pub fn build() -> HashMap<&'static str, FormatCapability> {
 
     // ── Manual Declarations / Tasks ─────────────────────────────────────────
     m.insert(
+        "declare health effect",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
+    m.insert(
+        "declare health intake",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
+    m.insert(
         "declare task",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
+    m.insert(
+        "tasks cancel",
         FormatCapability::single_shot(TABLE_JSON_YAML),
     );
     m.insert(
@@ -301,7 +313,16 @@ pub fn build() -> HashMap<&'static str, FormatCapability> {
         FormatCapability::single_shot(TABLE_JSON_YAML),
     );
     m.insert(
+        "tasks update",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
+    m.insert("tasks list", FormatCapability::single_shot(TABLE_JSON_YAML));
+    m.insert(
         "tasks state",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
+    m.insert(
+        "tasks status",
         FormatCapability::single_shot(TABLE_JSON_YAML),
     );
     m.insert(
@@ -314,6 +335,46 @@ pub fn build() -> HashMap<&'static str, FormatCapability> {
     );
     m.insert(
         "curation finalize",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
+    m.insert(
+        "semantics epoch create",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
+    m.insert(
+        "semantics epoch list",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
+    m.insert(
+        "semantics lane create",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
+    m.insert(
+        "semantics lane compare",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
+    m.insert(
+        "semantics lane list",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
+    m.insert(
+        "semantics lane status",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
+    m.insert(
+        "semantics lane discard",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
+    m.insert(
+        "semantics lane outputs",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
+    m.insert(
+        "semantics lane write-outputs",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
+    m.insert(
+        "semantics lane diffs",
         FormatCapability::single_shot(TABLE_JSON_YAML),
     );
     m.insert(
@@ -649,7 +710,7 @@ fn family_for_path(path: &str) -> CommandFamily {
         "node" | "automata" | "ingestors" | "replay" | "dlq" | "ops" | "audit" | "lifecycle"
         | "git-ops" | "privacy" | "blob" => CommandFamily::Operate,
         "sources" => CommandFamily::Sources,
-        "declare" | "tasks" | "curation" | "llm" | "documents" | "annotate" => {
+        "declare" | "tasks" | "curation" | "semantics" | "llm" | "documents" | "annotate" => {
             CommandFamily::Domain
         }
         "telemetry" | "throughput" => CommandFamily::Telemetry,
@@ -678,6 +739,8 @@ fn effect_for_path(path: &str, capability: &FormatCapability) -> CommandEffect {
         "curation finalize",
         "curation judge",
         "declare",
+        "declare health effect",
+        "declare health intake",
         "declare task",
         "dlq purge",
         "dlq requeue",
@@ -703,6 +766,12 @@ fn effect_for_path(path: &str, capability: &FormatCapability) -> CommandEffect {
         "replay preview",
         "replay run",
         "replay submit",
+        "semantics epoch create",
+        "semantics lane compare",
+        "semantics lane create",
+        "semantics lane discard",
+        "semantics lane status",
+        "semantics lane write-outputs",
         "shadow create",
         "shadow delete",
         "sources annotate",
@@ -712,7 +781,10 @@ fn effect_for_path(path: &str, capability: &FormatCapability) -> CommandEffect {
         "sources stage",
         "state restore",
         "state snapshot",
+        "tasks cancel",
         "tasks complete",
+        "tasks status",
+        "tasks update",
     ];
 
     if mutating.binary_search(&path).is_ok() {
@@ -737,6 +809,8 @@ fn mutation_guards_for_path(path: &str) -> &'static [CommandMutationGuard] {
         | "curation finalize"
         | "curation judge"
         | "declare"
+        | "declare health effect"
+        | "declare health intake"
         | "declare task"
         | "dlq requeue"
         | "git-ops create"
@@ -755,12 +829,21 @@ fn mutation_guards_for_path(path: &str) -> &'static [CommandMutationGuard] {
         | "replay cancel"
         | "replay execute"
         | "replay submit"
+        | "semantics epoch create"
+        | "semantics lane compare"
+        | "semantics lane create"
+        | "semantics lane discard"
+        | "semantics lane status"
+        | "semantics lane write-outputs"
         | "sources annotate"
         | "sources archive"
         | "sources bindings create"
         | "sources bindings update"
         | "sources stage"
-        | "tasks complete" => &[RpcAuth],
+        | "tasks cancel"
+        | "tasks complete"
+        | "tasks status"
+        | "tasks update" => &[RpcAuth],
         _ => &[],
     }
 }
@@ -847,12 +930,28 @@ fn backing_rpc_methods_for_path(path: &str) -> &'static [&'static str] {
             methods::SOURCES_READINESS_LIST,
             methods::SOURCES_READINESS_GET,
         ],
+        "declare health effect" => &[methods::HEALTH_EFFECT_RECORD],
+        "declare health intake" => &[methods::HEALTH_INTAKE_RECORD],
         "declare task" => &[methods::TASKS_CREATE],
+        "tasks cancel" => &[methods::TASKS_CANCEL],
         "tasks complete" => &[methods::TASKS_COMPLETE],
+        "tasks list" => &[methods::TASKS_LIST],
         "tasks state" => &[methods::TASKS_STATE_GET],
+        "tasks status" => &[methods::TASKS_STATUS_SET],
+        "tasks update" => &[methods::TASKS_UPDATE],
         "curation proposals" => &[methods::CURATION_PROPOSALS_LIST],
         "curation judge" => &[methods::CURATION_JUDGMENTS_RECORD],
         "curation finalize" => &[methods::CURATION_FINALIZE],
+        "semantics epoch create" => &[methods::SEMANTIC_EPOCHS_CREATE],
+        "semantics epoch list" => &[methods::SEMANTIC_EPOCHS_LIST],
+        "semantics lane create" => &[methods::SEMANTIC_LANES_CREATE],
+        "semantics lane list" => &[methods::SEMANTIC_LANES_LIST],
+        "semantics lane status" => &[methods::SEMANTIC_LANES_SET_STATUS],
+        "semantics lane discard" => &[methods::SEMANTIC_LANES_DISCARD],
+        "semantics lane outputs" => &[methods::SEMANTIC_LANE_OUTPUTS_LIST],
+        "semantics lane write-outputs" => &[methods::SEMANTIC_LANE_OUTPUTS_WRITE],
+        "semantics lane diffs" => &[methods::SEMANTIC_LANE_DIFFS_LIST],
+        "semantics lane compare" => &[methods::SEMANTIC_LANE_DIFFS_RECORD_ENTITY_RELATION],
         "llm prompts" => &[methods::LLM_PROMPTS_LIST],
         "llm route-explain" => &[methods::LLM_ROUTE_EXPLAIN],
         "llm budget-report" => &[methods::LLM_BUDGET_REPORT],

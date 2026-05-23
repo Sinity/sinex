@@ -130,8 +130,7 @@ async fn telemetry_material_registered_before_gauge_event(ctx: TestContext) -> T
     let dlq_messages = js
         .get_stream(&dlq_stream_name)
         .await
-        .map(|stream| stream.cached_info().state.messages)
-        .unwrap_or(0);
+        .map_or(0, |stream| stream.cached_info().state.messages);
 
     assert_eq!(
         dlq_messages, 0,

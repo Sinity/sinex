@@ -253,8 +253,8 @@ async fn declarative_apply_rebuilds_telemetry_read_models(ctx: TestContext) -> T
     )
     .fetch_one(pool)
     .await?;
-    assert_eq!(
-        relation_state.0, true,
+    assert!(
+        relation_state.0,
         "command_frequency_hourly must be restored as a Timescale continuous aggregate, got relkind={} definition={}",
         relation_state.1, relation_state.2
     );
@@ -769,7 +769,7 @@ async fn operator_telemetry_does_not_register_continuous_aggregates(
         "stream_stats_1h",
     ]
     .iter()
-    .map(|s| s.to_string())
+    .map(std::string::ToString::to_string)
     .collect::<BTreeSet<_>>();
 
     assert_eq!(

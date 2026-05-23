@@ -11,6 +11,64 @@ use sinex_macros::EventPayload;
 
 use crate::Timestamp;
 
+/// Timing precision of a manually declared health observation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum HealthTimingQuality {
+    Exact,
+    Approximate,
+    DateOnly,
+    Unknown,
+}
+
+/// Numeric quantity with caller-supplied units and precision.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct HealthQuantity {
+    pub value: f64,
+    pub unit: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub precision: Option<String>,
+}
+
+/// Structured manual declaration of substance intake (#1348).
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
+#[event_payload(
+    source = "manual-health",
+    event_type = "health.substance.intake_recorded"
+)]
+pub struct HealthSubstanceIntakeRecordedPayload {
+    pub intake_id: crate::Uuid,
+    pub substance: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dose: Option<HealthQuantity>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub route: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub form: Option<String>,
+    pub occurred_at: Timestamp,
+    pub timing_quality: HealthTimingQuality,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub confidence: Option<f64>,
+    pub note_redacted: bool,
+}
+
+/// Structured manual observation of an effect or state after intake (#1348).
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
+#[event_payload(source = "manual-health", event_type = "health.effect.observed")]
+pub struct HealthEffectObservationRecordedPayload {
+    pub observation_id: crate::Uuid,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub related_intake_id: Option<crate::Uuid>,
+    pub effect: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub severity: Option<String>,
+    pub observed_at: Timestamp,
+    pub timing_quality: HealthTimingQuality,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub confidence: Option<f64>,
+    pub note_redacted: bool,
+}
+
 /// One sleep session observation from a merged Samsung Health / Sleep As
 /// Android export (#1052).
 ///
@@ -83,6 +141,14 @@ mod tests {
         assert_eq!(
             SleepSessionPayload::EVENT_TYPE.as_static_str(),
             "sleep.session"
+        );
+        assert_eq!(
+            HealthSubstanceIntakeRecordedPayload::EVENT_TYPE.as_static_str(),
+            "health.substance.intake_recorded"
+        );
+        assert_eq!(
+            HealthEffectObservationRecordedPayload::EVENT_TYPE.as_static_str(),
+            "health.effect.observed"
         );
     }
 }

@@ -1,0 +1,134 @@
+{
+  "$defs": {
+    "DateTime": {
+      "description": "RFC 3339 formatted date-time string",
+      "format": "date-time",
+      "type": "string"
+    },
+    "SemanticLaneKind": {
+      "description": "Lane class.",
+      "enum": [
+        "canonical",
+        "shadow",
+        "experiment"
+      ],
+      "type": "string"
+    },
+    "SemanticLaneRecord": {
+      "description": "Registry record for a semantic lane.",
+      "properties": {
+        "base_epoch_id": {
+          "format": "uuid",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "candidate_epoch_id": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/SemanticLaneKind"
+        },
+        "lane_id": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "purpose": {
+          "type": "string"
+        },
+        "scope": {
+          "$ref": "#/$defs/SemanticScope"
+        },
+        "status": {
+          "$ref": "#/$defs/SemanticLaneStatus"
+        }
+      },
+      "required": [
+        "lane_id",
+        "name",
+        "kind",
+        "candidate_epoch_id",
+        "scope",
+        "status",
+        "purpose"
+      ],
+      "type": "object"
+    },
+    "SemanticLaneStatus": {
+      "description": "Shadow-lane lifecycle state.",
+      "enum": [
+        "planned",
+        "running",
+        "completed",
+        "compared",
+        "promoted",
+        "discarded",
+        "expired"
+      ],
+      "type": "string"
+    },
+    "SemanticScope": {
+      "description": "Input scope for a semantic lane.",
+      "properties": {
+        "input_ids": {
+          "description": "Stable identifiers in this scope.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "input_set_hash": {
+          "description": "Hash of the resolved ordered input set.",
+          "type": "string"
+        },
+        "kind": {
+          "description": "Scope kind, e.g. `source_material`, `event_set`, `document_chunk_set`.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "input_ids",
+        "input_set_hash"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "A canonical, shadow, or experiment lane was created.",
+  "properties": {
+    "expires_at": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/DateTime"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "lane": {
+      "$ref": "#/$defs/SemanticLaneRecord"
+    },
+    "operation_id": {
+      "format": "uuid",
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "lane"
+  ],
+  "title": "SemanticLaneCreatedPayload",
+  "type": "object",
+  "x-sinex-event-type": "semantic.lane_created",
+  "x-sinex-source": "semantics",
+  "x-sinex-version": "1.0.0"
+}

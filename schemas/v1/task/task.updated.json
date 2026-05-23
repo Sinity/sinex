@@ -1,0 +1,197 @@
+{
+  "$defs": {
+    "DateTime": {
+      "description": "RFC 3339 formatted date-time string",
+      "format": "date-time",
+      "type": "string"
+    },
+    "TaskExternalRef": {
+      "description": "Stable external task alias scoped by source system.",
+      "properties": {
+        "external_id": {
+          "type": "string"
+        },
+        "system": {
+          "type": "string"
+        },
+        "version": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "system",
+        "external_id"
+      ],
+      "type": "object"
+    },
+    "TaskFieldUpdate": {
+      "description": "Patch operation for task fields that can either be set or cleared.",
+      "oneOf": [
+        {
+          "properties": {
+            "op": {
+              "const": "set",
+              "type": "string"
+            },
+            "value": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "op",
+            "value"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "op": {
+              "const": "clear",
+              "type": "string"
+            }
+          },
+          "required": [
+            "op"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "TaskFieldUpdate2": {
+      "description": "Patch operation for task fields that can either be set or cleared.",
+      "oneOf": [
+        {
+          "properties": {
+            "op": {
+              "const": "set",
+              "type": "string"
+            },
+            "value": {
+              "$ref": "#/$defs/DateTime"
+            }
+          },
+          "required": [
+            "op",
+            "value"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "op": {
+              "const": "clear",
+              "type": "string"
+            }
+          },
+          "required": [
+            "op"
+          ],
+          "type": "object"
+        }
+      ]
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Canonical task metadata update lifecycle event.",
+  "properties": {
+    "actor": {
+      "type": "string"
+    },
+    "body": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/TaskFieldUpdate"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "due_at": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/TaskFieldUpdate2"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "external_refs": {
+      "items": {
+        "$ref": "#/$defs/TaskExternalRef"
+      },
+      "type": [
+        "array",
+        "null"
+      ]
+    },
+    "external_version": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "priority": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/TaskFieldUpdate"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "project_id": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/TaskFieldUpdate"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "reason": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "tags": {
+      "items": {
+        "type": "string"
+      },
+      "type": [
+        "array",
+        "null"
+      ]
+    },
+    "task_id": {
+      "format": "uuid",
+      "type": "string"
+    },
+    "title": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "updated_at": {
+      "$ref": "#/$defs/DateTime"
+    }
+  },
+  "required": [
+    "task_id",
+    "updated_at",
+    "actor"
+  ],
+  "title": "TaskUpdatedPayload",
+  "type": "object",
+  "x-sinex-event-type": "task.updated",
+  "x-sinex-source": "task",
+  "x-sinex-version": "1.0.0"
+}

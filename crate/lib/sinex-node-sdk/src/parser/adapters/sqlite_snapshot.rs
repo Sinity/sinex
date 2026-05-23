@@ -387,7 +387,7 @@ mod tests {
         assert!(cfg.enabled());
         let spec = SnapshotLaneSpec::from_sqlite_config("/tmp/x.db", "test.unit", &cfg).unwrap();
         assert_eq!(spec.source_identifier, "test.unit.snapshot");
-        assert_eq!(spec.interval, Duration::from_secs(60));
+        assert_eq!(spec.interval, Duration::from_mins(1));
         assert!(spec.dedup_by_content_hash);
         Ok(())
     }
@@ -402,7 +402,7 @@ mod tests {
         let spec = SnapshotLaneSpec {
             path: db.path().to_path_buf(),
             source_identifier: "test.atuin.snapshot".to_string(),
-            interval: Duration::from_secs(3600),
+            interval: Duration::from_hours(1),
             dedup_by_content_hash: true,
         };
         let mut lane = SqliteSnapshotLane::new(spec, Arc::clone(&manager));
@@ -423,7 +423,7 @@ mod tests {
         let spec = SnapshotLaneSpec {
             path: db.path().to_path_buf(),
             source_identifier: "test.atuin.snapshot".to_string(),
-            interval: Duration::from_secs(3600),
+            interval: Duration::from_hours(1),
             dedup_by_content_hash: true,
         };
         let mut lane = SqliteSnapshotLane::new(spec, Arc::clone(&manager));
@@ -455,7 +455,7 @@ mod tests {
         let spec = SnapshotLaneSpec {
             path: path.path().to_path_buf(),
             source_identifier: "test.atuin.snapshot".to_string(),
-            interval: Duration::from_secs(3600),
+            interval: Duration::from_hours(1),
             dedup_by_content_hash: true,
         };
         let mut lane = SqliteSnapshotLane::new(spec, Arc::clone(&manager));
@@ -484,7 +484,7 @@ mod tests {
         let spec = SnapshotLaneSpec {
             path: db.path().to_path_buf(),
             source_identifier: "test.atuin.snapshot".to_string(),
-            interval: Duration::from_secs(3600),
+            interval: Duration::from_hours(1),
             dedup_by_content_hash: false,
         };
         let mut lane = SqliteSnapshotLane::new(spec, Arc::clone(&manager));
@@ -505,7 +505,7 @@ mod tests {
         let spec = SnapshotLaneSpec {
             path: PathBuf::from("/definitely/does/not/exist.db"),
             source_identifier: "test.atuin.snapshot".to_string(),
-            interval: Duration::from_secs(3600),
+            interval: Duration::from_hours(1),
             dedup_by_content_hash: true,
         };
         let mut lane = SqliteSnapshotLane::new(spec, Arc::clone(&manager));
@@ -526,7 +526,7 @@ mod tests {
             path: db.path().to_path_buf(),
             source_identifier: "test.atuin.snapshot".to_string(),
             // Long interval — only the initial-capture should run before shutdown.
-            interval: Duration::from_secs(3600),
+            interval: Duration::from_hours(1),
             dedup_by_content_hash: true,
         };
         let lane = SqliteSnapshotLane::new(spec, Arc::clone(&manager));
@@ -537,8 +537,7 @@ mod tests {
         // Give the lane a beat to do its initial capture, then shut it down.
         tokio::time::sleep(Duration::from_millis(200)).await;
         tx.send(true).unwrap();
-        let result = task.await.expect("task join")?;
-        let _ = result;
+        task.await.expect("task join")?;
         Ok(())
     }
 }

@@ -48,12 +48,13 @@ jobs:
       - name: Install nix
         uses: cachix/install-nix-action@v27
 
-      - name: Apply schema
+      - name: Run schema-only drift gate
         env:
           DATABASE_URL: postgres://postgres:postgres@localhost:5432/sinex
-        run: nix develop --command xtask schema apply
-
-      - name: Run strict diff
-        env:
-          DATABASE_URL: postgres://postgres:postgres@localhost:5432/sinex
-        run: nix develop --command xtask schema strict-diff
+          PGDATABASE: sinex
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: postgres
+          PGPASSWORD: postgres
+          SUPERUSER: postgres
+        run: nix develop --command xtask ci schema-only
