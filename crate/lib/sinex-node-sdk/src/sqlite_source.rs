@@ -628,7 +628,10 @@ mod tests {
         drop(conn);
 
         let path = Utf8PathBuf::from_path_buf(temp.path().to_path_buf())
-            .map_err(|path| color_eyre::eyre::eyre!("non-utf8 temp path: {path:?}"))?;
+            .map_err(|path| {
+                SinexError::validation("test path is not valid UTF-8")
+                    .with_context("path", format!("{path:?}"))
+            })?;
         let capture = capture_sqlite_snapshot(&path, "test://sqlite")?;
         assert!(capture.metadata().total_bytes > 0);
         assert!(capture.metadata().page_size > 0);
@@ -686,7 +689,10 @@ mod tests {
         };
 
         let path = Utf8PathBuf::from_path_buf(db_path)
-            .map_err(|path| color_eyre::eyre::eyre!("non-utf8 temp path: {path:?}"))?;
+            .map_err(|path| {
+                SinexError::validation("test path is not valid UTF-8")
+                    .with_context("path", format!("{path:?}"))
+            })?;
 
         ensure_sqlite_with_tables(&path, &["history"])?;
         let max_id = max_row_id_for_query(&path, "SELECT MAX(ROWID) FROM history")?;
