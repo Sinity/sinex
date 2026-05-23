@@ -5,7 +5,9 @@ use sinex_primitives::SinexError;
 use std::future::pending;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Duration;
 use tokio::sync::Notify;
+use tokio::time::{sleep, timeout};
 use xtask::sandbox::sinex_test;
 
 #[sinex_test]
@@ -157,7 +159,13 @@ async fn test_watcher_is_inactive_when_forwarder_finishes() -> Result<(), Box<dy
 
     let mut handle = WatcherHandle::<()>::initialized("test");
     handle.start(main_task, Some(forwarder))?;
-    tokio::task::yield_now().await;
+    timeout(Duration::from_secs(1), async {
+        while handle.is_active() {
+            sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("completed forwarder should make watcher inactive promptly");
 
     assert!(
         !handle.is_active(),

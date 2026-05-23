@@ -165,6 +165,26 @@ journalctl -u sinex-gateway -u sinex-ingestd -f
 | Deploy on NixOS | [nixos/README.md](nixos/README.md) |
 | Build a node or derived service | [crate/lib/sinex-node-sdk/docs/overview.md](crate/lib/sinex-node-sdk/docs/overview.md) |
 | Understand event schemas | [crate/lib/sinex-schema/docs/event-taxonomy.md](crate/lib/sinex-schema/docs/event-taxonomy.md) |
+| Separate notes, typed records, graph, and artifacts | [docs/architecture/knowledge-boundaries.md](docs/architecture/knowledge-boundaries.md) |
+| Define current-state projections for event-native domains | [docs/architecture/domain-reducers.md](docs/architecture/domain-reducers.md) |
+| Model tasks as event-native workflow objects | [docs/architecture/task-domain.md](docs/architecture/task-domain.md) |
+| Model sensitive health and self-observation logs | [docs/architecture/health-self-observation-domain.md](docs/architecture/health-self-observation-domain.md) |
+| Model declarations, omissions, and conceptual time | [docs/architecture/declarations-and-conceptual-time.md](docs/architecture/declarations-and-conceptual-time.md) |
+| Design interval-backed moment queries | [docs/architecture/moment-evidence-windows.md](docs/architecture/moment-evidence-windows.md) |
+| Define versioned SQL-shaped derivations | [docs/architecture/sql-derivation-engine.md](docs/architecture/sql-derivation-engine.md) |
+| Record replayable inference confidence and seeds | [docs/architecture/inference-decision-metadata.md](docs/architecture/inference-decision-metadata.md) |
+| Explain semantic composition beyond ancestry trace | [docs/architecture/semantic-trace-teardown.md](docs/architecture/semantic-trace-teardown.md) |
+| Run replay-safe semantic experiments | [docs/architecture/semantic-epochs-shadow-lanes.md](docs/architecture/semantic-epochs-shadow-lanes.md) |
+| Route model calls through prompts, policy, and budgets | [docs/architecture/prompt-router-budget.md](docs/architecture/prompt-router-budget.md) |
+| Bound active instruction and actuator loops | [docs/architecture/instruction-actuator-loops.md](docs/architecture/instruction-actuator-loops.md) |
+| Rename event taxonomy labels without parser replay | [docs/architecture/audited-semantic-renames.md](docs/architecture/audited-semantic-renames.md) |
+| Reason about replay evidence and source snapshots | [docs/architecture/evidence-lanes.md](docs/architecture/evidence-lanes.md) |
+| Reason about large aggregate provenance | [docs/architecture/high-fan-in-lineage.md](docs/architecture/high-fan-in-lineage.md) |
+| Coordinate late-arriving evidence in derived outputs | [docs/architecture/late-arriving-event-temporal-coordination.md](docs/architecture/late-arriving-event-temporal-coordination.md) |
+| Reason about runtime backpressure and loss policy | [docs/architecture/runtime-qos.md](docs/architecture/runtime-qos.md) |
+| Drain and recover source-worker material cleanly | [docs/design/source-worker-drain-protocol.md](docs/design/source-worker-drain-protocol.md) |
+| Decide which surface owns a runtime or data concern | [docs/architecture/authority-surfaces.md](docs/architecture/authority-surfaces.md) |
+| Integrate an external tool or sibling project | [docs/architecture/integration-authority.md](docs/architecture/integration-authority.md) |
 | Work on repo workflow or verification | [CONTRIBUTING.md](CONTRIBUTING.md), [TESTING.md](TESTING.md) |
 | Work on the CLI/tooling loop | [xtask/docs/README.md](xtask/docs/README.md) |
 

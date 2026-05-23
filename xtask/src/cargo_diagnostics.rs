@@ -498,7 +498,10 @@ pub fn parse_cargo_json_output(
                 .and_then(|p| p.as_str())
                 .and_then(extract_package_name);
 
-            if let Some(ref pkg) = package {
+            if json.get("reason").and_then(|r| r.as_str()) == Some("compiler-artifact")
+                && json.get("fresh").and_then(serde_json::Value::as_bool) != Some(true)
+                && let Some(ref pkg) = package
+            {
                 compiled_packages.insert(pkg.clone());
             }
 
@@ -801,17 +804,21 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_compiled_packages_tracked_from_artifacts() -> TestResult<()> {
-        // compiler-artifact messages also carry package_id
+    async fn test_compiled_packages_tracked_from_non_fresh_artifacts() -> TestResult<()> {
+        // compiler-artifact messages also carry package_id. Only non-fresh
+        // artifacts are compiled work; fresh artifacts are dependency graph
+        // visibility, not rebuild evidence.
         let lines = [
-            r#"{"reason":"compiler-artifact","package_id":"path+file:///realm/project/sinex#sinex-primitives@0.1.0","target":{"name":"sinex-primitives"}}"#,
-            r#"{"reason":"compiler-artifact","package_id":"path+file:///realm/project/sinex#sinex-db@0.1.0","target":{"name":"sinex-db"}}"#,
+            r#"{"reason":"compiler-artifact","fresh":false,"package_id":"path+file:///realm/project/sinex#sinex-primitives@0.1.0","target":{"name":"sinex-primitives"}}"#,
+            r#"{"reason":"compiler-artifact","fresh":true,"package_id":"path+file:///realm/project/sinex#zerovec@0.11.5","target":{"name":"zerovec"}}"#,
+            r#"{"reason":"compiler-message","package_id":"path+file:///realm/project/sinex#sinex-db@0.1.0","message":{"level":"warning","message":"unused","spans":[],"children":[]}}"#,
         ];
         let output = lines.join("\n");
         let result = parse_cargo_json_output(&output, true)?;
-        assert_eq!(result.compiled_packages.len(), 2);
+        assert_eq!(result.compiled_packages.len(), 1);
         assert!(result.compiled_packages.contains("sinex-primitives"));
-        assert!(result.compiled_packages.contains("sinex-db"));
+        assert!(!result.compiled_packages.contains("zerovec"));
+        assert!(!result.compiled_packages.contains("sinex-db"));
         Ok(())
     }
 

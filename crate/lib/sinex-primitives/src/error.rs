@@ -716,6 +716,52 @@ impl From<tokio::sync::oneshot::error::RecvError> for SinexError {
 
 pub type Result<T> = std::result::Result<T, SinexError>;
 
+pub fn deserialize_with_path<T: serde::de::DeserializeOwned>(json_str: &str) -> Result<T> {
+    let jd = &mut serde_json::Deserializer::from_str(json_str);
+    serde_path_to_error::deserialize(jd).map_err(|err| {
+        let path = err.path().to_string();
+        SinexError::serialization(format!(
+            "JSON deserialization failed at path '{}': {}",
+            path,
+            err.inner()
+        ))
+        .with_context("json_path", path)
+        .with_context("error_type", format!("{:?}", err.inner().classify()))
+    })
+}
+
+pub trait ResultExt<T> {
+    /// Adds a "context" key with the given message to the error, preserving the
+    /// original error variant.
+    fn context(self, msg: &str) -> Result<T>;
+
+    /// Adds a key-value context pair to the error, preserving the original variant.
+    ///
+    /// Unlike the previous closure-based design, this preserves the error variant
+    /// and simply adds structured context. Use `.map_err()` directly if you need
+    /// to replace the error entirely.
+    fn with_context(self, key: impl Into<String>, value: impl ToString) -> Result<T>;
+}
+
+impl<T, E> ResultExt<T> for std::result::Result<T, E>
+where
+    E: Into<SinexError>,
+{
+    fn context(self, msg: &str) -> Result<T> {
+        self.map_err(|e| {
+            let err: SinexError = e.into();
+            err.with_context("context", msg)
+        })
+    }
+
+    fn with_context(self, key: impl Into<String>, value: impl ToString) -> Result<T> {
+        self.map_err(|e| {
+            let err: SinexError = e.into();
+            err.with_context(key, value)
+        })
+    }
+}
+
 #[cfg(test)]
 mod retryability_tests {
     use super::{ErrorClass, ErrorDetails, SinexError};
@@ -780,8 +826,7 @@ mod retryability_tests {
             assert_eq!(
                 err.is_retryable(),
                 class == ErrorClass::TransientInfra,
-                "is_retryable disagrees with error_class for {:?}: class={class:?}",
-                err
+                "is_retryable disagrees with error_class for {err:?}: class={class:?}"
             );
         }
         Ok(())
@@ -794,8 +839,7 @@ mod retryability_tests {
             assert_eq!(
                 err.is_permanent(),
                 class == ErrorClass::NodeFatal,
-                "is_permanent disagrees with error_class for {:?}: class={class:?}",
-                err
+                "is_permanent disagrees with error_class for {err:?}: class={class:?}"
             );
         }
         Ok(())
@@ -806,56 +850,9 @@ mod retryability_tests {
         for err in all_variants() {
             assert!(
                 !(err.is_retryable() && err.is_permanent()),
-                "error is both retryable and permanent: {:?}",
-                err
+                "error is both retryable and permanent: {err:?}"
             );
         }
         Ok(())
-    }
-}
-
-pub fn deserialize_with_path<T: serde::de::DeserializeOwned>(json_str: &str) -> Result<T> {
-    let jd = &mut serde_json::Deserializer::from_str(json_str);
-    serde_path_to_error::deserialize(jd).map_err(|err| {
-        let path = err.path().to_string();
-        SinexError::serialization(format!(
-            "JSON deserialization failed at path '{}': {}",
-            path,
-            err.inner()
-        ))
-        .with_context("json_path", path)
-        .with_context("error_type", format!("{:?}", err.inner().classify()))
-    })
-}
-
-pub trait ResultExt<T> {
-    /// Adds a "context" key with the given message to the error, preserving the
-    /// original error variant.
-    fn context(self, msg: &str) -> Result<T>;
-
-    /// Adds a key-value context pair to the error, preserving the original variant.
-    ///
-    /// Unlike the previous closure-based design, this preserves the error variant
-    /// and simply adds structured context. Use `.map_err()` directly if you need
-    /// to replace the error entirely.
-    fn with_context(self, key: impl Into<String>, value: impl ToString) -> Result<T>;
-}
-
-impl<T, E> ResultExt<T> for std::result::Result<T, E>
-where
-    E: Into<SinexError>,
-{
-    fn context(self, msg: &str) -> Result<T> {
-        self.map_err(|e| {
-            let err: SinexError = e.into();
-            err.with_context("context", msg)
-        })
-    }
-
-    fn with_context(self, key: impl Into<String>, value: impl ToString) -> Result<T> {
-        self.map_err(|e| {
-            let err: SinexError = e.into();
-            err.with_context(key, value)
-        })
     }
 }

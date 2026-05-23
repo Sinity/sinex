@@ -33,10 +33,10 @@ use sinex_source_worker::registry::SourceUnitRegistry;
 /// return both the source unit name and the filtered argv (without the
 /// `--source-unit` flag).
 ///
-/// The NodeCli parser does not know about `--source-unit` as a
+/// The `NodeCli` parser does not know about `--source-unit` as a
 /// dispatch selector — it only sees it as an optional identity field. We strip
 /// the selector form before forwarding the remaining args, and the identity is
-/// already carried through NodeCli's `--source-unit` identity field.
+/// already carried through `NodeCli`'s `--source-unit` identity field.
 fn extract_source_unit(args: Vec<std::ffi::OsString>) -> (SourceUnitId, Vec<std::ffi::OsString>) {
     // Read env as the fallback; CLI must override (standard CLI precedence).
     let env_val = std::env::var("SINEX_SOURCE_UNIT")
@@ -109,7 +109,7 @@ fn registered_factory_ids_for_display() -> String {
     } else {
         registered
             .iter()
-            .map(|id| id.as_str())
+            .map(sinex_primitives::parser::SourceUnitId::as_str)
             .collect::<Vec<_>>()
             .join(", ")
     }
@@ -131,17 +131,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // Dispatch to the source unit's factory — registry-driven, no match arms.
-    match node_factory::find_node_factory(&source_unit_name) {
-        Some(factory) => factory(filtered_args).await,
-        None => {
-            let list = registered_factory_ids_for_display();
-            eprintln!(
-                "error: source unit '{source_unit_name}' is in the descriptor registry \
-                 but has no node factory registered.\n\
-                 Source units with factories: {list}\n\
-                 Register a factory with register_node_factory!(\"{source_unit_name}\", YourNode)."
-            );
-            std::process::exit(1);
-        }
+    if let Some(factory) = node_factory::find_node_factory(&source_unit_name) {
+        factory(filtered_args).await
+    } else {
+        let list = registered_factory_ids_for_display();
+        eprintln!(
+            "error: source unit '{source_unit_name}' is in the descriptor registry \
+             but has no node factory registered.\n\
+             Source units with factories: {list}\n\
+             Register a factory with register_node_factory!(\"{source_unit_name}\", YourNode)."
+        );
+        std::process::exit(1);
     }
 }

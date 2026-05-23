@@ -1144,8 +1144,9 @@ let
           fi
         '';
       # Post-Wave-B fold (#1081): desktop source units.
-      # desktop.activitywatch is adapter-backed (SqliteRowAdapter).
-      # desktop.window-manager and desktop.clipboard are gated (#1234).
+      # desktop.activitywatch is adapter-backed (SqliteRowAdapter);
+      # window-manager and clipboard are live-stream adapters that depend on
+      # the target-runtime bridge below.
       activitywatchDbPath =
         if targetHome != null
         then "${targetHome}/.local/share/activitywatch/aw-server-rust/sqlite.db"
@@ -1171,7 +1172,12 @@ let
         writePaths = accessWritePaths;
         afterUnits = runtimeRootUnits;
         wantsUnits = runtimeRootUnits;
-        beforeUnits = [ "sinex-preflight.service" "sinex-source-worker-desktop.activitywatch-1.service" ];
+        beforeUnits = [
+          "sinex-preflight.service"
+          "sinex-source-worker-desktop.activitywatch-1.service"
+          "sinex-source-worker-desktop.window-manager-1.service"
+          "sinex-source-worker-desktop.clipboard-1.service"
+        ];
       };
       # Hyprland rotates instance signature directories under
       # /run/user/UID/hypr/<sig> on every compositor restart.  The oneshot
@@ -1235,15 +1241,17 @@ let
       } // (if gated then { gated = true; } else { });
       # desktop.activitywatch only supplies `path`; query/table come from
       # the Rust source unit's default_config (schema validation skipped).
-      # desktop.window-manager and desktop.clipboard are gated (#1234).
+      # desktop.window-manager resolves its socket from the bridge-written
+      # environment file at runtime. desktop.clipboard uses adapter defaults
+      # and the same XDG_RUNTIME_DIR/WAYLAND_DISPLAY bridge.
       desktopBindings = {
         # immutable=false: aw-server-rust holds the WAL active while writing,
         # which makes SQLite's immutable=1 path fail SQLITE_CANTOPEN. Without
         # this override the worker spams "unable to open database file" every
         # 30 s. The rest of the SqliteRow defaults stay (read_only=true, etc.).
         "desktop.activitywatch" = mkDesktopBinding "ActivityWatch SQLite (source-worker)" { path = activitywatchDbPath; immutable = false; } false;
-        "desktop.window-manager" = mkDesktopBinding "Desktop window manager (source-worker, gated)" { } true;
-        "desktop.clipboard" = mkDesktopBinding "Desktop clipboard (source-worker, gated)" { } true;
+        "desktop.window-manager" = mkDesktopBinding "Desktop window manager (source-worker)" { } false;
+        "desktop.clipboard" = mkDesktopBinding "Desktop clipboard (source-worker)" { } false;
       };
     in
     {

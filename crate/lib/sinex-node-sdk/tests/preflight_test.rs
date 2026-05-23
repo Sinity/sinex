@@ -24,6 +24,12 @@ fn env_lock() -> &'static Mutex<()> {
     LOCK.get_or_init(|| Mutex::new(()))
 }
 
+fn spacious_tempdir() -> TestResult<tempfile::TempDir> {
+    let root = env::current_dir()?.join(".sinex/test-preflight");
+    fs::create_dir_all(&root)?;
+    Ok(tempfile::tempdir_in(root)?)
+}
+
 fn database_environment_name(database_url: &str) -> Option<String> {
     database_url
         .split('?')
@@ -481,7 +487,7 @@ async fn test_phase4_system_resources_success() -> TestResult<()> {
 /// Test Phase 4: Filesystem permissions verification with temp directory
 #[sinex_test]
 async fn test_phase4_filesystem_permissions() -> TestResult<()> {
-    let root = tempfile::tempdir()?;
+    let root = spacious_tempdir()?;
     let state_dir = root.path().join("state");
     let data_dir = root.path().join("data");
     let log_dir = root.path().join("logs");
@@ -552,7 +558,7 @@ async fn test_phase4_filesystem_permissions() -> TestResult<()> {
 /// Test Phase 4: Filesystem permissions verification does not fabricate missing work directories
 #[sinex_test]
 async fn test_phase4_filesystem_permissions_missing_work_dir_fails_honestly() -> TestResult<()> {
-    let root = tempfile::tempdir()?;
+    let root = spacious_tempdir()?;
     let state_dir = root.path().join("state");
     let data_dir = root.path().join("data");
     let log_dir = root.path().join("logs");

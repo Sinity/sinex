@@ -62,6 +62,14 @@ Large or pre-planned work should not live only in scratch notes or chat history.
 Use a GitHub issue or an explicit source document/report before implementation
 starts.
 
+Target-vision-derived claims that may steer architecture, issue scope, naming,
+or proof obligations should also be checked against
+[`docs/target-vision-claim-ledger.md`](docs/target-vision-claim-ledger.md).
+The ledger records whether a claim is raw, issue-backed, implemented, verified,
+semantic debt, superseded, or rejected. Do not copy full target-vision prose
+into issues; summarize the claim, link the source, and keep GitHub as the
+implementation authority.
+
 Use the issue templates intentionally:
 
 - `Feature or Change` for concrete implementation slices with a defined outcome

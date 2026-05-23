@@ -1,8 +1,8 @@
 # Late-Arriving Event Temporal Coordination
 
-This document closes the design question tracked in `#325`: what should sinex
-do when higher-level derived output depends on sources that arrive with
-different latencies?
+This document closes the design question tracked in `#325` and extends it for
+`#1111`: what should sinex do when higher-level derived output depends on
+sources that arrive with different latencies?
 
 The answer is not one universal mechanism. The runtime already has three
 different shapes, and they should stay distinct:
@@ -32,6 +32,86 @@ This keeps provenance honest and query semantics legible:
 - correction happens through replay/invalidation and replacement records, not by
   mutating rows or by inventing a permanent "tentative" status for derived
   events.
+
+The settlement model is therefore metadata and query status, not a third event
+provenance class. A derived result can be explained as final, waiting,
+superseded, invalidated, or caveated without mutating the event payload that was
+emitted.
+
+## Settlement Vocabulary
+
+Late-arrival coordination uses three pieces of shared metadata:
+
+```rust
+pub struct SourceWatermark {
+    pub source_unit_id: String,
+    pub event_type_pattern: String,
+    pub complete_through: Timestamp,
+    pub observed_through: Timestamp,
+    pub lateness_bound: Duration,
+    pub confidence: WatermarkConfidence,
+    pub caveats: Vec<CaveatRef>,
+}
+
+pub enum DerivationSettlement {
+    Waiting {
+        reason: WaitingReason,
+        missing_sources: Vec<String>,
+        valid_for: TimeRange,
+    },
+    Final {
+        complete_through: Timestamp,
+        inputs_closed_by: Vec<SourceWatermarkRef>,
+    },
+    Superseded {
+        superseded_by: Uuid,
+        reason: SupersessionReason,
+    },
+    Invalidated {
+        invalidation_scope: ScopeRef,
+        reason: InvalidationReason,
+    },
+    Caveated {
+        caveats: Vec<CaveatRef>,
+    },
+}
+```
+
+`Waiting` is not a persisted tentative event. It is what a query/status surface
+reports when a bounded window or scope is intentionally not final yet.
+`Caveated` is for outputs whose evidence is usable but incomplete, such as
+ephemeral streams or private-mode gaps.
+
+Candidate support tables:
+
+```sql
+create table core.source_watermarks (
+  source_unit_id text not null,
+  event_type_pattern text not null,
+  scope jsonb not null default '{}'::jsonb,
+  complete_through timestamptz not null,
+  observed_through timestamptz not null,
+  lateness_bound interval not null,
+  confidence text not null,
+  caveats jsonb not null default '[]'::jsonb,
+  updated_at timestamptz not null default now(),
+  primary key (source_unit_id, event_type_pattern, scope)
+);
+
+create table core.derivation_settlements (
+  event_id uuid primary key references core.events(id) on delete cascade,
+  status text not null check (status in ('final', 'superseded', 'invalidated', 'caveated')),
+  valid_for tstzrange,
+  watermarks jsonb not null default '[]'::jsonb,
+  caveats jsonb not null default '[]'::jsonb,
+  superseded_by uuid references core.events(id),
+  operation_id uuid references core.operations_log(id),
+  created_at timestamptz not null default now()
+);
+```
+
+The side table records interpretation status for already-emitted derived rows.
+It does not authorize payload mutation.
 
 ## Why Not General Provisional Derived Events
 
@@ -222,6 +302,26 @@ The important distinction is:
 - scope recomputation changes which output is currently live for a scope;
 - neither requires a new "tentative" event kind.
 
+Query and status output should expose:
+
+| Status | Meaning |
+| --- | --- |
+| `waiting` | No event emitted yet because a bounded window is still open or required watermarks have not covered the window. |
+| `final` | The emitted derived row was produced with declared watermarks covering the window/scope. |
+| `superseded` | A later recomputation emitted a replacement for the same equivalence slot. |
+| `invalidated` | Replay/archive changed the scope and the old row is no longer a live interpretation. |
+| `caveated` | The row is usable but has attached source gaps, private-mode suppression, or low timing quality. |
+
+Replay distinguishes two causes:
+
+| Cause | Signal |
+| --- | --- |
+| Late evidence arrived | The input set for a scope/window changed while the reducer semantics version stayed the same. |
+| Automaton semantics changed | The node `semantics_version` changed or a replay operation explicitly requested reinterpretation under new code/policy. |
+
+Both causes may archive and replace outputs, but trace and operator output must
+label the reason differently.
+
 ## Immediate Implication
 
 No generic runtime feature needs to be added before canonicalization expands.
@@ -232,3 +332,38 @@ The current guidance is:
 - use the existing windowed model for real bounded intervals;
 - when a concrete cross-source late-correction node is introduced, build it as a
   scope reconciler with explicit `scope_key` and `equivalence_key` discipline.
+
+## First Proof Target
+
+The first implementation target should be the daily summarizer, not command
+canonicalization or raw capture.
+
+Reasons:
+
+- the output is naturally windowed by day;
+- late backfill can add events to an already-summarized day;
+- the output can use `equivalence_key = day + semantics_version`;
+- high-fan-in lineage can compact the day's input set;
+- query output can show final/caveated/superseded status without teaching every
+  transducer about settlement.
+
+The session detector remains a bounded-window example, but daily summaries give
+the clearest late-evidence fixture.
+
+## Fixture
+
+Late event after a daily summary:
+
+1. Seed events for `2026-05-16` and run the daily summarizer.
+2. Record a daily summary with `status = final` when source watermarks cover the
+   day, or `status = caveated` if a configured source has a known gap.
+3. Import/backfill an additional event with `ts_orig` inside `2026-05-16`.
+4. Publish scope invalidation for the daily summary scope.
+5. Recompute the day.
+6. Archive or mark the old output as superseded and emit the replacement with
+   the same equivalence key and a new event id.
+7. Trace reports the cause as `late_evidence_arrived`, not
+   `semantics_version_changed`.
+
+This fixture proves lateness handling without adding mutable events or a
+general-purpose provisional event type.

@@ -121,6 +121,19 @@ Catalog/spec issues close when their planned material is either promoted into
 a generated catalog or marked stale. PRs do not "implement" a catalog/spec
 issue; they implement a generator that emits the catalog.
 
+## Target-Vision Claim Ledger
+
+Target-vision material is evidence, not implementation truth. Reusable claims
+derived from `/realm/project/sinex-target-vision` are tracked in
+[`docs/target-vision-claim-ledger.md`](target-vision-claim-ledger.md).
+
+Use the ledger when raw/report/reference prose starts steering architecture,
+issue scope, naming, or proof obligations. The ledger records claim status,
+evidence source, current authority, promotion gates, and supersession notes.
+It is intentionally smaller than an issue body: issues remain the
+implementation tracker, while ledger rows prevent stale or seductive horizon
+prose from being rediscovered as if it were current design.
+
 ## Templates (summary)
 
 The issue templates under `.github/ISSUE_TEMPLATE/` should request:

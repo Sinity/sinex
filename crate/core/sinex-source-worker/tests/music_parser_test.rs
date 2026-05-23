@@ -5,10 +5,10 @@
 
 use sinex_node_sdk::parser::MaterialParser;
 use sinex_primitives::{
+    Uuid,
     ids::Id,
     parser::{MaterialAnchor, ParserContext, SourceRecord, SourceUnitId},
     temporal::Timestamp,
-    Uuid,
 };
 use sinex_source_worker::sources::music::SpotifyHistoryParser;
 
@@ -105,7 +105,10 @@ async fn ac_json_export_parses_to_track_played_events() {
     for intent in &intents {
         assert_eq!(intent.event_source.as_str(), "spotify");
         assert_eq!(intent.event_type.as_str(), "track.played");
-        assert!(intent.occurrence_key.is_some(), "occurrence_key must be set");
+        assert!(
+            intent.occurrence_key.is_some(),
+            "occurrence_key must be set"
+        );
         assert!(
             intent.ts_orig.inner().year() == 2024,
             "ts_orig should reflect the export row timestamp"
@@ -259,8 +262,10 @@ async fn ac_skip_threshold_boundary_30s_not_skipped() {
         .await
         .unwrap();
 
-    assert_eq!(intents[0].payload["skipped_inferred"], false,
-        "exactly 30_000 ms must not be classified as inferred-skip (threshold is < 30_000)");
+    assert_eq!(
+        intents[0].payload["skipped_inferred"], false,
+        "exactly 30_000 ms must not be classified as inferred-skip (threshold is < 30_000)"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -303,14 +308,20 @@ async fn ac_context_and_platform_metadata_preserved_ip_dropped() {
     assert_eq!(p["reason_end"], "trackdone");
     assert_eq!(p["shuffle"], true);
     assert_eq!(p["offline"], true);
-    assert_eq!(p["incognito_mode"], true,
-        "incognito_mode must be preserved so admission policy can gate private listens");
+    assert_eq!(
+        p["incognito_mode"], true,
+        "incognito_mode must be preserved so admission policy can gate private listens"
+    );
 
     // Privacy-sensitive fields must be absent.
-    assert!(p.get("ip_addr").is_none(),
-        "ip_addr is dropped at parse time, not passed to admission");
-    assert!(p.get("user_agent_decrypted").is_none(),
-        "user_agent_decrypted is dropped at parse time");
+    assert!(
+        p.get("ip_addr").is_none(),
+        "ip_addr is dropped at parse time, not passed to admission"
+    );
+    assert!(
+        p.get("user_agent_decrypted").is_none(),
+        "user_agent_decrypted is dropped at parse time"
+    );
 }
 
 /// Episode/podcast rows are preserved with their own URI fields — context_uri

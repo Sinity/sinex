@@ -53,6 +53,10 @@ pub struct NodeCli {
     #[arg(long, value_parser = validate_work_dir)]
     pub work_dir: Option<SanitizedPath>,
 
+    /// NATS namespace for subject/stream isolation.
+    #[arg(long, env = "SINEX_NAMESPACE")]
+    pub namespace: Option<String>,
+
     /// Enable verbose logging
     #[arg(short, long, action = clap::ArgAction::Count)]
     pub verbose: u8,
@@ -594,7 +598,8 @@ impl<T: crate::runtime::stream::Node + ExplorationProvider + Default + 'static> 
                 }
             }
         };
-        let transport = Self::connect_nats_transport(&args.nats.to_config()).await?;
+        let transport =
+            Self::connect_nats_transport(&args.nats.to_config(), args.namespace.clone()).await?;
 
         // Initialize runner with transport
         runner
@@ -700,7 +705,8 @@ impl<T: crate::runtime::stream::Node + ExplorationProvider + Default + 'static> 
             Some(Self::connect_primary_db(args).await?)
         };
 
-        let transport = Self::connect_nats_transport(&args.nats.to_config()).await?;
+        let transport =
+            Self::connect_nats_transport(&args.nats.to_config(), args.namespace.clone()).await?;
 
         // Initialize runner with transport
         runner
@@ -978,15 +984,17 @@ impl<T: crate::runtime::stream::Node + ExplorationProvider + Default + 'static> 
 
     async fn connect_nats_transport(
         config: &sinex_primitives::nats::NatsConnectionConfig,
+        namespace: Option<String>,
     ) -> NodeResult<EventTransport> {
-        info!(url = %config.url, "Using NATS for event publishing");
+        info!(url = %config.url, namespace = ?namespace, "Using NATS for event publishing");
 
         // Create NATS publisher
-        let nats_publisher = crate::NatsPublisher::new(
+        let nats_publisher = crate::NatsPublisher::with_namespace(
             config
                 .connect()
                 .await
                 .map_err(|e| SinexError::unknown(format!("Failed to connect to NATS: {e}")))?,
+            namespace,
         );
 
         Ok(EventTransport::Nats(std::sync::Arc::new(nats_publisher)))
@@ -1058,6 +1066,7 @@ mod tests {
             source_unit: None,
             runner_pack: None,
             work_dir: None,
+            namespace: None,
             verbose: 0,
             node_config: None,
             command: NodeCommand::Service {

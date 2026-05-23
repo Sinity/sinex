@@ -59,6 +59,9 @@ pub enum HistorySubcommand {
         /// Include test pass/fail counts for each invocation
         #[arg(long)]
         with_tests: bool,
+        /// Include watchdog/stale-pid cancellation rows normally hidden as zombie noise
+        #[arg(long)]
+        include_zombies: bool,
     },
     /// Show statistics for a command (or all commands / all packages)
     Stats {
@@ -198,6 +201,9 @@ pub enum HistorySubcommand {
         /// Maximum number of entries (default: 20)
         #[arg(long, default_value = "20")]
         limit: usize,
+        /// Include watchdog/stale-pid cancellation rows normally hidden as zombie noise
+        #[arg(long)]
+        include_zombies: bool,
     },
     /// Compare two invocations: diagnostic delta, duration delta, stage delta (I5)
     Diff {
@@ -219,6 +225,9 @@ pub enum HistorySubcommand {
         /// Inactivity gap in minutes that separates sessions (default: 30)
         #[arg(long, default_value = "30")]
         gap_minutes: u32,
+        /// Include watchdog/stale-pid cancellation rows normally hidden as zombie noise
+        #[arg(long)]
+        include_zombies: bool,
     },
     /// Show complete details for a single invocation (I7)
     Invocation {
@@ -310,6 +319,7 @@ impl XtaskCommand for HistoryCommand {
                     with_diagnostics,
                     with_stages,
                     with_tests,
+                    include_zombies,
                 } => {
                     if *first {
                         execute_last(db, command.as_deref().unwrap_or(""), ctx)
@@ -328,6 +338,7 @@ impl XtaskCommand for HistoryCommand {
                             *with_diagnostics,
                             *with_stages,
                             *with_tests,
+                            *include_zombies,
                             ctx,
                         )
                     }
@@ -479,13 +490,16 @@ impl XtaskCommand for HistoryCommand {
                     command,
                     days,
                     limit,
-                } => execute_timeline(db, command.as_deref(), *days, *limit, ctx),
+                    include_zombies,
+                } => execute_timeline(db, command.as_deref(), *days, *limit, *include_zombies, ctx),
                 HistorySubcommand::Diff { from, to, command } => {
                     execute_diff(db, *from, *to, command.as_deref(), ctx)
                 }
-                HistorySubcommand::Sessions { limit, gap_minutes } => {
-                    execute_sessions(db, *limit, *gap_minutes, ctx)
-                }
+                HistorySubcommand::Sessions {
+                    limit,
+                    gap_minutes,
+                    include_zombies,
+                } => execute_sessions(db, *limit, *gap_minutes, *include_zombies, ctx),
                 HistorySubcommand::Invocation { id, full, command } => {
                     execute_invocation(db, id, *full, command.as_deref(), ctx)
                 }
@@ -554,6 +568,7 @@ fn execute_list(
     with_diagnostics: bool,
     with_stages: bool,
     with_tests: bool,
+    include_zombies: bool,
     ctx: &CommandContext,
 ) -> Result<CommandResult> {
     let mut warnings = Vec::new();
@@ -608,6 +623,9 @@ fn execute_list(
         "status" => query.sort_status(),
         _ => query.sort_started(),
     };
+    if include_zombies {
+        query = query.include_zombies();
+    }
 
     let invocations = query.run(db)?;
 
@@ -2109,7 +2127,7 @@ fn execute_view(db: &HistoryDb, name: Option<&str>, ctx: &CommandContext) -> Res
                 .with_message(format!("{} regressions", regressions.len()))
                 .with_duration(ctx.elapsed()))
         }
-        "workspace-timeline" => execute_timeline(db, None, 7, 20, ctx),
+        "workspace-timeline" => execute_timeline(db, None, 7, 20, false, ctx),
         _ => {
             let names: Vec<&str> = views.iter().map(|v| v.name).collect();
             Err(color_eyre::eyre::eyre!(
@@ -2242,9 +2260,10 @@ fn execute_timeline(
     command: Option<&str>,
     days: u32,
     limit: usize,
+    include_zombies: bool,
     ctx: &CommandContext,
 ) -> Result<CommandResult> {
-    let entries = db.get_invocation_timeline(command, days, limit)?;
+    let entries = db.get_invocation_timeline_with_zombies(command, days, limit, include_zombies)?;
 
     if ctx.is_human() {
         if entries.is_empty() {
@@ -2402,9 +2421,10 @@ fn execute_sessions(
     db: &HistoryDb,
     limit: usize,
     gap_minutes: u32,
+    include_zombies: bool,
     ctx: &CommandContext,
 ) -> Result<CommandResult> {
-    let sessions = db.get_working_sessions(limit, gap_minutes)?;
+    let sessions = db.get_working_sessions_with_zombies(limit, gap_minutes, include_zombies)?;
 
     if ctx.is_human() {
         if sessions.is_empty() {
@@ -3266,6 +3286,7 @@ mod tests {
                 with_diagnostics: false,
                 with_stages: false,
                 with_tests: false,
+                include_zombies: false,
             },
         };
 

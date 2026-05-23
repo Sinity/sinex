@@ -122,7 +122,7 @@ impl ContentStoreManager {
         material_id: Id<SourceMaterial>,
     ) -> NodeResult<Event<JsonValue>> {
         let payload_value = serde_json::to_value(payload).map_err(SinexError::serialization)?;
-        DynamicPayload::new("content-store-manager", event_type, payload_value)
+        DynamicPayload::new("blob_storage", event_type, payload_value)
             .from_material(material_id)
             .build()
             .map_err(|err| {
