@@ -13,11 +13,13 @@
 //! dedicated `FsWatcherAdapter`) so a future revision can fold this into the
 //! adapter framework alongside the other Wave-B source units.
 
+pub mod parser;
 pub mod unified_node;
 
+pub use parser::FilesystemParser;
 pub use unified_node::{FilesystemConfig, FilesystemNode, FilesystemState};
 
-use crate::register_node_factory;
+use crate::{register_node_factory, register_parser};
 use sinex_primitives::proof::{
     CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, RetentionPolicy, RuntimeShape,
     SourceUnitBinding, SourceUnitDescriptor, SubjectRef,
@@ -25,6 +27,7 @@ use sinex_primitives::proof::{
 use sinex_primitives::{register_source_unit, register_source_unit_binding};
 
 register_node_factory!("fs", FilesystemNode);
+register_parser!("fs", FilesystemParser);
 
 // Source-unit descriptor (issue #690 / #734). The fs ingestor observes inotify
 // on watched roots and emits typed file events. Continuous path is an
