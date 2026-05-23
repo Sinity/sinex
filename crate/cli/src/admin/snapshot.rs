@@ -8,7 +8,7 @@
 use clap::Parser;
 use color_eyre::eyre::{Context, Result, bail, eyre};
 use serde::Serialize;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use crate::admin::exec;
@@ -147,9 +147,9 @@ EXAMPLES:
         --target-dir /tmp/sinex-restore-drill --dry-run
 
 NOTES:
-    Without --dry-run, this executes an isolated file-backed restore drill for
-    state, CAS, and NATS components only. Postgres restore execution remains
-    blocked until an empty target database and row-count comparison path exists.
+    Without --dry-run, this executes an isolated restore drill for state, CAS,
+    NATS, and Postgres when --restore-database-url is supplied. Postgres restore
+    writes only to that explicitly supplied drill database.
 ")]
 pub struct AdminSnapshotRestoreCommand {
     /// Snapshot archive to validate for restore.
@@ -175,6 +175,18 @@ pub struct AdminSnapshotRestoreCommand {
     /// Permit isolated restore drill execution while sinex services are active.
     #[arg(long)]
     pub allow_active_services: bool,
+
+    /// Empty target `PostgreSQL` database URL for restoring postgres components.
+    #[arg(long, env = "SINEX_RESTORE_DATABASE_URL")]
+    pub restore_database_url: Option<String>,
+
+    /// Internal test/ops override for the `pg_restore` binary.
+    #[arg(long, hide = true, env = "SINEX_PG_RESTORE_BIN")]
+    pub pg_restore_bin: Option<PathBuf>,
+
+    /// Internal test/ops override for the `psql` binary used by restore checks.
+    #[arg(long, hide = true, env = "SINEX_PSQL_BIN")]
+    pub psql_bin: Option<PathBuf>,
 }
 
 fn parse_component_str(s: &str) -> std::result::Result<Component, String> {
@@ -261,6 +273,8 @@ pub struct RestoreObservedChecks {
     pub target_entry_count: usize,
     pub source_unit_count: usize,
     pub source_unit_ids_match: bool,
+    pub postgres_row_counts: BTreeMap<String, i64>,
+    pub postgres_row_counts_match: Option<bool>,
     pub cas_blob_count: Option<u64>,
     pub cas_blob_count_matches: Option<bool>,
     pub private_mode_state_present: bool,
@@ -756,7 +770,12 @@ impl AdminSnapshotRestoreCommand {
             .components
             .iter()
             .filter(|component| component.bytes > 0)
-            .filter(|component| !matches!(component.name.as_str(), "state" | "cas" | "nats"))
+            .filter(|component| {
+                !matches!(
+                    component.name.as_str(),
+                    "state" | "cas" | "nats" | "postgres"
+                )
+            })
             .map(|component| component.name.as_str())
             .collect::<Vec<_>>();
         if !unsupported.is_empty() {
@@ -776,11 +795,54 @@ impl AdminSnapshotRestoreCommand {
             )
         })?;
 
+        let postgres_row_counts = self.execute_postgres_restore_drill(&inspect.manifest)?;
+
         Ok(observe_restored_target(
             &inspect.manifest,
             archive_entries,
             &self.target_dir,
+            postgres_row_counts,
         ))
+    }
+
+    fn execute_postgres_restore_drill(
+        &self,
+        manifest: &SnapshotManifest,
+    ) -> Result<Option<BTreeMap<String, i64>>> {
+        let Some(expected_row_counts) = expected_postgres_row_counts(manifest) else {
+            return Ok(None);
+        };
+        let Some(component) = manifest
+            .components
+            .iter()
+            .find(|component| component.name == "postgres")
+        else {
+            return Ok(None);
+        };
+        if component.bytes == 0 {
+            return Ok(Some(BTreeMap::new()));
+        }
+
+        let restore_database_url = self.restore_database_url.as_deref().ok_or_else(|| {
+            eyre!(
+                "postgres restore execution requires --restore-database-url pointing at an \
+                 empty drill database"
+            )
+        })?;
+        let dump_path = self.target_dir.join(&component.path);
+        exec::pg_restore(
+            restore_database_url,
+            &dump_path,
+            self.pg_restore_bin.as_deref(),
+        )
+        .with_context(|| format!("restore postgres dump {}", dump_path.display()))?;
+        let observed = exec::pg_exact_row_counts(
+            restore_database_url,
+            expected_row_counts.keys().cloned(),
+            self.psql_bin.as_deref(),
+        )
+        .context("query restored postgres row counts")?;
+        Ok(Some(observed))
     }
 }
 
@@ -1042,8 +1104,10 @@ fn observe_restored_target(
     manifest: &SnapshotManifest,
     archive_entries: &[String],
     target_dir: &Path,
+    postgres_row_counts: Option<BTreeMap<String, i64>>,
 ) -> RestoreObservedChecks {
     let source_unit_ids = discover_source_unit_ids(&target_dir.join("state"));
+    let expected_postgres_row_counts = expected_postgres_row_counts(manifest);
     let expected_cas_blob_count = manifest
         .components
         .iter()
@@ -1063,6 +1127,12 @@ fn observe_restored_target(
         target_entry_count: count_files_recursive(target_dir) as usize,
         source_unit_count: source_unit_ids.len(),
         source_unit_ids_match: source_unit_ids == manifest.source_unit_ids,
+        postgres_row_counts: postgres_row_counts.clone().unwrap_or_default(),
+        postgres_row_counts_match: expected_postgres_row_counts.map(|expected| {
+            postgres_row_counts
+                .as_ref()
+                .is_some_and(|observed| observed == expected)
+        }),
         cas_blob_count,
         cas_blob_count_matches: expected_cas_blob_count
             .map(|expected| cas_blob_count.map_or(expected == 0, |observed| observed == expected)),
@@ -1070,6 +1140,16 @@ fn observe_restored_target(
         private_mode_state_matches_manifest: private_mode_state_present
             == manifest_private_mode_state_present,
     }
+}
+
+fn expected_postgres_row_counts(manifest: &SnapshotManifest) -> Option<&BTreeMap<String, i64>> {
+    manifest
+        .components
+        .iter()
+        .find_map(|component| match &component.extras {
+            Some(ComponentExtras::Postgres(extras)) => Some(&extras.row_counts),
+            _ => None,
+        })
 }
 
 fn classify_archive_sensitivity(manifest: &SnapshotManifest) -> &'static str {
@@ -1415,6 +1495,13 @@ pub fn format_snapshot_restore_plan_result(result: &SnapshotRestorePlanResult) -
         ));
         if let Some(blob_count) = observed.cas_blob_count {
             out.push_str(&format!("    CAS blobs: {blob_count}\n"));
+        }
+        if let Some(matches) = observed.postgres_row_counts_match {
+            out.push_str(&format!(
+                "    postgres rows: {} ({})\n",
+                observed.postgres_row_counts.len(),
+                if matches { "match" } else { "mismatch" }
+            ));
         }
         out.push_str(&format!(
             "    private mode state: {} ({})\n",

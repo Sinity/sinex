@@ -4,9 +4,9 @@
 //! the `DeclarativeParser` evaluator in sinex-node-sdk.
 //!
 //! This is the only test that exercises the full Phase 1A path:
-//! struct attributes → generated DeclarativeParserSpec → evaluator →
-//! ParsedEventIntent emission. If this passes end-to-end, the macro is
-//! ready for Phase 2 (WeeChat canary + source-worker dispatch) and Phase 3
+//! struct attributes → generated `DeclarativeParserSpec` → evaluator →
+//! `ParsedEventIntent` emission. If this passes end-to-end, the macro is
+//! ready for Phase 2 (`WeeChat` canary + source-worker dispatch) and Phase 3
 //! (15 ingestor parsers).
 
 use sinex_macros::SourceRecord;
@@ -222,7 +222,7 @@ async fn missing_required_field_errors() {
         value: String::new(),
     };
     let result = parser
-        .parse_record(record(r#"{}"#), &ctx("test.minimal"))
+        .parse_record(record(r"{}"), &ctx("test.minimal"))
         .await;
     assert!(result.is_err());
 }

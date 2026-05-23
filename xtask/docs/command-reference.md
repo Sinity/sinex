@@ -1429,6 +1429,7 @@ Verify phase plans and performance contracts
 | `all` | Run perf only |
 | `source-worker` | Source-worker integrity gate: dispatch cleanliness, NixOS binding drift, ingestor-crate deletion, workspace member count, and parser registration smoke |
 | `closure` | Operationalize the 2026-05-11 closure-verification policy: fetch an issue body via `gh`, extract AC checkboxes and shell code blocks marked `verify`, and run each command, reporting pass/fail per command |
+| `claims` | Summarize executable proof claims, runner commands, and deferrals |
 
 ### `xtask verify plan`
 
@@ -1527,6 +1528,19 @@ Operationalize the 2026-05-11 closure-verification policy: fetch an issue body v
 | `issue` | yes | yes | GitHub issue number to verify |
 | `--json` | no | no | Emit JSON output |
 | `--dry-run` | no | no | Dry-run: parse and print commands without executing them |
+
+
+### `xtask verify claims`
+
+Summarize executable proof claims, runner commands, and deferrals
+
+**Arguments**
+
+| Flag | Value | Required | Description |
+|---|---|---|---|
+| `--json` | no | no | Emit JSON output |
+| `--advisory` | no | no | Show advisory obligations as well as required obligations |
+| `--deferrals` | no | no | Include deferred obligations and exemptions |
 
 
 ## `xtask docs`

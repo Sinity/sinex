@@ -104,8 +104,7 @@ async fn merge_duplicate_outgoing_relations_unions_source_event_ids(
     assert_eq!(
         relations.len(),
         1,
-        "expected exactly one surviving target->other knows relation, got {:?}",
-        relations
+        "expected exactly one surviving target->other knows relation, got {relations:?}"
     );
     let survivor = &relations[0];
     assert_eq!(survivor.from_entity_id, target.id);
@@ -168,8 +167,7 @@ async fn merge_duplicate_incoming_relations_unions_source_event_ids(
     assert_eq!(
         relations.len(),
         1,
-        "expected exactly one surviving other->target follows relation, got {:?}",
-        relations
+        "expected exactly one surviving other->target follows relation, got {relations:?}"
     );
     let survivor = &relations[0];
     assert_eq!(survivor.from_entity_id, other.id);
@@ -230,8 +228,7 @@ async fn merge_disjoint_relations_preserved(ctx: TestContext) -> TestResult<()> 
     assert_eq!(
         relations.len(),
         2,
-        "expected both disjoint relations to survive on the target, got {:?}",
-        relations
+        "expected both disjoint relations to survive on the target, got {relations:?}"
     );
 
     let to_c = relations

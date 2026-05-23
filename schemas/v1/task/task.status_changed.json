@@ -1,0 +1,61 @@
+{
+  "$defs": {
+    "DateTime": {
+      "description": "RFC 3339 formatted date-time string",
+      "format": "date-time",
+      "type": "string"
+    },
+    "TaskStatus": {
+      "description": "Current lifecycle state projected for a task object.",
+      "enum": [
+        "open",
+        "started",
+        "blocked",
+        "deferred",
+        "completed",
+        "cancelled"
+      ],
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Canonical non-terminal task status transition event.",
+  "properties": {
+    "actor": {
+      "type": "string"
+    },
+    "changed_at": {
+      "$ref": "#/$defs/DateTime"
+    },
+    "external_version": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "reason": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "status": {
+      "$ref": "#/$defs/TaskStatus"
+    },
+    "task_id": {
+      "format": "uuid",
+      "type": "string"
+    }
+  },
+  "required": [
+    "task_id",
+    "status",
+    "changed_at",
+    "actor"
+  ],
+  "title": "TaskStatusChangedPayload",
+  "type": "object",
+  "x-sinex-event-type": "task.status_changed",
+  "x-sinex-source": "task",
+  "x-sinex-version": "1.0.0"
+}

@@ -3,7 +3,6 @@
 use clap::{Args, Subcommand};
 use color_eyre::Result;
 use color_eyre::eyre::eyre;
-use serde::de::DeserializeOwned;
 use sinex_primitives::query::EventQueryResult;
 use sinex_primitives::rpc::curation::{
     CurationFinalizeRequest, CurationFinalizeResponse, CurationListProposalsRequest,
@@ -11,6 +10,7 @@ use sinex_primitives::rpc::curation::{
 };
 
 use crate::client::GatewayClient;
+use crate::commands::common::parse_serde_enum;
 use crate::fmt::{format_json, format_yaml};
 use crate::model::OutputFormat;
 
@@ -132,11 +132,6 @@ impl CurationFinalizeCommand {
             .await?;
         render_finalization(&response, format)
     }
-}
-
-fn parse_serde_enum<T: DeserializeOwned>(name: &str, raw: &str) -> Result<T> {
-    serde_json::from_value(serde_json::Value::String(raw.to_string()))
-        .map_err(|error| eyre!("invalid {name} `{raw}`: {error}"))
 }
 
 fn render_finalization(response: &CurationFinalizeResponse, format: OutputFormat) -> Result<()> {

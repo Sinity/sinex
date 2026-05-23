@@ -5,20 +5,30 @@ use sinex_db::DbPoolExt;
 use sinex_db::repositories::SourceMaterial as DbSourceMaterial;
 use sinex_primitives::events::EventPayload;
 use sinex_primitives::events::SourceMaterial;
-use sinex_primitives::events::payloads::{TaskCompletedPayload, TaskCreatedPayload};
+use sinex_primitives::events::payloads::{
+    TaskCancelledPayload, TaskCompletedPayload, TaskCreatedPayload, TaskStatusChangedPayload,
+    TaskUpdatedPayload,
+};
 use sinex_primitives::rpc::tasks::{
-    TaskCompleteRequest, TaskCompleteResponse, TaskCreateRequest, TaskCreateResponse,
-    TaskEventResponse, TaskStateGetRequest, TaskStateResponse,
+    TaskCancelRequest, TaskCancelResponse, TaskCompleteRequest, TaskCompleteResponse,
+    TaskCreateRequest, TaskCreateResponse, TaskEventResponse, TaskListRequest, TaskListResponse,
+    TaskStateGetRequest, TaskStateResponse, TaskStatusSetRequest, TaskStatusSetResponse,
+    TaskUpdateRequest, TaskUpdateResponse,
 };
 use sinex_primitives::task_domain::{
-    TaskCompletedInput, TaskCreatedInput, TaskLifecycleInput, TaskSourceSystem, TaskState,
-    reduce_task_event,
+    TaskCancelledInput, TaskCompletedInput, TaskCreatedInput, TaskLifecycleInput, TaskSourceSystem,
+    TaskState, TaskStatusChangedInput, TaskUpdatedInput, reduce_task_event,
 };
 use sinex_primitives::{Id, Result, SinexError, Timestamp, Uuid};
 use sqlx::PgPool;
+use std::collections::HashMap;
 
 use crate::rpc_server::RpcAuthContext;
 
+const DEFAULT_TASK_LIST_LIMIT: u32 = 50;
+const MAX_TASK_LIST_LIMIT: u32 = 500;
+
+#[derive(Clone)]
 struct TaskEventRow {
     id: Uuid,
     event_type: String,
@@ -141,6 +151,235 @@ pub async fn handle_tasks_complete(
     })
 }
 
+pub async fn handle_tasks_update(
+    pool: &PgPool,
+    req: TaskUpdateRequest,
+    auth: &RpcAuthContext,
+) -> Result<TaskUpdateResponse> {
+    let prior_state = rebuild_task_state(pool, req.task_id)
+        .await?
+        .ok_or_else(|| {
+            SinexError::not_found("tasks.update: task not found")
+                .with_context("task_id", req.task_id.to_string())
+        })?;
+    if prior_state.status.is_terminal() {
+        return Err(
+            SinexError::validation("tasks.update: task is already terminal")
+                .with_context("task_id", req.task_id.to_string())
+                .with_context("status", format!("{:?}", prior_state.status)),
+        );
+    }
+    if !task_update_request_has_changes(&req) {
+        return Err(
+            SinexError::validation("tasks.update: at least one field update is required")
+                .with_context("task_id", req.task_id.to_string()),
+        );
+    }
+    if let Some(title) = req.title.as_deref()
+        && title.trim().is_empty()
+    {
+        return Err(
+            SinexError::validation("tasks.update: title must not be empty")
+                .with_context("task_id", req.task_id.to_string()),
+        );
+    }
+
+    let updated_at = req.updated_at.unwrap_or_else(Timestamp::now);
+    let material_id = register_task_material(
+        pool,
+        auth,
+        req.task_id,
+        "updated",
+        &prior_state.title,
+        req.reason.as_deref(),
+    )
+    .await?;
+    let payload = TaskUpdatedPayload {
+        task_id: req.task_id,
+        updated_at,
+        actor: auth.actor_id().to_string(),
+        title: req.title.map(|title| title.trim().to_string()),
+        body: req.body,
+        project_id: req.project_id,
+        tags: req.tags,
+        due_at: req.due_at,
+        priority: req.priority,
+        external_refs: req.external_refs,
+        reason: req.reason,
+        external_version: req.external_version,
+    };
+    let event = payload
+        .clone()
+        .from_material(Id::<SourceMaterial>::from_uuid(material_id))
+        .at_time(updated_at)
+        .build()?;
+    let inserted = pool.events().insert(event).await?;
+    let _inserted_id = inserted.id.ok_or_else(|| {
+        SinexError::invalid_state("tasks.update: persisted task.updated event missing id")
+    })?;
+    let state = rebuild_task_state(pool, payload.task_id)
+        .await?
+        .ok_or_else(|| {
+            SinexError::invalid_state("tasks.update: inserted task.updated event not queryable")
+                .with_context("task_id", payload.task_id.to_string())
+        })?;
+
+    Ok(TaskEventResponse {
+        payload,
+        event: serde_json::to_value(inserted).map_err(|error| {
+            SinexError::serialization("tasks.update: failed to serialize event")
+                .with_std_error(&error)
+        })?,
+        material_id: Id::<SourceMaterial>::from_uuid(material_id),
+        state,
+    })
+}
+
+pub async fn handle_tasks_status_set(
+    pool: &PgPool,
+    req: TaskStatusSetRequest,
+    auth: &RpcAuthContext,
+) -> Result<TaskStatusSetResponse> {
+    let prior_state = rebuild_task_state(pool, req.task_id)
+        .await?
+        .ok_or_else(|| {
+            SinexError::not_found("tasks.status.set: task not found")
+                .with_context("task_id", req.task_id.to_string())
+        })?;
+    if req.status.is_terminal() {
+        return Err(SinexError::validation(
+            "tasks.status.set: use complete/cancel for terminal status",
+        )
+        .with_context("task_id", req.task_id.to_string())
+        .with_context("status", req.status.to_string()));
+    }
+    if prior_state.status.is_terminal() {
+        return Err(
+            SinexError::validation("tasks.status.set: task is already terminal")
+                .with_context("task_id", req.task_id.to_string())
+                .with_context("status", format!("{:?}", prior_state.status)),
+        );
+    }
+    if prior_state.status == req.status {
+        return Err(
+            SinexError::validation("tasks.status.set: task already has requested status")
+                .with_context("task_id", req.task_id.to_string())
+                .with_context("status", req.status.to_string()),
+        );
+    }
+
+    let changed_at = req.changed_at.unwrap_or_else(Timestamp::now);
+    let material_id = register_task_material(
+        pool,
+        auth,
+        req.task_id,
+        "status_changed",
+        &prior_state.title,
+        req.reason.as_deref(),
+    )
+    .await?;
+    let payload = TaskStatusChangedPayload {
+        task_id: req.task_id,
+        status: req.status,
+        changed_at,
+        actor: auth.actor_id().to_string(),
+        reason: req.reason,
+        external_version: req.external_version,
+    };
+    let event = payload
+        .clone()
+        .from_material(Id::<SourceMaterial>::from_uuid(material_id))
+        .at_time(changed_at)
+        .build()?;
+    let inserted = pool.events().insert(event).await?;
+    let _inserted_id = inserted.id.ok_or_else(|| {
+        SinexError::invalid_state(
+            "tasks.status.set: persisted task.status_changed event missing id",
+        )
+    })?;
+    let state = rebuild_task_state(pool, payload.task_id)
+        .await?
+        .ok_or_else(|| {
+            SinexError::invalid_state(
+                "tasks.status.set: inserted task.status_changed event not queryable",
+            )
+            .with_context("task_id", payload.task_id.to_string())
+        })?;
+
+    Ok(TaskEventResponse {
+        payload,
+        event: serde_json::to_value(inserted).map_err(|error| {
+            SinexError::serialization("tasks.status.set: failed to serialize event")
+                .with_std_error(&error)
+        })?,
+        material_id: Id::<SourceMaterial>::from_uuid(material_id),
+        state,
+    })
+}
+
+pub async fn handle_tasks_cancel(
+    pool: &PgPool,
+    req: TaskCancelRequest,
+    auth: &RpcAuthContext,
+) -> Result<TaskCancelResponse> {
+    let prior_state = rebuild_task_state(pool, req.task_id)
+        .await?
+        .ok_or_else(|| {
+            SinexError::not_found("tasks.cancel: task not found")
+                .with_context("task_id", req.task_id.to_string())
+        })?;
+    if prior_state.status.is_terminal() {
+        return Err(
+            SinexError::validation("tasks.cancel: task is already terminal")
+                .with_context("task_id", req.task_id.to_string())
+                .with_context("status", format!("{:?}", prior_state.status)),
+        );
+    }
+
+    let cancelled_at = req.cancelled_at.unwrap_or_else(Timestamp::now);
+    let material_id = register_task_material(
+        pool,
+        auth,
+        req.task_id,
+        "cancelled",
+        &prior_state.title,
+        req.reason.as_deref(),
+    )
+    .await?;
+    let payload = TaskCancelledPayload {
+        task_id: req.task_id,
+        cancelled_at,
+        actor: auth.actor_id().to_string(),
+        reason: req.reason,
+        external_version: req.external_version,
+    };
+    let event = payload
+        .clone()
+        .from_material(Id::<SourceMaterial>::from_uuid(material_id))
+        .at_time(cancelled_at)
+        .build()?;
+    let inserted = pool.events().insert(event).await?;
+    let _inserted_id = inserted.id.ok_or_else(|| {
+        SinexError::invalid_state("tasks.cancel: persisted task.cancelled event missing id")
+    })?;
+    let state = rebuild_task_state(pool, payload.task_id)
+        .await?
+        .ok_or_else(|| {
+            SinexError::invalid_state("tasks.cancel: inserted task.cancelled event not queryable")
+                .with_context("task_id", payload.task_id.to_string())
+        })?;
+
+    Ok(TaskEventResponse {
+        payload,
+        event: serde_json::to_value(inserted).map_err(|error| {
+            SinexError::serialization("tasks.cancel: failed to serialize event")
+                .with_std_error(&error)
+        })?,
+        material_id: Id::<SourceMaterial>::from_uuid(material_id),
+        state,
+    })
+}
+
 pub async fn handle_tasks_state_get(
     pool: &PgPool,
     req: TaskStateGetRequest,
@@ -152,6 +391,58 @@ pub async fn handle_tasks_state_get(
         task_id: req.task_id,
         state,
         event_count,
+    })
+}
+
+pub async fn handle_tasks_list(pool: &PgPool, req: TaskListRequest) -> Result<TaskListResponse> {
+    let limit = normalize_task_list_limit(req.limit)?;
+    let rows = query_all_task_event_rows(pool).await?;
+    let event_count = rows.len();
+    let mut states = reduce_task_rows_by_id(rows)?;
+
+    if let Some(query) = req
+        .query
+        .as_deref()
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+    {
+        states.retain(|state| task_state_matches_query(state, query));
+    }
+    if let Some(status) = req.status {
+        states.retain(|state| state.status == status);
+    }
+    if let Some(project_id) = req
+        .project_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+    {
+        states.retain(|state| state.project_id.as_deref() == Some(project_id));
+    }
+    if let Some(tag) = req.tag.as_deref().map(str::trim).filter(|v| !v.is_empty()) {
+        states.retain(|state| state.tags.iter().any(|candidate| candidate == tag));
+    }
+    if let Some(due_from) = req.due_from {
+        states.retain(|state| state.due_at.is_some_and(|due_at| due_at >= due_from));
+    }
+    if let Some(due_until) = req.due_until {
+        states.retain(|state| state.due_at.is_some_and(|due_at| due_at <= due_until));
+    }
+
+    states.sort_by(|left, right| {
+        right
+            .updated_at
+            .cmp(&left.updated_at)
+            .then_with(|| left.task_id.cmp(&right.task_id))
+    });
+    let total = states.len();
+    states.truncate(limit as usize);
+
+    Ok(TaskListResponse {
+        tasks: states,
+        total,
+        event_count,
+        limit,
     })
 }
 
@@ -207,7 +498,7 @@ async fn query_task_event_rows(pool: &PgPool, task_id: Uuid) -> Result<Vec<TaskE
             ts_orig as "ts_orig!: Timestamp"
         FROM core.events
         WHERE source = 'task'
-          AND event_type IN ('task.created', 'task.completed')
+          AND event_type IN ('task.created', 'task.updated', 'task.status_changed', 'task.completed', 'task.cancelled')
           AND payload->>'task_id' = $1
         ORDER BY ts_orig ASC, id ASC
         "#,
@@ -232,6 +523,112 @@ async fn query_task_event_rows(pool: &PgPool, task_id: Uuid) -> Result<Vec<TaskE
         .collect())
 }
 
+async fn query_all_task_event_rows(pool: &PgPool) -> Result<Vec<TaskEventRow>> {
+    let rows = sqlx::query!(
+        r#"
+        SELECT
+            id as "id!: Uuid",
+            event_type,
+            payload,
+            ts_orig as "ts_orig!: Timestamp"
+        FROM core.events
+        WHERE source = 'task'
+          AND event_type IN ('task.created', 'task.updated', 'task.status_changed', 'task.completed', 'task.cancelled')
+        ORDER BY payload->>'task_id' ASC, ts_orig ASC, id ASC
+        "#
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(|error| {
+        SinexError::database("failed to query task lifecycle events").with_std_error(&error)
+    })?;
+
+    Ok(rows
+        .into_iter()
+        .map(|row| TaskEventRow {
+            id: row.id,
+            event_type: row.event_type,
+            payload: row.payload,
+            ts_orig: row.ts_orig,
+        })
+        .collect())
+}
+
+fn normalize_task_list_limit(limit: Option<u32>) -> Result<u32> {
+    match limit {
+        Some(0) => Err(SinexError::validation(
+            "tasks.list: limit must be greater than zero",
+        )),
+        Some(value) => Ok(value.min(MAX_TASK_LIST_LIMIT)),
+        None => Ok(DEFAULT_TASK_LIST_LIMIT),
+    }
+}
+
+fn task_state_matches_query(state: &TaskState, query: &str) -> bool {
+    let query = query.to_ascii_lowercase();
+    string_matches_query(&state.title, &query)
+        || state
+            .body
+            .as_ref()
+            .is_some_and(|value| string_matches_query(value, &query))
+        || state
+            .project_id
+            .as_ref()
+            .is_some_and(|value| string_matches_query(value, &query))
+        || state
+            .priority
+            .as_ref()
+            .is_some_and(|value| string_matches_query(value, &query))
+        || state
+            .tags
+            .iter()
+            .any(|value| string_matches_query(value, &query))
+        || state.external_refs.iter().any(|external_ref| {
+            string_matches_query(&external_ref.system, &query)
+                || string_matches_query(&external_ref.external_id, &query)
+                || external_ref
+                    .version
+                    .as_ref()
+                    .is_some_and(|value| string_matches_query(value, &query))
+        })
+}
+
+fn string_matches_query(value: &str, query: &str) -> bool {
+    value.to_ascii_lowercase().contains(query)
+}
+
+fn reduce_task_rows_by_id(rows: Vec<TaskEventRow>) -> Result<Vec<TaskState>> {
+    let mut grouped: HashMap<Uuid, Vec<TaskEventRow>> = HashMap::new();
+    for row in rows {
+        let task_id = task_id_from_payload(&row)?;
+        grouped.entry(task_id).or_default().push(row);
+    }
+
+    grouped
+        .into_values()
+        .map(reduce_task_rows)
+        .filter_map(std::result::Result::transpose)
+        .collect()
+}
+
+fn task_id_from_payload(row: &TaskEventRow) -> Result<Uuid> {
+    let raw = row
+        .payload
+        .get("task_id")
+        .and_then(Value::as_str)
+        .ok_or_else(|| {
+            SinexError::serialization("task lifecycle payload missing task_id")
+                .with_context("event_id", row.id.to_string())
+                .with_context("event_type", row.event_type.clone())
+        })?;
+    raw.parse::<Uuid>().map_err(|error| {
+        SinexError::serialization("task lifecycle payload has invalid task_id")
+            .with_context("event_id", row.id.to_string())
+            .with_context("task_id", raw.to_string())
+            .with_std_error(&error)
+    })
+}
+
 fn reduce_task_rows(rows: Vec<TaskEventRow>) -> Result<Option<TaskState>> {
     let mut state = None;
     for row in rows {
@@ -254,6 +651,33 @@ fn reduce_task_rows(rows: Vec<TaskEventRow>) -> Result<Option<TaskState>> {
                     })?;
                 TaskLifecycleInput::Completed(TaskCompletedInput::from(payload))
             }
+            "task.updated" => {
+                let payload: TaskUpdatedPayload =
+                    serde_json::from_value(row.payload).map_err(|error| {
+                        SinexError::serialization("invalid task.updated payload")
+                            .with_context("event_id", row.id.to_string())
+                            .with_std_error(&error)
+                    })?;
+                TaskLifecycleInput::Updated(TaskUpdatedInput::from(payload))
+            }
+            "task.status_changed" => {
+                let payload: TaskStatusChangedPayload = serde_json::from_value(row.payload)
+                    .map_err(|error| {
+                        SinexError::serialization("invalid task.status_changed payload")
+                            .with_context("event_id", row.id.to_string())
+                            .with_std_error(&error)
+                    })?;
+                TaskLifecycleInput::StatusChanged(TaskStatusChangedInput::from(payload))
+            }
+            "task.cancelled" => {
+                let payload: TaskCancelledPayload =
+                    serde_json::from_value(row.payload).map_err(|error| {
+                        SinexError::serialization("invalid task.cancelled payload")
+                            .with_context("event_id", row.id.to_string())
+                            .with_std_error(&error)
+                    })?;
+                TaskLifecycleInput::Cancelled(TaskCancelledInput::from(payload))
+            }
             other => {
                 return Err(SinexError::invalid_state("unexpected task event type")
                     .with_context("event_type", other.to_string())
@@ -263,4 +687,14 @@ fn reduce_task_rows(rows: Vec<TaskEventRow>) -> Result<Option<TaskState>> {
         state = Some(reduce_task_event(state, row.id, input, row.ts_orig)?);
     }
     Ok(state)
+}
+
+fn task_update_request_has_changes(req: &TaskUpdateRequest) -> bool {
+    req.title.is_some()
+        || req.body.is_some()
+        || req.project_id.is_some()
+        || req.tags.is_some()
+        || req.due_at.is_some()
+        || req.priority.is_some()
+        || req.external_refs.is_some()
 }

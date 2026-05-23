@@ -310,7 +310,7 @@ mod tests {
         let elapsed = start.elapsed().as_millis() as u64;
         assert!(result.is_ok());
         // ~10ms + ~20ms ≥ 20ms total
-        assert!(elapsed >= 20, "elapsed: {}ms", elapsed);
+        assert!(elapsed >= 20, "elapsed: {elapsed}ms");
         Ok(())
     }
 
@@ -394,7 +394,7 @@ mod tests {
         let elapsed = start.elapsed().as_millis() as u64;
         assert!(result.is_ok());
         // Delays cap at base_delay_ms * 2^10 = 1024ms after exponent 10.
-        assert!(elapsed >= 1000, "elapsed: {}ms", elapsed);
+        assert!(elapsed >= 1000, "elapsed: {elapsed}ms");
         Ok(())
     }
 }

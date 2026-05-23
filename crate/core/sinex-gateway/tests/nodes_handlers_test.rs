@@ -2,7 +2,6 @@ mod common;
 
 use common::{NatsHarness, admin_auth};
 use futures::StreamExt;
-use serde_json::json;
 use sinex_gateway::handlers::{
     handle_nodes_drain, handle_nodes_list, handle_nodes_resume, handle_nodes_set_horizon,
 };

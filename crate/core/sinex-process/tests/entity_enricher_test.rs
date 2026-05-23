@@ -1,7 +1,7 @@
 //! Tests for the entity enricher — stage 4 of the entity intelligence pipeline.
 //!
 //! Verifies per-entity scope keying, accumulated temporal statistics
-//! (first_seen, last_seen, occurrence_count, active_hours histogram),
+//! (`first_seen`, `last_seen`, `occurrence_count`, `active_hours` histogram),
 //! dirty-entity tracking, periodic sweep emission via `reconcile_interval_secs`,
 //! and `entity_type` → `EntityCategory` refinement.
 

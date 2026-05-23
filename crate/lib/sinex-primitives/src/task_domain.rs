@@ -2,6 +2,7 @@
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use std::{fmt, str::FromStr};
 
 use crate::{Result, SinexError, Timestamp, Uuid};
 
@@ -24,6 +25,41 @@ impl TaskStatus {
     #[must_use]
     pub const fn is_terminal(self) -> bool {
         matches!(self, Self::Completed | Self::Cancelled)
+    }
+
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Open => "open",
+            Self::Started => "started",
+            Self::Blocked => "blocked",
+            Self::Deferred => "deferred",
+            Self::Completed => "completed",
+            Self::Cancelled => "cancelled",
+        }
+    }
+}
+
+impl fmt::Display for TaskStatus {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl FromStr for TaskStatus {
+    type Err = SinexError;
+
+    fn from_str(raw: &str) -> Result<Self> {
+        match raw.trim().to_ascii_lowercase().as_str() {
+            "open" => Ok(Self::Open),
+            "started" => Ok(Self::Started),
+            "blocked" => Ok(Self::Blocked),
+            "deferred" => Ok(Self::Deferred),
+            "completed" => Ok(Self::Completed),
+            "cancelled" => Ok(Self::Cancelled),
+            other => Err(SinexError::validation("unknown task status")
+                .with_context("status", other.to_string())),
+        }
     }
 }
 
@@ -75,7 +111,18 @@ pub struct TaskState {
 #[serde(tag = "event_type", content = "payload", rename_all = "snake_case")]
 pub enum TaskLifecycleInput {
     Created(TaskCreatedInput),
+    Updated(TaskUpdatedInput),
+    StatusChanged(TaskStatusChangedInput),
     Completed(TaskCompletedInput),
+    Cancelled(TaskCancelledInput),
+}
+
+/// Patch operation for task fields that can either be set or cleared.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "op", content = "value", rename_all = "snake_case")]
+pub enum TaskFieldUpdate<T> {
+    Set(T),
+    Clear,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -98,9 +145,57 @@ pub struct TaskCreatedInput {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct TaskUpdatedInput {
+    pub task_id: Uuid,
+    pub updated_at: Timestamp,
+    pub actor: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub body: Option<TaskFieldUpdate<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_id: Option<TaskFieldUpdate<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tags: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub due_at: Option<TaskFieldUpdate<Timestamp>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub priority: Option<TaskFieldUpdate<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub external_refs: Option<Vec<TaskExternalRef>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub external_version: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct TaskStatusChangedInput {
+    pub task_id: Uuid,
+    pub status: TaskStatus,
+    pub changed_at: Timestamp,
+    pub actor: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub external_version: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct TaskCompletedInput {
     pub task_id: Uuid,
     pub completed_at: Timestamp,
+    pub actor: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub external_version: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct TaskCancelledInput {
+    pub task_id: Uuid,
+    pub cancelled_at: Timestamp,
     pub actor: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
@@ -119,8 +214,17 @@ pub fn reduce_task_event(
         TaskLifecycleInput::Created(created) => {
             reduce_created(state, event_id, created, observed_at)
         }
+        TaskLifecycleInput::Updated(updated) => {
+            reduce_updated(state, event_id, updated, observed_at)
+        }
+        TaskLifecycleInput::StatusChanged(status_changed) => {
+            reduce_status_changed(state, event_id, status_changed, observed_at)
+        }
         TaskLifecycleInput::Completed(completed) => {
             reduce_completed(state, event_id, completed, observed_at)
+        }
+        TaskLifecycleInput::Cancelled(cancelled) => {
+            reduce_cancelled(state, event_id, cancelled, observed_at)
         }
     }
 }
@@ -160,6 +264,64 @@ fn reduce_created(
     Ok(state)
 }
 
+fn reduce_updated(
+    state: Option<TaskState>,
+    event_id: Uuid,
+    updated: TaskUpdatedInput,
+    observed_at: Timestamp,
+) -> Result<TaskState> {
+    let mut state = state.ok_or_else(|| {
+        SinexError::validation("task.updated requires an existing task")
+            .with_context("task_id", updated.task_id.to_string())
+    })?;
+    if state.task_id != updated.task_id {
+        return Err(
+            SinexError::validation("task.updated task_id does not match state")
+                .with_context("state_task_id", state.task_id.to_string())
+                .with_context("event_task_id", updated.task_id.to_string()),
+        );
+    }
+    if state.status.is_terminal() {
+        return Err(SinexError::validation("terminal task cannot be updated")
+            .with_context("task_id", updated.task_id.to_string())
+            .with_context("status", format!("{:?}", state.status)));
+    }
+    if !updated.has_changes() {
+        return Err(
+            SinexError::validation("task.updated must change at least one field")
+                .with_context("task_id", updated.task_id.to_string()),
+        );
+    }
+
+    if let Some(title) = updated.title {
+        let title = title.trim();
+        if title.is_empty() {
+            return Err(SinexError::validation("task title cannot be empty")
+                .with_context("task_id", updated.task_id.to_string()));
+        }
+        state.title = title.to_string();
+    }
+    apply_optional_string_update(&mut state.body, updated.body);
+    apply_optional_string_update(&mut state.project_id, updated.project_id);
+    if let Some(tags) = updated.tags {
+        state.tags = tags;
+    }
+    match updated.due_at {
+        Some(TaskFieldUpdate::Set(value)) => state.due_at = Some(value),
+        Some(TaskFieldUpdate::Clear) => state.due_at = None,
+        None => {}
+    }
+    apply_optional_string_update(&mut state.priority, updated.priority);
+    if let Some(external_refs) = updated.external_refs {
+        state.external_refs = external_refs;
+    }
+
+    state.last_event_id = event_id;
+    state.updated_at = observed_at;
+    state.state_hash = hash_task_state(&state);
+    Ok(state)
+}
+
 fn reduce_completed(
     state: Option<TaskState>,
     event_id: Uuid,
@@ -190,6 +352,104 @@ fn reduce_completed(
     state.updated_at = observed_at;
     state.state_hash = hash_task_state(&state);
     Ok(state)
+}
+
+fn reduce_status_changed(
+    state: Option<TaskState>,
+    event_id: Uuid,
+    status_changed: TaskStatusChangedInput,
+    observed_at: Timestamp,
+) -> Result<TaskState> {
+    let mut state = state.ok_or_else(|| {
+        SinexError::validation("task.status_changed requires an existing task")
+            .with_context("task_id", status_changed.task_id.to_string())
+    })?;
+    if state.task_id != status_changed.task_id {
+        return Err(
+            SinexError::validation("task.status_changed task_id does not match state")
+                .with_context("state_task_id", state.task_id.to_string())
+                .with_context("event_task_id", status_changed.task_id.to_string()),
+        );
+    }
+    if status_changed.status.is_terminal() {
+        return Err(
+            SinexError::validation("task.status_changed cannot target a terminal status")
+                .with_context("task_id", status_changed.task_id.to_string())
+                .with_context("status", status_changed.status.to_string()),
+        );
+    }
+    if state.status.is_terminal() {
+        return Err(SinexError::validation("terminal task cannot change status")
+            .with_context("task_id", status_changed.task_id.to_string())
+            .with_context("status", format!("{:?}", state.status)));
+    }
+    if state.status == status_changed.status {
+        return Err(SinexError::validation("task already has requested status")
+            .with_context("task_id", status_changed.task_id.to_string())
+            .with_context("status", status_changed.status.to_string()));
+    }
+
+    state.status = status_changed.status;
+    state.last_event_id = event_id;
+    state.updated_at = observed_at;
+    state.state_hash = hash_task_state(&state);
+    Ok(state)
+}
+
+fn reduce_cancelled(
+    state: Option<TaskState>,
+    event_id: Uuid,
+    cancelled: TaskCancelledInput,
+    observed_at: Timestamp,
+) -> Result<TaskState> {
+    let mut state = state.ok_or_else(|| {
+        SinexError::validation("task.cancelled requires an existing task")
+            .with_context("task_id", cancelled.task_id.to_string())
+    })?;
+    if state.task_id != cancelled.task_id {
+        return Err(
+            SinexError::validation("task.cancelled task_id does not match state")
+                .with_context("state_task_id", state.task_id.to_string())
+                .with_context("event_task_id", cancelled.task_id.to_string()),
+        );
+    }
+    if state.status.is_terminal() {
+        return Err(
+            SinexError::validation("terminal task cannot transition to cancelled")
+                .with_context("task_id", cancelled.task_id.to_string())
+                .with_context("status", format!("{:?}", state.status)),
+        );
+    }
+
+    state.status = TaskStatus::Cancelled;
+    state.last_event_id = event_id;
+    state.updated_at = observed_at;
+    state.state_hash = hash_task_state(&state);
+    Ok(state)
+}
+
+fn apply_optional_string_update(
+    target: &mut Option<String>,
+    update: Option<TaskFieldUpdate<String>>,
+) {
+    match update {
+        Some(TaskFieldUpdate::Set(value)) => *target = Some(value),
+        Some(TaskFieldUpdate::Clear) => *target = None,
+        None => {}
+    }
+}
+
+impl TaskUpdatedInput {
+    #[must_use]
+    pub fn has_changes(&self) -> bool {
+        self.title.is_some()
+            || self.body.is_some()
+            || self.project_id.is_some()
+            || self.tags.is_some()
+            || self.due_at.is_some()
+            || self.priority.is_some()
+            || self.external_refs.is_some()
+    }
 }
 
 #[must_use]

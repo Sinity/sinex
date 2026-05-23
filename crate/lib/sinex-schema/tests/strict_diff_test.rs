@@ -369,7 +369,7 @@ async fn detects_orphan_column_in_convergible_table(ctx: TestContext) -> TestRes
 async fn pending_drop_suppresses_orphan_report(ctx: TestContext) -> TestResult<()> {
     sinex_schema::apply::apply(&ctx.pool).await?;
 
-    // The core.events table has `node_version` in its `columns_to_drop` list.
+    // The core.events table has legacy columns in its `columns_to_drop` list.
     // If the column still exists in the DB (it may have been dropped already
     // by convergence, so we re-add it to simulate a pre-migration state), the
     // orphan check must NOT report it — it is covered by columns_to_drop, which
@@ -377,21 +377,29 @@ async fn pending_drop_suppresses_orphan_report(ctx: TestContext) -> TestResult<(
     //
     // We re-add the column to simulate a DB that hasn't had `columns_to_drop`
     // applied yet.
-    sqlx::query("ALTER TABLE core.events ADD COLUMN IF NOT EXISTS node_version TEXT")
-        .execute(&ctx.pool)
-        .await?;
+    sqlx::query(
+        "ALTER TABLE core.events
+         ADD COLUMN IF NOT EXISTS node_version TEXT,
+         ADD COLUMN IF NOT EXISTS occurrence_id UUID",
+    )
+    .execute(&ctx.pool)
+    .await?;
 
     let drifts = check_strict(&ctx.pool).await?;
     let false_positives: Vec<_> = drifts
         .iter()
         .filter(|d| {
-            d.category == DriftCategory::OrphanColumn && d.location == "core.events.node_version"
+            d.category == DriftCategory::OrphanColumn
+                && matches!(
+                    d.location.as_str(),
+                    "core.events.node_version" | "core.events.occurrence_id"
+                )
         })
         .collect();
 
     assert!(
         false_positives.is_empty(),
-        "node_version is in columns_to_drop — orphan check must not report it: {drifts:?}"
+        "legacy events columns are in columns_to_drop — orphan check must not report them: {drifts:?}"
     );
 
     Ok(())

@@ -3765,6 +3765,20 @@
       "type_name": "sinex_primitives::events::payloads::llm::LlmRoutingPolicyRegisteredPayload"
     },
     {
+      "subject": "event_payload:manual-health/health.effect.observed/1.0.0",
+      "source": "manual-health",
+      "event_type": "health.effect.observed",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::health::HealthEffectObservationRecordedPayload"
+    },
+    {
+      "subject": "event_payload:manual-health/health.substance.intake_recorded/1.0.0",
+      "source": "manual-health",
+      "event_type": "health.substance.intake_recorded",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::health::HealthSubstanceIntakeRecordedPayload"
+    },
+    {
       "subject": "event_payload:messenger/message.sent/1.0.0",
       "source": "messenger",
       "event_type": "message.sent",
@@ -3800,11 +3814,67 @@
       "type_name": "sinex_primitives::events::payloads::entity::EntityRelatedPayload"
     },
     {
+      "subject": "event_payload:runtime.instruction/actuation.attempted/1.0.0",
+      "source": "runtime.instruction",
+      "event_type": "actuation.attempted",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::instruction::ActuationAttemptPayload"
+    },
+    {
+      "subject": "event_payload:runtime.instruction/desktop.workspace.switch_requested/1.0.0",
+      "source": "runtime.instruction",
+      "event_type": "desktop.workspace.switch_requested",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::instruction::DesktopWorkspaceSwitchInstructionPayload"
+    },
+    {
+      "subject": "event_payload:runtime.instruction/expectation.status/1.0.0",
+      "source": "runtime.instruction",
+      "event_type": "expectation.status",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::instruction::InstructionExpectationStatusPayload"
+    },
+    {
       "subject": "event_payload:samsung-health/sleep.session/1.0.0",
       "source": "samsung-health",
       "event_type": "sleep.session",
       "version": "1.0.0",
       "type_name": "sinex_primitives::events::payloads::health::SleepSessionPayload"
+    },
+    {
+      "subject": "event_payload:semantics/semantic.epoch_recorded/1.0.0",
+      "source": "semantics",
+      "event_type": "semantic.epoch_recorded",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::semantic::SemanticEpochRecordedPayload"
+    },
+    {
+      "subject": "event_payload:semantics/semantic.lane_created/1.0.0",
+      "source": "semantics",
+      "event_type": "semantic.lane_created",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::semantic::SemanticLaneCreatedPayload"
+    },
+    {
+      "subject": "event_payload:semantics/semantic.lane_diff_recorded/1.0.0",
+      "source": "semantics",
+      "event_type": "semantic.lane_diff_recorded",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::semantic::SemanticLaneDiffRecordedPayload"
+    },
+    {
+      "subject": "event_payload:semantics/semantic.lane_outputs_discarded/1.0.0",
+      "source": "semantics",
+      "event_type": "semantic.lane_outputs_discarded",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::semantic::SemanticLaneOutputsDiscardedPayload"
+    },
+    {
+      "subject": "event_payload:semantics/semantic.lane_status_changed/1.0.0",
+      "source": "semantics",
+      "event_type": "semantic.lane_status_changed",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::semantic::SemanticLaneStatusChangedPayload"
     },
     {
       "subject": "event_payload:shell.atuin/command.completed/1.0.0",
@@ -4045,6 +4115,13 @@
       "type_name": "sinex_primitives::events::payloads::system::SystemdUnitStoppedPayload"
     },
     {
+      "subject": "event_payload:task/task.cancelled/1.0.0",
+      "source": "task",
+      "event_type": "task.cancelled",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::task_domain::TaskCancelledPayload"
+    },
+    {
       "subject": "event_payload:task/task.completed/1.0.0",
       "source": "task",
       "event_type": "task.completed",
@@ -4057,6 +4134,20 @@
       "event_type": "task.created",
       "version": "1.0.0",
       "type_name": "sinex_primitives::events::payloads::task_domain::TaskCreatedPayload"
+    },
+    {
+      "subject": "event_payload:task/task.status_changed/1.0.0",
+      "source": "task",
+      "event_type": "task.status_changed",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::task_domain::TaskStatusChangedPayload"
+    },
+    {
+      "subject": "event_payload:task/task.updated/1.0.0",
+      "source": "task",
+      "event_type": "task.updated",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::task_domain::TaskUpdatedPayload"
     },
     {
       "subject": "event_payload:terminal/shell.terminal_monitoring_started/1.0.0",
@@ -4876,6 +4967,11 @@
       "subject": "xtask_command:verify.all",
       "path": "verify.all",
       "about": "Run perf only"
+    },
+    {
+      "subject": "xtask_command:verify.claims",
+      "path": "verify.claims",
+      "about": "Summarize executable proof claims, runner commands, and deferrals"
     },
     {
       "subject": "xtask_command:verify.closure",

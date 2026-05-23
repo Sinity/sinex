@@ -12,6 +12,7 @@ pub mod coordination;
 pub mod curation;
 pub mod dlq;
 pub mod documents;
+pub mod health;
 pub mod ingestors;
 pub mod lifecycle;
 pub mod llm;
@@ -23,6 +24,7 @@ pub mod privacy;
 pub mod query;
 pub mod replay;
 pub mod rpc_handlers;
+pub mod semantic;
 pub mod shadow;
 pub mod sources;
 pub mod system;
@@ -63,6 +65,13 @@ pub use nodes::{
     handle_nodes_drain, handle_nodes_list, handle_nodes_resume, handle_nodes_set_horizon,
 };
 pub use ops::{handle_ops_cancel, handle_ops_get, handle_ops_list, handle_ops_start};
+pub use semantic::{
+    handle_semantic_epoch_create, handle_semantic_epoch_list, handle_semantic_lane_create,
+    handle_semantic_lane_diff_record_entity_relation, handle_semantic_lane_diffs_list,
+    handle_semantic_lane_discard, handle_semantic_lane_outputs_list,
+    handle_semantic_lane_outputs_write, handle_semantic_lane_set_status,
+    handle_semantic_lanes_list,
+};
 pub use shadow::{handle_shadow_create, handle_shadow_delete, handle_shadow_list};
 
 pub use content::{handle_retrieve_blob, handle_store_blob};
@@ -71,6 +80,7 @@ pub use coordination::{
     handle_coordination_list_instances,
 };
 pub use documents::{handle_documents_get, handle_documents_get_chunks, handle_documents_search};
+pub use health::{handle_health_effect_record, handle_health_intake_record};
 pub use node_registry::{handle_nodes_health, handle_nodes_list_active};
 pub use pkm::{handle_create_entities, handle_create_note, handle_link_entities};
 pub use privacy::{
@@ -87,7 +97,10 @@ pub use sources::{
     handle_sources_show, handle_sources_stage,
 };
 pub use system::{handle_system_health, handle_system_ping, handle_system_version};
-pub use tasks::{handle_tasks_complete, handle_tasks_create, handle_tasks_state_get};
+pub use tasks::{
+    handle_tasks_cancel, handle_tasks_complete, handle_tasks_create, handle_tasks_list,
+    handle_tasks_state_get, handle_tasks_status_set, handle_tasks_update,
+};
 pub use telemetry::{
     handle_telemetry_assembly_stats, handle_telemetry_command_frequency,
     handle_telemetry_current_device_state, handle_telemetry_current_health,
