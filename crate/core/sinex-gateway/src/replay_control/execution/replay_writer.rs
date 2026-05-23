@@ -2,8 +2,8 @@
 //! `ReplayExecutionEngine`. See `execution/mod.rs` for the engine type.
 
 use super::{
-    Context, ReplayExecutionEngine, Result, ScopeInvalidationBucket, StreamExt, eyre,
-    replay_scope_drift_error, stale_preview_missing_root_ids_error,
+    ReplayExecutionEngine, ScopeInvalidationBucket, StreamExt, replay_scope_drift_error,
+    stale_preview_missing_root_ids_error,
 };
 use sinex_db::repositories::DbPoolExt;
 use sinex_node_sdk::runtime::stream::{
@@ -11,7 +11,7 @@ use sinex_node_sdk::runtime::stream::{
     ReplayScopeFilters as NodeReplayScopeFilters, ScanArgs, TimeHorizon,
 };
 use sinex_primitives::events::Provenance;
-use sinex_primitives::{SinexError, Timestamp, Uuid};
+use sinex_primitives::{Result, SinexError, Timestamp, Uuid};
 use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 use tracing::{debug, error, info, warn};
@@ -48,7 +48,10 @@ impl ReplayExecutionEngine {
         )
         .fetch_all(pool)
         .await
-        .map_err(|e| eyre!("Failed to query archived events for replacement matching: {e}"))?;
+        .map_err(|err| {
+            SinexError::database("Failed to query archived events for replacement matching")
+                .with_std_error(&err)
+        })?;
 
         // Query the actual events emitted by this replay operation. Re-querying
         // the original scope window can miss replacements or bind unrelated
@@ -123,15 +126,18 @@ impl ReplayExecutionEngine {
             return Ok(());
         }
 
-        self.maybe_fail_replacement_recording()
-            .wrap_err("Failed to record replay replacement relations")?;
+        self.maybe_fail_replacement_recording().map_err(|err| {
+            SinexError::service("Failed to record replay replacement relations").with_source(err)
+        })?;
 
         let count = pool
             .events()
             .record_replacements(operation_id, &replacements)
             .await
-            .map_err(|e| eyre!("{e}"))
-            .wrap_err("Failed to record replay replacement relations")?;
+            .map_err(|err| {
+                SinexError::database("Failed to record replay replacement relations")
+                    .with_source(err)
+            })?;
 
         info!(
             operation_id = %operation_id,
@@ -187,8 +193,8 @@ impl ReplayExecutionEngine {
             .collect_scope_events(scope, execution_window, pool)
             .await?;
         if material_roots.is_empty() {
-            return Err(eyre!(
-                "Replay scope matched zero live events at execution time; preview is stale or the scoped rows were already replaced"
+            return Err(SinexError::invalid_state(
+                "Replay scope matched zero live events at execution time; preview is stale or the scoped rows were already replaced",
             ));
         }
 
@@ -197,8 +203,8 @@ impl ReplayExecutionEngine {
             .filter_map(|event| event.id.map(|id| *id.as_uuid()))
             .collect();
         if root_ids.is_empty() {
-            return Err(eyre!(
-                "Replay scope material roots are missing persistent event ids"
+            return Err(SinexError::invalid_state(
+                "Replay scope material roots are missing persistent event ids",
             ));
         }
         root_ids.sort_unstable();
@@ -207,11 +213,9 @@ impl ReplayExecutionEngine {
         if preview_root_ids.is_empty() {
             // Stale preview: root_event_ids not available. Require a fresh preview
             // to enable ID-level staleness detection.
-            return Err(stale_preview_missing_root_ids_error(
-                operation_id,
-                expected_total_events,
-            )
-            .into());
+            return Err(
+                stale_preview_missing_root_ids_error(operation_id, expected_total_events).into(),
+            );
         }
         if root_ids.as_slice() != preview_root_ids {
             return Err(replay_scope_drift_error(
@@ -294,9 +298,10 @@ impl ReplayExecutionEngine {
                         &cascade_ids,
                         &scope_metadata,
                         operation_id,
-                        eyre!(
+                        SinexError::nats_publish(format!(
                             "Failed to publish replay scope invalidations before dispatch: {invalidation_error}"
-                        ),
+                        ))
+                        .with_source(invalidation_error),
                     )
                     .await;
         }
@@ -338,7 +343,8 @@ impl ReplayExecutionEngine {
                         &cascade_ids,
                         &scope_metadata,
                         operation_id,
-                        eyre!("Failed to subscribe to replay progress: {error}"),
+                        SinexError::nats_subscribe("Failed to subscribe to replay progress")
+                            .with_std_error(&error),
                     )
                     .await;
             }
@@ -371,8 +377,9 @@ impl ReplayExecutionEngine {
             },
         };
 
-        let command_payload = serde_json::to_vec(&scan_command)
-            .map_err(|e| eyre!("Failed to serialize NodeScanCommand: {e}"))?;
+        let command_payload = serde_json::to_vec(&scan_command).map_err(|err| {
+            SinexError::serialization("Failed to serialize NodeScanCommand").with_std_error(&err)
+        })?;
 
         // Step 3: Send via NATS request-reply and wait for acknowledgement
         let ack_msg = match tokio::time::timeout(
@@ -390,7 +397,8 @@ impl ReplayExecutionEngine {
                         &cascade_ids,
                         &scope_metadata,
                         operation_id,
-                        eyre!("NATS request to {} failed: {error}", scan_subject),
+                        SinexError::nats(format!("NATS request to {} failed", scan_subject))
+                            .with_std_error(&error),
                     )
                     .await;
             }
@@ -401,11 +409,11 @@ impl ReplayExecutionEngine {
                         &cascade_ids,
                         &scope_metadata,
                         operation_id,
-                        eyre!(
+                        SinexError::timeout(format!(
                             "Timed out waiting for scan ack from node '{}' after {:?}. Is the node running?",
                             scope.node_id,
                             self.scan_ack_timeout
-                        ),
+                        )),
                     )
                     .await;
             }
@@ -420,7 +428,8 @@ impl ReplayExecutionEngine {
                         &cascade_ids,
                         &scope_metadata,
                         operation_id,
-                        eyre!("Failed to deserialize NodeScanAck: {error}"),
+                        SinexError::serialization("Failed to deserialize NodeScanAck")
+                            .with_std_error(&error),
                     )
                     .await;
             }
@@ -433,11 +442,11 @@ impl ReplayExecutionEngine {
                     &cascade_ids,
                     &scope_metadata,
                     operation_id,
-                    eyre!(
+                    SinexError::invalid_state(format!(
                         "Node '{}' rejected scan command: {}",
                         ack.node_name,
                         ack.error.unwrap_or_else(|| "unknown reason".to_string())
-                    ),
+                    )),
                 )
                 .await;
         }
@@ -453,7 +462,7 @@ impl ReplayExecutionEngine {
         let mut events_emitted: u64 = 0;
 
         struct ReplayScanFailure {
-            error: color_eyre::eyre::Report,
+            error: SinexError,
             emitted_count: u64,
             restore_archived_cascade: bool,
         }
@@ -465,10 +474,10 @@ impl ReplayExecutionEngine {
                     maybe_msg = progress_sub.next() => {
                         let Some(msg) = maybe_msg else {
                             return Err::<u64, ReplayScanFailure>(ReplayScanFailure {
-                                error: eyre!(
+                                error: SinexError::nats(format!(
                                     "Replay progress stream closed before node '{}' reported completion",
                                     target_node_name
-                                ),
+                                )),
                                 emitted_count: events_emitted,
                                 restore_archived_cascade: events_emitted == 0,
                             });
@@ -480,11 +489,11 @@ impl ReplayExecutionEngine {
                                 events_emitted = progress.events_emitted;
                                 if let Some(error) = progress.error {
                                     return Err::<u64, ReplayScanFailure>(ReplayScanFailure {
-                                        error: eyre!(
+                                        error: SinexError::processing(format!(
                                             "Node '{}' failed replay scan: {}",
                                             progress.node_name,
                                             error
-                                        ),
+                                        )),
                                         emitted_count: progress.events_emitted,
                                         restore_archived_cascade: progress.events_emitted == 0,
                                     });
@@ -542,30 +551,30 @@ impl ReplayExecutionEngine {
                                 return Err::<u64, ReplayScanFailure>(ReplayScanFailure {
                                     error: SinexError::cancelled(format!(
                                         "Replay operation {operation_id} was cancelled during execution"
-                                    ))
-                                    .into(),
+                                    )),
                                     emitted_count: events_emitted,
                                     restore_archived_cascade: events_emitted == 0,
                                 });
                             }
                             Ok(operation) => {
                                 return Err::<u64, ReplayScanFailure>(ReplayScanFailure {
-                                    error: eyre!(
+                                    error: SinexError::invalid_state(format!(
                                         "Replay operation {} left Executing state unexpectedly: {:?}",
                                         operation_id,
                                         operation.state
-                                    ),
+                                    )),
                                     emitted_count: events_emitted,
                                     restore_archived_cascade: false,
                                 });
                             }
                             Err(error) => {
                                 return Err::<u64, ReplayScanFailure>(ReplayScanFailure {
-                                    error: eyre!(
+                                    error: SinexError::service(format!(
                                         "Failed to reload replay operation {} while waiting for progress: {}",
                                         operation_id,
                                         error
-                                    ),
+                                    ))
+                                    .with_source(error),
                                     emitted_count: events_emitted,
                                     restore_archived_cascade: false,
                                 });
@@ -579,11 +588,11 @@ impl ReplayExecutionEngine {
         {
             Ok(result) => result,
             Err(_timeout) => Err(ReplayScanFailure {
-                error: eyre!(
+                error: SinexError::timeout(format!(
                     "Replay scan timed out waiting for node '{}' to report completion after {:?}",
                     target_node_name,
                     self.scan_completion_timeout
-                ),
+                )),
                 emitted_count: events_emitted,
                 restore_archived_cascade: false,
             }),
@@ -604,6 +613,7 @@ impl ReplayExecutionEngine {
                 Ok(count)
             }
             Err(failure) => {
+                let cancelled = matches!(failure.error, SinexError::Cancelled(_));
                 warn!(
                     operation_id = %operation_id,
                     error = %failure.error,
@@ -615,9 +625,11 @@ impl ReplayExecutionEngine {
                     && let Err(restore_error) =
                         self.restore_cascade(pool, &cascade_ids, operation_id).await
                 {
-                    return Err(failure.error.wrap_err(format!(
+                    return Err(SinexError::service(format!(
                             "Replay scan failed before emitting replacement events, and restoring the archived cascade also failed: {restore_error}"
-                        )));
+                        ))
+                    .with_source(failure.error)
+                    .with_source(restore_error));
                 }
                 // Publish compensating scope invalidations when either:
                 // - we restored the cascade (so automata reconcile against restored events)
@@ -627,17 +639,23 @@ impl ReplayExecutionEngine {
                         .publish_scope_invalidations(&scope_metadata, operation_id)
                         .await
                 {
-                    return Err(failure.error.wrap_err(format!(
+                    return Err(SinexError::service(format!(
                             "Replay scan failed and compensating scope invalidation also failed: {invalidation_error}"
-                        )));
+                        ))
+                    .with_source(failure.error)
+                    .with_source(invalidation_error));
                 }
-                Err(failure.error).wrap_err(if failure.restore_archived_cascade {
+                if cancelled {
+                    return Err(failure.error);
+                }
+                let message = if failure.restore_archived_cascade {
                     "Replay scan failed before emitting replacement events; restored archived cascade and published compensating scope invalidations"
                 } else if failure.emitted_count > 0 {
                     "Replay scan failed after partial event emission; published compensating scope invalidations for automata reconciliation"
                 } else {
                     "Replay scan failed before emitting any replacement events; archived cascade left untouched"
-                })
+                };
+                Err(SinexError::service(message).with_source(failure.error))
             }
         }
     }
@@ -670,8 +688,10 @@ impl ReplayExecutionEngine {
             "executor": executor_name,
         });
 
-        let command_payload = serde_json::to_vec(&parse_command)
-            .map_err(|e| eyre!("Failed to serialize source parse command: {e}"))?;
+        let command_payload = serde_json::to_vec(&parse_command).map_err(|err| {
+            SinexError::serialization("Failed to serialize source parse command")
+                .with_std_error(&err)
+        })?;
 
         info!(
             operation_id = %operation_id,
@@ -695,7 +715,8 @@ impl ReplayExecutionEngine {
                         cascade_ids,
                         scope_metadata,
                         operation_id,
-                        eyre!("NATS request to {parse_subject} failed: {error}"),
+                        SinexError::nats(format!("NATS request to {parse_subject} failed"))
+                            .with_std_error(&error),
                     )
                     .await;
             }
@@ -706,17 +727,18 @@ impl ReplayExecutionEngine {
                         cascade_ids,
                         scope_metadata,
                         operation_id,
-                        eyre!(
+                        SinexError::timeout(format!(
                             "Timed out waiting for source-worker parse ack from '{source_id}' after {:?}",
                             self.scan_ack_timeout
-                        ),
+                        )),
                     )
                     .await;
             }
         };
 
-        let ack: serde_json::Value = serde_json::from_slice(&ack_msg.payload)
-            .map_err(|e| eyre!("Failed to deserialize source parse ack: {e}"))?;
+        let ack: serde_json::Value = serde_json::from_slice(&ack_msg.payload).map_err(|err| {
+            SinexError::serialization("Failed to deserialize source parse ack").with_std_error(&err)
+        })?;
 
         if ack.get("accepted").and_then(serde_json::Value::as_bool) != Some(true) {
             let error_msg = ack
@@ -729,7 +751,9 @@ impl ReplayExecutionEngine {
                     cascade_ids,
                     scope_metadata,
                     operation_id,
-                    eyre!("Source-worker '{source_id}' rejected parse command: {error_msg}"),
+                    SinexError::invalid_state(format!(
+                        "Source-worker '{source_id}' rejected parse command: {error_msg}"
+                    )),
                 )
                 .await;
         }
@@ -747,8 +771,11 @@ impl ReplayExecutionEngine {
         loop {
             tokio::time::sleep(Duration::from_millis(250)).await;
 
-            let operation = replay.load_operation(operation_id).await.map_err(|e| {
-                eyre!("Failed to load replay operation {operation_id} during source parse: {e}")
+            let operation = replay.load_operation(operation_id).await.map_err(|err| {
+                SinexError::service(format!(
+                    "Failed to load replay operation {operation_id} during source parse"
+                ))
+                .with_source(err)
             })?;
 
             match operation.state {
@@ -761,17 +788,17 @@ impl ReplayExecutionEngine {
                     return Ok(count);
                 }
                 ReplayState::Failed => {
-                    return Err(eyre!(
+                    return Err(SinexError::processing(format!(
                         "Staged-source replay failed for operation {operation_id}: {}",
                         operation
                             .error_details
                             .unwrap_or_else(|| "unknown error".to_string())
-                    ));
+                    )));
                 }
                 ReplayState::Cancelled => {
-                    return Err(eyre!(
+                    return Err(SinexError::cancelled(format!(
                         "Staged-source replay cancelled for operation {operation_id}",
-                    ));
+                    )));
                 }
                 _ => {
                     debug!(

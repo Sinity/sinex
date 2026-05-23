@@ -86,14 +86,16 @@ async fn replay_execution_fails_when_outputs_never_become_query_visible(
     assert_eq!(live_target_count, 0);
     assert_eq!(archived_target_count, 1);
 
-    let dispatched_command = scan_command_rx
-        .await
-        .map_err(|_| eyre!("fake visibility-timeout-test node did not receive a scan command"))?;
+    let dispatched_command = scan_command_rx.await.map_err(|_| {
+        test_error("fake visibility-timeout-test node did not receive a scan command")
+    })?;
     assert_eq!(dispatched_command.operation_id, planned.operation_id);
 
-    scan_handle
-        .await
-        .map_err(|e| eyre!("fake visibility-timeout-test node task failed: {e}"))?;
+    scan_handle.await.map_err(|e| {
+        test_error(format!(
+            "fake visibility-timeout-test node task failed: {e}"
+        ))
+    })?;
 
     Ok(())
 }
@@ -188,12 +190,12 @@ async fn replay_execution_fails_when_node_never_reports_completion(ctx: TestCont
 
     let dispatched_command = scan_command_rx
         .await
-        .map_err(|_| eyre!("fake timeout-test node did not receive a scan command"))?;
+        .map_err(|_| test_error("fake timeout-test node did not receive a scan command"))?;
     assert_eq!(dispatched_command.operation_id, approved.operation_id);
 
     scan_handle
         .await
-        .map_err(|e| eyre!("fake timeout-test node task failed: {e}"))?;
+        .map_err(|e| test_error(format!("fake timeout-test node task failed: {e}")))?;
 
     Ok(())
 }
@@ -255,11 +257,7 @@ async fn replay_execution_fails_fast_when_progress_checkpoint_persist_fails(
         .await
         .expect_err("checkpoint persistence failure should abort replay execution");
     assert!(
-        err.chain().any(|cause| {
-            cause
-                .to_string()
-                .contains("Failed to persist replay progress checkpoint")
-        }),
+        error_contains(&err, "Failed to persist replay progress checkpoint"),
         "unexpected error: {err}"
     );
 
@@ -299,7 +297,7 @@ async fn replay_execution_fails_fast_when_progress_checkpoint_persist_fails(
 
     scan_handle
         .await
-        .map_err(|e| eyre!("fake checkpoint-fail-test node task failed: {e}"))?;
+        .map_err(|e| test_error(format!("fake checkpoint-fail-test node task failed: {e}")))?;
 
     Ok(())
 }
@@ -374,11 +372,7 @@ async fn replay_execution_fails_when_replacement_recording_fails(ctx: TestContex
         .await
         .expect_err("replacement-record failure should abort replay execution");
     assert!(
-        err.chain().any(|cause| {
-            cause
-                .to_string()
-                .contains("Failed to record replay replacement relations")
-        }),
+        error_contains(&err, "Failed to record replay replacement relations"),
         "unexpected error: {err}"
     );
 
@@ -396,9 +390,11 @@ async fn replay_execution_fails_when_replacement_recording_fails(ctx: TestContex
         failed.error_details
     );
 
-    let replay_command = replay_output_handle
-        .await
-        .map_err(|e| eyre!("fake replacement-record replay output task failed: {e}"))??;
+    let replay_command = replay_output_handle.await.map_err(|e| {
+        test_error(format!(
+            "fake replacement-record replay output task failed: {e}"
+        ))
+    })??;
 
     let live_target_count: i64 =
         sqlx::query_scalar("SELECT COUNT(*)::bigint FROM core.events WHERE id = $1::uuid")
@@ -440,9 +436,11 @@ async fn replay_execution_fails_when_replacement_recording_fails(ctx: TestContex
         "failed replacement recording must not partially insert lineage rows"
     );
 
-    scan_handle
-        .await
-        .map_err(|e| eyre!("fake replacement-record-fail-test node task failed: {e}"))?;
+    scan_handle.await.map_err(|e| {
+        test_error(format!(
+            "fake replacement-record-fail-test node task failed: {e}"
+        ))
+    })?;
 
     Ok(())
 }
@@ -590,11 +588,7 @@ async fn replay_execution_fails_before_archive_when_scope_metadata_collection_fa
         .await
         .expect_err("scope metadata collection failure should abort replay execution");
     assert!(
-        err.chain().any(|cause| {
-            cause
-                .to_string()
-                .contains("Failed to collect replay cascade scope metadata")
-        }),
+        error_contains(&err, "Failed to collect replay cascade scope metadata"),
         "unexpected error: {err}"
     );
 
@@ -688,11 +682,10 @@ async fn replay_execution_restores_cascade_when_initial_scope_invalidation_publi
         .await
         .expect_err("scope invalidation publish failure should abort replay execution");
     assert!(
-        err.chain().any(|cause| {
-            cause
-                .to_string()
-                .contains("Failed to publish replay scope invalidations before dispatch")
-        }),
+        error_contains(
+            &err,
+            "Failed to publish replay scope invalidations before dispatch",
+        ),
         "unexpected error: {err}"
     );
 

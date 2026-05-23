@@ -6,9 +6,9 @@
 //! `sample`) are `pub(super)` so the cross-module integration tests in
 //! `replay_control::tests` can drive sampling deterministically.
 
-use color_eyre::eyre::Result;
 use parking_lot::Mutex;
 use sinex_db::replay::state_machine::{ReplayState, ReplayStateMachine};
+use sinex_primitives::Result;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
