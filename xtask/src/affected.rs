@@ -374,17 +374,17 @@ fn test_binary_for_path(path: &str) -> Option<String> {
 
     // Workspace integration-test crates: tests/e2e/tests/foo.rs and
     // tests/workspace/tests/foo.rs compile to nextest target `foo`.
-    if parts.len() >= 4 && parts[0] == "tests" && parts[2] == "tests" {
+    if parts.len() == 4 && parts[0] == "tests" && parts[2] == "tests" {
         return Some(stem.to_string());
     }
 
     // Crate-local integration tests: crate/<category>/<crate>/tests/foo.rs.
-    if parts.len() >= 5 && parts[0] == "crate" && parts[3] == "tests" {
+    if parts.len() == 5 && parts[0] == "crate" && parts[3] == "tests" {
         return Some(stem.to_string());
     }
 
     // xtask integration tests: xtask/tests/foo.rs.
-    if parts.len() >= 3 && parts[0] == "xtask" && parts[1] == "tests" {
+    if parts.len() == 3 && parts[0] == "xtask" && parts[1] == "tests" {
         return Some(stem.to_string());
     }
 
@@ -777,6 +777,33 @@ mod tests {
             "test(test_batch_large_payloads) | test(inline_unit_test)",
         )?;
         assert!(inferred.is_empty());
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_infer_test_binaries_ignores_nested_integration_modules() -> TestResult<()> {
+        let repo = tempfile::tempdir()?;
+        let root = repo
+            .path()
+            .join("crate/core/sinex-source-worker/tests/production_path.rs");
+        let nested = repo
+            .path()
+            .join("crate/core/sinex-source-worker/tests/production_path/browser.rs");
+        fs::create_dir_all(nested.parent().expect("nested parent"))?;
+        fs::write(&root, "#[path = \"production_path/browser.rs\"] mod browser;\n")?;
+        fs::write(
+            &nested,
+            "#[sinex_test]\nasync fn browser_history_qutebrowser_initial_ingestion() {}\n",
+        )?;
+
+        let inferred = infer_test_binaries_for_test_filter_in(
+            repo.path(),
+            "test(browser_history_qutebrowser_initial_ingestion)",
+        )?;
+        assert!(
+            inferred.is_empty(),
+            "nested integration-test modules must not be inferred as standalone --test targets"
+        );
         Ok(())
     }
 
