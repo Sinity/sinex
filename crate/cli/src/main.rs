@@ -10,10 +10,11 @@ use sinexctl::commands::{
     AnnotateCommand, AuditCommand, AutomataCommand, BlobCommands, CompletionsCommand,
     ConfigCommands, ContextCommand, CoreCommands, CurationCommand, DeclareCommand, DemoCommand,
     DlqCommands, DocumentsCommand, ErrorsCommand, ExplainCommand, GatewayCommands, GitOpsCommands,
-    IngestorsCommand, LifecycleCommands, LlmCommand, NodeCommands, NodesCommand, NowCommand,
-    OpsCommands, PrivacyCommand, QueryCommand, RecentCommand, ReplayCommands, ReportCommands,
-    SemanticCommand, SourcesCommand, StateCommands, StatusCommand, TasksCommand, TelemetryCommands,
-    ThroughputCommand, TraceCommand, TuiCommand, VerifyCommand, WatchCommand,
+    IngestorsCommand, InstructionsCommand, LifecycleCommands, LlmCommand, NodeCommands,
+    NodesCommand, NowCommand, OpsCommands, PrivacyCommand, QueryCommand, RecentCommand,
+    ReplayCommands, ReportCommands, SemanticCommand, SourcesCommand, StateCommands, StatusCommand,
+    TasksCommand, TelemetryCommands, ThroughputCommand, TraceCommand, TuiCommand, VerifyCommand,
+    WatchCommand,
 };
 use sinexctl::fmt::format_yaml;
 use sinexctl::mcp::{McpCatalogEntry, tool_catalog as mcp_tool_catalog};
@@ -176,6 +177,9 @@ enum Commands {
 
     /// Manual canonical declarations
     Declare(DeclareCommand),
+
+    /// Local desired-state instructions and actuator dispatch.
+    Instructions(InstructionsCommand),
 
     /// Task lifecycle and projection commands
     Tasks(TasksCommand),
@@ -374,6 +378,7 @@ async fn main() -> color_eyre::Result<()> {
                 Commands::State { .. } => unreachable!("State command handled above"),
                 Commands::Sources(cmd) => cmd.execute(&client, format).await?,
                 Commands::Declare(cmd) => cmd.execute(&client, format).await?,
+                Commands::Instructions(cmd) => cmd.execute(&client, format).await?,
                 Commands::Tasks(cmd) => cmd.execute(&client, format).await?,
                 Commands::Curation(cmd) => cmd.execute(&client, format).await?,
                 Commands::Semantics(cmd) => cmd.execute(&client, format).await?,
@@ -577,6 +582,14 @@ fn command_path(cmd: &Commands) -> String {
                     }
                 }
                 DeclareSubcommand::Task(_) => "declare task".to_string(),
+            }
+        }
+        Commands::Instructions(cmd) => {
+            use sinexctl::commands::instructions::InstructionsSubcommand;
+            match cmd.subcommand() {
+                InstructionsSubcommand::HyprlandWorkspace(_) => {
+                    "instructions hyprland-workspace".to_string()
+                }
             }
         }
         Commands::Tasks(cmd) => {
@@ -1152,6 +1165,17 @@ mod tests {
             (
                 vec![
                     "sinexctl",
+                    "instructions",
+                    "hyprland-workspace",
+                    "--workspace",
+                    "4",
+                    "--dry-run",
+                ],
+                "instructions hyprland-workspace",
+            ),
+            (
+                vec![
+                    "sinexctl",
                     "state",
                     "snapshot",
                     "--output",
@@ -1222,6 +1246,128 @@ mod tests {
             (
                 vec!["sinexctl", "llm", "budget-report"],
                 "llm budget-report",
+            ),
+            (
+                vec![
+                    "sinexctl",
+                    "semantics",
+                    "epoch",
+                    "create",
+                    "--name",
+                    "fixture",
+                    "--scope-kind",
+                    "event_set",
+                    "--input-id",
+                    "event:1",
+                    "--input-set-hash",
+                    "hash",
+                    "--config-hash",
+                    "config",
+                ],
+                "semantics epoch create",
+            ),
+            (
+                vec!["sinexctl", "semantics", "epoch", "list"],
+                "semantics epoch list",
+            ),
+            (
+                vec![
+                    "sinexctl",
+                    "semantics",
+                    "lane",
+                    "create",
+                    "--name",
+                    "fixture",
+                    "--candidate-epoch-id",
+                    "0196ed62-8f7a-7000-8000-000000000001",
+                    "--scope-kind",
+                    "event_set",
+                    "--input-id",
+                    "event:1",
+                    "--input-set-hash",
+                    "hash",
+                    "--purpose",
+                    "fixture",
+                ],
+                "semantics lane create",
+            ),
+            (
+                vec![
+                    "sinexctl",
+                    "semantics",
+                    "lane",
+                    "list",
+                    "--status",
+                    "planned",
+                ],
+                "semantics lane list",
+            ),
+            (
+                vec![
+                    "sinexctl",
+                    "semantics",
+                    "lane",
+                    "status",
+                    "0196ed62-8f7a-7000-8000-000000000001",
+                    "--status",
+                    "running",
+                ],
+                "semantics lane status",
+            ),
+            (
+                vec![
+                    "sinexctl",
+                    "semantics",
+                    "lane",
+                    "discard",
+                    "0196ed62-8f7a-7000-8000-000000000001",
+                ],
+                "semantics lane discard",
+            ),
+            (
+                vec![
+                    "sinexctl",
+                    "semantics",
+                    "lane",
+                    "outputs",
+                    "0196ed62-8f7a-7000-8000-000000000001",
+                ],
+                "semantics lane outputs",
+            ),
+            (
+                vec![
+                    "sinexctl",
+                    "semantics",
+                    "lane",
+                    "write-outputs",
+                    "0196ed62-8f7a-7000-8000-000000000001",
+                    "--outputs-json",
+                    r#"{"entities":[],"relations":[]}"#,
+                ],
+                "semantics lane write-outputs",
+            ),
+            (
+                vec![
+                    "sinexctl",
+                    "semantics",
+                    "lane",
+                    "diffs",
+                    "0196ed62-8f7a-7000-8000-000000000001",
+                ],
+                "semantics lane diffs",
+            ),
+            (
+                vec![
+                    "sinexctl",
+                    "semantics",
+                    "lane",
+                    "compare",
+                    "--baseline-lane-id",
+                    "0196ed62-8f7a-7000-8000-000000000001",
+                    "--candidate-lane-id",
+                    "0196ed62-8f7a-7000-8000-000000000002",
+                ],
+                "semantics lane compare",
             ),
             (
                 vec![

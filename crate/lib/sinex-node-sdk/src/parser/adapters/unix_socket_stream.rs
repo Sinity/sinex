@@ -103,7 +103,6 @@ fn build_unix_stream(
             let reader = BufReader::new(&mut conn);
             let mut lines = reader.lines();
 
-            let mut got_eof = false;
             loop {
                 match lines.next_line().await {
                     Err(e) => {
@@ -111,7 +110,6 @@ fn build_unix_stream(
                         return; // Non-EOF I/O error — abort.
                     }
                     Ok(None) => {
-                        got_eof = true;
                         break; // EOF from server.
                     }
                     Ok(Some(line)) => {
@@ -143,7 +141,7 @@ fn build_unix_stream(
             }
 
             // EOF reached.
-            if !reconnect || !got_eof {
+            if !reconnect {
                 break;
             }
 

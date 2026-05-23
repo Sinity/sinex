@@ -1578,6 +1578,18 @@ in
                   description = "Rule-based tag automaton. Applies source, file-type, and MIME tags to events — emits `knowledge.tag_applied`.";
                 };
 
+                instructionReconciler = mkOption {
+                  type = submodule {
+                    options = {
+                      enable = mkOption { type = bool; default = true; description = "Enable instruction expectation reconciler automaton."; };
+                      profile = mkOption { type = str; default = "standard"; description = "Performance profile key."; };
+                      env = mkOption { type = envModule; default = { }; description = "Extra environment variables."; };
+                    };
+                  };
+                  default = { };
+                  description = "Instruction expectation reconciler. Compares desired-state instruction events with ordinary observations — emits `runtime.instruction/expectation.status`.";
+                };
+
                 entityExtractor = mkOption {
                   type = submodule {
                     options = {

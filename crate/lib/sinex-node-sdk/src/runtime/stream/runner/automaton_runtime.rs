@@ -6,10 +6,10 @@
 //! materialized inputs and feeds them into the node implementation.
 
 use super::{
-    Arc, CONFIRMED_EVENT_CHANNEL_CAPACITY, Checkpoint, DbPoolExt, EventTransport,
-    JetStreamEventConsumer, JetStreamEventConsumerConfig, LeaderState, Node, NodeResult,
-    NodeRunner, ProcessingModel, ProvisionalEvent, RunnerConfirmedEventHandler, ScanArgs,
-    SinexError, StreamExt, TimeHorizon, Uuid, debug, info, mpsc, systemd_notify, warn,
+    Arc, CONFIRMED_EVENT_CHANNEL_CAPACITY, Checkpoint, EventTransport, JetStreamEventConsumer,
+    JetStreamEventConsumerConfig, LeaderState, Node, NodeResult, NodeRunner, ProcessingModel,
+    ProvisionalEvent, RunnerConfirmedEventHandler, ScanArgs, SinexError, TimeHorizon, Uuid, debug,
+    info, mpsc, systemd_notify, warn,
 };
 
 impl<T: Node + 'static> NodeRunner<T> {
@@ -92,13 +92,12 @@ impl<T: Node + 'static> NodeRunner<T> {
     /// If another instance currently holds the lease, remain in standby and
     /// retry until the lease is handed off or expires.
     pub(super) async fn acquire_leader_standby(&mut self) -> NodeResult<bool> {
-        let rs = self
-            .runtime_state()
-            .ok_or_else(|| SinexError::lifecycle("Runtime state missing".to_string()))?;
-        let drain_controller = rs.handles().runtime_drain();
-
         #[cfg(feature = "messaging")]
         {
+            let rs = self
+                .runtime_state()
+                .ok_or_else(|| SinexError::lifecycle("Runtime state missing".to_string()))?;
+            let drain_controller = rs.handles().runtime_drain();
             let nc = rs
                 .nats_client()
                 .ok_or_else(|| SinexError::lifecycle("NATS client missing".to_string()))?;
@@ -175,7 +174,8 @@ impl<T: Node + 'static> NodeRunner<T> {
 
         #[cfg(not(feature = "messaging"))]
         {
-            let _ = rs; // suppress unused variable
+            self.runtime_state()
+                .ok_or_else(|| SinexError::lifecycle("Runtime state missing".to_string()))?;
             warn!("LeaderStandby mode requires messaging feature. Skipping leadership check.");
         }
 

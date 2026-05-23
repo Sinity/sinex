@@ -1427,7 +1427,7 @@ Verify phase plans and performance contracts
 | `report` | Print summary from a perf report JSON |
 | `compare` | Compare two perf reports |
 | `all` | Run perf only |
-| `source-worker` | Source-worker integrity gate: dispatch cleanliness, NixOS binding drift, ingestor-crate deletion, workspace member count, and parser registration smoke |
+| `source-worker` | Source-worker evidence gate: NixOS binding drift, parser registration, and privacy invocation |
 | `closure` | Operationalize the 2026-05-11 closure-verification policy: fetch an issue body via `gh`, extract AC checkboxes and shell code blocks marked `verify`, and run each command, reporting pass/fail per command |
 | `claims` | Summarize executable proof claims, runner commands, and deferrals |
 
@@ -1504,15 +1504,12 @@ Run perf only
 
 ### `xtask verify source-worker`
 
-Source-worker integrity gate: dispatch cleanliness, NixOS binding drift, ingestor-crate deletion, workspace member count, and parser registration smoke
+Source-worker evidence gate: NixOS binding drift, parser registration, and privacy invocation
 
 **Arguments**
 
 | Flag | Value | Required | Description |
 |---|---|---|---|
-| `--expect-deleted` | yes | no | Crate names (without path prefix) expected to already be deleted. Failing if they still exist. Use repeatedly or comma-separated |
-| `--expected-members` | yes | no | Expected workspace member count. Post-Wave-B (#1081) baseline is 14 (was 20: six legacy ingestor crates folded into sinex-source-worker and deleted) |
-| `--warn-ingestors` | no | no | Treat ingestor crates still present as warnings, not failures |
 | `--bindings-json` | yes | no | Path to the JSON file exported by `config.services.sinex.sources.exportedJson` (from the NixOS module) |
 | `--json` | no | no | Emit JSON output |
 

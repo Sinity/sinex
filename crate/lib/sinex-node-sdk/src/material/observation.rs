@@ -77,7 +77,6 @@ pub type FlushCallback = dyn Fn(SerializedBatch) -> FlushFuture + Send + Sync + 
 /// Accumulates records of type `R: Serialize` and flushes to JSON Lines format
 /// when thresholds (`max_records`, `max_bytes`, or coalesce window) are reached.
 pub struct ObservationMaterializer<R: Serialize + Send> {
-    config: ObservationMaterializerConfig,
     tx: mpsc::Sender<AppendRequest<R>>,
     handle: tokio::task::JoinHandle<()>,
 }
@@ -108,7 +107,7 @@ impl<R: Serialize + Send + 'static> ObservationMaterializer<R> {
 
         let handle = tokio::spawn(buffer_task(rx, config_clone, on_flush));
 
-        Self { config, tx, handle }
+        Self { tx, handle }
     }
 
     /// Append a record to the buffer.

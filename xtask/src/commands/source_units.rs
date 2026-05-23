@@ -757,7 +757,7 @@ fn required_empty_fields(unit: &SourceUnitDescriptor) -> Vec<String> {
     .map(|(field, _)| format!("{}:{field}", unit.subject.as_str()))
     .collect::<Vec<_>>();
 
-    if unit.output_event_types.is_empty() {
+    if unit.output_event_types.is_empty() && unit.id != "noop" {
         empty_fields.push(format!("{}:output_event_types", unit.subject.as_str()));
     }
 
@@ -770,6 +770,7 @@ fn runner_pack_binary(runner_pack: &str) -> Option<&'static str> {
         "analytics" | "daily" | "health" | "hourly" | "session" | "process" => {
             Some("sinex-process")
         }
+        "source-worker" => Some("sinex-source-worker"),
         "browser" => Some("sinex-browser-ingestor"),
         "desktop" => Some("sinex-desktop-ingestor"),
         "document" => Some("sinex-document-ingestor"),
@@ -782,6 +783,7 @@ fn runner_pack_binary(runner_pack: &str) -> Option<&'static str> {
         // pairs are claimed by *something* in the inventory; the runtime
         // owners are the surrounding pack bindings.
         "infra" => Some("<embedded>"),
+        "external" => Some("<external>"),
         _ => None,
     }
 }
@@ -790,9 +792,12 @@ fn static_emitter_event_pairs(
     source_unit_id: &str,
 ) -> Option<BTreeSet<(&'static str, &'static str)>> {
     let pairs = match source_unit_id {
+        "ai-session-chatgpt" => &[("chatgpt", "ai.message")][..],
+        "ai-session-claude" => &[("claude", "ai.message")][..],
         "analytics" => &[("derived.activity-window", "activity.window.summary")][..],
         "browser.history" => &[("webhistory", "page.visited")][..],
         "daily-summarizer" => &[("derived.daily-summarizer", "activity.summary.daily")][..],
+        "docs-library-index" => &[("docs-library", "document.indexed")][..],
         "document-parser" => &[
             ("document-parser", "document.parsed"),
             ("document-parser", "document.chunked"),
@@ -827,10 +832,26 @@ fn static_emitter_event_pairs(
             ("fs-watcher", "file.deleted"),
             ("fs-watcher", "file.moved"),
         ][..],
+        "facebook-messenger-thread" => &[("messenger", "message.sent")][..],
+        "git-commit-history" => &[("git", "commit.created")][..],
         "health" => &[("health-aggregator", "health.aggregated_report")][..],
+        "hledger-journal" => &[("ledger", "transaction.posted")][..],
         "hourly-summarizer" => &[("derived.hourly-summarizer", "activity.summary.hourly")][..],
+        "instruction-expectation-reconciler" => {
+            &[("runtime.instruction", "expectation.status")][..]
+        }
+        "integration.polylogue" => &[(
+            "integration.polylogue",
+            "integration.polylogue.conversation_indexed",
+        )][..],
+        "knowledgebase-vault" => &[("knowledgebase", "note.observed")][..],
+        "raindrop-bookmarks" => &[("raindrop", "bookmark.created")][..],
+        "reddit-gdpr-comments" => &[("reddit", "social.comment.posted")][..],
+        "reddit-gdpr-posts" => &[("reddit", "social.post.created")][..],
         "session-detector" => &[("derived.session-detector", "activity.session.boundary")][..],
         "relation-extractor" => &[("relation-extractor", "entity.related")][..],
+        "sleep-merged-summary" => &[("samsung-health", "sleep.session")][..],
+        "spotify-extended-history" => &[("spotify", "track.played")][..],
         "system.monitor" => &[("system", "monitoring.started")][..],
         "system.systemd" => &[
             ("systemd", "unit.started"),
@@ -869,6 +890,15 @@ fn static_emitter_event_pairs(
         "terminal.atuin-history" => &[("shell.atuin", "command.executed")][..],
         "tag-applier" => &[("knowledge-graph", "knowledge.tag_applied")][..],
         "terminal-canonicalizer" => &[("canonical.terminal", "command.canonical")][..],
+        "weechat" => &[
+            ("irc", "irc.join"),
+            ("irc", "irc.part"),
+            ("irc", "irc.server_notice"),
+            ("irc", "irc.message"),
+        ][..],
+        "weechat.message" => &[("irc", "irc.message")][..],
+        "wykop-entries" => &[("wykop", "social.entry.created")][..],
+        "wykop-entry-comments" => &[("wykop", "social.entry_comment.posted")][..],
         _ => return None,
     };
     Some(pairs.iter().copied().collect())
@@ -1166,11 +1196,14 @@ mod tests {
         assert!(validation.invalid_output_event_pairs.is_empty());
         assert!(validation.unbacked_output_event_pairs.is_empty());
         assert!(validation.missing_output_event_pair_backing.is_empty());
-        assert!(validation.exempted_output_event_pair_backing.is_empty());
+        assert!(
+            !validation.exempted_output_event_pair_backing.is_empty(),
+            "infra source units should remain visible as explicit backing exemptions"
+        );
         assert!(
             validation
                 .runner_packs_with_multiple_units
-                .contains(&"terminal".to_string())
+                .contains(&"source-worker".to_string())
         );
         Ok(())
     }

@@ -2,9 +2,6 @@
 //!
 //! This module organizes handlers into domain-specific submodules.
 
-use serde::de::DeserializeOwned;
-use serde_json::Value;
-
 pub mod audit;
 pub mod automata;
 pub mod content;
@@ -14,6 +11,7 @@ pub mod dlq;
 pub mod documents;
 pub mod health;
 pub mod ingestors;
+pub mod instructions;
 pub mod lifecycle;
 pub mod llm;
 pub mod node_registry;
@@ -41,13 +39,13 @@ pub use replay::{
     handle_replay_operation_status, handle_replay_preview_operation,
     handle_replay_submit_operation,
 };
-pub use rpc_handlers::*;
 
 // Re-export new domain-specific handler functions
 pub use audit::handle_audit_get;
 pub use automata::handle_automata_status;
 pub use dlq::{handle_dlq_list, handle_dlq_peek, handle_dlq_purge, handle_dlq_requeue};
 pub use ingestors::handle_ingestors_status;
+pub use instructions::handle_hyprland_workspace_switch;
 pub use lifecycle::{
     handle_lifecycle_archive,
     handle_lifecycle_restore,
@@ -110,14 +108,3 @@ pub use telemetry::{
     handle_telemetry_recent_activity, handle_telemetry_stream_stats, handle_telemetry_system_state,
     handle_telemetry_throughput, handle_telemetry_window_focus,
 };
-
-fn parse_default_on_null<T>(params: Value) -> Result<T, serde_json::Error>
-where
-    T: Default + DeserializeOwned,
-{
-    if params.is_null() {
-        Ok(T::default())
-    } else {
-        serde_json::from_value(params)
-    }
-}

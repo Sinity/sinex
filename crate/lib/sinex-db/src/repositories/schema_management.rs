@@ -80,6 +80,17 @@ pub struct SchemaSyncResult {
     pub unchanged: usize,
 }
 
+/// Active event schema retention horizon used by lifecycle TTL enforcement.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EventPayloadRetention {
+    /// Event source identifier.
+    pub source: EventSource,
+    /// Event type identifier.
+    pub event_type: EventType,
+    /// Retention horizon in seconds.
+    pub retention_seconds: i64,
+}
+
 /// Repository for event payload schema management
 pub struct SchemaManagementRepository<'a> {
     pool: &'a PgPool,
@@ -544,6 +555,34 @@ impl<'a> SchemaManagementRepository<'a> {
             .collect())
     }
 
+    /// List active schemas that declare a positive retention horizon.
+    pub async fn list_with_retention(&self) -> DbResult<Vec<EventPayloadRetention>> {
+        let rows = sqlx::query!(
+            r#"
+            SELECT
+                source,
+                event_type,
+                retention_seconds as "retention_seconds!"
+            FROM sinex_schemas.event_payload_schemas
+            WHERE retention_seconds IS NOT NULL
+              AND is_active = true
+            ORDER BY source, event_type
+            "#
+        )
+        .fetch_all(self.pool)
+        .await
+        .map_err(|e| db_error(e, "list schemas with retention"))?;
+
+        Ok(rows
+            .into_iter()
+            .map(|row| EventPayloadRetention {
+                source: row.source.into(),
+                event_type: row.event_type.into(),
+                retention_seconds: row.retention_seconds,
+            })
+            .collect())
+    }
+
     /// Validate a typed event payload using its built-in source/type information
     pub async fn validate_typed_event<T>(&self, event: &Event<T>) -> DbResult<ValidationResult>
     where
@@ -817,7 +856,7 @@ impl<'a> SchemaManagementRepository<'a> {
     async fn insert_new_schema(&self, candidate: &SchemaCandidate) -> DbResult<Uuid> {
         let id = Uuid::now_v7();
 
-        sqlx::query!(
+        let row = sqlx::query!(
             r#"
             INSERT INTO sinex_schemas.event_payload_schemas (
                 id, source, event_type, schema_version, schema_content,
@@ -825,6 +864,10 @@ impl<'a> SchemaManagementRepository<'a> {
             ) VALUES (
                 $1::uuid, $2, $3, $4, $5, $6, true, NOW()
             )
+            ON CONFLICT (content_hash) DO UPDATE
+            SET is_active = true,
+                updated_at = NOW()
+            RETURNING id as "id!: Uuid"
             "#,
             id,
             candidate.schema.source.as_str(),
@@ -833,11 +876,11 @@ impl<'a> SchemaManagementRepository<'a> {
             &candidate.schema.schema_content,
             candidate.content_hash.as_str(),
         )
-        .execute(self.pool)
+        .fetch_one(self.pool)
         .await
         .map_err(|e| db_error(e, "insert new schema"))?;
 
-        Ok(id)
+        Ok(row.id)
     }
 }
 

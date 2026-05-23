@@ -12,19 +12,13 @@
 //! `max_age = leadership_timeout`). If coordination is unavailable the task
 //! degrades to "no-op until next tick" rather than running everywhere.
 //!
-//! TODO(#1172): swap the raw `sqlx::query!` retention SELECT for the typed
-//! `EventPayloadSchemaRecord.retention_seconds` accessor once Phase 1 lands
-//! the column on `EventPayloadSchemaRow` and exposes it via the schema
-//! repository. Today the repository SELECT lists do not project the new
-//! column, so we run a small bespoke query here and revisit.
-//!
 //! Cadence: once per hour by default. The first tick fires shortly after
 //! startup so a freshly deployed gateway begins enforcing without waiting
 //! a full hour.
 
 use crate::service_container::ServiceContainer;
 use serde_json::json;
-use sinex_db::{CascadeSource, DbPoolExt};
+use sinex_db::{CascadeSource, DbPoolExt, EventPayloadRetention};
 use sinex_primitives::domain::OperationStatus;
 use sinex_primitives::error::SinexError;
 use sinex_primitives::{Result, Uuid};
@@ -115,7 +109,7 @@ async fn run_ttl_sweep(services: &ServiceContainer, instance_id: &str) -> Result
     }
 
     let pool = services.pool();
-    let entries = fetch_retention_entries(pool).await?;
+    let entries = pool.schemas().list_with_retention().await?;
     if entries.is_empty() {
         debug!("TTL sweep: no schemas declare retention_seconds");
         return Ok(());
@@ -157,42 +151,6 @@ async fn run_ttl_sweep(services: &ServiceContainer, instance_id: &str) -> Result
     Ok(())
 }
 
-/// One row from `event_payload_schemas` with a non-NULL retention horizon.
-struct RetentionEntry {
-    source: String,
-    event_type: String,
-    retention_seconds: i64,
-}
-
-async fn fetch_retention_entries(pool: &PgPool) -> Result<Vec<RetentionEntry>> {
-    // TODO(#1172): swap to a typed `pool.schemas().list_with_retention()`
-    // accessor once Phase 1's column lands on the schema repository's SELECT
-    // lists. Until then, query directly so we don't depend on the typed row
-    // shape (which `sqlx::query!` would lock at compile time).
-    let rows = sqlx::query(
-        r"
-        SELECT source, event_type, retention_seconds
-        FROM sinex_schemas.event_payload_schemas
-        WHERE retention_seconds IS NOT NULL AND is_active = true
-        ",
-    )
-    .fetch_all(pool)
-    .await
-    .map_err(|error| {
-        SinexError::database("Failed to fetch retention horizons").with_source(error.to_string())
-    })?;
-
-    use sqlx::Row;
-    Ok(rows
-        .into_iter()
-        .map(|row| RetentionEntry {
-            source: row.get::<String, _>("source"),
-            event_type: row.get::<String, _>("event_type"),
-            retention_seconds: row.get::<i64, _>("retention_seconds"),
-        })
-        .collect())
-}
-
 /// Limit per (source, `event_type`) per sweep — protects against runaway
 /// archives if a horizon is shortened on a high-volume event type.
 const TTL_BATCH_LIMIT: i64 = 10_000;
@@ -200,7 +158,7 @@ const TTL_BATCH_LIMIT: i64 = 10_000;
 async fn archive_expired_for_event_type(
     pool: &PgPool,
     instance_id: &str,
-    entry: &RetentionEntry,
+    entry: &EventPayloadRetention,
 ) -> Result<usize> {
     // 1. Find expired live event IDs (cap to TTL_BATCH_LIMIT).
     //    Keyed on `ts_orig` per the plan: "events older than ts_orig - retention".
@@ -216,8 +174,8 @@ async fn archive_expired_for_event_type(
         LIMIT $4
         ",
     )
-    .bind(&entry.source)
-    .bind(&entry.event_type)
+    .bind(entry.source.as_str())
+    .bind(entry.event_type.as_str())
     .bind(cutoff_secs as f64)
     .bind(TTL_BATCH_LIMIT)
     .fetch_all(pool)

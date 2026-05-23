@@ -183,10 +183,13 @@ const GUIDE_SECTIONS: &[GuideSection] = &[
                 when: "a check or build failed and you want package-scoped errors, trends, or fixable subsets",
                 examples: &[
                     "xtask history diagnostics --level error",
+                    "xtask history diagnostics --command check --level warning",
                     "xtask history diagnostics --fixable",
                     "xtask history diagnostics --package sinex-primitives",
                 ],
-                notes: &[],
+                notes: &[
+                    "Use --command check to isolate the normal check surface after broader lint/build runs.",
+                ],
             },
             GuideEntry {
                 path: "history tests analyze",

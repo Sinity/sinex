@@ -1,5 +1,5 @@
 use serde_json::{Value, json};
-use sinex_primitives::rpc::{RpcMutability, RpcRole, method_catalog};
+use sinex_primitives::rpc::{RpcMutability, RpcRole, method_catalog, methods};
 use sinex_primitives::temporal::{Duration, Timestamp};
 use sinexctl::client::{ClientConfig, GatewayClient};
 use sinexctl::mcp::{
@@ -61,37 +61,14 @@ async fn validate_time_range_rejects_inverted_and_equal_bounds() -> TestResult<(
 }
 
 #[sinex_test]
-async fn mcp_lists_first_slice_read_only_tools() -> TestResult<()> {
-    let tools = tools();
-    let names = tools.iter().map(|tool| tool.name).collect::<Vec<_>>();
+async fn mcp_tool_order_matches_catalog_order() -> TestResult<()> {
+    let tool_names = tools().iter().map(|tool| tool.name).collect::<Vec<_>>();
+    let catalog_names = tool_catalog()
+        .iter()
+        .map(|entry| entry.name)
+        .collect::<Vec<_>>();
 
-    assert_eq!(
-        names,
-        vec![
-            "sinex.search_events",
-            "sinex.trace_lineage",
-            "sinex.source_readiness",
-            "sinex.source_continuity",
-            "sinex.privacy_status",
-            "sinex.system_health",
-            "sinex.tasks_list",
-            "sinex.task_state",
-            "sinex.replay_operations",
-            "sinex.replay_status",
-            "sinex.documents_search",
-            "sinex.documents_get",
-            "sinex.semantic_epochs",
-            "sinex.semantic_lanes",
-            "sinex.semantic_lane_outputs",
-            "sinex.semantic_lane_diffs",
-            "sinex.automata_status",
-            "sinex.ingestors_status",
-            "sinex.nodes_health",
-            "sinex.nodes_active",
-            "sinex.ingestd_validation",
-            "sinex.ingestd_batch_stats"
-        ]
-    );
+    assert_eq!(tool_names, catalog_names);
     assert_read_only_tool_names()?;
     Ok(())
 }
@@ -103,6 +80,80 @@ async fn mcp_tool_schemas_are_closed_objects() -> TestResult<()> {
         assert_eq!(tool.input_schema["additionalProperties"], false);
         assert!(tool.input_schema["properties"].is_object());
     }
+    Ok(())
+}
+
+#[sinex_test]
+async fn mcp_docs_tool_table_matches_live_tools() -> TestResult<()> {
+    let docs_path =
+        workspace_root_from_manifest_dir()?.join("docs/architecture/mcp-readonly-server.md");
+    let docs = std::fs::read_to_string(&docs_path)?;
+    let documented = docs
+        .lines()
+        .filter_map(|line| {
+            line.strip_prefix("| `sinex.")
+                .and_then(|rest| rest.split_once('`'))
+                .map(|(suffix, _)| format!("sinex.{suffix}"))
+        })
+        .collect::<BTreeSet<_>>();
+    let live = tools()
+        .into_iter()
+        .map(|tool| tool.name.to_string())
+        .collect::<BTreeSet<_>>();
+
+    assert_eq!(
+        documented,
+        live,
+        "MCP docs tool table must match live tools in {}",
+        docs_path.display()
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn mcp_omits_raw_content_read_methods_until_redacted_variants_exist() -> TestResult<()> {
+    let backing_methods = tool_catalog()
+        .into_iter()
+        .flat_map(|entry| entry.backing_rpc_methods.iter().copied())
+        .collect::<BTreeSet<_>>();
+
+    assert!(
+        !backing_methods.contains(methods::CONTENT_RETRIEVE_BLOB),
+        "MCP must not expose raw blob retrieval without a redacted read contract"
+    );
+    assert!(
+        !backing_methods.contains(methods::DOCUMENTS_GET_CHUNKS),
+        "MCP must not expose raw document chunk text without a redacted read contract"
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn mcp_covers_or_explicitly_omits_safe_read_only_rpc_methods() -> TestResult<()> {
+    let exposed_methods = tool_catalog()
+        .into_iter()
+        .flat_map(|entry| entry.backing_rpc_methods.iter().copied())
+        .collect::<BTreeSet<_>>();
+    let explicitly_omitted = BTreeSet::from([
+        methods::CONTENT_RETRIEVE_BLOB,
+        methods::DOCUMENTS_GET_CHUNKS,
+    ]);
+
+    let missing = method_catalog()
+        .into_iter()
+        .filter(|method| {
+            method.role == RpcRole::ReadOnly
+                && method.mutability == RpcMutability::ReadOnly
+                && !exposed_methods.contains(method.name)
+                && !explicitly_omitted.contains(method.name)
+        })
+        .map(|method| method.name)
+        .collect::<Vec<_>>();
+
+    assert!(
+        missing.is_empty(),
+        "MCP must expose safe read-only RPC methods or list a deliberate omission: {missing:?}"
+    );
     Ok(())
 }
 
@@ -128,6 +179,15 @@ async fn mcp_catalog_exactly_covers_live_tools() -> TestResult<()> {
         );
     }
     Ok(())
+}
+
+fn workspace_root_from_manifest_dir() -> TestResult<std::path::PathBuf> {
+    let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    manifest_dir
+        .parent()
+        .and_then(std::path::Path::parent)
+        .map(std::path::Path::to_path_buf)
+        .ok_or_else(|| color_eyre::eyre::eyre!("cannot resolve workspace root from manifest dir"))
 }
 
 #[sinex_test]
@@ -340,6 +400,68 @@ async fn mcp_source_continuity_get_call_uses_gateway_fixture() -> TestResult<()>
     );
     assert_eq!(
         response["items"]["result"]["report"]["replayability"]["raw_bytes_preserved"],
+        true
+    );
+    assert_eq!(response["redaction"]["raw_samples"], false);
+    Ok(())
+}
+
+#[sinex_test]
+async fn mcp_source_gap_explain_call_uses_gateway_fixture() -> TestResult<()> {
+    let server = mount_mcp_gateway_fixture().await;
+    let client = fixture_gateway_client(&server)?;
+
+    let response = call_tool(
+        &client,
+        "sinex.source_gap_explain",
+        json!({
+            "source_family": "terminal",
+            "at": "2026-05-19T12:05:00Z"
+        }),
+    )
+    .await?;
+
+    assert_eq!(response["tool"], "sinex.source_gap_explain");
+    assert_eq!(response["query"]["source_family"], "terminal");
+    assert_eq!(response["query"]["at"], "2026-05-19T12:05:00Z");
+    assert_eq!(response["items"]["result"]["gap"]["kind"], "private_mode");
+    assert!(
+        response["items"]["result"]["explanation"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("coverage gap")
+    );
+    assert_eq!(response["redaction"]["raw_samples"], false);
+    Ok(())
+}
+
+#[sinex_test]
+async fn mcp_source_identifier_continuity_call_uses_gateway_fixture() -> TestResult<()> {
+    let server = mount_mcp_gateway_fixture().await;
+    let client = fixture_gateway_client(&server)?;
+
+    let response = call_tool(
+        &client,
+        "sinex.source_identifier_continuity",
+        json!({
+            "source_identifier": "/realm/data/captures/fixture.jsonl",
+            "material_kind": "local_cas"
+        }),
+    )
+    .await?;
+
+    assert_eq!(response["tool"], "sinex.source_identifier_continuity");
+    assert_eq!(
+        response["query"]["source_identifier"],
+        "/realm/data/captures/fixture.jsonl"
+    );
+    assert_eq!(response["query"]["material_kind"], "local_cas");
+    assert_eq!(
+        response["items"]["result"]["source_identifier"],
+        "/realm/data/captures/fixture.jsonl"
+    );
+    assert_eq!(
+        response["items"]["result"]["replayability"]["replayable"],
         true
     );
     assert_eq!(response["redaction"]["raw_samples"], false);
@@ -743,6 +865,23 @@ async fn mcp_nodes_active_call_uses_gateway_fixture() -> TestResult<()> {
 }
 
 #[sinex_test]
+async fn mcp_nodes_registry_call_uses_gateway_fixture() -> TestResult<()> {
+    let server = mount_mcp_gateway_fixture().await;
+    let client = fixture_gateway_client(&server)?;
+
+    let response = call_tool(&client, "sinex.nodes_registry", json!({})).await?;
+
+    assert_eq!(response["tool"], "sinex.nodes_registry");
+    assert_eq!(
+        response["items"]["result"]["nodes"][0]["node_id"],
+        "terminal.atuin-history"
+    );
+    assert_eq!(response["items"]["result"]["nodes"][0]["state"], "running");
+    assert_eq!(response["redaction"]["raw_samples"], false);
+    Ok(())
+}
+
+#[sinex_test]
 async fn mcp_ingestd_validation_call_uses_gateway_fixture() -> TestResult<()> {
     let server = mount_mcp_gateway_fixture().await;
     let client = fixture_gateway_client(&server)?;
@@ -786,6 +925,723 @@ async fn mcp_ingestd_batch_stats_call_uses_gateway_fixture() -> TestResult<()> {
     );
     assert_eq!(response["redaction"]["raw_samples"], false);
     Ok(())
+}
+
+#[sinex_test]
+async fn mcp_throughput_call_uses_gateway_fixture() -> TestResult<()> {
+    let server = mount_mcp_gateway_fixture().await;
+    let client = fixture_gateway_client(&server)?;
+
+    let response = call_tool(&client, "sinex.throughput", json!({})).await?;
+
+    assert_eq!(response["tool"], "sinex.throughput");
+    assert_eq!(
+        response["items"]["result"]["per_source"][0]["source"],
+        "terminal"
+    );
+    assert_eq!(
+        response["items"]["result"]["per_source"][0]["events_last_1h"],
+        120
+    );
+    assert_eq!(
+        response["items"]["result"]["per_component"][0]["component"],
+        "ingestd"
+    );
+    assert_eq!(response["redaction"]["raw_samples"], false);
+    Ok(())
+}
+
+#[sinex_test]
+async fn mcp_recent_activity_call_uses_gateway_fixture() -> TestResult<()> {
+    let server = mount_mcp_gateway_fixture().await;
+    let client = fixture_gateway_client(&server)?;
+
+    let response = call_tool(&client, "sinex.recent_activity", json!({ "limit": 7 })).await?;
+
+    assert_eq!(response["tool"], "sinex.recent_activity");
+    assert_eq!(response["query"]["limit"], 7);
+    assert_eq!(response["items"]["entries"][0]["activity_type"], "command");
+    assert_eq!(response["items"]["entries"][0]["context"], "terminal");
+    assert_eq!(response["redaction"]["raw_samples"], false);
+    Ok(())
+}
+
+#[sinex_test]
+async fn mcp_command_frequency_call_uses_gateway_fixture() -> TestResult<()> {
+    let server = mount_mcp_gateway_fixture().await;
+    let client = fixture_gateway_client(&server)?;
+
+    let response = call_tool(
+        &client,
+        "sinex.command_frequency",
+        json!({
+            "from": "2026-05-19T00:00:00Z",
+            "to": "2026-05-19T01:00:00Z",
+            "limit": 3
+        }),
+    )
+    .await?;
+
+    assert_eq!(response["tool"], "sinex.command_frequency");
+    assert_eq!(response["query"]["limit"], 3);
+    assert_eq!(response["items"]["entries"][0]["command"], "xtask");
+    assert_eq!(response["items"]["entries"][0]["total_executions"], 12);
+    assert_eq!(response["redaction"]["raw_samples"], false);
+    Ok(())
+}
+
+#[sinex_test]
+async fn mcp_file_activity_call_uses_gateway_fixture() -> TestResult<()> {
+    let server = mount_mcp_gateway_fixture().await;
+    let client = fixture_gateway_client(&server)?;
+
+    let response = call_tool(
+        &client,
+        "sinex.file_activity",
+        json!({
+            "from": "2026-05-19T00:00:00Z",
+            "to": "2026-05-19T01:00:00Z",
+            "limit": 3
+        }),
+    )
+    .await?;
+
+    assert_eq!(response["tool"], "sinex.file_activity");
+    assert_eq!(response["query"]["limit"], 3);
+    assert_eq!(
+        response["items"]["entries"][0]["directory"],
+        "/realm/project/sinex"
+    );
+    assert_eq!(response["items"]["entries"][0]["total_events"], 9);
+    assert_eq!(response["redaction"]["raw_samples"], false);
+    Ok(())
+}
+
+#[sinex_test]
+async fn mcp_system_state_call_uses_gateway_fixture() -> TestResult<()> {
+    let server = mount_mcp_gateway_fixture().await;
+    let client = fixture_gateway_client(&server)?;
+
+    let response = call_tool(
+        &client,
+        "sinex.system_state",
+        json!({
+            "from": "2026-05-19T00:00:00Z",
+            "to": "2026-05-19T01:00:00Z",
+            "limit": 3
+        }),
+    )
+    .await?;
+
+    assert_eq!(response["tool"], "sinex.system_state");
+    assert_eq!(response["query"]["limit"], 3);
+    assert_eq!(response["items"]["buckets"][0]["sample_count"], 5);
+    assert_eq!(response["items"]["buckets"][0]["avg_memory_percent"], 42.5);
+    assert_eq!(response["redaction"]["raw_samples"], false);
+    Ok(())
+}
+
+#[sinex_test]
+async fn mcp_window_focus_call_uses_gateway_fixture() -> TestResult<()> {
+    let server = mount_mcp_gateway_fixture().await;
+    let client = fixture_gateway_client(&server)?;
+
+    let response = call_tool(
+        &client,
+        "sinex.window_focus",
+        json!({
+            "from": "2026-05-19T00:00:00Z",
+            "to": "2026-05-19T01:00:00Z",
+            "limit": 3
+        }),
+    )
+    .await?;
+
+    assert_eq!(response["tool"], "sinex.window_focus");
+    assert_eq!(response["query"]["limit"], 3);
+    assert_eq!(response["items"]["buckets"][0]["workspace"], "4");
+    assert_eq!(response["items"]["buckets"][0]["window_class"], "kitty");
+    assert_eq!(response["items"]["buckets"][0]["focus_event_count"], 6);
+    assert_eq!(response["redaction"]["raw_samples"], false);
+    Ok(())
+}
+
+#[sinex_test]
+async fn mcp_current_health_call_uses_gateway_fixture() -> TestResult<()> {
+    let server = mount_mcp_gateway_fixture().await;
+    let client = fixture_gateway_client(&server)?;
+
+    let response = call_tool(&client, "sinex.current_health", json!({ "limit": 4 })).await?;
+
+    assert_eq!(response["tool"], "sinex.current_health");
+    assert_eq!(response["query"]["limit"], 4);
+    assert_eq!(response["items"]["entries"][0]["source"], "sinex");
+    assert_eq!(response["items"]["entries"][0]["event_type"], "health");
+    assert_eq!(response["items"]["entries"][0]["status"], "healthy");
+    assert_eq!(response["redaction"]["raw_samples"], false);
+    Ok(())
+}
+
+#[sinex_test]
+async fn mcp_current_device_state_call_uses_gateway_fixture() -> TestResult<()> {
+    let server = mount_mcp_gateway_fixture().await;
+    let client = fixture_gateway_client(&server)?;
+
+    let response = call_tool(&client, "sinex.current_device_state", json!({ "limit": 4 })).await?;
+
+    assert_eq!(response["tool"], "sinex.current_device_state");
+    assert_eq!(response["query"]["limit"], 4);
+    assert_eq!(
+        response["items"]["entries"][0]["unit_name"],
+        "sinex-gateway"
+    );
+    assert_eq!(response["items"]["entries"][0]["state"], "active");
+    assert_eq!(response["redaction"]["raw_samples"], false);
+    Ok(())
+}
+
+#[sinex_test]
+async fn mcp_gateway_stats_call_uses_gateway_fixture() -> TestResult<()> {
+    let server = mount_mcp_gateway_fixture().await;
+    let client = fixture_gateway_client(&server)?;
+
+    let response = call_tool(&client, "sinex.gateway_stats", telemetry_window_args()).await?;
+
+    assert_eq!(response["tool"], "sinex.gateway_stats");
+    assert_eq!(response["query"]["limit"], 3);
+    assert_eq!(response["items"]["buckets"][0]["source"], "gateway");
+    assert_eq!(response["items"]["buckets"][0]["stat_events"], 4);
+    assert_eq!(response["redaction"]["raw_samples"], false);
+    Ok(())
+}
+
+#[sinex_test]
+async fn mcp_stream_stats_call_uses_gateway_fixture() -> TestResult<()> {
+    let server = mount_mcp_gateway_fixture().await;
+    let client = fixture_gateway_client(&server)?;
+
+    let response = call_tool(&client, "sinex.stream_stats", telemetry_window_args()).await?;
+
+    assert_eq!(response["tool"], "sinex.stream_stats");
+    assert_eq!(response["query"]["limit"], 3);
+    assert_eq!(response["items"]["buckets"][0]["stream_name"], "EVENTS");
+    assert_eq!(response["items"]["buckets"][0]["sample_count"], 2);
+    assert_eq!(response["redaction"]["raw_samples"], false);
+    Ok(())
+}
+
+#[sinex_test]
+async fn mcp_assembly_stats_call_uses_gateway_fixture() -> TestResult<()> {
+    let server = mount_mcp_gateway_fixture().await;
+    let client = fixture_gateway_client(&server)?;
+
+    let response = call_tool(&client, "sinex.assembly_stats", telemetry_window_args()).await?;
+
+    assert_eq!(response["tool"], "sinex.assembly_stats");
+    assert_eq!(response["query"]["limit"], 3);
+    assert_eq!(response["items"]["buckets"][0]["total_completed"], 7);
+    assert_eq!(response["items"]["buckets"][0]["sample_count"], 3);
+    assert_eq!(response["redaction"]["raw_samples"], false);
+    Ok(())
+}
+
+#[sinex_test]
+async fn mcp_node_stats_call_uses_gateway_fixture() -> TestResult<()> {
+    let server = mount_mcp_gateway_fixture().await;
+    let client = fixture_gateway_client(&server)?;
+
+    let response = call_tool(&client, "sinex.node_stats", telemetry_window_args()).await?;
+
+    assert_eq!(response["tool"], "sinex.node_stats");
+    assert_eq!(response["query"]["limit"], 3);
+    assert_eq!(response["items"]["buckets"][0]["node_type"], "ingestor");
+    assert_eq!(
+        response["items"]["buckets"][0]["total_events_processed"],
+        42
+    );
+    assert_eq!(response["redaction"]["raw_samples"], false);
+    Ok(())
+}
+
+#[sinex_test]
+async fn mcp_metric_counters_call_uses_gateway_fixture() -> TestResult<()> {
+    let server = mount_mcp_gateway_fixture().await;
+    let client = fixture_gateway_client(&server)?;
+
+    let response = call_tool(&client, "sinex.metric_counters", telemetry_window_args()).await?;
+
+    assert_eq!(response["tool"], "sinex.metric_counters");
+    assert_eq!(response["query"]["limit"], 3);
+    assert_eq!(response["items"]["buckets"][0]["component"], "ingestd");
+    assert_eq!(response["items"]["buckets"][0]["metric_name"], "events");
+    assert_eq!(response["items"]["buckets"][0]["total_value"], 99);
+    assert_eq!(response["redaction"]["raw_samples"], false);
+    Ok(())
+}
+
+#[sinex_test]
+async fn mcp_llm_prompts_call_uses_gateway_fixture() -> TestResult<()> {
+    let server = mount_mcp_gateway_fixture().await;
+    let client = fixture_gateway_client(&server)?;
+
+    let response = call_tool(
+        &client,
+        "sinex.llm_prompts",
+        json!({ "status": "active", "limit": 2 }),
+    )
+    .await?;
+
+    assert_eq!(response["tool"], "sinex.llm_prompts");
+    assert_eq!(response["query"]["status"], "active");
+    assert_eq!(
+        response["items"]["result"]["events"][0]["payload"]["redacted"],
+        true
+    );
+    assert_eq!(response["redaction"]["raw_samples"], false);
+    Ok(())
+}
+
+#[sinex_test]
+async fn mcp_llm_route_explain_call_uses_gateway_fixture() -> TestResult<()> {
+    let server = mount_mcp_gateway_fixture().await;
+    let client = fixture_gateway_client(&server)?;
+
+    let response = call_tool(&client, "sinex.llm_route_explain", fixture_llm_route_args()).await?;
+
+    assert_eq!(response["tool"], "sinex.llm_route_explain");
+    assert_eq!(
+        response["query"]["request"]["task_kind"],
+        "entity-extraction"
+    );
+    assert_eq!(
+        response["items"]["result"]["decision"]["model"],
+        "fixture-model"
+    );
+    assert_eq!(response["redaction"]["raw_samples"], false);
+    Ok(())
+}
+
+#[sinex_test]
+async fn mcp_llm_budget_report_call_uses_gateway_fixture() -> TestResult<()> {
+    let server = mount_mcp_gateway_fixture().await;
+    let client = fixture_gateway_client(&server)?;
+
+    let response = call_tool(&client, "sinex.llm_budget_report", json!({ "limit": 5 })).await?;
+
+    assert_eq!(response["tool"], "sinex.llm_budget_report");
+    assert_eq!(response["query"]["limit"], 5);
+    assert_eq!(response["items"]["result"]["total_rows"], 1);
+    assert_eq!(response["items"]["result"]["prompt_tokens"], 12);
+    assert_eq!(response["redaction"]["raw_samples"], false);
+    Ok(())
+}
+
+#[sinex_test]
+async fn mcp_curation_proposals_call_uses_gateway_fixture() -> TestResult<()> {
+    let server = mount_mcp_gateway_fixture().await;
+    let client = fixture_gateway_client(&server)?;
+
+    let response = call_tool(
+        &client,
+        "sinex.curation_proposals",
+        json!({ "status": "pending", "limit": 4 }),
+    )
+    .await?;
+
+    assert_eq!(response["tool"], "sinex.curation_proposals");
+    assert_eq!(response["query"]["status"], "pending");
+    assert_eq!(
+        response["items"]["result"]["events"][0]["payload"]["redacted"],
+        true
+    );
+    assert_eq!(response["redaction"]["raw_samples"], false);
+    Ok(())
+}
+
+#[sinex_test]
+async fn mcp_dlq_stats_call_uses_gateway_fixture() -> TestResult<()> {
+    let server = mount_mcp_gateway_fixture().await;
+    let client = fixture_gateway_client(&server)?;
+
+    let response = call_tool(&client, "sinex.dlq_stats", json!({})).await?;
+
+    assert_eq!(response["tool"], "sinex.dlq_stats");
+    assert_eq!(response["items"]["result"]["total_messages"], 2);
+    assert_eq!(response["items"]["result"]["total_bytes"], 512);
+    assert_eq!(response["redaction"]["raw_samples"], false);
+    Ok(())
+}
+
+#[sinex_test]
+async fn mcp_dlq_peek_call_uses_gateway_fixture() -> TestResult<()> {
+    let server = mount_mcp_gateway_fixture().await;
+    let client = fixture_gateway_client(&server)?;
+
+    let response = call_tool(&client, "sinex.dlq_peek", json!({ "limit": 2 })).await?;
+
+    assert_eq!(response["tool"], "sinex.dlq_peek");
+    assert_eq!(response["query"]["limit"], 2);
+    assert_eq!(
+        response["items"]["result"]["messages"][0]["payload_redacted"],
+        true
+    );
+    assert_eq!(
+        response["items"]["result"]["messages"][0]["privacy_caveats"][0],
+        "secret_redacted"
+    );
+    assert_eq!(response["redaction"]["raw_samples"], false);
+    Ok(())
+}
+
+#[sinex_test]
+async fn mcp_source_materials_call_uses_gateway_fixture() -> TestResult<()> {
+    let server = mount_mcp_gateway_fixture().await;
+    let client = fixture_gateway_client(&server)?;
+
+    let response = call_tool(
+        &client,
+        "sinex.source_materials",
+        json!({ "status": "completed", "limit": 2 }),
+    )
+    .await?;
+
+    assert_eq!(response["tool"], "sinex.source_materials");
+    assert_eq!(response["query"]["status"], "completed");
+    assert_eq!(
+        response["items"]["result"]["materials"][0]["id"],
+        fixture_material_id()
+    );
+    assert_eq!(response["redaction"]["raw_samples"], false);
+    Ok(())
+}
+
+#[sinex_test]
+async fn mcp_source_material_call_uses_gateway_fixture() -> TestResult<()> {
+    let server = mount_mcp_gateway_fixture().await;
+    let client = fixture_gateway_client(&server)?;
+
+    let response = call_tool(
+        &client,
+        "sinex.source_material",
+        json!({ "material_id": fixture_material_id() }),
+    )
+    .await?;
+
+    assert_eq!(response["tool"], "sinex.source_material");
+    assert_eq!(response["query"]["material_id"], fixture_material_id());
+    assert_eq!(
+        response["items"]["result"]["material"]["metadata"]["redacted"],
+        true
+    );
+    assert_eq!(response["redaction"]["raw_samples"], false);
+    Ok(())
+}
+
+#[sinex_test]
+async fn mcp_source_coverage_call_uses_gateway_fixture() -> TestResult<()> {
+    let server = mount_mcp_gateway_fixture().await;
+    let client = fixture_gateway_client(&server)?;
+
+    let response = call_tool(&client, "sinex.source_coverage", json!({})).await?;
+
+    assert_eq!(response["tool"], "sinex.source_coverage");
+    assert_eq!(response["items"]["result"]["sources"][0]["event_count"], 42);
+    assert_eq!(
+        response["items"]["result"]["sources"][0]["material_count"],
+        3
+    );
+    assert_eq!(response["redaction"]["raw_samples"], false);
+    Ok(())
+}
+
+#[sinex_test]
+async fn mcp_source_presets_call_uses_gateway_fixture() -> TestResult<()> {
+    let server = mount_mcp_gateway_fixture().await;
+    let client = fixture_gateway_client(&server)?;
+
+    let response = call_tool(&client, "sinex.source_presets", json!({})).await?;
+
+    assert_eq!(response["tool"], "sinex.source_presets");
+    assert_eq!(
+        response["items"]["result"]["presets"][0]["name"],
+        "terminal.atuin.default"
+    );
+    assert_eq!(response["redaction"]["raw_samples"], false);
+    Ok(())
+}
+
+#[sinex_test]
+async fn mcp_source_bindings_call_uses_gateway_fixture() -> TestResult<()> {
+    let server = mount_mcp_gateway_fixture().await;
+    let client = fixture_gateway_client(&server)?;
+
+    let response = call_tool(
+        &client,
+        "sinex.source_bindings",
+        json!({ "source_family": "terminal", "include_disabled": true }),
+    )
+    .await?;
+
+    assert_eq!(response["tool"], "sinex.source_bindings");
+    assert_eq!(response["query"]["source_family"], "terminal");
+    assert_eq!(response["query"]["include_disabled"], true);
+    assert_eq!(
+        response["items"]["result"]["bindings"][0]["id"],
+        "terminal-atuin-history"
+    );
+    assert_eq!(response["redaction"]["raw_samples"], false);
+    Ok(())
+}
+
+#[sinex_test]
+async fn mcp_ops_list_call_uses_gateway_fixture() -> TestResult<()> {
+    let server = mount_mcp_gateway_fixture().await;
+    let client = fixture_gateway_client(&server)?;
+
+    let response = call_tool(
+        &client,
+        "sinex.ops_list",
+        json!({ "operation_type": "replay", "limit": 2 }),
+    )
+    .await?;
+
+    assert_eq!(response["tool"], "sinex.ops_list");
+    assert_eq!(response["query"]["operation_type"], "replay");
+    assert_eq!(
+        response["items"]["result"]["operations"][0]["operation_type"],
+        "replay"
+    );
+    assert_eq!(response["redaction"]["raw_samples"], false);
+    Ok(())
+}
+
+#[sinex_test]
+async fn mcp_ops_get_call_uses_gateway_fixture() -> TestResult<()> {
+    let server = mount_mcp_gateway_fixture().await;
+    let client = fixture_gateway_client(&server)?;
+
+    let response = call_tool(
+        &client,
+        "sinex.ops_get",
+        json!({ "operation_id": fixture_operation_id() }),
+    )
+    .await?;
+
+    assert_eq!(response["tool"], "sinex.ops_get");
+    assert_eq!(response["query"]["operation_id"], fixture_operation_id());
+    assert_eq!(
+        response["items"]["result"]["operation"]["id"],
+        fixture_operation_id()
+    );
+    assert_eq!(response["redaction"]["raw_samples"], false);
+    Ok(())
+}
+
+#[sinex_test]
+async fn mcp_lifecycle_status_call_uses_gateway_fixture() -> TestResult<()> {
+    let server = mount_mcp_gateway_fixture().await;
+    let client = fixture_gateway_client(&server)?;
+
+    let response = call_tool(&client, "sinex.lifecycle_status", json!({})).await?;
+
+    assert_eq!(response["tool"], "sinex.lifecycle_status");
+    assert_eq!(response["items"]["result"]["total_events"], 42);
+    assert_eq!(response["items"]["result"]["tiers"][0]["tier"], "live");
+    assert_eq!(response["redaction"]["raw_samples"], false);
+    Ok(())
+}
+
+#[sinex_test]
+async fn mcp_gitops_sources_call_uses_gateway_fixture() -> TestResult<()> {
+    let server = mount_mcp_gateway_fixture().await;
+    let client = fixture_gateway_client(&server)?;
+
+    let response = call_tool(
+        &client,
+        "sinex.gitops_sources",
+        json!({ "include_disabled": true }),
+    )
+    .await?;
+
+    assert_eq!(response["tool"], "sinex.gitops_sources");
+    assert_eq!(response["query"]["include_disabled"], true);
+    assert_eq!(
+        response["items"]["result"]["sources"][0]["repository_url"],
+        "https://example.invalid/sinex-schemas.git"
+    );
+    assert_eq!(response["redaction"]["raw_samples"], false);
+    Ok(())
+}
+
+#[sinex_test]
+async fn mcp_audit_trail_call_uses_gateway_fixture() -> TestResult<()> {
+    let server = mount_mcp_gateway_fixture().await;
+    let client = fixture_gateway_client(&server)?;
+
+    let response = call_tool(
+        &client,
+        "sinex.audit_trail",
+        json!({ "operation_id": fixture_operation_id() }),
+    )
+    .await?;
+
+    assert_eq!(response["tool"], "sinex.audit_trail");
+    assert_eq!(response["query"]["operation_id"], fixture_operation_id());
+    assert_eq!(
+        response["items"]["result"]["audit_trail"]["operation"]["id"],
+        fixture_operation_id()
+    );
+    assert_eq!(response["items"]["result"]["event_count"], 1);
+    assert_eq!(response["redaction"]["raw_samples"], false);
+    Ok(())
+}
+
+#[sinex_test]
+async fn mcp_coordination_instances_call_uses_gateway_fixture() -> TestResult<()> {
+    let server = mount_mcp_gateway_fixture().await;
+    let client = fixture_gateway_client(&server)?;
+
+    let response = call_tool(
+        &client,
+        "sinex.coordination_instances",
+        json!({ "node_type": "service" }),
+    )
+    .await?;
+
+    assert_eq!(response["tool"], "sinex.coordination_instances");
+    assert_eq!(response["query"]["node_type"], "service");
+    assert_eq!(
+        response["items"]["result"]["instances"][0]["instance_id"],
+        fixture_instance_id()
+    );
+    assert_eq!(response["redaction"]["raw_samples"], false);
+    Ok(())
+}
+
+#[sinex_test]
+async fn mcp_coordination_leader_call_uses_gateway_fixture() -> TestResult<()> {
+    let server = mount_mcp_gateway_fixture().await;
+    let client = fixture_gateway_client(&server)?;
+
+    let response = call_tool(
+        &client,
+        "sinex.coordination_leader",
+        json!({ "node_type": "service" }),
+    )
+    .await?;
+
+    assert_eq!(response["tool"], "sinex.coordination_leader");
+    assert_eq!(
+        response["items"]["result"]["leader"]["instance_id"],
+        fixture_instance_id()
+    );
+    assert_eq!(response["redaction"]["raw_samples"], false);
+    Ok(())
+}
+
+#[sinex_test]
+async fn mcp_coordination_instance_health_call_uses_gateway_fixture() -> TestResult<()> {
+    let server = mount_mcp_gateway_fixture().await;
+    let client = fixture_gateway_client(&server)?;
+
+    let response = call_tool(
+        &client,
+        "sinex.coordination_instance_health",
+        json!({ "instance_id": fixture_instance_id() }),
+    )
+    .await?;
+
+    assert_eq!(response["tool"], "sinex.coordination_instance_health");
+    assert_eq!(response["query"]["instance_id"], fixture_instance_id());
+    assert_eq!(response["items"]["result"]["healthy"], true);
+    assert_eq!(response["redaction"]["raw_samples"], false);
+    Ok(())
+}
+
+#[sinex_test]
+async fn mcp_shadow_consumers_call_uses_gateway_fixture() -> TestResult<()> {
+    let server = mount_mcp_gateway_fixture().await;
+    let client = fixture_gateway_client(&server)?;
+
+    let response = call_tool(
+        &client,
+        "sinex.shadow_consumers",
+        json!({ "prefix": "dev-fixture" }),
+    )
+    .await?;
+
+    assert_eq!(response["tool"], "sinex.shadow_consumers");
+    assert_eq!(response["query"]["prefix"], "dev-fixture");
+    assert_eq!(
+        response["items"]["result"]["consumers"][0]["consumer_name"],
+        "dev-fixture"
+    );
+    assert_eq!(response["redaction"]["raw_samples"], false);
+    Ok(())
+}
+
+#[sinex_test]
+async fn mcp_system_ping_call_uses_gateway_fixture() -> TestResult<()> {
+    let server = mount_mcp_gateway_fixture().await;
+    let client = fixture_gateway_client(&server)?;
+
+    let response = call_tool(&client, "sinex.system_ping", json!({})).await?;
+
+    assert_eq!(response["tool"], "sinex.system_ping");
+    assert_eq!(response["items"]["result"], "pong");
+    assert_eq!(response["redaction"]["raw_samples"], false);
+    Ok(())
+}
+
+#[sinex_test]
+async fn mcp_system_version_call_uses_gateway_fixture() -> TestResult<()> {
+    let server = mount_mcp_gateway_fixture().await;
+    let client = fixture_gateway_client(&server)?;
+
+    let response = call_tool(&client, "sinex.system_version", json!({})).await?;
+
+    assert_eq!(response["tool"], "sinex.system_version");
+    assert_eq!(response["items"]["result"], "0.4.2");
+    assert_eq!(response["redaction"]["raw_samples"], false);
+    Ok(())
+}
+
+fn telemetry_window_args() -> Value {
+    json!({
+        "from": "2026-05-19T00:00:00Z",
+        "to": "2026-05-19T01:00:00Z",
+        "limit": 3
+    })
+}
+
+fn fixture_llm_route_args() -> Value {
+    json!({
+        "request": {
+            "task_kind": "entity-extraction",
+            "prompt_id": "extract-entities",
+            "input_hash": "input-hash",
+            "privacy_route": "remote_allowed",
+            "bucket_key": "fixture"
+        },
+        "policy": {
+            "policy_id": "entity-policy",
+            "task_kind": "entity-extraction",
+            "prompt_id": "extract-entities",
+            "prompt_version": "2026-05-19",
+            "fallback_order": [
+                {
+                    "provider": "fixture-provider",
+                    "model": "fixture-model",
+                    "tier": null,
+                    "is_local": false
+                }
+            ],
+            "replay_policy": "record",
+            "privacy_policy_ref": "privacy.llm.fixture",
+            "rollout": null,
+            "active": true
+        }
+    })
 }
 
 async fn mount_mcp_gateway_fixture() -> MockServer {
@@ -886,6 +1742,29 @@ async fn mount_mcp_gateway_fixture() -> MockServer {
                         "material_count": 3
                     }
                 }),
+                "sources.continuity" => json!({
+                    "source_identifier": body["params"]["source_identifier"].as_str().unwrap_or("/realm/data/captures/fixture.jsonl"),
+                    "coverage_gaps": [
+                        {
+                            "gap_start": "2026-05-19T10:00:00Z",
+                            "gap_end": "2026-05-19T10:30:00Z",
+                            "gap_duration_seconds": 1800,
+                            "gap_type": "temporal"
+                        }
+                    ],
+                    "contract_status": {
+                        "has_coverage_contract": true,
+                        "expected_interval_seconds": 60,
+                        "actual_coverage_percent": 99.1,
+                        "breaches": []
+                    },
+                    "replayability": {
+                        "replayable": true,
+                        "reason": null,
+                        "material_count": 3,
+                        "events_count": 42
+                    }
+                }),
                 "sources.continuity.list" => json!({
                     "reports": [
                         fixture_continuity_report()
@@ -893,6 +1772,17 @@ async fn mount_mcp_gateway_fixture() -> MockServer {
                 }),
                 "sources.continuity.get" => json!({
                     "report": fixture_continuity_report()
+                }),
+                "sources.continuity.explain_gap" => json!({
+                    "source_family": body["params"]["source_family"].as_str().unwrap_or("terminal"),
+                    "at": body["params"]["at"].as_str().unwrap_or("2026-05-19T12:05:00Z"),
+                    "gap": {
+                        "from_ts": "2026-05-19T10:00:00Z",
+                        "to_ts": "2026-05-19T10:30:00Z",
+                        "kind": "private_mode",
+                        "attribution": "fixture private mode"
+                    },
+                    "explanation": "At 2026-05-19T12:05:00Z, terminal was inside a coverage gap: fixture private mode"
                 }),
                 "privacy.private_mode.status" => json!({
                     "state": {
@@ -1144,6 +2034,16 @@ async fn mount_mcp_gateway_fixture() -> MockServer {
                         }
                     ]
                 }),
+                "nodes.list" => json!({
+                    "nodes": [
+                        {
+                            "node_id": "terminal.atuin-history",
+                            "state": "running",
+                            "last_heartbeat": "2026-05-19T11:59:59Z",
+                            "processing_horizon": "2026-05-19T12:00:00Z"
+                        }
+                    ]
+                }),
                 "telemetry.ingestd_validation" => json!({
                     "snapshot": {
                         "observed_at": "2026-05-19T11:59:59Z",
@@ -1183,6 +2083,445 @@ async fn mount_mcp_gateway_fixture() -> MockServer {
                         }
                     ]
                 }),
+                "telemetry.throughput" => json!({
+                    "per_source": [
+                        {
+                            "source": "terminal",
+                            "events_last_1h": 120,
+                            "events_last_24h": 1440,
+                            "eps_1h": 0.0333333333,
+                            "eps_24h": 0.0166666667
+                        }
+                    ],
+                    "per_component": [
+                        {
+                            "component": "ingestd",
+                            "eps_1h": 0.05,
+                            "eps_24h": 0.02
+                        }
+                    ]
+                }),
+                "telemetry.recent_activity" => json!({
+                    "entries": [
+                        {
+                            "activity_type": "command",
+                            "context": "terminal",
+                            "detail": "fixture recent activity",
+                            "timestamp": "2026-05-19T12:00:00Z"
+                        }
+                    ]
+                }),
+                "telemetry.command_frequency" => json!({
+                    "entries": [
+                        {
+                            "command": "xtask",
+                            "shell": "zsh",
+                            "total_executions": 12,
+                            "successful_executions": 11,
+                            "failed_executions": 1,
+                            "avg_duration_ms": 42.0
+                        }
+                    ]
+                }),
+                "telemetry.file_activity" => json!({
+                    "entries": [
+                        {
+                            "bucket": "2026-05-19T12:00:00Z",
+                            "directory": "/realm/project/sinex",
+                            "event_type": "modified",
+                            "total_events": 9,
+                            "unique_files": 4
+                        }
+                    ]
+                }),
+                "telemetry.system_state" => json!({
+                    "buckets": [
+                        {
+                            "bucket": "2026-05-19T12:00:00Z",
+                            "avg_cpu_percent": 12.5,
+                            "max_cpu_percent": 25.0,
+                            "avg_memory_percent": 42.5,
+                            "max_memory_percent": 50.0,
+                            "avg_disk_percent": 60.0,
+                            "current_active_units": 8,
+                            "sample_count": 5
+                        }
+                    ]
+                }),
+                "telemetry.window_focus" => json!({
+                    "buckets": [
+                        {
+                            "bucket": "2026-05-19T12:00:00Z",
+                            "workspace": "4",
+                            "window_class": "kitty",
+                            "window_title": "sinex",
+                            "window_id": "0xabc",
+                            "last_focus_time": "2026-05-19T12:00:00Z",
+                            "focus_event_count": 6
+                        }
+                    ]
+                }),
+                "telemetry.current_health" => json!({
+                    "entries": [
+                        {
+                            "source": "sinex",
+                            "event_type": "health",
+                            "component": "gateway",
+                            "status": "healthy",
+                            "reason": "fixture",
+                            "last_update": "2026-05-19T12:00:00Z"
+                        }
+                    ]
+                }),
+                "telemetry.current_device_state" => json!({
+                    "entries": [
+                        {
+                            "unit_name": "sinex-gateway",
+                            "unit_type": "service",
+                            "state": "active",
+                            "sub_state": "running",
+                            "last_update": "2026-05-19T12:00:00Z"
+                        }
+                    ]
+                }),
+                "telemetry.gateway_stats" => json!({
+                    "buckets": [
+                        {
+                            "bucket": "2026-05-19T12:00:00Z",
+                            "source": "gateway",
+                            "stat_events": 4,
+                            "avg_total_requests": 12.0,
+                            "total_rate_limited": 1,
+                            "avg_latency_ms": 3.5,
+                            "max_p99_latency_ms": 9.0
+                        }
+                    ]
+                }),
+                "telemetry.stream_stats" => json!({
+                    "buckets": [
+                        {
+                            "bucket": "2026-05-19T12:00:00Z",
+                            "stream_name": "EVENTS",
+                            "avg_fill_pct": 12.0,
+                            "max_fill_pct": 20.0,
+                            "avg_messages": 128.0,
+                            "max_messages": 256,
+                            "sample_count": 2
+                        }
+                    ]
+                }),
+                "telemetry.assembly_stats" => json!({
+                    "buckets": [
+                        {
+                            "bucket": "2026-05-19T12:00:00Z",
+                            "max_active_assemblies": 2,
+                            "total_completed": 7,
+                            "total_cancelled": 0,
+                            "total_failed": 1,
+                            "total_timed_out": 0,
+                            "avg_duration_ms": 22.0,
+                            "sample_count": 3
+                        }
+                    ]
+                }),
+                "telemetry.node_stats" => json!({
+                    "buckets": [
+                        {
+                            "bucket": "2026-05-19T12:00:00Z",
+                            "node_type": "ingestor",
+                            "total_events_processed": 42,
+                            "total_events_dropped": 0,
+                            "avg_latency_ms": 5.5,
+                            "max_queue_depth": 1,
+                            "total_errors": 0,
+                            "sample_count": 4
+                        }
+                    ]
+                }),
+                "telemetry.metric_counters" => json!({
+                    "buckets": [
+                        {
+                            "bucket": "2026-05-19T12:00:00Z",
+                            "component": "ingestd",
+                            "metric_name": "events",
+                            "total_value": 99,
+                            "max_value": 20,
+                            "sample_count": 5
+                        }
+                    ]
+                }),
+                "llm.prompts.list" => json!({
+                    "type": "events",
+                    "events": [
+                        {
+                            "id": fixture_event_id(),
+                            "source": "llm",
+                            "event_type": "llm.prompt_template.registered",
+                            "payload": {
+                                "prompt_id": "extract-entities",
+                                "version": "2026-05-19",
+                                "body_storage_ref": "prompt body ghp_fixture_secret should not leak"
+                            },
+                            "ts_orig": "2026-05-19T12:00:00Z",
+                            "host": "test-host",
+                            "payload_schema_id": null,
+                            "source_material_id": fixture_material_id(),
+                            "anchor_byte": 0,
+                            "offset_start": 0,
+                            "offset_end": 12,
+                            "offset_kind": "byte",
+                            "associated_blob_ids": null
+                        }
+                    ],
+                    "next_cursor": null,
+                    "total_estimate": null
+                }),
+                "llm.route.explain" => json!({
+                    "decision": {
+                        "routing_decision_id": "018f4b6b-6a4d-7c80-8000-000000000010",
+                        "policy_id": "entity-policy",
+                        "task_kind": "entity-extraction",
+                        "prompt_id": "extract-entities",
+                        "prompt_version": "2026-05-19",
+                        "provider": "fixture-provider",
+                        "model": "fixture-model",
+                        "experiment_id": null,
+                        "bucket_key": "fixture",
+                        "decision_reason": "fixture route"
+                    }
+                }),
+                "llm.budget.report" => json!({
+                    "rows": [
+                        {
+                            "budget_ledger_id": "018f4b6b-6a4d-7c80-8000-000000000011",
+                            "routing_decision_id": "018f4b6b-6a4d-7c80-8000-000000000010",
+                            "caller": "fixture",
+                            "task_kind": "entity-extraction",
+                            "provider": "fixture-provider",
+                            "model": "fixture-model",
+                            "prompt_tokens": 12,
+                            "completion_tokens": 8,
+                            "cost_estimate_microusd": 100,
+                            "runtime_ms": 25,
+                            "status": "success",
+                            "failure_class": null,
+                            "recorded_at": "2026-05-19T12:00:00Z"
+                        }
+                    ],
+                    "total_rows": 1,
+                    "success_count": 1,
+                    "failure_count": 0,
+                    "rejected_count": 0,
+                    "prompt_tokens": 12,
+                    "completion_tokens": 8,
+                    "cost_estimate_microusd": 100,
+                    "runtime_ms": 25
+                }),
+                "curation.proposals.list" => json!({
+                    "type": "events",
+                    "events": [
+                        {
+                            "id": fixture_event_id(),
+                            "source": "curation",
+                            "event_type": "curation.proposal",
+                            "payload": {
+                                "proposal_kind": "entity_relation",
+                                "status": "pending",
+                                "candidate": "fixture relation ghp_fixture_secret should not leak"
+                            },
+                            "ts_orig": "2026-05-19T12:00:00Z",
+                            "host": "test-host",
+                            "payload_schema_id": null,
+                            "source_material_id": fixture_material_id(),
+                            "anchor_byte": 0,
+                            "offset_start": 0,
+                            "offset_end": 12,
+                            "offset_kind": "byte",
+                            "associated_blob_ids": null
+                        }
+                    ],
+                    "next_cursor": null,
+                    "total_estimate": null
+                }),
+                "dlq.list" => json!({
+                    "total_messages": 2,
+                    "total_bytes": 512,
+                    "first_seq": 10,
+                    "last_seq": 11
+                }),
+                "dlq.peek" => json!({
+                    "messages": [
+                        {
+                            "subject": "sinex.events.dlq",
+                            "sequence": 10,
+                            "retry_count": 3,
+                            "original_subject": "sinex.events.raw.fixture",
+                            "payload_preview": "[REDACTED]",
+                            "payload_redacted": true,
+                            "privacy_caveats": ["secret_redacted"]
+                        }
+                    ]
+                }),
+                "sources.list" => json!({
+                    "materials": [
+                        {
+                            "id": fixture_material_id(),
+                            "material_kind": "local_cas",
+                            "source_identifier": "/realm/data/captures/fixture.jsonl",
+                            "status": "completed",
+                            "timing_info_type": "point",
+                            "format": "jsonl",
+                            "contract_version": 1,
+                            "staged_at": "2026-05-19T12:00:00Z",
+                            "staged_by": "fixture",
+                            "size_bytes": 1024,
+                            "mime_type": "application/jsonl"
+                        }
+                    ]
+                }),
+                "sources.show" => json!({
+                    "material": {
+                        "id": fixture_material_id(),
+                        "material_kind": "local_cas",
+                        "source_identifier": "/realm/data/captures/fixture.jsonl",
+                        "status": "completed",
+                        "timing_info_type": "point",
+                        "metadata": {
+                            "secret_note": "ghp_fixture_secret should not leak"
+                        },
+                        "contract": null,
+                        "temporal_evidence": {
+                            "ledger_entries": 1,
+                            "source_types": ["fixture"]
+                        },
+                        "staged_at": "2026-05-19T12:00:00Z",
+                        "start_time": "2026-05-19T12:00:00Z",
+                        "end_time": "2026-05-19T12:01:00Z",
+                        "staged_by": "fixture",
+                        "staged_on_host": "test-host",
+                        "optional_blob_id": null,
+                        "total_bytes": 1024,
+                        "event_count": 42
+                    }
+                }),
+                "sources.coverage" => json!({
+                    "sources": [
+                        {
+                            "source_identifier": "/realm/data/captures/fixture.jsonl",
+                            "material_kind": "local_cas",
+                            "earliest_ts": "2026-05-19T12:00:00Z",
+                            "latest_ts": "2026-05-19T12:30:00Z",
+                            "event_count": 42,
+                            "material_count": 3
+                        }
+                    ]
+                }),
+                "sources.presets.list" => json!({
+                    "presets": [
+                        {
+                            "name": "terminal.atuin.default",
+                            "description": "Fixture Atuin history preset",
+                            "source_family": "terminal",
+                            "input_shape_kind": "sqlite",
+                            "material_format_hint": "sqlite",
+                            "resolver_preset": "atuin-history"
+                        }
+                    ]
+                }),
+                "sources.bindings.list" => json!({
+                    "bindings": [
+                        {
+                            "id": "terminal-atuin-history",
+                            "name": "Atuin history",
+                            "source_family": "terminal",
+                            "binding_mode": "nix",
+                            "input_shape_kind": "sqlite",
+                            "enabled": true,
+                            "status": "configured",
+                            "last_error": null,
+                            "created_at": "2026-05-19T12:00:00Z"
+                        }
+                    ]
+                }),
+                "ops.list" => json!({
+                    "operations": [
+                        fixture_operation()
+                    ]
+                }),
+                "ops.get" => json!({
+                    "operation": fixture_operation()
+                }),
+                "lifecycle.status" => json!({
+                    "tiers": [
+                        {
+                            "tier": "live",
+                            "event_count": 42,
+                            "oldest_ts": "2026-05-19T12:00:00Z",
+                            "newest_ts": "2026-05-19T12:30:00Z",
+                            "distinct_sources": 7
+                        }
+                    ],
+                    "total_events": 42
+                }),
+                "gitops.list_sources" => json!({
+                    "sources": [
+                        {
+                            "id": "018f4b6b-6a4d-7c80-8000-000000000012",
+                            "repository_url": "https://example.invalid/sinex-schemas.git",
+                            "branch": "main",
+                            "path_pattern": "schemas/**/*.json",
+                            "sync_enabled": true,
+                            "last_sync_at": "2026-05-19T12:00:00Z",
+                            "last_sync_commit": "abcdef123456",
+                            "sync_frequency_minutes": 60
+                        }
+                    ]
+                }),
+                "audit.get" => json!({
+                    "audit_trail": {
+                        "operation": fixture_operation(),
+                        "affected_events": [
+                            {
+                                "id": fixture_event_id(),
+                                "source": "fixture",
+                                "event_type": "fixture.event",
+                                "ts_orig": "2026-05-19T12:00:00Z",
+                                "ts_coided": "2026-05-19T12:00:01Z",
+                                "tier": "live",
+                                "provenance_operation_id": fixture_operation_id()
+                            }
+                        ]
+                    },
+                    "event_count": 1,
+                    "next_cursor": null,
+                    "has_more": false
+                }),
+                "coordination.list_instances" => json!({
+                    "instances": [
+                        fixture_instance(true)
+                    ]
+                }),
+                "coordination.get_leader" => json!({
+                    "leader": fixture_instance(true)
+                }),
+                "coordination.instance_health" => json!({
+                    "instance": fixture_instance(true),
+                    "healthy": true,
+                    "last_error": null
+                }),
+                "shadow.list" => json!({
+                    "consumers": [
+                        {
+                            "consumer_name": "dev-fixture",
+                            "stream_name": "EVENTS",
+                            "subject_filter": "sinex.events.raw.fixture",
+                            "num_pending": 2,
+                            "first_sequence": 10
+                        }
+                    ]
+                }),
+                "system.ping" => json!("pong"),
+                "system.version" => json!("0.4.2"),
                 other => {
                     return ResponseTemplate::new(400).set_body_json(json!({
                         "jsonrpc": "2.0",
@@ -1249,6 +2588,37 @@ fn fixture_semantic_candidate_lane_id() -> &'static str {
 
 fn fixture_semantic_diff_id() -> &'static str {
     "018f4b6b-6a4d-7c80-8000-000000000009"
+}
+
+fn fixture_instance_id() -> &'static str {
+    "gateway-fixture"
+}
+
+fn fixture_instance(is_leader: bool) -> Value {
+    json!({
+        "instance_id": fixture_instance_id(),
+        "node_type": "service",
+        "hostname": "test-host",
+        "last_heartbeat": "2026-05-19T12:00:00Z",
+        "is_leader": is_leader
+    })
+}
+
+fn fixture_operation() -> Value {
+    json!({
+        "id": fixture_operation_id(),
+        "operation_type": "replay",
+        "operator": "fixture",
+        "scope": {
+            "node_id": "terminal.atuin-history"
+        },
+        "result_status": "running",
+        "result_message": null,
+        "preview_summary": {
+            "total_events": 12
+        },
+        "duration_ms": 42
+    })
 }
 
 fn fixture_replay_operation(state: &str) -> Value {

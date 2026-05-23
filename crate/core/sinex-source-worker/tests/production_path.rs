@@ -1,22 +1,7 @@
 //! Production-path test harness root.
 //!
-//! Wave B subagents add per-source-unit `case!(...)` invocations inside the
-//! fenced regions in `obligations/initial_ingestion.rs` and
-//! `obligations/privacy.rs`.
-//!
-//! # Usage
-//!
-//! ```rust,ignore
-//! use crate::production_path::case;
-//!
-//! // In the appropriate obligation file, inside the fenced region for your domain:
-//! case! {
-//!     source_unit_id: "terminal.atuin-history",
-//!     adapter_kind: AppendOnlyFile,
-//!     fixture_data: b"2024-01-15 14:23:45\techo hello\n",
-//!     expected_event_types: &["shell.command"],
-//! }
-//! ```
+//! Per-source-unit proof modules call `_run_case(...)` with fixture data,
+//! expected event types, and the obligation set they want to exercise.
 //!
 //! # Adapter kinds
 //!
@@ -53,104 +38,11 @@ pub enum AdapterKind {
     UnixSocket,
 }
 
-// ---------------------------------------------------------------------------
-// case! macro
-// ---------------------------------------------------------------------------
-
-/// Declare a production-path test case for a source unit.
-///
-/// # Parameters
-///
-/// - `source_unit_id` — the registered source unit id, e.g. `"terminal.atuin-history"`
-/// - `adapter_kind` — which fixture type to build (one of the `AdapterKind` variants)
-/// - `fixture_data` — raw bytes (for file adapters) or adapter-specific seed type
-/// - `expected_event_types` — slice of event type strings to verify appear in `core.events`
-/// - `obligations` (optional) — comma-separated list of obligation sets to run;
-///   defaults to `[initial_ingestion, privacy]`
-///
-/// # Example
-///
-/// ```rust,ignore
-/// // In a #[sinex_test] body, inside a fenced region in initial_ingestion.rs:
-/// let failures = case! {
-///     source_unit_id: "terminal.atuin-history",
-///     adapter_kind: AppendOnlyFile,
-///     fixture_data: b"2024-01-15 14:23:45\techo hello\n",
-///     expected_event_types: &["shell.command"],
-/// }.await;
-/// assert!(failures.is_empty(), "{failures:?}");
-/// ```
-///
-/// ```rust,ignore
-/// let failures = case! {
-///     source_unit_id: "browser.firefox-history",
-///     adapter_kind: SqliteRow,
-///     fixture_data: b"INSERT ...",
-///     expected_event_types: &["webhistory.page.visited"],
-///     obligations: [initial_ingestion, replay, privacy],
-/// }.await;
-/// assert!(failures.is_empty(), "{failures:?}");
-/// ```
-#[allow(unused_macros)]
-macro_rules! case {
-    // Full form: explicit obligation list
-    (
-        source_unit_id: $unit_id:expr,
-        adapter_kind: $kind:ident,
-        fixture_data: $data:expr,
-        expected_event_types: $types:expr,
-        obligations: [$($obligation:ident),+ $(,)?] $(,)?
-    ) => {
-        crate::production_path::_run_case(
-            $unit_id,
-            crate::production_path::AdapterKind::$kind,
-            $data,
-            $types,
-            &[$(stringify!($obligation)),+],
-        )
-    };
-
-    // Short form: default obligations (initial_ingestion + privacy)
-    (
-        source_unit_id: $unit_id:expr,
-        adapter_kind: $kind:ident,
-        fixture_data: $data:expr,
-        expected_event_types: $types:expr $(,)?
-    ) => {
-        crate::production_path::_run_case(
-            $unit_id,
-            crate::production_path::AdapterKind::$kind,
-            $data,
-            $types,
-            &["initial_ingestion", "privacy"],
-        )
-    };
-
-    // Full-coverage form: exercises every obligation the harness knows about.
-    // Use for Wave-B subagents to cover initial_ingestion, replay, drain,
-    // isolation, and privacy with a single invocation.
-    (
-        source_unit_id: $unit_id:expr,
-        adapter_kind: $kind:ident,
-        fixture_data: $data:expr,
-        expected_event_types: $types:expr,
-        obligations: all $(,)?
-    ) => {
-        crate::production_path::_run_case(
-            $unit_id,
-            crate::production_path::AdapterKind::$kind,
-            $data,
-            $types,
-            $crate::production_path::ALL_OBLIGATIONS,
-        )
-    };
-}
-
 /// Canonical list of every obligation supported by the harness.
 ///
-/// Wave-B per-source-unit tests use this via `obligations: all` in the
-/// `case!` macro to get full coverage in one line. Update this list (and
-/// `_run_obligation`) whenever a new obligation family is added.
+/// Per-source-unit tests pass this to `_run_case(...)` when they need full
+/// coverage. Update this list and `_run_obligation` whenever a new obligation
+/// family is added.
 pub const ALL_OBLIGATIONS: &[&str] = &[
     "initial_ingestion",
     "replay",
@@ -159,17 +51,13 @@ pub const ALL_OBLIGATIONS: &[&str] = &[
     "privacy",
 ];
 
-/// Re-export the `case!` macro so submodules can use it via `use`.
-#[allow(unused_imports)]
-pub(crate) use case;
-
 // ---------------------------------------------------------------------------
 // Internal case runner
 // ---------------------------------------------------------------------------
 
 /// Internal: runs the named obligation set against the given fixture.
 ///
-/// Called by the `case!` macro. Not intended for direct use.
+/// Called by per-source-unit production-path tests.
 ///
 /// Returns a list of failures as strings. An empty vec means all obligations
 /// passed. The caller (typically a `#[sinex_test]`) should assert this is empty.

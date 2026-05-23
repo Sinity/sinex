@@ -321,7 +321,7 @@ impl<I: IngestorNode> IngestorNodeAdapter<I> {
                 // a hot loop. Distinguishing this from generic Err propagation
                 // preserves the Settlement→action mapping the policy intended.
                 if let Some(drain) = self.shutdown_tx.as_ref() {
-                    drain.request_drain_and_warn(self.ingestor.name());
+                    let _ = drain.request_drain_and_warn(self.ingestor.name());
                 }
                 warn!(
                     node = %self.ingestor.name(),

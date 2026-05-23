@@ -26,7 +26,7 @@
 //!
 //! ## Per-domain fenced regions
 //!
-//! Wave B subagents add `case!(...)` calls inside the fence for their domain.
+//! Per-source-unit modules call `_run_case(...)` directly.
 
 use crate::AdapterKind;
 use sinex_primitives::Uuid;
@@ -104,23 +104,23 @@ pub async fn run(
 }
 
 // =============================================================================
-// Per-domain fenced regions — Wave B adds case!() invocations here
+// Per-domain fenced regions — production-path cases live here.
 // =============================================================================
 
 // === terminal ===
-// (Wave B terminal subagent adds case! invocations here)
+// (terminal cases live here)
 
 // === browser ===
-// (Wave B browser subagent adds case! invocations here)
+// (browser cases live here)
 
 // === document ===
-// (Wave B document subagent adds case! invocations here)
+// (document cases live here)
 
 // === fs ===
-// (Wave B fs subagent adds case! invocations here)
+// (fs cases live here)
 
 // === system ===
-// (Wave B system subagent adds case! invocations here)
+// (system cases live here)
 
 // === desktop ===
-// (Wave B desktop subagent adds case! invocations here)
+// (desktop cases live here)

@@ -5,107 +5,8 @@
 
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
-use serde_json::Value;
 use sinex_primitives::rpc::content::RetrieveBlobResponse;
-use sinex_primitives::{Id, Result, SinexError, Uuid, domain::Entity};
-
-pub(crate) struct RpcParams<'a> {
-    inner: &'a Value,
-}
-
-impl<'a> RpcParams<'a> {
-    pub(crate) fn new(inner: &'a Value) -> Self {
-        Self { inner }
-    }
-
-    pub(crate) fn require_str(&self, key: &str) -> Result<&'a str> {
-        self.inner
-            .get(key)
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| missing_or_invalid_param(key, "string"))
-    }
-
-    pub(crate) fn optional_str(&self, key: &str) -> Result<Option<&'a str>> {
-        match self.inner.get(key) {
-            None | Some(Value::Null) => Ok(None),
-            Some(value) => value
-                .as_str()
-                .map(Some)
-                .ok_or_else(|| invalid_param_type(key, "string")),
-        }
-    }
-
-    pub(crate) fn optional_bool(&self, key: &str) -> Result<Option<bool>> {
-        match self.inner.get(key) {
-            None | Some(Value::Null) => Ok(None),
-            Some(value) => value
-                .as_bool()
-                .map(Some)
-                .ok_or_else(|| invalid_param_type(key, "boolean")),
-        }
-    }
-
-    pub(crate) fn optional_array(&self, key: &str) -> Result<Option<&'a [Value]>> {
-        match self.inner.get(key) {
-            None | Some(Value::Null) => Ok(None),
-            Some(value) => value
-                .as_array()
-                .map(|items| Some(items.as_slice()))
-                .ok_or_else(|| invalid_param_type(key, "array")),
-        }
-    }
-
-    pub(crate) fn optional_object(
-        &self,
-        key: &str,
-    ) -> Result<Option<&'a serde_json::Map<String, Value>>> {
-        match self.inner.get(key) {
-            None | Some(Value::Null) => Ok(None),
-            Some(value) => value
-                .as_object()
-                .map(Some)
-                .ok_or_else(|| invalid_param_type(key, "object")),
-        }
-    }
-
-    pub(crate) fn optional_i64(&self, key: &str) -> Result<Option<i64>> {
-        match self.inner.get(key) {
-            None | Some(Value::Null) => Ok(None),
-            Some(value) => value
-                .as_i64()
-                .map(Some)
-                .ok_or_else(|| invalid_param_type(key, "integer")),
-        }
-    }
-
-    pub(crate) fn require_value(&self, key: &str) -> Result<&'a Value> {
-        self.inner.get(key).ok_or_else(|| {
-            SinexError::validation("missing parameter").with_context("parameter", key)
-        })
-    }
-
-    pub(crate) fn require_uuid(&self, key: &str) -> Result<Uuid> {
-        let value = self.require_str(key)?;
-        value.parse::<Uuid>().map_err(|error| {
-            SinexError::validation("invalid UUIDv7 parameter")
-                .with_context("parameter", key)
-                .with_context("value", value)
-                .with_std_error(&error)
-        })
-    }
-}
-
-fn missing_or_invalid_param(key: &str, expected_type: &str) -> SinexError {
-    SinexError::validation("missing or invalid parameter")
-        .with_context("parameter", key)
-        .with_context("expected_type", expected_type)
-}
-
-fn invalid_param_type(key: &str, expected_type: &str) -> SinexError {
-    SinexError::validation("invalid parameter type")
-        .with_context("parameter", key)
-        .with_context("expected_type", expected_type)
-}
+use sinex_primitives::{Id, Result, SinexError, domain::Entity};
 
 // Default values for content/blob handling
 pub(crate) const DEFAULT_BLOB_FILENAME: &str = "content.txt";
@@ -212,9 +113,7 @@ fn max_base64_length(limit_bytes: usize) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
     use sinex_db::models::blob::Blob;
-    use sinex_primitives::error::ErrorClass;
     use xtask::sandbox::sinex_test;
 
     #[sinex_test]
@@ -234,39 +133,6 @@ mod tests {
             Some("application/octet-stream")
         );
         assert_eq!(response.size, 2);
-        Ok(())
-    }
-
-    #[sinex_test]
-    async fn rpc_params_uuid_parses_input() -> TestResult<()> {
-        let id = Uuid::now_v7();
-        let params = json!({"operation_id": id.to_string()});
-        let rpc_params = RpcParams::new(&params);
-        assert_eq!(rpc_params.require_uuid("operation_id").unwrap(), id);
-
-        let invalid = json!({"operation_id": "not-uuid"});
-        let rpc_params = RpcParams::new(&invalid);
-        let error = rpc_params.require_uuid("operation_id").unwrap_err();
-        assert_eq!(error.error_class(), ErrorClass::DataError);
-        Ok(())
-    }
-
-    #[sinex_test]
-    async fn rpc_params_optional_values_reject_wrong_types() -> TestResult<()> {
-        let params = json!({
-            "name": ["not-a-string"],
-            "enabled": "not-a-bool",
-            "limit": "not-an-int"
-        });
-        let rpc_params = RpcParams::new(&params);
-
-        for error in [
-            rpc_params.optional_str("name").unwrap_err(),
-            rpc_params.optional_bool("enabled").unwrap_err(),
-            rpc_params.optional_i64("limit").unwrap_err(),
-        ] {
-            assert_eq!(error.error_class(), ErrorClass::DataError);
-        }
         Ok(())
     }
 }

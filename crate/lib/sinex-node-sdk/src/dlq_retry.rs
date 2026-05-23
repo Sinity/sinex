@@ -17,7 +17,6 @@ use tracing::{error, info, warn};
 // Default DLQ retry configuration values
 const DEFAULT_DLQ_CONSUMER_NAME: &str = "dlq-retry-consumer";
 const DEFAULT_DLQ_BATCH_SIZE: usize = 10;
-const DEFAULT_DLQ_RETRY_DELAY: Seconds = Seconds::from_secs(60);
 const DEFAULT_DLQ_ACK_WAIT: Seconds = Seconds::from_secs(60);
 const DEFAULT_DLQ_INTER_BATCH_DELAY_MS: u64 = 200;
 

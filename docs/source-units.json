@@ -842,6 +842,40 @@
       "dedicated_build_rationale": null
     },
     {
+      "subject": "source_unit:instruction-expectation-reconciler",
+      "id": "instruction-expectation-reconciler",
+      "domain": "derived",
+      "role": "derived_node",
+      "modes": [
+        "continuous"
+      ],
+      "acquisition_shape": "append_stream",
+      "material_policy": "synthesis_provenance",
+      "checkpoint_policy": "append_stream_cursor",
+      "occurrence_policy": "uuid5:(instruction_id, desired_event_source, desired_event_type)",
+      "output_event_types": [
+        {
+          "source": "runtime.instruction",
+          "event_type": "expectation.status"
+        }
+      ],
+      "privacy_context": "sensitive",
+      "retention_policy": "forever",
+      "resource_profile": "continuous",
+      "access_policy": "event_stream_read",
+      "service_policy": "dedicated_instance:on-failure",
+      "runner_pack": "process",
+      "package_impact": "no_new_output",
+      "implementation_mode": "rust_in_pack:process",
+      "proof_obligations": [],
+      "crate_impact": "0",
+      "binary_impact": "0",
+      "nix_output_impact": "0",
+      "derivation_impact": "0",
+      "sqlx_validation_impact": "0",
+      "dedicated_build_rationale": null
+    },
+    {
       "subject": "source_unit:integration.polylogue",
       "id": "integration.polylogue",
       "domain": "integration",
@@ -2093,12 +2127,12 @@
       ],
       "privacy_context": "sensitive",
       "retention_policy": "forever",
-      "resource_profile": "continuous",
+      "resource_profile": "on_demand",
       "access_policy": "personal_irc_logs",
-      "service_policy": "dedicated_instance:on-failure",
-      "runner_pack": "",
-      "package_impact": "",
-      "implementation_mode": "",
+      "service_policy": "invoked_on_demand",
+      "runner_pack": "source-worker",
+      "package_impact": "weechat_message_source_unit",
+      "implementation_mode": "rust_in_pack:source-worker",
       "proof_obligations": [
         "anchor_line"
       ],
@@ -2188,19 +2222,11 @@
   ],
   "runner_packs": [
     {
-      "id": "",
-      "source_unit_ids": [
-        "weechat.message"
-      ],
-      "shared_binary": "",
-      "source_unit_count": 1
-    },
-    {
       "id": "external",
       "source_unit_ids": [
         "integration.polylogue"
       ],
-      "shared_binary": "external",
+      "shared_binary": "<external>",
       "source_unit_count": 1
     },
     {
@@ -2228,13 +2254,14 @@
         "entity-resolver",
         "health",
         "hourly-summarizer",
+        "instruction-expectation-reconciler",
         "relation-extractor",
         "session-detector",
         "tag-applier",
         "terminal-canonicalizer"
       ],
       "shared_binary": "sinex-process",
-      "source_unit_count": 12
+      "source_unit_count": 13
     },
     {
       "id": "source-worker",
@@ -2270,11 +2297,12 @@
         "terminal.text-history",
         "terminal.zsh-history",
         "weechat",
+        "weechat.message",
         "wykop-entries",
         "wykop-entry-comments"
       ],
-      "shared_binary": "source-worker",
-      "source_unit_count": 33
+      "shared_binary": "sinex-source-worker",
+      "source_unit_count": 34
     }
   ],
   "services": [
@@ -2282,7 +2310,7 @@
       "source_unit_id": "ai-session-chatgpt",
       "service_name": "sinex-source@ai-session-chatgpt",
       "runner_pack": "source-worker",
-      "binary": "source-worker",
+      "binary": "sinex-source-worker",
       "checkpoint_identity": "ai-session-chatgpt",
       "control_identity": "ai-session-chatgpt",
       "host_identity": "runtime_hostname"
@@ -2291,7 +2319,7 @@
       "source_unit_id": "ai-session-claude",
       "service_name": "sinex-source@ai-session-claude",
       "runner_pack": "source-worker",
-      "binary": "source-worker",
+      "binary": "sinex-source-worker",
       "checkpoint_identity": "ai-session-claude",
       "control_identity": "ai-session-claude",
       "host_identity": "runtime_hostname"
@@ -2318,7 +2346,7 @@
       "source_unit_id": "browser.history",
       "service_name": "sinex-source@browser.history",
       "runner_pack": "source-worker",
-      "binary": "source-worker",
+      "binary": "sinex-source-worker",
       "checkpoint_identity": "browser.history",
       "control_identity": "browser.history",
       "host_identity": "runtime_hostname"
@@ -2336,7 +2364,7 @@
       "source_unit_id": "desktop.activitywatch",
       "service_name": "sinex-source@desktop.activitywatch",
       "runner_pack": "source-worker",
-      "binary": "source-worker",
+      "binary": "sinex-source-worker",
       "checkpoint_identity": "desktop.activitywatch",
       "control_identity": "desktop.activitywatch",
       "host_identity": "runtime_hostname"
@@ -2345,7 +2373,7 @@
       "source_unit_id": "desktop.clipboard",
       "service_name": "sinex-source@desktop.clipboard",
       "runner_pack": "source-worker",
-      "binary": "source-worker",
+      "binary": "sinex-source-worker",
       "checkpoint_identity": "desktop.clipboard",
       "control_identity": "desktop.clipboard",
       "host_identity": "runtime_hostname"
@@ -2354,7 +2382,7 @@
       "source_unit_id": "desktop.window-manager",
       "service_name": "sinex-source@desktop.window-manager",
       "runner_pack": "source-worker",
-      "binary": "source-worker",
+      "binary": "sinex-source-worker",
       "checkpoint_identity": "desktop.window-manager",
       "control_identity": "desktop.window-manager",
       "host_identity": "runtime_hostname"
@@ -2363,7 +2391,7 @@
       "source_unit_id": "docs-library-index",
       "service_name": "sinex-source@docs-library-index",
       "runner_pack": "source-worker",
-      "binary": "source-worker",
+      "binary": "sinex-source-worker",
       "checkpoint_identity": "docs-library-index",
       "control_identity": "docs-library-index",
       "host_identity": "runtime_hostname"
@@ -2381,7 +2409,7 @@
       "source_unit_id": "document.staging",
       "service_name": "sinex-source@document.staging",
       "runner_pack": "source-worker",
-      "binary": "source-worker",
+      "binary": "sinex-source-worker",
       "checkpoint_identity": "document.staging",
       "control_identity": "document.staging",
       "host_identity": "runtime_hostname"
@@ -2417,7 +2445,7 @@
       "source_unit_id": "facebook-messenger-thread",
       "service_name": "sinex-source@facebook-messenger-thread",
       "runner_pack": "source-worker",
-      "binary": "source-worker",
+      "binary": "sinex-source-worker",
       "checkpoint_identity": "facebook-messenger-thread",
       "control_identity": "facebook-messenger-thread",
       "host_identity": "runtime_hostname"
@@ -2426,7 +2454,7 @@
       "source_unit_id": "fs",
       "service_name": "sinex-source@fs",
       "runner_pack": "source-worker",
-      "binary": "source-worker",
+      "binary": "sinex-source-worker",
       "checkpoint_identity": "fs",
       "control_identity": "fs",
       "host_identity": "runtime_hostname"
@@ -2435,7 +2463,7 @@
       "source_unit_id": "git-commit-history",
       "service_name": "sinex-source@git-commit-history",
       "runner_pack": "source-worker",
-      "binary": "source-worker",
+      "binary": "sinex-source-worker",
       "checkpoint_identity": "git-commit-history",
       "control_identity": "git-commit-history",
       "host_identity": "runtime_hostname"
@@ -2453,7 +2481,7 @@
       "source_unit_id": "hledger-journal",
       "service_name": "sinex-source@hledger-journal",
       "runner_pack": "source-worker",
-      "binary": "source-worker",
+      "binary": "sinex-source-worker",
       "checkpoint_identity": "hledger-journal",
       "control_identity": "hledger-journal",
       "host_identity": "runtime_hostname"
@@ -2468,10 +2496,19 @@
       "host_identity": "runtime_hostname"
     },
     {
+      "source_unit_id": "instruction-expectation-reconciler",
+      "service_name": "sinex-source@instruction-expectation-reconciler",
+      "runner_pack": "process",
+      "binary": "sinex-process",
+      "checkpoint_identity": "instruction-expectation-reconciler",
+      "control_identity": "instruction-expectation-reconciler",
+      "host_identity": "runtime_hostname"
+    },
+    {
       "source_unit_id": "integration.polylogue",
       "service_name": "sinex-source@integration.polylogue",
       "runner_pack": "external",
-      "binary": "external",
+      "binary": "<external>",
       "checkpoint_identity": "integration.polylogue",
       "control_identity": "integration.polylogue",
       "host_identity": "runtime_hostname"
@@ -2480,7 +2517,7 @@
       "source_unit_id": "knowledgebase-vault",
       "service_name": "sinex-source@knowledgebase-vault",
       "runner_pack": "source-worker",
-      "binary": "source-worker",
+      "binary": "sinex-source-worker",
       "checkpoint_identity": "knowledgebase-vault",
       "control_identity": "knowledgebase-vault",
       "host_identity": "runtime_hostname"
@@ -2489,7 +2526,7 @@
       "source_unit_id": "noop",
       "service_name": "sinex-source@noop",
       "runner_pack": "source-worker",
-      "binary": "source-worker",
+      "binary": "sinex-source-worker",
       "checkpoint_identity": "noop",
       "control_identity": "noop",
       "host_identity": "runtime_hostname"
@@ -2498,7 +2535,7 @@
       "source_unit_id": "raindrop-bookmarks",
       "service_name": "sinex-source@raindrop-bookmarks",
       "runner_pack": "source-worker",
-      "binary": "source-worker",
+      "binary": "sinex-source-worker",
       "checkpoint_identity": "raindrop-bookmarks",
       "control_identity": "raindrop-bookmarks",
       "host_identity": "runtime_hostname"
@@ -2507,7 +2544,7 @@
       "source_unit_id": "reddit-gdpr-comments",
       "service_name": "sinex-source@reddit-gdpr-comments",
       "runner_pack": "source-worker",
-      "binary": "source-worker",
+      "binary": "sinex-source-worker",
       "checkpoint_identity": "reddit-gdpr-comments",
       "control_identity": "reddit-gdpr-comments",
       "host_identity": "runtime_hostname"
@@ -2516,7 +2553,7 @@
       "source_unit_id": "reddit-gdpr-posts",
       "service_name": "sinex-source@reddit-gdpr-posts",
       "runner_pack": "source-worker",
-      "binary": "source-worker",
+      "binary": "sinex-source-worker",
       "checkpoint_identity": "reddit-gdpr-posts",
       "control_identity": "reddit-gdpr-posts",
       "host_identity": "runtime_hostname"
@@ -2597,7 +2634,7 @@
       "source_unit_id": "sleep-merged-summary",
       "service_name": "sinex-source@sleep-merged-summary",
       "runner_pack": "source-worker",
-      "binary": "source-worker",
+      "binary": "sinex-source-worker",
       "checkpoint_identity": "sleep-merged-summary",
       "control_identity": "sleep-merged-summary",
       "host_identity": "runtime_hostname"
@@ -2606,7 +2643,7 @@
       "source_unit_id": "spotify-extended-history",
       "service_name": "sinex-source@spotify-extended-history",
       "runner_pack": "source-worker",
-      "binary": "source-worker",
+      "binary": "sinex-source-worker",
       "checkpoint_identity": "spotify-extended-history",
       "control_identity": "spotify-extended-history",
       "host_identity": "runtime_hostname"
@@ -2615,7 +2652,7 @@
       "source_unit_id": "system.dbus",
       "service_name": "sinex-source@system.dbus",
       "runner_pack": "source-worker",
-      "binary": "source-worker",
+      "binary": "sinex-source-worker",
       "checkpoint_identity": "system.dbus",
       "control_identity": "system.dbus",
       "host_identity": "runtime_hostname"
@@ -2624,7 +2661,7 @@
       "source_unit_id": "system.journald",
       "service_name": "sinex-source@system.journald",
       "runner_pack": "source-worker",
-      "binary": "source-worker",
+      "binary": "sinex-source-worker",
       "checkpoint_identity": "system.journald",
       "control_identity": "system.journald",
       "host_identity": "runtime_hostname"
@@ -2633,7 +2670,7 @@
       "source_unit_id": "system.monitor",
       "service_name": "sinex-source@system.monitor",
       "runner_pack": "source-worker",
-      "binary": "source-worker",
+      "binary": "sinex-source-worker",
       "checkpoint_identity": "system.monitor",
       "control_identity": "system.monitor",
       "host_identity": "runtime_hostname"
@@ -2642,7 +2679,7 @@
       "source_unit_id": "system.systemd",
       "service_name": "sinex-source@system.systemd",
       "runner_pack": "source-worker",
-      "binary": "source-worker",
+      "binary": "sinex-source-worker",
       "checkpoint_identity": "system.systemd",
       "control_identity": "system.systemd",
       "host_identity": "runtime_hostname"
@@ -2651,7 +2688,7 @@
       "source_unit_id": "system.udev",
       "service_name": "sinex-source@system.udev",
       "runner_pack": "source-worker",
-      "binary": "source-worker",
+      "binary": "sinex-source-worker",
       "checkpoint_identity": "system.udev",
       "control_identity": "system.udev",
       "host_identity": "runtime_hostname"
@@ -2678,7 +2715,7 @@
       "source_unit_id": "terminal.atuin-history",
       "service_name": "sinex-source@terminal.atuin-history",
       "runner_pack": "source-worker",
-      "binary": "source-worker",
+      "binary": "sinex-source-worker",
       "checkpoint_identity": "terminal.atuin-history",
       "control_identity": "terminal.atuin-history",
       "host_identity": "runtime_hostname"
@@ -2687,7 +2724,7 @@
       "source_unit_id": "terminal.bash-history",
       "service_name": "sinex-source@terminal.bash-history",
       "runner_pack": "source-worker",
-      "binary": "source-worker",
+      "binary": "sinex-source-worker",
       "checkpoint_identity": "terminal.bash-history",
       "control_identity": "terminal.bash-history",
       "host_identity": "runtime_hostname"
@@ -2696,7 +2733,7 @@
       "source_unit_id": "terminal.fish-history",
       "service_name": "sinex-source@terminal.fish-history",
       "runner_pack": "source-worker",
-      "binary": "source-worker",
+      "binary": "sinex-source-worker",
       "checkpoint_identity": "terminal.fish-history",
       "control_identity": "terminal.fish-history",
       "host_identity": "runtime_hostname"
@@ -2705,7 +2742,7 @@
       "source_unit_id": "terminal.monitor",
       "service_name": "sinex-source@terminal.monitor",
       "runner_pack": "source-worker",
-      "binary": "source-worker",
+      "binary": "sinex-source-worker",
       "checkpoint_identity": "terminal.monitor",
       "control_identity": "terminal.monitor",
       "host_identity": "runtime_hostname"
@@ -2714,7 +2751,7 @@
       "source_unit_id": "terminal.text-history",
       "service_name": "sinex-source@terminal.text-history",
       "runner_pack": "source-worker",
-      "binary": "source-worker",
+      "binary": "sinex-source-worker",
       "checkpoint_identity": "terminal.text-history",
       "control_identity": "terminal.text-history",
       "host_identity": "runtime_hostname"
@@ -2723,7 +2760,7 @@
       "source_unit_id": "terminal.zsh-history",
       "service_name": "sinex-source@terminal.zsh-history",
       "runner_pack": "source-worker",
-      "binary": "source-worker",
+      "binary": "sinex-source-worker",
       "checkpoint_identity": "terminal.zsh-history",
       "control_identity": "terminal.zsh-history",
       "host_identity": "runtime_hostname"
@@ -2732,7 +2769,7 @@
       "source_unit_id": "weechat",
       "service_name": "sinex-source@weechat",
       "runner_pack": "source-worker",
-      "binary": "source-worker",
+      "binary": "sinex-source-worker",
       "checkpoint_identity": "weechat",
       "control_identity": "weechat",
       "host_identity": "runtime_hostname"
@@ -2740,8 +2777,8 @@
     {
       "source_unit_id": "weechat.message",
       "service_name": "sinex-source@weechat.message",
-      "runner_pack": "",
-      "binary": "",
+      "runner_pack": "source-worker",
+      "binary": "sinex-source-worker",
       "checkpoint_identity": "weechat.message",
       "control_identity": "weechat.message",
       "host_identity": "runtime_hostname"
@@ -2750,7 +2787,7 @@
       "source_unit_id": "wykop-entries",
       "service_name": "sinex-source@wykop-entries",
       "runner_pack": "source-worker",
-      "binary": "source-worker",
+      "binary": "sinex-source-worker",
       "checkpoint_identity": "wykop-entries",
       "control_identity": "wykop-entries",
       "host_identity": "runtime_hostname"
@@ -2759,19 +2796,19 @@
       "source_unit_id": "wykop-entry-comments",
       "service_name": "sinex-source@wykop-entry-comments",
       "runner_pack": "source-worker",
-      "binary": "source-worker",
+      "binary": "sinex-source-worker",
       "checkpoint_identity": "wykop-entry-comments",
       "control_identity": "wykop-entry-comments",
       "host_identity": "runtime_hostname"
     }
   ],
   "package_impact": {
-    "total_source_units": 54,
-    "zero_crate_impact": 54,
-    "zero_binary_impact": 54,
-    "zero_nix_output_impact": 54,
-    "zero_derivation_impact": 54,
-    "zero_sqlx_validation_impact": 54,
+    "total_source_units": 55,
+    "zero_crate_impact": 55,
+    "zero_binary_impact": 55,
+    "zero_nix_output_impact": 55,
+    "zero_derivation_impact": 55,
+    "zero_sqlx_validation_impact": 55,
     "dedicated_build_rationales": []
   },
   "proof_obligations": [

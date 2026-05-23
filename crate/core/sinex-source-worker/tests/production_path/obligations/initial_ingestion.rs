@@ -18,9 +18,9 @@
 //!
 //! ## Per-domain fenced regions
 //!
-//! Wave B subagents add `case!(...)` calls inside the fence for their domain.
-//! Do not move or rename the fence comments — the orchestrator uses them for
-//! conflict detection.
+//! Per-source-unit modules call `_run_case(...)` directly. Do not move or
+//! rename the fence comments — the orchestrator uses them for conflict
+//! detection.
 
 use crate::AdapterKind;
 use sinex_primitives::Uuid;
@@ -91,26 +91,26 @@ pub async fn run(
 }
 
 // =============================================================================
-// Per-domain fenced regions — Wave B adds case!() invocations here
+// Per-domain fenced regions — production-path cases live here.
 // =============================================================================
 
 // === terminal ===
-// (Wave B terminal subagent adds case! invocations here)
+// (terminal cases live here)
 
 // === browser ===
-// (Wave B browser subagent adds case! invocations here)
+// (browser cases live here)
 
 // === document ===
-// (Wave B document subagent adds case! invocations here)
+// (document cases live here)
 
 // === fs ===
-// (Wave B fs subagent adds case! invocations here)
+// (fs cases live here)
 
 // === system ===
-// (Wave B system subagent adds case! invocations here)
+// (system cases live here)
 
 // === desktop ===
-// (Wave B desktop subagent adds case! invocations here)
+// (desktop cases live here)
 
 // =============================================================================
 // Canary case — weechat.message declarative parser
@@ -124,7 +124,7 @@ pub async fn run(
 // 2. Change `adapter_kind` to the appropriate `AdapterKind` variant.
 // 3. Replace `WEECHAT_FIXTURE_LINE` with fixture bytes for your source.
 // 4. Update `expected_event_types` to match your parser's output.
-// 5. Move the `case!()` call inside your domain's fenced region above.
+// 5. Move the `_run_case(...)` call inside your domain's fenced region above.
 
 /// Canary: proves `weechat.message` declarative parser round-trips through
 /// the harness end-to-end. Used as a copy-paste template for Wave B subagents.
@@ -141,8 +141,8 @@ mod canary {
     /// the production-path harness and produces `irc.message` events.
     ///
     /// This is the Wave A end-to-end proof. Wave B subagents add analogous
-    /// tests inside the fenced regions of this file (using `case!()` or by
-    /// calling `run()` directly from their own `#[sinex_test]`).
+    /// tests inside the fenced regions of this file or by calling `run()`
+    /// directly from their own `#[sinex_test]`.
     #[sinex_test]
     async fn weechat_message_canary(_ctx: TestContext) -> TestResult<()> {
         let result = super::run(

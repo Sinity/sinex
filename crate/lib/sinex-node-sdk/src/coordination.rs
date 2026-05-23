@@ -54,7 +54,6 @@
 //! ```
 
 use crate::error_helpers::unix_timestamp_secs_with_warning;
-use crate::heartbeat::HeartbeatEmitter;
 use crate::runtime::stream::NodeRuntimeState;
 use crate::version::{NodeInstance, NodeVersion};
 
@@ -755,8 +754,6 @@ pub struct WorkTracker {
     in_flight_operations: Arc<CoordinationPrimitive>,
     /// Signal to request graceful shutdown
     shutdown_requested: Arc<CoordinationPrimitive>,
-    /// Heartbeat emitter for monitoring
-    heartbeat_emitter: Option<Arc<HeartbeatEmitter>>,
     /// Notification for work completion (separate from `CoordinationPrimitive`)
     work_complete_notify: Arc<tokio::sync::Notify>,
 }
@@ -792,15 +789,8 @@ impl WorkTracker {
                 "in_flight_ops",
             )),
             shutdown_requested: Arc::new(CoordinationPrimitive::synchronizer("shutdown_signal")),
-            heartbeat_emitter: None,
             work_complete_notify: Arc::new(tokio::sync::Notify::new()),
         }
-    }
-
-    #[must_use]
-    pub fn with_heartbeat(mut self, heartbeat: Arc<HeartbeatEmitter>) -> Self {
-        self.heartbeat_emitter = Some(heartbeat);
-        self
     }
 
     /// Start a new operation (increments in-flight counter)
@@ -809,9 +799,6 @@ impl WorkTracker {
     #[must_use]
     pub fn start_operation(&self) -> WorkGuard {
         let _ = self.in_flight_operations.add(1);
-        if let Some(heartbeat) = &self.heartbeat_emitter {
-            heartbeat.increment_events_processed(1);
-        }
         WorkGuard {
             tracker: self.in_flight_operations.clone(),
             notify: self.work_complete_notify.clone(),

@@ -30,9 +30,6 @@ tracing = "0.1"
 [dependencies.mimalloc]
 workspace = true
 
-[dependencies.camino]
-workspace = true
-
 [dependencies.tokio]
 workspace = true
 features = [

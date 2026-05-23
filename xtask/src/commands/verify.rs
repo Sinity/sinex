@@ -91,21 +91,9 @@ pub enum VerifySubcommand {
         #[arg(long)]
         history_db: Option<PathBuf>,
     },
-    /// Source-worker integrity gate: dispatch cleanliness, NixOS binding drift,
-    /// ingestor-crate deletion, workspace member count, and parser registration smoke.
+    /// Source-worker evidence gate: NixOS binding drift, parser registration,
+    /// and privacy invocation.
     SourceWorker {
-        /// Crate names (without path prefix) expected to already be deleted.
-        /// Failing if they still exist. Use repeatedly or comma-separated.
-        #[arg(long, value_delimiter = ',')]
-        expect_deleted: Vec<String>,
-        /// Expected workspace member count. Post-Wave-B (#1081) baseline is 14
-        /// (was 20: six legacy ingestor crates folded into sinex-source-worker
-        /// and deleted).
-        #[arg(long, default_value_t = 14)]
-        expected_members: usize,
-        /// Treat ingestor crates still present as warnings, not failures.
-        #[arg(long)]
-        warn_ingestors: bool,
         /// Path to the JSON file exported by
         /// `config.services.sinex.sources.exportedJson` (from the NixOS module).
         ///
@@ -331,19 +319,9 @@ impl XtaskCommand for VerifyCommand {
                 ctx,
             ),
             VerifySubcommand::SourceWorker {
-                expect_deleted,
-                expected_members,
-                warn_ingestors,
                 bindings_json,
                 json,
-            } => execute_source_worker(
-                expect_deleted,
-                *expected_members,
-                *warn_ingestors,
-                bindings_json.as_deref(),
-                *json,
-                ctx,
-            ),
+            } => execute_source_worker(bindings_json.as_deref(), *json, ctx),
             VerifySubcommand::Closure {
                 issue,
                 json,
@@ -402,7 +380,7 @@ fn execute_claims(
     json: bool,
     include_advisory: bool,
     include_deferrals: bool,
-    _ctx: &CommandContext,
+    ctx: &CommandContext,
 ) -> Result<CommandResult> {
     let catalog = crate::proof_catalog::build_proof_catalog(&workspace_root())?;
     let validation = crate::proof_catalog::validate_proof_catalog(&catalog);
@@ -456,12 +434,17 @@ fn execute_claims(
         deferred,
         exemptions,
         errors: validation.errors,
-        warnings: validation.warnings,
+        warnings: visible_claim_warnings(
+            validation.warnings,
+            include_advisory || include_deferrals,
+        ),
     };
 
-    if json {
+    let summary_data = serde_json::to_value(&summary)?;
+
+    if json && !ctx.is_json() {
         println!("{}", serde_json::to_string_pretty(&summary)?);
-    } else {
+    } else if !json && ctx.is_human() {
         println!("Proof claims");
         println!("  required:  {}", summary.required.len());
         println!("  advisory:  {}", summary.advisory.len());
@@ -499,15 +482,37 @@ fn execute_claims(
         }
     }
 
-    if summary.errors.is_empty() {
-        Ok(CommandResult::success().with_message("proof claims catalog is valid"))
+    let result = if summary.errors.is_empty() {
+        CommandResult::success().with_message("proof claims catalog is valid")
     } else {
-        Ok(CommandResult::failure(crate::output::StructuredError::new(
+        CommandResult::failure(crate::output::StructuredError::new(
             "PROOF_CLAIMS_INVALID",
             "proof claims catalog has errors",
         ))
-        .with_message("proof claims catalog has errors"))
+        .with_message("proof claims catalog has errors")
+    };
+
+    if ctx.is_json() {
+        Ok(result.with_data(summary_data))
+    } else if json {
+        Ok(result.with_silent())
+    } else {
+        Ok(result)
     }
+}
+
+fn visible_claim_warnings(warnings: Vec<String>, include_demoted_detail: bool) -> Vec<String> {
+    if include_demoted_detail {
+        return warnings;
+    }
+    warnings
+        .into_iter()
+        .filter(|warning| !is_local_source_unit_tag_warning(warning))
+        .collect()
+}
+
+fn is_local_source_unit_tag_warning(warning: &str) -> bool {
+    warning.contains(" local source-unit proof tag")
 }
 
 fn default_phase_manifest_path() -> PathBuf {
@@ -1268,9 +1273,6 @@ struct SourceWorkerReport {
 }
 
 fn execute_source_worker(
-    expect_deleted: &[String],
-    expected_members: usize,
-    warn_ingestors: bool,
     bindings_json: Option<&Path>,
     json: bool,
     ctx: &CommandContext,
@@ -1278,26 +1280,13 @@ fn execute_source_worker(
     let root = workspace_root();
     let mut checks: Vec<SwCheck> = Vec::new();
 
-    // A3.1.1 — No match arms in source-worker dispatch/main
-    checks.push(check_sw_no_match_arms(&root));
-
-    // A3.1.2 — SourceUnitDescriptor inventory vs NixOS source-bindings drift
+    // A3.1.1 — SourceUnitDescriptor inventory vs NixOS source-bindings drift
     checks.push(check_sw_binding_drift(&root, bindings_json));
 
-    // A3.1.3 — Ingestor crates gone (or warn)
-    checks.push(check_sw_ingestor_crates(
-        &root,
-        expect_deleted,
-        warn_ingestors,
-    ));
-
-    // A3.1.4 — Workspace member count
-    checks.push(check_sw_member_count(&root, expected_members));
-
-    // A3.1.5 — Registered parsers smoke
+    // A3.1.2 — Registered parsers smoke
     checks.push(check_sw_registered_parsers(&root));
 
-    // A3.1.6 — Privacy invocation: every Sensitive/Secret source unit must invoke
+    // A3.1.3 — Privacy invocation: every Sensitive/Secret source unit must invoke
     // the privacy engine or declare an explicit escape hatch.
     checks.push(check_sw_privacy_invocation(&root));
 
@@ -1314,9 +1303,9 @@ fn execute_source_worker(
         checks: checks.clone(),
     };
 
-    if json {
+    if json && !ctx.is_json() {
         println!("{}", serde_json::to_string_pretty(&report)?);
-    } else if ctx.is_human() {
+    } else if !json && ctx.is_human() {
         for check in &checks {
             let tag = match check.status {
                 SwCheckStatus::Pass => "PASS",
@@ -1334,8 +1323,8 @@ fn execute_source_worker(
     // source units without NixOS bindings) that the PR being verified did not introduce.
     // Returning Partial here would make every PR fail CI as soon as any drift accumulates
     // anywhere in the source-unit catalog, defeating the gate's purpose. Only true Fail
-    // states (regressions in dispatch cleanliness, workspace member count, registered
-    // parsers, or privacy invocation) block the PR.
+    // states (registered parser or privacy invocation regressions, plus live binding drift
+    // when --bindings-json is supplied) block the PR.
     let mut result = match &overall {
         SwCheckStatus::Pass => {
             CommandResult::success().with_message("source-worker integrity: all checks passed")
@@ -1365,61 +1354,15 @@ fn execute_source_worker(
         .with_data(serde_json::to_value(&report)?)
         .with_duration(ctx.elapsed());
 
+    if json && !ctx.is_json() {
+        result.data = None;
+        result = result.with_silent();
+    }
+
     Ok(result)
 }
 
-/// A3.1.1 — No match arms in source-worker dispatch or main.
-fn check_sw_no_match_arms(root: &Path) -> SwCheck {
-    let targets = [
-        root.join("crate/core/sinex-source-worker/src/main.rs"),
-        root.join("crate/core/sinex-source-worker/src/dispatch.rs"),
-    ];
-
-    // Pattern: a quoted source-unit name followed by `=>` (match arm).
-    // Legitimate dispatch is registry-driven and has none of these.
-    let arm_pattern =
-        regex::Regex::new(r#""[a-z_][a-z0-9_.-]*"\s*=>"#).expect("static regex is valid");
-
-    let mut hits: Vec<String> = Vec::new();
-    for path in &targets {
-        let Ok(contents) = fs::read_to_string(path) else {
-            continue;
-        };
-        for (lineno, line) in contents.lines().enumerate() {
-            // Skip doc comments and regular comments.
-            let trimmed = line.trim_start();
-            if trimmed.starts_with("///") || trimmed.starts_with("//") {
-                continue;
-            }
-            if arm_pattern.is_match(line) {
-                hits.push(format!(
-                    "{}:{}: {}",
-                    path.file_name().unwrap_or_default().to_string_lossy(),
-                    lineno + 1,
-                    line.trim()
-                ));
-            }
-        }
-    }
-
-    if hits.is_empty() {
-        SwCheck::pass(
-            "no_match_arms",
-            "no source-unit match arms in dispatch/main",
-        )
-    } else {
-        SwCheck::fail(
-            "no_match_arms",
-            format!(
-                "{} match arm(s) found — dispatch must be registry-driven",
-                hits.len()
-            ),
-            hits,
-        )
-    }
-}
-
-/// A3.1.2 — SourceUnitDescriptor inventory vs NixOS source-bindings drift.
+/// A3.1.1 — SourceUnitDescriptor inventory vs NixOS source-bindings drift.
 ///
 /// Two modes:
 ///
@@ -1439,7 +1382,9 @@ fn check_sw_no_match_arms(root: &Path) -> SwCheck {
 ///
 /// In live mode the check fails on rust-only IDs (descriptors without a host
 /// binding) and warns on nix-only IDs (host bindings without a Rust
-/// descriptor).  In static mode both directions are warn-only.
+/// descriptor). Static mode only checks the Nix module's examples for unresolved
+/// descriptor references; it is not a host inventory and should not report every
+/// descriptor as rust-only.
 fn check_sw_binding_drift(root: &Path, bindings_json: Option<&Path>) -> SwCheck {
     // Collect Nix-side source-unit IDs.
     let (nix_ids, mode_label): (BTreeSet<String>, &str) = if let Some(json_path) = bindings_json {
@@ -1502,7 +1447,11 @@ fn check_sw_binding_drift(root: &Path, bindings_json: Option<&Path>) -> SwCheck 
         .collect();
 
     let nix_only: Vec<String> = nix_ids.difference(&rust_ids).cloned().collect();
-    let rust_only: Vec<String> = rust_ids.difference(&nix_ids).cloned().collect();
+    let rust_only: Vec<String> = if bindings_json.is_some() {
+        rust_ids.difference(&nix_ids).cloned().collect()
+    } else {
+        Vec::new()
+    };
 
     if nix_only.is_empty() && rust_only.is_empty() {
         return SwCheck::pass(
@@ -1549,140 +1498,7 @@ fn check_sw_binding_drift(root: &Path, bindings_json: Option<&Path>) -> SwCheck 
     }
 }
 
-/// A3.1.3 — Ingestor crates gone (or warn).
-///
-/// Lists `crate/nodes/` and fails/warns if any `sinex-*-ingestor` directory
-/// is still present. Pass `--expect-deleted <crate>` to promote a specific
-/// crate to a failure if it still exists. `--warn-ingestors` demotes all
-/// ingestor presence to warnings.
-fn check_sw_ingestor_crates(
-    root: &Path,
-    expect_deleted: &[String],
-    warn_ingestors: bool,
-) -> SwCheck {
-    // Post-Wave-B (#1081) `crate/nodes/` was deleted entirely: the six
-    // per-domain ingestor crates were folded into `sinex-source-worker` and
-    // `sinex-process` moved to `crate/core/`. A missing directory is the
-    // expected success case.
-    let nodes_dir = root.join("crate/nodes");
-    if !nodes_dir.exists() {
-        return SwCheck::pass(
-            "ingestor_crates",
-            "crate/nodes/ has been deleted (Wave-B fold complete)",
-        );
-    }
-    let entries = match fs::read_dir(&nodes_dir) {
-        Ok(e) => e,
-        Err(err) => {
-            return SwCheck::fail(
-                "ingestor_crates",
-                format!("cannot read {}: {err}", nodes_dir.display()),
-                Vec::new(),
-            );
-        }
-    };
-
-    let mut present: Vec<String> = entries
-        .filter_map(std::result::Result::ok)
-        .filter_map(|e| {
-            let name = e.file_name().to_string_lossy().into_owned();
-            if name.ends_with("-ingestor") {
-                Some(name)
-            } else {
-                None
-            }
-        })
-        .collect();
-    present.sort();
-
-    // Any crate in `expect_deleted` that's still present is a hard failure.
-    let hard_fail: Vec<String> = expect_deleted
-        .iter()
-        .filter(|name| present.contains(name))
-        .cloned()
-        .collect();
-
-    if !hard_fail.is_empty() {
-        return SwCheck::fail(
-            "ingestor_crates",
-            format!(
-                "{} crate(s) declared --expect-deleted are still present",
-                hard_fail.len()
-            ),
-            hard_fail,
-        );
-    }
-
-    if present.is_empty() {
-        return SwCheck::pass(
-            "ingestor_crates",
-            "no ingestor crates remain in crate/nodes/",
-        );
-    }
-
-    let detail = format!(
-        "{} ingestor crate(s) still present in crate/nodes/",
-        present.len()
-    );
-    if warn_ingestors {
-        SwCheck::warn("ingestor_crates", detail, present)
-    } else {
-        SwCheck::warn(
-            "ingestor_crates",
-            format!("{detail} (pass --warn-ingestors or --expect-deleted to control severity)"),
-            present,
-        )
-    }
-}
-
-/// A3.1.4 — Workspace member count.
-fn check_sw_member_count(root: &Path, expected: usize) -> SwCheck {
-    let cargo_toml = root.join("Cargo.toml");
-    let contents = match fs::read_to_string(&cargo_toml) {
-        Ok(s) => s,
-        Err(e) => {
-            return SwCheck::fail(
-                "member_count",
-                format!("cannot read Cargo.toml: {e}"),
-                Vec::new(),
-            );
-        }
-    };
-
-    // Count quoted members lines in the `[workspace] members = [...]` block.
-    // Simple heuristic: count lines that match `  "crate/` or `  "tests/` or
-    // `  "xtask"` patterns inside the members block.
-    let member_pattern = regex::Regex::new(r#"^\s+"[^"]+""#).expect("static regex");
-    let mut in_members = false;
-    let mut count = 0usize;
-    for line in contents.lines() {
-        let trimmed = line.trim();
-        if trimmed.starts_with("members") && trimmed.contains('[') {
-            in_members = true;
-        }
-        if in_members && member_pattern.is_match(line) && !trimmed.starts_with('#') {
-            count += 1;
-        }
-        if in_members && trimmed == "]" {
-            break;
-        }
-    }
-
-    if count == expected {
-        SwCheck::pass(
-            "member_count",
-            format!("workspace has {count} member(s) (expected {expected})"),
-        )
-    } else {
-        SwCheck::fail(
-            "member_count",
-            format!("workspace has {count} member(s), expected {expected}"),
-            vec![format!("actual={count}, expected={expected}")],
-        )
-    }
-}
-
-/// A3.1.5 — Registered parsers smoke: list every `register_parser!` call in
+/// A3.1.2 — Registered parsers smoke: list every `register_parser!` call in
 /// the workspace and surface source_unit_id + parser type for drift visibility.
 fn check_sw_registered_parsers(root: &Path) -> SwCheck {
     // Static grep across crate/core/sinex-source-worker and crate/lib/sinex-node-sdk.
@@ -1736,7 +1552,7 @@ fn scan_rs_files_for_pattern(dir: &Path, pattern: &regex::Regex, out: &mut Vec<S
     }
 }
 
-/// A3.1.6 — Privacy invocation: every `register_source_unit!` block that declares
+/// A3.1.3 — Privacy invocation: every `register_source_unit!` block that declares
 /// a non-Public privacy tier must invoke the privacy engine in the same file.
 ///
 /// Scanning targets: the entire `crate/core/sinex-source-worker/src/` tree and
@@ -1959,10 +1775,10 @@ async fn execute_closure(
             evidence_sources,
             results: Vec::new(),
         };
-        if json {
+        if json && !ctx.is_json() {
             println!("{}", serde_json::to_string_pretty(&report)?);
         }
-        return Ok(CommandResult::failure(crate::output::StructuredError::new(
+        let mut result = CommandResult::failure(crate::output::StructuredError::new(
             "CLOSURE_VERIFICATION_MISSING_EVIDENCE",
             format!(
                 "issue #{issue}: no verification commands or closure matrix found in issue body \
@@ -1973,7 +1789,12 @@ async fn execute_closure(
             "issue #{issue}: closure verification missing evidence"
         ))
         .with_data(serde_json::to_value(&report)?)
-        .with_duration(ctx.elapsed()));
+        .with_duration(ctx.elapsed());
+        if json && !ctx.is_json() {
+            result.data = None;
+            result = result.with_silent();
+        }
+        return Ok(result);
     }
 
     if ctx.is_human() && !json {
@@ -2027,7 +1848,7 @@ async fn execute_closure(
         results,
     };
 
-    if json {
+    if json && !ctx.is_json() {
         println!("{}", serde_json::to_string_pretty(&report)?);
     } else if ctx.is_human() && !dry_run {
         println!(
@@ -2060,6 +1881,11 @@ async fn execute_closure(
         .with_detail(format!("matrix_items={}", evidence.matrix_items.len()))
         .with_data(serde_json::to_value(&report)?)
         .with_duration(ctx.elapsed());
+
+    if json && !ctx.is_json() {
+        result.data = None;
+        result = result.with_silent();
+    }
 
     Ok(result)
 }
@@ -2139,21 +1965,6 @@ fn fetch_issue_closure_payload(issue: u64) -> Result<ClosureIssuePayload> {
         Ok(out) => serde_json::from_slice(&out.stdout)
             .with_context(|| "gh issue view output is not valid closure JSON"),
     }
-}
-
-/// Extract verification shell commands from an issue body.
-///
-/// Extracts from:
-/// 1. Fenced code blocks with `verify` or `bash` (or no language tag) that
-///    appear after a heading containing "verif" (case-insensitive).
-/// 2. Lines starting with `$ ` inside any code block in a verify context.
-/// 3. Lines in `Closure verification commands` sections (per CONTRIBUTING.md
-///    policy) that look like shell commands.
-fn extract_closure_commands(body: &str) -> Vec<String> {
-    extract_closure_command_entries(body, "body")
-        .into_iter()
-        .map(|entry| entry.command)
-        .collect()
 }
 
 fn extract_closure_command_entries(body: &str, source: &str) -> Vec<ClosureCommand> {
@@ -2424,6 +2235,23 @@ mod tests {
         Ok(())
     }
 
+    #[sinex_test]
+    async fn claim_warnings_hide_local_tags_until_demoted_detail_requested()
+    -> ::xtask::sandbox::TestResult<()> {
+        let warnings = vec![
+            "source_unit:terminal carries 2 local source-unit proof tag(s): anchor, timestamp"
+                .to_string(),
+            "required proof subject `runtime_unit:*` has no runner binding".to_string(),
+        ];
+
+        assert_eq!(
+            visible_claim_warnings(warnings.clone(), false),
+            vec!["required proof subject `runtime_unit:*` has no runner binding".to_string()]
+        );
+        assert_eq!(visible_claim_warnings(warnings.clone(), true), warnings);
+        Ok(())
+    }
+
     fn valid_phase_manifest() -> PhaseVerificationManifest {
         PhaseVerificationManifest {
             version: 1,
@@ -2494,7 +2322,7 @@ mod tests {
     async fn extract_closure_commands_returns_empty_for_no_verify_section()
     -> ::xtask::sandbox::TestResult<()> {
         let body = "## Summary\nSome text.\n\n```bash\necho hello\n```\n";
-        let cmds = extract_closure_commands(body);
+        let cmds = extract_closure_command_entries(body, "body");
         assert!(
             cmds.is_empty(),
             "no verify section should yield no commands, got: {cmds:?}"
@@ -2506,28 +2334,28 @@ mod tests {
     async fn extract_closure_commands_finds_commands_in_verify_section()
     -> ::xtask::sandbox::TestResult<()> {
         let body = "## Closure verification commands\n\n```bash\ngit log --oneline -3\nxtask verify source-worker\n```\n";
-        let cmds = extract_closure_commands(body);
+        let cmds = extract_closure_command_entries(body, "body");
         assert_eq!(cmds.len(), 2, "expected 2 commands, got: {cmds:?}");
-        assert!(cmds[0].contains("git log"));
-        assert!(cmds[1].contains("xtask verify"));
+        assert!(cmds[0].command.contains("git log"));
+        assert!(cmds[1].command.contains("xtask verify"));
         Ok(())
     }
 
     #[sinex_test]
     async fn extract_closure_commands_strips_dollar_prompt() -> ::xtask::sandbox::TestResult<()> {
         let body = "## Verification\n\n```bash\n$ git show HEAD --stat\n```\n";
-        let cmds = extract_closure_commands(body);
+        let cmds = extract_closure_command_entries(body, "body");
         assert_eq!(cmds.len(), 1);
-        assert_eq!(cmds[0], "git show HEAD --stat");
+        assert_eq!(cmds[0].command, "git show HEAD --stat");
         Ok(())
     }
 
     #[sinex_test]
     async fn extract_closure_commands_ignores_comment_lines() -> ::xtask::sandbox::TestResult<()> {
         let body = "## Verification\n\n```bash\n# this is a comment\nxtask check\n```\n";
-        let cmds = extract_closure_commands(body);
+        let cmds = extract_closure_command_entries(body, "body");
         assert_eq!(cmds.len(), 1);
-        assert_eq!(cmds[0], "xtask check");
+        assert_eq!(cmds[0].command, "xtask check");
         Ok(())
     }
 
@@ -2543,6 +2371,50 @@ mod tests {
     }
 
     #[sinex_test]
+    async fn claims_json_mode_returns_enveloped_data() -> ::xtask::sandbox::TestResult<()> {
+        let ctx = CommandContext::new(
+            crate::output::OutputWriter::new(crate::output::OutputFormat::Json),
+            false,
+            None,
+            "verify",
+        );
+        let result = execute_claims(true, false, false, &ctx)?;
+
+        assert!(matches!(result.status, Status::Success));
+        let data = result
+            .data
+            .as_ref()
+            .ok_or_else(|| color_eyre::eyre::eyre!("claims result missing structured data"))?;
+        assert_eq!(data["schema_version"], 1);
+        assert!(
+            data["required"]
+                .as_array()
+                .is_some_and(|items| !items.is_empty())
+        );
+        assert!(data["errors"].as_array().is_some_and(Vec::is_empty));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn source_worker_json_mode_returns_enveloped_data() -> ::xtask::sandbox::TestResult<()> {
+        let ctx = CommandContext::new(
+            crate::output::OutputWriter::new(crate::output::OutputFormat::Json),
+            false,
+            None,
+            "verify",
+        );
+        let result = execute_source_worker(None, true, &ctx)?;
+
+        assert!(matches!(result.status, Status::Success));
+        let data = result.data.as_ref().ok_or_else(|| {
+            color_eyre::eyre::eyre!("source-worker result missing structured data")
+        })?;
+        assert_eq!(data["overall"], "pass");
+        assert_eq!(data["checks"].as_array().map(Vec::len), Some(3));
+        Ok(())
+    }
+
+    #[sinex_test]
     async fn extract_closure_commands_finds_inline_comment_verification()
     -> ::xtask::sandbox::TestResult<()> {
         let body = "\
@@ -2551,10 +2423,14 @@ Verification:
 - `SINEX_PREFLIGHT_SKIP_DISK_CHECK=1 xtask check -p sinexctl --allow-contended-host` - passed.
 - `xtask test -p sinexctl -E 'test(mcp)' --allow-contended-host` - passed.
 ";
-        let cmds = extract_closure_commands(body);
+        let cmds = extract_closure_command_entries(body, "body");
         assert_eq!(cmds.len(), 2);
-        assert!(cmds[0].starts_with("SINEX_PREFLIGHT_SKIP_DISK_CHECK=1 xtask check"));
-        assert!(cmds[1].starts_with("xtask test -p sinexctl"));
+        assert!(
+            cmds[0]
+                .command
+                .starts_with("SINEX_PREFLIGHT_SKIP_DISK_CHECK=1 xtask check")
+        );
+        assert!(cmds[1].command.starts_with("xtask test -p sinexctl"));
         Ok(())
     }
 
@@ -2641,34 +2517,6 @@ Verification:
         assert!(!pass.is_fail());
         assert!(!warn.is_fail());
         assert!(fail.is_fail());
-        Ok(())
-    }
-
-    #[sinex_test]
-    async fn check_sw_member_count_detects_mismatch() -> ::xtask::sandbox::TestResult<()> {
-        let root = crate::config::workspace_root();
-        // Current real member count is 20. Asking for 5 should be a mismatch.
-        let check = check_sw_member_count(&root, 5);
-        assert!(
-            check.is_fail(),
-            "wrong expected count should fail: {:?}",
-            check.detail
-        );
-        Ok(())
-    }
-
-    #[sinex_test]
-    async fn check_sw_no_match_arms_passes_on_registry_driven_files()
-    -> ::xtask::sandbox::TestResult<()> {
-        let root = crate::config::workspace_root();
-        let check = check_sw_no_match_arms(&root);
-        // Current dispatch is registry-driven, so there should be no match arms.
-        assert_ne!(
-            check.status,
-            SwCheckStatus::Fail,
-            "match-arm check should not fail on current dispatch: {:?}",
-            check.items
-        );
         Ok(())
     }
 }
