@@ -703,7 +703,7 @@ mod tests {
     use super::*;
     use serde_json::json;
     use sinex_primitives::domain::HostName;
-    use sinex_primitives::events::{Event, OffsetKind, SourceMaterial};
+    use sinex_primitives::events::{Event, SourceMaterial};
     use sinex_primitives::temporal::Timestamp;
     use sinex_primitives::{Id, Uuid};
     use xtask::sandbox::prelude::sinex_test;
@@ -791,13 +791,12 @@ mod tests {
             host: HostName::from_static("sinnix-prime"),
             source_run_id: None,
             payload_schema_id: None,
-            provenance: Provenance::Material {
-                id: Id::<SourceMaterial>::from_uuid(Uuid::from_u128(2)),
-                anchor_byte: 42,
-                offset_start: None,
-                offset_end: None,
-                offset_kind: OffsetKind::Byte,
-            },
+            provenance: Provenance::from_material(
+                Id::<SourceMaterial>::from_uuid(Uuid::from_u128(2)),
+                42,
+                None,
+                None,
+            ),
             associated_blob_ids: Some(vec![Uuid::from_u128(3)]),
             temporal_policy: None,
             semantics_version: None,
