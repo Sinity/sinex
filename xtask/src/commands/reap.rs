@@ -16,7 +16,7 @@ use clap::Parser;
 use color_eyre::eyre::Result;
 
 use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskCommand};
-use crate::history::{HistoryDb, InvocationStatus, JobLifecycleStatus};
+use crate::history::{HistoryDb, JobLifecycleStatus};
 
 #[derive(Parser, Clone, Debug)]
 #[command(
@@ -165,11 +165,12 @@ fn run_reaper_grandchild(args: ReapCommand) {
     // Update history DB.
     let duration_secs = args.max_secs as f64;
     if let Ok(db) = HistoryDb::open(&args.db_path) {
-        let _ = db.finish_invocation(
+        let _ = db.finish_invocation_cancelled(
             args.invocation_id,
-            InvocationStatus::Cancelled,
             Some(124),
             duration_secs,
+            "watchdog_timeout",
+            "watchdog",
         );
         let _ = db.finish_background_job(
             args.job_id,

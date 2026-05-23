@@ -300,8 +300,16 @@ fn parse_sqlite_record(
     } else if let Some(visit_time) = extract_timestamp(&obj) {
         // Fallback: JSONL dump row arriving without the "secondary/" logical-path
         // prefix (e.g. test dispatch with logical_path = None). Parse generically.
-        let url = obj.get("url").and_then(|v| v.as_str()).unwrap_or("").to_string();
-        let title = obj.get("title").and_then(|v| v.as_str()).unwrap_or("").to_string();
+        let url = obj
+            .get("url")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let title = obj
+            .get("title")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
         VisitData {
             browser: infer_browser_from_path(&source_file),
             title,
@@ -312,7 +320,10 @@ fn parse_sqlite_record(
                 .or_else(|| obj.get("external_referrer_url"))
                 .and_then(|v| v.as_str())
                 .map(String::from),
-            transition: obj.get("transition").and_then(|v| v.as_str()).map(String::from),
+            transition: obj
+                .get("transition")
+                .and_then(|v| v.as_str())
+                .map(String::from),
             visit_id: obj
                 .get("visitId")
                 .or_else(|| obj.get("visit_id"))

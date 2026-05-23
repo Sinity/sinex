@@ -15,7 +15,7 @@
     },
     "relation_type": {
       "$ref": "#/$defs/RelationType",
-      "description": "Semantic type of the relationship (e.g. works_on, co_occurs_with)."
+      "description": "Semantic type of the relationship (e.g. `works_on`, `co_occurs_with`)."
     },
     "source_entity_id": {
       "description": "The source entity of the relationship.",

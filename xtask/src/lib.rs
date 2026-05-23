@@ -1027,6 +1027,7 @@ mod tests {
                 with_diagnostics: false,
                 with_stages: false,
                 with_tests: false,
+                include_zombies: false,
             },
         }
         .metadata();

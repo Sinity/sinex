@@ -14,11 +14,11 @@
 
 use sinex_node_sdk::parser::MaterialParser;
 use sinex_primitives::{
+    Uuid,
     ids::Id,
     parser::{MaterialAnchor, ParserContext, SourceRecord, SourceUnitId},
     privacy::ProcessingContext,
     temporal::Timestamp,
-    Uuid,
 };
 use sinex_source_worker::sources::messaging::MessengerThreadParser;
 
@@ -227,7 +227,9 @@ async fn messenger_thread_index_encoded_in_anchor() {
         assert!(
             matches!(intent.anchor, MaterialAnchor::ByteRange { start, len: 1 } if start == i as u64),
             "anchor for index {} should be ByteRange{{start:{}, len:1}}, got {:?}",
-            i, i, intent.anchor
+            i,
+            i,
+            intent.anchor
         );
     }
 }

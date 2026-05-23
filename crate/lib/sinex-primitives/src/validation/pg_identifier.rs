@@ -79,8 +79,7 @@ mod tests {
         ] {
             assert!(
                 validate_pg_identifier(ident, "test").is_ok(),
-                "expected {:?} to be accepted",
-                ident
+                "expected {ident:?} to be accepted"
             );
         }
         Ok(())
@@ -102,8 +101,7 @@ mod tests {
         for ident in &malicious {
             assert!(
                 validate_pg_identifier(ident, "test").is_err(),
-                "expected {:?} to be rejected",
-                ident
+                "expected {ident:?} to be rejected"
             );
         }
         Ok(())

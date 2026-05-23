@@ -119,8 +119,17 @@ impl ProofCatalogValidation {
 pub fn build_proof_catalog(workspace_root: &Path) -> Result<ProofCatalog> {
     crate::source_unit_inventory::link_source_unit_inventories();
 
-    let mut runtime_units = proof::source_unit_bindings().copied().collect::<Vec<_>>();
-    runtime_units.sort_by(|left, right| left.subject.as_str().cmp(right.subject.as_str()));
+    let mut runtime_units_by_subject: BTreeMap<&'static str, SourceUnitBinding> =
+        BTreeMap::new();
+    for binding in proof::source_unit_bindings() {
+        match runtime_units_by_subject.get(binding.subject.as_str()) {
+            Some(existing) if !existing.proposed && binding.proposed => {}
+            _ => {
+                runtime_units_by_subject.insert(binding.subject.as_str(), *binding);
+            }
+        }
+    }
+    let runtime_units = runtime_units_by_subject.into_values().collect::<Vec<_>>();
 
     // Build a binding lookup keyed by source_unit_id so source_unit_subject
     // can read deployment-shape fields (`runner_pack`, `runtime_shape`,
@@ -337,9 +346,16 @@ pub fn validate_proof_catalog(catalog: &ProofCatalog) -> ProofCatalogValidation 
 
     for unit in &catalog.source_units {
         for obligation_id in &unit.proof_obligations {
-            if !obligations.contains_key(obligation_id.as_str()) {
+            if obligation_id.starts_with("obligation:")
+                && !obligations.contains_key(obligation_id.as_str())
+            {
                 errors.push(format!(
                     "{} references unknown proof obligation {obligation_id}",
+                    unit.subject
+                ));
+            } else if !obligation_id.starts_with("obligation:") {
+                warnings.push(format!(
+                    "{} carries local source-unit proof tag {obligation_id}",
                     unit.subject
                 ));
             }
@@ -617,6 +633,12 @@ mod tests {
                 .iter()
                 .any(|unit| unit.subject.as_str() == "source_unit:terminal.atuin-history")
         );
+        let runtime_subject_count = catalog
+            .runtime_units
+            .iter()
+            .filter(|unit| unit.subject.as_str() == "source_unit:terminal.atuin-history")
+            .count();
+        assert_eq!(runtime_subject_count, 1);
         assert!(
             catalog
                 .source_units
@@ -654,6 +676,50 @@ mod tests {
                 .any(|command| command.subject == "xtask_command:test")
         );
         assert!(!catalog.event_payloads.is_empty());
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn proof_catalog_validation_demotes_local_source_unit_tags() -> TestResult<()> {
+        let workspace = crate::sandbox::orchestrator::find_workspace_root()?;
+        let mut catalog = build_proof_catalog(&workspace)?;
+        catalog.source_units[0].proof_obligations = vec!["timestamp_intrinsic".to_string()];
+
+        let validation = validate_proof_catalog(&catalog);
+
+        assert!(
+            validation.errors.is_empty(),
+            "local source-unit proof tags should not be catalog obligation errors: {:?}",
+            validation.errors
+        );
+        assert!(
+            validation
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("timestamp_intrinsic")),
+            "expected local proof tag warning, got {:?}",
+            validation.warnings
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn proof_catalog_validation_rejects_unknown_catalog_obligations() -> TestResult<()> {
+        let workspace = crate::sandbox::orchestrator::find_workspace_root()?;
+        let mut catalog = build_proof_catalog(&workspace)?;
+        catalog.source_units[0].proof_obligations =
+            vec!["obligation:source_unit.missing".to_string()];
+
+        let validation = validate_proof_catalog(&catalog);
+
+        assert!(
+            validation
+                .errors
+                .iter()
+                .any(|error| error.contains("obligation:source_unit.missing")),
+            "expected unknown catalog obligation validation error, got {:?}",
+            validation.errors
+        );
         Ok(())
     }
 

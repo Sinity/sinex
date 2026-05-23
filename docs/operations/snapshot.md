@@ -46,16 +46,15 @@ sinexctl admin snapshot --output <path>
 ## Archive layout
 
 ```
-<snapshot-id>/
-  manifest.json                   -- JSON metadata + BLAKE3 checksums
-  postgres/
-    sinex_prod.dump               -- pg_dump custom-format (-Fc -Z9)
-  nats/
-    jetstream/                    -- NATS JetStream state tree
-    streams.summary.json          -- `nats stream ls --json` output (best-effort)
-  cas/
-    blob-repository/              -- CAS BLAKE3 content store tree
-  state/                          -- remaining $STATE_DIR contents
+manifest.json                   -- JSON metadata + BLAKE3 checksums
+postgres/
+  sinex_prod.dump               -- pg_dump custom-format (-Fc -Z9)
+nats/
+  jetstream/                    -- NATS JetStream state tree
+  streams.summary.json          -- `nats stream ls --json` output (best-effort)
+cas/
+  blob-repository/              -- CAS BLAKE3 content store tree
+state/                          -- remaining $STATE_DIR contents
 ```
 
 ## Restore procedure (manual)

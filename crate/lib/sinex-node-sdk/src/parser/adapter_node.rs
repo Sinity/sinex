@@ -845,6 +845,13 @@ where
             warnings: Vec::new(),
         })
     }
+
+    async fn shutdown(&mut self, _state: &Self::State) -> NodeResult<()> {
+        if let Some(acquirer) = self.stream_acquirer.as_mut() {
+            acquirer.finalize("adapter-node-shutdown").await?;
+        }
+        Ok(())
+    }
 }
 
 // =============================================================================

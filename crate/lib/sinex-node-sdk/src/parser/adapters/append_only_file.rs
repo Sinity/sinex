@@ -370,11 +370,11 @@ mod tests {
             path: "/nonexistent/file.log".into(),
             skip_empty: false,
         };
+        let stream = adapter.open(dummy_material_id(), &config, None).await?;
+        let records: Vec<_> = stream.collect().await;
         assert!(
-            adapter
-                .open(dummy_material_id(), &config, None)
-                .await
-                .is_err()
+            records.is_empty(),
+            "missing append-only files are optional sources and should yield no records"
         );
         Ok(())
     }

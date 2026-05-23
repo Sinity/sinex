@@ -73,8 +73,7 @@ async fn many_drain_cycles_share_material_until_rotation(ctx: TestContext) -> Te
 
     let mut stream = AppendStreamAcquirer::new(Arc::clone(&manager));
     const DRAIN_CYCLES: usize = 100;
-    const RECORD_BYTES: usize = 10; // 10 bytes per "poll cycle"
-    const RECORD: &[u8] = b"0123456789"; // exactly RECORD_BYTES
+    const RECORD: &[u8] = b"0123456789"; // 10 bytes per "poll cycle"
 
     let mut seen_material_ids = std::collections::HashSet::new();
 
@@ -99,6 +98,45 @@ async fn many_drain_cycles_share_material_until_rotation(ctx: TestContext) -> Te
     assert!(
         material_count >= 2,
         "expected ≥2 materials (at least one rotation), got {material_count}"
+    );
+
+    Ok(())
+}
+
+/// Appending 1 000 tiny records under the default 100 MiB / 1 hour rotation
+/// policy must use a single material. This pins the issue-level regression:
+/// frequent low-volume polling must not create O(poll_count) registry rows.
+#[sinex_test]
+async fn default_rotation_keeps_tiny_poll_cycles_on_one_material(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let work_dir = tempfile::tempdir()?;
+    let manager = make_manager(
+        work_dir.path(),
+        ctx.nats_client(),
+        "default-poll-material-reuse",
+        RotationPolicy::default(),
+    );
+
+    let mut stream = AppendStreamAcquirer::new(Arc::clone(&manager));
+    const DRAIN_CYCLES: usize = 1_000;
+    const RECORD: &[u8] = b"0123456789";
+
+    let mut seen_material_ids = std::collections::HashSet::new();
+
+    for _ in 0..DRAIN_CYCLES {
+        let anchor = stream
+            .append_with_anchor(RECORD, "test://default-poll-reuse")
+            .await?;
+        seen_material_ids.insert(anchor.material_id);
+    }
+    stream.finalize("test-complete").await?;
+
+    assert_eq!(
+        seen_material_ids.len(),
+        1,
+        "default rotation should keep {DRAIN_CYCLES} tiny poll cycles on one material"
     );
 
     Ok(())

@@ -1085,7 +1085,13 @@ fn mark_cancelled(job_id: i64) -> Result<()> {
         eyre!("background job {job_id} missing while recording superseded cancellation")
     })?;
     if let Some(invocation_id) = job.invocation_id {
-        db.finish_invocation(invocation_id, InvocationStatus::Cancelled, None, 0.0)
+        db.finish_invocation_cancelled(
+            invocation_id,
+            None,
+            0.0,
+            "superseded",
+            "coordinator",
+        )
             .with_context(|| {
                 format!(
                     "failed to finish invocation {invocation_id} while cancelling superseded job {job_id}"
@@ -2440,6 +2446,10 @@ mod tests {
         })?;
         assert_eq!(invocation.invocation.status, InvocationStatus::Cancelled);
         assert!(invocation.invocation.finished_at.is_some());
+        assert_eq!(
+            db.get_invocation_cancel_metadata(invocation_id)?,
+            Some((Some("superseded".into()), Some("coordinator".into())))
+        );
 
         let job = db.get_background_job_by_id(job_id)?.ok_or_else(|| {
             color_eyre::eyre::eyre!("missing background job after supersede cancellation")

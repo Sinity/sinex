@@ -214,25 +214,11 @@ impl<T: Node + 'static> NodeRunner<T> {
             EventTransport::Nats(publisher) => publisher.nats_client().clone(),
         };
 
-        let consumer_config = JetStreamEventConsumerConfig {
-            processing_model: self.processing_model,
-            batch_size: 128,
-            confirmation_timeout: std::time::Duration::from_mins(1),
-            consumer_name: if db_backed_confirmations {
-                format!("{}-automaton-confirmed-v2", service_name.replace('.', "_"))
-            } else {
-                format!("{}-automaton", service_name.replace('.', "_"))
-            },
-            enable_provisional_processing: false,
-            buffer_raw_events: !db_backed_confirmations,
-            accept_unbuffered_confirmations: db_backed_confirmations,
-            deliver_policy: if db_backed_confirmations {
-                async_nats::jetstream::consumer::DeliverPolicy::New
-            } else {
-                async_nats::jetstream::consumer::DeliverPolicy::All
-            },
-            ..Default::default()
-        };
+        let consumer_config = Self::automaton_consumer_config(
+            service_name.as_str(),
+            db_backed_confirmations,
+            self.processing_model,
+        );
 
         let consumer = Arc::new(JetStreamEventConsumer::new(
             nats_client,
@@ -426,5 +412,35 @@ impl<T: Node + 'static> NodeRunner<T> {
         }
 
         Ok(())
+    }
+
+    #[cfg(feature = "messaging")]
+    pub(super) fn automaton_consumer_config(
+        service_name: &str,
+        db_backed_confirmations: bool,
+        processing_model: ProcessingModel,
+    ) -> JetStreamEventConsumerConfig {
+        JetStreamEventConsumerConfig {
+            processing_model,
+            batch_size: 128,
+            confirmation_timeout: std::time::Duration::from_mins(1),
+            consumer_name: if db_backed_confirmations {
+                format!("{}-automaton-confirmed-v2", service_name.replace('.', "_"))
+            } else {
+                format!("{}-automaton", service_name.replace('.', "_"))
+            },
+            enable_provisional_processing: false,
+            // Even with DB-backed confirmation hydration, payload-driven
+            // automata need the raw event stream so confirmation watermarks can
+            // resolve buffered inputs instead of synthetic kind stand-ins.
+            buffer_raw_events: true,
+            accept_unbuffered_confirmations: db_backed_confirmations,
+            deliver_policy: if db_backed_confirmations {
+                async_nats::jetstream::consumer::DeliverPolicy::New
+            } else {
+                async_nats::jetstream::consumer::DeliverPolicy::All
+            },
+            ..Default::default()
+        }
     }
 }

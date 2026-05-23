@@ -1,6 +1,6 @@
 //! Parse and store nextest JSON output.
 
-use super::db::{HistoryDb, InvocationStatus};
+use super::db::{HistoryDb, InvocationStatus, ResourceUsage};
 use color_eyre::eyre::{Result, WrapErr};
 use rusqlite::OptionalExtension;
 use serde::{Deserialize, Serialize};
@@ -657,6 +657,8 @@ pub struct TestSuiteAnalysis {
     pub probable_timeouts: Vec<ProbableTimeout>,
     /// Failure summary grouped by package
     pub failure_summary: Vec<PackageFailureSummary>,
+    /// Host-pressure context for timing-sensitive failures in this run.
+    pub host_pressure: Option<HostPressureFailureClassification>,
     /// Total counts
     pub total_passed: usize,
     pub total_failed: usize,
@@ -665,6 +667,74 @@ pub struct TestSuiteAnalysis {
     /// Invocation metadata
     pub invocation_id: i64,
     pub started_at: String,
+}
+
+/// Host-pressure context for interpreting timing-sensitive test failures.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct HostPressureFailureClassification {
+    pub level: String,
+    pub timing_failures_may_be_invalidated: bool,
+    pub reason: String,
+    pub host_io_pressure_full_avg10_max: Option<f64>,
+    pub host_memory_pressure_full_avg10_max: Option<f64>,
+    pub host_cpu_pressure_some_avg10_max: Option<f64>,
+}
+
+fn is_probable_timeout_duration(duration_secs: f64) -> bool {
+    const TIMEOUT_CEILINGS: [f64; 7] = [10.0, 30.0, 60.0, 90.0, 120.0, 180.0, 300.0];
+    TIMEOUT_CEILINGS
+        .iter()
+        .any(|ceiling| (duration_secs - ceiling).abs() < 2.0)
+}
+
+fn timing_sensitive_failure_text(text: &str) -> bool {
+    let lower = text.to_ascii_lowercase();
+    lower.contains("did not reach ready")
+        || lower.contains("ready state")
+        || lower.contains("timed out")
+        || lower.contains("timeout")
+        || lower.contains("deadline")
+}
+
+fn classify_host_pressure_for_failures(
+    usage: Option<&ResourceUsage>,
+    has_timing_sensitive_failure: bool,
+) -> Option<HostPressureFailureClassification> {
+    let usage = usage?;
+    let io_full = usage.host_io_pressure_full_avg10_max.unwrap_or(0.0);
+    let memory_full = usage.host_memory_pressure_full_avg10_max.unwrap_or(0.0);
+    let level = if io_full >= crate::resources::thresholds::PSI_IO_FULL_REFUSE
+        || memory_full >= crate::resources::thresholds::PSI_MEMORY_FULL_REFUSE
+    {
+        "severe"
+    } else if io_full >= crate::resources::thresholds::PSI_IO_FULL_WARN
+        || memory_full >= crate::resources::thresholds::PSI_MEMORY_FULL_WARN
+    {
+        "elevated"
+    } else {
+        "clear"
+    };
+
+    if level == "clear" {
+        return None;
+    }
+
+    Some(HostPressureFailureClassification {
+        level: level.to_string(),
+        timing_failures_may_be_invalidated: has_timing_sensitive_failure,
+        reason: if has_timing_sensitive_failure {
+            format!(
+                "timing-sensitive failures occurred while host pressure was {level}; rerun under low contention before treating them as product regressions"
+            )
+        } else {
+            format!(
+                "host pressure was {level}, but the stored failures do not look timing-sensitive"
+            )
+        },
+        host_io_pressure_full_avg10_max: usage.host_io_pressure_full_avg10_max,
+        host_memory_pressure_full_avg10_max: usage.host_memory_pressure_full_avg10_max,
+        host_cpu_pressure_some_avg10_max: usage.host_cpu_pressure_some_avg10_max,
+    })
 }
 
 /// A duration distribution bucket.
@@ -919,7 +989,11 @@ impl HistoryDb {
         // Get all test results for this invocation
         let mut stmt = self.conn.prepare(
             r"
-            SELECT test_name, package, status, COALESCE(duration_secs, 0) as duration
+            SELECT test_name,
+                   package,
+                   status,
+                   COALESCE(duration_secs, 0) as duration,
+                   output
             FROM test_results
             WHERE invocation_id = ?1
             ORDER BY duration DESC
@@ -931,6 +1005,7 @@ impl HistoryDb {
             package: String,
             status: String,
             duration: f64,
+            output: Option<String>,
         }
 
         let rows: Vec<Row> = stmt
@@ -940,6 +1015,7 @@ impl HistoryDb {
                     package: row.get(1)?,
                     status: row.get(2)?,
                     duration: row.get(3)?,
+                    output: row.get(4)?,
                 })
             })?
             .collect::<std::result::Result<Vec<_>, _>>()
@@ -1007,14 +1083,11 @@ impl HistoryDb {
 
         // Probable timeouts: failed tests with duration near common timeout ceilings
         // (10s, 30s, 60s, 90s, 120s, 180s, 300s)
-        let timeout_ceilings = [10.0, 30.0, 60.0, 90.0, 120.0, 180.0, 300.0];
         let probable_timeouts: Vec<ProbableTimeout> = rows
             .iter()
             .filter(|r| {
                 matches!(r.status.as_str(), "failed" | "fail")
-                    && timeout_ceilings
-                        .iter()
-                        .any(|c| (r.duration - c).abs() < 2.0)
+                    && is_probable_timeout_duration(r.duration)
             })
             .map(|r| ProbableTimeout {
                 test_name: r.test_name.clone(),
@@ -1023,6 +1096,21 @@ impl HistoryDb {
                 status: r.status.clone(),
             })
             .collect();
+
+        let resource_usage = self.get_resource_usage_for_invocation(invocation_id)?;
+        let has_timing_sensitive_failure = rows.iter().any(|row| {
+            matches!(row.status.as_str(), "failed" | "fail")
+                && (is_probable_timeout_duration(row.duration)
+                    || timing_sensitive_failure_text(&row.test_name)
+                    || row
+                        .output
+                        .as_deref()
+                        .is_some_and(timing_sensitive_failure_text))
+        });
+        let host_pressure = classify_host_pressure_for_failures(
+            resource_usage.as_ref(),
+            has_timing_sensitive_failure,
+        );
 
         // Per-package failure summary
         let mut pkg_map: std::collections::HashMap<String, (usize, usize, Vec<String>)> =
@@ -1062,6 +1150,7 @@ impl HistoryDb {
             slowest_tests,
             probable_timeouts,
             failure_summary,
+            host_pressure,
             total_passed,
             total_failed,
             total_ignored,
@@ -2321,6 +2410,77 @@ mod tests {
         let analysis = db.analyze_last_run()?.expect("should have analysis");
         assert_eq!(analysis.probable_timeouts.len(), 1);
         assert_eq!(analysis.probable_timeouts[0].test_name, "test_timeout");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_analyze_classifies_ready_failures_under_host_pressure() -> TestResult<()> {
+        let (_dir, db, inv_id) = test_db_with_invocation()?;
+
+        db.conn.execute(
+            r"
+            UPDATE invocations
+            SET host_io_pressure_full_avg10_max = 84.41,
+                host_memory_pressure_full_avg10_max = 65.13,
+                host_cpu_pressure_some_avg10_max = 71.20
+            WHERE id = ?1
+            ",
+            rusqlite::params![inv_id],
+        )?;
+        db.store_test_results(
+            inv_id,
+            &[TestResult {
+                test_name: "ingestd_ready_probe".into(),
+                package: "sinex-ingestd".into(),
+                status: TestStatus::Fail,
+                duration_secs: Some(12.0),
+                attempt: 1,
+                output: Some("ingestd did not reach READY state".into()),
+            }],
+        )?;
+
+        let analysis = db.analyze_last_run()?.expect("should have analysis");
+        let pressure = analysis
+            .host_pressure
+            .expect("pressure classification should be present");
+        assert_eq!(pressure.level, "severe");
+        assert!(pressure.timing_failures_may_be_invalidated);
+        assert!(pressure.reason.contains("rerun under low contention"));
+        assert_eq!(pressure.host_io_pressure_full_avg10_max, Some(84.41));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_analyze_does_not_invalidate_nontiming_failures() -> TestResult<()> {
+        let (_dir, db, inv_id) = test_db_with_invocation()?;
+
+        db.conn.execute(
+            r"
+            UPDATE invocations
+            SET host_io_pressure_full_avg10_max = 12.0
+            WHERE id = ?1
+            ",
+            rusqlite::params![inv_id],
+        )?;
+        db.store_test_results(
+            inv_id,
+            &[TestResult {
+                test_name: "assert_payload_shape".into(),
+                package: "sinex-db".into(),
+                status: TestStatus::Fail,
+                duration_secs: Some(0.2),
+                attempt: 1,
+                output: Some("assertion failed: payload mismatch".into()),
+            }],
+        )?;
+
+        let analysis = db.analyze_last_run()?.expect("should have analysis");
+        let pressure = analysis
+            .host_pressure
+            .expect("pressure context should still be present");
+        assert_eq!(pressure.level, "severe");
+        assert!(!pressure.timing_failures_may_be_invalidated);
+        assert!(pressure.reason.contains("do not look timing-sensitive"));
         Ok(())
     }
 
