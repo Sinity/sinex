@@ -4,6 +4,7 @@ use crate::fmt::{format_json, format_yaml};
 use crate::model::OutputFormat;
 use clap::{Args, Subcommand};
 use color_eyre::Result;
+use color_eyre::eyre::eyre;
 use serde::Serialize;
 use sinex_primitives::domain::{EventSource, EventType};
 use sinex_primitives::events::Provenance;
@@ -193,7 +194,7 @@ impl PrivacyExportArgs {
     async fn execute(&self, client: &GatewayClient, format: OutputFormat) -> Result<()> {
         let query = self.to_event_query()?;
         let response = client.query_events(query).await?;
-        let report = build_privacy_export_report(response);
+        let report = build_privacy_export_report(response, self.to_export_scope());
 
         if let Some(path) = &self.output {
             let content = render_privacy_export_report(&report, format)?;
@@ -213,6 +214,7 @@ impl PrivacyExportArgs {
     }
 
     fn to_event_query(&self) -> Result<EventQuery> {
+        self.ensure_explicit_scope()?;
         let start_time = self.since.as_deref().map(parse_time_input).transpose()?;
         let end_time = self.until.as_deref().map(parse_time_input).transpose()?;
         let time_range = match (start_time, end_time) {
@@ -235,6 +237,34 @@ impl PrivacyExportArgs {
             include_total_estimate: true,
             ..Default::default()
         })
+    }
+
+    fn ensure_explicit_scope(&self) -> Result<()> {
+        if self.source.is_empty()
+            && self.event_type.is_empty()
+            && self.since.is_none()
+            && self.until.is_none()
+            && self.query.is_none()
+        {
+            return Err(eyre!(
+                "privacy export requires an explicit scope: pass --source, --event-type, \
+                 --since, --until, or --query"
+            ));
+        }
+        Ok(())
+    }
+
+    fn to_export_scope(&self) -> PrivacyExportScope {
+        PrivacyExportScope {
+            sources: self.source.iter().map(ToString::to_string).collect(),
+            event_types: self.event_type.iter().map(ToString::to_string).collect(),
+            since: self.since.clone(),
+            until: self.until.clone(),
+            text_search_used: self.query.is_some(),
+            limit: self
+                .limit
+                .clamp(1, sinex_primitives::query::Pagination::MAX_LIMIT),
+        }
     }
 }
 
@@ -285,10 +315,21 @@ struct PrivacyAuditFinding {
 struct PrivacyExportReport {
     schema_version: u32,
     payload_policy: &'static str,
+    scope: PrivacyExportScope,
     exported_events: usize,
     total_estimate: Option<i64>,
     next_cursor: Option<Cursor>,
     events: Vec<PrivacyExportEvent>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct PrivacyExportScope {
+    sources: Vec<String>,
+    event_types: Vec<String>,
+    since: Option<String>,
+    until: Option<String>,
+    text_search_used: bool,
+    limit: i64,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -403,7 +444,10 @@ fn build_privacy_audit_report(
     }
 }
 
-fn build_privacy_export_report(result: EventQueryResult) -> PrivacyExportReport {
+fn build_privacy_export_report(
+    result: EventQueryResult,
+    scope: PrivacyExportScope,
+) -> PrivacyExportReport {
     let (events, next_cursor, total_estimate) = match result {
         EventQueryResult::Events {
             events,
@@ -417,6 +461,7 @@ fn build_privacy_export_report(result: EventQueryResult) -> PrivacyExportReport 
     PrivacyExportReport {
         schema_version: 1,
         payload_policy: "metadata_only_payloads_and_snippets_omitted",
+        scope,
         exported_events: events.len(),
         total_estimate,
         next_cursor,
@@ -761,18 +806,30 @@ mod tests {
             created_by_operation_id: None,
             node_model: None,
         };
-        let report = build_privacy_export_report(EventQueryResult::Events {
-            events: vec![QueryResultEvent {
-                event,
-                relevance_score: Some(0.8),
-                snippet: Some("TOKEN=secret".to_string()),
-            }],
-            next_cursor: None,
-            total_estimate: Some(1),
-        });
+        let report = build_privacy_export_report(
+            EventQueryResult::Events {
+                events: vec![QueryResultEvent {
+                    event,
+                    relevance_score: Some(0.8),
+                    snippet: Some("TOKEN=secret".to_string()),
+                }],
+                next_cursor: None,
+                total_estimate: Some(1),
+            },
+            PrivacyExportScope {
+                sources: vec!["terminal".to_string()],
+                event_types: vec!["shell.command".to_string()],
+                since: Some("24h".to_string()),
+                until: None,
+                text_search_used: true,
+                limit: 100,
+            },
+        );
 
         let encoded = serde_json::to_string(&report)?;
         assert_eq!(report.exported_events, 1);
+        assert_eq!(report.scope.sources, vec!["terminal".to_string()]);
+        assert!(report.scope.text_search_used);
         assert!(encoded.contains("metadata_only_payloads_and_snippets_omitted"));
         assert!(encoded.contains("\"payload_redacted\":true"));
         assert!(encoded.contains("\"snippet_redacted\":true"));
@@ -781,6 +838,28 @@ mod tests {
         assert!(!encoded.contains("/home/sinity/private"));
         assert!(!encoded.contains("\"payload\""));
         assert!(!encoded.contains("\"snippet\""));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn privacy_export_requires_explicit_scope() -> xtask::sandbox::TestResult<()> {
+        let args = PrivacyExportArgs {
+            source: Vec::new(),
+            event_type: Vec::new(),
+            since: None,
+            until: None,
+            query: None,
+            limit: 100,
+            output: None,
+        };
+
+        let error = args
+            .to_event_query()
+            .expect_err("unscoped privacy export should be refused");
+        assert!(
+            format!("{error:#}").contains("requires an explicit scope"),
+            "error should explain scope requirement: {error:#}"
+        );
         Ok(())
     }
 }

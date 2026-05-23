@@ -36,7 +36,9 @@ use sinex_primitives::{
 };
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+#[cfg(any(test, feature = "testing"))]
+use std::sync::atomic::{AtomicBool, AtomicUsize};
+use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::sync::RwLock;
 use tokio::time::Duration;
 use tracing::{debug, error, info, instrument, warn};

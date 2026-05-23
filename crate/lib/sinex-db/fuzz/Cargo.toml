@@ -10,7 +10,6 @@ cargo-fuzz = true
 [dependencies]
 libfuzzer-sys = "0.4"
 sinex-db = { path = ".." }
-arbitrary = { version = "1", features = ["derive"] }
 
 [[bin]]
 name = "fuzz_copy_escape"

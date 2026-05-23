@@ -67,9 +67,13 @@ async fn semantic_repository_keeps_shadow_outputs_out_of_canonical_entities(
     ctx: TestContext,
 ) -> TestResult<()> {
     let repo = ctx.pool.semantic();
-    let canonical_count_before: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM core.entities")
+    let canonical_entities_before: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM core.entities")
         .fetch_one(&ctx.pool)
         .await?;
+    let canonical_relations_before: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM core.entity_relations")
+            .fetch_one(&ctx.pool)
+            .await?;
 
     let baseline_epoch = repo
         .create_epoch(CreateSemanticEpoch {
@@ -124,12 +128,20 @@ async fn semantic_repository_keeps_shadow_outputs_out_of_canonical_entities(
     let read_outputs = repo.read_entity_relation_outputs(candidate_lane.id).await?;
     assert_eq!(read_outputs, candidate_outputs);
 
-    let canonical_count_after: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM core.entities")
+    let canonical_entities_after: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM core.entities")
         .fetch_one(&ctx.pool)
         .await?;
     assert_eq!(
-        canonical_count_after, canonical_count_before,
+        canonical_entities_after, canonical_entities_before,
         "shadow lane writes must not mutate canonical entity projections"
+    );
+    let canonical_relations_after: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM core.entity_relations")
+            .fetch_one(&ctx.pool)
+            .await?;
+    assert_eq!(
+        canonical_relations_after, canonical_relations_before,
+        "shadow lane writes must not mutate canonical relation projections"
     );
 
     let report = diff_entity_relation_lanes(
@@ -153,5 +165,14 @@ async fn semantic_repository_keeps_shadow_outputs_out_of_canonical_entities(
     assert_eq!(diff.candidate_lane_id, candidate_lane.id);
     assert_eq!(diff.counts["entity_new"], 1);
     assert_eq!(diff.counts["entity_missing"], 1);
+
+    let (discarded_lane, discarded_outputs) = repo
+        .discard_lane_outputs(candidate_lane.id, sinex_primitives::Timestamp::now())
+        .await?;
+    assert_eq!(discarded_lane.status, "discarded");
+    assert_eq!(discarded_outputs, 2);
+    assert_eq!(repo.count_lane_outputs(candidate_lane.id).await?, 0);
+    assert_eq!(repo.list_lane_diffs(candidate_lane.id, 10).await?.len(), 1);
+
     Ok(())
 }

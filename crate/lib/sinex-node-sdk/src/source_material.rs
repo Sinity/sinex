@@ -1,5 +1,6 @@
 #[cfg(feature = "messaging")]
 use crate::{NodeResult, acquisition_manager::AcquisitionManager};
+#[cfg(feature = "messaging")]
 use camino::Utf8Path;
 #[cfg(feature = "messaging")]
 use serde_json::Value as JsonValue;

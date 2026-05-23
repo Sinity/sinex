@@ -177,9 +177,7 @@ mod tests {
     // crosses an .await point inside RetryableMaterialCapture::run, requiring
     // Send.
     #[derive(Clone)]
-    struct CountingPredicate {
-        transient_count: Arc<AtomicUsize>,
-    }
+    struct CountingPredicate;
 
     impl TransientErrorPredicate for CountingPredicate {
         fn is_transient(&self, err: &SinexError) -> bool {
@@ -316,9 +314,7 @@ mod tests {
 
     #[sinex_test]
     async fn test_custom_predicate() -> xtask::sandbox::TestResult<()> {
-        let predicate = CountingPredicate {
-            transient_count: Arc::new(AtomicUsize::new(0)),
-        };
+        let predicate = CountingPredicate;
         let retry = RetryableMaterialCapture::new()
             .with_max_attempts(2)
             .with_predicate(predicate);

@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "channel": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "message": {
+      "type": "string"
+    },
+    "nick": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "nick",
+    "message"
+  ],
+  "title": "IrcPartPayload",
+  "type": "object",
+  "x-sinex-event-type": "irc.part",
+  "x-sinex-source": "irc",
+  "x-sinex-version": "1.0.0"
+}

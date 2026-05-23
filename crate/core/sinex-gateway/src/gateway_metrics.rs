@@ -362,11 +362,9 @@ struct MetricsSnapshot {
     rate_limited_requests: u64,
     latency_sum_us: u64,
     latency_count: u64,
-    /// Min latency - collected for future histogram support
-    #[allow(dead_code)]
+    /// Min latency for the emitted interval.
     latency_min_us: u64,
-    /// Max latency - collected for future histogram support
-    #[allow(dead_code)]
+    /// Max latency for the emitted interval.
     latency_max_us: u64,
     active_connections: u32,
 }

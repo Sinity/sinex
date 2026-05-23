@@ -1,3 +1,4 @@
+#[cfg(feature = "messaging")]
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use thiserror::Error;
 
@@ -44,6 +45,7 @@ impl From<NodeLogicError> for SinexError {
 }
 
 /// Persisted state wrapper used by derived node checkpointing.
+#[cfg(feature = "messaging")]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct PersistedState<S> {
     /// User-defined state.
@@ -59,6 +61,7 @@ pub(crate) struct PersistedState<S> {
     pub version: u32,
 }
 
+#[cfg(feature = "messaging")]
 impl<S: Default + Serialize + DeserializeOwned> Default for PersistedState<S> {
     fn default() -> Self {
         Self {

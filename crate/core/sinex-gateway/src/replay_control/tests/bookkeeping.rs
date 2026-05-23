@@ -1,4 +1,3 @@
-#[allow(unused_imports)]
 use super::*;
 #[sinex_test]
 async fn replay_execution_surfaces_operation_state_corruption_after_failure(

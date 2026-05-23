@@ -10,6 +10,9 @@ libc = "0.2"
 human-panic = "2.0"
 shadow-rs = "0.35"
 
+[package.metadata.cargo-machete]
+ignored = ["shadow-rs"]
+
 [package.version]
 workspace = true
 
@@ -98,12 +101,6 @@ workspace = true
 workspace = true
 
 [dependencies.base64]
-workspace = true
-
-[dependencies.git2]
-workspace = true
-
-[dependencies.globset]
 workspace = true
 
 [dependencies.sinex-primitives]

@@ -2,7 +2,11 @@ use serde_json::json;
 use sinex_db::repositories::DbPoolExt;
 use sinex_db::repositories::schema_management::NewEventSchema;
 use sinex_primitives::domain::{EventSource, EventType};
+use sinex_primitives::events::schema_registry::SchemaBundleEntry;
 use uuid::Uuid;
+// `#[sinex_test]` consumes these signature types before the unused-import lint sees them.
+#[allow(unused_imports)]
+use xtask::sandbox::prelude::{TestContext, TestResult};
 use xtask::sandbox::sinex_test;
 
 fn unique_schema_source(prefix: &str) -> EventSource {
@@ -137,6 +141,75 @@ async fn list_schemas_for_source_returns_all(ctx: TestContext) -> TestResult<()>
         schemas.len()
     );
     assert!(schemas.iter().all(|s| s.source == source && s.is_active));
+    Ok(())
+}
+
+#[sinex_test]
+async fn list_with_retention_returns_only_active_retention_rows(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let repo = ctx.pool.schemas();
+    let source = unique_schema_source("retention-source");
+    let active_event_type = unique_schema_event_type("retention.active");
+    let inactive_event_type = unique_schema_event_type("retention.inactive");
+    let no_retention_event_type = unique_schema_event_type("retention.none");
+
+    let active = repo
+        .register_schema(NewEventSchema {
+            source: source.clone(),
+            event_type: active_event_type.clone(),
+            schema_version: "1.0.0".to_string(),
+            schema_content: json!({ "type": "object" }),
+        })
+        .await?;
+    let inactive = repo
+        .register_schema(NewEventSchema {
+            source: source.clone(),
+            event_type: inactive_event_type,
+            schema_version: "1.0.0".to_string(),
+            schema_content: json!({ "type": "object", "properties": { "old": { "type": "boolean" } } }),
+        })
+        .await?;
+    repo.register_schema(NewEventSchema {
+        source: source.clone(),
+        event_type: no_retention_event_type,
+        schema_version: "1.0.0".to_string(),
+        schema_content: json!({ "type": "object", "properties": { "kept": { "type": "boolean" } } }),
+    })
+    .await?;
+
+    sqlx::query!(
+        r#"
+        UPDATE sinex_schemas.event_payload_schemas
+        SET retention_seconds = CASE
+                WHEN id = $1::uuid THEN 3600
+                WHEN id = $2::uuid THEN 60
+                ELSE retention_seconds
+            END,
+            is_active = CASE
+                WHEN id = $2::uuid THEN false
+                ELSE is_active
+            END
+        WHERE id IN ($1::uuid, $2::uuid)
+        "#,
+        active.id.to_uuid(),
+        inactive.id.to_uuid()
+    )
+    .execute(&ctx.pool)
+    .await?;
+
+    let rows = repo.list_with_retention().await?;
+    let row = rows
+        .iter()
+        .find(|row| row.source == source && row.event_type == active_event_type)
+        .expect("active retention row should be returned");
+
+    assert_eq!(row.retention_seconds, 3600);
+    assert!(
+        rows.iter()
+            .all(|row| row.source != source || row.event_type == active_event_type),
+        "inactive or NULL retention rows should not be returned"
+    );
     Ok(())
 }
 
@@ -372,5 +445,63 @@ async fn sync_schema_bundle_converges_same_version_content_drift(
     assert_eq!(active.content_hash, discovered_entry.content_hash);
     assert_eq!(active.schema_content, discovered_entry.schema_content);
     assert!(active.is_active);
+    Ok(())
+}
+
+#[sinex_test]
+async fn concurrent_schema_bundle_sync_is_idempotent(ctx: TestContext) -> color_eyre::Result<()> {
+    let source = unique_schema_source("sync-concurrent-source");
+    let event_type = unique_schema_event_type("sync.concurrent.event");
+    let entry = SchemaBundleEntry::new(
+        source.to_string(),
+        event_type.to_string(),
+        "1.0.0".to_string(),
+        json!({
+            "type": "object",
+            "properties": { "value": { "type": "string" } },
+            "required": ["value"]
+        }),
+    )?;
+
+    let pool_a = ctx.pool.clone();
+    let pool_b = ctx.pool.clone();
+    let entry_a = entry.clone();
+    let entry_b = entry.clone();
+
+    let (result_a, result_b) = tokio::join!(
+        async move { pool_a.schemas().sync_schema_bundle([entry_a]).await },
+        async move { pool_b.schemas().sync_schema_bundle([entry_b]).await }
+    );
+
+    let result_a = result_a?;
+    let result_b = result_b?;
+    assert_eq!(result_a.discovered, 1);
+    assert_eq!(result_b.discovered, 1);
+    assert!(
+        (1..=2).contains(&(result_a.created + result_b.created)),
+        "at least one caller should create-attempt the new schema"
+    );
+    assert_eq!(result_a.updated + result_b.updated, 0);
+
+    let active = ctx
+        .pool
+        .schemas()
+        .get_active_schema(source.as_str(), event_type.as_str())
+        .await?;
+    assert_eq!(active.content_hash, entry.content_hash);
+    assert!(active.is_active);
+
+    let count = sqlx::query_scalar!(
+        r#"
+        SELECT COUNT(*) as "count!"
+        FROM sinex_schemas.event_payload_schemas
+        WHERE content_hash = $1
+        "#,
+        entry.content_hash
+    )
+    .fetch_one(&ctx.pool)
+    .await?;
+    assert_eq!(count, 1);
+
     Ok(())
 }

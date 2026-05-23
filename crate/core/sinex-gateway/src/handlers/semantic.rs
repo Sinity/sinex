@@ -6,9 +6,10 @@ use sinex_primitives::rpc::semantic::{
     SemanticEpochRecordResponse, SemanticLaneCreateRequest,
     SemanticLaneDiffRecordEntityRelationRequest, SemanticLaneDiffRecordResponse,
     SemanticLaneDiffsListRequest, SemanticLaneDiffsListResponse, SemanticLaneDiscardRequest,
-    SemanticLaneListRequest, SemanticLaneListResponse, SemanticLaneOutputsListRequest,
-    SemanticLaneOutputsListResponse, SemanticLaneOutputsWriteRequest,
-    SemanticLaneOutputsWriteResponse, SemanticLaneRecordResponse, SemanticLaneSetStatusRequest,
+    SemanticLaneDiscardResponse, SemanticLaneListRequest, SemanticLaneListResponse,
+    SemanticLaneOutputsListRequest, SemanticLaneOutputsListResponse,
+    SemanticLaneOutputsWriteRequest, SemanticLaneOutputsWriteResponse, SemanticLaneRecordResponse,
+    SemanticLaneSetStatusRequest,
 };
 use sinex_primitives::{
     Result, SemanticEpochRecord, SemanticLaneRecord, SemanticLaneStatus, SemanticScope, SinexError,
@@ -130,14 +131,14 @@ pub async fn handle_semantic_lane_set_status(
 pub async fn handle_semantic_lane_discard(
     pool: &PgPool,
     req: SemanticLaneDiscardRequest,
-) -> Result<SemanticLaneRecordResponse> {
-    let completed_at = Some(Timestamp::now());
-    let lane = pool
+) -> Result<SemanticLaneDiscardResponse> {
+    let (lane, discarded_outputs) = pool
         .semantic()
-        .set_lane_status(req.lane_id, SemanticLaneStatus::Discarded, completed_at)
+        .discard_lane_outputs(req.lane_id, Timestamp::now())
         .await?;
-    Ok(SemanticLaneRecordResponse {
+    Ok(SemanticLaneDiscardResponse {
         lane: serde_json::to_value(lane).map_err(serialize_error)?,
+        discarded_outputs,
     })
 }
 

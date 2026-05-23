@@ -141,6 +141,29 @@ register_source_unit! {
     }
 }
 
+register_source_unit_binding! {
+    SourceUnitBinding::builder(
+        SubjectRef::from_static("source_unit:weechat.message"),
+        "weechat.message",
+        "irc",
+    )
+    .implementation("sinex-source-worker")
+    .adapter("AppendOnlyFileAdapter")
+    .output_event_type("irc.message")
+    .privacy_context("Command")
+    .material_policy("append_only_log")
+    .checkpoint_policy("append_only_cursor")
+    .resource_shape("file_watcher")
+    .source_unit_id("weechat.message")
+    .runner_pack("source-worker")
+    .checkpoint_family(CheckpointFamily::AppendStream)
+    .runtime_shape(RuntimeShape::OnDemand)
+    .package_impact("weechat_message_source_unit")
+    .implementation_mode("rust_in_pack:source-worker")
+    .build_impact(SourceUnitBuildImpact::ZERO)
+    .build()
+}
+
 // ---------------------------------------------------------------------------
 // Node factory — Phase 3 (Wave A substrate).
 //

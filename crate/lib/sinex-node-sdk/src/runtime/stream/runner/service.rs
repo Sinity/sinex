@@ -7,7 +7,7 @@
 
 use super::{
     Checkpoint, Node, NodeDrainComplete, NodeResult, NodeRunner, NodeState, NodeType,
-    RunnerLifecycle, ScanArgs, ScanReport, SinexError, StreamExt, TimeHorizon, Timestamp, info,
+    RunnerLifecycle, ScanArgs, ScanReport, SinexError, TimeHorizon, Timestamp, info,
     systemd_notify, warn,
 };
 use sinex_primitives::env as shared_env;

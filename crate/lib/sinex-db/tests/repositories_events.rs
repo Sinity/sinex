@@ -346,10 +346,7 @@ async fn stream_batch_copy_roundtrip_diverse_payloads(ctx: TestContext) -> TestR
             "event_type mismatch at index {i}"
         );
         assert_eq!(event.host, row.host, "host mismatch at index {i}");
-        assert_eq!(
-            event.payload, row.payload,
-            "payload mismatch at index {i}"
-        );
+        assert_eq!(event.payload, row.payload, "payload mismatch at index {i}");
         assert_eq!(
             event.ts_orig,
             Some(row.ts_orig),

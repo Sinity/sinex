@@ -637,6 +637,7 @@ async fn derived_source_state_is_unhealthy_before_runtime_initialization() -> Te
     assert!(!state.is_connected);
     assert!(!state.healthy);
     assert_eq!(state.last_updated, None);
+    assert_eq!(state.total_items, Some(0));
     assert!(state.description.contains("runtime not initialized"));
     assert_eq!(
         state
@@ -644,6 +645,46 @@ async fn derived_source_state_is_unhealthy_before_runtime_initialization() -> Te
             .get("runtime_initialized")
             .and_then(serde_json::Value::as_bool),
         Some(false)
+    );
+    assert_eq!(
+        state
+            .metadata
+            .get("total_processed")
+            .and_then(serde_json::Value::as_u64),
+        Some(0)
+    );
+    assert_eq!(
+        state
+            .metadata
+            .get("run_processed")
+            .and_then(serde_json::Value::as_u64),
+        Some(0)
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn derived_source_state_reports_processed_counters() -> TestResult<()> {
+    let mut adapter = DerivedNodeAdapter::new(TransducerWrapper(TestDerivedNode));
+    adapter.persisted_state.events_processed = 7;
+    adapter.run_events_processed = 3;
+
+    let state = ExplorationProvider::get_source_state(&adapter)?;
+
+    assert_eq!(state.total_items, Some(7));
+    assert_eq!(
+        state
+            .metadata
+            .get("total_processed")
+            .and_then(serde_json::Value::as_u64),
+        Some(7)
+    );
+    assert_eq!(
+        state
+            .metadata
+            .get("run_processed")
+            .and_then(serde_json::Value::as_u64),
+        Some(3)
     );
     Ok(())
 }
