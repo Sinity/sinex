@@ -106,6 +106,12 @@ pub struct FileDropRecordMetadata {
     pub move_to_path: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub move_role: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub content_materialized: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub content_size_bytes: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub content_skipped_reason: Option<String>,
 }
 
 impl FileDropRecordMetadata {
@@ -134,6 +140,9 @@ impl FileDropRecordMetadata {
             move_from_path: None,
             move_to_path: None,
             move_role: None,
+            content_materialized: None,
+            content_size_bytes: None,
+            content_skipped_reason: None,
         }
     }
 
@@ -146,6 +155,20 @@ impl FileDropRecordMetadata {
         self.move_from_path = Some(from_path.as_str().to_string());
         self.move_to_path = Some(to_path.as_str().to_string());
         self.move_role = Some(role.metadata_label().to_string());
+        self
+    }
+
+    fn with_materialized_content(mut self, content_size_bytes: u64) -> Self {
+        self.content_materialized = Some(true);
+        self.content_size_bytes = Some(content_size_bytes);
+        self.content_skipped_reason = None;
+        self
+    }
+
+    fn with_skipped_content(mut self, content_size_bytes: u64, reason: &str) -> Self {
+        self.content_materialized = Some(false);
+        self.content_size_bytes = Some(content_size_bytes);
+        self.content_skipped_reason = Some(reason.to_string());
         self
     }
 
@@ -925,22 +948,18 @@ async fn materialize_file_content_record(
         return Ok(record);
     }
     let len = file_metadata.len();
-    if len == 0 || len > max_capture_bytes {
+    if len == 0 {
         return Ok(record);
     }
 
-    let mut material_metadata = record.metadata.clone();
-    if let serde_json::Value::Object(map) = &mut material_metadata {
-        map.insert(
-            "content_materialized".to_string(),
-            serde_json::Value::Bool(true),
-        );
-        map.insert(
-            "content_size_bytes".to_string(),
-            serde_json::Value::Number(serde_json::Number::from(len)),
-        );
+    if len > max_capture_bytes {
+        return Ok(SourceRecord {
+            metadata: metadata.with_skipped_content(len, "oversized").into_json(),
+            ..record
+        });
     }
 
+    let material_metadata = metadata.with_materialized_content(len).into_json();
     let (material_id, total_bytes) = stage_material_from_file_bounded(
         &acquisition,
         &path,
@@ -1147,7 +1166,21 @@ mod tests {
                 .metadata
                 .get("content_materialized")
                 .and_then(serde_json::Value::as_bool),
-            None
+            Some(false)
+        );
+        assert_eq!(
+            materialized
+                .metadata
+                .get("content_size_bytes")
+                .and_then(serde_json::Value::as_u64),
+            Some(9)
+        );
+        assert_eq!(
+            materialized
+                .metadata
+                .get("content_skipped_reason")
+                .and_then(serde_json::Value::as_str),
+            Some("oversized")
         );
         Ok(())
     }
@@ -1436,6 +1469,29 @@ mod tests {
     }
 
     #[sinex_test]
+    async fn file_drop_record_metadata_keeps_content_state_typed() -> xtask::sandbox::TestResult<()>
+    {
+        let materialized = FileDropRecordMetadata::new(
+            FileDropEventKind::Created,
+            &Utf8PathBuf::from("/tmp/sinex-file-drop-content"),
+        )
+        .with_materialized_content(42);
+        assert_eq!(materialized.content_materialized, Some(true));
+        assert_eq!(materialized.content_size_bytes, Some(42));
+        assert_eq!(materialized.content_skipped_reason, None);
+
+        let skipped = FileDropRecordMetadata::new(
+            FileDropEventKind::Modified,
+            &Utf8PathBuf::from("/tmp/sinex-file-drop-oversized"),
+        )
+        .with_skipped_content(1024, "oversized");
+        assert_eq!(skipped.content_materialized, Some(false));
+        assert_eq!(skipped.content_size_bytes, Some(1024));
+        assert_eq!(skipped.content_skipped_reason.as_deref(), Some("oversized"));
+        Ok(())
+    }
+
+    #[sinex_test]
     async fn file_drop_record_metadata_parses_typed_labels() -> xtask::sandbox::TestResult<()> {
         let metadata = FileDropRecordMetadata::from_value(&serde_json::json!({
             "event_kind": "Moved",
@@ -1443,10 +1499,19 @@ mod tests {
             "move_from_path": "/tmp/sinex-file-drop-before",
             "move_to_path": "/tmp/sinex-file-drop-after",
             "move_role": "to",
+            "content_materialized": false,
+            "content_size_bytes": 1024,
+            "content_skipped_reason": "oversized",
         }))?;
 
         assert_eq!(metadata.event_kind(), Some(FileDropEventKind::Moved));
         assert_eq!(metadata.move_role(), Some(FileDropMoveRole::To));
+        assert_eq!(metadata.content_materialized, Some(false));
+        assert_eq!(metadata.content_size_bytes, Some(1024));
+        assert_eq!(
+            metadata.content_skipped_reason.as_deref(),
+            Some("oversized")
+        );
 
         let unknown = FileDropRecordMetadata::from_value(&serde_json::json!({
             "event_kind": "Renamed",
