@@ -180,12 +180,6 @@ impl XtaskCommand for LintForbiddenCommand {
             "crate/core/sinex-gateway/src/replay_control/execution/collect.rs",
             "crate/core/sinex-gateway/src/rpc_server_test_support.rs",
             "crate/lib/sinex-db/src/repositories/events/persistence.rs",
-            "crate/lib/sinex-node-sdk/src/systemd_notify.rs",
-            "crate/lib/sinex-node-sdk/src/node_cli.rs",
-            "crate/lib/sinex-node-sdk/src/stage_as_you_go.rs",
-            "crate/lib/sinex-node-sdk/src/preflight/configuration.rs",
-            "crate/lib/sinex-node-sdk/src/coordination.rs",
-            "crate/lib/sinex-node-sdk/src/runtime/stream/handles.rs",
         ];
         violations.extend(check_color_eyre_in_lib(
             "color_eyre::",
