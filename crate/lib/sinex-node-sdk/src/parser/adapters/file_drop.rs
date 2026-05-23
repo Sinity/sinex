@@ -198,6 +198,13 @@ pub struct FileDropConfig {
 pub struct FileDropWatchSurvey {
     pub accessible_watch_count: usize,
     pub filtered_watch_count: usize,
+    /// Whether a max-depth policy was applied while surveying.
+    ///
+    /// A native recursive watch would continue observing future descendants
+    /// below the configured depth, so any depth-limited survey requires
+    /// filtered native watch targets even when the current tree is shallow.
+    #[serde(default)]
+    pub depth_limited: bool,
     #[serde(default)]
     pub unreadable_directories: usize,
     #[serde(default)]
@@ -279,6 +286,7 @@ pub fn choose_file_drop_watch_plan(
     budget: FileDropWatchBudget,
 ) -> ParserResult<FileDropWatchPlan> {
     let needs_filtered_plan = survey.accessible_watch_count > budget.effective_max_watches.get()
+        || survey.depth_limited
         || survey.unreadable_directories > 0
         || survey.ignored_directories > 0;
 
@@ -301,11 +309,12 @@ pub fn choose_file_drop_watch_plan(
     }
 
     let mut message = format!(
-        "file-drop watch budget exceeded after filtered planning: configured_max_watches={}, effective_max_watches={}, accessible_watch_count={}, filtered_watch_count={}, unreadable_directories={}, ignored_directories={}",
+        "file-drop watch budget exceeded after filtered planning: configured_max_watches={}, effective_max_watches={}, accessible_watch_count={}, filtered_watch_count={}, depth_limited={}, unreadable_directories={}, ignored_directories={}",
         budget.configured_max_watches,
         budget.effective_max_watches,
         survey.accessible_watch_count,
         survey.filtered_watch_count,
+        survey.depth_limited,
         survey.unreadable_directories,
         survey.ignored_directories
     );
@@ -509,14 +518,16 @@ pub fn survey_file_drop_watch_tree(
     }
 
     let mut visited: HashSet<(u64, u64)> = HashSet::new();
-    inspect_path(
+    let mut survey = inspect_path(
         path,
         start_depth,
         max_depth,
         follow_symlinks,
         ignored_directory_names,
         &mut visited,
-    )
+    )?;
+    survey.depth_limited = max_depth.is_some();
+    Ok(survey)
 }
 
 fn planned_file_drop_watch_targets(
@@ -1318,6 +1329,37 @@ mod tests {
     }
 
     #[sinex_test]
+    async fn file_drop_watch_targets_filter_depth_limited_trees() -> xtask::sandbox::TestResult<()>
+    {
+        let temp_root = TempDir::new()?;
+        std::fs::create_dir_all(temp_root.path().join("notes/daily"))?;
+        let root = Utf8PathBuf::from_path_buf(temp_root.path().to_path_buf())
+            .expect("temp root should be utf8");
+        let config = FileDropConfig {
+            watch_paths: vec![root.clone()],
+            recursive: true,
+            max_depth: Some(1),
+            ignored_directory_names: Vec::new(),
+            events: vec![],
+        };
+
+        let targets = planned_file_drop_watch_targets(&config)?;
+        let target_paths = targets
+            .iter()
+            .map(|(path, mode)| (path.strip_prefix(root.as_std_path()).unwrap(), *mode))
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            target_paths,
+            vec![
+                (Path::new(""), RecursiveMode::NonRecursive),
+                (Path::new("notes"), RecursiveMode::NonRecursive)
+            ]
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
     async fn file_drop_watch_plan_uses_recursive_when_budget_suffices()
     -> xtask::sandbox::TestResult<()> {
         let survey = FileDropWatchSurvey {
@@ -1343,6 +1385,7 @@ mod tests {
         let survey = FileDropWatchSurvey {
             accessible_watch_count: 6,
             filtered_watch_count: 4,
+            depth_limited: false,
             unreadable_directories: 0,
             ignored_directories: 1,
             filtered_targets: vec![PathBuf::from("/tmp/sinex-file-drop-root")],
@@ -1358,6 +1401,25 @@ mod tests {
         assert_eq!(plan.mode.as_str(), "native-filtered");
         assert_eq!(plan.effective_watch_count, 4);
         assert_eq!(plan.budget.effective_max_watches.get(), 4);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn file_drop_watch_plan_switches_to_filtered_for_depth_limit()
+    -> xtask::sandbox::TestResult<()> {
+        let survey = FileDropWatchSurvey {
+            accessible_watch_count: 2,
+            filtered_watch_count: 2,
+            depth_limited: true,
+            filtered_targets: vec![PathBuf::from("/tmp/sinex-file-drop-root")],
+            ..FileDropWatchSurvey::default()
+        };
+        let budget = FileDropWatchBudget::from_limits(NonZeroUsize::new(8).unwrap(), None);
+
+        let plan = choose_file_drop_watch_plan(survey, budget)?;
+
+        assert_eq!(plan.mode, FileDropWatchMode::NativeFiltered);
+        assert_eq!(plan.effective_watch_count, 2);
         Ok(())
     }
 
