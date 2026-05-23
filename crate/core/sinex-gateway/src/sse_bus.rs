@@ -671,7 +671,7 @@ mod tests {
     use sinex_db::DbPoolExt;
     use sinex_primitives::events::{DynamicPayload, Event};
     use sinex_primitives::query::SubscriptionFilter;
-    use sinex_primitives::{Id, JsonValue, Uuid};
+    use sinex_primitives::{Id, JsonValue, SinexError, Uuid};
     use std::sync::Arc;
     use tokio::time::{Duration, timeout};
     use xtask::sandbox::prelude::*;
@@ -686,7 +686,7 @@ mod tests {
         });
 
         let parsed = SubscriptionBus::parse_confirmation(&serde_json::to_vec(&payload)?)
-            .map_err(|error| color_eyre::eyre::eyre!(error))?;
+            .map_err(SinexError::validation)?;
         assert_eq!(parsed, Some(event_id));
         Ok(())
     }
@@ -699,7 +699,7 @@ mod tests {
         });
 
         let parsed = SubscriptionBus::parse_confirmation(&serde_json::to_vec(&payload)?)
-            .map_err(|error| color_eyre::eyre::eyre!(error))?;
+            .map_err(SinexError::validation)?;
         assert!(parsed.is_none());
         Ok(())
     }
