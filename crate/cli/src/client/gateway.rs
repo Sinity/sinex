@@ -1,30 +1,48 @@
 use std::path::Path;
 use std::time::Duration;
 
+use color_eyre::eyre::eyre;
 use reqwest::{ClientBuilder, StatusCode};
-use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
+use serde_json::Value;
 use sinex_primitives::constants::env_vars;
 use sinex_primitives::domain::{EventSource, NodeType};
 use sinex_primitives::rpc::{
-    JsonRpcError,
-    automata::{AutomataStatusRequest, AutomataStatusResponse},
+    JsonRpcError, RpcMethod,
+    automata::{AUTOMATA_STATUS_METHOD, AutomataStatusRequest, AutomataStatusResponse},
     coordination::{
+        COORDINATION_INSTANCE_HEALTH_METHOD, COORDINATION_LIST_INSTANCES_METHOD,
         InstanceHealthRequest, InstanceHealthResponse, InstanceInfo, ListInstancesRequest,
         ListInstancesResponse,
     },
     dlq::{
-        DlqListRequest, DlqListResponse, DlqPeekRequest, DlqPeekResponse, DlqPurgeRequest,
-        DlqPurgeResponse, DlqRequeueRequest, DlqRequeueResponse,
+        DLQ_LIST_METHOD, DLQ_PEEK_METHOD, DLQ_PURGE_METHOD, DLQ_REQUEUE_METHOD, DlqListRequest,
+        DlqListResponse, DlqPeekRequest, DlqPeekResponse, DlqPurgeRequest, DlqPurgeResponse,
+        DlqRequeueRequest, DlqRequeueResponse,
+    },
+    documents::{
+        DOCUMENTS_GET_CHUNKS_METHOD, DOCUMENTS_GET_METHOD, DOCUMENTS_SEARCH_METHOD,
+        DocumentsGetChunksRequest, DocumentsGetChunksResponse, DocumentsGetRequest,
+        DocumentsGetResponse, DocumentsSearchRequest, DocumentsSearchResponse,
+    },
+    events::{
+        EVENTS_ANNOTATE_METHOD, EVENTS_LINEAGE_METHOD, EVENTS_QUERY_METHOD, EventsAnnotateRequest,
+        EventsAnnotateResponse,
     },
     gitops::{
         DEFAULT_GITOPS_BRANCH, DEFAULT_GITOPS_PATH_PATTERN, DEFAULT_GITOPS_SYNC_FREQUENCY_MINUTES,
-        GitOpsCreateSourceRequest, GitOpsCreateSourceResponse, GitOpsDeleteSourceRequest,
-        GitOpsDeleteSourceResponse, GitOpsListSourcesRequest, GitOpsListSourcesResponse,
-        GitOpsSourceInfo, GitOpsTriggerSyncRequest, GitOpsTriggerSyncResponse,
+        GITOPS_CREATE_SOURCE_METHOD, GITOPS_DELETE_SOURCE_METHOD, GITOPS_LIST_SOURCES_METHOD,
+        GITOPS_TRIGGER_SYNC_METHOD, GitOpsCreateSourceRequest, GitOpsCreateSourceResponse,
+        GitOpsDeleteSourceRequest, GitOpsDeleteSourceResponse, GitOpsListSourcesRequest,
+        GitOpsListSourcesResponse, GitOpsSourceInfo, GitOpsTriggerSyncRequest,
+        GitOpsTriggerSyncResponse,
     },
-    ingestors::{IngestorsStatusRequest, IngestorsStatusResponse},
+    ingestors::{INGESTORS_STATUS_METHOD, IngestorsStatusRequest, IngestorsStatusResponse},
     lifecycle::{
+        LIFECYCLE_ARCHIVE_METHOD, LIFECYCLE_RESTORE_METHOD, LIFECYCLE_STATUS_METHOD,
+        LIFECYCLE_TOMBSTONE_APPROVE_METHOD, LIFECYCLE_TOMBSTONE_CANCEL_METHOD,
+        LIFECYCLE_TOMBSTONE_CREATE_METHOD, LIFECYCLE_TOMBSTONE_LIST_METHOD,
+        LIFECYCLE_TOMBSTONE_PREVIEW_METHOD, LIFECYCLE_TOMBSTONE_STATUS_METHOD,
         LifecycleArchiveRequest, LifecycleArchiveResponse, LifecycleRestoreRequest,
         LifecycleRestoreResponse, LifecycleStatusRequest, LifecycleStatusResponse,
         TombstoneApproveRequest, TombstoneApproveResponse, TombstoneCancelRequest,
@@ -33,22 +51,58 @@ use sinex_primitives::rpc::{
         TombstonePreviewRequest, TombstonePreviewResponse, TombstoneStatusRequest,
         TombstoneStatusResponse,
     },
-    methods,
+    nodes::{NODES_DRAIN_METHOD, NODES_RESUME_METHOD, NODES_SET_HORIZON_METHOD},
     nodes::{NodeDrainRequest, NodeResumeRequest, NodeSetHorizonRequest},
     ops::{Operation as OpsOperation, OpsGetResponse, OpsListResponse, OpsStartResponse},
-    replay::{
-        ReplayApproveRequest, ReplayApproveResponse, ReplayCancelRequest, ReplayCancelResponse,
-        ReplayCreateRequest, ReplayCreateResponse, ReplayExecuteRequest, ReplayExecuteResponse,
-        ReplayListRequest, ReplayListResponse, ReplayOperation, ReplayPreviewRequest,
-        ReplayPreviewResponse, ReplayScope, ReplayState, ReplayStatusRequest, ReplayStatusResponse,
-        ReplaySubmitRequest, ReplaySubmitResponse,
+    privacy::{
+        PRIVACY_PRIVATE_MODE_DISABLE_METHOD, PRIVACY_PRIVATE_MODE_ENABLE_METHOD,
+        PRIVACY_PRIVATE_MODE_STATUS_METHOD, PrivateModeDisableRequest, PrivateModeEnableRequest,
+        PrivateModeStateResponse, PrivateModeStatusRequest,
     },
-    system::{SystemHealthRequest, SystemHealthResponse},
+    replay::{
+        REPLAY_APPROVE_OPERATION_METHOD, REPLAY_CANCEL_OPERATION_METHOD,
+        REPLAY_CREATE_OPERATION_METHOD, REPLAY_EXECUTE_OPERATION_METHOD,
+        REPLAY_LIST_OPERATIONS_METHOD, REPLAY_OPERATION_STATUS_METHOD,
+        REPLAY_PREVIEW_OPERATION_METHOD, REPLAY_SUBMIT_OPERATION_METHOD, ReplayApproveRequest,
+        ReplayApproveResponse, ReplayCancelRequest, ReplayCancelResponse, ReplayCreateRequest,
+        ReplayCreateResponse, ReplayExecuteRequest, ReplayExecuteResponse, ReplayListRequest,
+        ReplayListResponse, ReplayOperation, ReplayPreviewRequest, ReplayPreviewResponse,
+        ReplayScope, ReplayState, ReplayStatusRequest, ReplayStatusResponse, ReplaySubmitRequest,
+        ReplaySubmitResponse,
+    },
+    sources::{
+        SOURCES_ANNOTATE_METHOD, SOURCES_ARCHIVE_METHOD, SOURCES_CONTINUITY_EXPLAIN_GAP_METHOD,
+        SOURCES_CONTINUITY_GET_METHOD, SOURCES_CONTINUITY_LIST_METHOD, SOURCES_CONTINUITY_METHOD,
+        SOURCES_COVERAGE_METHOD, SOURCES_LIST_METHOD, SOURCES_READINESS_GET_METHOD,
+        SOURCES_READINESS_LIST_METHOD, SOURCES_SHOW_METHOD, SOURCES_STAGE_METHOD,
+        SourcesAnnotateRequest, SourcesAnnotateResponse, SourcesArchiveRequest,
+        SourcesArchiveResponse, SourcesContinuityRequest, SourcesContinuityResponse,
+        SourcesCoverageRequest, SourcesCoverageResponse, SourcesListRequest, SourcesListResponse,
+        SourcesReadinessGetRequest, SourcesReadinessGetResponse, SourcesReadinessListRequest,
+        SourcesReadinessListResponse, SourcesShowRequest, SourcesShowResponse, SourcesStageRequest,
+        SourcesStageResponse,
+    },
+    system::{
+        SYSTEM_HEALTH_METHOD, SYSTEM_PING_METHOD, SYSTEM_VERSION_METHOD, SystemHealthRequest,
+        SystemHealthResponse, SystemPingRequest, SystemVersionRequest,
+    },
+    tasks::{
+        TASKS_COMPLETE_METHOD, TASKS_CREATE_METHOD, TASKS_STATE_GET_METHOD, TaskCompleteRequest,
+        TaskCompleteResponse, TaskCreateRequest, TaskCreateResponse, TaskStateGetRequest,
+        TaskStateResponse,
+    },
     telemetry::{
         AssemblyStatsBucket, CommandFrequencyEntry, CurrentDeviceStateEntry, CurrentHealthEntry,
         FileActivityEntry, GatewayStatsBucket, IngestdBatchStatsBucket, IngestdValidationSnapshot,
         MetricCounterBucket, NodeStatsBucket, RecentActivityEntry, StreamStatsBucket,
-        SystemStateBucket, TelemetryAssemblyStatsRequest, TelemetryAssemblyStatsResponse,
+        SystemStateBucket, TELEMETRY_ASSEMBLY_STATS_METHOD, TELEMETRY_COMMAND_FREQUENCY_METHOD,
+        TELEMETRY_CURRENT_DEVICE_STATE_METHOD, TELEMETRY_CURRENT_HEALTH_METHOD,
+        TELEMETRY_FILE_ACTIVITY_METHOD, TELEMETRY_GATEWAY_STATS_METHOD,
+        TELEMETRY_INGESTD_BATCH_STATS_METHOD, TELEMETRY_INGESTD_VALIDATION_METHOD,
+        TELEMETRY_METRIC_COUNTERS_METHOD, TELEMETRY_NODE_STATS_METHOD,
+        TELEMETRY_RECENT_ACTIVITY_METHOD, TELEMETRY_STREAM_STATS_METHOD,
+        TELEMETRY_SYSTEM_STATE_METHOD, TELEMETRY_THROUGHPUT_METHOD, TELEMETRY_WINDOW_FOCUS_METHOD,
+        TelemetryAssemblyStatsRequest, TelemetryAssemblyStatsResponse,
         TelemetryCommandFrequencyRequest, TelemetryCommandFrequencyResponse,
         TelemetryCurrentDeviceStateRequest, TelemetryCurrentDeviceStateResponse,
         TelemetryCurrentHealthRequest, TelemetryCurrentHealthResponse,
@@ -63,6 +117,10 @@ use sinex_primitives::rpc::{
         TelemetryTimeRange, TelemetryWindowFocusRequest, TelemetryWindowFocusResponse,
         WindowFocusBucket,
     },
+};
+use sinex_primitives::sources::continuity::{
+    SourcesContinuityGetRequest, SourcesContinuityGetResponse, SourcesContinuityListRequest,
+    SourcesContinuityListResponse, SourcesExplainGapRequest, SourcesExplainGapResponse,
 };
 use sinex_primitives::temporal::Timestamp;
 
@@ -265,6 +323,28 @@ impl GatewayClient {
         }
     }
 
+    /// Call a typed JSON-RPC method with retry logic.
+    async fn call_typed<Req, Resp>(
+        &self,
+        method: RpcMethod<Req, Resp>,
+        request: &Req,
+    ) -> Result<Resp>
+    where
+        Req: Serialize,
+        Resp: DeserializeOwned,
+    {
+        let params = serde_json::to_value(request)?;
+        let result = self.call_rpc(method.name, params).await?;
+        serde_path_to_error::deserialize(result).map_err(|error| {
+            eyre!(
+                "failed to decode {} response at {}: {}",
+                method.name,
+                error.path(),
+                error.inner()
+            )
+        })
+    }
+
     /// Perform a single RPC call attempt (without retry)
     async fn call_rpc_once(&self, method: &str, params: Value) -> Result<Value> {
         const REQUEST_ID: u64 = 1;
@@ -384,10 +464,8 @@ impl GatewayClient {
     /// List configured gitops sources
     pub async fn gitops_list(&self, include_disabled: bool) -> Result<Vec<GitOpsSourceInfo>> {
         let req = GitOpsListSourcesRequest { include_disabled };
-        let result = self
-            .call_rpc(methods::GITOPS_LIST_SOURCES, serde_json::to_value(&req)?)
-            .await?;
-        let response: GitOpsListSourcesResponse = serde_json::from_value(result)?;
+        let response: GitOpsListSourcesResponse =
+            self.call_typed(GITOPS_LIST_SOURCES_METHOD, &req).await?;
         Ok(response.sources)
     }
 
@@ -406,10 +484,7 @@ impl GatewayClient {
             sync_frequency_minutes: sync_frequency_minutes
                 .unwrap_or(DEFAULT_GITOPS_SYNC_FREQUENCY_MINUTES),
         };
-        let result = self
-            .call_rpc(methods::GITOPS_CREATE_SOURCE, serde_json::to_value(&req)?)
-            .await?;
-        serde_json::from_value(result).map_err(Into::into)
+        self.call_typed(GITOPS_CREATE_SOURCE_METHOD, &req).await
     }
 
     /// Delete a gitops source
@@ -419,10 +494,8 @@ impl GatewayClient {
                 .parse()
                 .map_err(|e| color_eyre::eyre::eyre!("Invalid UUID: {}", e))?,
         };
-        let result = self
-            .call_rpc(methods::GITOPS_DELETE_SOURCE, serde_json::to_value(&req)?)
-            .await?;
-        let response: GitOpsDeleteSourceResponse = serde_json::from_value(result)?;
+        let response: GitOpsDeleteSourceResponse =
+            self.call_typed(GITOPS_DELETE_SOURCE_METHOD, &req).await?;
         Ok(response.deleted)
     }
 
@@ -433,24 +506,21 @@ impl GatewayClient {
                 .parse()
                 .map_err(|e| color_eyre::eyre::eyre!("Invalid UUID: {}", e))?,
         };
-        let result = self
-            .call_rpc(methods::GITOPS_TRIGGER_SYNC, serde_json::to_value(&req)?)
-            .await?;
-        serde_json::from_value(result).map_err(Into::into)
+        self.call_typed(GITOPS_TRIGGER_SYNC_METHOD, &req).await
     }
 
     // ==================== Gateway Commands ====================
 
     /// Ping the gateway
     pub async fn ping(&self) -> Result<String> {
-        let result = self.call_rpc(methods::SYSTEM_PING, json!({})).await?;
-        Self::expect_string_result(methods::SYSTEM_PING, result)
+        self.call_typed(SYSTEM_PING_METHOD, &SystemPingRequest {})
+            .await
     }
 
     /// Get gateway version
     pub async fn version(&self) -> Result<String> {
-        let result = self.call_rpc(methods::SYSTEM_VERSION, json!({})).await?;
-        Self::expect_string_result(methods::SYSTEM_VERSION, result)
+        self.call_typed(SYSTEM_VERSION_METHOD, &SystemVersionRequest {})
+            .await
     }
 
     // ==================== Core Commands ====================
@@ -458,10 +528,7 @@ impl GatewayClient {
     /// Get system health status
     pub async fn health(&self) -> Result<SystemHealthResponse> {
         let req = SystemHealthRequest {};
-        let result = self
-            .call_rpc(methods::SYSTEM_HEALTH, serde_json::to_value(&req)?)
-            .await?;
-        serde_json::from_value(result).map_err(Into::into)
+        self.call_typed(SYSTEM_HEALTH_METHOD, &req).await
     }
 
     // ==================== Node Commands ====================
@@ -476,10 +543,7 @@ impl GatewayClient {
             stale_after_secs,
             recent_window_secs,
         };
-        let result = self
-            .call_rpc(methods::AUTOMATA_STATUS, serde_json::to_value(&req)?)
-            .await?;
-        serde_json::from_value(result).map_err(Into::into)
+        self.call_typed(AUTOMATA_STATUS_METHOD, &req).await
     }
 
     /// List ingestor status (manifest, run, latest health.status, recent emissions).
@@ -492,10 +556,7 @@ impl GatewayClient {
             stale_after_secs,
             recent_window_secs,
         };
-        let result = self
-            .call_rpc(methods::INGESTORS_STATUS, serde_json::to_value(&req)?)
-            .await?;
-        serde_json::from_value(result).map_err(Into::into)
+        self.call_typed(INGESTORS_STATUS_METHOD, &req).await
     }
 
     /// List all nodes, optionally filtered by role.
@@ -509,13 +570,9 @@ impl GatewayClient {
             }),
             ..Default::default()
         };
-        let result = self
-            .call_rpc(
-                methods::COORDINATION_LIST_INSTANCES,
-                serde_json::to_value(&req)?,
-            )
+        let response: ListInstancesResponse = self
+            .call_typed(COORDINATION_LIST_INSTANCES_METHOD, &req)
             .await?;
-        let response: ListInstancesResponse = serde_json::from_value(result)?;
         Ok(response.instances)
     }
 
@@ -524,13 +581,8 @@ impl GatewayClient {
         let req = InstanceHealthRequest {
             instance_id: node_id.into(),
         };
-        let result = self
-            .call_rpc(
-                methods::COORDINATION_INSTANCE_HEALTH,
-                serde_json::to_value(&req)?,
-            )
-            .await?;
-        serde_json::from_value(result).map_err(Into::into)
+        self.call_typed(COORDINATION_INSTANCE_HEALTH_METHOD, &req)
+            .await
     }
 
     /// Drain a node for maintenance
@@ -539,8 +591,7 @@ impl GatewayClient {
             node_id: node_id.into(),
             reason: reason.map(String::from),
         };
-        self.call_rpc(methods::NODES_DRAIN, serde_json::to_value(&req)?)
-            .await?;
+        self.call_typed(NODES_DRAIN_METHOD, &req).await?;
         Ok(())
     }
 
@@ -549,8 +600,7 @@ impl GatewayClient {
         let req = NodeResumeRequest {
             node_id: node_id.into(),
         };
-        self.call_rpc(methods::NODES_RESUME, serde_json::to_value(&req)?)
-            .await?;
+        self.call_typed(NODES_RESUME_METHOD, &req).await?;
         Ok(())
     }
 
@@ -562,8 +612,7 @@ impl GatewayClient {
             node_id: node_id.into(),
             horizon: horizon_ts,
         };
-        self.call_rpc(methods::NODES_SET_HORIZON, serde_json::to_value(&req)?)
-            .await?;
+        self.call_typed(NODES_SET_HORIZON_METHOD, &req).await?;
         Ok(())
     }
 
@@ -613,15 +662,9 @@ impl GatewayClient {
             },
         };
 
-        let result = self
-            .call_rpc(
-                methods::REPLAY_CREATE_OPERATION,
-                serde_json::to_value(&req)?,
-            )
+        let response: ReplayCreateResponse = self
+            .call_typed(REPLAY_CREATE_OPERATION_METHOD, &req)
             .await?;
-
-        // Gateway returns { "operation": ReplayOperation }
-        let response: ReplayCreateResponse = serde_json::from_value(result)?;
         Ok(response.operation)
     }
 
@@ -673,13 +716,9 @@ impl GatewayClient {
         let req = ReplaySubmitRequest {
             operation_id: operation_id.to_string(),
         };
-        let result = self
-            .call_rpc(
-                methods::REPLAY_SUBMIT_OPERATION,
-                serde_json::to_value(&req)?,
-            )
+        let response: ReplaySubmitResponse = self
+            .call_typed(REPLAY_SUBMIT_OPERATION_METHOD, &req)
             .await?;
-        let response: ReplaySubmitResponse = serde_json::from_value(result)?;
         Ok(response.operation)
     }
 
@@ -688,14 +727,9 @@ impl GatewayClient {
         let req = ReplayStatusRequest {
             operation_id: operation_id.to_string(),
         };
-        let result = self
-            .call_rpc(
-                methods::REPLAY_OPERATION_STATUS,
-                serde_json::to_value(&req)?,
-            )
+        let response: ReplayStatusResponse = self
+            .call_typed(REPLAY_OPERATION_STATUS_METHOD, &req)
             .await?;
-
-        let response: ReplayStatusResponse = serde_json::from_value(result)?;
         Ok(response.operation)
     }
 
@@ -716,11 +750,8 @@ impl GatewayClient {
             node: node.map(String::from),
             limit,
         };
-        let result = self
-            .call_rpc(methods::REPLAY_LIST_OPERATIONS, serde_json::to_value(&req)?)
-            .await?;
-
-        let response: ReplayListResponse = serde_json::from_value(result)?;
+        let response: ReplayListResponse =
+            self.call_typed(REPLAY_LIST_OPERATIONS_METHOD, &req).await?;
         Ok(response.operations)
     }
 
@@ -732,13 +763,9 @@ impl GatewayClient {
         let req = ReplayPreviewRequest {
             operation_id: operation_id.to_string(),
         };
-        let result = self
-            .call_rpc(
-                methods::REPLAY_PREVIEW_OPERATION,
-                serde_json::to_value(&req)?,
-            )
+        let response: ReplayPreviewResponse = self
+            .call_typed(REPLAY_PREVIEW_OPERATION_METHOD, &req)
             .await?;
-        let response: ReplayPreviewResponse = serde_json::from_value(result)?;
         Ok((response.operation, response.preview))
     }
 
@@ -747,13 +774,9 @@ impl GatewayClient {
         let req = ReplayApproveRequest {
             operation_id: operation_id.to_string(),
         };
-        let result = self
-            .call_rpc(
-                methods::REPLAY_APPROVE_OPERATION,
-                serde_json::to_value(&req)?,
-            )
+        let response: ReplayApproveResponse = self
+            .call_typed(REPLAY_APPROVE_OPERATION_METHOD, &req)
             .await?;
-        let response: ReplayApproveResponse = serde_json::from_value(result)?;
         Ok(response.operation)
     }
 
@@ -763,13 +786,9 @@ impl GatewayClient {
             operation_id: operation_id.to_string(),
             dry_run: false,
         };
-        let result = self
-            .call_rpc(
-                methods::REPLAY_EXECUTE_OPERATION,
-                serde_json::to_value(&req)?,
-            )
+        let response: ReplayExecuteResponse = self
+            .call_typed(REPLAY_EXECUTE_OPERATION_METHOD, &req)
             .await?;
-        let response: ReplayExecuteResponse = serde_json::from_value(result)?;
         Ok(response.operation)
     }
 
@@ -783,13 +802,9 @@ impl GatewayClient {
             operation_id: operation_id.to_string(),
             reason: reason.map(String::from),
         };
-        let result = self
-            .call_rpc(
-                methods::REPLAY_CANCEL_OPERATION,
-                serde_json::to_value(&req)?,
-            )
+        let response: ReplayCancelResponse = self
+            .call_typed(REPLAY_CANCEL_OPERATION_METHOD, &req)
             .await?;
-        let response: ReplayCancelResponse = serde_json::from_value(result)?;
         Ok(response.operation)
     }
 
@@ -798,10 +813,7 @@ impl GatewayClient {
     /// List raw-ingest dead-letter queue statistics
     pub async fn dlq_list(&self) -> Result<DlqListResponse> {
         let req = DlqListRequest {};
-        let result = self
-            .call_rpc(methods::DLQ_LIST, serde_json::to_value(&req)?)
-            .await?;
-        serde_json::from_value(result).map_err(Into::into)
+        self.call_typed(DLQ_LIST_METHOD, &req).await
     }
 
     /// Peek at messages in a DLQ
@@ -809,10 +821,7 @@ impl GatewayClient {
         let req = DlqPeekRequest {
             limit: limit.unwrap_or(10),
         };
-        let result = self
-            .call_rpc(methods::DLQ_PEEK, serde_json::to_value(&req)?)
-            .await?;
-        serde_json::from_value(result).map_err(Into::into)
+        self.call_typed(DLQ_PEEK_METHOD, &req).await
     }
 
     /// Requeue messages from DLQ
@@ -822,37 +831,161 @@ impl GatewayClient {
         all: bool,
     ) -> Result<DlqRequeueResponse> {
         let req = DlqRequeueRequest { event_id, all };
-        let result = self
-            .call_rpc(methods::DLQ_REQUEUE, serde_json::to_value(&req)?)
-            .await?;
-        serde_json::from_value(result).map_err(Into::into)
+        self.call_typed(DLQ_REQUEUE_METHOD, &req).await
     }
 
     /// Purge all messages from DLQ
     pub async fn dlq_purge(&self, confirm: bool) -> Result<DlqPurgeResponse> {
         let req = DlqPurgeRequest { confirm };
-        let result = self
-            .call_rpc(methods::DLQ_PURGE, serde_json::to_value(&req)?)
-            .await?;
-        serde_json::from_value(result).map_err(Into::into)
+        self.call_typed(DLQ_PURGE_METHOD, &req).await
     }
 
     // ==================== Event Query Commands ====================
 
     /// Query events using the composable query engine
     pub async fn query_events(&self, query: EventQuery) -> Result<EventQueryResult> {
-        let result = self
-            .call_rpc(methods::EVENTS_QUERY, serde_json::to_value(&query)?)
-            .await?;
-        serde_json::from_value(result).map_err(Into::into)
+        self.call_typed(EVENTS_QUERY_METHOD, &query).await
     }
 
     /// Trace provenance lineage for an event
     pub async fn trace_lineage(&self, query: LineageQuery) -> Result<LineageResult> {
-        let result = self
-            .call_rpc(methods::EVENTS_LINEAGE, serde_json::to_value(&query)?)
-            .await?;
-        serde_json::from_value(result).map_err(Into::into)
+        self.call_typed(EVENTS_LINEAGE_METHOD, &query).await
+    }
+
+    /// Record an annotation against an event.
+    pub async fn events_annotate(
+        &self,
+        request: EventsAnnotateRequest,
+    ) -> Result<EventsAnnotateResponse> {
+        self.call_typed(EVENTS_ANNOTATE_METHOD, &request).await
+    }
+
+    // ==================== Task Domain Commands ====================
+
+    /// Create a manual task declaration.
+    pub async fn tasks_create(&self, request: TaskCreateRequest) -> Result<TaskCreateResponse> {
+        self.call_typed(TASKS_CREATE_METHOD, &request).await
+    }
+
+    /// Mark a task complete.
+    pub async fn tasks_complete(
+        &self,
+        request: TaskCompleteRequest,
+    ) -> Result<TaskCompleteResponse> {
+        self.call_typed(TASKS_COMPLETE_METHOD, &request).await
+    }
+
+    /// Fetch current task state.
+    pub async fn tasks_state_get(&self, request: TaskStateGetRequest) -> Result<TaskStateResponse> {
+        self.call_typed(TASKS_STATE_GET_METHOD, &request).await
+    }
+
+    // ==================== Source Material Commands ====================
+
+    pub async fn sources_stage(
+        &self,
+        request: SourcesStageRequest,
+    ) -> Result<SourcesStageResponse> {
+        self.call_typed(SOURCES_STAGE_METHOD, &request).await
+    }
+
+    pub async fn sources_list(&self, request: SourcesListRequest) -> Result<SourcesListResponse> {
+        self.call_typed(SOURCES_LIST_METHOD, &request).await
+    }
+
+    pub async fn sources_show(&self, request: SourcesShowRequest) -> Result<SourcesShowResponse> {
+        self.call_typed(SOURCES_SHOW_METHOD, &request).await
+    }
+
+    pub async fn sources_coverage(
+        &self,
+        request: SourcesCoverageRequest,
+    ) -> Result<SourcesCoverageResponse> {
+        self.call_typed(SOURCES_COVERAGE_METHOD, &request).await
+    }
+
+    pub async fn sources_annotate(
+        &self,
+        request: SourcesAnnotateRequest,
+    ) -> Result<SourcesAnnotateResponse> {
+        self.call_typed(SOURCES_ANNOTATE_METHOD, &request).await
+    }
+
+    pub async fn sources_archive(
+        &self,
+        request: SourcesArchiveRequest,
+    ) -> Result<SourcesArchiveResponse> {
+        self.call_typed(SOURCES_ARCHIVE_METHOD, &request).await
+    }
+
+    pub async fn sources_continuity(
+        &self,
+        request: SourcesContinuityRequest,
+    ) -> Result<SourcesContinuityResponse> {
+        self.call_typed(SOURCES_CONTINUITY_METHOD, &request).await
+    }
+
+    pub async fn sources_continuity_get(
+        &self,
+        request: SourcesContinuityGetRequest,
+    ) -> Result<SourcesContinuityGetResponse> {
+        self.call_typed(SOURCES_CONTINUITY_GET_METHOD, &request)
+            .await
+    }
+
+    pub async fn sources_continuity_list(
+        &self,
+        request: SourcesContinuityListRequest,
+    ) -> Result<SourcesContinuityListResponse> {
+        self.call_typed(SOURCES_CONTINUITY_LIST_METHOD, &request)
+            .await
+    }
+
+    pub async fn sources_continuity_explain_gap(
+        &self,
+        request: SourcesExplainGapRequest,
+    ) -> Result<SourcesExplainGapResponse> {
+        self.call_typed(SOURCES_CONTINUITY_EXPLAIN_GAP_METHOD, &request)
+            .await
+    }
+
+    pub async fn sources_readiness_get(
+        &self,
+        request: SourcesReadinessGetRequest,
+    ) -> Result<SourcesReadinessGetResponse> {
+        self.call_typed(SOURCES_READINESS_GET_METHOD, &request)
+            .await
+    }
+
+    pub async fn sources_readiness_list(
+        &self,
+        request: SourcesReadinessListRequest,
+    ) -> Result<SourcesReadinessListResponse> {
+        self.call_typed(SOURCES_READINESS_LIST_METHOD, &request)
+            .await
+    }
+
+    // ==================== Document Commands ====================
+
+    pub async fn documents_search(
+        &self,
+        request: DocumentsSearchRequest,
+    ) -> Result<DocumentsSearchResponse> {
+        self.call_typed(DOCUMENTS_SEARCH_METHOD, &request).await
+    }
+
+    pub async fn documents_get(
+        &self,
+        request: DocumentsGetRequest,
+    ) -> Result<DocumentsGetResponse> {
+        self.call_typed(DOCUMENTS_GET_METHOD, &request).await
+    }
+
+    pub async fn documents_get_chunks(
+        &self,
+        request: DocumentsGetChunksRequest,
+    ) -> Result<DocumentsGetChunksResponse> {
+        self.call_typed(DOCUMENTS_GET_CHUNKS_METHOD, &request).await
     }
 
     // ==================== Operations Log Commands ====================
@@ -863,12 +996,12 @@ impl GatewayClient {
         operation_type: &str,
         scope: Option<Value>,
     ) -> Result<OpsStartResponse> {
-        let params = json!({
-            "operation_type": operation_type,
-            "scope": scope
-        });
-        let result = self.call_rpc("ops.start", params).await?;
-        serde_json::from_value(result).map_err(Into::into)
+        let request = sinex_primitives::rpc::ops::OpsStartRequest {
+            operation_type: operation_type.to_string(),
+            scope,
+        };
+        self.call_typed(sinex_primitives::rpc::ops::OPS_START_METHOD, &request)
+            .await
     }
 
     /// List operations
@@ -878,31 +1011,40 @@ impl GatewayClient {
         status: Option<String>,
         limit: Option<i64>,
     ) -> Result<Vec<OpsOperation>> {
-        let params = json!({
-            "operation_type": operation_type,
-            "status": status,
-            "limit": limit.unwrap_or(50)
-        });
-        let result = self.call_rpc("ops.list", params).await?;
-        let response: OpsListResponse = serde_json::from_value(result)?;
+        let status = status
+            .map(serde_json::Value::String)
+            .map(serde_json::from_value)
+            .transpose()?;
+        let request = sinex_primitives::rpc::ops::OpsListRequest {
+            operation_type,
+            status,
+            limit: limit.unwrap_or(50),
+        };
+        let response: OpsListResponse = self
+            .call_typed(sinex_primitives::rpc::ops::OPS_LIST_METHOD, &request)
+            .await?;
         Ok(response.operations)
     }
 
     /// Get operation details
     pub async fn ops_get(&self, operation_id: &str) -> Result<OpsOperation> {
-        let params = json!({ "operation_id": operation_id });
-        let result = self.call_rpc("ops.get", params).await?;
-        let response: OpsGetResponse = serde_json::from_value(result)?;
+        let request = sinex_primitives::rpc::ops::OpsGetRequest {
+            operation_id: operation_id.to_string(),
+        };
+        let response: OpsGetResponse = self
+            .call_typed(sinex_primitives::rpc::ops::OPS_GET_METHOD, &request)
+            .await?;
         Ok(response.operation)
     }
 
     /// Cancel an operation
     pub async fn ops_cancel(&self, operation_id: &str, reason: Option<String>) -> Result<()> {
-        let params = json!({
-            "operation_id": operation_id,
-            "reason": reason
-        });
-        self.call_rpc("ops.cancel", params).await?;
+        let request = sinex_primitives::rpc::ops::OpsCancelRequest {
+            operation_id: operation_id.to_string(),
+            reason,
+        };
+        self.call_typed(sinex_primitives::rpc::ops::OPS_CANCEL_METHOD, &request)
+            .await?;
         Ok(())
     }
 
@@ -915,7 +1057,7 @@ impl GatewayClient {
     ) -> Result<sinex_primitives::rpc::audit::AuditGetResponse> {
         use sinex_primitives::Id;
         use sinex_primitives::events::builder::OperationMarker;
-        use sinex_primitives::rpc::audit::{AuditGetRequest, AuditGetResponse};
+        use sinex_primitives::rpc::audit::{AUDIT_GET_METHOD, AuditGetRequest};
 
         let op_id = operation_id
             .parse::<Id<OperationMarker>>()
@@ -926,11 +1068,7 @@ impl GatewayClient {
             after_id: None,
             limit: 100,
         };
-        let result = self
-            .call_rpc("audit.get", serde_json::to_value(&request)?)
-            .await?;
-        let response: AuditGetResponse = serde_json::from_value(result)?;
-        Ok(response)
+        self.call_typed(AUDIT_GET_METHOD, &request).await
     }
 
     // ==================== Lifecycle Commands ====================
@@ -938,10 +1076,7 @@ impl GatewayClient {
     /// Get lifecycle tier status
     pub async fn lifecycle_status(&self) -> Result<LifecycleStatusResponse> {
         let req = LifecycleStatusRequest::default();
-        let result = self
-            .call_rpc(methods::LIFECYCLE_STATUS, serde_json::to_value(&req)?)
-            .await?;
-        serde_json::from_value(result).map_err(Into::into)
+        self.call_typed(LIFECYCLE_STATUS_METHOD, &req).await
     }
 
     /// Archive live events (move to `audit.archived_events`)
@@ -961,10 +1096,7 @@ impl GatewayClient {
             reason: None,
             dry_run,
         };
-        let result = self
-            .call_rpc(methods::LIFECYCLE_ARCHIVE, serde_json::to_value(&req)?)
-            .await?;
-        serde_json::from_value(result).map_err(Into::into)
+        self.call_typed(LIFECYCLE_ARCHIVE_METHOD, &req).await
     }
 
     /// Restore archived events back to live
@@ -974,10 +1106,36 @@ impl GatewayClient {
         dry_run: bool,
     ) -> Result<LifecycleRestoreResponse> {
         let req = LifecycleRestoreRequest { event_ids, dry_run };
-        let result = self
-            .call_rpc(methods::LIFECYCLE_RESTORE, serde_json::to_value(&req)?)
-            .await?;
-        serde_json::from_value(result).map_err(Into::into)
+        self.call_typed(LIFECYCLE_RESTORE_METHOD, &req).await
+    }
+
+    // ==================== Privacy Commands ====================
+
+    pub async fn private_mode_status(&self) -> Result<PrivateModeStateResponse> {
+        let req = PrivateModeStatusRequest {};
+        self.call_typed(PRIVACY_PRIVATE_MODE_STATUS_METHOD, &req)
+            .await
+    }
+
+    pub async fn private_mode_enable(
+        &self,
+        actor: String,
+        reason_class: sinex_primitives::privacy::PrivateModeReasonClass,
+        source_classes: Vec<String>,
+    ) -> Result<PrivateModeStateResponse> {
+        let req = PrivateModeEnableRequest {
+            actor,
+            reason_class,
+            source_classes,
+        };
+        self.call_typed(PRIVACY_PRIVATE_MODE_ENABLE_METHOD, &req)
+            .await
+    }
+
+    pub async fn private_mode_disable(&self) -> Result<PrivateModeStateResponse> {
+        let req = PrivateModeDisableRequest {};
+        self.call_typed(PRIVACY_PRIVATE_MODE_DISABLE_METHOD, &req)
+            .await
     }
 
     // ==================== Two-Step Tombstone Commands (SEC-003) ====================
@@ -998,13 +1156,8 @@ impl GatewayClient {
             limit,
             reason,
         };
-        let result = self
-            .call_rpc(
-                methods::LIFECYCLE_TOMBSTONE_CREATE,
-                serde_json::to_value(&req)?,
-            )
-            .await?;
-        serde_json::from_value(result).map_err(Into::into)
+        self.call_typed(LIFECYCLE_TOMBSTONE_CREATE_METHOD, &req)
+            .await
     }
 
     /// Preview cascade analysis for a tombstone operation
@@ -1013,13 +1166,8 @@ impl GatewayClient {
         operation_id: String,
     ) -> Result<TombstonePreviewResponse> {
         let req = TombstonePreviewRequest { operation_id };
-        let result = self
-            .call_rpc(
-                methods::LIFECYCLE_TOMBSTONE_PREVIEW,
-                serde_json::to_value(&req)?,
-            )
-            .await?;
-        serde_json::from_value(result).map_err(Into::into)
+        self.call_typed(LIFECYCLE_TOMBSTONE_PREVIEW_METHOD, &req)
+            .await
     }
 
     /// Approve and execute a tombstone operation (Step 2 - PERMANENT!)
@@ -1032,13 +1180,8 @@ impl GatewayClient {
             operation_id,
             yes_i_understand_data_is_gone: confirm,
         };
-        let result = self
-            .call_rpc(
-                methods::LIFECYCLE_TOMBSTONE_APPROVE,
-                serde_json::to_value(&req)?,
-            )
-            .await?;
-        serde_json::from_value(result).map_err(Into::into)
+        self.call_typed(LIFECYCLE_TOMBSTONE_APPROVE_METHOD, &req)
+            .await
     }
 
     /// Cancel a pending tombstone operation
@@ -1051,13 +1194,8 @@ impl GatewayClient {
             operation_id,
             reason,
         };
-        let result = self
-            .call_rpc(
-                methods::LIFECYCLE_TOMBSTONE_CANCEL,
-                serde_json::to_value(&req)?,
-            )
-            .await?;
-        serde_json::from_value(result).map_err(Into::into)
+        self.call_typed(LIFECYCLE_TOMBSTONE_CANCEL_METHOD, &req)
+            .await
     }
 
     /// List tombstone operations
@@ -1067,25 +1205,14 @@ impl GatewayClient {
         limit: Option<i64>,
     ) -> Result<TombstoneListResponse> {
         let req = TombstoneListRequest { state, limit };
-        let result = self
-            .call_rpc(
-                methods::LIFECYCLE_TOMBSTONE_LIST,
-                serde_json::to_value(&req)?,
-            )
-            .await?;
-        serde_json::from_value(result).map_err(Into::into)
+        self.call_typed(LIFECYCLE_TOMBSTONE_LIST_METHOD, &req).await
     }
 
     /// Get status of a specific tombstone operation
     pub async fn tombstone_status(&self, operation_id: String) -> Result<TombstoneStatusResponse> {
         let req = TombstoneStatusRequest { operation_id };
-        let result = self
-            .call_rpc(
-                methods::LIFECYCLE_TOMBSTONE_STATUS,
-                serde_json::to_value(&req)?,
-            )
-            .await?;
-        serde_json::from_value(result).map_err(Into::into)
+        self.call_typed(LIFECYCLE_TOMBSTONE_STATUS_METHOD, &req)
+            .await
     }
 
     // ==================== Telemetry Commands ====================
@@ -1096,13 +1223,9 @@ impl GatewayClient {
         limit: Option<i64>,
     ) -> Result<Vec<CurrentHealthEntry>> {
         let req = TelemetryCurrentHealthRequest { limit };
-        let result = self
-            .call_rpc(
-                methods::TELEMETRY_CURRENT_HEALTH,
-                serde_json::to_value(&req)?,
-            )
+        let response: TelemetryCurrentHealthResponse = self
+            .call_typed(TELEMETRY_CURRENT_HEALTH_METHOD, &req)
             .await?;
-        let response: TelemetryCurrentHealthResponse = serde_json::from_value(result)?;
         Ok(response.entries)
     }
 
@@ -1112,13 +1235,9 @@ impl GatewayClient {
         limit: Option<i64>,
     ) -> Result<Vec<CurrentDeviceStateEntry>> {
         let req = TelemetryCurrentDeviceStateRequest { limit };
-        let result = self
-            .call_rpc(
-                methods::TELEMETRY_CURRENT_DEVICE_STATE,
-                serde_json::to_value(&req)?,
-            )
+        let response: TelemetryCurrentDeviceStateResponse = self
+            .call_typed(TELEMETRY_CURRENT_DEVICE_STATE_METHOD, &req)
             .await?;
-        let response: TelemetryCurrentDeviceStateResponse = serde_json::from_value(result)?;
         Ok(response.entries)
     }
 
@@ -1133,10 +1252,8 @@ impl GatewayClient {
             time_range: TelemetryTimeRange { from, to },
             limit,
         };
-        let result = self
-            .call_rpc(methods::TELEMETRY_WINDOW_FOCUS, serde_json::to_value(&req)?)
-            .await?;
-        let response: TelemetryWindowFocusResponse = serde_json::from_value(result)?;
+        let response: TelemetryWindowFocusResponse =
+            self.call_typed(TELEMETRY_WINDOW_FOCUS_METHOD, &req).await?;
         Ok(response.buckets)
     }
 
@@ -1151,13 +1268,9 @@ impl GatewayClient {
             time_range: TelemetryTimeRange { from, to },
             limit,
         };
-        let result = self
-            .call_rpc(
-                methods::TELEMETRY_COMMAND_FREQUENCY,
-                serde_json::to_value(&req)?,
-            )
+        let response: TelemetryCommandFrequencyResponse = self
+            .call_typed(TELEMETRY_COMMAND_FREQUENCY_METHOD, &req)
             .await?;
-        let response: TelemetryCommandFrequencyResponse = serde_json::from_value(result)?;
         Ok(response.entries)
     }
 
@@ -1172,23 +1285,16 @@ impl GatewayClient {
             time_range: TelemetryTimeRange { from, to },
             limit,
         };
-        let result = self
-            .call_rpc(
-                methods::TELEMETRY_FILE_ACTIVITY,
-                serde_json::to_value(&req)?,
-            )
+        let response: TelemetryFileActivityResponse = self
+            .call_typed(TELEMETRY_FILE_ACTIVITY_METHOD, &req)
             .await?;
-        let response: TelemetryFileActivityResponse = serde_json::from_value(result)?;
         Ok(response.entries)
     }
 
     /// Query the per-source/component throughput summary (#1172 AC-8).
     pub async fn telemetry_throughput(&self) -> Result<TelemetryThroughputResponse> {
         let req = TelemetryThroughputRequest::default();
-        let result = self
-            .call_rpc(methods::TELEMETRY_THROUGHPUT, serde_json::to_value(&req)?)
-            .await?;
-        Ok(serde_json::from_value(result)?)
+        self.call_typed(TELEMETRY_THROUGHPUT_METHOD, &req).await
     }
 
     /// Query recent activity summary (hardcoded lookback window, no time params).
@@ -1197,13 +1303,9 @@ impl GatewayClient {
         limit: Option<i64>,
     ) -> Result<Vec<RecentActivityEntry>> {
         let req = TelemetryRecentActivityRequest { limit };
-        let result = self
-            .call_rpc(
-                methods::TELEMETRY_RECENT_ACTIVITY,
-                serde_json::to_value(&req)?,
-            )
+        let response: TelemetryRecentActivityResponse = self
+            .call_typed(TELEMETRY_RECENT_ACTIVITY_METHOD, &req)
             .await?;
-        let response: TelemetryRecentActivityResponse = serde_json::from_value(result)?;
         Ok(response.entries)
     }
 
@@ -1218,10 +1320,8 @@ impl GatewayClient {
             time_range: TelemetryTimeRange { from, to },
             limit,
         };
-        let result = self
-            .call_rpc(methods::TELEMETRY_SYSTEM_STATE, serde_json::to_value(&req)?)
-            .await?;
-        let response: TelemetrySystemStateResponse = serde_json::from_value(result)?;
+        let response: TelemetrySystemStateResponse =
+            self.call_typed(TELEMETRY_SYSTEM_STATE_METHOD, &req).await?;
         Ok(response.buckets)
     }
 
@@ -1236,13 +1336,9 @@ impl GatewayClient {
             time_range: TelemetryTimeRange { from, to },
             limit,
         };
-        let result = self
-            .call_rpc(
-                methods::TELEMETRY_GATEWAY_STATS,
-                serde_json::to_value(&req)?,
-            )
+        let response: TelemetryGatewayStatsResponse = self
+            .call_typed(TELEMETRY_GATEWAY_STATS_METHOD, &req)
             .await?;
-        let response: TelemetryGatewayStatsResponse = serde_json::from_value(result)?;
         Ok(response.buckets)
     }
 
@@ -1257,10 +1353,8 @@ impl GatewayClient {
             time_range: TelemetryTimeRange { from, to },
             limit,
         };
-        let result = self
-            .call_rpc(methods::TELEMETRY_STREAM_STATS, serde_json::to_value(&req)?)
-            .await?;
-        let response: TelemetryStreamStatsResponse = serde_json::from_value(result)?;
+        let response: TelemetryStreamStatsResponse =
+            self.call_typed(TELEMETRY_STREAM_STATS_METHOD, &req).await?;
         Ok(response.buckets)
     }
 
@@ -1275,13 +1369,9 @@ impl GatewayClient {
             time_range: TelemetryTimeRange { from, to },
             limit,
         };
-        let result = self
-            .call_rpc(
-                methods::TELEMETRY_ASSEMBLY_STATS,
-                serde_json::to_value(&req)?,
-            )
+        let response: TelemetryAssemblyStatsResponse = self
+            .call_typed(TELEMETRY_ASSEMBLY_STATS_METHOD, &req)
             .await?;
-        let response: TelemetryAssemblyStatsResponse = serde_json::from_value(result)?;
         Ok(response.buckets)
     }
 
@@ -1296,10 +1386,8 @@ impl GatewayClient {
             time_range: TelemetryTimeRange { from, to },
             limit,
         };
-        let result = self
-            .call_rpc(methods::TELEMETRY_NODE_STATS, serde_json::to_value(&req)?)
-            .await?;
-        let response: TelemetryNodeStatsResponse = serde_json::from_value(result)?;
+        let response: TelemetryNodeStatsResponse =
+            self.call_typed(TELEMETRY_NODE_STATS_METHOD, &req).await?;
         Ok(response.buckets)
     }
 
@@ -1314,13 +1402,9 @@ impl GatewayClient {
             time_range: TelemetryTimeRange { from, to },
             limit,
         };
-        let result = self
-            .call_rpc(
-                methods::TELEMETRY_METRIC_COUNTERS,
-                serde_json::to_value(&req)?,
-            )
+        let response: TelemetryMetricCountersResponse = self
+            .call_typed(TELEMETRY_METRIC_COUNTERS_METHOD, &req)
             .await?;
-        let response: TelemetryMetricCountersResponse = serde_json::from_value(result)?;
         Ok(response.buckets)
     }
 
@@ -1335,26 +1419,18 @@ impl GatewayClient {
             time_range: TelemetryTimeRange { from, to },
             limit,
         };
-        let result = self
-            .call_rpc(
-                methods::TELEMETRY_INGESTD_BATCH_STATS,
-                serde_json::to_value(&req)?,
-            )
+        let response: TelemetryIngestdBatchStatsResponse = self
+            .call_typed(TELEMETRY_INGESTD_BATCH_STATS_METHOD, &req)
             .await?;
-        let response: TelemetryIngestdBatchStatsResponse = serde_json::from_value(result)?;
         Ok(response.buckets)
     }
 
     /// Query the latest ingestd validation snapshot.
     pub async fn telemetry_ingestd_validation(&self) -> Result<Option<IngestdValidationSnapshot>> {
         let req = TelemetryIngestdValidationRequest::default();
-        let result = self
-            .call_rpc(
-                methods::TELEMETRY_INGESTD_VALIDATION,
-                serde_json::to_value(&req)?,
-            )
+        let response: TelemetryIngestdValidationResponse = self
+            .call_typed(TELEMETRY_INGESTD_VALIDATION_METHOD, &req)
             .await?;
-        let response: TelemetryIngestdValidationResponse = serde_json::from_value(result)?;
         Ok(response.snapshot)
     }
 

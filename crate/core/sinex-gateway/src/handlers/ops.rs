@@ -1,4 +1,3 @@
-use serde_json::Value;
 use sinex_db::DbPoolExt;
 use sinex_db::repositories::state::Operation as DbOperation;
 use sinex_primitives::Id;
@@ -38,12 +37,11 @@ fn record_to_operation(record: sinex_db::repositories::OperationRecord) -> Opera
 /// Write operations are logged for audit purposes.
 pub async fn handle_ops_start(
     pool: &PgPool,
-    params: Value,
+    request: OpsStartRequest,
     auth: &crate::rpc_server::RpcAuthContext,
-) -> Result<Value> {
+) -> Result<OpsStartResponse> {
     use tracing::info;
 
-    let request: OpsStartRequest = serde_json::from_value(params)?;
     let scope_jsonb = request.scope.unwrap_or(serde_json::json!({}));
     let actor = auth.actor_id();
 
@@ -63,7 +61,7 @@ pub async fn handle_ops_start(
         operation: record_to_operation(record),
     };
 
-    Ok(serde_json::to_value(response)?)
+    Ok(response)
 }
 
 /// Handle GET /ops - list operations with optional filtering
@@ -73,12 +71,11 @@ pub async fn handle_ops_start(
 /// Read-only operation. Auth context accepted for audit trail consistency.
 pub async fn handle_ops_list(
     pool: &PgPool,
-    params: Value,
+    request: OpsListRequest,
     auth: &crate::rpc_server::RpcAuthContext,
-) -> Result<Value> {
+) -> Result<OpsListResponse> {
     use tracing::debug;
 
-    let request: OpsListRequest = super::parse_default_on_null(params)?;
     let limit = if request.limit == default_ops_limit() || request.limit > 0 {
         request.limit
     } else {
@@ -105,7 +102,7 @@ pub async fn handle_ops_list(
         operations: records.into_iter().map(record_to_operation).collect(),
     };
 
-    Ok(serde_json::to_value(response)?)
+    Ok(response)
 }
 
 /// Handle GET /ops/{id} - get operation details
@@ -115,12 +112,10 @@ pub async fn handle_ops_list(
 /// Read-only operation. Auth context accepted for audit trail consistency.
 pub async fn handle_ops_get(
     pool: &PgPool,
-    params: Value,
+    request: OpsGetRequest,
     auth: &crate::rpc_server::RpcAuthContext,
-) -> Result<Value> {
+) -> Result<OpsGetResponse> {
     use tracing::debug;
-
-    let request: OpsGetRequest = serde_json::from_value(params)?;
 
     debug!(
         actor = %auth.actor_id(),
@@ -143,7 +138,7 @@ pub async fn handle_ops_get(
         operation: record_to_operation(record),
     };
 
-    Ok(serde_json::to_value(response)?)
+    Ok(response)
 }
 
 /// Handle POST /ops/{id}/cancel - cancel a running operation
@@ -154,12 +149,10 @@ pub async fn handle_ops_get(
 /// The auth context is logged for audit purposes.
 pub async fn handle_ops_cancel(
     pool: &PgPool,
-    params: Value,
+    request: OpsCancelRequest,
     auth: &crate::rpc_server::RpcAuthContext,
-) -> Result<Value> {
+) -> Result<OpsCancelResponse> {
     use tracing::info;
-
-    let request: OpsCancelRequest = serde_json::from_value(params)?;
 
     let operation_id = request
         .operation_id
@@ -196,5 +189,5 @@ pub async fn handle_ops_cancel(
         cancelled: true,
     };
 
-    Ok(serde_json::to_value(response)?)
+    Ok(response)
 }

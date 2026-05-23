@@ -7,6 +7,34 @@ use crate::ids::Id;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use super::{RpcDomain, RpcMethod, RpcMutability, RpcRole, RpcStability, methods};
+
+pub const PKM_CREATE_NOTE_METHOD: RpcMethod<CreateNoteRequest, CreateNoteResponse> = RpcMethod::new(
+    methods::PKM_CREATE_NOTE,
+    RpcRole::Write,
+    RpcDomain::Pkm,
+    RpcStability::Experimental,
+    RpcMutability::Mutating,
+);
+
+pub const PKM_CREATE_ENTITIES_METHOD: RpcMethod<CreateEntitiesRequest, CreateEntitiesResponse> =
+    RpcMethod::new(
+        methods::PKM_CREATE_ENTITIES,
+        RpcRole::Write,
+        RpcDomain::Pkm,
+        RpcStability::Experimental,
+        RpcMutability::Mutating,
+    );
+
+pub const PKM_LINK_ENTITIES_METHOD: RpcMethod<LinkEntitiesRequest, LinkEntitiesResponse> =
+    RpcMethod::new(
+        methods::PKM_LINK_ENTITIES,
+        RpcRole::Write,
+        RpcDomain::Pkm,
+        RpcStability::Experimental,
+        RpcMutability::Mutating,
+    );
+
 // ─────────────────────────────────────────────────────────────
 // pkm.create_note
 // ─────────────────────────────────────────────────────────────

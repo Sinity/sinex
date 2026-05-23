@@ -1,33 +1,29 @@
 //! Content RPC handlers.
 
 use super::rpc_handlers::{
-    DEFAULT_BLOB_CONTENT_TYPE, DEFAULT_BLOB_FILENAME, RpcParams, blob_response_payload,
-    decode_blob_content,
+    DEFAULT_BLOB_CONTENT_TYPE, DEFAULT_BLOB_FILENAME, blob_response_payload, decode_blob_content,
 };
 use crate::rpc_server::RpcAuthContext;
 use crate::service_container::ServiceContainer;
-use serde_json::Value;
-use sinex_primitives::rpc::content::StoreBlobResponse;
+use sinex_primitives::rpc::content::{
+    RetrieveBlobRequest, RetrieveBlobResponse, StoreBlobRequest, StoreBlobResponse,
+};
 use sinex_primitives::{Result, SinexError};
 
 pub async fn handle_store_blob(
     services: &ServiceContainer,
-    params: Value,
+    request: StoreBlobRequest,
     auth: &RpcAuthContext,
-) -> Result<Value> {
-    let params = RpcParams::new(&params);
-    let content_b64 = params.require_str("content")?;
-
+) -> Result<StoreBlobResponse> {
     let limit = services.config().max_blob_bytes;
-    let content = decode_blob_content(content_b64, limit)?;
+    let content = decode_blob_content(&request.content, limit)?;
 
-    let filename = params
-        .optional_str("filename")?
-        .unwrap_or(DEFAULT_BLOB_FILENAME);
-    let content_type = params
-        .optional_str("content_type")?
+    let filename = request.filename.as_deref().unwrap_or(DEFAULT_BLOB_FILENAME);
+    let content_type = request
+        .content_type
+        .as_deref()
         .unwrap_or(DEFAULT_BLOB_CONTENT_TYPE);
-    let source = params.optional_str("source")?.unwrap_or(auth.actor_id());
+    let source = request.source.as_deref().unwrap_or(auth.actor_id());
 
     let key = services
         .content
@@ -39,26 +35,25 @@ pub async fn handle_store_blob(
             .with_context("size_bytes", metadata.size_bytes)
     })?;
 
-    serde_json::to_value(StoreBlobResponse {
+    Ok(StoreBlobResponse {
         content_key: key,
         size,
         blake3_hash: metadata.content_hash,
     })
-    .map_err(|error| {
-        SinexError::serialization("failed to serialize content.store_blob response")
-            .with_std_error(&error)
-    })
 }
 
-pub async fn handle_retrieve_blob(services: &ServiceContainer, params: Value) -> Result<Value> {
-    let params = RpcParams::new(&params);
-    let key = params.require_str("content_key")?;
+pub async fn handle_retrieve_blob(
+    services: &ServiceContainer,
+    request: RetrieveBlobRequest,
+) -> Result<RetrieveBlobResponse> {
+    let content = services
+        .content
+        .retrieve_content(&request.content_key)
+        .await?;
+    let metadata = services
+        .content
+        .get_content_metadata(&request.content_key)
+        .await?;
 
-    let content = services.content.retrieve_content(key).await?;
-    let metadata = services.content.get_content_metadata(key).await?;
-
-    serde_json::to_value(blob_response_payload(&content, &metadata)?).map_err(|error| {
-        SinexError::serialization("failed to serialize content.retrieve_blob response")
-            .with_std_error(&error)
-    })
+    blob_response_payload(&content, &metadata)
 }

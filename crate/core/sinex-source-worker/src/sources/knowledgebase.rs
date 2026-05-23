@@ -20,7 +20,6 @@ use std::sync::OnceLock;
 
 use sinex_node_sdk::parser::{DirectoryWalkAdapter, MaterialParser, ParserError, ParserResult};
 use sinex_primitives::domain::{EventSource, EventType};
-use sinex_primitives::ids::Id;
 use sinex_primitives::parser::{
     InputShapeKind, MaterialAnchor, OccurrenceKey, ParsedEventIntent, ParserContext, ParserId,
     ParserManifest, SourceRecord, SourceUnitId, TimingConfidence, TimingEvidence,
@@ -45,17 +44,17 @@ const EVENT_TYPE: &str = "note.observed";
 // Regex helpers (compiled once)
 // ---------------------------------------------------------------------------
 
-fn wikilink_re() -> &'static Regex {
-    static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| Regex::new(r"\[\[([^\]|#]+?)(?:\|[^\]]*)?]]").expect("valid regex"))
+fn wikilink_re() -> &'static Result<Regex, regex::Error> {
+    static RE: OnceLock<Result<Regex, regex::Error>> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(r"\[\[([^\]|#]+?)(?:\|[^\]]*)?]]"))
 }
 
-fn body_tag_re() -> &'static Regex {
-    static RE: OnceLock<Regex> = OnceLock::new();
+fn body_tag_re() -> &'static Result<Regex, regex::Error> {
+    static RE: OnceLock<Result<Regex, regex::Error>> = OnceLock::new();
     // Match a # followed by word chars (including Unicode letters/digits/underscores).
     // Require either start-of-string or a word-break so we don't match markdown headings
     // that appear mid-line with `##`. Headings start the line with `#`.
-    RE.get_or_init(|| Regex::new(r"(?:^|\s)#([A-Za-z][A-Za-z0-9_/-]*)").expect("valid regex"))
+    RE.get_or_init(|| Regex::new(r"(?:^|\s)#([A-Za-z][A-Za-z0-9_/-]*)"))
 }
 
 // ---------------------------------------------------------------------------
@@ -134,7 +133,9 @@ fn tags_from_front_matter(fm: &serde_json::Value) -> Vec<String> {
 /// Skips markdown headings (`# Heading`) — those are whole lines starting with
 /// `#`.
 fn body_tags(body: &str) -> Vec<String> {
-    let re = body_tag_re();
+    let Ok(re) = body_tag_re() else {
+        return Vec::new();
+    };
     let mut tags = Vec::new();
     for line in body.lines() {
         let trimmed = line.trim();
@@ -159,7 +160,9 @@ fn body_tags(body: &str) -> Vec<String> {
 /// Strips alias suffixes (`[[note|Alias]]` → `"note"`) and `#header` anchors
 /// (`[[note#heading]]` → `"note"`).
 fn wikilinks(body: &str) -> Vec<String> {
-    let re = wikilink_re();
+    let Ok(re) = wikilink_re() else {
+        return Vec::new();
+    };
     re.captures_iter(body)
         .filter_map(|cap| cap.get(1))
         .map(|m| {
@@ -323,22 +326,19 @@ impl MaterialParser for KnowledgebaseVaultParser {
             content_hash: Some(body_hash),
         };
 
-        let intent = ParsedEventIntent {
-            id: Id::new(),
-            source_unit_id: ctx.source_unit_id.clone(),
-            parser_id: ParserId::from_static("knowledgebase-vault"),
-            parser_version: "1.0.0".into(),
-            event_type: EventType::from_static(EVENT_TYPE),
-            event_source: EventSource::from_static(EVENT_SOURCE),
-            payload,
-            ts_orig,
-            timing,
-            anchor,
-            occurrence_key: Some(occurrence_key),
-            privacy_context: ProcessingContext::Document,
-            field_privacy_log: None,
-            synthesis_parents: None,
-        };
+        let intent = ParsedEventIntent::builder()
+            .source_unit_id(ctx.source_unit_id.clone())
+            .parser_id(ParserId::from_static("knowledgebase-vault"))
+            .parser_version("1.0.0")
+            .event_type(EventType::from_static(EVENT_TYPE))
+            .event_source(EventSource::from_static(EVENT_SOURCE))
+            .payload(payload)
+            .ts_orig(ts_orig)
+            .timing(timing)
+            .anchor(anchor)
+            .occurrence_key(occurrence_key)
+            .privacy_context(ProcessingContext::Document)
+            .build();
 
         Ok(vec![intent])
     }

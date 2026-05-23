@@ -19,14 +19,14 @@ use sinex_primitives::temporal::{Duration, Timestamp};
 use std::collections::{BTreeMap, BTreeSet};
 
 fn floor_to_hour(timestamp: Timestamp) -> Timestamp {
-    let rounded = timestamp
+    let Ok(rounded) = timestamp
         .inner()
         .replace_minute(0)
-        .expect("0 minute is always valid")
-        .replace_second(0)
-        .expect("0 second is always valid")
-        .replace_nanosecond(0)
-        .expect("0 nanosecond is always valid");
+        .and_then(|value| value.replace_second(0))
+        .and_then(|value| value.replace_nanosecond(0))
+    else {
+        unreachable!("zeroed minute, second, and nanosecond are valid time components");
+    };
     Timestamp::from(rounded)
 }
 

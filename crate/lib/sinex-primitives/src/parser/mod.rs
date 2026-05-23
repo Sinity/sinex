@@ -18,6 +18,7 @@
 
 use std::borrow::Cow;
 
+use bon::Builder;
 use camino::Utf8PathBuf;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -474,13 +475,15 @@ pub type ParserError = SinexError;
 /// This is the parser's output contract. The source-worker or transport
 /// layer owns admission, privacy, NATS publication, and confirmation
 /// tracking.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Builder)]
+#[builder(on(String, into))]
 pub struct ParsedEventIntent {
     /// A freshly-generated `UUIDv7` identity for this intent.
     ///
     /// The transport layer uses this as the event ID it persists and
     /// references in confirmations. Synthesis intents reference their
     /// parent's `id` in `synthesis_parents`.
+    #[builder(default = Id::new())]
     pub id: EventId,
 
     /// Which source unit the parser belongs to.

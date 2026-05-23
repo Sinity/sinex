@@ -8,7 +8,6 @@ use sinex_primitives::events::payloads::system::{
     UdevDeviceChangedPayload, UdevDeviceConnectedPayload, UdevDeviceDisconnectedPayload,
     UdevDeviceDriverChangedPayload, UdevDeviceOtherPayload,
 };
-use sinex_primitives::ids::Id;
 use sinex_primitives::parser::{
     InputShapeKind, ParsedEventIntent, ParserContext, ParserId, ParserManifest, SourceRecord,
     SourceUnitId, TimingEvidence,
@@ -266,22 +265,18 @@ impl MaterialParser for UdevParser {
             }
         };
 
-        let intent = ParsedEventIntent {
-            id: Id::new(),
-            source_unit_id: ctx.source_unit_id.clone(),
-            parser_id: ParserId::from_static("system.udev"),
-            parser_version: "1.0.0".into(),
-            event_type,
-            event_source: EventSource::from_static("udev"),
-            payload: payload_value,
-            ts_orig: timestamp,
-            timing: TimingEvidence::Atemporal,
-            anchor: record.anchor.clone(),
-            occurrence_key: None,
-            privacy_context: ProcessingContext::Metadata,
-            field_privacy_log: None,
-            synthesis_parents: None,
-        };
+        let intent = ParsedEventIntent::builder()
+            .source_unit_id(ctx.source_unit_id.clone())
+            .parser_id(ParserId::from_static("system.udev"))
+            .parser_version("1.0.0")
+            .event_type(event_type)
+            .event_source(EventSource::from_static("udev"))
+            .payload(payload_value)
+            .ts_orig(timestamp)
+            .timing(TimingEvidence::Atemporal)
+            .anchor(record.anchor.clone())
+            .privacy_context(ProcessingContext::Metadata)
+            .build();
 
         Ok(vec![intent])
     }

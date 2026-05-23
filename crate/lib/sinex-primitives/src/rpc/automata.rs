@@ -1,6 +1,7 @@
 //! Operator-facing automata status RPC types.
 
 use crate::domain::NodeName;
+use crate::rpc::{RpcDomain, RpcMethod, RpcMutability, RpcRole, RpcStability, methods};
 use crate::{Timestamp, Uuid};
 use serde::{Deserialize, Serialize};
 
@@ -11,6 +12,15 @@ fn default_stale_after_secs() -> u64 {
 fn default_recent_window_secs() -> u64 {
     300
 }
+
+pub const AUTOMATA_STATUS_METHOD: RpcMethod<AutomataStatusRequest, AutomataStatusResponse> =
+    RpcMethod::new(
+        methods::AUTOMATA_STATUS,
+        RpcRole::ReadOnly,
+        RpcDomain::Automata,
+        RpcStability::Experimental,
+        RpcMutability::ReadOnly,
+    );
 
 /// Request: `automata.status`
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -386,10 +386,7 @@ async fn query_affected_events(
 }
 
 /// Handle GET /`audit/{operation_id`} - get audit trail for an operation
-pub async fn handle_audit_get(pool: &PgPool, params: Value) -> Result<Value> {
-    let request: AuditGetRequest = serde_json::from_value(params)
-        .map_err(|e| SinexError::serialization("invalid audit request").with_std_error(&e))?;
-
+pub async fn handle_audit_get(pool: &PgPool, request: AuditGetRequest) -> Result<AuditGetResponse> {
     let operation_id = request.operation_id;
 
     // Convert RPC phantom type → DB phantom type for repository call
@@ -444,7 +441,5 @@ pub async fn handle_audit_get(pool: &PgPool, params: Value) -> Result<Value> {
         has_more,
     };
 
-    serde_json::to_value(response).map_err(|e| {
-        SinexError::serialization("failed to serialize audit response").with_std_error(&e)
-    })
+    Ok(response)
 }

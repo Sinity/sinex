@@ -12,12 +12,18 @@ use sinex_primitives::rpc::sources::{
     SourceCoverageEntry, SourceMaterialDetail, SourceMaterialMetadataContract,
     SourceMaterialStatistics, SourceMaterialSummary, SourceOrigin, SourcePolicyEvidence,
     SourcePresetDescriptor, SourcesAnnotateRequest, SourcesAnnotateResponse, SourcesArchiveRequest,
-    SourcesArchiveResponse, SourcesBindingsListResponse, SourcesContinuityRequest,
-    SourcesContinuityResponse, SourcesCoverageRequest, SourcesCoverageResponse, SourcesListRequest,
-    SourcesListResponse, SourcesPresetsListResponse, SourcesReadinessGetRequest,
+    SourcesArchiveResponse, SourcesBindingsCreateRequest, SourcesBindingsCreateResponse,
+    SourcesBindingsListRequest, SourcesBindingsListResponse, SourcesBindingsResolveRequest,
+    SourcesBindingsResolveResponse, SourcesContinuityRequest, SourcesContinuityResponse,
+    SourcesCoverageRequest, SourcesCoverageResponse, SourcesListRequest, SourcesListResponse,
+    SourcesPresetsListRequest, SourcesPresetsListResponse, SourcesReadinessGetRequest,
     SourcesReadinessGetResponse, SourcesReadinessListRequest, SourcesReadinessListResponse,
     SourcesShowRequest, SourcesShowResponse, SourcesStageRequest, SourcesStageResponse,
     TemporalEvidenceSummary, bridge_material_presets, external_producer_presets,
+};
+use sinex_primitives::sources::continuity::{
+    SourcesContinuityGetRequest, SourcesContinuityGetResponse, SourcesContinuityListRequest,
+    SourcesContinuityListResponse, SourcesExplainGapRequest, SourcesExplainGapResponse,
 };
 use sinex_primitives::{Result, SinexError};
 use sqlx::{FromRow, PgPool};
@@ -52,14 +58,10 @@ struct CoverageRow {
 // ── sources.stage ──────────────────────────────────────────────
 
 pub async fn handle_sources_stage(
-    params: Value,
     services: &crate::service_container::ServiceContainer,
+    req: SourcesStageRequest,
     _auth: &crate::rpc_server::RpcAuthContext,
-) -> Result<Value> {
-    let req: SourcesStageRequest = serde_json::from_value(params).map_err(|error| {
-        SinexError::serialization("Invalid sources.stage request").with_std_error(&error)
-    })?;
-
+) -> Result<SourcesStageResponse> {
     let pool = services.pool();
 
     let path = std::path::Path::new(&req.file_path);
@@ -224,19 +226,15 @@ pub async fn handle_sources_stage(
         contract,
     };
 
-    serde_json::to_value(response).map_err(|error| {
-        SinexError::serialization("Failed to serialize sources.stage response")
-            .with_std_error(&error)
-    })
+    Ok(response)
 }
 
 // ── sources.list ───────────────────────────────────────────────
 
-pub async fn handle_sources_list(pool: &PgPool, params: Value) -> Result<Value> {
-    let req: SourcesListRequest = super::parse_default_on_null(params).map_err(|error| {
-        SinexError::serialization("Invalid sources.list request").with_std_error(&error)
-    })?;
-
+pub async fn handle_sources_list(
+    pool: &PgPool,
+    req: SourcesListRequest,
+) -> Result<SourcesListResponse> {
     let limit = req.limit.unwrap_or(100).clamp(1, 1000);
     let rows = sqlx::query_as!(
         MaterialListRow,
@@ -286,21 +284,15 @@ pub async fn handle_sources_list(pool: &PgPool, params: Value) -> Result<Value> 
         })
         .collect();
 
-    let response = SourcesListResponse { materials };
-
-    serde_json::to_value(response).map_err(|error| {
-        SinexError::serialization("Failed to serialize sources.list response")
-            .with_std_error(&error)
-    })
+    Ok(SourcesListResponse { materials })
 }
 
 // ── sources.show ───────────────────────────────────────────────
 
-pub async fn handle_sources_show(pool: &PgPool, params: Value) -> Result<Value> {
-    let req: SourcesShowRequest = serde_json::from_value(params).map_err(|error| {
-        SinexError::serialization("Invalid sources.show request").with_std_error(&error)
-    })?;
-
+pub async fn handle_sources_show(
+    pool: &PgPool,
+    req: SourcesShowRequest,
+) -> Result<SourcesShowResponse> {
     let material_id = Uuid::parse_str(&req.material_id).map_err(|error| {
         SinexError::validation("Invalid material_id UUID")
             .with_context("material_id", &req.material_id)
@@ -348,12 +340,7 @@ pub async fn handle_sources_show(pool: &PgPool, params: Value) -> Result<Value> 
         event_count: Some(event_count),
     };
 
-    let response = SourcesShowResponse { material: detail };
-
-    serde_json::to_value(response).map_err(|error| {
-        SinexError::serialization("Failed to serialize sources.show response")
-            .with_std_error(&error)
-    })
+    Ok(SourcesShowResponse { material: detail })
 }
 
 async fn query_temporal_evidence(
@@ -388,11 +375,10 @@ async fn query_temporal_evidence(
 
 // ── sources.coverage ───────────────────────────────────────────
 
-pub async fn handle_sources_coverage(pool: &PgPool, params: Value) -> Result<Value> {
-    let _req: SourcesCoverageRequest = super::parse_default_on_null(params).map_err(|error| {
-        SinexError::serialization("Invalid sources.coverage request").with_std_error(&error)
-    })?;
-
+pub async fn handle_sources_coverage(
+    pool: &PgPool,
+    _req: SourcesCoverageRequest,
+) -> Result<SourcesCoverageResponse> {
     let rows = sqlx::query_as!(
         CoverageRow,
         r#"
@@ -425,12 +411,7 @@ pub async fn handle_sources_coverage(pool: &PgPool, params: Value) -> Result<Val
         })
         .collect();
 
-    let response = SourcesCoverageResponse { sources };
-
-    serde_json::to_value(response).map_err(|error| {
-        SinexError::serialization("Failed to serialize sources.coverage response")
-            .with_std_error(&error)
-    })
+    Ok(SourcesCoverageResponse { sources })
 }
 
 // ── sources.presets.list ─────────────────────────────────────────
@@ -497,16 +478,11 @@ fn builtin_presets() -> Vec<SourcePresetDescriptor> {
 }
 
 pub async fn handle_sources_presets_list(
-    _params: Value,
     _services: &crate::service_container::ServiceContainer,
-    _auth: &crate::rpc_server::RpcAuthContext,
-) -> Result<Value> {
+    _request: SourcesPresetsListRequest,
+) -> Result<SourcesPresetsListResponse> {
     let presets = builtin_presets();
-    let response = SourcesPresetsListResponse { presets };
-    serde_json::to_value(response).map_err(|error| {
-        SinexError::serialization("Failed to serialize sources.presets.list response")
-            .with_std_error(&error)
-    })
+    Ok(SourcesPresetsListResponse { presets })
 }
 
 #[cfg(test)]
@@ -541,19 +517,21 @@ mod preset_tests {
 
 // ── sources.bindings.list ───────────────────────────────────────
 
-pub async fn handle_sources_bindings_list(_pool: &PgPool, _params: Value) -> Result<Value> {
+pub async fn handle_sources_bindings_list(
+    _pool: &PgPool,
+    _request: SourcesBindingsListRequest,
+) -> Result<SourcesBindingsListResponse> {
     // Source bindings are Nix configuration (#1098), not a DB catalog.
     // The binding catalog DB tables were removed in #1160.
-    let response = SourcesBindingsListResponse { bindings: vec![] };
-    serde_json::to_value(response).map_err(|error| {
-        SinexError::serialization("Failed to serialize sources.bindings.list response")
-            .with_std_error(&error)
-    })
+    Ok(SourcesBindingsListResponse { bindings: vec![] })
 }
 
 // ── sources.bindings.create ─────────────────────────────────────
 
-pub async fn handle_sources_bindings_create(_pool: &PgPool, _params: Value) -> Result<Value> {
+pub async fn handle_sources_bindings_create(
+    _pool: &PgPool,
+    _request: SourcesBindingsCreateRequest,
+) -> Result<SourcesBindingsCreateResponse> {
     Err(SinexError::configuration(
         "Source bindings are Nix configuration (#1098), not a DB catalog. Bindings are declared in nixos/modules/source-bindings.nix.",
     ))
@@ -561,7 +539,10 @@ pub async fn handle_sources_bindings_create(_pool: &PgPool, _params: Value) -> R
 
 // ── sources.bindings.resolve ─────────────────────────────────────
 
-pub async fn handle_sources_bindings_resolve(_pool: &PgPool, _params: Value) -> Result<Value> {
+pub async fn handle_sources_bindings_resolve(
+    _pool: &PgPool,
+    _request: SourcesBindingsResolveRequest,
+) -> Result<SourcesBindingsResolveResponse> {
     Err(SinexError::configuration(
         "Source bindings are Nix configuration (#1098), not a DB catalog. Bindings are declared in nixos/modules/source-bindings.nix.",
     ))
@@ -574,11 +555,10 @@ pub async fn handle_sources_bindings_resolve(_pool: &PgPool, _params: Value) -> 
 /// Merges new annotations additively: new notes are appended to existing notes,
 /// new tags are merged (deduplicated). Declared temporal bounds replace existing
 /// values only when the request provides them.
-pub async fn handle_sources_annotate(pool: &PgPool, params: Value) -> Result<Value> {
-    let req: SourcesAnnotateRequest = serde_json::from_value(params).map_err(|error| {
-        SinexError::serialization("Invalid sources.annotate request").with_std_error(&error)
-    })?;
-
+pub async fn handle_sources_annotate(
+    pool: &PgPool,
+    req: SourcesAnnotateRequest,
+) -> Result<SourcesAnnotateResponse> {
     let material_id = Uuid::parse_str(&req.material_id).map_err(|error| {
         SinexError::validation("Invalid material_id UUID")
             .with_context("material_id", &req.material_id)
@@ -667,10 +647,7 @@ pub async fn handle_sources_annotate(pool: &PgPool, params: Value) -> Result<Val
         annotations,
     };
 
-    serde_json::to_value(response).map_err(|error| {
-        SinexError::serialization("Failed to serialize sources.annotate response")
-            .with_std_error(&error)
-    })
+    Ok(response)
 }
 
 // ── sources.archive ──────────────────────────────────────────────
@@ -680,11 +657,10 @@ pub async fn handle_sources_annotate(pool: &PgPool, params: Value) -> Result<Val
 /// Wraps the existing lifecycle archive infrastructure. Dry-run mode computes
 /// the cascade preview without actually archiving, letting the operator inspect
 /// the blast radius.
-pub async fn handle_sources_archive(pool: &PgPool, params: Value) -> Result<Value> {
-    let req: SourcesArchiveRequest = serde_json::from_value(params).map_err(|error| {
-        SinexError::serialization("Invalid sources.archive request").with_std_error(&error)
-    })?;
-
+pub async fn handle_sources_archive(
+    pool: &PgPool,
+    req: SourcesArchiveRequest,
+) -> Result<SourcesArchiveResponse> {
     let material_id = Uuid::parse_str(&req.material_id).map_err(|error| {
         SinexError::validation("Invalid material_id UUID")
             .with_context("material_id", &req.material_id)
@@ -729,10 +705,7 @@ pub async fn handle_sources_archive(pool: &PgPool, params: Value) -> Result<Valu
             dry_run: true,
             preview: Some(preview),
         };
-        return serde_json::to_value(response).map_err(|error| {
-            SinexError::serialization("Failed to serialize sources.archive response")
-                .with_std_error(&error)
-        });
+        return Ok(response);
     }
 
     // Execute the archive via the lifecycle handler logic.
@@ -747,26 +720,12 @@ pub async fn handle_sources_archive(pool: &PgPool, params: Value) -> Result<Valu
     };
 
     let system_auth = crate::rpc_server::RpcAuthContext::system();
-    let lifecycle_result = crate::handlers::lifecycle::handle_lifecycle_archive(
-        pool,
-        {
-            serde_json::to_value(&lifecycle_req).map_err(|error| {
-                SinexError::serialization("Failed to build lifecycle archive request")
-                    .with_std_error(&error)
-            })?
-        },
-        &system_auth,
-    )
-    .await;
+    let lifecycle_result =
+        crate::handlers::lifecycle::handle_lifecycle_archive(pool, lifecycle_req, &system_auth)
+            .await;
 
     match lifecycle_result {
-        Ok(value) => {
-            let archive_resp: sinex_primitives::rpc::lifecycle::LifecycleArchiveResponse =
-                serde_json::from_value(value).map_err(|error| {
-                    SinexError::serialization("Failed to parse lifecycle archive response")
-                        .with_std_error(&error)
-                })?;
-
+        Ok(archive_resp) => {
             let response = SourcesArchiveResponse {
                 material_id: req.material_id,
                 operation_id: Some(archive_resp.operation_id),
@@ -774,10 +733,7 @@ pub async fn handle_sources_archive(pool: &PgPool, params: Value) -> Result<Valu
                 dry_run: false,
                 preview: None,
             };
-            serde_json::to_value(response).map_err(|error| {
-                SinexError::serialization("Failed to serialize sources.archive response")
-                    .with_std_error(&error)
-            })
+            Ok(response)
         }
         Err(error) => Err(error),
     }
@@ -789,11 +745,10 @@ pub async fn handle_sources_archive(pool: &PgPool, params: Value) -> Result<Valu
 ///
 /// Queries `raw.temporal_ledger` and `raw.source_material_registry` to detect
 /// coverage gaps, contract breaches, and replayability status.
-pub async fn handle_sources_continuity(pool: &PgPool, params: Value) -> Result<Value> {
-    let req: SourcesContinuityRequest = serde_json::from_value(params).map_err(|error| {
-        SinexError::serialization("Invalid sources.continuity request").with_std_error(&error)
-    })?;
-
+pub async fn handle_sources_continuity(
+    pool: &PgPool,
+    req: SourcesContinuityRequest,
+) -> Result<SourcesContinuityResponse> {
     // ── Gather materials for this source ─────────────────────────
     let material_rows = sqlx::query!(
         r#"
@@ -926,28 +881,20 @@ pub async fn handle_sources_continuity(pool: &PgPool, params: Value) -> Result<V
         events_count,
     };
 
-    let response = SourcesContinuityResponse {
+    Ok(SourcesContinuityResponse {
         source_identifier: req.source_identifier,
         coverage_gaps: gaps,
         contract_status,
         replayability,
-    };
-
-    serde_json::to_value(response).map_err(|error| {
-        SinexError::serialization("Failed to serialize sources.continuity response")
-            .with_std_error(&error)
     })
 }
 
 // ── sources.readiness.list (#1099) ─────────────────────────────
 
-pub async fn handle_sources_readiness_list(pool: &PgPool, params: Value) -> Result<Value> {
-    let req: SourcesReadinessListRequest =
-        super::parse_default_on_null(params).map_err(|error| {
-            SinexError::serialization("Invalid sources.readiness.list request")
-                .with_std_error(&error)
-        })?;
-
+pub async fn handle_sources_readiness_list(
+    pool: &PgPool,
+    req: SourcesReadinessListRequest,
+) -> Result<SourcesReadinessListResponse> {
     let sources = pool
         .source_materials()
         .list_source_readiness(req.source_family.as_deref(), req.stale_after_seconds)
@@ -956,20 +903,15 @@ pub async fn handle_sources_readiness_list(pool: &PgPool, params: Value) -> Resu
             SinexError::database("Failed to list source readiness").with_std_error(&error)
         })?;
 
-    let response = SourcesReadinessListResponse { sources };
-    serde_json::to_value(response).map_err(|error| {
-        SinexError::serialization("Failed to serialize sources.readiness.list response")
-            .with_std_error(&error)
-    })
+    Ok(SourcesReadinessListResponse { sources })
 }
 
 // ── sources.readiness.get (#1099) ──────────────────────────────
 
-pub async fn handle_sources_readiness_get(pool: &PgPool, params: Value) -> Result<Value> {
-    let req: SourcesReadinessGetRequest = serde_json::from_value(params).map_err(|error| {
-        SinexError::serialization("Invalid sources.readiness.get request").with_std_error(&error)
-    })?;
-
+pub async fn handle_sources_readiness_get(
+    pool: &PgPool,
+    req: SourcesReadinessGetRequest,
+) -> Result<SourcesReadinessGetResponse> {
     let readiness = pool
         .source_materials()
         .get_source_readiness(
@@ -982,11 +924,7 @@ pub async fn handle_sources_readiness_get(pool: &PgPool, params: Value) -> Resul
             SinexError::database("Failed to get source readiness").with_std_error(&error)
         })?;
 
-    let response = SourcesReadinessGetResponse { readiness };
-    serde_json::to_value(response).map_err(|error| {
-        SinexError::serialization("Failed to serialize sources.readiness.get response")
-            .with_std_error(&error)
-    })
+    Ok(SourcesReadinessGetResponse { readiness })
 }
 
 // ── sources.continuity.list / .get / .explain_gap (#1085) ────────
@@ -997,60 +935,33 @@ pub async fn handle_sources_readiness_get(pool: &PgPool, params: Value) -> Resul
 // richer scorecard / seam / gap structures.
 
 /// Handle `sources.continuity.list` — a continuity report per observed source family.
-pub async fn handle_sources_continuity_list(pool: &PgPool, params: Value) -> Result<Value> {
-    use sinex_primitives::sources::continuity::{
-        SourcesContinuityListRequest, SourcesContinuityListResponse,
-    };
-
-    let req: SourcesContinuityListRequest = if params.is_null() {
-        SourcesContinuityListRequest::default()
-    } else {
-        serde_json::from_value(params).map_err(|error| {
-            SinexError::serialization("Invalid sources.continuity.list request")
-                .with_std_error(&error)
-        })?
-    };
-
+pub async fn handle_sources_continuity_list(
+    pool: &PgPool,
+    req: SourcesContinuityListRequest,
+) -> Result<SourcesContinuityListResponse> {
     let reports = pool.continuity().list_continuity_reports(req.since).await?;
 
-    serde_json::to_value(SourcesContinuityListResponse { reports }).map_err(|error| {
-        SinexError::serialization("Failed to serialize sources.continuity.list response")
-            .with_std_error(&error)
-    })
+    Ok(SourcesContinuityListResponse { reports })
 }
 
 /// Handle `sources.continuity.get` — continuity report for one family.
-pub async fn handle_sources_continuity_get(pool: &PgPool, params: Value) -> Result<Value> {
-    use sinex_primitives::sources::continuity::{
-        SourcesContinuityGetRequest, SourcesContinuityGetResponse,
-    };
-
-    let req: SourcesContinuityGetRequest = serde_json::from_value(params).map_err(|error| {
-        SinexError::serialization("Invalid sources.continuity.get request").with_std_error(&error)
-    })?;
-
+pub async fn handle_sources_continuity_get(
+    pool: &PgPool,
+    req: SourcesContinuityGetRequest,
+) -> Result<SourcesContinuityGetResponse> {
     let report = pool
         .continuity()
         .get_continuity_report(&req.source_family)
         .await?;
 
-    serde_json::to_value(SourcesContinuityGetResponse { report }).map_err(|error| {
-        SinexError::serialization("Failed to serialize sources.continuity.get response")
-            .with_std_error(&error)
-    })
+    Ok(SourcesContinuityGetResponse { report })
 }
 
 /// Handle `sources.continuity.explain_gap` — attribute a single window.
-pub async fn handle_sources_continuity_explain_gap(pool: &PgPool, params: Value) -> Result<Value> {
-    use sinex_primitives::sources::continuity::{
-        SourcesExplainGapRequest, SourcesExplainGapResponse,
-    };
-
-    let req: SourcesExplainGapRequest = serde_json::from_value(params).map_err(|error| {
-        SinexError::serialization("Invalid sources.continuity.explain_gap request")
-            .with_std_error(&error)
-    })?;
-
+pub async fn handle_sources_continuity_explain_gap(
+    pool: &PgPool,
+    req: SourcesExplainGapRequest,
+) -> Result<SourcesExplainGapResponse> {
     let gap = pool
         .continuity()
         .explain_gap(&req.source_family, req.at)
@@ -1071,14 +982,10 @@ pub async fn handle_sources_continuity_explain_gap(pool: &PgPool, params: Value)
         ),
     };
 
-    serde_json::to_value(SourcesExplainGapResponse {
+    Ok(SourcesExplainGapResponse {
         source_family: req.source_family,
         at: req.at,
         gap,
         explanation,
-    })
-    .map_err(|error| {
-        SinexError::serialization("Failed to serialize sources.continuity.explain_gap response")
-            .with_std_error(&error)
     })
 }

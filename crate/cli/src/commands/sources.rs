@@ -134,10 +134,7 @@ impl StageCommand {
             with_bytes: true,
         };
 
-        let response = client
-            .call_raw_rpc("sources.stage", serde_json::to_value(&req)?)
-            .await?;
-        let stage_response: SourcesStageResponse = serde_json::from_value(response)?;
+        let stage_response: SourcesStageResponse = client.sources_stage(req).await?;
 
         CommandOutput::single(stage_response, format_stage_result).display(&format)?;
         Ok(())
@@ -181,10 +178,7 @@ impl ListCommand {
             limit: Some(self.limit),
         };
 
-        let response = client
-            .call_raw_rpc("sources.list", serde_json::to_value(&req)?)
-            .await?;
-        let list_response: SourcesListResponse = serde_json::from_value(response)?;
+        let list_response: SourcesListResponse = client.sources_list(req).await?;
 
         CommandOutput::single(list_response, format_source_materials_table).display(&format)?;
         Ok(())
@@ -253,10 +247,7 @@ impl ShowCommand {
             material_id: self.material_id.clone(),
         };
 
-        let response = client
-            .call_raw_rpc("sources.show", serde_json::to_value(&req)?)
-            .await?;
-        let show_response: SourcesShowResponse = serde_json::from_value(response)?;
+        let show_response: SourcesShowResponse = client.sources_show(req).await?;
 
         CommandOutput::single(show_response, format_source_material_detail).display(&format)?;
         Ok(())
@@ -336,10 +327,7 @@ impl CoverageCommand {
     async fn execute(&self, client: &GatewayClient, format: OutputFormat) -> Result<()> {
         let req = SourcesCoverageRequest {};
 
-        let response = client
-            .call_raw_rpc("sources.coverage", serde_json::to_value(&req)?)
-            .await?;
-        let coverage_response: SourcesCoverageResponse = serde_json::from_value(response)?;
+        let coverage_response: SourcesCoverageResponse = client.sources_coverage(req).await?;
 
         CommandOutput::single(coverage_response, format_coverage_table).display(&format)?;
         Ok(())
@@ -423,10 +411,7 @@ impl AnnotateCommand {
             declared_end_time: self.declared_end_time.clone(),
         };
 
-        let response = client
-            .call_raw_rpc("sources.annotate", serde_json::to_value(&req)?)
-            .await?;
-        let annotate_response: SourcesAnnotateResponse = serde_json::from_value(response)?;
+        let annotate_response: SourcesAnnotateResponse = client.sources_annotate(req).await?;
 
         CommandOutput::single(annotate_response, format_annotate_result).display(&format)?;
         Ok(())
@@ -481,10 +466,7 @@ impl ArchiveCommand {
             reason: self.reason.clone(),
         };
 
-        let response = client
-            .call_raw_rpc("sources.archive", serde_json::to_value(&req)?)
-            .await?;
-        let archive_response: SourcesArchiveResponse = serde_json::from_value(response)?;
+        let archive_response: SourcesArchiveResponse = client.sources_archive(req).await?;
 
         CommandOutput::single(archive_response, format_archive_result).display(&format)?;
         Ok(())
@@ -551,10 +533,7 @@ impl ContinuityCommand {
                 source_identifier: source.clone(),
                 material_kind: self.kind.clone(),
             };
-            let response = client
-                .call_raw_rpc("sources.continuity", serde_json::to_value(&req)?)
-                .await?;
-            let resp: SourcesContinuityResponse = serde_json::from_value(response)?;
+            let resp: SourcesContinuityResponse = client.sources_continuity(req).await?;
             CommandOutput::single(resp, format_continuity_result).display(&format)?;
             return Ok(());
         }
@@ -567,10 +546,7 @@ impl ContinuityCommand {
             let req = SourcesContinuityGetRequest {
                 source_family: family,
             };
-            let response = client
-                .call_raw_rpc("sources.continuity.get", serde_json::to_value(&req)?)
-                .await?;
-            let resp: SourcesContinuityGetResponse = serde_json::from_value(response)?;
+            let resp: SourcesContinuityGetResponse = client.sources_continuity_get(req).await?;
             CommandOutput::single(resp, format_continuity_get).display(&format)?;
             return Ok(());
         }
@@ -578,10 +554,7 @@ impl ContinuityCommand {
         // ── List mode ──
         let since = self.since.as_deref().map(parse_timestamp).transpose()?;
         let req = SourcesContinuityListRequest { since };
-        let response = client
-            .call_raw_rpc("sources.continuity.list", serde_json::to_value(&req)?)
-            .await?;
-        let resp: SourcesContinuityListResponse = serde_json::from_value(response)?;
+        let resp: SourcesContinuityListResponse = client.sources_continuity_list(req).await?;
         CommandOutput::single(resp, format_continuity_list).display(&format)?;
         Ok(())
     }
@@ -609,13 +582,7 @@ impl ExplainGapCommand {
             source_family: family,
             at,
         };
-        let response = client
-            .call_raw_rpc(
-                "sources.continuity.explain_gap",
-                serde_json::to_value(&req)?,
-            )
-            .await?;
-        let resp: SourcesExplainGapResponse = serde_json::from_value(response)?;
+        let resp: SourcesExplainGapResponse = client.sources_continuity_explain_gap(req).await?;
         CommandOutput::single(resp, format_explain_gap).display(&format)?;
         Ok(())
     }
@@ -886,20 +853,14 @@ impl ReadinessCommand {
                 source_family: self.family.clone(),
                 stale_after_seconds: self.stale_after_seconds,
             };
-            let response = client
-                .call_raw_rpc("sources.readiness.get", serde_json::to_value(&req)?)
-                .await?;
-            let body: SourcesReadinessGetResponse = serde_json::from_value(response)?;
+            let body: SourcesReadinessGetResponse = client.sources_readiness_get(req).await?;
             CommandOutput::single(body, format_readiness_get).display(&format)?;
         } else {
             let req = SourcesReadinessListRequest {
                 source_family: self.family.clone(),
                 stale_after_seconds: self.stale_after_seconds,
             };
-            let response = client
-                .call_raw_rpc("sources.readiness.list", serde_json::to_value(&req)?)
-                .await?;
-            let body: SourcesReadinessListResponse = serde_json::from_value(response)?;
+            let body: SourcesReadinessListResponse = client.sources_readiness_list(req).await?;
             CommandOutput::single(body, format_readiness_list).display(&format)?;
         }
         Ok(())

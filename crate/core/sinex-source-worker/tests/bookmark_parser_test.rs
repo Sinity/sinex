@@ -360,7 +360,7 @@ async fn manifest_proof_obligations_declared() {
     let obligations: HashSet<&str> = manifest
         .proof_obligations
         .iter()
-        .map(|s| s.as_str())
+        .map(std::string::String::as_str)
         .collect();
 
     assert!(obligations.contains("timestamp_intrinsic"));

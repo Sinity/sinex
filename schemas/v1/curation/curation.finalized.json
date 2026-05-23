@@ -1,0 +1,68 @@
+{
+  "$defs": {
+    "CurationFinalizationStatus": {
+      "description": "Outcome recorded by a deterministic finalizer.",
+      "enum": [
+        "applied",
+        "noop",
+        "conflict"
+      ],
+      "type": "string"
+    },
+    "DateTime": {
+      "description": "RFC 3339 formatted date-time string",
+      "format": "date-time",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Deterministic record of applying a judged proposal.",
+  "properties": {
+    "caveat": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "finalization_id": {
+      "format": "uuid",
+      "type": "string"
+    },
+    "finalized_at": {
+      "$ref": "#/$defs/DateTime"
+    },
+    "judgment_id": {
+      "format": "uuid",
+      "type": "string"
+    },
+    "output_event_type": {
+      "type": "string"
+    },
+    "output_payload": true,
+    "output_source": {
+      "type": "string"
+    },
+    "proposal_id": {
+      "format": "uuid",
+      "type": "string"
+    },
+    "status": {
+      "$ref": "#/$defs/CurationFinalizationStatus"
+    }
+  },
+  "required": [
+    "finalization_id",
+    "proposal_id",
+    "judgment_id",
+    "output_source",
+    "output_event_type",
+    "output_payload",
+    "status",
+    "finalized_at"
+  ],
+  "title": "CurationFinalizedPayload",
+  "type": "object",
+  "x-sinex-event-type": "curation.finalized",
+  "x-sinex-source": "curation",
+  "x-sinex-version": "1.0.0"
+}

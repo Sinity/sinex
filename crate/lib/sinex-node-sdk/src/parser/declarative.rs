@@ -647,22 +647,22 @@ fn evaluate_inner(
         })
     };
 
-    Ok(vec![ParsedEventIntent {
-        id: sinex_primitives::ids::Id::new(),
-        source_unit_id: ctx.source_unit_id.clone(),
-        parser_id: spec.parser_id.clone(),
-        parser_version: spec.parser_version.clone(),
-        event_type: resolved_event_type,
-        event_source: resolved_event_source,
-        payload: serde_json::Value::Object(payload),
-        ts_orig,
-        timing,
-        anchor: record.anchor.clone(),
-        occurrence_key,
-        privacy_context: spec.default_privacy_context,
-        field_privacy_log: Some(field_privacy_log),
-        synthesis_parents: None,
-    }])
+    Ok(vec![
+        ParsedEventIntent::builder()
+            .source_unit_id(ctx.source_unit_id.clone())
+            .parser_id(spec.parser_id.clone())
+            .parser_version(spec.parser_version.clone())
+            .event_type(resolved_event_type)
+            .event_source(resolved_event_source)
+            .payload(serde_json::Value::Object(payload))
+            .ts_orig(ts_orig)
+            .timing(timing)
+            .anchor(record.anchor.clone())
+            .maybe_occurrence_key(occurrence_key)
+            .privacy_context(spec.default_privacy_context)
+            .field_privacy_log(field_privacy_log)
+            .build(),
+    ])
 }
 
 // =============================================================================

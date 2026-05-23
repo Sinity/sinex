@@ -79,6 +79,27 @@
       "content_hash": "b983f2eb12a8a0187e1d93d3627e5d765c4b462964dc41a28338f2810004c37a"
     },
     {
+      "source": "curation",
+      "event_type": "curation.finalized",
+      "version": "1.0.0",
+      "path": "curation/curation.finalized.json",
+      "content_hash": "5c5264dedea253fd14f544ec395bd8811b5b87251839579695054240dae8de20"
+    },
+    {
+      "source": "curation",
+      "event_type": "curation.judgment",
+      "version": "1.0.0",
+      "path": "curation/curation.judgment.json",
+      "content_hash": "f55dad3d2e741c131f8c47c92c158620a7aa51586d3a58faf729d9a05dfd6f75"
+    },
+    {
+      "source": "curation",
+      "event_type": "curation.proposal",
+      "version": "1.0.0",
+      "path": "curation/curation.proposal.json",
+      "content_hash": "2a9969450f4a4bec38f1474d623733bbe50d1fe46efcd61ff4b156db5baea5b4"
+    },
+    {
       "source": "dbus",
       "event_type": "bluetooth.device_changed",
       "version": "1.0.0",
@@ -322,6 +343,34 @@
       "version": "1.0.0",
       "path": "ledger/transaction.posted.json",
       "content_hash": "7fe090f8bb868292ef58448157d1026921274136365f2f80f209746fdfe9a72d"
+    },
+    {
+      "source": "llm",
+      "event_type": "llm.budget.ledger",
+      "version": "1.0.0",
+      "path": "llm/llm.budget.ledger.json",
+      "content_hash": "11f643ce0d48673f0781202d9256d45e6a466a5402266431413bc8209b717881"
+    },
+    {
+      "source": "llm",
+      "event_type": "llm.prompt_template.registered",
+      "version": "1.0.0",
+      "path": "llm/llm.prompt_template.registered.json",
+      "content_hash": "aad330016d7b56a22c3338e252699c22bdc922892fab3159fa15cb7ca655484e"
+    },
+    {
+      "source": "llm",
+      "event_type": "llm.routing.decision",
+      "version": "1.0.0",
+      "path": "llm/llm.routing.decision.json",
+      "content_hash": "1dc4c2c7e203e4c320a97a6e6f0c7a3d8f2699a36f42e49922f39db033ec2023"
+    },
+    {
+      "source": "llm",
+      "event_type": "llm.routing_policy.registered",
+      "version": "1.0.0",
+      "path": "llm/llm.routing_policy.registered.json",
+      "content_hash": "375e46b03d453802d50eacac813f16e4522de3f79781ac42b27e31f392612200"
     },
     {
       "source": "messenger",
@@ -595,6 +644,20 @@
       "version": "1.0.0",
       "path": "systemd/unit.stopped.json",
       "content_hash": "60e4890314d4dbb90200b0dd5be5e9863f262ae75fb42eece7fac0a2d8201f35"
+    },
+    {
+      "source": "task",
+      "event_type": "task.completed",
+      "version": "1.0.0",
+      "path": "task/task.completed.json",
+      "content_hash": "6678d2968c097faefde343cdbaf26fde01775a934953949527130f2ab802018e"
+    },
+    {
+      "source": "task",
+      "event_type": "task.created",
+      "version": "1.0.0",
+      "path": "task/task.created.json",
+      "content_hash": "d3fa1c79fc1cc0afca19c100fa1e1cdbf1351b860e302450ca74d731e191e069"
     },
     {
       "source": "terminal",

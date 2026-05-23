@@ -1,0 +1,99 @@
+{
+  "$defs": {
+    "BudgetLedgerStatus": {
+      "description": "Budget ledger outcome.",
+      "enum": [
+        "success",
+        "failure",
+        "rejected"
+      ],
+      "type": "string"
+    },
+    "DateTime": {
+      "description": "RFC 3339 formatted date-time string",
+      "format": "date-time",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Budget ledger row for a model-effect attempt or privacy/policy rejection.",
+  "properties": {
+    "budget_ledger_id": {
+      "format": "uuid",
+      "type": "string"
+    },
+    "caller": {
+      "type": "string"
+    },
+    "completion_tokens": {
+      "format": "int64",
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "cost_estimate_microusd": {
+      "format": "int64",
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "failure_class": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "model": {
+      "type": "string"
+    },
+    "prompt_tokens": {
+      "format": "int64",
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "provider": {
+      "type": "string"
+    },
+    "recorded_at": {
+      "$ref": "#/$defs/DateTime"
+    },
+    "routing_decision_id": {
+      "format": "uuid",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "runtime_ms": {
+      "format": "int64",
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "status": {
+      "$ref": "#/$defs/BudgetLedgerStatus"
+    },
+    "task_kind": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "budget_ledger_id",
+    "caller",
+    "task_kind",
+    "provider",
+    "model",
+    "status",
+    "recorded_at"
+  ],
+  "title": "LlmBudgetLedgerPayload",
+  "type": "object",
+  "x-sinex-event-type": "llm.budget.ledger",
+  "x-sinex-source": "llm",
+  "x-sinex-version": "1.0.0"
+}

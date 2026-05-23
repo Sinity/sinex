@@ -1,6 +1,7 @@
 //! Operations log types
 
 use crate::domain::OperationStatus;
+use crate::rpc::{RpcDomain, RpcMethod, RpcMutability, RpcRole, RpcStability, methods};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -25,6 +26,14 @@ pub struct Operation {
 // ops.start
 // ─────────────────────────────────────────────────────────────
 
+pub const OPS_START_METHOD: RpcMethod<OpsStartRequest, OpsStartResponse> = RpcMethod::new(
+    methods::OPS_START,
+    RpcRole::Write,
+    RpcDomain::Ops,
+    RpcStability::Experimental,
+    RpcMutability::Mutating,
+);
+
 /// Request: ops.start
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OpsStartRequest {
@@ -42,6 +51,14 @@ pub struct OpsStartResponse {
 // ─────────────────────────────────────────────────────────────
 // ops.list
 // ─────────────────────────────────────────────────────────────
+
+pub const OPS_LIST_METHOD: RpcMethod<OpsListRequest, OpsListResponse> = RpcMethod::new(
+    methods::OPS_LIST,
+    RpcRole::ReadOnly,
+    RpcDomain::Ops,
+    RpcStability::Experimental,
+    RpcMutability::ReadOnly,
+);
 
 /// Request: ops.list
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -71,6 +88,14 @@ pub struct OpsListResponse {
 // ops.get
 // ─────────────────────────────────────────────────────────────
 
+pub const OPS_GET_METHOD: RpcMethod<OpsGetRequest, OpsGetResponse> = RpcMethod::new(
+    methods::OPS_GET,
+    RpcRole::ReadOnly,
+    RpcDomain::Ops,
+    RpcStability::Experimental,
+    RpcMutability::ReadOnly,
+);
+
 /// Request: ops.get
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OpsGetRequest {
@@ -86,6 +111,14 @@ pub struct OpsGetResponse {
 // ─────────────────────────────────────────────────────────────
 // ops.cancel
 // ─────────────────────────────────────────────────────────────
+
+pub const OPS_CANCEL_METHOD: RpcMethod<OpsCancelRequest, OpsCancelResponse> = RpcMethod::new(
+    methods::OPS_CANCEL,
+    RpcRole::Admin,
+    RpcDomain::Ops,
+    RpcStability::Experimental,
+    RpcMutability::Mutating,
+);
 
 /// Request: ops.cancel
 #[derive(Debug, Clone, Serialize, Deserialize)]

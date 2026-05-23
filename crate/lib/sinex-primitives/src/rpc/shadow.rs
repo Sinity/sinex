@@ -2,6 +2,34 @@
 
 use serde::{Deserialize, Serialize};
 
+use super::{RpcDomain, RpcMethod, RpcMutability, RpcRole, RpcStability, methods};
+
+pub const SHADOW_CREATE_METHOD: RpcMethod<ShadowCreateRequest, ShadowCreateResponse> =
+    RpcMethod::new(
+        methods::SHADOW_CREATE,
+        RpcRole::Admin,
+        RpcDomain::Shadow,
+        RpcStability::Experimental,
+        RpcMutability::Mutating,
+    );
+
+pub const SHADOW_LIST_METHOD: RpcMethod<ShadowListRequest, ShadowListResponse> = RpcMethod::new(
+    methods::SHADOW_LIST,
+    RpcRole::ReadOnly,
+    RpcDomain::Shadow,
+    RpcStability::Experimental,
+    RpcMutability::ReadOnly,
+);
+
+pub const SHADOW_DELETE_METHOD: RpcMethod<ShadowDeleteRequest, ShadowDeleteResponse> =
+    RpcMethod::new(
+        methods::SHADOW_DELETE,
+        RpcRole::Admin,
+        RpcDomain::Shadow,
+        RpcStability::Experimental,
+        RpcMutability::Mutating,
+    );
+
 /// Shadow consumer info
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ShadowConsumerInfo {

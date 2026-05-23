@@ -4,6 +4,7 @@ use crate::domain::{DataTier, EventSource, EventType, OperationStatus};
 use crate::events::Event;
 use crate::events::builder::OperationMarker;
 use crate::ids::Id;
+use crate::rpc::{RpcDomain, RpcMethod, RpcMutability, RpcRole, RpcStability, methods};
 use crate::temporal::Timestamp;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -54,6 +55,14 @@ pub struct AuditTrail {
 // ─────────────────────────────────────────────────────────────
 // audit.get
 // ─────────────────────────────────────────────────────────────
+
+pub const AUDIT_GET_METHOD: RpcMethod<AuditGetRequest, AuditGetResponse> = RpcMethod::new(
+    methods::AUDIT_GET,
+    RpcRole::ReadOnly,
+    RpcDomain::Audit,
+    RpcStability::Experimental,
+    RpcMutability::ReadOnly,
+);
 
 /// Request: audit.get
 #[derive(Debug, Clone, Serialize, Deserialize)]

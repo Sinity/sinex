@@ -3,20 +3,115 @@
 use serde_json::json;
 use sinex_db::DbPoolExt;
 use sinex_gateway::handlers::{
-    handle_audit_get, handle_lifecycle_archive, handle_lifecycle_restore, handle_tombstone_approve,
-    handle_tombstone_cancel, handle_tombstone_create, handle_tombstone_list,
-    handle_tombstone_status,
+    handle_audit_get as handle_audit_get_typed,
+    handle_lifecycle_archive as handle_lifecycle_archive_typed,
+    handle_lifecycle_restore as handle_lifecycle_restore_typed,
+    handle_tombstone_approve as handle_tombstone_approve_typed,
+    handle_tombstone_cancel as handle_tombstone_cancel_typed,
+    handle_tombstone_create as handle_tombstone_create_typed,
+    handle_tombstone_list as handle_tombstone_list_typed,
+    handle_tombstone_status as handle_tombstone_status_typed,
 };
 use sinex_gateway::rpc_server::RpcAuthContext;
 use sinex_gateway::service_container::ServiceContainer;
 use sinex_primitives::events::DynamicPayload;
+use sinex_primitives::rpc::audit::AuditGetRequest;
 use sinex_primitives::rpc::audit::AuditGetResponse;
 use sinex_primitives::rpc::lifecycle::{
-    LifecycleArchiveResponse, LifecycleRestoreResponse, TombstoneApproveResponse,
-    TombstoneCancelResponse, TombstoneCreateResponse, TombstoneListResponse,
-    TombstoneOperationState, TombstoneStatusResponse,
+    LifecycleArchiveRequest, LifecycleArchiveResponse, LifecycleRestoreRequest,
+    LifecycleRestoreResponse, TombstoneApproveRequest, TombstoneApproveResponse,
+    TombstoneCancelRequest, TombstoneCancelResponse, TombstoneCreateRequest,
+    TombstoneCreateResponse, TombstoneListRequest, TombstoneListResponse, TombstoneOperationState,
+    TombstoneStatusRequest, TombstoneStatusResponse,
 };
 use xtask::sandbox::prelude::*;
+
+async fn handle_audit_get(
+    pool: &sqlx::PgPool,
+    params: serde_json::Value,
+) -> TestResult<serde_json::Value> {
+    let request: AuditGetRequest = serde_json::from_value(params)?;
+    Ok(serde_json::to_value(
+        handle_audit_get_typed(pool, request).await?,
+    )?)
+}
+
+async fn handle_lifecycle_archive(
+    pool: &sqlx::PgPool,
+    params: serde_json::Value,
+    auth: &RpcAuthContext,
+) -> TestResult<serde_json::Value> {
+    let request: LifecycleArchiveRequest = serde_json::from_value(params)?;
+    Ok(serde_json::to_value(
+        handle_lifecycle_archive_typed(pool, request, auth).await?,
+    )?)
+}
+
+async fn handle_lifecycle_restore(
+    pool: &sqlx::PgPool,
+    params: serde_json::Value,
+    auth: &RpcAuthContext,
+) -> TestResult<serde_json::Value> {
+    let request: LifecycleRestoreRequest = serde_json::from_value(params)?;
+    Ok(serde_json::to_value(
+        handle_lifecycle_restore_typed(pool, request, auth).await?,
+    )?)
+}
+
+async fn handle_tombstone_create(
+    pool: &sqlx::PgPool,
+    params: serde_json::Value,
+    auth: &RpcAuthContext,
+) -> TestResult<serde_json::Value> {
+    let request: TombstoneCreateRequest = serde_json::from_value(params)?;
+    Ok(serde_json::to_value(
+        handle_tombstone_create_typed(pool, request, auth).await?,
+    )?)
+}
+
+async fn handle_tombstone_approve(
+    params: serde_json::Value,
+    services: &ServiceContainer,
+    auth: &RpcAuthContext,
+) -> TestResult<serde_json::Value> {
+    let request: TombstoneApproveRequest = serde_json::from_value(params)?;
+    Ok(serde_json::to_value(
+        handle_tombstone_approve_typed(services, request, auth).await?,
+    )?)
+}
+
+async fn handle_tombstone_cancel(
+    pool: &sqlx::PgPool,
+    params: serde_json::Value,
+    auth: &RpcAuthContext,
+) -> TestResult<serde_json::Value> {
+    let request: TombstoneCancelRequest = serde_json::from_value(params)?;
+    Ok(serde_json::to_value(
+        handle_tombstone_cancel_typed(pool, request, auth).await?,
+    )?)
+}
+
+async fn handle_tombstone_list(
+    pool: &sqlx::PgPool,
+    params: serde_json::Value,
+    auth: &RpcAuthContext,
+) -> TestResult<serde_json::Value> {
+    let request: TombstoneListRequest = serde_json::from_value(params)?;
+    Ok(serde_json::to_value(
+        handle_tombstone_list_typed(pool, request, auth).await?,
+    )?)
+}
+
+async fn handle_tombstone_status(
+    pool: &sqlx::PgPool,
+    params: serde_json::Value,
+    auth: &RpcAuthContext,
+) -> TestResult<serde_json::Value> {
+    let request: TombstoneStatusRequest = serde_json::from_value(params)?;
+    Ok(serde_json::to_value(
+        handle_tombstone_status_typed(pool, request, auth).await?,
+    )?)
+}
 
 async fn publish_event(
     ctx: &TestContext,

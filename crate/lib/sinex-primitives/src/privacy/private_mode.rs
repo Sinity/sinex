@@ -14,16 +14,12 @@ pub const DEFAULT_PRIVATE_MODE_STATE_DIR: &str = "/var/lib/sinex";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum PrivateModeReasonClass {
+    #[default]
     OperatorPrivate,
     PolicyHold,
     TestFixture,
-}
-
-impl Default for PrivateModeReasonClass {
-    fn default() -> Self {
-        Self::OperatorPrivate
-    }
 }
 
 impl std::fmt::Display for PrivateModeReasonClass {
