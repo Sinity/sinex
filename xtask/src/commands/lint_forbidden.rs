@@ -167,11 +167,6 @@ impl XtaskCommand for LintForbiddenCommand {
             // existing gateway/node-sdk/ingestd surfaces are migrated in
             // focused subsystem slices.
             "crate/core/sinex-source-worker/src/monitor_node.rs",
-            "crate/core/sinex-ingestd/src/jetstream_consumer.rs",
-            "crate/core/sinex-ingestd/src/material_assembler/pipeline.rs",
-            "crate/core/sinex-ingestd/src/material_assembler/finalize.rs",
-            "crate/core/sinex-ingestd/src/material_assembler/test_support.rs",
-            "crate/core/sinex-ingestd/src/material_assembler/io.rs",
             "crate/core/sinex-gateway/src/replay_control/server.rs",
             "crate/core/sinex-gateway/src/replay_control/protocol.rs",
             "crate/core/sinex-gateway/src/replay_control/mod.rs",
