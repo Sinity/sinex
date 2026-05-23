@@ -342,7 +342,7 @@ async fn replay_abort_before_scan_ack_restores_cascade_and_emits_compensating_in
             &[event_id.to_uuid()],
             &scope_metadata,
             operation_id,
-            eyre!("boom"),
+            test_error("boom"),
         )
         .await
         .expect_err("abort helper should surface the caller failure");
@@ -417,7 +417,7 @@ async fn replay_abort_before_scan_ack_surfaces_compensating_invalidation_failure
             &[event_id.to_uuid()],
             &scope_metadata,
             operation_id,
-            eyre!("boom"),
+            test_error("boom"),
         )
         .await
         .expect_err("compensating invalidation publish failure should surface");
@@ -562,7 +562,7 @@ async fn replay_execution_returns_cancelled_operation_when_cancelled_midflight(
 
     let executed = execute_task
         .await
-        .map_err(|e| eyre!("execute task failed: {e}"))??;
+        .map_err(|e| test_error(format!("execute task failed: {e}")))??;
     assert_eq!(executed.state, ReplayState::Cancelled);
     assert_eq!(
         executed.outcome,
@@ -595,7 +595,7 @@ async fn replay_execution_returns_cancelled_operation_when_cancelled_midflight(
 
     scan_handle
         .await
-        .map_err(|e| eyre!("fake cancel-test node task failed: {e}"))?;
+        .map_err(|e| test_error(format!("fake cancel-test node task failed: {e}")))?;
 
     Ok(())
 }
