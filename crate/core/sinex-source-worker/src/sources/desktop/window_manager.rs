@@ -400,9 +400,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn baseline_adapter_config_prefers_explicit_event_socket(
-        _ctx: TestContext,
-    ) -> TestResult<()> {
+    async fn baseline_adapter_config_prefers_explicit_event_socket() -> TestResult<()> {
         let _guard = ENV_LOCK.lock().expect("env lock poisoned");
         clear_hyprland_env();
         unsafe {
@@ -426,9 +424,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn baseline_adapter_config_derives_socket_from_bridge_env(
-        _ctx: TestContext,
-    ) -> TestResult<()> {
+    async fn baseline_adapter_config_derives_socket_from_bridge_env() -> TestResult<()> {
         let _guard = ENV_LOCK.lock().expect("env lock poisoned");
         clear_hyprland_env();
         unsafe {

@@ -185,7 +185,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn noop_source_unit_reports_zero_work(_ctx: TestContext) -> TestResult<()> {
+    async fn noop_source_unit_reports_zero_work() -> TestResult<()> {
         let mut node = NoopSourceUnit;
         let mut state = NoopState;
 
