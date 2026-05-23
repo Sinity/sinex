@@ -11,6 +11,12 @@ pub enum HistoryTestsSubcommand {
     Slowest {
         #[arg(long, default_value = "10")]
         limit: usize,
+        /// Only include test results from the last N days.
+        #[arg(long)]
+        days: Option<u32>,
+        /// Require at least this many passing runs in the selected window.
+        #[arg(long, default_value = "1")]
+        min_runs: usize,
         /// Test run selector: `latest`, `previous`, `latest-success`, `latest-failure`,
         /// invocation ID, `inv:<id>`, or `job:<id>`
         #[arg(long)]
@@ -104,9 +110,12 @@ pub(super) fn execute_tests(
     ctx: &CommandContext,
 ) -> Result<CommandResult> {
     match tests_cmd {
-        HistoryTestsSubcommand::Slowest { limit, invocation } => {
-            execute_tests_slowest(db, invocation.as_deref(), *limit, ctx)
-        }
+        HistoryTestsSubcommand::Slowest {
+            limit,
+            days,
+            min_runs,
+            invocation,
+        } => execute_tests_slowest(db, invocation.as_deref(), *limit, *days, *min_runs, ctx),
         HistoryTestsSubcommand::Flaky { limit } => execute_tests_flaky(db, *limit, ctx),
         HistoryTestsSubcommand::GettingSlower {
             threshold_pct,
@@ -168,6 +177,8 @@ pub(super) fn execute_tests_slowest(
     db: &HistoryDb,
     invocation: Option<&str>,
     limit: usize,
+    days: Option<u32>,
+    min_runs: usize,
     ctx: &CommandContext,
 ) -> Result<CommandResult> {
     if let Some(invocation) = invocation {
@@ -223,12 +234,25 @@ pub(super) fn execute_tests_slowest(
             .with_duration(ctx.elapsed()));
     }
 
-    let tests = db.get_slowest_tests(limit)?;
+    let since = days
+        .map(|days| {
+            super::format_history_cutoff_timestamp(
+                time::OffsetDateTime::now_utc() - time::Duration::days(i64::from(days)),
+                "history tests slowest cutoff",
+            )
+        })
+        .transpose()?;
+    let tests = db.get_slowest_tests_filtered(limit, since.as_deref(), min_runs)?;
 
     if ctx.is_human() {
         if tests.is_empty() {
             println!("No test timing data found.");
         } else {
+            if let Some(days) = days {
+                println!("Window: last {days} day(s), min runs: {min_runs}");
+            } else if min_runs > 1 {
+                println!("Window: all history, min runs: {min_runs}");
+            }
             println!(
                 "{:<50} {:<20} {:>10} {:>6}",
                 "TEST", "PACKAGE", "AVG (s)", "RUNS"
