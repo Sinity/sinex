@@ -16,8 +16,9 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::num::NonZeroUsize;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tokio::sync::mpsc;
+use tracing::warn;
 
 use sinex_primitives::events::SourceMaterial;
 use sinex_primitives::ids::Id;
@@ -311,6 +312,210 @@ pub fn choose_file_drop_watch_plan(
         message.push_str(&format!(", kernel_max_user_watches={kernel_max_watches}"));
     }
     Err(ParserError::Adapter(message))
+}
+
+fn file_drop_permission_denied(error: &std::io::Error) -> bool {
+    error.kind() == std::io::ErrorKind::PermissionDenied
+}
+
+fn file_drop_path_component_is_ignored(
+    path: &Path,
+    ignored_directory_names: &HashSet<String>,
+) -> bool {
+    path.file_name()
+        .and_then(std::ffi::OsStr::to_str)
+        .is_some_and(|name| ignored_directory_names.contains(name))
+}
+
+fn file_drop_metadata_is_directory(
+    metadata: &std::fs::Metadata,
+    follow_symlinks: bool,
+    path: &Path,
+) -> ParserResult<bool> {
+    if metadata.is_dir() {
+        return Ok(true);
+    }
+
+    if follow_symlinks && metadata.file_type().is_symlink() {
+        return std::fs::metadata(path)
+            .map(|resolved| resolved.is_dir())
+            .map_err(|error| {
+                ParserError::Adapter(format!(
+                    "failed to follow file-drop watch symlink {}: {error}",
+                    path.display()
+                ))
+            });
+    }
+
+    Ok(false)
+}
+
+/// Survey a native file-drop watch target so callers can choose a bounded
+/// recursive or filtered watch plan.
+pub fn survey_file_drop_watch_tree(
+    path: &Path,
+    start_depth: usize,
+    max_depth: Option<usize>,
+    follow_symlinks: bool,
+    ignored_directory_names: &HashSet<String>,
+) -> ParserResult<FileDropWatchSurvey> {
+    fn inspect_path(
+        path: &Path,
+        depth: usize,
+        max_depth: Option<usize>,
+        follow_symlinks: bool,
+        ignored_directory_names: &HashSet<String>,
+        visited: &mut HashSet<(u64, u64)>,
+    ) -> ParserResult<FileDropWatchSurvey> {
+        use std::os::unix::fs::MetadataExt;
+
+        let metadata = match std::fs::symlink_metadata(path) {
+            Ok(metadata) => metadata,
+            Err(error) if depth > 0 && file_drop_permission_denied(&error) => {
+                warn!(
+                    path = %path.display(),
+                    "Skipping unreadable directory while surveying file-drop watch strategy"
+                );
+                return Ok(FileDropWatchSurvey {
+                    accessible_watch_count: 1,
+                    unreadable_directories: 1,
+                    ..FileDropWatchSurvey::default()
+                });
+            }
+            Err(error) => {
+                return Err(ParserError::Adapter(format!(
+                    "failed to inspect file-drop watch target {}: {error}",
+                    path.display()
+                )));
+            }
+        };
+
+        if !file_drop_metadata_is_directory(&metadata, follow_symlinks, path)? {
+            return Ok(FileDropWatchSurvey {
+                accessible_watch_count: 1,
+                filtered_watch_count: 1,
+                filtered_targets: vec![path.to_path_buf()],
+                ..FileDropWatchSurvey::default()
+            });
+        }
+
+        let resolved_meta = if metadata.file_type().is_symlink() {
+            std::fs::metadata(path).unwrap_or(metadata)
+        } else {
+            metadata
+        };
+        let inode_key = (resolved_meta.dev(), resolved_meta.ino());
+        if !visited.insert(inode_key) {
+            warn!(
+                path = %path.display(),
+                "Symlink cycle detected while surveying file-drop watch strategy; skipping"
+            );
+            return Ok(FileDropWatchSurvey::default());
+        }
+
+        let mut survey = FileDropWatchSurvey {
+            accessible_watch_count: 1,
+            filtered_watch_count: 1,
+            filtered_targets: vec![path.to_path_buf()],
+            ..FileDropWatchSurvey::default()
+        };
+
+        if max_depth.is_some_and(|limit| depth >= limit) {
+            return Ok(survey);
+        }
+
+        let entries = match std::fs::read_dir(path) {
+            Ok(entries) => entries,
+            Err(error) if depth > 0 && file_drop_permission_denied(&error) => {
+                warn!(
+                    path = %path.display(),
+                    "Skipping unreadable directory while surveying file-drop watch strategy"
+                );
+                return Ok(FileDropWatchSurvey {
+                    accessible_watch_count: 1,
+                    unreadable_directories: 1,
+                    ..FileDropWatchSurvey::default()
+                });
+            }
+            Err(error) => {
+                return Err(ParserError::Adapter(format!(
+                    "failed to enumerate file-drop watch directory {}: {error}",
+                    path.display()
+                )));
+            }
+        };
+
+        for entry in entries {
+            let entry = match entry {
+                Ok(entry) => entry,
+                Err(error) if depth > 0 && file_drop_permission_denied(&error) => {
+                    warn!(
+                        path = %path.display(),
+                        "Skipping unreadable directory entry while surveying file-drop watch strategy"
+                    );
+                    continue;
+                }
+                Err(error) => {
+                    return Err(ParserError::Adapter(format!(
+                        "failed to read file-drop watch directory entry under {}: {error}",
+                        path.display()
+                    )));
+                }
+            };
+            let entry_path = entry.path();
+            let metadata = match std::fs::symlink_metadata(&entry_path) {
+                Ok(metadata) => metadata,
+                Err(error) if depth > 0 && file_drop_permission_denied(&error) => {
+                    warn!(
+                        path = %entry_path.display(),
+                        "Skipping unreadable watch directory entry while surveying file-drop watch strategy"
+                    );
+                    continue;
+                }
+                Err(error) => {
+                    return Err(ParserError::Adapter(format!(
+                        "failed to inspect file-drop watch directory entry {}: {error}",
+                        entry_path.display()
+                    )));
+                }
+            };
+
+            if file_drop_metadata_is_directory(&metadata, follow_symlinks, &entry_path)? {
+                if file_drop_path_component_is_ignored(&entry_path, ignored_directory_names) {
+                    survey.accessible_watch_count += 1;
+                    survey.ignored_directories += 1;
+                    continue;
+                }
+                let child_survey = inspect_path(
+                    &entry_path,
+                    depth + 1,
+                    max_depth,
+                    follow_symlinks,
+                    ignored_directory_names,
+                    visited,
+                )?;
+                survey.accessible_watch_count += child_survey.accessible_watch_count;
+                survey.filtered_watch_count += child_survey.filtered_watch_count;
+                survey.unreadable_directories += child_survey.unreadable_directories;
+                survey.ignored_directories += child_survey.ignored_directories;
+                survey
+                    .filtered_targets
+                    .extend(child_survey.filtered_targets);
+            }
+        }
+
+        Ok(survey)
+    }
+
+    let mut visited: HashSet<(u64, u64)> = HashSet::new();
+    inspect_path(
+        path,
+        start_depth,
+        max_depth,
+        follow_symlinks,
+        ignored_directory_names,
+        &mut visited,
+    )
 }
 
 /// No cursor for [`FileDropAdapter`] — live streams are anchor-only.
@@ -936,6 +1141,73 @@ mod tests {
         assert_eq!(budget.configured_max_watches.get(), 8);
         assert_eq!(budget.effective_max_watches.get(), 4);
         assert_eq!(budget.kernel_max_watches.map(NonZeroUsize::get), Some(4));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn file_drop_watch_survey_counts_nested_directories() -> xtask::sandbox::TestResult<()> {
+        let temp_root = TempDir::new()?;
+        std::fs::create_dir_all(temp_root.path().join("a/b"))?;
+        std::fs::create_dir_all(temp_root.path().join("c"))?;
+
+        let survey =
+            survey_file_drop_watch_tree(temp_root.path(), 0, None, false, &HashSet::new())?;
+        assert_eq!(
+            survey.accessible_watch_count, 4,
+            "root + three nested directories should need four watches"
+        );
+        assert_eq!(survey.filtered_watch_count, 4);
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[sinex_test]
+    async fn file_drop_watch_survey_skips_unreadable_subdirectories()
+    -> xtask::sandbox::TestResult<()> {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp_root = TempDir::new()?;
+        let unreadable = temp_root.path().join("private");
+        let nested = unreadable.join("nested");
+        std::fs::create_dir_all(&nested)?;
+        std::fs::create_dir_all(&unreadable)?;
+
+        let original_permissions = std::fs::metadata(&unreadable)?.permissions();
+        let mut restricted_permissions = original_permissions.clone();
+        restricted_permissions.set_mode(0o000);
+        std::fs::set_permissions(&unreadable, restricted_permissions)?;
+
+        let survey =
+            survey_file_drop_watch_tree(temp_root.path(), 0, None, false, &HashSet::new())?;
+
+        std::fs::set_permissions(&unreadable, original_permissions)?;
+
+        assert!(
+            survey.accessible_watch_count >= 2,
+            "root and unreadable directory should still count toward watch budget: {}",
+            survey.accessible_watch_count
+        );
+        assert_eq!(
+            survey.accessible_watch_count, 2,
+            "nested descendants under an unreadable subtree should be skipped conservatively"
+        );
+        assert_eq!(survey.filtered_watch_count, 1);
+        assert_eq!(survey.unreadable_directories, 1);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn file_drop_watch_survey_skips_ignored_directories() -> xtask::sandbox::TestResult<()> {
+        let temp_root = TempDir::new()?;
+        std::fs::create_dir_all(temp_root.path().join(".direnv/profile/bin"))?;
+        std::fs::create_dir_all(temp_root.path().join("notes/daily"))?;
+
+        let ignored = HashSet::from([".direnv".to_string()]);
+        let survey = survey_file_drop_watch_tree(temp_root.path(), 0, None, false, &ignored)?;
+
+        assert_eq!(survey.accessible_watch_count, 4);
+        assert_eq!(survey.filtered_watch_count, 3);
+        assert_eq!(survey.ignored_directories, 1);
         Ok(())
     }
 

@@ -91,6 +91,7 @@ pub use adapters::{
     chained_classify_record,
     choose_file_drop_watch_plan,
     records_from_journal_lines,
+    survey_file_drop_watch_tree,
 };
 pub use declarative::{
     BindingConfig, CarrySpec, DeclarativeParser, DeclarativeParserSpec, Discriminator,

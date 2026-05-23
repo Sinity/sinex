@@ -22,7 +22,7 @@ use sinex_node_sdk::{
     ingestor_node::IngestorNode,
     parser::{
         FileDropWatchBudget, FileDropWatchMode, FileDropWatchPlan, FileDropWatchSurvey,
-        choose_file_drop_watch_plan,
+        choose_file_drop_watch_plan, survey_file_drop_watch_tree,
     },
     runtime::stream::{
         Checkpoint, ContinuousStart, MaterialReplayContext, NodeCapabilities, NodeRuntimeState,
@@ -1064,12 +1064,6 @@ impl ExplorationProvider for FilesystemNode {
     }
 }
 
-fn path_component_is_ignored(path: &Path, ignored_directory_names: &HashSet<String>) -> bool {
-    path.file_name()
-        .and_then(std::ffi::OsStr::to_str)
-        .is_some_and(|name| ignored_directory_names.contains(name))
-}
-
 fn path_contains_ignored_descendant(
     root: &Path,
     path: &Path,
@@ -1119,7 +1113,6 @@ fn metadata_is_directory(
     Ok(false)
 }
 
-/// Survey a watch target once at startup so the node can choose a bounded native strategy.
 fn survey_watch_tree(
     path: &Path,
     depth: usize,
@@ -1127,174 +1120,18 @@ fn survey_watch_tree(
     follow_symlinks: bool,
     ignored_directory_names: &HashSet<String>,
 ) -> NodeResult<WatchTreeSurvey> {
-    fn is_permission_denied(error: &std::io::Error) -> bool {
-        error.kind() == std::io::ErrorKind::PermissionDenied
-    }
-
-    fn inspect_path(
-        path: &Path,
-        depth: usize,
-        max_depth: Option<usize>,
-        follow_symlinks: bool,
-        ignored_directory_names: &HashSet<String>,
-        visited: &mut HashSet<(u64, u64)>,
-    ) -> NodeResult<WatchTreeSurvey> {
-        use std::os::unix::fs::MetadataExt;
-
-        let metadata = match std::fs::symlink_metadata(path) {
-            Ok(metadata) => metadata,
-            Err(error) if depth > 0 && is_permission_denied(&error) => {
-                warn!(
-                    path = %path.display(),
-                    "Skipping unreadable directory while surveying watch strategy"
-                );
-                return Ok(WatchTreeSurvey {
-                    accessible_watch_count: 1,
-                    unreadable_directories: 1,
-                    ..WatchTreeSurvey::default()
-                });
-            }
-            Err(error) => {
-                return Err(SinexError::io(
-                    "Failed to inspect watch target while surveying watch strategy",
-                )
-                .with_std_error(&error)
-                .with_path(path.display()));
-            }
-        };
-
-        if !metadata_is_directory(&metadata, follow_symlinks, path)? {
-            return Ok(WatchTreeSurvey {
-                accessible_watch_count: 1,
-                filtered_watch_count: 1,
-                filtered_targets: vec![path.to_path_buf()],
-                ..WatchTreeSurvey::default()
-            });
-        }
-
-        // Resolve the inode to detect symlink cycles. For symlinks pointing at
-        // directories, follow to the real inode so both the link and the target
-        // share the same (dev, ino) key.
-        let resolved_meta = if metadata.file_type().is_symlink() {
-            std::fs::metadata(path).unwrap_or(metadata)
-        } else {
-            metadata
-        };
-        let inode_key = (resolved_meta.dev(), resolved_meta.ino());
-        if !visited.insert(inode_key) {
-            warn!(
-                path = %path.display(),
-                "Symlink cycle detected while surveying watch strategy; skipping"
-            );
-            return Ok(WatchTreeSurvey::default());
-        }
-
-        let mut survey = WatchTreeSurvey {
-            accessible_watch_count: 1,
-            filtered_watch_count: 1,
-            filtered_targets: vec![path.to_path_buf()],
-            ..WatchTreeSurvey::default()
-        };
-
-        if max_depth.is_some_and(|m| depth >= m) {
-            return Ok(survey);
-        }
-
-        let entries = match std::fs::read_dir(path) {
-            Ok(entries) => entries,
-            Err(error) if depth > 0 && is_permission_denied(&error) => {
-                warn!(
-                    path = %path.display(),
-                    "Skipping unreadable directory while surveying watch strategy"
-                );
-                return Ok(WatchTreeSurvey {
-                    accessible_watch_count: 1,
-                    unreadable_directories: 1,
-                    ..WatchTreeSurvey::default()
-                });
-            }
-            Err(error) => {
-                return Err(SinexError::io(
-                    "Failed to enumerate watch directory while surveying watch strategy",
-                )
-                .with_std_error(&error)
-                .with_path(path.display()));
-            }
-        };
-
-        for entry in entries {
-            let entry = match entry {
-                Ok(entry) => entry,
-                Err(error) if depth > 0 && is_permission_denied(&error) => {
-                    warn!(
-                        path = %path.display(),
-                        "Skipping unreadable directory entry while surveying watch strategy"
-                    );
-                    continue;
-                }
-                Err(error) => {
-                    return Err(SinexError::io(
-                        "Failed to read watch directory entry while surveying watch strategy",
-                    )
-                    .with_std_error(&error)
-                    .with_path(path.display()));
-                }
-            };
-            let entry_path = entry.path();
-            let metadata = match std::fs::symlink_metadata(&entry_path) {
-                Ok(metadata) => metadata,
-                Err(error) if depth > 0 && is_permission_denied(&error) => {
-                    warn!(
-                        path = %entry_path.display(),
-                        "Skipping unreadable watch directory entry while surveying watch strategy"
-                    );
-                    continue;
-                }
-                Err(error) => {
-                    return Err(SinexError::io(
-                        "Failed to inspect watch directory entry while surveying watch strategy",
-                    )
-                    .with_std_error(&error)
-                    .with_path(entry_path.display()));
-                }
-            };
-
-            if metadata_is_directory(&metadata, follow_symlinks, &entry_path)? {
-                if path_component_is_ignored(&entry_path, ignored_directory_names) {
-                    survey.accessible_watch_count += 1;
-                    survey.ignored_directories += 1;
-                    continue;
-                }
-                let child_survey = inspect_path(
-                    &entry_path,
-                    depth + 1,
-                    max_depth,
-                    follow_symlinks,
-                    ignored_directory_names,
-                    visited,
-                )?;
-                survey.accessible_watch_count += child_survey.accessible_watch_count;
-                survey.filtered_watch_count += child_survey.filtered_watch_count;
-                survey.unreadable_directories += child_survey.unreadable_directories;
-                survey.ignored_directories += child_survey.ignored_directories;
-                survey
-                    .filtered_targets
-                    .extend(child_survey.filtered_targets);
-            }
-        }
-
-        Ok(survey)
-    }
-
-    let mut visited: HashSet<(u64, u64)> = HashSet::new();
-    inspect_path(
+    survey_file_drop_watch_tree(
         path,
         depth,
         max_depth,
         follow_symlinks,
         ignored_directory_names,
-        &mut visited,
     )
+    .map_err(|error| {
+        SinexError::configuration("Failed to survey filesystem watch strategy")
+            .with_context("path", path.display().to_string())
+            .with_context("reason", error.to_string())
+    })
 }
 
 fn choose_watch_plan(survey: &WatchTreeSurvey, budget: WatchBudget) -> NodeResult<WatchPlan> {
@@ -2497,8 +2334,6 @@ mod tests {
     use std::ffi::OsString;
     #[cfg(unix)]
     use std::os::unix::ffi::OsStringExt;
-    #[cfg(unix)]
-    use std::os::unix::fs::PermissionsExt;
 
     #[sinex_test]
     async fn filesystem_config_validation_allows_basic_configuration() -> TestResult<()> {
@@ -2745,68 +2580,6 @@ mod tests {
         );
 
         drop(guard);
-        Ok(())
-    }
-
-    #[sinex_test]
-    async fn survey_watch_tree_counts_nested_directories() -> TestResult<()> {
-        let temp_root = tempdir()?;
-        std::fs::create_dir_all(temp_root.path().join("a/b"))?;
-        std::fs::create_dir_all(temp_root.path().join("c"))?;
-
-        let survey = survey_watch_tree(temp_root.path(), 0, None, false, &HashSet::new())?;
-        assert_eq!(
-            survey.accessible_watch_count, 4,
-            "root + three nested directories should need four watches"
-        );
-        assert_eq!(survey.filtered_watch_count, 4);
-        Ok(())
-    }
-
-    #[cfg(unix)]
-    #[sinex_test]
-    async fn survey_watch_tree_skips_unreadable_subdirectories() -> TestResult<()> {
-        let temp_root = tempdir()?;
-        let unreadable = temp_root.path().join("private");
-        let nested = unreadable.join("nested");
-        std::fs::create_dir_all(&nested)?;
-        std::fs::create_dir_all(&unreadable)?;
-
-        let original_permissions = std::fs::metadata(&unreadable)?.permissions();
-        let mut restricted_permissions = original_permissions.clone();
-        restricted_permissions.set_mode(0o000);
-        std::fs::set_permissions(&unreadable, restricted_permissions)?;
-
-        let survey = survey_watch_tree(temp_root.path(), 0, None, false, &HashSet::new())?;
-
-        std::fs::set_permissions(&unreadable, original_permissions)?;
-
-        assert!(
-            survey.accessible_watch_count >= 2,
-            "root and unreadable directory should still count toward watch budget: {}",
-            survey.accessible_watch_count
-        );
-        assert_eq!(
-            survey.accessible_watch_count, 2,
-            "nested descendants under an unreadable subtree should be skipped conservatively"
-        );
-        assert_eq!(survey.filtered_watch_count, 1);
-        assert_eq!(survey.unreadable_directories, 1);
-        Ok(())
-    }
-
-    #[sinex_test]
-    async fn survey_watch_tree_skips_ignored_directories() -> TestResult<()> {
-        let temp_root = tempdir()?;
-        std::fs::create_dir_all(temp_root.path().join(".direnv/profile/bin"))?;
-        std::fs::create_dir_all(temp_root.path().join("notes/daily"))?;
-
-        let ignored = HashSet::from([".direnv".to_string()]);
-        let survey = survey_watch_tree(temp_root.path(), 0, None, false, &ignored)?;
-
-        assert_eq!(survey.accessible_watch_count, 4);
-        assert_eq!(survey.filtered_watch_count, 3);
-        assert_eq!(survey.ignored_directories, 1);
         Ok(())
     }
 
