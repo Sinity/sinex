@@ -21,7 +21,8 @@ use sinex_node_sdk::{
     },
     ingestor_node::IngestorNode,
     parser::{
-        FileDropWatchBudget, FileDropWatchMode, FileDropWatchSurvey, choose_file_drop_watch_plan,
+        FileDropWatchBudget, FileDropWatchMode, FileDropWatchPlan, FileDropWatchSurvey,
+        choose_file_drop_watch_plan,
     },
     runtime::stream::{
         Checkpoint, ContinuousStart, MaterialReplayContext, NodeCapabilities, NodeRuntimeState,
@@ -93,22 +94,8 @@ const MATERIAL_REASON_MOVED: &str = "fs-watcher:file-moved";
 
 type WatchTreeSurvey = FileDropWatchSurvey;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum WatchStrategy {
-    NativeRecursive,
-    NativeFiltered { filtered_targets: Vec<PathBuf> },
-}
-
-impl WatchStrategy {
-    fn mode_name(&self) -> &'static str {
-        match self {
-            Self::NativeRecursive => "native-recursive",
-            Self::NativeFiltered { .. } => "native-filtered",
-        }
-    }
-}
-
 type WatchBudget = FileDropWatchBudget;
+type WatchPlan = FileDropWatchPlan;
 
 enum ActiveWatcher {
     NativeRecursive {
@@ -1310,23 +1297,13 @@ fn survey_watch_tree(
     )
 }
 
-fn choose_watch_strategy(
-    survey: &WatchTreeSurvey,
-    budget: WatchBudget,
-) -> NodeResult<WatchStrategy> {
-    let plan = choose_file_drop_watch_plan(survey.clone(), budget).map_err(|error| {
+fn choose_watch_plan(survey: &WatchTreeSurvey, budget: WatchBudget) -> NodeResult<WatchPlan> {
+    choose_file_drop_watch_plan(survey.clone(), budget).map_err(|error| {
         SinexError::configuration(
             "Filesystem watch budget exceeded even after applying filtered native watch planning",
         )
         .with_context("reason", error.to_string())
-    })?;
-
-    match plan.mode {
-        FileDropWatchMode::NativeRecursive => Ok(WatchStrategy::NativeRecursive),
-        FileDropWatchMode::NativeFiltered => Ok(WatchStrategy::NativeFiltered {
-            filtered_targets: survey.filtered_targets.clone(),
-        }),
-    }
+    })
 }
 
 fn notify_error_is_skippable_filtered_target(error: &notify::Error) -> bool {
@@ -1467,10 +1444,9 @@ fn reconcile_filtered_watch_targets(
 }
 
 async fn watch_path(root: String, ctx: WatchContext) -> NodeResult<()> {
-    let (canonical, canonical_root, survey, watch_strategy, budget) =
-        prepare_watch_root(&root, &ctx)?;
-    let watcher_mode = watch_strategy.mode_name();
-    log_watch_strategy(&canonical, &survey, budget, watcher_mode);
+    let (canonical, canonical_root, watch_plan) = prepare_watch_root(&root, &ctx)?;
+    let watcher_mode = watch_plan.mode.as_str();
+    log_watch_strategy(&canonical, &watch_plan);
 
     let (tx, mut rx) = mpsc::channel::<Event>(FS_WATCH_CHANNEL_SIZE);
     let drop_counter = Arc::clone(&ctx.dropped_events);
@@ -1483,13 +1459,8 @@ async fn watch_path(root: String, ctx: WatchContext) -> NodeResult<()> {
             handle_watcher_callback(result, &tx, &drop_counter, &error_counter, watcher_mode);
         }
     };
-    let mut watcher = build_active_watcher(
-        &canonical,
-        &root,
-        watcher_mode,
-        watch_strategy,
-        event_handler,
-    )?;
+    let mut watcher =
+        build_active_watcher(&canonical, &root, watcher_mode, watch_plan, event_handler)?;
 
     loop {
         tokio::select! {
@@ -2146,12 +2117,10 @@ fn file_created_at(
     )
 }
 
-fn log_watch_strategy(
-    path: &Path,
-    survey: &WatchTreeSurvey,
-    budget: WatchBudget,
-    watcher_mode: &str,
-) {
+fn log_watch_strategy(path: &Path, plan: &WatchPlan) {
+    let survey = &plan.survey;
+    let budget = plan.budget;
+    let watcher_mode = plan.mode.as_str();
     if let Some(kernel_max_watches) = budget.kernel_max_watches
         && kernel_max_watches < budget.configured_max_watches
     {
@@ -2237,14 +2206,14 @@ fn build_active_watcher<F>(
     canonical: &Path,
     root: &str,
     watcher_mode: &'static str,
-    strategy: WatchStrategy,
+    plan: WatchPlan,
     event_handler: F,
 ) -> NodeResult<ActiveWatcher>
 where
     F: FnMut(Result<Event, notify::Error>) + Send + 'static,
 {
-    match strategy {
-        WatchStrategy::NativeRecursive => {
+    match plan.mode {
+        FileDropWatchMode::NativeRecursive => {
             let mut watcher = notify::recommended_watcher(event_handler).map_err(|error| {
                 SinexError::lifecycle("Failed to create watcher").with_source(error)
             })?;
@@ -2258,12 +2227,16 @@ where
                 })?;
             Ok(ActiveWatcher::NativeRecursive { _watcher: watcher })
         }
-        WatchStrategy::NativeFiltered { filtered_targets } => {
+        FileDropWatchMode::NativeFiltered => {
             let mut watcher = notify::recommended_watcher(event_handler).map_err(|error| {
                 SinexError::lifecycle("Failed to create watcher").with_source(error)
             })?;
             let mut watched_targets = HashSet::new();
-            add_filtered_watch_targets(&mut watcher, &mut watched_targets, filtered_targets)?;
+            add_filtered_watch_targets(
+                &mut watcher,
+                &mut watched_targets,
+                plan.survey.filtered_targets,
+            )?;
             Ok(ActiveWatcher::NativeFiltered {
                 watcher,
                 watched_targets,
@@ -2272,10 +2245,7 @@ where
     }
 }
 
-fn prepare_watch_root(
-    root: &str,
-    ctx: &WatchContext,
-) -> NodeResult<(PathBuf, String, WatchTreeSurvey, WatchStrategy, WatchBudget)> {
+fn prepare_watch_root(root: &str, ctx: &WatchContext) -> NodeResult<(PathBuf, String, WatchPlan)> {
     let normalized = validate_watch_path(root, &ctx.security_policy)
         .map_err(|error| SinexError::validation(error.to_string()))?;
     let canonical = std::fs::canonicalize(normalized.as_str()).map_err(|error| {
@@ -2298,8 +2268,8 @@ fn prepare_watch_root(
             .with_context("max_watches", ctx.max_watches.to_string())
     })?;
     let budget = WatchBudget::detect(configured_max_watches);
-    let strategy = choose_watch_strategy(&survey, budget)?;
-    Ok((canonical, canonical_root, survey, strategy, budget))
+    let plan = choose_watch_plan(&survey, budget)?;
+    Ok((canonical, canonical_root, plan))
 }
 
 fn file_modified_at(
@@ -2841,7 +2811,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn choose_watch_strategy_uses_effective_watch_budget() -> TestResult<()> {
+    async fn choose_watch_plan_uses_effective_watch_budget() -> TestResult<()> {
         let survey = WatchTreeSurvey {
             accessible_watch_count: 6,
             filtered_watch_count: 4,
@@ -2853,13 +2823,17 @@ mod tests {
             Some(NonZeroUsize::new(4).expect("fixture kernel limit should be non-zero")),
         );
 
-        let strategy = choose_watch_strategy(&survey, budget)?;
-        assert!(matches!(strategy, WatchStrategy::NativeFiltered { .. }));
+        let plan = choose_watch_plan(&survey, budget)?;
+        assert_eq!(plan.mode, FileDropWatchMode::NativeFiltered);
+        assert_eq!(
+            plan.survey.filtered_targets,
+            vec![PathBuf::from("/tmp"), PathBuf::from("/tmp/notes")]
+        );
         Ok(())
     }
 
     #[sinex_test]
-    async fn choose_watch_strategy_reports_kernel_limit_when_filtered_plan_still_too_large()
+    async fn choose_watch_plan_reports_kernel_limit_when_filtered_plan_still_too_large()
     -> TestResult<()> {
         let survey = WatchTreeSurvey {
             accessible_watch_count: 8,
@@ -2871,7 +2845,7 @@ mod tests {
             Some(NonZeroUsize::new(4).expect("fixture kernel limit should be non-zero")),
         );
 
-        let error = choose_watch_strategy(&survey, budget)
+        let error = choose_watch_plan(&survey, budget)
             .expect_err("oversized filtered plan should fail honestly");
         let message = error.to_string();
         assert!(message.contains("kernel_max_user_watches"));
