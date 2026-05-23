@@ -784,6 +784,59 @@ async fn snapshot_restore_execute_extracts_state_archive_into_empty_target()
 }
 
 #[sinex_test]
+async fn snapshot_restore_execute_preserves_dry_run_plan() -> xtask::sandbox::TestResult<()> {
+    let (_dir, archive_path) = make_snapshot_archive()?;
+    let target_parent = tempfile::tempdir()?;
+    let restore_target = target_parent.path().join("restore-target");
+
+    let dry_run = AdminSnapshotRestoreCommand {
+        archive: archive_path.clone(),
+        target_dir: restore_target.clone(),
+        dry_run: true,
+        allow_non_empty_target: false,
+        confirm_restore: false,
+        allow_active_services: true,
+        restore_database_url: None,
+        pg_restore_bin: None,
+        psql_bin: None,
+    }
+    .execute()?;
+
+    let executed = AdminSnapshotRestoreCommand {
+        archive: archive_path,
+        target_dir: restore_target,
+        dry_run: false,
+        allow_non_empty_target: false,
+        confirm_restore: true,
+        allow_active_services: true,
+        restore_database_url: None,
+        pg_restore_bin: None,
+        psql_bin: None,
+    }
+    .execute()?;
+
+    assert_eq!(
+        serde_json::to_value(&executed.planned_steps)?,
+        serde_json::to_value(&dry_run.planned_steps)?,
+        "execution must preserve the dry-run restore plan"
+    );
+    assert_eq!(
+        serde_json::to_value(&executed.drill_checks)?,
+        serde_json::to_value(&dry_run.drill_checks)?,
+        "execution must preserve the dry-run drill-check contract"
+    );
+    assert!(
+        dry_run.observed_checks.is_none(),
+        "dry-run should not report observed restore checks"
+    );
+    assert!(
+        executed.observed_checks.is_some(),
+        "execution should add observations without changing the plan"
+    );
+    Ok(())
+}
+
+#[sinex_test]
 async fn snapshot_restore_executes_postgres_drill_with_row_count_check()
 -> xtask::sandbox::TestResult<()> {
     let (_dir, archive_path) = make_postgres_snapshot_archive()?;
