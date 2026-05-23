@@ -6,10 +6,9 @@
 //! and reused as defense-in-depth checks on both sides of the NATS bus.
 
 use crate::cascade_analyzer::{CascadeAnalyzerConfig, Severity, StreamingCascadeAnalyzer};
-use color_eyre::eyre::{Result, eyre};
 use sinex_db::replay::state_machine::{ReplayOperation, ReplayState};
-use sinex_primitives::Uuid;
 use sinex_primitives::env as shared_env;
+use sinex_primitives::{Result, SinexError, Uuid};
 use std::collections::HashSet;
 use tracing::warn;
 
@@ -34,19 +33,25 @@ pub(super) enum ReplayAction {
 pub(super) fn ensure_preview_allowed(operation: &ReplayOperation) -> Result<()> {
     match operation.state {
         ReplayState::Planning | ReplayState::Previewed => Ok(()),
-        ReplayState::Approved => Err(eyre!(
-            "Operation {} is already approved; create a new plan to refresh the preview",
-            operation.operation_id
-        )),
-        ReplayState::Executing | ReplayState::Committing | ReplayState::Cancelling => Err(eyre!(
-            "Operation {} is already executing; preview is no longer available",
-            operation.operation_id
-        )),
-        ReplayState::Completed | ReplayState::Failed | ReplayState::Cancelled => Err(eyre!(
-            "Operation {} is in terminal state {:?}; preview is no longer available",
-            operation.operation_id,
-            operation.state
-        )),
+        ReplayState::Approved => Err(SinexError::invalid_state(
+            "Replay operation is already approved; create a new plan to refresh the preview",
+        )
+        .with_context("operation_id", operation.operation_id.to_string())
+        .with_context("state", format!("{:?}", operation.state))),
+        ReplayState::Executing | ReplayState::Committing | ReplayState::Cancelling => Err(
+            SinexError::invalid_state(
+                "Replay operation is already executing; preview is no longer available",
+            )
+            .with_context("operation_id", operation.operation_id.to_string())
+            .with_context("state", format!("{:?}", operation.state)),
+        ),
+        ReplayState::Completed | ReplayState::Failed | ReplayState::Cancelled => Err(
+            SinexError::invalid_state(
+                "Replay operation is in a terminal state; preview is no longer available",
+            )
+            .with_context("operation_id", operation.operation_id.to_string())
+            .with_context("state", format!("{:?}", operation.state)),
+        ),
     }
 }
 
@@ -64,44 +69,51 @@ pub(super) fn allow_test_actors() -> Result<bool> {
 
 pub(super) fn validate_actor_for_action(actor: &str, action: ReplayAction) -> Result<()> {
     if actor.is_empty() {
-        return Err(eyre!("Actor cannot be empty"));
+        return Err(SinexError::validation("Actor cannot be empty"));
     }
     if actor.trim() != actor {
-        return Err(eyre!("Actor cannot contain leading or trailing whitespace"));
+        return Err(SinexError::validation(
+            "Actor cannot contain leading or trailing whitespace",
+        ));
     }
     if actor.chars().any(char::is_control) {
-        return Err(eyre!("Actor contains invalid control characters"));
+        return Err(SinexError::validation(
+            "Actor contains invalid control characters",
+        ));
     }
 
     let (role, identifier) = actor
         .split_once(':')
-        .ok_or_else(|| eyre!("Invalid actor format. Expected '<role>:<identifier>'"))?;
+        .ok_or_else(|| {
+            SinexError::validation("Invalid actor format")
+                .with_context("expected", "<role>:<identifier>")
+        })?;
 
     if !VALID_ACTOR_ROLES.contains(&role) {
-        return Err(eyre!(
-            "Invalid actor role '{role}'. Allowed roles: {}",
-            VALID_ACTOR_ROLES.join(", ")
-        ));
+        return Err(SinexError::validation("Invalid actor role")
+            .with_context("role", role)
+            .with_context("allowed_roles", VALID_ACTOR_ROLES.join(", ")));
     }
 
     if identifier.is_empty() || identifier.trim().is_empty() {
-        return Err(eyre!("Actor identifier cannot be empty"));
+        return Err(SinexError::validation("Actor identifier cannot be empty"));
     }
     if identifier.trim() != identifier {
-        return Err(eyre!(
-            "Actor identifier cannot contain leading or trailing whitespace"
+        return Err(SinexError::validation(
+            "Actor identifier cannot contain leading or trailing whitespace",
         ));
     }
     if identifier.chars().any(char::is_control) {
-        return Err(eyre!(
-            "Actor identifier contains invalid control characters"
+        return Err(SinexError::validation(
+            "Actor identifier contains invalid control characters",
         ));
     }
 
     if role == "test" && !allow_test_actors()? {
-        return Err(eyre!(
-            "Test actors are disabled in this environment (set SINEX_ALLOW_TEST_ACTORS=1 to enable)"
-        ));
+        return Err(SinexError::permission_denied(
+            "Test actors are disabled in this environment",
+        )
+        .with_context("hint", "set SINEX_ALLOW_TEST_ACTORS=1 to enable"));
     }
 
     let requires_privileged_role = matches!(
@@ -109,9 +121,11 @@ pub(super) fn validate_actor_for_action(actor: &str, action: ReplayAction) -> Re
         ReplayAction::Approve | ReplayAction::Execute | ReplayAction::Cancel
     );
     if requires_privileged_role && !matches!(role, "admin" | "operator" | "service" | "system") {
-        return Err(eyre!(
-            "Actor role '{role}' cannot perform this replay action"
-        ));
+        return Err(SinexError::permission_denied(
+            "Actor role cannot perform this replay action",
+        )
+        .with_context("role", role)
+        .with_context("action", format!("{action:?}")));
     }
 
     Ok(())
@@ -208,14 +222,13 @@ pub(super) fn summarize_uuid_set(ids: &HashSet<Uuid>) -> String {
 pub(super) fn stale_preview_missing_root_ids_error(
     operation_id: Uuid,
     expected_total_events: u64,
-) -> color_eyre::eyre::Report {
-    eyre!(
-        "Operation {} preview is stale: preview covered {} material-root events but \
-         root_event_ids is absent. ID-level staleness detection is not possible; \
-         refresh preview before execution",
-        operation_id,
-        expected_total_events,
+) -> SinexError {
+    SinexError::invalid_state(
+        "Replay preview is stale: root_event_ids is absent, so ID-level staleness detection is not possible",
     )
+    .with_context("operation_id", operation_id.to_string())
+    .with_context("expected_total_events", expected_total_events.to_string())
+    .with_context("hint", "refresh preview before execution")
 }
 
 pub(super) fn replay_scope_drift_error(
@@ -223,15 +236,13 @@ pub(super) fn replay_scope_drift_error(
     expected_total_events: u64,
     expected_root_ids: &[Uuid],
     actual_root_ids: &[Uuid],
-) -> color_eyre::eyre::Report {
+) -> SinexError {
     if expected_root_ids.is_empty() {
-        return eyre!(
-            "Operation {} preview is stale: approved preview covered {} material-root events, \
-             but execution matched {}. Refresh preview before execution",
-            operation_id,
-            expected_total_events,
-            actual_root_ids.len()
-        );
+        return SinexError::invalid_state("Replay preview is stale")
+            .with_context("operation_id", operation_id.to_string())
+            .with_context("expected_total_events", expected_total_events.to_string())
+            .with_context("actual_root_events", actual_root_ids.len().to_string())
+            .with_context("hint", "refresh preview before execution");
     }
 
     let expected: HashSet<_> = expected_root_ids.iter().copied().collect();
@@ -239,18 +250,15 @@ pub(super) fn replay_scope_drift_error(
     let missing: HashSet<_> = expected.difference(&actual).copied().collect();
     let unexpected: HashSet<_> = actual.difference(&expected).copied().collect();
 
-    eyre!(
-        "Operation {} preview is stale: approved preview covered {} material-root events, \
-         but execution matched {}. Missing previewed roots: {} ({}). Unexpected live roots: {} ({}). \
-         Refresh preview before execution",
-        operation_id,
-        expected_total_events,
-        actual_root_ids.len(),
-        missing.len(),
-        summarize_uuid_set(&missing),
-        unexpected.len(),
-        summarize_uuid_set(&unexpected),
-    )
+    SinexError::invalid_state("Replay preview is stale: live scope no longer matches approved preview")
+        .with_context("operation_id", operation_id.to_string())
+        .with_context("expected_total_events", expected_total_events.to_string())
+        .with_context("actual_root_events", actual_root_ids.len().to_string())
+        .with_context("missing_previewed_roots", missing.len().to_string())
+        .with_context("missing_previewed_root_sample", summarize_uuid_set(&missing))
+        .with_context("unexpected_live_roots", unexpected.len().to_string())
+        .with_context("unexpected_live_root_sample", summarize_uuid_set(&unexpected))
+        .with_context("hint", "refresh preview before execution")
 }
 
 #[cfg(test)]
