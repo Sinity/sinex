@@ -183,6 +183,9 @@ struct RustAnalyzerCliStderrSummary {
     categories: Vec<&'static str>,
     cyclic_dependency_warnings: usize,
     cyclic_dependency_edges: Vec<String>,
+    self_cycle_edges: Vec<String>,
+    xtask_cycle_edges: Vec<String>,
+    workspace_cycle_edges: Vec<String>,
     internal_errors: usize,
     internal_error_kinds: Vec<&'static str>,
     other_warnings: usize,
@@ -951,6 +954,16 @@ fn summarize_rust_analyzer_cli_stderr(stderr: &str) -> Option<RustAnalyzerCliStd
     }
 
     cyclic_dependency_edges.sort();
+    let self_cycle_edges =
+        classify_rust_analyzer_cycle_edges(&cyclic_dependency_edges, |from, to| from == to);
+    let xtask_cycle_edges =
+        classify_rust_analyzer_cycle_edges(&cyclic_dependency_edges, |from, to| {
+            from == "xtask" || to == "xtask"
+        });
+    let workspace_cycle_edges =
+        classify_rust_analyzer_cycle_edges(&cyclic_dependency_edges, |from, to| {
+            from != to && from != "xtask" && to != "xtask"
+        });
     internal_error_kinds.sort();
 
     let mut categories = Vec::new();
@@ -971,6 +984,9 @@ fn summarize_rust_analyzer_cli_stderr(stderr: &str) -> Option<RustAnalyzerCliStd
         categories,
         cyclic_dependency_warnings,
         cyclic_dependency_edges,
+        self_cycle_edges,
+        xtask_cycle_edges,
+        workspace_cycle_edges,
         internal_errors,
         internal_error_kinds,
         other_warnings,
@@ -978,6 +994,19 @@ fn summarize_rust_analyzer_cli_stderr(stderr: &str) -> Option<RustAnalyzerCliStd
         other_errors,
         other_error_samples,
     })
+}
+
+fn classify_rust_analyzer_cycle_edges(
+    edges: &[String],
+    include: impl Fn(&str, &str) -> bool,
+) -> Vec<String> {
+    edges
+        .iter()
+        .filter_map(|edge| {
+            let (from, to) = edge.split_once("->")?;
+            include(from, to).then(|| edge.clone())
+        })
+        .collect()
 }
 
 fn rust_analyzer_internal_error_line(line: &str) -> bool {
@@ -1513,6 +1542,12 @@ fn print_rust_analyzer_report(report: &RustAnalyzerDoctorReport) {
                 println!(
                     "  RA cycle edges:    {}",
                     summary.cyclic_dependency_edges.join(", ")
+                );
+                println!(
+                    "  RA cycle buckets:  self [{}], xtask [{}], workspace [{}]",
+                    summary.self_cycle_edges.join(", "),
+                    summary.xtask_cycle_edges.join(", "),
+                    summary.workspace_cycle_edges.join(", ")
                 );
             }
             if !summary.internal_error_kinds.is_empty() {
