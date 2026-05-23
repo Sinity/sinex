@@ -63,6 +63,9 @@ impl MaterialParser for FilesystemParser {
         let Some(kind) = metadata.event_kind() else {
             return Ok(Vec::new());
         };
+        if metadata.content_skipped_reason.as_deref() == Some("oversized") {
+            return Ok(Vec::new());
+        }
 
         let timing = record
             .source_ts_hint
@@ -202,11 +205,7 @@ fn recorded_path(path: &str) -> Result<RecordedPath, ParserError> {
 }
 
 async fn file_size_hint(record: &SourceRecord, metadata: &FileDropRecordMetadata) -> u64 {
-    if let Some(size) = record
-        .metadata
-        .get("content_size_bytes")
-        .and_then(serde_json::Value::as_u64)
-    {
+    if let Some(size) = metadata.content_size_bytes {
         return size;
     }
     if let Some(path) = record.logical_path.as_ref()
@@ -295,6 +294,73 @@ mod tests {
     }
 
     #[sinex_test]
+    async fn filesystem_parser_maps_modified_content_record() -> xtask::sandbox::TestResult<()> {
+        let metadata = serde_json::json!({
+            "event_kind": "Modified",
+            "path": "/tmp/sinex-modified.txt",
+            "content_materialized": true,
+            "content_size_bytes": 21
+        });
+        let mut parser = FilesystemParser;
+        let intents = parser
+            .parse_record(
+                record(metadata, "/tmp/sinex-modified.txt"),
+                &parser_context(),
+            )
+            .await?;
+
+        assert_eq!(intents.len(), 1);
+        assert_eq!(intents[0].event_type, FileModifiedPayload::EVENT_TYPE);
+        assert_eq!(intents[0].event_source, FileModifiedPayload::SOURCE);
+        assert_eq!(intents[0].payload["path"], "/tmp/sinex-modified.txt");
+        assert_eq!(intents[0].payload["size"], 21);
+        assert_eq!(intents[0].payload["modification_type"], "content");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn filesystem_parser_maps_deleted_observation_record() -> xtask::sandbox::TestResult<()> {
+        let metadata = serde_json::json!({
+            "event_kind": "Deleted",
+            "path": "/tmp/sinex-deleted.txt"
+        });
+        let mut parser = FilesystemParser;
+        let intents = parser
+            .parse_record(
+                record(metadata, "/tmp/sinex-deleted.txt"),
+                &parser_context(),
+            )
+            .await?;
+
+        assert_eq!(intents.len(), 1);
+        assert_eq!(intents[0].event_type, FileDeletedPayload::EVENT_TYPE);
+        assert_eq!(intents[0].event_source, FileDeletedPayload::SOURCE);
+        assert_eq!(intents[0].payload["path"], "/tmp/sinex-deleted.txt");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn filesystem_parser_skips_oversized_content_records() -> xtask::sandbox::TestResult<()> {
+        let metadata = serde_json::json!({
+            "event_kind": "Created",
+            "path": "/tmp/sinex-oversized.txt",
+            "content_materialized": false,
+            "content_size_bytes": 10485761_u64,
+            "content_skipped_reason": "oversized"
+        });
+        let mut parser = FilesystemParser;
+        let intents = parser
+            .parse_record(
+                record(metadata, "/tmp/sinex-oversized.txt"),
+                &parser_context(),
+            )
+            .await?;
+
+        assert!(intents.is_empty());
+        Ok(())
+    }
+
+    #[sinex_test]
     async fn filesystem_parser_emits_one_event_for_paired_move_to_record()
     -> xtask::sandbox::TestResult<()> {
         let metadata = serde_json::json!({
@@ -313,6 +379,24 @@ mod tests {
         assert_eq!(intents[0].event_type, FileMovedPayload::EVENT_TYPE);
         assert_eq!(intents[0].payload["old_path"], "/tmp/old.txt");
         assert_eq!(intents[0].payload["new_path"], "/tmp/new.txt");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn filesystem_parser_skips_paired_move_from_record() -> xtask::sandbox::TestResult<()> {
+        let metadata = serde_json::json!({
+            "event_kind": "Moved",
+            "path": "/tmp/old.txt",
+            "move_from_path": "/tmp/old.txt",
+            "move_to_path": "/tmp/new.txt",
+            "move_role": "from"
+        });
+        let mut parser = FilesystemParser;
+        let intents = parser
+            .parse_record(record(metadata, "/tmp/old.txt"), &parser_context())
+            .await?;
+
+        assert!(intents.is_empty());
         Ok(())
     }
 }
