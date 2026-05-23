@@ -131,9 +131,10 @@ pub struct SleepSessionPayload {
 mod tests {
     use super::*;
     use crate::events::EventPayload;
+    use xtask::sandbox::prelude::*;
 
-    #[test]
-    fn declares_source_and_event_type() {
+    #[sinex_test]
+    async fn declares_source_and_event_type() -> TestResult<()> {
         assert_eq!(
             SleepSessionPayload::SOURCE.as_static_str(),
             "samsung-health"
@@ -150,5 +151,6 @@ mod tests {
             HealthEffectObservationRecordedPayload::EVENT_TYPE.as_static_str(),
             "health.effect.observed"
         );
+        Ok(())
     }
 }

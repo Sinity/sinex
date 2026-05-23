@@ -11,6 +11,7 @@ use sinex_primitives::{
     temporal::Timestamp,
 };
 use sinex_source_worker::sources::ai_session::{ChatGptSessionParser, ClaudeSessionParser};
+use xtask::sandbox::prelude::*;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -59,8 +60,10 @@ fn record_for(bytes: &[u8]) -> SourceRecord {
 // ---------------------------------------------------------------------------
 
 /// Two conversations with 2 and 1 messages respectively → 3 total intents.
-#[tokio::test]
-async fn claude_parses_two_conversations_into_correct_intent_count() {
+#[sinex_test]
+async fn claude_parses_two_conversations_into_correct_intent_count(
+    _ctx: TestContext,
+) -> TestResult<()> {
     let json = serde_json::json!([
         {
             "uuid": "conv-aaa",
@@ -106,11 +109,12 @@ async fn claude_parses_two_conversations_into_correct_intent_count() {
     );
     assert_eq!(intents[0].event_source.as_static_str(), "claude");
     assert_eq!(intents[0].event_type.as_static_str(), "ai.message");
+    Ok(())
 }
 
 /// `session_id` and `message_id` are preserved from the export.
-#[tokio::test]
-async fn claude_preserves_session_id_and_message_id() {
+#[sinex_test]
+async fn claude_preserves_session_id_and_message_id(_ctx: TestContext) -> TestResult<()> {
     let json = serde_json::json!([{
         "uuid": "session-xyz",
         "name": "Test session",
@@ -132,11 +136,12 @@ async fn claude_preserves_session_id_and_message_id() {
     assert_eq!(intent.payload["message_id"], "msg-unique-001");
     assert_eq!(intent.payload["role"], "human");
     assert_eq!(intent.payload["conversation_name"], "Test session");
+    Ok(())
 }
 
 /// Anchor encodes `conv_index * 1_000_000 + msg_index`.
-#[tokio::test]
-async fn claude_anchor_encodes_conv_and_msg_index() {
+#[sinex_test]
+async fn claude_anchor_encodes_conv_and_msg_index(_ctx: TestContext) -> TestResult<()> {
     let json = serde_json::json!([
         {
             "uuid": "conv-1",
@@ -178,11 +183,12 @@ async fn claude_anchor_encodes_conv_and_msg_index() {
             len: 1
         }
     );
+    Ok(())
 }
 
 /// Occurrence key fields: [`session_id`, `message_id`] in order.
-#[tokio::test]
-async fn claude_occurrence_key_fields_and_order() {
+#[sinex_test]
+async fn claude_occurrence_key_fields_and_order(_ctx: TestContext) -> TestResult<()> {
     let json = serde_json::json!([{
         "uuid": "s1",
         "name": "",
@@ -200,11 +206,12 @@ async fn claude_occurrence_key_fields_and_order() {
     let key = intents[0].occurrence_key.as_ref().unwrap();
     assert_eq!(key.fields[0], ("session_id".into(), "s1".into()));
     assert_eq!(key.fields[1], ("message_id".into(), "m1".into()));
+    Ok(())
 }
 
 /// Older export batches use a flat `text` field instead of `content` array.
-#[tokio::test]
-async fn claude_falls_back_to_flat_text_field() {
+#[sinex_test]
+async fn claude_falls_back_to_flat_text_field(_ctx: TestContext) -> TestResult<()> {
     let json = serde_json::json!([{
         "uuid": "s1",
         "name": "",
@@ -223,17 +230,19 @@ async fn claude_falls_back_to_flat_text_field() {
         .await
         .unwrap();
     assert_eq!(intents[0].payload["text"], "Fallback text only");
+    Ok(())
 }
 
 /// Non-JSON input → `ParserError::Parse`.
-#[tokio::test]
-async fn claude_invalid_json_returns_parser_error() {
+#[sinex_test]
+async fn claude_invalid_json_returns_parser_error(_ctx: TestContext) -> TestResult<()> {
     let bytes = b"not json at all";
     let ctx = claude_ctx();
     let result = ClaudeSessionParser
         .parse_record(record_for(bytes), &ctx)
         .await;
     assert!(matches!(result, Err(ParserError::Parse(_))));
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -282,8 +291,8 @@ fn chatgpt_minimal_json() -> serde_json::Value {
 }
 
 /// Root node has no message; 2 text nodes → 2 intents.
-#[tokio::test]
-async fn chatgpt_parses_thread_into_intents() {
+#[sinex_test]
+async fn chatgpt_parses_thread_into_intents(_ctx: TestContext) -> TestResult<()> {
     let json = chatgpt_minimal_json();
     let bytes = serde_json::to_vec(&json).unwrap();
     let ctx = chatgpt_ctx();
@@ -294,11 +303,12 @@ async fn chatgpt_parses_thread_into_intents() {
     assert_eq!(intents.len(), 2);
     assert_eq!(intents[0].event_source.as_static_str(), "chatgpt");
     assert_eq!(intents[0].event_type.as_static_str(), "ai.message");
+    Ok(())
 }
 
 /// `session_id`, `message_id`, role, text are all preserved.
-#[tokio::test]
-async fn chatgpt_preserves_session_and_message_ids() {
+#[sinex_test]
+async fn chatgpt_preserves_session_and_message_ids(_ctx: TestContext) -> TestResult<()> {
     let json = chatgpt_minimal_json();
     let bytes = serde_json::to_vec(&json).unwrap();
     let ctx = chatgpt_ctx();
@@ -310,11 +320,12 @@ async fn chatgpt_preserves_session_and_message_ids() {
     assert_eq!(intents[0].payload["message_id"], "node-user");
     assert_eq!(intents[0].payload["role"], "user");
     assert_eq!(intents[0].payload["text"], "Hello GPT");
+    Ok(())
 }
 
 /// `model_slug` from message metadata takes priority over conversation default.
-#[tokio::test]
-async fn chatgpt_model_slug_from_metadata() {
+#[sinex_test]
+async fn chatgpt_model_slug_from_metadata(_ctx: TestContext) -> TestResult<()> {
     let json = chatgpt_minimal_json();
     let bytes = serde_json::to_vec(&json).unwrap();
     let ctx = chatgpt_ctx();
@@ -323,11 +334,12 @@ async fn chatgpt_model_slug_from_metadata() {
         .await
         .unwrap();
     assert_eq!(intents[1].payload["model"], "gpt-4o");
+    Ok(())
 }
 
 /// Non-text content nodes (tool outputs, DALL-E, etc.) are skipped.
-#[tokio::test]
-async fn chatgpt_skips_non_text_content() {
+#[sinex_test]
+async fn chatgpt_skips_non_text_content(_ctx: TestContext) -> TestResult<()> {
     let json = serde_json::json!([{
         "id": "c1",
         "title": "",
@@ -363,22 +375,24 @@ async fn chatgpt_skips_non_text_content() {
         .unwrap();
     assert_eq!(intents.len(), 1);
     assert_eq!(intents[0].payload["text"], "actual text");
+    Ok(())
 }
 
 /// Non-JSON input → `ParserError::Parse`.
-#[tokio::test]
-async fn chatgpt_invalid_json_returns_parser_error() {
+#[sinex_test]
+async fn chatgpt_invalid_json_returns_parser_error(_ctx: TestContext) -> TestResult<()> {
     let bytes = b"{not valid}";
     let ctx = chatgpt_ctx();
     let result = ChatGptSessionParser
         .parse_record(record_for(bytes), &ctx)
         .await;
     assert!(matches!(result, Err(ParserError::Parse(_))));
+    Ok(())
 }
 
 /// Occurrence key fields: [`session_id`, `message_id`] in order.
-#[tokio::test]
-async fn chatgpt_occurrence_key_fields_and_order() {
+#[sinex_test]
+async fn chatgpt_occurrence_key_fields_and_order(_ctx: TestContext) -> TestResult<()> {
     let json = chatgpt_minimal_json();
     let bytes = serde_json::to_vec(&json).unwrap();
     let ctx = chatgpt_ctx();
@@ -389,4 +403,5 @@ async fn chatgpt_occurrence_key_fields_and_order() {
     let key = intents[0].occurrence_key.as_ref().unwrap();
     assert_eq!(key.fields[0].0, "session_id");
     assert_eq!(key.fields[1].0, "message_id");
+    Ok(())
 }

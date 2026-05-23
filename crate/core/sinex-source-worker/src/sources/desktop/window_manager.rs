@@ -385,6 +385,7 @@ register_adapter_ingestor!(
 mod tests {
     use super::*;
     use std::sync::{LazyLock, Mutex};
+    use xtask::sandbox::prelude::*;
 
     static ENV_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 
@@ -398,8 +399,10 @@ mod tests {
         }
     }
 
-    #[test]
-    fn baseline_adapter_config_prefers_explicit_event_socket() {
+    #[sinex_test]
+    async fn baseline_adapter_config_prefers_explicit_event_socket(
+        _ctx: TestContext,
+    ) -> TestResult<()> {
         let _guard = ENV_LOCK.lock().expect("env lock poisoned");
         clear_hyprland_env();
         unsafe {
@@ -419,10 +422,13 @@ mod tests {
         );
         assert_eq!(config["reconnect_on_eof"], true);
         clear_hyprland_env();
+        Ok(())
     }
 
-    #[test]
-    fn baseline_adapter_config_derives_socket_from_bridge_env() {
+    #[sinex_test]
+    async fn baseline_adapter_config_derives_socket_from_bridge_env(
+        _ctx: TestContext,
+    ) -> TestResult<()> {
         let _guard = ENV_LOCK.lock().expect("env lock poisoned");
         clear_hyprland_env();
         unsafe {
@@ -438,5 +444,6 @@ mod tests {
         );
         assert_eq!(config["reconnect_on_eof"], true);
         clear_hyprland_env();
+        Ok(())
     }
 }

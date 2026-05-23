@@ -49,6 +49,7 @@ pub use adapters::{
     ClipboardPollingAdapter,
     ClipboardPollingConfig,
     ClipboardPollingCursor,
+    DEFAULT_FILE_DROP_MAX_WATCHES,
     DbusBackend,
     DbusBus,
     DbusMessage,
@@ -59,6 +60,8 @@ pub use adapters::{
     DirectoryWalkAdapter,
     DirectoryWalkConfig,
     DirectoryWalkCursor,
+    FileContentDropAdapter,
+    FileContentDropConfig,
     FileDropAdapter,
     FileDropConfig,
     FileDropCursor,
@@ -90,7 +93,9 @@ pub use adapters::{
     all_adapter_schemas,
     chained_classify_record,
     choose_file_drop_watch_plan,
+    normalized_file_drop_watch_roots,
     records_from_journal_lines,
+    survey_file_drop_watch_tree,
 };
 pub use declarative::{
     BindingConfig, CarrySpec, DeclarativeParser, DeclarativeParserSpec, Discriminator,
@@ -226,6 +231,24 @@ pub trait InputShapeAdapter: Send + Sync {
         config: &Self::Config,
         cursor: Option<Self::Cursor>,
     ) -> ParserResult<BoxStream<'static, ParserResult<SourceRecord>>>;
+
+    /// Open the adapter with access to runtime material acquisition.
+    ///
+    /// Most adapters should keep the default and return records that the
+    /// generic node appends to its long-lived material stream. Adapters that
+    /// already stage their own material, such as content-bearing file watchers,
+    /// can override this method and return records with real `material_id`
+    /// values and byte-range anchors.
+    #[cfg(feature = "messaging")]
+    async fn open_with_acquisition(
+        &self,
+        material_id: Id<SourceMaterial>,
+        config: &Self::Config,
+        cursor: Option<Self::Cursor>,
+        _acquisition: Option<std::sync::Arc<crate::acquisition_manager::AcquisitionManager>>,
+    ) -> ParserResult<BoxStream<'static, ParserResult<SourceRecord>>> {
+        self.open(material_id, config, cursor).await
+    }
 
     /// Optionally compute a bounded structural fingerprint for the input
     /// substrate before row/record parsing.

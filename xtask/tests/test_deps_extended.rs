@@ -97,12 +97,11 @@ async fn test_deps_duplicates_json_includes_version_roots() -> ::xtask::sandbox:
         .find(|duplicate| duplicate["version_details"].is_array())
         .ok_or_else(|| color_eyre::eyre::eyre!("expected at least one duplicate detail"))?;
     assert!(
-        duplicate["direct_workspace_debt"].is_boolean(),
-        "duplicate should expose whether first-party manifests directly request it"
-    );
-    assert!(
-        duplicate["transitive_only"].is_boolean(),
-        "duplicate should expose whether it is transitive-only"
+        matches!(
+            duplicate["classification"].as_str(),
+            Some("direct_workspace" | "transitive_upstream")
+        ),
+        "duplicate should expose its actionability classification"
     );
     assert!(
         duplicate["direct_workspace_root_count"].is_number(),
@@ -171,16 +170,15 @@ async fn test_deps_duplicates_json_classifies_direct_debt() -> ::xtask::sandbox:
             }
         }
         let has_direct_roots = !direct_roots.is_empty();
+        let expected_classification = if has_direct_roots {
+            "direct_workspace"
+        } else {
+            "transitive_upstream"
+        };
         assert_eq!(
-            duplicate["direct_workspace_debt"].as_bool(),
-            Some(has_direct_roots),
-            "{} direct_workspace_debt should match per-version roots",
-            duplicate["name"].as_str().unwrap_or("<unknown>")
-        );
-        assert_eq!(
-            duplicate["transitive_only"].as_bool(),
-            Some(!has_direct_roots),
-            "{} transitive_only should be inverse direct_workspace_debt",
+            duplicate["classification"].as_str(),
+            Some(expected_classification),
+            "{} classification should match per-version roots",
             duplicate["name"].as_str().unwrap_or("<unknown>")
         );
         assert_eq!(
@@ -192,11 +190,11 @@ async fn test_deps_duplicates_json_classifies_direct_debt() -> ::xtask::sandbox:
     }
     let direct_count = duplicates
         .iter()
-        .filter(|duplicate| duplicate["direct_workspace_debt"] == serde_json::json!(true))
+        .filter(|duplicate| duplicate["classification"] == serde_json::json!("direct_workspace"))
         .count();
     let transitive_count = duplicates
         .iter()
-        .filter(|duplicate| duplicate["transitive_only"] == serde_json::json!(true))
+        .filter(|duplicate| duplicate["classification"] == serde_json::json!("transitive_upstream"))
         .count();
     assert_eq!(
         parsed["data"]["direct_count"].as_u64(),
@@ -235,7 +233,7 @@ async fn test_deps_duplicates_direct_only_filters_transitive_only()
     assert!(
         duplicates
             .iter()
-            .all(|duplicate| duplicate["direct_workspace_debt"] == serde_json::json!(true)),
+            .all(|duplicate| duplicate["classification"] == serde_json::json!("direct_workspace")),
         "--direct-only should only return duplicates directly requested by workspace manifests"
     );
     Ok(())
@@ -263,9 +261,9 @@ async fn test_deps_duplicates_transitive_only_filters_direct_debt()
         .ok_or_else(|| color_eyre::eyre::eyre!("data.duplicates should be an array"))?;
 
     assert!(
-        duplicates
-            .iter()
-            .all(|duplicate| duplicate["transitive_only"] == serde_json::json!(true)),
+        duplicates.iter().all(
+            |duplicate| duplicate["classification"] == serde_json::json!("transitive_upstream"),
+        ),
         "--transitive-only should only return duplicates without direct workspace roots"
     );
     Ok(())
@@ -324,10 +322,15 @@ async fn test_deps_duplicates_json_direct_roots_match_direct_debt()
                 .as_array()
                 .is_some_and(|roots| !roots.is_empty())
         });
+        let expected_classification = if has_direct_root {
+            "direct_workspace"
+        } else {
+            "transitive_upstream"
+        };
         assert_eq!(
-            duplicate["direct_workspace_debt"].as_bool(),
-            Some(has_direct_root),
-            "{} direct_workspace_debt should reflect direct root presence",
+            duplicate["classification"].as_str(),
+            Some(expected_classification),
+            "{} classification should reflect direct root presence",
             duplicate["name"].as_str().unwrap_or("<unknown>")
         );
     }
@@ -335,7 +338,7 @@ async fn test_deps_duplicates_json_direct_roots_match_direct_debt()
         direct_count,
         duplicates
             .iter()
-            .filter(|duplicate| duplicate["direct_workspace_debt"] == serde_json::json!(true))
+            .filter(|duplicate| duplicate["classification"] == serde_json::json!("direct_workspace"))
             .count() as u64,
         "data.direct_count should allow a fully transitive duplicate set"
     );

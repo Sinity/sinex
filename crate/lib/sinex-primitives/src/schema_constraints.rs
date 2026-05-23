@@ -110,9 +110,10 @@ pub fn registered_specs() -> impl Iterator<Item = &'static DbCheckSpec> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use xtask::sandbox::prelude::*;
 
-    #[test]
-    fn check_clause_quotes_single_quotes() {
+    #[sinex_test]
+    async fn check_clause_quotes_single_quotes() -> TestResult<()> {
         let spec = DbCheckSpec {
             schema: "core",
             table: "t",
@@ -122,10 +123,11 @@ mod tests {
             enum_name: "E",
         };
         assert_eq!(spec.check_clause(), "c IN ('a', 'it''s')");
+        Ok(())
     }
 
-    #[test]
-    fn constraint_names() {
+    #[sinex_test]
+    async fn constraint_names() -> TestResult<()> {
         let spec = DbCheckSpec {
             schema: "core",
             table: "manifests",
@@ -141,5 +143,6 @@ mod tests {
             "manifests_manifest_type_check"
         );
         assert_eq!(spec.qualified_table(), "core.manifests");
+        Ok(())
     }
 }

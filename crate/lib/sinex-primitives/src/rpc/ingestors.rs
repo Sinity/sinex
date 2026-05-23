@@ -257,6 +257,7 @@ mod emit_stall_tests {
     use super::*;
     use crate::temporal::Timestamp;
     use time::Duration;
+    use xtask::sandbox::prelude::*;
 
     fn base(now: Timestamp) -> IngestorStatus {
         IngestorStatus {
@@ -287,8 +288,8 @@ mod emit_stall_tests {
         }
     }
 
-    #[test]
-    fn stalled_when_alive_and_quiet_past_window() {
+    #[sinex_test]
+    async fn stalled_when_alive_and_quiet_past_window() -> TestResult<()> {
         let now = Timestamp::now();
         let mut s = base(now);
         s.last_output_at = Some(now - Duration::seconds(1200));
@@ -296,20 +297,22 @@ mod emit_stall_tests {
             s.classify_emit_stall(thresholds(), now),
             EmitStallVerdict::Stalled,
         );
+        Ok(())
     }
 
-    #[test]
-    fn stalled_when_never_emitted_past_uptime_gate() {
+    #[sinex_test]
+    async fn stalled_when_never_emitted_past_uptime_gate() -> TestResult<()> {
         let now = Timestamp::now();
         let s = base(now); // uptime 3600s, recent_output_count = 0, last_output_at = None
         assert_eq!(
             s.classify_emit_stall(thresholds(), now),
             EmitStallVerdict::Stalled,
         );
+        Ok(())
     }
 
-    #[test]
-    fn emitting_when_recent_output_present() {
+    #[sinex_test]
+    async fn emitting_when_recent_output_present() -> TestResult<()> {
         let now = Timestamp::now();
         let mut s = base(now);
         s.recent_output_count = 42;
@@ -318,10 +321,11 @@ mod emit_stall_tests {
             s.classify_emit_stall(thresholds(), now),
             EmitStallVerdict::Emitting,
         );
+        Ok(())
     }
 
-    #[test]
-    fn initializing_inside_uptime_gate() {
+    #[sinex_test]
+    async fn initializing_inside_uptime_gate() -> TestResult<()> {
         let now = Timestamp::now();
         let mut s = base(now);
         s.started_at = Some(now - Duration::seconds(60));
@@ -329,10 +333,11 @@ mod emit_stall_tests {
             s.classify_emit_stall(thresholds(), now),
             EmitStallVerdict::Initializing,
         );
+        Ok(())
     }
 
-    #[test]
-    fn not_live_when_unit_offline() {
+    #[sinex_test]
+    async fn not_live_when_unit_offline() -> TestResult<()> {
         let now = Timestamp::now();
         let mut s = base(now);
         s.live = false;
@@ -340,10 +345,11 @@ mod emit_stall_tests {
             s.classify_emit_stall(thresholds(), now),
             EmitStallVerdict::NotLive,
         );
+        Ok(())
     }
 
-    #[test]
-    fn unknown_when_no_started_at() {
+    #[sinex_test]
+    async fn unknown_when_no_started_at() -> TestResult<()> {
         let now = Timestamp::now();
         let mut s = base(now);
         s.started_at = None;
@@ -351,10 +357,11 @@ mod emit_stall_tests {
             s.classify_emit_stall(thresholds(), now),
             EmitStallVerdict::Unknown,
         );
+        Ok(())
     }
 
-    #[test]
-    fn emitting_when_last_output_inside_quiet_window() {
+    #[sinex_test]
+    async fn emitting_when_last_output_inside_quiet_window() -> TestResult<()> {
         let now = Timestamp::now();
         let mut s = base(now);
         s.last_output_at = Some(now - Duration::seconds(120));
@@ -362,21 +369,24 @@ mod emit_stall_tests {
             s.classify_emit_stall(thresholds(), now),
             EmitStallVerdict::Emitting,
         );
+        Ok(())
     }
 
-    #[test]
-    fn defaults_from_env_match_constants() {
+    #[sinex_test]
+    async fn defaults_from_env_match_constants() -> TestResult<()> {
         let t = EmitStallThresholds::default();
         assert_eq!(t.uptime_gate_secs, DEFAULT_EMIT_STALL_UPTIME_GATE_SECS);
         assert_eq!(t.quiet_secs, DEFAULT_EMIT_STALL_QUIET_SECS);
+        Ok(())
     }
 
-    #[test]
-    fn label_and_is_degraded() {
+    #[sinex_test]
+    async fn label_and_is_degraded() -> TestResult<()> {
         assert_eq!(EmitStallVerdict::Stalled.label(), "stalled");
         assert!(EmitStallVerdict::Stalled.is_degraded());
         assert!(!EmitStallVerdict::Emitting.is_degraded());
         assert!(!EmitStallVerdict::Initializing.is_degraded());
         assert!(!EmitStallVerdict::NotLive.is_degraded());
+        Ok(())
     }
 }

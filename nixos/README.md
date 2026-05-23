@@ -46,10 +46,10 @@ Key architectural decisions and implementation details are documented at their i
   - Snapshot, historical, and continuous modes
 
 ### Node Implementations
-- **Filesystem Monitoring**: [`sinex-fs-ingestor/src/unified_processor.rs:1-62`](../crate/nodes/sinex-fs-ingestor/src/unified_processor.rs#L1-L62)
-  - inotify (Linux) implementation details
-  - FSEvents (macOS) configuration
-  - System limits and overflow handling
+- **Filesystem Monitoring**: [`sinex-source-worker/src/sources/fs/mod.rs`](../crate/core/sinex-source-worker/src/sources/fs/mod.rs)
+  - SDK `FileContentDropAdapter` registration
+  - inotify-backed file-drop watch planning
+  - content staging plus metadata-only observations
 
 ## Quick Start
 
@@ -553,7 +553,7 @@ ORDER BY created_at DESC;
 ```bash
 # Release current leadership to trigger election
 sudo -u sinex psql sinex_prod -c "
-DELETE FROM core.service_leadership WHERE service_name = 'sinex-fs-ingestor';
+DELETE FROM core.service_leadership WHERE service_name = 'sinex-source-worker';
 "
 # Healthy standby instances will immediately compete for leadership
 ```

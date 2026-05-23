@@ -1,30 +1,28 @@
 //! Filesystem source unit (`fs`).
 //!
-//! Moved from the legacy `sinex-fs-ingestor` crate during Wave B. The
-//! imperative [`FilesystemNode`] implementation is too large and too kernel-
-//! adjacent (inotify watcher ownership, watch-budget planning, dual-shape
-//! content/observation material) to slot into the SDK adapter framework, so
-//! `fs` follows the "honest exception" pattern established by
-//! [`crate::noop::NoopSourceUnit`], `terminal.monitor`, and `system.monitor`:
-//! a raw [`sinex_node_sdk::IngestorNode`] registered via
-//! [`register_node_factory!`].
-//!
-//! A follow-up issue tracks extending `FileDropAdapter` (or introducing a
-//! dedicated `FsWatcherAdapter`) so a future revision can fold this into the
-//! adapter framework alongside the other Wave-B source units.
+//! Moved from the legacy `sinex-fs-ingestor` crate during Wave B. The runtime
+//! now uses the SDK's content-materializing file-drop adapter plus the
+//! filesystem parser, so watcher policy, source-material staging, and parser
+//! dispatch share the same adapter-backed source-unit surface as the rest of
+//! the source worker.
 
-pub mod unified_node;
+pub mod parser;
 
-pub use unified_node::{FilesystemConfig, FilesystemNode, FilesystemState};
+pub use parser::FilesystemParser;
 
-use crate::register_node_factory;
+use crate::register_adapter_ingestor;
+use sinex_node_sdk::parser::FileContentDropAdapter;
 use sinex_primitives::proof::{
     CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, RetentionPolicy, RuntimeShape,
     SourceUnitBinding, SourceUnitDescriptor, SubjectRef,
 };
 use sinex_primitives::{register_source_unit, register_source_unit_binding};
 
-register_node_factory!("fs", FilesystemNode);
+register_adapter_ingestor!(
+    source_unit_id: "fs",
+    adapter: FileContentDropAdapter,
+    parser: FilesystemParser,
+);
 
 // Source-unit descriptor (issue #690 / #734). The fs ingestor observes inotify
 // on watched roots and emits typed file events. Continuous path is an
@@ -40,8 +38,8 @@ register_source_unit! {
             ("fs-watcher", "file.moved"),
         ],
         // Paths can leak home-directory layout and filenames may carry secrets.
-        // Path redaction is applied in unified_node.rs via redact_metadata().
-        // Treat as Secret during ingestion.
+        // FilesystemParser applies metadata-context path redaction. Treat as
+        // Secret during ingestion.
         privacy_tier: PrivacyTier::Secret,
         horizons: &[Horizon::Continuous, Horizon::Historical],
         retention: RetentionPolicy::Forever,
@@ -58,7 +56,7 @@ register_source_unit_binding! {
         "filesystem",
     )
     .implementation("sinex-source-worker")
-    .adapter("IngestorNodeAdapter")
+    .adapter("FileContentDropAdapter")
     .output_event_type("file.created")
     .privacy_context("fs_path")
     .material_policy("inotify_anchor")

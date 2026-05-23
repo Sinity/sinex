@@ -93,11 +93,13 @@ Find duplicate dependency versions.
 
 **Usage**:
 ```bash
-xtask deps duplicates [--threshold <n>]
+xtask deps duplicates [--threshold <n>] [--direct-only | --transitive-only]
 ```
 
 **Options**:
 - `--threshold <n>` - Minimum number of versions to report (default: 2)
+- `--direct-only` - Only report duplicate versions directly requested by workspace manifests
+- `--transitive-only` - Only report duplicate versions introduced solely through upstream dependencies
 
 **Examples**:
 ```bash
@@ -106,21 +108,33 @@ xtask deps duplicates
 
 # Only show packages with 3+ versions
 xtask deps duplicates --threshold 3
+
+# Find duplicates that can be acted on in first-party manifests
+xtask deps duplicates --direct-only
+
+# Confirm which duplicate families are upstream-only
+xtask deps duplicates --transitive-only --json
 ```
 
 **Output**:
 ```
 Duplicate dependencies (2 total):
+  1 direct workspace debt, 1 transitive upstream
 
-  syn has 2 versions:
+  syn has 2 versions (direct workspace, 1 direct workspace roots):
     - 1.0.109
+      roots: sinexctl
+      direct: sinexctl
     - 2.0.48
+      roots: sinex-macros
 
-  tokio has 2 versions:
+  tokio has 2 versions (transitive upstream, 0 direct workspace roots):
     - 1.35.1
+      roots: <none>
     - 1.36.0
+      roots: <none>
 
-Total: 2 packages with duplicates
+Total: 2 packages with duplicates (1 direct, 1 transitive)
 ```
 
 ---
@@ -132,6 +146,9 @@ Total: 2 packages with duplicates
 ```bash
 # Check for duplicates
 xtask deps duplicates
+
+# Check only duplicates actionable from workspace manifests
+xtask deps duplicates --direct-only
 
 # Review all dependencies
 xtask deps list --format json | jq .
@@ -150,8 +167,8 @@ xtask deps list
 ### CI integration
 
 ```bash
-# Fail if duplicates found (CI script)
-if xtask deps duplicates | grep -q "Total: [1-9]"; then
+# Fail only on duplicates directly requested by workspace manifests
+if xtask deps duplicates --direct-only --json | jq -e '.data.count > 0'; then
   echo "Duplicate dependencies found!"
   exit 1
 fi
@@ -193,7 +210,7 @@ xtask deps unused [--format <format>] [--ci]
 
 **Examples**:
 ```bash
-# Detect unused dependencies (requires cargo-machete or cargo-udeps)
+# Detect unused dependencies through the xtask wrapper
 xtask deps unused
 
 # JSON output
@@ -238,9 +255,8 @@ Install one of the detection tools:
 pkgs.cargo-machete
 pkgs.cargo-udeps
 
-# Or via cargo (fallback)
-cargo install cargo-machete
-cargo +nightly install cargo-udeps
+# Or enter a temporary shell while investigating locally
+nix shell nixpkgs#cargo-machete
 ```
 
 **CI Integration**:
