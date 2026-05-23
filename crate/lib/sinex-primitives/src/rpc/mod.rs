@@ -51,6 +51,7 @@ pub enum RpcDomain {
     Documents,
     Events,
     GitOps,
+    Health,
     Ingestors,
     Lifecycle,
     Llm,
@@ -59,6 +60,7 @@ pub enum RpcDomain {
     Pkm,
     Privacy,
     Replay,
+    Semantic,
     Shadow,
     Sources,
     System,
@@ -154,6 +156,7 @@ pub mod dlq;
 pub mod documents;
 pub mod events;
 pub mod gitops;
+pub mod health;
 pub mod ingestors;
 pub mod lifecycle;
 pub mod llm;
@@ -163,6 +166,7 @@ pub mod ops;
 pub mod pkm;
 pub mod privacy;
 pub mod replay;
+pub mod semantic;
 pub mod shadow;
 pub mod sources;
 pub mod system;
@@ -197,6 +201,8 @@ pub fn method_catalog() -> Vec<RpcMethodInfo> {
         gitops::GITOPS_DELETE_SOURCE_METHOD.info(),
         gitops::GITOPS_LIST_SOURCES_METHOD.info(),
         gitops::GITOPS_TRIGGER_SYNC_METHOD.info(),
+        health::HEALTH_EFFECT_RECORD_METHOD.info(),
+        health::HEALTH_INTAKE_RECORD_METHOD.info(),
         ingestors::INGESTORS_STATUS_METHOD.info(),
         lifecycle::LIFECYCLE_ARCHIVE_METHOD.info(),
         lifecycle::LIFECYCLE_RESTORE_METHOD.info(),
@@ -234,6 +240,16 @@ pub fn method_catalog() -> Vec<RpcMethodInfo> {
         replay::REPLAY_OPERATION_STATUS_METHOD.info(),
         replay::REPLAY_PREVIEW_OPERATION_METHOD.info(),
         replay::REPLAY_SUBMIT_OPERATION_METHOD.info(),
+        semantic::SEMANTIC_EPOCHS_CREATE_METHOD.info(),
+        semantic::SEMANTIC_EPOCHS_LIST_METHOD.info(),
+        semantic::SEMANTIC_LANE_DIFFS_LIST_METHOD.info(),
+        semantic::SEMANTIC_LANE_DIFFS_RECORD_ENTITY_RELATION_METHOD.info(),
+        semantic::SEMANTIC_LANE_OUTPUTS_LIST_METHOD.info(),
+        semantic::SEMANTIC_LANE_OUTPUTS_WRITE_METHOD.info(),
+        semantic::SEMANTIC_LANES_CREATE_METHOD.info(),
+        semantic::SEMANTIC_LANES_DISCARD_METHOD.info(),
+        semantic::SEMANTIC_LANES_LIST_METHOD.info(),
+        semantic::SEMANTIC_LANES_SET_STATUS_METHOD.info(),
         shadow::SHADOW_CREATE_METHOD.info(),
         shadow::SHADOW_DELETE_METHOD.info(),
         shadow::SHADOW_LIST_METHOD.info(),
@@ -256,9 +272,13 @@ pub fn method_catalog() -> Vec<RpcMethodInfo> {
         system::SYSTEM_HEALTH_METHOD.info(),
         system::SYSTEM_PING_METHOD.info(),
         system::SYSTEM_VERSION_METHOD.info(),
+        tasks::TASKS_CANCEL_METHOD.info(),
         tasks::TASKS_COMPLETE_METHOD.info(),
         tasks::TASKS_CREATE_METHOD.info(),
+        tasks::TASKS_LIST_METHOD.info(),
         tasks::TASKS_STATE_GET_METHOD.info(),
+        tasks::TASKS_STATUS_SET_METHOD.info(),
+        tasks::TASKS_UPDATE_METHOD.info(),
         telemetry::TELEMETRY_ASSEMBLY_STATS_METHOD.info(),
         telemetry::TELEMETRY_COMMAND_FREQUENCY_METHOD.info(),
         telemetry::TELEMETRY_CURRENT_DEVICE_STATE_METHOD.info(),
@@ -288,6 +308,7 @@ pub mod prelude {
     pub use super::documents::*;
     pub use super::events::*;
     pub use super::gitops::*;
+    pub use super::health::*;
     pub use super::ingestors::*;
     pub use super::lifecycle::*;
     pub use super::llm::*;
@@ -297,6 +318,7 @@ pub mod prelude {
     pub use super::pkm::*;
     pub use super::privacy::*;
     pub use super::replay::*;
+    pub use super::semantic::*;
     pub use super::shadow::*;
     pub use super::sources::*;
     pub use super::system::*;

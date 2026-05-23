@@ -38,6 +38,11 @@ pub const SINEX_SCHEMAS: &[SchemaInfo] = &[
         requires_grants: true,
     },
     SchemaInfo {
+        name: "semantic",
+        description: "Semantic epochs, shadow lanes, lane outputs, and diff reports",
+        requires_grants: true,
+    },
+    SchemaInfo {
         name: "metrics",
         description: "Metrics and monitoring data",
         requires_grants: true,

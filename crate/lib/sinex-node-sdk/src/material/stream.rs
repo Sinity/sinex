@@ -331,7 +331,7 @@ mod tests {
             .await
             .unwrap();
 
-        let debug_str = format!("{:?}", handle);
+        let debug_str = format!("{handle:?}");
         assert!(debug_str.contains("StreamHandle"));
         assert!(debug_str.contains("material_id"));
         Ok(())

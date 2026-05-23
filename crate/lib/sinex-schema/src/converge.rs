@@ -68,8 +68,8 @@ use std::collections::{HashMap, HashSet};
 use crate::apply::ApplyError;
 use crate::schema::{
     Blobs, EmbeddingCache, EmbeddingModels, Entities, EntityRelations, EventAnnotations,
-    EventEmbeddings, EventPayloadSchemas, Events, OperationsLog, SourceMaterialRegistry, TableMeta,
-    TaggedItems, Tags,
+    EventEmbeddings, EventPayloadSchemas, Events, OperationsLog, SemanticEpochs, SemanticLaneDiffs,
+    SemanticLaneOutputs, SemanticLanes, SourceMaterialRegistry, TableMeta, TaggedItems, Tags,
 };
 use sea_query::{
     Alias, ColumnDef, ColumnSpec, ForeignKeyCreateStatement, PostgresQueryBuilder, Table,
@@ -724,14 +724,16 @@ pub fn convergible_tables() -> Result<Vec<ConvergibleTable>, ApplyError> {
                 statement_fn: Events::create_node_run_foreign_key,
             }],
             // node_version was the predecessor to source_run_id.
-            columns_to_drop: &["node_version"],
+            // occurrence_id was removed when occurrence rows were folded back
+            // into material provenance identity: (source_material_id, anchor_byte).
+            columns_to_drop: &["node_version", "occurrence_id"],
             // audit.archived_events was created with LIKE core.events INCLUDING ALL.
             // LIKE only runs at CREATE TABLE time, so new columns added to core.events
             // must be explicitly propagated to the mirror.
             mirror: Some(MirrorSpec {
                 schema: "audit",
                 table: "archived_events",
-                columns_to_drop: &["node_version"],
+                columns_to_drop: &["node_version", "occurrence_id"],
                 // ts_coided is GENERATED ALWAYS AS in core.events, but must be a plain
                 // TIMESTAMPTZ in audit.archived_events (the expression is dropped by
                 // create_table_sql()). Skip it here — it already exists from LIKE
@@ -896,6 +898,86 @@ pub fn convergible_tables() -> Result<Vec<ConvergibleTable>, ApplyError> {
                 NamedConstraint {
                     name: "entity_relations_confidence_score_range",
                     expression: "confidence_score >= 0 AND confidence_score <= 1.0",
+                },
+            ],
+            foreign_keys: vec![],
+            columns_to_drop: &[],
+            mirror: None,
+        },
+        ConvergibleTable {
+            meta: find_meta("semantic.epochs")?,
+            statement_fn: SemanticEpochs::create_table_statement,
+            column_renames: &[],
+            pending_drop: &[],
+            named_constraints: vec![
+                NamedConstraint {
+                    name: "semantic_epochs_name_bounds",
+                    expression: "length(name) BETWEEN 1 AND 256",
+                },
+                NamedConstraint {
+                    name: "semantic_epochs_config_hash_bounds",
+                    expression: "length(config_hash) BETWEEN 1 AND 256",
+                },
+            ],
+            foreign_keys: vec![],
+            columns_to_drop: &[],
+            mirror: None,
+        },
+        ConvergibleTable {
+            meta: find_meta("semantic.lanes")?,
+            statement_fn: SemanticLanes::create_table_statement,
+            column_renames: &[],
+            pending_drop: &[],
+            named_constraints: vec![
+                NamedConstraint {
+                    name: "semantic_lanes_kind_valid",
+                    expression: "kind IN ('canonical', 'shadow', 'experiment')",
+                },
+                NamedConstraint {
+                    name: "semantic_lanes_status_valid",
+                    expression: "status IN ('planned', 'running', 'completed', 'compared', 'promoted', 'discarded', 'expired')",
+                },
+            ],
+            foreign_keys: vec![],
+            columns_to_drop: &[],
+            mirror: None,
+        },
+        ConvergibleTable {
+            meta: find_meta("semantic.lane_outputs")?,
+            statement_fn: SemanticLaneOutputs::create_table_statement,
+            column_renames: &[],
+            pending_drop: &[],
+            named_constraints: vec![
+                NamedConstraint {
+                    name: "semantic_lane_outputs_kind_bounds",
+                    expression: "length(output_kind) BETWEEN 1 AND 128",
+                },
+                NamedConstraint {
+                    name: "semantic_lane_outputs_key_bounds",
+                    expression: "length(output_key) BETWEEN 1 AND 512",
+                },
+                NamedConstraint {
+                    name: "semantic_lane_outputs_hash_bounds",
+                    expression: "length(output_hash) BETWEEN 1 AND 256",
+                },
+            ],
+            foreign_keys: vec![],
+            columns_to_drop: &[],
+            mirror: None,
+        },
+        ConvergibleTable {
+            meta: find_meta("semantic.lane_diffs")?,
+            statement_fn: SemanticLaneDiffs::create_table_statement,
+            column_renames: &[],
+            pending_drop: &[],
+            named_constraints: vec![
+                NamedConstraint {
+                    name: "semantic_lane_diffs_kind_bounds",
+                    expression: "length(diff_kind) BETWEEN 1 AND 128",
+                },
+                NamedConstraint {
+                    name: "semantic_lane_diffs_report_hash_bounds",
+                    expression: "length(report_hash) BETWEEN 1 AND 256",
                 },
             ],
             foreign_keys: vec![],

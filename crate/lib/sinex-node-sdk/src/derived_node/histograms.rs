@@ -166,7 +166,7 @@ mod tests {
     async fn latency_window_percentile_on_uniform_distribution() -> TestResult<()> {
         let mut win = LatencyWindow::new(1024);
         for i in 0..1000 {
-            win.record(i as f64);
+            win.record(f64::from(i));
         }
         // Nearest-rank p50 of 0..999 is at index ceil(0.5 * 1000) - 1 = 499 → 499.0.
         assert_eq!(win.percentile(0.5), Some(499.0));
@@ -181,7 +181,7 @@ mod tests {
     async fn latency_window_overwrites_oldest_when_full() -> TestResult<()> {
         let mut win = LatencyWindow::new(4);
         for i in 0..6 {
-            win.record(i as f64);
+            win.record(f64::from(i));
         }
         // Reservoir should hold {2,3,4,5} (in some order).
         assert_eq!(win.len(), 4);
@@ -212,7 +212,7 @@ mod tests {
 
     #[sinex_test]
     async fn throughput_window_eps_uses_live_span_not_window_length() -> TestResult<()> {
-        let mut tp = ThroughputWindow::new(Duration::from_secs(60));
+        let mut tp = ThroughputWindow::new(Duration::from_mins(1));
         let t0 = Instant::now();
         // Record 5 events spread over 100 ms — should report ~50 eps, not
         // 5 / 60 ≈ 0.083 eps.
@@ -231,7 +231,7 @@ mod tests {
 
     #[sinex_test]
     async fn throughput_window_evicts_stale_samples() -> TestResult<()> {
-        let mut tp = ThroughputWindow::new(Duration::from_secs(60));
+        let mut tp = ThroughputWindow::new(Duration::from_mins(1));
         let t0 = Instant::now();
         tp.record(t0);
         tp.record(t0 + Duration::from_secs(1));

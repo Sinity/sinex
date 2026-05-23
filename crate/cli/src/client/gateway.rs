@@ -42,6 +42,10 @@ use sinex_primitives::rpc::{
         GitOpsListSourcesResponse, GitOpsSourceInfo, GitOpsTriggerSyncRequest,
         GitOpsTriggerSyncResponse,
     },
+    health::{
+        HEALTH_EFFECT_RECORD_METHOD, HEALTH_INTAKE_RECORD_METHOD, HealthEffectRecordRequest,
+        HealthEffectRecordResponse, HealthIntakeRecordRequest, HealthIntakeRecordResponse,
+    },
     ingestors::{INGESTORS_STATUS_METHOD, IngestorsStatusRequest, IngestorsStatusResponse},
     lifecycle::{
         LIFECYCLE_ARCHIVE_METHOD, LIFECYCLE_RESTORE_METHOD, LIFECYCLE_STATUS_METHOD,
@@ -61,8 +65,14 @@ use sinex_primitives::rpc::{
         LlmBudgetReportRequest, LlmBudgetReportResponse, LlmPromptsListRequest,
         LlmRouteExplainRequest, LlmRouteExplainResponse,
     },
-    nodes::{NODES_DRAIN_METHOD, NODES_RESUME_METHOD, NODES_SET_HORIZON_METHOD},
-    nodes::{NodeDrainRequest, NodeResumeRequest, NodeSetHorizonRequest},
+    nodes::{
+        NODES_DRAIN_METHOD, NODES_HEALTH_METHOD, NODES_LIST_ACTIVE_METHOD, NODES_RESUME_METHOD,
+        NODES_SET_HORIZON_METHOD,
+    },
+    nodes::{
+        NodeDrainRequest, NodeResumeRequest, NodeSetHorizonRequest, NodesHealthRequest,
+        NodesHealthResponse, NodesListActiveRequest, NodesListActiveResponse,
+    },
     ops::{Operation as OpsOperation, OpsGetResponse, OpsListResponse, OpsStartResponse},
     privacy::{
         PRIVACY_PRIVATE_MODE_DISABLE_METHOD, PRIVACY_PRIVATE_MODE_ENABLE_METHOD,
@@ -79,6 +89,19 @@ use sinex_primitives::rpc::{
         ReplayListResponse, ReplayOperation, ReplayPreviewRequest, ReplayPreviewResponse,
         ReplayScope, ReplayState, ReplayStatusRequest, ReplayStatusResponse, ReplaySubmitRequest,
         ReplaySubmitResponse,
+    },
+    semantic::{
+        SEMANTIC_EPOCHS_CREATE_METHOD, SEMANTIC_EPOCHS_LIST_METHOD,
+        SEMANTIC_LANE_DIFFS_LIST_METHOD, SEMANTIC_LANE_DIFFS_RECORD_ENTITY_RELATION_METHOD,
+        SEMANTIC_LANE_OUTPUTS_LIST_METHOD, SEMANTIC_LANE_OUTPUTS_WRITE_METHOD,
+        SEMANTIC_LANES_CREATE_METHOD, SEMANTIC_LANES_DISCARD_METHOD, SEMANTIC_LANES_LIST_METHOD,
+        SEMANTIC_LANES_SET_STATUS_METHOD, SemanticEpochCreateRequest, SemanticEpochListRequest,
+        SemanticEpochListResponse, SemanticEpochRecordResponse, SemanticLaneCreateRequest,
+        SemanticLaneDiffRecordEntityRelationRequest, SemanticLaneDiffRecordResponse,
+        SemanticLaneDiffsListRequest, SemanticLaneDiffsListResponse, SemanticLaneDiscardRequest,
+        SemanticLaneListRequest, SemanticLaneListResponse, SemanticLaneOutputsListRequest,
+        SemanticLaneOutputsListResponse, SemanticLaneOutputsWriteRequest,
+        SemanticLaneOutputsWriteResponse, SemanticLaneRecordResponse, SemanticLaneSetStatusRequest,
     },
     sources::{
         SOURCES_ANNOTATE_METHOD, SOURCES_ARCHIVE_METHOD, SOURCES_CONTINUITY_EXPLAIN_GAP_METHOD,
@@ -97,9 +120,12 @@ use sinex_primitives::rpc::{
         SystemHealthResponse, SystemPingRequest, SystemVersionRequest,
     },
     tasks::{
-        TASKS_COMPLETE_METHOD, TASKS_CREATE_METHOD, TASKS_STATE_GET_METHOD, TaskCompleteRequest,
-        TaskCompleteResponse, TaskCreateRequest, TaskCreateResponse, TaskStateGetRequest,
-        TaskStateResponse,
+        TASKS_CANCEL_METHOD, TASKS_COMPLETE_METHOD, TASKS_CREATE_METHOD, TASKS_LIST_METHOD,
+        TASKS_STATE_GET_METHOD, TASKS_STATUS_SET_METHOD, TASKS_UPDATE_METHOD, TaskCancelRequest,
+        TaskCancelResponse, TaskCompleteRequest, TaskCompleteResponse, TaskCreateRequest,
+        TaskCreateResponse, TaskListRequest, TaskListResponse, TaskStateGetRequest,
+        TaskStateResponse, TaskStatusSetRequest, TaskStatusSetResponse, TaskUpdateRequest,
+        TaskUpdateResponse,
     },
     telemetry::{
         AssemblyStatsBucket, CommandFrequencyEntry, CurrentDeviceStateEntry, CurrentHealthEntry,
@@ -421,16 +447,6 @@ impl GatewayClient {
         Ok(())
     }
 
-    #[allow(clippy::needless_pass_by_value)]
-    fn expect_string_result(method: &str, result: Value) -> Result<String> {
-        result.as_str().map(ToOwned::to_owned).ok_or_else(|| {
-            GatewayRpcError::ProtocolViolation(format!(
-                "{method} returned non-string result: {result}"
-            ))
-            .into()
-        })
-    }
-
     /// Determine if an error is retryable (transient network/server issues)
     fn is_retryable_error(err: &color_eyre::Report) -> bool {
         if let Some(reqwest_err) = err.downcast_ref::<reqwest::Error>() {
@@ -584,6 +600,21 @@ impl GatewayClient {
             .call_typed(COORDINATION_LIST_INSTANCES_METHOD, &req)
             .await?;
         Ok(response.instances)
+    }
+
+    /// List active node presence from runtime registry state.
+    pub async fn nodes_list_active(
+        &self,
+        stale_after_secs: u64,
+    ) -> Result<NodesListActiveResponse> {
+        let req = NodesListActiveRequest { stale_after_secs };
+        self.call_typed(NODES_LIST_ACTIVE_METHOD, &req).await
+    }
+
+    /// Get aggregate node health from runtime registry state.
+    pub async fn nodes_health(&self, stale_after_secs: u64) -> Result<NodesHealthResponse> {
+        let req = NodesHealthRequest { stale_after_secs };
+        self.call_typed(NODES_HEALTH_METHOD, &req).await
     }
 
     /// Get node status
@@ -877,6 +908,22 @@ impl GatewayClient {
         self.call_typed(TASKS_CREATE_METHOD, &request).await
     }
 
+    /// Record a structured health intake declaration.
+    pub async fn health_intake_record(
+        &self,
+        request: HealthIntakeRecordRequest,
+    ) -> Result<HealthIntakeRecordResponse> {
+        self.call_typed(HEALTH_INTAKE_RECORD_METHOD, &request).await
+    }
+
+    /// Record a structured health effect declaration.
+    pub async fn health_effect_record(
+        &self,
+        request: HealthEffectRecordRequest,
+    ) -> Result<HealthEffectRecordResponse> {
+        self.call_typed(HEALTH_EFFECT_RECORD_METHOD, &request).await
+    }
+
     /// Mark a task complete.
     pub async fn tasks_complete(
         &self,
@@ -885,9 +932,32 @@ impl GatewayClient {
         self.call_typed(TASKS_COMPLETE_METHOD, &request).await
     }
 
+    /// Mark a task cancelled.
+    pub async fn tasks_cancel(&self, request: TaskCancelRequest) -> Result<TaskCancelResponse> {
+        self.call_typed(TASKS_CANCEL_METHOD, &request).await
+    }
+
+    /// Update mutable task metadata.
+    pub async fn tasks_update(&self, request: TaskUpdateRequest) -> Result<TaskUpdateResponse> {
+        self.call_typed(TASKS_UPDATE_METHOD, &request).await
+    }
+
+    /// Set a non-terminal task status.
+    pub async fn tasks_status_set(
+        &self,
+        request: TaskStatusSetRequest,
+    ) -> Result<TaskStatusSetResponse> {
+        self.call_typed(TASKS_STATUS_SET_METHOD, &request).await
+    }
+
     /// Fetch current task state.
     pub async fn tasks_state_get(&self, request: TaskStateGetRequest) -> Result<TaskStateResponse> {
         self.call_typed(TASKS_STATE_GET_METHOD, &request).await
+    }
+
+    /// List current task states.
+    pub async fn tasks_list(&self, request: TaskListRequest) -> Result<TaskListResponse> {
+        self.call_typed(TASKS_LIST_METHOD, &request).await
     }
 
     // ==================== Curation Commands ====================
@@ -916,6 +986,86 @@ impl GatewayClient {
         request: CurationFinalizeRequest,
     ) -> Result<CurationFinalizeResponse> {
         self.call_typed(CURATION_FINALIZE_METHOD, &request).await
+    }
+
+    // ==================== Semantic Lane Commands ====================
+
+    pub async fn semantic_epoch_create(
+        &self,
+        request: SemanticEpochCreateRequest,
+    ) -> Result<SemanticEpochRecordResponse> {
+        self.call_typed(SEMANTIC_EPOCHS_CREATE_METHOD, &request)
+            .await
+    }
+
+    pub async fn semantic_epochs_list(
+        &self,
+        request: SemanticEpochListRequest,
+    ) -> Result<SemanticEpochListResponse> {
+        self.call_typed(SEMANTIC_EPOCHS_LIST_METHOD, &request).await
+    }
+
+    pub async fn semantic_lane_create(
+        &self,
+        request: SemanticLaneCreateRequest,
+    ) -> Result<SemanticLaneRecordResponse> {
+        self.call_typed(SEMANTIC_LANES_CREATE_METHOD, &request)
+            .await
+    }
+
+    pub async fn semantic_lanes_list(
+        &self,
+        request: SemanticLaneListRequest,
+    ) -> Result<SemanticLaneListResponse> {
+        self.call_typed(SEMANTIC_LANES_LIST_METHOD, &request).await
+    }
+
+    pub async fn semantic_lane_set_status(
+        &self,
+        request: SemanticLaneSetStatusRequest,
+    ) -> Result<SemanticLaneRecordResponse> {
+        self.call_typed(SEMANTIC_LANES_SET_STATUS_METHOD, &request)
+            .await
+    }
+
+    pub async fn semantic_lane_discard(
+        &self,
+        request: SemanticLaneDiscardRequest,
+    ) -> Result<SemanticLaneRecordResponse> {
+        self.call_typed(SEMANTIC_LANES_DISCARD_METHOD, &request)
+            .await
+    }
+
+    pub async fn semantic_lane_outputs_list(
+        &self,
+        request: SemanticLaneOutputsListRequest,
+    ) -> Result<SemanticLaneOutputsListResponse> {
+        self.call_typed(SEMANTIC_LANE_OUTPUTS_LIST_METHOD, &request)
+            .await
+    }
+
+    pub async fn semantic_lane_outputs_write(
+        &self,
+        request: SemanticLaneOutputsWriteRequest,
+    ) -> Result<SemanticLaneOutputsWriteResponse> {
+        self.call_typed(SEMANTIC_LANE_OUTPUTS_WRITE_METHOD, &request)
+            .await
+    }
+
+    pub async fn semantic_lane_diffs_list(
+        &self,
+        request: SemanticLaneDiffsListRequest,
+    ) -> Result<SemanticLaneDiffsListResponse> {
+        self.call_typed(SEMANTIC_LANE_DIFFS_LIST_METHOD, &request)
+            .await
+    }
+
+    pub async fn semantic_lane_diff_record_entity_relation(
+        &self,
+        request: SemanticLaneDiffRecordEntityRelationRequest,
+    ) -> Result<SemanticLaneDiffRecordResponse> {
+        self.call_typed(SEMANTIC_LANE_DIFFS_RECORD_ENTITY_RELATION_METHOD, &request)
+            .await
     }
 
     // ==================== LLM Prompt/Router/Budget Commands ====================

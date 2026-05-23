@@ -17,6 +17,7 @@ pub mod entities;
 pub mod events;
 pub mod manifests;
 pub mod operations;
+pub mod semantic;
 pub mod sinex_schemas;
 pub mod source_materials;
 pub mod temporal_ledger;
@@ -30,6 +31,7 @@ pub use entities::*;
 pub use events::*;
 pub use manifests::*;
 pub use operations::*;
+pub use semantic::*;
 pub use sinex_schemas::*;
 pub use source_materials::*;
 pub use temporal_ledger::*;
@@ -43,6 +45,9 @@ pub mod records {
     pub use super::entities::EntityRecord;
     pub use super::events::{EventRecord, EventReplacementRecord};
     pub use super::manifests::ManifestRecord;
+    pub use super::semantic::{
+        SemanticEpochRecord, SemanticLaneDiffRecord, SemanticLaneOutputRecord, SemanticLaneRecord,
+    };
     pub use super::source_materials::{SourceMaterialLinkRecord, SourceMaterialRecord};
     pub use super::temporal_ledger::TemporalLedgerRecord;
 }
@@ -179,6 +184,38 @@ const ALL_TABLES: &[TableMeta] = &[
         qualified_name: "core.entity_relations",
         is_hypertable: false,
         has_triggers: true,
+        cleanup_protected: false,
+    },
+    TableMeta {
+        schema: "semantic",
+        name: "epochs",
+        qualified_name: "semantic.epochs",
+        is_hypertable: false,
+        has_triggers: false,
+        cleanup_protected: false,
+    },
+    TableMeta {
+        schema: "semantic",
+        name: "lanes",
+        qualified_name: "semantic.lanes",
+        is_hypertable: false,
+        has_triggers: false,
+        cleanup_protected: false,
+    },
+    TableMeta {
+        schema: "semantic",
+        name: "lane_outputs",
+        qualified_name: "semantic.lane_outputs",
+        is_hypertable: false,
+        has_triggers: false,
+        cleanup_protected: false,
+    },
+    TableMeta {
+        schema: "semantic",
+        name: "lane_diffs",
+        qualified_name: "semantic.lane_diffs",
+        is_hypertable: false,
+        has_triggers: false,
         cleanup_protected: false,
     },
     TableMeta {

@@ -317,14 +317,12 @@ async fn stream_batch_copy_roundtrip_diverse_payloads(ctx: TestContext) -> TestR
     let result = ctx.pool.events().insert_stream_batch(&batch).await?;
     assert_eq!(
         result.inserted_count, batch_size,
-        "all {} events should be inserted",
-        batch_size
+        "all {batch_size} events should be inserted"
     );
     assert_eq!(
         result.inserted_ids.as_ref().map(Vec::len),
         Some(batch_size),
-        "inserted_ids should contain all {} ids",
-        batch_size
+        "inserted_ids should contain all {batch_size} ids"
     );
 
     // Read back every event by ID and verify roundtrip.
@@ -340,26 +338,22 @@ async fn stream_batch_copy_roundtrip_diverse_payloads(ctx: TestContext) -> TestR
         assert_eq!(
             event.id.unwrap().to_uuid(),
             row.id,
-            "id mismatch at index {}",
-            i
+            "id mismatch at index {i}"
         );
-        assert_eq!(event.source, row.source, "source mismatch at index {}", i);
+        assert_eq!(event.source, row.source, "source mismatch at index {i}");
         assert_eq!(
             event.event_type, row.event_type,
-            "event_type mismatch at index {}",
-            i
+            "event_type mismatch at index {i}"
         );
-        assert_eq!(event.host, row.host, "host mismatch at index {}", i);
+        assert_eq!(event.host, row.host, "host mismatch at index {i}");
         assert_eq!(
             event.payload, row.payload,
-            "payload mismatch at index {}",
-            i
+            "payload mismatch at index {i}"
         );
         assert_eq!(
             event.ts_orig,
             Some(row.ts_orig),
-            "ts_orig mismatch at index {}",
-            i
+            "ts_orig mismatch at index {i}"
         );
 
         // Verify material provenance fields.
@@ -375,24 +369,20 @@ async fn stream_batch_copy_roundtrip_diverse_payloads(ctx: TestContext) -> TestR
                 assert_eq!(
                     *id,
                     row.source_material_id.unwrap(),
-                    "material id mismatch at index {}",
-                    i
+                    "material id mismatch at index {i}"
                 );
                 assert_eq!(
                     *anchor_byte,
                     row.anchor_byte.unwrap(),
-                    "anchor_byte mismatch at index {}",
-                    i
+                    "anchor_byte mismatch at index {i}"
                 );
                 assert_eq!(
                     *offset_start, row.offset_start,
-                    "offset_start mismatch at index {}",
-                    i
+                    "offset_start mismatch at index {i}"
                 );
                 assert_eq!(
                     *offset_end, row.offset_end,
-                    "offset_end mismatch at index {}",
-                    i
+                    "offset_end mismatch at index {i}"
                 );
                 // When the row carries no explicit offset_kind, the readback
                 // defaults to OffsetKind::Byte.
@@ -400,8 +390,7 @@ async fn stream_batch_copy_roundtrip_diverse_payloads(ctx: TestContext) -> TestR
                     assert_eq!(
                         offset_kind.as_wire_str(),
                         kind.as_str(),
-                        "offset_kind mismatch at index {}",
-                        i
+                        "offset_kind mismatch at index {i}"
                     );
                 }
             }
@@ -414,53 +403,43 @@ async fn stream_batch_copy_roundtrip_diverse_payloads(ctx: TestContext) -> TestR
         // NULL fields should remain NULL.
         assert!(
             matches!(&event.provenance, Provenance::Material { .. }),
-            "provenance should be Material at index {}",
-            i
+            "provenance should be Material at index {i}"
         );
         assert!(
             event.payload_schema_id.is_none(),
-            "payload_schema_id should be None at index {}",
-            i
+            "payload_schema_id should be None at index {i}"
         );
         assert!(
             event.source_run_id.is_none(),
-            "source_run_id should be None at index {}",
-            i
+            "source_run_id should be None at index {i}"
         );
         assert!(
             event.associated_blob_ids.is_none(),
-            "associated_blob_ids should be None at index {}",
-            i
+            "associated_blob_ids should be None at index {i}"
         );
         assert!(
             event.temporal_policy.is_none(),
-            "temporal_policy should be None at index {}",
-            i
+            "temporal_policy should be None at index {i}"
         );
         assert!(
             event.semantics_version.is_none(),
-            "semantics_version should be None at index {}",
-            i
+            "semantics_version should be None at index {i}"
         );
         assert!(
             event.scope_key.is_none(),
-            "scope_key should be None at index {}",
-            i
+            "scope_key should be None at index {i}"
         );
         assert!(
             event.equivalence_key.is_none(),
-            "equivalence_key should be None at index {}",
-            i
+            "equivalence_key should be None at index {i}"
         );
         assert!(
             event.created_by_operation_id.is_none(),
-            "created_by_operation_id should be None at index {}",
-            i
+            "created_by_operation_id should be None at index {i}"
         );
         assert!(
             event.node_model.is_none(),
-            "node_model should be None at index {}",
-            i
+            "node_model should be None at index {i}"
         );
     }
 

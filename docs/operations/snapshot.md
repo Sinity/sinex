@@ -107,13 +107,26 @@ drill directory. It does not permit destructive writes.
 
 ## Isolated restore drill execution
 
-For state-only or file-backed component archives (`state`, `cas`, `nats`),
-`state restore` can execute an isolated drill into an empty target directory:
+For file-backed components (`state`, `cas`, `nats`) and explicitly supplied
+Postgres drill databases, `state restore` can execute an isolated drill into an
+empty target directory:
 
 ```bash
 sinexctl state restore \
     --archive /var/backup/sinex/2026-05-15.sinex.tar.zst \
     --target-dir /tmp/sinex-restore-drill \
+    --confirm-restore
+```
+
+For archives containing a non-empty Postgres dump, point the drill at an empty
+throwaway database:
+
+```bash
+createdb sinex_restore_drill
+sinexctl state restore \
+    --archive /var/backup/sinex/2026-05-15.sinex.tar.zst \
+    --target-dir /tmp/sinex-restore-drill \
+    --restore-database-url "$SINEX_RESTORE_DATABASE_URL" \
     --confirm-restore
 ```
 
@@ -123,19 +136,20 @@ Execution refuses to run unless:
 - The target directory is empty, or does not yet exist under an existing parent.
 - Active `sinex-*` services are stopped, unless `--allow-active-services` is
   explicitly passed for an isolated drill target.
-- The archive contains only file-backed components that this command can restore
-  (`state`, `cas`, `nats`). Archives with non-empty `postgres` components still
-  require the manual Postgres restore below.
+- Archives with non-empty `postgres` components include
+  `--restore-database-url`, pointing at an empty drill database.
 
 The JSON/YAML result includes `observed_checks` comparing the extracted target
 against the manifest: source-unit IDs, CAS blob count when present, and
-private-mode state presence.
+private-mode state presence. When Postgres is restored, it also compares exact
+row counts for the tables listed in the snapshot manifest.
 
 ## Restore procedure (manual for Postgres/live state)
 
-Postgres and live in-place restore remain manual. Use
-`state restore --dry-run` first, then execute the explicit steps below in a
-prepared maintenance window.
+Live in-place restore remains manual. Use `state restore --dry-run` first, then
+execute the explicit steps below in a prepared maintenance window. The isolated
+restore drill above covers Postgres dumps only when the target is a deliberately
+empty drill database.
 
 ### 1. Stop services (if running)
 

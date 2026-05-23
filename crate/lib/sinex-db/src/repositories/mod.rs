@@ -13,6 +13,7 @@ pub mod knowledge_graph;
 pub mod replay;
 pub mod schema_cache;
 pub mod schema_management;
+pub mod semantic;
 pub mod source_materials;
 pub mod state;
 
@@ -43,6 +44,7 @@ pub use schema_cache::{CachedSchema, SchemaCacheRepository};
 pub use schema_management::{
     NewEventSchema, SchemaManagementRepository, SchemaStatistics, ValidationError, ValidationResult,
 };
+pub use semantic::{CreateSemanticEpoch, CreateSemanticLane, SemanticRepository};
 pub use source_materials::{
     SourceMaterial, SourceMaterialExt, SourceMaterialLink, SourceMaterialLinkRecord,
     SourceMaterialRepository, TemporalLedgerEntry, material_kinds, material_types,
@@ -73,6 +75,7 @@ pub trait DbPoolExt {
     fn schemas(&self) -> schema_management::SchemaManagementRepository<'_>;
     fn schema_cache(&self) -> schema_cache::SchemaCacheRepository<'_>;
     fn replay(&self) -> replay::ReplayRepository<'_>;
+    fn semantic(&self) -> semantic::SemanticRepository<'_>;
     fn integrity(&self) -> integrity::IntegrityRepository<'_>;
     fn continuity(&self) -> continuity::ContinuityRepository<'_>;
     fn documents(&self) -> document_search::DocumentSearchRepository<'_>;
@@ -116,6 +119,10 @@ impl DbPoolExt for PgPool {
 
     fn replay(&self) -> replay::ReplayRepository<'_> {
         replay::ReplayRepository::new(self)
+    }
+
+    fn semantic(&self) -> semantic::SemanticRepository<'_> {
+        semantic::SemanticRepository::new(self)
     }
 
     fn integrity(&self) -> integrity::IntegrityRepository<'_> {

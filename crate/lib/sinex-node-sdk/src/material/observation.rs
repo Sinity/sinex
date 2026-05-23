@@ -277,7 +277,7 @@ mod tests {
         for i in 0..3 {
             let record = TestRecord {
                 id: i,
-                value: format!("test{}", i),
+                value: format!("test{i}"),
             };
             let _ = mat.append(record).await;
         }
@@ -389,7 +389,7 @@ mod tests {
 
         // Should have flushed due to exceeding max_bytes
         let flushes = flush_count.load(Ordering::SeqCst);
-        assert!(flushes > 0, "Expected at least 1 flush, got {}", flushes);
+        assert!(flushes > 0, "Expected at least 1 flush, got {flushes}");
         Ok(())
     }
 
@@ -449,7 +449,7 @@ mod tests {
         for i in 0..5 {
             let record = TestRecord {
                 id: i,
-                value: format!("test{}", i),
+                value: format!("test{i}"),
             };
             let _ = mat.append(record).await;
         }
@@ -457,7 +457,7 @@ mod tests {
         sleep(Duration::from_millis(150)).await;
 
         let flushes = flush_count.load(Ordering::SeqCst);
-        assert!(flushes >= 2, "Expected at least 2 flushes, got {}", flushes);
+        assert!(flushes >= 2, "Expected at least 2 flushes, got {flushes}");
         Ok(())
     }
 }

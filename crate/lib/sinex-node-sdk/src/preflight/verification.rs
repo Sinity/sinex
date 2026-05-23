@@ -634,7 +634,7 @@ mod tests {
         ctx: TestContext,
     ) -> TestResult<()> {
         let mut conn = ctx.pool().acquire().await?;
-        configure_preflight_database_session(&mut *conn).await?;
+        configure_preflight_database_session(&mut conn).await?;
 
         let parallel_workers =
             sqlx::query_scalar::<_, String>("SHOW max_parallel_workers_per_gather")

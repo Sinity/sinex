@@ -5,10 +5,13 @@ use serde_json::Value;
 
 use crate::events::{
     SourceMaterial,
-    payloads::{TaskCompletedPayload, TaskCreatedPayload},
+    payloads::{
+        TaskCancelledPayload, TaskCompletedPayload, TaskCreatedPayload, TaskStatusChangedPayload,
+        TaskUpdatedPayload,
+    },
 };
 use crate::rpc::{RpcDomain, RpcMethod, RpcMutability, RpcRole, RpcStability, methods};
-use crate::task_domain::{TaskExternalRef, TaskState};
+use crate::task_domain::{TaskExternalRef, TaskFieldUpdate, TaskState, TaskStatus};
 use crate::{Id, Timestamp, Uuid};
 
 pub const TASKS_CREATE_METHOD: RpcMethod<TaskCreateRequest, TaskCreateResponse> = RpcMethod::new(
@@ -28,6 +31,31 @@ pub const TASKS_COMPLETE_METHOD: RpcMethod<TaskCompleteRequest, TaskCompleteResp
         RpcMutability::Mutating,
     );
 
+pub const TASKS_UPDATE_METHOD: RpcMethod<TaskUpdateRequest, TaskUpdateResponse> = RpcMethod::new(
+    methods::TASKS_UPDATE,
+    RpcRole::Write,
+    RpcDomain::Tasks,
+    RpcStability::Experimental,
+    RpcMutability::Mutating,
+);
+
+pub const TASKS_STATUS_SET_METHOD: RpcMethod<TaskStatusSetRequest, TaskStatusSetResponse> =
+    RpcMethod::new(
+        methods::TASKS_STATUS_SET,
+        RpcRole::Write,
+        RpcDomain::Tasks,
+        RpcStability::Experimental,
+        RpcMutability::Mutating,
+    );
+
+pub const TASKS_CANCEL_METHOD: RpcMethod<TaskCancelRequest, TaskCancelResponse> = RpcMethod::new(
+    methods::TASKS_CANCEL,
+    RpcRole::Write,
+    RpcDomain::Tasks,
+    RpcStability::Experimental,
+    RpcMutability::Mutating,
+);
+
 pub const TASKS_STATE_GET_METHOD: RpcMethod<TaskStateGetRequest, TaskStateResponse> =
     RpcMethod::new(
         methods::TASKS_STATE_GET,
@@ -36,6 +64,14 @@ pub const TASKS_STATE_GET_METHOD: RpcMethod<TaskStateGetRequest, TaskStateRespon
         RpcStability::Experimental,
         RpcMutability::ReadOnly,
     );
+
+pub const TASKS_LIST_METHOD: RpcMethod<TaskListRequest, TaskListResponse> = RpcMethod::new(
+    methods::TASKS_LIST,
+    RpcRole::ReadOnly,
+    RpcDomain::Tasks,
+    RpcStability::Experimental,
+    RpcMutability::ReadOnly,
+);
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct TaskCreateRequest {
@@ -68,8 +104,74 @@ pub struct TaskCompleteRequest {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct TaskUpdateRequest {
+    pub task_id: Uuid,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub updated_at: Option<Timestamp>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub body: Option<TaskFieldUpdate<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_id: Option<TaskFieldUpdate<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tags: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub due_at: Option<TaskFieldUpdate<Timestamp>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub priority: Option<TaskFieldUpdate<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub external_refs: Option<Vec<TaskExternalRef>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub external_version: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct TaskStatusSetRequest {
+    pub task_id: Uuid,
+    pub status: TaskStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub changed_at: Option<Timestamp>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub external_version: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct TaskCancelRequest {
+    pub task_id: Uuid,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cancelled_at: Option<Timestamp>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub external_version: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct TaskStateGetRequest {
     pub task_id: Uuid,
+}
+
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+pub struct TaskListRequest {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub query: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<TaskStatus>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tag: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub due_from: Option<Timestamp>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub due_until: Option<Timestamp>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limit: Option<u32>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -81,11 +183,22 @@ pub struct TaskEventResponse<T> {
 }
 
 pub type TaskCreateResponse = TaskEventResponse<TaskCreatedPayload>;
+pub type TaskUpdateResponse = TaskEventResponse<TaskUpdatedPayload>;
+pub type TaskStatusSetResponse = TaskEventResponse<TaskStatusChangedPayload>;
 pub type TaskCompleteResponse = TaskEventResponse<TaskCompletedPayload>;
+pub type TaskCancelResponse = TaskEventResponse<TaskCancelledPayload>;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct TaskStateResponse {
     pub task_id: Uuid,
     pub state: Option<TaskState>,
     pub event_count: usize,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct TaskListResponse {
+    pub tasks: Vec<TaskState>,
+    pub total: usize,
+    pub event_count: usize,
+    pub limit: u32,
 }

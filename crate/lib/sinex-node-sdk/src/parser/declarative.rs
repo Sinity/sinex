@@ -928,7 +928,7 @@ mod tests {
         });
         let result = DeclarativeParser::evaluate(
             &spec,
-            json_record(r#"{}"#),
+            json_record(r"{}"),
             &test_ctx(),
             &BindingConfig::default(),
         );
@@ -956,7 +956,7 @@ mod tests {
         });
         let intents = DeclarativeParser::evaluate(
             &spec,
-            json_record(r#"{}"#),
+            json_record(r"{}"),
             &test_ctx(),
             &BindingConfig::default(),
         )
@@ -985,7 +985,7 @@ mod tests {
         });
         let intents = DeclarativeParser::evaluate(
             &spec,
-            json_record(r#"{}"#),
+            json_record(r"{}"),
             &test_ctx(),
             &BindingConfig::default(),
         )
@@ -1774,7 +1774,7 @@ mod tests {
         });
         let intents = DeclarativeParser::evaluate(
             &spec,
-            json_record(r#"{}"#), // label missing
+            json_record(r"{}"), // label missing
             &test_ctx(),
             &BindingConfig::default(),
         )

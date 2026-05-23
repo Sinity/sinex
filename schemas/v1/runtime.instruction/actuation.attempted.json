@@ -1,0 +1,128 @@
+{
+  "$defs": {
+    "ActuationStatus": {
+      "description": "Lifecycle status for a local actuation attempt.",
+      "enum": [
+        "accepted",
+        "rejected",
+        "dry_run",
+        "noop_already_satisfied",
+        "attempted",
+        "failed",
+        "unavailable"
+      ],
+      "type": "string"
+    },
+    "DateTime": {
+      "description": "RFC 3339 formatted date-time string",
+      "format": "date-time",
+      "type": "string"
+    },
+    "HyprlandActuatorCapability": {
+      "description": "Declared local actuator capability.",
+      "enum": [
+        "workspace_switch"
+      ],
+      "type": "string"
+    },
+    "HyprlandCommandSummary": {
+      "description": "Sanitized command summary safe to persist in an actuation-attempt event.",
+      "properties": {
+        "capability": {
+          "$ref": "#/$defs/HyprlandActuatorCapability"
+        },
+        "command": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/HyprlandWorkspaceCommand"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "current_workspace_id": {
+          "format": "int32",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "observation_ready": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "capability",
+        "observation_ready"
+      ],
+      "type": "object"
+    },
+    "HyprlandDispatch": {
+      "description": "Hyprland command-socket dispatch kind.",
+      "enum": [
+        "workspace"
+      ],
+      "type": "string"
+    },
+    "HyprlandWorkspaceCommand": {
+      "description": "Typed Hyprland command-socket message for switching workspaces.",
+      "properties": {
+        "dispatch": {
+          "$ref": "#/$defs/HyprlandDispatch"
+        },
+        "workspace_id": {
+          "format": "int32",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "dispatch",
+        "workspace_id"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Sanitized record of an actuator decision or command-socket attempt.",
+  "properties": {
+    "actuator_id": {
+      "type": "string"
+    },
+    "attempted_at": {
+      "$ref": "#/$defs/DateTime"
+    },
+    "capability": {
+      "type": "string"
+    },
+    "command_summary": {
+      "$ref": "#/$defs/HyprlandCommandSummary"
+    },
+    "error": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "instruction_id": {
+      "format": "uuid",
+      "type": "string"
+    },
+    "status": {
+      "$ref": "#/$defs/ActuationStatus"
+    }
+  },
+  "required": [
+    "instruction_id",
+    "actuator_id",
+    "capability",
+    "status",
+    "command_summary",
+    "attempted_at"
+  ],
+  "title": "ActuationAttemptPayload",
+  "type": "object",
+  "x-sinex-event-type": "actuation.attempted",
+  "x-sinex-source": "runtime.instruction",
+  "x-sinex-version": "1.0.0"
+}

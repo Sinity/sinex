@@ -1,0 +1,45 @@
+{
+  "$defs": {
+    "DateTime": {
+      "description": "RFC 3339 formatted date-time string",
+      "format": "date-time",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Canonical task cancellation lifecycle event.",
+  "properties": {
+    "actor": {
+      "type": "string"
+    },
+    "cancelled_at": {
+      "$ref": "#/$defs/DateTime"
+    },
+    "external_version": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "reason": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "task_id": {
+      "format": "uuid",
+      "type": "string"
+    }
+  },
+  "required": [
+    "task_id",
+    "cancelled_at",
+    "actor"
+  ],
+  "title": "TaskCancelledPayload",
+  "type": "object",
+  "x-sinex-event-type": "task.cancelled",
+  "x-sinex-source": "task",
+  "x-sinex-version": "1.0.0"
+}

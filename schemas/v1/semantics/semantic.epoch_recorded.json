@@ -1,0 +1,134 @@
+{
+  "$defs": {
+    "SemanticComponentVersion": {
+      "description": "One semantic component participating in an epoch.",
+      "properties": {
+        "component": {
+          "type": "string"
+        },
+        "config_hash": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "version": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "component",
+        "version"
+      ],
+      "type": "object"
+    },
+    "SemanticEpochRecord": {
+      "description": "Versioned semantic configuration.",
+      "properties": {
+        "code_ref": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "components": {
+          "items": {
+            "$ref": "#/$defs/SemanticComponentVersion"
+          },
+          "type": "array"
+        },
+        "config_hash": {
+          "type": "string"
+        },
+        "epoch_id": {
+          "format": "uuid",
+          "type": "string"
+        },
+        "model_config_hash": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "name": {
+          "type": "string"
+        },
+        "prompt_set_hash": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "scope": {
+          "$ref": "#/$defs/SemanticScope"
+        }
+      },
+      "required": [
+        "epoch_id",
+        "name",
+        "scope",
+        "config_hash"
+      ],
+      "type": "object"
+    },
+    "SemanticScope": {
+      "description": "Input scope for a semantic lane.",
+      "properties": {
+        "input_ids": {
+          "description": "Stable identifiers in this scope.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "input_set_hash": {
+          "description": "Hash of the resolved ordered input set.",
+          "type": "string"
+        },
+        "kind": {
+          "description": "Scope kind, e.g. `source_material`, `event_set`, `document_chunk_set`.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "input_ids",
+        "input_set_hash"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "A semantic epoch was declared for a fixed scope and configuration.",
+  "properties": {
+    "created_by": {
+      "type": "string"
+    },
+    "epoch": {
+      "$ref": "#/$defs/SemanticEpochRecord"
+    },
+    "operation_id": {
+      "format": "uuid",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "supersedes_epoch_id": {
+      "format": "uuid",
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "epoch",
+    "created_by"
+  ],
+  "title": "SemanticEpochRecordedPayload",
+  "type": "object",
+  "x-sinex-event-type": "semantic.epoch_recorded",
+  "x-sinex-source": "semantics",
+  "x-sinex-version": "1.0.0"
+}
