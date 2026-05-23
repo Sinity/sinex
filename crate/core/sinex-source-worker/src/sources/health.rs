@@ -150,28 +150,25 @@ fn parse_row(row: SleepCsvRow, line: u64, ctx: &ParserContext) -> ParserResult<P
         "sa_vs_sh_duration_minutes": row.sa_vs_sh_duration_minutes,
     });
 
-    Ok(ParsedEventIntent {
-        id: sinex_primitives::ids::Id::new(),
-        source_unit_id: ctx.source_unit_id.clone(),
-        parser_id: ParserId::from_static("sleep-merged-summary"),
-        parser_version: "1.0.0".into(),
-        event_type: EventType::from_static("sleep.session"),
-        event_source: EventSource::from_static("samsung-health"),
-        payload,
-        ts_orig: start_at,
-        timing: TimingEvidence::Intrinsic {
+    Ok(ParsedEventIntent::builder()
+        .source_unit_id(ctx.source_unit_id.clone())
+        .parser_id(ParserId::from_static("sleep-merged-summary"))
+        .parser_version("1.0.0")
+        .event_type(EventType::from_static("sleep.session"))
+        .event_source(EventSource::from_static("samsung-health"))
+        .payload(payload)
+        .ts_orig(start_at)
+        .timing(TimingEvidence::Intrinsic {
             field: "start_local".into(),
             confidence: TimingConfidence::Intrinsic,
-        },
-        anchor: MaterialAnchor::Line {
+        })
+        .anchor(MaterialAnchor::Line {
             byte_start: 0,
             line,
-        },
-        occurrence_key: Some(occurrence_key),
-        privacy_context: ProcessingContext::Metadata,
-        field_privacy_log: None,
-        synthesis_parents: None,
-    })
+        })
+        .occurrence_key(occurrence_key)
+        .privacy_context(ProcessingContext::Metadata)
+        .build())
 }
 
 fn parse_iso8601(raw: &str) -> ParserResult<Timestamp> {

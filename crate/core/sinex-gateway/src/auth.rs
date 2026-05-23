@@ -15,6 +15,7 @@
 //! - **Admin**: Write + destructive operations (tombstone, DLQ purge, shadow delete)
 
 use serde::{Deserialize, Serialize};
+use sinex_primitives::rpc::RpcRole;
 use std::fmt;
 
 /// Authorization role for RPC access control
@@ -119,6 +120,16 @@ impl Role {
     #[must_use]
     pub fn can_write(&self) -> bool {
         matches!(self, Role::Write | Role::Admin)
+    }
+}
+
+impl From<RpcRole> for Role {
+    fn from(value: RpcRole) -> Self {
+        match value {
+            RpcRole::ReadOnly => Role::ReadOnly,
+            RpcRole::Write => Role::Write,
+            RpcRole::Admin => Role::Admin,
+        }
     }
 }
 

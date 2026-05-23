@@ -7,7 +7,6 @@ use sinex_primitives::events::enums::JournalSyncType;
 use sinex_primitives::events::payloads::system::{
     JournalEntryWrittenPayload, JournalSyncCompletedPayload,
 };
-use sinex_primitives::ids::Id;
 use sinex_primitives::parser::{
     InputShapeKind, ParsedEventIntent, ParserContext, ParserId, ParserManifest, SourceRecord,
     SourceUnitId, TimingConfidence, TimingEvidence,
@@ -148,23 +147,21 @@ impl MaterialParser for JournaldParser {
                 time_end: None,
                 duration_ms: 0,
             };
-            let intent = ParsedEventIntent {
-                id: Id::new(),
-                source_unit_id: ctx.source_unit_id.clone(),
-                parser_id: ParserId::from_static("system.journald"),
-                parser_version: "1.0.0".into(),
-                event_type: EventType::from_static("sync.completed"),
-                event_source: EventSource::from_static("journald"),
-                payload: serde_json::to_value(&payload)
-                    .map_err(|e| ParserError::Parse(e.to_string()))?,
-                ts_orig: Timestamp::now(),
-                timing: TimingEvidence::Atemporal,
-                anchor: record.anchor.clone(),
-                occurrence_key: None,
-                privacy_context: ProcessingContext::Journal,
-                field_privacy_log: None,
-                synthesis_parents: None,
-            };
+            let intent = ParsedEventIntent::builder()
+                .source_unit_id(ctx.source_unit_id.clone())
+                .parser_id(ParserId::from_static("system.journald"))
+                .parser_version("1.0.0")
+                .event_type(EventType::from_static("sync.completed"))
+                .event_source(EventSource::from_static("journald"))
+                .payload(
+                    serde_json::to_value(&payload)
+                        .map_err(|e| ParserError::Parse(e.to_string()))?,
+                )
+                .ts_orig(Timestamp::now())
+                .timing(TimingEvidence::Atemporal)
+                .anchor(record.anchor.clone())
+                .privacy_context(ProcessingContext::Journal)
+                .build();
             return Ok(vec![intent]);
         }
 
@@ -264,26 +261,21 @@ impl MaterialParser for JournaldParser {
             fields,
         };
 
-        let intent = ParsedEventIntent {
-            id: Id::new(),
-            source_unit_id: ctx.source_unit_id.clone(),
-            parser_id: ParserId::from_static("system.journald"),
-            parser_version: "1.0.0".into(),
-            event_type: EventType::from_static("entry.written"),
-            event_source: EventSource::from_static("journald"),
-            payload: serde_json::to_value(&payload)
-                .map_err(|e| ParserError::Parse(e.to_string()))?,
-            ts_orig: timestamp,
-            timing: TimingEvidence::Intrinsic {
+        let intent = ParsedEventIntent::builder()
+            .source_unit_id(ctx.source_unit_id.clone())
+            .parser_id(ParserId::from_static("system.journald"))
+            .parser_version("1.0.0")
+            .event_type(EventType::from_static("entry.written"))
+            .event_source(EventSource::from_static("journald"))
+            .payload(serde_json::to_value(&payload).map_err(|e| ParserError::Parse(e.to_string()))?)
+            .ts_orig(timestamp)
+            .timing(TimingEvidence::Intrinsic {
                 field: "__REALTIME_TIMESTAMP".into(),
                 confidence: TimingConfidence::Intrinsic,
-            },
-            anchor: record.anchor.clone(),
-            occurrence_key: None,
-            privacy_context: ProcessingContext::Journal,
-            field_privacy_log: None,
-            synthesis_parents: None,
-        };
+            })
+            .anchor(record.anchor.clone())
+            .privacy_context(ProcessingContext::Journal)
+            .build();
 
         Ok(vec![intent])
     }

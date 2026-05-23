@@ -3,7 +3,111 @@
 //! These types map to the `sinex_telemetry.*` read models exposed by the
 //! gateway under the `telemetry.*` method namespace.
 
+use crate::rpc::{RpcDomain, RpcMethod, RpcMutability, RpcRole, RpcStability, methods};
 use serde::{Deserialize, Serialize};
+
+macro_rules! telemetry_method {
+    ($name:ident, $method:ident, $req:ty, $resp:ty) => {
+        pub const $name: RpcMethod<$req, $resp> = RpcMethod::new(
+            methods::$method,
+            RpcRole::ReadOnly,
+            RpcDomain::Telemetry,
+            RpcStability::Experimental,
+            RpcMutability::ReadOnly,
+        );
+    };
+}
+
+telemetry_method!(
+    TELEMETRY_CURRENT_HEALTH_METHOD,
+    TELEMETRY_CURRENT_HEALTH,
+    TelemetryCurrentHealthRequest,
+    TelemetryCurrentHealthResponse
+);
+telemetry_method!(
+    TELEMETRY_CURRENT_DEVICE_STATE_METHOD,
+    TELEMETRY_CURRENT_DEVICE_STATE,
+    TelemetryCurrentDeviceStateRequest,
+    TelemetryCurrentDeviceStateResponse
+);
+telemetry_method!(
+    TELEMETRY_WINDOW_FOCUS_METHOD,
+    TELEMETRY_WINDOW_FOCUS,
+    TelemetryWindowFocusRequest,
+    TelemetryWindowFocusResponse
+);
+telemetry_method!(
+    TELEMETRY_COMMAND_FREQUENCY_METHOD,
+    TELEMETRY_COMMAND_FREQUENCY,
+    TelemetryCommandFrequencyRequest,
+    TelemetryCommandFrequencyResponse
+);
+telemetry_method!(
+    TELEMETRY_FILE_ACTIVITY_METHOD,
+    TELEMETRY_FILE_ACTIVITY,
+    TelemetryFileActivityRequest,
+    TelemetryFileActivityResponse
+);
+telemetry_method!(
+    TELEMETRY_RECENT_ACTIVITY_METHOD,
+    TELEMETRY_RECENT_ACTIVITY,
+    TelemetryRecentActivityRequest,
+    TelemetryRecentActivityResponse
+);
+telemetry_method!(
+    TELEMETRY_SYSTEM_STATE_METHOD,
+    TELEMETRY_SYSTEM_STATE,
+    TelemetrySystemStateRequest,
+    TelemetrySystemStateResponse
+);
+telemetry_method!(
+    TELEMETRY_GATEWAY_STATS_METHOD,
+    TELEMETRY_GATEWAY_STATS,
+    TelemetryGatewayStatsRequest,
+    TelemetryGatewayStatsResponse
+);
+telemetry_method!(
+    TELEMETRY_STREAM_STATS_METHOD,
+    TELEMETRY_STREAM_STATS,
+    TelemetryStreamStatsRequest,
+    TelemetryStreamStatsResponse
+);
+telemetry_method!(
+    TELEMETRY_ASSEMBLY_STATS_METHOD,
+    TELEMETRY_ASSEMBLY_STATS,
+    TelemetryAssemblyStatsRequest,
+    TelemetryAssemblyStatsResponse
+);
+telemetry_method!(
+    TELEMETRY_NODE_STATS_METHOD,
+    TELEMETRY_NODE_STATS,
+    TelemetryNodeStatsRequest,
+    TelemetryNodeStatsResponse
+);
+telemetry_method!(
+    TELEMETRY_METRIC_COUNTERS_METHOD,
+    TELEMETRY_METRIC_COUNTERS,
+    TelemetryMetricCountersRequest,
+    TelemetryMetricCountersResponse
+);
+telemetry_method!(
+    TELEMETRY_INGESTD_BATCH_STATS_METHOD,
+    TELEMETRY_INGESTD_BATCH_STATS,
+    TelemetryIngestdBatchStatsRequest,
+    TelemetryIngestdBatchStatsResponse
+);
+telemetry_method!(
+    TELEMETRY_INGESTD_VALIDATION_METHOD,
+    TELEMETRY_INGESTD_VALIDATION,
+    TelemetryIngestdValidationRequest,
+    TelemetryIngestdValidationResponse
+);
+telemetry_method!(
+    TELEMETRY_THROUGHPUT_METHOD,
+    TELEMETRY_THROUGHPUT,
+    TelemetryThroughputRequest,
+    TelemetryThroughputResponse
+);
 
 // ─────────────────────────────────────────────────────────────
 // Shared parameters

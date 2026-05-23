@@ -1,10 +1,55 @@
 use crate::Uuid;
+use crate::rpc::{RpcDomain, RpcMethod, RpcMutability, RpcRole, RpcStability, methods};
 use crate::temporal::Timestamp;
 use serde::{Deserialize, Serialize};
 
 pub const DEFAULT_GITOPS_BRANCH: &str = "main";
 pub const DEFAULT_GITOPS_PATH_PATTERN: &str = "schemas/**/*.json";
 pub const DEFAULT_GITOPS_SYNC_FREQUENCY_MINUTES: i32 = 60;
+
+pub const GITOPS_LIST_SOURCES_METHOD: RpcMethod<
+    GitOpsListSourcesRequest,
+    GitOpsListSourcesResponse,
+> = RpcMethod::new(
+    methods::GITOPS_LIST_SOURCES,
+    RpcRole::ReadOnly,
+    RpcDomain::GitOps,
+    RpcStability::Experimental,
+    RpcMutability::ReadOnly,
+);
+
+pub const GITOPS_CREATE_SOURCE_METHOD: RpcMethod<
+    GitOpsCreateSourceRequest,
+    GitOpsCreateSourceResponse,
+> = RpcMethod::new(
+    methods::GITOPS_CREATE_SOURCE,
+    RpcRole::Write,
+    RpcDomain::GitOps,
+    RpcStability::Experimental,
+    RpcMutability::Mutating,
+);
+
+pub const GITOPS_DELETE_SOURCE_METHOD: RpcMethod<
+    GitOpsDeleteSourceRequest,
+    GitOpsDeleteSourceResponse,
+> = RpcMethod::new(
+    methods::GITOPS_DELETE_SOURCE,
+    RpcRole::Admin,
+    RpcDomain::GitOps,
+    RpcStability::Experimental,
+    RpcMutability::Mutating,
+);
+
+pub const GITOPS_TRIGGER_SYNC_METHOD: RpcMethod<
+    GitOpsTriggerSyncRequest,
+    GitOpsTriggerSyncResponse,
+> = RpcMethod::new(
+    methods::GITOPS_TRIGGER_SYNC,
+    RpcRole::Write,
+    RpcDomain::GitOps,
+    RpcStability::Experimental,
+    RpcMutability::Mutating,
+);
 
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct GitOpsListSourcesRequest {

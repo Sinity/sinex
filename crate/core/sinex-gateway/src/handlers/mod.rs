@@ -9,6 +9,7 @@ pub mod audit;
 pub mod automata;
 pub mod content;
 pub mod coordination;
+pub mod curation;
 pub mod dlq;
 pub mod documents;
 pub mod ingestors;
@@ -24,8 +25,10 @@ pub mod rpc_handlers;
 pub mod shadow;
 pub mod sources;
 pub mod system;
+pub mod tasks;
 pub mod telemetry;
 
+pub use curation::{handle_curation_list_proposals, handle_curation_record_judgment};
 pub use query::{handle_events_annotate, handle_events_lineage, handle_events_query};
 pub use replay::{
     handle_replay_approve_operation, handle_replay_cancel_operation,
@@ -67,7 +70,9 @@ pub use documents::{handle_documents_get, handle_documents_get_chunks, handle_do
 pub use node_registry::{handle_nodes_health, handle_nodes_list_active};
 pub use pkm::{handle_create_entities, handle_create_note, handle_link_entities};
 pub use privacy::{
-    handle_private_mode_disable, handle_private_mode_enable, handle_private_mode_status,
+    handle_private_mode_disable, handle_private_mode_disable_service, handle_private_mode_enable,
+    handle_private_mode_enable_service, handle_private_mode_status,
+    handle_private_mode_status_service,
 };
 pub use sources::{
     handle_sources_annotate, handle_sources_archive, handle_sources_bindings_create,
@@ -78,6 +83,7 @@ pub use sources::{
     handle_sources_show, handle_sources_stage,
 };
 pub use system::{handle_system_health, handle_system_ping, handle_system_version};
+pub use tasks::{handle_tasks_complete, handle_tasks_create, handle_tasks_state_get};
 pub use telemetry::{
     handle_telemetry_assembly_stats, handle_telemetry_command_frequency,
     handle_telemetry_current_device_state, handle_telemetry_current_health,

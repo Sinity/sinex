@@ -162,28 +162,25 @@ fn parse_row(
         "favorite": favorite,
     });
 
-    Ok(ParsedEventIntent {
-        id: sinex_primitives::ids::Id::new(),
-        source_unit_id: ctx.source_unit_id.clone(),
-        parser_id: ParserId::from_static("raindrop-bookmarks"),
-        parser_version: "1.0.0".into(),
-        event_type: EventType::from_static("bookmark.created"),
-        event_source: EventSource::from_static("raindrop"),
-        payload,
-        ts_orig: created_at,
-        timing: TimingEvidence::Intrinsic {
+    Ok(ParsedEventIntent::builder()
+        .source_unit_id(ctx.source_unit_id.clone())
+        .parser_id(ParserId::from_static("raindrop-bookmarks"))
+        .parser_version("1.0.0")
+        .event_type(EventType::from_static("bookmark.created"))
+        .event_source(EventSource::from_static("raindrop"))
+        .payload(payload)
+        .ts_orig(created_at)
+        .timing(TimingEvidence::Intrinsic {
             field: "created".into(),
             confidence: TimingConfidence::Intrinsic,
-        },
-        anchor: MaterialAnchor::Line {
+        })
+        .anchor(MaterialAnchor::Line {
             byte_start: 0,
             line,
-        },
-        occurrence_key: Some(occurrence_key),
-        privacy_context: ProcessingContext::Metadata,
-        field_privacy_log: None,
-        synthesis_parents: None,
-    })
+        })
+        .occurrence_key(occurrence_key)
+        .privacy_context(ProcessingContext::Metadata)
+        .build())
 }
 
 fn parse_iso8601(raw: &str) -> ParserResult<Timestamp> {

@@ -395,28 +395,25 @@ fn build_intent(tx: JournalTransaction, ctx: &ParserContext) -> ParserResult<Par
         "comment": tx.comment,
     });
 
-    Ok(ParsedEventIntent {
-        id: sinex_primitives::ids::Id::new(),
-        source_unit_id: ctx.source_unit_id.clone(),
-        parser_id: ParserId::from_static("hledger-journal"),
-        parser_version: "1.0.0".into(),
-        event_type: EventType::from_static("transaction.posted"),
-        event_source: EventSource::from_static("ledger"),
-        payload,
-        ts_orig: tx.date,
-        timing: TimingEvidence::Intrinsic {
+    Ok(ParsedEventIntent::builder()
+        .source_unit_id(ctx.source_unit_id.clone())
+        .parser_id(ParserId::from_static("hledger-journal"))
+        .parser_version("1.0.0")
+        .event_type(EventType::from_static("transaction.posted"))
+        .event_source(EventSource::from_static("ledger"))
+        .payload(payload)
+        .ts_orig(tx.date)
+        .timing(TimingEvidence::Intrinsic {
             field: "date".into(),
             confidence: TimingConfidence::Intrinsic,
-        },
-        anchor: MaterialAnchor::ByteRange {
+        })
+        .anchor(MaterialAnchor::ByteRange {
             start: tx.index,
             len: 1,
-        },
-        occurrence_key: Some(occurrence_key),
-        privacy_context: ProcessingContext::Document,
-        field_privacy_log: None,
-        synthesis_parents: None,
-    })
+        })
+        .occurrence_key(occurrence_key)
+        .privacy_context(ProcessingContext::Document)
+        .build())
 }
 
 // ---------------------------------------------------------------------------

@@ -1,10 +1,9 @@
 //! Coordination RPC handlers.
 
-use super::rpc_handlers::RpcParams;
-use serde_json::Value;
 use sinex_primitives::coordination::{CoordinationKvClient, InstanceMetadata};
 use sinex_primitives::rpc::coordination::{
-    GetLeaderResponse, InstanceHealthResponse, InstanceInfo, ListInstancesResponse,
+    GetLeaderRequest, GetLeaderResponse, InstanceHealthRequest, InstanceHealthResponse,
+    InstanceInfo, ListInstancesRequest, ListInstancesResponse,
 };
 use sinex_primitives::{
     Result, SinexError,
@@ -31,8 +30,8 @@ fn metadata_to_instance_info(meta: &InstanceMetadata, is_leader: bool) -> Result
 
 pub async fn handle_coordination_list_instances(
     kv_client: &CoordinationKvClient,
-    _params: Value,
-) -> Result<Value> {
+    _req: ListInstancesRequest,
+) -> Result<ListInstancesResponse> {
     let instances = kv_client.list_instances().await?;
     let leader = kv_client.get_leader().await?;
 
@@ -43,19 +42,15 @@ pub async fn handle_coordination_list_instances(
         })
         .collect::<Result<_>>()?;
 
-    serde_json::to_value(ListInstancesResponse {
+    Ok(ListInstancesResponse {
         instances: instance_infos,
-    })
-    .map_err(|error| {
-        SinexError::serialization("failed to serialize coordination.list_instances response")
-            .with_std_error(&error)
     })
 }
 
 pub async fn handle_coordination_get_leader(
     kv_client: &CoordinationKvClient,
-    _params: Value,
-) -> Result<Value> {
+    _req: GetLeaderRequest,
+) -> Result<GetLeaderResponse> {
     let leader = match kv_client.get_leader().await? {
         Some(instance_id) => {
             let metadata = kv_client.get_instance(&instance_id).await?.ok_or_else(|| {
@@ -67,20 +62,14 @@ pub async fn handle_coordination_get_leader(
         None => None,
     };
 
-    serde_json::to_value(GetLeaderResponse { leader }).map_err(|error| {
-        SinexError::serialization("failed to serialize coordination.get_leader response")
-            .with_std_error(&error)
-    })
+    Ok(GetLeaderResponse { leader })
 }
 
 pub async fn handle_coordination_instance_health(
     kv_client: &CoordinationKvClient,
-    params: Value,
-) -> Result<Value> {
-    let params = RpcParams::new(&params);
-    let instance_id = params.require_str("instance_id")?;
-
-    let metadata = kv_client.get_instance(instance_id).await?;
+    req: InstanceHealthRequest,
+) -> Result<InstanceHealthResponse> {
+    let metadata = kv_client.get_instance(req.instance_id.as_str()).await?;
     let leader = kv_client.get_leader().await?;
 
     match metadata {
@@ -91,21 +80,13 @@ pub async fn handle_coordination_instance_health(
                 heartbeat_age_secs < kv_client.instance_stale_timeout().as_secs() as i64;
             let is_leader = leader.as_deref() == Some(meta.instance_id.as_str());
 
-            serde_json::to_value(InstanceHealthResponse {
+            Ok(InstanceHealthResponse {
                 instance: metadata_to_instance_info(&meta, is_leader)?,
                 healthy: is_healthy,
                 last_error: None,
             })
-            .map_err(|error| {
-                SinexError::serialization(
-                    "failed to serialize coordination.instance_health response",
-                )
-                .with_std_error(&error)
-            })
         }
-        None => {
-            Err(SinexError::not_found("Instance not found")
-                .with_context("instance_id", instance_id))
-        }
+        None => Err(SinexError::not_found("Instance not found")
+            .with_context("instance_id", req.instance_id.as_str())),
     }
 }

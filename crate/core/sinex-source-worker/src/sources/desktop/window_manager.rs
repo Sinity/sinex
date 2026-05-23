@@ -199,24 +199,20 @@ impl MaterialParser for HyprlandParser {
 
         let ts_now = Timestamp::now();
 
-        let intent = ParsedEventIntent {
-            id: sinex_primitives::ids::Id::new(),
-            source_unit_id: ctx.source_unit_id.clone(),
-            parser_id: ParserId::from_static("hyprland-ipc"),
-            parser_version: "1.0.0".into(),
-            event_type: EventType::new(event_type_str).map_err(|e| {
+        let intent = ParsedEventIntent::builder()
+            .source_unit_id(ctx.source_unit_id.clone())
+            .parser_id(ParserId::from_static("hyprland-ipc"))
+            .parser_version("1.0.0")
+            .event_type(EventType::new(event_type_str).map_err(|e| {
                 ParserError::Parse(format!("invalid event type '{event_type_str}': {e}"))
-            })?,
-            event_source: EventSource::from_static("wm.hyprland"),
-            payload,
-            ts_orig: ts_now,
-            timing: TimingEvidence::StagedAtFallback,
-            anchor: record.anchor.clone(),
-            occurrence_key: None,
-            privacy_context: ProcessingContext::WindowTitle,
-            field_privacy_log: None,
-            synthesis_parents: None,
-        };
+            })?)
+            .event_source(EventSource::from_static("wm.hyprland"))
+            .payload(payload)
+            .ts_orig(ts_now)
+            .timing(TimingEvidence::StagedAtFallback)
+            .anchor(record.anchor.clone())
+            .privacy_context(ProcessingContext::WindowTitle)
+            .build();
 
         Ok(vec![intent])
     }

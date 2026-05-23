@@ -1,0 +1,106 @@
+{
+  "$defs": {
+    "DateTime": {
+      "description": "RFC 3339 formatted date-time string",
+      "format": "date-time",
+      "type": "string"
+    },
+    "TaskExternalRef": {
+      "description": "Stable external task alias scoped by source system.",
+      "properties": {
+        "external_id": {
+          "type": "string"
+        },
+        "system": {
+          "type": "string"
+        },
+        "version": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "system",
+        "external_id"
+      ],
+      "type": "object"
+    },
+    "TaskSourceSystem": {
+      "description": "Authority source that created a canonical task event.",
+      "enum": [
+        "sinexctl",
+        "gateway",
+        "taskwarrior_import",
+        "curation_finalizer",
+        "test_fixture"
+      ],
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Canonical task creation lifecycle event.",
+  "properties": {
+    "body": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "due_at": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/DateTime"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "external_refs": {
+      "items": {
+        "$ref": "#/$defs/TaskExternalRef"
+      },
+      "type": "array"
+    },
+    "priority": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "project_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "source_system": {
+      "$ref": "#/$defs/TaskSourceSystem"
+    },
+    "tags": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "task_id": {
+      "format": "uuid",
+      "type": "string"
+    },
+    "title": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "task_id",
+    "title",
+    "source_system"
+  ],
+  "title": "TaskCreatedPayload",
+  "type": "object",
+  "x-sinex-event-type": "task.created",
+  "x-sinex-source": "task",
+  "x-sinex-version": "1.0.0"
+}

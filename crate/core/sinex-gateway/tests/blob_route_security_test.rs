@@ -6,12 +6,16 @@ use sinex_gateway::{
     auth::Role,
     config::GatewayConfig,
     handlers::{handle_retrieve_blob, handle_store_blob},
+    rpc_registry::build_registry,
     rpc_server::RpcAuthContext,
     service_container::ServiceContainer,
 };
 use sinex_node_sdk::content_store::MaterialContentStore;
 use sinex_primitives::error::ErrorClass;
-use sinex_primitives::rpc::content::{RetrieveBlobResponse, StoreBlobResponse};
+use sinex_primitives::rpc::{
+    content::{RetrieveBlobRequest, StoreBlobRequest},
+    methods,
+};
 use sinex_primitives::temporal;
 use tempfile::TempDir;
 use which::which;
@@ -67,12 +71,14 @@ async fn blob_routes_should_enforce_auth_and_quota(ctx: TestContext) -> TestResu
 
     // Simulate a 10MB upload with no authentication metadata.
     let oversized_blob = vec![0u8; 10 * 1024 * 1024];
-    let params = serde_json::json!({
-        "filename": "oversized.bin",
-        "content_type": "application/octet-stream",
-        "content": BASE64_STANDARD.encode(&oversized_blob)});
+    let request = StoreBlobRequest {
+        content: BASE64_STANDARD.encode(&oversized_blob),
+        filename: Some("oversized.bin".to_string()),
+        content_type: Some("application/octet-stream".to_string()),
+        source: None,
+    };
 
-    let err = handle_store_blob(&services, params, &auth)
+    let err = handle_store_blob(&services, request, &auth)
         .await
         .unwrap_err();
 
@@ -98,12 +104,14 @@ async fn content_store_blob_does_not_insert_events(ctx: TestContext) -> TestResu
         .fetch_one(&pool)
         .await?;
 
-    let params = serde_json::json!({
-        "filename": "note.txt",
-        "content_type": "text/plain",
-        "content": BASE64_STANDARD.encode(b"hello gateway")});
+    let request = StoreBlobRequest {
+        content: BASE64_STANDARD.encode(b"hello gateway"),
+        filename: Some("note.txt".to_string()),
+        content_type: Some("text/plain".to_string()),
+        source: None,
+    };
 
-    handle_store_blob(&services, params, &auth).await?;
+    handle_store_blob(&services, request, &auth).await?;
 
     let after: i64 = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM core.events")
         .fetch_one(&pool)
@@ -130,7 +138,8 @@ async fn content_store_blob_rejects_malformed_optional_fields(ctx: TestContext) 
         "content": BASE64_STANDARD.encode(b"hello gateway")
     });
 
-    let error = handle_store_blob(&services, params, &auth)
+    let error = build_registry()
+        .dispatch(methods::CONTENT_STORE_BLOB, params, &services, &auth)
         .await
         .expect_err("malformed optional blob params must fail");
     assert_eq!(error.error_class(), ErrorClass::DataError);
@@ -149,14 +158,14 @@ async fn content_store_blob_uses_authenticated_actor_for_operations_log(
     let pool = services.pool().clone();
     let auth = write_auth();
 
-    let params = serde_json::json!({
-        "filename": "audited.txt",
-        "content_type": "text/plain",
-        "source": "import://browser-export",
-        "content": BASE64_STANDARD.encode(b"hello audited gateway")
-    });
+    let request = StoreBlobRequest {
+        content: BASE64_STANDARD.encode(b"hello audited gateway"),
+        filename: Some("audited.txt".to_string()),
+        content_type: Some("text/plain".to_string()),
+        source: Some("import://browser-export".to_string()),
+    };
 
-    handle_store_blob(&services, params, &auth).await?;
+    handle_store_blob(&services, request, &auth).await?;
 
     let row: (String, Option<String>) = sqlx::query_as(
         "SELECT operator, scope->>'source' FROM core.operations_log \
@@ -180,14 +189,14 @@ async fn content_blob_rpc_uses_typed_request_and_response_contracts(
         blob_test_services(ctx, "gateway-blob-contracts", 5 * 1024 * 1024).await?;
     let auth = write_auth();
 
-    let store_params = serde_json::json!({
-        "filename": "contract.txt",
-        "content_type": "text/plain",
-        "content": BASE64_STANDARD.encode(b"hello typed contract")
-    });
+    let store_request = StoreBlobRequest {
+        content: BASE64_STANDARD.encode(b"hello typed contract"),
+        filename: Some("contract.txt".to_string()),
+        content_type: Some("text/plain".to_string()),
+        source: None,
+    };
 
-    let stored: StoreBlobResponse =
-        serde_json::from_value(handle_store_blob(&services, store_params, &auth).await?)?;
+    let stored = handle_store_blob(&services, store_request, &auth).await?;
     assert!(
         !stored.content_key.is_empty(),
         "store response must include blob content_key"
@@ -198,13 +207,13 @@ async fn content_blob_rpc_uses_typed_request_and_response_contracts(
         "store response must include blake3 hash"
     );
 
-    let retrieved: RetrieveBlobResponse = serde_json::from_value(
-        handle_retrieve_blob(
-            &services,
-            serde_json::json!({ "content_key": stored.content_key }),
-        )
-        .await?,
-    )?;
+    let retrieved = handle_retrieve_blob(
+        &services,
+        RetrieveBlobRequest {
+            content_key: stored.content_key,
+        },
+    )
+    .await?;
     assert_eq!(
         retrieved.content,
         BASE64_STANDARD.encode(b"hello typed contract")

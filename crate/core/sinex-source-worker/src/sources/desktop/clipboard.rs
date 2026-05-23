@@ -186,22 +186,18 @@ impl MaterialParser for ClipboardParser {
             "content_size_bytes": record.bytes.len(),
         });
 
-        let intent = ParsedEventIntent {
-            id: sinex_primitives::ids::Id::new(),
-            source_unit_id: ctx.source_unit_id.clone(),
-            parser_id: ParserId::from_static("clipboard-poller"),
-            parser_version: "1.0.0".into(),
-            event_type: EventType::from_static("clipboard.copied"),
-            event_source: EventSource::from_static("clipboard"),
-            payload,
-            ts_orig: ts_now,
-            timing: TimingEvidence::StagedAtFallback,
-            anchor: record.anchor.clone(),
-            occurrence_key: None,
-            privacy_context: ProcessingContext::Clipboard,
-            field_privacy_log: None,
-            synthesis_parents: None,
-        };
+        let intent = ParsedEventIntent::builder()
+            .source_unit_id(ctx.source_unit_id.clone())
+            .parser_id(ParserId::from_static("clipboard-poller"))
+            .parser_version("1.0.0")
+            .event_type(EventType::from_static("clipboard.copied"))
+            .event_source(EventSource::from_static("clipboard"))
+            .payload(payload)
+            .ts_orig(ts_now)
+            .timing(TimingEvidence::StagedAtFallback)
+            .anchor(record.anchor.clone())
+            .privacy_context(ProcessingContext::Clipboard)
+            .build();
 
         Ok(vec![intent])
     }

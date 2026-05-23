@@ -9,32 +9,32 @@ use assert_cmd::cargo;
 use std::fs;
 use std::process::Command;
 use tempfile::TempDir;
-use xtask::sandbox::sinex_test;
+use xtask::sandbox::prelude::*;
 
 use sinexctl::admin::exec;
 use sinexctl::admin::snapshot::{AdminSnapshotCommand, AdminSnapshotInspectCommand, Component};
 
 /// Helper: build a fake state directory with recognizable fixture files.
-fn make_fake_state_dir() -> TempDir {
-    let dir = tempfile::tempdir().expect("create tempdir");
+fn make_fake_state_dir() -> TestResult<TempDir> {
+    let dir = tempfile::tempdir()?;
     let root = dir.path();
 
     // postgres — not in state dir, but pg_dump goes to staging
     // nats/jetstream
     let nats_js = root.join("nats").join("jetstream");
-    fs::create_dir_all(&nats_js).unwrap();
-    fs::write(nats_js.join("meta.inf"), b"nats-jetstream-fixture").unwrap();
+    fs::create_dir_all(&nats_js)?;
+    fs::write(nats_js.join("meta.inf"), b"nats-jetstream-fixture")?;
 
     // blob-repository (CAS)
     let cas = root.join("blob-repository");
-    fs::create_dir_all(&cas).unwrap();
-    fs::write(cas.join("blob1.bin"), b"blob-content-1").unwrap();
-    fs::write(cas.join("blob2.bin"), b"blob-content-2").unwrap();
+    fs::create_dir_all(&cas)?;
+    fs::write(cas.join("blob1.bin"), b"blob-content-1")?;
+    fs::write(cas.join("blob2.bin"), b"blob-content-2")?;
 
     // spool
     let spool = root.join("spool");
-    fs::create_dir_all(&spool).unwrap();
-    fs::write(spool.join("checkpoint.bin"), b"checkpoint-data").unwrap();
+    fs::create_dir_all(&spool)?;
+    fs::write(spool.join("checkpoint.bin"), b"checkpoint-data")?;
 
     fs::write(
         root.join("source-units.json"),
@@ -45,27 +45,25 @@ fn make_fake_state_dir() -> TempDir {
             { "id": "desktop.clipboard" }
           ]
         }"#,
-    )
-    .unwrap();
+    )?;
 
-    dir
+    Ok(dir)
 }
 
 fn sinexctl_bin() -> Command {
     Command::new(cargo::cargo_bin!("sinexctl"))
 }
 
-fn make_snapshot_archive() -> (TempDir, std::path::PathBuf) {
+fn make_snapshot_archive() -> TestResult<(TempDir, std::path::PathBuf)> {
     use sinexctl::admin::manifest::{ComponentRecord, SnapshotManifest, Totals};
 
-    let dir = tempfile::tempdir().expect("archive tempdir");
+    let dir = tempfile::tempdir()?;
     let staging = dir.path().join("staging");
-    fs::create_dir_all(staging.join("state")).unwrap();
+    fs::create_dir_all(staging.join("state"))?;
     fs::write(
         staging.join("state").join("checkpoint.bin"),
         b"checkpoint-data",
-    )
-    .unwrap();
+    )?;
 
     let manifest = SnapshotManifest {
         snapshot_id: "01970a7f-391b-7000-8000-000000000001".to_string(),
@@ -89,13 +87,12 @@ fn make_snapshot_archive() -> (TempDir, std::path::PathBuf) {
     };
     fs::write(
         staging.join("manifest.json"),
-        serde_json::to_vec_pretty(&manifest).unwrap(),
-    )
-    .unwrap();
+        serde_json::to_vec_pretty(&manifest)?,
+    )?;
 
     let archive_path = dir.path().join("fixture.sinex.tar.zst");
-    exec::tar_create_zstd(&staging, &archive_path, 1, 1).expect("create snapshot fixture archive");
-    (dir, archive_path)
+    exec::tar_create_zstd(&staging, &archive_path, 1, 1)?;
+    Ok((dir, archive_path))
 }
 
 // ── Dry-run test ─────────────────────────────────────────────────────────────
@@ -104,8 +101,8 @@ fn make_snapshot_archive() -> (TempDir, std::path::PathBuf) {
 /// directory.
 #[sinex_test]
 async fn dry_run_reports_estimates_and_creates_no_archive() -> xtask::sandbox::TestResult<()> {
-    let state_dir = make_fake_state_dir();
-    let output_dir = tempfile::tempdir().expect("output tempdir");
+    let state_dir = make_fake_state_dir()?;
+    let output_dir = tempfile::tempdir()?;
     let output_path = output_dir.path().join("test.tar.zst");
 
     let output = sinexctl_bin()
@@ -113,17 +110,16 @@ async fn dry_run_reports_estimates_and_creates_no_archive() -> xtask::sandbox::T
             "admin",
             "snapshot",
             "--output",
-            output_path.to_str().unwrap(),
+            &output_path.to_string_lossy(),
             "--dry-run",
             "--state-dir",
-            state_dir.path().to_str().unwrap(),
+            &state_dir.path().to_string_lossy(),
             "--database-url",
             "postgresql://sinex:sinex@localhost/sinex_prod",
             "--components",
             "nats,cas,state",
         ])
-        .output()
-        .expect("run sinexctl admin snapshot --dry-run");
+        .output()?;
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -141,8 +137,7 @@ async fn dry_run_reports_estimates_and_creates_no_archive() -> xtask::sandbox::T
     );
 
     // Staging directories must be absent.
-    let staging_entries: Vec<_> = std::fs::read_dir(output_dir.path())
-        .unwrap()
+    let staging_entries: Vec<_> = std::fs::read_dir(output_dir.path())?
         .flatten()
         .filter(|e| {
             e.file_name()
@@ -170,8 +165,8 @@ async fn dry_run_reports_estimates_and_creates_no_archive() -> xtask::sandbox::T
 #[sinex_test]
 async fn dry_run_non_postgres_components_do_not_require_database_url()
 -> xtask::sandbox::TestResult<()> {
-    let state_dir = make_fake_state_dir();
-    let output_dir = tempfile::tempdir().expect("output tempdir");
+    let state_dir = make_fake_state_dir()?;
+    let output_dir = tempfile::tempdir()?;
     let output_path = output_dir.path().join("test.tar.zst");
 
     let output = sinexctl_bin()
@@ -179,15 +174,14 @@ async fn dry_run_non_postgres_components_do_not_require_database_url()
             "admin",
             "snapshot",
             "--output",
-            output_path.to_str().unwrap(),
+            &output_path.to_string_lossy(),
             "--dry-run",
             "--state-dir",
-            state_dir.path().to_str().unwrap(),
+            &state_dir.path().to_string_lossy(),
             "--components",
             "nats,cas,state",
         ])
-        .output()
-        .expect("run sinexctl admin snapshot --dry-run without DATABASE_URL");
+        .output()?;
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -211,12 +205,12 @@ async fn dry_run_non_postgres_components_do_not_require_database_url()
 /// and validates that non-empty manifest component paths exist in the tar.
 #[sinex_test]
 async fn snapshot_inspect_reports_manifest_and_archive_paths() -> xtask::sandbox::TestResult<()> {
-    let (_dir, archive_path) = make_snapshot_archive();
+    let (_dir, archive_path) = make_snapshot_archive()?;
 
     let cmd = AdminSnapshotInspectCommand {
         archive: archive_path.clone(),
     };
-    let result = cmd.execute().expect("inspect fixture archive");
+    let result = cmd.execute()?;
 
     assert_eq!(result.snapshot_id, "01970a7f-391b-7000-8000-000000000001");
     assert_eq!(result.source_unit_count, 1);
@@ -231,12 +225,11 @@ async fn snapshot_inspect_reports_manifest_and_archive_paths() -> xtask::sandbox
             "admin",
             "snapshot-inspect",
             "--archive",
-            archive_path.to_str().unwrap(),
+            &archive_path.to_string_lossy(),
             "--format",
             "json",
         ])
-        .output()
-        .expect("run sinexctl admin snapshot-inspect");
+        .output()?;
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
@@ -257,8 +250,8 @@ async fn snapshot_inspect_reports_manifest_and_archive_paths() -> xtask::sandbox
 /// command must exit non-zero.
 #[sinex_test]
 async fn staging_cleaned_up_on_pg_dump_failure() -> xtask::sandbox::TestResult<()> {
-    let state_dir = make_fake_state_dir();
-    let output_dir = tempfile::tempdir().expect("output tempdir");
+    let state_dir = make_fake_state_dir()?;
+    let output_dir = tempfile::tempdir()?;
     let output_path = output_dir.path().join("should-not-exist.tar.zst");
 
     // Use an intentionally invalid DATABASE_URL.
@@ -267,16 +260,15 @@ async fn staging_cleaned_up_on_pg_dump_failure() -> xtask::sandbox::TestResult<(
             "admin",
             "snapshot",
             "--output",
-            output_path.to_str().unwrap(),
+            &output_path.to_string_lossy(),
             "--state-dir",
-            state_dir.path().to_str().unwrap(),
+            &state_dir.path().to_string_lossy(),
             "--database-url",
             "postgresql://bad:creds@127.0.0.1:1/nonexistent",
             "--components",
             "postgres",
         ])
-        .output()
-        .expect("run sinexctl admin snapshot with bad DB URL");
+        .output()?;
 
     // Must fail (non-zero exit) — pg_dump cannot connect.
     assert!(
@@ -291,8 +283,7 @@ async fn staging_cleaned_up_on_pg_dump_failure() -> xtask::sandbox::TestResult<(
     );
 
     // Staging directory must be absent.
-    let staging_entries: Vec<_> = std::fs::read_dir(output_dir.path())
-        .unwrap()
+    let staging_entries: Vec<_> = std::fs::read_dir(output_dir.path())?
         .flatten()
         .filter(|e| {
             e.file_name()
@@ -332,8 +323,8 @@ async fn component_all_covers_all_four() -> xtask::sandbox::TestResult<()> {
 /// a real fake state dir and returns a valid SnapshotResult.
 #[sinex_test]
 async fn library_dry_run_returns_valid_result() -> xtask::sandbox::TestResult<()> {
-    let state_dir = make_fake_state_dir();
-    let output_dir = tempfile::tempdir().expect("output tempdir");
+    let state_dir = make_fake_state_dir()?;
+    let output_dir = tempfile::tempdir()?;
     let output_path = output_dir.path().join("test.tar.zst");
 
     let cmd = AdminSnapshotCommand {
@@ -348,10 +339,10 @@ async fn library_dry_run_returns_valid_result() -> xtask::sandbox::TestResult<()
         components: vec![Component::Nats, Component::Cas, Component::State],
     };
 
-    let result = cmd.execute().expect("dry-run execute must succeed");
+    let result = cmd.execute()?;
 
     assert_eq!(result.mode, "dry-run");
-    assert_snapshot_id_is_uuidv7(&result.snapshot_id);
+    assert_snapshot_id_is_uuidv7(&result.snapshot_id)?;
     assert!(
         result.output_path.is_none(),
         "dry-run must not report an output path"
@@ -388,14 +379,15 @@ async fn library_dry_run_returns_valid_result() -> xtask::sandbox::TestResult<()
     Ok(())
 }
 
-fn assert_snapshot_id_is_uuidv7(id: &str) {
+fn assert_snapshot_id_is_uuidv7(id: &str) -> TestResult<()> {
     assert_eq!(id.len(), 36, "snapshot ID must be canonical UUID text");
     assert_eq!(
         id.as_bytes().get(14),
         Some(&b'7'),
         "snapshot ID must be UUIDv7"
     );
-    sinex_primitives::Uuid::parse_str(id).expect("snapshot ID must parse as UUID");
+    sinex_primitives::Uuid::parse_str(id)?;
+    Ok(())
 }
 
 /// Manifest JSON round-trips correctly through serde.
@@ -442,8 +434,8 @@ async fn manifest_round_trips_through_serde() -> xtask::sandbox::TestResult<()> 
         },
     };
 
-    let json = serde_json::to_string_pretty(&manifest).expect("serialise manifest");
-    let back: SnapshotManifest = serde_json::from_str(&json).expect("deserialise manifest");
+    let json = serde_json::to_string_pretty(&manifest)?;
+    let back: SnapshotManifest = serde_json::from_str(&json)?;
 
     assert_eq!(back.snapshot_id, "test-id");
     assert_eq!(back.source_unit_ids.len(), 2);

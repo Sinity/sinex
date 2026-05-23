@@ -212,25 +212,21 @@ impl MaterialParser for WeeChatLogParser {
 
         let anchor = record.anchor.clone();
 
-        let intent = ParsedEventIntent {
-            id: sinex_primitives::ids::Id::new(),
-            source_unit_id: ctx.source_unit_id.clone(),
-            parser_id: ParserId::from_static("weechat-log"),
-            parser_version: "1.0.0".into(),
-            event_type: EventType::from_static(cls.event_type),
-            event_source: EventSource::from_static("irc"),
-            payload: serde_json::Value::Object(payload),
-            ts_orig,
-            timing: TimingEvidence::Intrinsic {
+        let intent = ParsedEventIntent::builder()
+            .source_unit_id(ctx.source_unit_id.clone())
+            .parser_id(ParserId::from_static("weechat-log"))
+            .parser_version("1.0.0")
+            .event_type(EventType::from_static(cls.event_type))
+            .event_source(EventSource::from_static("irc"))
+            .payload(serde_json::Value::Object(payload))
+            .ts_orig(ts_orig)
+            .timing(TimingEvidence::Intrinsic {
                 field: "timestamp".into(),
                 confidence: TimingConfidence::Intrinsic,
-            },
-            anchor,
-            occurrence_key: None,
-            privacy_context: ProcessingContext::Command,
-            field_privacy_log: None,
-            synthesis_parents: None,
-        };
+            })
+            .anchor(anchor)
+            .privacy_context(ProcessingContext::Command)
+            .build();
 
         Ok(vec![intent])
     }

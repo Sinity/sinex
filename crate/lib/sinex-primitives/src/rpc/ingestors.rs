@@ -7,6 +7,7 @@
 
 use crate::domain::NodeName;
 use crate::env as shared_env;
+use crate::rpc::{RpcDomain, RpcMethod, RpcMutability, RpcRole, RpcStability, methods};
 use crate::{Result, Timestamp, Uuid};
 use serde::{Deserialize, Serialize};
 
@@ -17,6 +18,15 @@ fn default_stale_after_secs() -> u64 {
 fn default_recent_window_secs() -> u64 {
     300
 }
+
+pub const INGESTORS_STATUS_METHOD: RpcMethod<IngestorsStatusRequest, IngestorsStatusResponse> =
+    RpcMethod::new(
+        methods::INGESTORS_STATUS,
+        RpcRole::ReadOnly,
+        RpcDomain::Ingestors,
+        RpcStability::Experimental,
+        RpcMutability::ReadOnly,
+    );
 
 /// Request: `ingestors.status`
 #[derive(Debug, Clone, Serialize, Deserialize)]

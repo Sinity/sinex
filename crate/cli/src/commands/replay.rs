@@ -742,10 +742,7 @@ async fn collect_material_scorecards(
         let req = SourcesShowRequest {
             material_id: material_id.clone(),
         };
-        let response = match client
-            .call_raw_rpc("sources.show", serde_json::to_value(&req)?)
-            .await
-        {
+        let show: SourcesShowResponse = match client.sources_show(req).await {
             Ok(v) => v,
             Err(err) => {
                 // A missing material in scope is not fatal at the preview
@@ -768,17 +765,6 @@ async fn collect_material_scorecards(
                         "scorecard collection skipped material due to non-not-found error; preview will be partial"
                     );
                 }
-                continue;
-            }
-        };
-        let show: SourcesShowResponse = match serde_json::from_value(response) {
-            Ok(v) => v,
-            Err(err) => {
-                tracing::warn!(
-                    material_id = %material_id,
-                    error = %err,
-                    "scorecard collection skipped material — sources.show response failed schema validation; preview will be partial"
-                );
                 continue;
             }
         };

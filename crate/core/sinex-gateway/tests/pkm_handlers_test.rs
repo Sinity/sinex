@@ -7,9 +7,10 @@ use sinex_gateway::{
     handlers::{handle_create_entities, handle_create_note, handle_link_entities},
     rpc_server::RpcAuthContext,
 };
+use sinex_primitives::domain::{EntityTypeName, RelationType};
 use sinex_primitives::error::ErrorClass;
 use sinex_primitives::rpc::pkm::{
-    CreateEntitiesResponse, CreateNoteResponse, LinkEntitiesResponse,
+    CreateEntitiesRequest, CreateNoteRequest, EntityDefinition, LinkEntitiesRequest,
 };
 use sinex_primitives::{Uuid, events::DynamicPayload, temporal};
 use xtask::sandbox::prelude::*;
@@ -25,8 +26,6 @@ fn write_auth() -> RpcAuthContext {
 
 #[sinex_test]
 async fn pkm_create_note_rejects_malformed_optional_tags(ctx: TestContext) -> TestResult<()> {
-    let service = PkmService::new(ctx.pool().clone());
-    let auth = write_auth();
     let material_id = ctx.create_source_material(Some("pkm-note-test")).await?;
     let event = DynamicPayload::new(
         "gateway.test",
@@ -37,41 +36,26 @@ async fn pkm_create_note_rejects_malformed_optional_tags(ctx: TestContext) -> Te
     .build()?;
     let event = ctx.pool().events().insert(event).await?;
 
-    let error = handle_create_note(
-        &service,
-        serde_json::json!({
-            "event_id": event.id.expect("published event must have id"),
-            "content": base64::engine::general_purpose::STANDARD.encode("note"),
-            "tags": "not-an-array"
-        }),
-        &auth,
-    )
-    .await
+    let error = serde_path_to_error::deserialize::<_, CreateNoteRequest>(serde_json::json!({
+        "event_id": event.id.expect("published event must have id"),
+        "content": base64::engine::general_purpose::STANDARD.encode("note"),
+        "tags": "not-an-array"
+    }))
     .expect_err("malformed tags must fail");
 
-    assert!(error.to_string().contains("tags"));
-    assert_eq!(error.error_class(), ErrorClass::DataError);
+    assert_eq!(error.path().to_string(), "tags");
     Ok(())
 }
 
 #[sinex_test]
 async fn pkm_create_entities_rejects_malformed_entities_param(ctx: TestContext) -> TestResult<()> {
-    let service = PkmService::new(ctx.pool().clone());
-    let auth = write_auth();
-
-    let error = handle_create_entities(
-        &service,
-        serde_json::json!({
-            "source_material_id": Uuid::now_v7(),
-            "entities": "not-an-array"
-        }),
-        &auth,
-    )
-    .await
+    let error = serde_path_to_error::deserialize::<_, CreateEntitiesRequest>(serde_json::json!({
+        "source_material_id": Uuid::now_v7(),
+        "entities": "not-an-array"
+    }))
     .expect_err("malformed entities must fail");
 
-    assert!(error.to_string().contains("entities"));
-    assert_eq!(error.error_class(), ErrorClass::DataError);
+    assert_eq!(error.path().to_string(), "entities");
     Ok(())
 }
 
@@ -82,12 +66,13 @@ async fn pkm_link_entities_rejects_malformed_properties(ctx: TestContext) -> Tes
 
     let error = handle_link_entities(
         &service,
-        serde_json::json!({
-            "from_entity_id": Uuid::now_v7(),
-            "to_entity_id": Uuid::now_v7(),
-            "relation_type": "related_to",
-            "metadata": ["not-an-object"]
-        }),
+        LinkEntitiesRequest {
+            from_entity_id: Uuid::now_v7().into(),
+            to_entity_id: Uuid::now_v7().into(),
+            relation_type: RelationType::from_static("related_to"),
+            metadata: Some(serde_json::json!(["not-an-object"])),
+            source_material_id: None,
+        },
         &auth,
     )
     .await
@@ -119,15 +104,14 @@ async fn pkm_create_note_uses_authenticated_actor_over_payload_created_by(
 
     let response = handle_create_note(
         &service,
-        serde_json::json!({
-            "event_id": event_id,
-            "content": base64::engine::general_purpose::STANDARD.encode("note"),
-            "created_by": "forged-payload-user"
-        }),
+        CreateNoteRequest {
+            event_id,
+            content: base64::engine::general_purpose::STANDARD.encode("note"),
+            tags: vec![],
+        },
         &auth,
     )
     .await?;
-    let response: CreateNoteResponse = serde_json::from_value(response)?;
     let annotation_id = *response.annotation_id.as_uuid();
 
     let annotations = ctx.pool().events().get_annotations(event_id).await?;
@@ -152,15 +136,16 @@ async fn pkm_create_entities_uses_authenticated_actor_over_payload_created_by(
 
     let response = handle_create_entities(
         &service,
-        serde_json::json!({
-            "source_material_id": material_id.as_uuid(),
-            "entities": [{ "name": "Sinex", "entity_type": "project" }],
-            "created_by": "forged-payload-user"
-        }),
+        CreateEntitiesRequest {
+            source_material_id: material_id,
+            entities: vec![EntityDefinition {
+                name: "Sinex".to_string(),
+                entity_type: EntityTypeName::from_static("project"),
+            }],
+        },
         &auth,
     )
     .await?;
-    let response: CreateEntitiesResponse = serde_json::from_value(response)?;
     let entity_id = *response.entity_ids[0].as_uuid();
 
     let entity = ctx
@@ -199,17 +184,16 @@ async fn pkm_link_entities_uses_typed_contract_and_preserves_source_material(
 
     let response = handle_link_entities(
         &service,
-        serde_json::json!({
-            "from_entity_id": from.id,
-            "to_entity_id": to.id,
-            "relation_type": "uses",
-            "metadata": { "note": "operator supplied" },
-            "source_material_id": material_id,
-        }),
+        LinkEntitiesRequest {
+            from_entity_id: from.id,
+            to_entity_id: to.id,
+            relation_type: RelationType::from_static("uses"),
+            metadata: Some(serde_json::json!({ "note": "operator supplied" })),
+            source_material_id: Some(material_id),
+        },
         &auth,
     )
     .await?;
-    let response: LinkEntitiesResponse = serde_json::from_value(response)?;
 
     let relations = ctx
         .pool()

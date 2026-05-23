@@ -1,6 +1,5 @@
-use crate::handlers::parse_default_on_null;
 use crate::rpc_server::RpcAuthContext;
-use serde::{Deserialize, Serialize};
+use crate::service_container::ServiceContainer;
 use serde_json::{Value, json};
 use sinex_db::DbPoolExt;
 use sinex_db::repositories::state::Operation;
@@ -8,8 +7,11 @@ use sinex_primitives::domain::OperationStatus;
 use sinex_primitives::environment::SinexEnvironment;
 use sinex_primitives::prelude::*;
 use sinex_primitives::privacy::{
-    PrivateModeReasonClass, RuntimePrivateModeState, load_private_mode_state,
-    save_private_mode_state,
+    RuntimePrivateModeState, load_private_mode_state, save_private_mode_state,
+};
+use sinex_primitives::rpc::privacy::{
+    PrivateModeDisableRequest, PrivateModeEnableRequest, PrivateModeStateResponse,
+    PrivateModeStatusRequest,
 };
 use sinex_primitives::temporal::Timestamp;
 use sinex_primitives::transport;
@@ -19,76 +21,84 @@ use std::path::Path;
 const PRIVATE_MODE_OPERATION_TYPE: &str = "privacy.private_mode";
 const PRIVATE_MODE_CONTROL_SUBJECT: &str = "sinex.control.privacy.private_mode";
 
-#[derive(Debug, Clone, Default, Deserialize)]
-pub struct PrivateModeStatusRequest {}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct PrivateModeEnableRequest {
-    #[serde(default = "default_actor")]
-    pub actor: String,
-
-    #[serde(default)]
-    pub reason_class: PrivateModeReasonClass,
-
-    #[serde(default)]
-    pub source_classes: Vec<String>,
+pub async fn handle_private_mode_status(
+    state_dir: &Path,
+    _request: PrivateModeStatusRequest,
+) -> Result<PrivateModeStateResponse> {
+    Ok(private_mode_response(load_private_mode_state(state_dir)?))
 }
 
-#[derive(Debug, Clone, Default, Deserialize)]
-pub struct PrivateModeDisableRequest {}
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct PrivateModeStateResponse {
-    pub state: RuntimePrivateModeState,
-}
-
-fn default_actor() -> String {
-    "operator".to_string()
-}
-
-impl Default for PrivateModeEnableRequest {
-    fn default() -> Self {
-        Self {
-            actor: default_actor(),
-            reason_class: PrivateModeReasonClass::default(),
-            source_classes: Vec::new(),
-        }
-    }
-}
-
-pub async fn handle_private_mode_status(state_dir: &Path, params: Value) -> Result<Value> {
-    let _req: PrivateModeStatusRequest = parse_default_on_null(params)?;
-    private_mode_response(load_private_mode_state(state_dir)?)
+pub async fn handle_private_mode_status_service(
+    services: &ServiceContainer,
+    request: PrivateModeStatusRequest,
+) -> Result<PrivateModeStateResponse> {
+    handle_private_mode_status(services.state_dir(), request).await
 }
 
 pub async fn handle_private_mode_enable(
     pool: &PgPool,
     state_dir: &Path,
     control: Option<(&async_nats::Client, &SinexEnvironment)>,
-    params: Value,
+    req: PrivateModeEnableRequest,
     auth: &RpcAuthContext,
-) -> Result<Value> {
-    let req: PrivateModeEnableRequest = parse_default_on_null(params)?;
+) -> Result<PrivateModeStateResponse> {
     let mut state =
         RuntimePrivateModeState::enabled_by(req.actor, req.source_classes, Timestamp::now());
     state.reason_class = req.reason_class;
     persist_private_mode_state_with_audit(pool, state_dir, control, auth, "enable", &mut state)
         .await?;
-    private_mode_response(state)
+    Ok(private_mode_response(state))
+}
+
+pub async fn handle_private_mode_enable_service(
+    services: &ServiceContainer,
+    request: PrivateModeEnableRequest,
+    auth: &RpcAuthContext,
+) -> Result<PrivateModeStateResponse> {
+    let nats = services.nats_client().ok_or_else(|| {
+        SinexError::configuration("NATS client is not available for private-mode broadcast")
+    })?;
+    let control = Some((nats, services.environment()));
+    handle_private_mode_enable(
+        services.pool(),
+        services.state_dir(),
+        control,
+        request,
+        auth,
+    )
+    .await
 }
 
 pub async fn handle_private_mode_disable(
     pool: &PgPool,
     state_dir: &Path,
     control: Option<(&async_nats::Client, &SinexEnvironment)>,
-    params: Value,
+    _request: PrivateModeDisableRequest,
     auth: &RpcAuthContext,
-) -> Result<Value> {
-    let _req: PrivateModeDisableRequest = parse_default_on_null(params)?;
+) -> Result<PrivateModeStateResponse> {
     let mut state = load_private_mode_state(state_dir)?.disable();
     persist_private_mode_state_with_audit(pool, state_dir, control, auth, "disable", &mut state)
         .await?;
-    private_mode_response(state)
+    Ok(private_mode_response(state))
+}
+
+pub async fn handle_private_mode_disable_service(
+    services: &ServiceContainer,
+    request: PrivateModeDisableRequest,
+    auth: &RpcAuthContext,
+) -> Result<PrivateModeStateResponse> {
+    let nats = services.nats_client().ok_or_else(|| {
+        SinexError::configuration("NATS client is not available for private-mode broadcast")
+    })?;
+    let control = Some((nats, services.environment()));
+    handle_private_mode_disable(
+        services.pool(),
+        services.state_dir(),
+        control,
+        request,
+        auth,
+    )
+    .await
 }
 
 async fn persist_private_mode_state_with_audit(
@@ -212,25 +222,24 @@ fn private_mode_operation_scope(action: &'static str, state: &RuntimePrivateMode
     })
 }
 
-fn private_mode_response(state: RuntimePrivateModeState) -> Result<Value> {
-    serde_json::to_value(PrivateModeStateResponse { state }).map_err(|err| {
-        SinexError::serialization("failed to serialize private-mode response").with_std_error(&err)
-    })
+fn private_mode_response(state: RuntimePrivateModeState) -> PrivateModeStateResponse {
+    PrivateModeStateResponse { state }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
-    use xtask::sandbox::prelude::{TestContext, sinex_test};
+    use sinex_primitives::privacy::PrivateModeReasonClass;
+    use xtask::sandbox::prelude::sinex_test;
 
     #[sinex_test]
     async fn private_mode_status_defaults_disabled() -> xtask::sandbox::TestResult<()> {
         let dir = tempfile::tempdir()?;
 
-        let value = handle_private_mode_status(dir.path(), Value::Null).await?;
+        let response =
+            handle_private_mode_status(dir.path(), PrivateModeStatusRequest::default()).await?;
 
-        let response: PrivateModeStateResponse = serde_json::from_value(value)?;
         assert!(!response.state.enabled);
         Ok(())
     }
@@ -246,15 +255,14 @@ mod tests {
             ctx.pool(),
             dir.path(),
             None,
-            json!({
-                "actor": "sinity",
-                "reason_class": "policy_hold",
-                "source_classes": ["desktop"]
-            }),
+            PrivateModeEnableRequest {
+                actor: "sinity".to_string(),
+                reason_class: PrivateModeReasonClass::PolicyHold,
+                source_classes: vec!["desktop".to_string()],
+            },
             &auth,
         )
         .await?;
-        let enabled: PrivateModeStateResponse = serde_json::from_value(enabled)?;
 
         assert!(enabled.state.enabled);
         assert_eq!(enabled.state.actor, "sinity");
@@ -265,9 +273,14 @@ mod tests {
         assert_eq!(enabled.state.affected_source_classes, vec!["desktop"]);
         assert!(enabled.state.updated_by_operation_id.is_some());
 
-        let disabled =
-            handle_private_mode_disable(ctx.pool(), dir.path(), None, Value::Null, &auth).await?;
-        let disabled: PrivateModeStateResponse = serde_json::from_value(disabled)?;
+        let disabled = handle_private_mode_disable(
+            ctx.pool(),
+            dir.path(),
+            None,
+            PrivateModeDisableRequest::default(),
+            &auth,
+        )
+        .await?;
 
         assert!(!disabled.state.enabled);
         assert_eq!(disabled.state.actor, "sinity");
@@ -283,9 +296,14 @@ mod tests {
         let dir = tempfile::tempdir()?;
         let auth = RpcAuthContext::system();
 
-        let enabled =
-            handle_private_mode_enable(ctx.pool(), dir.path(), None, Value::Null, &auth).await?;
-        let enabled: PrivateModeStateResponse = serde_json::from_value(enabled)?;
+        let enabled = handle_private_mode_enable(
+            ctx.pool(),
+            dir.path(),
+            None,
+            PrivateModeEnableRequest::default(),
+            &auth,
+        )
+        .await?;
 
         assert!(enabled.state.enabled);
         assert_eq!(enabled.state.actor, "operator");
@@ -309,14 +327,14 @@ mod tests {
             ctx.pool(),
             dir.path(),
             None,
-            json!({
-                "actor": "sinity",
-                "source_classes": ["desktop"]
-            }),
+            PrivateModeEnableRequest {
+                actor: "sinity".to_string(),
+                reason_class: PrivateModeReasonClass::OperatorPrivate,
+                source_classes: vec!["desktop".to_string()],
+            },
             &auth,
         )
         .await?;
-        let enabled: PrivateModeStateResponse = serde_json::from_value(enabled)?;
         let operation_id = enabled
             .state
             .updated_by_operation_id

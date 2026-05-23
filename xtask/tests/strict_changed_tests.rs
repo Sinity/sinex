@@ -26,35 +26,32 @@ use xtask::strict_changed::owning_package;
 ///   crate/beta/Cargo.toml            [package] name = "beta"
 ///   crate/beta/src/lib.rs
 /// ```
-fn scaffold_workspace() -> TempDir {
-    let tmp = tempfile::tempdir().expect("tempdir");
+fn scaffold_workspace() -> ::xtask::sandbox::TestResult<TempDir> {
+    let tmp = tempfile::tempdir()?;
     let root = tmp.path();
 
     fs::write(
         root.join("Cargo.toml"),
         "[workspace]\nmembers = [\"crate/alpha\", \"crate/beta\"]\n",
-    )
-    .expect("write workspace Cargo.toml");
+    )?;
 
     let alpha_src = root.join("crate/alpha/src");
-    fs::create_dir_all(&alpha_src).expect("create alpha/src");
+    fs::create_dir_all(&alpha_src)?;
     fs::write(
         root.join("crate/alpha/Cargo.toml"),
         "[package]\nname = \"alpha\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
-    )
-    .expect("write alpha Cargo.toml");
-    fs::write(alpha_src.join("lib.rs"), "// alpha\n").expect("write alpha/lib.rs");
+    )?;
+    fs::write(alpha_src.join("lib.rs"), "// alpha\n")?;
 
     let beta_src = root.join("crate/beta/src");
-    fs::create_dir_all(&beta_src).expect("create beta/src");
+    fs::create_dir_all(&beta_src)?;
     fs::write(
         root.join("crate/beta/Cargo.toml"),
         "[package]\nname = \"beta\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
-    )
-    .expect("write beta Cargo.toml");
-    fs::write(beta_src.join("lib.rs"), "// beta\n").expect("write beta/lib.rs");
+    )?;
+    fs::write(beta_src.join("lib.rs"), "// beta\n")?;
 
-    tmp
+    Ok(tmp)
 }
 
 // ============================================================================
@@ -63,12 +60,11 @@ fn scaffold_workspace() -> TempDir {
 
 #[sinex_test]
 async fn test_owning_package_finds_direct_parent() -> ::xtask::sandbox::TestResult<()> {
-    let tmp = scaffold_workspace();
+    let tmp = scaffold_workspace()?;
     let root = tmp.path();
 
-    let pkg =
-        owning_package(Path::new("crate/alpha/src/lib.rs"), root).expect("should resolve to alpha");
-    assert_eq!(pkg, "alpha");
+    let pkg = owning_package(Path::new("crate/alpha/src/lib.rs"), root);
+    assert_eq!(pkg.as_deref(), Some("alpha"));
     Ok(())
 }
 
@@ -78,16 +74,15 @@ async fn test_owning_package_finds_direct_parent() -> ::xtask::sandbox::TestResu
 
 #[sinex_test]
 async fn test_owning_package_finds_nested_file() -> ::xtask::sandbox::TestResult<()> {
-    let tmp = scaffold_workspace();
+    let tmp = scaffold_workspace()?;
     let root = tmp.path();
 
     let nested = root.join("crate/beta/src/submod");
     fs::create_dir_all(&nested)?;
     fs::write(nested.join("helper.rs"), "// helper\n")?;
 
-    let pkg = owning_package(Path::new("crate/beta/src/submod/helper.rs"), root)
-        .expect("should resolve to beta");
-    assert_eq!(pkg, "beta");
+    let pkg = owning_package(Path::new("crate/beta/src/submod/helper.rs"), root);
+    assert_eq!(pkg.as_deref(), Some("beta"));
     Ok(())
 }
 
@@ -98,7 +93,7 @@ async fn test_owning_package_finds_nested_file() -> ::xtask::sandbox::TestResult
 #[sinex_test]
 async fn test_owning_package_returns_none_for_workspace_root_file()
 -> ::xtask::sandbox::TestResult<()> {
-    let tmp = scaffold_workspace();
+    let tmp = scaffold_workspace()?;
     let root = tmp.path();
 
     // A file at the workspace root level has no package owner;
@@ -117,12 +112,12 @@ async fn test_owning_package_returns_none_for_workspace_root_file()
 
 #[sinex_test]
 async fn test_owning_package_ignores_workspace_only_manifest() -> ::xtask::sandbox::TestResult<()> {
-    let tmp = scaffold_workspace();
+    let tmp = scaffold_workspace()?;
     let root = tmp.path();
 
     // Create a subdirectory with only a [workspace] manifest (no [package]).
     let sub = root.join("tools/nopkg");
-    fs::create_dir_all(&sub.join("src"))?;
+    fs::create_dir_all(sub.join("src"))?;
     fs::write(
         sub.join("Cargo.toml"),
         "[workspace]\nmembers = []\n\n[workspace.package]\nversion = \"0.1.0\"\n",
@@ -144,7 +139,7 @@ async fn test_owning_package_ignores_workspace_only_manifest() -> ::xtask::sandb
 
 #[sinex_test]
 async fn test_changed_strict_maps_files_to_packages() -> ::xtask::sandbox::TestResult<()> {
-    let tmp = scaffold_workspace();
+    let tmp = scaffold_workspace()?;
     let root = tmp.path();
 
     // Simulate two changed files: one in alpha, one with no owning package.
@@ -171,7 +166,7 @@ async fn test_changed_strict_maps_files_to_packages() -> ::xtask::sandbox::TestR
 
 #[sinex_test]
 async fn test_changed_strict_deduplicates_packages() -> ::xtask::sandbox::TestResult<()> {
-    let tmp = scaffold_workspace();
+    let tmp = scaffold_workspace()?;
     let root = tmp.path();
 
     // Two files in alpha — should collapse to one package entry.
@@ -204,7 +199,7 @@ async fn test_changed_strict_deduplicates_packages() -> ::xtask::sandbox::TestRe
 
 #[sinex_test]
 async fn test_changed_strict_cross_package() -> ::xtask::sandbox::TestResult<()> {
-    let tmp = scaffold_workspace();
+    let tmp = scaffold_workspace()?;
     let root = tmp.path();
 
     let changed = [

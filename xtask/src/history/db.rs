@@ -24,15 +24,14 @@ const LATEST_PER_PACKAGE_CTE_CLOSE: &str = "
 
 pub(crate) fn non_zombie_cancel_filter(column_prefix: &str) -> String {
     format!(
-        "NOT ({prefix}status = 'cancelled' \
-        AND ({prefix}cancel_reason IS NULL \
-             OR {prefix}cancel_reason IN (\
+        "NOT ({column_prefix}status = 'cancelled' \
+        AND ({column_prefix}cancel_reason IS NULL \
+             OR {column_prefix}cancel_reason IN (\
                 'stale_pid', \
                 'watchdog_timeout', \
                 'zombie_reaped', \
                 'zombie_escaped_watchdog'\
-             )))",
-        prefix = column_prefix
+             )))"
     )
 }
 use rusqlite::{Connection, OpenFlags, OptionalExtension, params};
