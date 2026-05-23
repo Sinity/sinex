@@ -545,7 +545,7 @@ pub fn survey_file_drop_watch_tree(
 fn planned_file_drop_watch_targets(
     config: &FileDropConfig,
 ) -> ParserResult<Vec<(PathBuf, RecursiveMode)>> {
-    let watch_paths = dedup_file_drop_watch_paths(config);
+    let watch_paths = normalized_file_drop_watch_paths(config);
 
     if !config.recursive {
         return Ok(watch_paths
@@ -598,16 +598,61 @@ fn planned_file_drop_watch_targets(
     Ok(targets)
 }
 
-fn dedup_file_drop_watch_paths(config: &FileDropConfig) -> Vec<PathBuf> {
+fn normalized_file_drop_watch_paths(config: &FileDropConfig) -> Vec<PathBuf> {
+    normalized_file_drop_watch_roots(config)
+        .into_iter()
+        .map(|path| path.as_std_path().to_path_buf())
+        .collect()
+}
+
+fn normalized_file_drop_watch_roots(config: &FileDropConfig) -> Vec<Utf8PathBuf> {
     let mut seen = HashSet::new();
+    let ignored_directory_names = config
+        .ignored_directory_names
+        .iter()
+        .map(String::as_str)
+        .collect::<HashSet<_>>();
+    let can_subsume_nested_roots = config.recursive && config.max_depth.is_none();
+    let mut roots = Vec::new();
+
     config
         .watch_paths
         .iter()
-        .filter_map(|path| {
-            let path = path.as_std_path().to_path_buf();
-            seen.insert(path.clone()).then_some(path)
-        })
-        .collect()
+        .filter(|path| seen.insert((*path).clone()))
+        .for_each(|path| {
+            if can_subsume_nested_roots
+                && roots
+                    .iter()
+                    .any(|root| file_drop_watch_root_subsumes(root, path, &ignored_directory_names))
+            {
+                return;
+            }
+
+            if can_subsume_nested_roots {
+                roots.retain(|root| {
+                    !file_drop_watch_root_subsumes(path, root, &ignored_directory_names)
+                });
+            }
+
+            roots.push(path.clone());
+        });
+    roots
+}
+
+fn file_drop_watch_root_subsumes(
+    parent: &Utf8PathBuf,
+    child: &Utf8PathBuf,
+    ignored_directory_names: &HashSet<&str>,
+) -> bool {
+    let Ok(relative) = child.strip_prefix(parent) else {
+        return false;
+    };
+    if relative.components().next().is_none() {
+        return true;
+    }
+    !relative
+        .components()
+        .any(|component| ignored_directory_names.contains(component.as_str()))
 }
 
 /// No cursor for [`FileDropAdapter`] — live streams are anchor-only.
@@ -782,7 +827,7 @@ struct FileDropPathFilter {
 impl FileDropPathFilter {
     fn from_config(config: &FileDropConfig) -> Self {
         Self {
-            watch_roots: config.watch_paths.clone(),
+            watch_roots: normalized_file_drop_watch_roots(config),
             max_depth: config.max_depth,
             ignored_directory_names: config.ignored_directory_names.iter().cloned().collect(),
         }
@@ -821,14 +866,22 @@ impl FileDropPathFilter {
                 .any(|component| self.ignored_directory_names.contains(component.as_str()));
         }
 
-        self.watch_roots
+        let mut matched_root = false;
+        for relative in self
+            .watch_roots
             .iter()
             .filter_map(|root| path.strip_prefix(root).ok())
-            .any(|relative| {
-                relative
-                    .components()
-                    .any(|component| self.ignored_directory_names.contains(component.as_str()))
-            })
+        {
+            matched_root = true;
+            if !relative
+                .components()
+                .any(|component| self.ignored_directory_names.contains(component.as_str()))
+            {
+                return false;
+            }
+        }
+
+        matched_root
     }
 
     fn relative_depth(&self, path: &Utf8PathBuf) -> Option<usize> {
@@ -1234,6 +1287,41 @@ mod tests {
     }
 
     #[sinex_test]
+    async fn file_drop_nested_root_under_ignored_component_stays_explicit()
+    -> xtask::sandbox::TestResult<()> {
+        let material_id = dummy_material_id();
+        let root = Utf8PathBuf::from("/tmp/sinex-file-drop-root");
+        let explicit_child = Utf8PathBuf::from("/tmp/sinex-file-drop-root/target/explicit");
+        let filter = FileDropPathFilter::from_config(&FileDropConfig {
+            watch_paths: vec![root, explicit_child.clone()],
+            recursive: true,
+            max_depth: None,
+            ignored_directory_names: vec!["target".to_string()],
+            max_watches: default_file_drop_max_watches(),
+            events: vec![],
+        });
+        let event = Event::new(EventKind::Create(notify::event::CreateKind::File))
+            .add_path(std::path::PathBuf::from(
+                "/tmp/sinex-file-drop-root/target/suppressed.txt",
+            ))
+            .add_path(std::path::PathBuf::from(
+                "/tmp/sinex-file-drop-root/target/explicit/kept.txt",
+            ));
+
+        let records = records_from_file_drop_event(material_id, &event, &[], &filter);
+
+        assert_eq!(records.len(), 1);
+        assert_eq!(
+            records[0]
+                .logical_path
+                .as_deref()
+                .map(camino::Utf8Path::as_str),
+            Some("/tmp/sinex-file-drop-root/target/explicit/kept.txt")
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
     async fn file_drop_max_depth_bounds_recursive_records() -> xtask::sandbox::TestResult<()> {
         let material_id = dummy_material_id();
         let filter = FileDropPathFilter::from_config(&FileDropConfig {
@@ -1396,6 +1484,65 @@ mod tests {
         assert_eq!(
             targets,
             vec![(root.as_std_path().to_path_buf(), RecursiveMode::Recursive)]
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn file_drop_watch_targets_subsume_nested_recursive_roots()
+    -> xtask::sandbox::TestResult<()> {
+        let temp_root = TempDir::new()?;
+        std::fs::create_dir_all(temp_root.path().join("nested/child"))?;
+        let root = Utf8PathBuf::from_path_buf(temp_root.path().to_path_buf())
+            .expect("temp root should be utf8");
+        let child = root.join("nested");
+        let config = FileDropConfig {
+            watch_paths: vec![child, root.clone()],
+            recursive: true,
+            max_depth: None,
+            ignored_directory_names: Vec::new(),
+            max_watches: default_file_drop_max_watches(),
+            events: vec![],
+        };
+
+        let targets = planned_file_drop_watch_targets(&config)?;
+
+        assert_eq!(
+            targets,
+            vec![(root.as_std_path().to_path_buf(), RecursiveMode::Recursive)]
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn file_drop_watch_targets_keep_ignored_nested_roots_explicit()
+    -> xtask::sandbox::TestResult<()> {
+        let temp_root = TempDir::new()?;
+        std::fs::create_dir_all(temp_root.path().join("target/explicit"))?;
+        let root = Utf8PathBuf::from_path_buf(temp_root.path().to_path_buf())
+            .expect("temp root should be utf8");
+        let explicit_child = root.join("target/explicit");
+        let config = FileDropConfig {
+            watch_paths: vec![root.clone(), explicit_child.clone()],
+            recursive: true,
+            max_depth: None,
+            ignored_directory_names: vec!["target".to_string()],
+            max_watches: default_file_drop_max_watches(),
+            events: vec![],
+        };
+
+        let targets = planned_file_drop_watch_targets(&config)?;
+        let target_paths = targets
+            .iter()
+            .map(|(path, mode)| (path.strip_prefix(root.as_std_path()).unwrap(), *mode))
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            target_paths,
+            vec![
+                (Path::new(""), RecursiveMode::NonRecursive),
+                (Path::new("target/explicit"), RecursiveMode::NonRecursive)
+            ]
         );
         Ok(())
     }
