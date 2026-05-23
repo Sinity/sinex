@@ -564,7 +564,7 @@ fn planned_file_drop_watch_targets(
         .cloned()
         .collect::<HashSet<_>>();
     let budget = FileDropWatchBudget::detect(config.max_watches);
-    let mut targets = Vec::new();
+    let mut aggregate_survey = FileDropWatchSurvey::default();
 
     for path in &config.watch_paths {
         let survey = survey_file_drop_watch_tree(
@@ -574,21 +574,31 @@ fn planned_file_drop_watch_targets(
             false,
             &ignored_directory_names,
         )?;
-        let plan = choose_file_drop_watch_plan(survey, budget)?;
-        match plan.mode {
-            FileDropWatchMode::NativeRecursive => {
-                targets.push((path.as_std_path().to_path_buf(), RecursiveMode::Recursive));
-            }
-            FileDropWatchMode::NativeFiltered => {
-                targets.extend(
-                    plan.survey
-                        .filtered_targets
-                        .into_iter()
-                        .map(|target| (target, RecursiveMode::NonRecursive)),
-                );
-            }
-        }
+
+        aggregate_survey.accessible_watch_count += survey.accessible_watch_count;
+        aggregate_survey.filtered_watch_count += survey.filtered_watch_count;
+        aggregate_survey.depth_limited |= survey.depth_limited;
+        aggregate_survey.unreadable_directories += survey.unreadable_directories;
+        aggregate_survey.ignored_directories += survey.ignored_directories;
+        aggregate_survey
+            .filtered_targets
+            .extend(survey.filtered_targets);
     }
+
+    let plan = choose_file_drop_watch_plan(aggregate_survey, budget)?;
+    let targets = match plan.mode {
+        FileDropWatchMode::NativeRecursive => config
+            .watch_paths
+            .iter()
+            .map(|path| (path.as_std_path().to_path_buf(), RecursiveMode::Recursive))
+            .collect(),
+        FileDropWatchMode::NativeFiltered => plan
+            .survey
+            .filtered_targets
+            .into_iter()
+            .map(|target| (target, RecursiveMode::NonRecursive))
+            .collect(),
+    };
 
     Ok(targets)
 }
@@ -1446,6 +1456,35 @@ mod tests {
 
         assert!(message.contains("configured_max_watches=1"));
         assert!(message.contains("accessible_watch_count=3"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn file_drop_watch_targets_apply_budget_across_all_roots()
+    -> xtask::sandbox::TestResult<()> {
+        let temp_root = TempDir::new()?;
+        let root_a = temp_root.path().join("a");
+        let root_b = temp_root.path().join("b");
+        std::fs::create_dir_all(root_a.join("nested"))?;
+        std::fs::create_dir_all(root_b.join("nested"))?;
+        let root_a = Utf8PathBuf::from_path_buf(root_a).expect("temp root should be utf8");
+        let root_b = Utf8PathBuf::from_path_buf(root_b).expect("temp root should be utf8");
+        let config = FileDropConfig {
+            watch_paths: vec![root_a, root_b],
+            recursive: true,
+            max_depth: None,
+            ignored_directory_names: Vec::new(),
+            max_watches: NonZeroUsize::new(3).unwrap(),
+            events: vec![],
+        };
+
+        let error = planned_file_drop_watch_targets(&config)
+            .expect_err("watch budget must apply across all configured roots");
+        let message = error.to_string();
+
+        assert!(message.contains("configured_max_watches=3"));
+        assert!(message.contains("accessible_watch_count=4"));
+        assert!(message.contains("filtered_watch_count=4"));
         Ok(())
     }
 
