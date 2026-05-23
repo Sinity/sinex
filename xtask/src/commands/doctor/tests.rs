@@ -2137,6 +2137,8 @@ async fn test_rust_analyzer_cli_stderr_summary_buckets_failures() -> ::xtask::sa
 {
     let stderr = r#"
 2026-05-22T06:29:21.645151397+02:00  WARN cyclic deps: sinex_gateway(Idx::<CrateBuilder>(38)) -> sinex_gateway(Idx::<CrateBuilder>(38))
+2026-05-22T06:29:21.645151397+02:00  WARN cyclic deps: sinex_node_sdk(Idx::<CrateBuilder>(176)) -> xtask(Idx::<CrateBuilder>(346)), alternative path: xtask(Idx::<CrateBuilder>(346)) -> sinex_node_sdk(Idx::<CrateBuilder>(176))
+2026-05-22T06:29:21.645151397+02:00  WARN cyclic deps: sinex_macros(Idx::<CrateBuilder>(172)) -> sinex_primitives(Idx::<CrateBuilder>(242)), alternative path: sinex_primitives(Idx::<CrateBuilder>(242)) -> sinex_macros(Idx::<CrateBuilder>(172))
 2026-05-22T06:29:47.951700288+02:00 ERROR pattern has unexpected type: pat: Pat { ty: str }
 2026-05-22T06:29:49.34967273+02:00 ERROR Overloaded deref on type str is not a projection
 2026-05-22T06:29:50.00000000+02:00  WARN some other warning
@@ -2155,10 +2157,23 @@ async fn test_rust_analyzer_cli_stderr_summary_buckets_failures() -> ::xtask::sa
             "other_errors",
         ]
     );
-    assert_eq!(summary.cyclic_dependency_warnings, 1);
+    assert_eq!(summary.cyclic_dependency_warnings, 3);
     assert_eq!(
         summary.cyclic_dependency_edges,
+        vec![
+            "sinex_gateway->sinex_gateway",
+            "sinex_macros->sinex_primitives",
+            "sinex_node_sdk->xtask",
+        ]
+    );
+    assert_eq!(
+        summary.self_cycle_edges,
         vec!["sinex_gateway->sinex_gateway"]
+    );
+    assert_eq!(summary.xtask_cycle_edges, vec!["sinex_node_sdk->xtask"]);
+    assert_eq!(
+        summary.workspace_cycle_edges,
+        vec!["sinex_macros->sinex_primitives"]
     );
     assert_eq!(summary.internal_errors, 2);
     assert_eq!(
