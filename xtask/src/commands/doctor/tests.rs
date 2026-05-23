@@ -2157,6 +2157,16 @@ async fn test_rust_analyzer_cli_stderr_summary_buckets_failures() -> ::xtask::sa
             "other_errors",
         ]
     );
+    assert_eq!(
+        summary.remediation_actions,
+        vec![
+            RA_ACTION_EXTRACT_XTASK_SANDBOX,
+            RA_ACTION_BREAK_WORKSPACE_CYCLES,
+            RA_ACTION_INSPECT_SELF_CYCLES,
+            RA_ACTION_CAPTURE_UPSTREAM_REPRO,
+            RA_ACTION_CLASSIFY_UNCATEGORIZED_STDERR,
+        ]
+    );
     assert_eq!(summary.cyclic_dependency_warnings, 3);
     assert_eq!(
         summary.cyclic_dependency_edges,
@@ -2194,6 +2204,39 @@ async fn test_rust_analyzer_cli_stderr_summary_omits_empty_output()
     assert_eq!(
         summarize_rust_analyzer_cli_stderr("informational line"),
         None
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn test_rust_analyzer_remediation_actions_are_bucket_specific()
+-> ::xtask::sandbox::TestResult<()> {
+    assert_eq!(
+        rust_analyzer_remediation_actions(
+            &[],
+            &["sinex_node_sdk->xtask".to_string()],
+            &[],
+            0,
+            0,
+            0,
+        ),
+        vec![RA_ACTION_EXTRACT_XTASK_SANDBOX]
+    );
+    assert_eq!(
+        rust_analyzer_remediation_actions(
+            &["sinex_gateway->sinex_gateway".to_string()],
+            &[],
+            &["sinex_macros->sinex_primitives".to_string()],
+            1,
+            0,
+            1,
+        ),
+        vec![
+            RA_ACTION_BREAK_WORKSPACE_CYCLES,
+            RA_ACTION_INSPECT_SELF_CYCLES,
+            RA_ACTION_CAPTURE_UPSTREAM_REPRO,
+            RA_ACTION_CLASSIFY_UNCATEGORIZED_STDERR,
+        ]
     );
     Ok(())
 }
