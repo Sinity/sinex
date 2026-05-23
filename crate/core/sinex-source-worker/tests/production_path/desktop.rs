@@ -7,8 +7,8 @@
 //!
 //! `desktop.activitywatch` uses pre-serialised JSON rows (as `SqliteRowAdapter` produces).
 //! `desktop.clipboard` passes raw UTF-8 text bytes.
-//! `desktop.window-manager` requires a live Unix socket (Hyprland IPC); those tests
-//! are marked `#[ignore]` and tracked in #1234.
+//! `desktop.window-manager` is covered with both parser fixtures and an in-process
+//! line-delimited Unix socket fixture.
 
 #[cfg(test)]
 mod tests {
@@ -33,7 +33,6 @@ mod tests {
     const CLIPBOARD_FIXTURE: &[u8] = b"hello from clipboard";
 
     /// Hyprland IPC line for `activewindow` — `TYPE>>class,title` format.
-    /// This fixture is defined for completeness but only used by the ignored test.
     const HYPRLAND_FOCUSED_FIXTURE: &[u8] = b"activewindow>>kitty,~/project/sinex";
 
     // -------------------------------------------------------------------------
@@ -121,11 +120,10 @@ mod tests {
     }
 
     // -------------------------------------------------------------------------
-    // desktop.window-manager — requires live Hyprland Unix socket
+    // desktop.window-manager
     // -------------------------------------------------------------------------
 
     #[sinex_test]
-    #[ignore = "requires live Hyprland IPC socket - tracked in #1234"]
     async fn desktop_window_manager_obligations(_ctx: TestContext) -> TestResult<()> {
         let failures = crate::_run_case(
             "desktop.window-manager",
@@ -139,6 +137,68 @@ mod tests {
             failures.is_empty(),
             "desktop.window-manager obligations failed: {failures:#?}"
         );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn desktop_window_manager_unix_socket_adapter_parses_hyprland_frame(
+        _ctx: TestContext,
+    ) -> TestResult<()> {
+        use futures::StreamExt;
+        use sinex_node_sdk::parser::{
+            InputShapeAdapter, MaterialParser, UnixSocketStreamAdapter, UnixSocketStreamConfig,
+        };
+        use sinex_primitives::events::SourceMaterial;
+        use sinex_primitives::ids::Id;
+        use sinex_primitives::parser::{ParserContext, SourceUnitId};
+        use sinex_primitives::temporal::Timestamp;
+        use sinex_source_worker::sources::desktop::window_manager::HyprlandParser;
+
+        let fixture = crate::fixtures::unix_socket::build(b"activewindow>>kitty,~/project/sinex\n")
+            .await
+            .map_err(|error| color_eyre::eyre::eyre!("{error}"))?;
+        let socket_path = match &fixture.binding {
+            crate::fixtures::FixtureBinding::UnixSocketPath(path) => path.clone(),
+            other => {
+                return Err(color_eyre::eyre::eyre!(
+                    "unix socket fixture returned unexpected binding: {other:?}"
+                ));
+            }
+        };
+
+        let material_id = Id::<SourceMaterial>::from_uuid(sinex_primitives::Uuid::now_v7());
+        let adapter = UnixSocketStreamAdapter;
+        let config = UnixSocketStreamConfig {
+            socket_path: camino::Utf8PathBuf::from_path_buf(socket_path)
+                .map_err(|path| color_eyre::eyre::eyre!("non-UTF8 socket path: {path:?}"))?,
+            reconnect_on_eof: false,
+        };
+        let mut stream = adapter.open(material_id, &config, None).await?;
+        let record = stream
+            .next()
+            .await
+            .ok_or_else(|| color_eyre::eyre::eyre!("unix socket fixture emitted no frames"))??;
+
+        let source_unit_id = SourceUnitId::from_static("desktop.window-manager");
+        let ctx = ParserContext {
+            source_unit_id: source_unit_id.clone(),
+            source_material_id: material_id,
+            record_anchor: record.anchor.clone(),
+            operation_id: sinex_primitives::Uuid::now_v7(),
+            job_id: sinex_primitives::Uuid::now_v7(),
+            host: "fixture-host".to_string(),
+            acquisition_time: Timestamp::now(),
+        };
+
+        let mut parser = HyprlandParser;
+        let events = parser.parse_record(record, &ctx).await?;
+
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].event_type.as_str(), "window.focused");
+        assert_eq!(events[0].event_source.as_str(), "wm.hyprland");
+        assert_eq!(events[0].payload["window_class"], "kitty");
+        assert_eq!(events[0].payload["window_title"], "~/project/sinex");
+
         Ok(())
     }
 }

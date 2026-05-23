@@ -3147,6 +3147,86 @@
         "roots"
       ]
     },
+    "FileContentDropAdapter": {
+      "schema": {
+        "$defs": {
+          "FileDropEventKind": {
+            "description": "Which filesystem events the adapter should yield.",
+            "enum": [
+              "created",
+              "modified",
+              "deleted",
+              "moved"
+            ],
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Configuration for [`FileContentDropAdapter`].",
+        "properties": {
+          "events": {
+            "default": [],
+            "description": "Which event kinds to report. If empty, all kinds are reported.",
+            "items": {
+              "$ref": "#/$defs/FileDropEventKind"
+            },
+            "type": "array"
+          },
+          "ignored_directory_names": {
+            "default": [],
+            "description": "Directory names to suppress before records leave the adapter.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "max_capture_bytes": {
+            "default": 10485760,
+            "description": "Maximum regular-file payload to stage for created/modified records.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "max_depth": {
+            "default": null,
+            "description": "Maximum relative path depth to emit under a watched directory.\n\n`0` means direct children of a watched directory only, `1` includes one\nnested directory level, and `None` leaves depth unbounded.",
+            "format": "uint",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "max_watches": {
+            "default": 524288,
+            "description": "Maximum native watches the adapter should plan for before applying the\nhost kernel limit.",
+            "format": "uint",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "recursive": {
+            "default": false,
+            "description": "Whether to watch directories recursively.",
+            "type": "boolean"
+          },
+          "watch_paths": {
+            "description": "Paths to watch (files or directories).",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "watch_paths"
+        ],
+        "title": "FileContentDropConfig",
+        "type": "object"
+      },
+      "required": [
+        "watch_paths"
+      ]
+    },
     "FileDropAdapter": {
       "schema": {
         "$defs": {
@@ -3171,6 +3251,31 @@
               "$ref": "#/$defs/FileDropEventKind"
             },
             "type": "array"
+          },
+          "ignored_directory_names": {
+            "default": [],
+            "description": "Directory names to suppress before records leave the adapter.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "max_depth": {
+            "default": null,
+            "description": "Maximum relative path depth to emit under a watched directory.\n\n`0` means direct children of a watched directory only, `1` includes one\nnested directory level, and `None` leaves depth unbounded.",
+            "format": "uint",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "max_watches": {
+            "default": 524288,
+            "description": "Maximum native watches the adapter should plan for before applying the\nhost kernel limit.",
+            "format": "uint",
+            "minimum": 1,
+            "type": "integer"
           },
           "recursive": {
             "default": false,

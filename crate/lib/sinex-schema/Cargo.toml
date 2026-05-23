@@ -18,11 +18,8 @@ default = [
 ]
 
 [dev-dependencies]
-tokio-test        = "0.4"
-pretty_assertions = "1.4"
-tempfile          = { workspace = true }
-tokio             = { workspace = true }
-color-eyre        = { workspace = true }
+tokio      = { workspace = true }
+color-eyre = { workspace = true }
 
 [package.version]
 workspace = true
@@ -52,12 +49,6 @@ workspace = true
 workspace = true
 
 [dependencies.tokio]
-workspace = true
-
-[dev-dependencies.rstest]
-workspace = true
-
-[dev-dependencies.proptest]
 workspace = true
 
 [dev-dependencies.xtask]

@@ -46,14 +46,41 @@ pub struct DuplicateDependency {
     pub name: String,
     /// List of versions present
     pub versions: Vec<String>,
-    /// Whether any workspace manifest directly requests at least one reported version.
-    pub direct_workspace_debt: bool,
+    /// Whether this duplicate is directly requested by workspace manifests or
+    /// introduced only by upstream transitive dependencies.
+    pub classification: DuplicateDependencyClass,
     /// Number of workspace packages that directly request any reported version.
     pub direct_workspace_root_count: usize,
-    /// Whether this duplicate is only introduced transitively.
-    pub transitive_only: bool,
     /// Per-version reachability from workspace roots.
     pub version_details: Vec<DuplicateVersionDetail>,
+}
+
+/// How actionable a duplicate dependency is from workspace manifests.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum DuplicateDependencyClass {
+    /// At least one workspace manifest directly requests one of the versions.
+    DirectWorkspace,
+    /// No workspace manifest directly requests the duplicate; upstream crates
+    /// introduce the version split.
+    TransitiveUpstream,
+}
+
+impl DuplicateDependencyClass {
+    pub const fn is_direct_workspace(self) -> bool {
+        matches!(self, Self::DirectWorkspace)
+    }
+
+    pub const fn is_transitive_upstream(self) -> bool {
+        matches!(self, Self::TransitiveUpstream)
+    }
+
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::DirectWorkspace => "direct workspace debt",
+            Self::TransitiveUpstream => "transitive upstream",
+        }
+    }
 }
 
 /// Reachability detail for one version of a duplicate dependency.
@@ -251,14 +278,17 @@ impl WorkspaceAnalyzer {
                 }
                 let direct_workspace_roots = Self::direct_workspace_roots(&version_details);
                 let direct_workspace_root_count = direct_workspace_roots.len();
-                let direct_workspace_debt = direct_workspace_root_count > 0;
+                let classification = if direct_workspace_root_count > 0 {
+                    DuplicateDependencyClass::DirectWorkspace
+                } else {
+                    DuplicateDependencyClass::TransitiveUpstream
+                };
 
                 duplicates.push(DuplicateDependency {
                     name,
                     versions: versions_vec,
-                    direct_workspace_debt,
+                    classification,
                     direct_workspace_root_count,
-                    transitive_only: !direct_workspace_debt,
                     version_details,
                 });
             }
@@ -492,6 +522,48 @@ mod tests {
                     duplicates[i].name
                 );
             }
+        }
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_duplicates_classify_workspace_debt_explicitly() -> TestResult<()> {
+        let analyzer = WorkspaceAnalyzer::new().expect("Failed to create analyzer");
+        let duplicates = analyzer
+            .find_duplicates()
+            .expect("Failed to find duplicates");
+
+        for dup in &duplicates {
+            let has_direct_roots = dup.direct_workspace_root_count > 0;
+            assert_eq!(
+                dup.classification.is_direct_workspace(),
+                has_direct_roots,
+                "{} direct classification did not match direct roots",
+                dup.name
+            );
+            assert_eq!(
+                dup.classification.is_transitive_upstream(),
+                !has_direct_roots,
+                "{} transitive classification did not match direct roots",
+                dup.name
+            );
+
+            let value = serde_json::to_value(dup)?;
+            assert!(
+                value.get("classification").is_some(),
+                "{} missing duplicate classification in JSON shape",
+                dup.name
+            );
+            assert!(
+                value.get("direct_workspace_debt").is_none(),
+                "{} still exposes removed duplicate boolean",
+                dup.name
+            );
+            assert!(
+                value.get("transitive_only").is_none(),
+                "{} still exposes removed duplicate boolean",
+                dup.name
+            );
         }
         Ok(())
     }

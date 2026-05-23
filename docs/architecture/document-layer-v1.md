@@ -329,7 +329,7 @@ layer surface.
 ### Dendron path
 
 ```
-filesystem watch (existing sinex-fs-ingestor)
+filesystem watch (sinex-source-worker fs source unit)
    → file.created/modified events for *.md under vault root
    → sinex-document-ingestor scan (existing)
    → document.ingested (material provenance, existing payload)

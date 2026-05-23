@@ -680,6 +680,8 @@ Find duplicate dependencies (multiple versions)
 | Flag | Value | Required | Description |
 |---|---|---|---|
 | `--threshold` | yes | no | Minimum number of versions to report |
+| `--direct-only` | no | no | Only report duplicates directly requested by workspace manifests |
+| `--transitive-only` | no | no | Only report duplicates introduced through transitive dependencies |
 
 
 ### `xtask deps unused`
@@ -1814,6 +1816,7 @@ Reset developer state for a fresh start
 | `--seed` | no | no | When used with --history: reseed the history database with synthetic data |
 | `--jobs` | no | no | Delete background job records and output files |
 | `--test-tmp` | no | no | Delete stale per-test temporary directories |
+| `--stale-build-processes` | no | no | Kill stale orphaned compiler/linker processes for this checkout's target dirs |
 | `--target` | no | no | Wipe the cargo target/ directory (forces clean recompilation) |
 | `--tls` | no | no | Regenerate TLS certificates |
 

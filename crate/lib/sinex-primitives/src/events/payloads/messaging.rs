@@ -61,9 +61,10 @@ pub struct MessengerMessageSentPayload {
 mod tests {
     use super::*;
     use crate::events::EventPayload;
+    use xtask::sandbox::prelude::*;
 
-    #[test]
-    fn declares_source_and_event_type() {
+    #[sinex_test]
+    async fn declares_source_and_event_type() -> TestResult<()> {
         assert_eq!(
             MessengerMessageSentPayload::SOURCE.as_static_str(),
             "messenger"
@@ -72,5 +73,6 @@ mod tests {
             MessengerMessageSentPayload::EVENT_TYPE.as_static_str(),
             "message.sent"
         );
+        Ok(())
     }
 }
