@@ -15,6 +15,11 @@ use sinex_primitives::rpc::{
         InstanceHealthRequest, InstanceHealthResponse, InstanceInfo, ListInstancesRequest,
         ListInstancesResponse,
     },
+    curation::{
+        CURATION_FINALIZE_METHOD, CURATION_JUDGMENTS_RECORD_METHOD, CURATION_PROPOSALS_LIST_METHOD,
+        CurationFinalizeRequest, CurationFinalizeResponse, CurationListProposalsRequest,
+        CurationRecordJudgmentRequest, CurationRecordJudgmentResponse,
+    },
     dlq::{
         DLQ_LIST_METHOD, DLQ_PEEK_METHOD, DLQ_PURGE_METHOD, DLQ_REQUEUE_METHOD, DlqListRequest,
         DlqListResponse, DlqPeekRequest, DlqPeekResponse, DlqPurgeRequest, DlqPurgeResponse,
@@ -50,6 +55,11 @@ use sinex_primitives::rpc::{
         TombstoneListRequest, TombstoneListResponse, TombstoneOperationState,
         TombstonePreviewRequest, TombstonePreviewResponse, TombstoneStatusRequest,
         TombstoneStatusResponse,
+    },
+    llm::{
+        LLM_BUDGET_REPORT_METHOD, LLM_PROMPTS_LIST_METHOD, LLM_ROUTE_EXPLAIN_METHOD,
+        LlmBudgetReportRequest, LlmBudgetReportResponse, LlmPromptsListRequest,
+        LlmRouteExplainRequest, LlmRouteExplainResponse,
     },
     nodes::{NODES_DRAIN_METHOD, NODES_RESUME_METHOD, NODES_SET_HORIZON_METHOD},
     nodes::{NodeDrainRequest, NodeResumeRequest, NodeSetHorizonRequest},
@@ -880,6 +890,57 @@ impl GatewayClient {
         self.call_typed(TASKS_STATE_GET_METHOD, &request).await
     }
 
+    // ==================== Curation Commands ====================
+
+    /// List curation proposals.
+    pub async fn curation_proposals_list(
+        &self,
+        request: CurationListProposalsRequest,
+    ) -> Result<EventQueryResult> {
+        self.call_typed(CURATION_PROPOSALS_LIST_METHOD, &request)
+            .await
+    }
+
+    /// Record a judgment over a curation proposal event.
+    pub async fn curation_judgments_record(
+        &self,
+        request: CurationRecordJudgmentRequest,
+    ) -> Result<CurationRecordJudgmentResponse> {
+        self.call_typed(CURATION_JUDGMENTS_RECORD_METHOD, &request)
+            .await
+    }
+
+    /// Finalize an accepted or modified curation judgment.
+    pub async fn curation_finalize(
+        &self,
+        request: CurationFinalizeRequest,
+    ) -> Result<CurationFinalizeResponse> {
+        self.call_typed(CURATION_FINALIZE_METHOD, &request).await
+    }
+
+    // ==================== LLM Prompt/Router/Budget Commands ====================
+
+    pub async fn llm_prompts_list(
+        &self,
+        request: LlmPromptsListRequest,
+    ) -> Result<EventQueryResult> {
+        self.call_typed(LLM_PROMPTS_LIST_METHOD, &request).await
+    }
+
+    pub async fn llm_route_explain(
+        &self,
+        request: LlmRouteExplainRequest,
+    ) -> Result<LlmRouteExplainResponse> {
+        self.call_typed(LLM_ROUTE_EXPLAIN_METHOD, &request).await
+    }
+
+    pub async fn llm_budget_report(
+        &self,
+        request: LlmBudgetReportRequest,
+    ) -> Result<LlmBudgetReportResponse> {
+        self.call_typed(LLM_BUDGET_REPORT_METHOD, &request).await
+    }
+
     // ==================== Source Material Commands ====================
 
     pub async fn sources_stage(
@@ -1122,11 +1183,13 @@ impl GatewayClient {
         actor: String,
         reason_class: sinex_primitives::privacy::PrivateModeReasonClass,
         source_classes: Vec<String>,
+        expires_at: Option<sinex_primitives::temporal::Timestamp>,
     ) -> Result<PrivateModeStateResponse> {
         let req = PrivateModeEnableRequest {
             actor,
             reason_class,
             source_classes,
+            expires_at,
         };
         self.call_typed(PRIVACY_PRIVATE_MODE_ENABLE_METHOD, &req)
             .await

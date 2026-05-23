@@ -126,7 +126,7 @@ const FIXTURE_SHARE_TYPE: &str = r#"{
 }"#;
 
 /// A thread where two messages would have the same (thread, sender, ts) but differ in text.
-/// Verifies that text_hint disambiguates occurrence keys.
+/// Verifies that `text_hint` disambiguates occurrence keys.
 const FIXTURE_SAME_TS_DIFFERENT_TEXT: &str = r#"{
   "participants": ["Alice"],
   "threadName": "dupe_ts_thread",

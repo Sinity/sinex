@@ -70,7 +70,7 @@ pub async fn run(
 
     // Verify expected event types appear in both runs.
     for &expected in expected_event_types {
-        if !types_1.iter().any(|&t| t == expected) {
+        if !types_1.contains(&expected) {
             return Err(format!(
                 "replay for '{source_unit_id}': expected event type '{expected}' \
                  missing from replay output. Got: {types_1:?}"

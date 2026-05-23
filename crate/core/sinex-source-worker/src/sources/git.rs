@@ -679,8 +679,10 @@ mod tests {
         let workspace_root = std::path::Path::new(repo_path)
             .ancestors()
             .find(|p| p.join(".git").exists())
-            .map(|p| p.to_str().unwrap_or(repo_path).to_owned())
-            .unwrap_or_else(|| repo_path.to_owned());
+            .map_or_else(
+                || repo_path.to_owned(),
+                |p| p.to_str().unwrap_or(repo_path).to_owned(),
+            );
 
         let commits = run_git_log(&workspace_root).await;
         match commits {

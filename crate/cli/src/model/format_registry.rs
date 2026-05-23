@@ -1,9 +1,12 @@
 use std::collections::HashMap;
 
 use super::OutputFormat;
+use serde::Serialize;
+use sinex_primitives::rpc::{RpcMethodInfo, RpcRole, method_catalog, methods};
 
 /// Operator-facing command family used for UX grouping and projection routing.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum CommandFamily {
     Gateway,
     Query,
@@ -16,11 +19,35 @@ pub enum CommandFamily {
     Admin,
 }
 
+/// Operator-facing command effect for parity checks across CLI, RPC, MCP, and docs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CommandEffect {
+    ReadOnly,
+    Mutating,
+    Streaming,
+    Local,
+}
+
+/// Safety mechanism declared for commands that can mutate state.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CommandMutationGuard {
+    RpcAuth,
+    DryRun,
+    Confirmation,
+    LocalMaintenance,
+}
+
 /// Consolidated operator command metadata.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct CommandCatalogEntry {
     pub path: &'static str,
     pub family: CommandFamily,
+    pub effect: CommandEffect,
+    pub backing_rpc_methods: &'static [&'static str],
+    pub required_rpc_role: Option<RpcRole>,
+    pub mutation_guards: &'static [CommandMutationGuard],
     pub capability: FormatCapability,
 }
 
@@ -33,7 +60,7 @@ pub struct CommandCatalogEntry {
 /// The registry is consulted at dispatch time to reject unsupported `--format`
 /// combinations before the command executes, producing a clear error message
 /// instead of silent fallback or panic.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct FormatCapability {
     /// All formats this command handles correctly.
     pub supported: &'static [OutputFormat],
@@ -216,6 +243,15 @@ pub fn build() -> HashMap<&'static str, FormatCapability> {
         "privacy private-mode disable",
         FormatCapability::single_shot(TABLE_JSON_YAML),
     );
+    m.insert(
+        "privacy audit",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
+    m.insert(
+        "privacy export",
+        FormatCapability::single_shot(TABLE_JSON_YAML)
+            .with_note("metadata-only export; raw payloads and snippets are omitted"),
+    );
 
     // ── Audit ────────────────────────────────────────────────────────────────
     m.insert("audit", FormatCapability::single_shot(TABLE_JSON_YAML));
@@ -266,6 +302,30 @@ pub fn build() -> HashMap<&'static str, FormatCapability> {
     );
     m.insert(
         "tasks state",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
+    m.insert(
+        "curation proposals",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
+    m.insert(
+        "curation judge",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
+    m.insert(
+        "curation finalize",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
+    m.insert(
+        "llm prompts",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
+    m.insert(
+        "llm route-explain",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
+    m.insert(
+        "llm budget-report",
         FormatCapability::single_shot(TABLE_JSON_YAML),
     );
     m.insert(
@@ -501,6 +561,26 @@ pub fn build() -> HashMap<&'static str, FormatCapability> {
         FormatCapability::single_shot(TABLE_JSON_YAML)
             .with_note("inspect snapshot manifest and archive member coverage"),
     );
+    m.insert(
+        "admin snapshot-restore",
+        FormatCapability::single_shot(TABLE_JSON_YAML)
+            .with_note("restore drill plan/execution and archive sensitivity classification"),
+    );
+    m.insert(
+        "state snapshot",
+        FormatCapability::single_shot(TABLE_JSON_YAML)
+            .with_note("quiesce-mode snapshot of postgres + NATS + CAS + state"),
+    );
+    m.insert(
+        "state inspect",
+        FormatCapability::single_shot(TABLE_JSON_YAML)
+            .with_note("inspect snapshot manifest and archive member coverage"),
+    );
+    m.insert(
+        "state restore",
+        FormatCapability::single_shot(TABLE_JSON_YAML)
+            .with_note("restore drill plan/execution and archive sensitivity classification"),
+    );
 
     m
 }
@@ -517,16 +597,47 @@ pub fn registry() -> &'static HashMap<&'static str, FormatCapability> {
 /// Return the consolidated operator command catalog.
 #[must_use]
 pub fn command_catalog() -> Vec<CommandCatalogEntry> {
+    let rpc_catalog = method_catalog();
     let mut entries: Vec<_> = registry()
         .iter()
-        .map(|(&path, capability)| CommandCatalogEntry {
-            path,
-            family: family_for_path(path),
-            capability: capability.clone(),
+        .map(|(&path, capability)| {
+            let backing_rpc_methods = backing_rpc_methods_for_path(path);
+            CommandCatalogEntry {
+                path,
+                family: family_for_path(path),
+                effect: effect_for_path(path, capability),
+                backing_rpc_methods,
+                required_rpc_role: required_rpc_role(backing_rpc_methods, &rpc_catalog),
+                mutation_guards: mutation_guards_for_path(path),
+                capability: capability.clone(),
+            }
         })
         .collect();
     entries.sort_by_key(|entry| entry.path);
     entries
+}
+
+fn required_rpc_role(
+    method_names: &[&'static str],
+    rpc_catalog: &[RpcMethodInfo],
+) -> Option<RpcRole> {
+    method_names
+        .iter()
+        .filter_map(|method_name| {
+            rpc_catalog
+                .iter()
+                .find(|method| method.name == *method_name)
+                .map(|method| method.role)
+        })
+        .max_by_key(|role| rpc_role_rank(*role))
+}
+
+const fn rpc_role_rank(role: RpcRole) -> u8 {
+    match role {
+        RpcRole::ReadOnly => 0,
+        RpcRole::Write => 1,
+        RpcRole::Admin => 2,
+    }
 }
 
 fn family_for_path(path: &str) -> CommandFamily {
@@ -538,11 +649,245 @@ fn family_for_path(path: &str) -> CommandFamily {
         "node" | "automata" | "ingestors" | "replay" | "dlq" | "ops" | "audit" | "lifecycle"
         | "git-ops" | "privacy" | "blob" => CommandFamily::Operate,
         "sources" => CommandFamily::Sources,
-        "declare" | "tasks" | "documents" | "annotate" => CommandFamily::Domain,
+        "declare" | "tasks" | "curation" | "llm" | "documents" | "annotate" => {
+            CommandFamily::Domain
+        }
         "telemetry" | "throughput" => CommandFamily::Telemetry,
         "report" => CommandFamily::Report,
-        "admin" => CommandFamily::Admin,
+        "admin" | "state" => CommandFamily::Admin,
         _ => CommandFamily::Local,
+    }
+}
+
+fn effect_for_path(path: &str, capability: &FormatCapability) -> CommandEffect {
+    if capability.streaming {
+        return CommandEffect::Streaming;
+    }
+
+    if capability.supported.is_empty() {
+        return CommandEffect::Local;
+    }
+
+    let mutating = [
+        "admin snapshot",
+        "annotate",
+        "blob fsck",
+        "blob migrate",
+        "blob store",
+        "blob sweep-orphans",
+        "curation finalize",
+        "curation judge",
+        "declare",
+        "declare task",
+        "dlq purge",
+        "dlq requeue",
+        "git-ops create",
+        "git-ops delete",
+        "git-ops sync",
+        "lifecycle archive",
+        "lifecycle restore",
+        "lifecycle tombstone approve",
+        "lifecycle tombstone cancel",
+        "lifecycle tombstone create",
+        "node drain",
+        "node resume",
+        "node set-horizon",
+        "ops cancel",
+        "ops start",
+        "privacy private-mode disable",
+        "privacy private-mode enable",
+        "replay approve",
+        "replay cancel",
+        "replay execute",
+        "replay plan",
+        "replay preview",
+        "replay run",
+        "replay submit",
+        "shadow create",
+        "shadow delete",
+        "sources annotate",
+        "sources archive",
+        "sources bindings create",
+        "sources bindings update",
+        "sources stage",
+        "state restore",
+        "state snapshot",
+        "tasks complete",
+    ];
+
+    if mutating.binary_search(&path).is_ok() {
+        CommandEffect::Mutating
+    } else {
+        CommandEffect::ReadOnly
+    }
+}
+
+fn mutation_guards_for_path(path: &str) -> &'static [CommandMutationGuard] {
+    use CommandMutationGuard::{Confirmation, DryRun, LocalMaintenance, RpcAuth};
+
+    match path {
+        "admin snapshot" | "state snapshot" => &[LocalMaintenance],
+        "state restore" => &[DryRun, Confirmation, LocalMaintenance],
+        "blob fsck" | "blob migrate" | "blob sweep-orphans" => &[DryRun, LocalMaintenance],
+        "dlq purge" => &[RpcAuth, Confirmation],
+        "lifecycle archive" | "lifecycle restore" | "replay plan" | "replay preview"
+        | "replay run" => &[RpcAuth, DryRun],
+        "lifecycle tombstone approve" => &[RpcAuth, Confirmation],
+        "annotate"
+        | "curation finalize"
+        | "curation judge"
+        | "declare"
+        | "declare task"
+        | "dlq requeue"
+        | "git-ops create"
+        | "git-ops delete"
+        | "git-ops sync"
+        | "lifecycle tombstone cancel"
+        | "lifecycle tombstone create"
+        | "node drain"
+        | "node resume"
+        | "node set-horizon"
+        | "ops cancel"
+        | "ops start"
+        | "privacy private-mode disable"
+        | "privacy private-mode enable"
+        | "replay approve"
+        | "replay cancel"
+        | "replay execute"
+        | "replay submit"
+        | "sources annotate"
+        | "sources archive"
+        | "sources bindings create"
+        | "sources bindings update"
+        | "sources stage"
+        | "tasks complete" => &[RpcAuth],
+        _ => &[],
+    }
+}
+
+fn backing_rpc_methods_for_path(path: &str) -> &'static [&'static str] {
+    match path {
+        "gateway ping" => &[methods::SYSTEM_PING],
+        "gateway version" => &[methods::SYSTEM_VERSION],
+        "core health" => &[methods::SYSTEM_HEALTH],
+        "node list" | "nodes" => &[methods::COORDINATION_LIST_INSTANCES],
+        "status" => &[
+            methods::SYSTEM_VERSION,
+            methods::SYSTEM_HEALTH,
+            methods::COORDINATION_LIST_INSTANCES,
+            methods::DLQ_LIST,
+        ],
+        "now" => &[
+            methods::SYSTEM_HEALTH,
+            methods::COORDINATION_LIST_INSTANCES,
+            methods::TELEMETRY_RECENT_ACTIVITY,
+        ],
+        "tui" => &[
+            methods::SYSTEM_VERSION,
+            methods::COORDINATION_LIST_INSTANCES,
+            methods::DLQ_LIST,
+            methods::EVENTS_QUERY,
+        ],
+        "node status" => &[methods::COORDINATION_INSTANCE_HEALTH],
+        "ingestors" => &[methods::INGESTORS_STATUS],
+        "node drain" => &[methods::NODES_DRAIN],
+        "node resume" => &[methods::NODES_RESUME],
+        "node set-horizon" => &[methods::NODES_SET_HORIZON],
+        "automata" => &[methods::AUTOMATA_STATUS],
+        "replay plan" | "replay run" => &[methods::REPLAY_CREATE_OPERATION],
+        "replay preview" => &[methods::REPLAY_PREVIEW_OPERATION],
+        "replay approve" => &[methods::REPLAY_APPROVE_OPERATION],
+        "replay execute" => &[methods::REPLAY_EXECUTE_OPERATION],
+        "replay submit" => &[methods::REPLAY_SUBMIT_OPERATION],
+        "replay cancel" => &[methods::REPLAY_CANCEL_OPERATION],
+        "replay status" | "replay watch" => &[methods::REPLAY_OPERATION_STATUS],
+        "replay list" => &[methods::REPLAY_LIST_OPERATIONS],
+        "dlq list" => &[methods::DLQ_LIST],
+        "dlq peek" => &[methods::DLQ_PEEK],
+        "dlq requeue" => &[methods::DLQ_REQUEUE],
+        "dlq purge" => &[methods::DLQ_PURGE],
+        "query" | "recent" | "errors" | "context" | "report today" | "report yesterday"
+        | "report calendar" => &[methods::EVENTS_QUERY],
+        "verify" => &[
+            methods::SYSTEM_HEALTH,
+            methods::EVENTS_QUERY,
+            methods::TELEMETRY_THROUGHPUT,
+            methods::TELEMETRY_RECENT_ACTIVITY,
+        ],
+        "trace" | "explain" => &[methods::EVENTS_LINEAGE],
+        "watch" => &[],
+        "ops start" => &[methods::OPS_START],
+        "ops list" => &[methods::OPS_LIST],
+        "ops get" => &[methods::OPS_GET],
+        "ops cancel" => &[methods::OPS_CANCEL],
+        "privacy private-mode status" => &[methods::PRIVACY_PRIVATE_MODE_STATUS],
+        "privacy private-mode enable" => &[methods::PRIVACY_PRIVATE_MODE_ENABLE],
+        "privacy private-mode disable" => &[methods::PRIVACY_PRIVATE_MODE_DISABLE],
+        "privacy audit" => &[
+            methods::PRIVACY_PRIVATE_MODE_STATUS,
+            methods::DLQ_LIST,
+            methods::SOURCES_READINESS_LIST,
+        ],
+        "privacy export" => &[methods::EVENTS_QUERY],
+        "audit" => &[methods::AUDIT_GET],
+        "annotate" => &[methods::EVENTS_ANNOTATE],
+        "sources stage" => &[methods::SOURCES_STAGE],
+        "sources list" => &[methods::SOURCES_LIST],
+        "sources show" => &[methods::SOURCES_SHOW],
+        "sources coverage" => &[methods::SOURCES_COVERAGE],
+        "sources annotate" => &[methods::SOURCES_ANNOTATE],
+        "sources archive" => &[methods::SOURCES_ARCHIVE],
+        "sources continuity" => &[
+            methods::SOURCES_CONTINUITY,
+            methods::SOURCES_CONTINUITY_LIST,
+            methods::SOURCES_CONTINUITY_GET,
+        ],
+        "sources explain-gap" => &[methods::SOURCES_CONTINUITY_EXPLAIN_GAP],
+        "sources readiness" => &[
+            methods::SOURCES_READINESS_LIST,
+            methods::SOURCES_READINESS_GET,
+        ],
+        "declare task" => &[methods::TASKS_CREATE],
+        "tasks complete" => &[methods::TASKS_COMPLETE],
+        "tasks state" => &[methods::TASKS_STATE_GET],
+        "curation proposals" => &[methods::CURATION_PROPOSALS_LIST],
+        "curation judge" => &[methods::CURATION_JUDGMENTS_RECORD],
+        "curation finalize" => &[methods::CURATION_FINALIZE],
+        "llm prompts" => &[methods::LLM_PROMPTS_LIST],
+        "llm route-explain" => &[methods::LLM_ROUTE_EXPLAIN],
+        "llm budget-report" => &[methods::LLM_BUDGET_REPORT],
+        "lifecycle status" => &[methods::LIFECYCLE_STATUS],
+        "lifecycle archive" => &[methods::LIFECYCLE_ARCHIVE],
+        "lifecycle restore" => &[methods::LIFECYCLE_RESTORE],
+        "lifecycle tombstone create" => &[methods::LIFECYCLE_TOMBSTONE_CREATE],
+        "lifecycle tombstone approve" => &[methods::LIFECYCLE_TOMBSTONE_APPROVE],
+        "lifecycle tombstone preview" => &[methods::LIFECYCLE_TOMBSTONE_PREVIEW],
+        "lifecycle tombstone cancel" => &[methods::LIFECYCLE_TOMBSTONE_CANCEL],
+        "lifecycle tombstone list" => &[methods::LIFECYCLE_TOMBSTONE_LIST],
+        "lifecycle tombstone status" => &[methods::LIFECYCLE_TOMBSTONE_STATUS],
+        "git-ops list" => &[methods::GITOPS_LIST_SOURCES],
+        "git-ops create" => &[methods::GITOPS_CREATE_SOURCE],
+        "git-ops delete" => &[methods::GITOPS_DELETE_SOURCE],
+        "git-ops sync" => &[methods::GITOPS_TRIGGER_SYNC],
+        "telemetry window-focus" => &[methods::TELEMETRY_WINDOW_FOCUS],
+        "telemetry command-frequency" => &[methods::TELEMETRY_COMMAND_FREQUENCY],
+        "telemetry file-activity" => &[methods::TELEMETRY_FILE_ACTIVITY],
+        "telemetry recent-activity" => &[methods::TELEMETRY_RECENT_ACTIVITY],
+        "telemetry system-state" => &[methods::TELEMETRY_SYSTEM_STATE],
+        "telemetry node-stats" => &[methods::TELEMETRY_NODE_STATS],
+        "telemetry stream-stats" => &[methods::TELEMETRY_STREAM_STATS],
+        "telemetry gateway-stats" => &[methods::TELEMETRY_GATEWAY_STATS],
+        "telemetry assembly-stats" => &[methods::TELEMETRY_ASSEMBLY_STATS],
+        "telemetry metric-counters" => &[methods::TELEMETRY_METRIC_COUNTERS],
+        "telemetry current-device-state" => &[methods::TELEMETRY_CURRENT_DEVICE_STATE],
+        "telemetry current-health" => &[methods::TELEMETRY_CURRENT_HEALTH],
+        "telemetry ingestd-batch-stats" => &[methods::TELEMETRY_INGESTD_BATCH_STATS],
+        "telemetry ingestd-validation" => &[methods::TELEMETRY_INGESTD_VALIDATION],
+        "throughput" => &[methods::TELEMETRY_THROUGHPUT],
+        "documents search" => &[methods::DOCUMENTS_SEARCH],
+        "documents get" => &[methods::DOCUMENTS_GET],
+        "documents chunks" => &[methods::DOCUMENTS_GET_CHUNKS],
+        _ => &[],
     }
 }
 
@@ -583,15 +928,21 @@ pub fn validate_format(command_path: &str, format: OutputFormat) -> Result<(), S
 pub fn render_format_matrix() -> String {
     let rows = command_catalog();
 
-    let mut out = String::from("| Command | table | json | yaml | dot | streaming | Note |\n");
-    out.push_str("|---------|-------|------|------|-----|-----------|------|\n");
+    let mut out = String::from(
+        "| Command | effect | RPC role | mutation guards | RPC methods | table | json | yaml | dot | streaming | Note |\n",
+    );
+    out.push_str("|---------|--------|----------|-----------------|-------------|-------|------|------|-----|-----------|------|\n");
 
     for entry in &rows {
         let cap = &entry.capability;
         let has = |f: OutputFormat| if cap.supports(f) { "✓" } else { "" };
         out.push_str(&format!(
-            "| `{}` | {} | {} | {} | {} | {} | {} |\n",
+            "| `{}` | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |\n",
             entry.path,
+            effect_label(entry.effect),
+            entry.required_rpc_role.map_or("", rpc_role_label),
+            mutation_guards_label(entry),
+            entry.backing_rpc_methods.join(", "),
             has(OutputFormat::Table),
             has(OutputFormat::Json),
             has(OutputFormat::Yaml),
@@ -615,10 +966,32 @@ pub fn render_format_matrix_terminal() -> String {
         .max()
         .unwrap_or(10)
         .max(7);
+    let effect_width = "read_only".len();
+    let role_width = "read_only".len();
+    let guard_width = rows
+        .iter()
+        .map(|entry| mutation_guards_label(entry).len())
+        .max()
+        .unwrap_or("guards".len())
+        .max("guards".len());
+    let rpc_width = rows
+        .iter()
+        .map(|entry| rpc_methods_label(entry).len())
+        .max()
+        .unwrap_or("rpc_methods".len())
+        .max("rpc_methods".len());
     let header = format!(
-        "{:<width$}  table  json   yaml   dot  stream  note",
+        "{:<width$}  {:<effect_width$}  {:<role_width$}  {:<guard_width$}  {:<rpc_width$}  table  json   yaml   dot  stream  note",
         "COMMAND",
-        width = cmd_width
+        "EFFECT",
+        "RPC_ROLE",
+        "GUARDS",
+        "RPC_METHODS",
+        width = cmd_width,
+        effect_width = effect_width,
+        role_width = role_width,
+        guard_width = guard_width,
+        rpc_width = rpc_width,
     );
     let sep = "─".repeat(header.len());
 
@@ -628,8 +1001,12 @@ pub fn render_format_matrix_terminal() -> String {
         let cap = &entry.capability;
         let has = |f: OutputFormat| if cap.supports(f) { "  ✓  " } else { "     " };
         out.push_str(&format!(
-            "{:<width$} {}{}{}{}  {:<6}  {}\n",
+            "{:<width$}  {:<effect_width$}  {:<role_width$}  {:<guard_width$}  {:<rpc_width$}{}{}{}{}  {:<6}  {}\n",
             entry.path,
+            effect_label(entry.effect),
+            entry.required_rpc_role.map_or("", rpc_role_label),
+            mutation_guards_label(entry),
+            rpc_methods_label(entry),
             has(OutputFormat::Table),
             has(OutputFormat::Json),
             has(OutputFormat::Yaml),
@@ -637,15 +1014,59 @@ pub fn render_format_matrix_terminal() -> String {
             if cap.streaming { "stream" } else { "" },
             cap.note.unwrap_or(""),
             width = cmd_width,
+            effect_width = effect_width,
+            role_width = role_width,
+            guard_width = guard_width,
+            rpc_width = rpc_width,
         ));
     }
 
     out
 }
 
+fn rpc_methods_label(entry: &CommandCatalogEntry) -> String {
+    if entry.backing_rpc_methods.is_empty() {
+        String::new()
+    } else {
+        entry.backing_rpc_methods.join(",")
+    }
+}
+
+fn mutation_guards_label(entry: &CommandCatalogEntry) -> String {
+    entry
+        .mutation_guards
+        .iter()
+        .map(|guard| match guard {
+            CommandMutationGuard::RpcAuth => "rpc_auth",
+            CommandMutationGuard::DryRun => "dry_run",
+            CommandMutationGuard::Confirmation => "confirmation",
+            CommandMutationGuard::LocalMaintenance => "local_maintenance",
+        })
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+fn rpc_role_label(role: RpcRole) -> &'static str {
+    match role {
+        RpcRole::ReadOnly => "read_only",
+        RpcRole::Write => "write",
+        RpcRole::Admin => "admin",
+    }
+}
+
+fn effect_label(effect: CommandEffect) -> &'static str {
+    match effect {
+        CommandEffect::ReadOnly => "read_only",
+        CommandEffect::Mutating => "mutating",
+        CommandEffect::Streaming => "streaming",
+        CommandEffect::Local => "local",
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sinex_primitives::rpc::{RpcMutability, method_catalog};
     use xtask::sandbox::prelude::sinex_test;
 
     #[sinex_test]
@@ -693,6 +1114,216 @@ mod tests {
                 "catalog entry `{}` must be backed by the format registry",
                 entry.path
             );
+        }
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn command_catalog_serializes_machine_readable_matrix() -> xtask::sandbox::TestResult<()>
+    {
+        let value = serde_json::to_value(command_catalog())?;
+        let entries = value
+            .as_array()
+            .ok_or_else(|| color_eyre::eyre::eyre!("command catalog must serialize as an array"))?;
+
+        assert_eq!(entries.len(), registry().len());
+        for entry in entries {
+            assert!(entry["path"].as_str().is_some());
+            assert!(entry["family"].as_str().is_some());
+            assert!(entry["effect"].as_str().is_some());
+            assert!(entry["backing_rpc_methods"].as_array().is_some());
+            assert!(entry["required_rpc_role"].is_string() || entry["required_rpc_role"].is_null());
+            assert!(entry["mutation_guards"].as_array().is_some());
+            assert!(entry["capability"]["supported"].as_array().is_some());
+            assert!(entry["capability"]["streaming"].as_bool().is_some());
+        }
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn command_catalog_classifies_known_effects() -> xtask::sandbox::TestResult<()> {
+        let catalog = command_catalog();
+        let effect_for = |path: &str| {
+            catalog
+                .iter()
+                .find(|entry| entry.path == path)
+                .map(|entry| entry.effect)
+        };
+
+        assert_eq!(effect_for("query"), Some(CommandEffect::ReadOnly));
+        assert_eq!(effect_for("watch"), Some(CommandEffect::Streaming));
+        assert_eq!(effect_for("completions"), Some(CommandEffect::Local));
+        assert_eq!(effect_for("dlq requeue"), Some(CommandEffect::Mutating));
+        assert_eq!(
+            effect_for("privacy private-mode enable"),
+            Some(CommandEffect::Mutating)
+        );
+        assert_eq!(effect_for("privacy audit"), Some(CommandEffect::ReadOnly));
+        assert_eq!(
+            effect_for("curation finalize"),
+            Some(CommandEffect::Mutating)
+        );
+        assert_eq!(effect_for("replay plan"), Some(CommandEffect::Mutating));
+        assert_eq!(effect_for("replay preview"), Some(CommandEffect::Mutating));
+        assert_eq!(effect_for("git-ops create"), Some(CommandEffect::Mutating));
+        assert_eq!(effect_for("git-ops sync"), Some(CommandEffect::Mutating));
+        assert_eq!(effect_for("state inspect"), Some(CommandEffect::ReadOnly));
+        assert_eq!(effect_for("state restore"), Some(CommandEffect::Mutating));
+        assert_eq!(effect_for("state snapshot"), Some(CommandEffect::Mutating));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn command_catalog_mutating_entries_declare_guards() -> xtask::sandbox::TestResult<()> {
+        for entry in command_catalog() {
+            if entry.effect != CommandEffect::Mutating {
+                assert!(
+                    entry.mutation_guards.is_empty(),
+                    "non-mutating command `{}` must not declare mutation guards",
+                    entry.path
+                );
+                continue;
+            }
+
+            assert!(
+                !entry.mutation_guards.is_empty(),
+                "mutating command `{}` must declare at least one mutation guard",
+                entry.path
+            );
+        }
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn command_catalog_rpc_mutations_declare_rpc_auth() -> xtask::sandbox::TestResult<()> {
+        for entry in command_catalog() {
+            if entry.effect != CommandEffect::Mutating || entry.backing_rpc_methods.is_empty() {
+                continue;
+            }
+
+            assert!(
+                entry
+                    .mutation_guards
+                    .contains(&CommandMutationGuard::RpcAuth),
+                "mutating RPC-backed command `{}` must declare rpc_auth",
+                entry.path
+            );
+        }
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn command_catalog_local_mutations_declare_operator_guard()
+    -> xtask::sandbox::TestResult<()> {
+        for entry in command_catalog() {
+            if entry.effect != CommandEffect::Mutating || !entry.backing_rpc_methods.is_empty() {
+                continue;
+            }
+
+            let has_local_guard = entry.mutation_guards.iter().any(|guard| {
+                matches!(
+                    guard,
+                    CommandMutationGuard::DryRun
+                        | CommandMutationGuard::Confirmation
+                        | CommandMutationGuard::LocalMaintenance
+                )
+            });
+            assert!(
+                has_local_guard,
+                "local mutating command `{}` must declare a dry-run, confirmation, or local-maintenance guard",
+                entry.path
+            );
+        }
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn command_catalog_backing_rpc_methods_are_known() -> xtask::sandbox::TestResult<()> {
+        let rpc_catalog = method_catalog()
+            .into_iter()
+            .map(|method| (method.name, method))
+            .collect::<std::collections::BTreeMap<_, _>>();
+
+        for entry in command_catalog() {
+            for method_name in entry.backing_rpc_methods {
+                assert!(
+                    rpc_catalog.contains_key(method_name),
+                    "command `{}` references unknown RPC method `{method_name}`",
+                    entry.path
+                );
+            }
+        }
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn command_catalog_required_role_matches_backing_rpc_methods()
+    -> xtask::sandbox::TestResult<()> {
+        let rpc_catalog = method_catalog()
+            .into_iter()
+            .map(|method| (method.name, method))
+            .collect::<std::collections::BTreeMap<_, _>>();
+
+        for entry in command_catalog() {
+            if entry.backing_rpc_methods.is_empty() {
+                assert_eq!(
+                    entry.required_rpc_role, None,
+                    "local command `{}` must not claim an RPC role",
+                    entry.path
+                );
+                continue;
+            }
+
+            let expected = entry
+                .backing_rpc_methods
+                .iter()
+                .filter_map(|method_name| rpc_catalog.get(method_name))
+                .map(|method| method.role)
+                .max_by_key(|role| rpc_role_rank(*role));
+
+            assert_eq!(
+                entry.required_rpc_role, expected,
+                "command `{}` must expose the maximum required backing RPC role",
+                entry.path
+            );
+        }
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn command_catalog_effect_matches_backing_rpc_mutability()
+    -> xtask::sandbox::TestResult<()> {
+        let rpc_catalog = method_catalog()
+            .into_iter()
+            .map(|method| (method.name, method))
+            .collect::<std::collections::BTreeMap<_, _>>();
+
+        for entry in command_catalog() {
+            if entry.backing_rpc_methods.is_empty() {
+                continue;
+            }
+
+            let has_mutating_rpc = entry
+                .backing_rpc_methods
+                .iter()
+                .filter_map(|method_name| rpc_catalog.get(method_name))
+                .any(|method| method.mutability == RpcMutability::Mutating);
+
+            if has_mutating_rpc {
+                assert_eq!(
+                    entry.effect,
+                    CommandEffect::Mutating,
+                    "command `{}` must be mutating because at least one backing RPC mutates",
+                    entry.path
+                );
+            } else {
+                assert_ne!(
+                    entry.effect,
+                    CommandEffect::Mutating,
+                    "command `{}` is marked mutating but all backing RPC methods are read-only",
+                    entry.path
+                );
+            }
         }
         Ok(())
     }

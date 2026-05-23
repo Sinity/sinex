@@ -70,6 +70,12 @@ async fn test_mock_client_custom_health_response() -> TestResult<()> {
                 connected: true,
                 last_error: None,
             },
+            sse_confirmation: ComponentHealthReport {
+                status: HealthStatus::Healthy,
+                connected: true,
+                latency_ms: None,
+                detail: None,
+            },
         },
     };
 
@@ -836,6 +842,12 @@ async fn test_gateway_client_successful_health() -> TestResult<()> {
                         "enabled": true,
                         "connected": true,
                         "last_error": null
+                    },
+                    "sse_confirmation": {
+                        "status": "healthy",
+                        "connected": true,
+                        "latency_ms": null,
+                        "detail": "active_subscriptions=0, pending_retries=0"
                     }
                 }
             },
@@ -859,6 +871,7 @@ async fn test_gateway_client_successful_health() -> TestResult<()> {
     assert!(health.serving);
     assert!(health.components.database.connected);
     assert!(health.components.nats.connected);
+    assert!(health.components.sse_confirmation.connected);
     assert_eq!(health.components.nats.latency_ms, Some(2.5));
     assert_eq!(
         health.components.nats.detail.as_deref(),
@@ -1045,6 +1058,7 @@ async fn private_mode_enable_uses_typed_gateway_rpc() -> TestResult<()> {
             "sinity".to_string(),
             sinex_primitives::privacy::PrivateModeReasonClass::PolicyHold,
             vec!["desktop".to_string()],
+            None,
         )
         .await?;
 

@@ -1,7 +1,10 @@
 //! Curation proposal and judgment RPC contracts.
 
 use crate::JsonValue;
-use crate::events::{Event, payloads::CurationJudgmentPayload};
+use crate::events::{
+    Event,
+    payloads::{CurationFinalizedPayload, CurationJudgmentPayload},
+};
 use crate::query::EventQueryResult;
 
 use serde::{Deserialize, Serialize};
@@ -29,6 +32,15 @@ pub const CURATION_JUDGMENTS_RECORD_METHOD: RpcMethod<
     RpcStability::Experimental,
     RpcMutability::Mutating,
 );
+
+pub const CURATION_FINALIZE_METHOD: RpcMethod<CurationFinalizeRequest, CurationFinalizeResponse> =
+    RpcMethod::new(
+        methods::CURATION_FINALIZE,
+        RpcRole::Write,
+        RpcDomain::Curation,
+        RpcStability::Experimental,
+        RpcMutability::Mutating,
+    );
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CurationListProposalsRequest {
@@ -65,6 +77,17 @@ pub struct CurationRecordJudgmentRequest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CurationRecordJudgmentResponse {
     pub judgment: CurationJudgmentPayload,
+    pub event: Event<JsonValue>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CurationFinalizeRequest {
+    pub judgment_event_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CurationFinalizeResponse {
+    pub finalized: CurationFinalizedPayload,
     pub event: Event<JsonValue>,
 }
 

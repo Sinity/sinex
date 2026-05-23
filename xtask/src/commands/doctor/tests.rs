@@ -4,7 +4,12 @@ use crate::output::{OutputFormat, OutputWriter};
 use crate::sandbox::sinex_test;
 use ::xtask::sandbox::EnvGuard;
 use sinex_node_sdk::preflight::services::SystemdServiceDetails;
-use sinex_primitives::{DeploymentReadinessMode, nats::NatsConnectionConfig};
+use sinex_primitives::{
+    DeploymentReadinessMode,
+    nats::NatsConnectionConfig,
+    privacy::{RuntimePrivateModeState, private_mode_state_path, save_private_mode_state},
+    temporal::Timestamp,
+};
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::process::ExitStatusExt;
@@ -71,6 +76,10 @@ async fn test_doctor_report_json_shape() -> ::xtask::sandbox::TestResult<()> {
             available: false,
             message: Some("Cannot connect to NATS on port 4222".into()),
         },
+        private_mode: DoctorServiceCheck {
+            available: true,
+            message: Some("disabled".into()),
+        },
         tools: vec![
             ToolCheck {
                 name: "rustc".into(),
@@ -116,6 +125,8 @@ async fn test_doctor_report_json_shape() -> ::xtask::sandbox::TestResult<()> {
     assert!(json["postgres"]["message"].is_null());
     assert_eq!(json["nats"]["available"], false);
     assert!(json["nats"]["message"].is_string());
+    assert_eq!(json["private_mode"]["available"], true);
+    assert_eq!(json["private_mode"]["message"], "disabled");
 
     // Tools (agents use: .data.tools[].name, .available, .version)
     assert!(json["tools"].is_array());
@@ -142,6 +153,50 @@ async fn test_doctor_report_json_shape() -> ::xtask::sandbox::TestResult<()> {
     assert!(json.get("postgres_extensions_error").is_none());
     assert_eq!(json["pipeline_smoke"]["available"], false);
     assert_eq!(json["pipeline_smoke"]["message"], "pipeline smoke failed");
+    Ok(())
+}
+
+#[sinex_test]
+async fn test_private_mode_check_surfaces_runtime_state() -> ::xtask::sandbox::TestResult<()> {
+    let dir = tempfile::tempdir()?;
+    let mut all_ok = true;
+    let check = private_mode_check(dir.path(), &mut all_ok);
+    assert!(all_ok);
+    assert!(check.available);
+    assert_eq!(check.message.as_deref(), Some("disabled"));
+
+    save_private_mode_state(
+        dir.path(),
+        &RuntimePrivateModeState::enabled_by(
+            "operator",
+            vec!["terminal".to_string()],
+            Timestamp::UNIX_EPOCH,
+        ),
+    )?;
+
+    let check = private_mode_check(dir.path(), &mut all_ok);
+    assert!(check.available);
+    assert!(
+        check
+            .message
+            .as_deref()
+            .is_some_and(|message| message.contains("enabled for terminal"))
+    );
+
+    let malformed_dir = tempfile::tempdir()?;
+    let path = private_mode_state_path(malformed_dir.path());
+    fs::create_dir_all(path.parent().expect("private-mode path has parent"))?;
+    fs::write(path, "{not-json")?;
+
+    let check = private_mode_check(malformed_dir.path(), &mut all_ok);
+    assert!(!all_ok);
+    assert!(!check.available);
+    assert!(
+        check
+            .message
+            .as_deref()
+            .is_some_and(|message| message.contains("private-mode state unavailable"))
+    );
     Ok(())
 }
 

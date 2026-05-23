@@ -37,6 +37,7 @@ pub(crate) fn system_health_response(report: GatewayHealthReport) -> SystemHealt
         db_detail,
         nats,
         replay,
+        sse_confirmation,
         healthy,
         serving,
         degradation_reasons,
@@ -72,6 +73,18 @@ pub(crate) fn system_health_response(report: GatewayHealthReport) -> SystemHealt
                 enabled: replay.enabled,
                 connected: replay.connected,
                 last_error: replay.last_error.map(|error| error.message),
+            },
+            sse_confirmation: ComponentHealthReport {
+                status: if !sse_confirmation.running {
+                    HealthStatus::Unhealthy
+                } else if sse_confirmation.degraded {
+                    HealthStatus::Degraded
+                } else {
+                    HealthStatus::Healthy
+                },
+                connected: sse_confirmation.running,
+                latency_ms: None,
+                detail: Some(sse_confirmation.detail),
             },
         },
     }
@@ -147,6 +160,11 @@ mod tests {
                 connected: false,
                 last_error: None,
             },
+            sse_confirmation: crate::service_container::SseConfirmationStatus {
+                running: true,
+                degraded: true,
+                detail: "pending_retries=2".to_string(),
+            },
             healthy: false,
             serving: true,
             degradation_reasons: vec!["NATS unavailable".to_string()],
@@ -163,6 +181,15 @@ mod tests {
             Some("timed out")
         );
         assert!(response.components.replay_control.enabled);
+        assert_eq!(
+            response.components.sse_confirmation.status,
+            HealthStatus::Degraded
+        );
+        assert!(response.components.sse_confirmation.connected);
+        assert_eq!(
+            response.components.sse_confirmation.detail.as_deref(),
+            Some("pending_retries=2")
+        );
         assert_eq!(
             serde_json::to_value(&response)?["degradation_reasons"][0],
             "NATS unavailable"

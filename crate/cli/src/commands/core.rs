@@ -70,6 +70,13 @@ fn format_health_table(health: &SystemHealthResponse) -> String {
     if let Some(ref err) = health.components.replay_control.last_error {
         output.push_str(&format!("    Last error: {err}\n"));
     }
+    output.push_str(&format!(
+        "  SSE Confirmations: {} (connected: {})\n",
+        health.components.sse_confirmation.status, health.components.sse_confirmation.connected
+    ));
+    if let Some(ref detail) = health.components.sse_confirmation.detail {
+        output.push_str(&format!("    Detail: {detail}\n"));
+    }
 
     output
 }

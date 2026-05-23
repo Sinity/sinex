@@ -38,6 +38,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 
 use sinex_primitives::parser::SourceUnitId;
+use sinex_primitives::rpc::sources::{CaveatSeverity, SourceCaveat, caveat_codes};
 use sinex_primitives::temporal::Timestamp;
 
 const MAX_JSON_FINGERPRINT_DEPTH: usize = 8;
@@ -658,6 +659,58 @@ pub struct DriftEvent {
 }
 
 impl DriftEvent {
+    /// Convert this drift observation into readiness caveats.
+    ///
+    /// Added fields are advisory because existing parser mappings can usually
+    /// ignore them. Removed fields and type changes are degraded because they
+    /// are the shapes most likely to produce missing/defaulted parsed values.
+    #[must_use]
+    pub fn readiness_caveats(&self) -> Vec<SourceCaveat> {
+        let mut caveats = Vec::new();
+        let evidence_ref = Some(format!("drift:{}", self.current_hash));
+
+        if !self.type_changes.is_empty() {
+            caveats.push(SourceCaveat {
+                code: caveat_codes::PARSER_FIELD_TYPE_CHANGED.to_string(),
+                severity: CaveatSeverity::Degraded,
+                message: format!(
+                    "{} input field type(s) changed for source unit {}.",
+                    self.type_changes.len(),
+                    self.source_unit_id.as_str()
+                ),
+                evidence_ref: evidence_ref.clone(),
+            });
+        }
+
+        if !self.removed_keys.is_empty() {
+            caveats.push(SourceCaveat {
+                code: caveat_codes::PARSER_REQUIRED_FIELD_MISSING.to_string(),
+                severity: CaveatSeverity::Degraded,
+                message: format!(
+                    "{} previously observed input field(s) are missing for source unit {}.",
+                    self.removed_keys.len(),
+                    self.source_unit_id.as_str()
+                ),
+                evidence_ref: evidence_ref.clone(),
+            });
+        }
+
+        if !self.added_keys.is_empty() && caveats.is_empty() {
+            caveats.push(SourceCaveat {
+                code: caveat_codes::SOURCE_SHAPE_CHANGED.to_string(),
+                severity: CaveatSeverity::Info,
+                message: format!(
+                    "{} new input field(s) observed for source unit {}.",
+                    self.added_keys.len(),
+                    self.source_unit_id.as_str()
+                ),
+                evidence_ref,
+            });
+        }
+
+        caveats
+    }
+
     /// Serializes this event as a JSON payload suitable for a parser-emitted event.
     #[must_use]
     pub fn to_payload(&self) -> serde_json::Value {
@@ -1160,6 +1213,54 @@ mod tests {
         assert!(
             SourceRecordFingerprint::diff(SourceUnitId::from_static("test.unit"), &fp1, &fp1)
                 .is_none()
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn drift_readiness_caveats_classify_advisory_and_degraded_shapes()
+    -> xtask::sandbox::TestResult<()> {
+        let source_unit = SourceUnitId::from_static("test.unit");
+
+        let additive = SourceRecordFingerprint::diff(
+            source_unit.clone(),
+            &SourceRecordFingerprint::from_json(&json!({"id": 1})),
+            &SourceRecordFingerprint::from_json(&json!({"id": 1, "optional": true})),
+        )
+        .ok_or_else(|| color_eyre::eyre::eyre!("additive drift expected"))?;
+        let additive_caveats = additive.readiness_caveats();
+        assert_eq!(additive_caveats.len(), 1);
+        assert_eq!(additive_caveats[0].code, caveat_codes::SOURCE_SHAPE_CHANGED);
+        assert_eq!(additive_caveats[0].severity, CaveatSeverity::Info);
+        assert!(
+            additive_caveats[0]
+                .evidence_ref
+                .as_deref()
+                .is_some_and(|reference| reference.starts_with("drift:"))
+        );
+
+        let degraded = SourceRecordFingerprint::diff(
+            source_unit,
+            &SourceRecordFingerprint::from_json(&json!({"id": 1, "name": "old"})),
+            &SourceRecordFingerprint::from_json(&json!({"id": "1"})),
+        )
+        .ok_or_else(|| color_eyre::eyre::eyre!("degraded drift expected"))?;
+        let degraded_caveats = degraded.readiness_caveats();
+        let codes = degraded_caveats
+            .iter()
+            .map(|caveat| caveat.code.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            codes,
+            vec![
+                caveat_codes::PARSER_FIELD_TYPE_CHANGED,
+                caveat_codes::PARSER_REQUIRED_FIELD_MISSING
+            ]
+        );
+        assert!(
+            degraded_caveats
+                .iter()
+                .all(|caveat| caveat.severity == CaveatSeverity::Degraded)
         );
         Ok(())
     }
