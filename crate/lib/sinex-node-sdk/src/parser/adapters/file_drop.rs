@@ -27,7 +27,7 @@ use sinex_primitives::parser::{InputShapeKind, MaterialAnchor, SourceRecord};
 use crate::parser::{InputShapeAdapter, ParserError, ParserResult};
 
 const INOTIFY_MAX_USER_WATCHES_PATH: &str = "/proc/sys/fs/inotify/max_user_watches";
-const DEFAULT_FILE_DROP_MAX_WATCHES: usize = 524_288;
+pub const DEFAULT_FILE_DROP_MAX_WATCHES: usize = 524_288;
 
 // =============================================================================
 // FileDropEventKind
@@ -183,9 +183,21 @@ pub struct FileDropConfig {
     #[serde(default)]
     pub ignored_directory_names: Vec<String>,
 
+    /// Maximum native watches the adapter should plan for before applying the
+    /// host kernel limit.
+    #[serde(default = "default_file_drop_max_watches")]
+    pub max_watches: NonZeroUsize,
+
     /// Which event kinds to report. If empty, all kinds are reported.
     #[serde(default)]
     pub events: Vec<FileDropEventKind>,
+}
+
+fn default_file_drop_max_watches() -> NonZeroUsize {
+    match NonZeroUsize::new(DEFAULT_FILE_DROP_MAX_WATCHES) {
+        Some(value) => value,
+        None => NonZeroUsize::MIN,
+    }
 }
 
 /// Directory survey used to choose a native filesystem watch strategy.
@@ -551,11 +563,7 @@ fn planned_file_drop_watch_targets(
         .iter()
         .cloned()
         .collect::<HashSet<_>>();
-    let configured_max_watches =
-        NonZeroUsize::new(DEFAULT_FILE_DROP_MAX_WATCHES).ok_or_else(|| {
-            ParserError::Config("file-drop max watch budget must be non-zero".to_string())
-        })?;
-    let budget = FileDropWatchBudget::detect(configured_max_watches);
+    let budget = FileDropWatchBudget::detect(config.max_watches);
     let mut targets = Vec::new();
 
     for path in &config.watch_paths {
@@ -823,6 +831,7 @@ mod tests {
             recursive: false,
             max_depth: None,
             ignored_directory_names: Vec::new(),
+            max_watches: default_file_drop_max_watches(),
             events: vec![FileDropEventKind::Created],
         };
 
@@ -911,6 +920,7 @@ mod tests {
             recursive: false,
             max_depth: None,
             ignored_directory_names: Vec::new(),
+            max_watches: default_file_drop_max_watches(),
             events: vec![],
         };
         assert!(
@@ -932,6 +942,7 @@ mod tests {
             recursive: false,
             max_depth: None,
             ignored_directory_names: Vec::new(),
+            max_watches: default_file_drop_max_watches(),
             events: vec![],
         };
         // Open with a cursor — should not error.
@@ -951,6 +962,7 @@ mod tests {
             recursive: false,
             max_depth: None,
             ignored_directory_names: Vec::new(),
+            max_watches: default_file_drop_max_watches(),
             events: vec![FileDropEventKind::Created],
         };
 
@@ -980,6 +992,7 @@ mod tests {
             recursive: false,
             max_depth: None,
             ignored_directory_names: Vec::new(),
+            max_watches: default_file_drop_max_watches(),
             events: vec![FileDropEventKind::Created],
         };
 
@@ -1126,6 +1139,7 @@ mod tests {
             recursive: true,
             max_depth: None,
             ignored_directory_names: vec!["target".to_string(), ".git".to_string()],
+            max_watches: default_file_drop_max_watches(),
             events: vec![],
         });
         let event = Event::new(EventKind::Modify(notify::event::ModifyKind::Data(
@@ -1162,6 +1176,7 @@ mod tests {
             recursive: true,
             max_depth: Some(1),
             ignored_directory_names: Vec::new(),
+            max_watches: default_file_drop_max_watches(),
             events: vec![],
         });
         let event = Event::new(EventKind::Create(notify::event::CreateKind::File))
@@ -1284,6 +1299,7 @@ mod tests {
             recursive: true,
             max_depth: None,
             ignored_directory_names: Vec::new(),
+            max_watches: default_file_drop_max_watches(),
             events: vec![],
         };
 
@@ -1309,6 +1325,7 @@ mod tests {
             recursive: true,
             max_depth: None,
             ignored_directory_names: vec![".git".to_string()],
+            max_watches: default_file_drop_max_watches(),
             events: vec![],
         };
 
@@ -1340,6 +1357,7 @@ mod tests {
             recursive: true,
             max_depth: Some(1),
             ignored_directory_names: Vec::new(),
+            max_watches: default_file_drop_max_watches(),
             events: vec![],
         };
 
@@ -1356,6 +1374,40 @@ mod tests {
                 (Path::new("notes"), RecursiveMode::NonRecursive)
             ]
         );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn file_drop_watch_targets_use_configured_budget() -> xtask::sandbox::TestResult<()> {
+        let temp_root = TempDir::new()?;
+        std::fs::create_dir_all(temp_root.path().join("notes/daily"))?;
+        let root = Utf8PathBuf::from_path_buf(temp_root.path().to_path_buf())
+            .expect("temp root should be utf8");
+        let config = FileDropConfig {
+            watch_paths: vec![root],
+            recursive: true,
+            max_depth: None,
+            ignored_directory_names: Vec::new(),
+            max_watches: NonZeroUsize::new(1).unwrap(),
+            events: vec![],
+        };
+
+        let error = planned_file_drop_watch_targets(&config)
+            .expect_err("configured budget should constrain adapter watch planning");
+        let message = error.to_string();
+
+        assert!(message.contains("configured_max_watches=1"));
+        assert!(message.contains("accessible_watch_count=3"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn file_drop_config_defaults_max_watches() -> xtask::sandbox::TestResult<()> {
+        let config: FileDropConfig = serde_json::from_value(serde_json::json!({
+            "watch_paths": ["/tmp/sinex-file-drop-root"]
+        }))?;
+
+        assert_eq!(config.max_watches.get(), DEFAULT_FILE_DROP_MAX_WATCHES);
         Ok(())
     }
 
