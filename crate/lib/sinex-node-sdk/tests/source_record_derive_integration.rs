@@ -20,8 +20,9 @@ use sinex_primitives::{
     privacy::ProcessingContext,
 };
 use uuid::Uuid;
+use xtask::sandbox::prelude::*;
 
-fn ctx(source_unit_id: &'static str) -> ParserContext {
+fn parser_ctx(source_unit_id: &'static str) -> ParserContext {
     ParserContext {
         source_unit_id: SourceUnitId::from_static(source_unit_id),
         source_material_id: Id::from_uuid(Uuid::nil()),
@@ -65,13 +66,13 @@ struct MinimalRecord {
     value: String,
 }
 
-#[tokio::test]
-async fn minimal_record_round_trip() {
+#[sinex_test]
+async fn minimal_record_round_trip(_ctx: TestContext) -> TestResult<()> {
     let mut parser = MinimalRecord {
         value: String::new(),
     };
     let intents = parser
-        .parse_record(record(r#"{"value": "hello"}"#), &ctx("test.minimal"))
+        .parse_record(record(r#"{"value": "hello"}"#), &parser_ctx("test.minimal"))
         .await
         .unwrap();
     assert_eq!(intents.len(), 1);
@@ -80,10 +81,11 @@ async fn minimal_record_round_trip() {
     assert_eq!(intents[0].event_type.as_str(), "test.event");
     // event_source defaults to first dot-segment of source_unit_id.
     assert_eq!(intents[0].event_source.as_str(), "test");
+    Ok(())
 }
 
-#[test]
-fn parser_spec_is_built_from_struct_attrs() {
+#[sinex_test]
+async fn parser_spec_is_built_from_struct_attrs(_ctx: TestContext) -> TestResult<()> {
     let spec = MinimalRecord::parser_spec();
     assert_eq!(spec.parser_id.as_str(), "minimal-test");
     assert_eq!(spec.source_unit_id.as_str(), "test.minimal");
@@ -94,6 +96,7 @@ fn parser_spec_is_built_from_struct_attrs() {
         value: String::new(),
     };
     assert_eq!(parser.required_input_keys(), vec!["/value"]);
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -132,8 +135,8 @@ struct AtuinHistoryTestRecord {
     exit: i64,
 }
 
-#[tokio::test]
-async fn atuin_shape_extracts_payload_with_privacy_log() {
+#[sinex_test]
+async fn atuin_shape_extracts_payload_with_privacy_log(_ctx: TestContext) -> TestResult<()> {
     let mut parser = AtuinHistoryTestRecord {
         rowid: 0,
         session: String::new(),
@@ -149,7 +152,7 @@ async fn atuin_shape_extracts_payload_with_privacy_log() {
         "exit": 0
     }"#;
     let intents = parser
-        .parse_record(record(json), &ctx("terminal.atuin-history"))
+        .parse_record(record(json), &parser_ctx("terminal.atuin-history"))
         .await
         .unwrap();
     assert_eq!(intents.len(), 1);
@@ -186,14 +189,15 @@ async fn atuin_shape_extracts_payload_with_privacy_log() {
         .find(|d| d.field == "command")
         .expect("command in log");
     assert_eq!(cmd_decision.context, ProcessingContext::Command);
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
 // Test 3 — default values for missing optional fields.
 // ---------------------------------------------------------------------------
 
-#[tokio::test]
-async fn missing_optional_field_uses_default() {
+#[sinex_test]
+async fn missing_optional_field_uses_default(_ctx: TestContext) -> TestResult<()> {
     let mut parser = AtuinHistoryTestRecord {
         rowid: 0,
         session: String::new(),
@@ -209,26 +213,28 @@ async fn missing_optional_field_uses_default() {
         "command": "echo"
     }"#;
     let intents = parser
-        .parse_record(record(json), &ctx("terminal.atuin-history"))
+        .parse_record(record(json), &parser_ctx("terminal.atuin-history"))
         .await
         .unwrap();
     // exit defaulted to 0 (declared via #[default = "0"]).
     assert_eq!(intents[0].payload["exit"], 0);
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
 // Test 4 — missing required field errors.
 // ---------------------------------------------------------------------------
 
-#[tokio::test]
-async fn missing_required_field_errors() {
+#[sinex_test]
+async fn missing_required_field_errors(_ctx: TestContext) -> TestResult<()> {
     let mut parser = MinimalRecord {
         value: String::new(),
     };
     let result = parser
-        .parse_record(record(r"{}"), &ctx("test.minimal"))
+        .parse_record(record(r"{}"), &parser_ctx("test.minimal"))
         .await;
     assert!(result.is_err());
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -256,8 +262,8 @@ struct TabRecord {
     message: String,
 }
 
-#[tokio::test]
-async fn tab_separated_with_column_index_extracts_correctly() {
+#[sinex_test]
+async fn tab_separated_with_column_index_extracts_correctly(_ctx: TestContext) -> TestResult<()> {
     let mut parser = TabRecord {
         timestamp: String::new(),
         prefix: String::new(),
@@ -275,10 +281,14 @@ async fn tab_separated_with_column_index_extracts_correctly() {
         source_ts_hint: None,
         metadata: serde_json::Value::Null,
     };
-    let intents = parser.parse_record(rec, &ctx("irc.weechat")).await.unwrap();
+    let intents = parser
+        .parse_record(rec, &parser_ctx("irc.weechat"))
+        .await
+        .unwrap();
     assert_eq!(intents[0].payload["timestamp"], "2024-01-15 12:34:56");
     assert_eq!(intents[0].payload["prefix"], "@nick");
     assert_eq!(intents[0].payload["message"], "hello world");
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -299,8 +309,8 @@ struct SuppressRecord {
     cmd: String,
 }
 
-#[tokio::test]
-async fn suppress_if_drops_field_when_flag_set() {
+#[sinex_test]
+async fn suppress_if_drops_field_when_flag_set(_ctx: TestContext) -> TestResult<()> {
     let spec = SuppressRecord::parser_spec();
 
     // With the flag on, the cmd field should be suppressed.
@@ -308,7 +318,7 @@ async fn suppress_if_drops_field_when_flag_set() {
     let intents = DeclarativeParser::evaluate(
         spec,
         record(r#"{"cmd": "secret-stuff"}"#),
-        &ctx("test.suppress"),
+        &parser_ctx("test.suppress"),
         &binding,
     )
     .unwrap();
@@ -319,22 +329,23 @@ async fn suppress_if_drops_field_when_flag_set() {
     let intents = DeclarativeParser::evaluate(
         spec,
         record(r#"{"cmd": "secret-stuff"}"#),
-        &ctx("test.suppress"),
+        &parser_ctx("test.suppress"),
         &binding,
     )
     .unwrap();
     assert_eq!(intents[0].payload["cmd"], "secret-stuff");
+    Ok(())
 }
 
-#[tokio::test]
-async fn derived_parser_honors_binding_aware_entrypoint() {
+#[sinex_test]
+async fn derived_parser_honors_binding_aware_entrypoint(_ctx: TestContext) -> TestResult<()> {
     let mut parser = SuppressRecord { cmd: String::new() };
 
     let binding = BindingConfig::new().with_flag("private_mode_active", true);
     let intents = parser
         .parse_record_with_binding(
             record(r#"{"cmd": "secret-stuff"}"#),
-            &ctx("test.suppress"),
+            &parser_ctx("test.suppress"),
             &binding,
         )
         .await
@@ -342,18 +353,22 @@ async fn derived_parser_honors_binding_aware_entrypoint() {
     assert!(intents[0].payload.get("cmd").is_none());
 
     let intents = parser
-        .parse_record(record(r#"{"cmd": "secret-stuff"}"#), &ctx("test.suppress"))
+        .parse_record(
+            record(r#"{"cmd": "secret-stuff"}"#),
+            &parser_ctx("test.suppress"),
+        )
         .await
         .unwrap();
     assert_eq!(intents[0].payload["cmd"], "secret-stuff");
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
 // Test 7 — manifest is built from the spec.
 // ---------------------------------------------------------------------------
 
-#[test]
-fn manifest_reflects_spec_metadata() {
+#[sinex_test]
+async fn manifest_reflects_spec_metadata(_ctx: TestContext) -> TestResult<()> {
     let parser = MinimalRecord {
         value: String::new(),
     };
@@ -362,6 +377,7 @@ fn manifest_reflects_spec_metadata() {
     assert_eq!(manifest.source_unit_id.as_str(), "test.minimal");
     assert_eq!(manifest.declared_event_types.len(), 1);
     assert_eq!(manifest.declared_event_types[0].1.as_str(), "test.event");
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -397,8 +413,8 @@ struct FsDispatchRecord {
     path: String,
 }
 
-#[tokio::test]
-async fn discriminator_selects_event_type_created() {
+#[sinex_test]
+async fn discriminator_selects_event_type_created(_ctx: TestContext) -> TestResult<()> {
     let mut parser = FsDispatchRecord {
         kind: String::new(),
         path: String::new(),
@@ -406,7 +422,7 @@ async fn discriminator_selects_event_type_created() {
     let intents = parser
         .parse_record(
             record(r#"{"kind": "Created", "path": "/home/user/file.txt"}"#),
-            &ctx("fs"),
+            &parser_ctx("fs"),
         )
         .await
         .unwrap();
@@ -415,10 +431,11 @@ async fn discriminator_selects_event_type_created() {
     assert_eq!(intents[0].event_source.as_str(), "fs-watcher");
     assert_eq!(intents[0].payload["path"], "/home/user/file.txt");
     assert_eq!(intents[0].payload["kind"], "Created");
+    Ok(())
 }
 
-#[tokio::test]
-async fn discriminator_selects_event_type_deleted() {
+#[sinex_test]
+async fn discriminator_selects_event_type_deleted(_ctx: TestContext) -> TestResult<()> {
     let mut parser = FsDispatchRecord {
         kind: String::new(),
         path: String::new(),
@@ -426,16 +443,17 @@ async fn discriminator_selects_event_type_deleted() {
     let intents = parser
         .parse_record(
             record(r#"{"kind": "Deleted", "path": "/home/user/file.txt"}"#),
-            &ctx("fs"),
+            &parser_ctx("fs"),
         )
         .await
         .unwrap();
     assert_eq!(intents.len(), 1);
     assert_eq!(intents[0].event_type.as_str(), "file.deleted");
+    Ok(())
 }
 
-#[tokio::test]
-async fn discriminator_on_unknown_skip_emits_no_events() {
+#[sinex_test]
+async fn discriminator_on_unknown_skip_emits_no_events(_ctx: TestContext) -> TestResult<()> {
     let mut parser = FsDispatchRecord {
         kind: String::new(),
         path: String::new(),
@@ -444,7 +462,7 @@ async fn discriminator_on_unknown_skip_emits_no_events() {
     let intents = parser
         .parse_record(
             record(r#"{"kind": "Renamed", "path": "/home/user/file.txt"}"#),
-            &ctx("fs"),
+            &parser_ctx("fs"),
         )
         .await
         .unwrap();
@@ -453,10 +471,11 @@ async fn discriminator_on_unknown_skip_emits_no_events() {
         0,
         "unknown discriminator value must produce zero events"
     );
+    Ok(())
 }
 
-#[test]
-fn discriminator_spec_is_built_from_attrs() {
+#[sinex_test]
+async fn discriminator_spec_is_built_from_attrs(_ctx: TestContext) -> TestResult<()> {
     let spec = FsDispatchRecord::parser_spec();
     let disc = spec
         .discriminator
@@ -468,10 +487,11 @@ fn discriminator_spec_is_built_from_attrs() {
     assert_eq!(disc.cases[0].event_type.as_str(), "file.created");
     assert_eq!(disc.cases[2].value, "Deleted");
     assert_eq!(disc.cases[2].event_type.as_str(), "file.deleted");
+    Ok(())
 }
 
-#[test]
-fn discriminator_manifest_includes_all_event_types() {
+#[sinex_test]
+async fn discriminator_manifest_includes_all_event_types(_ctx: TestContext) -> TestResult<()> {
     let parser = FsDispatchRecord {
         kind: String::new(),
         path: String::new(),
@@ -492,6 +512,7 @@ fn discriminator_manifest_includes_all_event_types() {
     assert!(types.contains(&"file.modified"));
     assert!(types.contains(&"file.deleted"));
     assert!(types.contains(&"file.moved"));
+    Ok(())
 }
 
 // Test with on_unknown = "error".
@@ -518,8 +539,8 @@ struct AwDispatchRecord {
     title: String,
 }
 
-#[tokio::test]
-async fn discriminator_on_unknown_error_fails_record() {
+#[sinex_test]
+async fn discriminator_on_unknown_error_fails_record(_ctx: TestContext) -> TestResult<()> {
     let mut parser = AwDispatchRecord {
         bucket_kind: String::new(),
         title: String::new(),
@@ -527,14 +548,15 @@ async fn discriminator_on_unknown_error_fails_record() {
     let result = parser
         .parse_record(
             record(r#"{"bucket_kind": "unknown_bucket", "title": "test"}"#),
-            &ctx("desktop.activitywatch"),
+            &parser_ctx("desktop.activitywatch"),
         )
         .await;
     assert!(result.is_err(), "on_unknown=error must fail the record");
+    Ok(())
 }
 
-#[tokio::test]
-async fn discriminator_afk_dispatch() {
+#[sinex_test]
+async fn discriminator_afk_dispatch(_ctx: TestContext) -> TestResult<()> {
     let mut parser = AwDispatchRecord {
         bucket_kind: String::new(),
         title: String::new(),
@@ -542,12 +564,13 @@ async fn discriminator_afk_dispatch() {
     let intents = parser
         .parse_record(
             record(r#"{"bucket_kind": "afk", "title": "not-afk"}"#),
-            &ctx("desktop.activitywatch"),
+            &parser_ctx("desktop.activitywatch"),
         )
         .await
         .unwrap();
     assert_eq!(intents.len(), 1);
     assert_eq!(intents[0].event_type.as_str(), "afk.changed");
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -587,8 +610,8 @@ struct ZshCarryRecord {
     command: String,
 }
 
-#[tokio::test]
-async fn carry_producer_sets_state_and_consumer_receives_it() {
+#[sinex_test]
+async fn carry_producer_sets_state_and_consumer_receives_it(_ctx: TestContext) -> TestResult<()> {
     let spec = ZshCarryRecord::parser_spec();
     let mut stateful = StatefulDeclarativeParser::new(spec.clone());
     let binding = sinex_node_sdk::parser::BindingConfig::default();
@@ -599,21 +622,22 @@ async fn carry_producer_sets_state_and_consumer_receives_it() {
     let r2 = record("ls -la");
 
     let intents1 = stateful
-        .evaluate(r1, &ctx("terminal.zsh-history"), &binding)
+        .evaluate(r1, &parser_ctx("terminal.zsh-history"), &binding)
         .unwrap();
     // Both fields are RawLine — record 1 emits one intent with command = the full line.
     assert_eq!(intents1.len(), 1);
 
     let intents2 = stateful
-        .evaluate(r2, &ctx("terminal.zsh-history"), &binding)
+        .evaluate(r2, &parser_ctx("terminal.zsh-history"), &binding)
         .unwrap();
     assert_eq!(intents2.len(), 1);
     // The command field of record 2 is "ls -la".
     assert_eq!(intents2[0].payload["command"], "ls -la");
+    Ok(())
 }
 
-#[test]
-fn carry_spec_is_built_from_field_attr() {
+#[sinex_test]
+async fn carry_spec_is_built_from_field_attr(_ctx: TestContext) -> TestResult<()> {
     let spec = ZshCarryRecord::parser_spec();
     let ts_field = spec
         .fields
@@ -626,18 +650,24 @@ fn carry_spec_is_built_from_field_attr() {
         sinex_node_sdk::parser::StatefulCarryPolicy::SetThenConsume
     );
     assert!(ts_field.skip_payload, "ts_raw must be skip_payload");
+    Ok(())
 }
 
-#[test]
-fn stateful_parser_reset_clears_carry_state() {
+#[sinex_test]
+async fn stateful_parser_reset_clears_carry_state(_ctx: TestContext) -> TestResult<()> {
     let spec = ZshCarryRecord::parser_spec();
     let mut stateful = StatefulDeclarativeParser::new(spec.clone());
     let binding = sinex_node_sdk::parser::BindingConfig::default();
 
     // Evaluate one record to populate carry state.
-    let _ = stateful.evaluate(record("line1"), &ctx("terminal.zsh-history"), &binding);
+    let _ = stateful.evaluate(
+        record("line1"),
+        &parser_ctx("terminal.zsh-history"),
+        &binding,
+    );
     // Reset must clear it.
     stateful.reset_carry_state();
     // After reset, the spec is still valid.
     assert_eq!(stateful.spec().parser_id.as_str(), "zsh-history-carry-test");
+    Ok(())
 }
