@@ -183,7 +183,6 @@ impl XtaskCommand for LintForbiddenCommand {
             "crate/lib/sinex-node-sdk/src/systemd_notify.rs",
             "crate/lib/sinex-node-sdk/src/node_cli.rs",
             "crate/lib/sinex-node-sdk/src/stage_as_you_go.rs",
-            "crate/lib/sinex-node-sdk/src/record_source/mod.rs",
             "crate/lib/sinex-node-sdk/src/preflight/configuration.rs",
             "crate/lib/sinex-node-sdk/src/coordination.rs",
             "crate/lib/sinex-node-sdk/src/runtime/stream/handles.rs",
