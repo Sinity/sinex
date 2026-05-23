@@ -211,7 +211,9 @@ pub use shutdown::wait_for_shutdown_signal;
 pub use shutdown::wait_for_shutdown_signal_bool;
 pub use shutdown::{ShutdownConfig, default_checkpoint_path};
 #[cfg(feature = "messaging")]
-pub use source_material::{stage_material, stage_material_from_file};
+pub use source_material::{
+    stage_material, stage_material_from_file, stage_material_from_file_bounded,
+};
 pub use sqlite_source::{
     SqliteSnapshotCapture, SqliteSnapshotError, SqliteSnapshotEvidenceReport,
     SqliteSnapshotMetadata, SqliteSnapshotPolicy, SqliteSnapshotState, SqliteSnapshotTrigger,

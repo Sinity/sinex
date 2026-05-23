@@ -28,7 +28,9 @@ use sinex_primitives::parser::{InputShapeKind, MaterialAnchor, SourceRecord};
 
 use crate::parser::{InputShapeAdapter, ParserError, ParserResult};
 #[cfg(feature = "messaging")]
-use crate::{acquisition_manager::AcquisitionManager, source_material::stage_material_from_file};
+use crate::{
+    acquisition_manager::AcquisitionManager, source_material::stage_material_from_file_bounded,
+};
 
 const INOTIFY_MAX_USER_WATCHES_PATH: &str = "/proc/sys/fs/inotify/max_user_watches";
 pub const DEFAULT_FILE_DROP_MAX_WATCHES: usize = 524_288;
@@ -939,11 +941,12 @@ async fn materialize_file_content_record(
         );
     }
 
-    let (material_id, total_bytes) = stage_material_from_file(
+    let (material_id, total_bytes) = stage_material_from_file_bounded(
         &acquisition,
         &path,
         "file-drop-content-material",
         Some(material_metadata.clone()),
+        Some(max_capture_bytes),
     )
     .await
     .map_err(|error| ParserError::Sinex(error))?;
@@ -1095,6 +1098,56 @@ mod tests {
                 .get("content_materialized")
                 .and_then(serde_json::Value::as_bool),
             Some(true)
+        );
+        Ok(())
+    }
+
+    #[cfg(feature = "messaging")]
+    #[sinex_test]
+    async fn content_drop_keeps_oversized_file_as_observation_record(
+        ctx: xtask::sandbox::prelude::TestContext,
+    ) -> xtask::sandbox::prelude::TestResult<()> {
+        let ctx = ctx.with_nats().dedicated().await?;
+        AcquisitionManager::bootstrap_streams(&ctx.nats_client()).await?;
+        let acquisition = Arc::new(AcquisitionManager::with_defaults(
+            ctx.nats_client(),
+            "file-content-drop-oversized-test",
+        ));
+        let dir = TempDir::new()?;
+        let file_path = dir.path().join("oversized.txt");
+        tokio::fs::write(&file_path, b"too large").await?;
+        let utf8_path = Utf8PathBuf::from_path_buf(file_path.clone())
+            .map_err(|path| color_eyre::eyre::eyre!("test path not utf8: {}", path.display()))?;
+        let original_material_id = dummy_material_id();
+        let record = SourceRecord {
+            material_id: original_material_id,
+            anchor: MaterialAnchor::DirectoryEntry {
+                path: utf8_path.clone(),
+                content_hash: None,
+            },
+            bytes: utf8_path.as_str().as_bytes().to_vec(),
+            logical_path: Some(utf8_path.clone()),
+            source_ts_hint: None,
+            metadata: FileDropRecordMetadata::new(FileDropEventKind::Created, &utf8_path)
+                .into_json(),
+        };
+
+        let materialized = materialize_file_content_record(record, acquisition, 4).await?;
+
+        assert_eq!(materialized.material_id, original_material_id);
+        assert_eq!(
+            materialized.anchor,
+            MaterialAnchor::DirectoryEntry {
+                path: utf8_path,
+                content_hash: None,
+            }
+        );
+        assert_eq!(
+            materialized
+                .metadata
+                .get("content_materialized")
+                .and_then(serde_json::Value::as_bool),
+            None
         );
         Ok(())
     }
