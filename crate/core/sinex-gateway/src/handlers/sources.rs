@@ -496,6 +496,7 @@ pub async fn handle_sources_presets_list(
 #[cfg(test)]
 mod preset_tests {
     use super::builtin_presets;
+    use sinex_primitives::SinexError;
     use xtask::sandbox::prelude::*;
 
     #[sinex_test]
@@ -516,7 +517,7 @@ mod preset_tests {
         let lynchpin = presets
             .iter()
             .find(|preset| preset.name == "lynchpin.generated.default")
-            .ok_or_else(|| color_eyre::eyre::eyre!("lynchpin preset should exist"))?;
+            .ok_or_else(|| SinexError::validation("lynchpin preset should exist"))?;
         assert_eq!(lynchpin.source_family, "analysis");
         assert_eq!(lynchpin.input_shape_kind, "directory");
         Ok(())
