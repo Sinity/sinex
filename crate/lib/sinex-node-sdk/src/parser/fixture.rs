@@ -35,6 +35,8 @@ use sinex_primitives::parser::{
     InputShapeKind, MaterialAnchor, ParsedEventIntent, ParserContext, ParserManifest,
     TimingEvidence,
 };
+use sinex_primitives::privacy::ProcessingContext;
+use sinex_primitives::proof::{PrivacyTier, SourceUnitDescriptor};
 use sinex_primitives::temporal::Timestamp;
 
 use super::{InputShapeAdapter, MaterialParser};
@@ -153,6 +155,61 @@ pub struct FixtureSpec {
     /// Tags for fixture categorization and filtering.
     #[serde(default)]
     pub tags: Vec<String>,
+
+    /// Optional acceptance contract for backlog/parser-family fixtures.
+    ///
+    /// When set, the harness validates that the fixture proves the shared
+    /// parser-family evidence shape before it runs parser-specific assertions.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub acceptance: Option<FixtureAcceptanceContract>,
+}
+
+/// Machine-checkable acceptance checklist for parser-family fixture issues.
+///
+/// This is intentionally small and repetitive: each parser fixture should make
+/// source identity, emitted event pairs, temporal extraction, occurrence
+/// identity, privacy policy, and proof obligations explicit in the fixture
+/// itself instead of relying on issue prose.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FixtureAcceptanceContract {
+    /// Source unit this fixture is proving.
+    pub source_unit_id: String,
+
+    /// Proof obligations the parser issue claims this fixture exercises.
+    #[serde(default)]
+    pub proof_obligations: Vec<String>,
+
+    /// Require every positive expectation to assert `ts_orig`.
+    #[serde(default = "default_true")]
+    pub require_timestamp: bool,
+
+    /// Require every positive expectation to assert timing evidence.
+    #[serde(default = "default_true")]
+    pub require_timing: bool,
+
+    /// Require every positive expectation to assert material anchor identity.
+    #[serde(default = "default_true")]
+    pub require_anchor: bool,
+
+    /// Require every positive expectation to assert occurrence identity.
+    #[serde(default = "default_true")]
+    pub require_occurrence_identity: bool,
+
+    /// Require every positive expectation to assert privacy context.
+    #[serde(default = "default_true")]
+    pub require_privacy_context: bool,
+
+    /// Require every positive expectation to assert parser id/version.
+    #[serde(default = "default_true")]
+    pub require_parser_metadata: bool,
+
+    /// Require non-public source units to assert field-level privacy logging.
+    #[serde(default = "default_true")]
+    pub require_privacy_log_for_non_public: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 // =============================================================================
@@ -212,6 +269,15 @@ pub enum FixtureAssertion {
 
     /// Assert that the timing evidence matches.
     Timing { expected: TimingEvidence },
+
+    /// Assert that the intent privacy context matches.
+    PrivacyContext { expected: ProcessingContext },
+
+    /// Assert that field-level privacy decisions were recorded.
+    FieldPrivacyLogPresent,
+
+    /// Assert that field-level privacy decisions were not recorded.
+    FieldPrivacyLogAbsent,
 
     /// Assert that an occurrence key is present with specific fields.
     OccurrenceKey {
@@ -382,6 +448,8 @@ impl ParserFixtureHarness {
         let material_id = test_ctx.source_material_id;
         let mut failures: Vec<FixtureFailure> = Vec::new();
         let mut intents: Vec<ParsedEventIntent> = Vec::new();
+
+        failures.extend(spec.acceptance_failures(manifest, None));
 
         // Validate manifest matches expectation.
         if let Some(exp) = spec.expectations.iter().find(|e| {
@@ -615,6 +683,37 @@ impl ParserFixtureHarness {
                                 });
                             }
                         }
+                        FixtureAssertion::PrivacyContext { expected } => {
+                            if intent.privacy_context != *expected {
+                                failures.push(FixtureFailure {
+                                    intent_index: Some(expectation.index),
+                                    expected: format!("privacy_context={expected:?}"),
+                                    found: format!("privacy_context={:?}", intent.privacy_context),
+                                });
+                            }
+                        }
+                        FixtureAssertion::FieldPrivacyLogPresent => {
+                            if intent.field_privacy_log.as_ref().is_none_or(Vec::is_empty) {
+                                failures.push(FixtureFailure {
+                                    intent_index: Some(expectation.index),
+                                    expected: "field_privacy_log present".into(),
+                                    found: "field_privacy_log absent or empty".into(),
+                                });
+                            }
+                        }
+                        FixtureAssertion::FieldPrivacyLogAbsent => {
+                            if intent
+                                .field_privacy_log
+                                .as_ref()
+                                .is_some_and(|log| !log.is_empty())
+                            {
+                                failures.push(FixtureFailure {
+                                    intent_index: Some(expectation.index),
+                                    expected: "field_privacy_log absent".into(),
+                                    found: "field_privacy_log present".into(),
+                                });
+                            }
+                        }
                         FixtureAssertion::OccurrenceKey { expected_fields } => {
                             match &intent.occurrence_key {
                                 Some(key) => {
@@ -802,6 +901,255 @@ impl ParserFixtureHarness {
     }
 }
 
+impl FixtureSpec {
+    /// Validate the parser-family acceptance contract without running a parser.
+    ///
+    /// Call this in parser issue tests before or during harness execution when
+    /// the source descriptor is available. The harness itself calls the same
+    /// validation without a descriptor so pure unit fixtures still catch
+    /// manifest/assertion drift.
+    #[must_use]
+    pub fn acceptance_failures(
+        &self,
+        manifest: &ParserManifest,
+        descriptor: Option<&SourceUnitDescriptor>,
+    ) -> Vec<FixtureFailure> {
+        let Some(contract) = &self.acceptance else {
+            return Vec::new();
+        };
+
+        let mut failures = Vec::new();
+
+        if manifest.source_unit_id.as_str() != contract.source_unit_id {
+            failures.push(FixtureFailure {
+                intent_index: None,
+                expected: format!("manifest source_unit_id={}", contract.source_unit_id),
+                found: format!(
+                    "manifest source_unit_id={}",
+                    manifest.source_unit_id.as_str()
+                ),
+            });
+        }
+
+        if !manifest
+            .accepted_input_shapes
+            .contains(&self.input_shape_kind)
+        {
+            failures.push(FixtureFailure {
+                intent_index: None,
+                expected: format!("manifest accepted input shape {:?}", self.input_shape_kind),
+                found: format!("accepted_input_shapes={:?}", manifest.accepted_input_shapes),
+            });
+        }
+
+        if let Some(descriptor) = descriptor {
+            if descriptor.id != contract.source_unit_id {
+                failures.push(FixtureFailure {
+                    intent_index: None,
+                    expected: format!("descriptor id={}", contract.source_unit_id),
+                    found: format!("descriptor id={}", descriptor.id),
+                });
+            }
+        }
+
+        for obligation in &contract.proof_obligations {
+            if !manifest
+                .proof_obligations
+                .iter()
+                .any(|item| item == obligation)
+            {
+                failures.push(FixtureFailure {
+                    intent_index: None,
+                    expected: format!("manifest proof obligation {obligation}"),
+                    found: format!("proof_obligations={:?}", manifest.proof_obligations),
+                });
+            }
+            if let Some(descriptor) = descriptor
+                && !descriptor.proof_obligations.contains(&obligation.as_str())
+            {
+                failures.push(FixtureFailure {
+                    intent_index: None,
+                    expected: format!("descriptor proof obligation {obligation}"),
+                    found: format!("proof_obligations={:?}", descriptor.proof_obligations),
+                });
+            }
+        }
+
+        if self.expect_error || self.expect_no_intents {
+            return failures;
+        }
+
+        if self.expectations.is_empty() {
+            failures.push(FixtureFailure {
+                intent_index: None,
+                expected: "at least one positive fixture expectation".into(),
+                found: "no expectations".into(),
+            });
+            return failures;
+        }
+
+        let descriptor_privacy_tier = descriptor.map(|descriptor| descriptor.privacy_tier);
+        for expectation in &self.expectations {
+            let assertions = &expectation.assertions;
+
+            require_assertion(
+                &mut failures,
+                expectation.index,
+                contract.require_timestamp,
+                assertions
+                    .iter()
+                    .any(|a| matches!(a, FixtureAssertion::Timestamp { .. })),
+                "timestamp",
+            );
+            require_assertion(
+                &mut failures,
+                expectation.index,
+                contract.require_timing,
+                assertions
+                    .iter()
+                    .any(|a| matches!(a, FixtureAssertion::Timing { .. })),
+                "timing evidence",
+            );
+            require_assertion(
+                &mut failures,
+                expectation.index,
+                contract.require_anchor,
+                assertions
+                    .iter()
+                    .any(|a| matches!(a, FixtureAssertion::Anchor { .. })),
+                "material anchor",
+            );
+            require_assertion(
+                &mut failures,
+                expectation.index,
+                contract.require_occurrence_identity,
+                assertions.iter().any(|a| {
+                    matches!(
+                        a,
+                        FixtureAssertion::OccurrenceKey { .. } | FixtureAssertion::NoOccurrenceKey
+                    )
+                }),
+                "occurrence identity",
+            );
+            require_assertion(
+                &mut failures,
+                expectation.index,
+                contract.require_privacy_context,
+                assertions
+                    .iter()
+                    .any(|a| matches!(a, FixtureAssertion::PrivacyContext { .. })),
+                "privacy context",
+            );
+            require_assertion(
+                &mut failures,
+                expectation.index,
+                contract.require_parser_metadata,
+                assertions
+                    .iter()
+                    .any(|a| matches!(a, FixtureAssertion::ParserMetadata { .. })),
+                "parser metadata",
+            );
+
+            if contract.require_privacy_log_for_non_public
+                && matches!(
+                    descriptor_privacy_tier,
+                    Some(PrivacyTier::Sensitive | PrivacyTier::Secret)
+                )
+            {
+                require_assertion(
+                    &mut failures,
+                    expectation.index,
+                    true,
+                    assertions
+                        .iter()
+                        .any(|a| matches!(a, FixtureAssertion::FieldPrivacyLogPresent)),
+                    "field privacy log",
+                );
+            }
+
+            let event_source = assertions.iter().find_map(|assertion| match assertion {
+                FixtureAssertion::EventSource { expected } => Some(expected.as_str()),
+                _ => None,
+            });
+            let event_type = assertions.iter().find_map(|assertion| match assertion {
+                FixtureAssertion::EventType { expected } => Some(expected.as_str()),
+                _ => None,
+            });
+
+            match (event_source, event_type) {
+                (Some(source), Some(event_type)) => {
+                    let declared_by_manifest = manifest.declared_event_types.iter().any(
+                        |(declared_source, declared_type)| {
+                            declared_source.as_str() == source
+                                && declared_type.as_str() == event_type
+                        },
+                    );
+                    if !declared_by_manifest {
+                        failures.push(FixtureFailure {
+                            intent_index: Some(expectation.index),
+                            expected: format!("manifest declares ({source}, {event_type})"),
+                            found: format!(
+                                "declared_event_types={:?}",
+                                manifest.declared_event_types
+                            ),
+                        });
+                    }
+
+                    if let Some(descriptor) = descriptor {
+                        let declared_by_descriptor = descriptor.event_types.iter().any(
+                            |(declared_source, declared_type)| {
+                                *declared_source == source && *declared_type == event_type
+                            },
+                        );
+                        if !declared_by_descriptor {
+                            failures.push(FixtureFailure {
+                                intent_index: Some(expectation.index),
+                                expected: format!("descriptor declares ({source}, {event_type})"),
+                                found: format!("event_types={:?}", descriptor.event_types),
+                            });
+                        }
+                    }
+                }
+                _ => failures.push(FixtureFailure {
+                    intent_index: Some(expectation.index),
+                    expected: "event source and event type assertions".into(),
+                    found: "missing EventSource or EventType assertion".into(),
+                }),
+            }
+
+            for assertion in assertions {
+                if let FixtureAssertion::PrivacyContext { expected } = assertion
+                    && !manifest.privacy_contexts.contains(expected)
+                {
+                    failures.push(FixtureFailure {
+                        intent_index: Some(expectation.index),
+                        expected: format!("manifest privacy context {expected:?}"),
+                        found: format!("privacy_contexts={:?}", manifest.privacy_contexts),
+                    });
+                }
+            }
+        }
+
+        failures
+    }
+}
+
+fn require_assertion(
+    failures: &mut Vec<FixtureFailure>,
+    intent_index: usize,
+    required: bool,
+    present: bool,
+    label: &str,
+) {
+    if required && !present {
+        failures.push(FixtureFailure {
+            intent_index: Some(intent_index),
+            expected: format!("{label} assertion"),
+            found: "missing".into(),
+        });
+    }
+}
+
 // =============================================================================
 // JSON path helpers
 // =============================================================================
@@ -822,4 +1170,166 @@ fn json_path_get<'a>(value: &'a serde_json::Value, path: &str) -> Option<&'a ser
         }
     }
     Some(current)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sinex_primitives::domain::{EventSource, EventType};
+    use sinex_primitives::parser::{ParserId, SourceUnitId, TimingConfidence};
+    use sinex_primitives::proof::{Horizon, OccurrenceIdentity, RetentionPolicy};
+    use xtask::sandbox::prelude::sinex_test;
+
+    static EVENT_TYPES: &[(&str, &str)] = &[("terminal", "shell.command")];
+    static HORIZONS: &[Horizon] = &[Horizon::Historical];
+    static PROOF_OBLIGATIONS: &[&str] = &["timestamp_intrinsic", "anchor_csv_row"];
+
+    fn fixture_manifest() -> ParserManifest {
+        ParserManifest {
+            parser_id: ParserId::from_static("fixture-parser"),
+            parser_version: "1.0.0".to_string(),
+            accepted_input_shapes: vec![InputShapeKind::StaticFile],
+            source_unit_id: SourceUnitId::from_static("fixture.source"),
+            declared_event_types: vec![(
+                EventSource::from_static("terminal"),
+                EventType::from_static("shell.command"),
+            )],
+            privacy_contexts: vec![ProcessingContext::Command],
+            proof_obligations: PROOF_OBLIGATIONS
+                .iter()
+                .map(|item| item.to_string())
+                .collect(),
+            description: "fixture parser".to_string(),
+        }
+    }
+
+    fn fixture_descriptor() -> SourceUnitDescriptor {
+        SourceUnitDescriptor {
+            id: "fixture.source",
+            namespace: "fixture",
+            event_types: EVENT_TYPES,
+            privacy_tier: PrivacyTier::Sensitive,
+            horizons: HORIZONS,
+            retention: RetentionPolicy::Forever,
+            proof_obligations: PROOF_OBLIGATIONS,
+            occurrence_identity: OccurrenceIdentity::Natural,
+            access_policy: "fixture",
+        }
+    }
+
+    fn acceptance_spec(assertions: Vec<FixtureAssertion>) -> FixtureSpec {
+        FixtureSpec {
+            name: "fixture acceptance".to_string(),
+            description: "representative parser-family fixture".to_string(),
+            input_shape_kind: InputShapeKind::StaticFile,
+            material_bytes: Vec::new(),
+            material_path: None,
+            expectations: vec![FixtureExpectation {
+                index: 0,
+                assertions,
+                golden_artifact: None,
+            }],
+            expect_no_intents: false,
+            expect_error: false,
+            expected_error_contains: None,
+            tags: vec!["parser-family".to_string()],
+            acceptance: Some(FixtureAcceptanceContract {
+                source_unit_id: "fixture.source".to_string(),
+                proof_obligations: PROOF_OBLIGATIONS
+                    .iter()
+                    .map(|item| item.to_string())
+                    .collect(),
+                require_timestamp: true,
+                require_timing: true,
+                require_anchor: true,
+                require_occurrence_identity: true,
+                require_privacy_context: true,
+                require_parser_metadata: true,
+                require_privacy_log_for_non_public: true,
+            }),
+        }
+    }
+
+    fn complete_assertions() -> Vec<FixtureAssertion> {
+        vec![
+            FixtureAssertion::EventSource {
+                expected: "terminal".to_string(),
+            },
+            FixtureAssertion::EventType {
+                expected: "shell.command".to_string(),
+            },
+            FixtureAssertion::Timestamp {
+                value: Timestamp::UNIX_EPOCH,
+            },
+            FixtureAssertion::Timing {
+                expected: TimingEvidence::Intrinsic {
+                    field: "fixture.timestamp".to_string(),
+                    confidence: TimingConfidence::Intrinsic,
+                },
+            },
+            FixtureAssertion::Anchor {
+                expected: MaterialAnchor::ByteRange { start: 0, len: 12 },
+            },
+            FixtureAssertion::OccurrenceKey {
+                expected_fields: vec![("row".to_string(), "1".to_string())],
+            },
+            FixtureAssertion::PrivacyContext {
+                expected: ProcessingContext::Command,
+            },
+            FixtureAssertion::FieldPrivacyLogPresent,
+            FixtureAssertion::ParserMetadata {
+                parser_id: "fixture-parser".to_string(),
+                parser_version: "1.0.0".to_string(),
+            },
+        ]
+    }
+
+    #[sinex_test]
+    async fn acceptance_contract_accepts_complete_fixture() -> xtask::sandbox::TestResult<()> {
+        let spec = acceptance_spec(complete_assertions());
+        let failures = spec.acceptance_failures(&fixture_manifest(), Some(&fixture_descriptor()));
+
+        assert!(failures.is_empty(), "unexpected failures: {failures:?}");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn acceptance_contract_reports_missing_privacy_and_occurrence()
+    -> xtask::sandbox::TestResult<()> {
+        let mut assertions = complete_assertions();
+        assertions.retain(|assertion| {
+            !matches!(
+                assertion,
+                FixtureAssertion::PrivacyContext { .. }
+                    | FixtureAssertion::FieldPrivacyLogPresent
+                    | FixtureAssertion::OccurrenceKey { .. }
+            )
+        });
+        let spec = acceptance_spec(assertions);
+        let failures = spec.acceptance_failures(&fixture_manifest(), Some(&fixture_descriptor()));
+        let rendered = format!("{failures:?}");
+
+        assert!(rendered.contains("privacy context assertion"));
+        assert!(rendered.contains("field privacy log assertion"));
+        assert!(rendered.contains("occurrence identity assertion"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn acceptance_contract_checks_manifest_descriptor_event_pair()
+    -> xtask::sandbox::TestResult<()> {
+        let mut assertions = complete_assertions();
+        for assertion in &mut assertions {
+            if let FixtureAssertion::EventType { expected } = assertion {
+                *expected = "shell.unclaimed".to_string();
+            }
+        }
+        let spec = acceptance_spec(assertions);
+        let failures = spec.acceptance_failures(&fixture_manifest(), Some(&fixture_descriptor()));
+        let rendered = format!("{failures:?}");
+
+        assert!(rendered.contains("manifest declares (terminal, shell.unclaimed)"));
+        assert!(rendered.contains("descriptor declares (terminal, shell.unclaimed)"));
+        Ok(())
+    }
 }

@@ -1,6 +1,6 @@
 pub mod format_registry;
 
-pub use format_registry::{CommandCatalogEntry, CommandFamily, FormatCapability};
+pub use format_registry::{CommandCatalogEntry, CommandEffect, CommandFamily, FormatCapability};
 
 use clap::ValueEnum;
 use serde::{Deserialize, Serialize};

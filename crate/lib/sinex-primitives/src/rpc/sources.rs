@@ -956,6 +956,12 @@ pub mod caveat_codes {
     pub const PARSER_FAILED_RECENTLY: &str = "parser.failed_recently";
     /// Parser version differs from the version that produced existing events.
     pub const PARSER_VERSION_DRIFT: &str = "parser.version_drift";
+    /// Parser input shape changed but only additive fields were observed.
+    pub const SOURCE_SHAPE_CHANGED: &str = "source.shape_changed";
+    /// Parser input shape is missing fields seen in the previous accepted shape.
+    pub const PARSER_REQUIRED_FIELD_MISSING: &str = "parser.required_field_missing";
+    /// Parser input shape changed the scalar type of one or more existing fields.
+    pub const PARSER_FIELD_TYPE_CHANGED: &str = "parser.field_type_changed";
     /// Coverage is partial within the requested time window.
     pub const COVERAGE_PARTIAL_TIME_WINDOW: &str = "coverage.partial_time_window";
     /// Using this source will trigger local-heavy work.
@@ -966,6 +972,8 @@ pub mod caveat_codes {
     pub const PARSER_JOBS_UNTRACKED: &str = "parser.jobs_untracked";
     /// Source bindings are declared in Nix configuration; no DB catalog (#1098).
     pub const BINDINGS_NOT_IN_DB: &str = "binding.not_in_db";
+    /// Runtime private-mode state could not be read, so readiness fails closed.
+    pub const POLICY_PRIVATE_MODE_STATE_UNAVAILABLE: &str = "policy.private_mode_state_unavailable";
 }
 
 /// A single caveat attached to a readiness report.

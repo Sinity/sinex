@@ -25,7 +25,9 @@ pub async fn handle_private_mode_status(
     state_dir: &Path,
     _request: PrivateModeStatusRequest,
 ) -> Result<PrivateModeStateResponse> {
-    Ok(private_mode_response(load_private_mode_state(state_dir)?))
+    Ok(private_mode_response(
+        load_private_mode_state(state_dir)?.effective_at(Timestamp::now()),
+    ))
 }
 
 pub async fn handle_private_mode_status_service(
@@ -43,7 +45,8 @@ pub async fn handle_private_mode_enable(
     auth: &RpcAuthContext,
 ) -> Result<PrivateModeStateResponse> {
     let mut state =
-        RuntimePrivateModeState::enabled_by(req.actor, req.source_classes, Timestamp::now());
+        RuntimePrivateModeState::enabled_by(req.actor, req.source_classes, Timestamp::now())
+            .with_expires_at(req.expires_at);
     state.reason_class = req.reason_class;
     persist_private_mode_state_with_audit(pool, state_dir, control, auth, "enable", &mut state)
         .await?;
@@ -245,6 +248,27 @@ mod tests {
     }
 
     #[sinex_test]
+    async fn private_mode_status_treats_expired_state_as_disabled() -> xtask::sandbox::TestResult<()>
+    {
+        let dir = tempfile::tempdir()?;
+        let expired = RuntimePrivateModeState::enabled_by(
+            "sinity",
+            vec!["desktop".to_string()],
+            Timestamp::UNIX_EPOCH,
+        )
+        .with_expires_at(Timestamp::from_unix_timestamp(1));
+        save_private_mode_state(dir.path(), &expired)?;
+
+        let response =
+            handle_private_mode_status(dir.path(), PrivateModeStatusRequest::default()).await?;
+
+        assert!(!response.state.enabled);
+        assert_eq!(response.state.actor, "sinity");
+        assert_eq!(response.state.expires_at, Timestamp::from_unix_timestamp(1));
+        Ok(())
+    }
+
+    #[sinex_test]
     async fn private_mode_enable_and_disable_round_trip(
         ctx: TestContext,
     ) -> xtask::sandbox::TestResult<()> {
@@ -259,6 +283,7 @@ mod tests {
                 actor: "sinity".to_string(),
                 reason_class: PrivateModeReasonClass::PolicyHold,
                 source_classes: vec!["desktop".to_string()],
+                expires_at: None,
             },
             &auth,
         )
@@ -331,6 +356,7 @@ mod tests {
                 actor: "sinity".to_string(),
                 reason_class: PrivateModeReasonClass::OperatorPrivate,
                 source_classes: vec!["desktop".to_string()],
+                expires_at: None,
             },
             &auth,
         )

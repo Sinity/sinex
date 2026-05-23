@@ -1,20 +1,27 @@
 use clap::{CommandFactory, FromArgMatches, Parser, Subcommand, parser::ValueSource};
 use color_eyre::eyre::eyre;
+use serde::Serialize;
 use sinex_node_sdk::service_runtime;
 use sinex_primitives::RuntimeTargetDescriptor;
+use sinex_primitives::rpc::{RpcMethodInfo, method_catalog};
 use sinexctl::AdminCommands;
 use sinexctl::client::{ClientConfig, GatewayClient};
 use sinexctl::commands::{
     AnnotateCommand, AuditCommand, AutomataCommand, BlobCommands, CompletionsCommand,
-    ConfigCommands, ContextCommand, CoreCommands, DeclareCommand, DemoCommand, DlqCommands,
-    DocumentsCommand, ErrorsCommand, ExplainCommand, GatewayCommands, GitOpsCommands,
-    IngestorsCommand, LifecycleCommands, NodeCommands, NodesCommand, NowCommand, OpsCommands,
-    PrivacyCommand, QueryCommand, RecentCommand, ReplayCommands, ReportCommands, SourcesCommand,
-    StatusCommand, TasksCommand, TelemetryCommands, ThroughputCommand, TraceCommand, TuiCommand,
-    VerifyCommand, WatchCommand,
+    ConfigCommands, ContextCommand, CoreCommands, CurationCommand, DeclareCommand, DemoCommand,
+    DlqCommands, DocumentsCommand, ErrorsCommand, ExplainCommand, GatewayCommands, GitOpsCommands,
+    IngestorsCommand, LifecycleCommands, LlmCommand, NodeCommands, NodesCommand, NowCommand,
+    OpsCommands, PrivacyCommand, QueryCommand, RecentCommand, ReplayCommands, ReportCommands,
+    SourcesCommand, StateCommands, StatusCommand, TasksCommand, TelemetryCommands,
+    ThroughputCommand, TraceCommand, TuiCommand, VerifyCommand, WatchCommand,
 };
+use sinexctl::fmt::format_yaml;
+use sinexctl::mcp::{McpCatalogEntry, tool_catalog as mcp_tool_catalog};
 use sinexctl::model::OutputFormat;
-use sinexctl::{Config, default_rpc_url, render_format_matrix_terminal, validate_format};
+use sinexctl::{
+    CommandCatalogEntry, Config, command_catalog, default_rpc_url, render_format_matrix_terminal,
+    validate_format,
+};
 use std::path::PathBuf;
 
 /// Sinex control CLI
@@ -161,11 +168,23 @@ enum Commands {
     /// Source material inventory and staging
     Sources(SourcesCommand),
 
+    /// Runtime state snapshot and restore operations
+    State {
+        #[command(subcommand)]
+        cmd: StateCommands,
+    },
+
     /// Manual canonical declarations
     Declare(DeclareCommand),
 
     /// Task lifecycle and projection commands
     Tasks(TasksCommand),
+
+    /// Curation proposal and judgment commands
+    Curation(CurationCommand),
+
+    /// LLM prompt, routing, and budget read surfaces
+    Llm(LlmCommand),
 
     /// Document search, retrieval, and chunk browsing
     Documents(DocumentsCommand),
@@ -290,7 +309,7 @@ async fn main() -> color_eyre::Result<()> {
 
     // Handle --list-formats before requiring a subcommand.
     if cli.list_formats {
-        print!("{}", render_format_matrix_terminal());
+        print!("{}", render_list_formats(config.default_format)?);
         return Ok(());
     }
 
@@ -319,6 +338,9 @@ async fn main() -> color_eyre::Result<()> {
         Commands::Blob { cmd } => cmd.execute(format).await?,
         // `sinexctl admin` commands are local operations — no gateway needed.
         Commands::Admin { cmd } => cmd.execute(format)?,
+        // `sinexctl state` snapshot/restore commands are local filesystem,
+        // database, and service operations that do not use gateway RPC.
+        Commands::State { cmd } => cmd.execute(format)?,
         // `sinexctl verify --source-units` (alone) is a static descriptor /
         // payload coverage check that does not need a gateway connection
         // or auth token. Short-circuit so it can be run in CI without
@@ -346,9 +368,12 @@ async fn main() -> color_eyre::Result<()> {
                 Commands::Tui(cmd) => cmd.execute(&client).await?,
                 Commands::Config { .. } => unreachable!("Config command handled above"),
                 Commands::Demo(_) => unreachable!("Demo command handled above"),
+                Commands::State { .. } => unreachable!("State command handled above"),
                 Commands::Sources(cmd) => cmd.execute(&client, format).await?,
                 Commands::Declare(cmd) => cmd.execute(&client, format).await?,
                 Commands::Tasks(cmd) => cmd.execute(&client, format).await?,
+                Commands::Curation(cmd) => cmd.execute(&client, format).await?,
+                Commands::Llm(cmd) => cmd.execute(&client, format).await?,
                 Commands::Documents(cmd) => cmd.execute(&client, format).await?,
                 Commands::Lifecycle { cmd } => cmd.execute(&client, format).await?,
                 Commands::GitOps { cmd } => cmd.execute(&client, format).await?,
@@ -377,6 +402,76 @@ async fn main() -> color_eyre::Result<()> {
     Ok(())
 }
 
+fn render_list_formats(format: OutputFormat) -> color_eyre::Result<String> {
+    match format {
+        OutputFormat::Table => Ok(render_format_matrix_terminal()),
+        OutputFormat::Json => Ok(format!(
+            "{}\n",
+            serde_json::to_string_pretty(&operator_surface_catalog())?
+        )),
+        OutputFormat::Yaml => Ok(format!("{}\n", format_yaml(&operator_surface_catalog())?)),
+        OutputFormat::Dot => Err(eyre!("--list-formats does not support --format dot")),
+    }
+}
+
+#[derive(Debug, Serialize)]
+struct OperatorSurfaceCatalog {
+    schema_version: u8,
+    commands: Vec<CommandCatalogEntry>,
+    rpc_methods: Vec<RpcMethodInfo>,
+    mcp_surfaces: Vec<McpCatalogEntry>,
+    docs_projection: CatalogDocsProjection,
+}
+
+#[derive(Debug, Serialize)]
+struct CatalogDocsProjection {
+    command: &'static str,
+    human_projection: &'static str,
+    machine_projection: &'static str,
+    command_fields: &'static [&'static str],
+    rpc_fields: &'static [&'static str],
+    mcp_fields: &'static [&'static str],
+}
+
+fn operator_surface_catalog() -> OperatorSurfaceCatalog {
+    OperatorSurfaceCatalog {
+        schema_version: 1,
+        commands: command_catalog(),
+        rpc_methods: method_catalog(),
+        mcp_surfaces: mcp_tool_catalog(),
+        docs_projection: CatalogDocsProjection {
+            command: "sinexctl --list-formats",
+            human_projection: "--format table",
+            machine_projection: "--format json|yaml",
+            command_fields: &[
+                "path",
+                "family",
+                "effect",
+                "backing_rpc_methods",
+                "required_rpc_role",
+                "mutation_guards",
+                "capability",
+            ],
+            rpc_fields: &[
+                "name",
+                "role",
+                "domain",
+                "stability",
+                "mutability",
+                "request_type",
+                "response_type",
+            ],
+            mcp_fields: &[
+                "name",
+                "kind",
+                "description",
+                "backing_rpc_methods",
+                "read_only",
+            ],
+        },
+    }
+}
+
 /// Derive the registry key for a [`Commands`] variant.
 fn command_path(cmd: &Commands) -> String {
     use sinexctl::commands::lifecycle::TombstoneCommands;
@@ -389,7 +484,11 @@ fn command_path(cmd: &Commands) -> String {
             GatewayCommands::Ping => "gateway ping".to_string(),
             GatewayCommands::Version => "gateway version".to_string(),
         },
-        Commands::Blob { .. } => "blob sweep-orphans".to_string(),
+        Commands::Blob { cmd } => match cmd {
+            BlobCommands::SweepOrphans(_) => "blob sweep-orphans".to_string(),
+            BlobCommands::Fsck(_) => "blob fsck".to_string(),
+            BlobCommands::Migrate(_) => "blob migrate".to_string(),
+        },
         Commands::Core { .. } => "core health".to_string(),
         Commands::Node { cmd } => match cmd {
             NodeCommands::List { .. } => "node list".to_string(),
@@ -458,6 +557,11 @@ fn command_path(cmd: &Commands) -> String {
                 SourcesSubcommand::ExplainGap(_) => "sources explain-gap".to_string(),
             }
         }
+        Commands::State { cmd } => match cmd {
+            StateCommands::Snapshot(_) => "state snapshot".to_string(),
+            StateCommands::Inspect(_) => "state inspect".to_string(),
+            StateCommands::Restore(_) => "state restore".to_string(),
+        },
         Commands::Declare(cmd) => {
             use sinexctl::commands::declare::DeclareSubcommand;
             match cmd.subcommand() {
@@ -469,6 +573,22 @@ fn command_path(cmd: &Commands) -> String {
             match cmd.subcommand() {
                 TasksSubcommand::Complete(_) => "tasks complete".to_string(),
                 TasksSubcommand::State(_) => "tasks state".to_string(),
+            }
+        }
+        Commands::Curation(cmd) => {
+            use sinexctl::commands::curation::CurationSubcommand;
+            match cmd.subcommand() {
+                CurationSubcommand::Proposals(_) => "curation proposals".to_string(),
+                CurationSubcommand::Judge(_) => "curation judge".to_string(),
+                CurationSubcommand::Finalize(_) => "curation finalize".to_string(),
+            }
+        }
+        Commands::Llm(cmd) => {
+            use sinexctl::commands::llm::LlmSubcommand;
+            match cmd.subcommand() {
+                LlmSubcommand::Prompts(_) => "llm prompts".to_string(),
+                LlmSubcommand::RouteExplain(_) => "llm route-explain".to_string(),
+                LlmSubcommand::BudgetReport(_) => "llm budget-report".to_string(),
             }
         }
         Commands::Lifecycle { cmd } => match cmd {
@@ -532,6 +652,7 @@ fn command_path(cmd: &Commands) -> String {
             match cmd {
                 AdminCommands::Snapshot(_) => "admin snapshot".to_string(),
                 AdminCommands::SnapshotInspect(_) => "admin snapshot-inspect".to_string(),
+                AdminCommands::SnapshotRestore(_) => "admin snapshot-restore".to_string(),
             }
         }
     }
@@ -790,6 +911,85 @@ mod tests {
             output.contains("stream"),
             "matrix must mark `watch` as streaming"
         );
+        assert!(
+            output.contains("events.query"),
+            "matrix must expose exact backing RPC method names"
+        );
+        assert!(
+            output.contains("privacy.private_mode.enable"),
+            "matrix must expose privacy control RPC method names"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn list_formats_json_outputs_machine_readable_catalog() -> TestResult<()> {
+        let output = render_list_formats(OutputFormat::Json)?;
+        let catalog: serde_json::Value = serde_json::from_str(&output)?;
+
+        assert_eq!(catalog["schema_version"], 1);
+        assert!(
+            catalog["docs_projection"]["command_fields"]
+                .as_array()
+                .expect("docs projection must list command fields")
+                .iter()
+                .any(|field| field.as_str() == Some("backing_rpc_methods")),
+            "json list-formats output must expose the documented command field contract"
+        );
+
+        let commands = catalog["commands"]
+            .as_array()
+            .expect("operator surface catalog must contain command rows");
+        let query = commands
+            .iter()
+            .find(|entry| entry["path"] == "query")
+            .expect("json list-formats output must include query");
+        assert_eq!(query["backing_rpc_methods"][0], "events.query");
+
+        let blob_fsck = commands
+            .iter()
+            .find(|entry| entry["path"] == "blob fsck")
+            .expect("json list-formats output must include blob fsck");
+        assert!(
+            blob_fsck["mutation_guards"]
+                .as_array()
+                .expect("mutation guards must be an array")
+                .iter()
+                .any(|guard| guard.as_str() == Some("dry_run")),
+            "json list-formats output must expose local mutation guards"
+        );
+
+        let rpc_methods = catalog["rpc_methods"]
+            .as_array()
+            .expect("operator surface catalog must contain RPC descriptor rows");
+        assert!(
+            rpc_methods
+                .iter()
+                .any(|entry| entry["name"] == "events.query"),
+            "json list-formats output must include typed RPC descriptors"
+        );
+
+        let mcp_surfaces = catalog["mcp_surfaces"]
+            .as_array()
+            .expect("operator surface catalog must contain MCP surface rows");
+        let source_readiness = mcp_surfaces
+            .iter()
+            .find(|entry| entry["name"] == "sinex.source_readiness")
+            .expect("json list-formats output must include MCP source readiness");
+        assert_eq!(
+            source_readiness["backing_rpc_methods"][0],
+            "sources.readiness.list"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn list_formats_dot_is_rejected() -> TestResult<()> {
+        let err = render_list_formats(OutputFormat::Dot).unwrap_err();
+        assert!(
+            err.to_string().contains("--format dot"),
+            "dot rejection should name the unsupported format"
+        );
         Ok(())
     }
 
@@ -877,6 +1077,87 @@ mod tests {
                     "0196ed62-8f7a-7000-8000-000000000001",
                 ],
                 "tasks state",
+            ),
+            (vec!["sinexctl", "privacy", "audit"], "privacy audit"),
+            (
+                vec![
+                    "sinexctl", "privacy", "export", "--since", "24h", "--source", "terminal",
+                ],
+                "privacy export",
+            ),
+            (
+                vec![
+                    "sinexctl",
+                    "state",
+                    "snapshot",
+                    "--output",
+                    "/tmp/sinex-state.tar.zst",
+                ],
+                "state snapshot",
+            ),
+            (
+                vec![
+                    "sinexctl",
+                    "state",
+                    "inspect",
+                    "--archive",
+                    "/tmp/sinex-state.tar.zst",
+                ],
+                "state inspect",
+            ),
+            (
+                vec![
+                    "sinexctl",
+                    "state",
+                    "restore",
+                    "--archive",
+                    "/tmp/sinex-state.tar.zst",
+                    "--target-dir",
+                    "/tmp/sinex-restore",
+                    "--dry-run",
+                ],
+                "state restore",
+            ),
+            (
+                vec!["sinexctl", "curation", "proposals"],
+                "curation proposals",
+            ),
+            (
+                vec![
+                    "sinexctl",
+                    "curation",
+                    "judge",
+                    "0196ed62-8f7a-7000-8000-000000000001",
+                    "--decision",
+                    "accept",
+                ],
+                "curation judge",
+            ),
+            (
+                vec![
+                    "sinexctl",
+                    "curation",
+                    "finalize",
+                    "0196ed62-8f7a-7000-8000-000000000002",
+                ],
+                "curation finalize",
+            ),
+            (vec!["sinexctl", "llm", "prompts"], "llm prompts"),
+            (
+                vec![
+                    "sinexctl",
+                    "llm",
+                    "route-explain",
+                    "--request-json",
+                    "{}",
+                    "--policy-json",
+                    "{}",
+                ],
+                "llm route-explain",
+            ),
+            (
+                vec!["sinexctl", "llm", "budget-report"],
+                "llm budget-report",
             ),
             (
                 vec![

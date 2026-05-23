@@ -2,7 +2,7 @@
 //!
 //! Builds a `MockDbusBackend` from a list of pre-formed `DbusMessage` values.
 //! The `data` bytes are interpreted as newline-delimited JSON-encoded objects
-//! with fields matching `DbusMessage` (interface, member, path, sender, body_json).
+//! with fields matching `DbusMessage` (interface, member, path, sender, `body_json`).
 
 use sinex_node_sdk::parser::DbusMessage;
 
@@ -45,7 +45,7 @@ pub fn build(data: &[u8]) -> Result<FixtureHandle, String> {
                     .as_str()
                     .ok_or_else(|| format!("dbus fixture line {i}: missing 'path' field"))?
                     .to_string(),
-                sender: v["sender"].as_str().map(|s| s.to_string()),
+                sender: v["sender"].as_str().map(std::string::ToString::to_string),
                 body_json: v["body_json"].clone(),
             })
         })
@@ -65,6 +65,7 @@ pub fn build(data: &[u8]) -> Result<FixtureHandle, String> {
 
 /// Build a D-Bus fixture directly from typed messages (for callers that
 /// construct `DbusMessage` values in code rather than from bytes).
+#[must_use]
 pub fn build_from_messages(messages: Vec<DbusMessage>) -> FixtureHandle {
     let record_bytes: Vec<Vec<u8>> = messages
         .iter()

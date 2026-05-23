@@ -227,6 +227,38 @@ pub fn tar_read_file_zstd(archive_path: &Path, member: &str) -> Result<Vec<u8>> 
     Ok(output.stdout)
 }
 
+/// Extract a zstd-compressed tar archive into `target_dir`.
+pub fn tar_extract_zstd(archive_path: &Path, target_dir: &Path) -> Result<()> {
+    let output = Command::new("tar")
+        .args([
+            "--use-compress-program=zstd",
+            "-xf",
+            archive_path
+                .to_str()
+                .ok_or_else(|| eyre!("archive path is not valid UTF-8"))?,
+            "-C",
+            target_dir
+                .to_str()
+                .ok_or_else(|| eyre!("target path is not valid UTF-8"))?,
+        ])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .output()
+        .with_context(|| format!("spawn tar to extract {}", archive_path.display()))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        bail!(
+            "tar extraction failed (exit {}): {}",
+            output.status.code().unwrap_or(-1),
+            stderr.trim()
+        );
+    }
+
+    Ok(())
+}
+
 /// Check which sinex systemd services are currently active.
 ///
 /// Returns the list of active unit names matching `sinex-*`.  If `systemctl`

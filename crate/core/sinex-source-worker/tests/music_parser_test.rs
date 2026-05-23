@@ -200,7 +200,7 @@ async fn ac_occurrence_key_uri_primary_name_fallback_differ() {
 // AC: Skipped status records both provider boolean and local-threshold inference
 // ---------------------------------------------------------------------------
 
-/// Provider says skipped=false, but played_ms < 30s → inferred skipped=true.
+/// Provider says skipped=false, but `played_ms` < 30s → inferred skipped=true.
 /// Both flags must be surfaced independently.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn ac_skipped_provider_and_inferred_both_preserved() {
@@ -246,7 +246,7 @@ async fn ac_skipped_provider_and_inferred_both_preserved() {
     assert_eq!(intents[2].payload["skipped_inferred"], true);
 }
 
-/// Boundary: exactly 30_000 ms is NOT inferred-skipped (threshold is < 30_000).
+/// Boundary: exactly `30_000` ms is NOT inferred-skipped (threshold is < `30_000`).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn ac_skip_threshold_boundary_30s_not_skipped() {
     let exactly_30s = r#"[{
@@ -272,9 +272,9 @@ async fn ac_skip_threshold_boundary_30s_not_skipped() {
 // AC: Context URI + platform metadata preserved per admission/privacy policy
 // ---------------------------------------------------------------------------
 
-/// Platform, conn_country, reason_start/end, shuffle, offline, and incognito_mode
+/// Platform, `conn_country`, `reason_start/end`, shuffle, offline, and `incognito_mode`
 /// are all surfaced in the payload so admission policy can act on them.
-/// ip_addr and user_agent_decrypted must NOT be carried.
+/// `ip_addr` and `user_agent_decrypted` must NOT be carried.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn ac_context_and_platform_metadata_preserved_ip_dropped() {
     let row = r#"[{
@@ -324,8 +324,8 @@ async fn ac_context_and_platform_metadata_preserved_ip_dropped() {
     );
 }
 
-/// Episode/podcast rows are preserved with their own URI fields — context_uri
-/// via episode_uri is part of the payload shape.
+/// Episode/podcast rows are preserved with their own URI fields — `context_uri`
+/// via `episode_uri` is part of the payload shape.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn ac_episode_uri_preserved_in_payload() {
     let podcast_row = r#"[{

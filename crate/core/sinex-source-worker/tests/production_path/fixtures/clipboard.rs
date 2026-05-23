@@ -50,6 +50,7 @@ pub fn build(data: &[u8]) -> Result<FixtureHandle, String> {
 ///
 /// `snapshots` is an ordered list of clipboard states: `Some(text)` for
 /// a content change, `None` for a clear event.
+#[must_use]
 pub fn build_from_snapshots(snapshots: Vec<Option<String>>) -> FixtureHandle {
     let record_bytes: Vec<Vec<u8>> = snapshots
         .iter()

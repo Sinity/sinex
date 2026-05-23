@@ -4383,6 +4383,11 @@
       "about": "Generate the proof catalog from Rust descriptors, payloads, commands, and scenarios"
     },
     {
+      "subject": "xtask_command:docs.rpc-catalog",
+      "path": "docs.rpc-catalog",
+      "about": "Generate the public RPC method catalog from typed descriptors"
+    },
+    {
       "subject": "xtask_command:docs.schema-bundle",
       "path": "docs.schema-bundle",
       "about": "Generate the checked-in JSON schema bundle from the Rust EventPayload registry"
