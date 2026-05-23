@@ -49,6 +49,7 @@ pub use adapters::{
     ClipboardPollingAdapter,
     ClipboardPollingConfig,
     ClipboardPollingCursor,
+    DEFAULT_FILE_DROP_MAX_WATCHES,
     DbusBackend,
     DbusBus,
     DbusMessage,

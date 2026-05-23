@@ -21,8 +21,8 @@ use sinex_node_sdk::{
     },
     ingestor_node::IngestorNode,
     parser::{
-        FileDropWatchBudget, FileDropWatchMode, FileDropWatchPlan, FileDropWatchSurvey,
-        choose_file_drop_watch_plan, survey_file_drop_watch_tree,
+        DEFAULT_FILE_DROP_MAX_WATCHES, FileDropWatchBudget, FileDropWatchMode, FileDropWatchPlan,
+        FileDropWatchSurvey, choose_file_drop_watch_plan, survey_file_drop_watch_tree,
     },
     runtime::stream::{
         Checkpoint, ContinuousStart, MaterialReplayContext, NodeCapabilities, NodeRuntimeState,
@@ -74,7 +74,6 @@ use validator::ValidationError;
 
 const DEFAULT_MAX_CAPTURE_BYTES: Bytes = Bytes::from_mebibytes(10); // 10MB
 const DEFAULT_MAX_DEPTH: usize = 10; // Maximum directory traversal depth
-const DEFAULT_MAX_WATCHES: usize = 524_288; // Align with the documented/recommended Linux inotify limit
 const FS_WATCH_CHANNEL_SIZE: usize = 10_000; // Buffer size for filesystem event channel (high-volume burst protection)
 const FS_CAPTURE_CHUNK_SIZE: usize = 64 * 1024;
 const FS_READ_RETRY_ATTEMPTS: u32 = 3; // Number of retry attempts for transient file read errors
@@ -124,7 +123,7 @@ pub struct FilesystemConfig {
 
     /// Maximum total inotify watches across all paths (guards against FD exhaustion)
     #[serde(default = "default_max_watches")]
-    pub max_watches: usize,
+    pub max_watches: NonZeroUsize,
 
     /// Directory names that should be excluded from recursive watch planning and historical scans
     #[serde(default = "default_ignored_directory_names")]
@@ -135,8 +134,11 @@ pub struct FilesystemConfig {
     pub material_metadata_policy: sinex_node_sdk::MaterialMetadataPolicy,
 }
 
-fn default_max_watches() -> usize {
-    DEFAULT_MAX_WATCHES
+fn default_max_watches() -> NonZeroUsize {
+    match NonZeroUsize::new(DEFAULT_FILE_DROP_MAX_WATCHES) {
+        Some(value) => value,
+        None => NonZeroUsize::MIN,
+    }
 }
 
 fn default_ignored_directory_names() -> Vec<String> {
@@ -153,7 +155,7 @@ impl Default for FilesystemConfig {
             max_depth: Some(DEFAULT_MAX_DEPTH),
             follow_symlinks: false,
             max_capture_bytes: DEFAULT_MAX_CAPTURE_BYTES,
-            max_watches: DEFAULT_MAX_WATCHES,
+            max_watches: default_max_watches(),
             ignored_directory_names: default_ignored_directory_names(),
             material_metadata_policy: sinex_node_sdk::MaterialMetadataPolicy::default(),
         }
@@ -182,7 +184,7 @@ impl FilesystemConfig {
             ));
         }
 
-        if !(1..=524_288).contains(&self.max_watches) {
+        if self.max_watches.get() > DEFAULT_FILE_DROP_MAX_WATCHES {
             return Err(SinexError::configuration(
                 "Max watches must be between 1 and 524288".to_string(),
             ));
@@ -404,7 +406,7 @@ struct WatchContext {
     observation_source_identifier: Arc<str>,
     stage_context: StageAsYouGoContext,
     max_capture_bytes: Bytes,
-    max_watches: usize,
+    max_watches: NonZeroUsize,
     max_depth: Option<usize>,
     follow_symlinks: bool,
     security_policy: FileWatchingSecurityPolicy,
@@ -2100,11 +2102,7 @@ fn prepare_watch_root(root: &str, ctx: &WatchContext) -> NodeResult<(PathBuf, St
         ctx.follow_symlinks,
         &ctx.ignored_directory_names,
     )?;
-    let configured_max_watches = NonZeroUsize::new(ctx.max_watches).ok_or_else(|| {
-        SinexError::configuration("filesystem max_watches must be greater than zero")
-            .with_context("max_watches", ctx.max_watches.to_string())
-    })?;
-    let budget = WatchBudget::detect(configured_max_watches);
+    let budget = WatchBudget::detect(ctx.max_watches);
     let plan = choose_watch_plan(&survey, budget)?;
     Ok((canonical, canonical_root, plan))
 }
@@ -2340,6 +2338,14 @@ mod tests {
         let mut config = FilesystemConfig::default();
         config.watch_paths = vec!["/tmp".to_string()];
         assert!(config.validate_config().is_ok());
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn filesystem_config_uses_shared_file_drop_watch_default() -> TestResult<()> {
+        let config = FilesystemConfig::default();
+
+        assert_eq!(config.max_watches.get(), DEFAULT_FILE_DROP_MAX_WATCHES);
         Ok(())
     }
 
@@ -2671,7 +2677,7 @@ mod tests {
             observation_source_identifier,
             stage_context,
             max_capture_bytes: Bytes::from_mebibytes(1),
-            max_watches: DEFAULT_MAX_WATCHES,
+            max_watches: default_max_watches(),
             max_depth: Some(DEFAULT_MAX_DEPTH),
             follow_symlinks: true,
             security_policy: FileWatchingSecurityPolicy::permissive(),
@@ -2796,7 +2802,7 @@ mod tests {
         std::fs::create_dir_all(temp_root.path().join("notes"))?;
 
         let mut watch_ctx = test_watch_context(acquisition, stage_context, cancel_token.clone());
-        watch_ctx.max_watches = 2;
+        watch_ctx.max_watches = NonZeroUsize::new(2).unwrap();
 
         let watch_path_root = temp_root
             .path()
