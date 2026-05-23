@@ -1,9 +1,8 @@
 //! Test-only helpers for handler validation logic.
 
-use color_eyre::eyre::{Result, WrapErr};
 use sinex_db::models::Entity;
 use sinex_db::replay::state_machine::ReplayState;
-use sinex_primitives::Id;
+use sinex_primitives::{Id, Result, SinexError};
 use uuid::Uuid;
 
 use crate::handlers::replay::parse_replay_state as parse_replay_state_inner;
@@ -25,11 +24,15 @@ pub fn validate_entity_link(from_id: &str, to_id: &str) -> Result<()> {
     let from = from_id
         .parse::<Uuid>()
         .map(Id::<Entity>::from_uuid)
-        .wrap_err("Invalid or missing from_entity_id")?;
+        .map_err(|error| {
+            SinexError::validation("Invalid or missing from_entity_id").with_std_error(&error)
+        })?;
     let to = to_id
         .parse::<Uuid>()
         .map(Id::<Entity>::from_uuid)
-        .wrap_err("Invalid or missing to_entity_id")?;
+        .map_err(|error| {
+            SinexError::validation("Invalid or missing to_entity_id").with_std_error(&error)
+        })?;
     validate_entity_link_ids_inner(&from, &to).map_err(Into::into)
 }
 
