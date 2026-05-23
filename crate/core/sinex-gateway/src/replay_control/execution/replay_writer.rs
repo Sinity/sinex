@@ -210,7 +210,8 @@ impl ReplayExecutionEngine {
             return Err(stale_preview_missing_root_ids_error(
                 operation_id,
                 expected_total_events,
-            ));
+            )
+            .into());
         }
         if root_ids.as_slice() != preview_root_ids {
             return Err(replay_scope_drift_error(
@@ -218,7 +219,8 @@ impl ReplayExecutionEngine {
                 expected_total_events,
                 preview_root_ids,
                 &root_ids,
-            ));
+            )
+            .into());
         }
 
         let normalized = scope.normalized_filters();

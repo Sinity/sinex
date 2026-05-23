@@ -172,7 +172,6 @@ impl XtaskCommand for LintForbiddenCommand {
             "crate/core/sinex-ingestd/src/material_assembler/finalize.rs",
             "crate/core/sinex-ingestd/src/material_assembler/test_support.rs",
             "crate/core/sinex-ingestd/src/material_assembler/io.rs",
-            "crate/core/sinex-gateway/src/replay_control/validation.rs",
             "crate/core/sinex-gateway/src/replay_control/server.rs",
             "crate/core/sinex-gateway/src/replay_control/protocol.rs",
             "crate/core/sinex-gateway/src/replay_control/mod.rs",
