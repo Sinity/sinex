@@ -7,7 +7,7 @@
 //!
 //! # Coverage
 //!
-//! All 9 adapter types in `parser/adapters/mod.rs` are covered. For
+//! All adapter types in `parser/adapters/mod.rs` are covered. For
 //! [`DbusStreamConfig`] — whose source file is owned by a parallel agent — the
 //! schema is produced from the hand-authored definition below rather than from a
 //! derived implementation.
@@ -19,8 +19,8 @@ use serde_json::Value;
 
 use super::{
     AppendOnlyFileConfig, ChainedConfig, ClipboardPollingConfig, DirectoryWalkConfig,
-    FileDropConfig, JournalctlStreamConfig, SqliteRowConfig, StaticFileConfig,
-    UnixSocketStreamConfig,
+    FileContentDropConfig, FileDropConfig, JournalctlStreamConfig, SqliteRowConfig,
+    StaticFileConfig, UnixSocketStreamConfig,
 };
 
 // =============================================================================
@@ -48,12 +48,13 @@ pub struct AdapterSchema {
 ///
 /// The map key is the canonical adapter name used in source-unit descriptors.
 ///
-/// Adapter coverage (all 9 from `parser/adapters/mod.rs`):
+/// Adapter coverage:
 /// - `AppendOnlyFileAdapter`
 /// - `ChainedAdapter` (concrete instance: `ChainedConfig<StaticFileConfig, SqliteRowConfig>`)
 /// - `ClipboardPollingAdapter`
 /// - `DbusStreamAdapter` (hand-authored schema; source file is pending parallel work)
 /// - `DirectoryWalkAdapter`
+/// - `FileContentDropAdapter`
 /// - `FileDropAdapter`
 /// - `JournalctlStreamAdapter`
 /// - `SqliteRowAdapter`
@@ -88,6 +89,10 @@ pub fn all_adapter_schemas() -> BTreeMap<String, AdapterSchema> {
     map.insert(
         "DirectoryWalkAdapter".into(),
         schema_for_type::<DirectoryWalkConfig>(),
+    );
+    map.insert(
+        "FileContentDropAdapter".into(),
+        schema_for_type::<FileContentDropConfig>(),
     );
     map.insert(
         "FileDropAdapter".into(),

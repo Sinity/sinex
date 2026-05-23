@@ -9,7 +9,7 @@
 
 use async_trait::async_trait;
 use camino::Utf8PathBuf;
-use futures::stream::BoxStream;
+use futures::stream::{BoxStream, StreamExt};
 use notify::event::ModifyKind;
 use notify::{Event, EventKind, RecursiveMode, Watcher};
 use schemars::JsonSchema;
@@ -17,6 +17,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
+#[cfg(feature = "messaging")]
+use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::warn;
 
@@ -25,6 +27,8 @@ use sinex_primitives::ids::Id;
 use sinex_primitives::parser::{InputShapeKind, MaterialAnchor, SourceRecord};
 
 use crate::parser::{InputShapeAdapter, ParserError, ParserResult};
+#[cfg(feature = "messaging")]
+use crate::{acquisition_manager::AcquisitionManager, source_material::stage_material_from_file};
 
 const INOTIFY_MAX_USER_WATCHES_PATH: &str = "/proc/sys/fs/inotify/max_user_watches";
 pub const DEFAULT_FILE_DROP_MAX_WATCHES: usize = 524_288;
@@ -161,6 +165,10 @@ impl FileDropRecordMetadata {
 #[derive(Debug, Clone, Default)]
 pub struct FileDropAdapter;
 
+/// File-drop adapter variant that can stage regular file contents as source material.
+#[derive(Debug, Clone, Default)]
+pub struct FileContentDropAdapter;
+
 /// Configuration for [`FileDropAdapter`].
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct FileDropConfig {
@@ -193,11 +201,27 @@ pub struct FileDropConfig {
     pub events: Vec<FileDropEventKind>,
 }
 
+/// Configuration for [`FileContentDropAdapter`].
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct FileContentDropConfig {
+    /// Base file-drop watcher configuration.
+    #[serde(flatten)]
+    pub file_drop: FileDropConfig,
+
+    /// Maximum regular-file payload to stage for created/modified records.
+    #[serde(default = "default_file_content_max_capture_bytes")]
+    pub max_capture_bytes: u64,
+}
+
 fn default_file_drop_max_watches() -> NonZeroUsize {
     match NonZeroUsize::new(DEFAULT_FILE_DROP_MAX_WATCHES) {
         Some(value) => value,
         None => NonZeroUsize::MIN,
     }
+}
+
+fn default_file_content_max_capture_bytes() -> u64 {
+    10 * 1024 * 1024
 }
 
 /// Directory survey used to choose a native filesystem watch strategy.
@@ -699,6 +723,60 @@ impl InputShapeAdapter for FileDropAdapter {
     }
 }
 
+#[async_trait]
+impl InputShapeAdapter for FileContentDropAdapter {
+    type Config = FileContentDropConfig;
+    type Cursor = FileDropCursor;
+    const KIND: InputShapeKind = InputShapeKind::FileDrop;
+
+    async fn open(
+        &self,
+        material_id: Id<SourceMaterial>,
+        config: &Self::Config,
+        cursor: Option<Self::Cursor>,
+    ) -> ParserResult<BoxStream<'static, ParserResult<SourceRecord>>> {
+        FileDropAdapter
+            .open(material_id, &config.file_drop, cursor)
+            .await
+    }
+
+    #[cfg(feature = "messaging")]
+    async fn open_with_acquisition(
+        &self,
+        material_id: Id<SourceMaterial>,
+        config: &Self::Config,
+        cursor: Option<Self::Cursor>,
+        acquisition: Option<Arc<AcquisitionManager>>,
+    ) -> ParserResult<BoxStream<'static, ParserResult<SourceRecord>>> {
+        let Some(acquisition) = acquisition else {
+            return self.open(material_id, config, cursor).await;
+        };
+        let mut stream = FileDropAdapter
+            .open(material_id, &config.file_drop, cursor)
+            .await?;
+        let max_capture_bytes = config.max_capture_bytes;
+        let stream = async_stream::stream! {
+            while let Some(record_result) = stream.next().await {
+                match record_result {
+                    Ok(record) => {
+                        yield materialize_file_content_record(
+                            record,
+                            Arc::clone(&acquisition),
+                            max_capture_bytes,
+                        ).await;
+                    }
+                    Err(error) => yield Err(error),
+                }
+            }
+        };
+        Ok(Box::pin(stream))
+    }
+
+    fn cursor_after(&self, _record: &SourceRecord) -> ParserResult<Self::Cursor> {
+        Ok(FileDropCursor)
+    }
+}
+
 fn build_file_drop_stream(
     material_id: Id<SourceMaterial>,
     mut rx: mpsc::Receiver<notify::Result<Event>>,
@@ -818,6 +896,69 @@ fn records_from_file_drop_event(
         .collect()
 }
 
+#[cfg(feature = "messaging")]
+async fn materialize_file_content_record(
+    record: SourceRecord,
+    acquisition: Arc<AcquisitionManager>,
+    max_capture_bytes: u64,
+) -> ParserResult<SourceRecord> {
+    let metadata = match FileDropRecordMetadata::from_value(&record.metadata) {
+        Ok(metadata) => metadata,
+        Err(_) => return Ok(record),
+    };
+    if !matches!(
+        metadata.event_kind(),
+        Some(FileDropEventKind::Created | FileDropEventKind::Modified)
+    ) {
+        return Ok(record);
+    }
+
+    let Some(path) = record.logical_path.clone() else {
+        return Ok(record);
+    };
+    let Ok(file_metadata) = tokio::fs::metadata(path.as_std_path()).await else {
+        return Ok(record);
+    };
+    if !file_metadata.is_file() {
+        return Ok(record);
+    }
+    let len = file_metadata.len();
+    if len == 0 || len > max_capture_bytes {
+        return Ok(record);
+    }
+
+    let mut material_metadata = record.metadata.clone();
+    if let serde_json::Value::Object(map) = &mut material_metadata {
+        map.insert(
+            "content_materialized".to_string(),
+            serde_json::Value::Bool(true),
+        );
+        map.insert(
+            "content_size_bytes".to_string(),
+            serde_json::Value::Number(serde_json::Number::from(len)),
+        );
+    }
+
+    let (material_id, total_bytes) = stage_material_from_file(
+        &acquisition,
+        &path,
+        "file-drop-content-material",
+        Some(material_metadata.clone()),
+    )
+    .await
+    .map_err(|error| ParserError::Sinex(error))?;
+
+    Ok(SourceRecord {
+        material_id: Id::from_uuid(material_id),
+        anchor: MaterialAnchor::ByteRange {
+            start: 0,
+            len: total_bytes.max(0) as u64,
+        },
+        metadata: material_metadata,
+        ..record
+    })
+}
+
 #[derive(Debug, Clone)]
 struct FileDropPathFilter {
     watch_roots: Vec<Utf8PathBuf>,
@@ -905,6 +1046,57 @@ mod tests {
 
     fn dummy_material_id() -> Id<SourceMaterial> {
         Id::from_uuid(uuid::Uuid::new_v4())
+    }
+
+    #[cfg(feature = "messaging")]
+    #[sinex_test]
+    async fn content_drop_materializes_regular_created_file(
+        ctx: xtask::sandbox::prelude::TestContext,
+    ) -> xtask::sandbox::prelude::TestResult<()> {
+        let ctx = ctx.with_nats().dedicated().await?;
+        AcquisitionManager::bootstrap_streams(&ctx.nats_client()).await?;
+        let acquisition = Arc::new(AcquisitionManager::with_defaults(
+            ctx.nats_client(),
+            "file-content-drop-test",
+        ));
+        let dir = TempDir::new()?;
+        let file_path = dir.path().join("created.txt");
+        tokio::fs::write(&file_path, b"materialized").await?;
+        let utf8_path = Utf8PathBuf::from_path_buf(file_path.clone())
+            .map_err(|path| color_eyre::eyre::eyre!("test path not utf8: {}", path.display()))?;
+        let original_material_id = dummy_material_id();
+        let record = SourceRecord {
+            material_id: original_material_id,
+            anchor: MaterialAnchor::DirectoryEntry {
+                path: utf8_path.clone(),
+                content_hash: None,
+            },
+            bytes: utf8_path.as_str().as_bytes().to_vec(),
+            logical_path: Some(utf8_path.clone()),
+            source_ts_hint: None,
+            metadata: FileDropRecordMetadata::new(FileDropEventKind::Created, &utf8_path)
+                .into_json(),
+        };
+
+        let materialized =
+            materialize_file_content_record(record, acquisition, 1024 * 1024).await?;
+
+        assert_ne!(materialized.material_id, original_material_id);
+        assert_eq!(
+            materialized.anchor,
+            MaterialAnchor::ByteRange {
+                start: 0,
+                len: b"materialized".len() as u64,
+            }
+        );
+        assert_eq!(
+            materialized
+                .metadata
+                .get("content_materialized")
+                .and_then(serde_json::Value::as_bool),
+            Some(true)
+        );
+        Ok(())
     }
 
     #[sinex_test]
