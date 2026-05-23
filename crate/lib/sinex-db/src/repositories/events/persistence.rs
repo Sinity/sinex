@@ -2532,9 +2532,10 @@ impl<'a, 't> EventRepositoryTx<'a, 't> {
 mod tests {
     use super::*;
     use serde_json::json;
+    use sinex_primitives::Result;
     use xtask::sandbox::sinex_test;
 
-    fn base_stream_batch_row() -> color_eyre::Result<StreamBatchRow> {
+    fn base_stream_batch_row() -> Result<StreamBatchRow> {
         Ok(StreamBatchRow {
             id: Uuid::now_v7(),
             source: EventSource::new("test.source")?,
@@ -2592,7 +2593,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn missing_provenance_is_rejected() -> color_eyre::Result<()> {
+    async fn missing_provenance_is_rejected() -> Result<()> {
         let record = base_record();
         let err = record.try_to_event().expect_err("should fail");
         assert!(format!("{err}").contains("missing provenance"));
@@ -2600,7 +2601,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn material_provenance_requires_anchor() -> color_eyre::Result<()> {
+    async fn material_provenance_requires_anchor() -> Result<()> {
         let mut record = base_record();
         record.source_material_id = Some(uuid::Uuid::now_v7());
         let err = record.try_to_event().expect_err("should fail");
@@ -2609,7 +2610,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn valid_material_provenance_passes() -> color_eyre::Result<()> {
+    async fn valid_material_provenance_passes() -> Result<()> {
         let mut record = base_record();
         record.source_material_id = Some(uuid::Uuid::now_v7());
         record.anchor_byte = Some(42);
@@ -2618,7 +2619,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn invalid_material_offset_kind_is_rejected() -> color_eyre::Result<()> {
+    async fn invalid_material_offset_kind_is_rejected() -> Result<()> {
         let mut record = base_record();
         record.source_material_id = Some(uuid::Uuid::now_v7());
         record.anchor_byte = Some(42);
@@ -2629,7 +2630,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn synthesis_provenance_requires_non_empty_sources() -> color_eyre::Result<()> {
+    async fn synthesis_provenance_requires_non_empty_sources() -> Result<()> {
         let mut record = base_record();
         record.source_event_ids = Some(vec![]);
         let err = record.try_to_event().expect_err("should fail");
@@ -2638,7 +2639,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn synthesis_operation_lineage_round_trips_from_record() -> color_eyre::Result<()> {
+    async fn synthesis_operation_lineage_round_trips_from_record() -> Result<()> {
         let mut record = base_record();
         let parent_id = uuid::Uuid::now_v7();
         let operation_id = uuid::Uuid::now_v7();
@@ -2669,7 +2670,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn mismatched_operation_lineage_is_rejected() -> color_eyre::Result<()> {
+    async fn mismatched_operation_lineage_is_rejected() -> Result<()> {
         let parent_id = Id::<Event<JsonValue>>::new();
         let provenance_operation_id =
             Id::<sinex_primitives::events::builder::OperationMarker>::new();
@@ -2704,7 +2705,7 @@ mod tests {
 
     #[sinex_test]
     async fn stream_batch_insert_strategy_prefers_query_builder_for_small_material_batches()
-    -> color_eyre::Result<()> {
+    -> Result<()> {
         let batch = vec![base_stream_batch_row()?];
         assert_eq!(
             EventRepository::stream_batch_insert_strategy(&batch),
@@ -2715,10 +2716,10 @@ mod tests {
 
     #[sinex_test]
     async fn stream_batch_insert_strategy_prefers_copy_for_large_material_batches()
-    -> color_eyre::Result<()> {
+    -> Result<()> {
         let batch = (0..COPY_BATCH_THRESHOLD)
             .map(|_| base_stream_batch_row())
-            .collect::<color_eyre::Result<Vec<_>>>()?;
+            .collect::<Result<Vec<_>>>()?;
         assert_eq!(
             EventRepository::stream_batch_insert_strategy(&batch),
             Some(StreamBatchInsertStrategy::Copy)
@@ -2728,7 +2729,7 @@ mod tests {
 
     #[sinex_test]
     async fn stream_batch_insert_strategy_prefers_synthesis_for_parent_batches()
-    -> color_eyre::Result<()> {
+    -> Result<()> {
         let mut row = base_stream_batch_row()?;
         row.source_event_ids = Some(vec![EventId::from_uuid(Uuid::now_v7())]);
         let batch = vec![row];
