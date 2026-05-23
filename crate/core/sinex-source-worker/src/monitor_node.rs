@@ -593,7 +593,7 @@ mod tests {
         let event = events
             .recv()
             .await
-            .ok_or_else(|| color_eyre::eyre::eyre!("monitor event channel closed"))?;
+            .ok_or_else(|| SinexError::processing("monitor event channel closed"))?;
         assert_eq!(event.source.as_str(), "monitor.test");
         assert_eq!(event.event_type.as_str(), "monitor.test.started");
         assert!(
@@ -631,7 +631,8 @@ mod tests {
         let work_dir_path = work_dir.keep();
         let work_dir_utf8 =
             camino::Utf8PathBuf::from_path_buf(work_dir_path.clone()).map_err(|path| {
-                color_eyre::eyre::eyre!("temporary work dir should be utf-8: {}", path.display())
+                SinexError::validation("temporary work dir should be utf-8")
+                    .with_context("path", path.display().to_string())
             })?;
 
         Ok((
