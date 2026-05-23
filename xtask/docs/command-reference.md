@@ -680,6 +680,8 @@ Find duplicate dependencies (multiple versions)
 | Flag | Value | Required | Description |
 |---|---|---|---|
 | `--threshold` | yes | no | Minimum number of versions to report |
+| `--direct-only` | no | no | Only report duplicates directly requested by workspace manifests |
+| `--transitive-only` | no | no | Only report duplicates introduced through transitive dependencies |
 
 
 ### `xtask deps unused`

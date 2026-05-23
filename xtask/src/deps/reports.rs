@@ -28,9 +28,7 @@ impl FromStr for OutputFormat {
     }
 }
 
-/// Write dependency list
-///
-/// Will be implemented in P1.W5.T4
+/// Write dependency list.
 pub fn write_dependency_list<W: Write>(
     writer: &mut W,
     packages: &[PackageInfo],
@@ -57,9 +55,7 @@ pub fn write_dependency_list<W: Write>(
     Ok(())
 }
 
-/// Write duplicates report
-///
-/// Will be implemented in P1.W5.T4
+/// Write duplicate dependency report.
 pub fn write_duplicates_report<W: Write>(
     writer: &mut W,
     duplicates: &[DuplicateDependency],
@@ -145,9 +141,7 @@ pub fn write_duplicates_report<W: Write>(
     Ok(())
 }
 
-/// Write full workspace report
-///
-/// Will be implemented in P1.W5.T4
+/// Write full workspace report.
 pub fn write_workspace_report<W: Write>(
     writer: &mut W,
     packages: &[PackageInfo],
