@@ -1,7 +1,7 @@
 use std::{collections::VecDeque, sync::Arc};
 
-use color_eyre::Result;
 use serde_json::json;
+use sinex_primitives::Result;
 use sinex_gateway::{
     ServiceContainer,
     native_messaging::{
