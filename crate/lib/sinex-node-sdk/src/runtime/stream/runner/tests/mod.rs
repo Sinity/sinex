@@ -210,6 +210,42 @@ impl Node for RuntimeTestNode {
     }
 }
 
+#[cfg(feature = "messaging")]
+#[sinex_test]
+async fn automaton_consumer_config_keeps_raw_buffering_for_db_backed_confirmations()
+-> TestResult<()> {
+    let config = NodeRunner::<RuntimeTestNode>::automaton_consumer_config(
+        "sinex.entity-extractor",
+        true,
+        ProcessingModel::LeaderStandby,
+    );
+
+    assert!(config.buffer_raw_events);
+    assert!(config.accept_unbuffered_confirmations);
+    assert!(matches!(
+        config.deliver_policy,
+        async_nats::jetstream::consumer::DeliverPolicy::New
+    ));
+    assert_eq!(
+        config.consumer_name,
+        "sinex_entity-extractor-automaton-confirmed-v2"
+    );
+
+    let config_without_db = NodeRunner::<RuntimeTestNode>::automaton_consumer_config(
+        "sinex.entity-extractor",
+        false,
+        ProcessingModel::LeaderStandby,
+    );
+
+    assert!(config_without_db.buffer_raw_events);
+    assert!(!config_without_db.accept_unbuffered_confirmations);
+    assert!(matches!(
+        config_without_db.deliver_policy,
+        async_nats::jetstream::consumer::DeliverPolicy::All
+    ));
+    Ok(())
+}
+
 impl Node for FailingShutdownNode {
     type Config = ();
 

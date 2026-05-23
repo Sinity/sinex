@@ -195,6 +195,12 @@ impl NatsPublisher {
         &self.nats_client
     }
 
+    /// Namespace used for raw event, telemetry, DLQ, and material subjects.
+    #[must_use]
+    pub fn namespace(&self) -> Option<&str> {
+        self.namespace.as_deref()
+    }
+
     /// Publish an event to the raw-ingest DLQ.
     ///
     /// `transport::Class::Critical` (DLQ routing) — operator-facing raw DLQ;

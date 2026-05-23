@@ -744,11 +744,11 @@ impl JetStreamEventConsumer {
                     Ok(()) => true,
                     Err(e) => {
                         error!(
-                        target: "sinex_metrics",
-                        metric = "node.confirmation_handler_failures_total",
-                        error = %e,
-                        "Confirmed handler failed"
-                    );
+                            target: "sinex_metrics",
+                            metric = "node.confirmation_handler_failures_total",
+                            error = %e,
+                            "Confirmed handler failed"
+                        );
                         false
                     }
                 };

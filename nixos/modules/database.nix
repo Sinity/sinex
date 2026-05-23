@@ -57,10 +57,11 @@ let
   totalServiceCount = coreServiceCount + nodeServiceCount + automataCount;
 
   perServiceConnections = max 1 db.connectionPool.maxConnections;
-  # Add a 50-connection buffer above the per-service pool totals for migrations,
-  # admin tools, and background tasks. At least perServiceConnections + 10 even
-  # when no counted services are enabled.
-  baselineConnections = totalServiceCount * perServiceConnections + 50;
+  # Add a small buffer above per-service pool totals for migrations, admin tools,
+  # one-shot sinexctl calls, and exporter/preflight probes. The default service
+  # surface is intentionally sized near 100 slots instead of the historical
+  # several-hundred-slot overestimate.
+  baselineConnections = totalServiceCount * perServiceConnections + 25;
   computedMaxConnections = max (perServiceConnections + 10) baselineConnections;
 
   postgresqlPkgBase = db.package;

@@ -34,7 +34,10 @@
 
 use color_eyre::eyre::Result;
 
-use super::db::{HistoryDb, Invocation, InvocationStatus, StoredDiagnostic, row_to_invocation};
+use super::db::{
+    HistoryDb, Invocation, InvocationStatus, StoredDiagnostic, non_zombie_cancel_filter,
+    row_to_invocation,
+};
 use super::tests::{TestResult, TestStatus, parse_stored_test_status};
 
 // ─── Shared base ─────────────────────────────────────────────────────────────
@@ -192,6 +195,7 @@ pub struct InvocationQuery {
     since_rfc3339: Option<String>,
     offset: usize,
     sort_by: InvocationSort,
+    include_zombies: bool,
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -313,6 +317,13 @@ impl InvocationQuery {
     #[must_use]
     pub fn sort_status(mut self) -> Self {
         self.sort_by = InvocationSort::Status;
+        self
+    }
+
+    /// Include watchdog/stale-pid cancellation rows normally hidden as zombie noise.
+    #[must_use]
+    pub fn include_zombies(mut self) -> Self {
+        self.include_zombies = true;
         self
     }
 
@@ -614,6 +625,9 @@ impl HistoryDb {
             where_clauses.push("datetime(i.started_at) >= datetime(?)".into());
             bound_params.push(Box::new(since_rfc3339.clone()));
         }
+        if !q.include_zombies && q.invocation_id.is_none() {
+            where_clauses.push(non_zombie_cancel_filter("i."));
+        }
 
         let where_sql = if where_clauses.is_empty() {
             String::new()
@@ -688,6 +702,9 @@ impl HistoryDb {
         if let Some(since_rfc3339) = &q.since_rfc3339 {
             where_clauses.push("datetime(i.started_at) >= datetime(?)".into());
             bound_params.push(Box::new(since_rfc3339.clone()));
+        }
+        if !q.include_zombies && q.invocation_id.is_none() {
+            where_clauses.push(non_zombie_cancel_filter("i."));
         }
 
         let where_sql = if where_clauses.is_empty() {
@@ -935,6 +952,47 @@ mod tests {
             .run(&db)?;
         assert_eq!(paged.len(), 1);
         assert_eq!(paged[0].id, medium);
+
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_invocation_query_filters_zombie_cancellations_by_default() -> TestResult<()> {
+        let db = HistoryDb::open_in_memory()?;
+
+        let success = db.start_invocation("check", None, None, None)?;
+        db.finish_invocation(success, InvocationStatus::Success, Some(0), 0.1)?;
+
+        let stale = db.start_invocation("check", None, None, None)?;
+        db.finish_invocation_cancelled(stale, None, 0.2, "stale_pid", "open_time_sweep")?;
+
+        let null_reason = db.start_invocation("check", None, None, None)?;
+        db.finish_invocation(null_reason, InvocationStatus::Cancelled, None, 0.3)?;
+
+        let user_cancel = db.start_invocation("check", None, None, None)?;
+        db.finish_invocation_cancelled(user_cancel, None, 0.4, "user_cancel", "user")?;
+
+        let visible_ids = InvocationQuery::new()
+            .command("check")
+            .run(&db)?
+            .into_iter()
+            .map(|invocation| invocation.id)
+            .collect::<Vec<_>>();
+        assert_eq!(visible_ids, vec![user_cancel, success]);
+        assert_eq!(InvocationQuery::new().command("check").count(&db)?, 2);
+
+        let with_zombies = InvocationQuery::new()
+            .command("check")
+            .include_zombies()
+            .run(&db)?
+            .into_iter()
+            .map(|invocation| invocation.id)
+            .collect::<Vec<_>>();
+        assert_eq!(with_zombies, vec![user_cancel, null_reason, stale, success]);
+
+        let exact_zombie = InvocationQuery::new().for_invocation(stale).run(&db)?;
+        assert_eq!(exact_zombie.len(), 1);
+        assert_eq!(exact_zombie[0].id, stale);
 
         Ok(())
     }

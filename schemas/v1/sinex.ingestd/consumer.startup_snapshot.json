@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "description": "Startup snapshot for a JetStream pull consumer.\n\nEmitted once per consumer before the ingestd pull loop begins (before READY/`sd_notify`).\nCaptures stream state and consumer configuration so operators can determine at a glance\nwhether this startup is a normal resume, a cold-start full replay, or a catch-up run.",
+  "description": "Startup snapshot for a `JetStream` pull consumer.\n\nEmitted once per consumer before the ingestd pull loop begins (before READY/`sd_notify`).\nCaptures stream state and consumer configuration so operators can determine at a glance\nwhether this startup is a normal resume, a cold-start full replay, or a catch-up run.",
   "properties": {
     "consumer_ack_pending": {
       "description": "Messages acknowledged but not yet confirmed by the server.",
@@ -9,7 +9,7 @@
       "type": "integer"
     },
     "consumer_existed": {
-      "description": "Whether the durable consumer already existed in JetStream before this startup.",
+      "description": "Whether the durable consumer already existed in `JetStream` before this startup.",
       "type": "boolean"
     },
     "consumer_max_ack_pending": {
@@ -43,7 +43,7 @@
       "type": "string"
     },
     "initial_replay_risk": {
-      "description": "True when this looks like a dangerous cold-start full replay\n(new consumer, DeliverPolicy::All, non-empty stream).",
+      "description": "True when this looks like a dangerous cold-start full replay\n(new consumer, `DeliverPolicy::All`, non-empty stream).",
       "type": "boolean"
     },
     "stream_bytes": {
@@ -89,7 +89,7 @@
       "type": "integer"
     },
     "stream_name": {
-      "description": "Name of the JetStream stream being consumed.",
+      "description": "Name of the `JetStream` stream being consumed.",
       "type": "string"
     }
   },

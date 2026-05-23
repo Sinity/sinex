@@ -55,7 +55,7 @@
       "event_type": "ai.message",
       "version": "1.0.0",
       "path": "chatgpt/ai.message.json",
-      "content_hash": "5e40af748707cf778fdb1f5de6961b0dc87269d90e3074f09c4c5ac2645323f9"
+      "content_hash": "eeeeb681442844a037755d95b2f51f9242267e9992da1d53f4f4edc78c18bef3"
     },
     {
       "source": "claude",
@@ -202,7 +202,7 @@
       "event_type": "document.parsed",
       "version": "1.0.0",
       "path": "document-parser/document.parsed.json",
-      "content_hash": "937db86243b3a93cd8d78bf39300479b9d8d47257f31650209b2676aff169602"
+      "content_hash": "70e3ac844dd647064482839dff10436da7e71a880ec5178ff73cd968168ce4bc"
     },
     {
       "source": "entity-enricher",
@@ -216,14 +216,14 @@
       "event_type": "entity.extracted",
       "version": "1.0.0",
       "path": "entity-extractor/entity.extracted.json",
-      "content_hash": "cc42f0e5beef168065a545c636c0efe04b45338815ceef0392549efae1504a04"
+      "content_hash": "c9551c3afeb3d3a1d52e05101e7ddb4854a24708f50e1817868a7c4fafbb1aed"
     },
     {
       "source": "entity-resolver",
       "event_type": "entity.resolved",
       "version": "1.0.0",
       "path": "entity-resolver/entity.resolved.json",
-      "content_hash": "38a9acae8117ca4fd879c144eac6068155e6aa6a93601c3ebc0713a4618f0bd4"
+      "content_hash": "89745920cde543ebc479ebbcbf3dff9d75d965327148256fca172397265dd74b"
     },
     {
       "source": "fs-watcher",
@@ -304,52 +304,10 @@
     },
     {
       "source": "knowledge-graph",
-      "event_type": "knowledge.entity_linked",
-      "version": "1.0.0",
-      "path": "knowledge-graph/knowledge.entity_linked.json",
-      "content_hash": "9380f0856f44358049a55de534863353afb6807e03a3a0ae468c86efc002da8d"
-    },
-    {
-      "source": "knowledge-graph",
-      "event_type": "knowledge.entity_mention",
-      "version": "1.0.0",
-      "path": "knowledge-graph/knowledge.entity_mention.json",
-      "content_hash": "5f48839701faeb11b3ee0cef855921f37e54af5a125e106a084e72161c8a50a6"
-    },
-    {
-      "source": "knowledge-graph",
-      "event_type": "knowledge.entity_merged",
-      "version": "1.0.0",
-      "path": "knowledge-graph/knowledge.entity_merged.json",
-      "content_hash": "16237b1c7a85e888cb8fda0fd0a521c8a48f827ad190b8a6f39cf48a27e26207"
-    },
-    {
-      "source": "knowledge-graph",
-      "event_type": "knowledge.entity_resolution_candidate",
-      "version": "1.0.0",
-      "path": "knowledge-graph/knowledge.entity_resolution_candidate.json",
-      "content_hash": "b8cc6f9dd5acc76e2025961aba78b7dce48a60afa1dc0130d03cba693136eec9"
-    },
-    {
-      "source": "knowledge-graph",
-      "event_type": "knowledge.relation_proposed",
-      "version": "1.0.0",
-      "path": "knowledge-graph/knowledge.relation_proposed.json",
-      "content_hash": "7e63dd403ebf8c912bd4674000423aab3c792178e2cc37cb9f22f223ddc036bd"
-    },
-    {
-      "source": "knowledge-graph",
       "event_type": "knowledge.tag_applied",
       "version": "1.0.0",
       "path": "knowledge-graph/knowledge.tag_applied.json",
       "content_hash": "50fc904e5d5f4aa4ff5d7d7b358dc8290b9bbfbb311d57a8edd57da3a4ed75c4"
-    },
-    {
-      "source": "knowledge-graph",
-      "event_type": "knowledge.tag_confirmed",
-      "version": "1.0.0",
-      "path": "knowledge-graph/knowledge.tag_confirmed.json",
-      "content_hash": "e9d66b34b5b4bb00dd0e97050964829c25c419eb99f385982cea28205b93d807"
     },
     {
       "source": "knowledgebase",
@@ -398,7 +356,7 @@
       "event_type": "entity.related",
       "version": "1.0.0",
       "path": "relation-extractor/entity.related.json",
-      "content_hash": "2b16b360255b1d3867b358a845151cd9db0dad48ae74b9845799f6bf30feb33e"
+      "content_hash": "c411a527973678df4f45b65c547e45e2401a9ed5e514b388bf0f77b017257b40"
     },
     {
       "source": "samsung-health",
@@ -566,14 +524,14 @@
       "event_type": "consumer.startup_replay_risk",
       "version": "1.0.0",
       "path": "sinex.ingestd/consumer.startup_replay_risk.json",
-      "content_hash": "337e583fbdb4b87ba26c6226a808dc389152f6eda03c0a988be23f8b41309896"
+      "content_hash": "99c6f9c69ba9532a21e3e44ca06d56ef7e126c65af911d6e96035e152ff6b263"
     },
     {
       "source": "sinex.ingestd",
       "event_type": "consumer.startup_snapshot",
       "version": "1.0.0",
       "path": "sinex.ingestd/consumer.startup_snapshot.json",
-      "content_hash": "7e2bcd8827c5101ff9d0753f13100ecdd6dfcaf713353f63c60d25964a965a82"
+      "content_hash": "3f4e846975fb7d550901dc3999c432db8e3e59ddc56f37525f889d2c30442f75"
     },
     {
       "source": "sinex.ingestd",

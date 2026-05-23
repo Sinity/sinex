@@ -2,6 +2,66 @@
   "schema_version": 1,
   "runtime_units": [
     {
+      "subject": "source_unit:ai-session-chatgpt",
+      "id": "ai-session-chatgpt",
+      "domain": "ai_session",
+      "implementation": "sinex-source-worker",
+      "adapter": "StaticFileAdapter",
+      "output_event_type": "ai.message",
+      "privacy_context": "Document",
+      "material_policy": "static_export_file",
+      "checkpoint_policy": "static_file_cursor",
+      "resource_shape": "file_reader",
+      "capabilities": [],
+      "source_unit_id": "ai-session-chatgpt",
+      "proposed": false,
+      "runner_pack": "source-worker",
+      "checkpoint_family": {
+        "kind": "append_stream"
+      },
+      "runtime_shape": "on_demand",
+      "package_impact": "ai_session_chatgpt_source_unit",
+      "implementation_mode": "rust_in_pack:source-worker",
+      "build_impact": {
+        "crate_impact": "0",
+        "binary_impact": "0",
+        "nix_output_impact": "0",
+        "derivation_impact": "0",
+        "sqlx_validation_impact": "0",
+        "dedicated_build_rationale": null
+      }
+    },
+    {
+      "subject": "source_unit:ai-session-claude",
+      "id": "ai-session-claude",
+      "domain": "ai_session",
+      "implementation": "sinex-source-worker",
+      "adapter": "StaticFileAdapter",
+      "output_event_type": "ai.message",
+      "privacy_context": "Document",
+      "material_policy": "static_export_file",
+      "checkpoint_policy": "static_file_cursor",
+      "resource_shape": "file_reader",
+      "capabilities": [],
+      "source_unit_id": "ai-session-claude",
+      "proposed": false,
+      "runner_pack": "source-worker",
+      "checkpoint_family": {
+        "kind": "append_stream"
+      },
+      "runtime_shape": "on_demand",
+      "package_impact": "ai_session_claude_source_unit",
+      "implementation_mode": "rust_in_pack:source-worker",
+      "build_impact": {
+        "crate_impact": "0",
+        "binary_impact": "0",
+        "nix_output_impact": "0",
+        "derivation_impact": "0",
+        "sqlx_validation_impact": "0",
+        "dedicated_build_rationale": null
+      }
+    },
+    {
       "subject": "source_unit:analytics",
       "id": "analytics",
       "domain": "derived",
@@ -65,8 +125,8 @@
       "subject": "source_unit:browser.history",
       "id": "browser.history",
       "domain": "web",
-      "implementation": "sinex-browser-ingestor",
-      "adapter": "IngestorNodeAdapter",
+      "implementation": "sinex-source-worker",
+      "adapter": "ChainedAdapter<SqliteRowAdapter, AppendOnlyFileAdapter>",
       "output_event_type": "page.visited",
       "privacy_context": "url",
       "material_policy": "browser_visit_id",
@@ -75,15 +135,15 @@
       "capabilities": [],
       "source_unit_id": "browser.history",
       "proposed": false,
-      "runner_pack": "browser",
+      "runner_pack": "source-worker",
       "checkpoint_family": {
         "kind": "mutable_snapshot",
         "backing_store_kind": "sqlite",
         "occurrence_anchor": "visit_id"
       },
       "runtime_shape": "continuous",
-      "package_impact": "no_new_output",
-      "implementation_mode": "rust_in_pack:browser",
+      "package_impact": "browser_history_source_unit",
+      "implementation_mode": "rust_in_pack:source-worker",
       "build_impact": {
         "crate_impact": "0",
         "binary_impact": "0",
@@ -127,8 +187,8 @@
       "subject": "source_unit:desktop.activitywatch",
       "id": "desktop.activitywatch",
       "domain": "desktop",
-      "implementation": "sinex-desktop-ingestor",
-      "adapter": "IngestorNodeAdapter",
+      "implementation": "sinex-source-worker",
+      "adapter": "SqliteRowAdapter",
       "output_event_type": "window.active",
       "privacy_context": "window_title",
       "material_policy": "activitywatch_bucket_event",
@@ -137,15 +197,15 @@
       "capabilities": [],
       "source_unit_id": "desktop.activitywatch",
       "proposed": false,
-      "runner_pack": "desktop",
+      "runner_pack": "source-worker",
       "checkpoint_family": {
         "kind": "mutable_snapshot",
         "backing_store_kind": "sqlite",
         "occurrence_anchor": "bucket_event_timestamp"
       },
-      "runtime_shape": "on_demand",
-      "package_impact": "no_new_output",
-      "implementation_mode": "rust_in_pack:desktop",
+      "runtime_shape": "continuous",
+      "package_impact": "desktop_activitywatch",
+      "implementation_mode": "rust_in_pack:source-worker",
       "build_impact": {
         "crate_impact": "0",
         "binary_impact": "0",
@@ -159,23 +219,23 @@
       "subject": "source_unit:desktop.clipboard",
       "id": "desktop.clipboard",
       "domain": "desktop",
-      "implementation": "sinex-desktop-ingestor",
-      "adapter": "IngestorNodeAdapter",
+      "implementation": "sinex-source-worker",
+      "adapter": "ClipboardPollingAdapter",
       "output_event_type": "clipboard.copied",
       "privacy_context": "clipboard",
-      "material_policy": "clipboard_anchor",
-      "checkpoint_policy": "live_observation",
-      "resource_shape": "event_emitter",
+      "material_policy": "clipboard_stream",
+      "checkpoint_policy": "live_stream",
+      "resource_shape": "polling_watcher",
       "capabilities": [],
       "source_unit_id": "desktop.clipboard",
       "proposed": false,
-      "runner_pack": "desktop",
+      "runner_pack": "source-worker",
       "checkpoint_family": {
         "kind": "live_observation"
       },
       "runtime_shape": "continuous",
-      "package_impact": "no_new_output",
-      "implementation_mode": "rust_in_pack:desktop",
+      "package_impact": "desktop_clipboard",
+      "implementation_mode": "rust_in_pack:source-worker",
       "build_impact": {
         "crate_impact": "0",
         "binary_impact": "0",
@@ -189,23 +249,53 @@
       "subject": "source_unit:desktop.window-manager",
       "id": "desktop.window-manager",
       "domain": "desktop",
-      "implementation": "sinex-desktop-ingestor",
-      "adapter": "IngestorNodeAdapter",
+      "implementation": "sinex-source-worker",
+      "adapter": "UnixSocketStreamAdapter",
       "output_event_type": "window.opened",
       "privacy_context": "window_title",
-      "material_policy": "wm_anchor",
-      "checkpoint_policy": "live_observation",
-      "resource_shape": "event_emitter",
+      "material_policy": "wm_socket_stream",
+      "checkpoint_policy": "live_stream",
+      "resource_shape": "unix_socket_watcher",
       "capabilities": [],
       "source_unit_id": "desktop.window-manager",
       "proposed": false,
-      "runner_pack": "desktop",
+      "runner_pack": "source-worker",
       "checkpoint_family": {
         "kind": "live_observation"
       },
       "runtime_shape": "continuous",
-      "package_impact": "no_new_output",
-      "implementation_mode": "rust_in_pack:desktop",
+      "package_impact": "desktop_window_manager",
+      "implementation_mode": "rust_in_pack:source-worker",
+      "build_impact": {
+        "crate_impact": "0",
+        "binary_impact": "0",
+        "nix_output_impact": "0",
+        "derivation_impact": "0",
+        "sqlx_validation_impact": "0",
+        "dedicated_build_rationale": null
+      }
+    },
+    {
+      "subject": "source_unit:docs-library-index",
+      "id": "docs-library-index",
+      "domain": "library",
+      "implementation": "sinex-source-worker",
+      "adapter": "DirectoryWalkAdapter",
+      "output_event_type": "document.indexed",
+      "privacy_context": "Metadata",
+      "material_policy": "directory_walk_fingerprint",
+      "checkpoint_policy": "directory_walk_cursor",
+      "resource_shape": "file_reader",
+      "capabilities": [],
+      "source_unit_id": "docs-library-index",
+      "proposed": false,
+      "runner_pack": "source-worker",
+      "checkpoint_family": {
+        "kind": "append_stream"
+      },
+      "runtime_shape": "on_demand",
+      "package_impact": "docs_library_index_source_unit",
+      "implementation_mode": "rust_in_pack:source-worker",
       "build_impact": {
         "crate_impact": "0",
         "binary_impact": "0",
@@ -249,23 +339,23 @@
       "subject": "source_unit:document.staging",
       "id": "document.staging",
       "domain": "document",
-      "implementation": "sinex-document-ingestor",
-      "adapter": "IngestorNodeAdapter",
+      "implementation": "sinex-source-worker",
+      "adapter": "DocumentStagingParser",
       "output_event_type": "document.ingested",
       "privacy_context": "document_body",
       "material_policy": "document_anchor",
-      "checkpoint_policy": "append_stream",
+      "checkpoint_policy": "fingerprint_dedup",
       "resource_shape": "on_demand_batch",
       "capabilities": [],
       "source_unit_id": "document.staging",
       "proposed": false,
-      "runner_pack": "document",
+      "runner_pack": "source-worker",
       "checkpoint_family": {
         "kind": "append_stream"
       },
       "runtime_shape": "on_demand",
       "package_impact": "no_new_output",
-      "implementation_mode": "rust_in_pack:document",
+      "implementation_mode": "rust_in_pack:source-worker",
       "build_impact": {
         "crate_impact": "0",
         "binary_impact": "0",
@@ -366,10 +456,40 @@
       }
     },
     {
+      "subject": "source_unit:facebook-messenger-thread",
+      "id": "facebook-messenger-thread",
+      "domain": "messaging",
+      "implementation": "sinex-source-worker",
+      "adapter": "StaticFileAdapter",
+      "output_event_type": "message.sent",
+      "privacy_context": "Document",
+      "material_policy": "static_export_file",
+      "checkpoint_policy": "static_file_cursor",
+      "resource_shape": "file_reader",
+      "capabilities": [],
+      "source_unit_id": "facebook-messenger-thread",
+      "proposed": false,
+      "runner_pack": "source-worker",
+      "checkpoint_family": {
+        "kind": "append_stream"
+      },
+      "runtime_shape": "on_demand",
+      "package_impact": "facebook_messenger_thread_source_unit",
+      "implementation_mode": "rust_in_pack:source-worker",
+      "build_impact": {
+        "crate_impact": "0",
+        "binary_impact": "0",
+        "nix_output_impact": "0",
+        "derivation_impact": "0",
+        "sqlx_validation_impact": "0",
+        "dedicated_build_rationale": null
+      }
+    },
+    {
       "subject": "source_unit:fs",
       "id": "fs",
       "domain": "filesystem",
-      "implementation": "sinex-fs-ingestor",
+      "implementation": "sinex-source-worker",
       "adapter": "IngestorNodeAdapter",
       "output_event_type": "file.created",
       "privacy_context": "fs_path",
@@ -379,13 +499,43 @@
       "capabilities": [],
       "source_unit_id": "fs",
       "proposed": false,
-      "runner_pack": "fs",
+      "runner_pack": "source-worker",
       "checkpoint_family": {
         "kind": "append_stream"
       },
       "runtime_shape": "continuous",
       "package_impact": "no_new_output",
-      "implementation_mode": "rust_in_pack:fs",
+      "implementation_mode": "rust_in_pack:source-worker",
+      "build_impact": {
+        "crate_impact": "0",
+        "binary_impact": "0",
+        "nix_output_impact": "0",
+        "derivation_impact": "0",
+        "sqlx_validation_impact": "0",
+        "dedicated_build_rationale": null
+      }
+    },
+    {
+      "subject": "source_unit:git-commit-history",
+      "id": "git-commit-history",
+      "domain": "vcs",
+      "implementation": "sinex-source-worker",
+      "adapter": "StaticFileAdapter",
+      "output_event_type": "commit.created",
+      "privacy_context": "Document",
+      "material_policy": "static_export_file",
+      "checkpoint_policy": "static_file_cursor",
+      "resource_shape": "file_reader",
+      "capabilities": [],
+      "source_unit_id": "git-commit-history",
+      "proposed": false,
+      "runner_pack": "source-worker",
+      "checkpoint_family": {
+        "kind": "append_stream"
+      },
+      "runtime_shape": "on_demand",
+      "package_impact": "git_commit_history_source_unit",
+      "implementation_mode": "rust_in_pack:source-worker",
       "build_impact": {
         "crate_impact": "0",
         "binary_impact": "0",
@@ -426,6 +576,36 @@
       }
     },
     {
+      "subject": "source_unit:hledger-journal",
+      "id": "hledger-journal",
+      "domain": "finance",
+      "implementation": "sinex-source-worker",
+      "adapter": "StaticFileAdapter",
+      "output_event_type": "transaction.posted",
+      "privacy_context": "Document",
+      "material_policy": "static_export_file",
+      "checkpoint_policy": "static_file_cursor",
+      "resource_shape": "file_reader",
+      "capabilities": [],
+      "source_unit_id": "hledger-journal",
+      "proposed": false,
+      "runner_pack": "source-worker",
+      "checkpoint_family": {
+        "kind": "append_stream"
+      },
+      "runtime_shape": "on_demand",
+      "package_impact": "hledger_journal_source_unit",
+      "implementation_mode": "rust_in_pack:source-worker",
+      "build_impact": {
+        "crate_impact": "0",
+        "binary_impact": "0",
+        "nix_output_impact": "0",
+        "derivation_impact": "0",
+        "sqlx_validation_impact": "0",
+        "dedicated_build_rationale": null
+      }
+    },
+    {
       "subject": "source_unit:hourly-summarizer",
       "id": "hourly-summarizer",
       "domain": "derived",
@@ -446,6 +626,186 @@
       "runtime_shape": "continuous",
       "package_impact": "no_new_output",
       "implementation_mode": "rust_in_pack:process",
+      "build_impact": {
+        "crate_impact": "0",
+        "binary_impact": "0",
+        "nix_output_impact": "0",
+        "derivation_impact": "0",
+        "sqlx_validation_impact": "0",
+        "dedicated_build_rationale": null
+      }
+    },
+    {
+      "subject": "source_unit:integration.polylogue",
+      "id": "integration.polylogue",
+      "domain": "integration",
+      "implementation": "polylogue-daemon",
+      "adapter": "ExternalProducer",
+      "output_event_type": "integration.polylogue.conversation_indexed",
+      "privacy_context": "Sensitive",
+      "material_policy": "external_producer_virtual_material",
+      "checkpoint_policy": "external_producer",
+      "resource_shape": "nats_publisher",
+      "capabilities": [],
+      "source_unit_id": "integration.polylogue",
+      "proposed": false,
+      "runner_pack": "external",
+      "checkpoint_family": {
+        "kind": "live_observation"
+      },
+      "runtime_shape": "continuous",
+      "package_impact": "integration_polylogue_source_unit",
+      "implementation_mode": "external:polylogue-daemon",
+      "build_impact": {
+        "crate_impact": "0",
+        "binary_impact": "0",
+        "nix_output_impact": "0",
+        "derivation_impact": "0",
+        "sqlx_validation_impact": "0",
+        "dedicated_build_rationale": null
+      }
+    },
+    {
+      "subject": "source_unit:knowledgebase-vault",
+      "id": "knowledgebase-vault",
+      "domain": "knowledge",
+      "implementation": "sinex-source-worker",
+      "adapter": "DirectoryWalkAdapter",
+      "output_event_type": "note.observed",
+      "privacy_context": "Document",
+      "material_policy": "directory_walk",
+      "checkpoint_policy": "directory_walk_cursor",
+      "resource_shape": "file_reader",
+      "capabilities": [],
+      "source_unit_id": "knowledgebase-vault",
+      "proposed": false,
+      "runner_pack": "source-worker",
+      "checkpoint_family": {
+        "kind": "append_stream"
+      },
+      "runtime_shape": "on_demand",
+      "package_impact": "knowledgebase_vault_source_unit",
+      "implementation_mode": "rust_in_pack:source-worker",
+      "build_impact": {
+        "crate_impact": "0",
+        "binary_impact": "0",
+        "nix_output_impact": "0",
+        "derivation_impact": "0",
+        "sqlx_validation_impact": "0",
+        "dedicated_build_rationale": null
+      }
+    },
+    {
+      "subject": "source_unit:noop",
+      "id": "noop",
+      "domain": "sinex",
+      "implementation": "sinex-source-worker",
+      "adapter": "IngestorNodeAdapter",
+      "output_event_type": "noop",
+      "privacy_context": "none",
+      "material_policy": "none",
+      "checkpoint_policy": "live_observation",
+      "resource_shape": "event_emitter",
+      "capabilities": [],
+      "source_unit_id": "noop",
+      "proposed": false,
+      "runner_pack": "source-worker",
+      "checkpoint_family": {
+        "kind": "live_observation"
+      },
+      "runtime_shape": "continuous",
+      "package_impact": "noop_source_unit",
+      "implementation_mode": "rust_in_pack:source-worker",
+      "build_impact": {
+        "crate_impact": "0",
+        "binary_impact": "0",
+        "nix_output_impact": "0",
+        "derivation_impact": "0",
+        "sqlx_validation_impact": "0",
+        "dedicated_build_rationale": null
+      }
+    },
+    {
+      "subject": "source_unit:raindrop-bookmarks",
+      "id": "raindrop-bookmarks",
+      "domain": "web",
+      "implementation": "sinex-source-worker",
+      "adapter": "StaticFileAdapter",
+      "output_event_type": "bookmark.created",
+      "privacy_context": "Metadata",
+      "material_policy": "static_export_file",
+      "checkpoint_policy": "static_file_cursor",
+      "resource_shape": "file_reader",
+      "capabilities": [],
+      "source_unit_id": "raindrop-bookmarks",
+      "proposed": false,
+      "runner_pack": "source-worker",
+      "checkpoint_family": {
+        "kind": "append_stream"
+      },
+      "runtime_shape": "on_demand",
+      "package_impact": "raindrop_bookmarks_source_unit",
+      "implementation_mode": "rust_in_pack:source-worker",
+      "build_impact": {
+        "crate_impact": "0",
+        "binary_impact": "0",
+        "nix_output_impact": "0",
+        "derivation_impact": "0",
+        "sqlx_validation_impact": "0",
+        "dedicated_build_rationale": null
+      }
+    },
+    {
+      "subject": "source_unit:reddit-gdpr-comments",
+      "id": "reddit-gdpr-comments",
+      "domain": "social",
+      "implementation": "sinex-source-worker",
+      "adapter": "StaticFileAdapter",
+      "output_event_type": "social.comment.posted",
+      "privacy_context": "Document",
+      "material_policy": "static_export_file",
+      "checkpoint_policy": "static_file_cursor",
+      "resource_shape": "file_reader",
+      "capabilities": [],
+      "source_unit_id": "reddit-gdpr-comments",
+      "proposed": false,
+      "runner_pack": "source-worker",
+      "checkpoint_family": {
+        "kind": "append_stream"
+      },
+      "runtime_shape": "on_demand",
+      "package_impact": "reddit_gdpr_comments_source_unit",
+      "implementation_mode": "rust_in_pack:source-worker",
+      "build_impact": {
+        "crate_impact": "0",
+        "binary_impact": "0",
+        "nix_output_impact": "0",
+        "derivation_impact": "0",
+        "sqlx_validation_impact": "0",
+        "dedicated_build_rationale": null
+      }
+    },
+    {
+      "subject": "source_unit:reddit-gdpr-posts",
+      "id": "reddit-gdpr-posts",
+      "domain": "social",
+      "implementation": "sinex-source-worker",
+      "adapter": "StaticFileAdapter",
+      "output_event_type": "social.post.created",
+      "privacy_context": "Document",
+      "material_policy": "static_export_file",
+      "checkpoint_policy": "static_file_cursor",
+      "resource_shape": "file_reader",
+      "capabilities": [],
+      "source_unit_id": "reddit-gdpr-posts",
+      "proposed": false,
+      "runner_pack": "source-worker",
+      "checkpoint_family": {
+        "kind": "append_stream"
+      },
+      "runtime_shape": "on_demand",
+      "package_impact": "reddit_gdpr_posts_source_unit",
+      "implementation_mode": "rust_in_pack:source-worker",
       "build_impact": {
         "crate_impact": "0",
         "binary_impact": "0",
@@ -696,26 +1056,86 @@
       }
     },
     {
+      "subject": "source_unit:sleep-merged-summary",
+      "id": "sleep-merged-summary",
+      "domain": "health",
+      "implementation": "sinex-source-worker",
+      "adapter": "StaticFileAdapter",
+      "output_event_type": "sleep.session",
+      "privacy_context": "Metadata",
+      "material_policy": "static_export_file",
+      "checkpoint_policy": "static_file_cursor",
+      "resource_shape": "file_reader",
+      "capabilities": [],
+      "source_unit_id": "sleep-merged-summary",
+      "proposed": false,
+      "runner_pack": "source-worker",
+      "checkpoint_family": {
+        "kind": "append_stream"
+      },
+      "runtime_shape": "on_demand",
+      "package_impact": "sleep_merged_summary_source_unit",
+      "implementation_mode": "rust_in_pack:source-worker",
+      "build_impact": {
+        "crate_impact": "0",
+        "binary_impact": "0",
+        "nix_output_impact": "0",
+        "derivation_impact": "0",
+        "sqlx_validation_impact": "0",
+        "dedicated_build_rationale": null
+      }
+    },
+    {
+      "subject": "source_unit:spotify-extended-history",
+      "id": "spotify-extended-history",
+      "domain": "music",
+      "implementation": "sinex-source-worker",
+      "adapter": "StaticFileAdapter",
+      "output_event_type": "track.played",
+      "privacy_context": "Metadata",
+      "material_policy": "static_export_file",
+      "checkpoint_policy": "static_file_cursor",
+      "resource_shape": "file_reader",
+      "capabilities": [],
+      "source_unit_id": "spotify-extended-history",
+      "proposed": false,
+      "runner_pack": "source-worker",
+      "checkpoint_family": {
+        "kind": "append_stream"
+      },
+      "runtime_shape": "on_demand",
+      "package_impact": "spotify_extended_history_source_unit",
+      "implementation_mode": "rust_in_pack:source-worker",
+      "build_impact": {
+        "crate_impact": "0",
+        "binary_impact": "0",
+        "nix_output_impact": "0",
+        "derivation_impact": "0",
+        "sqlx_validation_impact": "0",
+        "dedicated_build_rationale": null
+      }
+    },
+    {
       "subject": "source_unit:system.dbus",
       "id": "system.dbus",
       "domain": "system",
-      "implementation": "sinex-system-ingestor",
-      "adapter": "IngestorNodeAdapter",
+      "implementation": "sinex-source-worker",
+      "adapter": "DbusStreamAdapter",
       "output_event_type": "signal.received",
-      "privacy_context": "dbus",
+      "privacy_context": "Dbus",
       "material_policy": "bus_anchor",
       "checkpoint_policy": "live_observation",
       "resource_shape": "event_emitter",
       "capabilities": [],
       "source_unit_id": "system.dbus",
       "proposed": false,
-      "runner_pack": "system",
+      "runner_pack": "source-worker",
       "checkpoint_family": {
         "kind": "live_observation"
       },
       "runtime_shape": "continuous",
-      "package_impact": "no_new_output",
-      "implementation_mode": "rust_in_pack:system",
+      "package_impact": "system_dbus_source_unit",
+      "implementation_mode": "rust_in_pack:source-worker",
       "build_impact": {
         "crate_impact": "0",
         "binary_impact": "0",
@@ -729,23 +1149,23 @@
       "subject": "source_unit:system.journald",
       "id": "system.journald",
       "domain": "system",
-      "implementation": "sinex-system-ingestor",
-      "adapter": "IngestorNodeAdapter",
+      "implementation": "sinex-source-worker",
+      "adapter": "JournalctlStreamAdapter",
       "output_event_type": "entry.written",
-      "privacy_context": "journal",
+      "privacy_context": "Journal",
       "material_policy": "journal_cursor",
       "checkpoint_policy": "journal",
       "resource_shape": "journal_tail",
       "capabilities": [],
       "source_unit_id": "system.journald",
       "proposed": false,
-      "runner_pack": "system",
+      "runner_pack": "source-worker",
       "checkpoint_family": {
         "kind": "journal"
       },
       "runtime_shape": "continuous",
-      "package_impact": "no_new_output",
-      "implementation_mode": "rust_in_pack:system",
+      "package_impact": "system_journald_source_unit",
+      "implementation_mode": "rust_in_pack:source-worker",
       "build_impact": {
         "crate_impact": "0",
         "binary_impact": "0",
@@ -759,23 +1179,23 @@
       "subject": "source_unit:system.monitor",
       "id": "system.monitor",
       "domain": "system",
-      "implementation": "sinex-system-ingestor",
-      "adapter": "IngestorNodeAdapter",
+      "implementation": "sinex-source-worker",
+      "adapter": "MonitorDriverNode",
       "output_event_type": "monitoring.started",
-      "privacy_context": "metadata",
-      "material_policy": "self_observation",
-      "checkpoint_policy": "live_observation",
-      "resource_shape": "event_emitter",
+      "privacy_context": "Metadata",
+      "material_policy": "synthetic_oneshot",
+      "checkpoint_policy": "stateless",
+      "resource_shape": "oneshot_bounded_memory",
       "capabilities": [],
       "source_unit_id": "system.monitor",
       "proposed": false,
-      "runner_pack": "system",
+      "runner_pack": "source-worker",
       "checkpoint_family": {
         "kind": "live_observation"
       },
-      "runtime_shape": "continuous",
-      "package_impact": "no_new_output",
-      "implementation_mode": "rust_in_pack:system",
+      "runtime_shape": "on_demand",
+      "package_impact": "system_monitor_unit",
+      "implementation_mode": "rust_in_pack:source-worker",
       "build_impact": {
         "crate_impact": "0",
         "binary_impact": "0",
@@ -789,23 +1209,23 @@
       "subject": "source_unit:system.systemd",
       "id": "system.systemd",
       "domain": "system",
-      "implementation": "sinex-system-ingestor",
-      "adapter": "IngestorNodeAdapter",
+      "implementation": "sinex-source-worker",
+      "adapter": "JournalctlStreamAdapter",
       "output_event_type": "unit.started",
-      "privacy_context": "metadata",
+      "privacy_context": "Journal",
       "material_policy": "journal_cursor",
       "checkpoint_policy": "journal",
       "resource_shape": "journal_tail",
       "capabilities": [],
       "source_unit_id": "system.systemd",
       "proposed": false,
-      "runner_pack": "system",
+      "runner_pack": "source-worker",
       "checkpoint_family": {
         "kind": "journal"
       },
       "runtime_shape": "continuous",
-      "package_impact": "no_new_output",
-      "implementation_mode": "rust_in_pack:system",
+      "package_impact": "system_systemd_source_unit",
+      "implementation_mode": "rust_in_pack:source-worker",
       "build_impact": {
         "crate_impact": "0",
         "binary_impact": "0",
@@ -819,23 +1239,23 @@
       "subject": "source_unit:system.udev",
       "id": "system.udev",
       "domain": "system",
-      "implementation": "sinex-system-ingestor",
-      "adapter": "IngestorNodeAdapter",
+      "implementation": "sinex-source-worker",
+      "adapter": "FileDropAdapter",
       "output_event_type": "device.connected",
-      "privacy_context": "metadata",
+      "privacy_context": "Metadata",
       "material_policy": "udev_anchor",
       "checkpoint_policy": "live_observation",
       "resource_shape": "event_emitter",
       "capabilities": [],
       "source_unit_id": "system.udev",
       "proposed": false,
-      "runner_pack": "system",
+      "runner_pack": "source-worker",
       "checkpoint_family": {
         "kind": "live_observation"
       },
       "runtime_shape": "continuous",
-      "package_impact": "no_new_output",
-      "implementation_mode": "rust_in_pack:system",
+      "package_impact": "system_udev_source_unit",
+      "implementation_mode": "rust_in_pack:source-worker",
       "build_impact": {
         "crate_impact": "0",
         "binary_impact": "0",
@@ -909,30 +1329,25 @@
       "subject": "source_unit:terminal.atuin-history",
       "id": "terminal.atuin-history",
       "domain": "terminal",
-      "implementation": "sinex-terminal-ingestor::atuin",
-      "adapter": "sqlite_row_stream",
+      "implementation": "sinex-source-worker",
+      "adapter": "SqliteRowAdapter",
       "output_event_type": "command.executed",
-      "privacy_context": "command",
-      "material_policy": "canonical_json_lines",
-      "checkpoint_policy": "sqlite_row_id",
+      "privacy_context": "Command",
+      "material_policy": "sqlite_row_id",
+      "checkpoint_policy": "mutable_snapshot",
       "resource_shape": "linear_rows_bounded_memory",
-      "capabilities": [
-        "supports_snapshot",
-        "supports_historical",
-        "produces_material_anchors",
-        "requires_target_home"
-      ],
+      "capabilities": [],
       "source_unit_id": "terminal.atuin-history",
       "proposed": false,
-      "runner_pack": "terminal",
+      "runner_pack": "source-worker",
       "checkpoint_family": {
         "kind": "mutable_snapshot",
         "backing_store_kind": "sqlite",
         "occurrence_anchor": "atuin_history_id"
       },
       "runtime_shape": "continuous",
-      "package_impact": "no_new_output",
-      "implementation_mode": "rust_in_pack:terminal",
+      "package_impact": "atuin_history_source_unit",
+      "implementation_mode": "rust_in_pack:source-worker",
       "build_impact": {
         "crate_impact": "0",
         "binary_impact": "0",
@@ -946,23 +1361,23 @@
       "subject": "source_unit:terminal.bash-history",
       "id": "terminal.bash-history",
       "domain": "terminal",
-      "implementation": "sinex-terminal-ingestor",
-      "adapter": "IngestorNodeAdapter",
+      "implementation": "sinex-source-worker",
+      "adapter": "AppendOnlyFileAdapter",
       "output_event_type": "command.imported",
-      "privacy_context": "command",
+      "privacy_context": "Command",
       "material_policy": "text_history_anchor",
       "checkpoint_policy": "append_stream",
       "resource_shape": "linear_rows_bounded_memory",
       "capabilities": [],
       "source_unit_id": "terminal.bash-history",
       "proposed": false,
-      "runner_pack": "terminal",
+      "runner_pack": "source-worker",
       "checkpoint_family": {
         "kind": "append_stream"
       },
       "runtime_shape": "continuous",
-      "package_impact": "no_new_output",
-      "implementation_mode": "rust_in_pack:terminal",
+      "package_impact": "bash_history_source_unit",
+      "implementation_mode": "rust_in_pack:source-worker",
       "build_impact": {
         "crate_impact": "0",
         "binary_impact": "0",
@@ -976,25 +1391,25 @@
       "subject": "source_unit:terminal.fish-history",
       "id": "terminal.fish-history",
       "domain": "terminal",
-      "implementation": "sinex-terminal-ingestor",
-      "adapter": "IngestorNodeAdapter",
+      "implementation": "sinex-source-worker",
+      "adapter": "SqliteRowAdapter",
       "output_event_type": "command.imported",
-      "privacy_context": "command",
+      "privacy_context": "Command",
       "material_policy": "sqlite_row_id",
       "checkpoint_policy": "mutable_snapshot",
       "resource_shape": "linear_rows_bounded_memory",
       "capabilities": [],
       "source_unit_id": "terminal.fish-history",
       "proposed": false,
-      "runner_pack": "terminal",
+      "runner_pack": "source-worker",
       "checkpoint_family": {
         "kind": "mutable_snapshot",
         "backing_store_kind": "sqlite",
         "occurrence_anchor": "fish_history_row_id"
       },
       "runtime_shape": "continuous",
-      "package_impact": "no_new_output",
-      "implementation_mode": "rust_in_pack:terminal",
+      "package_impact": "fish_history_source_unit",
+      "implementation_mode": "rust_in_pack:source-worker",
       "build_impact": {
         "crate_impact": "0",
         "binary_impact": "0",
@@ -1008,23 +1423,23 @@
       "subject": "source_unit:terminal.monitor",
       "id": "terminal.monitor",
       "domain": "terminal",
-      "implementation": "sinex-terminal-ingestor",
-      "adapter": "IngestorNodeAdapter",
+      "implementation": "sinex-source-worker",
+      "adapter": "MonitorDriverNode",
       "output_event_type": "shell.terminal_monitoring_started",
-      "privacy_context": "command",
-      "material_policy": "self_observation",
-      "checkpoint_policy": "live_observation",
-      "resource_shape": "event_emitter",
+      "privacy_context": "Metadata",
+      "material_policy": "synthetic_oneshot",
+      "checkpoint_policy": "stateless",
+      "resource_shape": "oneshot_bounded_memory",
       "capabilities": [],
       "source_unit_id": "terminal.monitor",
       "proposed": false,
-      "runner_pack": "terminal",
+      "runner_pack": "source-worker",
       "checkpoint_family": {
         "kind": "live_observation"
       },
-      "runtime_shape": "continuous",
-      "package_impact": "no_new_output",
-      "implementation_mode": "rust_in_pack:terminal",
+      "runtime_shape": "on_demand",
+      "package_impact": "terminal_monitor_unit",
+      "implementation_mode": "rust_in_pack:source-worker",
       "build_impact": {
         "crate_impact": "0",
         "binary_impact": "0",
@@ -1038,23 +1453,23 @@
       "subject": "source_unit:terminal.text-history",
       "id": "terminal.text-history",
       "domain": "terminal",
-      "implementation": "sinex-terminal-ingestor",
-      "adapter": "IngestorNodeAdapter",
+      "implementation": "sinex-source-worker",
+      "adapter": "AppendOnlyFileAdapter",
       "output_event_type": "command.imported",
-      "privacy_context": "command",
+      "privacy_context": "Command",
       "material_policy": "text_history_anchor",
       "checkpoint_policy": "append_stream",
       "resource_shape": "linear_rows_bounded_memory",
       "capabilities": [],
       "source_unit_id": "terminal.text-history",
       "proposed": false,
-      "runner_pack": "terminal",
+      "runner_pack": "source-worker",
       "checkpoint_family": {
         "kind": "append_stream"
       },
       "runtime_shape": "continuous",
-      "package_impact": "no_new_output",
-      "implementation_mode": "rust_in_pack:terminal",
+      "package_impact": "text_history_source_unit",
+      "implementation_mode": "rust_in_pack:source-worker",
       "build_impact": {
         "crate_impact": "0",
         "binary_impact": "0",
@@ -1068,23 +1483,113 @@
       "subject": "source_unit:terminal.zsh-history",
       "id": "terminal.zsh-history",
       "domain": "terminal",
-      "implementation": "sinex-terminal-ingestor",
-      "adapter": "IngestorNodeAdapter",
+      "implementation": "sinex-source-worker",
+      "adapter": "AppendOnlyFileAdapter",
       "output_event_type": "command.imported",
-      "privacy_context": "command",
+      "privacy_context": "Command",
       "material_policy": "text_history_anchor",
       "checkpoint_policy": "append_stream",
       "resource_shape": "linear_rows_bounded_memory",
       "capabilities": [],
       "source_unit_id": "terminal.zsh-history",
       "proposed": false,
-      "runner_pack": "terminal",
+      "runner_pack": "source-worker",
       "checkpoint_family": {
         "kind": "append_stream"
       },
       "runtime_shape": "continuous",
-      "package_impact": "no_new_output",
-      "implementation_mode": "rust_in_pack:terminal",
+      "package_impact": "zsh_history_source_unit",
+      "implementation_mode": "rust_in_pack:source-worker",
+      "build_impact": {
+        "crate_impact": "0",
+        "binary_impact": "0",
+        "nix_output_impact": "0",
+        "derivation_impact": "0",
+        "sqlx_validation_impact": "0",
+        "dedicated_build_rationale": null
+      }
+    },
+    {
+      "subject": "source_unit:weechat",
+      "id": "weechat",
+      "domain": "irc",
+      "implementation": "sinex-source-worker",
+      "adapter": "AppendOnlyFileAdapter",
+      "output_event_type": "irc.message",
+      "privacy_context": "Command",
+      "material_policy": "append_only_log",
+      "checkpoint_policy": "append_only_cursor",
+      "resource_shape": "file_watcher",
+      "capabilities": [],
+      "source_unit_id": "weechat",
+      "proposed": false,
+      "runner_pack": "source-worker",
+      "checkpoint_family": {
+        "kind": "append_stream"
+      },
+      "runtime_shape": "on_demand",
+      "package_impact": "weechat_source_unit",
+      "implementation_mode": "rust_in_pack:source-worker",
+      "build_impact": {
+        "crate_impact": "0",
+        "binary_impact": "0",
+        "nix_output_impact": "0",
+        "derivation_impact": "0",
+        "sqlx_validation_impact": "0",
+        "dedicated_build_rationale": null
+      }
+    },
+    {
+      "subject": "source_unit:wykop-entries",
+      "id": "wykop-entries",
+      "domain": "social",
+      "implementation": "sinex-source-worker",
+      "adapter": "StaticFileAdapter",
+      "output_event_type": "social.entry.created",
+      "privacy_context": "Document",
+      "material_policy": "static_export_file",
+      "checkpoint_policy": "static_file_cursor",
+      "resource_shape": "file_reader",
+      "capabilities": [],
+      "source_unit_id": "wykop-entries",
+      "proposed": false,
+      "runner_pack": "source-worker",
+      "checkpoint_family": {
+        "kind": "append_stream"
+      },
+      "runtime_shape": "on_demand",
+      "package_impact": "wykop_entries_source_unit",
+      "implementation_mode": "rust_in_pack:source-worker",
+      "build_impact": {
+        "crate_impact": "0",
+        "binary_impact": "0",
+        "nix_output_impact": "0",
+        "derivation_impact": "0",
+        "sqlx_validation_impact": "0",
+        "dedicated_build_rationale": null
+      }
+    },
+    {
+      "subject": "source_unit:wykop-entry-comments",
+      "id": "wykop-entry-comments",
+      "domain": "social",
+      "implementation": "sinex-source-worker",
+      "adapter": "StaticFileAdapter",
+      "output_event_type": "social.entry_comment.posted",
+      "privacy_context": "Document",
+      "material_policy": "static_export_file",
+      "checkpoint_policy": "static_file_cursor",
+      "resource_shape": "file_reader",
+      "capabilities": [],
+      "source_unit_id": "wykop-entry-comments",
+      "proposed": false,
+      "runner_pack": "source-worker",
+      "checkpoint_family": {
+        "kind": "append_stream"
+      },
+      "runtime_shape": "on_demand",
+      "package_impact": "wykop_entry_comments_source_unit",
+      "implementation_mode": "rust_in_pack:source-worker",
       "build_impact": {
         "crate_impact": "0",
         "binary_impact": "0",
@@ -1096,6 +1601,65 @@
     }
   ],
   "source_units": [
+    {
+      "subject": "source_unit:ai-session-chatgpt",
+      "id": "ai-session-chatgpt",
+      "namespace": "ai_session",
+      "runner_pack": "source-worker",
+      "modes": [
+        "historical"
+      ],
+      "output_event_types": [
+        {
+          "source": "chatgpt",
+          "event_type": "ai.message"
+        }
+      ],
+      "privacy_tier": "sensitive",
+      "runtime_shape": "on_demand",
+      "retention_policy": "forever",
+      "checkpoint_family": "append_stream",
+      "occurrence_identity": "uuid5:(session_id, message_id)",
+      "access_policy": "personal_ai_conversations",
+      "package_impact": "ai_session_chatgpt_source_unit",
+      "implementation_mode": "rust_in_pack:source-worker",
+      "proof_obligations": [
+        "timestamp_intrinsic",
+        "anchor_conv_msg_index",
+        "occurrence_key_session_id_message_id",
+        "text_privacy_context_document",
+        "mapping_walk_current_node_to_root"
+      ]
+    },
+    {
+      "subject": "source_unit:ai-session-claude",
+      "id": "ai-session-claude",
+      "namespace": "ai_session",
+      "runner_pack": "source-worker",
+      "modes": [
+        "historical"
+      ],
+      "output_event_types": [
+        {
+          "source": "claude",
+          "event_type": "ai.message"
+        }
+      ],
+      "privacy_tier": "sensitive",
+      "runtime_shape": "on_demand",
+      "retention_policy": "forever",
+      "checkpoint_family": "append_stream",
+      "occurrence_identity": "uuid5:(session_id, message_id)",
+      "access_policy": "personal_ai_conversations",
+      "package_impact": "ai_session_claude_source_unit",
+      "implementation_mode": "rust_in_pack:source-worker",
+      "proof_obligations": [
+        "timestamp_intrinsic",
+        "anchor_conv_msg_index",
+        "occurrence_key_session_id_message_id",
+        "text_privacy_context_document"
+      ]
+    },
     {
       "subject": "source_unit:analytics",
       "id": "analytics",
@@ -1160,7 +1724,7 @@
       "subject": "source_unit:browser.history",
       "id": "browser.history",
       "namespace": "web",
-      "runner_pack": "browser",
+      "runner_pack": "source-worker",
       "modes": [
         "continuous",
         "historical"
@@ -1177,9 +1741,13 @@
       "checkpoint_family": "mutable_snapshot",
       "occurrence_identity": "uuid5:(source_unit, browser_profile, visit_id)",
       "access_policy": "target_home_read:browser_history",
-      "package_impact": "no_new_output",
-      "implementation_mode": "rust_in_pack:browser",
-      "proof_obligations": []
+      "package_impact": "browser_history_source_unit",
+      "implementation_mode": "rust_in_pack:source-worker",
+      "proof_obligations": [
+        "url_privacy_redaction",
+        "sqlite_row_anchor",
+        "dump_line_anchor"
+      ]
     },
     {
       "subject": "source_unit:daily-summarizer",
@@ -1209,7 +1777,7 @@
       "subject": "source_unit:desktop.activitywatch",
       "id": "desktop.activitywatch",
       "namespace": "desktop",
-      "runner_pack": "desktop",
+      "runner_pack": "source-worker",
       "modes": [
         "historical"
       ],
@@ -1228,23 +1796,26 @@
         }
       ],
       "privacy_tier": "secret",
-      "runtime_shape": "on_demand",
+      "runtime_shape": "continuous",
       "retention_policy": "forever",
       "checkpoint_family": "mutable_snapshot",
       "occurrence_identity": "uuid5:(source_unit, bucket_id, event_timestamp)",
       "access_policy": "target_home_read:activitywatch_sqlite",
-      "package_impact": "no_new_output",
-      "implementation_mode": "rust_in_pack:desktop",
-      "proof_obligations": []
+      "package_impact": "desktop_activitywatch",
+      "implementation_mode": "rust_in_pack:source-worker",
+      "proof_obligations": [
+        "anchor_sqlite_row",
+        "timestamp_intrinsic",
+        "window_title_redacted"
+      ]
     },
     {
       "subject": "source_unit:desktop.clipboard",
       "id": "desktop.clipboard",
       "namespace": "desktop",
-      "runner_pack": "desktop",
+      "runner_pack": "source-worker",
       "modes": [
-        "continuous",
-        "historical"
+        "continuous"
       ],
       "output_event_types": [
         {
@@ -1262,18 +1833,20 @@
       "checkpoint_family": "live_observation",
       "occurrence_identity": "material_anchor",
       "access_policy": "target_runtime_bridge:clipboard",
-      "package_impact": "no_new_output",
-      "implementation_mode": "rust_in_pack:desktop",
-      "proof_obligations": []
+      "package_impact": "desktop_clipboard",
+      "implementation_mode": "rust_in_pack:source-worker",
+      "proof_obligations": [
+        "anchor_stream_frame",
+        "clipboard_content_redacted"
+      ]
     },
     {
       "subject": "source_unit:desktop.window-manager",
       "id": "desktop.window-manager",
       "namespace": "desktop",
-      "runner_pack": "desktop",
+      "runner_pack": "source-worker",
       "modes": [
-        "continuous",
-        "historical"
+        "continuous"
       ],
       "output_event_types": [
         {
@@ -1319,9 +1892,42 @@
       "checkpoint_family": "live_observation",
       "occurrence_identity": "material_anchor",
       "access_policy": "target_runtime_bridge:window_manager",
-      "package_impact": "no_new_output",
-      "implementation_mode": "rust_in_pack:desktop",
-      "proof_obligations": []
+      "package_impact": "desktop_window_manager",
+      "implementation_mode": "rust_in_pack:source-worker",
+      "proof_obligations": [
+        "anchor_stream_frame",
+        "window_title_redacted"
+      ]
+    },
+    {
+      "subject": "source_unit:docs-library-index",
+      "id": "docs-library-index",
+      "namespace": "library",
+      "runner_pack": "source-worker",
+      "modes": [
+        "historical"
+      ],
+      "output_event_types": [
+        {
+          "source": "docs-library",
+          "event_type": "document.indexed"
+        }
+      ],
+      "privacy_tier": "sensitive",
+      "runtime_shape": "on_demand",
+      "retention_policy": "forever",
+      "checkpoint_family": "append_stream",
+      "occurrence_identity": "uuid5:(source_unit, path, content_hash)",
+      "access_policy": "local_library_root",
+      "package_impact": "docs_library_index_source_unit",
+      "implementation_mode": "rust_in_pack:source-worker",
+      "proof_obligations": [
+        "anchor_directory_entry",
+        "timestamp_inferred_mtime",
+        "occurrence_key_path_hash",
+        "filename_heuristics_best_effort",
+        "metadata_privacy_applied"
+      ]
     },
     {
       "subject": "source_unit:document-parser",
@@ -1355,7 +1961,7 @@
       "subject": "source_unit:document.staging",
       "id": "document.staging",
       "namespace": "document",
-      "runner_pack": "document",
+      "runner_pack": "source-worker",
       "modes": [
         "continuous",
         "historical"
@@ -1373,7 +1979,7 @@
       "occurrence_identity": "material_anchor",
       "access_policy": "configured_document_roots",
       "package_impact": "no_new_output",
-      "implementation_mode": "rust_in_pack:document",
+      "implementation_mode": "rust_in_pack:source-worker",
       "proof_obligations": []
     },
     {
@@ -1449,10 +2055,39 @@
       "proof_obligations": []
     },
     {
+      "subject": "source_unit:facebook-messenger-thread",
+      "id": "facebook-messenger-thread",
+      "namespace": "messaging",
+      "runner_pack": "source-worker",
+      "modes": [
+        "historical"
+      ],
+      "output_event_types": [
+        {
+          "source": "messenger",
+          "event_type": "message.sent"
+        }
+      ],
+      "privacy_tier": "sensitive",
+      "runtime_shape": "on_demand",
+      "retention_policy": "forever",
+      "checkpoint_family": "append_stream",
+      "occurrence_identity": "uuid5:(thread_name, sender_name, timestamp_ms, text_hint)",
+      "access_policy": "personal_private_messages",
+      "package_impact": "facebook_messenger_thread_source_unit",
+      "implementation_mode": "rust_in_pack:source-worker",
+      "proof_obligations": [
+        "timestamp_intrinsic",
+        "media_and_reactions_summarized_to_count",
+        "anchor_message_index",
+        "occurrence_key_thread_sender_ts_texthint"
+      ]
+    },
+    {
       "subject": "source_unit:fs",
       "id": "fs",
       "namespace": "filesystem",
-      "runner_pack": "fs",
+      "runner_pack": "source-worker",
       "modes": [
         "continuous",
         "historical"
@@ -1482,8 +2117,37 @@
       "occurrence_identity": "material_anchor",
       "access_policy": "configured_watch_roots",
       "package_impact": "no_new_output",
-      "implementation_mode": "rust_in_pack:fs",
+      "implementation_mode": "rust_in_pack:source-worker",
       "proof_obligations": []
+    },
+    {
+      "subject": "source_unit:git-commit-history",
+      "id": "git-commit-history",
+      "namespace": "vcs",
+      "runner_pack": "source-worker",
+      "modes": [
+        "historical"
+      ],
+      "output_event_types": [
+        {
+          "source": "git",
+          "event_type": "commit.created"
+        }
+      ],
+      "privacy_tier": "sensitive",
+      "runtime_shape": "on_demand",
+      "retention_policy": "forever",
+      "checkpoint_family": "append_stream",
+      "occurrence_identity": "uuid5:(commit_sha, repo_path)",
+      "access_policy": "personal_git_history",
+      "package_impact": "git_commit_history_source_unit",
+      "implementation_mode": "rust_in_pack:source-worker",
+      "proof_obligations": [
+        "timestamp_intrinsic",
+        "anchor_commit_index",
+        "occurrence_key_sha_repo",
+        "sensitive_email_in_payload"
+      ]
     },
     {
       "subject": "source_unit:health",
@@ -1510,6 +2174,35 @@
       "proof_obligations": []
     },
     {
+      "subject": "source_unit:hledger-journal",
+      "id": "hledger-journal",
+      "namespace": "finance",
+      "runner_pack": "source-worker",
+      "modes": [
+        "historical"
+      ],
+      "output_event_types": [
+        {
+          "source": "ledger",
+          "event_type": "transaction.posted"
+        }
+      ],
+      "privacy_tier": "sensitive",
+      "runtime_shape": "on_demand",
+      "retention_policy": "forever",
+      "checkpoint_family": "append_stream",
+      "occurrence_identity": "uuid5:(date, description, first_explicit_posting_amount)",
+      "access_policy": "personal_finance_data",
+      "package_impact": "hledger_journal_source_unit",
+      "implementation_mode": "rust_in_pack:source-worker",
+      "proof_obligations": [
+        "timestamp_intrinsic",
+        "anchor_tx_index",
+        "occurrence_key_date_description_amount",
+        "implicit_posting_amount_none"
+      ]
+    },
+    {
       "subject": "source_unit:hourly-summarizer",
       "id": "hourly-summarizer",
       "namespace": "derived",
@@ -1532,6 +2225,172 @@
       "package_impact": "no_new_output",
       "implementation_mode": "rust_in_pack:process",
       "proof_obligations": []
+    },
+    {
+      "subject": "source_unit:integration.polylogue",
+      "id": "integration.polylogue",
+      "namespace": "integration",
+      "runner_pack": "external",
+      "modes": [
+        "continuous",
+        "historical"
+      ],
+      "output_event_types": [
+        {
+          "source": "integration.polylogue",
+          "event_type": "integration.polylogue.conversation_indexed"
+        }
+      ],
+      "privacy_tier": "sensitive",
+      "runtime_shape": "continuous",
+      "retention_policy": "forever",
+      "checkpoint_family": "live_observation",
+      "occurrence_identity": "uuid5:(content_hash, conversation_id)",
+      "access_policy": "personal_ai_conversations",
+      "package_impact": "integration_polylogue_source_unit",
+      "implementation_mode": "external:polylogue-daemon",
+      "proof_obligations": [
+        "metadata_only_no_raw_text",
+        "content_hash_sha256_hex",
+        "occurrence_key_content_hash_conversation_id",
+        "external_producer_admitted_envelope"
+      ]
+    },
+    {
+      "subject": "source_unit:knowledgebase-vault",
+      "id": "knowledgebase-vault",
+      "namespace": "knowledge",
+      "runner_pack": "source-worker",
+      "modes": [
+        "historical"
+      ],
+      "output_event_types": [
+        {
+          "source": "knowledgebase",
+          "event_type": "note.observed"
+        }
+      ],
+      "privacy_tier": "sensitive",
+      "runtime_shape": "on_demand",
+      "retention_policy": "forever",
+      "checkpoint_family": "append_stream",
+      "occurrence_identity": "uuid5:(path, body_text_hash)",
+      "access_policy": "personal_knowledgebase",
+      "package_impact": "knowledgebase_vault_source_unit",
+      "implementation_mode": "rust_in_pack:source-worker",
+      "proof_obligations": [
+        "timestamp_from_mtime_or_now",
+        "anchor_directory_entry_content_hash",
+        "occurrence_key_path_body_hash",
+        "front_matter_opaque_passthrough",
+        "personal_note_content_sensitive"
+      ]
+    },
+    {
+      "subject": "source_unit:noop",
+      "id": "noop",
+      "namespace": "sinex",
+      "runner_pack": "source-worker",
+      "modes": [
+        "continuous"
+      ],
+      "output_event_types": [],
+      "privacy_tier": "public",
+      "runtime_shape": "continuous",
+      "retention_policy": "forever",
+      "checkpoint_family": "live_observation",
+      "occurrence_identity": "uuid5:(source_unit)",
+      "access_policy": "none",
+      "package_impact": "noop_source_unit",
+      "implementation_mode": "rust_in_pack:source-worker",
+      "proof_obligations": []
+    },
+    {
+      "subject": "source_unit:raindrop-bookmarks",
+      "id": "raindrop-bookmarks",
+      "namespace": "web",
+      "runner_pack": "source-worker",
+      "modes": [
+        "historical"
+      ],
+      "output_event_types": [
+        {
+          "source": "raindrop",
+          "event_type": "bookmark.created"
+        }
+      ],
+      "privacy_tier": "sensitive",
+      "runtime_shape": "on_demand",
+      "retention_policy": "forever",
+      "checkpoint_family": "append_stream",
+      "occurrence_identity": "uuid5:(raindrop_id, url, created)",
+      "access_policy": "personal_bookmarks",
+      "package_impact": "raindrop_bookmarks_source_unit",
+      "implementation_mode": "rust_in_pack:source-worker",
+      "proof_obligations": [
+        "timestamp_intrinsic",
+        "anchor_csv_row",
+        "occurrence_key_id_url_created",
+        "cover_and_highlights_dropped"
+      ]
+    },
+    {
+      "subject": "source_unit:reddit-gdpr-comments",
+      "id": "reddit-gdpr-comments",
+      "namespace": "social",
+      "runner_pack": "source-worker",
+      "modes": [
+        "historical"
+      ],
+      "output_event_types": [
+        {
+          "source": "reddit",
+          "event_type": "social.comment.posted"
+        }
+      ],
+      "privacy_tier": "sensitive",
+      "runtime_shape": "on_demand",
+      "retention_policy": "forever",
+      "checkpoint_family": "append_stream",
+      "occurrence_identity": "uuid5:(reddit_id, subreddit)",
+      "access_policy": "personal_social_data",
+      "package_impact": "reddit_gdpr_comments_source_unit",
+      "implementation_mode": "rust_in_pack:source-worker",
+      "proof_obligations": [
+        "timestamp_intrinsic",
+        "anchor_csv_row",
+        "occurrence_key_id_subreddit",
+        "ip_gildings_media_dropped"
+      ]
+    },
+    {
+      "subject": "source_unit:reddit-gdpr-posts",
+      "id": "reddit-gdpr-posts",
+      "namespace": "social",
+      "runner_pack": "source-worker",
+      "modes": [
+        "historical"
+      ],
+      "output_event_types": [
+        {
+          "source": "reddit",
+          "event_type": "social.post.created"
+        }
+      ],
+      "privacy_tier": "sensitive",
+      "runtime_shape": "on_demand",
+      "retention_policy": "forever",
+      "checkpoint_family": "append_stream",
+      "occurrence_identity": "uuid5:(reddit_id, subreddit)",
+      "access_policy": "personal_social_data",
+      "package_impact": "reddit_gdpr_posts_source_unit",
+      "implementation_mode": "rust_in_pack:source-worker",
+      "proof_obligations": [
+        "timestamp_intrinsic",
+        "anchor_csv_row",
+        "occurrence_key_id_subreddit",
+        "ip_gildings_dropped"
+      ]
     },
     {
       "subject": "source_unit:relation-extractor",
@@ -1782,10 +2641,69 @@
       "proof_obligations": []
     },
     {
+      "subject": "source_unit:sleep-merged-summary",
+      "id": "sleep-merged-summary",
+      "namespace": "health",
+      "runner_pack": "source-worker",
+      "modes": [
+        "historical"
+      ],
+      "output_event_types": [
+        {
+          "source": "samsung-health",
+          "event_type": "sleep.session"
+        }
+      ],
+      "privacy_tier": "sensitive",
+      "runtime_shape": "on_demand",
+      "retention_policy": "forever",
+      "checkpoint_family": "append_stream",
+      "occurrence_identity": "uuid5:(sh_datauuid)",
+      "access_policy": "personal_health_data",
+      "package_impact": "sleep_merged_summary_source_unit",
+      "implementation_mode": "rust_in_pack:source-worker",
+      "proof_obligations": [
+        "timestamp_intrinsic",
+        "anchor_csv_row",
+        "occurrence_key_sh_datauuid",
+        "deltas_dropped"
+      ]
+    },
+    {
+      "subject": "source_unit:spotify-extended-history",
+      "id": "spotify-extended-history",
+      "namespace": "music",
+      "runner_pack": "source-worker",
+      "modes": [
+        "historical"
+      ],
+      "output_event_types": [
+        {
+          "source": "spotify",
+          "event_type": "track.played"
+        }
+      ],
+      "privacy_tier": "sensitive",
+      "runtime_shape": "on_demand",
+      "retention_policy": "forever",
+      "checkpoint_family": "append_stream",
+      "occurrence_identity": "uuid5:(spotify_track_uri | track_name+artist, started_at, played_ms)",
+      "access_policy": "personal_music_history",
+      "package_impact": "spotify_extended_history_source_unit",
+      "implementation_mode": "rust_in_pack:source-worker",
+      "proof_obligations": [
+        "timestamp_intrinsic",
+        "skipped_provider_preserved",
+        "skipped_inferred_threshold_30s",
+        "occurrence_key_uri_or_name_tuple",
+        "ip_and_user_agent_dropped"
+      ]
+    },
+    {
       "subject": "source_unit:system.dbus",
       "id": "system.dbus",
       "namespace": "system",
-      "runner_pack": "system",
+      "runner_pack": "source-worker",
       "modes": [
         "continuous"
       ],
@@ -1833,15 +2751,18 @@
       "checkpoint_family": "live_observation",
       "occurrence_identity": "material_anchor",
       "access_policy": "system_bus_session_bus_read",
-      "package_impact": "no_new_output",
-      "implementation_mode": "rust_in_pack:system",
-      "proof_obligations": []
+      "package_impact": "system_dbus_source_unit",
+      "implementation_mode": "rust_in_pack:source-worker",
+      "proof_obligations": [
+        "dbus_interface_dispatch",
+        "privacy_notification_body"
+      ]
     },
     {
       "subject": "source_unit:system.journald",
       "id": "system.journald",
       "namespace": "system",
-      "runner_pack": "system",
+      "runner_pack": "source-worker",
       "modes": [
         "continuous",
         "historical"
@@ -1862,15 +2783,19 @@
       "checkpoint_family": "journal",
       "occurrence_identity": "uuid5:(source_unit, journal_cursor)",
       "access_policy": "systemd_journal_read",
-      "package_impact": "no_new_output",
-      "implementation_mode": "rust_in_pack:system",
-      "proof_obligations": []
+      "package_impact": "system_journald_source_unit",
+      "implementation_mode": "rust_in_pack:source-worker",
+      "proof_obligations": [
+        "timestamp_intrinsic",
+        "cursor_anchor",
+        "privacy_journal_message"
+      ]
     },
     {
       "subject": "source_unit:system.monitor",
       "id": "system.monitor",
       "namespace": "system",
-      "runner_pack": "system",
+      "runner_pack": "source-worker",
       "modes": [
         "continuous"
       ],
@@ -1880,24 +2805,25 @@
           "event_type": "monitoring.started"
         }
       ],
-      "privacy_tier": "sensitive",
-      "runtime_shape": "continuous",
+      "privacy_tier": "public",
+      "runtime_shape": "on_demand",
       "retention_policy": "forever",
       "checkpoint_family": "live_observation",
-      "occurrence_identity": "uuid5:(source_unit, run_id)",
-      "access_policy": "runtime_self_observation",
-      "package_impact": "no_new_output",
-      "implementation_mode": "rust_in_pack:system",
-      "proof_obligations": []
+      "occurrence_identity": "natural_key",
+      "access_policy": "lifecycle_hook:none",
+      "package_impact": "system_monitor_unit",
+      "implementation_mode": "rust_in_pack:source-worker",
+      "proof_obligations": [
+        "obligation:source_unit.material_provenance"
+      ]
     },
     {
       "subject": "source_unit:system.systemd",
       "id": "system.systemd",
       "namespace": "system",
-      "runner_pack": "system",
+      "runner_pack": "source-worker",
       "modes": [
-        "continuous",
-        "historical"
+        "continuous"
       ],
       "output_event_types": [
         {
@@ -1925,17 +2851,20 @@
       "runtime_shape": "continuous",
       "retention_policy": "forever",
       "checkpoint_family": "journal",
-      "occurrence_identity": "uuid5:(source_unit, journal_cursor)",
+      "occurrence_identity": "material_anchor",
       "access_policy": "systemd_journal_read",
-      "package_impact": "no_new_output",
-      "implementation_mode": "rust_in_pack:system",
-      "proof_obligations": []
+      "package_impact": "system_systemd_source_unit",
+      "implementation_mode": "rust_in_pack:source-worker",
+      "proof_obligations": [
+        "unit_name_present",
+        "event_type_from_unit_result"
+      ]
     },
     {
       "subject": "source_unit:system.udev",
       "id": "system.udev",
       "namespace": "system",
-      "runner_pack": "system",
+      "runner_pack": "source-worker",
       "modes": [
         "continuous"
       ],
@@ -1967,9 +2896,12 @@
       "checkpoint_family": "live_observation",
       "occurrence_identity": "material_anchor",
       "access_policy": "udev_monitor_read",
-      "package_impact": "no_new_output",
-      "implementation_mode": "rust_in_pack:system",
-      "proof_obligations": []
+      "package_impact": "system_udev_source_unit",
+      "implementation_mode": "rust_in_pack:source-worker",
+      "proof_obligations": [
+        "udev_action_dispatch",
+        "privacy_device_path"
+      ]
     },
     {
       "subject": "source_unit:tag-applier",
@@ -2023,7 +2955,7 @@
       "subject": "source_unit:terminal.atuin-history",
       "id": "terminal.atuin-history",
       "namespace": "terminal",
-      "runner_pack": "terminal",
+      "runner_pack": "source-worker",
       "modes": [
         "continuous",
         "historical"
@@ -2040,8 +2972,8 @@
       "checkpoint_family": "mutable_snapshot",
       "occurrence_identity": "natural_key",
       "access_policy": "target_home_read:.local/share/atuin/history.db",
-      "package_impact": "no_new_output",
-      "implementation_mode": "rust_in_pack:terminal",
+      "package_impact": "atuin_history_source_unit",
+      "implementation_mode": "rust_in_pack:source-worker",
       "proof_obligations": [
         "obligation:source_unit.material_provenance",
         "obligation:source_unit.package_impact_rationale"
@@ -2051,7 +2983,7 @@
       "subject": "source_unit:terminal.bash-history",
       "id": "terminal.bash-history",
       "namespace": "terminal",
-      "runner_pack": "terminal",
+      "runner_pack": "source-worker",
       "modes": [
         "continuous",
         "historical"
@@ -2068,8 +3000,8 @@
       "checkpoint_family": "append_stream",
       "occurrence_identity": "material_anchor",
       "access_policy": "target_home_read:.bash_history",
-      "package_impact": "no_new_output",
-      "implementation_mode": "rust_in_pack:terminal",
+      "package_impact": "bash_history_source_unit",
+      "implementation_mode": "rust_in_pack:source-worker",
       "proof_obligations": [
         "obligation:source_unit.material_provenance",
         "obligation:source_unit.package_impact_rationale"
@@ -2079,7 +3011,7 @@
       "subject": "source_unit:terminal.fish-history",
       "id": "terminal.fish-history",
       "namespace": "terminal",
-      "runner_pack": "terminal",
+      "runner_pack": "source-worker",
       "modes": [
         "continuous",
         "historical"
@@ -2096,8 +3028,8 @@
       "checkpoint_family": "mutable_snapshot",
       "occurrence_identity": "natural_key",
       "access_policy": "target_home_read:.local/share/fish/fish_history",
-      "package_impact": "no_new_output",
-      "implementation_mode": "rust_in_pack:terminal",
+      "package_impact": "fish_history_source_unit",
+      "implementation_mode": "rust_in_pack:source-worker",
       "proof_obligations": [
         "obligation:source_unit.material_provenance",
         "obligation:source_unit.package_impact_rationale"
@@ -2107,7 +3039,7 @@
       "subject": "source_unit:terminal.monitor",
       "id": "terminal.monitor",
       "namespace": "terminal",
-      "runner_pack": "terminal",
+      "runner_pack": "source-worker",
       "modes": [
         "continuous"
       ],
@@ -2117,21 +3049,23 @@
           "event_type": "shell.terminal_monitoring_started"
         }
       ],
-      "privacy_tier": "sensitive",
-      "runtime_shape": "continuous",
+      "privacy_tier": "public",
+      "runtime_shape": "on_demand",
       "retention_policy": "forever",
       "checkpoint_family": "live_observation",
-      "occurrence_identity": "uuid5:(source_unit, run_id)",
-      "access_policy": "runtime_self_observation",
-      "package_impact": "no_new_output",
-      "implementation_mode": "rust_in_pack:terminal",
-      "proof_obligations": []
+      "occurrence_identity": "natural_key",
+      "access_policy": "lifecycle_hook:none",
+      "package_impact": "terminal_monitor_unit",
+      "implementation_mode": "rust_in_pack:source-worker",
+      "proof_obligations": [
+        "obligation:source_unit.material_provenance"
+      ]
     },
     {
       "subject": "source_unit:terminal.text-history",
       "id": "terminal.text-history",
       "namespace": "terminal",
-      "runner_pack": "terminal",
+      "runner_pack": "source-worker",
       "modes": [
         "continuous",
         "historical"
@@ -2148,8 +3082,8 @@
       "checkpoint_family": "append_stream",
       "occurrence_identity": "material_anchor",
       "access_policy": "target_home_read:shell_history_text",
-      "package_impact": "no_new_output",
-      "implementation_mode": "rust_in_pack:terminal",
+      "package_impact": "text_history_source_unit",
+      "implementation_mode": "rust_in_pack:source-worker",
       "proof_obligations": [
         "obligation:source_unit.material_provenance",
         "obligation:source_unit.package_impact_rationale"
@@ -2159,7 +3093,7 @@
       "subject": "source_unit:terminal.zsh-history",
       "id": "terminal.zsh-history",
       "namespace": "terminal",
-      "runner_pack": "terminal",
+      "runner_pack": "source-worker",
       "modes": [
         "continuous",
         "historical"
@@ -2176,11 +3110,134 @@
       "checkpoint_family": "append_stream",
       "occurrence_identity": "material_anchor",
       "access_policy": "target_home_read:.zsh_history",
-      "package_impact": "no_new_output",
-      "implementation_mode": "rust_in_pack:terminal",
+      "package_impact": "zsh_history_source_unit",
+      "implementation_mode": "rust_in_pack:source-worker",
       "proof_obligations": [
         "obligation:source_unit.material_provenance",
         "obligation:source_unit.package_impact_rationale"
+      ]
+    },
+    {
+      "subject": "source_unit:weechat",
+      "id": "weechat",
+      "namespace": "irc",
+      "runner_pack": "source-worker",
+      "modes": [
+        "historical"
+      ],
+      "output_event_types": [
+        {
+          "source": "irc",
+          "event_type": "irc.join"
+        },
+        {
+          "source": "irc",
+          "event_type": "irc.part"
+        },
+        {
+          "source": "irc",
+          "event_type": "irc.server_notice"
+        },
+        {
+          "source": "irc",
+          "event_type": "irc.message"
+        }
+      ],
+      "privacy_tier": "sensitive",
+      "runtime_shape": "on_demand",
+      "retention_policy": "forever",
+      "checkpoint_family": "append_stream",
+      "occurrence_identity": "material_anchor",
+      "access_policy": "personal_irc_logs",
+      "package_impact": "weechat_source_unit",
+      "implementation_mode": "rust_in_pack:source-worker",
+      "proof_obligations": [
+        "timestamp_intrinsic",
+        "event_type_from_prefix",
+        "anchor_line",
+        "nick_extraction"
+      ]
+    },
+    {
+      "subject": "source_unit:weechat.message",
+      "id": "weechat.message",
+      "namespace": "irc",
+      "runner_pack": "",
+      "modes": [
+        "historical"
+      ],
+      "output_event_types": [
+        {
+          "source": "irc",
+          "event_type": "irc.message"
+        }
+      ],
+      "privacy_tier": "sensitive",
+      "runtime_shape": "continuous",
+      "retention_policy": "forever",
+      "checkpoint_family": "append_stream",
+      "occurrence_identity": "material_anchor",
+      "access_policy": "personal_irc_logs",
+      "package_impact": "",
+      "implementation_mode": "",
+      "proof_obligations": [
+        "anchor_line"
+      ]
+    },
+    {
+      "subject": "source_unit:wykop-entries",
+      "id": "wykop-entries",
+      "namespace": "social",
+      "runner_pack": "source-worker",
+      "modes": [
+        "historical"
+      ],
+      "output_event_types": [
+        {
+          "source": "wykop",
+          "event_type": "social.entry.created"
+        }
+      ],
+      "privacy_tier": "sensitive",
+      "runtime_shape": "on_demand",
+      "retention_policy": "forever",
+      "checkpoint_family": "append_stream",
+      "occurrence_identity": "uuid5:(entry_id)",
+      "access_policy": "personal_social_data",
+      "package_impact": "wykop_entries_source_unit",
+      "implementation_mode": "rust_in_pack:source-worker",
+      "proof_obligations": [
+        "timestamp_intrinsic",
+        "anchor_jsonl_line",
+        "occurrence_key_entry_id"
+      ]
+    },
+    {
+      "subject": "source_unit:wykop-entry-comments",
+      "id": "wykop-entry-comments",
+      "namespace": "social",
+      "runner_pack": "source-worker",
+      "modes": [
+        "historical"
+      ],
+      "output_event_types": [
+        {
+          "source": "wykop",
+          "event_type": "social.entry_comment.posted"
+        }
+      ],
+      "privacy_tier": "sensitive",
+      "runtime_shape": "on_demand",
+      "retention_policy": "forever",
+      "checkpoint_family": "append_stream",
+      "occurrence_identity": "uuid5:(comment_id)",
+      "access_policy": "personal_social_data",
+      "package_impact": "wykop_entry_comments_source_unit",
+      "implementation_mode": "rust_in_pack:source-worker",
+      "proof_obligations": [
+        "timestamp_intrinsic",
+        "anchor_jsonl_line",
+        "occurrence_key_comment_id"
       ]
     }
   ],
@@ -2386,6 +3443,20 @@
       "type_name": "sinex_primitives::events::payloads::shell::CanonicalCommandPayload"
     },
     {
+      "subject": "event_payload:chatgpt/ai.message/1.0.0",
+      "source": "chatgpt",
+      "event_type": "ai.message",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::ai_session::ChatGptAiMessagePayload"
+    },
+    {
+      "subject": "event_payload:claude/ai.message/1.0.0",
+      "source": "claude",
+      "event_type": "ai.message",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::ai_session::ClaudeAiMessagePayload"
+    },
+    {
       "subject": "event_payload:clipboard/clipboard.copied/1.0.0",
       "source": "clipboard",
       "event_type": "clipboard.copied",
@@ -2498,6 +3569,13 @@
       "type_name": "sinex_primitives::events::payloads::desktop::DesktopMonitoringStartedPayload"
     },
     {
+      "subject": "event_payload:docs-library/document.indexed/1.0.0",
+      "source": "docs-library",
+      "event_type": "document.indexed",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::library::LibraryDocumentIndexedPayload"
+    },
+    {
       "subject": "event_payload:document-ingestor/document.ingested/1.0.0",
       "source": "document-ingestor",
       "event_type": "document.ingested",
@@ -2582,11 +3660,25 @@
       "type_name": "sinex_primitives::events::payloads::filesystem::FileMovedPayload"
     },
     {
+      "subject": "event_payload:git/commit.created/1.0.0",
+      "source": "git",
+      "event_type": "commit.created",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::vcs::GitCommitPayload"
+    },
+    {
       "subject": "event_payload:health-aggregator/health.aggregated_report/1.0.0",
       "source": "health-aggregator",
       "event_type": "health.aggregated_report",
       "version": "1.0.0",
       "type_name": "sinex_primitives::events::payloads::automaton::HealthAggregatedReportPayload"
+    },
+    {
+      "subject": "event_payload:integration.polylogue/integration.polylogue.conversation_indexed/1.0.0",
+      "source": "integration.polylogue",
+      "event_type": "integration.polylogue.conversation_indexed",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::integration::PolylogueConversationIndexedPayload"
     },
     {
       "subject": "event_payload:journald/entry.written/1.0.0",
@@ -2603,41 +3695,6 @@
       "type_name": "sinex_primitives::events::payloads::system::JournalSyncCompletedPayload"
     },
     {
-      "subject": "event_payload:knowledge-graph/knowledge.entity_linked/1.0.0",
-      "source": "knowledge-graph",
-      "event_type": "knowledge.entity_linked",
-      "version": "1.0.0",
-      "type_name": "sinex_primitives::events::payloads::knowledge::KnowledgeEntityLinkedPayload"
-    },
-    {
-      "subject": "event_payload:knowledge-graph/knowledge.entity_mention/1.0.0",
-      "source": "knowledge-graph",
-      "event_type": "knowledge.entity_mention",
-      "version": "1.0.0",
-      "type_name": "sinex_primitives::events::payloads::knowledge::KnowledgeEntityMentionPayload"
-    },
-    {
-      "subject": "event_payload:knowledge-graph/knowledge.entity_merged/1.0.0",
-      "source": "knowledge-graph",
-      "event_type": "knowledge.entity_merged",
-      "version": "1.0.0",
-      "type_name": "sinex_primitives::events::payloads::knowledge::KnowledgeEntityMergedPayload"
-    },
-    {
-      "subject": "event_payload:knowledge-graph/knowledge.entity_resolution_candidate/1.0.0",
-      "source": "knowledge-graph",
-      "event_type": "knowledge.entity_resolution_candidate",
-      "version": "1.0.0",
-      "type_name": "sinex_primitives::events::payloads::knowledge::KnowledgeEntityResolutionCandidatePayload"
-    },
-    {
-      "subject": "event_payload:knowledge-graph/knowledge.relation_proposed/1.0.0",
-      "source": "knowledge-graph",
-      "event_type": "knowledge.relation_proposed",
-      "version": "1.0.0",
-      "type_name": "sinex_primitives::events::payloads::knowledge::KnowledgeRelationProposedPayload"
-    },
-    {
       "subject": "event_payload:knowledge-graph/knowledge.tag_applied/1.0.0",
       "source": "knowledge-graph",
       "event_type": "knowledge.tag_applied",
@@ -2645,11 +3702,46 @@
       "type_name": "sinex_primitives::events::payloads::knowledge::KnowledgeTagAppliedPayload"
     },
     {
-      "subject": "event_payload:knowledge-graph/knowledge.tag_confirmed/1.0.0",
-      "source": "knowledge-graph",
-      "event_type": "knowledge.tag_confirmed",
+      "subject": "event_payload:knowledgebase/note.observed/1.0.0",
+      "source": "knowledgebase",
+      "event_type": "note.observed",
       "version": "1.0.0",
-      "type_name": "sinex_primitives::events::payloads::knowledge::KnowledgeTagConfirmedPayload"
+      "type_name": "sinex_primitives::events::payloads::knowledge::KnowledgeNoteObservedPayload"
+    },
+    {
+      "subject": "event_payload:ledger/transaction.posted/1.0.0",
+      "source": "ledger",
+      "event_type": "transaction.posted",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::finance::LedgerTransactionPayload"
+    },
+    {
+      "subject": "event_payload:messenger/message.sent/1.0.0",
+      "source": "messenger",
+      "event_type": "message.sent",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::messaging::MessengerMessageSentPayload"
+    },
+    {
+      "subject": "event_payload:raindrop/bookmark.created/1.0.0",
+      "source": "raindrop",
+      "event_type": "bookmark.created",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::bookmark::RaindropBookmarkPayload"
+    },
+    {
+      "subject": "event_payload:reddit/social.comment.posted/1.0.0",
+      "source": "reddit",
+      "event_type": "social.comment.posted",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::social::RedditCommentPayload"
+    },
+    {
+      "subject": "event_payload:reddit/social.post.created/1.0.0",
+      "source": "reddit",
+      "event_type": "social.post.created",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::social::RedditPostPayload"
     },
     {
       "subject": "event_payload:relation-extractor/entity.related/1.0.0",
@@ -2657,6 +3749,13 @@
       "event_type": "entity.related",
       "version": "1.0.0",
       "type_name": "sinex_primitives::events::payloads::entity::EntityRelatedPayload"
+    },
+    {
+      "subject": "event_payload:samsung-health/sleep.session/1.0.0",
+      "source": "samsung-health",
+      "event_type": "sleep.session",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::health::SleepSessionPayload"
     },
     {
       "subject": "event_payload:shell.atuin/command.completed/1.0.0",
@@ -2750,10 +3849,10 @@
       "type_name": "sinex_primitives::events::payloads::metrics::AssemblyStatsPayload"
     },
     {
-      "subject": "event_payload:sinex.ingestd/batch.stats/2.0.0",
+      "subject": "event_payload:sinex.ingestd/batch.stats/2.2.0",
       "source": "sinex.ingestd",
       "event_type": "batch.stats",
-      "version": "2.0.0",
+      "version": "2.2.0",
       "type_name": "sinex_primitives::events::payloads::metrics::IngestdBatchStatsPayload"
     },
     {
@@ -2846,6 +3945,13 @@
       "event_type": "process.started",
       "version": "1.0.0",
       "type_name": "sinex_primitives::events::payloads::process::ProcessStartedPayload"
+    },
+    {
+      "subject": "event_payload:spotify/track.played/1.0.0",
+      "source": "spotify",
+      "event_type": "track.played",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::music::SpotifyTrackPlayedPayload"
     },
     {
       "subject": "event_payload:system/monitoring.started/1.0.0",
@@ -3056,9 +4162,28 @@
       "event_type": "workspace.switched",
       "version": "1.0.0",
       "type_name": "sinex_primitives::events::payloads::window::HyprlandWorkspaceSwitchedPayload"
+    },
+    {
+      "subject": "event_payload:wykop/social.entry.created/1.0.0",
+      "source": "wykop",
+      "event_type": "social.entry.created",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::social::WykopEntryPayload"
+    },
+    {
+      "subject": "event_payload:wykop/social.entry_comment.posted/1.0.0",
+      "source": "wykop",
+      "event_type": "social.entry_comment.posted",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::social::WykopEntryCommentPayload"
     }
   ],
   "xtask_commands": [
+    {
+      "subject": "xtask_command:__reap",
+      "path": "__reap",
+      "about": "Internal detached process watchdog — not for human use"
+    },
     {
       "subject": "xtask_command:analytics",
       "path": "analytics",
@@ -3068,6 +4193,11 @@
       "subject": "xtask_command:analytics.hotspots",
       "path": "analytics.hotspots",
       "about": "Diagnostic churn analysis — most active recurring and chronic issues (J2)"
+    },
+    {
+      "subject": "xtask_command:analytics.pressure",
+      "path": "analytics.pressure",
+      "about": "Current host pressure snapshot, with Sinnix observability join when available"
     },
     {
       "subject": "xtask_command:analytics.recommend",
@@ -3680,6 +4810,11 @@
       "about": "Run perf only"
     },
     {
+      "subject": "xtask_command:verify.closure",
+      "path": "verify.closure",
+      "about": "Operationalize the 2026-05-11 closure-verification policy: fetch an issue body via `gh`, extract AC checkboxes and shell code blocks marked `verify`, and run each command, reporting pass/fail per command"
+    },
+    {
       "subject": "xtask_command:verify.compare",
       "path": "verify.compare",
       "about": "Compare two perf reports"
@@ -3698,6 +4833,11 @@
       "subject": "xtask_command:verify.report",
       "path": "verify.report",
       "about": "Print summary from a perf report JSON"
+    },
+    {
+      "subject": "xtask_command:verify.source-worker",
+      "path": "verify.source-worker",
+      "about": "Source-worker integrity gate: dispatch cleanliness, NixOS binding drift, ingestor-crate deletion, workspace member count, and parser registration smoke"
     }
   ],
   "scenarios": [

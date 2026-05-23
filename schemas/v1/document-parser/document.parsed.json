@@ -26,7 +26,7 @@
       "type": "integer"
     },
     "document_id": {
-      "description": "Deterministic document identity. UUIDv5 over `(NS_DOCUMENTS,\nsource_unit || \"/\" || natural_key)` — replay against the same source\nproduces the same id.",
+      "description": "Deterministic document identity. `UUIDv5` over `(NS_DOCUMENTS,\nsource_unit || \"/\" || natural_key)` — replay against the same source\nproduces the same id.",
       "format": "uuid",
       "type": "string"
     },

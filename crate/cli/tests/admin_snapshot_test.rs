@@ -205,6 +205,7 @@ async fn library_dry_run_returns_valid_result() -> xtask::sandbox::TestResult<()
     let result = cmd.execute().expect("dry-run execute must succeed");
 
     assert_eq!(result.mode, "dry-run");
+    assert_snapshot_id_is_uuidv7(&result.snapshot_id);
     assert!(
         result.output_path.is_none(),
         "dry-run must not report an output path"
@@ -232,6 +233,16 @@ async fn library_dry_run_returns_valid_result() -> xtask::sandbox::TestResult<()
     }
 
     Ok(())
+}
+
+fn assert_snapshot_id_is_uuidv7(id: &str) {
+    assert_eq!(id.len(), 36, "snapshot ID must be canonical UUID text");
+    assert_eq!(
+        id.as_bytes().get(14),
+        Some(&b'7'),
+        "snapshot ID must be UUIDv7"
+    );
+    sinex_primitives::Uuid::parse_str(id).expect("snapshot ID must parse as UUID");
 }
 
 /// Manifest JSON round-trips correctly through serde.
