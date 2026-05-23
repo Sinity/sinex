@@ -20,6 +20,9 @@ use sinex_node_sdk::{
         AcquisitionManager, BufferedAppendStreamWriterConfig, RotationPolicy, SourceRecordAnchor,
     },
     ingestor_node::IngestorNode,
+    parser::{
+        FileDropWatchBudget, FileDropWatchMode, FileDropWatchSurvey, choose_file_drop_watch_plan,
+    },
     runtime::stream::{
         Checkpoint, ContinuousStart, MaterialReplayContext, NodeCapabilities, NodeRuntimeState,
         ResolvedReplayMaterial, ScanArgs, ScanReport, ServiceInfo, TimeHorizon,
@@ -29,7 +32,7 @@ use sinex_node_sdk::{
 };
 use sinex_node_sdk::{ExplorationProvider, ExportFormat, IngestionHistoryEntry, SourceState};
 use sinex_primitives::{
-    Seconds, Uuid,
+    Uuid,
     domain::{HostName, RecordedPath, SanitizedPath, SourceIdentifier},
     events::{
         EventPayload,
@@ -49,6 +52,7 @@ use sinex_primitives::{
 use std::{
     collections::{HashMap, HashSet},
     fs::Metadata as StdMetadata,
+    num::NonZeroUsize,
     path::{Path, PathBuf},
     sync::{
         Arc, Mutex as StdMutex,
@@ -70,7 +74,6 @@ use validator::ValidationError;
 const DEFAULT_MAX_CAPTURE_BYTES: Bytes = Bytes::from_mebibytes(10); // 10MB
 const DEFAULT_MAX_DEPTH: usize = 10; // Maximum directory traversal depth
 const DEFAULT_MAX_WATCHES: usize = 524_288; // Align with the documented/recommended Linux inotify limit
-const DEFAULT_POLL_INTERVAL_SECS: Seconds = Seconds::from_secs(5);
 const FS_WATCH_CHANNEL_SIZE: usize = 10_000; // Buffer size for filesystem event channel (high-volume burst protection)
 const FS_CAPTURE_CHUNK_SIZE: usize = 64 * 1024;
 const FS_READ_RETRY_ATTEMPTS: u32 = 3; // Number of retry attempts for transient file read errors
@@ -83,20 +86,12 @@ const FS_OBSERVATION_BATCH_COALESCE_WINDOW: std::time::Duration =
     std::time::Duration::from_millis(20);
 const FS_OBSERVATION_WRITER_CHANNEL_CAPACITY: usize = 256;
 const DEFAULT_IGNORED_DIRECTORY_NAMES: &[&str] = &[".git", ".direnv", "node_modules", "target"];
-const INOTIFY_MAX_USER_WATCHES_PATH: &str = "/proc/sys/fs/inotify/max_user_watches";
 const MATERIAL_REASON_CREATED: &str = "fs-watcher:file-created";
 const MATERIAL_REASON_MODIFIED: &str = "fs-watcher:file-modified";
 const MATERIAL_REASON_DELETED: &str = "fs-watcher:file-deleted";
 const MATERIAL_REASON_MOVED: &str = "fs-watcher:file-moved";
 
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-struct WatchTreeSurvey {
-    accessible_watch_count: usize,
-    filtered_watch_count: usize,
-    unreadable_directories: usize,
-    ignored_directories: usize,
-    filtered_targets: Vec<PathBuf>,
-}
+type WatchTreeSurvey = FileDropWatchSurvey;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum WatchStrategy {
@@ -113,27 +108,7 @@ impl WatchStrategy {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct WatchBudget {
-    configured_max_watches: usize,
-    effective_max_watches: usize,
-    kernel_max_watches: Option<usize>,
-}
-
-impl WatchBudget {
-    fn detect(configured_max_watches: usize) -> Self {
-        let kernel_max_watches = read_kernel_inotify_watch_limit();
-        let effective_max_watches = kernel_max_watches.map_or(configured_max_watches, |limit| {
-            limit.min(configured_max_watches)
-        });
-
-        Self {
-            configured_max_watches,
-            effective_max_watches,
-            kernel_max_watches,
-        }
-    }
-}
+type WatchBudget = FileDropWatchBudget;
 
 enum ActiveWatcher {
     NativeRecursive {
@@ -164,10 +139,6 @@ pub struct FilesystemConfig {
     #[serde(default = "default_max_watches")]
     pub max_watches: usize,
 
-    /// Poll interval retained for backwards config compatibility; poll fallback is no longer automatic
-    #[serde(default = "default_poll_interval_secs")]
-    pub poll_interval_secs: Seconds,
-
     /// Directory names that should be excluded from recursive watch planning and historical scans
     #[serde(default = "default_ignored_directory_names")]
     pub ignored_directory_names: Vec<String>,
@@ -179,10 +150,6 @@ pub struct FilesystemConfig {
 
 fn default_max_watches() -> usize {
     DEFAULT_MAX_WATCHES
-}
-
-fn default_poll_interval_secs() -> Seconds {
-    DEFAULT_POLL_INTERVAL_SECS
 }
 
 fn default_ignored_directory_names() -> Vec<String> {
@@ -200,7 +167,6 @@ impl Default for FilesystemConfig {
             follow_symlinks: false,
             max_capture_bytes: DEFAULT_MAX_CAPTURE_BYTES,
             max_watches: DEFAULT_MAX_WATCHES,
-            poll_interval_secs: DEFAULT_POLL_INTERVAL_SECS,
             ignored_directory_names: default_ignored_directory_names(),
             material_metadata_policy: sinex_node_sdk::MaterialMetadataPolicy::default(),
         }
@@ -232,12 +198,6 @@ impl FilesystemConfig {
         if !(1..=524_288).contains(&self.max_watches) {
             return Err(SinexError::configuration(
                 "Max watches must be between 1 and 524288".to_string(),
-            ));
-        }
-
-        if !(1..=3600).contains(&self.poll_interval_secs.as_secs()) {
-            return Err(SinexError::configuration(
-                "Poll interval must be between 1 and 3600 seconds".to_string(),
             ));
         }
 
@@ -1354,53 +1314,19 @@ fn choose_watch_strategy(
     survey: &WatchTreeSurvey,
     budget: WatchBudget,
 ) -> NodeResult<WatchStrategy> {
-    let needs_filtered_plan = survey.accessible_watch_count > budget.effective_max_watches
-        || survey.unreadable_directories > 0
-        || survey.ignored_directories > 0;
+    let plan = choose_file_drop_watch_plan(survey.clone(), budget).map_err(|error| {
+        SinexError::configuration(
+            "Filesystem watch budget exceeded even after applying filtered native watch planning",
+        )
+        .with_context("reason", error.to_string())
+    })?;
 
-    if !needs_filtered_plan {
-        return Ok(WatchStrategy::NativeRecursive);
-    }
-
-    if survey.filtered_watch_count <= budget.effective_max_watches {
-        return Ok(WatchStrategy::NativeFiltered {
+    match plan.mode {
+        FileDropWatchMode::NativeRecursive => Ok(WatchStrategy::NativeRecursive),
+        FileDropWatchMode::NativeFiltered => Ok(WatchStrategy::NativeFiltered {
             filtered_targets: survey.filtered_targets.clone(),
-        });
+        }),
     }
-
-    let mut error = SinexError::configuration(
-        "Filesystem watch budget exceeded even after applying filtered native watch planning",
-    )
-    .with_context(
-        "configured_max_watches",
-        budget.configured_max_watches.to_string(),
-    )
-    .with_context(
-        "effective_max_watches",
-        budget.effective_max_watches.to_string(),
-    )
-    .with_context(
-        "accessible_watch_count",
-        survey.accessible_watch_count.to_string(),
-    )
-    .with_context(
-        "filtered_watch_count",
-        survey.filtered_watch_count.to_string(),
-    )
-    .with_context(
-        "unreadable_directories",
-        survey.unreadable_directories.to_string(),
-    )
-    .with_context(
-        "ignored_directories",
-        survey.ignored_directories.to_string(),
-    );
-
-    if let Some(kernel_max_watches) = budget.kernel_max_watches {
-        error = error.with_context("kernel_max_user_watches", kernel_max_watches.to_string());
-    }
-
-    Err(error)
 }
 
 fn notify_error_is_skippable_filtered_target(error: &notify::Error) -> bool {
@@ -2237,7 +2163,7 @@ fn log_watch_strategy(
             "Filesystem watch budget exceeds the current kernel inotify limit; the effective limit is clamped by the host"
         );
     }
-    if survey.accessible_watch_count > budget.effective_max_watches {
+    if survey.accessible_watch_count > budget.effective_max_watches.get() {
         warn!(
             path = %path.display(),
             accessible_watch_count = survey.accessible_watch_count,
@@ -2269,14 +2195,6 @@ fn log_watch_strategy(
         watcher_mode,
         "Watching path"
     );
-}
-
-fn read_kernel_inotify_watch_limit() -> Option<usize> {
-    std::fs::read_to_string(INOTIFY_MAX_USER_WATCHES_PATH)
-        .ok()?
-        .trim()
-        .parse::<usize>()
-        .ok()
 }
 
 fn handle_watcher_callback(
@@ -2375,7 +2293,11 @@ fn prepare_watch_root(
         ctx.follow_symlinks,
         &ctx.ignored_directory_names,
     )?;
-    let budget = WatchBudget::detect(ctx.max_watches);
+    let configured_max_watches = NonZeroUsize::new(ctx.max_watches).ok_or_else(|| {
+        SinexError::configuration("filesystem max_watches must be greater than zero")
+            .with_context("max_watches", ctx.max_watches.to_string())
+    })?;
+    let budget = WatchBudget::detect(configured_max_watches);
     let strategy = choose_watch_strategy(&survey, budget)?;
     Ok((canonical, canonical_root, survey, strategy, budget))
 }
@@ -2926,11 +2848,10 @@ mod tests {
             filtered_targets: vec![PathBuf::from("/tmp"), PathBuf::from("/tmp/notes")],
             ..WatchTreeSurvey::default()
         };
-        let budget = WatchBudget {
-            configured_max_watches: 8,
-            effective_max_watches: 4,
-            kernel_max_watches: Some(4),
-        };
+        let budget = WatchBudget::from_limits(
+            NonZeroUsize::new(8).expect("fixture watch limit should be non-zero"),
+            Some(NonZeroUsize::new(4).expect("fixture kernel limit should be non-zero")),
+        );
 
         let strategy = choose_watch_strategy(&survey, budget)?;
         assert!(matches!(strategy, WatchStrategy::NativeFiltered { .. }));
@@ -2945,11 +2866,10 @@ mod tests {
             filtered_watch_count: 5,
             ..WatchTreeSurvey::default()
         };
-        let budget = WatchBudget {
-            configured_max_watches: 8,
-            effective_max_watches: 4,
-            kernel_max_watches: Some(4),
-        };
+        let budget = WatchBudget::from_limits(
+            NonZeroUsize::new(8).expect("fixture watch limit should be non-zero"),
+            Some(NonZeroUsize::new(4).expect("fixture kernel limit should be non-zero")),
+        );
 
         let error = choose_watch_strategy(&survey, budget)
             .expect_err("oversized filtered plan should fail honestly");

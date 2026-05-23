@@ -29,7 +29,7 @@ use sinex_primitives::events::SourceMaterial;
 use sinex_primitives::ids::Id;
 use sinex_primitives::parser::{InputShapeKind, SourceRecord};
 
-use crate::parser::{InputShapeAdapter, ParserError, ParserResult};
+use crate::parser::{InputShapeAdapter, ParserError, ParserResult, SourceRecordFingerprint};
 
 // =============================================================================
 // Logical-path prefixes — the tagging mechanism
@@ -195,6 +195,16 @@ where
         Ok(merged)
     }
 
+    fn input_fingerprint(
+        &self,
+        config: &Self::Config,
+    ) -> ParserResult<Option<SourceRecordFingerprint>> {
+        if let Some(primary) = self.0.input_fingerprint(&config.primary)? {
+            return Ok(Some(primary));
+        }
+        self.1.input_fingerprint(&config.secondary)
+    }
+
     fn cursor_after(&self, record: &SourceRecord) -> ParserResult<Self::Cursor> {
         // We need the current cursor to carry forward the unchanged leg.
         // The runtime calls this without access to the previous cursor, so we
@@ -272,11 +282,22 @@ mod tests {
     #[derive(Clone, Default)]
     struct FixtureAdapter {
         records: Vec<SourceRecord>,
+        fingerprint: Option<SourceRecordFingerprint>,
     }
 
     impl FixtureAdapter {
         fn with_records(records: Vec<SourceRecord>) -> Self {
-            Self { records }
+            Self {
+                records,
+                fingerprint: None,
+            }
+        }
+
+        fn with_fingerprint(fingerprint: SourceRecordFingerprint) -> Self {
+            Self {
+                records: Vec::new(),
+                fingerprint: Some(fingerprint),
+            }
         }
     }
 
@@ -332,6 +353,13 @@ mod tests {
                 _ => Err(ParserError::Cursor("unexpected anchor".into())),
             }
         }
+
+        fn input_fingerprint(
+            &self,
+            _config: &Self::Config,
+        ) -> ParserResult<Option<SourceRecordFingerprint>> {
+            Ok(self.fingerprint.clone())
+        }
     }
 
     // -------------------------------------------------------------------------
@@ -382,6 +410,57 @@ mod tests {
             "third record must be secondary: {lp2}"
         );
 
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn input_fingerprint_prefers_primary_leg() -> xtask::sandbox::TestResult<()> {
+        let primary = SourceRecordFingerprint::from_json(&serde_json::json!({
+            "primary": 1
+        }));
+        let secondary = SourceRecordFingerprint::from_json(&serde_json::json!({
+            "secondary": true
+        }));
+        let adapter = ChainedAdapter(
+            FixtureAdapter::with_fingerprint(primary.clone()),
+            FixtureAdapter::with_fingerprint(secondary),
+        );
+        let config = ChainedConfig {
+            primary: FixtureConfig,
+            secondary: FixtureConfig,
+            interleaved: false,
+        };
+
+        let fingerprint = adapter
+            .input_fingerprint(&config)?
+            .ok_or_else(|| ParserError::Adapter("missing chained fingerprint".into()))?;
+
+        assert_eq!(fingerprint.hash(), primary.hash());
+        assert!(fingerprint.keys.contains(&"/primary".to_string()));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn input_fingerprint_falls_back_to_secondary_leg() -> xtask::sandbox::TestResult<()> {
+        let secondary = SourceRecordFingerprint::from_json(&serde_json::json!({
+            "secondary": true
+        }));
+        let adapter = ChainedAdapter(
+            FixtureAdapter::default(),
+            FixtureAdapter::with_fingerprint(secondary.clone()),
+        );
+        let config = ChainedConfig {
+            primary: FixtureConfig,
+            secondary: FixtureConfig,
+            interleaved: false,
+        };
+
+        let fingerprint = adapter
+            .input_fingerprint(&config)?
+            .ok_or_else(|| ParserError::Adapter("missing chained fingerprint".into()))?;
+
+        assert_eq!(fingerprint.hash(), secondary.hash());
+        assert!(fingerprint.keys.contains(&"/secondary".to_string()));
         Ok(())
     }
 

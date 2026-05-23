@@ -27,6 +27,11 @@ pub struct DomainProjectionSpec {
 }
 ```
 
+The Rust vocabulary for this contract lives in
+`sinex_primitives::domain_reducer`. Domain reducers should export a typed
+`DomainProjectionSpec` next to their reducer implementation; for example the
+task domain exports `TASK_REDUCER_SPEC` for `tasks.current` v1.
+
 The corresponding reducer implementation must provide:
 
 | Rule | Meaning |

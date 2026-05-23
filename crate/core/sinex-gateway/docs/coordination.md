@@ -145,58 +145,25 @@ let (rate_limiter, cleanup_task) = match services.nats_client() {
 - `SINEX_RPC_RATE_LIMIT_PER_MINUTE` - Requests per minute per token (default: 6000)
 - `SINEX_RPC_RATE_LIMIT_WINDOW_SECS` - Window duration in seconds (default: 60)
 
-## SO_REUSEPORT for Port Sharing
+## TCP Listener Binding
 
-### Problem
+### Current Behavior
 
-During hot reload with handoff:
-
-- Old instance holds port 9999
-- New instance tries to bind → "Address already in use"
-- Can't have both running simultaneously
-
-### Solution
-
-**SO_REUSEPORT** socket option allows multiple processes to bind the same port:
+The gateway binds its TCP listener through `tokio::net::TcpSocket` with
+`SO_REUSEADDR` enabled before `bind`/`listen`:
 
 ```rust
-async fn bind_with_reuseport(addr: &str) -> io::Result<TcpListener> {
-    let socket = Socket::new(Domain::IPV4, Type::STREAM, Some(Protocol::TCP))?;
-    socket.set_reuse_address(true)?;
-    socket.set_reuse_port(true)?; // Key: allows multiple binds
-    socket.bind(&socket_addr.into())?;
-    socket.listen(128)?;
-
-    tokio::net::TcpListener::from_std(socket.into())
-}
+let socket = TcpSocket::new_v4()?;
+socket.set_reuseaddr(true)?;
+socket.bind(addr)?;
+let listener = socket.listen(128)?;
 ```
 
-**Kernel Behavior:**
-
-- Both old and new instances listen on port 9999
-- Kernel load-balances incoming connections
-- Each instance accepts some connections
-- When old exits, new gets all traffic
-
-**Hot Reload Flow:**
-
-```
-Old gateway (port 9999, SO_REUSEPORT)
-    ↓
-New gateway starts, binds to same port 9999 ← No conflict!
-    ↓
-Both receive connections (kernel distributes)
-    ↓
-Old gateway: drains active connections, exits
-    ↓
-New gateway: now sole listener on 9999
-```
-
-**Benefits:**
-
-- Zero-downtime upgrades
-- Smooth traffic migration
-- No dropped connections during transition
+`SO_REUSEPORT` is not currently enabled. A replacement gateway process cannot
+bind the same address while the old process still owns it. Hot reload therefore
+needs an external handoff surface such as socket activation, a load balancer, or
+an orchestrator step that drains/stops the old process before the replacement
+binds.
 
 ## Integration with Hot Reload Orchestrator
 
@@ -210,7 +177,7 @@ async fn restart(&mut self) -> Result<()> {
     // 2. Start new instance WHILE old still running
     let new_child = self.spawn_new_instance(&binary_path).await?;
 
-    // 3. Wait for initialization (NATS connect, SO_REUSEPORT bind)
+    // 3. Wait for initialization (NATS connect, listener bind)
     sleep(3s);
 
     // 4. Wait for old to exit gracefully (connection drain)
@@ -282,7 +249,7 @@ Developer: xtask dev run gateway
     ↓
 File change detected → Build new binary
     ↓
-Spawn new instance (SO_REUSEPORT allows both to bind)
+Drain/stop old instance before replacement binds
     ↓
 Old instance: drains connections (30s timeout)
     ↓
@@ -310,7 +277,7 @@ Load Balancer
 **Rolling Upgrade:**
 
 1. Deploy new binary to Instance 1
-2. New process binds via SO_REUSEPORT
+2. New process binds after the old process releases the listener, or via an external socket handoff
 3. Old process drains and exits
 4. Repeat for Instance 2, 3
 

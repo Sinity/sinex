@@ -24,7 +24,7 @@ pub use common::{DbResult, EnhancedRepository, Repository, TableDef, Transaction
 pub use continuity::ContinuityRepository;
 pub use document_search::{
     DEFAULT_PAGE_SIZE, DocumentSearchQuery, DocumentSearchRepository, DocumentSearchResult,
-    DocumentSearchResults, MAX_PAGE_SIZE, SearchMode,
+    DocumentSearchResults, MAX_PAGE_SIZE, SearchEmptyReason, SearchMode,
 };
 pub use embeddings::{
     CacheEntry, CachedEmbeddingHit, EmbeddingModelRecord, EmbeddingRepository, EmbeddingTarget,

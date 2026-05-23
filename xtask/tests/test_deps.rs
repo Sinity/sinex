@@ -66,9 +66,9 @@ async fn test_deps_tree_no_package() -> ::xtask::sandbox::TestResult<()> {
     let stdout = String::from_utf8_lossy(&output.stdout);
     let parsed: serde_json::Value =
         serde_json::from_str(&stdout).expect("deps tree should produce valid JSON in non-TTY");
-    let tree = parsed["data"]
+    let tree = parsed["data"]["tree"]
         .as_str()
-        .expect("deps tree JSON should expose rendered tree in data");
+        .expect("deps tree JSON should expose rendered tree in data.tree");
     assert!(
         tree.contains("sinex-workspace"),
         "workspace tree should contain the synthetic workspace root"
@@ -76,6 +76,10 @@ async fn test_deps_tree_no_package() -> ::xtask::sandbox::TestResult<()> {
     assert!(
         tree.contains("xtask"),
         "workspace tree should contain xtask"
+    );
+    assert!(
+        !tree.contains('\u{1b}'),
+        "JSON tree should not contain terminal ANSI escapes"
     );
     Ok(())
 }
@@ -93,13 +97,14 @@ async fn test_deps_tree_with_valid_package() -> ::xtask::sandbox::TestResult<()>
     let stdout = String::from_utf8_lossy(&output.stdout);
     let parsed: serde_json::Value = serde_json::from_str(&stdout)
         .expect("deps tree --package should produce valid JSON in non-TTY");
-    let tree = parsed["data"]
+    let tree = parsed["data"]["tree"]
         .as_str()
-        .expect("deps tree --package JSON should expose rendered tree in data");
+        .expect("deps tree --package JSON should expose rendered tree in data.tree");
     assert!(
         tree.contains("xtask"),
         "package tree should include the requested package"
     );
+    assert_eq!(parsed["data"]["package"].as_str(), Some("xtask"));
     Ok(())
 }
 

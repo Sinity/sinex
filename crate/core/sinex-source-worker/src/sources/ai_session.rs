@@ -180,6 +180,13 @@ impl MaterialParser for ClaudeSessionParser {
 
         Ok(intents)
     }
+
+    fn required_input_keys(&self) -> Vec<String> {
+        ["/[]/uuid", "/[]/chat_messages"]
+            .into_iter()
+            .map(str::to_owned)
+            .collect()
+    }
 }
 
 fn parse_claude_message(
@@ -441,6 +448,13 @@ impl MaterialParser for ChatGptSessionParser {
         }
 
         Ok(intents)
+    }
+
+    fn required_input_keys(&self) -> Vec<String> {
+        ["/[]/id", "/[]/current_node", "/[]/mapping"]
+            .into_iter()
+            .map(str::to_owned)
+            .collect()
     }
 }
 

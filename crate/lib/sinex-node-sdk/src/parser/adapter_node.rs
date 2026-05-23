@@ -494,9 +494,10 @@ where
         match self.adapter.input_fingerprint(config) {
             Ok(Some(current)) => {
                 if let Some(previous) = &state.last_input_fingerprint
-                    && let Some(drift) =
+                    && let Some(mut drift) =
                         SourceRecordFingerprint::diff(source_unit_id.clone(), previous, &current)
                 {
+                    drift.required_input_keys = self.parser.required_input_keys();
                     warn!(
                         source_unit = self.source_unit_id,
                         format = drift.format.as_str(),
@@ -504,6 +505,7 @@ where
                         current_hash = drift.current_hash.as_str(),
                         added_keys = ?&drift.added_keys,
                         removed_keys = ?&drift.removed_keys,
+                        required_input_keys = ?&drift.required_input_keys,
                         type_changes = ?&drift.type_changes,
                         "input shape drift detected"
                     );
@@ -1276,7 +1278,7 @@ mod tests {
         RuntimePrivateModeState, load_private_mode_state, private_mode_state_path,
         save_private_mode_state,
     };
-    use sinex_primitives::rpc::sources::caveat_codes;
+    use sinex_primitives::rpc::sources::{CaveatSeverity, caveat_codes};
     use sinex_primitives::{HostName, JsonValue};
     use std::collections::HashMap;
     use tokio::sync::mpsc;
@@ -1360,6 +1362,10 @@ mod tests {
                 proof_obligations: Vec::new(),
                 description: String::new(),
             }
+        }
+
+        fn required_input_keys(&self) -> Vec<String> {
+            vec!["/message".to_string()]
         }
 
         async fn parse_record(
@@ -1788,6 +1794,7 @@ mod tests {
         let drift = &state.recent_input_drifts[0];
         assert_eq!(drift.source_unit_id, source_unit_id);
         assert_eq!(drift.added_keys, vec!["/enabled".to_string()]);
+        assert_eq!(drift.required_input_keys, vec!["/message".to_string()]);
         assert_eq!(
             drift.type_changes,
             vec![(
@@ -1834,7 +1841,7 @@ mod tests {
         assert_eq!(additive_caveats.len(), 1);
         assert_eq!(additive_caveats[0].code, caveat_codes::SOURCE_SHAPE_CHANGED);
 
-        let degraded = SourceRecordFingerprint::diff(
+        let mut degraded = SourceRecordFingerprint::diff(
             source_unit_id,
             &SourceRecordFingerprint::from_json(&serde_json::json!({
                 "message": "hello",
@@ -1845,6 +1852,7 @@ mod tests {
             })),
         )
         .ok_or_else(|| color_eyre::eyre::eyre!("degraded drift should be detected"))?;
+        degraded.required_input_keys = vec!["/message".to_string()];
         state.record_input_drift(degraded);
 
         let degraded_caveats = state.latest_input_drift_caveats();
@@ -1858,6 +1866,13 @@ mod tests {
                 caveat_codes::PARSER_FIELD_TYPE_CHANGED,
                 caveat_codes::PARSER_REQUIRED_FIELD_MISSING
             ]
+        );
+        assert!(
+            degraded_caveats.iter().any(|caveat| {
+                caveat.code == caveat_codes::PARSER_REQUIRED_FIELD_MISSING
+                    && caveat.severity == CaveatSeverity::Blocking
+            }),
+            "required input removal should be blocking: {degraded_caveats:?}"
         );
         Ok(())
     }

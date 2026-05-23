@@ -6,12 +6,7 @@ path = "src/main.rs"
 name = "sinex-ingestd"
 
 [dependencies]
-libc = "0.2"
-human-panic = "2.0"
-shadow-rs = "0.35"
-
-[package.metadata.cargo-machete]
-ignored = ["shadow-rs"]
+libc = { workspace = true }
 
 [package.version]
 workspace = true
@@ -154,8 +149,6 @@ features = [
     "testing",
 ]
 
-[build-dependencies]
-shadow-rs = "0.35"
 
 [lints]
 workspace = true

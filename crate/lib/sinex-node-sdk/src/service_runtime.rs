@@ -16,8 +16,6 @@
 //!
 //! - [`install_tracing`] **must** be called once per process before any
 //!   `tracing` macros are used.
-//! - `human_panic::setup_panic!()` is a proc-macro and cannot be wrapped in a
-//!   function; call it directly at the top of each `main`.
 //! - [`spawn_shutdown_task`] returns a `watch::Receiver<bool>` that flips to
 //!   `true` on SIGINT/SIGTERM. Pass it to long-running async code.
 //!
@@ -28,7 +26,6 @@
 //!
 //! #[tokio::main]
 //! async fn main() -> color_eyre::eyre::Result<()> {
-//!     human_panic::setup_panic!();
 //!     color_eyre::install()?;
 //!
 //!     service_runtime::install_tracing(TracingFormat::Text, "my_service=info")?;

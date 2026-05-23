@@ -810,18 +810,39 @@ impl SelfObserver {
 }
 
 /// Errors from self-observation emission
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug)]
 pub enum SelfObservationError {
-    #[error("Failed to build self-observation event")]
-    Build(#[source] SinexError),
-    #[error("Failed to serialize event: {0}")]
+    Build(SinexError),
     Serialization(String),
-    #[error("Self-observation materialization failed: {0}")]
     Materialization(String),
-    #[error("Self-observation is enabled but the runtime path is unavailable")]
     Unavailable,
-    #[error("Failed to publish event: {0}")]
     Publish(String),
+}
+
+impl std::fmt::Display for SelfObservationError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Build(_) => write!(f, "Failed to build self-observation event"),
+            Self::Serialization(message) => write!(f, "Failed to serialize event: {message}"),
+            Self::Materialization(message) => {
+                write!(f, "Self-observation materialization failed: {message}")
+            }
+            Self::Unavailable => write!(
+                f,
+                "Self-observation is enabled but the runtime path is unavailable"
+            ),
+            Self::Publish(message) => write!(f, "Failed to publish event: {message}"),
+        }
+    }
+}
+
+impl std::error::Error for SelfObservationError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Build(error) => Some(error),
+            _ => None,
+        }
+    }
 }
 
 impl From<SelfObservationError> for SinexError {

@@ -27,6 +27,7 @@
 use color_eyre::eyre::{ContextCompat, Result, WrapErr};
 use guppy::MetadataCommand;
 use guppy::graph::PackageGraph;
+use std::collections::BTreeSet;
 
 use crate::graph::impact::ImpactMetrics;
 
@@ -402,15 +403,16 @@ impl WorkspaceGraph {
             .find(|p| p.name() == package_name)
             .with_context(|| format!("Package '{package_name}' not found in workspace"))?;
 
-        // Get direct dependencies
-        let deps: Vec<DependencyInfo> = package
-            .direct_links()
-            .map(|link| {
-                let dep_pkg = link.to();
-                DependencyInfo {
-                    name: dep_pkg.name().to_string(),
-                }
-            })
+        let mut dependency_names = BTreeSet::new();
+        for dependency in
+            crate::deps::active::active_direct_dependencies(&self.graph, package.id(), true)?
+        {
+            dependency_names.insert(dependency.name);
+        }
+
+        let deps = dependency_names
+            .into_iter()
+            .map(|name| DependencyInfo { name })
             .collect();
 
         Ok(deps)

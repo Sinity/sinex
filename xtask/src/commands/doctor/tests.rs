@@ -1921,3 +1921,264 @@ async fn test_rust_analyzer_process_matcher_ignores_flag_names() -> ::xtask::san
     ));
     Ok(())
 }
+
+#[sinex_test]
+async fn test_rust_analyzer_config_summary_accepts_workspace_contract()
+-> ::xtask::sandbox::TestResult<()> {
+    let value = toml::from_str::<toml::Value>(
+        r#"
+numThreads = 6
+
+[cargo]
+allTargets = false
+
+[cachePriming]
+enable = false
+
+[check]
+workspace = false
+
+[files]
+excludeDirs = [".sinex", "target", ".direnv"]
+
+[lru]
+capacity = 1024
+
+[procMacro]
+enable = true
+attributes.enable = false
+
+[diagnostics]
+disabled = ["unresolved-proc-macro"]
+"#,
+    )?;
+
+    let summary = summarize_rust_analyzer_config(&value);
+
+    assert!(summary.parse_ok);
+    assert_eq!(summary.num_threads, Some(6));
+    assert_eq!(summary.cargo_all_targets, Some(false));
+    assert_eq!(summary.cache_priming_enable, Some(false));
+    assert_eq!(summary.check_workspace, Some(false));
+    assert_eq!(summary.lru_capacity, Some(1024));
+    assert_eq!(summary.proc_macro_enable, Some(true));
+    assert_eq!(summary.proc_macro_attributes_enable, Some(false));
+    assert!(summary.warnings.is_empty());
+    Ok(())
+}
+
+#[sinex_test]
+async fn test_rust_analyzer_config_summary_warns_on_expensive_defaults()
+-> ::xtask::sandbox::TestResult<()> {
+    let value = toml::from_str::<toml::Value>(
+        r#"
+numThreads = 24
+
+[cargo]
+allTargets = true
+
+[cachePriming]
+enable = true
+
+[check]
+workspace = true
+
+[files]
+excludeDirs = ["target"]
+
+[lru]
+capacity = 4096
+
+[procMacro]
+enable = false
+attributes.enable = true
+
+[diagnostics]
+disabled = []
+"#,
+    )?;
+
+    let summary = summarize_rust_analyzer_config(&value);
+
+    assert!(
+        summary
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("numThreads"))
+    );
+    assert!(
+        summary
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("cargo.allTargets"))
+    );
+    assert!(
+        summary
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("cachePriming.enable"))
+    );
+    assert!(
+        summary
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("check.workspace"))
+    );
+    assert!(
+        summary
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("lru.capacity"))
+    );
+    assert!(
+        summary
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("procMacro.enable"))
+    );
+    assert!(
+        summary
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("procMacro.attributes.enable"))
+    );
+    assert!(
+        summary
+            .warnings
+            .iter()
+            .any(|warning| warning.contains(".sinex"))
+    );
+    assert!(
+        summary
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("unresolved-proc-macro"))
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn test_rust_analyzer_cli_diagnostic_parser_reads_batch_output()
+-> ::xtask::sandbox::TestResult<()> {
+    let output = r#"at crate sinexctl, file /realm/project/sinex/crate/cli/src/lib.rs: Warning RustcLint("unused_variables") from LineCol { line: 12, col: 4 } to LineCol { line: 12, col: 10 }: unused variable"#;
+
+    let diagnostics = parse_rust_analyzer_cli_diagnostics(output);
+
+    assert_eq!(diagnostics.len(), 1);
+    let diagnostic = &diagnostics[0];
+    assert_eq!(diagnostic.crate_name, "sinexctl");
+    assert_eq!(diagnostic.file, "/realm/project/sinex/crate/cli/src/lib.rs");
+    assert_eq!(diagnostic.severity, "Warning");
+    assert_eq!(
+        diagnostic.diagnostic_kind,
+        "RustcLint(\"unused_variables\")"
+    );
+    assert_eq!(diagnostic.line, 12);
+    assert_eq!(diagnostic.col, 4);
+    assert_eq!(diagnostic.end_line, 12);
+    assert_eq!(diagnostic.end_col, 10);
+    assert_eq!(diagnostic.message, "unused variable");
+    Ok(())
+}
+
+#[sinex_test]
+async fn test_rust_analyzer_cli_diagnostic_maps_to_history_shape()
+-> ::xtask::sandbox::TestResult<()> {
+    let diagnostic = RustAnalyzerCliDiagnostic {
+        crate_name: "sinexctl".to_string(),
+        file: "/realm/project/sinex/crate/cli/src/lib.rs".to_string(),
+        severity: "Warning".to_string(),
+        diagnostic_kind: "RustcLint(\"unused_variables\")".to_string(),
+        line: 12,
+        col: 4,
+        end_line: 12,
+        end_col: 10,
+        message: "unused variable".to_string(),
+    };
+
+    let stored = rust_analyzer_diagnostic_to_compiler_diagnostic(&diagnostic);
+
+    assert_eq!(stored.level, "warning");
+    assert_eq!(
+        stored.code.as_deref(),
+        Some("RustcLint(\"unused_variables\")")
+    );
+    assert_eq!(stored.message, "unused variable");
+    assert_eq!(
+        stored.file_path.as_deref(),
+        Some("/realm/project/sinex/crate/cli/src/lib.rs")
+    );
+    assert_eq!(stored.line, Some(13));
+    assert_eq!(stored.column, Some(5));
+    assert_eq!(stored.package.as_deref(), Some("sinexctl"));
+    assert!(
+        stored
+            .rendered
+            .as_deref()
+            .is_some_and(|rendered| rendered.contains("unused variable"))
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn test_rust_analyzer_cli_scan_status_classifies_partial_results()
+-> ::xtask::sandbox::TestResult<()> {
+    assert_eq!(rust_analyzer_cli_scan_status(Some(0), 0), "clean");
+    assert_eq!(rust_analyzer_cli_scan_status(Some(0), 2), "diagnostics");
+    assert_eq!(rust_analyzer_cli_scan_status(Some(1), 0), "failed");
+    assert_eq!(rust_analyzer_cli_scan_status(Some(1), 2), "partial");
+    assert_eq!(rust_analyzer_cli_scan_status(None, 0), "failed");
+    assert_eq!(rust_analyzer_cli_scan_status(None, 2), "partial");
+    Ok(())
+}
+
+#[sinex_test]
+async fn test_rust_analyzer_cli_stderr_summary_buckets_failures() -> ::xtask::sandbox::TestResult<()>
+{
+    let stderr = r#"
+2026-05-22T06:29:21.645151397+02:00  WARN cyclic deps: sinex_gateway(Idx::<CrateBuilder>(38)) -> sinex_gateway(Idx::<CrateBuilder>(38))
+2026-05-22T06:29:47.951700288+02:00 ERROR pattern has unexpected type: pat: Pat { ty: str }
+2026-05-22T06:29:49.34967273+02:00 ERROR Overloaded deref on type str is not a projection
+2026-05-22T06:29:50.00000000+02:00  WARN some other warning
+2026-05-22T06:29:51.00000000+02:00 ERROR some other failure
+"#;
+
+    let summary = summarize_rust_analyzer_cli_stderr(stderr)
+        .expect("stderr summary should classify non-empty RA warnings/errors");
+
+    assert_eq!(
+        summary.categories,
+        vec![
+            "cyclic_dependencies",
+            "rust_analyzer_internal_errors",
+            "other_warnings",
+            "other_errors",
+        ]
+    );
+    assert_eq!(summary.cyclic_dependency_warnings, 1);
+    assert_eq!(
+        summary.cyclic_dependency_edges,
+        vec!["sinex_gateway->sinex_gateway"]
+    );
+    assert_eq!(summary.internal_errors, 2);
+    assert_eq!(
+        summary.internal_error_kinds,
+        vec!["overloaded_deref", "unexpected_pattern_type"]
+    );
+    assert_eq!(summary.other_warnings, 1);
+    assert_eq!(summary.other_warning_samples.len(), 1);
+    assert_eq!(summary.other_errors, 1);
+    assert_eq!(summary.other_error_samples.len(), 1);
+    Ok(())
+}
+
+#[sinex_test]
+async fn test_rust_analyzer_cli_stderr_summary_omits_empty_output()
+-> ::xtask::sandbox::TestResult<()> {
+    assert_eq!(summarize_rust_analyzer_cli_stderr(""), None);
+    assert_eq!(
+        summarize_rust_analyzer_cli_stderr("informational line"),
+        None
+    );
+    Ok(())
+}

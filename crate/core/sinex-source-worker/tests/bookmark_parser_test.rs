@@ -350,23 +350,23 @@ async fn occurrence_key_fields_are_raindrop_id_url_created() {
 }
 
 // ---------------------------------------------------------------------------
-// Additional: manifest proof obligations are declared
+// Additional: manifest verification tags are declared
 // ---------------------------------------------------------------------------
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn manifest_proof_obligations_declared() {
+async fn manifest_verification_tags_declared() {
     let parser = RaindropBookmarkParser;
     let manifest = parser.manifest();
-    let obligations: HashSet<&str> = manifest
+    let verification_tags: HashSet<&str> = manifest
         .proof_obligations
         .iter()
         .map(std::string::String::as_str)
         .collect();
 
-    assert!(obligations.contains("timestamp_intrinsic"));
-    assert!(obligations.contains("anchor_csv_row"));
-    assert!(obligations.contains("occurrence_key_id_url_created"));
-    assert!(obligations.contains("cover_and_highlights_dropped"));
+    assert!(verification_tags.contains("timestamp_intrinsic"));
+    assert!(verification_tags.contains("anchor_csv_row"));
+    assert!(verification_tags.contains("occurrence_key_id_url_created"));
+    assert!(verification_tags.contains("cover_and_highlights_dropped"));
 }
 
 // ---------------------------------------------------------------------------

@@ -1351,7 +1351,8 @@ pub fn ensure_ready(ctx: &crate::command::CommandContext) -> Result<()> {
     //   < 70% used: silent (cheap call, ~5ms)
     //   70-85%:     warn (one-liner; user reclaims when convenient)
     //   85-90%:     auto-reclaim (cargo-sweep + incremental keep-3)
-    //   >= 90%:     auto-reclaim, then refuse if still >= 90%
+    //   >= 90%:     auto-reclaim, then refuse only if absolute free space is
+    //                also low (large mounts can have ample GiB free at 90%+)
     //
     // Opt-out: SINEX_PREFLIGHT_SKIP_DISK_CHECK=1 (CI / unusual setups).
     if std::env::var("SINEX_PREFLIGHT_SKIP_DISK_CHECK").is_err() {
@@ -1386,12 +1387,14 @@ pub fn ensure_ready(ctx: &crate::command::CommandContext) -> Result<()> {
                         }
                         if after.refuse() {
                             bail!(
-                                "Disk {} still {:.1}% used after reclaim ({:.0} GB free). \
+                                "Disk {} still {:.1}% used after reclaim ({:.0} GB free, \
+                                 below {:.0} GB floor). \
                                  Refusing to proceed — free space manually or raise threshold via \
                                  SINEX_PREFLIGHT_SKIP_DISK_CHECK=1.",
                                 after.mount,
                                 after.percent_used,
-                                after.free_gb
+                                after.free_gb,
+                                crate::cache_hygiene::REFUSE_MIN_FREE_GB
                             );
                         }
                     }
@@ -1399,10 +1402,13 @@ pub fn ensure_ready(ctx: &crate::command::CommandContext) -> Result<()> {
                         tracing::warn!(error = %error, "disk reclaim failed during preflight");
                         if usage.refuse() {
                             bail!(
-                                "Disk {} {:.1}% used and reclaim failed: {error:#}. \
+                                "Disk {} {:.1}% used ({:.0} GB free, below {:.0} GB floor) \
+                                 and reclaim failed: {error:#}. \
                                  Free space manually or set SINEX_PREFLIGHT_SKIP_DISK_CHECK=1.",
                                 usage.mount,
-                                usage.percent_used
+                                usage.percent_used,
+                                usage.free_gb,
+                                crate::cache_hygiene::REFUSE_MIN_FREE_GB
                             );
                         }
                     }

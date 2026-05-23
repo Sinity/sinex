@@ -82,25 +82,65 @@ pub fn write_duplicates_report<W: Write>(
                     "Duplicate dependencies ({} total):",
                     duplicates.len()
                 )?;
+                let direct_count = duplicates
+                    .iter()
+                    .filter(|duplicate| duplicate.direct_workspace_debt)
+                    .count();
+                let transitive_count = duplicates
+                    .iter()
+                    .filter(|duplicate| duplicate.transitive_only)
+                    .count();
+                writeln!(
+                    writer,
+                    "  {} direct workspace debt, {} transitive only",
+                    direct_count, transitive_count
+                )?;
                 writeln!(writer)?;
 
                 for dup in duplicates {
                     writeln!(
                         writer,
-                        "  {} has {} versions:",
+                        "  {} has {} versions ({}, {} direct workspace roots):",
                         dup.name,
-                        dup.versions.len()
+                        dup.versions.len(),
+                        if dup.direct_workspace_debt {
+                            "direct workspace debt"
+                        } else {
+                            "transitive only"
+                        },
+                        dup.direct_workspace_root_count
                     )?;
-                    for version in &dup.versions {
-                        writeln!(writer, "    - {version}")?;
+                    for detail in &dup.version_details {
+                        writeln!(writer, "    - {}", detail.version)?;
+                        if detail.workspace_roots.is_empty() {
+                            writeln!(writer, "      roots: <none>")?;
+                        } else {
+                            writeln!(writer, "      roots: {}", detail.workspace_roots.join(", "))?;
+                        }
+                        if !detail.direct_workspace_roots.is_empty() {
+                            writeln!(
+                                writer,
+                                "      direct: {}",
+                                detail.direct_workspace_roots.join(", ")
+                            )?;
+                        }
+                        if !detail.direct_dependents.is_empty() {
+                            writeln!(
+                                writer,
+                                "      dependents: {}",
+                                detail.direct_dependents.join(", ")
+                            )?;
+                        }
                     }
                 }
 
                 writeln!(writer)?;
                 writeln!(
                     writer,
-                    "Total: {} packages with duplicates",
-                    duplicates.len()
+                    "Total: {} packages with duplicates ({} direct, {} transitive)",
+                    duplicates.len(),
+                    direct_count,
+                    transitive_count
                 )?;
             }
         }
@@ -232,7 +272,11 @@ pub fn write_timing_report_to_buffer<W: Write>(
 
     writeln!(writer, "Top {top} slowest crates:")?;
     for (i, crate_info) in report.crate_times.iter().take(top).enumerate() {
-        let percent = (crate_info.duration_secs / report.total_time_secs) * 100.0;
+        let percent = if report.total_time_secs > 0.0 {
+            (crate_info.duration_secs / report.total_time_secs) * 100.0
+        } else {
+            0.0
+        };
         writeln!(
             writer,
             "  {}. {} - {:.2}s ({:.1}%)",

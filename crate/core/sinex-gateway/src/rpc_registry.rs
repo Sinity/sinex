@@ -55,7 +55,8 @@ use sinex_primitives::rpc::{
     semantic::{
         SEMANTIC_EPOCHS_CREATE_METHOD, SEMANTIC_EPOCHS_LIST_METHOD,
         SEMANTIC_LANE_DIFFS_LIST_METHOD, SEMANTIC_LANE_DIFFS_RECORD_ENTITY_RELATION_METHOD,
-        SEMANTIC_LANE_OUTPUTS_LIST_METHOD, SEMANTIC_LANE_OUTPUTS_WRITE_METHOD,
+        SEMANTIC_LANE_OUTPUTS_LIST_METHOD, SEMANTIC_LANE_OUTPUTS_SEED_CANONICAL_GRAPH_METHOD,
+        SEMANTIC_LANE_OUTPUTS_SEED_ENTITY_EVENTS_METHOD, SEMANTIC_LANE_OUTPUTS_WRITE_METHOD,
         SEMANTIC_LANES_CREATE_METHOD, SEMANTIC_LANES_DISCARD_METHOD, SEMANTIC_LANES_LIST_METHOD,
         SEMANTIC_LANES_SET_STATUS_METHOD,
     },
@@ -65,8 +66,9 @@ use sinex_primitives::rpc::{
         SOURCES_BINDINGS_LIST_METHOD, SOURCES_BINDINGS_RESOLVE_METHOD,
         SOURCES_CONTINUITY_EXPLAIN_GAP_METHOD, SOURCES_CONTINUITY_GET_METHOD,
         SOURCES_CONTINUITY_LIST_METHOD, SOURCES_CONTINUITY_METHOD, SOURCES_COVERAGE_METHOD,
-        SOURCES_LIST_METHOD, SOURCES_PRESETS_LIST_METHOD, SOURCES_READINESS_GET_METHOD,
-        SOURCES_READINESS_LIST_METHOD, SOURCES_SHOW_METHOD, SOURCES_STAGE_METHOD,
+        SOURCES_DRIFT_LIST_METHOD, SOURCES_LIST_METHOD, SOURCES_PRESETS_LIST_METHOD,
+        SOURCES_READINESS_GET_METHOD, SOURCES_READINESS_LIST_METHOD, SOURCES_SHOW_METHOD,
+        SOURCES_STAGE_METHOD,
     },
     system::{SYSTEM_HEALTH_METHOD, SYSTEM_PING_METHOD, SYSTEM_VERSION_METHOD},
     tasks::{
@@ -605,17 +607,20 @@ fn build_registry_impl() -> RpcRegistry {
         handle_semantic_epoch_create, handle_semantic_epoch_list, handle_semantic_lane_create,
         handle_semantic_lane_diff_record_entity_relation, handle_semantic_lane_diffs_list,
         handle_semantic_lane_discard, handle_semantic_lane_outputs_list,
-        handle_semantic_lane_outputs_write, handle_semantic_lane_set_status,
-        handle_semantic_lanes_list, handle_shadow_create, handle_shadow_delete, handle_shadow_list,
-        handle_sources_annotate, handle_sources_archive, handle_sources_bindings_create,
-        handle_sources_bindings_list, handle_sources_bindings_resolve, handle_sources_continuity,
+        handle_semantic_lane_outputs_seed_canonical_graph,
+        handle_semantic_lane_outputs_seed_entity_events, handle_semantic_lane_outputs_write,
+        handle_semantic_lane_set_status, handle_semantic_lanes_list, handle_shadow_create,
+        handle_shadow_delete, handle_shadow_list, handle_sources_annotate, handle_sources_archive,
+        handle_sources_bindings_create, handle_sources_bindings_list,
+        handle_sources_bindings_resolve, handle_sources_continuity,
         handle_sources_continuity_explain_gap, handle_sources_continuity_get,
-        handle_sources_continuity_list, handle_sources_coverage, handle_sources_list,
-        handle_sources_presets_list, handle_sources_readiness_get, handle_sources_readiness_list,
-        handle_sources_show, handle_sources_stage, handle_store_blob, handle_system_health,
-        handle_system_ping, handle_system_version, handle_tasks_cancel, handle_tasks_complete,
-        handle_tasks_create, handle_tasks_list, handle_tasks_state_get, handle_tasks_status_set,
-        handle_tasks_update, handle_telemetry_assembly_stats, handle_telemetry_command_frequency,
+        handle_sources_continuity_list, handle_sources_coverage, handle_sources_drift_list,
+        handle_sources_list, handle_sources_presets_list, handle_sources_readiness_get,
+        handle_sources_readiness_list, handle_sources_show, handle_sources_stage,
+        handle_store_blob, handle_system_health, handle_system_ping, handle_system_version,
+        handle_tasks_cancel, handle_tasks_complete, handle_tasks_create, handle_tasks_list,
+        handle_tasks_state_get, handle_tasks_status_set, handle_tasks_update,
+        handle_telemetry_assembly_stats, handle_telemetry_command_frequency,
         handle_telemetry_current_device_state, handle_telemetry_current_health,
         handle_telemetry_file_activity, handle_telemetry_gateway_stats,
         handle_telemetry_ingestd_batch_stats, handle_telemetry_ingestd_validation,
@@ -723,6 +728,7 @@ fn build_registry_impl() -> RpcRegistry {
             SOURCES_READINESS_GET_METHOD,
             boxed!(handle_sources_readiness_get),
         )
+        .service_typed_rpc(SOURCES_DRIFT_LIST_METHOD, boxed!(handle_sources_drift_list))
         .service_typed_rpc(
             SOURCES_CONTINUITY_LIST_METHOD,
             boxed!(handle_sources_continuity_list),
@@ -843,6 +849,14 @@ fn build_registry_impl() -> RpcRegistry {
         .pool_typed_rpc(
             SEMANTIC_LANE_OUTPUTS_WRITE_METHOD,
             boxed!(handle_semantic_lane_outputs_write),
+        )
+        .pool_typed_rpc(
+            SEMANTIC_LANE_OUTPUTS_SEED_CANONICAL_GRAPH_METHOD,
+            boxed!(handle_semantic_lane_outputs_seed_canonical_graph),
+        )
+        .pool_typed_rpc(
+            SEMANTIC_LANE_OUTPUTS_SEED_ENTITY_EVENTS_METHOD,
+            boxed!(handle_semantic_lane_outputs_seed_entity_events),
         )
         .pool_typed_rpc(
             SEMANTIC_LANE_DIFFS_RECORD_ENTITY_RELATION_METHOD,

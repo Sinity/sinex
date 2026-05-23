@@ -35,6 +35,7 @@ Regenerate with `xtask docs sync` or `xtask docs command-reference`; verify drif
 | `analytics` | `xtask analytics` — developer intelligence analytics |
 | `git-stack` | Plan and materialize PR-sized git branch stacks from the current commit graph |
 | `doctor` | Probe developer-environment health and deployment readiness |
+| `ra-diagnose` | Diagnose rust-analyzer process footprint and local workspace contract |
 | `privacy` | Run privacy-engine catalog, test, key, and config utilities |
 | `schema` | Schema verification command group |
 | `verify` | Verify phase plans and performance contracts |
@@ -644,6 +645,7 @@ Analyze workspace dependency structure and impact
 | `unused` | Detect unused dependencies |
 | `timings` | Analyze build timings |
 | `impact` | Analyze rebuild impact of package changes |
+| `update` | Update Cargo.lock through the xtask dependency surface |
 | `graph` | Visualize dependency graph |
 
 ### `xtask deps list`
@@ -712,6 +714,20 @@ Analyze rebuild impact of package changes
 | Flag | Value | Required | Description |
 |---|---|---|---|
 | `--package` | yes | no | Target package to analyze (defaults to all) |
+
+
+### `xtask deps update`
+
+Update Cargo.lock through the xtask dependency surface
+
+**Arguments**
+
+| Flag | Value | Required | Description |
+|---|---|---|---|
+| `-p, --package` | yes | no | Package spec to update; forwarded as repeated `cargo update -p <SPEC>` |
+| `--recursive` | no | no | Update dependencies recursively for the selected packages |
+| `--dry-run` | no | no | Preview the update without writing Cargo.lock |
+| `--all` | no | no | Update the whole lockfile instead of named packages |
 
 
 ### `xtask deps graph`
@@ -1322,6 +1338,18 @@ Probe developer-environment health and deployment readiness
 | `--rust-analyzer` | no | no | Inspect rust-analyzer process footprint and local config |
 
 
+## `xtask ra-diagnose`
+
+Diagnose rust-analyzer process footprint and local workspace contract
+
+**Arguments**
+
+| Flag | Value | Required | Description |
+|---|---|---|---|
+| `--collect-diagnostics` | no | no | Also run rust-analyzer's batch diagnostics subcommand |
+| `--severity` | yes | no | Minimum severity for --collect-diagnostics |
+
+
 ## `xtask privacy`
 
 Run privacy-engine catalog, test, key, and config utilities
@@ -1429,7 +1457,7 @@ Verify phase plans and performance contracts
 | `all` | Run perf only |
 | `source-worker` | Source-worker evidence gate: NixOS binding drift, parser registration, and privacy invocation |
 | `closure` | Operationalize the 2026-05-11 closure-verification policy: fetch an issue body via `gh`, extract AC checkboxes and shell code blocks marked `verify`, and run each command, reporting pass/fail per command |
-| `claims` | Summarize executable proof claims, runner commands, and deferrals |
+| `claims` | Summarize executable verification claims, runner commands, and deferrals |
 
 ### `xtask verify plan`
 
@@ -1529,7 +1557,7 @@ Operationalize the 2026-05-11 closure-verification policy: fetch an issue body v
 
 ### `xtask verify claims`
 
-Summarize executable proof claims, runner commands, and deferrals
+Summarize executable verification claims, runner commands, and deferrals
 
 **Arguments**
 

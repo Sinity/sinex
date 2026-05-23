@@ -14,7 +14,6 @@ use async_nats::{
     },
 };
 use color_eyre::eyre::{Result, WrapErr, eyre};
-use rand::RngExt;
 use sinex_primitives::nats::NatsConnectionConfig;
 use tempfile::TempDir;
 use tokio::{
@@ -738,8 +737,7 @@ impl ChaosConfig {
 
     fn maybe_fail(&self, message: &str) -> Result<()> {
         if self.failure_rate > 0.0 {
-            let mut rng = rand::rng();
-            if rng.random_bool(self.failure_rate) {
+            if self.failure_rate >= 1.0 || fastrand::f64() < self.failure_rate {
                 return Err(eyre!("{}", message));
             }
         }

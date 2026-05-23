@@ -257,6 +257,18 @@ impl MaterialParser for BrowserHistoryParser {
         }
     }
 
+    fn required_input_keys(&self) -> Vec<String> {
+        [
+            "History.url",
+            "History.atime",
+            "urls.url",
+            "visits.visit_time",
+        ]
+        .into_iter()
+        .map(str::to_owned)
+        .collect()
+    }
+
     fn baseline_adapter_config() -> serde_json::Value {
         // Primary leg query: qutebrowser's `History` table. Chromium-only
         // deployments override via Nix to `SELECT rowid, * FROM visits JOIN

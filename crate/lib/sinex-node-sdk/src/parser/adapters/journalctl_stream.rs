@@ -503,10 +503,7 @@ mod tests {
     async fn test_records_skips_empty_lines() -> xtask::sandbox::TestResult<()> {
         let mid = dummy_material_id();
         let records = records_from_journal_lines(mid, &["", JOURNAL_LINE_WITH_CURSOR, ""]);
-        // Empty lines are filtered in the live stream; in our helper they are
-        // included as entries but the filter would remove them. Here we just
-        // verify the helper doesn't crash on empty lines.
-        assert!(!records.is_empty());
+        assert_eq!(records.len(), 1);
         Ok(())
     }
 

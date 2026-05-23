@@ -1429,46 +1429,26 @@ pub fn read_token_from_env() -> SinexResult<Option<String>> {
 ///
 /// 128 matches the traditional `SOMAXCONN` default and is sufficient for gateway
 /// workloads. The kernel may clamp this to the system-configured maximum.
-const TCP_LISTEN_BACKLOG: i32 = 128;
+const TCP_LISTEN_BACKLOG: u32 = 128;
 
-/// Bind a TCP listener with `SO_REUSEPORT` for seamless hot reload
-///
-/// This allows multiple processes to bind to the same port simultaneously,
-/// enabling zero-downtime upgrades:
-/// - Old instance continues serving while new instance starts
-/// - Both can accept connections (kernel load balances)
-/// - Coordination/handoff mechanism ensures only one is the leader
-/// - Old instance exits gracefully after handoff
-fn bind_with_reuseport(addr: &str) -> std::io::Result<tokio::net::TcpListener> {
-    use socket2::{Domain, Protocol, Socket, Type};
+/// Bind a TCP listener with explicit address reuse.
+fn bind_tcp_listener(addr: &str) -> std::io::Result<tokio::net::TcpListener> {
     use std::net::SocketAddr;
+    use tokio::net::TcpSocket;
 
     let socket_addr: SocketAddr = addr
         .parse()
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidInput, e))?;
 
-    let domain = if socket_addr.is_ipv4() {
-        Domain::IPV4
+    let socket = if socket_addr.is_ipv4() {
+        TcpSocket::new_v4()?
     } else {
-        Domain::IPV6
+        TcpSocket::new_v6()?
     };
 
-    let socket = Socket::new(domain, Type::STREAM, Some(Protocol::TCP))?;
-
-    // Enable SO_REUSEADDR (standard practice)
-    socket.set_reuse_address(true)?;
-
-    // SO_REUSEPORT is intentionally skipped here: the current socket2 build in this
-    // workspace does not expose `set_reuse_port` on `Socket`.
-
-    socket.set_nonblocking(true)?;
-    socket.bind(&socket_addr.into())?;
-    socket.listen(TCP_LISTEN_BACKLOG)?;
-
-    // Convert socket2::Socket to std::net::TcpListener then to tokio::net::TcpListener
-    let std_listener: std::net::TcpListener = socket.into();
-    std_listener.set_nonblocking(true)?;
-    tokio::net::TcpListener::from_std(std_listener)
+    socket.set_reuseaddr(true)?;
+    socket.bind(socket_addr)?;
+    socket.listen(TCP_LISTEN_BACKLOG)
 }
 
 fn tls_paths_from_config(
@@ -1822,7 +1802,7 @@ pub async fn spawn(
     };
 
     let app = RpcServer::build_app(&limits, &config.cors_origins_list(), state);
-    let listener = bind_with_reuseport(&addr_str)
+    let listener = bind_tcp_listener(&addr_str)
         .wrap_err_with(|| format!("Failed to bind TCP listener to {addr_str}"))?;
 
     let local_addr = listener.local_addr()?;

@@ -621,6 +621,15 @@
     "response_type": "sinex_primitives::rpc::semantic::SemanticLaneOutputsListResponse"
   },
   {
+    "name": "semantic.lane_outputs.seed_canonical_graph",
+    "role": "write",
+    "domain": "semantic",
+    "stability": "experimental",
+    "mutability": "mutating",
+    "request_type": "sinex_primitives::rpc::semantic::SemanticLaneOutputsSeedCanonicalGraphRequest",
+    "response_type": "sinex_primitives::rpc::semantic::SemanticLaneOutputsSeedCanonicalGraphResponse"
+  },
+  {
     "name": "semantic.lane_outputs.write",
     "role": "write",
     "domain": "semantic",
@@ -781,6 +790,15 @@
     "mutability": "read_only",
     "request_type": "sinex_primitives::rpc::sources::SourcesCoverageRequest",
     "response_type": "sinex_primitives::rpc::sources::SourcesCoverageResponse"
+  },
+  {
+    "name": "sources.drift.list",
+    "role": "read_only",
+    "domain": "sources",
+    "stability": "experimental",
+    "mutability": "read_only",
+    "request_type": "sinex_primitives::rpc::sources::SourcesDriftListRequest",
+    "response_type": "sinex_primitives::rpc::sources::SourcesDriftListResponse"
   },
   {
     "name": "sources.list",

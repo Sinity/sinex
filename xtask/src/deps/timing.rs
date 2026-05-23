@@ -5,6 +5,7 @@
 use crate::process::ProcessBuilder;
 use color_eyre::eyre::{Result, WrapErr, bail};
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::PathBuf;
 
@@ -34,9 +35,8 @@ pub struct TimingAnalyzer;
 impl TimingAnalyzer {
     /// Run cargo build with timings and analyze results
     ///
-    /// Executes `cargo build --release --timings` and parses build output.
-    /// Note: Cargo generates HTML reports, not JSON. We parse timing data
-    /// from the build output instead.
+    /// Executes `cargo build --release --timings` and parses Cargo's HTML timing
+    /// report. Cargo embeds the unit timing data as JSON inside that report.
     ///
     /// # Returns
     /// `TimingReport` with per-crate compile times and total build time
@@ -61,7 +61,7 @@ impl TimingAnalyzer {
             .run()
             .context("Failed to execute cargo build")?;
 
-        // Prefer JSON timing data if available (more accurate than stderr parsing)
+        // Prefer JSON timing data if Cargo adds it in the future.
         let timing_json =
             crate::config::workspace_target_dir().join("cargo-timings/cargo-timing.json");
         if timing_json.exists()
@@ -69,7 +69,15 @@ impl TimingAnalyzer {
         {
             return Ok(report);
         }
-        // Fall through to stderr parsing if JSON fails
+
+        // Current Cargo emits HTML with embedded JSON unit data.
+        let timing_html =
+            crate::config::workspace_target_dir().join("cargo-timings/cargo-timing.html");
+        if timing_html.exists()
+            && let Ok(report) = Self::parse_timing_html(&timing_html)
+        {
+            return Ok(report);
+        }
 
         // Parse timing from build output
         Ok(Self::parse_build_output(&output.stderr))
@@ -117,6 +125,72 @@ impl TimingAnalyzer {
             total_time_secs: 0.0, // Not available without parsing HTML
             html_report: if html_exists { Some(html_report) } else { None },
         }
+    }
+
+    /// Parse timing data embedded in Cargo's HTML timing report.
+    fn parse_timing_html(timing_html: &PathBuf) -> Result<TimingReport> {
+        if !timing_html.exists() {
+            bail!("Timing HTML file not found at {}", timing_html.display());
+        }
+
+        let contents =
+            fs::read_to_string(timing_html).context("Failed to read timing HTML file")?;
+        let unit_json = Self::extract_js_array(&contents, "const UNIT_DATA")
+            .context("Failed to find UNIT_DATA in timing HTML")?;
+
+        #[derive(Deserialize)]
+        struct UnitData {
+            name: String,
+            start: f64,
+            duration: f64,
+        }
+
+        let units: Vec<UnitData> =
+            serde_json::from_str(unit_json).context("Failed to parse timing UNIT_DATA")?;
+
+        let mut durations_by_name = BTreeMap::<String, f64>::new();
+        let mut total_time_secs = 0.0_f64;
+        for unit in units {
+            if unit.duration > 0.0 {
+                *durations_by_name.entry(unit.name).or_default() += unit.duration;
+            }
+            total_time_secs = total_time_secs.max(unit.start + unit.duration);
+        }
+
+        let mut crate_times: Vec<CrateTimingInfo> = durations_by_name
+            .into_iter()
+            .map(|(name, duration_secs)| CrateTimingInfo {
+                name,
+                duration_secs,
+            })
+            .collect();
+
+        crate_times.sort_by(|a, b| {
+            b.duration_secs
+                .partial_cmp(&a.duration_secs)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+
+        Ok(TimingReport {
+            crate_times,
+            total_time_secs,
+            html_report: Some(timing_html.clone()),
+        })
+    }
+
+    fn extract_js_array<'a>(contents: &'a str, declaration: &str) -> Result<&'a str> {
+        let declaration_start = contents
+            .find(declaration)
+            .ok_or_else(|| color_eyre::eyre::eyre!("{declaration} declaration not found"))?;
+        let after_declaration = &contents[declaration_start..];
+        let array_start = after_declaration
+            .find('[')
+            .ok_or_else(|| color_eyre::eyre::eyre!("{declaration} array start not found"))?;
+        let array_contents = &after_declaration[array_start..];
+        let array_end = array_contents
+            .find("\n];")
+            .ok_or_else(|| color_eyre::eyre::eyre!("{declaration} array end not found"))?;
+        Ok(&array_contents[..array_end + 2])
     }
 
     /// Parse timing JSON output from cargo (for future use if JSON format is added)
@@ -237,6 +311,88 @@ mod tests {
 
         assert_eq!(report.crate_times.len(), 0);
         assert_eq!(report.total_time_secs, 0.0);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_parse_timing_html_aggregates_unit_data() -> TestResult<()> {
+        let html_content = r#"
+<html>
+<body>
+<script>
+DURATION = 10;
+const UNIT_DATA = [
+  {
+    "i": 1,
+    "name": "sinex-db",
+    "version": "0.4.2",
+    "mode": "todo",
+    "target": " lib",
+    "features": [],
+    "start": 1.0,
+    "duration": 2.5,
+    "unblocked_units": [],
+    "unblocked_rmeta_units": [],
+    "sections": null
+  },
+  {
+    "i": 2,
+    "name": "sinex-db",
+    "version": "0.4.2",
+    "mode": "todo",
+    "target": " build-script",
+    "features": [],
+    "start": 4.0,
+    "duration": 1.5,
+    "unblocked_units": [],
+    "unblocked_rmeta_units": [],
+    "sections": null
+  },
+  {
+    "i": 3,
+    "name": "xtask",
+    "version": "0.1.0",
+    "mode": "todo",
+    "target": " lib",
+    "features": [],
+    "start": 5.0,
+    "duration": 3.0,
+    "unblocked_units": [],
+    "unblocked_rmeta_units": [],
+    "sections": null
+  }
+];
+const CONCURRENCY_DATA = [];
+</script>
+</body>
+</html>
+"#;
+
+        let mut temp_file = NamedTempFile::new().unwrap();
+        temp_file.write_all(html_content.as_bytes()).unwrap();
+        temp_file.flush().unwrap();
+
+        let report = TimingAnalyzer::parse_timing_html(&temp_file.path().to_path_buf()).unwrap();
+
+        assert_eq!(report.crate_times.len(), 2);
+        assert_eq!(report.crate_times[0].name, "sinex-db");
+        assert_eq!(report.crate_times[0].duration_secs, 4.0);
+        assert_eq!(report.crate_times[1].name, "xtask");
+        assert_eq!(report.crate_times[1].duration_secs, 3.0);
+        assert_eq!(report.total_time_secs, 8.0);
+        assert_eq!(report.html_report, Some(temp_file.path().to_path_buf()));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_parse_timing_html_rejects_missing_unit_data() -> TestResult<()> {
+        let mut temp_file = NamedTempFile::new().unwrap();
+        temp_file.write_all(b"<html></html>").unwrap();
+        temp_file.flush().unwrap();
+
+        let result = TimingAnalyzer::parse_timing_html(&temp_file.path().to_path_buf());
+
+        assert!(result.is_err());
         Ok(())
     }
 

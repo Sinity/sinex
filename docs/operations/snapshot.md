@@ -100,7 +100,8 @@ The dry-run command does not extract or write restored state. It validates:
 - Active `sinex-*` services are reported so destructive restore can quiesce
   them first.
 - The restore drill comparison plan includes source-unit count, Postgres table
-  count, CAS blob count when present, and runtime private-mode state presence.
+  count, NATS JetStream member count when present, CAS blob count when present,
+  and runtime private-mode state presence.
 
 `--allow-non-empty-target` is only for planning against an already-prepared
 drill directory. It does not permit destructive writes.
@@ -140,9 +141,10 @@ Execution refuses to run unless:
   `--restore-database-url`, pointing at an empty drill database.
 
 The JSON/YAML result includes `observed_checks` comparing the extracted target
-against the manifest: source-unit IDs, CAS blob count when present, and
-private-mode state presence. When Postgres is restored, it also compares exact
-row counts for the tables listed in the snapshot manifest.
+against the manifest: source-unit IDs, NATS JetStream member paths when present,
+CAS blob count when present, and private-mode state presence. When Postgres is
+restored, it also compares exact row counts for the tables listed in the
+snapshot manifest.
 
 ## Restore procedure (manual for Postgres/live state)
 
@@ -210,7 +212,8 @@ pg_restore \
 
 ```bash
 sudo systemctl stop nats  # if managed by NixOS
-sudo cp -a "$RESTORE_DIR/nats/jetstream/" /var/lib/sinex/nats/
+sudo mkdir -p /var/lib/sinex/nats/jetstream
+sudo cp -a "$RESTORE_DIR/nats/jetstream/." /var/lib/sinex/nats/jetstream/
 sudo chown -R nats:nats /var/lib/sinex/nats/
 sudo systemctl start nats
 ```
@@ -218,7 +221,8 @@ sudo systemctl start nats
 ### 6. Restore CAS blob repository
 
 ```bash
-sudo cp -a "$RESTORE_DIR/cas/blob-repository/" /var/lib/sinex/
+sudo mkdir -p /var/lib/sinex/blob-repository
+sudo cp -a "$RESTORE_DIR/cas/blob-repository/." /var/lib/sinex/blob-repository/
 sudo chown -R sinex:sinex /var/lib/sinex/blob-repository/
 ```
 

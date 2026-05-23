@@ -316,6 +316,21 @@ impl MaterialParser for SystemdParser {
 
         Ok(vec![intent])
     }
+
+    fn required_input_keys(&self) -> Vec<String> {
+        [
+            "/ACTIVE_STATE",
+            "/MESSAGE",
+            "/SUB_STATE",
+            "/UNIT_RESULT",
+            "/__CURSOR",
+            "/__REALTIME_TIMESTAMP",
+            "/_SYSTEMD_UNIT",
+        ]
+        .into_iter()
+        .map(str::to_string)
+        .collect()
+    }
 }
 
 // Register for dispatch (replay path).

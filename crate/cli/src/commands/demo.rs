@@ -9,8 +9,6 @@ use std::time::Instant;
 
 use clap::Parser;
 use color_eyre::Result;
-use rand::rngs::SmallRng;
-use rand::{RngExt, SeedableRng};
 use serde_json::json;
 use sinex_db::repositories::{SourceMaterial, StreamBatchRow};
 use sinex_db::{DbPoolExt, create_pool};
@@ -54,7 +52,7 @@ pub struct DemoCommand {
     pub clear: bool,
 }
 
-type PayloadFn = fn(&mut SmallRng, usize) -> serde_json::Value;
+type PayloadFn = fn(&mut DemoRng, usize) -> serde_json::Value;
 
 static EVENT_TYPES: &[(&str, PayloadFn)] = &[
     ("file.created", gen_file_created),
@@ -85,7 +83,7 @@ impl DemoCommand {
             // The archive-on-delete trigger requires sinex.operation_id to be set.
             sqlx::query!(
                 "SELECT pg_catalog.set_config('sinex.operation_id', $1, true)",
-                &format!("demo_clear_{}", rand::random::<u64>()),
+                &format!("demo_clear_{}", Uuid::now_v7()),
             )
             .fetch_one(&mut *tx)
             .await
@@ -133,7 +131,7 @@ impl DemoCommand {
         println!("Seeding {} events (seed={})...", self.count, self.seed);
         let started = Instant::now();
 
-        let mut rng = SmallRng::seed_from_u64(self.seed);
+        let mut rng = DemoRng::new(self.seed);
         let host = HostName::from_static("sinexctl-demo-host");
         let source = EventSource::from_static(DEMO_SOURCE);
 
@@ -145,7 +143,7 @@ impl DemoCommand {
 
             let mut batch = Vec::with_capacity(batch_len);
             for i in batch_start..batch_end {
-                let type_idx = rng.random_range(0..EVENT_TYPES.len());
+                let type_idx = rng.range_usize(EVENT_TYPES.len());
                 let (event_type_str, gen_payload) = EVENT_TYPES[type_idx];
                 let payload = gen_payload(&mut rng, i);
 
@@ -195,25 +193,64 @@ impl DemoCommand {
     }
 }
 
-fn gen_file_created(rng: &mut SmallRng, i: usize) -> serde_json::Value {
+#[derive(Debug, Clone)]
+struct DemoRng {
+    seed: u64,
+    counter: u64,
+}
+
+impl DemoRng {
+    const fn new(seed: u64) -> Self {
+        Self { seed, counter: 0 }
+    }
+
+    fn next_u64(&mut self) -> u64 {
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(&self.seed.to_le_bytes());
+        hasher.update(&self.counter.to_le_bytes());
+        self.counter = self.counter.wrapping_add(1);
+        let hash = hasher.finalize();
+        let mut bytes = [0; 8];
+        bytes.copy_from_slice(&hash.as_bytes()[..8]);
+        u64::from_le_bytes(bytes)
+    }
+
+    fn range_usize(&mut self, end: usize) -> usize {
+        (self.next_u64() % end as u64) as usize
+    }
+
+    fn range_u64(&mut self, start: u64, end: u64) -> u64 {
+        start + (self.next_u64() % (end - start))
+    }
+
+    fn range_u32(&mut self, start: u32, end: u32) -> u32 {
+        self.range_u64(u64::from(start), u64::from(end)) as u32
+    }
+
+    fn range_u8(&mut self, start: u8, end: u8) -> u8 {
+        self.range_u64(u64::from(start), u64::from(end)) as u8
+    }
+}
+
+fn gen_file_created(rng: &mut DemoRng, i: usize) -> serde_json::Value {
     json!({
         "path": format!("/home/user/docs/file_{i}.txt"),
-        "size": rng.random_range(100u64..1_000_000u64),
+        "size": rng.range_u64(100, 1_000_000),
         "mime_type": "text/plain"
     })
 }
 
-fn gen_window_focused(rng: &mut SmallRng, i: usize) -> serde_json::Value {
+fn gen_window_focused(rng: &mut DemoRng, i: usize) -> serde_json::Value {
     let apps = ["code", "firefox", "kitty", "sinex", "obsidian"];
-    let app = apps[rng.random_range(0..apps.len())];
+    let app = apps[rng.range_usize(apps.len())];
     json!({
         "app": app,
         "title": format!("file_{i}.rs - {app}"),
-        "duration_ms": rng.random_range(1_000u64..60_000u64)
+        "duration_ms": rng.range_u64(1_000, 60_000)
     })
 }
 
-fn gen_shell_command(rng: &mut SmallRng, _i: usize) -> serde_json::Value {
+fn gen_shell_command(rng: &mut DemoRng, _i: usize) -> serde_json::Value {
     let commands = [
         "git status",
         "xtask check",
@@ -221,30 +258,47 @@ fn gen_shell_command(rng: &mut SmallRng, _i: usize) -> serde_json::Value {
         "cargo build",
         "grep -r pattern .",
     ];
-    let cmd = commands[rng.random_range(0..commands.len())];
+    let cmd = commands[rng.range_usize(commands.len())];
     json!({
         "command": cmd,
         "exit_code": 0,
-        "duration_ms": rng.random_range(10u64..5_000u64)
+        "duration_ms": rng.range_u64(10, 5_000)
     })
 }
 
-fn gen_process_started(rng: &mut SmallRng, _i: usize) -> serde_json::Value {
+fn gen_process_started(rng: &mut DemoRng, _i: usize) -> serde_json::Value {
     let procs = ["sinex-ingestd", "sinex-gateway", "postgres", "nats-server"];
-    let proc = procs[rng.random_range(0..procs.len())];
+    let proc = procs[rng.range_usize(procs.len())];
     json!({
         "name": proc,
-        "pid": rng.random_range(1u32..65535u32),
+        "pid": rng.range_u32(1, 65535),
         "uid": 1000
     })
 }
 
-fn gen_network_connection(rng: &mut SmallRng, _i: usize) -> serde_json::Value {
+fn gen_network_connection(rng: &mut DemoRng, _i: usize) -> serde_json::Value {
     let ports = [80u16, 443, 5432, 4222, 8080];
-    let port = ports[rng.random_range(0..ports.len())];
+    let port = ports[rng.range_usize(ports.len())];
     json!({
-        "remote_host": format!("192.168.1.{}", rng.random_range(1u8..254u8)),
+        "remote_host": format!("192.168.1.{}", rng.range_u8(1, 254)),
         "remote_port": port,
-        "bytes_sent": rng.random_range(100u64..100_000u64)
+        "bytes_sent": rng.range_u64(100, 100_000)
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::DemoRng;
+    use xtask::sandbox::prelude::sinex_test;
+
+    #[sinex_test]
+    async fn demo_rng_is_seed_deterministic() -> xtask::sandbox::prelude::TestResult<()> {
+        let mut left = DemoRng::new(42);
+        let mut right = DemoRng::new(42);
+        let mut different = DemoRng::new(43);
+
+        assert_eq!(left.next_u64(), right.next_u64());
+        assert_ne!(left.next_u64(), different.next_u64());
+        Ok(())
+    }
 }

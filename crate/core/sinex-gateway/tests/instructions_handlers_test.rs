@@ -128,6 +128,98 @@ async fn hyprland_workspace_switch_dispatches_typed_command_when_observation_rea
 }
 
 #[sinex_test]
+async fn hyprland_workspace_switch_rejects_duplicate_active_idempotency_key(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let material_id = ctx
+        .create_source_material(Some("hyprland-workspace-observation"))
+        .await?;
+    let observed = HyprlandWorkspaceSwitchedPayload {
+        from_workspace_id: 1,
+        to_workspace_id: 2,
+        monitor_id: 0,
+        active_window_id: None,
+    }
+    .from_material(material_id)
+    .build()?;
+    ctx.pool().events().insert(observed).await?;
+
+    let temp = tempfile::Builder::new()
+        .prefix("sinex-hypr-")
+        .tempdir_in("/tmp")?;
+    let socket_path = temp.path().join("hyprland-command.sock");
+    let listener = UnixListener::bind(&socket_path)?;
+    let server = tokio::spawn(async move {
+        let (_probe_stream, _) = listener.accept().await?;
+        let (mut stream, _) = listener.accept().await?;
+        let mut request = String::new();
+        stream.read_to_string(&mut request).await?;
+        stream.write_all(b"ok").await?;
+        Ok::<_, std::io::Error>(request)
+    });
+
+    let first = handle_hyprland_workspace_switch(
+        ctx.pool(),
+        HyprlandWorkspaceSwitchRequest {
+            instruction_id: None,
+            desired_workspace_id: 4,
+            deadline: None,
+            dry_run: false,
+            command_socket_path: Some(socket_path.display().to_string()),
+        },
+        &RpcAuthContext::system(),
+    )
+    .await?;
+    let request = server.await??;
+
+    assert_eq!(request, "dispatch workspace 4");
+    assert_eq!(first.attempt.status, ActuationStatus::Attempted);
+
+    let second = handle_hyprland_workspace_switch(
+        ctx.pool(),
+        HyprlandWorkspaceSwitchRequest {
+            instruction_id: None,
+            desired_workspace_id: 4,
+            deadline: None,
+            dry_run: false,
+            command_socket_path: Some("/tmp/should-not-be-opened.sock".to_string()),
+        },
+        &RpcAuthContext::system(),
+    )
+    .await?;
+
+    assert_eq!(second.attempt.status, ActuationStatus::Rejected);
+    assert!(second.attempt.command_summary.command.is_none());
+    assert_eq!(second.command_socket_response, None);
+    assert!(
+        second
+            .attempt
+            .error
+            .as_deref()
+            .is_some_and(|error| error.contains("duplicate active workspace instruction"))
+    );
+
+    let persisted_attempt = ctx
+        .pool()
+        .events()
+        .get_by_id(
+            second
+                .attempt_event
+                .id
+                .ok_or_else(|| color_eyre::eyre::eyre!("attempt event missing id"))?,
+        )
+        .await?
+        .ok_or_else(|| color_eyre::eyre::eyre!("attempt event not persisted"))?;
+    assert_eq!(
+        persisted_attempt.payload["status"],
+        serde_json::json!("rejected")
+    );
+    assert!(persisted_attempt.payload["command_summary"]["command"].is_null());
+
+    Ok(())
+}
+
+#[sinex_test]
 async fn hyprland_workspace_switch_noops_when_already_satisfied(
     ctx: TestContext,
 ) -> TestResult<()> {

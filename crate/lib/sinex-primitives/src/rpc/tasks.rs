@@ -161,6 +161,10 @@ pub struct TaskListRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub query: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub external_system: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub external_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub status: Option<TaskStatus>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub project_id: Option<String>,
