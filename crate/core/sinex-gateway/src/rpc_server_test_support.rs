@@ -1,9 +1,8 @@
 //! Test-only helpers for gateway auth environment handling.
 
 use axum::http::HeaderMap;
-use color_eyre::eyre::{self, WrapErr, eyre};
 use serde_json::Value;
-use sinex_primitives::{Bytes, Seconds};
+use sinex_primitives::{Bytes, Result, Seconds, SinexError};
 
 use crate::config::GatewayConfig;
 use crate::rpc_server::{
@@ -24,18 +23,18 @@ pub struct RpcServerLimitsSnapshot {
     pub max_body_bytes: Bytes,
 }
 
-pub fn gateway_auth_mode_from_env() -> eyre::Result<GatewayAuthModeSnapshot> {
+pub fn gateway_auth_mode_from_env() -> Result<GatewayAuthModeSnapshot> {
     match read_token_from_env_inner()? {
         Some(token) => {
             if token.trim().is_empty() {
-                Err(eyre!(
+                Err(SinexError::configuration(
                     "SINEX_RPC_TOKEN (or SINEX_GATEWAY_ADMIN_TOKEN_FILE / SINEX_RPC_TOKEN_FILE) is set but empty; refusing to start without a token"
                 ))
             } else {
                 Ok(GatewayAuthModeSnapshot::StaticToken)
             }
         }
-        None => Err(eyre!(
+        None => Err(SinexError::configuration(
             "SINEX_RPC_TOKEN is not set. Export a token (or SINEX_GATEWAY_ADMIN_TOKEN_FILE / SINEX_RPC_TOKEN_FILE) so the gateway can authenticate RPC clients."
         )),
     }
@@ -51,13 +50,15 @@ pub fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
     constant_time_eq_inner(a, b)
 }
 
-pub fn read_token_from_env() -> eyre::Result<Option<String>> {
+pub fn read_token_from_env() -> Result<Option<String>> {
     Ok(read_token_from_env_inner()?)
 }
 
-pub fn rpc_server_limits_snapshot() -> eyre::Result<RpcServerLimitsSnapshot> {
-    let config =
-        GatewayConfig::load().wrap_err("gateway config should load for rpc server tests")?;
+pub fn rpc_server_limits_snapshot() -> Result<RpcServerLimitsSnapshot> {
+    let config = GatewayConfig::load().map_err(|error| {
+        SinexError::configuration("gateway config should load for rpc server tests")
+            .with_std_error(&error)
+    })?;
     let limits = RpcServerLimits::from_config(&config);
     Ok(RpcServerLimitsSnapshot {
         concurrency_limit: limits.concurrency_limit,
@@ -66,8 +67,9 @@ pub fn rpc_server_limits_snapshot() -> eyre::Result<RpcServerLimitsSnapshot> {
     })
 }
 
-pub fn validate_jsonrpc_value(value: &Value) -> eyre::Result<()> {
-    let request: JsonRpcRequest =
-        serde_json::from_value(value.clone()).wrap_err("Invalid JSON-RPC request payload")?;
+pub fn validate_jsonrpc_value(value: &Value) -> Result<()> {
+    let request: JsonRpcRequest = serde_json::from_value(value.clone()).map_err(|error| {
+        SinexError::validation("Invalid JSON-RPC request payload").with_std_error(&error)
+    })?;
     Ok(validate_jsonrpc_request(&request)?)
 }
