@@ -690,10 +690,19 @@ where
         // record's real anchor is returned by append_with_anchor() below.
         let placeholder_material_id = Id::<SourceMaterial>::from_uuid(Uuid::nil());
 
-        // Open the adapter stream.
+        // Open the adapter stream. Runtime acquisition is offered so
+        // content-bearing adapters can stage their own material and return
+        // already-anchored records; ordinary row/log adapters inherit the
+        // default open_with_acquisition() implementation and continue through
+        // the append-stream materialization path.
         let mut stream = match self
             .adapter
-            .open(placeholder_material_id, config, cursor)
+            .open_with_acquisition(
+                placeholder_material_id,
+                config,
+                cursor,
+                self.acquisition_manager.clone(),
+            )
             .await
         {
             Ok(s) => s,
@@ -1345,7 +1354,7 @@ where
 mod tests {
     use super::*;
     use crate::checkpoint::CheckpointManager;
-    use crate::parser::{InputShapeKind, ParserResult, SourceRecord};
+    use crate::parser::{InputShapeKind, ParserError, ParserResult, SourceRecord};
     use crate::runtime::stream::{EventEmitter, NodeHandles, ServiceInfo};
     use crate::{EventTransport, NatsPublisher};
     use async_trait::async_trait;
@@ -1510,6 +1519,23 @@ mod tests {
             _config: &Self::Config,
             _cursor: Option<Self::Cursor>,
         ) -> ParserResult<BoxStream<'static, ParserResult<SourceRecord>>> {
+            Err(ParserError::Adapter(
+                "open_with_acquisition should be used for materialized records".to_string(),
+            ))
+        }
+
+        async fn open_with_acquisition(
+            &self,
+            _material_id: Id<SourceMaterial>,
+            _config: &Self::Config,
+            _cursor: Option<Self::Cursor>,
+            acquisition: Option<Arc<AcquisitionManager>>,
+        ) -> ParserResult<BoxStream<'static, ParserResult<SourceRecord>>> {
+            if acquisition.is_none() {
+                return Err(ParserError::Adapter(
+                    "adapter-backed ingestor did not provide acquisition manager".to_string(),
+                ));
+            }
             let record = SourceRecord {
                 material_id: Id::from_uuid(Uuid::from_u128(42)),
                 anchor: MaterialAnchor::ByteRange { start: 17, len: 5 },
