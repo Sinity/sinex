@@ -26,18 +26,17 @@ workspace = true
 workspace = true
 
 [dependencies]
-rand                = { workspace = true }
 blake3              = { workspace = true }
-libc                = "0.2"
-clap_complete       = "4"
-serde_yml = "0.0.12"
-tabled              = "0.17"
-console             = "0.15"
+libc                = { workspace = true }
+clap_complete       = { workspace = true }
+serde_yml = { workspace = true }
+tabled              = { workspace = true }
+console             = { workspace = true }
 directories         = "5.0"
 rustls              = "0.23"
 ratatui             = { version = "0.30", default-features = false, features = ["crossterm", "underline-color"] }
 crossterm           = "0.29"
-walkdir             = "2.5"
+walkdir             = { workspace = true }
 
 [dependencies.sinex-primitives]
 path = "../lib/sinex-primitives"
@@ -67,8 +66,8 @@ workspace = true
 features = ["rt-multi-thread", "macros", "time", "signal"]
 
 [dependencies.reqwest]
-version = "0.12"
-features = ["json", "rustls-tls", "stream"]
+workspace = true
+features = ["json", "query", "rustls"]
 
 [dependencies.futures]
 workspace = true
@@ -86,9 +85,6 @@ workspace = true
 [dependencies.color-eyre]
 workspace = true
 
-[dependencies.thiserror]
-workspace = true
-
 [dependencies.tracing]
 workspace = true
 
@@ -103,12 +99,12 @@ workspace = true
 wiremock    = "0.6"
 assert_cmd  = "2"
 predicates  = "3"
-tempfile    = "3"
-toml        = "0.8"
+tempfile    = { workspace = true }
+toml        = { workspace = true }
 serial_test = "3"
 
 [dependencies.toml]
-version = "0.8"
+workspace = true
 
 [dev-dependencies.proptest]
 workspace = true

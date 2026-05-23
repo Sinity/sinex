@@ -131,6 +131,13 @@ impl MaterialParser for RaindropBookmarkParser {
 
         Ok(intents)
     }
+
+    fn required_input_keys(&self) -> Vec<String> {
+        ["id", "url", "created", "favorite"]
+            .into_iter()
+            .map(str::to_owned)
+            .collect()
+    }
 }
 
 fn parse_row(

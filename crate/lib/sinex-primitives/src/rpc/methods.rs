@@ -107,6 +107,10 @@ pub const SEMANTIC_LANES_SET_STATUS: &str = "semantic.lanes.set_status";
 pub const SEMANTIC_LANES_DISCARD: &str = "semantic.lanes.discard";
 pub const SEMANTIC_LANE_OUTPUTS_LIST: &str = "semantic.lane_outputs.list";
 pub const SEMANTIC_LANE_OUTPUTS_WRITE: &str = "semantic.lane_outputs.write";
+pub const SEMANTIC_LANE_OUTPUTS_SEED_CANONICAL_GRAPH: &str =
+    "semantic.lane_outputs.seed_canonical_graph";
+pub const SEMANTIC_LANE_OUTPUTS_SEED_ENTITY_EVENTS: &str =
+    "semantic.lane_outputs.seed_entity_events";
 pub const SEMANTIC_LANE_DIFFS_LIST: &str = "semantic.lane_diffs.list";
 pub const SEMANTIC_LANE_DIFFS_RECORD_ENTITY_RELATION: &str =
     "semantic.lane_diffs.record_entity_relation";
@@ -160,6 +164,7 @@ pub const SOURCES_BINDINGS_UPDATE: &str = "sources.bindings.update";
 pub const SOURCES_BINDINGS_RESOLVE: &str = "sources.bindings.resolve";
 pub const SOURCES_READINESS_LIST: &str = "sources.readiness.list";
 pub const SOURCES_READINESS_GET: &str = "sources.readiness.get";
+pub const SOURCES_DRIFT_LIST: &str = "sources.drift.list";
 
 // Tombstone (two-step)
 pub const LIFECYCLE_TOMBSTONE_CREATE: &str = "lifecycle.tombstone.create";

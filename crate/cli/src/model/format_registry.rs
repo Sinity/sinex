@@ -290,6 +290,10 @@ pub fn build() -> HashMap<&'static str, FormatCapability> {
         "sources explain-gap",
         FormatCapability::single_shot(TABLE_JSON_YAML),
     );
+    m.insert(
+        "sources drift",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
 
     // ── Manual Declarations / Tasks ─────────────────────────────────────────
     m.insert(
@@ -372,6 +376,14 @@ pub fn build() -> HashMap<&'static str, FormatCapability> {
     );
     m.insert(
         "semantics lane outputs",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
+    m.insert(
+        "semantics lane seed-canonical-graph",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
+    m.insert(
+        "semantics lane seed-entity-events",
         FormatCapability::single_shot(TABLE_JSON_YAML),
     );
     m.insert(
@@ -775,6 +787,7 @@ fn effect_for_path(path: &str, capability: &FormatCapability) -> CommandEffect {
         "semantics lane compare",
         "semantics lane create",
         "semantics lane discard",
+        "semantics lane seed-canonical-graph",
         "semantics lane status",
         "semantics lane write-outputs",
         "shadow create",
@@ -839,6 +852,7 @@ fn mutation_guards_for_path(path: &str) -> &'static [CommandMutationGuard] {
         | "semantics lane compare"
         | "semantics lane create"
         | "semantics lane discard"
+        | "semantics lane seed-canonical-graph"
         | "semantics lane status"
         | "semantics lane write-outputs"
         | "sources annotate"
@@ -932,6 +946,7 @@ fn backing_rpc_methods_for_path(path: &str) -> &'static [&'static str] {
             methods::SOURCES_CONTINUITY_GET,
         ],
         "sources explain-gap" => &[methods::SOURCES_CONTINUITY_EXPLAIN_GAP],
+        "sources drift" => &[methods::SOURCES_DRIFT_LIST],
         "sources readiness" => &[
             methods::SOURCES_READINESS_LIST,
             methods::SOURCES_READINESS_GET,
@@ -956,6 +971,10 @@ fn backing_rpc_methods_for_path(path: &str) -> &'static [&'static str] {
         "semantics lane status" => &[methods::SEMANTIC_LANES_SET_STATUS],
         "semantics lane discard" => &[methods::SEMANTIC_LANES_DISCARD],
         "semantics lane outputs" => &[methods::SEMANTIC_LANE_OUTPUTS_LIST],
+        "semantics lane seed-canonical-graph" => {
+            &[methods::SEMANTIC_LANE_OUTPUTS_SEED_CANONICAL_GRAPH]
+        }
+        "semantics lane seed-entity-events" => &[methods::SEMANTIC_LANE_OUTPUTS_SEED_ENTITY_EVENTS],
         "semantics lane write-outputs" => &[methods::SEMANTIC_LANE_OUTPUTS_WRITE],
         "semantics lane diffs" => &[methods::SEMANTIC_LANE_DIFFS_LIST],
         "semantics lane compare" => &[methods::SEMANTIC_LANE_DIFFS_RECORD_ENTITY_RELATION],

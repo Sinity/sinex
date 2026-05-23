@@ -19,7 +19,7 @@ use sinex_primitives::events::SourceMaterial;
 use sinex_primitives::ids::Id;
 use sinex_primitives::parser::{InputShapeKind, MaterialAnchor, SourceRecord};
 
-use crate::parser::{InputShapeAdapter, ParserError, ParserResult};
+use crate::parser::{InputShapeAdapter, ParserError, ParserResult, SourceRecordFingerprint};
 
 // =============================================================================
 // FileFingerprint
@@ -212,6 +212,49 @@ impl DirectoryWalkAdapter {
             modified_ms,
         }
     }
+
+    fn relative_manifest_path(path: &Utf8Path, roots: &[Utf8PathBuf]) -> String {
+        roots
+            .iter()
+            .filter_map(|root| path.strip_prefix(root).ok())
+            .min_by_key(|relative| relative.as_str().len())
+            .map_or_else(
+                || path.as_str().to_string(),
+                |relative| relative.as_str().to_string(),
+            )
+    }
+
+    fn manifest_file_kind(path: &Utf8Path) -> String {
+        let extension = path.extension().map(str::to_ascii_lowercase);
+        let base_kind = extension.as_ref().map_or_else(
+            || "extension:<none>".to_string(),
+            |extension| format!("extension:{extension}"),
+        );
+        match extension.as_deref() {
+            Some(extension @ ("csv" | "tsv" | "json" | "jsonl")) => {
+                match structured_file_shape_hash(path, extension) {
+                    Some(hash) => format!("{base_kind};shape:{hash}"),
+                    None => format!("{base_kind};shape:unavailable"),
+                }
+            }
+            _ => base_kind,
+        }
+    }
+}
+
+fn structured_file_shape_hash(path: &Utf8Path, extension: &str) -> Option<String> {
+    let bytes = std::fs::read(path.as_std_path()).ok()?;
+    let fingerprint = match extension {
+        "csv" => SourceRecordFingerprint::from_csv_bytes(&bytes).ok()?,
+        "tsv" => SourceRecordFingerprint::from_tsv_bytes(&bytes).ok()?,
+        "jsonl" => SourceRecordFingerprint::from_jsonl_bytes(&bytes).ok()?,
+        "json" => {
+            let value = serde_json::from_slice(&bytes).ok()?;
+            SourceRecordFingerprint::from_json(&value)
+        }
+        _ => return None,
+    };
+    Some(fingerprint.hash().to_string())
 }
 
 #[async_trait]
@@ -296,6 +339,35 @@ impl InputShapeAdapter for DirectoryWalkAdapter {
         });
 
         Ok(Box::pin(stream))
+    }
+
+    fn input_fingerprint(
+        &self,
+        config: &Self::Config,
+    ) -> ParserResult<Option<SourceRecordFingerprint>> {
+        let glob_set = Self::build_glob_set(&config.globs)?;
+        let mut entries = Vec::new();
+
+        for root in &config.roots {
+            if !root.exists() {
+                continue;
+            }
+            let paths =
+                Self::collect_paths(root, &glob_set, config.follow_symlinks, config.max_depth, 0)?;
+            entries.extend(paths.into_iter().map(|path| {
+                (
+                    Self::relative_manifest_path(&path, &config.roots),
+                    Self::manifest_file_kind(&path),
+                )
+            }));
+        }
+
+        entries.sort();
+        entries.dedup();
+
+        Ok(Some(SourceRecordFingerprint::from_directory_manifest(
+            entries,
+        )))
     }
 
     fn cursor_after(&self, record: &SourceRecord) -> ParserResult<Self::Cursor> {
@@ -529,6 +601,98 @@ mod tests {
             2,
             "both top.txt and nested.txt at depth 1"
         );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_input_fingerprint_reports_directory_manifest_shape()
+    -> xtask::sandbox::TestResult<()> {
+        let dir = TempDir::new().unwrap();
+        let root = Utf8PathBuf::from_path_buf(dir.path().to_path_buf()).unwrap();
+        let sub = dir.path().join("sub");
+        std::fs::create_dir(&sub).unwrap();
+
+        let mut csv = std::fs::File::create(dir.path().join("events.csv")).unwrap();
+        write!(csv, "id,name\n1,Alice").unwrap();
+        let mut json = std::fs::File::create(sub.join("profile.JSON")).unwrap();
+        write!(json, "{{\"id\":1}}").unwrap();
+        let mut jsonl = std::fs::File::create(sub.join("events.jsonl")).unwrap();
+        writeln!(jsonl, "{{\"event_id\":1}}").unwrap();
+
+        let adapter = DirectoryWalkAdapter;
+        let config = simple_config(vec![root]);
+        let fingerprint = adapter.input_fingerprint(&config)?.unwrap();
+
+        assert_eq!(fingerprint.format, "directory_manifest");
+        assert_eq!(
+            fingerprint.keys,
+            vec!["events.csv", "sub/events.jsonl", "sub/profile.JSON"]
+        );
+        assert!(
+            fingerprint
+                .type_map
+                .get("events.csv")
+                .is_some_and(|kind| kind.starts_with("extension:csv;shape:"))
+        );
+        assert!(
+            fingerprint
+                .type_map
+                .get("sub/profile.JSON")
+                .is_some_and(|kind| kind.starts_with("extension:json;shape:"))
+        );
+        assert!(
+            fingerprint
+                .type_map
+                .get("sub/events.jsonl")
+                .is_some_and(|kind| kind.starts_with("extension:jsonl;shape:"))
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_input_fingerprint_hash_changes_when_file_set_changes()
+    -> xtask::sandbox::TestResult<()> {
+        let dir = TempDir::new().unwrap();
+        let root = Utf8PathBuf::from_path_buf(dir.path().to_path_buf()).unwrap();
+        let mut first = std::fs::File::create(dir.path().join("events.csv")).unwrap();
+        write!(first, "id,name\n1,Alice").unwrap();
+
+        let adapter = DirectoryWalkAdapter;
+        let config = simple_config(vec![root]);
+        let before = adapter.input_fingerprint(&config)?.unwrap();
+
+        let mut second = std::fs::File::create(dir.path().join("events.json")).unwrap();
+        write!(second, "{{\"id\":1}}").unwrap();
+        let after = adapter.input_fingerprint(&config)?.unwrap();
+
+        assert_ne!(before.hash(), after.hash());
+        assert!(after.keys.contains(&"events.csv".to_string()));
+        assert!(after.keys.contains(&"events.json".to_string()));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_input_fingerprint_hash_changes_when_structured_child_shape_changes()
+    -> xtask::sandbox::TestResult<()> {
+        let dir = TempDir::new().unwrap();
+        let root = Utf8PathBuf::from_path_buf(dir.path().to_path_buf()).unwrap();
+        let csv_path = dir.path().join("events.csv");
+        let mut first = std::fs::File::create(&csv_path).unwrap();
+        write!(first, "id,name\n1,Alice").unwrap();
+        drop(first);
+
+        let adapter = DirectoryWalkAdapter;
+        let config = simple_config(vec![root]);
+        let before = adapter.input_fingerprint(&config)?.unwrap();
+
+        let mut second = std::fs::File::create(&csv_path).unwrap();
+        write!(second, "id,display_name,active\n1,Alice,true").unwrap();
+        drop(second);
+        let after = adapter.input_fingerprint(&config)?.unwrap();
+
+        assert_eq!(before.keys, after.keys);
+        assert_ne!(before.hash(), after.hash());
+        assert_ne!(before.type_map["events.csv"], after.type_map["events.csv"]);
         Ok(())
     }
 

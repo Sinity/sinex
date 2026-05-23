@@ -9,11 +9,10 @@
 use crate::config::config;
 use crate::sandbox::prelude::*;
 use color_eyre::eyre::{WrapErr, eyre};
-use nix::fcntl::{FlockArg, flock};
+use nix::fcntl::{Flock, FlockArg};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs::{self, OpenOptions};
-use std::os::fd::AsRawFd;
 use std::path::{Path, PathBuf};
 use time::Duration as TimeDuration;
 
@@ -120,7 +119,7 @@ impl CachedLazyPoolPreparation {
 }
 
 struct LockedPreparationState {
-    _lock_file: fs::File,
+    _lock_file: Flock<fs::File>,
     state_path: PathBuf,
 }
 
@@ -276,8 +275,8 @@ fn lock_preparation_state(state_dir: &Path, run_id: &str) -> TestResult<LockedPr
         .truncate(false)
         .open(&lock_path)
         .wrap_err_with(|| format!("failed to open {}", lock_path.display()))?;
-    flock(lock_file.as_raw_fd(), FlockArg::LockExclusive)
-        .map_err(|error| eyre!("failed to lock {}: {error}", lock_path.display()))?;
+    let lock_file = Flock::lock(lock_file, FlockArg::LockExclusive)
+        .map_err(|(_lock_file, error)| eyre!("failed to lock {}: {error}", lock_path.display()))?;
 
     Ok(LockedPreparationState {
         _lock_file: lock_file,
@@ -410,7 +409,8 @@ mod tests {
             .write(true)
             .truncate(false)
             .open(&lock_path)?;
-        flock(lock_file.as_raw_fd(), FlockArg::LockExclusive)?;
+        let _lock_file =
+            Flock::lock(lock_file, FlockArg::LockExclusive).map_err(|(_lock_file, error)| error)?;
 
         let reused = try_reuse_cached_preparation(
             &state_path,

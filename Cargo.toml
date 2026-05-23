@@ -148,17 +148,10 @@ license = "MIT"
 [workspace.metadata.crane]
 name = "sinex"
 
-# cargo-machete false positives (deps used in build.rs, conditional, platform-specific)
+# cargo-machete false positive: binary logging setup goes through shared service helpers.
 [workspace.metadata.cargo-machete]
 ignored = [
-    "prost",              # sinex-ingestd: build.rs
-    "tonic-build",        # sinex-node-sdk: build.rs
-    "sinex-test-utils",   # dev-dependencies in multiple crates
-    "tracing-subscriber", # binary crates logging setup
-    "xterm-query",        # sinex-terminal-ingestor: conditional
-    "battery",            # sinex-system-ingestor: platform-specific
-    "procfs",             # sinex-system-ingestor: platform-specific
-    "systemstat",         # sinex-system-ingestor: platform-specific
+    "tracing-subscriber",
 ]
 
 [workspace.dependencies]
@@ -183,10 +176,11 @@ sea-query = { version = "0.32", features = ["derive", "with-time", "with-uuid", 
 serde = { version = "1.0.219", features = ["derive"] }
 serde_json = "1.0.141"
 
-# Error handling
-thiserror = "2.0.18"
 color-eyre = "0.6.5"
 serde_path_to_error = "0.1.17"
+proc-macro2 = "1.0"
+quote = "1.0"
+syn = { version = "2.0", features = ["full", "parsing", "extra-traits"] }
 
 # Path handling
 camino = { version = "1.1", features = ["serde1"] }
@@ -203,16 +197,19 @@ humantime = "2.1"
 
 # HTTP and metrics
 axum = "0.7"
+reqwest = { version = "0.13", default-features = false }
 
 # Utils
-rand = "0.10"
+fastrand = "2.3"
+rand = "0.9"
 blake3 = "1.8.2"
 crc32fast = "1.5"
 glob = "0.3"
 globset = "0.4"
 git2 = "0.19"
-toml = "0.8"
+toml = "0.9"
 ahash = "0.8"
+bytes = "1.5"
 mimalloc = { version = "0.1", default-features = false }
 
 # Builder pattern
@@ -220,16 +217,24 @@ bon = "3.9"
 
 # Data structures
 indexmap = "2.0"
-dashmap = "5.5"
+dashmap = "6.1"
 governor = "0.10"
-petgraph = "0.7"
+petgraph = "0.8"
 
 # Retry logic
 tokio-retry = "0.3"
 parking_lot = "0.12"
+nix = { version = "0.29", features = [
+    "fs",
+    "process",
+    "resource",
+    "signal",
+    "term",
+] }
 
 # Message bus
 async-nats = "0.47"
+nkeys = "0.4"
 time = { version = "0.3", features = ["serde", "formatting", "parsing", "macros"] }
 
 # System integration
@@ -240,6 +245,12 @@ tokio-stream = "0.1"
 futures = "0.3"
 dirs = "5.0"
 base64 = "0.22"
+libc = "0.2"
+walkdir = "2.5"
+clap_complete = "4.5"
+serde_yml = "0.0.12"
+console = "0.15"
+tabled = "0.20"
 
 # File system watching
 notify = "8.2"
@@ -257,15 +268,17 @@ turmoil = "0.6"
 trybuild = { version = "1.0", features = ["diff"] }
 
 # System
-gethostname = "0.4"
+gethostname = "1.1"
 clap = { version = "4.5.42", features = ["derive", "env"] }
-which = "5.0"
+which = "8.0"
+semver = { version = "1.0", features = ["serde"] }
+shadow-rs = "0.35"
+sysinfo = "0.38"
 
 # Configuration and validation
 regex = "1.11.1"
 url = "2"
 csv = "1.3"
-serde_yaml = "0.9"
 unicode-normalization = "0.1"
 schemars = { version = "1.1", features = ["uuid1"] }
 tempfile = "3.0"

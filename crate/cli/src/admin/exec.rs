@@ -411,12 +411,12 @@ pub fn cp_tree(src: &Path, dst_parent: &Path) -> Result<()> {
         .to_str()
         .ok_or_else(|| eyre!("source path is not valid UTF-8: {}", src.display()))?;
 
-    // Append a trailing slash so `cp -a src/ dst/` copies the *contents* of
-    // src into dst, not src itself as a sub-directory.
-    let src_with_slash = if src_str.ends_with('/') {
-        src_str.to_string()
+    // Use `/.` so `cp -a src/. dst/` copies the contents of src into dst,
+    // not src itself as a sub-directory.
+    let src_contents = if src_str.ends_with('/') {
+        format!("{src_str}.")
     } else {
-        format!("{src_str}/")
+        format!("{src_str}/.")
     };
 
     let dst_str = dst_parent.to_str().ok_or_else(|| {
@@ -427,7 +427,7 @@ pub fn cp_tree(src: &Path, dst_parent: &Path) -> Result<()> {
     })?;
 
     let output = Command::new("cp")
-        .args(["-a", &src_with_slash, dst_str])
+        .args(["-a", &src_contents, dst_str])
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::piped())

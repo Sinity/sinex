@@ -20,9 +20,6 @@ workspace = true
 [package.license]
 workspace = true
 
-[dependencies]
-human-panic = "2.0"
-
 [dependencies.mimalloc]
 workspace = true
 
@@ -91,7 +88,7 @@ workspace = true
 [dependencies.regex]
 workspace = true
 
-[dependencies.serde_yaml]
+[dependencies.serde_yml]
 workspace = true
 
 [dependencies.sinex-primitives]

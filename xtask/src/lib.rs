@@ -56,8 +56,8 @@ pub mod watcher;
 use command::{CommandContext, HistoryAccessMode, XtaskCommand};
 use commands::{
     AnalyticsCommand, BuildCommand, CheckCommand, DoctorCommand, FixCommand, GitStackCommand,
-    JobsCommand, PrivacyCommand, ResetCommand, SchemaCommand, StatusCommand, TestCommand,
-    ci::CiCommand, completions::CompletionsCommand, source_units::SourceUnitsCommand,
+    JobsCommand, PrivacyCommand, RaDiagnoseCommand, ResetCommand, SchemaCommand, StatusCommand,
+    TestCommand, ci::CiCommand, completions::CompletionsCommand, source_units::SourceUnitsCommand,
     verify::VerifyCommand,
 };
 use config::config;
@@ -298,6 +298,8 @@ enum Commands {
     #[command(hide = true)]
     Doctor(DoctorCommand),
     #[command(hide = true)]
+    RaDiagnose(RaDiagnoseCommand),
+    #[command(hide = true)]
     Privacy(PrivacyCommand),
     #[command(hide = true)]
     Schema(SchemaCommand),
@@ -420,6 +422,7 @@ pub async fn run_cli() -> Result<()> {
         Commands::Docs(cmd) => ("docs", None, None, cmd.metadata()),
         Commands::SourceUnits(cmd) => ("source-units", None, None, cmd.metadata()),
         Commands::Doctor(cmd) => ("doctor", None, None, cmd.metadata()),
+        Commands::RaDiagnose(cmd) => ("ra-diagnose", None, None, cmd.metadata()),
         Commands::Privacy(cmd) => ("privacy", None, None, cmd.metadata()),
         Commands::Schema(cmd) => ("schema", None, None, cmd.metadata()),
         Commands::Verify(cmd) => ("verify", None, None, cmd.metadata()),
@@ -540,6 +543,7 @@ pub async fn run_cli() -> Result<()> {
             Commands::Docs(cmd) => cmd.execute(&ctx).await,
             Commands::SourceUnits(cmd) => cmd.execute(&ctx).await,
             Commands::Doctor(cmd) => cmd.execute(&ctx).await,
+            Commands::RaDiagnose(cmd) => cmd.execute(&ctx).await,
             Commands::Privacy(cmd) => cmd.execute(&ctx).await,
             Commands::Schema(cmd) => cmd.execute(&ctx).await,
             Commands::Verify(cmd) => cmd.execute(&ctx).await,

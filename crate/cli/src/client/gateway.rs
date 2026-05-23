@@ -99,7 +99,8 @@ use sinex_primitives::rpc::{
     semantic::{
         SEMANTIC_EPOCHS_CREATE_METHOD, SEMANTIC_EPOCHS_LIST_METHOD,
         SEMANTIC_LANE_DIFFS_LIST_METHOD, SEMANTIC_LANE_DIFFS_RECORD_ENTITY_RELATION_METHOD,
-        SEMANTIC_LANE_OUTPUTS_LIST_METHOD, SEMANTIC_LANE_OUTPUTS_WRITE_METHOD,
+        SEMANTIC_LANE_OUTPUTS_LIST_METHOD, SEMANTIC_LANE_OUTPUTS_SEED_CANONICAL_GRAPH_METHOD,
+        SEMANTIC_LANE_OUTPUTS_SEED_ENTITY_EVENTS_METHOD, SEMANTIC_LANE_OUTPUTS_WRITE_METHOD,
         SEMANTIC_LANES_CREATE_METHOD, SEMANTIC_LANES_DISCARD_METHOD, SEMANTIC_LANES_LIST_METHOD,
         SEMANTIC_LANES_SET_STATUS_METHOD, SemanticEpochCreateRequest, SemanticEpochListRequest,
         SemanticEpochListResponse, SemanticEpochRecordResponse, SemanticLaneCreateRequest,
@@ -107,20 +108,23 @@ use sinex_primitives::rpc::{
         SemanticLaneDiffsListRequest, SemanticLaneDiffsListResponse, SemanticLaneDiscardRequest,
         SemanticLaneDiscardResponse, SemanticLaneListRequest, SemanticLaneListResponse,
         SemanticLaneOutputsListRequest, SemanticLaneOutputsListResponse,
-        SemanticLaneOutputsWriteRequest, SemanticLaneOutputsWriteResponse,
-        SemanticLaneRecordResponse, SemanticLaneSetStatusRequest,
+        SemanticLaneOutputsSeedCanonicalGraphRequest,
+        SemanticLaneOutputsSeedCanonicalGraphResponse, SemanticLaneOutputsSeedEntityEventsRequest,
+        SemanticLaneOutputsSeedEntityEventsResponse, SemanticLaneOutputsWriteRequest,
+        SemanticLaneOutputsWriteResponse, SemanticLaneRecordResponse, SemanticLaneSetStatusRequest,
     },
     shadow::{SHADOW_LIST_METHOD, ShadowListRequest, ShadowListResponse},
     sources::{
         SOURCES_ANNOTATE_METHOD, SOURCES_ARCHIVE_METHOD, SOURCES_BINDINGS_LIST_METHOD,
         SOURCES_CONTINUITY_EXPLAIN_GAP_METHOD, SOURCES_CONTINUITY_GET_METHOD,
         SOURCES_CONTINUITY_LIST_METHOD, SOURCES_CONTINUITY_METHOD, SOURCES_COVERAGE_METHOD,
-        SOURCES_LIST_METHOD, SOURCES_PRESETS_LIST_METHOD, SOURCES_READINESS_GET_METHOD,
-        SOURCES_READINESS_LIST_METHOD, SOURCES_SHOW_METHOD, SOURCES_STAGE_METHOD,
-        SourcesAnnotateRequest, SourcesAnnotateResponse, SourcesArchiveRequest,
-        SourcesArchiveResponse, SourcesBindingsListRequest, SourcesBindingsListResponse,
-        SourcesContinuityRequest, SourcesContinuityResponse, SourcesCoverageRequest,
-        SourcesCoverageResponse, SourcesListRequest, SourcesListResponse,
+        SOURCES_DRIFT_LIST_METHOD, SOURCES_LIST_METHOD, SOURCES_PRESETS_LIST_METHOD,
+        SOURCES_READINESS_GET_METHOD, SOURCES_READINESS_LIST_METHOD, SOURCES_SHOW_METHOD,
+        SOURCES_STAGE_METHOD, SourcesAnnotateRequest, SourcesAnnotateResponse,
+        SourcesArchiveRequest, SourcesArchiveResponse, SourcesBindingsListRequest,
+        SourcesBindingsListResponse, SourcesContinuityRequest, SourcesContinuityResponse,
+        SourcesCoverageRequest, SourcesCoverageResponse, SourcesDriftListRequest,
+        SourcesDriftListResponse, SourcesListRequest, SourcesListResponse,
         SourcesPresetsListRequest, SourcesPresetsListResponse, SourcesReadinessGetRequest,
         SourcesReadinessGetResponse, SourcesReadinessListRequest, SourcesReadinessListResponse,
         SourcesShowRequest, SourcesShowResponse, SourcesStageRequest, SourcesStageResponse,
@@ -213,21 +217,41 @@ pub struct ClientConfig {
     pub retry_config: RetryConfig,
 }
 
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug)]
 pub(crate) enum GatewayRpcError {
-    #[error("HTTP {status} from gateway: {body}")]
-    HttpStatus { status: StatusCode, body: String },
-    #[error("RPC error {code}: {message}{details}")]
+    HttpStatus {
+        status: StatusCode,
+        body: String,
+    },
     JsonRpc {
         code: i32,
         message: String,
         details: String,
     },
-    #[error("RPC response missing result field")]
     MissingResult,
-    #[error("RPC protocol violation: {0}")]
     ProtocolViolation(String),
 }
+
+impl std::fmt::Display for GatewayRpcError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::HttpStatus { status, body } => {
+                write!(f, "HTTP {status} from gateway: {body}")
+            }
+            Self::JsonRpc {
+                code,
+                message,
+                details,
+            } => write!(f, "RPC error {code}: {message}{details}"),
+            Self::MissingResult => f.write_str("RPC response missing result field"),
+            Self::ProtocolViolation(message) => {
+                write!(f, "RPC protocol violation: {message}")
+            }
+        }
+    }
+}
+
+impl std::error::Error for GatewayRpcError {}
 
 #[derive(Serialize)]
 struct JsonRpcRequest<'a> {
@@ -1123,6 +1147,22 @@ impl GatewayClient {
             .await
     }
 
+    pub async fn semantic_lane_outputs_seed_canonical_graph(
+        &self,
+        request: SemanticLaneOutputsSeedCanonicalGraphRequest,
+    ) -> Result<SemanticLaneOutputsSeedCanonicalGraphResponse> {
+        self.call_typed(SEMANTIC_LANE_OUTPUTS_SEED_CANONICAL_GRAPH_METHOD, &request)
+            .await
+    }
+
+    pub async fn semantic_lane_outputs_seed_entity_events(
+        &self,
+        request: SemanticLaneOutputsSeedEntityEventsRequest,
+    ) -> Result<SemanticLaneOutputsSeedEntityEventsResponse> {
+        self.call_typed(SEMANTIC_LANE_OUTPUTS_SEED_ENTITY_EVENTS_METHOD, &request)
+            .await
+    }
+
     pub async fn semantic_lane_diffs_list(
         &self,
         request: SemanticLaneDiffsListRequest,
@@ -1265,6 +1305,13 @@ impl GatewayClient {
     ) -> Result<SourcesReadinessListResponse> {
         self.call_typed(SOURCES_READINESS_LIST_METHOD, &request)
             .await
+    }
+
+    pub async fn sources_drift_list(
+        &self,
+        request: SourcesDriftListRequest,
+    ) -> Result<SourcesDriftListResponse> {
+        self.call_typed(SOURCES_DRIFT_LIST_METHOD, &request).await
     }
 
     // ==================== Document Commands ====================

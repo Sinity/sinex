@@ -191,6 +191,10 @@ impl MaterialParser for FishHistoryParser {
         ])
     }
 
+    fn required_input_keys(&self) -> Vec<String> {
+        vec!["fish_history.command".to_owned()]
+    }
+
     fn baseline_adapter_config() -> serde_json::Value {
         // fish_history table; SqliteRowAdapter expands to
         // `SELECT rowid, * FROM fish_history`.

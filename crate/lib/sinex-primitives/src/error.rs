@@ -2,7 +2,6 @@ use displaydoc::Display;
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 use std::fmt;
-use thiserror::Error;
 
 /// Core error type for the Sinex system.
 ///
@@ -13,7 +12,7 @@ use thiserror::Error;
 /// **Guideline:** Prefer using specific variants of `SinexError` (e.g., `SinexError::database`)
 /// over generic `color_eyre::eyre::eyre!` in library code. This ensures errors can be
 /// programmatically handled and categorized.
-#[derive(Error, Display, Debug, Clone, Serialize, Deserialize)]
+#[derive(Display, Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", content = "details")]
 #[non_exhaustive]
 pub enum SinexError {
@@ -84,6 +83,8 @@ pub enum SinexError {
     /// Coordination operation failed: {0}
     Coordination(ErrorDetails),
 }
+
+impl std::error::Error for SinexError {}
 
 /// Classification of a `SinexError` by its inherent semantics.
 ///

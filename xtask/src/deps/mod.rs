@@ -6,8 +6,10 @@
 
 use clap::Subcommand;
 use color_eyre::eyre::{Result, WrapErr, bail};
+use std::time::Duration;
 
 // Submodules
+pub(crate) mod active;
 pub mod analyzer; // Created in P1.W3.T2
 pub mod reports; // Created in P1.W3.T3
 pub mod timing;
@@ -42,6 +44,14 @@ pub enum DepsCommand {
         /// Minimum number of versions to report
         #[arg(long, default_value = "2")]
         threshold: usize,
+
+        /// Only report duplicates directly requested by workspace manifests
+        #[arg(long, conflicts_with = "transitive_only")]
+        direct_only: bool,
+
+        /// Only report duplicates introduced through transitive dependencies
+        #[arg(long, conflicts_with = "direct_only")]
+        transitive_only: bool,
     },
 
     /// Detect unused dependencies
@@ -67,6 +77,25 @@ pub enum DepsCommand {
         /// Target package to analyze (defaults to all)
         #[arg(long)]
         package: Option<String>,
+    },
+
+    /// Update Cargo.lock through the xtask dependency surface
+    Update {
+        /// Package spec to update; forwarded as repeated `cargo update -p <SPEC>`
+        #[arg(short = 'p', long = "package")]
+        packages: Vec<String>,
+
+        /// Update dependencies recursively for the selected packages
+        #[arg(long)]
+        recursive: bool,
+
+        /// Preview the update without writing Cargo.lock
+        #[arg(long)]
+        dry_run: bool,
+
+        /// Update the whole lockfile instead of named packages
+        #[arg(long, conflicts_with = "packages")]
+        all: bool,
     },
 
     /// Visualize dependency graph
@@ -168,16 +197,31 @@ impl DepsCommand {
                 }
 
                 let rendered = AsciiRenderer::new(&graph, package.clone(), *depth)
+                    .with_style(!ctx.is_json())
                     .render()
                     .context("Failed to render dependency tree")?;
 
+                let data = if ctx.is_json() {
+                    serde_json::json!({
+                        "tree": rendered,
+                        "package": package,
+                        "depth": depth,
+                    })
+                } else {
+                    serde_json::Value::String(rendered)
+                };
+
                 Ok(CommandResult::success()
-                    .with_data(serde_json::Value::String(rendered))
+                    .with_data(data)
                     .with_silent()
                     .with_duration(ctx.elapsed()))
             }
 
-            Self::Duplicates { threshold } => {
+            Self::Duplicates {
+                threshold,
+                direct_only,
+                transitive_only,
+            } => {
                 use crate::deps::analyzer::WorkspaceAnalyzer;
                 use crate::deps::reports::{OutputFormat, write_duplicates_report};
 
@@ -192,12 +236,40 @@ impl DepsCommand {
 
                 // Filter by threshold
                 duplicates.retain(|d| d.versions.len() >= *threshold);
+                let direct_count = duplicates
+                    .iter()
+                    .filter(|duplicate| duplicate.direct_workspace_debt)
+                    .count();
+                let transitive_count = duplicates
+                    .iter()
+                    .filter(|duplicate| duplicate.transitive_only)
+                    .count();
+                if *direct_only {
+                    duplicates.retain(|d| d.direct_workspace_debt);
+                }
+                if *transitive_only {
+                    duplicates.retain(|d| d.transitive_only);
+                }
+
+                if ctx.is_json() {
+                    return Ok(CommandResult::success()
+                        .with_data(serde_json::json!({
+                            "duplicates": duplicates,
+                            "count": duplicates.len(),
+                            "threshold": threshold,
+                            "direct_count": direct_count,
+                            "transitive_count": transitive_count,
+                            "direct_only": direct_only,
+                            "transitive_only": transitive_only,
+                        }))
+                        .with_silent()
+                        .with_duration(ctx.elapsed()));
+                }
 
                 // Write report to buffer
                 let mut buffer = Vec::new();
                 write_duplicates_report(&mut buffer, &duplicates, OutputFormat::Human)?;
                 let rendered = String::from_utf8(buffer)?;
-
                 Ok(CommandResult::success()
                     .with_data(serde_json::Value::String(rendered))
                     .with_silent()
@@ -338,6 +410,13 @@ impl DepsCommand {
                 }
             }
 
+            Self::Update {
+                packages,
+                recursive,
+                dry_run,
+                all,
+            } => run_update(packages, *recursive, *dry_run, *all, ctx),
+
             Self::Graph {
                 render_format,
                 focus,
@@ -387,5 +466,113 @@ impl DepsCommand {
                 }
             }
         }
+    }
+}
+
+fn cargo_update_args(
+    packages: &[String],
+    recursive: bool,
+    dry_run: bool,
+    all: bool,
+) -> Result<Vec<String>> {
+    if packages.is_empty() && !all {
+        bail!("deps update requires at least one --package or explicit --all");
+    }
+
+    let mut args = vec!["update".to_string()];
+    for package in packages {
+        args.push("-p".to_string());
+        args.push(package.clone());
+    }
+    if recursive {
+        args.push("--recursive".to_string());
+    }
+    if dry_run {
+        args.push("--dry-run".to_string());
+    }
+    Ok(args)
+}
+
+fn run_update(
+    packages: &[String],
+    recursive: bool,
+    dry_run: bool,
+    all: bool,
+    ctx: &crate::command::CommandContext,
+) -> Result<crate::command::CommandResult> {
+    let args = cargo_update_args(packages, recursive, dry_run, all)?;
+    let output = crate::process::ProcessBuilder::cargo()
+        .args(args.iter().map(String::as_str))
+        .with_description("cargo update")
+        .with_timeout(Duration::from_mins(15))
+        .run_capture()
+        .context("failed to run cargo update")?;
+    if output.exit_code != 0 {
+        bail!(
+            "cargo update failed with exit code {}\nstdout:\n{}\nstderr:\n{}",
+            output.exit_code,
+            output.stdout.trim(),
+            output.stderr.trim()
+        );
+    }
+
+    let command = std::iter::once("cargo".to_string())
+        .chain(args.iter().cloned())
+        .collect::<Vec<_>>();
+    let mut result = crate::command::CommandResult::success()
+        .with_message(if dry_run {
+            "dependency update dry-run completed"
+        } else {
+            "dependency update completed"
+        })
+        .with_data(serde_json::json!({
+            "command": command,
+            "packages": packages,
+            "recursive": recursive,
+            "dry_run": dry_run,
+            "all": all,
+            "exit_code": output.exit_code,
+            "stdout": output.stdout,
+            "stderr": output.stderr,
+        }))
+        .with_duration(ctx.elapsed());
+
+    if !ctx.is_json() && !output.stdout.trim().is_empty() {
+        result = result.with_detail(output.stdout.trim().to_string());
+    }
+    if !ctx.is_json() && !output.stderr.trim().is_empty() {
+        result = result.with_warning(output.stderr.trim().to_string());
+    }
+    Ok(result)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::sandbox::sinex_test;
+
+    #[sinex_test]
+    async fn deps_update_requires_package_or_all() -> crate::TestResult<()> {
+        let error = cargo_update_args(&[], false, false, false)
+            .expect_err("empty targeted update should be rejected");
+        assert!(error.to_string().contains("--package"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn deps_update_builds_targeted_recursive_dry_run_args() -> crate::TestResult<()> {
+        let args = cargo_update_args(&["reqwest".to_string()], true, true, false)?;
+        assert_eq!(
+            args,
+            ["update", "-p", "reqwest", "--recursive", "--dry-run"]
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn deps_update_builds_all_lockfile_args() -> crate::TestResult<()> {
+        let args = cargo_update_args(&[], false, true, true)?;
+        assert_eq!(args, ["update", "--dry-run"]);
+        Ok(())
     }
 }

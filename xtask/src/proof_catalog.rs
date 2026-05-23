@@ -383,7 +383,7 @@ pub fn validate_proof_catalog(catalog: &ProofCatalog) -> ProofCatalogValidation 
     for (subject, mut tags) in local_source_unit_tags {
         tags.sort_unstable();
         warnings.push(format!(
-            "{subject} carries {} local source-unit proof tag(s): {}",
+            "{subject} carries {} local source-unit verification tag(s): {}",
             tags.len(),
             tags.join(", ")
         ));
@@ -716,7 +716,7 @@ mod tests {
 
         assert!(
             validation.errors.is_empty(),
-            "local source-unit proof tags should not be catalog obligation errors: {:?}",
+            "local source-unit verification tags should not be catalog obligation errors: {:?}",
             validation.errors
         );
         assert!(
@@ -724,7 +724,7 @@ mod tests {
                 .warnings
                 .iter()
                 .any(|warning| warning.contains("timestamp_intrinsic")),
-            "expected local proof tag warning, got {:?}",
+            "expected local verification tag warning, got {:?}",
             validation.warnings
         );
         Ok(())

@@ -20,7 +20,7 @@ default = [
 [dev-dependencies]
 tokio-test        = "0.4"
 pretty_assertions = "1.4"
-tempfile          = "3.0"
+tempfile          = { workspace = true }
 tokio             = { workspace = true }
 color-eyre        = { workspace = true }
 

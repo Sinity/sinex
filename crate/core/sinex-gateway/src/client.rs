@@ -4,7 +4,6 @@ use serde_json::{Value, json};
 use sinex_primitives::rpc::JsonRpcError;
 use std::path::Path;
 use std::time::Duration;
-use thiserror::Error;
 use tokio::fs;
 
 #[derive(Debug, Deserialize)]
@@ -15,16 +14,52 @@ struct JsonRpcResponse<T> {
     id: Option<Value>,
 }
 
-#[derive(Error, Debug)]
+#[derive(Debug)]
 pub enum ClientError {
-    #[error("IO error: {0}")]
-    Io(#[from] std::io::Error),
-    #[error("Request failed: {0}")]
-    Request(#[from] reqwest::Error),
-    #[error("Serialization error: {0}")]
-    Serialization(#[from] serde_json::Error),
-    #[error("Gateway error: {0}")]
+    Io(std::io::Error),
+    Request(reqwest::Error),
+    Serialization(serde_json::Error),
     Gateway(String),
+}
+
+impl std::fmt::Display for ClientError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Io(error) => write!(f, "IO error: {error}"),
+            Self::Request(error) => write!(f, "Request failed: {error}"),
+            Self::Serialization(error) => write!(f, "Serialization error: {error}"),
+            Self::Gateway(message) => write!(f, "Gateway error: {message}"),
+        }
+    }
+}
+
+impl std::error::Error for ClientError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Io(error) => Some(error),
+            Self::Request(error) => Some(error),
+            Self::Serialization(error) => Some(error),
+            Self::Gateway(_) => None,
+        }
+    }
+}
+
+impl From<std::io::Error> for ClientError {
+    fn from(error: std::io::Error) -> Self {
+        Self::Io(error)
+    }
+}
+
+impl From<reqwest::Error> for ClientError {
+    fn from(error: reqwest::Error) -> Self {
+        Self::Request(error)
+    }
+}
+
+impl From<serde_json::Error> for ClientError {
+    fn from(error: serde_json::Error) -> Self {
+        Self::Serialization(error)
+    }
 }
 
 impl From<ClientError> for sinex_primitives::error::SinexError {

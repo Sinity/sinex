@@ -523,7 +523,7 @@ impl StreamingCascadeAnalyzer {
         }
 
         // Build directed graph: edge from parent → child
-        let mut graph = DiGraphMap::new();
+        let mut graph: DiGraphMap<Uuid, ()> = DiGraphMap::new();
         for (child_id, parent_id) in &rows {
             graph.add_edge(*parent_id, *child_id, ());
         }

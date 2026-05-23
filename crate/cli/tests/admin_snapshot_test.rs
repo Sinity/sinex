@@ -14,6 +14,7 @@ use tempfile::TempDir;
 use xtask::sandbox::prelude::*;
 
 use sinexctl::admin::exec;
+use sinexctl::admin::manifest::ComponentExtras;
 use sinexctl::admin::snapshot::{
     AdminSnapshotCommand, AdminSnapshotInspectCommand, AdminSnapshotRestoreCommand, Component,
 };
@@ -104,6 +105,7 @@ fn make_snapshot_archive() -> TestResult<(TempDir, std::path::PathBuf)> {
             .join("state.json"),
         br#"{"enabled":false}"#,
     )?;
+    let state_blake3 = snapshot_component_blake3(&staging.join("state"))?;
 
     let manifest = SnapshotManifest {
         snapshot_id: "01970a7f-391b-7000-8000-000000000001".to_string(),
@@ -117,7 +119,7 @@ fn make_snapshot_archive() -> TestResult<(TempDir, std::path::PathBuf)> {
             name: "state".to_string(),
             path: "state/".to_string(),
             bytes: 15,
-            blake3: "c".repeat(64),
+            blake3: state_blake3,
             extras: None,
         }],
         totals: Totals {
@@ -148,6 +150,7 @@ fn make_postgres_snapshot_archive() -> TestResult<(TempDir, PathBuf)> {
         staging.join("postgres").join("sinex_prod.dump"),
         b"custom pg dump fixture",
     )?;
+    let postgres_blake3 = blake3::hash(b"custom pg dump fixture").to_hex().to_string();
 
     let mut row_counts = BTreeMap::new();
     row_counts.insert("core.events".to_string(), 7);
@@ -163,7 +166,7 @@ fn make_postgres_snapshot_archive() -> TestResult<(TempDir, PathBuf)> {
             name: "postgres".to_string(),
             path: "postgres/sinex_prod.dump".to_string(),
             bytes: 22,
-            blake3: "d".repeat(64),
+            blake3: postgres_blake3,
             extras: Some(ComponentExtras::Postgres(PostgresExtras { row_counts })),
         }],
         totals: Totals {
@@ -188,6 +191,41 @@ fn make_executable_script(dir: &TempDir, name: &str, body: &str) -> TestResult<P
     permissions.set_mode(0o755);
     fs::set_permissions(&path, permissions)?;
     Ok(path)
+}
+
+fn snapshot_component_blake3(path: &std::path::Path) -> TestResult<String> {
+    let mut entries = collect_snapshot_component_files(path, path)?;
+    entries.sort_by(|(left, _), (right, _)| left.cmp(right));
+
+    let mut hasher = blake3::Hasher::new();
+    for (relative_path, absolute_path) in entries {
+        let file_data = fs::read(absolute_path)?;
+        let file_hash = blake3::hash(&file_data);
+        hasher.update(relative_path.as_bytes());
+        hasher.update(file_hash.as_bytes());
+    }
+    Ok(hasher.finalize().to_hex().to_string())
+}
+
+fn collect_snapshot_component_files(
+    base: &std::path::Path,
+    dir: &std::path::Path,
+) -> TestResult<Vec<(String, PathBuf)>> {
+    let mut out = Vec::new();
+    for entry in fs::read_dir(dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        if path.is_symlink() {
+            continue;
+        }
+        if path.is_file() {
+            let relative_path = path.strip_prefix(base)?.to_string_lossy().to_string();
+            out.push((relative_path, path));
+        } else if path.is_dir() {
+            out.extend(collect_snapshot_component_files(base, &path)?);
+        }
+    }
+    Ok(out)
 }
 
 // ── Dry-run test ─────────────────────────────────────────────────────────────
@@ -296,6 +334,152 @@ async fn dry_run_non_postgres_components_do_not_require_database_url()
     Ok(())
 }
 
+/// Non-Postgres archive creation preserves the component paths declared in
+/// the manifest, including nested NATS and CAS state roots.
+#[sinex_test]
+async fn snapshot_archive_preserves_component_paths_and_nats_member_manifest()
+-> xtask::sandbox::TestResult<()> {
+    let state_dir = make_fake_state_dir()?;
+    let output_dir = tempfile::tempdir()?;
+    let output_path = output_dir.path().join("test.tar.zst");
+    let tools = tempfile::tempdir()?;
+    let _systemctl = make_executable_script(&tools, "systemctl", "#!/bin/sh\nexit 0\n")?;
+    let path = format!(
+        "{}:{}",
+        tools.path().display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+
+    let output = sinexctl_bin()
+        .env("PATH", path)
+        .args([
+            "admin",
+            "snapshot",
+            "--output",
+            &output_path.to_string_lossy(),
+            "--state-dir",
+            &state_dir.path().to_string_lossy(),
+            "--components",
+            "nats,cas,state",
+            "--compression",
+            "1",
+            "--workers",
+            "1",
+        ])
+        .output()?;
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "snapshot archive creation must exit 0\nstdout: {stdout}\nstderr: {stderr}"
+    );
+    assert!(output_path.exists(), "snapshot archive should be created");
+
+    let inspect = AdminSnapshotInspectCommand {
+        archive: output_path.clone(),
+    }
+    .execute()?;
+    assert!(
+        inspect.missing_component_paths.is_empty(),
+        "archive should contain every non-empty manifest component path: {:?}",
+        inspect.missing_component_paths
+    );
+    assert_eq!(inspect.state_source_unit_count, Some(2));
+    assert_eq!(inspect.state_private_mode_state_present, Some(false));
+    let inspect_table = sinexctl::admin::snapshot::format_snapshot_inspect_result(&inspect);
+    assert!(
+        inspect_table.contains("State source units: 2"),
+        "inspect table should summarize state source units\n{inspect_table}"
+    );
+    assert!(
+        inspect_table.contains("Private-mode state: absent"),
+        "inspect table should summarize private-mode state presence\n{inspect_table}"
+    );
+    let nats_record = inspect
+        .manifest
+        .components
+        .iter()
+        .find(|component| component.name == "nats")
+        .ok_or_else(|| color_eyre::eyre::eyre!("snapshot should include nats component"))?;
+    assert_eq!(nats_record.path, "nats/jetstream/");
+    let nats_member_paths = match &nats_record.extras {
+        Some(ComponentExtras::Nats(extras)) => &extras.member_paths,
+        other => {
+            return Err(color_eyre::eyre::eyre!(
+                "nats component should carry member paths, got {other:?}"
+            ));
+        }
+    };
+    assert_eq!(
+        nats_member_paths,
+        &vec!["meta.inf".to_string()],
+        "nats member manifest should be relative to the JetStream root"
+    );
+    let state_record = inspect
+        .manifest
+        .components
+        .iter()
+        .find(|component| component.name == "state")
+        .ok_or_else(|| color_eyre::eyre::eyre!("snapshot should include state component"))?;
+    let state_extras = match &state_record.extras {
+        Some(ComponentExtras::State(extras)) => extras,
+        other => {
+            return Err(color_eyre::eyre::eyre!(
+                "state component should carry runtime-state metadata, got {other:?}"
+            ));
+        }
+    };
+    assert_eq!(
+        state_extras.source_unit_ids,
+        vec![
+            "desktop.clipboard".to_string(),
+            "terminal.atuin-history".to_string()
+        ]
+    );
+    assert!(!state_extras.private_mode_state_present);
+
+    let target_parent = tempfile::tempdir()?;
+    let target = target_parent.path().join("restore-target");
+    let restore = AdminSnapshotRestoreCommand {
+        archive: output_path,
+        target_dir: target.clone(),
+        dry_run: false,
+        allow_non_empty_target: false,
+        confirm_restore: true,
+        allow_active_services: true,
+        restore_database_url: None,
+        pg_restore_bin: None,
+        psql_bin: None,
+    }
+    .execute()?;
+
+    assert!(
+        target
+            .join("nats")
+            .join("jetstream")
+            .join("meta.inf")
+            .exists()
+    );
+    assert!(
+        target
+            .join("cas")
+            .join("blob-repository")
+            .join("blob1.bin")
+            .exists()
+    );
+    let observed = restore
+        .observed_checks
+        .as_ref()
+        .ok_or_else(|| color_eyre::eyre::eyre!("restore execution should report observations"))?;
+    assert!(observed.nats_state_present);
+    assert_eq!(observed.nats_member_count, Some(1));
+    assert_eq!(observed.nats_member_paths_match, Some(true));
+    assert_eq!(observed.component_blake3_matches.get("nats"), Some(&true));
+    assert_eq!(observed.component_blake3_matches.get("cas"), Some(&true));
+
+    Ok(())
+}
+
 /// `sinexctl state snapshot` is the operator-facing route to the same
 /// implementation as `admin snapshot`.
 #[sinex_test]
@@ -331,6 +515,46 @@ async fn state_snapshot_dry_run_uses_snapshot_implementation() -> xtask::sandbox
     assert!(
         !output_path.exists(),
         "dry-run must NOT create an archive at {output_path:?}"
+    );
+
+    Ok(())
+}
+
+/// Live snapshots are intentionally unsupported until there is a real hot
+/// capture implementation. The binary path must fail closed rather than
+/// silently running the quiesce-mode code with a misleading mode label.
+#[sinex_test]
+async fn state_snapshot_live_mode_fails_closed() -> xtask::sandbox::TestResult<()> {
+    let output_dir = tempfile::tempdir()?;
+    let output_path = output_dir.path().join("state-live.tar.zst");
+
+    let output = sinexctl_bin()
+        .args([
+            "state",
+            "snapshot",
+            "--output",
+            &output_path.to_string_lossy(),
+            "--dry-run",
+            "--mode",
+            "live",
+            "--components",
+            "nats,cas,state",
+        ])
+        .output()?;
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !output.status.success(),
+        "live snapshot mode must fail closed until implemented\nstdout: {stdout}\nstderr: {stderr}"
+    );
+    assert!(
+        stderr.contains("only mode=quiesce is supported"),
+        "stderr should explain the unsupported live mode\nstdout: {stdout}\nstderr: {stderr}"
+    );
+    assert!(
+        !output_path.exists(),
+        "unsupported live mode must not create an archive at {output_path:?}"
     );
 
     Ok(())
@@ -513,9 +737,19 @@ async fn snapshot_restore_execute_extracts_state_archive_into_empty_target()
         .observed_checks
         .as_ref()
         .ok_or_else(|| color_eyre::eyre::eyre!("restore execution should report observations"))?;
+    assert!(observed.checks_passed);
+    assert!(
+        observed.failed_checks.is_empty(),
+        "successful restore drill should report no failed checks"
+    );
     assert!(observed.private_mode_state_present);
     assert!(observed.private_mode_state_matches_manifest);
     assert!(observed.source_unit_ids_match);
+    assert_eq!(
+        observed.component_blake3_matches.get("state"),
+        Some(&true),
+        "restore execution should compare restored state content hash with the manifest"
+    );
 
     let binary_target = target_parent.path().join("binary-target");
     let output = sinexctl_bin()
@@ -541,6 +775,63 @@ async fn snapshot_restore_execute_extracts_state_archive_into_empty_target()
     assert!(
         stdout.contains("\"observed_checks\""),
         "json output should include observed restore checks\nstdout: {stdout}"
+    );
+    assert!(
+        stdout.contains("\"checks_passed\":true"),
+        "json output should include aggregate restore verdict\nstdout: {stdout}"
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn snapshot_restore_execute_preserves_dry_run_plan() -> xtask::sandbox::TestResult<()> {
+    let (_dir, archive_path) = make_snapshot_archive()?;
+    let target_parent = tempfile::tempdir()?;
+    let restore_target = target_parent.path().join("restore-target");
+
+    let dry_run = AdminSnapshotRestoreCommand {
+        archive: archive_path.clone(),
+        target_dir: restore_target.clone(),
+        dry_run: true,
+        allow_non_empty_target: false,
+        confirm_restore: false,
+        allow_active_services: true,
+        restore_database_url: None,
+        pg_restore_bin: None,
+        psql_bin: None,
+    }
+    .execute()?;
+
+    let executed = AdminSnapshotRestoreCommand {
+        archive: archive_path,
+        target_dir: restore_target,
+        dry_run: false,
+        allow_non_empty_target: false,
+        confirm_restore: true,
+        allow_active_services: true,
+        restore_database_url: None,
+        pg_restore_bin: None,
+        psql_bin: None,
+    }
+    .execute()?;
+
+    assert_eq!(
+        serde_json::to_value(&executed.planned_steps)?,
+        serde_json::to_value(&dry_run.planned_steps)?,
+        "execution must preserve the dry-run restore plan"
+    );
+    assert_eq!(
+        serde_json::to_value(&executed.drill_checks)?,
+        serde_json::to_value(&dry_run.drill_checks)?,
+        "execution must preserve the dry-run drill-check contract"
+    );
+    assert!(
+        dry_run.observed_checks.is_none(),
+        "dry-run should not report observed restore checks"
+    );
+    assert!(
+        executed.observed_checks.is_some(),
+        "execution should add observations without changing the plan"
     );
     Ok(())
 }
@@ -572,8 +863,15 @@ async fn snapshot_restore_executes_postgres_drill_with_row_count_check()
         .as_ref()
         .ok_or_else(|| color_eyre::eyre::eyre!("restore execution should report observations"))?;
 
+    assert!(observed.checks_passed);
+    assert!(observed.failed_checks.is_empty());
     assert_eq!(observed.postgres_row_counts.get("core.events"), Some(&7));
     assert_eq!(observed.postgres_row_counts_match, Some(true));
+    assert_eq!(
+        observed.component_blake3_matches.get("postgres"),
+        Some(&true),
+        "restore execution should compare restored postgres dump hash with the manifest"
+    );
     assert!(target.join("postgres").join("sinex_prod.dump").exists());
     Ok(())
 }
@@ -782,7 +1080,8 @@ fn assert_snapshot_id_is_uuidv7(id: &str) -> TestResult<()> {
 #[sinex_test]
 async fn manifest_round_trips_through_serde() -> xtask::sandbox::TestResult<()> {
     use sinexctl::admin::manifest::{
-        CasExtras, ComponentExtras, ComponentRecord, PostgresExtras, SnapshotManifest, Totals,
+        CasExtras, ComponentExtras, ComponentRecord, PostgresExtras, SnapshotManifest, StateExtras,
+        Totals,
     };
     use std::collections::BTreeMap;
 
@@ -815,9 +1114,19 @@ async fn manifest_round_trips_through_serde() -> xtask::sandbox::TestResult<()> 
                 blake3: "b".repeat(64),
                 extras: Some(ComponentExtras::Cas(CasExtras { blob_count: 2 })),
             },
+            ComponentRecord {
+                name: "state".to_string(),
+                path: "state/".to_string(),
+                bytes: 256,
+                blake3: "c".repeat(64),
+                extras: Some(ComponentExtras::State(StateExtras {
+                    source_unit_ids: vec!["desktop.clipboard".to_string()],
+                    private_mode_state_present: true,
+                })),
+            },
         ],
         totals: Totals {
-            uncompressed_bytes: 12346702,
+            uncompressed_bytes: 12346958,
             archive_bytes: Some(3_000_000),
         },
     };
@@ -827,7 +1136,19 @@ async fn manifest_round_trips_through_serde() -> xtask::sandbox::TestResult<()> 
 
     assert_eq!(back.snapshot_id, "test-id");
     assert_eq!(back.source_unit_ids.len(), 2);
-    assert_eq!(back.components.len(), 2);
+    assert_eq!(back.components.len(), 3);
+    let state = back
+        .components
+        .iter()
+        .find(|component| component.name == "state")
+        .expect("state component should round-trip");
+    match &state.extras {
+        Some(ComponentExtras::State(extras)) => {
+            assert_eq!(extras.source_unit_ids, ["desktop.clipboard"]);
+            assert!(extras.private_mode_state_present);
+        }
+        other => panic!("state component extras should round-trip, got {other:?}"),
+    }
     assert_eq!(back.totals.archive_bytes, Some(3_000_000));
 
     Ok(())

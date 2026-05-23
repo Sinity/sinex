@@ -4,10 +4,6 @@
 //! - RPC Server: JSON-RPC over TLS for CLI
 //! - Native Messaging: stdin/stdout protocol for browser extensions
 
-mod build {
-    include!(concat!(env!("OUT_DIR"), "/shadow.rs"));
-}
-
 use clap::{Parser, Subcommand, ValueEnum};
 use color_eyre::eyre::{Result, eyre};
 use tracing::info;
@@ -35,7 +31,7 @@ enum LogFormat {
 #[derive(Parser)]
 #[command(name = "sinex-gateway")]
 #[command(about = "Unified API gateway for Sinex")]
-#[command(version = build::CLAP_LONG_VERSION)]
+#[command(version)]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -114,7 +110,6 @@ fn load_gateway_config(database_url: Option<String>) -> Result<GatewayConfig> {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    human_panic::setup_panic!();
     color_eyre::install()?;
 
     let cli = Cli::parse();

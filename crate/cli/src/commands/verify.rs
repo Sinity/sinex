@@ -5,12 +5,12 @@ use color_eyre::{Result, eyre::eyre};
 use console::{StyledObject, style};
 use serde::Serialize;
 use serde_json::json;
-use sinex_primitives::DeploymentReadinessDescriptor;
 use sinex_primitives::domain::{EventSource, EventType};
 use sinex_primitives::events::schema_registry::get_all_payloads;
 use sinex_primitives::proof;
 use sinex_primitives::query::{EventQuery, EventQueryResult, PayloadFilter, TimeRange};
 use sinex_primitives::temporal::Timestamp;
+use sinex_primitives::{DeploymentReadinessDescriptor, Uuid};
 use tokio::process::Command;
 
 use crate::client::GatewayClient;
@@ -1198,7 +1198,7 @@ fn build_document_smoke_path(descriptor: &DeploymentReadinessDescriptor) -> Resu
             "deployment descriptor marked the managed document surface enabled but did not declare any allowed roots"
         ));
     };
-    let marker = format!(".sinex-verify-{:016x}.md", rand::random::<u64>());
+    let marker = format!(".sinex-verify-{}.md", Uuid::now_v7());
     Ok(root.join(marker))
 }
 

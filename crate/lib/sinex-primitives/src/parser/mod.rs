@@ -667,8 +667,8 @@ pub struct OccurrenceKey {
 /// Metadata declared by a parser at registration time.
 ///
 /// The manifest declares what the parser accepts, what it emits, and
-/// what proof obligations it claims to satisfy. It is the parser's
-/// public identity record.
+/// which catalog obligations or descriptor-local verification tags apply.
+/// It is the parser's public identity record.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ParserManifest {
     /// Stable parser identifier.
@@ -690,7 +690,11 @@ pub struct ParserManifest {
     #[schemars(skip)]
     pub privacy_contexts: Vec<crate::privacy::ProcessingContext>,
 
-    /// Proof obligations the parser claims.
+    /// Catalog obligation IDs or descriptor-local verification tags.
+    ///
+    /// Strings prefixed with `obligation:` are validated against the proof
+    /// catalog. Other strings are advisory local tags that make parser
+    /// invariants inspectable without pretending they are global gates.
     #[serde(default)]
     pub proof_obligations: Vec<String>,
 

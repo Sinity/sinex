@@ -14,6 +14,7 @@ use sinex_primitives::Uuid;
 use sinex_primitives::domain::{EventSource, EventType};
 use sinex_primitives::events::Event;
 use sinex_primitives::ids::Id;
+use sinex_primitives::parser::SourceUnitId;
 use sinex_primitives::query::{EventQuery, LineageDirection, LineageQuery};
 use sinex_primitives::rpc::automata::AutomataStatusResponse;
 use sinex_primitives::rpc::curation::CurationListProposalsRequest;
@@ -33,7 +34,7 @@ use sinex_primitives::rpc::semantic::{
     SemanticLaneOutputsListRequest,
 };
 use sinex_primitives::rpc::sources::{
-    SourcesContinuityRequest, SourcesCoverageRequest, SourcesListRequest,
+    SourcesContinuityRequest, SourcesCoverageRequest, SourcesDriftListRequest, SourcesListRequest,
     SourcesReadinessGetRequest, SourcesReadinessListRequest, SourcesShowRequest,
 };
 use sinex_primitives::rpc::system::SystemHealthResponse;
@@ -84,6 +85,21 @@ pub struct McpCatalogEntry {
 #[serde(rename_all = "snake_case")]
 pub enum McpSurfaceKind {
     Tool,
+}
+
+fn catalog_description(tool_name: &str) -> &'static str {
+    tool_catalog()
+        .into_iter()
+        .find(|entry| entry.name == tool_name)
+        .map_or("Undocumented Sinex MCP tool.", |entry| entry.description)
+}
+
+fn mcp_tool(name: &'static str, input_schema: Value) -> McpTool {
+    McpTool {
+        name,
+        description: catalog_description(name),
+        input_schema,
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -148,6 +164,14 @@ struct SourceContinuityArgs {
 }
 
 #[derive(Debug, Deserialize, Serialize)]
+struct SourceDriftArgs {
+    #[serde(default)]
+    source_unit_id: Option<String>,
+    #[serde(default)]
+    limit: Option<usize>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
 struct SourceGapExplainArgs {
     source_family: SourceFamily,
     at: Timestamp,
@@ -164,6 +188,10 @@ struct SourceIdentifierContinuityArgs {
 struct TasksListArgs {
     #[serde(default)]
     query: Option<String>,
+    #[serde(default)]
+    external_system: Option<String>,
+    #[serde(default)]
+    external_id: Option<String>,
     #[serde(default)]
     status: Option<TaskStatus>,
     #[serde(default)]
@@ -433,6 +461,13 @@ pub fn tool_catalog() -> Vec<McpCatalogEntry> {
                 methods::SOURCES_CONTINUITY_LIST,
                 methods::SOURCES_CONTINUITY_GET,
             ],
+            read_only: true,
+        },
+        McpCatalogEntry {
+            name: "sinex.source_drift",
+            kind: McpSurfaceKind::Tool,
+            description: "Read-only checkpointed source-shape drift observations.",
+            backing_rpc_methods: &[methods::SOURCES_DRIFT_LIST],
             read_only: true,
         },
         McpCatalogEntry {
@@ -833,10 +868,9 @@ pub fn tool_catalog() -> Vec<McpCatalogEntry> {
 #[must_use]
 pub fn tools() -> Vec<McpTool> {
     vec![
-        McpTool {
-            name: "sinex.search_events",
-            description: "Read-only search over persisted Sinex events.",
-            input_schema: json!({
+        mcp_tool(
+            "sinex.search_events",
+            json!({
                 "type": "object",
                 "properties": {
                     "sources": {
@@ -860,11 +894,10 @@ pub fn tools() -> Vec<McpTool> {
                 },
                 "additionalProperties": false
             }),
-        },
-        McpTool {
-            name: "sinex.trace_lineage",
-            description: "Read-only provenance trace for one event.",
-            input_schema: json!({
+        ),
+        mcp_tool(
+            "sinex.trace_lineage",
+            json!({
                 "type": "object",
                 "required": ["event_id"],
                 "properties": {
@@ -883,11 +916,10 @@ pub fn tools() -> Vec<McpTool> {
                 },
                 "additionalProperties": false
             }),
-        },
-        McpTool {
-            name: "sinex.source_readiness",
-            description: "Read-only source readiness, caveat, freshness, and cost report.",
-            input_schema: json!({
+        ),
+        mcp_tool(
+            "sinex.source_readiness",
+            json!({
                 "type": "object",
                 "properties": {
                     "source_family": { "type": "string" },
@@ -898,11 +930,10 @@ pub fn tools() -> Vec<McpTool> {
                 },
                 "additionalProperties": false
             }),
-        },
-        McpTool {
-            name: "sinex.source_continuity",
-            description: "Read-only source continuity, seam, gap, and replayability report.",
-            input_schema: json!({
+        ),
+        mcp_tool(
+            "sinex.source_continuity",
+            json!({
                 "type": "object",
                 "properties": {
                     "source_family": { "type": "string" },
@@ -910,11 +941,26 @@ pub fn tools() -> Vec<McpTool> {
                 },
                 "additionalProperties": false
             }),
-        },
-        McpTool {
-            name: "sinex.source_gap_explain",
-            description: "Read-only attribution for a source-family coverage gap.",
-            input_schema: json!({
+        ),
+        mcp_tool(
+            "sinex.source_drift",
+            json!({
+                "type": "object",
+                "properties": {
+                    "source_unit_id": { "type": "string" },
+                    "limit": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 500,
+                        "default": 50
+                    }
+                },
+                "additionalProperties": false
+            }),
+        ),
+        mcp_tool(
+            "sinex.source_gap_explain",
+            json!({
                 "type": "object",
                 "required": ["source_family", "at"],
                 "properties": {
@@ -923,11 +969,10 @@ pub fn tools() -> Vec<McpTool> {
                 },
                 "additionalProperties": false
             }),
-        },
-        McpTool {
-            name: "sinex.source_identifier_continuity",
-            description: "Read-only continuity report for one source identifier.",
-            input_schema: json!({
+        ),
+        mcp_tool(
+            "sinex.source_identifier_continuity",
+            json!({
                 "type": "object",
                 "required": ["source_identifier"],
                 "properties": {
@@ -936,29 +981,26 @@ pub fn tools() -> Vec<McpTool> {
                 },
                 "additionalProperties": false
             }),
-        },
-        McpTool {
-            name: "sinex.privacy_status",
-            description: "Read-only runtime private-mode state.",
-            input_schema: json!({
+        ),
+        mcp_tool(
+            "sinex.privacy_status",
+            json!({
                 "type": "object",
                 "properties": {},
                 "additionalProperties": false
             }),
-        },
-        McpTool {
-            name: "sinex.system_health",
-            description: "Read-only gateway and confirmation-path health summary.",
-            input_schema: json!({
+        ),
+        mcp_tool(
+            "sinex.system_health",
+            json!({
                 "type": "object",
                 "properties": {},
                 "additionalProperties": false
             }),
-        },
-        McpTool {
-            name: "sinex.tasks_list",
-            description: "Read-only current task-state search and filtering.",
-            input_schema: json!({
+        ),
+        mcp_tool(
+            "sinex.tasks_list",
+            json!({
                 "type": "object",
                 "properties": {
                     "query": { "type": "string" },
@@ -979,11 +1021,10 @@ pub fn tools() -> Vec<McpTool> {
                 },
                 "additionalProperties": false
             }),
-        },
-        McpTool {
-            name: "sinex.task_state",
-            description: "Read-only current state for one task workflow object.",
-            input_schema: json!({
+        ),
+        mcp_tool(
+            "sinex.task_state",
+            json!({
                 "type": "object",
                 "required": ["task_id"],
                 "properties": {
@@ -991,11 +1032,10 @@ pub fn tools() -> Vec<McpTool> {
                 },
                 "additionalProperties": false
             }),
-        },
-        McpTool {
-            name: "sinex.replay_operations",
-            description: "Read-only replay operation list with state and node filters.",
-            input_schema: json!({
+        ),
+        mcp_tool(
+            "sinex.replay_operations",
+            json!({
                 "type": "object",
                 "properties": {
                     "state": {
@@ -1022,11 +1062,10 @@ pub fn tools() -> Vec<McpTool> {
                 },
                 "additionalProperties": false
             }),
-        },
-        McpTool {
-            name: "sinex.replay_status",
-            description: "Read-only current status for one replay operation.",
-            input_schema: json!({
+        ),
+        mcp_tool(
+            "sinex.replay_status",
+            json!({
                 "type": "object",
                 "required": ["operation_id"],
                 "properties": {
@@ -1034,11 +1073,10 @@ pub fn tools() -> Vec<McpTool> {
                 },
                 "additionalProperties": false
             }),
-        },
-        McpTool {
-            name: "sinex.documents_search",
-            description: "Read-only ranked document chunk search with raw text redacted.",
-            input_schema: json!({
+        ),
+        mcp_tool(
+            "sinex.documents_search",
+            json!({
                 "type": "object",
                 "required": ["query"],
                 "properties": {
@@ -1065,11 +1103,10 @@ pub fn tools() -> Vec<McpTool> {
                 },
                 "additionalProperties": false
             }),
-        },
-        McpTool {
-            name: "sinex.documents_get",
-            description: "Read-only document metadata lookup with side data redacted.",
-            input_schema: json!({
+        ),
+        mcp_tool(
+            "sinex.documents_get",
+            json!({
                 "type": "object",
                 "required": ["document_id"],
                 "properties": {
@@ -1077,16 +1114,11 @@ pub fn tools() -> Vec<McpTool> {
                 },
                 "additionalProperties": false
             }),
-        },
-        McpTool {
-            name: "sinex.semantic_epochs",
-            description: "Read-only semantic epoch registry listing.",
-            input_schema: limit_schema(100),
-        },
-        McpTool {
-            name: "sinex.semantic_lanes",
-            description: "Read-only semantic lane registry listing.",
-            input_schema: json!({
+        ),
+        mcp_tool("sinex.semantic_epochs", limit_schema(100)),
+        mcp_tool(
+            "sinex.semantic_lanes",
+            json!({
                 "type": "object",
                 "properties": {
                     "status": {
@@ -1110,121 +1142,32 @@ pub fn tools() -> Vec<McpTool> {
                 },
                 "additionalProperties": false
             }),
-        },
-        McpTool {
-            name: "sinex.semantic_lane_outputs",
-            description: "Read-only semantic lane output listing.",
-            input_schema: lane_records_schema(),
-        },
-        McpTool {
-            name: "sinex.semantic_lane_diffs",
-            description: "Read-only semantic lane diff listing.",
-            input_schema: lane_records_schema(),
-        },
-        McpTool {
-            name: "sinex.automata_status",
-            description: "Read-only derived-node automata liveness, checkpoint, and lag status.",
-            input_schema: status_window_schema(),
-        },
-        McpTool {
-            name: "sinex.ingestors_status",
-            description: "Read-only source-ingestor liveness, health, and emission status.",
-            input_schema: status_window_schema(),
-        },
-        McpTool {
-            name: "sinex.nodes_health",
-            description: "Read-only aggregate runtime node health.",
-            input_schema: stale_after_schema(),
-        },
-        McpTool {
-            name: "sinex.nodes_active",
-            description: "Read-only active runtime node presence.",
-            input_schema: stale_after_schema(),
-        },
-        McpTool {
-            name: "sinex.nodes_registry",
-            description: "Read-only persisted node state registry.",
-            input_schema: empty_object_schema(),
-        },
-        McpTool {
-            name: "sinex.ingestd_validation",
-            description: "Read-only latest ingestd validation and admission snapshot.",
-            input_schema: empty_object_schema(),
-        },
-        McpTool {
-            name: "sinex.ingestd_batch_stats",
-            description: "Read-only ingestd batch, latency, and validation telemetry buckets.",
-            input_schema: telemetry_buckets_schema(),
-        },
-        McpTool {
-            name: "sinex.throughput",
-            description: "Read-only per-source and per-component throughput summary.",
-            input_schema: empty_object_schema(),
-        },
-        McpTool {
-            name: "sinex.recent_activity",
-            description: "Read-only recent activity summary for agent context.",
-            input_schema: limit_schema(20),
-        },
-        McpTool {
-            name: "sinex.command_frequency",
-            description: "Read-only command-frequency telemetry for shell context.",
-            input_schema: telemetry_buckets_schema(),
-        },
-        McpTool {
-            name: "sinex.file_activity",
-            description: "Read-only file-activity telemetry for project context.",
-            input_schema: telemetry_buckets_schema(),
-        },
-        McpTool {
-            name: "sinex.system_state",
-            description: "Read-only CPU, memory, disk, and unit telemetry buckets.",
-            input_schema: telemetry_buckets_schema(),
-        },
-        McpTool {
-            name: "sinex.window_focus",
-            description: "Read-only desktop window focus telemetry buckets.",
-            input_schema: telemetry_buckets_schema(),
-        },
-        McpTool {
-            name: "sinex.current_health",
-            description: "Read-only current health telemetry rows.",
-            input_schema: limit_schema(50),
-        },
-        McpTool {
-            name: "sinex.current_device_state",
-            description: "Read-only current device-state telemetry rows.",
-            input_schema: limit_schema(50),
-        },
-        McpTool {
-            name: "sinex.gateway_stats",
-            description: "Read-only gateway request and latency telemetry buckets.",
-            input_schema: telemetry_buckets_schema(),
-        },
-        McpTool {
-            name: "sinex.stream_stats",
-            description: "Read-only JetStream fill and message telemetry buckets.",
-            input_schema: telemetry_buckets_schema(),
-        },
-        McpTool {
-            name: "sinex.assembly_stats",
-            description: "Read-only material assembly telemetry buckets.",
-            input_schema: telemetry_buckets_schema(),
-        },
-        McpTool {
-            name: "sinex.node_stats",
-            description: "Read-only node processing telemetry buckets.",
-            input_schema: telemetry_buckets_schema(),
-        },
-        McpTool {
-            name: "sinex.metric_counters",
-            description: "Read-only named metric counter telemetry buckets.",
-            input_schema: telemetry_buckets_schema(),
-        },
-        McpTool {
-            name: "sinex.llm_prompts",
-            description: "Read-only LLM prompt-template registry events.",
-            input_schema: json!({
+        ),
+        mcp_tool("sinex.semantic_lane_outputs", lane_records_schema()),
+        mcp_tool("sinex.semantic_lane_diffs", lane_records_schema()),
+        mcp_tool("sinex.automata_status", status_window_schema()),
+        mcp_tool("sinex.ingestors_status", status_window_schema()),
+        mcp_tool("sinex.nodes_health", stale_after_schema()),
+        mcp_tool("sinex.nodes_active", stale_after_schema()),
+        mcp_tool("sinex.nodes_registry", empty_object_schema()),
+        mcp_tool("sinex.ingestd_validation", empty_object_schema()),
+        mcp_tool("sinex.ingestd_batch_stats", telemetry_buckets_schema()),
+        mcp_tool("sinex.throughput", empty_object_schema()),
+        mcp_tool("sinex.recent_activity", limit_schema(20)),
+        mcp_tool("sinex.command_frequency", telemetry_buckets_schema()),
+        mcp_tool("sinex.file_activity", telemetry_buckets_schema()),
+        mcp_tool("sinex.system_state", telemetry_buckets_schema()),
+        mcp_tool("sinex.window_focus", telemetry_buckets_schema()),
+        mcp_tool("sinex.current_health", limit_schema(50)),
+        mcp_tool("sinex.current_device_state", limit_schema(50)),
+        mcp_tool("sinex.gateway_stats", telemetry_buckets_schema()),
+        mcp_tool("sinex.stream_stats", telemetry_buckets_schema()),
+        mcp_tool("sinex.assembly_stats", telemetry_buckets_schema()),
+        mcp_tool("sinex.node_stats", telemetry_buckets_schema()),
+        mcp_tool("sinex.metric_counters", telemetry_buckets_schema()),
+        mcp_tool(
+            "sinex.llm_prompts",
+            json!({
                 "type": "object",
                 "properties": {
                     "status": { "type": "string" },
@@ -1237,11 +1180,10 @@ pub fn tools() -> Vec<McpTool> {
                 },
                 "additionalProperties": false
             }),
-        },
-        McpTool {
-            name: "sinex.llm_route_explain",
-            description: "Read-only deterministic LLM routing explanation.",
-            input_schema: json!({
+        ),
+        mcp_tool(
+            "sinex.llm_route_explain",
+            json!({
                 "type": "object",
                 "required": ["request", "policy"],
                 "properties": {
@@ -1250,16 +1192,11 @@ pub fn tools() -> Vec<McpTool> {
                 },
                 "additionalProperties": false
             }),
-        },
-        McpTool {
-            name: "sinex.llm_budget_report",
-            description: "Read-only LLM budget-ledger usage report.",
-            input_schema: limit_schema(100),
-        },
-        McpTool {
-            name: "sinex.curation_proposals",
-            description: "Read-only curation proposal event listing.",
-            input_schema: json!({
+        ),
+        mcp_tool("sinex.llm_budget_report", limit_schema(100)),
+        mcp_tool(
+            "sinex.curation_proposals",
+            json!({
                 "type": "object",
                 "properties": {
                     "status": { "type": "string", "default": "pending" },
@@ -1272,16 +1209,11 @@ pub fn tools() -> Vec<McpTool> {
                 },
                 "additionalProperties": false
             }),
-        },
-        McpTool {
-            name: "sinex.dlq_stats",
-            description: "Read-only raw-ingest DLQ stream statistics.",
-            input_schema: empty_object_schema(),
-        },
-        McpTool {
-            name: "sinex.dlq_peek",
-            description: "Read-only sanitized raw-ingest DLQ message previews.",
-            input_schema: json!({
+        ),
+        mcp_tool("sinex.dlq_stats", empty_object_schema()),
+        mcp_tool(
+            "sinex.dlq_peek",
+            json!({
                 "type": "object",
                 "properties": {
                     "limit": {
@@ -1293,11 +1225,10 @@ pub fn tools() -> Vec<McpTool> {
                 },
                 "additionalProperties": false
             }),
-        },
-        McpTool {
-            name: "sinex.source_materials",
-            description: "Read-only staged source-material catalog listing.",
-            input_schema: json!({
+        ),
+        mcp_tool(
+            "sinex.source_materials",
+            json!({
                 "type": "object",
                 "properties": {
                     "status": { "type": "string" },
@@ -1310,11 +1241,10 @@ pub fn tools() -> Vec<McpTool> {
                 },
                 "additionalProperties": false
             }),
-        },
-        McpTool {
-            name: "sinex.source_material",
-            description: "Read-only staged source-material detail with metadata redacted.",
-            input_schema: json!({
+        ),
+        mcp_tool(
+            "sinex.source_material",
+            json!({
                 "type": "object",
                 "required": ["material_id"],
                 "properties": {
@@ -1322,21 +1252,12 @@ pub fn tools() -> Vec<McpTool> {
                 },
                 "additionalProperties": false
             }),
-        },
-        McpTool {
-            name: "sinex.source_coverage",
-            description: "Read-only source-material coverage buckets.",
-            input_schema: empty_object_schema(),
-        },
-        McpTool {
-            name: "sinex.source_presets",
-            description: "Read-only built-in source resolver preset catalog.",
-            input_schema: empty_object_schema(),
-        },
-        McpTool {
-            name: "sinex.source_bindings",
-            description: "Read-only configured source binding listing.",
-            input_schema: json!({
+        ),
+        mcp_tool("sinex.source_coverage", empty_object_schema()),
+        mcp_tool("sinex.source_presets", empty_object_schema()),
+        mcp_tool(
+            "sinex.source_bindings",
+            json!({
                 "type": "object",
                 "properties": {
                     "source_family": { "type": "string" },
@@ -1344,11 +1265,10 @@ pub fn tools() -> Vec<McpTool> {
                 },
                 "additionalProperties": false
             }),
-        },
-        McpTool {
-            name: "sinex.ops_list",
-            description: "Read-only operations log listing.",
-            input_schema: json!({
+        ),
+        mcp_tool(
+            "sinex.ops_list",
+            json!({
                 "type": "object",
                 "properties": {
                     "operation_type": { "type": "string" },
@@ -1362,11 +1282,10 @@ pub fn tools() -> Vec<McpTool> {
                 },
                 "additionalProperties": false
             }),
-        },
-        McpTool {
-            name: "sinex.ops_get",
-            description: "Read-only operation detail lookup.",
-            input_schema: json!({
+        ),
+        mcp_tool(
+            "sinex.ops_get",
+            json!({
                 "type": "object",
                 "required": ["operation_id"],
                 "properties": {
@@ -1374,27 +1293,21 @@ pub fn tools() -> Vec<McpTool> {
                 },
                 "additionalProperties": false
             }),
-        },
-        McpTool {
-            name: "sinex.lifecycle_status",
-            description: "Read-only data lifecycle tier status.",
-            input_schema: empty_object_schema(),
-        },
-        McpTool {
-            name: "sinex.gitops_sources",
-            description: "Read-only GitOps schema source listing.",
-            input_schema: json!({
+        ),
+        mcp_tool("sinex.lifecycle_status", empty_object_schema()),
+        mcp_tool(
+            "sinex.gitops_sources",
+            json!({
                 "type": "object",
                 "properties": {
                     "include_disabled": { "type": "boolean", "default": false }
                 },
                 "additionalProperties": false
             }),
-        },
-        McpTool {
-            name: "sinex.audit_trail",
-            description: "Read-only audit trail for one operation.",
-            input_schema: json!({
+        ),
+        mcp_tool(
+            "sinex.audit_trail",
+            json!({
                 "type": "object",
                 "required": ["operation_id"],
                 "properties": {
@@ -1402,11 +1315,10 @@ pub fn tools() -> Vec<McpTool> {
                 },
                 "additionalProperties": false
             }),
-        },
-        McpTool {
-            name: "sinex.coordination_instances",
-            description: "Read-only coordination instance listing.",
-            input_schema: json!({
+        ),
+        mcp_tool(
+            "sinex.coordination_instances",
+            json!({
                 "type": "object",
                 "properties": {
                     "node_type": {
@@ -1416,11 +1328,10 @@ pub fn tools() -> Vec<McpTool> {
                 },
                 "additionalProperties": false
             }),
-        },
-        McpTool {
-            name: "sinex.coordination_leader",
-            description: "Read-only coordination leader lookup.",
-            input_schema: json!({
+        ),
+        mcp_tool(
+            "sinex.coordination_leader",
+            json!({
                 "type": "object",
                 "required": ["node_type"],
                 "properties": {
@@ -1431,11 +1342,10 @@ pub fn tools() -> Vec<McpTool> {
                 },
                 "additionalProperties": false
             }),
-        },
-        McpTool {
-            name: "sinex.coordination_instance_health",
-            description: "Read-only coordination instance health lookup.",
-            input_schema: json!({
+        ),
+        mcp_tool(
+            "sinex.coordination_instance_health",
+            json!({
                 "type": "object",
                 "required": ["instance_id"],
                 "properties": {
@@ -1443,28 +1353,19 @@ pub fn tools() -> Vec<McpTool> {
                 },
                 "additionalProperties": false
             }),
-        },
-        McpTool {
-            name: "sinex.shadow_consumers",
-            description: "Read-only shadow consumer listing.",
-            input_schema: json!({
+        ),
+        mcp_tool(
+            "sinex.shadow_consumers",
+            json!({
                 "type": "object",
                 "properties": {
                     "prefix": { "type": "string" }
                 },
                 "additionalProperties": false
             }),
-        },
-        McpTool {
-            name: "sinex.system_ping",
-            description: "Read-only gateway ping.",
-            input_schema: empty_object_schema(),
-        },
-        McpTool {
-            name: "sinex.system_version",
-            description: "Read-only gateway package version.",
-            input_schema: empty_object_schema(),
-        },
+        ),
+        mcp_tool("sinex.system_ping", empty_object_schema()),
+        mcp_tool("sinex.system_version", empty_object_schema()),
     ]
 }
 
@@ -1639,6 +1540,7 @@ pub async fn call_tool(client: &GatewayClient, name: &str, arguments: Value) -> 
         "sinex.trace_lineage" => trace_lineage(client, arguments).await,
         "sinex.source_readiness" => source_readiness(client, arguments).await,
         "sinex.source_continuity" => source_continuity(client, arguments).await,
+        "sinex.source_drift" => source_drift(client, arguments).await,
         "sinex.source_gap_explain" => source_gap_explain(client, arguments).await,
         "sinex.source_identifier_continuity" => {
             source_identifier_continuity(client, arguments).await
@@ -1802,6 +1704,25 @@ async fn source_continuity(client: &GatewayClient, arguments: Value) -> Result<V
     ))
 }
 
+async fn source_drift(client: &GatewayClient, arguments: Value) -> Result<Value> {
+    let args: SourceDriftArgs = serde_json::from_value(arguments)?;
+    let request = SourcesDriftListRequest {
+        source_unit_id: args
+            .source_unit_id
+            .as_deref()
+            .map(SourceUnitId::new)
+            .transpose()?,
+        limit: args.limit,
+    };
+    let result = serde_json::to_value(client.sources_drift_list(request).await?)?;
+
+    Ok(envelope(
+        "sinex.source_drift",
+        json!(args),
+        json!({ "result": result }),
+    ))
+}
+
 async fn source_gap_explain(client: &GatewayClient, arguments: Value) -> Result<Value> {
     let args: SourceGapExplainArgs = serde_json::from_value(arguments)?;
     let response = client
@@ -1856,6 +1777,8 @@ async fn tasks_list(client: &GatewayClient, arguments: Value) -> Result<Value> {
     let args: TasksListArgs = serde_json::from_value(arguments)?;
     let request = TaskListRequest {
         query: args.query.clone(),
+        external_system: args.external_system.clone(),
+        external_id: args.external_id.clone(),
         status: args.status,
         project_id: args.project_id.clone(),
         tag: args.tag.clone(),
@@ -2097,53 +2020,46 @@ async fn recent_activity(client: &GatewayClient, arguments: Value) -> Result<Val
     ))
 }
 
-async fn command_frequency(client: &GatewayClient, arguments: Value) -> Result<Value> {
-    let args: TelemetryBucketsArgs = serde_json::from_value(arguments)?;
-    let entries = client
-        .telemetry_command_frequency(args.from.clone(), args.to.clone(), args.limit)
-        .await?;
-    Ok(envelope(
-        "sinex.command_frequency",
-        json!(args),
-        json!({ "entries": entries }),
-    ))
+macro_rules! telemetry_bucket_tool {
+    ($fn_name:ident, $tool_name:literal, $client_method:ident, $result_key:literal) => {
+        async fn $fn_name(client: &GatewayClient, arguments: Value) -> Result<Value> {
+            let args: TelemetryBucketsArgs = serde_json::from_value(arguments)?;
+            let result = client
+                .$client_method(args.from.clone(), args.to.clone(), args.limit)
+                .await?;
+            Ok(envelope(
+                $tool_name,
+                json!(args),
+                json!({ $result_key: result }),
+            ))
+        }
+    };
 }
 
-async fn file_activity(client: &GatewayClient, arguments: Value) -> Result<Value> {
-    let args: TelemetryBucketsArgs = serde_json::from_value(arguments)?;
-    let entries = client
-        .telemetry_file_activity(args.from.clone(), args.to.clone(), args.limit)
-        .await?;
-    Ok(envelope(
-        "sinex.file_activity",
-        json!(args),
-        json!({ "entries": entries }),
-    ))
-}
-
-async fn system_state(client: &GatewayClient, arguments: Value) -> Result<Value> {
-    let args: TelemetryBucketsArgs = serde_json::from_value(arguments)?;
-    let buckets = client
-        .telemetry_system_state(args.from.clone(), args.to.clone(), args.limit)
-        .await?;
-    Ok(envelope(
-        "sinex.system_state",
-        json!(args),
-        json!({ "buckets": buckets }),
-    ))
-}
-
-async fn window_focus(client: &GatewayClient, arguments: Value) -> Result<Value> {
-    let args: TelemetryBucketsArgs = serde_json::from_value(arguments)?;
-    let buckets = client
-        .telemetry_window_focus(args.from.clone(), args.to.clone(), args.limit)
-        .await?;
-    Ok(envelope(
-        "sinex.window_focus",
-        json!(args),
-        json!({ "buckets": buckets }),
-    ))
-}
+telemetry_bucket_tool!(
+    command_frequency,
+    "sinex.command_frequency",
+    telemetry_command_frequency,
+    "entries"
+);
+telemetry_bucket_tool!(
+    file_activity,
+    "sinex.file_activity",
+    telemetry_file_activity,
+    "entries"
+);
+telemetry_bucket_tool!(
+    system_state,
+    "sinex.system_state",
+    telemetry_system_state,
+    "buckets"
+);
+telemetry_bucket_tool!(
+    window_focus,
+    "sinex.window_focus",
+    telemetry_window_focus,
+    "buckets"
+);
 
 async fn current_health(client: &GatewayClient, arguments: Value) -> Result<Value> {
     let args: TelemetryLimitArgs = serde_json::from_value(arguments)?;
@@ -2165,65 +2081,36 @@ async fn current_device_state(client: &GatewayClient, arguments: Value) -> Resul
     ))
 }
 
-async fn gateway_stats(client: &GatewayClient, arguments: Value) -> Result<Value> {
-    let args: TelemetryBucketsArgs = serde_json::from_value(arguments)?;
-    let buckets = client
-        .telemetry_gateway_stats(args.from.clone(), args.to.clone(), args.limit)
-        .await?;
-    Ok(envelope(
-        "sinex.gateway_stats",
-        json!(args),
-        json!({ "buckets": buckets }),
-    ))
-}
-
-async fn stream_stats(client: &GatewayClient, arguments: Value) -> Result<Value> {
-    let args: TelemetryBucketsArgs = serde_json::from_value(arguments)?;
-    let buckets = client
-        .telemetry_stream_stats(args.from.clone(), args.to.clone(), args.limit)
-        .await?;
-    Ok(envelope(
-        "sinex.stream_stats",
-        json!(args),
-        json!({ "buckets": buckets }),
-    ))
-}
-
-async fn assembly_stats(client: &GatewayClient, arguments: Value) -> Result<Value> {
-    let args: TelemetryBucketsArgs = serde_json::from_value(arguments)?;
-    let buckets = client
-        .telemetry_assembly_stats(args.from.clone(), args.to.clone(), args.limit)
-        .await?;
-    Ok(envelope(
-        "sinex.assembly_stats",
-        json!(args),
-        json!({ "buckets": buckets }),
-    ))
-}
-
-async fn node_stats(client: &GatewayClient, arguments: Value) -> Result<Value> {
-    let args: TelemetryBucketsArgs = serde_json::from_value(arguments)?;
-    let buckets = client
-        .telemetry_node_stats(args.from.clone(), args.to.clone(), args.limit)
-        .await?;
-    Ok(envelope(
-        "sinex.node_stats",
-        json!(args),
-        json!({ "buckets": buckets }),
-    ))
-}
-
-async fn metric_counters(client: &GatewayClient, arguments: Value) -> Result<Value> {
-    let args: TelemetryBucketsArgs = serde_json::from_value(arguments)?;
-    let buckets = client
-        .telemetry_metric_counters(args.from.clone(), args.to.clone(), args.limit)
-        .await?;
-    Ok(envelope(
-        "sinex.metric_counters",
-        json!(args),
-        json!({ "buckets": buckets }),
-    ))
-}
+telemetry_bucket_tool!(
+    gateway_stats,
+    "sinex.gateway_stats",
+    telemetry_gateway_stats,
+    "buckets"
+);
+telemetry_bucket_tool!(
+    stream_stats,
+    "sinex.stream_stats",
+    telemetry_stream_stats,
+    "buckets"
+);
+telemetry_bucket_tool!(
+    assembly_stats,
+    "sinex.assembly_stats",
+    telemetry_assembly_stats,
+    "buckets"
+);
+telemetry_bucket_tool!(
+    node_stats,
+    "sinex.node_stats",
+    telemetry_node_stats,
+    "buckets"
+);
+telemetry_bucket_tool!(
+    metric_counters,
+    "sinex.metric_counters",
+    telemetry_metric_counters,
+    "buckets"
+);
 
 async fn llm_prompts(client: &GatewayClient, arguments: Value) -> Result<Value> {
     let args: LlmPromptsArgs = serde_json::from_value(arguments)?;

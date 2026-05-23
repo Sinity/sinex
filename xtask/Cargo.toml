@@ -16,27 +16,27 @@ clap = { workspace = true, features = [
     "derive",
 ] }
 color-eyre = { workspace = true }
-walkdir = "2.5"
-which = "6.0"
-sha2 = "0.10"
+walkdir = { workspace = true }
+which = { workspace = true }
+sha2 = { workspace = true }
 
-clap_complete = "4.5"
-tempfile = "3.14"
+clap_complete = { workspace = true }
+tempfile = { workspace = true }
 serde = { workspace = true, features = [
     "derive",
 ] }
 serde_json = { workspace = true }
-serde_yml = "0.0.12"
+serde_yml = { workspace = true }
 
 rusqlite = { workspace = true }
-console = "0.15"
+console = { workspace = true }
 quick-xml = "0.38"
 num_cpus = "1.16"
-dirs = "5.0"
+dirs = { workspace = true }
 toml = { workspace = true }
 gethostname = { workspace = true }
 guppy = "0.17"
-libc = "0.2"
+libc = { workspace = true }
 
 # TLS certificate generation
 rcgen       = { workspace = true, features = ["pem", "x509-parser"] }
@@ -46,17 +46,12 @@ time        = { workspace = true }
 # Hot reload and orchestration
 notify = { workspace = true }
 notify-debouncer-mini = "0.7"
-nix = { version = "0.27", features = [
-    "fs",
-    "signal",
-    "process",
-    "term",
-] }
-reqwest = { version = "0.12", default-features = false, features = [
+nix = { workspace = true }
+reqwest = { workspace = true, features = [
     "json",
-    "rustls-tls",
+    "rustls",
 ] }
-camino = "1"
+camino = { workspace = true }
 tokio = { workspace = true, features = [
     "full",
     "signal",
@@ -81,15 +76,15 @@ sinex-node-sdk = { path = "../crate/lib/sinex-node-sdk" }
 sinex-source-worker = { path = "../crate/core/sinex-source-worker" }
 sinex-process = { path = "../crate/core/sinex-process" }
 url = { workspace = true }
-rand = { workspace = true }
-tokio-stream = "0.1"
+fastrand = { workspace = true }
+tokio-stream = { workspace = true }
 uuid = { workspace = true }
 bon = { workspace = true }
 sqlx = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
-futures = "0.3"
-parking_lot = "0.12"
+futures = { workspace = true }
+parking_lot = { workspace = true }
 insta = { workspace = true }
 blake3 = { workspace = true }
 regex = { workspace = true }
@@ -97,25 +92,22 @@ regex = { workspace = true }
 # Macros
 xtask-macros = { path = "./macros" }
 
-sysinfo = "0.38.0"
+sysinfo = { workspace = true }
 
 # Shell-style command composition
 
 # Pretty table output
-tabled = "0.17"
-
-# Better panic messages for users
-human-panic = "2.0"
+tabled = { workspace = true }
 
 # Build-time metadata (git hash, build time)
-shadow-rs = "0.35"
+shadow-rs = { workspace = true }
 
 [build-dependencies]
 blake3 = { workspace = true }
-shadow-rs = "0.35"
+shadow-rs = { workspace = true }
 
 [dev-dependencies]
-vt100 = "0.15"
+vt100 = "0.16"
 
 [lints]
 workspace = true

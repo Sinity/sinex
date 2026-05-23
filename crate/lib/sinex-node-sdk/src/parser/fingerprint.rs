@@ -38,12 +38,17 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 
 use sinex_primitives::parser::SourceUnitId;
-use sinex_primitives::rpc::sources::{CaveatSeverity, SourceCaveat, caveat_codes};
+use sinex_primitives::rpc::sources::{
+    SourceCaveat, source_shape_drift_readiness_caveats_with_required_fields,
+};
 use sinex_primitives::temporal::Timestamp;
+
+use crate::parser::DeclarativeParserSpec;
 
 const MAX_JSON_FINGERPRINT_DEPTH: usize = 8;
 const MAX_JSON_FINGERPRINT_FIELDS: usize = 512;
 const MAX_DELIMITED_FINGERPRINT_FIELDS: usize = 512;
+const MAX_DIRECTORY_MANIFEST_FIELDS: usize = 512;
 
 // =============================================================================
 // SourceRecordFingerprint
@@ -138,6 +143,47 @@ impl SourceRecordFingerprint {
         Self::from_delimited_bytes("tsv", b'\t', bytes)
     }
 
+    /// Creates a fingerprint from JSON Lines bytes.
+    ///
+    /// Each non-empty line is parsed as one JSON value. Object field paths are
+    /// recorded under `/[]/...`, matching top-level JSON array exports while
+    /// preserving the fact that this source was JSONL in the fingerprint hash.
+    pub fn from_jsonl_bytes(bytes: &[u8]) -> Result<Self, serde_json::Error> {
+        let mut keys = Vec::new();
+        let mut type_map = BTreeMap::new();
+
+        for line in bytes.split(|byte| *byte == b'\n') {
+            if line.iter().all(u8::is_ascii_whitespace) {
+                continue;
+            }
+            let value: JsonValue = serde_json::from_slice(line)?;
+            Self::extract_top_level_array_object_types(
+                &[value],
+                0,
+                &mut keys,
+                &mut type_map,
+                MAX_JSON_FINGERPRINT_FIELDS,
+            );
+            if keys.len() >= MAX_JSON_FINGERPRINT_FIELDS {
+                break;
+            }
+        }
+
+        keys.sort();
+        keys.dedup();
+
+        let fp = Self {
+            format: "jsonl".to_string(),
+            keys: keys.clone(),
+            type_map: type_map.clone(),
+            blake3_hash: String::new(),
+        };
+
+        let mut fingerprint = fp;
+        fingerprint.blake3_hash = fingerprint.compute_hash();
+        Ok(fingerprint)
+    }
+
     /// Creates a fingerprint from the declared `SQLite` table/column shape.
     ///
     /// The fingerprint records table names, column names, declared types,
@@ -204,6 +250,42 @@ impl SourceRecordFingerprint {
         let mut fingerprint = fp;
         fingerprint.blake3_hash = fingerprint.compute_hash();
         Ok(fingerprint)
+    }
+
+    /// Creates a fingerprint from a directory manifest.
+    ///
+    /// The manifest stores relative file paths as keys and coarse file kinds
+    /// as types. It intentionally records filesystem shape only: path presence
+    /// and extension class, not file contents.
+    #[must_use]
+    pub fn from_directory_manifest<I, P, T>(entries: I) -> Self
+    where
+        I: IntoIterator<Item = (P, T)>,
+        P: Into<String>,
+        T: Into<String>,
+    {
+        let mut keys = Vec::new();
+        let mut type_map = BTreeMap::new();
+
+        for (path, file_kind) in entries.into_iter().take(MAX_DIRECTORY_MANIFEST_FIELDS) {
+            let key = normalize_directory_manifest_path(path.into());
+            keys.push(key.clone());
+            type_map.insert(key, file_kind.into());
+        }
+
+        keys.sort();
+        keys.dedup();
+
+        let fp = Self {
+            format: "directory_manifest".to_string(),
+            keys: keys.clone(),
+            type_map: type_map.clone(),
+            blake3_hash: String::new(),
+        };
+
+        let mut fingerprint = fp;
+        fingerprint.blake3_hash = fingerprint.compute_hash();
+        fingerprint
     }
 
     /// Creates a fingerprint from a `SourceRecord`.
@@ -335,13 +417,49 @@ impl SourceRecordFingerprint {
                     }
                 }
             }
-            JsonValue::Array(_) => {
-                // Arrays are represented by the field that owns them. We do
-                // not index elements because array cardinality is data, not
-                // source shape.
+            JsonValue::Array(items) => {
+                // Top-level export files are often arrays of homogeneous row
+                // objects. Record their element object keys under /[] so drift
+                // can detect a field disappearing without making array length
+                // or element index part of the shape.
+                if path.is_empty() {
+                    Self::extract_top_level_array_object_types(
+                        items, depth, keys, type_map, max_fields,
+                    );
+                } else {
+                    // Nested arrays are represented by the field that owns
+                    // them. We do not index elements because array cardinality
+                    // is data, not source shape.
+                }
             }
             _ => {
                 // Scalar values: no keys to extract.
+            }
+        }
+    }
+
+    fn extract_top_level_array_object_types(
+        items: &[JsonValue],
+        depth: usize,
+        keys: &mut Vec<String>,
+        type_map: &mut BTreeMap<String, String>,
+        max_fields: usize,
+    ) {
+        let element_path = join_json_pointer("", "[]");
+        for item in items {
+            let JsonValue::Object(map) = item else {
+                continue;
+            };
+            for (key, val) in map {
+                if keys.len() >= max_fields {
+                    return;
+                }
+                let child_path = join_json_pointer(&element_path, key);
+                keys.push(child_path.clone());
+                merge_inferred_type(type_map, child_path.clone(), Self::infer_type(val));
+                if val.is_object() {
+                    Self::extract_types_at(val, &child_path, depth + 1, keys, type_map, max_fields);
+                }
             }
         }
     }
@@ -613,6 +731,7 @@ fn build_drift_event_from_parts(
         added_keys,
         removed_keys,
         type_changes,
+        required_input_keys: Vec::new(),
         observed_at: Timestamp::now(),
     }
 }
@@ -654,6 +773,10 @@ pub struct DriftEvent {
     /// Type changes for keys that exist in both: (key, `old_type`, `new_type`).
     pub type_changes: Vec<(String, String, String)>,
 
+    /// Parser-declared input keys required by the producer, when known.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub required_input_keys: Vec<String>,
+
     /// When this drift was observed.
     pub observed_at: Timestamp,
 }
@@ -666,49 +789,34 @@ impl DriftEvent {
     /// are the shapes most likely to produce missing/defaulted parsed values.
     #[must_use]
     pub fn readiness_caveats(&self) -> Vec<SourceCaveat> {
-        let mut caveats = Vec::new();
-        let evidence_ref = Some(format!("drift:{}", self.current_hash));
+        self.readiness_caveats_with_required_fields(&self.required_input_keys)
+    }
 
-        if !self.type_changes.is_empty() {
-            caveats.push(SourceCaveat {
-                code: caveat_codes::PARSER_FIELD_TYPE_CHANGED.to_string(),
-                severity: CaveatSeverity::Degraded,
-                message: format!(
-                    "{} input field type(s) changed for source unit {}.",
-                    self.type_changes.len(),
-                    self.source_unit_id.as_str()
-                ),
-                evidence_ref: evidence_ref.clone(),
-            });
-        }
+    /// Convert this drift observation into readiness caveats while honoring
+    /// parser-declared required input keys.
+    #[must_use]
+    pub fn readiness_caveats_with_required_fields(
+        &self,
+        required_input_keys: &[String],
+    ) -> Vec<SourceCaveat> {
+        source_shape_drift_readiness_caveats_with_required_fields(
+            &self.source_unit_id,
+            &self.current_hash,
+            self.added_keys.len(),
+            &self.removed_keys,
+            self.type_changes.len(),
+            required_input_keys,
+        )
+    }
 
-        if !self.removed_keys.is_empty() {
-            caveats.push(SourceCaveat {
-                code: caveat_codes::PARSER_REQUIRED_FIELD_MISSING.to_string(),
-                severity: CaveatSeverity::Degraded,
-                message: format!(
-                    "{} previously observed input field(s) are missing for source unit {}.",
-                    self.removed_keys.len(),
-                    self.source_unit_id.as_str()
-                ),
-                evidence_ref: evidence_ref.clone(),
-            });
-        }
-
-        if !self.added_keys.is_empty() && caveats.is_empty() {
-            caveats.push(SourceCaveat {
-                code: caveat_codes::SOURCE_SHAPE_CHANGED.to_string(),
-                severity: CaveatSeverity::Info,
-                message: format!(
-                    "{} new input field(s) observed for source unit {}.",
-                    self.added_keys.len(),
-                    self.source_unit_id.as_str()
-                ),
-                evidence_ref,
-            });
-        }
-
-        caveats
+    /// Convert this drift observation into readiness caveats using the
+    /// required input keys declared by a declarative parser spec.
+    #[must_use]
+    pub fn readiness_caveats_for_declarative_parser(
+        &self,
+        spec: &DeclarativeParserSpec,
+    ) -> Vec<SourceCaveat> {
+        self.readiness_caveats_with_required_fields(&spec.required_input_keys())
     }
 
     /// Serializes this event as a JSON payload suitable for a parser-emitted event.
@@ -730,6 +838,7 @@ impl DriftEvent {
                     "current_type": new,
                 }))
                 .collect::<Vec<_>>(),
+            "required_input_keys": self.required_input_keys,
             "observed_at": self.observed_at.format_rfc3339(),
         })
     }
@@ -755,6 +864,18 @@ fn join_json_pointer(parent: &str, key: &str) -> String {
     }
 }
 
+fn merge_inferred_type(type_map: &mut BTreeMap<String, String>, key: String, inferred: String) {
+    match type_map.get_mut(&key) {
+        Some(existing) if *existing != inferred => {
+            *existing = "mixed".to_string();
+        }
+        Some(_) => {}
+        None => {
+            type_map.insert(key, inferred);
+        }
+    }
+}
+
 fn normalize_delimited_header(idx: usize, header: &str) -> String {
     let trimmed = header.trim();
     if trimmed.is_empty() {
@@ -762,6 +883,10 @@ fn normalize_delimited_header(idx: usize, header: &str) -> String {
     } else {
         trimmed.to_string()
     }
+}
+
+fn normalize_directory_manifest_path(path: String) -> String {
+    path.trim_start_matches("./").replace('\\', "/")
 }
 
 fn infer_text_type(value: &str) -> String {
@@ -804,7 +929,12 @@ fn normalize_sqlite_declared_type(declared_type: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::parser::{FieldSource, FieldSpec, FieldType, InputFormat};
     use serde_json::json;
+    use sinex_primitives::domain::{EventSource, EventType};
+    use sinex_primitives::parser::{ParserId, SourceUnitId};
+    use sinex_primitives::privacy::ProcessingContext;
+    use sinex_primitives::rpc::sources::{CaveatSeverity, caveat_codes};
     use xtask::sandbox::prelude::sinex_test;
 
     #[sinex_test]
@@ -910,6 +1040,26 @@ mod tests {
         let fp2 = SourceRecordFingerprint::from_json(&value2);
 
         assert_ne!(fp1.hash(), fp2.hash());
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_from_jsonl_bytes_records_row_object_keys() -> xtask::sandbox::TestResult<()> {
+        let fp = SourceRecordFingerprint::from_jsonl_bytes(
+            br#"{"entry_id":1,"entry_created_at":"2026-01-01 00:00:00","content":"a"}
+
+{"entry_id":2,"entry_created_at":"2026-01-02 00:00:00","votes_score":3}
+"#,
+        )?;
+
+        assert_eq!(fp.format, "jsonl");
+        assert!(fp.keys.contains(&"/[]/entry_id".to_string()));
+        assert!(fp.keys.contains(&"/[]/entry_created_at".to_string()));
+        assert!(fp.keys.contains(&"/[]/content".to_string()));
+        assert!(fp.keys.contains(&"/[]/votes_score".to_string()));
+        assert_eq!(fp.type_map["/[]/entry_id"], "integer");
+        assert_eq!(fp.type_map["/[]/entry_created_at"], "string");
+        assert_eq!(fp.type_map["/[]/votes_score"], "integer");
         Ok(())
     }
 
@@ -1262,6 +1412,50 @@ mod tests {
                 .iter()
                 .all(|caveat| caveat.severity == CaveatSeverity::Degraded)
         );
+
+        let required_caveats =
+            degraded.readiness_caveats_with_required_fields(&["/name".to_string()]);
+        assert!(
+            required_caveats.iter().any(|caveat| {
+                caveat.code == caveat_codes::PARSER_REQUIRED_FIELD_MISSING
+                    && caveat.severity == CaveatSeverity::Blocking
+            }),
+            "required input removal should block readiness: {required_caveats:?}"
+        );
+
+        let spec = DeclarativeParserSpec {
+            parser_id: ParserId::from_static("test-parser"),
+            parser_version: "1.0.0".to_string(),
+            source_unit_id: SourceUnitId::from_static("test.unit"),
+            event_source: EventSource::from_static("test"),
+            event_type: EventType::from_static("test.event"),
+            default_privacy_context: ProcessingContext::Metadata,
+            input_format: InputFormat::Json,
+            fields: vec![FieldSpec {
+                name: "name".to_string(),
+                source: FieldSource::JsonPointer {
+                    pointer: "/name".to_string(),
+                },
+                field_type: FieldType::String,
+                required: true,
+                default: None,
+                skip_payload: false,
+                privacy_context: None,
+                occurrence_key: false,
+                timestamp: None,
+                suppress_if: None,
+                carry: None,
+            }],
+            discriminator: None,
+        };
+        let spec_caveats = degraded.readiness_caveats_for_declarative_parser(&spec);
+        assert!(
+            spec_caveats.iter().any(|caveat| {
+                caveat.code == caveat_codes::PARSER_REQUIRED_FIELD_MISSING
+                    && caveat.severity == CaveatSeverity::Blocking
+            }),
+            "declarative required input removal should block readiness: {spec_caveats:?}"
+        );
         Ok(())
     }
 
@@ -1303,6 +1497,40 @@ mod tests {
 
         assert_eq!(fp.format, "json");
         assert!(fp.keys.is_empty());
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_top_level_array_of_objects_records_element_keys() -> xtask::sandbox::TestResult<()>
+    {
+        let value = json!([
+            {
+                "ts": "2026-01-01T00:00:00Z",
+                "ms_played": 1000,
+                "track": { "uri": "spotify:track:1" }
+            },
+            {
+                "ts": "2026-01-01T00:01:00Z",
+                "ms_played": "2000",
+                "platform": "linux"
+            }
+        ]);
+        let fp = SourceRecordFingerprint::from_json(&value);
+
+        assert_eq!(fp.format, "json");
+        assert_eq!(
+            fp.keys,
+            vec![
+                "/[]/ms_played",
+                "/[]/platform",
+                "/[]/track",
+                "/[]/track/uri",
+                "/[]/ts"
+            ]
+        );
+        assert_eq!(fp.type_map["/[]/ts"], "string");
+        assert_eq!(fp.type_map["/[]/ms_played"], "mixed");
+        assert_eq!(fp.type_map["/[]/track/uri"], "string");
         Ok(())
     }
 

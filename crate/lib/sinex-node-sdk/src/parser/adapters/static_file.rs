@@ -10,7 +10,7 @@ use sinex_primitives::events::SourceMaterial;
 use sinex_primitives::ids::Id;
 use sinex_primitives::parser::{InputShapeKind, MaterialAnchor, SourceRecord};
 
-use crate::parser::{InputShapeAdapter, ParserResult};
+use crate::parser::{InputShapeAdapter, ParserError, ParserResult, SourceRecordFingerprint};
 
 // =============================================================================
 // StaticFileAdapter
@@ -70,6 +70,37 @@ impl InputShapeAdapter for StaticFileAdapter {
         Ok(stream::once(async move { Ok(record) }).boxed())
     }
 
+    fn input_fingerprint(
+        &self,
+        config: &Self::Config,
+    ) -> ParserResult<Option<SourceRecordFingerprint>> {
+        let bytes = std::fs::read(&config.path)?;
+        match Utf8Path::new(&config.path)
+            .extension()
+            .map(str::to_ascii_lowercase)
+            .as_deref()
+        {
+            Some("csv") => SourceRecordFingerprint::from_csv_bytes(&bytes)
+                .map(Some)
+                .map_err(|e| ParserError::Adapter(format!("failed to fingerprint CSV file: {e}"))),
+            Some("tsv") => SourceRecordFingerprint::from_tsv_bytes(&bytes)
+                .map(Some)
+                .map_err(|e| ParserError::Adapter(format!("failed to fingerprint TSV file: {e}"))),
+            Some("jsonl") => SourceRecordFingerprint::from_jsonl_bytes(&bytes)
+                .map(Some)
+                .map_err(|e| {
+                    ParserError::Adapter(format!("failed to fingerprint JSONL file: {e}"))
+                }),
+            Some("json") => {
+                let value = serde_json::from_slice(&bytes).map_err(|e| {
+                    ParserError::Adapter(format!("failed to fingerprint JSON file: {e}"))
+                })?;
+                Ok(Some(SourceRecordFingerprint::from_json(&value)))
+            }
+            _ => Ok(None),
+        }
+    }
+
     fn cursor_after(&self, _record: &SourceRecord) -> ParserResult<Self::Cursor> {
         Ok(StaticFileCursor { processed: true })
     }
@@ -79,6 +110,7 @@ impl InputShapeAdapter for StaticFileAdapter {
 mod tests {
     use super::*;
     use std::io::Write;
+    use tempfile::Builder;
     use tempfile::NamedTempFile;
     use xtask::sandbox::prelude::sinex_test;
 
@@ -209,6 +241,90 @@ mod tests {
         let record = stream.next().await.unwrap().unwrap();
         assert!(record.bytes.is_empty());
         assert!(stream.next().await.is_none());
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn static_file_csv_input_fingerprint_reports_header_shape()
+    -> xtask::sandbox::TestResult<()> {
+        let mut f = Builder::new().suffix(".csv").tempfile().unwrap();
+        f.write_all(b"id,name\n1,Alice\n").unwrap();
+        let path = f.path().to_str().unwrap().to_string();
+
+        let adapter = StaticFileAdapter;
+        let config = StaticFileConfig { path };
+        let fingerprint = adapter
+            .input_fingerprint(&config)
+            .unwrap()
+            .expect("CSV static files should expose a structural fingerprint");
+
+        assert_eq!(fingerprint.format, "csv");
+        assert_eq!(fingerprint.keys, vec!["id", "name"]);
+        assert_eq!(fingerprint.type_map["id"], "integer");
+        assert_eq!(fingerprint.type_map["name"], "string");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn static_file_json_input_fingerprint_reports_nested_shape()
+    -> xtask::sandbox::TestResult<()> {
+        let mut f = Builder::new().suffix(".json").tempfile().unwrap();
+        f.write_all(br#"{"id":1,"profile":{"name":"Alice"}}"#)
+            .unwrap();
+        let path = f.path().to_str().unwrap().to_string();
+
+        let adapter = StaticFileAdapter;
+        let config = StaticFileConfig { path };
+        let fingerprint = adapter
+            .input_fingerprint(&config)
+            .unwrap()
+            .expect("JSON static files should expose a structural fingerprint");
+
+        assert_eq!(fingerprint.format, "json");
+        assert!(fingerprint.keys.contains(&"/id".to_string()));
+        assert!(fingerprint.keys.contains(&"/profile/name".to_string()));
+        assert_eq!(fingerprint.type_map["/id"], "integer");
+        assert_eq!(fingerprint.type_map["/profile/name"], "string");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn static_file_jsonl_input_fingerprint_reports_row_shape()
+    -> xtask::sandbox::TestResult<()> {
+        let mut f = Builder::new().suffix(".jsonl").tempfile().unwrap();
+        f.write_all(
+            br#"{"id":1,"created_at":"2026-01-01"}
+{"id":2,"created_at":"2026-01-02","score":7}
+"#,
+        )
+        .unwrap();
+        let path = f.path().to_str().unwrap().to_string();
+
+        let adapter = StaticFileAdapter;
+        let config = StaticFileConfig { path };
+        let fingerprint = adapter
+            .input_fingerprint(&config)
+            .unwrap()
+            .expect("JSONL static files should expose a structural fingerprint");
+
+        assert_eq!(fingerprint.format, "jsonl");
+        assert!(fingerprint.keys.contains(&"/[]/id".to_string()));
+        assert!(fingerprint.keys.contains(&"/[]/created_at".to_string()));
+        assert!(fingerprint.keys.contains(&"/[]/score".to_string()));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn static_file_unknown_extension_has_no_input_fingerprint()
+    -> xtask::sandbox::TestResult<()> {
+        let mut f = Builder::new().suffix(".txt").tempfile().unwrap();
+        f.write_all(b"not a structured export").unwrap();
+        let path = f.path().to_str().unwrap().to_string();
+
+        let adapter = StaticFileAdapter;
+        let config = StaticFileConfig { path };
+
+        assert!(adapter.input_fingerprint(&config).unwrap().is_none());
         Ok(())
     }
 }

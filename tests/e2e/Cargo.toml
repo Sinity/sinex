@@ -82,7 +82,7 @@ features = [ "testing",]
 path = "../../crate/lib/sinex-db"
 
 [dev-dependencies.toml]
-version = "0.8"
+workspace = true
 
 [dev-dependencies.pretty_assertions]
 version = "1.4"
