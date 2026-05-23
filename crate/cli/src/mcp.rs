@@ -13,7 +13,10 @@ use sinex_primitives::domain::{EventSource, EventType};
 use sinex_primitives::events::Event;
 use sinex_primitives::ids::Id;
 use sinex_primitives::query::{EventQuery, LineageDirection, LineageQuery};
+use sinex_primitives::rpc::methods;
+use sinex_primitives::rpc::privacy::PrivateModeStateResponse;
 use sinex_primitives::rpc::sources::{SourcesReadinessGetRequest, SourcesReadinessListRequest};
+use sinex_primitives::rpc::system::SystemHealthResponse;
 use sinex_primitives::temporal::Timestamp;
 use std::io::{BufRead, Write};
 
@@ -37,6 +40,21 @@ pub struct McpTool {
     pub description: &'static str,
     #[serde(rename = "inputSchema")]
     pub input_schema: Value,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct McpCatalogEntry {
+    pub name: &'static str,
+    pub kind: McpSurfaceKind,
+    pub description: &'static str,
+    pub backing_rpc_methods: &'static [&'static str],
+    pub read_only: bool,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum McpSurfaceKind {
+    Tool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -94,6 +112,50 @@ struct SourceReadinessArgs {
 
 const fn default_true() -> bool {
     true
+}
+
+#[must_use]
+pub fn tool_catalog() -> Vec<McpCatalogEntry> {
+    vec![
+        McpCatalogEntry {
+            name: "sinex.search_events",
+            kind: McpSurfaceKind::Tool,
+            description: "Read-only search over persisted Sinex events.",
+            backing_rpc_methods: &[methods::EVENTS_QUERY],
+            read_only: true,
+        },
+        McpCatalogEntry {
+            name: "sinex.trace_lineage",
+            kind: McpSurfaceKind::Tool,
+            description: "Read-only provenance trace for one event.",
+            backing_rpc_methods: &[methods::EVENTS_LINEAGE],
+            read_only: true,
+        },
+        McpCatalogEntry {
+            name: "sinex.source_readiness",
+            kind: McpSurfaceKind::Tool,
+            description: "Read-only source readiness, caveat, freshness, and cost report.",
+            backing_rpc_methods: &[
+                methods::SOURCES_READINESS_LIST,
+                methods::SOURCES_READINESS_GET,
+            ],
+            read_only: true,
+        },
+        McpCatalogEntry {
+            name: "sinex.privacy_status",
+            kind: McpSurfaceKind::Tool,
+            description: "Read-only runtime private-mode state.",
+            backing_rpc_methods: &[methods::PRIVACY_PRIVATE_MODE_STATUS],
+            read_only: true,
+        },
+        McpCatalogEntry {
+            name: "sinex.system_health",
+            kind: McpSurfaceKind::Tool,
+            description: "Read-only gateway and confirmation-path health summary.",
+            backing_rpc_methods: &[methods::SYSTEM_HEALTH],
+            read_only: true,
+        },
+    ]
 }
 
 #[must_use]
@@ -162,6 +224,24 @@ pub fn tools() -> Vec<McpTool> {
                     "stale_after_seconds": { "type": "integer", "minimum": 1 },
                     "include_caveats": { "type": "boolean", "default": true }
                 },
+                "additionalProperties": false
+            }),
+        },
+        McpTool {
+            name: "sinex.privacy_status",
+            description: "Read-only runtime private-mode state.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {},
+                "additionalProperties": false
+            }),
+        },
+        McpTool {
+            name: "sinex.system_health",
+            description: "Read-only gateway and confirmation-path health summary.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {},
                 "additionalProperties": false
             }),
         },
@@ -248,6 +328,8 @@ pub async fn call_tool(client: &GatewayClient, name: &str, arguments: Value) -> 
         "sinex.search_events" => search_events(client, arguments).await,
         "sinex.trace_lineage" => trace_lineage(client, arguments).await,
         "sinex.source_readiness" => source_readiness(client, arguments).await,
+        "sinex.privacy_status" => privacy_status(client, arguments).await,
+        "sinex.system_health" => system_health(client, arguments).await,
         other => Err(eyre!("unknown MCP tool: {other}")),
     }
 }
@@ -270,7 +352,8 @@ async fn search_events(client: &GatewayClient, arguments: Value) -> Result<Value
     query.include_total_estimate = args.include_total_estimate;
     query.validate()?;
 
-    let result = client.query_events(query).await?;
+    let mut result = serde_json::to_value(client.query_events(query).await?)?;
+    redact_raw_samples(&mut result);
     Ok(envelope(
         "sinex.search_events",
         json!(args),
@@ -287,7 +370,8 @@ async fn trace_lineage(client: &GatewayClient, arguments: Value) -> Result<Value
     };
     query.validate()?;
 
-    let result = client.trace_lineage(query).await?;
+    let mut result = serde_json::to_value(client.trace_lineage(query).await?)?;
+    redact_raw_samples(&mut result);
     Ok(envelope(
         "sinex.trace_lineage",
         json!(args),
@@ -324,6 +408,34 @@ async fn source_readiness(client: &GatewayClient, arguments: Value) -> Result<Va
     }
 
     Ok(envelope("sinex.source_readiness", json!(args), payload))
+}
+
+async fn privacy_status(client: &GatewayClient, arguments: Value) -> Result<Value> {
+    reject_non_empty_args("sinex.privacy_status", &arguments)?;
+    let response: PrivateModeStateResponse = client.private_mode_status().await?;
+    Ok(envelope(
+        "sinex.privacy_status",
+        json!({}),
+        json!({ "result": response }),
+    ))
+}
+
+async fn system_health(client: &GatewayClient, arguments: Value) -> Result<Value> {
+    reject_non_empty_args("sinex.system_health", &arguments)?;
+    let response: SystemHealthResponse = client.health().await?;
+    Ok(envelope(
+        "sinex.system_health",
+        json!({}),
+        json!({ "result": response }),
+    ))
+}
+
+fn reject_non_empty_args(tool: &str, arguments: &Value) -> Result<()> {
+    match arguments {
+        Value::Null => Ok(()),
+        Value::Object(fields) if fields.is_empty() => Ok(()),
+        _ => Err(eyre!("{tool} does not accept arguments")),
+    }
 }
 
 fn filter_readiness_by_source_unit(result: &mut Value, source_unit_id: &str) {
@@ -363,13 +475,50 @@ fn strip_caveats(value: &mut Value) {
     }
 }
 
+fn redact_raw_samples(value: &mut Value) {
+    match value {
+        Value::Array(items) => {
+            for item in items {
+                redact_raw_samples(item);
+            }
+        }
+        Value::Object(fields) => {
+            if fields.contains_key("payload") {
+                fields.insert(
+                    "payload".to_string(),
+                    json!({
+                        "redacted": true,
+                        "reason": "mcp_raw_samples_disabled"
+                    }),
+                );
+            }
+            if fields.contains_key("snippet") {
+                fields.insert("snippet".to_string(), json!("[REDACTED]"));
+            }
+            if fields.contains_key("metadata") {
+                fields.insert(
+                    "metadata".to_string(),
+                    json!({
+                        "redacted": true,
+                        "reason": "mcp_raw_samples_disabled"
+                    }),
+                );
+            }
+            for field in fields.values_mut() {
+                redact_raw_samples(field);
+            }
+        }
+        _ => {}
+    }
+}
+
 fn envelope(tool: &str, query: Value, result: Value) -> Value {
     json!({
         "tool": tool,
         "generated_at": Timestamp::now(),
         "query": query,
         "provenance_refs": [],
-        "caveats": [],
+        "caveats": ["mcp.raw_samples_redacted"],
         "redaction": {
             "mode": "gateway_default",
             "raw_samples": false

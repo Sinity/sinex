@@ -2,7 +2,7 @@
 //!
 //! Verifies:
 //! 1. `default_parser_dispatch()` is registry-driven (no match arms) and routes
-//!    WeeChat log lines to the correct parser.
+//!    `WeeChat` log lines to the correct parser.
 //! 2. The declarative `WeeChatMessageRecord` parser is registered and reachable.
 //! 3. Unknown source units produce a clear error.
 //! 4. The node factory registry has "noop" registered.

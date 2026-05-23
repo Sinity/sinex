@@ -1,4 +1,4 @@
-//! Tests for `sinexctl admin snapshot`.
+//! Tests for `sinexctl admin snapshot` and the `sinexctl state` snapshot aliases.
 //!
 //! These tests exercise the snapshot command using a tempdir-based fake state
 //! directory.  They do NOT require a live Postgres or NATS instance — instead
@@ -12,7 +12,9 @@ use tempfile::TempDir;
 use xtask::sandbox::prelude::*;
 
 use sinexctl::admin::exec;
-use sinexctl::admin::snapshot::{AdminSnapshotCommand, AdminSnapshotInspectCommand, Component};
+use sinexctl::admin::snapshot::{
+    AdminSnapshotCommand, AdminSnapshotInspectCommand, AdminSnapshotRestoreCommand, Component,
+};
 
 /// Helper: build a fake state directory with recognizable fixture files.
 fn make_fake_state_dir() -> TestResult<TempDir> {
@@ -63,6 +65,18 @@ fn make_snapshot_archive() -> TestResult<(TempDir, std::path::PathBuf)> {
     fs::write(
         staging.join("state").join("checkpoint.bin"),
         b"checkpoint-data",
+    )?;
+    fs::write(
+        staging.join("state").join("source-units.json"),
+        r#"{"source_units":[{"id":"terminal.atuin-history"}]}"#,
+    )?;
+    fs::create_dir_all(staging.join("state").join("private-mode"))?;
+    fs::write(
+        staging
+            .join("state")
+            .join("private-mode")
+            .join("state.json"),
+        br#"{"enabled":false}"#,
     )?;
 
     let manifest = SnapshotManifest {
@@ -201,6 +215,46 @@ async fn dry_run_non_postgres_components_do_not_require_database_url()
     Ok(())
 }
 
+/// `sinexctl state snapshot` is the operator-facing route to the same
+/// implementation as `admin snapshot`.
+#[sinex_test]
+async fn state_snapshot_dry_run_uses_snapshot_implementation() -> xtask::sandbox::TestResult<()> {
+    let state_dir = make_fake_state_dir()?;
+    let output_dir = tempfile::tempdir()?;
+    let output_path = output_dir.path().join("state-alias.tar.zst");
+
+    let output = sinexctl_bin()
+        .args([
+            "state",
+            "snapshot",
+            "--output",
+            &output_path.to_string_lossy(),
+            "--dry-run",
+            "--state-dir",
+            &state_dir.path().to_string_lossy(),
+            "--components",
+            "nats,cas,state",
+        ])
+        .output()?;
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "state snapshot dry-run must use the snapshot implementation\nstdout: {stdout}\nstderr: {stderr}"
+    );
+    assert!(
+        stdout.contains("dry-run"),
+        "stdout must mention dry-run mode\nstdout: {stdout}"
+    );
+    assert!(
+        !output_path.exists(),
+        "dry-run must NOT create an archive at {output_path:?}"
+    );
+
+    Ok(())
+}
+
 /// `admin snapshot-inspect` reads manifest.json from the compressed archive
 /// and validates that non-empty manifest component paths exist in the tar.
 #[sinex_test]
@@ -241,6 +295,186 @@ async fn snapshot_inspect_reports_manifest_and_archive_paths() -> xtask::sandbox
         "json output should include the manifest snapshot id\nstdout: {stdout}"
     );
 
+    Ok(())
+}
+
+/// `admin snapshot-restore --dry-run` validates archive structure and returns
+/// a non-destructive restore drill plan.
+#[sinex_test]
+async fn snapshot_restore_dry_run_reports_plan_and_policy() -> xtask::sandbox::TestResult<()> {
+    let (_dir, archive_path) = make_snapshot_archive()?;
+    let target = tempfile::tempdir()?;
+
+    let cmd = AdminSnapshotRestoreCommand {
+        archive: archive_path.clone(),
+        target_dir: target.path().to_path_buf(),
+        dry_run: true,
+        allow_non_empty_target: false,
+        confirm_restore: false,
+        allow_active_services: false,
+    };
+    let result = cmd.execute()?;
+
+    assert_eq!(result.snapshot_id, "01970a7f-391b-7000-8000-000000000001");
+    assert!(result.dry_run);
+    assert!(result.target_empty);
+    assert_eq!(result.planned_steps.len(), 1);
+    assert_eq!(result.planned_steps[0].component, "state");
+    assert!(
+        result.archive_sensitivity.contains("secret"),
+        "archive sensitivity should classify state snapshots as secret"
+    );
+    assert!(
+        result.key_policy.contains("exclude"),
+        "key policy should explain key inclusion/exclusion"
+    );
+    assert!(result.drill_checks.private_mode_state_present);
+    assert!(
+        result.observed_checks.is_none(),
+        "dry-run should not report observed target state"
+    );
+
+    let output = sinexctl_bin()
+        .args([
+            "admin",
+            "snapshot-restore",
+            "--archive",
+            &archive_path.to_string_lossy(),
+            "--target-dir",
+            &target.path().to_string_lossy(),
+            "--dry-run",
+            "--format",
+            "json",
+        ])
+        .output()?;
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "snapshot-restore dry-run must exit 0\nstdout: {stdout}\nstderr: {stderr}"
+    );
+    assert!(
+        stdout.contains("\"archive_sensitivity\""),
+        "json output should include archive sensitivity\nstdout: {stdout}"
+    );
+    assert!(
+        stdout.contains("\"key_policy\""),
+        "json output should include key policy\nstdout: {stdout}"
+    );
+
+    Ok(())
+}
+
+/// Restore planning refuses an ambiguous non-empty target unless explicitly
+/// allowed, even though dry-run itself writes nothing.
+#[sinex_test]
+async fn snapshot_restore_dry_run_refuses_non_empty_target_without_override()
+-> xtask::sandbox::TestResult<()> {
+    let (_dir, archive_path) = make_snapshot_archive()?;
+    let target = tempfile::tempdir()?;
+    fs::write(target.path().join("existing"), b"do-not-overwrite")?;
+
+    let cmd = AdminSnapshotRestoreCommand {
+        archive: archive_path,
+        target_dir: target.path().to_path_buf(),
+        dry_run: true,
+        allow_non_empty_target: false,
+        confirm_restore: false,
+        allow_active_services: false,
+    };
+    let error = cmd
+        .execute()
+        .expect_err("non-empty restore target should require an explicit override");
+    assert!(
+        format!("{error:#}").contains("not empty"),
+        "error should mention non-empty target: {error:#}"
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn snapshot_restore_execute_extracts_state_archive_into_empty_target()
+-> xtask::sandbox::TestResult<()> {
+    let (_dir, archive_path) = make_snapshot_archive()?;
+    let target_parent = tempfile::tempdir()?;
+    let target = target_parent.path().join("restore-target");
+
+    let cmd = AdminSnapshotRestoreCommand {
+        archive: archive_path.clone(),
+        target_dir: target.clone(),
+        dry_run: false,
+        allow_non_empty_target: false,
+        confirm_restore: true,
+        allow_active_services: true,
+    };
+    let result = cmd.execute()?;
+
+    assert!(!result.dry_run);
+    assert!(target.join("manifest.json").exists());
+    assert!(target.join("state").join("checkpoint.bin").exists());
+    assert!(
+        target
+            .join("state")
+            .join("private-mode")
+            .join("state.json")
+            .exists()
+    );
+    let observed = result
+        .observed_checks
+        .as_ref()
+        .ok_or_else(|| color_eyre::eyre::eyre!("restore execution should report observations"))?;
+    assert!(observed.private_mode_state_present);
+    assert!(observed.private_mode_state_matches_manifest);
+    assert!(observed.source_unit_ids_match);
+
+    let binary_target = target_parent.path().join("binary-target");
+    let output = sinexctl_bin()
+        .args([
+            "admin",
+            "snapshot-restore",
+            "--archive",
+            &archive_path.to_string_lossy(),
+            "--target-dir",
+            &binary_target.to_string_lossy(),
+            "--confirm-restore",
+            "--allow-active-services",
+            "--format",
+            "json",
+        ])
+        .output()?;
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "snapshot-restore execute must exit 0\nstdout: {stdout}\nstderr: {stderr}"
+    );
+    assert!(
+        stdout.contains("\"observed_checks\""),
+        "json output should include observed restore checks\nstdout: {stdout}"
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn snapshot_restore_execute_requires_confirmation() -> xtask::sandbox::TestResult<()> {
+    let (_dir, archive_path) = make_snapshot_archive()?;
+    let target = tempfile::tempdir()?;
+
+    let cmd = AdminSnapshotRestoreCommand {
+        archive: archive_path,
+        target_dir: target.path().to_path_buf(),
+        dry_run: false,
+        allow_non_empty_target: false,
+        confirm_restore: false,
+        allow_active_services: true,
+    };
+    let error = cmd
+        .execute()
+        .expect_err("restore execution should require explicit confirmation");
+    assert!(
+        format!("{error:#}").contains("--confirm-restore"),
+        "error should explain confirmation flag: {error:#}"
+    );
     Ok(())
 }
 

@@ -168,6 +168,12 @@ impl MockGatewayClient {
                         connected: true,
                         last_error: None,
                     },
+                    sse_confirmation: ComponentHealthReport {
+                        status: HealthStatus::Healthy,
+                        connected: true,
+                        latency_ms: None,
+                        detail: None,
+                    },
                 },
             }))
     }

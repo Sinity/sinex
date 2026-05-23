@@ -67,6 +67,11 @@ Every command declares its operator UX contract in the command catalog
 - `supported`: which [`OutputFormat`] values the command handles
 - `streaming`: whether the command emits an unbounded stream (NDJSON/YAML lines)
 - `family`: which operator surface group the command belongs to
+- `effect`: whether the command is read-only, mutating, streaming, or local
+- `backing_rpc_methods`: exact typed gateway RPC methods used by the command
+- `required_rpc_role`: the highest gateway role required by backing RPC methods
+- `mutation_guards`: safety mechanisms declared for mutating commands, such as
+  gateway auth, dry-run mode, confirmation, or direct local-maintenance scope
 
 The historical format registry is now a compatibility projection of that
 catalog for validation and tests. New UX surfaces should read the catalog rather
@@ -87,14 +92,25 @@ error: command `completions` does not support --format Dot; \
 
 ```bash
 sinexctl --list-formats   # full format-support matrix in terminal-friendly text
+sinexctl --list-formats --format json  # joined CLI/RPC/MCP operator catalog
+sinexctl --list-formats --format yaml  # same catalog for human patch review
 ```
+
+The JSON/YAML projection is a versioned operator-surface artifact with command
+rows, typed RPC descriptors, MCP surface rows, and the documented field lists
+for the generated projection. It is the machine-readable parity surface for
+catalog, docs, and future UI/MCP consumers.
 
 ### Extending the registry
 
 When adding a new command:
 1. Add a leaf entry to `build()` in `format_registry.rs`.
 2. Add the corresponding arm to `command_path()` in `main.rs`.
-3. If the command is streaming, use `FormatCapability::streaming(...)`.
+3. Add any gateway methods to `backing_rpc_methods_for_path()`.
+4. If the command can mutate state, add it to `effect_for_path()`.
+5. If the command can mutate state, add its guard to
+   `mutation_guards_for_path()`.
+6. If the command is streaming, use `FormatCapability::streaming(...)`.
 
 
 ## Pointers

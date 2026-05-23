@@ -429,7 +429,7 @@ mod tests {
             .await
             .unwrap();
         let key = intents[0].occurrence_key.as_ref().unwrap();
-        assert_eq!(key.fields[3], ("text_hint".into(), "".into()));
+        assert_eq!(key.fields[3], ("text_hint".into(), String::new()));
         assert!(intents[0].payload["text"].is_null());
         Ok(())
     }

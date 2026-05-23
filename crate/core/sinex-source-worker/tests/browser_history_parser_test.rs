@@ -1,7 +1,7 @@
 //! Browser history parser regression tests.
 //!
 //! Covers the live DLQ regression from #1321: `page.visited` payloads must
-//! include the required `source_file` field for SQLite and JSONL material.
+//! include the required `source_file` field for `SQLite` and JSONL material.
 
 use camino::Utf8PathBuf;
 use sinex_node_sdk::parser::MaterialParser;

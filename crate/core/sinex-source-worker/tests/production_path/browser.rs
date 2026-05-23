@@ -7,14 +7,14 @@
 mod tests {
     use xtask::sandbox::prelude::*;
 
-    /// Qutebrowser SQLite row serialised as JSON.
+    /// Qutebrowser `SQLite` row serialised as JSON.
     ///
     /// Fields match what `SqliteRowAdapter` produces from the `History` table:
     /// `rowid`, `url`, `title`, `atime` (Unix seconds), `redirect` (0/1).
     const QUTEBROWSER_FIXTURE: &[u8] =
         br#"{"rowid":1,"url":"https://example.com","title":"Example","atime":1700000000,"redirect":0}"#;
 
-    /// Chromium SQLite row serialised as JSON.
+    /// Chromium `SQLite` row serialised as JSON.
     ///
     /// Fields match what `SqliteRowAdapter` produces from the `visits` table:
     /// `rowid`, `url`, `title`, `visit_time` (Windows FILETIME µs), `transition`, `visit_duration` (µs).

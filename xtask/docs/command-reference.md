@@ -1544,6 +1544,7 @@ Generate and verify repo documentation surfaces
 | `command-reference` | Generate the exhaustive xtask public command reference from the live clap tree |
 | `schema-bundle` | Generate the checked-in JSON schema bundle from the Rust EventPayload registry |
 | `proof-catalog` | Generate the proof catalog from Rust descriptors, payloads, commands, and scenarios |
+| `rpc-catalog` | Generate the public RPC method catalog from typed descriptors |
 | `ast-grep-catalog` | Generate the live ast-grep rule catalog from `.config/ast-grep/rules/` |
 | `sync` | Refresh all generated repo surfaces tracked in the repo |
 | `check` | Verify that all generated repo surfaces are up to date |
@@ -1635,6 +1636,19 @@ Generate the proof catalog from Rust descriptors, payloads, commands, and scenar
 | Flag | Value | Required | Description |
 |---|---|---|---|
 | `--output` | yes | no | Output file (default: docs/proof-catalog.json) |
+| `--stdout` | no | no | Print to stdout instead of writing a file |
+| `--check` | no | no | Exit non-zero if the generated output would change |
+
+
+### `xtask docs rpc-catalog`
+
+Generate the public RPC method catalog from typed descriptors
+
+**Arguments**
+
+| Flag | Value | Required | Description |
+|---|---|---|---|
+| `--output` | yes | no | Output file (default: docs/rpc-catalog.json) |
 | `--stdout` | no | no | Print to stdout instead of writing a file |
 | `--check` | no | no | Exit non-zero if the generated output would change |
 

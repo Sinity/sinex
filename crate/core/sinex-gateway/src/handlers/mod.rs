@@ -14,6 +14,7 @@ pub mod dlq;
 pub mod documents;
 pub mod ingestors;
 pub mod lifecycle;
+pub mod llm;
 pub mod node_registry;
 pub mod nodes;
 pub mod ops;
@@ -28,7 +29,9 @@ pub mod system;
 pub mod tasks;
 pub mod telemetry;
 
-pub use curation::{handle_curation_list_proposals, handle_curation_record_judgment};
+pub use curation::{
+    handle_curation_finalize, handle_curation_list_proposals, handle_curation_record_judgment,
+};
 pub use query::{handle_events_annotate, handle_events_lineage, handle_events_query};
 pub use replay::{
     handle_replay_approve_operation, handle_replay_cancel_operation,
@@ -55,6 +58,7 @@ pub use lifecycle::{
     handle_tombstone_preview,
     handle_tombstone_status,
 };
+pub use llm::{handle_llm_budget_report, handle_llm_prompts_list, handle_llm_route_explain};
 pub use nodes::{
     handle_nodes_drain, handle_nodes_list, handle_nodes_resume, handle_nodes_set_horizon,
 };

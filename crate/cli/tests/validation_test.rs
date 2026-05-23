@@ -1,8 +1,13 @@
 use serde_json::{Value, json};
+use sinex_primitives::rpc::{RpcMutability, RpcRole, method_catalog};
 use sinex_primitives::temporal::{Duration, Timestamp};
 use sinexctl::client::{ClientConfig, GatewayClient};
-use sinexctl::mcp::{MCP_PROTOCOL_VERSION, assert_read_only_tool_names, call_tool, tools};
+use sinexctl::mcp::{
+    MCP_PROTOCOL_VERSION, McpSurfaceKind, assert_read_only_tool_names, call_tool, tool_catalog,
+    tools,
+};
 use sinexctl::validation::{parse_time_input, parse_time_input_with_now, validate_time_range};
+use std::collections::BTreeSet;
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 use xtask::sandbox::prelude::*;
@@ -65,7 +70,9 @@ async fn mcp_lists_first_slice_read_only_tools() -> TestResult<()> {
         vec![
             "sinex.search_events",
             "sinex.trace_lineage",
-            "sinex.source_readiness"
+            "sinex.source_readiness",
+            "sinex.privacy_status",
+            "sinex.system_health"
         ]
     );
     assert_read_only_tool_names()?;
@@ -78,6 +85,79 @@ async fn mcp_tool_schemas_are_closed_objects() -> TestResult<()> {
         assert_eq!(tool.input_schema["type"], "object");
         assert_eq!(tool.input_schema["additionalProperties"], false);
         assert!(tool.input_schema["properties"].is_object());
+    }
+    Ok(())
+}
+
+#[sinex_test]
+async fn mcp_catalog_exactly_covers_live_tools() -> TestResult<()> {
+    let tool_names = tools()
+        .iter()
+        .map(|tool| tool.name)
+        .collect::<BTreeSet<_>>();
+    let catalog_names = tool_catalog()
+        .iter()
+        .map(|entry| entry.name)
+        .collect::<BTreeSet<_>>();
+
+    assert_eq!(catalog_names, tool_names);
+    for entry in tool_catalog() {
+        assert_eq!(entry.kind, McpSurfaceKind::Tool);
+        assert!(entry.read_only, "MCP v1 catalog entry must be read-only");
+        assert!(
+            !entry.backing_rpc_methods.is_empty(),
+            "MCP entry `{}` must declare backing RPC descriptors",
+            entry.name
+        );
+    }
+    Ok(())
+}
+
+#[sinex_test]
+async fn mcp_catalog_backing_methods_are_typed_read_only_rpc() -> TestResult<()> {
+    let rpc_catalog = method_catalog()
+        .into_iter()
+        .map(|method| (method.name, method))
+        .collect::<std::collections::BTreeMap<_, _>>();
+
+    for entry in tool_catalog() {
+        for method_name in entry.backing_rpc_methods {
+            let method = rpc_catalog.get(method_name).ok_or_else(|| {
+                color_eyre::eyre::eyre!(
+                    "MCP entry `{}` references unknown RPC method `{method_name}`",
+                    entry.name
+                )
+            })?;
+            assert_eq!(
+                method.mutability,
+                RpcMutability::ReadOnly,
+                "MCP entry `{}` must not expose mutating RPC method `{method_name}`",
+                entry.name
+            );
+            assert_eq!(
+                method.role,
+                RpcRole::ReadOnly,
+                "MCP entry `{}` must not require elevated RPC role `{method_name}`",
+                entry.name
+            );
+        }
+    }
+    Ok(())
+}
+
+#[sinex_test]
+async fn mcp_catalog_serializes_as_machine_readable_matrix() -> TestResult<()> {
+    let value = serde_json::to_value(tool_catalog())?;
+    let entries = value
+        .as_array()
+        .ok_or_else(|| color_eyre::eyre::eyre!("MCP catalog must serialize as an array"))?;
+
+    assert_eq!(entries.len(), tools().len());
+    for entry in entries {
+        assert!(entry["name"].as_str().is_some());
+        assert_eq!(entry["kind"], "tool");
+        assert_eq!(entry["read_only"], true);
+        assert!(entry["backing_rpc_methods"].as_array().is_some());
     }
     Ok(())
 }
@@ -115,9 +195,20 @@ async fn mcp_search_events_call_uses_gateway_fixture() -> TestResult<()> {
     .await?;
 
     assert_eq!(response["tool"], "sinex.search_events");
-    assert_eq!(response["items"]["result"]["type"], "count");
-    assert_eq!(response["items"]["result"]["count"], 1);
+    assert_eq!(response["items"]["result"]["type"], "events");
+    assert_eq!(
+        response["items"]["result"]["events"][0]["payload"]["reason"],
+        "mcp_raw_samples_disabled"
+    );
+    assert_eq!(
+        response["items"]["result"]["events"][0]["snippet"],
+        "[REDACTED]"
+    );
     assert_eq!(response["redaction"]["raw_samples"], false);
+    assert!(
+        !response.to_string().contains("ghp_fixture_secret"),
+        "MCP event search leaked raw payload or snippet text"
+    );
     Ok(())
 }
 
@@ -136,8 +227,20 @@ async fn mcp_trace_lineage_call_uses_gateway_fixture() -> TestResult<()> {
 
     assert_eq!(response["tool"], "sinex.trace_lineage");
     assert_eq!(response["items"]["result"]["root"]["id"], event_id);
+    assert_eq!(
+        response["items"]["result"]["root"]["payload"]["reason"],
+        "mcp_raw_samples_disabled"
+    );
     assert_eq!(response["items"]["result"]["ancestors"], json!([]));
+    assert_eq!(
+        response["items"]["result"]["material_links"][0]["metadata"]["reason"],
+        "mcp_raw_samples_disabled"
+    );
     assert_eq!(response["provenance_refs"], json!([]));
+    assert!(
+        !response.to_string().contains("ghp_fixture_secret"),
+        "MCP lineage leaked raw payload or material metadata text"
+    );
     Ok(())
 }
 
@@ -174,6 +277,45 @@ async fn mcp_source_readiness_call_uses_gateway_fixture() -> TestResult<()> {
     Ok(())
 }
 
+#[sinex_test]
+async fn mcp_privacy_status_call_uses_gateway_fixture() -> TestResult<()> {
+    let server = mount_mcp_gateway_fixture().await;
+    let client = fixture_gateway_client(&server)?;
+
+    let response = call_tool(&client, "sinex.privacy_status", json!({})).await?;
+
+    assert_eq!(response["tool"], "sinex.privacy_status");
+    assert_eq!(response["items"]["result"]["state"]["enabled"], true);
+    assert_eq!(
+        response["items"]["result"]["state"]["affected_source_classes"],
+        json!(["terminal"])
+    );
+    assert_eq!(response["redaction"]["raw_samples"], false);
+    assert!(
+        !response.to_string().contains("ghp_fixture_secret"),
+        "MCP privacy status leaked raw sensitive sample text"
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn mcp_system_health_call_uses_gateway_fixture() -> TestResult<()> {
+    let server = mount_mcp_gateway_fixture().await;
+    let client = fixture_gateway_client(&server)?;
+
+    let response = call_tool(&client, "sinex.system_health", json!({})).await?;
+
+    assert_eq!(response["tool"], "sinex.system_health");
+    assert_eq!(response["items"]["result"]["status"], "degraded");
+    assert_eq!(response["items"]["result"]["healthy"], false);
+    assert_eq!(
+        response["items"]["result"]["components"]["sse_confirmation"]["status"],
+        "degraded"
+    );
+    assert_eq!(response["redaction"]["raw_samples"], false);
+    Ok(())
+}
+
 async fn mount_mcp_gateway_fixture() -> MockServer {
     let server = MockServer::start().await;
     Mock::given(method("POST"))
@@ -201,8 +343,12 @@ async fn mount_mcp_gateway_fixture() -> MockServer {
             };
             let result = match method {
                 "events.query" => json!({
-                    "type": "count",
-                    "count": 1
+                    "type": "events",
+                    "events": [
+                        fixture_sensitive_query_event()
+                    ],
+                    "next_cursor": null,
+                    "total_estimate": null
                 }),
                 "events.lineage" => {
                     let event_id = match body["params"]["event_id"].as_str() {
@@ -213,7 +359,17 @@ async fn mount_mcp_gateway_fixture() -> MockServer {
                         "root": fixture_event(&event_id),
                         "ancestors": [],
                         "descendants": [],
-                        "material_links": []
+                        "material_links": [
+                            {
+                                "from_material_id": fixture_material_id(),
+                                "to_material_id": fixture_material_id(),
+                                "relation_type": "fixture",
+                                "metadata": {
+                                    "raw_sample": "lineage ghp_fixture_secret should not leak"
+                                },
+                                "created_at": "2026-05-18T12:00:00Z"
+                            }
+                        ]
                     })
                 }
                 "sources.readiness.list" => json!({
@@ -256,6 +412,49 @@ async fn mount_mcp_gateway_fixture() -> MockServer {
                         "status": "available",
                         "cost": "local_fast",
                         "material_count": 3
+                    }
+                }),
+                "privacy.private_mode.status" => json!({
+                    "state": {
+                        "enabled": true,
+                        "reason_class": "operator_private",
+                        "actor": "operator",
+                        "started_at": "2026-05-19T10:00:00Z",
+                        "expires_at": null,
+                        "affected_source_classes": ["terminal"],
+                        "updated_by_operation_id": "op-private"
+                    }
+                }),
+                "system.health" => json!({
+                    "status": "degraded",
+                    "healthy": false,
+                    "serving": true,
+                    "degradation_reasons": ["confirmation fan-out degraded"],
+                    "components": {
+                        "database": {
+                            "status": "healthy",
+                            "connected": true,
+                            "latency_ms": 1.5,
+                            "detail": null
+                        },
+                        "nats": {
+                            "status": "healthy",
+                            "connected": true,
+                            "latency_ms": 2.0,
+                            "detail": null
+                        },
+                        "replay_control": {
+                            "status": "healthy",
+                            "enabled": true,
+                            "connected": true,
+                            "last_error": null
+                        },
+                        "sse_confirmation": {
+                            "status": "degraded",
+                            "connected": true,
+                            "latency_ms": null,
+                            "detail": "pending_retry=2 dropped=1"
+                        }
                     }
                 }),
                 other => {
@@ -303,7 +502,7 @@ fn fixture_event(event_id: &str) -> Value {
         "id": event_id,
         "source": "fixture",
         "event_type": "fixture.event",
-        "payload": { "summary": "[REDACTED]" },
+        "payload": { "summary": "raw lineage ghp_fixture_secret should not leak" },
         "ts_orig": "2026-05-18T12:00:00Z",
         "host": "test-host",
         "payload_schema_id": null,
@@ -314,4 +513,16 @@ fn fixture_event(event_id: &str) -> Value {
         "offset_kind": "byte",
         "associated_blob_ids": null
     })
+}
+
+fn fixture_sensitive_query_event() -> Value {
+    let mut event = fixture_event(fixture_event_id());
+    let Some(fields) = event.as_object_mut() else {
+        return event;
+    };
+    fields.insert(
+        "snippet".to_string(),
+        json!("search snippet ghp_fixture_secret should not leak"),
+    );
+    event
 }

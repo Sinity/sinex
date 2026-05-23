@@ -9,6 +9,7 @@
 
 use crate::service_container::ServiceContainer;
 use sinex_node_sdk::dlq_retry::{DlqRetryConfig, DlqRetryHandler};
+use sinex_primitives::privacy::{self, ProcessingContext};
 use sinex_primitives::validation::normalize_unicode;
 use sinex_primitives::{Result, SinexError};
 use tracing::warn;
@@ -18,6 +19,13 @@ pub use sinex_primitives::rpc::dlq::{
     DlqListRequest, DlqListResponse, DlqMessagePeek, DlqPeekRequest, DlqPeekResponse,
     DlqPurgeRequest, DlqPurgeResponse, DlqRequeueRequest, DlqRequeueResponse,
 };
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct SanitizedPreview {
+    text: String,
+    redacted: bool,
+    caveats: Vec<String>,
+}
 
 fn parse_retry_count_header(headers: Option<&async_nats::HeaderMap>) -> Result<u32> {
     let Some(value) = headers.and_then(|headers| headers.get("Retry-Count")) else {
@@ -37,12 +45,65 @@ fn require_stream_sequence(sequence: std::result::Result<u64, String>) -> Result
     })
 }
 
-fn payload_preview(payload: &str, max_chars: usize) -> String {
+fn truncate_preview(payload: &str, max_chars: usize) -> String {
     let preview: String = payload.chars().take(max_chars).collect();
     if payload.chars().count() > max_chars {
         format!("{preview}...")
     } else {
         preview
+    }
+}
+
+fn payload_preview(payload: &str, max_chars: usize) -> SanitizedPreview {
+    const SUPPRESSED_PREVIEW: &str = "[payload preview suppressed by privacy policy]";
+    const ENGINE_UNAVAILABLE_PREVIEW: &str = "[payload preview unavailable: privacy engine failed]";
+
+    let mut current = payload.to_string();
+    let mut redacted = false;
+    let mut caveats = Vec::new();
+
+    // DLQ messages may contain raw command, journal, or document-shaped payloads.
+    // Run the same privacy engine across those operator-relevant contexts before
+    // any bytes leave the gateway boundary.
+    for context in [
+        ProcessingContext::Command,
+        ProcessingContext::Journal,
+        ProcessingContext::Document,
+    ] {
+        let processed = match privacy::process(&current, context) {
+            Ok(processed) => processed,
+            Err(error) => {
+                warn!(
+                    error = %error,
+                    "DLQ payload preview privacy processing failed; suppressing preview"
+                );
+                return SanitizedPreview {
+                    text: ENGINE_UNAVAILABLE_PREVIEW.to_string(),
+                    redacted: true,
+                    caveats: vec!["privacy_engine_unavailable".to_string()],
+                };
+            }
+        };
+
+        if processed.suppressed {
+            return SanitizedPreview {
+                text: SUPPRESSED_PREVIEW.to_string(),
+                redacted: true,
+                caveats: vec!["payload_preview_suppressed".to_string()],
+            };
+        }
+
+        if processed.any_matched() {
+            redacted = true;
+            caveats.push(format!("redacted:{context:?}"));
+            current = processed.text.into_owned();
+        }
+    }
+
+    SanitizedPreview {
+        text: truncate_preview(&current, max_chars),
+        redacted,
+        caveats,
     }
 }
 
@@ -163,7 +224,9 @@ pub async fn handle_dlq_peek(
                     sequence,
                     retry_count,
                     original_subject,
-                    payload_preview,
+                    payload_preview: payload_preview.text,
+                    payload_redacted: payload_preview.redacted,
+                    privacy_caveats: payload_preview.caveats,
                 });
 
                 count += 1;
@@ -344,8 +407,39 @@ mod tests {
     async fn payload_preview_truncates_without_breaking_unicode() -> TestResult<()> {
         let payload = "żółw".repeat(80);
         let preview = payload_preview(&payload, 200);
-        assert!(preview.ends_with("..."));
-        assert_eq!(preview.chars().count(), 203);
+        assert!(preview.text.ends_with("..."));
+        assert_eq!(preview.text.chars().count(), 203);
+        assert!(!preview.redacted);
+        assert!(preview.caveats.is_empty());
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn payload_preview_redacts_raw_dlq_secret_bytes() -> TestResult<()> {
+        let payload = r#"{
+            "original_subject": "dev.sinex.events.raw.shell.command",
+            "original_payload": {
+                "command": "export GITHUB_TOKEN=ghp_abcdefghijklmnopqrstuvwxyz123456"
+            }
+        }"#;
+
+        let preview = payload_preview(payload, 200);
+
+        assert!(preview.redacted);
+        assert!(
+            preview
+                .caveats
+                .iter()
+                .any(|caveat| caveat.starts_with("redacted:")),
+            "redaction must be visible to machine clients: {:?}",
+            preview.caveats
+        );
+        assert!(
+            !preview
+                .text
+                .contains("ghp_abcdefghijklmnopqrstuvwxyz123456")
+        );
+        assert!(!preview.text.contains("GITHUB_TOKEN=ghp_"));
         Ok(())
     }
 }
