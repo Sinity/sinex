@@ -1060,6 +1060,7 @@ impl FileDropPathFilter {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::SinexError;
     use futures::StreamExt;
     use std::io::Write;
     use tempfile::TempDir;
@@ -1085,7 +1086,10 @@ mod tests {
         let file_path = dir.path().join("created.txt");
         tokio::fs::write(&file_path, b"materialized").await?;
         let utf8_path = Utf8PathBuf::from_path_buf(file_path.clone())
-            .map_err(|path| color_eyre::eyre::eyre!("test path not utf8: {}", path.display()))?;
+            .map_err(|path| {
+                SinexError::validation("test path is not valid UTF-8")
+                    .with_context("path", path.display().to_string())
+            })?;
         let original_material_id = dummy_material_id();
         let record = SourceRecord {
             material_id: original_material_id,
@@ -1136,7 +1140,10 @@ mod tests {
         let file_path = dir.path().join("oversized.txt");
         tokio::fs::write(&file_path, b"too large").await?;
         let utf8_path = Utf8PathBuf::from_path_buf(file_path.clone())
-            .map_err(|path| color_eyre::eyre::eyre!("test path not utf8: {}", path.display()))?;
+            .map_err(|path| {
+                SinexError::validation("test path is not valid UTF-8")
+                    .with_context("path", path.display().to_string())
+            })?;
         let original_material_id = dummy_material_id();
         let record = SourceRecord {
             material_id: original_material_id,

@@ -1369,7 +1369,7 @@ mod tests {
         save_private_mode_state,
     };
     use sinex_primitives::rpc::sources::{CaveatSeverity, caveat_codes};
-    use sinex_primitives::{HostName, JsonValue};
+    use sinex_primitives::{HostName, JsonValue, SinexError};
     use std::collections::HashMap;
     use tokio::sync::mpsc;
     use xtask::sandbox::prelude::{TestContext, TestResult, WaitHelpers, sinex_test};
@@ -1620,7 +1620,8 @@ mod tests {
         let work_dir = tempfile::tempdir()?;
         let work_dir_path = work_dir.keep();
         let work_dir_utf8 = Utf8PathBuf::from_path_buf(work_dir_path.clone()).map_err(|path| {
-            color_eyre::eyre::eyre!("temporary work dir should be utf-8: {}", path.display())
+            SinexError::validation("temporary work dir should be UTF-8")
+                .with_context("path", path.display().to_string())
         })?;
         Ok((
             NodeRuntimeState::new(
@@ -1742,7 +1743,7 @@ mod tests {
         let path = private_mode_state_path(dir.path());
         let parent = path
             .parent()
-            .ok_or_else(|| color_eyre::eyre::eyre!("private-mode path must have parent"))?;
+            .ok_or_else(|| SinexError::validation("private-mode path must have parent"))?;
         tokio::fs::create_dir_all(parent).await?;
         tokio::fs::write(&path, b"{not-json").await?;
         let config = AdapterNodeConfig {
@@ -1764,7 +1765,7 @@ mod tests {
         let path = private_mode_state_path(dir.path());
         let parent = path
             .parent()
-            .ok_or_else(|| color_eyre::eyre::eyre!("private-mode path must have parent"))?;
+            .ok_or_else(|| SinexError::validation("private-mode path must have parent"))?;
         tokio::fs::create_dir_all(parent).await?;
         tokio::fs::write(&path, b"{not-json").await?;
         let config = AdapterNodeConfig {
@@ -1857,7 +1858,7 @@ mod tests {
         let event = event_receiver
             .recv()
             .await
-            .ok_or_else(|| color_eyre::eyre::eyre!("expected emitted event"))?;
+            .ok_or_else(|| SinexError::processing("expected emitted event"))?;
 
         assert_eq!(emitted, 1);
         assert_eq!(state.cursor, Some(1));
@@ -1994,9 +1995,7 @@ mod tests {
                 &SourceRecordFingerprint::from_json(&serde_json::json!({ "idx": idx })),
                 &SourceRecordFingerprint::from_json(&serde_json::json!({ "idx": idx, "x": true })),
             )
-            .ok_or_else(|| {
-                color_eyre::eyre::eyre!("different fingerprints should produce drift")
-            })?;
+            .ok_or_else(|| SinexError::validation("different fingerprints should produce drift"))?;
             state.record_input_drift(drift);
         }
 
@@ -2018,7 +2017,7 @@ mod tests {
                 "window_title": "terminal"
             })),
         )
-        .ok_or_else(|| color_eyre::eyre::eyre!("additive drift should be detected"))?;
+        .ok_or_else(|| SinexError::validation("additive drift should be detected"))?;
         state.record_input_drift(additive);
 
         let additive_caveats = state.latest_input_drift_caveats();
@@ -2035,7 +2034,7 @@ mod tests {
                 "count": "1"
             })),
         )
-        .ok_or_else(|| color_eyre::eyre::eyre!("degraded drift should be detected"))?;
+        .ok_or_else(|| SinexError::validation("degraded drift should be detected"))?;
         degraded.required_input_keys = vec!["/message".to_string()];
         state.record_input_drift(degraded);
 
