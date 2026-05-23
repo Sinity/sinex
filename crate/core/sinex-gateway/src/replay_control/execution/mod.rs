@@ -454,7 +454,8 @@ impl ReplayExecutionEngine {
             return Err(stale_preview_missing_root_ids_error(
                 operation_id,
                 total_events,
-            ));
+            )
+            .into());
         }
         if preview_root_ids.len() as u64 != total_events {
             return Err(eyre!(
