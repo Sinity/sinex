@@ -136,7 +136,7 @@ async fn replay_execution_records_outcome(ctx: TestContext) -> Result<()> {
 
     let dispatched_command = replay_output_handle
         .await
-        .map_err(|e| eyre!("fake replay output task failed: {e}"))??;
+        .map_err(|e| test_error(format!("fake replay output task failed: {e}")))??;
     let replay_context = dispatched_command
         .args
         .replay
@@ -187,11 +187,11 @@ async fn replay_execution_records_outcome(ctx: TestContext) -> Result<()> {
         .await?;
     let mut replay_payloads = Vec::new();
     while let Some(message) = replay_batch.next().await {
-        let message = message.map_err(|e| eyre!(e.to_string()))?;
+        let message = message.map_err(|e| test_error(e.to_string()))?;
         replay_payloads.push(serde_json::from_slice::<serde_json::Value>(
             &message.payload,
         )?);
-        message.ack().await.map_err(|e| eyre!(e.to_string()))?;
+        message.ack().await.map_err(|e| test_error(e.to_string()))?;
     }
     assert_eq!(
         replay_payloads.len(),
@@ -312,7 +312,7 @@ async fn replay_execution_records_outcome(ctx: TestContext) -> Result<()> {
     assert_eq!(reexecution_executed.checkpoint.processed_events, 1);
     let reexecution_command = reexecution_output_handle
         .await
-        .map_err(|e| eyre!("fake reexecution replay output task failed: {e}"))??;
+        .map_err(|e| test_error(format!("fake reexecution replay output task failed: {e}")))??;
     let reexecution_context = reexecution_command
         .args
         .replay
@@ -343,10 +343,10 @@ async fn replay_execution_records_outcome(ctx: TestContext) -> Result<()> {
 
     scan_handle
         .await
-        .map_err(|e| eyre!("fake fs-test node task failed: {e}"))?;
+        .map_err(|e| test_error(format!("fake fs-test node task failed: {e}")))?;
     reexecution_handle
         .await
-        .map_err(|e| eyre!("fake reexecution-test node task failed: {e}"))?;
+        .map_err(|e| test_error(format!("fake reexecution-test node task failed: {e}")))?;
 
     Ok(())
 }

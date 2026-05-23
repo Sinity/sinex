@@ -162,18 +162,6 @@ impl XtaskCommand for LintForbiddenCommand {
         let color_eyre_lib_allow = [
             // xtask is a build tool, not a library — color_eyre is its error stack.
             "xtask/src/commands/lint_forbidden.rs",
-            // Inherited error-stack migration debt tracked by #1369. Keep this
-            // list explicit so new color_eyre files still fail the scan while
-            // existing gateway/node-sdk/ingestd surfaces are migrated in
-            // focused subsystem slices.
-            "crate/core/sinex-gateway/src/replay_control/server.rs",
-            "crate/core/sinex-gateway/src/replay_control/protocol.rs",
-            "crate/core/sinex-gateway/src/replay_control/mod.rs",
-            "crate/core/sinex-gateway/src/replay_control/client.rs",
-            "crate/core/sinex-gateway/src/replay_control/telemetry.rs",
-            "crate/core/sinex-gateway/src/replay_control/execution/replay_writer.rs",
-            "crate/core/sinex-gateway/src/replay_control/execution/mod.rs",
-            "crate/core/sinex-gateway/src/replay_control/execution/collect.rs",
         ];
         violations.extend(check_color_eyre_in_lib(
             "color_eyre::",

@@ -74,7 +74,7 @@ async fn replay_execution_surfaces_operation_state_corruption_after_failure(
 
     let err = execute_task
         .await
-        .map_err(|e| eyre!("execute task failed: {e}"))?
+        .map_err(|e| test_error(format!("execute task failed: {e}")))?
         .expect_err("corrupt replay metadata should surface as execution failure");
     assert!(
         err.to_string()
@@ -89,7 +89,7 @@ async fn replay_execution_surfaces_operation_state_corruption_after_failure(
 
     scan_handle
         .await
-        .map_err(|e| eyre!("fake corrupt-failure-test node task failed: {e}"))?;
+        .map_err(|e| test_error(format!("fake corrupt-failure-test node task failed: {e}")))?;
 
     Ok(())
 }
@@ -187,7 +187,7 @@ async fn replay_execution_surfaces_cancellation_bookkeeping_corruption(
 
     let err = execute_task
         .await
-        .map_err(|e| eyre!("execute task failed: {e}"))?
+        .map_err(|e| test_error(format!("execute task failed: {e}")))?
         .expect_err("corrupt replay metadata should surface as cancellation bookkeeping failure");
     assert!(
         err.to_string()
@@ -202,7 +202,7 @@ async fn replay_execution_surfaces_cancellation_bookkeeping_corruption(
 
     scan_handle
         .await
-        .map_err(|e| eyre!("fake corrupt-cancel-test node task failed: {e}"))?;
+        .map_err(|e| test_error(format!("fake corrupt-cancel-test node task failed: {e}")))?;
 
     Ok(())
 }

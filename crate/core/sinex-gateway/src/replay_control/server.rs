@@ -1,10 +1,9 @@
 use async_nats::{Client, Message};
-use color_eyre::eyre::{Context, Result, eyre};
 use futures::StreamExt;
 use parking_lot::Mutex;
 use sinex_db::replay::state_machine::ReplayStateMachine;
 use sinex_primitives::environment::SinexEnvironment;
-use sinex_primitives::transport;
+use sinex_primitives::{Result, SinexError, transport};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Semaphore;
@@ -134,7 +133,10 @@ impl ReplayControlServer {
                 Err(err) => {
                     Self::record_subscription_error(&self.health, err.to_string());
                     if attempt >= REPLAY_CONTROL_SUBSCRIBE_ATTEMPTS {
-                        return Err(err).wrap_err("Failed to subscribe to replay control subject");
+                        return Err(err.with_context(
+                            "context",
+                            "Failed to subscribe to replay control subject",
+                        ));
                     }
                     warn!(
                         attempt,
@@ -160,13 +162,14 @@ impl ReplayControlServer {
         .await
         {
             Ok(Ok(subscription)) => Ok(subscription),
-            Ok(Err(error)) => Err(error).wrap_err_with(|| {
-                format!("failed to subscribe to replay control subject {subject}")
-            }),
-            Err(_) => Err(eyre!(
+            Ok(Err(error)) => Err(SinexError::nats_subscribe(format!(
+                "failed to subscribe to replay control subject {subject}"
+            ))
+            .with_std_error(&error)),
+            Err(_) => Err(SinexError::timeout(format!(
                 "timed out subscribing to replay control subject {subject} after {:?}",
                 REPLAY_CONTROL_SUBSCRIBE_ATTEMPT_TIMEOUT
-            )),
+            ))),
         }
     }
 
@@ -197,12 +200,14 @@ impl ReplayControlServer {
                 Ok(response) => response,
                 Err(err) => {
                     warn!(?err, "Replay control request failed");
-                    ReplayControlResponse::from_report(&err)
+                    ReplayControlResponse::from_sinex_error(&err)
                 }
             },
             Err(e) => {
                 warn!(error = %e, "Failed to parse replay control request");
-                ReplayControlResponse::error(format!("Invalid request: {e}"))
+                ReplayControlResponse::from_sinex_error(
+                    &SinexError::serialization("Invalid request").with_std_error(&e),
+                )
             }
         };
 
@@ -266,7 +271,10 @@ impl ReplayControlServer {
                 // Augment preview with cascade safety analysis (integrity violations, cycles).
                 let root_ids = serde_json::from_value::<ReplayPreviewSummary>(preview.clone())
                     .map(|summary| summary.root_event_ids)
-                    .map_err(|e| eyre!("Invalid replay preview summary: {e}"))?;
+                    .map_err(|e| {
+                        SinexError::serialization("Invalid replay preview summary")
+                            .with_std_error(&e)
+                    })?;
                 let safety = run_safety_analysis(replay.pool(), &root_ids).await;
                 if let serde_json::Value::Object(ref mut map) = preview {
                     map.insert("safety_analysis".to_string(), safety);
@@ -306,8 +314,8 @@ impl ReplayControlServer {
                 validate_actor_for_action(&actor, ReplayAction::Execute)?;
 
                 if dry_run {
-                    return Err(eyre!(
-                        "Replay execute does not support dry-run semantics; use preview before approval instead"
+                    return Err(SinexError::validation(
+                        "Replay execute does not support dry-run semantics; use preview before approval instead",
                     ));
                 }
                 let updated = executor.execute(operation_id, actor).await?;
