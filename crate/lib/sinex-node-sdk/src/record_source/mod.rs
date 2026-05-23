@@ -1647,13 +1647,15 @@ mod tests {
         assert!(report.warnings.is_empty());
         assert_eq!(report.material_anchors.len(), 2);
         let records = sink.records.lock().map_err(|error| {
-            color_eyre::eyre::eyre!("capturing record sink lock poisoned: {error}")
+            SinexError::processing("capturing record sink lock poisoned")
+                .with_context("error", error.to_string())
         })?;
         assert_eq!(records.len(), 2);
         assert_eq!(std::str::from_utf8(&records[0])?, "{\"row\":1}\n");
         assert_eq!(std::str::from_utf8(&records[1])?, "{\"row\":2}\n");
         let finalize_reasons = sink.finalize_reasons.lock().map_err(|error| {
-            color_eyre::eyre::eyre!("capturing record sink lock poisoned: {error}")
+            SinexError::processing("capturing record sink lock poisoned")
+                .with_context("error", error.to_string())
         })?;
         assert_eq!(finalize_reasons.as_slice(), ["test-complete"]);
         Ok(())
@@ -1664,7 +1666,10 @@ mod tests {
         let temp = tempfile::NamedTempFile::new()?;
         tokio::fs::write(temp.path(), b"one\ntwo\npartial").await?;
         let path = Utf8PathBuf::from_path_buf(temp.path().to_path_buf())
-            .map_err(|path| color_eyre::eyre::eyre!("non-utf8 temp path: {path:?}"))?;
+            .map_err(|path| {
+                SinexError::validation("temporary path was not valid UTF-8")
+                    .with_context("path", format!("{path:?}"))
+            })?;
         let source = RecordSources::append_only_utf8_file(path);
         let batch = source
             .read_batch(&source.initial_checkpoint(), RecordReadHorizon::Unbounded)
@@ -1693,9 +1698,9 @@ mod tests {
                 assert_eq!(bytes_consumed, 8);
             }
             other => {
-                return Err(color_eyre::eyre::eyre!(
-                    "expected append-only observation, got {other:?}"
-                ));
+                return Err(SinexError::validation("expected append-only observation")
+                    .with_context("actual", format!("{other:?}"))
+                    .into());
             }
         }
         Ok(())
@@ -1765,7 +1770,10 @@ mod tests {
         drop(conn);
 
         let db_path = Utf8PathBuf::from_path_buf(temp.path().to_path_buf())
-            .map_err(|path| color_eyre::eyre::eyre!("non-utf8 temp path: {path:?}"))?;
+            .map_err(|path| {
+                SinexError::validation("temporary path was not valid UTF-8")
+                    .with_context("path", format!("{path:?}"))
+            })?;
         let source = RecordSources::sqlite(
             db_path.clone(),
             "test://sqlite-snapshot",
@@ -1827,7 +1835,7 @@ mod tests {
         assert_eq!(report.material_anchors.len(), 2);
         let snapshot = report
             .sqlite_snapshot
-            .ok_or_else(|| color_eyre::eyre::eyre!("missing sqlite snapshot report"))?;
+            .ok_or_else(|| SinexError::processing("missing sqlite snapshot report"))?;
         assert!(snapshot.snapshot_material_id.is_some());
         assert_eq!(snapshot.failure, None);
         assert!(snapshot_state.first_observation_captured);
@@ -1918,7 +1926,7 @@ mod tests {
         assert_eq!(report.material_anchors.len(), 1);
         let snapshot = report
             .sqlite_snapshot
-            .ok_or_else(|| color_eyre::eyre::eyre!("missing sqlite snapshot failure report"))?;
+            .ok_or_else(|| SinexError::processing("missing sqlite snapshot failure report"))?;
         assert_eq!(snapshot.snapshot_material_id, None);
         assert_eq!(
             snapshot.trigger,
