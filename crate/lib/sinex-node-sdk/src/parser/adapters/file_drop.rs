@@ -545,16 +545,12 @@ pub fn survey_file_drop_watch_tree(
 fn planned_file_drop_watch_targets(
     config: &FileDropConfig,
 ) -> ParserResult<Vec<(PathBuf, RecursiveMode)>> {
+    let watch_paths = dedup_file_drop_watch_paths(config);
+
     if !config.recursive {
-        return Ok(config
-            .watch_paths
-            .iter()
-            .map(|path| {
-                (
-                    path.as_std_path().to_path_buf(),
-                    RecursiveMode::NonRecursive,
-                )
-            })
+        return Ok(watch_paths
+            .into_iter()
+            .map(|path| (path, RecursiveMode::NonRecursive))
             .collect());
     }
 
@@ -566,9 +562,9 @@ fn planned_file_drop_watch_targets(
     let budget = FileDropWatchBudget::detect(config.max_watches);
     let mut aggregate_survey = FileDropWatchSurvey::default();
 
-    for path in &config.watch_paths {
+    for path in &watch_paths {
         let survey = survey_file_drop_watch_tree(
-            path.as_std_path(),
+            path,
             0,
             config.max_depth,
             false,
@@ -587,10 +583,9 @@ fn planned_file_drop_watch_targets(
 
     let plan = choose_file_drop_watch_plan(aggregate_survey, budget)?;
     let targets = match plan.mode {
-        FileDropWatchMode::NativeRecursive => config
-            .watch_paths
-            .iter()
-            .map(|path| (path.as_std_path().to_path_buf(), RecursiveMode::Recursive))
+        FileDropWatchMode::NativeRecursive => watch_paths
+            .into_iter()
+            .map(|path| (path, RecursiveMode::Recursive))
             .collect(),
         FileDropWatchMode::NativeFiltered => plan
             .survey
@@ -601,6 +596,18 @@ fn planned_file_drop_watch_targets(
     };
 
     Ok(targets)
+}
+
+fn dedup_file_drop_watch_paths(config: &FileDropConfig) -> Vec<PathBuf> {
+    let mut seen = HashSet::new();
+    config
+        .watch_paths
+        .iter()
+        .filter_map(|path| {
+            let path = path.as_std_path().to_path_buf();
+            seen.insert(path.clone()).then_some(path)
+        })
+        .collect()
 }
 
 /// No cursor for [`FileDropAdapter`] — live streams are anchor-only.
@@ -1358,6 +1365,29 @@ mod tests {
             max_depth: None,
             ignored_directory_names: Vec::new(),
             max_watches: default_file_drop_max_watches(),
+            events: vec![],
+        };
+
+        let targets = planned_file_drop_watch_targets(&config)?;
+
+        assert_eq!(
+            targets,
+            vec![(root.as_std_path().to_path_buf(), RecursiveMode::Recursive)]
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn file_drop_watch_targets_deduplicate_exact_roots() -> xtask::sandbox::TestResult<()> {
+        let temp_root = TempDir::new()?;
+        let root = Utf8PathBuf::from_path_buf(temp_root.path().to_path_buf())
+            .expect("temp root should be utf8");
+        let config = FileDropConfig {
+            watch_paths: vec![root.clone(), root.clone()],
+            recursive: true,
+            max_depth: None,
+            ignored_directory_names: Vec::new(),
+            max_watches: NonZeroUsize::new(1).unwrap(),
             events: vec![],
         };
 
