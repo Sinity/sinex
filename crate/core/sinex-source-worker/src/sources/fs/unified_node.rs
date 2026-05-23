@@ -11,6 +11,7 @@
 //! - Structured events are emitted through `StageAsYouGoContext`, referencing
 //!   the captured material for provenance.
 
+use camino::Utf8PathBuf;
 use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher, event::RenameMode};
 use serde::{Deserialize, Serialize};
 use sinex_node_sdk::error_helpers::NodeErrorExt;
@@ -21,8 +22,9 @@ use sinex_node_sdk::{
     },
     ingestor_node::IngestorNode,
     parser::{
-        DEFAULT_FILE_DROP_MAX_WATCHES, FileDropWatchBudget, FileDropWatchMode, FileDropWatchPlan,
-        FileDropWatchSurvey, choose_file_drop_watch_plan, survey_file_drop_watch_tree,
+        DEFAULT_FILE_DROP_MAX_WATCHES, FileDropConfig, FileDropWatchBudget, FileDropWatchMode,
+        FileDropWatchPlan, FileDropWatchSurvey, choose_file_drop_watch_plan,
+        normalized_file_drop_watch_roots, survey_file_drop_watch_tree,
     },
     runtime::stream::{
         Checkpoint, ContinuousStart, MaterialReplayContext, NodeCapabilities, NodeRuntimeState,
@@ -573,7 +575,7 @@ impl FilesystemNode {
             .ok_or_else(|| SinexError::lifecycle("Stage context not available".to_string()))?;
 
         let mut contexts = HashMap::new();
-        for path in &self.config.watch_paths {
+        for path in normalized_filesystem_watch_paths(&self.config) {
             let acquisition = Arc::new(runtime.acquisition_manager(
                 RotationPolicy::default(),
                 FileCreatedPayload::SOURCE.as_static_str(),
@@ -993,7 +995,7 @@ impl IngestorNode for FilesystemNode {
 
 impl ExplorationProvider for FilesystemNode {
     fn get_source_state(&self) -> NodeResult<SourceState> {
-        let watched_paths = self.config.watch_paths.len();
+        let watched_paths = normalized_filesystem_watch_paths(&self.config).len();
         let dropped_events = self.dropped_event_count();
         let (active_watchers, watcher_registry_busy) = self.active_watcher_state();
         let healthy = !watcher_registry_busy
@@ -2145,14 +2147,32 @@ fn historical_scan_targets(
     }
 
     if targets.is_empty() {
-        for path in &config.watch_paths {
+        for path in normalized_filesystem_watch_paths(config) {
             if seen.insert(path.clone()) {
-                targets.push(path.clone());
+                targets.push(path);
             }
         }
     }
 
     targets
+}
+
+fn filesystem_file_drop_config(config: &FilesystemConfig) -> FileDropConfig {
+    FileDropConfig {
+        watch_paths: config.watch_paths.iter().map(Utf8PathBuf::from).collect(),
+        recursive: true,
+        max_depth: config.max_depth,
+        ignored_directory_names: config.ignored_directory_names.clone(),
+        max_watches: config.max_watches,
+        events: Vec::new(),
+    }
+}
+
+fn normalized_filesystem_watch_paths(config: &FilesystemConfig) -> Vec<String> {
+    normalized_file_drop_watch_roots(&filesystem_file_drop_config(config))
+        .into_iter()
+        .map(|path| path.as_str().to_string())
+        .collect()
 }
 
 fn watch_context_for_target<'a>(
@@ -2346,6 +2366,44 @@ mod tests {
         let config = FilesystemConfig::default();
 
         assert_eq!(config.max_watches.get(), DEFAULT_FILE_DROP_MAX_WATCHES);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn filesystem_watch_paths_use_file_drop_root_normalization() -> TestResult<()> {
+        let config = FilesystemConfig {
+            watch_paths: vec![
+                "/tmp/sinex-fs-root".to_string(),
+                "/tmp/sinex-fs-root".to_string(),
+                "/tmp/sinex-fs-root/nested".to_string(),
+            ],
+            max_depth: None,
+            ..FilesystemConfig::default()
+        };
+
+        assert_eq!(
+            normalized_filesystem_watch_paths(&config),
+            vec!["/tmp/sinex-fs-root".to_string()],
+            "fs source should share FileDrop root dedupe/subsumption semantics",
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn filesystem_historical_targets_use_normalized_watch_roots() -> TestResult<()> {
+        let config = FilesystemConfig {
+            watch_paths: vec![
+                "/tmp/sinex-fs-root".to_string(),
+                "/tmp/sinex-fs-root/nested".to_string(),
+            ],
+            max_depth: None,
+            ..FilesystemConfig::default()
+        };
+
+        assert_eq!(
+            historical_scan_targets(&config, &None),
+            vec!["/tmp/sinex-fs-root".to_string()],
+        );
         Ok(())
     }
 

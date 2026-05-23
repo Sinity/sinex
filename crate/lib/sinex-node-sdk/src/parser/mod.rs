@@ -91,6 +91,7 @@ pub use adapters::{
     all_adapter_schemas,
     chained_classify_record,
     choose_file_drop_watch_plan,
+    normalized_file_drop_watch_roots,
     records_from_journal_lines,
     survey_file_drop_watch_tree,
 };

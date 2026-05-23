@@ -605,7 +605,8 @@ fn normalized_file_drop_watch_paths(config: &FileDropConfig) -> Vec<PathBuf> {
         .collect()
 }
 
-fn normalized_file_drop_watch_roots(config: &FileDropConfig) -> Vec<Utf8PathBuf> {
+#[must_use]
+pub fn normalized_file_drop_watch_roots(config: &FileDropConfig) -> Vec<Utf8PathBuf> {
     let mut seen = HashSet::new();
     let ignored_directory_names = config
         .ignored_directory_names
