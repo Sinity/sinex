@@ -238,17 +238,17 @@ impl DepsCommand {
                 duplicates.retain(|d| d.versions.len() >= *threshold);
                 let direct_count = duplicates
                     .iter()
-                    .filter(|duplicate| duplicate.direct_workspace_debt)
+                    .filter(|duplicate| duplicate.classification.is_direct_workspace())
                     .count();
                 let transitive_count = duplicates
                     .iter()
-                    .filter(|duplicate| duplicate.transitive_only)
+                    .filter(|duplicate| duplicate.classification.is_transitive_upstream())
                     .count();
                 if *direct_only {
-                    duplicates.retain(|d| d.direct_workspace_debt);
+                    duplicates.retain(|d| d.classification.is_direct_workspace());
                 }
                 if *transitive_only {
-                    duplicates.retain(|d| d.transitive_only);
+                    duplicates.retain(|d| d.classification.is_transitive_upstream());
                 }
 
                 if ctx.is_json() {

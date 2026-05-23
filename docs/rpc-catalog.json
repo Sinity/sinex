@@ -630,6 +630,15 @@
     "response_type": "sinex_primitives::rpc::semantic::SemanticLaneOutputsSeedCanonicalGraphResponse"
   },
   {
+    "name": "semantic.lane_outputs.seed_entity_events",
+    "role": "write",
+    "domain": "semantic",
+    "stability": "experimental",
+    "mutability": "mutating",
+    "request_type": "sinex_primitives::rpc::semantic::SemanticLaneOutputsSeedEntityEventsRequest",
+    "response_type": "sinex_primitives::rpc::semantic::SemanticLaneOutputsSeedEntityEventsResponse"
+  },
+  {
     "name": "semantic.lane_outputs.write",
     "role": "write",
     "domain": "semantic",

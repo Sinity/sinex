@@ -377,8 +377,8 @@ fn spawn_replay_output_inserter(
     })
 }
 
-#[test]
-fn replay_output_expectations_deduplicate_logical_sources() {
+#[sinex_test]
+async fn replay_output_expectations_deduplicate_logical_sources() -> Result<()> {
     let logical_source = "/tmp/replay-dedup.txt";
     let expected = ExpectedReplayOutputs {
         minimum_visible_count: 0,
@@ -414,6 +414,7 @@ fn replay_output_expectations_deduplicate_logical_sources() {
         expected.logical_source_identifiers,
         vec![logical_source.to_string()]
     );
+    Ok(())
 }
 
 #[sinex_test]

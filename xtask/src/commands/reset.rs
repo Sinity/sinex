@@ -70,6 +70,10 @@ pub struct ResetCommand {
     #[arg(long)]
     test_tmp: bool,
 
+    /// Kill stale orphaned compiler/linker processes for this checkout's target dirs.
+    #[arg(long)]
+    stale_build_processes: bool,
+
     /// Wipe the cargo target/ directory (forces clean recompilation).
     #[arg(long)]
     target: bool,
@@ -95,6 +99,7 @@ impl XtaskCommand for ResetCommand {
             || self.history
             || self.jobs
             || self.test_tmp
+            || self.stale_build_processes
             || self.target
             || self.tls;
         let all = !any_specific;
@@ -225,6 +230,18 @@ impl XtaskCommand for ResetCommand {
                 actions.push("stale test temp dirs removed");
             } else {
                 actions.push("test temp dir already clean");
+            }
+        }
+
+        // ── Stale build processes ───────────────────────────────────────────
+        if all || self.stale_build_processes {
+            let killed = reset_stale_build_processes(verbose)?;
+            if killed == 0 {
+                actions.push("no stale orphaned build processes found");
+            } else if killed == 1 {
+                actions.push("stale orphaned build process killed");
+            } else {
+                actions.push("stale orphaned build processes killed");
             }
         }
 
@@ -465,6 +482,256 @@ fn reset_target(verbose: bool) -> Result<Vec<std::path::PathBuf>> {
     Ok(removed)
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct StaleBuildProcess {
+    pid: u32,
+    ppid: u32,
+    age_secs: u64,
+    command: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct BuildProcessProbe {
+    pid: u32,
+    ppid: u32,
+    age_secs: u64,
+    command: String,
+    parent_command: Option<String>,
+}
+
+const STALE_BUILD_PROCESS_MIN_AGE_SECS: u64 = 30 * 60;
+
+fn reset_stale_build_processes(verbose: bool) -> Result<usize> {
+    let target_dirs = target_dirs_for_reset(
+        &crate::config::workspace_target_dir(),
+        &crate::config::workspace_root(),
+    );
+    let candidates =
+        stale_build_processes_for_reset(&target_dirs, STALE_BUILD_PROCESS_MIN_AGE_SECS)?;
+
+    let mut killed = 0_usize;
+    for candidate in candidates {
+        if verbose {
+            println!(
+                "  killing stale build process pid={} ppid={} age={}s: {}",
+                candidate.pid,
+                candidate.ppid,
+                candidate.age_secs,
+                truncate_command_for_reset(&candidate.command, 160)
+            );
+        }
+        kill_process_for_reset(candidate.pid)?;
+        killed += 1;
+    }
+
+    Ok(killed)
+}
+
+#[cfg(target_os = "linux")]
+fn stale_build_processes_for_reset(
+    target_dirs: &[std::path::PathBuf],
+    min_age_secs: u64,
+) -> Result<Vec<StaleBuildProcess>> {
+    let uptime_secs = linux_uptime_secs().unwrap_or(0);
+    let clock_ticks = linux_clock_ticks_per_second();
+    let mut processes = Vec::new();
+    let Ok(entries) = std::fs::read_dir("/proc") else {
+        return Ok(processes);
+    };
+    let self_pid = std::process::id();
+
+    for entry in entries.flatten() {
+        let Some(pid) = entry
+            .file_name()
+            .to_str()
+            .and_then(|name| name.parse::<u32>().ok())
+        else {
+            continue;
+        };
+        if pid == self_pid {
+            continue;
+        }
+
+        let Some((ppid, start_ticks)) = read_linux_proc_stat_for_reset(pid) else {
+            continue;
+        };
+        let Some(command) = read_linux_proc_cmdline_for_reset(pid) else {
+            continue;
+        };
+        let parent_command = read_linux_proc_cmdline_for_reset(ppid);
+        let start_secs = start_ticks / clock_ticks.max(1);
+        let age_secs = uptime_secs.saturating_sub(start_secs);
+        let probe = BuildProcessProbe {
+            pid,
+            ppid,
+            age_secs,
+            command,
+            parent_command,
+        };
+        if let Some(process) = classify_stale_build_process(&probe, target_dirs, min_age_secs) {
+            processes.push(process);
+        }
+    }
+
+    Ok(processes)
+}
+
+#[cfg(not(target_os = "linux"))]
+fn stale_build_processes_for_reset(
+    _target_dirs: &[std::path::PathBuf],
+    _min_age_secs: u64,
+) -> Result<Vec<StaleBuildProcess>> {
+    Ok(Vec::new())
+}
+
+fn classify_stale_build_process(
+    probe: &BuildProcessProbe,
+    target_dirs: &[std::path::PathBuf],
+    min_age_secs: u64,
+) -> Option<StaleBuildProcess> {
+    if probe.age_secs < min_age_secs {
+        return None;
+    }
+    if !orphaned_build_parent_for_reset(probe.ppid, probe.parent_command.as_deref()) {
+        return None;
+    }
+    if !build_tool_command_for_reset(&probe.command) {
+        return None;
+    }
+    if !command_mentions_target_dir_for_reset(&probe.command, target_dirs) {
+        return None;
+    }
+
+    Some(StaleBuildProcess {
+        pid: probe.pid,
+        ppid: probe.ppid,
+        age_secs: probe.age_secs,
+        command: probe.command.clone(),
+    })
+}
+
+fn orphaned_build_parent_for_reset(ppid: u32, parent_command: Option<&str>) -> bool {
+    if ppid <= 1 {
+        return true;
+    }
+    parent_command.is_some_and(|command| {
+        let command = command.to_ascii_lowercase();
+        command.contains("systemd --user") || command.ends_with("/systemd")
+    })
+}
+
+fn build_tool_command_for_reset(command: &str) -> bool {
+    let argv0 = command.split_whitespace().next().unwrap_or_default();
+    let executable = std::path::Path::new(argv0)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or(argv0)
+        .to_ascii_lowercase();
+    matches!(
+        executable.as_str(),
+        "rustc"
+            | "rustdoc"
+            | "gcc"
+            | "cc"
+            | "clang"
+            | "clang++"
+            | "ld"
+            | "ld.mold"
+            | "mold"
+            | "collect2"
+            | "sccache"
+    ) || executable.starts_with("mold")
+}
+
+fn command_mentions_target_dir_for_reset(
+    command: &str,
+    target_dirs: &[std::path::PathBuf],
+) -> bool {
+    target_dirs.iter().any(|target_dir| {
+        let path = target_dir.to_string_lossy();
+        !path.is_empty() && command.contains(path.as_ref())
+    })
+}
+
+#[cfg(target_os = "linux")]
+fn read_linux_proc_stat_for_reset(pid: u32) -> Option<(u32, u64)> {
+    let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+    let close = stat.rfind(") ")?;
+    let after = stat.get(close + 2..)?;
+    let parts: Vec<&str> = after.split_whitespace().collect();
+    if parts.len() <= 19 {
+        return None;
+    }
+    let ppid = parts.get(1)?.parse().ok()?;
+    let start_ticks = parts.get(19)?.parse().ok()?;
+    Some((ppid, start_ticks))
+}
+
+#[cfg(target_os = "linux")]
+fn read_linux_proc_cmdline_for_reset(pid: u32) -> Option<String> {
+    let raw = std::fs::read(format!("/proc/{pid}/cmdline")).ok()?;
+    if raw.is_empty() {
+        return None;
+    }
+    Some(String::from_utf8_lossy(&raw).replace('\0', " "))
+}
+
+#[cfg(target_os = "linux")]
+fn linux_uptime_secs() -> Option<u64> {
+    let uptime = std::fs::read_to_string("/proc/uptime").ok()?;
+    let first = uptime.split_whitespace().next()?;
+    let secs = first.parse::<f64>().ok()?;
+    Some(secs.max(0.0) as u64)
+}
+
+#[cfg(target_os = "linux")]
+fn linux_clock_ticks_per_second() -> u64 {
+    let ticks = unsafe { libc::sysconf(libc::_SC_CLK_TCK) };
+    if ticks > 0 { ticks as u64 } else { 100 }
+}
+
+#[cfg(target_os = "linux")]
+fn kill_process_for_reset(pid: u32) -> Result<()> {
+    let raw_pid = pid as libc::pid_t;
+    let term_rc = unsafe { libc::kill(raw_pid, libc::SIGTERM) };
+    if term_rc != 0 {
+        let error = std::io::Error::last_os_error();
+        if !matches!(error.raw_os_error(), Some(libc::ESRCH)) {
+            return Err(error).wrap_err_with(|| format!("send SIGTERM to stale build pid {pid}"));
+        }
+        return Ok(());
+    }
+
+    std::thread::sleep(std::time::Duration::from_millis(500));
+    let alive_rc = unsafe { libc::kill(raw_pid, 0) };
+    if alive_rc == 0 {
+        let kill_rc = unsafe { libc::kill(raw_pid, libc::SIGKILL) };
+        if kill_rc != 0 {
+            let error = std::io::Error::last_os_error();
+            if !matches!(error.raw_os_error(), Some(libc::ESRCH)) {
+                return Err(error).wrap_err_with(|| {
+                    format!("send SIGKILL to stale build pid {pid} after SIGTERM")
+                });
+            }
+        }
+    }
+
+    Ok(())
+}
+
+#[cfg(not(target_os = "linux"))]
+fn kill_process_for_reset(_pid: u32) -> Result<()> {
+    Ok(())
+}
+
+fn truncate_command_for_reset(command: &str, max: usize) -> String {
+    if command.len() <= max {
+        command.to_string()
+    } else {
+        format!("{}...", &command[..max])
+    }
+}
+
 fn target_dirs_for_reset(
     configured_target_dir: &Path,
     workspace_root: &Path,
@@ -559,6 +826,96 @@ mod tests {
         let dirs = target_dirs_for_reset(&configured, workspace.path());
 
         assert_eq!(dirs, vec![configured]);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_stale_build_classifier_requires_age_orphan_tool_and_target() -> TestResult<()> {
+        let target = std::path::PathBuf::from("/tmp/sinex-target");
+        let probe = BuildProcessProbe {
+            pid: 42,
+            ppid: 1,
+            age_secs: STALE_BUILD_PROCESS_MIN_AGE_SECS,
+            command: "/nix/store/bin/ld.mold /tmp/sinex-target/debug/deps/libfoo.rlib".to_string(),
+            parent_command: Some("/sbin/init".to_string()),
+        };
+
+        let classified = classify_stale_build_process(
+            &probe,
+            std::slice::from_ref(&target),
+            STALE_BUILD_PROCESS_MIN_AGE_SECS,
+        );
+
+        assert_eq!(
+            classified,
+            Some(StaleBuildProcess {
+                pid: 42,
+                ppid: 1,
+                age_secs: STALE_BUILD_PROCESS_MIN_AGE_SECS,
+                command: probe.command.clone(),
+            })
+        );
+
+        let fresh = BuildProcessProbe {
+            age_secs: STALE_BUILD_PROCESS_MIN_AGE_SECS - 1,
+            ..probe.clone()
+        };
+        assert!(
+            classify_stale_build_process(&fresh, &[target], STALE_BUILD_PROCESS_MIN_AGE_SECS)
+                .is_none()
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_stale_build_classifier_rejects_live_parent() -> TestResult<()> {
+        let target = std::path::PathBuf::from("/tmp/sinex-target");
+        let probe = BuildProcessProbe {
+            pid: 42,
+            ppid: 99,
+            age_secs: STALE_BUILD_PROCESS_MIN_AGE_SECS,
+            command: "rustc --crate-name foo /tmp/sinex-target/debug/deps/foo.rs".to_string(),
+            parent_command: Some("cargo check -p xtask".to_string()),
+        };
+
+        assert!(
+            classify_stale_build_process(&probe, &[target], STALE_BUILD_PROCESS_MIN_AGE_SECS)
+                .is_none()
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_stale_build_classifier_rejects_non_target_commands() -> TestResult<()> {
+        let probe = BuildProcessProbe {
+            pid: 42,
+            ppid: 1,
+            age_secs: STALE_BUILD_PROCESS_MIN_AGE_SECS,
+            command: "gcc /tmp/other-target/debug/build/foo.o".to_string(),
+            parent_command: Some("/sbin/init".to_string()),
+        };
+
+        assert!(
+            classify_stale_build_process(
+                &probe,
+                &[std::path::PathBuf::from("/tmp/sinex-target")],
+                STALE_BUILD_PROCESS_MIN_AGE_SECS,
+            )
+            .is_none()
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_orphaned_build_parent_accepts_user_systemd() -> TestResult<()> {
+        assert!(orphaned_build_parent_for_reset(
+            3492,
+            Some("/nix/store/systemd/lib/systemd/systemd --user")
+        ));
+        assert!(!orphaned_build_parent_for_reset(
+            3492,
+            Some("cargo check -p xtask")
+        ));
         Ok(())
     }
 

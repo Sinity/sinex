@@ -8,7 +8,6 @@ use sinex_node_sdk::content_store::{
     cas_fsck::check_cas,
     gc::{BlobGcReport, sweep_orphans_detailed},
 };
-use sinex_primitives::Uuid;
 
 use crate::Result;
 use crate::fmt::{CommandOutput, format_bytes};
@@ -363,8 +362,12 @@ impl BlobMigrateCommand {
         .wrap_err_with(|| format!("open content-store root {}", self.content_store_path))?;
 
         // Find all blobs with non-SINEXBLAKE3 backend (legacy annex blobs)
-        let legacy_blobs: Vec<(Uuid, String, String, i64)> = sqlx::query_as(
-            "SELECT id, annex_backend, content_hash, size_bytes FROM core.blobs WHERE annex_backend != 'SINEXBLAKE3'",
+        let legacy_blobs = sqlx::query!(
+            r"
+            SELECT id, annex_backend, content_hash, size_bytes
+            FROM core.blobs
+            WHERE annex_backend != 'SINEXBLAKE3'
+            ",
         )
         .fetch_all(&pool)
         .await
@@ -376,14 +379,27 @@ impl BlobMigrateCommand {
         let mut failed = 0usize;
         let mut migrated_keys: Vec<MigratedKey> = Vec::new();
 
-        for (blob_id, backend, content_hash, size_bytes) in &legacy_blobs {
+        for legacy_blob in &legacy_blobs {
+            let blob_id = legacy_blob.id;
+            let backend = legacy_blob.annex_backend.as_str();
+            let content_hash = legacy_blob.content_hash.as_str();
+            let size_bytes = legacy_blob.size_bytes;
             let annex_key = format!("{backend}-s{size_bytes}--{content_hash}");
 
             // Check if already has a SINEXBLAKE3 equivalent
-            let already: Option<(Uuid,)> = sqlx::query_as(
-                "SELECT id FROM core.blobs WHERE checksum_blake3 = (SELECT checksum_blake3 FROM core.blobs WHERE id = $1) AND annex_backend = 'SINEXBLAKE3'",
+            let already = sqlx::query_scalar!(
+                r"
+                SELECT id
+                FROM core.blobs
+                WHERE checksum_blake3 = (
+                    SELECT checksum_blake3
+                    FROM core.blobs
+                    WHERE id = $1
+                )
+                  AND annex_backend = 'SINEXBLAKE3'
+                ",
+                blob_id,
             )
-            .bind(blob_id)
             .fetch_optional(&pool)
             .await
             .wrap_err("check existing SINEXBLAKE3 blob")?;
@@ -432,12 +448,18 @@ impl BlobMigrateCommand {
                         let cas_target = content_store.store_file(&path).await;
                         match cas_target {
                             Ok(cas_key) => {
-                                let update_result = sqlx::query(
-                                    "UPDATE core.blobs SET annex_backend = 'SINEXBLAKE3', content_hash = $1, checksum_blake3 = $2 WHERE id = $3",
+                                let update_result = sqlx::query!(
+                                    r"
+                                    UPDATE core.blobs
+                                    SET annex_backend = 'SINEXBLAKE3',
+                                        content_hash = $1,
+                                        checksum_blake3 = $2
+                                    WHERE id = $3
+                                    ",
+                                    blake3_hash,
+                                    blake3_hash,
+                                    blob_id,
                                 )
-                                .bind(&blake3_hash)
-                                .bind(&blake3_hash)
-                                .bind(blob_id)
                                 .execute(&pool)
                                 .await;
                                 match update_result {
@@ -446,7 +468,7 @@ impl BlobMigrateCommand {
                                         migrated_keys.push(MigratedKey {
                                             annex_key: annex_key.clone(),
                                             cas_key: cas_key.key,
-                                            size_bytes: *size_bytes,
+                                            size_bytes,
                                         });
                                     }
                                     Err(e) => {
@@ -473,7 +495,7 @@ impl BlobMigrateCommand {
                         migrated_keys.push(MigratedKey {
                             annex_key: annex_key.clone(),
                             cas_key: format!("would-migrate:{blake3_hash}"),
-                            size_bytes: *size_bytes,
+                            size_bytes,
                         });
                     }
                 }
