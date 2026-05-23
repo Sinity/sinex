@@ -962,9 +962,35 @@ impl HistoryDb {
             return Ok(StaleCleanupOutcome::SkippedLockHeld);
         }
 
+        self.repair_open_time_sweep_durations()?;
         self.cleanup_stale_invocations()?;
         drop(lock_file);
         Ok(StaleCleanupOutcome::Ran)
+    }
+
+    fn repair_open_time_sweep_durations(&self) -> Result<usize> {
+        let repaired = self
+            .conn
+            .execute(
+                r"
+                UPDATE invocations
+                SET duration_secs = NULL
+                WHERE status = 'cancelled'
+                  AND cancel_reason = 'stale_pid'
+                  AND cancelled_by = 'open_time_sweep'
+                  AND duration_secs IS NOT NULL
+                ",
+                [],
+            )
+            .context("failed to repair stale open-time-sweep invocation durations")?;
+
+        if repaired > 0 {
+            eprintln!(
+                "ℹ️  Repaired {repaired} stale history duration(s): dead-PID cleanup rows have unknown runtime"
+            );
+        }
+
+        Ok(repaired)
     }
 
     fn schema_version(&self) -> Result<i32> {
@@ -1848,12 +1874,14 @@ impl HistoryDb {
             "stale_pid",
             "open_time_sweep",
             None,
+            false,
         )?;
         let zombie_cleaned = self.mark_stale_invocations_cancelled(
             &zombie_invocation_ids,
             "zombie_reaped",
             "open_time_sweep",
             Some(124),
+            true,
         )?;
         let cleaned = stale_cleaned + zombie_cleaned;
         if cleaned > 0 {
@@ -1932,6 +1960,7 @@ impl HistoryDb {
         cancel_reason: &str,
         cancelled_by: &str,
         exit_code: Option<i32>,
+        duration_known: bool,
     ) -> Result<usize> {
         if invocation_ids.is_empty() {
             return Ok(0);
@@ -1950,7 +1979,10 @@ impl HistoryDb {
                 SET status = 'cancelled',
                     finished_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now'),
                     exit_code = COALESCE(?3, exit_code),
-                    duration_secs = (julianday('now') - julianday(started_at)) * 86400,
+                    duration_secs = CASE
+                        WHEN ?4 THEN (julianday('now') - julianday(started_at)) * 86400
+                        ELSE NULL
+                    END,
                     cancel_reason = ?1,
                     cancelled_by = ?2
                 WHERE id IN ({})
@@ -1961,6 +1993,7 @@ impl HistoryDb {
             let params = std::iter::once(&cancel_reason as &dyn rusqlite::ToSql)
                 .chain(std::iter::once(&cancelled_by as &dyn rusqlite::ToSql))
                 .chain(std::iter::once(&exit_code as &dyn rusqlite::ToSql))
+                .chain(std::iter::once(&duration_known as &dyn rusqlite::ToSql))
                 .chain(chunk.iter().map(|id| id as &dyn rusqlite::ToSql));
             total_cancelled += self
                 .conn
@@ -4816,15 +4849,24 @@ mod tests {
         let reopened = HistoryDb::open(&db_path)?;
         let _ = child.wait();
 
-        let (invocation_status, invocation_exit_code, cancel_reason, cancelled_by): (
+        let (invocation_status, invocation_exit_code, duration_secs, cancel_reason, cancelled_by): (
             String,
             Option<i32>,
+            Option<f64>,
             String,
             String,
         ) = reopened.conn.query_row(
-            "SELECT status, exit_code, cancel_reason, cancelled_by FROM invocations WHERE id = ?1",
+            "SELECT status, exit_code, duration_secs, cancel_reason, cancelled_by FROM invocations WHERE id = ?1",
             params![invocation_id],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                ))
+            },
         )?;
         let (background_status, background_exit_code): (String, Option<i32>) =
             reopened.conn.query_row(
@@ -4835,6 +4877,10 @@ mod tests {
 
         assert_eq!(invocation_status, "cancelled");
         assert_eq!(invocation_exit_code, Some(124));
+        assert!(
+            duration_secs.is_some(),
+            "zombie reaping records observed runtime because xtask killed a still-live process"
+        );
         assert_eq!(cancel_reason, "zombie_reaped");
         assert_eq!(cancelled_by, "open_time_sweep");
         assert_eq!(background_status, "killed");
@@ -4892,13 +4938,66 @@ mod tests {
             background_status, "orphaned",
             "dead background job handles should be marked orphaned on open"
         );
-        let (cancel_reason, cancelled_by): (String, String) = reopened.conn.query_row(
-            "SELECT cancel_reason, cancelled_by FROM invocations WHERE id = ?1",
-            params![invocation_id],
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        )?;
+        let (duration_secs, cancel_reason, cancelled_by): (Option<f64>, String, String) =
+            reopened.conn.query_row(
+                "SELECT duration_secs, cancel_reason, cancelled_by FROM invocations WHERE id = ?1",
+                params![invocation_id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )?;
+        assert_eq!(
+            duration_secs, None,
+            "dead-PID cleanup time is not the command runtime"
+        );
         assert_eq!(cancel_reason, "stale_pid");
         assert_eq!(cancelled_by, "open_time_sweep");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_history_db_open_repairs_inflated_stale_cleanup_duration() -> TestResult<()> {
+        let dir = tempdir()?;
+        let db_path = dir
+            .path()
+            .join("test-history-repair-stale-cleanup-duration.db");
+        let db = HistoryDb::open(&db_path)?;
+
+        db.conn.execute(
+            r"
+            INSERT INTO invocations (
+                command,
+                started_at,
+                finished_at,
+                duration_secs,
+                status,
+                host,
+                cwd,
+                cancel_reason,
+                cancelled_by
+            ) VALUES (?1, ?2, ?3, ?4, 'cancelled', ?5, ?6, 'stale_pid', 'open_time_sweep')
+            ",
+            params![
+                "test",
+                "2026-05-23T00:29:19Z",
+                "2026-05-23T06:49:07Z",
+                22_788.0_f64,
+                "localhost",
+                "/tmp",
+            ],
+        )?;
+        let invocation_id = db.conn.last_insert_rowid();
+        drop(db);
+
+        let reopened = HistoryDb::open(&db_path)?;
+        let duration_secs: Option<f64> = reopened.conn.query_row(
+            "SELECT duration_secs FROM invocations WHERE id = ?1",
+            params![invocation_id],
+            |row| row.get(0),
+        )?;
+        assert_eq!(
+            duration_secs, None,
+            "existing stale open-time-sweep durations should be repaired in-place"
+        );
+
         Ok(())
     }
 

@@ -11,7 +11,7 @@ use sinex_primitives::temporal;
 use xtask::command::CommandResult;
 use xtask::history::{HistoryDb, InvocationQuery, InvocationStatus};
 use xtask::output::{OutputFormat, Status, StructuredError};
-use xtask::sandbox::sinex_proptest;
+use xtask::sandbox::{sinex_proptest, sinex_test};
 
 // ============================================================================
 // Strategy Generators
@@ -483,79 +483,81 @@ sinex_proptest! {
         Ok(())
     }
 
-    /// get_recent_filtered never returns more entries than the requested limit.
-    ///
-    /// The limit parameter is a hard upper bound, not a hint. Violating this
-    /// would overflow agent-facing JSON payloads and break UX assumptions
-    /// (e.g. `xtask history list --limit 5` returning 20 entries).
-    #[cases(32)]
-    fn historydb_recent_respects_limit(
-        write_count in 5usize..=15usize,
-        query_limit in 1usize..=4usize
-    ) -> TestResult<()> {
-        // write_count (5–15) > query_limit (1–4) guarantees the cap is always exercised
-        let db = HistoryDb::open_in_memory().expect("in-memory DB open must succeed");
+}
 
-        for _ in 0..write_count {
-            let id = db.start_invocation("check", None, None, None)
-                .expect("start_invocation must succeed");
-            db.finish_invocation(id, InvocationStatus::Success, Some(0), 1.0)
-                .expect("finish_invocation must succeed");
+/// get_recent_filtered never returns more entries than the requested limit.
+///
+/// This is a bounded pagination contract, not a randomized parser surface. A
+/// fixed boundary matrix exercises the cap without paying repeated proptest DB
+/// setup cost on every local and CI run.
+#[sinex_test]
+async fn historydb_recent_respects_limit() -> xtask::sandbox::TestResult<()> {
+    for write_count in [5usize, 6, 15] {
+        for query_limit in [1usize, 2, 4] {
+            let db = HistoryDb::open_in_memory().expect("in-memory DB open must succeed");
+
+            for _ in 0..write_count {
+                let id = db
+                    .start_invocation("check", None, None, None)
+                    .expect("start_invocation must succeed");
+                db.finish_invocation(id, InvocationStatus::Success, Some(0), 1.0)
+                    .expect("finish_invocation must succeed");
+            }
+
+            let results = InvocationQuery::new()
+                .limit(query_limit)
+                .run(&db)
+                .expect("InvocationQuery::limit must succeed");
+
+            assert!(
+                results.len() <= query_limit,
+                "get_recent_filtered({query_limit}) returned {} entries; must be <= {query_limit}",
+                results.len()
+            );
         }
-
-        let results = InvocationQuery::new()
-            .limit(query_limit)
-            .run(&db)
-            .expect("InvocationQuery::limit must succeed");
-
-        prop_assert!(
-            results.len() <= query_limit,
-            "get_recent_filtered({}) returned {} entries — must be ≤ {}",
-            query_limit, results.len(), query_limit
-        );
-
-        Ok(())
     }
 
-    /// Offset pagination produces non-overlapping pages.
-    ///
-    /// Page 0 and page 1 (same page size) must not share any invocation IDs.
-    /// Broken pagination would cause `xtask history list --offset N` to show
-    /// duplicate entries or skip entries silently.
-    #[cases(32)]
-    fn historydb_offset_pages_are_disjoint(
-        total in 6usize..=12usize,
-        page_size in 2usize..=3usize
-    ) -> TestResult<()> {
-        let db = HistoryDb::open_in_memory().expect("in-memory DB open must succeed");
+    Ok(())
+}
 
-        for _ in 0..total {
-            let id = db.start_invocation("check", None, None, None)
-                .expect("start_invocation must succeed");
-            db.finish_invocation(id, InvocationStatus::Success, Some(0), 0.5)
-                .expect("finish_invocation must succeed");
+/// Offset pagination produces non-overlapping pages.
+///
+/// Page 0 and page 1 with the same page size must not share invocation IDs.
+#[sinex_test]
+async fn historydb_offset_pages_are_disjoint() -> xtask::sandbox::TestResult<()> {
+    for total in [6usize, 7, 12] {
+        for page_size in [2usize, 3] {
+            let db = HistoryDb::open_in_memory().expect("in-memory DB open must succeed");
+
+            for _ in 0..total {
+                let id = db
+                    .start_invocation("check", None, None, None)
+                    .expect("start_invocation must succeed");
+                db.finish_invocation(id, InvocationStatus::Success, Some(0), 0.5)
+                    .expect("finish_invocation must succeed");
+            }
+
+            let page0 = InvocationQuery::new()
+                .limit(page_size)
+                .offset(0)
+                .run(&db)
+                .expect("page0 query must succeed");
+            let page1 = InvocationQuery::new()
+                .limit(page_size)
+                .offset(page_size)
+                .run(&db)
+                .expect("page1 query must succeed");
+
+            let ids0: std::collections::HashSet<i64> = page0.iter().map(|i| i.id).collect();
+            let ids1: std::collections::HashSet<i64> = page1.iter().map(|i| i.id).collect();
+
+            let overlap: Vec<_> = ids0.intersection(&ids1).collect();
+            assert!(
+                overlap.is_empty(),
+                "pages 0 and 1 must not share entries, but shared: {overlap:?}"
+            );
         }
-
-        let page0 = InvocationQuery::new()
-            .limit(page_size)
-            .offset(0)
-            .run(&db)
-            .expect("page0 query must succeed");
-        let page1 = InvocationQuery::new()
-            .limit(page_size)
-            .offset(page_size)
-            .run(&db)
-            .expect("page1 query must succeed");
-
-        let ids0: std::collections::HashSet<i64> = page0.iter().map(|i| i.id).collect();
-        let ids1: std::collections::HashSet<i64> = page1.iter().map(|i| i.id).collect();
-
-        let overlap: Vec<_> = ids0.intersection(&ids1).collect();
-        prop_assert!(
-            overlap.is_empty(),
-            "pages 0 and 1 must not share entries, but shared: {:?}", overlap
-        );
-
-        Ok(())
     }
+
+    Ok(())
 }
