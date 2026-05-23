@@ -10,7 +10,7 @@
 /// This replaces the `std::thread::spawn` watchdog that died with its parent.
 use std::path::PathBuf;
 use std::process::Stdio;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use clap::Parser;
 use color_eyre::eyre::Result;
@@ -124,22 +124,18 @@ fn double_fork_reap(args: ReapCommand) -> Result<CommandResult> {
 /// The reaper body — runs in the orphaned grandchild process.
 /// Fully synchronous; must not touch the tokio runtime.
 fn run_reaper_grandchild(args: ReapCommand) {
-    // Ignore SIGTERM ourselves so the user can't accidentally kill the reaper
-    // before it fires.  If they really want it gone they can SIGKILL.
-    // We do honour SIGINT (Ctrl-C in rare foreground testing).
-    // Simplest: just ignore SIGTERM via nix.
-    unsafe {
-        let _ = libc::signal(libc::SIGTERM, libc::SIG_IGN);
+    let nix_pid = nix::unistd::Pid::from_raw(args.target_pid as i32);
+    if nix::sys::signal::kill(nix_pid, None).is_err() {
+        return;
     }
 
-    std::thread::sleep(Duration::from_secs(args.max_secs));
+    let deadline = Instant::now() + Duration::from_secs(args.max_secs);
 
-    let nix_pid = nix::unistd::Pid::from_raw(args.target_pid as i32);
-
-    // Verify the process is still alive.
-    if nix::sys::signal::kill(nix_pid, None).is_err() {
-        // Already gone — nothing to do.
-        return;
+    while Instant::now() < deadline {
+        if nix::sys::signal::kill(nix_pid, None).is_err() {
+            return;
+        }
+        std::thread::sleep(Duration::from_secs(1));
     }
 
     // PID reuse guard: confirm it still looks like a cargo/xtask process.
