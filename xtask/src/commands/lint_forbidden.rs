@@ -182,14 +182,10 @@ impl XtaskCommand for LintForbiddenCommand {
             "crate/lib/sinex-db/src/repositories/events/persistence.rs",
             "crate/lib/sinex-node-sdk/src/systemd_notify.rs",
             "crate/lib/sinex-node-sdk/src/node_cli.rs",
-            "crate/lib/sinex-node-sdk/src/sqlite_source.rs",
             "crate/lib/sinex-node-sdk/src/stage_as_you_go.rs",
             "crate/lib/sinex-node-sdk/src/record_source/mod.rs",
-            "crate/lib/sinex-node-sdk/src/parser/fingerprint.rs",
             "crate/lib/sinex-node-sdk/src/preflight/configuration.rs",
             "crate/lib/sinex-node-sdk/src/coordination.rs",
-            "crate/lib/sinex-node-sdk/src/parser/adapter_node.rs",
-            "crate/lib/sinex-node-sdk/src/parser/adapters/file_drop.rs",
             "crate/lib/sinex-node-sdk/src/runtime/stream/handles.rs",
         ];
         violations.extend(check_color_eyre_in_lib(

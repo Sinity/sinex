@@ -935,6 +935,7 @@ mod tests {
     use sinex_primitives::parser::{ParserId, SourceUnitId};
     use sinex_primitives::privacy::ProcessingContext;
     use sinex_primitives::rpc::sources::{CaveatSeverity, caveat_codes};
+    use sinex_primitives::SinexError;
     use xtask::sandbox::prelude::sinex_test;
 
     #[sinex_test]
@@ -1377,7 +1378,7 @@ mod tests {
             &SourceRecordFingerprint::from_json(&json!({"id": 1})),
             &SourceRecordFingerprint::from_json(&json!({"id": 1, "optional": true})),
         )
-        .ok_or_else(|| color_eyre::eyre::eyre!("additive drift expected"))?;
+        .ok_or_else(|| SinexError::validation("additive drift expected"))?;
         let additive_caveats = additive.readiness_caveats();
         assert_eq!(additive_caveats.len(), 1);
         assert_eq!(additive_caveats[0].code, caveat_codes::SOURCE_SHAPE_CHANGED);
@@ -1394,7 +1395,7 @@ mod tests {
             &SourceRecordFingerprint::from_json(&json!({"id": 1, "name": "old"})),
             &SourceRecordFingerprint::from_json(&json!({"id": "1"})),
         )
-        .ok_or_else(|| color_eyre::eyre::eyre!("degraded drift expected"))?;
+        .ok_or_else(|| SinexError::validation("degraded drift expected"))?;
         let degraded_caveats = degraded.readiness_caveats();
         let codes = degraded_caveats
             .iter()
