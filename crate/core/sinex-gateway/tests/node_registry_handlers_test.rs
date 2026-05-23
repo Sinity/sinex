@@ -3,10 +3,10 @@
 //! The gateway exposes read-only runtime status surfaces here; lifecycle writes
 //! now happen directly in the owning services/runtimes.
 
-use serde_json::json;
 use sinex_db::DbPoolExt;
 use sinex_gateway::handlers::node_registry::{handle_nodes_health, handle_nodes_list_active};
 use sinex_primitives::domain::{NodeName, NodeType};
+use sinex_primitives::rpc::nodes::{NodesHealthRequest, NodesListActiveRequest};
 use xtask::sandbox::prelude::*;
 
 async fn register_test_node(
@@ -46,7 +46,8 @@ async fn list_active_uses_manifest_fallback_without_run(ctx: TestContext) -> Tes
             .await?
     );
 
-    let list_result = handle_nodes_list_active(pool, json!({})).await?;
+    let list_result = handle_nodes_list_active(pool, NodesListActiveRequest::default()).await?;
+    let list_result = serde_json::to_value(&list_result)?;
     let node = find_node_in_list(&list_result, "manifest-only-node", None)
         .expect("manifest-backed node should appear in active list");
 
@@ -76,7 +77,8 @@ async fn list_active_surfaces_run_identity_when_available(ctx: TestContext) -> T
         )
         .await?;
 
-    let list_result = handle_nodes_list_active(pool, json!({})).await?;
+    let list_result = handle_nodes_list_active(pool, NodesListActiveRequest::default()).await?;
+    let list_result = serde_json::to_value(&list_result)?;
     let node = find_node_in_list(&list_result, "run-backed-node", Some("instance-a"))
         .expect("run-backed node should appear in active list");
     let run_id = run.id.to_string();
@@ -121,7 +123,8 @@ async fn list_active_keeps_parallel_runs_distinct(ctx: TestContext) -> TestResul
         )
         .await?;
 
-    let list_result = handle_nodes_list_active(pool, json!({})).await?;
+    let list_result = handle_nodes_list_active(pool, NodesListActiveRequest::default()).await?;
+    let list_result = serde_json::to_value(&list_result)?;
     let nodes = list_result["nodes"]
         .as_array()
         .expect("nodes should be an array");
@@ -176,43 +179,11 @@ async fn health_counts_unique_nodes_and_concrete_runs(ctx: TestContext) -> TestR
             .await?
     );
 
-    let health_result = handle_nodes_health(pool, json!({})).await?;
-    assert_eq!(health_result["unique_nodes"].as_i64(), Some(3));
-    assert_eq!(health_result["active_count"].as_i64(), Some(2));
-    assert_eq!(health_result["inactive_count"].as_i64(), Some(1));
-    assert_eq!(health_result["active_run_count"].as_i64(), Some(1));
-
-    Ok(())
-}
-
-#[sinex_test]
-async fn nodes_list_active_rejects_malformed_params(ctx: TestContext) -> TestResult<()> {
-    let pool = ctx.pool();
-
-    let result = handle_nodes_list_active(pool, json!(["unexpected"])).await;
-    assert!(result.is_err(), "malformed list-active params must fail");
-    assert!(
-        result
-            .unwrap_err()
-            .to_string()
-            .contains("Invalid nodes list active request")
-    );
-
-    Ok(())
-}
-
-#[sinex_test]
-async fn nodes_health_rejects_malformed_params(ctx: TestContext) -> TestResult<()> {
-    let pool = ctx.pool();
-
-    let result = handle_nodes_health(pool, json!({ "stale_after_secs": "soon" })).await;
-    assert!(result.is_err(), "malformed health params must fail");
-    assert!(
-        result
-            .unwrap_err()
-            .to_string()
-            .contains("Invalid nodes health request")
-    );
+    let health_result = handle_nodes_health(pool, NodesHealthRequest::default()).await?;
+    assert_eq!(health_result.unique_nodes, 3);
+    assert_eq!(health_result.active_count, 2);
+    assert_eq!(health_result.inactive_count, 1);
+    assert_eq!(health_result.active_run_count, 1);
 
     Ok(())
 }

@@ -608,18 +608,21 @@ where
                 }
             };
 
-            // Advance cursor before parsing (cursor tracks adapter position,
-            // not parser success). Best effort — log and continue on failure.
-            match self.adapter.cursor_after(&record) {
-                Ok(c) => state.cursor = Some(c),
+            // Compute the next cursor before parsing, but only commit it after
+            // the source bytes have been anchored in material storage. Parser
+            // failures may still advance the cursor because the record was
+            // observed and preserved; append failures must remain retryable.
+            let next_cursor = match self.adapter.cursor_after(&record) {
+                Ok(c) => Some(c),
                 Err(e) => {
                     warn!(
                         source_unit = self.source_unit_id,
                         error = %e,
                         "cursor_after failed — checkpoint may regress"
                     );
+                    None
                 }
-            }
+            };
 
             // Append record bytes to the long-lived stream material. The acquirer
             // returns a SourceRecordAnchor with (material_id, offset_start,
@@ -644,20 +647,16 @@ where
                     warn!(
                         source_unit = self.source_unit_id,
                         error = %e,
-                        "append_with_anchor failed — material content may be incomplete"
+                        "append_with_anchor failed — skipping record so material provenance can be retried"
                     );
-                    // Best-effort: emit the event with a zeroed anchor rather than
-                    // dropping it entirely. The provenance will be degraded but the
-                    // event is not silently lost.
-                    crate::acquisition_manager::SourceRecordAnchor {
-                        material_id: Uuid::nil(),
-                        offset_start: 0,
-                        offset_end: 0,
-                    }
+                    continue;
                 }
             };
 
             let material_id = Id::<SourceMaterial>::from_uuid(anchor.material_id);
+            if let Some(cursor) = next_cursor {
+                state.cursor = Some(cursor);
+            }
 
             let ctx = ParserContext {
                 source_unit_id: source_unit_id.clone(),
@@ -1224,15 +1223,23 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::checkpoint::CheckpointManager;
     use crate::parser::{InputShapeKind, ParserResult, SourceRecord};
+    use crate::runtime::stream::{EventEmitter, NodeHandles, ServiceInfo};
+    use crate::{EventTransport, NatsPublisher};
     use async_trait::async_trait;
+    use camino::Utf8PathBuf;
     use futures::stream::{self, BoxStream};
     use sinex_primitives::domain::{EventSource, EventType};
+    use sinex_primitives::events::Event;
     use sinex_primitives::parser::{ParserId, ParserManifest, SourceUnitId};
     use sinex_primitives::privacy::ProcessingContext;
     use sinex_primitives::privacy::{
         RuntimePrivateModeState, load_private_mode_state, save_private_mode_state,
     };
+    use sinex_primitives::{HostName, JsonValue};
+    use std::collections::HashMap;
+    use tokio::sync::mpsc;
     use xtask::sandbox::prelude::{TestContext, TestResult, WaitHelpers, sinex_test};
 
     #[derive(Default)]
@@ -1324,6 +1331,132 @@ mod tests {
         }
     }
 
+    #[derive(Default)]
+    struct OversizedRecordAdapter;
+
+    #[async_trait]
+    impl InputShapeAdapter for OversizedRecordAdapter {
+        type Config = ();
+        type Cursor = u64;
+
+        const KIND: InputShapeKind = InputShapeKind::AppendOnlyFile;
+
+        async fn open(
+            &self,
+            material_id: Id<SourceMaterial>,
+            _config: &Self::Config,
+            _cursor: Option<Self::Cursor>,
+        ) -> ParserResult<BoxStream<'static, ParserResult<SourceRecord>>> {
+            let oversized = vec![b'x'; 512 * 1024 + 1];
+            let record = SourceRecord {
+                material_id,
+                anchor: MaterialAnchor::ByteRange {
+                    start: 0,
+                    len: oversized.len() as u64,
+                },
+                bytes: oversized,
+                logical_path: None,
+                source_ts_hint: None,
+                metadata: JsonValue::Null,
+            };
+            Ok(Box::pin(stream::iter(vec![Ok(record)])))
+        }
+
+        fn cursor_after(&self, _record: &SourceRecord) -> ParserResult<Self::Cursor> {
+            Ok(1)
+        }
+    }
+
+    #[derive(Default)]
+    struct EmittingParser;
+
+    #[async_trait]
+    impl MaterialParser for EmittingParser {
+        type Config = ();
+
+        fn manifest(&self) -> ParserManifest {
+            ParserManifest {
+                parser_id: ParserId::from_static("emitting-parser"),
+                parser_version: "1.0.0".to_string(),
+                accepted_input_shapes: vec![InputShapeKind::AppendOnlyFile],
+                source_unit_id: SourceUnitId::from_static("desktop.clipboard"),
+                declared_event_types: vec![(
+                    EventSource::from_static("test"),
+                    EventType::from_static("test.event"),
+                )],
+                privacy_contexts: vec![ProcessingContext::Metadata],
+                proof_obligations: Vec::new(),
+                description: String::new(),
+            }
+        }
+
+        async fn parse_record(
+            &mut self,
+            record: SourceRecord,
+            ctx: &ParserContext,
+        ) -> ParserResult<Vec<ParsedEventIntent>> {
+            Ok(vec![
+                ParsedEventIntent::builder()
+                    .source_unit_id(ctx.source_unit_id.clone())
+                    .parser_id(ParserId::from_static("emitting-parser"))
+                    .parser_version("1.0.0")
+                    .event_type(EventType::from_static("test.event"))
+                    .event_source(EventSource::from_static("test"))
+                    .payload(serde_json::json!({"parsed": true}))
+                    .ts_orig(ctx.acquisition_time)
+                    .timing(sinex_primitives::parser::TimingEvidence::StagedAtFallback)
+                    .anchor(record.anchor)
+                    .privacy_context(ProcessingContext::Metadata)
+                    .build(),
+            ])
+        }
+    }
+
+    async fn make_adapter_runtime(
+        ctx: &TestContext,
+    ) -> TestResult<(NodeRuntimeState, mpsc::Receiver<Event<JsonValue>>)> {
+        let kv = ctx.checkpoint_kv().await?;
+        let checkpoint_manager = Arc::new(CheckpointManager::new(
+            kv,
+            "adapter-append-failure-test".to_string(),
+            "test-group".to_string(),
+            format!("test-consumer-{}", Uuid::now_v7().simple()),
+        ));
+        let (event_sender, event_receiver) = mpsc::channel::<Event<JsonValue>>(8);
+        let emitter = EventEmitter::new(event_sender, false);
+        let publisher = Arc::new(NatsPublisher::new(ctx.nats_client()));
+        let handles = NodeHandles::new_edge(
+            checkpoint_manager,
+            emitter,
+            EventTransport::Nats(publisher),
+            None,
+            None,
+        );
+        let work_dir = tempfile::tempdir()?;
+        let work_dir_path = work_dir.keep();
+        let work_dir_utf8 = Utf8PathBuf::from_path_buf(work_dir_path.clone()).map_err(|path| {
+            color_eyre::eyre::eyre!("temporary work dir should be utf-8: {}", path.display())
+        })?;
+        Ok((
+            NodeRuntimeState::new(
+                ServiceInfo::new(
+                    "adapter-append-failure-test".to_string(),
+                    "adapter-append-failure-test".to_string(),
+                    HostName::from_static("test-host"),
+                    work_dir_path,
+                    false,
+                    format!("instance-{}", Uuid::now_v7().simple()),
+                    env!("CARGO_PKG_VERSION").to_string(),
+                    None,
+                ),
+                handles,
+                HashMap::new(),
+                work_dir_utf8,
+            ),
+            event_receiver,
+        ))
+    }
+
     #[sinex_test]
     async fn adapter_node_config_derives_private_mode_binding_flag()
     -> xtask::sandbox::TestResult<()> {
@@ -1390,6 +1523,37 @@ mod tests {
 
         ingestor.refresh_binding_config()?;
         assert!(ingestor.binding_config.is_truthy("private_mode_active"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn adapter_append_failure_does_not_emit_nil_material_event(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        let ctx = ctx.with_nats().shared().await?;
+        let (runtime, mut event_receiver) = make_adapter_runtime(&ctx).await?;
+        let mut ingestor = AdapterBackedIngestor::<OversizedRecordAdapter, EmittingParser>::new(
+            "desktop.clipboard",
+        );
+        let mut state = AdapterNodeState::default();
+
+        ingestor
+            .initialize(AdapterNodeConfig::default(), &runtime, &mut state)
+            .await?;
+        let emitted = ingestor.drain_adapter(None, &mut state).await?;
+
+        assert_eq!(emitted, 0);
+        assert!(
+            state.cursor.is_none(),
+            "failed material append must not advance the adapter cursor"
+        );
+        assert!(
+            matches!(
+                event_receiver.try_recv(),
+                Err(tokio::sync::mpsc::error::TryRecvError::Empty)
+            ),
+            "failed material append must not emit an event with degraded provenance"
+        );
         Ok(())
     }
 

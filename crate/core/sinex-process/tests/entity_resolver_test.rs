@@ -41,20 +41,13 @@ async fn drive(
     resolver: &mut EntityResolver,
     state: &mut ResolverState,
     input: EntityExtractedPayload,
-) -> Option<EntityResolvedPayload> {
+) -> TestResult<Option<EntityResolvedPayload>> {
     let ctx = make_context();
-    resolver
-        .accumulate(state, input, &ctx)
-        .await
-        .expect("accumulate");
+    resolver.accumulate(state, input, &ctx).await?;
     if resolver.window_complete(state) {
-        resolver
-            .emit(state, &ctx)
-            .await
-            .expect("emit")
-            .map(|out| out.payload)
+        Ok(resolver.emit(state, &ctx).await?.map(|out| out.payload))
     } else {
-        None
+        Ok(None)
     }
 }
 
@@ -78,9 +71,11 @@ async fn emit_clears_pending_and_returns_resolved_payload() -> TestResult<()> {
     let mut resolver = EntityResolver::default();
     let mut state = ResolverState::default();
 
-    let payload = drive(&mut resolver, &mut state, extracted("tool", "git"))
-        .await
-        .expect("first emission");
+    let Some(payload) = drive(&mut resolver, &mut state, extracted("tool", "git")).await? else {
+        return Err(color_eyre::eyre::eyre!(
+            "first emission returned no payload"
+        ));
+    };
     assert_eq!(payload.entity_type, EntityTypeName::new("tool"));
     assert_eq!(payload.canonical_name, "git");
     assert_eq!(payload.original_name, "git");
@@ -93,10 +88,12 @@ async fn duplicate_entity_skipped_via_dedup_map() -> TestResult<()> {
     let mut resolver = EntityResolver::default();
     let mut state = ResolverState::default();
 
-    drive(&mut resolver, &mut state, extracted("tool", "git"))
-        .await
-        .expect("first");
-    let second = drive(&mut resolver, &mut state, extracted("tool", "git")).await;
+    let Some(_) = drive(&mut resolver, &mut state, extracted("tool", "git")).await? else {
+        return Err(color_eyre::eyre::eyre!(
+            "first emission returned no payload"
+        ));
+    };
+    let second = drive(&mut resolver, &mut state, extracted("tool", "git")).await?;
 
     assert!(
         second.is_none(),
@@ -112,16 +109,22 @@ async fn identity_is_deterministic_uuidv5() -> TestResult<()> {
     let payload_a = {
         let mut r = EntityResolver::default();
         let mut s = ResolverState::default();
-        drive(&mut r, &mut s, extracted("tool", "git"))
-            .await
-            .unwrap()
+        let Some(payload) = drive(&mut r, &mut s, extracted("tool", "git")).await? else {
+            return Err(color_eyre::eyre::eyre!(
+                "first resolver returned no payload"
+            ));
+        };
+        payload
     };
     let payload_b = {
         let mut r = EntityResolver::default();
         let mut s = ResolverState::default();
-        drive(&mut r, &mut s, extracted("tool", "git"))
-            .await
-            .unwrap()
+        let Some(payload) = drive(&mut r, &mut s, extracted("tool", "git")).await? else {
+            return Err(color_eyre::eyre::eyre!(
+                "second resolver returned no payload"
+            ));
+        };
+        payload
     };
 
     assert_eq!(
@@ -138,9 +141,11 @@ async fn identity_is_deterministic_uuidv5() -> TestResult<()> {
 async fn tool_canonicalization_lowercases_and_trims() -> TestResult<()> {
     let mut resolver = EntityResolver::default();
     let mut state = ResolverState::default();
-    let out = drive(&mut resolver, &mut state, extracted("tool", "  GIT  "))
-        .await
-        .unwrap();
+    let Some(out) = drive(&mut resolver, &mut state, extracted("tool", "  GIT  ")).await? else {
+        return Err(color_eyre::eyre::eyre!(
+            "tool extraction returned no payload"
+        ));
+    };
     assert_eq!(out.canonical_name, "git");
     assert_eq!(out.original_name, "  GIT  ");
     Ok(())
@@ -150,13 +155,17 @@ async fn tool_canonicalization_lowercases_and_trims() -> TestResult<()> {
 async fn url_canonicalization_normalizes_host() -> TestResult<()> {
     let mut resolver = EntityResolver::default();
     let mut state = ResolverState::default();
-    let out = drive(
+    let Some(out) = drive(
         &mut resolver,
         &mut state,
         extracted("url", "https://www.Example.COM/path/to/page"),
     )
-    .await
-    .unwrap();
+    .await?
+    else {
+        return Err(color_eyre::eyre::eyre!(
+            "url extraction returned no payload"
+        ));
+    };
     assert_eq!(out.canonical_name, "example.com");
     Ok(())
 }
@@ -165,13 +174,17 @@ async fn url_canonicalization_normalizes_host() -> TestResult<()> {
 async fn file_canonicalization_preserves_path_case() -> TestResult<()> {
     let mut resolver = EntityResolver::default();
     let mut state = ResolverState::default();
-    let out = drive(
+    let Some(out) = drive(
         &mut resolver,
         &mut state,
         extracted("file", "/Home/User/Notes.md"),
     )
-    .await
-    .unwrap();
+    .await?
+    else {
+        return Err(color_eyre::eyre::eyre!(
+            "file extraction returned no payload"
+        ));
+    };
     assert_eq!(out.canonical_name, "/Home/User/Notes.md");
     Ok(())
 }
@@ -181,12 +194,16 @@ async fn different_types_with_same_name_are_distinct_entities() -> TestResult<()
     let mut resolver = EntityResolver::default();
     let mut state = ResolverState::default();
 
-    let tool = drive(&mut resolver, &mut state, extracted("tool", "git"))
-        .await
-        .unwrap();
-    let url = drive(&mut resolver, &mut state, extracted("url", "git"))
-        .await
-        .unwrap();
+    let Some(tool) = drive(&mut resolver, &mut state, extracted("tool", "git")).await? else {
+        return Err(color_eyre::eyre::eyre!(
+            "tool extraction returned no payload"
+        ));
+    };
+    let Some(url) = drive(&mut resolver, &mut state, extracted("url", "git")).await? else {
+        return Err(color_eyre::eyre::eyre!(
+            "url extraction returned no payload"
+        ));
+    };
 
     assert_ne!(tool.entity_id, url.entity_id);
     assert_eq!(state.known_entities.len(), 2);

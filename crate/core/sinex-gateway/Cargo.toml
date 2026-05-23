@@ -119,6 +119,9 @@ workspace = true
 [dependencies.serde_json]
 workspace = true
 
+[dependencies.serde_path_to_error]
+workspace = true
+
 [dependencies.base64]
 workspace = true
 

@@ -1,6 +1,5 @@
 //! Operator-facing automata status handlers.
 
-use serde_json::Value;
 use sinex_db::DbPoolExt;
 use sinex_primitives::SinexError;
 use sinex_primitives::rpc::automata::{
@@ -13,11 +12,10 @@ use std::time::Duration;
 type Result<T> = std::result::Result<T, SinexError>;
 
 /// List registered automata with run, checkpoint, and derived-node telemetry.
-pub async fn handle_automata_status(pool: &PgPool, params: Value) -> Result<Value> {
-    let request: AutomataStatusRequest = super::parse_default_on_null(params).map_err(|e| {
-        SinexError::serialization("Invalid automata status request").with_std_error(&e)
-    })?;
-
+pub async fn handle_automata_status(
+    pool: &PgPool,
+    request: AutomataStatusRequest,
+) -> Result<AutomataStatusResponse> {
     let stale_after = Duration::from_secs(request.stale_after_secs);
     let recent_window = Duration::from_secs(request.recent_window_secs);
     let automata = pool
@@ -63,7 +61,5 @@ pub async fn handle_automata_status(pool: &PgPool, params: Value) -> Result<Valu
         automata,
     };
 
-    serde_json::to_value(response).map_err(|e| {
-        SinexError::serialization("Failed to serialize automata status response").with_std_error(&e)
-    })
+    Ok(response)
 }

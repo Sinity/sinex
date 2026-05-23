@@ -5,6 +5,7 @@ use sinex_db::DbPoolExt;
 use sinex_gateway::handlers::automata::handle_automata_status;
 use sinex_primitives::domain::{NodeName, NodeType};
 use sinex_primitives::events::DynamicPayload;
+use sinex_primitives::rpc::automata::AutomataStatusRequest;
 use xtask::sandbox::prelude::*;
 
 async fn insert_material_event(
@@ -129,34 +130,28 @@ async fn automata_status_surfaces_registry_run_and_derived_metrics(
 
     let response = handle_automata_status(
         pool,
-        json!({
-            "stale_after_secs": 300,
-            "recent_window_secs": 300,
-        }),
+        AutomataStatusRequest {
+            stale_after_secs: 300,
+            recent_window_secs: 300,
+        },
     )
     .await?;
-    let automata = response["automata"]
-        .as_array()
-        .expect("automata should be an array");
+    let automata = response.automata;
     assert_eq!(automata.len(), 1);
     let status = &automata[0];
-    let run_id = run.id.to_string();
 
-    assert_eq!(status["node_name"].as_str(), Some("canonicalizer-test"));
-    assert_eq!(status["version"].as_str(), Some("1.0.0-test"));
-    assert_eq!(status["live"].as_bool(), Some(true));
-    assert_eq!(status["source_run_id"].as_str(), Some(run_id.as_str()));
-    assert_eq!(status["events_processed_current_run"].as_i64(), Some(42));
-    assert_eq!(status["pending_invalidation_count"].as_i64(), Some(3));
-    assert_eq!(status["checkpoint_kind"].as_str(), Some("internal"));
-    assert_eq!(
-        status["checkpoint_position"].as_str(),
-        Some("018f-test:#42")
-    );
-    assert_eq!(status["checkpoint_revision"].as_i64(), Some(7));
-    assert_eq!(status["recent_output_count"].as_i64(), Some(1));
-    assert!((status["error_rate_5m"].as_f64().expect("error rate") - 0.125).abs() < f64::EPSILON);
-    assert!(!status["last_output_at"].is_null());
+    assert_eq!(status.node_name, NodeName::new("canonicalizer-test"));
+    assert_eq!(status.version, "1.0.0-test");
+    assert!(status.live);
+    assert_eq!(status.source_run_id, Some(run.id.to_uuid()));
+    assert_eq!(status.events_processed_current_run, Some(42));
+    assert_eq!(status.pending_invalidation_count, Some(3));
+    assert_eq!(status.checkpoint_kind.as_deref(), Some("internal"));
+    assert_eq!(status.checkpoint_position.as_deref(), Some("018f-test:#42"));
+    assert_eq!(status.checkpoint_revision, Some(7));
+    assert_eq!(status.recent_output_count, 1);
+    assert!((status.error_rate_5m.expect("error rate") - 0.125).abs() < f64::EPSILON);
+    assert!(status.last_output_at.is_some());
 
     Ok(())
 }
@@ -190,46 +185,29 @@ async fn automata_status_handles_live_run_without_metric_events(
 
     let response = handle_automata_status(
         pool,
-        json!({
-            "stale_after_secs": 300,
-            "recent_window_secs": 300,
-        }),
+        AutomataStatusRequest {
+            stale_after_secs: 300,
+            recent_window_secs: 300,
+        },
     )
     .await?;
-    let automata = response["automata"]
-        .as_array()
-        .expect("automata should be an array");
+    let automata = response.automata;
     assert_eq!(automata.len(), 1);
     let status = &automata[0];
-    let run_id = run.id.to_string();
 
-    assert_eq!(status["node_name"].as_str(), Some("session-detector-test"));
-    assert_eq!(status["live"].as_bool(), Some(true));
-    assert_eq!(status["source_run_id"].as_str(), Some(run_id.as_str()));
-    assert!(status["events_processed_current_run"].is_null());
-    assert!(status["pending_invalidation_count"].is_null());
-    assert!(status["checkpoint_kind"].is_null());
-    assert!(status["checkpoint_position"].is_null());
-    assert!(status["checkpoint_revision"].is_null());
-    assert!(status["checkpoint_recorded_at"].is_null());
-    assert!(status["error_rate_5m"].is_null());
-    assert_eq!(status["recent_output_count"].as_i64(), Some(0));
-    assert!(status["last_output_at"].is_null());
-    assert!(status["last_replay_at"].is_null());
+    assert_eq!(status.node_name, NodeName::new("session-detector-test"));
+    assert!(status.live);
+    assert_eq!(status.source_run_id, Some(run.id.to_uuid()));
+    assert!(status.events_processed_current_run.is_none());
+    assert!(status.pending_invalidation_count.is_none());
+    assert!(status.checkpoint_kind.is_none());
+    assert!(status.checkpoint_position.is_none());
+    assert!(status.checkpoint_revision.is_none());
+    assert!(status.checkpoint_recorded_at.is_none());
+    assert!(status.error_rate_5m.is_none());
+    assert_eq!(status.recent_output_count, 0);
+    assert!(status.last_output_at.is_none());
+    assert!(status.last_replay_at.is_none());
 
-    Ok(())
-}
-
-#[sinex_test]
-async fn automata_status_rejects_malformed_params(ctx: TestContext) -> TestResult<()> {
-    let result = handle_automata_status(ctx.pool(), json!({ "stale_after_secs": "soon" })).await;
-
-    assert!(result.is_err(), "malformed automata params must fail");
-    assert!(
-        result
-            .unwrap_err()
-            .to_string()
-            .contains("Invalid automata status request")
-    );
     Ok(())
 }

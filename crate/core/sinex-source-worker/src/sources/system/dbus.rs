@@ -15,7 +15,6 @@ use sinex_primitives::events::payloads::system::{
     DbusMethodCalledPayload, DbusMountEventPayload, DbusNetworkStateChangedPayload,
     DbusNotificationSentPayload, DbusPowerStateChangedPayload, DbusSignalPayload,
 };
-use sinex_primitives::ids::Id;
 use sinex_primitives::parser::{
     InputShapeKind, ParsedEventIntent, ParserContext, ParserId, ParserManifest, SourceRecord,
     SourceUnitId, TimingEvidence,
@@ -399,22 +398,18 @@ impl MaterialParser for DbusParser {
             _ => EventType::from_static("signal.received"),
         };
 
-        let intent = ParsedEventIntent {
-            id: Id::new(),
-            source_unit_id: ctx.source_unit_id.clone(),
-            parser_id: ParserId::from_static("system.dbus"),
-            parser_version: "1.0.0".into(),
-            event_type,
-            event_source: EventSource::from_static("dbus"),
-            payload: payload_value,
-            ts_orig: timestamp,
-            timing: TimingEvidence::Atemporal,
-            anchor: record.anchor.clone(),
-            occurrence_key: None,
-            privacy_context: ProcessingContext::Dbus,
-            field_privacy_log: None,
-            synthesis_parents: None,
-        };
+        let intent = ParsedEventIntent::builder()
+            .source_unit_id(ctx.source_unit_id.clone())
+            .parser_id(ParserId::from_static("system.dbus"))
+            .parser_version("1.0.0")
+            .event_type(event_type)
+            .event_source(EventSource::from_static("dbus"))
+            .payload(payload_value)
+            .ts_orig(timestamp)
+            .timing(TimingEvidence::Atemporal)
+            .anchor(record.anchor.clone())
+            .privacy_context(ProcessingContext::Dbus)
+            .build();
 
         Ok(vec![intent])
     }

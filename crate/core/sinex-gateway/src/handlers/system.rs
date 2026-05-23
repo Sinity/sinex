@@ -1,27 +1,32 @@
 //! System RPC handlers.
 
 use crate::service_container::{GatewayHealthReport, GatewayHealthStatus, ServiceContainer};
-use serde_json::Value;
+use sinex_primitives::Result;
 use sinex_primitives::domain::HealthStatus;
 use sinex_primitives::rpc::system::{
-    ComponentHealthReport, ComponentsHealth, ReplayControlHealth, SystemHealthResponse,
+    ComponentHealthReport, ComponentsHealth, ReplayControlHealth, SystemHealthRequest,
+    SystemHealthResponse, SystemPingRequest, SystemVersionRequest,
 };
-use sinex_primitives::{Result, SinexError};
 
-pub async fn handle_system_ping(_services: &ServiceContainer, _params: Value) -> Result<Value> {
+pub async fn handle_system_ping(
+    _services: &ServiceContainer,
+    _request: SystemPingRequest,
+) -> Result<String> {
     Ok(system_ping_response())
 }
 
-pub async fn handle_system_version(_services: &ServiceContainer, _params: Value) -> Result<Value> {
+pub async fn handle_system_version(
+    _services: &ServiceContainer,
+    _request: SystemVersionRequest,
+) -> Result<String> {
     Ok(system_version_response())
 }
 
-pub async fn handle_system_health(services: &ServiceContainer, _params: Value) -> Result<Value> {
-    let response = system_health_response(services.health_report().await);
-    serde_json::to_value(response).map_err(|error| {
-        SinexError::serialization("failed to serialize system.health response")
-            .with_std_error(&error)
-    })
+pub async fn handle_system_health(
+    services: &ServiceContainer,
+    _request: SystemHealthRequest,
+) -> Result<SystemHealthResponse> {
+    Ok(system_health_response(services.health_report().await))
 }
 
 pub(crate) fn system_health_response(report: GatewayHealthReport) -> SystemHealthResponse {
@@ -72,14 +77,6 @@ pub(crate) fn system_health_response(report: GatewayHealthReport) -> SystemHealt
     }
 }
 
-fn system_ping_response() -> Value {
-    Value::String("pong".to_string())
-}
-
-fn system_version_response() -> Value {
-    Value::String(env!("CARGO_PKG_VERSION").to_string())
-}
-
 fn system_component_health(
     connected: bool,
     latency_ms: Option<f64>,
@@ -105,6 +102,14 @@ fn map_gateway_health_status(status: GatewayHealthStatus) -> HealthStatus {
     }
 }
 
+fn system_ping_response() -> String {
+    "pong".to_string()
+}
+
+fn system_version_response() -> String {
+    env!("CARGO_PKG_VERSION").to_string()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -114,17 +119,14 @@ mod tests {
     #[sinex_test]
     async fn system_ping_returns_pong_string() -> TestResult<()> {
         let response = system_ping_response();
-        assert_eq!(response, Value::String("pong".to_string()));
+        assert_eq!(response, "pong");
         Ok(())
     }
 
     #[sinex_test]
     async fn system_version_returns_gateway_package_version() -> TestResult<()> {
         let response = system_version_response();
-        assert_eq!(
-            response,
-            Value::String(env!("CARGO_PKG_VERSION").to_string())
-        );
+        assert_eq!(response, env!("CARGO_PKG_VERSION"));
         Ok(())
     }
 

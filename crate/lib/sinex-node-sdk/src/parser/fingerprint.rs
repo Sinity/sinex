@@ -137,7 +137,7 @@ impl SourceRecordFingerprint {
         Self::from_delimited_bytes("tsv", b'\t', bytes)
     }
 
-    /// Creates a fingerprint from the declared SQLite table/column shape.
+    /// Creates a fingerprint from the declared `SQLite` table/column shape.
     ///
     /// The fingerprint records table names, column names, declared types,
     /// not-null flags, and primary-key positions. It never reads row values.

@@ -282,27 +282,23 @@ impl MaterialParser for ActivityWatchParser {
             BucketKind::Unknown => unreachable!("filtered above"),
         };
 
-        let intent = ParsedEventIntent {
-            id: sinex_primitives::ids::Id::new(),
-            source_unit_id: ctx.source_unit_id.clone(),
-            parser_id: ParserId::from_static("activitywatch-sqlite"),
-            parser_version: "1.0.0".into(),
-            event_type: EventType::new(event_type).map_err(|e| {
+        let intent = ParsedEventIntent::builder()
+            .source_unit_id(ctx.source_unit_id.clone())
+            .parser_id(ParserId::from_static("activitywatch-sqlite"))
+            .parser_version("1.0.0")
+            .event_type(EventType::new(event_type).map_err(|e| {
                 ParserError::Parse(format!("invalid event type '{event_type}': {e}"))
-            })?,
-            event_source: EventSource::from_static("activitywatch"),
-            payload,
-            ts_orig,
-            timing: TimingEvidence::Intrinsic {
+            })?)
+            .event_source(EventSource::from_static("activitywatch"))
+            .payload(payload)
+            .ts_orig(ts_orig)
+            .timing(TimingEvidence::Intrinsic {
                 field: "started_at".into(),
                 confidence: TimingConfidence::Intrinsic,
-            },
-            anchor: record.anchor.clone(),
-            occurrence_key: None,
-            privacy_context: ProcessingContext::WindowTitle,
-            field_privacy_log: None,
-            synthesis_parents: None,
-        };
+            })
+            .anchor(record.anchor.clone())
+            .privacy_context(ProcessingContext::WindowTitle)
+            .build();
 
         Ok(vec![intent])
     }

@@ -3,8 +3,6 @@
 //! Queries the `sinex_telemetry.*` read models and returns structured responses
 //! for the `telemetry.*` RPC method namespace.
 
-use serde::{Serialize, de::DeserializeOwned};
-use serde_json::Value;
 use sinex_primitives::rpc::telemetry::{
     AssemblyStatsBucket, CommandFrequencyEntry, CurrentDeviceStateEntry, CurrentHealthEntry,
     FileActivityEntry, GatewayStatsBucket, IngestdBatchStatsBucket, IngestdValidationSnapshot,
@@ -73,28 +71,8 @@ fn resolve_positive_limit(limit: Option<i64>) -> Result<i64> {
     Ok(limit)
 }
 
-fn parse_telemetry_request<T>(method: &'static str, params: Value) -> Result<T>
-where
-    T: Default + DeserializeOwned,
-{
-    super::parse_default_on_null(params).map_err(|error| {
-        SinexError::serialization(format!("Invalid telemetry.{method} request"))
-            .with_std_error(&error)
-    })
-}
-
 fn telemetry_query_error(relation: &'static str, error: sqlx::Error) -> SinexError {
     SinexError::database(format!("Failed to query {relation}")).with_std_error(&error)
-}
-
-fn serialize_telemetry_response<T>(method: &'static str, response: T) -> Result<Value>
-where
-    T: Serialize,
-{
-    serde_json::to_value(response).map_err(|error| {
-        SinexError::serialization(format!("Failed to serialize telemetry.{method} response"))
-            .with_std_error(&error)
-    })
 }
 
 #[derive(sqlx::FromRow)]
@@ -241,8 +219,10 @@ struct IngestdBatchStatsRow {
     avg_validation_coverage_pct: Option<f64>,
 }
 
-pub async fn handle_telemetry_current_health(pool: &PgPool, params: Value) -> Result<Value> {
-    let req: TelemetryCurrentHealthRequest = parse_telemetry_request("current_health", params)?;
+pub async fn handle_telemetry_current_health(
+    pool: &PgPool,
+    req: TelemetryCurrentHealthRequest,
+) -> Result<TelemetryCurrentHealthResponse> {
     let limit = resolve_positive_limit(req.limit)?;
 
     let rows = sqlx::query_as::<_, CurrentHealthRow>(
@@ -276,12 +256,13 @@ pub async fn handle_telemetry_current_health(pool: &PgPool, params: Value) -> Re
         })
         .collect();
 
-    serialize_telemetry_response("current_health", TelemetryCurrentHealthResponse { entries })
+    Ok(TelemetryCurrentHealthResponse { entries })
 }
 
-pub async fn handle_telemetry_current_device_state(pool: &PgPool, params: Value) -> Result<Value> {
-    let req: TelemetryCurrentDeviceStateRequest =
-        parse_telemetry_request("current_device_state", params)?;
+pub async fn handle_telemetry_current_device_state(
+    pool: &PgPool,
+    req: TelemetryCurrentDeviceStateRequest,
+) -> Result<TelemetryCurrentDeviceStateResponse> {
     let limit = resolve_positive_limit(req.limit)?;
 
     let rows = sqlx::query_as::<_, CurrentDeviceStateRow>(
@@ -313,15 +294,13 @@ pub async fn handle_telemetry_current_device_state(pool: &PgPool, params: Value)
         })
         .collect();
 
-    serialize_telemetry_response(
-        "current_device_state",
-        TelemetryCurrentDeviceStateResponse { entries },
-    )
+    Ok(TelemetryCurrentDeviceStateResponse { entries })
 }
 
-pub async fn handle_telemetry_window_focus(pool: &PgPool, params: Value) -> Result<Value> {
-    let req: TelemetryWindowFocusRequest = parse_telemetry_request("window_focus", params)?;
-
+pub async fn handle_telemetry_window_focus(
+    pool: &PgPool,
+    req: TelemetryWindowFocusRequest,
+) -> Result<TelemetryWindowFocusResponse> {
     let (from, to) = resolve_time_range(
         req.time_range.from.as_deref(),
         req.time_range.to.as_deref(),
@@ -366,13 +345,13 @@ pub async fn handle_telemetry_window_focus(pool: &PgPool, params: Value) -> Resu
         })
         .collect();
 
-    serialize_telemetry_response("window_focus", TelemetryWindowFocusResponse { buckets })
+    Ok(TelemetryWindowFocusResponse { buckets })
 }
 
-pub async fn handle_telemetry_command_frequency(pool: &PgPool, params: Value) -> Result<Value> {
-    let req: TelemetryCommandFrequencyRequest =
-        parse_telemetry_request("command_frequency", params)?;
-
+pub async fn handle_telemetry_command_frequency(
+    pool: &PgPool,
+    req: TelemetryCommandFrequencyRequest,
+) -> Result<TelemetryCommandFrequencyResponse> {
     let (from, to) = resolve_time_range(
         req.time_range.from.as_deref(),
         req.time_range.to.as_deref(),
@@ -416,15 +395,13 @@ pub async fn handle_telemetry_command_frequency(pool: &PgPool, params: Value) ->
         })
         .collect();
 
-    serialize_telemetry_response(
-        "command_frequency",
-        TelemetryCommandFrequencyResponse { entries },
-    )
+    Ok(TelemetryCommandFrequencyResponse { entries })
 }
 
-pub async fn handle_telemetry_file_activity(pool: &PgPool, params: Value) -> Result<Value> {
-    let req: TelemetryFileActivityRequest = parse_telemetry_request("file_activity", params)?;
-
+pub async fn handle_telemetry_file_activity(
+    pool: &PgPool,
+    req: TelemetryFileActivityRequest,
+) -> Result<TelemetryFileActivityResponse> {
     let (from, to) = resolve_time_range(
         req.time_range.from.as_deref(),
         req.time_range.to.as_deref(),
@@ -465,11 +442,13 @@ pub async fn handle_telemetry_file_activity(pool: &PgPool, params: Value) -> Res
         })
         .collect();
 
-    serialize_telemetry_response("file_activity", TelemetryFileActivityResponse { entries })
+    Ok(TelemetryFileActivityResponse { entries })
 }
 
-pub async fn handle_telemetry_recent_activity(pool: &PgPool, params: Value) -> Result<Value> {
-    let req: TelemetryRecentActivityRequest = parse_telemetry_request("recent_activity", params)?;
+pub async fn handle_telemetry_recent_activity(
+    pool: &PgPool,
+    req: TelemetryRecentActivityRequest,
+) -> Result<TelemetryRecentActivityResponse> {
     let limit = resolve_positive_limit(req.limit)?;
 
     let rows = sqlx::query_as::<_, RecentActivityRow>(
@@ -499,15 +478,13 @@ pub async fn handle_telemetry_recent_activity(pool: &PgPool, params: Value) -> R
         })
         .collect();
 
-    serialize_telemetry_response(
-        "recent_activity",
-        TelemetryRecentActivityResponse { entries },
-    )
+    Ok(TelemetryRecentActivityResponse { entries })
 }
 
-pub async fn handle_telemetry_system_state(pool: &PgPool, params: Value) -> Result<Value> {
-    let req: TelemetrySystemStateRequest = parse_telemetry_request("system_state", params)?;
-
+pub async fn handle_telemetry_system_state(
+    pool: &PgPool,
+    req: TelemetrySystemStateRequest,
+) -> Result<TelemetrySystemStateResponse> {
     let (from, to) = resolve_time_range(
         req.time_range.from.as_deref(),
         req.time_range.to.as_deref(),
@@ -554,12 +531,13 @@ pub async fn handle_telemetry_system_state(pool: &PgPool, params: Value) -> Resu
         })
         .collect();
 
-    serialize_telemetry_response("system_state", TelemetrySystemStateResponse { buckets })
+    Ok(TelemetrySystemStateResponse { buckets })
 }
 
-pub async fn handle_telemetry_gateway_stats(pool: &PgPool, params: Value) -> Result<Value> {
-    let req: TelemetryGatewayStatsRequest = parse_telemetry_request("gateway_stats", params)?;
-
+pub async fn handle_telemetry_gateway_stats(
+    pool: &PgPool,
+    req: TelemetryGatewayStatsRequest,
+) -> Result<TelemetryGatewayStatsResponse> {
     let (from, to) = resolve_time_range(
         req.time_range.from.as_deref(),
         req.time_range.to.as_deref(),
@@ -604,12 +582,13 @@ pub async fn handle_telemetry_gateway_stats(pool: &PgPool, params: Value) -> Res
         })
         .collect();
 
-    serialize_telemetry_response("gateway_stats", TelemetryGatewayStatsResponse { buckets })
+    Ok(TelemetryGatewayStatsResponse { buckets })
 }
 
-pub async fn handle_telemetry_stream_stats(pool: &PgPool, params: Value) -> Result<Value> {
-    let req: TelemetryStreamStatsRequest = parse_telemetry_request("stream_stats", params)?;
-
+pub async fn handle_telemetry_stream_stats(
+    pool: &PgPool,
+    req: TelemetryStreamStatsRequest,
+) -> Result<TelemetryStreamStatsResponse> {
     let (from, to) = resolve_time_range(
         req.time_range.from.as_deref(),
         req.time_range.to.as_deref(),
@@ -654,12 +633,13 @@ pub async fn handle_telemetry_stream_stats(pool: &PgPool, params: Value) -> Resu
         })
         .collect();
 
-    serialize_telemetry_response("stream_stats", TelemetryStreamStatsResponse { buckets })
+    Ok(TelemetryStreamStatsResponse { buckets })
 }
 
-pub async fn handle_telemetry_assembly_stats(pool: &PgPool, params: Value) -> Result<Value> {
-    let req: TelemetryAssemblyStatsRequest = parse_telemetry_request("assembly_stats", params)?;
-
+pub async fn handle_telemetry_assembly_stats(
+    pool: &PgPool,
+    req: TelemetryAssemblyStatsRequest,
+) -> Result<TelemetryAssemblyStatsResponse> {
     let (from, to) = resolve_time_range(
         req.time_range.from.as_deref(),
         req.time_range.to.as_deref(),
@@ -706,12 +686,13 @@ pub async fn handle_telemetry_assembly_stats(pool: &PgPool, params: Value) -> Re
         })
         .collect();
 
-    serialize_telemetry_response("assembly_stats", TelemetryAssemblyStatsResponse { buckets })
+    Ok(TelemetryAssemblyStatsResponse { buckets })
 }
 
-pub async fn handle_telemetry_node_stats(pool: &PgPool, params: Value) -> Result<Value> {
-    let req: TelemetryNodeStatsRequest = parse_telemetry_request("node_stats", params)?;
-
+pub async fn handle_telemetry_node_stats(
+    pool: &PgPool,
+    req: TelemetryNodeStatsRequest,
+) -> Result<TelemetryNodeStatsResponse> {
     let (from, to) = resolve_time_range(
         req.time_range.from.as_deref(),
         req.time_range.to.as_deref(),
@@ -758,12 +739,13 @@ pub async fn handle_telemetry_node_stats(pool: &PgPool, params: Value) -> Result
         })
         .collect();
 
-    serialize_telemetry_response("node_stats", TelemetryNodeStatsResponse { buckets })
+    Ok(TelemetryNodeStatsResponse { buckets })
 }
 
-pub async fn handle_telemetry_metric_counters(pool: &PgPool, params: Value) -> Result<Value> {
-    let req: TelemetryMetricCountersRequest = parse_telemetry_request("metric_counters", params)?;
-
+pub async fn handle_telemetry_metric_counters(
+    pool: &PgPool,
+    req: TelemetryMetricCountersRequest,
+) -> Result<TelemetryMetricCountersResponse> {
     let (from, to) = resolve_time_range(
         req.time_range.from.as_deref(),
         req.time_range.to.as_deref(),
@@ -806,16 +788,13 @@ pub async fn handle_telemetry_metric_counters(pool: &PgPool, params: Value) -> R
         })
         .collect();
 
-    serialize_telemetry_response(
-        "metric_counters",
-        TelemetryMetricCountersResponse { buckets },
-    )
+    Ok(TelemetryMetricCountersResponse { buckets })
 }
 
-pub async fn handle_telemetry_ingestd_batch_stats(pool: &PgPool, params: Value) -> Result<Value> {
-    let req: TelemetryIngestdBatchStatsRequest =
-        parse_telemetry_request("ingestd_batch_stats", params)?;
-
+pub async fn handle_telemetry_ingestd_batch_stats(
+    pool: &PgPool,
+    req: TelemetryIngestdBatchStatsRequest,
+) -> Result<TelemetryIngestdBatchStatsResponse> {
     let (from, to) = resolve_time_range(
         req.time_range.from.as_deref(),
         req.time_range.to.as_deref(),
@@ -876,16 +855,13 @@ pub async fn handle_telemetry_ingestd_batch_stats(pool: &PgPool, params: Value) 
         })
         .collect();
 
-    serialize_telemetry_response(
-        "ingestd_batch_stats",
-        TelemetryIngestdBatchStatsResponse { buckets },
-    )
+    Ok(TelemetryIngestdBatchStatsResponse { buckets })
 }
 
-pub async fn handle_telemetry_ingestd_validation(pool: &PgPool, params: Value) -> Result<Value> {
-    let _req: TelemetryIngestdValidationRequest =
-        parse_telemetry_request("ingestd_validation", params)?;
-
+pub async fn handle_telemetry_ingestd_validation(
+    pool: &PgPool,
+    _req: TelemetryIngestdValidationRequest,
+) -> Result<TelemetryIngestdValidationResponse> {
     let row = sqlx::query!(
         r#"
         SELECT
@@ -931,10 +907,7 @@ pub async fn handle_telemetry_ingestd_validation(pool: &PgPool, params: Value) -
         suspicious_future_ts_orig: row.suspicious_future_ts_orig,
     });
 
-    serialize_telemetry_response(
-        "ingestd_validation",
-        TelemetryIngestdValidationResponse { snapshot },
-    )
+    Ok(TelemetryIngestdValidationResponse { snapshot })
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -948,9 +921,10 @@ pub async fn handle_telemetry_ingestd_validation(pool: &PgPool, params: Value) -
 
 const THROUGHPUT_SOURCE_LIMIT: i64 = 64;
 
-pub async fn handle_telemetry_throughput(pool: &PgPool, params: Value) -> Result<Value> {
-    let _req: TelemetryThroughputRequest = parse_telemetry_request("throughput", params)?;
-
+pub async fn handle_telemetry_throughput(
+    pool: &PgPool,
+    _req: TelemetryThroughputRequest,
+) -> Result<TelemetryThroughputResponse> {
     // Per-source counts via grouped SELECTs against core.events. We use
     // ts_orig because it's the operator-meaningful clock.
     #[derive(sqlx::FromRow)]
@@ -1078,11 +1052,8 @@ pub async fn handle_telemetry_throughput(pool: &PgPool, params: Value) -> Result
             .unwrap_or(std::cmp::Ordering::Equal)
     });
 
-    serialize_telemetry_response(
-        "throughput",
-        TelemetryThroughputResponse {
-            per_source,
-            per_component,
-        },
-    )
+    Ok(TelemetryThroughputResponse {
+        per_source,
+        per_component,
+    })
 }

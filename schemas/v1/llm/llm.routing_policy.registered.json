@@ -1,0 +1,78 @@
+{
+  "$defs": {
+    "ModelRoute": {
+      "description": "Provider/model candidate admitted by a routing policy.",
+      "properties": {
+        "is_local": {
+          "type": "boolean"
+        },
+        "model": {
+          "type": "string"
+        },
+        "provider": {
+          "type": "string"
+        },
+        "tier": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "provider",
+        "model",
+        "is_local"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Durable routing policy registry entry.",
+  "properties": {
+    "active": {
+      "type": "boolean"
+    },
+    "fallback_order": {
+      "items": {
+        "$ref": "#/$defs/ModelRoute"
+      },
+      "type": "array"
+    },
+    "policy_id": {
+      "type": "string"
+    },
+    "privacy_policy_ref": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "prompt_id": {
+      "type": "string"
+    },
+    "prompt_version": {
+      "type": "string"
+    },
+    "replay_policy": {
+      "type": "string"
+    },
+    "task_kind": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "policy_id",
+    "task_kind",
+    "prompt_id",
+    "prompt_version",
+    "fallback_order",
+    "replay_policy",
+    "active"
+  ],
+  "title": "LlmRoutingPolicyRegisteredPayload",
+  "type": "object",
+  "x-sinex-event-type": "llm.routing_policy.registered",
+  "x-sinex-source": "llm",
+  "x-sinex-version": "1.0.0"
+}

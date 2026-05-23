@@ -37,21 +37,18 @@ use std::sync::LazyLock;
 
 // ── Pattern catalog ────────────────────────────────────────────────────
 
-static URL_PATTERN: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new("https?://[^\\s<>\"{}|\\\\^`\\[\\]]+").expect("compile URL regex"));
+static URL_PATTERN: LazyLock<Result<Regex, regex::Error>> =
+    LazyLock::new(|| Regex::new("https?://[^\\s<>\"{}|\\\\^`\\[\\]]+"));
 
-static FILE_PATH_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new("(?:/~?|[./]?)(?:[\\w.-]+/)+[\\w.-]+(?:\\.\\w+)?").expect("compile file path regex")
-});
+static FILE_PATH_PATTERN: LazyLock<Result<Regex, regex::Error>> =
+    LazyLock::new(|| Regex::new("(?:/~?|[./]?)(?:[\\w.-]+/)+[\\w.-]+(?:\\.\\w+)?"));
 
-static COMMAND_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
+static COMMAND_PATTERN: LazyLock<Result<Regex, regex::Error>> = LazyLock::new(|| {
     Regex::new("\\b(git|nix|cargo|docker|kubectl|ssh|curl|wget|systemctl|journalctl)\\b")
-        .expect("compile command regex")
 });
 
-static EMAIL_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new("[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}").expect("compile email regex")
-});
+static EMAIL_PATTERN: LazyLock<Result<Regex, regex::Error>> =
+    LazyLock::new(|| Regex::new("[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}"));
 
 // ── Node ───────────────────────────────────────────────────────────────
 
@@ -169,7 +166,9 @@ fn extract_text_fields(value: &serde_json::Value) -> String {
 fn find_first_entity(text: &str) -> Option<EntityExtractedPayload> {
     // Try patterns in priority order: URL > file path > email > command.
 
-    if let Some(m) = URL_PATTERN.find(text) {
+    if let Ok(pattern) = &*URL_PATTERN
+        && let Some(m) = pattern.find(text)
+    {
         let raw = m.as_str().to_string();
         return Some(EntityExtractedPayload {
             entity_type: EntityTypeName::new("url"),
@@ -178,7 +177,9 @@ fn find_first_entity(text: &str) -> Option<EntityExtractedPayload> {
         });
     }
 
-    if let Some(m) = EMAIL_PATTERN.find(text) {
+    if let Ok(pattern) = &*EMAIL_PATTERN
+        && let Some(m) = pattern.find(text)
+    {
         let raw = m.as_str().to_string();
         return Some(EntityExtractedPayload {
             entity_type: EntityTypeName::new("person"),
@@ -187,7 +188,9 @@ fn find_first_entity(text: &str) -> Option<EntityExtractedPayload> {
         });
     }
 
-    if let Some(m) = FILE_PATH_PATTERN.find(text) {
+    if let Ok(pattern) = &*FILE_PATH_PATTERN
+        && let Some(m) = pattern.find(text)
+    {
         let raw = m.as_str().to_string();
         // Only match paths that look like real file paths (contain a directory
         // separator and are at least 4 characters).
@@ -200,7 +203,9 @@ fn find_first_entity(text: &str) -> Option<EntityExtractedPayload> {
         }
     }
 
-    if let Some(m) = COMMAND_PATTERN.find(text) {
+    if let Ok(pattern) = &*COMMAND_PATTERN
+        && let Some(m) = pattern.find(text)
+    {
         let raw = m.as_str().to_string();
         return Some(EntityExtractedPayload {
             entity_type: EntityTypeName::new("tool"),

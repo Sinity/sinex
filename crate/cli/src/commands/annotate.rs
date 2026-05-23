@@ -8,7 +8,7 @@
 use clap::Args;
 use color_eyre::Result;
 use color_eyre::eyre::eyre;
-use serde_json::json;
+use sinex_primitives::rpc::events::EventsAnnotateRequest;
 
 use crate::client::GatewayClient;
 use crate::fmt::format_json;
@@ -42,13 +42,14 @@ impl AnnotateCommand {
             return Err(eyre!("annotation --kind must not be empty"));
         }
 
-        let params = json!({
-            "event_id": self.event_id,
-            "annotation_type": self.kind,
-            "content": self.note,
-        });
-
-        let response = client.call_raw_rpc("events.annotate", params).await?;
+        let response = client
+            .events_annotate(EventsAnnotateRequest {
+                event_id: self.event_id.clone(),
+                annotation_type: self.kind.clone(),
+                content: self.note.clone(),
+                metadata: None,
+            })
+            .await?;
 
         match format {
             OutputFormat::Json | OutputFormat::Dot => {

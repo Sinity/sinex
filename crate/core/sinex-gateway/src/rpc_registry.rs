@@ -7,9 +7,68 @@ use crate::auth::Role;
 use crate::replay_control::ReplayControlClient;
 use crate::rpc_server::RpcAuthContext;
 use crate::service_container::ServiceContainer;
+use serde::{Serialize, de::DeserializeOwned};
 use serde_json::Value as JsonValue;
+use sinex_db::pkm::PkmService;
 use sinex_primitives::coordination::CoordinationKvClient;
-use sinex_primitives::rpc::methods;
+use sinex_primitives::rpc::{
+    RpcMethod,
+    audit::AUDIT_GET_METHOD,
+    automata::AUTOMATA_STATUS_METHOD,
+    content::{CONTENT_RETRIEVE_BLOB_METHOD, CONTENT_STORE_BLOB_METHOD},
+    coordination::{
+        COORDINATION_GET_LEADER_METHOD, COORDINATION_INSTANCE_HEALTH_METHOD,
+        COORDINATION_LIST_INSTANCES_METHOD,
+    },
+    curation::{CURATION_JUDGMENTS_RECORD_METHOD, CURATION_PROPOSALS_LIST_METHOD},
+    dlq::{DLQ_LIST_METHOD, DLQ_PEEK_METHOD, DLQ_PURGE_METHOD, DLQ_REQUEUE_METHOD},
+    documents::{DOCUMENTS_GET_CHUNKS_METHOD, DOCUMENTS_GET_METHOD, DOCUMENTS_SEARCH_METHOD},
+    events::{EVENTS_ANNOTATE_METHOD, EVENTS_LINEAGE_METHOD, EVENTS_QUERY_METHOD},
+    ingestors::INGESTORS_STATUS_METHOD,
+    lifecycle::{
+        LIFECYCLE_ARCHIVE_METHOD, LIFECYCLE_RESTORE_METHOD, LIFECYCLE_STATUS_METHOD,
+        LIFECYCLE_TOMBSTONE_APPROVE_METHOD, LIFECYCLE_TOMBSTONE_CANCEL_METHOD,
+        LIFECYCLE_TOMBSTONE_CREATE_METHOD, LIFECYCLE_TOMBSTONE_LIST_METHOD,
+        LIFECYCLE_TOMBSTONE_PREVIEW_METHOD, LIFECYCLE_TOMBSTONE_STATUS_METHOD,
+    },
+    methods,
+    nodes::{
+        NODES_DRAIN_METHOD, NODES_HEALTH_METHOD, NODES_LIST_ACTIVE_METHOD, NODES_LIST_METHOD,
+        NODES_RESUME_METHOD, NODES_SET_HORIZON_METHOD,
+    },
+    ops::{OPS_CANCEL_METHOD, OPS_GET_METHOD, OPS_LIST_METHOD, OPS_START_METHOD},
+    pkm::{PKM_CREATE_ENTITIES_METHOD, PKM_CREATE_NOTE_METHOD, PKM_LINK_ENTITIES_METHOD},
+    privacy::{
+        PRIVACY_PRIVATE_MODE_DISABLE_METHOD, PRIVACY_PRIVATE_MODE_ENABLE_METHOD,
+        PRIVACY_PRIVATE_MODE_STATUS_METHOD,
+    },
+    replay::{
+        REPLAY_APPROVE_OPERATION_METHOD, REPLAY_CANCEL_OPERATION_METHOD,
+        REPLAY_CREATE_OPERATION_METHOD, REPLAY_EXECUTE_OPERATION_METHOD,
+        REPLAY_LIST_OPERATIONS_METHOD, REPLAY_OPERATION_STATUS_METHOD,
+        REPLAY_PREVIEW_OPERATION_METHOD, REPLAY_SUBMIT_OPERATION_METHOD,
+    },
+    shadow::{SHADOW_CREATE_METHOD, SHADOW_DELETE_METHOD, SHADOW_LIST_METHOD},
+    sources::{
+        SOURCES_ANNOTATE_METHOD, SOURCES_ARCHIVE_METHOD, SOURCES_BINDINGS_CREATE_METHOD,
+        SOURCES_BINDINGS_LIST_METHOD, SOURCES_BINDINGS_RESOLVE_METHOD,
+        SOURCES_CONTINUITY_EXPLAIN_GAP_METHOD, SOURCES_CONTINUITY_GET_METHOD,
+        SOURCES_CONTINUITY_LIST_METHOD, SOURCES_CONTINUITY_METHOD, SOURCES_COVERAGE_METHOD,
+        SOURCES_LIST_METHOD, SOURCES_PRESETS_LIST_METHOD, SOURCES_READINESS_GET_METHOD,
+        SOURCES_READINESS_LIST_METHOD, SOURCES_SHOW_METHOD, SOURCES_STAGE_METHOD,
+    },
+    system::{SYSTEM_HEALTH_METHOD, SYSTEM_PING_METHOD, SYSTEM_VERSION_METHOD},
+    tasks::{TASKS_COMPLETE_METHOD, TASKS_CREATE_METHOD, TASKS_STATE_GET_METHOD},
+    telemetry::{
+        TELEMETRY_ASSEMBLY_STATS_METHOD, TELEMETRY_COMMAND_FREQUENCY_METHOD,
+        TELEMETRY_CURRENT_DEVICE_STATE_METHOD, TELEMETRY_CURRENT_HEALTH_METHOD,
+        TELEMETRY_FILE_ACTIVITY_METHOD, TELEMETRY_GATEWAY_STATS_METHOD,
+        TELEMETRY_INGESTD_BATCH_STATS_METHOD, TELEMETRY_INGESTD_VALIDATION_METHOD,
+        TELEMETRY_METRIC_COUNTERS_METHOD, TELEMETRY_NODE_STATS_METHOD,
+        TELEMETRY_RECENT_ACTIVITY_METHOD, TELEMETRY_STREAM_STATS_METHOD,
+        TELEMETRY_SYSTEM_STATE_METHOD, TELEMETRY_THROUGHPUT_METHOD, TELEMETRY_WINDOW_FOCUS_METHOD,
+    },
+};
 use sinex_primitives::{Result, error::SinexError};
 use std::collections::HashMap;
 use std::future::Future;
@@ -26,9 +85,6 @@ use std::sync::Arc;
 ///
 /// // 3-arg handler (pool_auth_rpc, nats_rpc)
 /// .pool_auth_rpc("method", Role::Admin, boxed!(handle_fn, 3))
-///
-/// // 4-arg handler (nats_auth_rpc)
-/// .nats_auth_rpc("method", Role::Admin, boxed!(handle_fn, 4))
 /// ```
 macro_rules! boxed {
     ($f:expr) => {
@@ -76,6 +132,183 @@ impl RpcRegistry {
         Self {
             methods: HashMap::new(),
         }
+    }
+
+    /// Register a typed database-backed RPC handler (no auth context).
+    ///
+    /// The registry owns the JSON boundary: it deserializes request params with
+    /// path-aware diagnostics and serializes the typed response.
+    pub(crate) fn pool_typed_rpc<Req, Resp, F>(mut self, method: RpcMethod<Req, Resp>, f: F) -> Self
+    where
+        Req: DeserializeOwned + 'static,
+        Resp: Serialize + 'static,
+        F: for<'a> Fn(
+                &'a sqlx::PgPool,
+                Req,
+            ) -> Pin<Box<dyn Future<Output = Result<Resp>> + Send + 'a>>
+            + Send
+            + Sync
+            + 'static,
+    {
+        let f = Arc::new(f);
+        self.methods.insert(
+            method.name,
+            RegistryEntry {
+                handler: Arc::new(move |params, services, _auth| {
+                    let f = Arc::clone(&f);
+                    Box::pin(async move {
+                        let request = decode_rpc_params(method.name, params)?;
+                        let response = f(services.pool(), request).await?;
+                        encode_rpc_response(method.name, &response)
+                    })
+                }),
+                required_role: method.role.into(),
+            },
+        );
+        self
+    }
+
+    /// Register a typed database-backed RPC handler with auth context.
+    pub(crate) fn pool_auth_typed_rpc<Req, Resp, F>(
+        mut self,
+        method: RpcMethod<Req, Resp>,
+        f: F,
+    ) -> Self
+    where
+        Req: DeserializeOwned + 'static,
+        Resp: Serialize + 'static,
+        F: for<'a> Fn(
+                &'a sqlx::PgPool,
+                Req,
+                &'a RpcAuthContext,
+            ) -> Pin<Box<dyn Future<Output = Result<Resp>> + Send + 'a>>
+            + Send
+            + Sync
+            + 'static,
+    {
+        let f = Arc::new(f);
+        self.methods.insert(
+            method.name,
+            RegistryEntry {
+                handler: Arc::new(move |params, services, auth| {
+                    let f = Arc::clone(&f);
+                    Box::pin(async move {
+                        let request = decode_rpc_params(method.name, params)?;
+                        let response = f(services.pool(), request, auth).await?;
+                        encode_rpc_response(method.name, &response)
+                    })
+                }),
+                required_role: method.role.into(),
+            },
+        );
+        self
+    }
+
+    /// Register a typed service-backed RPC handler.
+    pub(crate) fn service_typed_rpc<Req, Resp, F>(
+        mut self,
+        method: RpcMethod<Req, Resp>,
+        f: F,
+    ) -> Self
+    where
+        Req: DeserializeOwned + 'static,
+        Resp: Serialize + 'static,
+        F: for<'a> Fn(
+                &'a ServiceContainer,
+                Req,
+            ) -> Pin<Box<dyn Future<Output = Result<Resp>> + Send + 'a>>
+            + Send
+            + Sync
+            + 'static,
+    {
+        let f = Arc::new(f);
+        self.methods.insert(
+            method.name,
+            RegistryEntry {
+                handler: Arc::new(move |params, services, _auth| {
+                    let f = Arc::clone(&f);
+                    Box::pin(async move {
+                        let request = decode_rpc_params(method.name, params)?;
+                        let response = f(services, request).await?;
+                        encode_rpc_response(method.name, &response)
+                    })
+                }),
+                required_role: method.role.into(),
+            },
+        );
+        self
+    }
+
+    /// Register a typed service-backed RPC handler with auth context.
+    pub(crate) fn service_auth_typed_rpc<Req, Resp, F>(
+        mut self,
+        method: RpcMethod<Req, Resp>,
+        f: F,
+    ) -> Self
+    where
+        Req: DeserializeOwned + 'static,
+        Resp: Serialize + 'static,
+        F: for<'a> Fn(
+                &'a ServiceContainer,
+                Req,
+                &'a RpcAuthContext,
+            ) -> Pin<Box<dyn Future<Output = Result<Resp>> + Send + 'a>>
+            + Send
+            + Sync
+            + 'static,
+    {
+        let f = Arc::new(f);
+        self.methods.insert(
+            method.name,
+            RegistryEntry {
+                handler: Arc::new(move |params, services, auth| {
+                    let f = Arc::clone(&f);
+                    Box::pin(async move {
+                        let request = decode_rpc_params(method.name, params)?;
+                        let response = f(services, request, auth).await?;
+                        encode_rpc_response(method.name, &response)
+                    })
+                }),
+                required_role: method.role.into(),
+            },
+        );
+        self
+    }
+
+    /// Register a typed PKM service-backed RPC handler with auth context.
+    pub(crate) fn pkm_auth_typed_rpc<Req, Resp, F>(
+        mut self,
+        method: RpcMethod<Req, Resp>,
+        f: F,
+    ) -> Self
+    where
+        Req: DeserializeOwned + 'static,
+        Resp: Serialize + 'static,
+        F: for<'a> Fn(
+                &'a PkmService,
+                Req,
+                &'a RpcAuthContext,
+            ) -> Pin<Box<dyn Future<Output = Result<Resp>> + Send + 'a>>
+            + Send
+            + Sync
+            + 'static,
+    {
+        let f = Arc::new(f);
+        self.methods.insert(
+            method.name,
+            RegistryEntry {
+                handler: Arc::new(move |params, services, auth| {
+                    let f = Arc::clone(&f);
+                    Box::pin(async move {
+                        let request = decode_rpc_params(method.name, params)?;
+                        let response = f(services.pkm.as_ref(), request, auth).await?;
+                        encode_rpc_response(method.name, &response)
+                    })
+                }),
+                required_role: method.role.into(),
+            },
+        );
+        self
     }
 
     /// Register a handler for a method
@@ -160,35 +393,43 @@ impl RpcRegistry {
         self
     }
 
-    /// Register a replay control RPC handler
+    /// Register a typed replay-control RPC handler.
     ///
-    /// Automatically extracts and validates `ReplayControlClient` from `ServiceContainer`
-    /// and passes through the authenticated actor context.
-    pub(crate) fn replay_rpc<F>(mut self, method: &'static str, role: Role, f: F) -> Self
+    /// The registry owns the JSON boundary and extracts the replay-control
+    /// client from the service container before invoking the typed handler.
+    pub(crate) fn replay_typed_rpc<Req, Resp, F>(
+        mut self,
+        method: RpcMethod<Req, Resp>,
+        f: F,
+    ) -> Self
     where
+        Req: DeserializeOwned + 'static,
+        Resp: Serialize + 'static,
         F: for<'a> Fn(
                 &'a ReplayControlClient,
-                JsonValue,
+                Req,
                 &'a RpcAuthContext,
-            ) -> Pin<Box<dyn Future<Output = Result<JsonValue>> + Send + 'a>>
+            ) -> Pin<Box<dyn Future<Output = Result<Resp>> + Send + 'a>>
             + Send
             + Sync
             + 'static,
     {
         let f = Arc::new(f);
         self.methods.insert(
-            method,
+            method.name,
             RegistryEntry {
                 handler: Arc::new(move |params, services, auth| {
                     let f = Arc::clone(&f);
                     Box::pin(async move {
+                        let request = decode_rpc_params(method.name, params)?;
                         let client = services.replay_control.as_ref().ok_or_else(|| {
                             SinexError::configuration("Replay control bus is not initialized")
                         })?;
-                        f(client, params, auth).await
+                        let response = f(client, request, auth).await?;
+                        encode_rpc_response(method.name, &response)
                     })
                 }),
-                required_role: role,
+                required_role: method.role.into(),
             },
         );
         self
@@ -228,24 +469,64 @@ impl RpcRegistry {
         self
     }
 
-    /// Register a NATS-backed RPC handler (with auth context)
-    ///
-    /// Automatically extracts NATS client and environment from `ServiceContainer`.
-    pub(crate) fn nats_auth_rpc<F>(mut self, method: &'static str, role: Role, f: F) -> Self
+    /// Register a typed NATS-backed RPC handler.
+    pub(crate) fn nats_typed_rpc<Req, Resp, F>(mut self, method: RpcMethod<Req, Resp>, f: F) -> Self
     where
+        Req: DeserializeOwned + 'static,
+        Resp: Serialize + 'static,
         F: for<'a> Fn(
                 &'a async_nats::Client,
                 &'a sinex_primitives::environment::SinexEnvironment,
-                JsonValue,
-                &'a RpcAuthContext,
-            ) -> Pin<Box<dyn Future<Output = Result<JsonValue>> + Send + 'a>>
+                Req,
+            ) -> Pin<Box<dyn Future<Output = Result<Resp>> + Send + 'a>>
             + Send
             + Sync
             + 'static,
     {
         let f = Arc::new(f);
         self.methods.insert(
-            method,
+            method.name,
+            RegistryEntry {
+                handler: Arc::new(move |params, services, _auth| {
+                    let f = Arc::clone(&f);
+                    Box::pin(async move {
+                        let nats = services.nats_client().ok_or_else(|| {
+                            SinexError::configuration("NATS client is not available")
+                        })?;
+                        let env = services.environment();
+                        let request = decode_rpc_params(method.name, params)?;
+                        let response = f(nats, env, request).await?;
+                        encode_rpc_response(method.name, &response)
+                    })
+                }),
+                required_role: method.role.into(),
+            },
+        );
+        self
+    }
+
+    /// Register a typed NATS-backed RPC handler with auth context.
+    pub(crate) fn nats_auth_typed_rpc<Req, Resp, F>(
+        mut self,
+        method: RpcMethod<Req, Resp>,
+        f: F,
+    ) -> Self
+    where
+        Req: DeserializeOwned + 'static,
+        Resp: Serialize + 'static,
+        F: for<'a> Fn(
+                &'a async_nats::Client,
+                &'a sinex_primitives::environment::SinexEnvironment,
+                Req,
+                &'a RpcAuthContext,
+            ) -> Pin<Box<dyn Future<Output = Result<Resp>> + Send + 'a>>
+            + Send
+            + Sync
+            + 'static,
+    {
+        let f = Arc::new(f);
+        self.methods.insert(
+            method.name,
             RegistryEntry {
                 handler: Arc::new(move |params, services, auth| {
                     let f = Arc::clone(&f);
@@ -254,31 +535,37 @@ impl RpcRegistry {
                             SinexError::configuration("NATS client is not available")
                         })?;
                         let env = services.environment();
-                        f(nats, env, params, auth).await
+                        let request = decode_rpc_params(method.name, params)?;
+                        let response = f(nats, env, request, auth).await?;
+                        encode_rpc_response(method.name, &response)
                     })
                 }),
-                required_role: role,
+                required_role: method.role.into(),
             },
         );
         self
     }
 
-    /// Register a coordination RPC handler
-    ///
-    /// Automatically extracts and validates `CoordinationKvClient` from `ServiceContainer`.
-    pub(crate) fn coord_rpc<F>(mut self, method: &'static str, role: Role, f: F) -> Self
+    /// Register a typed coordination RPC handler.
+    pub(crate) fn coord_typed_rpc<Req, Resp, F>(
+        mut self,
+        method: RpcMethod<Req, Resp>,
+        f: F,
+    ) -> Self
     where
+        Req: DeserializeOwned + 'static,
+        Resp: Serialize + 'static,
         F: for<'a> Fn(
                 &'a CoordinationKvClient,
-                JsonValue,
-            ) -> Pin<Box<dyn Future<Output = Result<JsonValue>> + Send + 'a>>
+                Req,
+            ) -> Pin<Box<dyn Future<Output = Result<Resp>> + Send + 'a>>
             + Send
             + Sync
             + 'static,
     {
         let f = Arc::new(f);
         self.methods.insert(
-            method,
+            method.name,
             RegistryEntry {
                 handler: Arc::new(move |params, services, _auth| {
                     let f = Arc::clone(&f);
@@ -292,10 +579,12 @@ impl RpcRegistry {
                                     "Coordination client is not initialized (NATS connection required)"
                                 )
                             })?;
-                        f(client, params).await
+                        let request = decode_rpc_params(method.name, params)?;
+                        let response = f(client, request).await?;
+                        encode_rpc_response(method.name, &response)
                     })
                 }),
-                required_role: role,
+                required_role: method.role.into(),
             },
         );
         self
@@ -357,6 +646,30 @@ impl RpcRegistry {
     }
 }
 
+fn decode_rpc_params<Req>(method: &str, params: JsonValue) -> Result<Req>
+where
+    Req: DeserializeOwned,
+{
+    serde_path_to_error::deserialize(params).map_err(|error| {
+        let path = error.path().to_string();
+        SinexError::serialization("invalid RPC request parameters")
+            .with_context("method", method)
+            .with_context("json_path", path)
+            .with_std_error(error.inner())
+    })
+}
+
+fn encode_rpc_response<Resp>(method: &str, response: &Resp) -> Result<JsonValue>
+where
+    Resp: Serialize,
+{
+    serde_json::to_value(response).map_err(|error| {
+        SinexError::serialization("failed to serialize RPC response")
+            .with_context("method", method)
+            .with_std_error(&error)
+    })
+}
+
 /// Build the RPC registry with all method handlers
 ///
 /// This function registers all RPC methods from the original dispatch table.
@@ -384,27 +697,29 @@ fn build_registry_impl() -> RpcRegistry {
     use crate::handlers::{
         handle_audit_get, handle_automata_status, handle_coordination_get_leader,
         handle_coordination_instance_health, handle_coordination_list_instances,
-        handle_create_entities, handle_create_note, handle_dlq_list, handle_dlq_peek,
-        handle_dlq_purge, handle_dlq_requeue, handle_documents_get, handle_documents_get_chunks,
+        handle_create_entities, handle_create_note, handle_curation_list_proposals,
+        handle_curation_record_judgment, handle_dlq_list, handle_dlq_peek, handle_dlq_purge,
+        handle_dlq_requeue, handle_documents_get, handle_documents_get_chunks,
         handle_documents_search, handle_events_annotate, handle_events_lineage,
         handle_events_query, handle_ingestors_status, handle_lifecycle_archive,
         handle_lifecycle_restore, handle_lifecycle_status, handle_link_entities,
         handle_nodes_drain, handle_nodes_health, handle_nodes_list, handle_nodes_list_active,
         handle_nodes_resume, handle_nodes_set_horizon, handle_ops_cancel, handle_ops_get,
-        handle_ops_list, handle_ops_start, handle_private_mode_disable, handle_private_mode_enable,
-        handle_private_mode_status, handle_replay_approve_operation,
-        handle_replay_cancel_operation, handle_replay_create_operation,
-        handle_replay_execute_operation, handle_replay_list_operations,
-        handle_replay_operation_status, handle_replay_preview_operation,
-        handle_replay_submit_operation, handle_retrieve_blob, handle_shadow_create,
-        handle_shadow_delete, handle_shadow_list, handle_sources_annotate, handle_sources_archive,
-        handle_sources_bindings_create, handle_sources_bindings_list,
+        handle_ops_list, handle_ops_start, handle_private_mode_disable_service,
+        handle_private_mode_enable_service, handle_private_mode_status_service,
+        handle_replay_approve_operation, handle_replay_cancel_operation,
+        handle_replay_create_operation, handle_replay_execute_operation,
+        handle_replay_list_operations, handle_replay_operation_status,
+        handle_replay_preview_operation, handle_replay_submit_operation, handle_retrieve_blob,
+        handle_shadow_create, handle_shadow_delete, handle_shadow_list, handle_sources_annotate,
+        handle_sources_archive, handle_sources_bindings_create, handle_sources_bindings_list,
         handle_sources_bindings_resolve, handle_sources_continuity,
         handle_sources_continuity_explain_gap, handle_sources_continuity_get,
         handle_sources_continuity_list, handle_sources_coverage, handle_sources_list,
         handle_sources_presets_list, handle_sources_readiness_get, handle_sources_readiness_list,
         handle_sources_show, handle_sources_stage, handle_store_blob, handle_system_health,
-        handle_system_ping, handle_system_version, handle_telemetry_assembly_stats,
+        handle_system_ping, handle_system_version, handle_tasks_complete, handle_tasks_create,
+        handle_tasks_state_get, handle_telemetry_assembly_stats,
         handle_telemetry_command_frequency, handle_telemetry_current_device_state,
         handle_telemetry_current_health, handle_telemetry_file_activity,
         handle_telemetry_gateway_stats, handle_telemetry_ingestd_batch_stats,
@@ -420,543 +735,307 @@ fn build_registry_impl() -> RpcRegistry {
         // ─────────────────────────────────────────────────────────────
         // ReadOnly methods (all authenticated users can access)
         // ─────────────────────────────────────────────────────────────
-        .register(
-            methods::SYSTEM_PING,
-            Role::ReadOnly,
-            |params, services, _auth| {
-                Box::pin(async move { handle_system_ping(services, params).await })
-            },
-        )
-        .register(
-            methods::SYSTEM_VERSION,
-            Role::ReadOnly,
-            |params, services, _auth| {
-                Box::pin(async move { handle_system_version(services, params).await })
-            },
-        )
-        .register(
-            methods::SYSTEM_HEALTH,
-            Role::ReadOnly,
-            |params, services, _auth| {
-                Box::pin(async move { handle_system_health(services, params).await })
-            },
-        )
-        .register(
-            methods::PRIVACY_PRIVATE_MODE_STATUS,
-            Role::ReadOnly,
-            |params, services, _auth| {
-                Box::pin(
-                    async move { handle_private_mode_status(services.state_dir(), params).await },
-                )
-            },
-        )
+        .service_typed_rpc(SYSTEM_PING_METHOD, boxed!(handle_system_ping))
+        .service_typed_rpc(SYSTEM_VERSION_METHOD, boxed!(handle_system_version))
+        .service_typed_rpc(SYSTEM_HEALTH_METHOD, boxed!(handle_system_health))
+        .service_typed_rpc(PRIVACY_PRIVATE_MODE_STATUS_METHOD, |services, request| {
+            Box::pin(async move { handle_private_mode_status_service(services, request).await })
+        })
         // Composable event query methods (ReadOnly)
-        .pool_rpc(
-            methods::EVENTS_QUERY,
-            Role::ReadOnly,
-            boxed!(handle_events_query),
+        .pool_typed_rpc(EVENTS_QUERY_METHOD, boxed!(handle_events_query))
+        .pool_typed_rpc(
+            CURATION_PROPOSALS_LIST_METHOD,
+            boxed!(handle_curation_list_proposals),
         )
-        .pool_rpc(
-            methods::EVENTS_LINEAGE,
-            Role::ReadOnly,
-            boxed!(handle_events_lineage),
-        )
+        .pool_typed_rpc(EVENTS_LINEAGE_METHOD, boxed!(handle_events_lineage))
+        .pool_typed_rpc(TASKS_STATE_GET_METHOD, boxed!(handle_tasks_state_get))
         // Coordination methods (ReadOnly)
-        .coord_rpc(
-            methods::COORDINATION_LIST_INSTANCES,
-            Role::ReadOnly,
+        .coord_typed_rpc(
+            COORDINATION_LIST_INSTANCES_METHOD,
             boxed!(handle_coordination_list_instances),
         )
-        .coord_rpc(
-            methods::COORDINATION_GET_LEADER,
-            Role::ReadOnly,
+        .coord_typed_rpc(
+            COORDINATION_GET_LEADER_METHOD,
             boxed!(handle_coordination_get_leader),
         )
-        .coord_rpc(
-            methods::COORDINATION_INSTANCE_HEALTH,
-            Role::ReadOnly,
+        .coord_typed_rpc(
+            COORDINATION_INSTANCE_HEALTH_METHOD,
             boxed!(handle_coordination_instance_health),
         )
         // Audit trail methods (ReadOnly)
-        .pool_rpc(methods::AUDIT_GET, Role::ReadOnly, boxed!(handle_audit_get))
+        .pool_typed_rpc(AUDIT_GET_METHOD, boxed!(handle_audit_get))
         // Document search methods (ReadOnly)
-        .pool_rpc(
-            methods::DOCUMENTS_SEARCH,
-            Role::ReadOnly,
-            boxed!(handle_documents_search),
-        )
-        .pool_rpc(
-            methods::DOCUMENTS_GET,
-            Role::ReadOnly,
-            boxed!(handle_documents_get),
-        )
-        .pool_rpc(
-            methods::DOCUMENTS_GET_CHUNKS,
-            Role::ReadOnly,
+        .pool_typed_rpc(DOCUMENTS_SEARCH_METHOD, boxed!(handle_documents_search))
+        .pool_typed_rpc(DOCUMENTS_GET_METHOD, boxed!(handle_documents_get))
+        .pool_typed_rpc(
+            DOCUMENTS_GET_CHUNKS_METHOD,
             boxed!(handle_documents_get_chunks),
         )
         // Operations log read methods (ReadOnly)
-        .pool_auth_rpc(
-            methods::OPS_LIST,
-            Role::ReadOnly,
-            boxed!(handle_ops_list, 3),
-        )
-        .pool_auth_rpc(methods::OPS_GET, Role::ReadOnly, boxed!(handle_ops_get, 3))
+        .pool_auth_typed_rpc(OPS_LIST_METHOD, boxed!(handle_ops_list, 3))
+        .pool_auth_typed_rpc(OPS_GET_METHOD, boxed!(handle_ops_get, 3))
         // Lifecycle status (ReadOnly)
-        .pool_rpc(
-            methods::LIFECYCLE_STATUS,
-            Role::ReadOnly,
-            boxed!(handle_lifecycle_status),
-        )
+        .pool_typed_rpc(LIFECYCLE_STATUS_METHOD, boxed!(handle_lifecycle_status))
         // DLQ read methods (ReadOnly)
-        .register(
-            methods::DLQ_LIST,
-            Role::ReadOnly,
-            |params, services, _auth| {
-                Box::pin(async move { handle_dlq_list(services, params).await })
-            },
-        )
-        .register(
-            methods::DLQ_PEEK,
-            Role::ReadOnly,
-            |params, services, _auth| {
-                Box::pin(async move { handle_dlq_peek(services, params).await })
-            },
-        )
+        .service_typed_rpc(DLQ_LIST_METHOD, boxed!(handle_dlq_list))
+        .service_typed_rpc(DLQ_PEEK_METHOD, boxed!(handle_dlq_peek))
         // Node listing (ReadOnly)
-        .nats_rpc(
-            methods::NODES_LIST,
-            Role::ReadOnly,
-            boxed!(handle_nodes_list, 3),
-        )
+        .nats_typed_rpc(NODES_LIST_METHOD, boxed!(handle_nodes_list, 3))
         // Replay status/list (ReadOnly)
-        .replay_rpc(
-            methods::REPLAY_OPERATION_STATUS,
-            Role::ReadOnly,
+        .replay_typed_rpc(
+            REPLAY_OPERATION_STATUS_METHOD,
             boxed!(handle_replay_operation_status, 3),
         )
-        .replay_rpc(
-            methods::REPLAY_LIST_OPERATIONS,
-            Role::ReadOnly,
+        .replay_typed_rpc(
+            REPLAY_LIST_OPERATIONS_METHOD,
             boxed!(handle_replay_list_operations, 3),
         )
         // Node registry status methods (ReadOnly)
-        .pool_rpc(
-            methods::NODES_LIST_ACTIVE,
-            Role::ReadOnly,
-            boxed!(handle_nodes_list_active),
-        )
-        .pool_rpc(
-            methods::NODES_HEALTH,
-            Role::ReadOnly,
-            boxed!(handle_nodes_health),
-        )
-        .pool_rpc(
-            methods::AUTOMATA_STATUS,
-            Role::ReadOnly,
-            boxed!(handle_automata_status),
-        )
-        .pool_rpc(
-            methods::INGESTORS_STATUS,
-            Role::ReadOnly,
-            boxed!(handle_ingestors_status),
-        )
+        .pool_typed_rpc(NODES_LIST_ACTIVE_METHOD, boxed!(handle_nodes_list_active))
+        .pool_typed_rpc(NODES_HEALTH_METHOD, boxed!(handle_nodes_health))
+        .pool_typed_rpc(AUTOMATA_STATUS_METHOD, boxed!(handle_automata_status))
+        .pool_typed_rpc(INGESTORS_STATUS_METHOD, boxed!(handle_ingestors_status))
         // Source material inventory (ReadOnly)
-        .pool_rpc(
-            methods::SOURCES_LIST,
-            Role::ReadOnly,
-            boxed!(handle_sources_list),
-        )
-        .pool_rpc(
-            methods::SOURCES_SHOW,
-            Role::ReadOnly,
-            boxed!(handle_sources_show),
-        )
-        .pool_rpc(
-            methods::SOURCES_COVERAGE,
-            Role::ReadOnly,
-            boxed!(handle_sources_coverage),
-        )
-        .pool_rpc(
-            methods::SOURCES_CONTINUITY,
-            Role::ReadOnly,
-            boxed!(handle_sources_continuity),
-        )
-        .pool_rpc(
-            methods::SOURCES_READINESS_LIST,
-            Role::ReadOnly,
+        .pool_typed_rpc(SOURCES_LIST_METHOD, boxed!(handle_sources_list))
+        .pool_typed_rpc(SOURCES_SHOW_METHOD, boxed!(handle_sources_show))
+        .pool_typed_rpc(SOURCES_COVERAGE_METHOD, boxed!(handle_sources_coverage))
+        .pool_typed_rpc(SOURCES_CONTINUITY_METHOD, boxed!(handle_sources_continuity))
+        .pool_typed_rpc(
+            SOURCES_READINESS_LIST_METHOD,
             boxed!(handle_sources_readiness_list),
         )
-        .pool_rpc(
-            methods::SOURCES_READINESS_GET,
-            Role::ReadOnly,
+        .pool_typed_rpc(
+            SOURCES_READINESS_GET_METHOD,
             boxed!(handle_sources_readiness_get),
         )
-        .pool_rpc(
-            methods::SOURCES_CONTINUITY_LIST,
-            Role::ReadOnly,
+        .pool_typed_rpc(
+            SOURCES_CONTINUITY_LIST_METHOD,
             boxed!(handle_sources_continuity_list),
         )
-        .pool_rpc(
-            methods::SOURCES_CONTINUITY_GET,
-            Role::ReadOnly,
+        .pool_typed_rpc(
+            SOURCES_CONTINUITY_GET_METHOD,
             boxed!(handle_sources_continuity_get),
         )
-        .pool_rpc(
-            methods::SOURCES_CONTINUITY_EXPLAIN_GAP,
-            Role::ReadOnly,
+        .pool_typed_rpc(
+            SOURCES_CONTINUITY_EXPLAIN_GAP_METHOD,
             boxed!(handle_sources_continuity_explain_gap),
         )
         // Source presets and bindings (ReadOnly)
-        .register(
-            methods::SOURCES_PRESETS_LIST,
-            Role::ReadOnly,
-            |params, services, auth| {
-                Box::pin(async move { handle_sources_presets_list(params, services, auth).await })
-            },
+        .service_typed_rpc(
+            SOURCES_PRESETS_LIST_METHOD,
+            boxed!(handle_sources_presets_list),
         )
-        .pool_rpc(
-            methods::SOURCES_BINDINGS_LIST,
-            Role::ReadOnly,
+        .pool_typed_rpc(
+            SOURCES_BINDINGS_LIST_METHOD,
             boxed!(handle_sources_bindings_list),
         )
         // Telemetry read models (ReadOnly)
-        .pool_rpc(
-            methods::TELEMETRY_CURRENT_HEALTH,
-            Role::ReadOnly,
+        .pool_typed_rpc(
+            TELEMETRY_CURRENT_HEALTH_METHOD,
             boxed!(handle_telemetry_current_health),
         )
-        .pool_rpc(
-            methods::TELEMETRY_CURRENT_DEVICE_STATE,
-            Role::ReadOnly,
+        .pool_typed_rpc(
+            TELEMETRY_CURRENT_DEVICE_STATE_METHOD,
             boxed!(handle_telemetry_current_device_state),
         )
-        .pool_rpc(
-            methods::TELEMETRY_WINDOW_FOCUS,
-            Role::ReadOnly,
+        .pool_typed_rpc(
+            TELEMETRY_WINDOW_FOCUS_METHOD,
             boxed!(handle_telemetry_window_focus),
         )
-        .pool_rpc(
-            methods::TELEMETRY_COMMAND_FREQUENCY,
-            Role::ReadOnly,
+        .pool_typed_rpc(
+            TELEMETRY_COMMAND_FREQUENCY_METHOD,
             boxed!(handle_telemetry_command_frequency),
         )
-        .pool_rpc(
-            methods::TELEMETRY_FILE_ACTIVITY,
-            Role::ReadOnly,
+        .pool_typed_rpc(
+            TELEMETRY_FILE_ACTIVITY_METHOD,
             boxed!(handle_telemetry_file_activity),
         )
-        .pool_rpc(
-            methods::TELEMETRY_RECENT_ACTIVITY,
-            Role::ReadOnly,
+        .pool_typed_rpc(
+            TELEMETRY_RECENT_ACTIVITY_METHOD,
             boxed!(handle_telemetry_recent_activity),
         )
-        .pool_rpc(
-            methods::TELEMETRY_SYSTEM_STATE,
-            Role::ReadOnly,
+        .pool_typed_rpc(
+            TELEMETRY_SYSTEM_STATE_METHOD,
             boxed!(handle_telemetry_system_state),
         )
-        .pool_rpc(
-            methods::TELEMETRY_GATEWAY_STATS,
-            Role::ReadOnly,
+        .pool_typed_rpc(
+            TELEMETRY_GATEWAY_STATS_METHOD,
             boxed!(handle_telemetry_gateway_stats),
         )
-        .pool_rpc(
-            methods::TELEMETRY_STREAM_STATS,
-            Role::ReadOnly,
+        .pool_typed_rpc(
+            TELEMETRY_STREAM_STATS_METHOD,
             boxed!(handle_telemetry_stream_stats),
         )
-        .pool_rpc(
-            methods::TELEMETRY_ASSEMBLY_STATS,
-            Role::ReadOnly,
+        .pool_typed_rpc(
+            TELEMETRY_ASSEMBLY_STATS_METHOD,
             boxed!(handle_telemetry_assembly_stats),
         )
-        .pool_rpc(
-            methods::TELEMETRY_NODE_STATS,
-            Role::ReadOnly,
+        .pool_typed_rpc(
+            TELEMETRY_NODE_STATS_METHOD,
             boxed!(handle_telemetry_node_stats),
         )
-        .pool_rpc(
-            methods::TELEMETRY_METRIC_COUNTERS,
-            Role::ReadOnly,
+        .pool_typed_rpc(
+            TELEMETRY_METRIC_COUNTERS_METHOD,
             boxed!(handle_telemetry_metric_counters),
         )
-        .pool_rpc(
-            methods::TELEMETRY_INGESTD_BATCH_STATS,
-            Role::ReadOnly,
+        .pool_typed_rpc(
+            TELEMETRY_INGESTD_BATCH_STATS_METHOD,
             boxed!(handle_telemetry_ingestd_batch_stats),
         )
-        .pool_rpc(
-            methods::TELEMETRY_INGESTD_VALIDATION,
-            Role::ReadOnly,
+        .pool_typed_rpc(
+            TELEMETRY_INGESTD_VALIDATION_METHOD,
             boxed!(handle_telemetry_ingestd_validation),
         )
-        .pool_rpc(
-            methods::TELEMETRY_THROUGHPUT,
-            Role::ReadOnly,
+        .pool_typed_rpc(
+            TELEMETRY_THROUGHPUT_METHOD,
             boxed!(handle_telemetry_throughput),
         )
         // ─────────────────────────────────────────────────────────────
         // Write methods (requires Write or Admin role)
         // ─────────────────────────────────────────────────────────────
         // Event annotations (#1172 AC-9)
-        .pool_auth_rpc(
-            methods::EVENTS_ANNOTATE,
-            Role::Write,
-            boxed!(handle_events_annotate, 3),
+        .pool_auth_typed_rpc(EVENTS_ANNOTATE_METHOD, boxed!(handle_events_annotate, 3))
+        .pool_auth_typed_rpc(
+            CURATION_JUDGMENTS_RECORD_METHOD,
+            boxed!(handle_curation_record_judgment, 3),
         )
+        .pool_auth_typed_rpc(TASKS_CREATE_METHOD, boxed!(handle_tasks_create, 3))
+        .pool_auth_typed_rpc(TASKS_COMPLETE_METHOD, boxed!(handle_tasks_complete, 3))
         // PKM methods (Write)
-        .register(
-            methods::PKM_CREATE_NOTE,
-            Role::Write,
-            |params, services, auth| {
-                Box::pin(
-                    async move { handle_create_note(services.pkm.as_ref(), params, auth).await },
-                )
-            },
+        .pkm_auth_typed_rpc(PKM_CREATE_NOTE_METHOD, boxed!(handle_create_note, 3))
+        .pkm_auth_typed_rpc(
+            PKM_CREATE_ENTITIES_METHOD,
+            boxed!(handle_create_entities, 3),
         )
-        .register(
-            methods::PKM_CREATE_ENTITIES,
-            Role::Write,
-            |params, services, auth| {
-                Box::pin(async move {
-                    handle_create_entities(services.pkm.as_ref(), params, auth).await
-                })
-            },
-        )
-        .register(
-            methods::PKM_LINK_ENTITIES,
-            Role::Write,
-            |params, services, auth| {
-                Box::pin(
-                    async move { handle_link_entities(services.pkm.as_ref(), params, auth).await },
-                )
-            },
-        )
+        .pkm_auth_typed_rpc(PKM_LINK_ENTITIES_METHOD, boxed!(handle_link_entities, 3))
         // Content methods (Write)
-        .register(
-            methods::CONTENT_STORE_BLOB,
-            Role::Write,
-            |params, services, auth| {
-                Box::pin(async move { handle_store_blob(services, params, auth).await })
-            },
-        )
-        .register(
-            methods::CONTENT_RETRIEVE_BLOB,
-            Role::ReadOnly,
-            |params, services, _auth| {
-                Box::pin(async move { handle_retrieve_blob(services, params).await })
-            },
-        )
+        .service_auth_typed_rpc(CONTENT_STORE_BLOB_METHOD, boxed!(handle_store_blob, 3))
+        .service_typed_rpc(CONTENT_RETRIEVE_BLOB_METHOD, boxed!(handle_retrieve_blob))
         // Source material staging (Write — registers new materials, uses services)
-        .register(
-            methods::SOURCES_STAGE,
-            Role::Write,
-            |params, services, auth| {
-                Box::pin(async move { handle_sources_stage(params, services, auth).await })
-            },
-        )
+        .service_auth_typed_rpc(SOURCES_STAGE_METHOD, boxed!(handle_sources_stage, 3))
         // Source binding management (Write)
-        .pool_rpc(
-            methods::SOURCES_BINDINGS_CREATE,
-            Role::Write,
+        .pool_typed_rpc(
+            SOURCES_BINDINGS_CREATE_METHOD,
             boxed!(handle_sources_bindings_create),
         )
-        .pool_rpc(
-            methods::SOURCES_BINDINGS_RESOLVE,
-            Role::Write,
+        .pool_typed_rpc(
+            SOURCES_BINDINGS_RESOLVE_METHOD,
             boxed!(handle_sources_bindings_resolve),
         )
         // Source annotation (Write — modifies metadata)
-        .pool_rpc(
-            methods::SOURCES_ANNOTATE,
-            Role::Write,
-            boxed!(handle_sources_annotate),
-        )
+        .pool_typed_rpc(SOURCES_ANNOTATE_METHOD, boxed!(handle_sources_annotate))
         // Node operations (Write - affects system but not destructive)
-        .nats_auth_rpc(
-            methods::NODES_DRAIN,
-            Role::Write,
-            boxed!(handle_nodes_drain, 4),
-        )
-        .nats_auth_rpc(
-            methods::NODES_RESUME,
-            Role::Write,
-            boxed!(handle_nodes_resume, 4),
-        )
-        .nats_auth_rpc(
-            methods::NODES_SET_HORIZON,
-            Role::Write,
+        .nats_auth_typed_rpc(NODES_DRAIN_METHOD, boxed!(handle_nodes_drain, 4))
+        .nats_auth_typed_rpc(NODES_RESUME_METHOD, boxed!(handle_nodes_resume, 4))
+        .nats_auth_typed_rpc(
+            NODES_SET_HORIZON_METHOD,
             boxed!(handle_nodes_set_horizon, 4),
         )
         // Operations log write (Write)
-        .pool_auth_rpc(methods::OPS_START, Role::Write, boxed!(handle_ops_start, 3))
-        .register(
-            methods::PRIVACY_PRIVATE_MODE_ENABLE,
-            Role::Write,
-            |params, services, auth| {
-                Box::pin(async move {
-                    let nats = services.nats_client().ok_or_else(|| {
-                        SinexError::configuration(
-                            "NATS client is not available for private-mode broadcast",
-                        )
-                    })?;
-                    let control = Some((nats, services.environment()));
-                    handle_private_mode_enable(
-                        services.pool(),
-                        services.state_dir(),
-                        control,
-                        params,
-                        auth,
-                    )
-                    .await
-                })
-            },
+        .pool_auth_typed_rpc(OPS_START_METHOD, boxed!(handle_ops_start, 3))
+        .service_auth_typed_rpc(
+            PRIVACY_PRIVATE_MODE_ENABLE_METHOD,
+            boxed!(handle_private_mode_enable_service, 3),
         )
-        .register(
-            methods::PRIVACY_PRIVATE_MODE_DISABLE,
-            Role::Write,
-            |params, services, auth| {
-                Box::pin(async move {
-                    let nats = services.nats_client().ok_or_else(|| {
-                        SinexError::configuration(
-                            "NATS client is not available for private-mode broadcast",
-                        )
-                    })?;
-                    let control = Some((nats, services.environment()));
-                    handle_private_mode_disable(
-                        services.pool(),
-                        services.state_dir(),
-                        control,
-                        params,
-                        auth,
-                    )
-                    .await
-                })
-            },
+        .service_auth_typed_rpc(
+            PRIVACY_PRIVATE_MODE_DISABLE_METHOD,
+            boxed!(handle_private_mode_disable_service, 3),
         )
         // Replay create/preview (Write - doesn't execute yet)
-        .replay_rpc(
-            methods::REPLAY_CREATE_OPERATION,
-            Role::Write,
+        .replay_typed_rpc(
+            REPLAY_CREATE_OPERATION_METHOD,
             boxed!(handle_replay_create_operation, 3),
         )
-        .replay_rpc(
-            methods::REPLAY_PREVIEW_OPERATION,
-            Role::Write,
+        .replay_typed_rpc(
+            REPLAY_PREVIEW_OPERATION_METHOD,
             boxed!(handle_replay_preview_operation, 3),
         )
         // ─────────────────────────────────────────────────────────────
         // Admin methods (requires Admin role - destructive operations)
         // ─────────────────────────────────────────────────────────────
         // Replay approve/execute/cancel (Admin - actually modifies data)
-        .replay_rpc(
-            methods::REPLAY_APPROVE_OPERATION,
-            Role::Admin,
+        .replay_typed_rpc(
+            REPLAY_APPROVE_OPERATION_METHOD,
             boxed!(handle_replay_approve_operation, 3),
         )
-        .replay_rpc(
-            methods::REPLAY_SUBMIT_OPERATION,
-            Role::Admin,
+        .replay_typed_rpc(
+            REPLAY_SUBMIT_OPERATION_METHOD,
             boxed!(handle_replay_submit_operation, 3),
         )
-        .replay_rpc(
-            methods::REPLAY_EXECUTE_OPERATION,
-            Role::Admin,
+        .replay_typed_rpc(
+            REPLAY_EXECUTE_OPERATION_METHOD,
             boxed!(handle_replay_execute_operation, 3),
         )
-        .replay_rpc(
-            methods::REPLAY_CANCEL_OPERATION,
-            Role::Admin,
+        .replay_typed_rpc(
+            REPLAY_CANCEL_OPERATION_METHOD,
             boxed!(handle_replay_cancel_operation, 3),
         )
         // DLQ mutation methods (Admin)
-        .register(
-            methods::DLQ_REQUEUE,
-            Role::Admin,
-            |params, services, auth| {
-                Box::pin(async move { handle_dlq_requeue(services, params, auth).await })
-            },
-        )
-        .register(methods::DLQ_PURGE, Role::Admin, |params, services, auth| {
-            Box::pin(async move { handle_dlq_purge(services, params, auth).await })
-        })
+        .service_auth_typed_rpc(DLQ_REQUEUE_METHOD, boxed!(handle_dlq_requeue, 3))
+        .service_auth_typed_rpc(DLQ_PURGE_METHOD, boxed!(handle_dlq_purge, 3))
         // Operations cancel (Admin)
-        .pool_auth_rpc(
-            methods::OPS_CANCEL,
-            Role::Admin,
-            boxed!(handle_ops_cancel, 3),
-        )
+        .pool_auth_typed_rpc(OPS_CANCEL_METHOD, boxed!(handle_ops_cancel, 3))
         // Data lifecycle mutations (Admin - DESTRUCTIVE)
-        .pool_auth_rpc(
-            methods::LIFECYCLE_ARCHIVE,
-            Role::Admin,
+        .pool_auth_typed_rpc(
+            LIFECYCLE_ARCHIVE_METHOD,
             boxed!(handle_lifecycle_archive, 3),
         )
         // Source material archival (Admin — archives material + cascade)
-        .pool_rpc(
-            methods::SOURCES_ARCHIVE,
-            Role::Admin,
-            boxed!(handle_sources_archive),
-        )
-        .pool_auth_rpc(
-            methods::LIFECYCLE_RESTORE,
-            Role::Admin,
+        .pool_typed_rpc(SOURCES_ARCHIVE_METHOD, boxed!(handle_sources_archive))
+        .pool_auth_typed_rpc(
+            LIFECYCLE_RESTORE_METHOD,
             boxed!(handle_lifecycle_restore, 3),
         )
         // Two-step tombstone operations (SEC-003)
-        .pool_auth_rpc(
-            methods::LIFECYCLE_TOMBSTONE_CREATE,
-            Role::Admin,
+        .pool_auth_typed_rpc(
+            LIFECYCLE_TOMBSTONE_CREATE_METHOD,
             boxed!(handle_tombstone_create, 3),
         )
-        .pool_auth_rpc(
-            methods::LIFECYCLE_TOMBSTONE_PREVIEW,
-            Role::Admin,
+        .pool_auth_typed_rpc(
+            LIFECYCLE_TOMBSTONE_PREVIEW_METHOD,
             boxed!(handle_tombstone_preview, 3),
         )
-        .register(
-            methods::LIFECYCLE_TOMBSTONE_APPROVE,
-            Role::Admin,
-            |params, services, auth| {
-                Box::pin(async move { handle_tombstone_approve(params, services, auth).await })
-            },
+        .service_auth_typed_rpc(
+            LIFECYCLE_TOMBSTONE_APPROVE_METHOD,
+            boxed!(handle_tombstone_approve, 3),
         )
-        .pool_auth_rpc(
-            methods::LIFECYCLE_TOMBSTONE_CANCEL,
-            Role::Admin,
+        .pool_auth_typed_rpc(
+            LIFECYCLE_TOMBSTONE_CANCEL_METHOD,
             boxed!(handle_tombstone_cancel, 3),
         )
-        .pool_auth_rpc(
-            methods::LIFECYCLE_TOMBSTONE_LIST,
-            Role::Admin,
+        .pool_auth_typed_rpc(
+            LIFECYCLE_TOMBSTONE_LIST_METHOD,
             boxed!(handle_tombstone_list, 3),
         )
-        .pool_auth_rpc(
-            methods::LIFECYCLE_TOMBSTONE_STATUS,
-            Role::Admin,
+        .pool_auth_typed_rpc(
+            LIFECYCLE_TOMBSTONE_STATUS_METHOD,
             boxed!(handle_tombstone_status, 3),
         )
         // Shadow consumer mutations (Admin)
-        .register(
-            methods::SHADOW_CREATE,
-            Role::Admin,
-            |params, services, _auth| {
-                Box::pin(async move { handle_shadow_create(services, params).await })
-            },
-        )
-        .register(
-            methods::SHADOW_LIST,
-            Role::ReadOnly,
-            |params, services, _auth| {
-                Box::pin(async move { handle_shadow_list(services, params).await })
-            },
-        )
-        .register(
-            methods::SHADOW_DELETE,
-            Role::Admin,
-            |params, services, auth| {
-                Box::pin(async move { handle_shadow_delete(services, params, auth).await })
-            },
-        )
+        .service_typed_rpc(SHADOW_CREATE_METHOD, boxed!(handle_shadow_create))
+        .service_typed_rpc(SHADOW_LIST_METHOD, boxed!(handle_shadow_list))
+        .service_auth_typed_rpc(SHADOW_DELETE_METHOD, boxed!(handle_shadow_delete, 3))
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn registry_build_surface_does_not_use_raw_registration_helpers() {
+        let source = include_str!("rpc_registry.rs");
+        let registry_impl = source
+            .split("fn build_registry_impl() -> RpcRegistry")
+            .nth(1)
+            .expect("registry implementation should exist")
+            .split("#[cfg(test)]")
+            .next()
+            .expect("test module marker should delimit registry implementation");
+
+        let forbidden = [".register(", "pool_rpc(", "pool_auth_rpc(", "nats_rpc("];
+        for pattern in forbidden {
+            assert!(
+                !registry_impl.contains(pattern),
+                "gateway registry build surface must use RpcMethod descriptor-backed typed helpers, found `{pattern}`"
+            );
+        }
+    }
 }

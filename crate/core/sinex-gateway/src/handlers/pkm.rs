@@ -1,10 +1,8 @@
 //! PKM RPC handlers.
 
-use super::rpc_handlers::{
-    RpcParams, decode_note_content, validate_entity_link_ids, validate_entity_name,
-};
+use super::rpc_handlers::{decode_note_content, validate_entity_link_ids, validate_entity_name};
 use crate::rpc_server::RpcAuthContext;
-use serde_json::{Value, json};
+use serde_json::json;
 use sinex_db::pkm::PkmService;
 use sinex_primitives::rpc::pkm::{
     CreateEntitiesRequest, CreateEntitiesResponse, CreateNoteRequest, CreateNoteResponse,
@@ -14,13 +12,9 @@ use sinex_primitives::{Event, Id, JsonValue, Result, SinexError, domain::EntityR
 
 pub async fn handle_create_note(
     service: &PkmService,
-    params: Value,
+    request: CreateNoteRequest,
     auth: &RpcAuthContext,
-) -> Result<Value> {
-    RpcParams::new(&params).optional_array("tags")?;
-    let request: CreateNoteRequest = serde_json::from_value(params).map_err(|error| {
-        SinexError::serialization("invalid `pkm.create_note` request").with_std_error(&error)
-    })?;
+) -> Result<CreateNoteResponse> {
     let content = decode_note_content(&request.content)?;
 
     let annotation_id = service
@@ -32,24 +26,16 @@ pub async fn handle_create_note(
             None,
         )
         .await?;
-    serde_json::to_value(CreateNoteResponse {
+    Ok(CreateNoteResponse {
         annotation_id: Id::<Event<JsonValue>>::from_uuid(annotation_id),
-    })
-    .map_err(|error| {
-        SinexError::serialization("failed to serialize `pkm.create_note` response")
-            .with_std_error(&error)
     })
 }
 
 pub async fn handle_create_entities(
     service: &PkmService,
-    params: Value,
+    request: CreateEntitiesRequest,
     auth: &RpcAuthContext,
-) -> Result<Value> {
-    RpcParams::new(&params).optional_array("entities")?;
-    let request: CreateEntitiesRequest = serde_json::from_value(params).map_err(|error| {
-        SinexError::serialization("invalid `pkm.create_entities` request").with_std_error(&error)
-    })?;
+) -> Result<CreateEntitiesResponse> {
     let entities = request
         .entities
         .iter()
@@ -66,24 +52,16 @@ pub async fn handle_create_entities(
             auth.actor_id(),
         )
         .await?;
-    serde_json::to_value(CreateEntitiesResponse {
+    Ok(CreateEntitiesResponse {
         entity_ids: entity_ids.into_iter().map(Id::from_uuid).collect(),
-    })
-    .map_err(|error| {
-        SinexError::serialization("failed to serialize `pkm.create_entities` response")
-            .with_std_error(&error)
     })
 }
 
 pub async fn handle_link_entities(
     service: &PkmService,
-    params: Value,
+    request: LinkEntitiesRequest,
     auth: &RpcAuthContext,
-) -> Result<Value> {
-    RpcParams::new(&params).optional_object("metadata")?;
-    let request: LinkEntitiesRequest = serde_json::from_value(params).map_err(|error| {
-        SinexError::serialization("invalid `pkm.link_entities` request").with_std_error(&error)
-    })?;
+) -> Result<LinkEntitiesResponse> {
     validate_entity_link_ids(&request.from_entity_id, &request.to_entity_id)?;
     let metadata = request.metadata.unwrap_or_else(|| json!({}));
     let properties = metadata
@@ -104,11 +82,7 @@ pub async fn handle_link_entities(
         )
         .await?;
 
-    serde_json::to_value(LinkEntitiesResponse {
+    Ok(LinkEntitiesResponse {
         relation_id: Id::<EntityRelation>::from_uuid(relation_id),
-    })
-    .map_err(|error| {
-        SinexError::serialization("failed to serialize `pkm.link_entities` response")
-            .with_std_error(&error)
     })
 }

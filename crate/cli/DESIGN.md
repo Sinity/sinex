@@ -60,13 +60,17 @@ CLI flags still win so one-off overrides remain possible.
 
 ## Format-Capability Registry
 
-Every command declares its output-format contract in a central registry
-(`crate/cli/src/model/format_registry.rs`). The registry maps command paths
-(e.g. `"node list"`, `"replay watch"`) to a [`FormatCapability`] struct that
-records:
+Every command declares its operator UX contract in the command catalog
+(`crate/cli/src/model/format_registry.rs`). The catalog maps command paths
+(e.g. `"node list"`, `"replay watch"`) to command metadata that records:
 
 - `supported`: which [`OutputFormat`] values the command handles
 - `streaming`: whether the command emits an unbounded stream (NDJSON/YAML lines)
+- `family`: which operator surface group the command belongs to
+
+The historical format registry is now a compatibility projection of that
+catalog for validation and tests. New UX surfaces should read the catalog rather
+than maintaining another command list.
 
 ### Early rejection
 

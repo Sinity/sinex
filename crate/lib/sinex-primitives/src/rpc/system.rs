@@ -1,11 +1,47 @@
 //! System types
 
 use crate::domain::HealthStatus;
+use crate::rpc::{RpcDomain, RpcMethod, RpcMutability, RpcRole, RpcStability, methods};
 use serde::{Deserialize, Serialize};
+
+// ─────────────────────────────────────────────────────────────
+// system.ping / system.version
+// ─────────────────────────────────────────────────────────────
+
+pub const SYSTEM_PING_METHOD: RpcMethod<SystemPingRequest, String> = RpcMethod::new(
+    methods::SYSTEM_PING,
+    RpcRole::ReadOnly,
+    RpcDomain::System,
+    RpcStability::Experimental,
+    RpcMutability::ReadOnly,
+);
+
+pub const SYSTEM_VERSION_METHOD: RpcMethod<SystemVersionRequest, String> = RpcMethod::new(
+    methods::SYSTEM_VERSION,
+    RpcRole::ReadOnly,
+    RpcDomain::System,
+    RpcStability::Experimental,
+    RpcMutability::ReadOnly,
+);
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct SystemPingRequest {}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct SystemVersionRequest {}
 
 // ─────────────────────────────────────────────────────────────
 // system.health
 // ─────────────────────────────────────────────────────────────
+
+pub const SYSTEM_HEALTH_METHOD: RpcMethod<SystemHealthRequest, SystemHealthResponse> =
+    RpcMethod::new(
+        methods::SYSTEM_HEALTH,
+        RpcRole::ReadOnly,
+        RpcDomain::System,
+        RpcStability::Experimental,
+        RpcMutability::ReadOnly,
+    );
 
 /// Request: system.health (no params)
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

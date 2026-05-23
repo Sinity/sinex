@@ -831,12 +831,21 @@ impl IngestService {
         let stats_log_interval = Duration::from_secs(self.config.stats_log_interval_secs);
         let reject_initial_replay = self.config.reject_initial_replay;
         let future_ts_skew = time::Duration::seconds(self.config.ts_orig_future_skew_secs as i64);
-        let ts_orig_lower_bound =
-            Timestamp::from_unix_timestamp(self.config.ts_orig_lower_bound_unix)
-                .expect("default ts_orig_lower_bound_unix must produce valid timestamp");
-
         let heartbeat_handle = self.heartbeat_counter_handle.clone();
         let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();
+        let Some(ts_orig_lower_bound) =
+            Timestamp::from_unix_timestamp(self.config.ts_orig_lower_bound_unix)
+        else {
+            let error =
+                SinexError::configuration("ts_orig_lower_bound_unix is outside timestamp range")
+                    .with_context(
+                        "ts_orig_lower_bound_unix",
+                        self.config.ts_orig_lower_bound_unix.to_string(),
+                    );
+            let _ = ready_tx.send(());
+            let handle = tokio::spawn(async move { Err(error) });
+            return (handle, ready_rx);
+        };
         let handle = tokio::spawn(async move {
             let mut consumer = crate::JetStreamConsumer::new(
                 nats_client,

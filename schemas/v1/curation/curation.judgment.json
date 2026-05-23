@@ -1,0 +1,74 @@
+{
+  "$defs": {
+    "CurationJudgmentActorKind": {
+      "description": "Actor class authorized to record a judgment.",
+      "enum": [
+        "user",
+        "operator",
+        "deterministic_policy",
+        "test_fixture"
+      ],
+      "type": "string"
+    },
+    "CurationJudgmentDecision": {
+      "description": "Decision recorded by an authority actor.",
+      "enum": [
+        "accept",
+        "reject",
+        "modify",
+        "defer"
+      ],
+      "type": "string"
+    },
+    "DateTime": {
+      "description": "RFC 3339 formatted date-time string",
+      "format": "date-time",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Authority-owned judgment over one proposal.",
+  "properties": {
+    "actor_id": {
+      "type": "string"
+    },
+    "actor_kind": {
+      "$ref": "#/$defs/CurationJudgmentActorKind"
+    },
+    "authorization_context": true,
+    "comment": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "corrected_payload": true,
+    "decision": {
+      "$ref": "#/$defs/CurationJudgmentDecision"
+    },
+    "judged_at": {
+      "$ref": "#/$defs/DateTime"
+    },
+    "judgment_id": {
+      "format": "uuid",
+      "type": "string"
+    },
+    "proposal_id": {
+      "format": "uuid",
+      "type": "string"
+    }
+  },
+  "required": [
+    "judgment_id",
+    "proposal_id",
+    "actor_kind",
+    "actor_id",
+    "decision",
+    "judged_at"
+  ],
+  "title": "CurationJudgmentPayload",
+  "type": "object",
+  "x-sinex-event-type": "curation.judgment",
+  "x-sinex-source": "curation",
+  "x-sinex-version": "1.0.0"
+}

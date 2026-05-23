@@ -99,11 +99,178 @@
 
 use crate::domain::{SourceMaterialFormat, SourceMaterialTimingInfoType};
 use crate::parser::{ParserId, SourceBindingId, SourceUnitId};
+use crate::rpc::{RpcDomain, RpcMethod, RpcMutability, RpcRole, RpcStability, methods};
+use crate::sources::continuity::{
+    SourcesContinuityGetRequest, SourcesContinuityGetResponse, SourcesContinuityListRequest,
+    SourcesContinuityListResponse, SourcesExplainGapRequest, SourcesExplainGapResponse,
+};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 
 pub const SOURCE_MATERIAL_CONTRACT_METADATA_KEY: &str = "source_material_contract";
+
+pub const SOURCES_LIST_METHOD: RpcMethod<SourcesListRequest, SourcesListResponse> = RpcMethod::new(
+    methods::SOURCES_LIST,
+    RpcRole::ReadOnly,
+    RpcDomain::Sources,
+    RpcStability::Experimental,
+    RpcMutability::ReadOnly,
+);
+
+pub const SOURCES_SHOW_METHOD: RpcMethod<SourcesShowRequest, SourcesShowResponse> = RpcMethod::new(
+    methods::SOURCES_SHOW,
+    RpcRole::ReadOnly,
+    RpcDomain::Sources,
+    RpcStability::Experimental,
+    RpcMutability::ReadOnly,
+);
+
+pub const SOURCES_COVERAGE_METHOD: RpcMethod<SourcesCoverageRequest, SourcesCoverageResponse> =
+    RpcMethod::new(
+        methods::SOURCES_COVERAGE,
+        RpcRole::ReadOnly,
+        RpcDomain::Sources,
+        RpcStability::Experimental,
+        RpcMutability::ReadOnly,
+    );
+
+pub const SOURCES_CONTINUITY_METHOD: RpcMethod<
+    SourcesContinuityRequest,
+    SourcesContinuityResponse,
+> = RpcMethod::new(
+    methods::SOURCES_CONTINUITY,
+    RpcRole::ReadOnly,
+    RpcDomain::Sources,
+    RpcStability::Experimental,
+    RpcMutability::ReadOnly,
+);
+
+pub const SOURCES_CONTINUITY_LIST_METHOD: RpcMethod<
+    SourcesContinuityListRequest,
+    SourcesContinuityListResponse,
+> = RpcMethod::new(
+    methods::SOURCES_CONTINUITY_LIST,
+    RpcRole::ReadOnly,
+    RpcDomain::Sources,
+    RpcStability::Experimental,
+    RpcMutability::ReadOnly,
+);
+
+pub const SOURCES_CONTINUITY_GET_METHOD: RpcMethod<
+    SourcesContinuityGetRequest,
+    SourcesContinuityGetResponse,
+> = RpcMethod::new(
+    methods::SOURCES_CONTINUITY_GET,
+    RpcRole::ReadOnly,
+    RpcDomain::Sources,
+    RpcStability::Experimental,
+    RpcMutability::ReadOnly,
+);
+
+pub const SOURCES_CONTINUITY_EXPLAIN_GAP_METHOD: RpcMethod<
+    SourcesExplainGapRequest,
+    SourcesExplainGapResponse,
+> = RpcMethod::new(
+    methods::SOURCES_CONTINUITY_EXPLAIN_GAP,
+    RpcRole::ReadOnly,
+    RpcDomain::Sources,
+    RpcStability::Experimental,
+    RpcMutability::ReadOnly,
+);
+
+pub const SOURCES_READINESS_LIST_METHOD: RpcMethod<
+    SourcesReadinessListRequest,
+    SourcesReadinessListResponse,
+> = RpcMethod::new(
+    methods::SOURCES_READINESS_LIST,
+    RpcRole::ReadOnly,
+    RpcDomain::Sources,
+    RpcStability::Experimental,
+    RpcMutability::ReadOnly,
+);
+
+pub const SOURCES_READINESS_GET_METHOD: RpcMethod<
+    SourcesReadinessGetRequest,
+    SourcesReadinessGetResponse,
+> = RpcMethod::new(
+    methods::SOURCES_READINESS_GET,
+    RpcRole::ReadOnly,
+    RpcDomain::Sources,
+    RpcStability::Experimental,
+    RpcMutability::ReadOnly,
+);
+
+pub const SOURCES_STAGE_METHOD: RpcMethod<SourcesStageRequest, SourcesStageResponse> =
+    RpcMethod::new(
+        methods::SOURCES_STAGE,
+        RpcRole::Write,
+        RpcDomain::Sources,
+        RpcStability::Experimental,
+        RpcMutability::Mutating,
+    );
+
+pub const SOURCES_ANNOTATE_METHOD: RpcMethod<SourcesAnnotateRequest, SourcesAnnotateResponse> =
+    RpcMethod::new(
+        methods::SOURCES_ANNOTATE,
+        RpcRole::Write,
+        RpcDomain::Sources,
+        RpcStability::Experimental,
+        RpcMutability::Mutating,
+    );
+
+pub const SOURCES_ARCHIVE_METHOD: RpcMethod<SourcesArchiveRequest, SourcesArchiveResponse> =
+    RpcMethod::new(
+        methods::SOURCES_ARCHIVE,
+        RpcRole::Admin,
+        RpcDomain::Sources,
+        RpcStability::Experimental,
+        RpcMutability::Mutating,
+    );
+
+pub const SOURCES_PRESETS_LIST_METHOD: RpcMethod<
+    SourcesPresetsListRequest,
+    SourcesPresetsListResponse,
+> = RpcMethod::new(
+    methods::SOURCES_PRESETS_LIST,
+    RpcRole::ReadOnly,
+    RpcDomain::Sources,
+    RpcStability::Experimental,
+    RpcMutability::ReadOnly,
+);
+
+pub const SOURCES_BINDINGS_LIST_METHOD: RpcMethod<
+    SourcesBindingsListRequest,
+    SourcesBindingsListResponse,
+> = RpcMethod::new(
+    methods::SOURCES_BINDINGS_LIST,
+    RpcRole::ReadOnly,
+    RpcDomain::Sources,
+    RpcStability::Experimental,
+    RpcMutability::ReadOnly,
+);
+
+pub const SOURCES_BINDINGS_CREATE_METHOD: RpcMethod<
+    SourcesBindingsCreateRequest,
+    SourcesBindingsCreateResponse,
+> = RpcMethod::new(
+    methods::SOURCES_BINDINGS_CREATE,
+    RpcRole::Write,
+    RpcDomain::Sources,
+    RpcStability::Experimental,
+    RpcMutability::Mutating,
+);
+
+pub const SOURCES_BINDINGS_RESOLVE_METHOD: RpcMethod<
+    SourcesBindingsResolveRequest,
+    SourcesBindingsResolveResponse,
+> = RpcMethod::new(
+    methods::SOURCES_BINDINGS_RESOLVE,
+    RpcRole::Write,
+    RpcDomain::Sources,
+    RpcStability::Experimental,
+    RpcMutability::Mutating,
+);
 
 /// Versioned source-material metadata contract stored under
 /// `metadata.source_material_contract`.
@@ -401,6 +568,10 @@ pub struct SourcePresetDescriptor {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub resolver_preset: Option<String>,
 }
+
+/// Request: `sources.presets.list`
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct SourcesPresetsListRequest {}
 
 /// Response: `sources.presets.list`
 #[derive(Debug, Clone, Serialize, Deserialize)]
