@@ -1001,7 +1001,7 @@ mod tests {
                 Ok::<std::path::PathBuf, io::Error>(instance_b.clone()),
             ],
         )
-        .map_err(color_eyre::eyre::Report::msg)?;
+        .map_err(SinexError::processing)?;
 
         assert_eq!(sockets, vec![instance_a.join(".socket2.sock")]);
         Ok(())

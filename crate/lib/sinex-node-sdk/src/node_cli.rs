@@ -1103,10 +1103,11 @@ mod tests {
                 assert_eq!(message_id, "1234567890-0");
             }
             other => {
-                return Err(color_eyre::eyre::eyre!(
+                return Err(SinexError::validation(format!(
                     "expected stream checkpoint, got {}",
                     other.description()
-                ));
+                ))
+                .into());
             }
         }
         Ok(())

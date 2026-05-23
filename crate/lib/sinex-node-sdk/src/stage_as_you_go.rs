@@ -68,6 +68,7 @@ mod tests {
     use crate::acquisition_manager::{AcquisitionManager, SOURCE_MATERIAL_END_SUBJECT};
     use crate::ids::deterministic_material_event_id;
     use crate::runtime::stream::EventEmitter;
+    use crate::SinexError;
     use sinex_primitives::environment::environment;
     use sinex_primitives::{DynamicPayload, Id, events::Provenance};
     use std::sync::Arc;
@@ -95,7 +96,7 @@ mod tests {
         .with_offset_end(34)?
         .at_time(
             sinex_primitives::Timestamp::from_unix_timestamp_millis(1_710_000_000_123)
-                .ok_or_else(|| color_eyre::eyre::eyre!("test timestamp should be valid"))?,
+                .ok_or_else(|| SinexError::processing("test timestamp should be valid"))?,
         )
         .build()
         .expect("infallible: test provenance set");
@@ -105,11 +106,11 @@ mod tests {
 
         let emitted = timeout(Duration::from_secs(1), rx.recv())
             .await?
-            .ok_or_else(|| color_eyre::eyre::eyre!("event channel closed"))?;
+            .ok_or_else(|| SinexError::processing("event channel closed"))?;
 
         let stored_id = emitted
             .id
-            .ok_or_else(|| color_eyre::eyre::eyre!("event ID should be assigned"))?;
+            .ok_or_else(|| SinexError::processing("event ID should be assigned"))?;
         assert_eq!(*stored_id.as_uuid(), emitted_id);
         assert_eq!(
             *stored_id.as_uuid(),
@@ -122,7 +123,7 @@ mod tests {
                 Some(34),
                 emitted
                     .ts_orig
-                    .ok_or_else(|| color_eyre::eyre::eyre!("event timestamp should be assigned"))?
+                    .ok_or_else(|| SinexError::processing("event timestamp should be assigned"))?
             )
         );
 
@@ -131,10 +132,10 @@ mod tests {
                 assert_eq!(*anchor_byte, 12);
             }
             other => {
-                return Err(color_eyre::eyre::eyre!(
-                    "unexpected provenance variant: {:?}",
-                    other
-                ));
+                return Err(SinexError::validation(format!(
+                    "unexpected provenance variant: {other:?}"
+                ))
+                .into());
             }
         }
         assert!(
@@ -266,12 +267,12 @@ mod tests {
 
         let end = timeout(Duration::from_secs(1), end_sub.next())
             .await?
-            .ok_or_else(|| color_eyre::eyre::eyre!("missing material end message"))?;
+            .ok_or_else(|| SinexError::processing("missing material end message"))?;
         let payload: serde_json::Value = serde_json::from_slice(&end.payload)?;
         if payload["material_id"] != material_id.to_string() {
             let end = timeout(Duration::from_secs(1), end_sub.next())
                 .await?
-                .ok_or_else(|| color_eyre::eyre::eyre!("missing material end message"))?;
+                .ok_or_else(|| SinexError::processing("missing material end message"))?;
             let payload: serde_json::Value = serde_json::from_slice(&end.payload)?;
             assert_eq!(payload["material_id"], material_id.to_string());
             assert_eq!(payload["total_size_bytes"], 6);
