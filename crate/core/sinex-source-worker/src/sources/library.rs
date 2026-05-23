@@ -415,7 +415,7 @@ mod tests {
     use sinex_primitives::temporal::Timestamp;
     use std::io::Write;
     use tempfile::TempDir;
-    use xtask::sandbox::prelude::sinex_test;
+    use xtask::sandbox::prelude::*;
 
     fn make_ctx() -> ParserContext {
         ParserContext {
@@ -669,57 +669,74 @@ mod tests {
     // Unit tests for heuristics (no I/O)
     // -------------------------------------------------------------------------
 
-    #[test]
-    fn extract_year_finds_4digit_year() {
+    #[sinex_test]
+    async fn extract_year_finds_4digit_year(_ctx: TestContext) -> xtask::sandbox::TestResult<()> {
         assert_eq!(extract_year("Book Title (2023)"), Some(2023));
         assert_eq!(extract_year("Title-Publisher (2018)"), Some(2018));
         assert_eq!(extract_year("no year here"), None);
         // Out-of-range years are not matched.
         assert_eq!(extract_year("old 1800 book"), None);
+        Ok(())
     }
 
-    #[test]
-    fn extract_year_ignores_longer_sequences() {
+    #[sinex_test]
+    async fn extract_year_ignores_longer_sequences(
+        _ctx: TestContext,
+    ) -> xtask::sandbox::TestResult<()> {
         // 5+ digit numbers should not match.
         assert_eq!(extract_year("12345 is not a year"), None);
         // Exactly 4 digits followed by non-digit is fine.
         assert_eq!(extract_year("prefix2021suffix"), Some(2021));
+        Ok(())
     }
 
-    #[test]
-    fn extract_external_id_finds_32hex() {
+    #[sinex_test]
+    async fn extract_external_id_finds_32hex(_ctx: TestContext) -> xtask::sandbox::TestResult<()> {
         let name = "Some Book -- e73bc86a05ff4661d735d35f844c9650 -- Anna's Archive";
         assert_eq!(
             extract_external_id(name),
             Some("e73bc86a05ff4661d735d35f844c9650".to_string()),
         );
+        Ok(())
     }
 
-    #[test]
-    fn extract_external_id_none_for_short_hex() {
+    #[sinex_test]
+    async fn extract_external_id_none_for_short_hex(
+        _ctx: TestContext,
+    ) -> xtask::sandbox::TestResult<()> {
         assert_eq!(extract_external_id("abc123"), None);
+        Ok(())
     }
 
-    #[test]
-    fn extract_author_title_splits_on_separator() {
+    #[sinex_test]
+    async fn extract_author_title_splits_on_separator(
+        _ctx: TestContext,
+    ) -> xtask::sandbox::TestResult<()> {
         let (author, title) = extract_author_title("Jordan B. Peterson - 12 Rules for Life (2018)");
         assert_eq!(author.as_deref(), Some("Jordan B. Peterson"));
         assert_eq!(title.as_deref(), Some("12 Rules for Life"));
+        Ok(())
     }
 
-    #[test]
-    fn extract_author_title_no_separator_returns_none() {
+    #[sinex_test]
+    async fn extract_author_title_no_separator_returns_none(
+        _ctx: TestContext,
+    ) -> xtask::sandbox::TestResult<()> {
         let (author, title) = extract_author_title("DocumentWithNoSeparator");
         assert!(author.is_none());
         assert!(title.is_none());
+        Ok(())
     }
 
-    #[test]
-    fn extract_author_title_preserves_inner_dashes() {
+    #[sinex_test]
+    async fn extract_author_title_preserves_inner_dashes(
+        _ctx: TestContext,
+    ) -> xtask::sandbox::TestResult<()> {
         // Titles like "The XX Factor - How the Rise ... (2013)" have " - " only once.
         let stem = "Alison Wolf - The XX Factor (2013)";
         let (author, title) = extract_author_title(stem);
         assert_eq!(author.as_deref(), Some("Alison Wolf"));
         assert_eq!(title.as_deref(), Some("The XX Factor"));
+        Ok(())
     }
 }
