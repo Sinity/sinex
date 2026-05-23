@@ -11,10 +11,23 @@ use sinex_source_worker::parse_listener::{
 };
 use xtask::sandbox::prelude::*;
 
-/// Prove that a parse command published over NATS reaches the source-worker
-/// parse listener, is dispatched to the parser, and returns an ack.
+async fn request_parse_ack(
+    client: &async_nats::Client,
+    subject: &str,
+    cmd: &SourceParseCommand,
+) -> TestResult<SourceParseAck> {
+    let response = client
+        .request(subject.to_string(), serde_json::to_vec(cmd)?.into())
+        .await
+        .map_err(|e| eyre!("NATS request failed: {e}"))?;
+    Ok(serde_json::from_slice(&response.payload)?)
+}
+
+/// Prove that parse commands published over NATS reach the source-worker parse
+/// listener, dispatch matching sources, reject mismatches, and handle
+/// concurrent requests independently.
 #[sinex_test]
-async fn test_parse_command_round_trip_via_nats(ctx: TestContext) -> TestResult<()> {
+async fn parse_listener_handles_command_lifecycle(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
 
     let (dispatch, calls) = test_parser_dispatch();
@@ -27,6 +40,7 @@ async fn test_parse_command_round_trip_via_nats(ctx: TestContext) -> TestResult<
 
     let operation_id = Uuid::now_v7();
     let material_id = Uuid::now_v7();
+    let subject = format!("sinex.control.sources.{source_id}.parse");
 
     let cmd = SourceParseCommand {
         operation_id,
@@ -35,91 +49,25 @@ async fn test_parse_command_round_trip_via_nats(ctx: TestContext) -> TestResult<
         source_version: None,
         executor: "test".to_string(),
     };
-    let payload = serde_json::to_vec(&cmd)?;
-
-    let subject = format!("sinex.control.sources.{source_id}.parse");
-    let response = client
-        .request(subject, payload.into())
-        .await
-        .map_err(|e| eyre!("NATS request failed: {e}"))?;
-
-    let ack: SourceParseAck = serde_json::from_slice(&response.payload)?;
+    let ack = request_parse_ack(&client, &subject, &cmd).await?;
 
     assert!(ack.accepted, "parse should be accepted");
     assert!(ack.error.is_none(), "should have no error: {:?}", ack.error);
 
-    let recorded = calls.lock().unwrap();
-    assert_eq!(recorded.len(), 1, "dispatch should be called once");
-    assert_eq!(recorded[0].0, source_id, "dispatch source_id should match");
-    assert_eq!(
-        recorded[0].2,
-        Some(material_id),
-        "dispatch material_id should match"
-    );
-
-    handle.abort();
-    Ok(())
-}
-
-/// Prove that a parse command for a mismatched source_id is rejected.
-#[sinex_test]
-async fn test_parse_command_rejected_for_mismatched_source(ctx: TestContext) -> TestResult<()> {
-    let ctx = ctx.with_nats().shared().await?;
-
-    let (dispatch, calls) = test_parser_dispatch();
-    let listener_source = "weechat";
-    let client = ctx.nats_client();
-
-    let handle = spawn_parse_listener(client.clone(), listener_source, dispatch)
-        .await
-        .map_err(|e| eyre!("spawn failed: {e}"))?;
-
-    let cmd = SourceParseCommand {
+    let mismatched = SourceParseCommand {
         operation_id: Uuid::now_v7(),
         source_id: "desktop".to_string(),
         source_material_id: None,
         source_version: None,
         executor: "test".to_string(),
     };
-    let payload = serde_json::to_vec(&cmd)?;
-
-    let subject = format!("sinex.control.sources.{listener_source}.parse");
-    let response = client
-        .request(subject, payload.into())
-        .await
-        .map_err(|e| eyre!("NATS request failed: {e}"))?;
-
-    let ack: SourceParseAck = serde_json::from_slice(&response.payload)?;
+    let rejected = request_parse_ack(&client, &subject, &mismatched).await?;
 
     assert!(
-        !ack.accepted,
+        !rejected.accepted,
         "parse should be rejected for mismatched source"
     );
-    assert!(ack.error.is_some(), "should have error");
-    assert_eq!(
-        calls.lock().unwrap().len(),
-        0,
-        "dispatch should not be called"
-    );
-
-    handle.abort();
-    Ok(())
-}
-
-/// Prove that two concurrent parse commands are both processed independently.
-#[sinex_test]
-async fn test_concurrent_parse_commands(ctx: TestContext) -> TestResult<()> {
-    let ctx = ctx.with_nats().shared().await?;
-
-    let (dispatch, calls) = test_parser_dispatch();
-    let source_id = "weechat";
-    let client = ctx.nats_client();
-
-    let handle = spawn_parse_listener(client.clone(), source_id, dispatch)
-        .await
-        .map_err(|e| eyre!("spawn failed: {e}"))?;
-
-    let subject = format!("sinex.control.sources.{source_id}.parse");
+    assert!(rejected.error.is_some(), "should have error");
 
     let cmd1 = SourceParseCommand {
         operation_id: Uuid::now_v7(),
@@ -137,18 +85,27 @@ async fn test_concurrent_parse_commands(ctx: TestContext) -> TestResult<()> {
     };
 
     let (r1, r2) = tokio::join!(
-        client.request(subject.clone(), serde_json::to_vec(&cmd1)?.into()),
-        client.request(subject.clone(), serde_json::to_vec(&cmd2)?.into()),
+        request_parse_ack(&client, &subject, &cmd1),
+        request_parse_ack(&client, &subject, &cmd2),
     );
 
-    let ack1: SourceParseAck =
-        serde_json::from_slice(&r1.map_err(|e| eyre!("request 1 failed: {e}"))?.payload)?;
-    let ack2: SourceParseAck =
-        serde_json::from_slice(&r2.map_err(|e| eyre!("request 2 failed: {e}"))?.payload)?;
-
+    let ack1 = r1?;
+    let ack2 = r2?;
     assert!(ack1.accepted, "ack1 should be accepted");
     assert!(ack2.accepted, "ack2 should be accepted");
-    assert_eq!(calls.lock().unwrap().len(), 2, "both should be dispatched");
+
+    let recorded = calls.lock().unwrap();
+    assert_eq!(
+        recorded.len(),
+        3,
+        "accepted requests should dispatch; rejected request should not"
+    );
+    assert_eq!(recorded[0].0, source_id, "dispatch source_id should match");
+    assert_eq!(
+        recorded[0].2,
+        Some(material_id),
+        "dispatch material_id should match"
+    );
 
     handle.abort();
     Ok(())
