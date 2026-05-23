@@ -27,6 +27,7 @@ use sinex_primitives::parser::{InputShapeKind, MaterialAnchor, SourceRecord};
 use crate::parser::{InputShapeAdapter, ParserError, ParserResult};
 
 const INOTIFY_MAX_USER_WATCHES_PATH: &str = "/proc/sys/fs/inotify/max_user_watches";
+const DEFAULT_FILE_DROP_MAX_WATCHES: usize = 524_288;
 
 // =============================================================================
 // FileDropEventKind
@@ -518,6 +519,61 @@ pub fn survey_file_drop_watch_tree(
     )
 }
 
+fn planned_file_drop_watch_targets(
+    config: &FileDropConfig,
+) -> ParserResult<Vec<(PathBuf, RecursiveMode)>> {
+    if !config.recursive {
+        return Ok(config
+            .watch_paths
+            .iter()
+            .map(|path| {
+                (
+                    path.as_std_path().to_path_buf(),
+                    RecursiveMode::NonRecursive,
+                )
+            })
+            .collect());
+    }
+
+    let ignored_directory_names = config
+        .ignored_directory_names
+        .iter()
+        .cloned()
+        .collect::<HashSet<_>>();
+    let configured_max_watches =
+        NonZeroUsize::new(DEFAULT_FILE_DROP_MAX_WATCHES).ok_or_else(|| {
+            ParserError::Config("file-drop max watch budget must be non-zero".to_string())
+        })?;
+    let budget = FileDropWatchBudget::detect(configured_max_watches);
+    let mut targets = Vec::new();
+
+    for path in &config.watch_paths {
+        let survey = survey_file_drop_watch_tree(
+            path.as_std_path(),
+            0,
+            config.max_depth,
+            false,
+            &ignored_directory_names,
+        )?;
+        let plan = choose_file_drop_watch_plan(survey, budget)?;
+        match plan.mode {
+            FileDropWatchMode::NativeRecursive => {
+                targets.push((path.as_std_path().to_path_buf(), RecursiveMode::Recursive));
+            }
+            FileDropWatchMode::NativeFiltered => {
+                targets.extend(
+                    plan.survey
+                        .filtered_targets
+                        .into_iter()
+                        .map(|target| (target, RecursiveMode::NonRecursive)),
+                );
+            }
+        }
+    }
+
+    Ok(targets)
+}
+
 /// No cursor for [`FileDropAdapter`] — live streams are anchor-only.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FileDropCursor;
@@ -545,16 +601,10 @@ impl InputShapeAdapter for FileDropAdapter {
         })
         .map_err(|e| ParserError::Adapter(format!("failed to create file watcher: {e}")))?;
 
-        let mode = if config.recursive {
-            RecursiveMode::Recursive
-        } else {
-            RecursiveMode::NonRecursive
-        };
-
-        for path in &config.watch_paths {
-            watcher
-                .watch(path.as_std_path(), mode)
-                .map_err(|e| ParserError::Adapter(format!("failed to watch {path}: {e}")))?;
+        for (path, mode) in planned_file_drop_watch_targets(config)? {
+            watcher.watch(&path, mode).map_err(|e| {
+                ParserError::Adapter(format!("failed to watch {}: {e}", path.display()))
+            })?;
         }
 
         let stream = build_file_drop_stream(material_id, rx, event_filter, path_filter, watcher);
@@ -1208,6 +1258,62 @@ mod tests {
         assert_eq!(survey.accessible_watch_count, 4);
         assert_eq!(survey.filtered_watch_count, 3);
         assert_eq!(survey.ignored_directories, 1);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn file_drop_watch_targets_use_recursive_when_plan_allows()
+    -> xtask::sandbox::TestResult<()> {
+        let temp_root = TempDir::new()?;
+        std::fs::create_dir_all(temp_root.path().join("notes/daily"))?;
+        let root = Utf8PathBuf::from_path_buf(temp_root.path().to_path_buf())
+            .expect("temp root should be utf8");
+        let config = FileDropConfig {
+            watch_paths: vec![root.clone()],
+            recursive: true,
+            max_depth: None,
+            ignored_directory_names: Vec::new(),
+            events: vec![],
+        };
+
+        let targets = planned_file_drop_watch_targets(&config)?;
+
+        assert_eq!(
+            targets,
+            vec![(root.as_std_path().to_path_buf(), RecursiveMode::Recursive)]
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn file_drop_watch_targets_filter_ignored_directories() -> xtask::sandbox::TestResult<()>
+    {
+        let temp_root = TempDir::new()?;
+        std::fs::create_dir_all(temp_root.path().join(".git/objects"))?;
+        std::fs::create_dir_all(temp_root.path().join("src"))?;
+        let root = Utf8PathBuf::from_path_buf(temp_root.path().to_path_buf())
+            .expect("temp root should be utf8");
+        let config = FileDropConfig {
+            watch_paths: vec![root.clone()],
+            recursive: true,
+            max_depth: None,
+            ignored_directory_names: vec![".git".to_string()],
+            events: vec![],
+        };
+
+        let targets = planned_file_drop_watch_targets(&config)?;
+        let target_paths = targets
+            .iter()
+            .map(|(path, mode)| (path.strip_prefix(root.as_std_path()).unwrap(), *mode))
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            target_paths,
+            vec![
+                (Path::new(""), RecursiveMode::NonRecursive),
+                (Path::new("src"), RecursiveMode::NonRecursive)
+            ]
+        );
         Ok(())
     }
 
