@@ -1,19 +1,11 @@
 //! Wave B production-path obligation tests for the `fs` source unit.
 //!
-//! `fs` is registered as a raw `IngestorNode` (no `InputShapeAdapter`) — see
-//! `crate::sources::fs` and the orchestrator's option (c) decision recorded in
-//! its `mod.rs` docstring. The legacy `sinex-fs-ingestor` watcher owns inotify
-//! directly, plus a watch-budget planner, dual-shape content/observation
-//! materialization, and an `AcquisitionManager` + `FS_MAX_CONCURRENT_CAPTURES`
-//! semaphore around content staging. None of that slots into the harness's
-//! parser-dispatch obligations, which assume an adapter-backed
-//! `MaterialParser` reachable through dispatch.
-//!
-//! Until the follow-up "Extend `FileDropAdapter` / introduce `FsWatcherAdapter`"
-//! issue lands, the only obligations exercisable here are the structural ones
-//! that match `system.monitor`'s situation: descriptor registration and node-
-//! factory registration. The behavior obligations (`initial_ingestion`, replay,
-//! drain, isolation, privacy) require the adapter-backed flow.
+//! `fs` still runs through a raw `IngestorNode` factory for continuous capture:
+//! the imperative watcher owns inotify directly, plus watch-budget planning,
+//! dual-shape content/observation materialization, and capture concurrency.
+//! The parser-dispatch bridge is now registered separately, so production-path
+//! obligations can pin both the raw runtime and the parser bridge while the
+//! remaining adapter-backed runtime swap is proven.
 
 use xtask::sandbox::prelude::*;
 
