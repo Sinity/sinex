@@ -61,9 +61,6 @@ workspace = true
 [dependencies.futures]
 workspace = true
 
-[dependencies.sinex-db]
-path = "../../lib/sinex-db"
-
 [dependencies.csv]
 workspace = true
 
@@ -93,15 +90,6 @@ workspace = true
 
 [dependencies.sinex-primitives]
 path = "../../lib/sinex-primitives"
-
-[dependencies.notify]
-workspace = true
-
-[dependencies.validator]
-workspace = true
-
-[dependencies.tokio-util]
-version = "0.7"
 
 [dev-dependencies.color-eyre]
 workspace = true
