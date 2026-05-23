@@ -6,7 +6,7 @@
 //! 2. The declarative `WeeChatMessageRecord` parser is registered and reachable.
 //! 3. Unknown source units produce a clear error.
 //! 4. The node factory registry has "noop" registered.
-//! 5. The fs source exposes both its raw node factory and parser-dispatch bridge.
+//! 5. The fs source exposes one adapter-backed factory plus parser dispatch.
 //! 6. Grep probe: no source-unit match arms in dispatch.rs or main.rs.
 
 use sinex_primitives::parser::SourceUnitId;
@@ -131,18 +131,18 @@ async fn noop_node_factory_registered(_ctx: TestContext) -> TestResult<()> {
 }
 
 // ---------------------------------------------------------------------------
-// 5. Filesystem bridge — raw runtime plus parser dispatch bridge
+// 5. Filesystem bridge — adapter-backed runtime plus parser dispatch
 // ---------------------------------------------------------------------------
 
 #[sinex_test]
-async fn fs_raw_factory_and_parser_bridge_registered(_ctx: TestContext) -> TestResult<()> {
+async fn fs_adapter_factory_and_parser_bridge_registered(_ctx: TestContext) -> TestResult<()> {
     assert!(
         find_node_factory(&sui("fs")).is_some(),
-        "raw node factory for 'fs' must remain registered until runtime parity is complete"
+        "adapter-backed node factory for 'fs' must be registered"
     );
     assert!(
         find_parser_factory(&sui("fs")).is_some(),
-        "parser factory for 'fs' must be registered for replay/adapter parity"
+        "parser factory for 'fs' must be registered for replay dispatch"
     );
     Ok(())
 }

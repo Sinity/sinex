@@ -1,27 +1,28 @@
 //! Filesystem source unit (`fs`).
 //!
 //! Moved from the legacy `sinex-fs-ingestor` crate during Wave B. The runtime
-//! still uses the imperative [`FilesystemNode`] for inotify watcher ownership,
-//! watch-budget planning, and dual-shape content/observation material. The
-//! parser half now has an adapter-compatible [`FilesystemParser`] registered
-//! for dispatch, so the remaining fold is a runtime factory parity question
-//! rather than an unmodeled parser contract.
+//! now uses the SDK's content-materializing file-drop adapter plus the
+//! filesystem parser, so watcher policy, source-material staging, and parser
+//! dispatch share the same adapter-backed source-unit surface as the rest of
+//! the source worker.
 
 pub mod parser;
-pub mod unified_node;
 
 pub use parser::FilesystemParser;
-pub use unified_node::{FilesystemConfig, FilesystemNode, FilesystemState};
 
-use crate::{register_node_factory, register_parser};
+use crate::register_adapter_ingestor;
+use sinex_node_sdk::parser::FileContentDropAdapter;
 use sinex_primitives::proof::{
     CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, RetentionPolicy, RuntimeShape,
     SourceUnitBinding, SourceUnitDescriptor, SubjectRef,
 };
 use sinex_primitives::{register_source_unit, register_source_unit_binding};
 
-register_node_factory!("fs", FilesystemNode);
-register_parser!("fs", FilesystemParser);
+register_adapter_ingestor!(
+    source_unit_id: "fs",
+    adapter: FileContentDropAdapter,
+    parser: FilesystemParser,
+);
 
 // Source-unit descriptor (issue #690 / #734). The fs ingestor observes inotify
 // on watched roots and emits typed file events. Continuous path is an
@@ -37,8 +38,8 @@ register_source_unit! {
             ("fs-watcher", "file.moved"),
         ],
         // Paths can leak home-directory layout and filenames may carry secrets.
-        // Path redaction is applied in unified_node.rs via redact_metadata().
-        // Treat as Secret during ingestion.
+        // FilesystemParser applies metadata-context path redaction. Treat as
+        // Secret during ingestion.
         privacy_tier: PrivacyTier::Secret,
         horizons: &[Horizon::Continuous, Horizon::Historical],
         retention: RetentionPolicy::Forever,
@@ -55,7 +56,7 @@ register_source_unit_binding! {
         "filesystem",
     )
     .implementation("sinex-source-worker")
-    .adapter("IngestorNodeAdapter")
+    .adapter("FileContentDropAdapter")
     .output_event_type("file.created")
     .privacy_context("fs_path")
     .material_policy("inotify_anchor")
