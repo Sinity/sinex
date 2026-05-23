@@ -11,7 +11,7 @@ use sinex_source_worker::sources::terminal::{
 use xtask::sandbox::prelude::*;
 
 #[sinex_test]
-async fn terminal_sqlite_parsers_declare_required_input_keys(_ctx: TestContext) -> TestResult<()> {
+async fn terminal_sqlite_parsers_declare_required_input_keys() -> TestResult<()> {
     assert_eq!(
         AtuinHistoryParser.required_input_keys(),
         vec!["history.command", "history.timestamp"]
@@ -24,7 +24,7 @@ async fn terminal_sqlite_parsers_declare_required_input_keys(_ctx: TestContext) 
 }
 
 #[sinex_test]
-async fn atuin_required_schema_removal_blocks_readiness(_ctx: TestContext) -> TestResult<()> {
+async fn atuin_required_schema_removal_blocks_readiness() -> TestResult<()> {
     let before = rusqlite::Connection::open_in_memory()?;
     before.execute_batch(
         "CREATE TABLE history (

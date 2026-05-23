@@ -25,7 +25,7 @@ mod tests {
     // -------------------------------------------------------------------------
 
     #[sinex_test]
-    async fn document_staging_obligations(_ctx: TestContext) -> TestResult<()> {
+    async fn document_staging_obligations() -> TestResult<()> {
         let failures = crate::_run_case(
             "document.staging",
             crate::AdapterKind::FileDrop,
@@ -42,7 +42,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn docs_library_index_directory_entry_obligations(_ctx: TestContext) -> TestResult<()> {
+    async fn docs_library_index_directory_entry_obligations() -> TestResult<()> {
         let dir = TempDir::new()?;
         let file = dir.path().join("Jane Doe - Practical Notes (2026).pdf");
         let mut handle = std::fs::File::create(&file)?;

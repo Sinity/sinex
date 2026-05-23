@@ -9,7 +9,7 @@ use sinex_source_worker::sources::music::SpotifyHistoryParser;
 use xtask::sandbox::prelude::*;
 
 #[sinex_test]
-async fn spotify_parser_declares_required_array_element_keys(_ctx: TestContext) -> TestResult<()> {
+async fn spotify_parser_declares_required_array_element_keys() -> TestResult<()> {
     assert_eq!(SpotifyHistoryParser.required_input_keys(), vec!["/[]/ts"]);
     Ok(())
 }

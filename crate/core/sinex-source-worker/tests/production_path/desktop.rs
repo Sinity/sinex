@@ -40,7 +40,7 @@ mod tests {
     // -------------------------------------------------------------------------
 
     #[sinex_test]
-    async fn desktop_activitywatch_window_obligations(_ctx: TestContext) -> TestResult<()> {
+    async fn desktop_activitywatch_window_obligations() -> TestResult<()> {
         let failures = crate::_run_case(
             "desktop.activitywatch",
             crate::AdapterKind::SqliteRow,
@@ -61,7 +61,7 @@ mod tests {
     // -------------------------------------------------------------------------
 
     #[sinex_test]
-    async fn desktop_activitywatch_afk_obligations(_ctx: TestContext) -> TestResult<()> {
+    async fn desktop_activitywatch_afk_obligations() -> TestResult<()> {
         let failures = crate::_run_case(
             "desktop.activitywatch",
             crate::AdapterKind::SqliteRow,
@@ -82,7 +82,7 @@ mod tests {
     // -------------------------------------------------------------------------
 
     #[sinex_test]
-    async fn desktop_activitywatch_web_obligations(_ctx: TestContext) -> TestResult<()> {
+    async fn desktop_activitywatch_web_obligations() -> TestResult<()> {
         let failures = crate::_run_case(
             "desktop.activitywatch",
             crate::AdapterKind::SqliteRow,
@@ -103,7 +103,7 @@ mod tests {
     // -------------------------------------------------------------------------
 
     #[sinex_test]
-    async fn desktop_clipboard_obligations(_ctx: TestContext) -> TestResult<()> {
+    async fn desktop_clipboard_obligations() -> TestResult<()> {
         let failures = crate::_run_case(
             "desktop.clipboard",
             crate::AdapterKind::Clipboard,
@@ -124,7 +124,7 @@ mod tests {
     // -------------------------------------------------------------------------
 
     #[sinex_test]
-    async fn desktop_window_manager_obligations(_ctx: TestContext) -> TestResult<()> {
+    async fn desktop_window_manager_obligations() -> TestResult<()> {
         let failures = crate::_run_case(
             "desktop.window-manager",
             crate::AdapterKind::UnixSocket,

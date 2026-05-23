@@ -9,7 +9,7 @@ use sinex_source_worker::sources::desktop::activitywatch::ActivityWatchParser;
 use xtask::sandbox::prelude::*;
 
 #[sinex_test]
-async fn activitywatch_parser_declares_required_sqlite_keys(_ctx: TestContext) -> TestResult<()> {
+async fn activitywatch_parser_declares_required_sqlite_keys() -> TestResult<()> {
     assert_eq!(
         ActivityWatchParser.required_input_keys(),
         vec![

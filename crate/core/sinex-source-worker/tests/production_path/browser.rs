@@ -26,7 +26,7 @@ mod tests {
         b"{\"url\":\"https://dump.example.com\",\"title\":\"Dump\",\"time\":1700002000}\n";
 
     #[sinex_test]
-    async fn browser_history_qutebrowser_initial_ingestion(_ctx: TestContext) -> TestResult<()> {
+    async fn browser_history_qutebrowser_initial_ingestion() -> TestResult<()> {
         let failures = crate::_run_case(
             "browser.history",
             crate::AdapterKind::SqliteRow,
@@ -43,7 +43,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn browser_history_chromium_initial_ingestion(_ctx: TestContext) -> TestResult<()> {
+    async fn browser_history_chromium_initial_ingestion() -> TestResult<()> {
         let failures = crate::_run_case(
             "browser.history",
             crate::AdapterKind::SqliteRow,
@@ -60,7 +60,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn browser_history_jsonl_dump_initial_ingestion(_ctx: TestContext) -> TestResult<()> {
+    async fn browser_history_jsonl_dump_initial_ingestion() -> TestResult<()> {
         let failures = crate::_run_case(
             "browser.history",
             crate::AdapterKind::AppendOnlyFile,

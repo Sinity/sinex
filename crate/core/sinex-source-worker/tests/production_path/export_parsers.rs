@@ -55,7 +55,7 @@ id,title,note,excerpt,url,folder,tags,created,cover,highlights,favorite
     }"#;
 
     #[sinex_test]
-    async fn raindrop_bookmarks_obligations(_ctx: TestContext) -> TestResult<()> {
+    async fn raindrop_bookmarks_obligations() -> TestResult<()> {
         let failures = crate::_run_case(
             "raindrop-bookmarks",
             crate::AdapterKind::StaticFile,
@@ -72,7 +72,7 @@ id,title,note,excerpt,url,folder,tags,created,cover,highlights,favorite
     }
 
     #[sinex_test]
-    async fn spotify_extended_history_obligations(_ctx: TestContext) -> TestResult<()> {
+    async fn spotify_extended_history_obligations() -> TestResult<()> {
         let failures = crate::_run_case(
             "spotify-extended-history",
             crate::AdapterKind::StaticFile,
@@ -89,7 +89,7 @@ id,title,note,excerpt,url,folder,tags,created,cover,highlights,favorite
     }
 
     #[sinex_test]
-    async fn hledger_journal_obligations(_ctx: TestContext) -> TestResult<()> {
+    async fn hledger_journal_obligations() -> TestResult<()> {
         let failures = crate::_run_case(
             "hledger-journal",
             crate::AdapterKind::StaticFile,
@@ -106,7 +106,7 @@ id,title,note,excerpt,url,folder,tags,created,cover,highlights,favorite
     }
 
     #[sinex_test]
-    async fn facebook_messenger_thread_obligations(_ctx: TestContext) -> TestResult<()> {
+    async fn facebook_messenger_thread_obligations() -> TestResult<()> {
         let failures = crate::_run_case(
             "facebook-messenger-thread",
             crate::AdapterKind::StaticFile,

@@ -972,6 +972,7 @@ pub async fn run_test_source_worker_scan(
     ]);
     if let Some(wd) = &config.work_dir {
         cmd.arg("--work-dir").arg(wd);
+        cmd.env("SINEX_WORK_DIR", wd);
     }
     if let Some(service_name) = &config.service_name {
         cmd.arg("--service-name").arg(service_name);

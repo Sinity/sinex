@@ -114,7 +114,7 @@ async fn claude_parses_two_conversations_into_correct_intent_count(
 
 /// `session_id` and `message_id` are preserved from the export.
 #[sinex_test]
-async fn claude_preserves_session_id_and_message_id(_ctx: TestContext) -> TestResult<()> {
+async fn claude_preserves_session_id_and_message_id() -> TestResult<()> {
     let json = serde_json::json!([{
         "uuid": "session-xyz",
         "name": "Test session",
@@ -141,7 +141,7 @@ async fn claude_preserves_session_id_and_message_id(_ctx: TestContext) -> TestRe
 
 /// Anchor encodes `conv_index * 1_000_000 + msg_index`.
 #[sinex_test]
-async fn claude_anchor_encodes_conv_and_msg_index(_ctx: TestContext) -> TestResult<()> {
+async fn claude_anchor_encodes_conv_and_msg_index() -> TestResult<()> {
     let json = serde_json::json!([
         {
             "uuid": "conv-1",
@@ -188,7 +188,7 @@ async fn claude_anchor_encodes_conv_and_msg_index(_ctx: TestContext) -> TestResu
 
 /// Occurrence key fields: [`session_id`, `message_id`] in order.
 #[sinex_test]
-async fn claude_occurrence_key_fields_and_order(_ctx: TestContext) -> TestResult<()> {
+async fn claude_occurrence_key_fields_and_order() -> TestResult<()> {
     let json = serde_json::json!([{
         "uuid": "s1",
         "name": "",
@@ -211,7 +211,7 @@ async fn claude_occurrence_key_fields_and_order(_ctx: TestContext) -> TestResult
 
 /// Older export batches use a flat `text` field instead of `content` array.
 #[sinex_test]
-async fn claude_falls_back_to_flat_text_field(_ctx: TestContext) -> TestResult<()> {
+async fn claude_falls_back_to_flat_text_field() -> TestResult<()> {
     let json = serde_json::json!([{
         "uuid": "s1",
         "name": "",
@@ -235,7 +235,7 @@ async fn claude_falls_back_to_flat_text_field(_ctx: TestContext) -> TestResult<(
 
 /// Non-JSON input → `ParserError::Parse`.
 #[sinex_test]
-async fn claude_invalid_json_returns_parser_error(_ctx: TestContext) -> TestResult<()> {
+async fn claude_invalid_json_returns_parser_error() -> TestResult<()> {
     let bytes = b"not json at all";
     let ctx = claude_ctx();
     let result = ClaudeSessionParser
@@ -292,7 +292,7 @@ fn chatgpt_minimal_json() -> serde_json::Value {
 
 /// Root node has no message; 2 text nodes → 2 intents.
 #[sinex_test]
-async fn chatgpt_parses_thread_into_intents(_ctx: TestContext) -> TestResult<()> {
+async fn chatgpt_parses_thread_into_intents() -> TestResult<()> {
     let json = chatgpt_minimal_json();
     let bytes = serde_json::to_vec(&json).unwrap();
     let ctx = chatgpt_ctx();
@@ -308,7 +308,7 @@ async fn chatgpt_parses_thread_into_intents(_ctx: TestContext) -> TestResult<()>
 
 /// `session_id`, `message_id`, role, text are all preserved.
 #[sinex_test]
-async fn chatgpt_preserves_session_and_message_ids(_ctx: TestContext) -> TestResult<()> {
+async fn chatgpt_preserves_session_and_message_ids() -> TestResult<()> {
     let json = chatgpt_minimal_json();
     let bytes = serde_json::to_vec(&json).unwrap();
     let ctx = chatgpt_ctx();
@@ -325,7 +325,7 @@ async fn chatgpt_preserves_session_and_message_ids(_ctx: TestContext) -> TestRes
 
 /// `model_slug` from message metadata takes priority over conversation default.
 #[sinex_test]
-async fn chatgpt_model_slug_from_metadata(_ctx: TestContext) -> TestResult<()> {
+async fn chatgpt_model_slug_from_metadata() -> TestResult<()> {
     let json = chatgpt_minimal_json();
     let bytes = serde_json::to_vec(&json).unwrap();
     let ctx = chatgpt_ctx();
@@ -339,7 +339,7 @@ async fn chatgpt_model_slug_from_metadata(_ctx: TestContext) -> TestResult<()> {
 
 /// Non-text content nodes (tool outputs, DALL-E, etc.) are skipped.
 #[sinex_test]
-async fn chatgpt_skips_non_text_content(_ctx: TestContext) -> TestResult<()> {
+async fn chatgpt_skips_non_text_content() -> TestResult<()> {
     let json = serde_json::json!([{
         "id": "c1",
         "title": "",
@@ -380,7 +380,7 @@ async fn chatgpt_skips_non_text_content(_ctx: TestContext) -> TestResult<()> {
 
 /// Non-JSON input → `ParserError::Parse`.
 #[sinex_test]
-async fn chatgpt_invalid_json_returns_parser_error(_ctx: TestContext) -> TestResult<()> {
+async fn chatgpt_invalid_json_returns_parser_error() -> TestResult<()> {
     let bytes = b"{not valid}";
     let ctx = chatgpt_ctx();
     let result = ChatGptSessionParser
@@ -392,7 +392,7 @@ async fn chatgpt_invalid_json_returns_parser_error(_ctx: TestContext) -> TestRes
 
 /// Occurrence key fields: [`session_id`, `message_id`] in order.
 #[sinex_test]
-async fn chatgpt_occurrence_key_fields_and_order(_ctx: TestContext) -> TestResult<()> {
+async fn chatgpt_occurrence_key_fields_and_order() -> TestResult<()> {
     let json = chatgpt_minimal_json();
     let bytes = serde_json::to_vec(&json).unwrap();
     let ctx = chatgpt_ctx();
