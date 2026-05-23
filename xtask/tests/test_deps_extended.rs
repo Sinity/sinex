@@ -294,7 +294,8 @@ async fn test_deps_duplicates_direct_and_transitive_only_conflict()
 }
 
 #[sinex_test]
-async fn test_deps_duplicates_json_identifies_direct_roots() -> ::xtask::sandbox::TestResult<()> {
+async fn test_deps_duplicates_json_direct_roots_match_direct_debt()
+-> ::xtask::sandbox::TestResult<()> {
     let output = xtask_command()?
         .arg("deps")
         .arg("duplicates")
@@ -311,17 +312,32 @@ async fn test_deps_duplicates_json_identifies_direct_roots() -> ::xtask::sandbox
         .as_array()
         .ok_or_else(|| color_eyre::eyre::eyre!("data.duplicates should be an array"))?;
 
-    assert!(
-        duplicates.iter().any(
-            |duplicate| duplicate["version_details"]
+    let direct_count = parsed["data"]["direct_count"]
+        .as_u64()
+        .ok_or_else(|| color_eyre::eyre::eyre!("data.direct_count should be numeric"))?;
+    for duplicate in duplicates {
+        let details = duplicate["version_details"]
+            .as_array()
+            .ok_or_else(|| color_eyre::eyre::eyre!("version_details should be an array"))?;
+        let has_direct_root = details.iter().any(|detail| {
+            detail["direct_workspace_roots"]
                 .as_array()
-                .is_some_and(|details| details.iter().any(|detail| {
-                    detail["direct_workspace_roots"]
-                        .as_array()
-                        .is_some_and(|roots| !roots.is_empty())
-                }))
-        ),
-        "at least one duplicate should name a first-party manifest root that directly requests it"
+                .is_some_and(|roots| !roots.is_empty())
+        });
+        assert_eq!(
+            duplicate["direct_workspace_debt"].as_bool(),
+            Some(has_direct_root),
+            "{} direct_workspace_debt should reflect direct root presence",
+            duplicate["name"].as_str().unwrap_or("<unknown>")
+        );
+    }
+    assert_eq!(
+        direct_count,
+        duplicates
+            .iter()
+            .filter(|duplicate| duplicate["direct_workspace_debt"] == serde_json::json!(true))
+            .count() as u64,
+        "data.direct_count should allow a fully transitive duplicate set"
     );
     Ok(())
 }
