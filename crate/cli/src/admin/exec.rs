@@ -56,6 +56,7 @@ pub fn pg_row_counts_with(
 ) -> Result<BTreeMap<String, i64>> {
     let sql = "SELECT schemaname || '.' || relname, n_live_tup \
                FROM pg_stat_user_tables \
+               WHERE schemaname NOT LIKE '\\_%' ESCAPE '\\' \
                ORDER BY 1;";
 
     let output = Command::new(psql_bin.unwrap_or_else(|| Path::new("psql")))
