@@ -181,6 +181,7 @@ struct RustAnalyzerCliDiagnosticScan {
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 struct RustAnalyzerCliStderrSummary {
     categories: Vec<&'static str>,
+    remediation_actions: Vec<&'static str>,
     cyclic_dependency_warnings: usize,
     cyclic_dependency_edges: Vec<String>,
     self_cycle_edges: Vec<String>,
@@ -206,6 +207,16 @@ struct RustAnalyzerCliDiagnostic {
     end_col: u32,
     message: String,
 }
+
+const RA_ACTION_EXTRACT_XTASK_SANDBOX: &str = "extract shared test/sandbox helpers out of xtask or remove workspace crates' dev-dependency on xtask";
+const RA_ACTION_BREAK_WORKSPACE_CYCLES: &str =
+    "break non-xtask workspace crate cycles before treating rust-analyzer as clean";
+const RA_ACTION_INSPECT_SELF_CYCLES: &str =
+    "inspect rust-analyzer self-cycle reports against crate target/dev-dependency metadata";
+const RA_ACTION_CAPTURE_UPSTREAM_REPRO: &str =
+    "capture an upstream rust-analyzer repro after local cycle pressure is reduced";
+const RA_ACTION_CLASSIFY_UNCATEGORIZED_STDERR: &str =
+    "classify uncategorized rust-analyzer stderr samples";
 
 impl TlsCheck {
     fn is_healthy(&self) -> bool {
@@ -979,9 +990,18 @@ fn summarize_rust_analyzer_cli_stderr(stderr: &str) -> Option<RustAnalyzerCliStd
     if other_errors > 0 {
         categories.push("other_errors");
     }
+    let remediation_actions = rust_analyzer_remediation_actions(
+        &self_cycle_edges,
+        &xtask_cycle_edges,
+        &workspace_cycle_edges,
+        internal_errors,
+        other_warnings,
+        other_errors,
+    );
 
     (!categories.is_empty()).then_some(RustAnalyzerCliStderrSummary {
         categories,
+        remediation_actions,
         cyclic_dependency_warnings,
         cyclic_dependency_edges,
         self_cycle_edges,
@@ -994,6 +1014,33 @@ fn summarize_rust_analyzer_cli_stderr(stderr: &str) -> Option<RustAnalyzerCliStd
         other_errors,
         other_error_samples,
     })
+}
+
+fn rust_analyzer_remediation_actions(
+    self_cycle_edges: &[String],
+    xtask_cycle_edges: &[String],
+    workspace_cycle_edges: &[String],
+    internal_errors: usize,
+    other_warnings: usize,
+    other_errors: usize,
+) -> Vec<&'static str> {
+    let mut actions = Vec::new();
+    if !xtask_cycle_edges.is_empty() {
+        actions.push(RA_ACTION_EXTRACT_XTASK_SANDBOX);
+    }
+    if !workspace_cycle_edges.is_empty() {
+        actions.push(RA_ACTION_BREAK_WORKSPACE_CYCLES);
+    }
+    if !self_cycle_edges.is_empty() {
+        actions.push(RA_ACTION_INSPECT_SELF_CYCLES);
+    }
+    if internal_errors > 0 {
+        actions.push(RA_ACTION_CAPTURE_UPSTREAM_REPRO);
+    }
+    if other_warnings > 0 || other_errors > 0 {
+        actions.push(RA_ACTION_CLASSIFY_UNCATEGORIZED_STDERR);
+    }
+    actions
 }
 
 fn classify_rust_analyzer_cycle_edges(
@@ -1554,6 +1601,12 @@ fn print_rust_analyzer_report(report: &RustAnalyzerDoctorReport) {
                 println!(
                     "  RA internal kinds: {}",
                     summary.internal_error_kinds.join(", ")
+                );
+            }
+            if !summary.remediation_actions.is_empty() {
+                println!(
+                    "  RA actions:        {}",
+                    summary.remediation_actions.join("; ")
                 );
             }
         }
