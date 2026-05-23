@@ -59,7 +59,7 @@ pub use file_drop::{
     DEFAULT_FILE_DROP_MAX_WATCHES, FileDropAdapter, FileDropConfig, FileDropCursor,
     FileDropEventKind, FileDropMoveRole, FileDropRecordMetadata, FileDropWatchBudget,
     FileDropWatchMode, FileDropWatchPlan, FileDropWatchSurvey, choose_file_drop_watch_plan,
-    survey_file_drop_watch_tree,
+    normalized_file_drop_watch_roots, survey_file_drop_watch_tree,
 };
 pub use journalctl_stream::{
     BROADCAST_CAPACITY as JOURNALCTL_BROADCAST_CAPACITY, JournalctlCursor, JournalctlStreamAdapter,
