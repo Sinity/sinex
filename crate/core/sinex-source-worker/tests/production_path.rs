@@ -176,17 +176,24 @@ async fn _run_case_with_record_fixture(
     obligation_names: &[&str],
 ) -> Vec<String> {
     let mut failures = Vec::new();
+    let mut initial_ingestion_verified = false;
     for &obligation in obligation_names {
-        let result = _run_record_fixture_obligation(
-            obligation,
-            source_unit_id,
-            adapter_kind,
-            fixture.clone(),
-            expected_event_types,
-        )
-        .await;
+        let result = if obligation == "privacy" && initial_ingestion_verified {
+            run_record_fixture_privacy_redaction_only(source_unit_id, fixture.clone()).await
+        } else {
+            _run_record_fixture_obligation(
+                obligation,
+                source_unit_id,
+                adapter_kind,
+                fixture.clone(),
+                expected_event_types,
+            )
+            .await
+        };
         if let Err(e) = result {
             failures.push(format!("[{source_unit_id}] obligation '{obligation}': {e}"));
+        } else if obligation == "initial_ingestion" {
+            initial_ingestion_verified = true;
         }
     }
     failures
@@ -372,11 +379,18 @@ async fn run_record_fixture_privacy(
     fixture: RecordFixtureSpec<'_>,
     expected_event_types: &[&str],
 ) -> Result<(), String> {
-    use sinex_primitives::privacy::{self, ProcessingContext};
-
     run_record_fixture_initial_ingestion(source_unit_id, fixture.clone(), expected_event_types)
         .await
         .map_err(|e| format!("privacy/clean-path: {e}"))?;
+
+    run_record_fixture_privacy_redaction_only(source_unit_id, fixture).await
+}
+
+async fn run_record_fixture_privacy_redaction_only(
+    source_unit_id: &str,
+    fixture: RecordFixtureSpec<'_>,
+) -> Result<(), String> {
+    use sinex_primitives::privacy::{self, ProcessingContext};
 
     let secret_text = "export TOKEN=ghp_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
     let engine_result = privacy::engine()
