@@ -547,10 +547,10 @@ mod coverage_matrix {
             SmokeCoverage::ObligationHarness,
             "production_path/export_parsers.rs",
         ),
-        blocked(
+        entry(
             "fs",
-            "production_path/fs.rs; native fs adapter fold pending",
-            "#1224",
+            SmokeCoverage::ObligationHarness,
+            "production_path/fs.rs",
         ),
         entry(
             "git-commit-history",
@@ -810,7 +810,7 @@ mod coverage_matrix {
 
         assert_eq!(
             blocked,
-            BTreeMap::from([("desktop.window-manager", "#1234"), ("fs", "#1224"),]),
+            BTreeMap::from([("desktop.window-manager", "#1234")]),
             "source-worker smoke blockers must stay explicit and issue-backed"
         );
 

@@ -28,7 +28,7 @@ corresponding `crate/core/sinex-source-worker/src/sources/<domain>/` module tree
 
 ## fs
 
-- `fs` — IngestorNodeAdapter; checkpoint: AppendStream (inotify/file-watch events)
+- `fs` — FileContentDropAdapter; checkpoint: AppendStream (inotify/file-watch events with content staging)
 
 ## system
 
@@ -49,7 +49,7 @@ corresponding `crate/core/sinex-source-worker/src/sources/<domain>/` module tree
 ## Notes on drift from tentative lists
 
 - **`terminal.zsh-history`** — present in source unit registrations (listed in the prompt as tentative). Confirmed.
-- **`fs`** — registered as `id: "fs"` (a single unit covering all file events), not split into `file-created/modified/deleted/moved` sub-units as the tentative list suggested. Wave B fs subagent should fold as `fs.fs` or keep `fs` — coordinate with the dispatch table.
+- **`fs`** — registered as `id: "fs"` (a single unit covering all file events), not split into `file-created/modified/deleted/moved` sub-units as the tentative list suggested. It now uses `FileContentDropAdapter` plus `FilesystemParser`; keep the stable `fs` id.
 - **`system.monitor`** — present in registrations, omitted from the tentative list. Confirmed here.
 - **`terminal.monitor`** — present in registrations, omitted from the tentative list. Confirmed here.
 - **`document.staging`** — the descriptor id is `document.staging`, not `document.file-watch` as tentatively listed.
