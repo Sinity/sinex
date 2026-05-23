@@ -26,6 +26,12 @@
 
 use std::time::Duration;
 use turmoil::net::{TcpListener, TcpStream};
+use xtask::sandbox::prelude::*;
+
+async fn run_turmoil_blocking(test: impl FnOnce() + Send + 'static) -> TestResult<()> {
+    tokio::task::spawn_blocking(test).await?;
+    Ok(())
+}
 
 // ─── Backoff state machine ────────────────────────────────────────────────────
 
@@ -74,48 +80,51 @@ impl BackoffSchedule {
 /// Verify that a reconnect loop accumulates the correct total wait time
 /// under turmoil's virtual clock. Without turmoil, this test would sleep
 /// for 1+2+4+8+16 = 31 real seconds.
-#[test]
-fn dst_turmoil_backoff_timing_deterministic() {
-    let mut builder = turmoil::Builder::new();
-    builder.simulation_duration(Duration::from_secs(40));
-    let mut sim = builder.build();
+#[sinex_test]
+async fn dst_turmoil_backoff_timing_deterministic() -> TestResult<()> {
+    run_turmoil_blocking(|| {
+        let mut builder = turmoil::Builder::new();
+        builder.simulation_duration(Duration::from_secs(40));
+        let mut sim = builder.build();
 
-    sim.host("client", || async {
-        let mut backoff = BackoffSchedule::new(Duration::from_secs(1), Duration::from_secs(16));
+        sim.host("client", || async {
+            let mut backoff = BackoffSchedule::new(Duration::from_secs(1), Duration::from_secs(16));
 
-        let start = tokio::time::Instant::now();
-        let mut delays = Vec::new();
+            let start = tokio::time::Instant::now();
+            let mut delays = Vec::new();
 
-        // Simulate 5 reconnect attempts with backoff
-        for _ in 0..5 {
-            let delay = backoff.next();
-            delays.push(delay);
-            tokio::time::sleep(delay).await;
-        }
+            // Simulate 5 reconnect attempts with backoff
+            for _ in 0..5 {
+                let delay = backoff.next();
+                delays.push(delay);
+                tokio::time::sleep(delay).await;
+            }
 
-        let total_elapsed = start.elapsed();
-        let expected_total = Duration::from_secs(1 + 2 + 4 + 8 + 16); // 31s
+            let total_elapsed = start.elapsed();
+            let expected_total = Duration::from_secs(1 + 2 + 4 + 8 + 16); // 31s
 
-        // Under turmoil virtual clock, this takes 0ms wall time but the
-        // virtual clock shows the correct elapsed time.
-        assert_eq!(
-            total_elapsed, expected_total,
-            "backoff total should be exactly 31 virtual seconds, got {total_elapsed:?}"
-        );
+            // Under turmoil virtual clock, this takes 0ms wall time but the
+            // virtual clock shows the correct elapsed time.
+            assert_eq!(
+                total_elapsed, expected_total,
+                "backoff total should be exactly 31 virtual seconds, got {total_elapsed:?}"
+            );
 
-        // Verify the backoff sequence: 1s, 2s, 4s, 8s, 16s (capped at max)
-        assert_eq!(delays[0], Duration::from_secs(1));
-        assert_eq!(delays[1], Duration::from_secs(2));
-        assert_eq!(delays[2], Duration::from_secs(4));
-        assert_eq!(delays[3], Duration::from_secs(8));
-        assert_eq!(delays[4], Duration::from_secs(16)); // capped at max=16
+            // Verify the backoff sequence: 1s, 2s, 4s, 8s, 16s (capped at max)
+            assert_eq!(delays[0], Duration::from_secs(1));
+            assert_eq!(delays[1], Duration::from_secs(2));
+            assert_eq!(delays[2], Duration::from_secs(4));
+            assert_eq!(delays[3], Duration::from_secs(8));
+            assert_eq!(delays[4], Duration::from_secs(16)); // capped at max=16
 
-        assert_eq!(backoff.attempt(), 5);
+            assert_eq!(backoff.attempt(), 5);
 
-        Ok(())
-    });
+            Ok(())
+        });
 
-    sim.run().unwrap();
+        sim.run().expect("turmoil simulation should run");
+    })
+    .await
 }
 
 // ─── Test 2: TCP server availability + connect/retry loop ────────────────────
@@ -124,45 +133,48 @@ fn dst_turmoil_backoff_timing_deterministic() {
 /// - Server is initially down → client retries with backoff
 /// - Server comes up at a known virtual time → client connects
 /// - Total retry count and timing are deterministic
-#[test]
-fn dst_turmoil_connect_retry_until_server_available() {
-    let mut sim = turmoil::Builder::new().build();
+#[sinex_test]
+async fn dst_turmoil_connect_retry_until_server_available() -> TestResult<()> {
+    run_turmoil_blocking(|| {
+        let mut sim = turmoil::Builder::new().build();
 
-    // Server: starts listening after 5 virtual seconds
-    sim.host("server", || async {
-        tokio::time::sleep(Duration::from_secs(5)).await;
-        let listener = TcpListener::bind("0.0.0.0:4222").await.unwrap();
-        // Accept one connection, then close
-        let _ = listener.accept().await.unwrap();
-        Ok(())
-    });
+        // Server: starts listening after 5 virtual seconds
+        sim.host("server", || async {
+            tokio::time::sleep(Duration::from_secs(5)).await;
+            let listener = TcpListener::bind("0.0.0.0:4222").await.unwrap();
+            // Accept one connection, then close
+            let _ = listener.accept().await.unwrap();
+            Ok(())
+        });
 
-    // Client: retries connection with 1s backoff until server is ready
-    sim.client("client", async {
-        let server_addr = "server:4222";
-        let mut backoff = BackoffSchedule::new(Duration::from_secs(1), Duration::from_secs(8));
-        let mut attempts = 0u32;
+        // Client: retries connection with 1s backoff until server is ready
+        sim.client("client", async {
+            let server_addr = "server:4222";
+            let mut backoff = BackoffSchedule::new(Duration::from_secs(1), Duration::from_secs(8));
+            let mut attempts = 0u32;
 
-        loop {
-            attempts += 1;
-            if let Ok(_stream) = TcpStream::connect(server_addr).await {
-                // Connected — verify we retried a reasonable number of times
-                // Server is up at t=5s, base retry=1s, so ~3-6 attempts expected
-                assert!(
-                    (3..=8).contains(&attempts),
-                    "expected 3-8 connection attempts before success, got {attempts}"
-                );
-                break;
+            loop {
+                attempts += 1;
+                if let Ok(_stream) = TcpStream::connect(server_addr).await {
+                    // Connected — verify we retried a reasonable number of times
+                    // Server is up at t=5s, base retry=1s, so ~3-6 attempts expected
+                    assert!(
+                        (3..=8).contains(&attempts),
+                        "expected 3-8 connection attempts before success, got {attempts}"
+                    );
+                    break;
+                }
+                let delay = backoff.next();
+                tokio::time::sleep(delay).await;
+                assert!(backoff.attempt() <= 15, "too many retries: {attempts}");
             }
-            let delay = backoff.next();
-            tokio::time::sleep(delay).await;
-            assert!(backoff.attempt() <= 15, "too many retries: {attempts}");
-        }
 
-        Ok(())
-    });
+            Ok(())
+        });
 
-    sim.run().unwrap();
+        sim.run().expect("turmoil simulation should run");
+    })
+    .await
 }
 
 // ─── Test 3: Network partition → reconnect ────────────────────────────────────
@@ -170,46 +182,49 @@ fn dst_turmoil_connect_retry_until_server_available() {
 /// Simulate a network partition between client and server.
 /// Verifies that the client detects the partition (read returns Err) and
 /// successfully reconnects after the partition is healed.
-#[test]
-fn dst_turmoil_network_partition_and_reconnect() {
-    use tokio::io::{AsyncReadExt, AsyncWriteExt};
-
-    let mut sim = turmoil::Builder::new().build();
-
-    // Echo server
-    sim.host("server", || async {
-        let listener = TcpListener::bind("0.0.0.0:9000").await.unwrap();
-        loop {
-            let (mut stream, _) = listener.accept().await.unwrap();
-            tokio::spawn(async move {
-                let mut buf = [0u8; 64];
-                loop {
-                    match stream.read(&mut buf).await {
-                        Ok(0) | Err(_) => break,
-                        Ok(n) => {
-                            let _ = stream.write_all(&buf[..n]).await;
-                        }
-                    }
-                }
-            });
-        }
-    });
-
-    sim.client("client", async {
+#[sinex_test]
+async fn dst_turmoil_network_partition_and_reconnect() -> TestResult<()> {
+    run_turmoil_blocking(|| {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-        let mut stream = TcpStream::connect("server:9000").await.unwrap();
+        let mut sim = turmoil::Builder::new().build();
 
-        // Verify connection works
-        stream.write_all(b"hello").await.unwrap();
-        let mut buf = [0u8; 64];
-        let n = stream.read(&mut buf).await.unwrap();
-        assert_eq!(&buf[..n], b"hello");
+        // Echo server
+        sim.host("server", || async {
+            let listener = TcpListener::bind("0.0.0.0:9000").await.unwrap();
+            loop {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                tokio::spawn(async move {
+                    let mut buf = [0u8; 64];
+                    loop {
+                        match stream.read(&mut buf).await {
+                            Ok(0) | Err(_) => break,
+                            Ok(n) => {
+                                let _ = stream.write_all(&buf[..n]).await;
+                            }
+                        }
+                    }
+                });
+            }
+        });
 
-        Ok(())
-    });
+        sim.client("client", async {
+            use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-    sim.run().unwrap();
+            let mut stream = TcpStream::connect("server:9000").await.unwrap();
+
+            // Verify connection works
+            stream.write_all(b"hello").await.unwrap();
+            let mut buf = [0u8; 64];
+            let n = stream.read(&mut buf).await.unwrap();
+            assert_eq!(&buf[..n], b"hello");
+
+            Ok(())
+        });
+
+        sim.run().expect("turmoil simulation should run");
+    })
+    .await
 }
 
 // ─── Test 4: Deadline enforcement ────────────────────────────────────────────
@@ -218,64 +233,67 @@ fn dst_turmoil_network_partition_and_reconnect() {
 /// correct virtual time. A bare `TcpStream::connect()` to an unbound turmoil
 /// host fails immediately with connection refused, so the timeout must wrap the
 /// higher-level retry behavior that actually waits.
-#[test]
-fn dst_turmoil_connection_timeout_fires_at_correct_virtual_time() {
-    let mut builder = turmoil::Builder::new();
-    builder.simulation_duration(Duration::from_secs(15));
-    let mut sim = builder.build();
+#[sinex_test]
+async fn dst_turmoil_connection_timeout_fires_at_correct_virtual_time() -> TestResult<()> {
+    run_turmoil_blocking(|| {
+        let mut builder = turmoil::Builder::new();
+        builder.simulation_duration(Duration::from_secs(15));
+        let mut sim = builder.build();
 
-    // Server never comes up
-    sim.host("unreachable", || async {
-        // Never bind — connections will be refused indefinitely
-        tokio::time::sleep(Duration::from_secs(1000)).await;
-        Ok(())
-    });
+        // Server never comes up
+        sim.host("unreachable", || async {
+            // Never bind — connections will be refused indefinitely
+            tokio::time::sleep(Duration::from_secs(1000)).await;
+            Ok(())
+        });
 
-    sim.client("client", async {
-        let timeout = Duration::from_secs(10);
-        let start = tokio::time::Instant::now();
+        sim.client("client", async {
+            let timeout = Duration::from_secs(10);
+            let start = tokio::time::Instant::now();
 
-        let result = tokio::time::timeout(timeout, async {
-            loop {
-                let _ = TcpStream::connect("unreachable:9999").await;
-                tokio::time::sleep(Duration::from_secs(1)).await;
-            }
-            #[allow(unreachable_code)]
-            Ok::<(), std::io::Error>(())
-        })
-        .await;
+            let result = tokio::time::timeout(timeout, async {
+                loop {
+                    let _ = TcpStream::connect("unreachable:9999").await;
+                    tokio::time::sleep(Duration::from_secs(1)).await;
+                }
+                #[allow(unreachable_code)]
+                Ok::<(), std::io::Error>(())
+            })
+            .await;
 
-        let elapsed = start.elapsed();
+            let elapsed = start.elapsed();
 
-        assert!(
-            result.is_err(),
-            "retry loop should time out before succeeding"
-        );
+            assert!(
+                result.is_err(),
+                "retry loop should time out before succeeding"
+            );
 
-        // Virtual time elapsed must be at least the timeout duration
-        assert!(
-            elapsed >= timeout,
-            "must wait at least {timeout:?} before timeout fires, elapsed: {elapsed:?}"
-        );
+            // Virtual time elapsed must be at least the timeout duration
+            assert!(
+                elapsed >= timeout,
+                "must wait at least {timeout:?} before timeout fires, elapsed: {elapsed:?}"
+            );
 
-        // Must not wait significantly longer than the timeout
-        assert!(
-            elapsed < timeout + Duration::from_secs(2),
-            "timeout should fire promptly, elapsed: {elapsed:?}"
-        );
+            // Must not wait significantly longer than the timeout
+            assert!(
+                elapsed < timeout + Duration::from_secs(2),
+                "timeout should fire promptly, elapsed: {elapsed:?}"
+            );
 
-        Ok(())
-    });
+            Ok(())
+        });
 
-    sim.run().unwrap();
+        sim.run().expect("turmoil simulation should run");
+    })
+    .await
 }
 
 // ─── Test 5: Backoff cap invariant ───────────────────────────────────────────
 
 /// Property: no matter how many retries occur, the backoff delay never exceeds
 /// `max`. This is an invariant that should hold for any number of attempts.
-#[test]
-fn dst_turmoil_backoff_never_exceeds_max() {
+#[sinex_test]
+async fn dst_turmoil_backoff_never_exceeds_max() -> TestResult<()> {
     let max = Duration::from_secs(30);
     let mut backoff = BackoffSchedule::new(Duration::from_millis(100), max);
 
@@ -287,6 +305,7 @@ fn dst_turmoil_backoff_never_exceeds_max() {
             backoff.attempt()
         );
     }
+    Ok(())
 }
 
 // ─── Test 6: Deterministic sequence replay ───────────────────────────────────
@@ -297,40 +316,44 @@ fn dst_turmoil_backoff_never_exceeds_max() {
 /// Turmoil's default seed is fixed (0), so this test should always produce
 /// the same result — which means if it ever fails, something changed in
 /// turmoil's RNG or the test logic.
-#[test]
-fn dst_turmoil_same_seed_produces_identical_outcomes() {
-    fn run_sim() -> Vec<Duration> {
-        let mut builder = turmoil::Builder::new();
-        builder.simulation_duration(Duration::from_secs(20));
-        let mut sim = builder.build();
-        let delays = std::sync::Arc::new(std::sync::Mutex::new(Vec::<Duration>::new()));
-        let delays_clone = delays.clone();
+#[sinex_test]
+async fn dst_turmoil_same_seed_produces_identical_outcomes() -> TestResult<()> {
+    run_turmoil_blocking(|| {
+        fn run_sim() -> Vec<Duration> {
+            let mut builder = turmoil::Builder::new();
+            builder.simulation_duration(Duration::from_secs(20));
+            let mut sim = builder.build();
+            let delays = std::sync::Arc::new(std::sync::Mutex::new(Vec::<Duration>::new()));
+            let delays_clone = delays.clone();
 
-        sim.client("observer", async move {
-            let mut backoff = BackoffSchedule::new(Duration::from_secs(1), Duration::from_secs(8));
-            let start = tokio::time::Instant::now();
+            sim.client("observer", async move {
+                let mut backoff =
+                    BackoffSchedule::new(Duration::from_secs(1), Duration::from_secs(8));
+                let start = tokio::time::Instant::now();
 
-            for _ in 0..4 {
-                let delay = backoff.next();
-                tokio::time::sleep(delay).await;
-                delays_clone.lock().unwrap().push(start.elapsed());
-            }
-            Ok(())
-        });
+                for _ in 0..4 {
+                    let delay = backoff.next();
+                    tokio::time::sleep(delay).await;
+                    delays_clone.lock().unwrap().push(start.elapsed());
+                }
+                Ok(())
+            });
 
-        sim.run().unwrap();
-        std::sync::Arc::try_unwrap(delays)
-            .unwrap()
-            .into_inner()
-            .unwrap()
-    }
+            sim.run().unwrap();
+            std::sync::Arc::try_unwrap(delays)
+                .unwrap()
+                .into_inner()
+                .unwrap()
+        }
 
-    let run1 = run_sim();
-    let run2 = run_sim();
+        let run1 = run_sim();
+        let run2 = run_sim();
 
-    assert_eq!(
-        run1, run2,
-        "same seed must produce identical virtual time traces"
-    );
-    assert_eq!(run1.len(), 4, "must have 4 recorded timestamps");
+        assert_eq!(
+            run1, run2,
+            "same seed must produce identical virtual time traces"
+        );
+        assert_eq!(run1.len(), 4, "must have 4 recorded timestamps");
+    })
+    .await
 }
