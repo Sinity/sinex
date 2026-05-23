@@ -206,6 +206,7 @@ impl TokenRateLimiter {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sinex_primitives::SinexError;
     use tokio::time::{Duration, timeout};
     use xtask::sandbox::prelude::*;
 
@@ -220,7 +221,7 @@ mod tests {
         timeout(Duration::from_secs(1), handle)
             .await
             .map_err(|_| {
-                color_eyre::eyre::eyre!("cleanup task should exit after shutdown sender drops")
+                SinexError::timeout("cleanup task should exit after shutdown sender drops")
             })??;
         Ok(())
     }

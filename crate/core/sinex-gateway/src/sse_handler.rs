@@ -360,7 +360,7 @@ mod tests {
     use axum::http::{HeaderMap, HeaderValue};
     use serde::Serialize;
     use sinex_primitives::events::Event;
-    use sinex_primitives::{Id, JsonValue, Uuid};
+    use sinex_primitives::{Id, JsonValue, SinexError, Uuid};
     use xtask::sandbox::sinex_test;
 
     struct FailingSerialize;
@@ -397,8 +397,7 @@ mod tests {
             HeaderValue::from_str(&event_id.to_string())?,
         );
 
-        let parsed =
-            parse_last_event_id(&headers).map_err(|error| color_eyre::eyre::eyre!(error))?;
+        let parsed = parse_last_event_id(&headers).map_err(SinexError::validation)?;
         assert_eq!(parsed, Some(event_id));
         Ok(())
     }

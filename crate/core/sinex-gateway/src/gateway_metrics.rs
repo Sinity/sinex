@@ -372,6 +372,7 @@ struct MetricsSnapshot {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sinex_primitives::SinexError;
     use xtask::sandbox::prelude::*;
 
     #[sinex_test]
@@ -444,7 +445,7 @@ mod tests {
         tokio::time::timeout(Duration::from_secs(1), handle)
             .await
             .map_err(|_| {
-                color_eyre::eyre::eyre!("metrics task should exit after shutdown sender drops")
+                SinexError::timeout("metrics task should exit after shutdown sender drops")
             })??;
         Ok(())
     }
