@@ -508,6 +508,7 @@ mod tests {
     };
     use async_nats::HeaderMap;
     use serde_json::json;
+    use sinex_primitives::SinexError;
     use uuid::Uuid;
     use xtask::sandbox::sinex_test;
 
@@ -520,7 +521,7 @@ mod tests {
         let mut headers = HeaderMap::new();
         headers.insert("Offset", "42");
         let offset = parse_slice_offset(SUBJECT, Some(&headers))
-            .map_err(|error| color_eyre::eyre::eyre!(error))?;
+            .map_err(SinexError::validation)?;
         assert_eq!(offset, 42);
         Ok(())
     }
@@ -600,7 +601,7 @@ mod tests {
             }))?
             .as_slice(),
         )
-        .map_err(|error| color_eyre::eyre::eyre!(error))?;
+        .map_err(SinexError::validation)?;
         assert_eq!(begin.material_kind, "shell-history");
         assert_eq!(parsed_material_id, material_id.parse::<Uuid>()?);
         Ok(())
