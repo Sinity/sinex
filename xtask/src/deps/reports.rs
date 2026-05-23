@@ -84,15 +84,15 @@ pub fn write_duplicates_report<W: Write>(
                 )?;
                 let direct_count = duplicates
                     .iter()
-                    .filter(|duplicate| duplicate.direct_workspace_debt)
+                    .filter(|duplicate| duplicate.classification.is_direct_workspace())
                     .count();
                 let transitive_count = duplicates
                     .iter()
-                    .filter(|duplicate| duplicate.transitive_only)
+                    .filter(|duplicate| duplicate.classification.is_transitive_upstream())
                     .count();
                 writeln!(
                     writer,
-                    "  {} direct workspace debt, {} transitive only",
+                    "  {} direct workspace debt, {} transitive upstream",
                     direct_count, transitive_count
                 )?;
                 writeln!(writer)?;
@@ -103,11 +103,7 @@ pub fn write_duplicates_report<W: Write>(
                         "  {} has {} versions ({}, {} direct workspace roots):",
                         dup.name,
                         dup.versions.len(),
-                        if dup.direct_workspace_debt {
-                            "direct workspace debt"
-                        } else {
-                            "transitive only"
-                        },
+                        dup.classification.label(),
                         dup.direct_workspace_root_count
                     )?;
                     for detail in &dup.version_details {
