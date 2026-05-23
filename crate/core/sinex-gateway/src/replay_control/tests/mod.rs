@@ -3,7 +3,6 @@ use super::server::ReplayControlServer;
 use super::validation::run_safety_analysis;
 use super::*;
 use async_nats::Client;
-use color_eyre::eyre::eyre;
 use futures::StreamExt;
 use serde_json::json;
 use sinex_db::DbPool;
@@ -17,11 +16,19 @@ use sinex_node_sdk::runtime::stream::{
 };
 use sinex_primitives::environment::{SinexEnvironment, environment};
 use sinex_primitives::events::{EventPayload, payloads::filesystem::FileCreatedPayload};
-use sinex_primitives::{DynamicPayload, Id, Uuid};
+use sinex_primitives::{DynamicPayload, Id, SinexError, Uuid};
 use std::collections::HashMap;
 use std::sync::atomic::AtomicUsize;
 use tokio::time::sleep;
 use xtask::sandbox::sinex_test;
+
+fn test_error(message: impl std::fmt::Display) -> SinexError {
+    SinexError::service(message)
+}
+
+fn error_contains(error: &SinexError, needle: &str) -> bool {
+    error.to_string().contains(needle)
+}
 
 /// Subscribe to scope-invalidation messages in tests.
 ///
@@ -51,7 +58,7 @@ async fn spawn_invalidation_listener_for_test(
             ..Default::default()
         })
         .await
-        .map_err(|e| eyre!("failed to bootstrap invalidation stream: {e}"))?;
+        .map_err(|e| test_error(format!("failed to bootstrap invalidation stream: {e}")))?;
     let deliver_subject = nats_client.new_inbox();
     let consumer = stream
         .create_consumer(push::Config {
@@ -59,11 +66,11 @@ async fn spawn_invalidation_listener_for_test(
             ..Default::default()
         })
         .await
-        .map_err(|e| eyre!("failed to create invalidation consumer: {e}"))?;
+        .map_err(|e| test_error(format!("failed to create invalidation consumer: {e}")))?;
     let mut messages = consumer
         .messages()
         .await
-        .map_err(|e| eyre!("failed to start invalidation message stream: {e}"))?;
+        .map_err(|e| test_error(format!("failed to start invalidation message stream: {e}")))?;
 
     let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
     tokio::spawn(async move {
@@ -96,9 +103,9 @@ async fn wait_for_operation(pool: &DbPool, operation_id: Uuid) -> Result<()> {
         }
         sleep(Duration::from_millis(10 * (attempt + 1) as u64)).await;
     }
-    Err(eyre!(
+    Err(test_error(format!(
         "operation record {operation_id} not found after waiting for repository persistence"
-    ))
+    )))
 }
 
 async fn drive_to_state(
@@ -126,10 +133,10 @@ async fn wait_for_operation_state(
         }
         sleep(Duration::from_millis(25)).await;
     }
-    Err(eyre!(
+    Err(test_error(format!(
         "operation {operation_id} did not reach state {:?} before timeout",
         target
-    ))
+    )))
 }
 
 async fn corrupt_operation_preview_summary(pool: &DbPool, operation_id: Uuid) -> Result<()> {
@@ -160,7 +167,7 @@ async fn spawn_fake_scan_node(
     let mut sub = nats
         .subscribe(subject)
         .await
-        .map_err(|e| eyre!("failed to subscribe fake node dispatcher: {e}"))?;
+        .map_err(|e| test_error(format!("failed to subscribe fake node dispatcher: {e}")))?;
     let (command_tx, command_rx) = tokio::sync::oneshot::channel();
 
     let handle = tokio::spawn(async move {
@@ -230,7 +237,7 @@ async fn spawn_fake_scan_node_with_progress(
     let mut sub = nats
         .subscribe(subject)
         .await
-        .map_err(|e| eyre!("failed to subscribe fake node dispatcher: {e}"))?;
+        .map_err(|e| test_error(format!("failed to subscribe fake node dispatcher: {e}")))?;
     let (command_tx, command_rx) = tokio::sync::oneshot::channel();
 
     let handle = tokio::spawn(async move {
@@ -298,7 +305,7 @@ async fn spawn_fake_scan_node_ack_only(
     let mut sub = nats
         .subscribe(subject)
         .await
-        .map_err(|e| eyre!("failed to subscribe fake node dispatcher: {e}"))?;
+        .map_err(|e| test_error(format!("failed to subscribe fake node dispatcher: {e}")))?;
     let (command_tx, command_rx) = tokio::sync::oneshot::channel();
 
     let handle = tokio::spawn(async move {
@@ -335,7 +342,7 @@ fn spawn_replay_output_inserter(
     tokio::spawn(async move {
         let command = command_rx
             .await
-            .map_err(|_| eyre!("fake replay output inserter did not receive scan command"))?;
+            .map_err(|_| test_error("fake replay output inserter did not receive scan command"))?;
         let logical_source_identifier = command
             .args
             .replay

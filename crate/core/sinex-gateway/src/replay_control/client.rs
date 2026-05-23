@@ -7,11 +7,10 @@
 
 use async_nats::Client;
 use async_nats::connection::State as NatsState;
-use color_eyre::eyre::{Context, Result, eyre};
 use parking_lot::Mutex;
 use sinex_db::replay::state_machine::{ReplayOperation, ReplayScope, ReplayState};
-use sinex_primitives::Uuid;
 use sinex_primitives::environment::SinexEnvironment;
+use sinex_primitives::{Result, SinexError, Uuid};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -73,11 +72,10 @@ impl ReplayControlClient {
     }
 
     fn decode_response_payload(&self, payload: &[u8]) -> Result<ReplayControlResponse> {
-        let response: ReplayControlResponse = serde_json::from_slice(payload)
-            .inspect_err(|err| {
-                self.record_error(err.to_string());
-            })
-            .wrap_err("Invalid replay control response")?;
+        let response: ReplayControlResponse = serde_json::from_slice(payload).map_err(|err| {
+            self.record_error(err.to_string());
+            SinexError::serialization("Invalid replay control response").with_std_error(&err)
+        })?;
 
         if response.status == ReplayControlStatus::Error {
             let message = response
@@ -85,9 +83,9 @@ impl ReplayControlClient {
                 .unwrap_or_else(|| "Replay control request failed".to_string());
             self.record_error(message.clone());
             if let Some(kind) = response.error_kind {
-                return Err(kind.into_sinex_error(message).into());
+                return Err(kind.into_sinex_error(message));
             }
-            return Err(eyre!("{}", message));
+            return Err(SinexError::service(message));
         }
 
         Ok(response)
@@ -96,7 +94,7 @@ impl ReplayControlClient {
     fn require_operation(&self, response: ReplayControlResponse) -> Result<ReplayOperation> {
         response
             .operation
-            .ok_or_else(|| eyre!("Replay control response missing operation"))
+            .ok_or_else(|| SinexError::serialization("Replay control response missing operation"))
     }
 
     pub(super) fn require_operations(
@@ -104,11 +102,14 @@ impl ReplayControlClient {
     ) -> Result<Vec<ReplayOperation>> {
         response
             .operations
-            .ok_or_else(|| eyre!("Replay control response missing operations"))
+            .ok_or_else(|| SinexError::serialization("Replay control response missing operations"))
     }
 
     async fn send(&self, request: ReplayControlRequest) -> Result<ReplayControlResponse> {
-        let payload = serde_json::to_vec(&request)?;
+        let payload = serde_json::to_vec(&request).map_err(|err| {
+            SinexError::serialization("Failed to serialize replay control request")
+                .with_std_error(&err)
+        })?;
 
         // Issue 126: Configurable timeout for NATS replay requests
         let message = tokio::time::timeout(
@@ -122,12 +123,14 @@ impl ReplayControlClient {
                 self.request_timeout
             );
             self.record_error(error_msg.clone());
-            eyre!(error_msg)
+            SinexError::timeout(error_msg)
         })?
         .inspect_err(|err| {
             self.record_error(err.to_string());
         })
-        .wrap_err("Replay control request failed")?;
+        .map_err(|err| {
+            SinexError::messaging("Replay control request failed").with_std_error(&err)
+        })?;
 
         self.decode_response_payload(&message.payload)
     }
@@ -138,7 +141,10 @@ impl ReplayControlClient {
         request: ReplayControlRequest,
         timeout: Duration,
     ) -> Result<ReplayControlResponse> {
-        let payload = serde_json::to_vec(&request)?;
+        let payload = serde_json::to_vec(&request).map_err(|err| {
+            SinexError::serialization("Failed to serialize replay control request")
+                .with_std_error(&err)
+        })?;
         let nats_request = async_nats::Request::new()
             .timeout(Some(timeout))
             .payload(payload.into());
@@ -149,7 +155,9 @@ impl ReplayControlClient {
             .inspect_err(|err| {
                 self.record_error(err.to_string());
             })
-            .wrap_err("Replay control request timed out")?;
+            .map_err(|err| {
+                SinexError::timeout("Replay control request timed out").with_std_error(&err)
+            })?;
 
         self.decode_response_payload(&message.payload)
     }
@@ -189,12 +197,12 @@ impl ReplayControlClient {
         let response = self
             .send(ReplayControlRequest::Preview { operation_id })
             .await?;
-        let operation = response
-            .operation
-            .ok_or_else(|| eyre!("Replay control response missing operation"))?;
-        let preview = response
-            .preview
-            .ok_or_else(|| eyre!("Replay control response missing preview summary"))?;
+        let operation = response.operation.ok_or_else(|| {
+            SinexError::serialization("Replay control response missing operation")
+        })?;
+        let preview = response.preview.ok_or_else(|| {
+            SinexError::serialization("Replay control response missing preview summary")
+        })?;
         Ok((operation, preview))
     }
 

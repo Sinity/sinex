@@ -1,5 +1,4 @@
 use async_nats::{Client, jetstream};
-use color_eyre::eyre::{Context, Result, eyre};
 use futures::StreamExt;
 use serde::Deserialize;
 use sinex_db::replay::state_machine::{
@@ -7,7 +6,7 @@ use sinex_db::replay::state_machine::{
 };
 use sinex_primitives::domain::{EventSource, EventType, NodeName};
 use sinex_primitives::environment::{SinexEnvironment, environment};
-use sinex_primitives::{SinexError, Timestamp, Uuid};
+use sinex_primitives::{Result, SinexError, Timestamp, Uuid};
 use std::sync::Arc;
 #[cfg(test)]
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -140,10 +139,10 @@ impl ReplayExecutionEngine {
         executor_name: String,
     ) -> Result<ReplayOperation> {
         let Some(_execution_lock) = self.replay.acquire_execution_lock(operation_id).await? else {
-            return Err(eyre!(
+            return Err(SinexError::invalid_state(format!(
                 "Operation {} is already executing on another node",
                 operation_id
-            ));
+            )));
         };
 
         info!(
@@ -169,9 +168,11 @@ impl ReplayExecutionEngine {
                 Ok(Some(cancelled)) if cancelled.started_at.is_some() => Ok(cancelled),
                 Ok(Some(_)) => Err(err),
                 Ok(None) => Err(err),
-                Err(load_err) => Err(err).wrap_err(format!(
+                Err(load_err) => Err(SinexError::service(format!(
                     "replay cancellation probe failed after execution error: {load_err}"
-                )),
+                ))
+                .with_source(err)
+                .with_source(load_err)),
             },
         }
     }
@@ -182,10 +183,10 @@ impl ReplayExecutionEngine {
         submitter: String,
     ) -> Result<ReplayOperation> {
         let Some(_execution_lock) = self.replay.acquire_execution_lock(operation_id).await? else {
-            return Err(eyre!(
+            return Err(SinexError::invalid_state(format!(
                 "Operation {} is already executing on another node",
                 operation_id
-            ));
+            )));
         };
 
         info!(
@@ -211,9 +212,11 @@ impl ReplayExecutionEngine {
                 Ok(Some(cancelled)) if cancelled.started_at.is_some() => Ok(cancelled),
                 Ok(Some(_)) => Err(err),
                 Ok(None) => Err(err),
-                Err(load_err) => Err(err).wrap_err(format!(
+                Err(load_err) => Err(SinexError::service(format!(
                     "replay cancellation probe failed after execution error: {load_err}"
-                )),
+                ))
+                .with_source(err)
+                .with_source(load_err)),
             },
         }
     }
@@ -227,10 +230,11 @@ impl ReplayExecutionEngine {
             .replay
             .load_operation(operation_id)
             .await
-            .wrap_err_with(|| {
-                format!(
+            .map_err(|err| {
+                SinexError::service(format!(
                     "failed to inspect replay operation state after execution for {operation_id}"
-                )
+                ))
+                .with_source(err)
             })?;
 
         if operation.state == ReplayState::Cancelled {
@@ -248,8 +252,11 @@ impl ReplayExecutionEngine {
             self.replay
                 .finish_cancellation(operation_id)
                 .await
-                .wrap_err_with(|| {
-                    format!("failed to finalize replay cancellation for operation {operation_id}")
+                .map_err(|err| {
+                    SinexError::service(format!(
+                        "failed to finalize replay cancellation for operation {operation_id}"
+                    ))
+                    .with_source(err)
                 })?;
             info!(
                 operation_id = %operation_id,
@@ -281,10 +288,12 @@ impl ReplayExecutionEngine {
                     "OPERATOR ACTION REQUIRED: replay operation stuck in Executing state. \
                      Run: sinexctl replay cancel {operation_id} --reason 'stuck after mark_failed failure'"
                 );
-                return Err(eyre!(
+                return Err(SinexError::service(format!(
                     "Replay execution failed ({err:#}) and marking operation as failed also failed ({mark_err}); \
                      operation {operation_id} is stuck in Executing state"
-                ));
+                ))
+                .with_source(err)
+                .with_source(mark_err));
             }
         }
 
@@ -292,14 +301,16 @@ impl ReplayExecutionEngine {
     }
 
     pub(super) fn wrap_bookkeeping_error(
-        err: color_eyre::eyre::Report,
+        err: SinexError,
         operation_id: Uuid,
-        bookkeeping_error: Option<color_eyre::eyre::Report>,
-    ) -> color_eyre::eyre::Report {
+        bookkeeping_error: Option<SinexError>,
+    ) -> SinexError {
         match bookkeeping_error {
-            Some(bookkeeping_error) => err.wrap_err(format!(
+            Some(bookkeeping_error) => SinexError::service(format!(
                 "failed to finalize replay execution bookkeeping for operation {operation_id}: {bookkeeping_error:#}"
-            )),
+            ))
+            .with_source(err)
+            .with_source(bookkeeping_error),
             None => err,
         }
     }
@@ -382,10 +393,11 @@ impl ReplayExecutionEngine {
     ) -> Result<(ReplayOperation, u64, (Timestamp, Timestamp), Vec<Uuid>)> {
         let op = self.replay.load_operation(operation_id).await?;
         if op.state != ReplayState::Approved {
-            return Err(eyre!(
+            return Err(SinexError::invalid_state(format!(
                 "Operation {} must be approved before execution",
                 operation_id
-            ));
+            ))
+            .with_context("state", format!("{:?}", op.state)));
         }
 
         let (total_events, execution_window, preview_root_ids) =
@@ -433,37 +445,35 @@ impl ReplayExecutionEngine {
         operation: &ReplayOperation,
     ) -> Result<(u64, (Timestamp, Timestamp), Vec<Uuid>)> {
         let preview = operation.preview_summary.clone().ok_or_else(|| {
-            eyre!(
+            SinexError::invalid_state(format!(
                 "Operation {} is missing preview summary; run preview before execution",
                 operation_id
-            )
+            ))
         })?;
-        let preview_summary: ReplayPreviewSummary = serde_json::from_value(preview)
-            .map_err(|e| eyre!("Invalid replay preview summary: {e}"))?;
+        let preview_summary: ReplayPreviewSummary =
+            serde_json::from_value(preview).map_err(|e| {
+                SinexError::serialization("Invalid replay preview summary").with_std_error(&e)
+            })?;
         let total_events = preview_summary.total_events;
         if total_events == 0 {
-            return Err(eyre!(
+            return Err(SinexError::invalid_state(format!(
                 "Operation {} preview matches zero events; refresh preview before execution",
                 operation_id
-            ));
+            )));
         }
         let mut preview_root_ids = preview_summary.root_event_ids;
         preview_root_ids.sort_unstable();
         preview_root_ids.dedup();
         if preview_root_ids.is_empty() {
-            return Err(stale_preview_missing_root_ids_error(
-                operation_id,
-                total_events,
-            )
-            .into());
+            return Err(stale_preview_missing_root_ids_error(operation_id, total_events).into());
         }
         if preview_root_ids.len() as u64 != total_events {
-            return Err(eyre!(
+            return Err(SinexError::invalid_state(format!(
                 "Operation {} preview summary is inconsistent: total_events={} but root_event_ids contains {} ids",
                 operation_id,
                 total_events,
                 preview_root_ids.len()
-            ));
+            )));
         }
 
         Ok((
@@ -517,7 +527,10 @@ impl ReplayExecutionEngine {
                 self.replay
                     .load_operation(operation_id)
                     .await
-                    .map_err(|e| eyre!("{}", e))
+                    .map_err(|err| {
+                        SinexError::service("Failed to load replay operation after completion")
+                            .with_source(err)
+                    })
             }
             Err(err) => {
                 // Update checkpoint with current progress before failing
@@ -530,7 +543,9 @@ impl ReplayExecutionEngine {
                     )
                     .await
                 {
-                    return Err(err.wrap_err(format!("{checkpoint_error}")));
+                    return Err(SinexError::service(format!("{checkpoint_error}"))
+                        .with_source(err)
+                        .with_source(checkpoint_error));
                 }
                 Err(err)
             }
@@ -546,10 +561,9 @@ impl ReplayExecutionEngine {
     }
 
     pub(super) fn execution_result_is_cancellation(result: &Result<ReplayOperation>) -> bool {
-        result.as_ref().is_err_and(|err| {
-            err.downcast_ref::<SinexError>()
-                .is_some_and(|sinex_err| matches!(sinex_err, SinexError::Cancelled(_)))
-        })
+        result
+            .as_ref()
+            .is_err_and(|err| matches!(err, SinexError::Cancelled(_)))
     }
 
     #[cfg(test)]
@@ -561,7 +575,9 @@ impl ReplayExecutionEngine {
                 })
                 .is_ok()
         {
-            return Err(eyre!("forced replay checkpoint persistence failure"));
+            return Err(SinexError::processing(
+                "forced replay checkpoint persistence failure",
+            ));
         }
         Ok(())
     }
@@ -581,12 +597,12 @@ impl ReplayExecutionEngine {
         checkpoint: &ReplayCheckpoint,
         context: &'static str,
     ) -> Result<()> {
-        self.maybe_fail_checkpoint_persist().wrap_err(context)?;
+        self.maybe_fail_checkpoint_persist()
+            .map_err(|err| SinexError::service(context).with_source(err))?;
         self.replay
             .update_checkpoint(operation_id, checkpoint)
             .await
-            .map_err(|e| eyre!("{e}"))
-            .wrap_err(context)
+            .map_err(|err| SinexError::service(context).with_source(err))
     }
 
     #[cfg(test)]
@@ -598,7 +614,9 @@ impl ReplayExecutionEngine {
                 })
                 .is_ok()
         {
-            return Err(eyre!("forced replay scope metadata collection failure"));
+            return Err(SinexError::processing(
+                "forced replay scope metadata collection failure",
+            ));
         }
         Ok(())
     }
@@ -621,7 +639,9 @@ impl ReplayExecutionEngine {
                 })
                 .is_ok()
         {
-            return Err(eyre!("forced replay scope invalidation publish failure"));
+            return Err(SinexError::processing(
+                "forced replay scope invalidation publish failure",
+            ));
         }
         Ok(())
     }
@@ -644,7 +664,9 @@ impl ReplayExecutionEngine {
                 })
                 .is_ok()
         {
-            return Err(eyre!("forced replay replacement recording failure"));
+            return Err(SinexError::processing(
+                "forced replay replacement recording failure",
+            ));
         }
         Ok(())
     }

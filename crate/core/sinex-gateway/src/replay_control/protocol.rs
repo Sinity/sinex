@@ -115,20 +115,39 @@ impl ReplayControlResponse {
         }
     }
 
-    pub(super) fn from_report(err: &color_eyre::Report) -> Self {
-        if let Some(sinex_err) = err.downcast_ref::<SinexError>() {
-            return Self {
-                status: ReplayControlStatus::Error,
-                message: Some(sinex_err.client_message().to_string()),
-                error_kind: Some(ReplayControlErrorKind::from_sinex_error(sinex_err)),
-                operation: None,
-                operations: None,
-                preview: None,
-            };
+    pub(super) fn from_sinex_error(err: &SinexError) -> Self {
+        Self {
+            status: ReplayControlStatus::Error,
+            message: Some(full_error_details(err)),
+            error_kind: Some(ReplayControlErrorKind::from_sinex_error(err)),
+            operation: None,
+            operations: None,
+            preview: None,
         }
-
-        Self::error(err.to_string())
     }
+}
+
+fn full_error_details(err: &SinexError) -> String {
+    let mut message = err.message().to_string();
+    if !err.context_map().is_empty() {
+        message.push_str(" (");
+        for (idx, (key, value)) in err.context_map().iter().enumerate() {
+            if idx > 0 {
+                message.push_str(", ");
+            }
+            message.push_str(key);
+            message.push_str(": ");
+            message.push_str(value);
+        }
+        message.push(')');
+    }
+    if !err.sources().is_empty() {
+        message.push_str("\nCaused by:");
+        for (idx, source) in err.sources().iter().enumerate() {
+            message.push_str(&format!("\n  {}: {}", idx + 1, source));
+        }
+    }
+    message
 }
 
 impl ReplayControlErrorKind {

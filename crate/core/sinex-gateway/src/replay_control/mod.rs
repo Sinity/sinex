@@ -20,11 +20,11 @@ use execution::ReplayExecutionEngine;
 use telemetry::ReplayTelemetry;
 
 use async_nats::Client;
-use color_eyre::eyre::Result;
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 pub use sinex_db::replay::state_machine::ReplayScope;
 use sinex_db::replay::state_machine::ReplayStateMachine;
+use sinex_primitives::Result;
 use sinex_primitives::Timestamp;
 use sinex_primitives::environment::environment;
 use std::sync::Arc;

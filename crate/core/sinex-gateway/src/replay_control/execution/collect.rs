@@ -3,15 +3,15 @@
 //! engine type itself and the public-API entry points.
 
 use super::{
-    Context, ExpectedReplayOutputs, OperationOutputEvent, REPLAY_OUTPUT_VISIBILITY_TIMEOUT,
-    ReplayExecutionEngine, Result, ScopeInvalidationBucket, eyre,
+    ExpectedReplayOutputs, OperationOutputEvent, REPLAY_OUTPUT_VISIBILITY_TIMEOUT,
+    ReplayExecutionEngine, ScopeInvalidationBucket,
 };
 use sinex_db::repositories::{DbPoolExt, EventRepositoryTx};
 use sinex_node_sdk::derived_node::invalidation::{DerivedScopeInvalidation, INVALIDATION_SUBJECT};
 use sinex_node_sdk::runtime::stream::ResolvedReplayMaterial;
 use sinex_primitives::domain::{EventSource, EventType, SourceIdentifier};
 use sinex_primitives::events::{Event as StoredEvent, Provenance};
-use sinex_primitives::{Id, Timestamp, Uuid, transport};
+use sinex_primitives::{Id, Result, SinexError, Timestamp, Uuid, transport};
 use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 use tracing::debug;
@@ -29,7 +29,9 @@ impl ReplayExecutionEngine {
             .replay
             .collect_scope_root_ids(scope)
             .await
-            .map_err(|e| eyre!("Failed to collect replay scope root ids: {e}"))?;
+            .map_err(|err| {
+                SinexError::database("Failed to collect replay scope root ids").with_source(err)
+            })?;
         let event_ids: Vec<Id<StoredEvent>> = root_ids
             .into_iter()
             .map(Id::<StoredEvent>::from_uuid)
@@ -38,20 +40,16 @@ impl ReplayExecutionEngine {
         // get_by_ids enforces a 1000-ID limit; chunk here when needed.
         const CHUNK_SIZE: usize = 1000;
         if event_ids.len() <= CHUNK_SIZE {
-            return pool
-                .events()
-                .get_by_ids(&event_ids)
-                .await
-                .map_err(|e| eyre!("Failed to hydrate replay scope events: {e}"));
+            return pool.events().get_by_ids(&event_ids).await.map_err(|err| {
+                SinexError::database("Failed to hydrate replay scope events").with_source(err)
+            });
         }
 
         let mut all_events = Vec::with_capacity(event_ids.len());
         for chunk in event_ids.chunks(CHUNK_SIZE) {
-            let chunk_events = pool
-                .events()
-                .get_by_ids(chunk)
-                .await
-                .map_err(|e| eyre!("Failed to hydrate replay scope event chunk: {e}"))?;
+            let chunk_events = pool.events().get_by_ids(chunk).await.map_err(|err| {
+                SinexError::database("Failed to hydrate replay scope event chunk").with_source(err)
+            })?;
             all_events.extend(chunk_events);
         }
         Ok(all_events)
@@ -75,7 +73,9 @@ impl ReplayExecutionEngine {
         )
         .fetch_all(pool)
         .await
-        .map_err(|e| eyre!("Failed to query replay operation outputs: {e}"))?;
+        .map_err(|err| {
+            SinexError::database("Failed to query replay operation outputs").with_std_error(&err)
+        })?;
 
         Ok(rows
             .into_iter()
@@ -90,8 +90,8 @@ impl ReplayExecutionEngine {
         material_roots: &[StoredEvent],
     ) -> Result<ExpectedReplayOutputs> {
         if material_roots.is_empty() {
-            return Err(eyre!(
-                "Replay output expectations require at least one material root"
+            return Err(SinexError::invalid_state(
+                "Replay output expectations require at least one material root",
             ));
         }
 
@@ -104,11 +104,10 @@ impl ReplayExecutionEngine {
             match &event.provenance {
                 Provenance::Material { .. } => {}
                 Provenance::Synthesis { .. } => {
-                    return Err(eyre!(
+                    return Err(SinexError::invalid_state(format!(
                         "Replay scope included non-material root '{}' / '{}'",
-                        event.source,
-                        event.event_type
-                    ));
+                        event.source, event.event_type
+                    )));
                 }
             }
         }
@@ -152,8 +151,8 @@ impl ReplayExecutionEngine {
         logical_source_identifiers.dedup();
 
         if logical_source_identifiers.is_empty() {
-            return Err(eyre!(
-                "Replay output expectations require at least one logical source identifier"
+            return Err(SinexError::invalid_state(
+                "Replay output expectations require at least one logical source identifier",
             ));
         }
 
@@ -198,7 +197,9 @@ impl ReplayExecutionEngine {
         .bind(&expected.logical_source_identifiers)
         .fetch_one(pool)
         .await
-        .map_err(|e| eyre!("Failed to count visible replay outputs: {e}"))
+        .map_err(|err| {
+            SinexError::database("Failed to count visible replay outputs").with_std_error(&err)
+        })
     }
 
     pub(crate) async fn wait_for_replay_outputs_visible(
@@ -223,7 +224,7 @@ impl ReplayExecutionEngine {
                         minimum_visible_count = expected.minimum_visible_count,
                         "Replay outputs are query-visible"
                     );
-                    return Ok::<(), color_eyre::eyre::Report>(());
+                    return Ok::<(), SinexError>(());
                 }
 
                 tokio::time::sleep(Self::EXECUTION_STATE_POLL_INTERVAL).await;
@@ -238,7 +239,7 @@ impl ReplayExecutionEngine {
                     .count_visible_replay_outputs(pool, operation_id, expected)
                     .await
                     .unwrap_or(-1);
-                Err(eyre!(
+                Err(SinexError::timeout(format!(
                     "Replay outputs were not query-visible after successful scan within {:?} (visible={}, minimum_visible={}, sources={}, event_types={}, logical_sources={})",
                     timeout,
                     visible_count,
@@ -246,7 +247,7 @@ impl ReplayExecutionEngine {
                     expected.sources.join(","),
                     expected.event_types.join(","),
                     expected.logical_source_identifiers.join(","),
-                ))
+                )))
             }
         }
     }
@@ -264,8 +265,10 @@ impl ReplayExecutionEngine {
                 .source_materials()
                 .get_by_id(Id::from_uuid(*material_id))
                 .await
-                .map_err(|e| eyre!("{e}"))
-                .wrap_err("Failed to resolve source material for replay")?;
+                .map_err(|err| {
+                    SinexError::database("Failed to resolve source material for replay")
+                        .with_source(err)
+                })?;
 
             match record {
                 Some(record) => resolved.push(ResolvedReplayMaterial::from(record)),
@@ -274,14 +277,14 @@ impl ReplayExecutionEngine {
         }
 
         if !missing.is_empty() {
-            return Err(eyre!(
+            return Err(SinexError::not_found(format!(
                 "Replay scope referenced missing source materials: {}",
                 missing
                     .iter()
                     .map(Uuid::to_string)
                     .collect::<Vec<_>>()
                     .join(", ")
-            ));
+            )));
         }
 
         Ok(resolved)
@@ -334,7 +337,9 @@ impl ReplayExecutionEngine {
                 Ok(cascade_ids)
             })
             .await
-            .map_err(|e| eyre!("{e}"))?;
+            .map_err(|err| {
+                SinexError::database("Failed to derive replay cascade ids").with_source(err)
+            })?;
 
         cascade_ids.sort_unstable();
         cascade_ids.dedup();
@@ -360,8 +365,9 @@ impl ReplayExecutionEngine {
                 archived_by,
             )
             .await
-            .map_err(|e| eyre!("{e}"))
-            .wrap_err("Failed to archive replay cascade")
+            .map_err(|err| {
+                SinexError::database("Failed to archive replay cascade").with_source(err)
+            })
     }
 
     /// Collect scope metadata from events about to be archived.
@@ -377,8 +383,9 @@ impl ReplayExecutionEngine {
             return Ok(Vec::new());
         }
 
-        self.maybe_fail_scope_metadata_collection()
-            .wrap_err("Failed to collect replay cascade scope metadata")?;
+        self.maybe_fail_scope_metadata_collection().map_err(|err| {
+            SinexError::service("Failed to collect replay cascade scope metadata").with_source(err)
+        })?;
 
         // Query scope metadata for cascade events that have scope_keys so invalidations
         // stay bucketed by the archived event source + type pair.
@@ -391,23 +398,25 @@ impl ReplayExecutionEngine {
         )
         .fetch_all(pool)
         .await
-        .map_err(|e| eyre!("Failed to collect cascade scope metadata: {e}"))?;
+        .map_err(|err| {
+            SinexError::database("Failed to collect cascade scope metadata").with_std_error(&err)
+        })?;
 
         let mut grouped: HashMap<(EventSource, EventType, bool), ScopeInvalidationBucket> =
             HashMap::new();
         for row in rows {
             if let Some(sk) = row.scope_key {
                 let event_source = EventSource::new(row.source.clone()).map_err(|error| {
-                    eyre!(
+                    SinexError::validation(format!(
                         "Invalid event source '{}' in replay cascade scope metadata: {error}",
                         row.source
-                    )
+                    ))
                 })?;
                 let event_type = EventType::new(row.event_type.clone()).map_err(|error| {
-                    eyre!(
+                    SinexError::validation(format!(
                         "Invalid event type '{}' in replay cascade scope metadata: {error}",
                         row.event_type
-                    )
+                    ))
                 })?;
                 let bucket = grouped
                     .entry((event_source.clone(), event_type.clone(), row.has_lineage))
@@ -474,11 +483,12 @@ impl ReplayExecutionEngine {
                         .publish_with_headers(invalidation_subject.clone(), headers, payload.into())
                         .await
                     {
-                        return Err(eyre!(
+                        return Err(SinexError::nats_publish(format!(
                             "Failed to publish replay scope invalidation for event type '{}' (scope_count={}): {e}",
                             bucket.event_type,
                             bucket.scope_keys.len()
-                        ));
+                        ))
+                        .with_std_error(&e));
                     }
                     debug!(
                         operation_id = %operation_id,
@@ -488,11 +498,12 @@ impl ReplayExecutionEngine {
                     );
                 }
                 Err(e) => {
-                    return Err(eyre!(
+                    return Err(SinexError::serialization(format!(
                         "Failed to serialize replay scope invalidation for event type '{}' (scope_count={}): {e}",
                         bucket.event_type,
                         bucket.scope_keys.len()
-                    ));
+                    ))
+                    .with_std_error(&e));
                 }
             }
         }
@@ -513,8 +524,12 @@ impl ReplayExecutionEngine {
         pool.events()
             .execute_cascade_restore(cascade_ids, &operation_id.to_string())
             .await
-            .map_err(|e| eyre!("{e}"))
-            .wrap_err("Failed to restore archived replay cascade after replay dispatch failure")?;
+            .map_err(|err| {
+                SinexError::database(
+                    "Failed to restore archived replay cascade after replay dispatch failure",
+                )
+                .with_source(err)
+            })?;
         Ok(())
     }
 
@@ -524,26 +539,31 @@ impl ReplayExecutionEngine {
         cascade_ids: &[Uuid],
         scope_metadata: &[ScopeInvalidationBucket],
         operation_id: Uuid,
-        error: color_eyre::eyre::Report,
+        error: SinexError,
     ) -> Result<u64> {
         if let Err(restore_error) = self.restore_cascade(pool, cascade_ids, operation_id).await {
-            return Err(error.wrap_err(format!(
+            return Err(SinexError::service(format!(
                 "Replay dispatch failed before node acknowledgement, and restoring the archived cascade also failed: {restore_error}"
-            )));
+            ))
+            .with_source(error)
+            .with_source(restore_error));
         }
 
         if let Err(invalidation_error) = self
             .publish_scope_invalidations(scope_metadata, operation_id)
             .await
         {
-            return Err(error.wrap_err(format!(
+            return Err(SinexError::service(format!(
                 "Replay dispatch failed before node acknowledgement, restored the archived cascade, but failed to publish compensating scope invalidations: {invalidation_error}"
-            )));
+            ))
+            .with_source(error)
+            .with_source(invalidation_error));
         }
 
-        Err(error.wrap_err(
+        Err(SinexError::service(
             "Replay dispatch failed before node acknowledgement; restored archived cascade and published compensating scope invalidations",
-        ))
+        )
+        .with_source(error))
     }
 
     /// Timeout for the node to acknowledge the scan command.
