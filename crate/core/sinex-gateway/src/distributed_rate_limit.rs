@@ -14,8 +14,8 @@ use async_nats::jetstream::Context;
 use async_nats::jetstream::kv::{
     Config as KvConfig, CreateErrorKind, EntryErrorKind, Store, UpdateErrorKind,
 };
-use color_eyre::eyre::{Context as _, Result};
 use sinex_primitives::nats::create_or_open_kv_store;
+use sinex_primitives::{Result, SinexError};
 use std::num::NonZeroU32;
 use std::sync::LazyLock;
 use std::time::{Duration, Instant};
@@ -123,7 +123,9 @@ impl DistributedRateLimiter {
 
         let kv = create_or_open_kv_store(&jetstream, kv_config)
             .await
-            .wrap_err("Failed to create/get rate limit KV bucket")?;
+            .map_err(|error| {
+                SinexError::kv("Failed to create/get rate limit KV bucket").with_source(error)
+            })?;
 
         Ok(Self {
             kv,

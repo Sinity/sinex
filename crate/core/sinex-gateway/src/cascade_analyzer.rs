@@ -1,13 +1,12 @@
 #![doc = include_str!("../docs/cascade_analyzer.md")]
 
-use color_eyre::eyre::{Result, eyre};
 use petgraph::graphmap::DiGraphMap;
 use serde::{Deserialize, Serialize};
 use sinex_db::query_helpers::db_error;
 use sinex_db::repositories::{DbPoolExt, EventRepositoryTx};
-use sinex_primitives::SinexError;
 use sinex_primitives::constants::replay::DEFAULT_CASCADE_MAX_DEPTH;
 use sinex_primitives::env as shared_env;
+use sinex_primitives::{Result, SinexError};
 use sqlx::PgPool;
 use std::collections::{HashMap, VecDeque};
 use std::time::Duration;
@@ -229,20 +228,23 @@ impl StreamingCascadeAnalyzer {
         // Session ID should only contain alphanumeric characters and underscores
         // and be reasonable length (max 64 chars)
         if session_id.len() > 64 {
-            return Err(eyre!("Session ID too long: {} chars", session_id.len()));
+            return Err(SinexError::validation("Session ID too long")
+                .with_context("session_id_len", session_id.len().to_string())
+                .with_context("max_len", "64"));
         }
 
         if session_id.is_empty() {
-            return Err(eyre!("Session ID cannot be empty"));
+            return Err(SinexError::validation("Session ID cannot be empty"));
         }
 
         if !session_id
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || c == '_')
         {
-            return Err(eyre!(
-                "Session ID contains invalid characters. Only alphanumeric and underscore allowed."
-            ));
+            return Err(SinexError::validation(
+                "Session ID contains invalid characters",
+            )
+            .with_context("allowed_characters", "ascii_alphanumeric_or_underscore"));
         }
 
         Ok(())
@@ -272,12 +274,14 @@ impl StreamingCascadeAnalyzer {
         let analysis_future = self.pool.with_transaction(async |tx| {
             self.analyze_cascades_in_transaction(tx, event_ids, &session_id)
                 .await
-                .map_err(|e| SinexError::processing(e.to_string()))
+                .map_err(|error| {
+                    SinexError::processing("Cascade analysis failed").with_source(error)
+                })
         });
 
         match tokio::time::timeout(timeout_duration, analysis_future).await {
             Ok(Ok(analysis)) => Ok(analysis),
-            Ok(Err(e)) => Err(eyre!("{e}")),
+            Ok(Err(error)) => Err(error),
             Err(_elapsed) => {
                 warn!(
                     timeout_secs = timeout_duration.as_secs(),
@@ -285,12 +289,13 @@ impl StreamingCascadeAnalyzer {
                     session_id = %session_id,
                     "Cascade analysis exceeded timeout - transaction aborted"
                 );
-                Err(eyre!(
-                    "Cascade analysis timeout after {:?} (analyzed {} events). \
-                    Consider increasing SINEX_CASCADE_TIMEOUT_SECS or reducing max_depth.",
-                    timeout_duration,
-                    event_ids.len()
-                ))
+                Err(SinexError::timeout("Cascade analysis timed out")
+                    .with_context("timeout_secs", timeout_duration.as_secs().to_string())
+                    .with_context("event_count", event_ids.len().to_string())
+                    .with_context(
+                        "hint",
+                        "increase SINEX_CASCADE_TIMEOUT_SECS or reduce max_depth",
+                    ))
             }
         }
     }
@@ -322,13 +327,15 @@ impl StreamingCascadeAnalyzer {
             && memory_estimate > limit
         {
             self.cleanup_temp_tables_tx(tx, &temp_table).await?;
-            return Err(eyre!(
-                "Cascade analysis would require ~{} bytes ({} events × 256), \
-                     exceeding memory limit of {} bytes. \
-                     Consider increasing SINEX_CASCADE_MEMORY_LIMIT_BYTES or reducing scope.",
-                memory_estimate,
-                total_affected,
-                limit,
+            return Err(SinexError::resource_exhausted(
+                "Cascade analysis memory estimate exceeds configured limit",
+            )
+            .with_context("memory_estimate_bytes", memory_estimate.to_string())
+            .with_context("event_count", total_affected.to_string())
+            .with_context("memory_limit_bytes", limit.to_string())
+            .with_context(
+                "hint",
+                "increase SINEX_CASCADE_MEMORY_LIMIT_BYTES or reduce scope",
             ));
         }
 
@@ -365,7 +372,9 @@ impl StreamingCascadeAnalyzer {
         let table_name = repo
             .prepare_cascade_session(session_id, true)
             .await
-            .map_err(|e| eyre!("prepare cascade session failed: {e}"))?;
+            .map_err(|error| {
+                SinexError::database("Failed to prepare cascade session").with_source(error)
+            })?;
         debug!("Created temp table: {}", table_name);
         Ok(table_name)
     }
@@ -384,7 +393,9 @@ impl StreamingCascadeAnalyzer {
         let mut repo = EventRepositoryTx::new(tx);
         repo.populate_cascade_roots(table_name, event_ids)
             .await
-            .map_err(|e| eyre!("populate cascade roots failed: {e}"))?;
+            .map_err(|error| {
+                SinexError::database("Failed to populate cascade roots").with_source(error)
+            })?;
         debug!("Populated {} initial events", event_ids.len());
         Ok(())
     }
@@ -399,7 +410,9 @@ impl StreamingCascadeAnalyzer {
         let depth = repo
             .expand_cascade(table_name, self.config.max_depth as i32)
             .await
-            .map_err(|e| eyre!("expand cascade graph failed: {e}"))?;
+            .map_err(|error| {
+                SinexError::database("Failed to expand cascade graph").with_source(error)
+            })?;
 
         Ok(depth)
     }
@@ -414,7 +427,10 @@ impl StreamingCascadeAnalyzer {
         let rows = repo
             .cascade_depth_histogram(table_name)
             .await
-            .map_err(|e| eyre!("cascade depth histogram failed: {e}"))?;
+            .map_err(|error| {
+                SinexError::database("Failed to calculate cascade depth histogram")
+                    .with_source(error)
+            })?;
 
         let mut histogram = HashMap::new();
         for (depth, count) in rows {
@@ -434,7 +450,9 @@ impl StreamingCascadeAnalyzer {
         let count = repo
             .cascade_node_count(table_name)
             .await
-            .map_err(|e| eyre!("count cascade nodes failed: {e}"))?;
+            .map_err(|error| {
+                SinexError::database("Failed to count cascade nodes").with_source(error)
+            })?;
         Ok(count as usize)
     }
 
@@ -457,7 +475,10 @@ impl StreamingCascadeAnalyzer {
             let rows = repo
                 .cascade_integrity_violations_paginated(table_name, BATCH_SIZE, offset)
                 .await
-                .map_err(|e| eyre!("find cascade integrity violations failed: {e}"))?;
+                .map_err(|error| {
+                    SinexError::database("Failed to find cascade integrity violations")
+                        .with_source(error)
+                })?;
 
             if rows.is_empty() {
                 break;
@@ -562,7 +583,9 @@ impl StreamingCascadeAnalyzer {
         let mut repo = EventRepositoryTx::new(tx);
         repo.cleanup_cascade_session(table_name)
             .await
-            .map_err(|e| eyre!("cleanup cascade session failed: {e}"))?;
+            .map_err(|error| {
+                SinexError::database("Failed to cleanup cascade session").with_source(error)
+            })?;
         Ok(())
     }
 
@@ -644,13 +667,12 @@ impl StreamingCascadeAnalyzer {
 
         // Check for cycles
         if result.len() != event_ids.len() {
-            return Err(
-                SinexError::validation("Circular dependencies detected in cascade plan")
-                    .with_context("error_class", "cascade_cycle_detected")
-                    .with_context("processed_events", result.len().to_string())
-                    .with_context("requested_events", event_ids.len().to_string())
-                    .into(),
-            );
+            return Err(SinexError::validation(
+                "Circular dependencies detected in cascade plan",
+            )
+            .with_context("error_class", "cascade_cycle_detected")
+            .with_context("processed_events", result.len().to_string())
+            .with_context("requested_events", event_ids.len().to_string()));
         }
 
         // Reverse to get deletion order (children before parents)
@@ -789,11 +811,8 @@ mod tests {
             .plan_cascade_order(&[a, b, c])
             .await
             .expect_err("cycle should be detected in cascade ordering");
-        let sinex_err = err
-            .downcast_ref::<sinex_primitives::SinexError>()
-            .expect("cycle error should be a SinexError");
         assert_eq!(
-            sinex_err.context_map().get("error_class"),
+            err.context_map().get("error_class"),
             Some(&"cascade_cycle_detected".to_string())
         );
 
