@@ -490,7 +490,7 @@
       "id": "fs",
       "domain": "filesystem",
       "implementation": "sinex-source-worker",
-      "adapter": "IngestorNodeAdapter",
+      "adapter": "FileContentDropAdapter",
       "output_event_type": "file.created",
       "privacy_context": "fs_path",
       "material_policy": "inotify_anchor",
