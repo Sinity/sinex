@@ -166,7 +166,6 @@ impl XtaskCommand for LintForbiddenCommand {
             // list explicit so new color_eyre files still fail the scan while
             // existing gateway/node-sdk/ingestd surfaces are migrated in
             // focused subsystem slices.
-            "crate/core/sinex-source-worker/src/monitor_node.rs",
             "crate/core/sinex-gateway/src/replay_control/server.rs",
             "crate/core/sinex-gateway/src/replay_control/protocol.rs",
             "crate/core/sinex-gateway/src/replay_control/mod.rs",
@@ -179,7 +178,6 @@ impl XtaskCommand for LintForbiddenCommand {
             "crate/core/sinex-gateway/src/replay_control/execution/mod.rs",
             "crate/core/sinex-gateway/src/replay_control/execution/collect.rs",
             "crate/core/sinex-gateway/src/rpc_server_test_support.rs",
-            "crate/lib/sinex-db/src/repositories/events/persistence.rs",
         ];
         violations.extend(check_color_eyre_in_lib(
             "color_eyre::",
