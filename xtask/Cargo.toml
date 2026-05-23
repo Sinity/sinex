@@ -27,7 +27,6 @@ serde = { workspace = true, features = [
 ] }
 serde_json = { workspace = true }
 serde_yml = "0.0.12"
-schemars = { workspace = true }
 
 rusqlite = { workspace = true }
 console = "0.15"
@@ -63,8 +62,6 @@ tokio = { workspace = true, features = [
     "signal",
     "process",
 ] }
-async-trait = { workspace = true }
-
 # Sandbox infrastructure
 async-nats = { workspace = true }
 proptest = { workspace = true }

@@ -12,6 +12,9 @@ use mime_guess::MimeGuess;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sinex_node_sdk::{
+    ActivityEntry, ExplorationProvider, ExportFormat, IngestionHistoryEntry, SourceState,
+};
+use sinex_node_sdk::{
     EventTransport, NodeResult, SinexError,
     acquisition_manager::{AcquisitionManager, RotationPolicy},
     ingestor_node::IngestorNode,
@@ -22,7 +25,6 @@ use sinex_node_sdk::{
     stage_as_you_go::StageAsYouGoContext,
     stage_material_from_file, tags,
 };
-use sinex_node_sdk::{ExplorationProvider, ExportFormat, IngestionHistoryEntry, SourceState};
 use sinex_primitives::temporal::Timestamp;
 use sinex_primitives::validation::validate_path_within_root;
 use sinex_primitives::{
@@ -36,7 +38,7 @@ use sinex_primitives::{
 };
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap},
-    sync::Arc,
+    sync::{Arc, Mutex},
     time::{Instant, SystemTime},
 };
 use tokio::fs;
@@ -173,6 +175,12 @@ pub struct DocumentNode {
     config: DocumentIngestorConfig,
     stage_context: Option<StageAsYouGoContext>,
     acquisition: Option<Arc<AcquisitionManager>>,
+    exploration: Arc<Mutex<DocumentExplorationState>>,
+}
+
+#[derive(Debug, Default)]
+struct DocumentExplorationState {
+    last_scan: Option<ScanReport>,
 }
 
 impl DocumentNode {
@@ -183,6 +191,7 @@ impl DocumentNode {
             config: DocumentIngestorConfig::default(),
             stage_context: None,
             acquisition: None,
+            exploration: Arc::new(Mutex::new(DocumentExplorationState::default())),
         }
     }
 
@@ -220,6 +229,67 @@ impl DocumentNode {
             failed_targets,
             warnings,
         }
+    }
+
+    fn record_scan_report(&self, report: &ScanReport) -> NodeResult<()> {
+        let mut exploration = self.exploration.lock().map_err(|_| {
+            SinexError::invalid_state("document exploration state lock is poisoned")
+        })?;
+        exploration.last_scan = Some(report.clone());
+        Ok(())
+    }
+
+    fn last_scan_report(&self) -> NodeResult<Option<ScanReport>> {
+        self.exploration
+            .lock()
+            .map_err(|_| SinexError::invalid_state("document exploration state lock is poisoned"))
+            .map(|exploration| exploration.last_scan.clone())
+    }
+
+    fn recent_activity_for_report(report: &ScanReport) -> Option<ActivityEntry> {
+        let (_, completed_at) = report.time_range?;
+        Some(ActivityEntry {
+            timestamp: completed_at,
+            description: format!(
+                "document ingestor scanned {} target(s), emitted {} event(s), failed {} target(s)",
+                report.successful_targets.len() + report.failed_targets.len(),
+                report.events_processed,
+                report.failed_targets.len()
+            ),
+            data: Some(json!({
+                "events_processed": report.events_processed,
+                "successful_targets": report.successful_targets.len(),
+                "failed_targets": report.failed_targets.len(),
+                "warnings": report.warnings,
+            })),
+        })
+    }
+
+    fn ingestion_history_for_report(report: &ScanReport, limit: u64) -> Vec<IngestionHistoryEntry> {
+        if limit == 0 {
+            return Vec::new();
+        }
+
+        let Some((started_at, completed_at)) = report.time_range else {
+            return Vec::new();
+        };
+        let error = if report.failed_targets.is_empty() {
+            None
+        } else {
+            Some(format!(
+                "{} document target(s) failed",
+                report.failed_targets.len()
+            ))
+        };
+
+        vec![IngestionHistoryEntry {
+            id: format!("document-ingestor:{}", completed_at.format_rfc3339()),
+            started_at,
+            completed_at: Some(completed_at),
+            events_generated: report.events_processed,
+            scan_report: Some(report.clone()),
+            error,
+        }]
     }
 
     fn is_allowed_path(&self, target: &str) -> bool {
@@ -569,7 +639,7 @@ impl DocumentNode {
         }
 
         let finished_at = Timestamp::now();
-        Ok(Self::completed_report(
+        let report = Self::completed_report(
             started_at,
             finished_at,
             start.elapsed(),
@@ -577,7 +647,9 @@ impl DocumentNode {
             successful_targets,
             failed_targets,
             warnings,
-        ))
+        );
+        self.record_scan_report(&report)?;
+        Ok(report)
     }
 
     async fn ingest_document(&self, document: &DocumentInput) -> NodeResult<Option<Uuid>> {
@@ -831,6 +903,21 @@ impl ExplorationProvider for DocumentNode {
         if let Some(error) = &config_status {
             metadata.insert("config_error".to_string(), json!(error));
         }
+        let last_scan = self.last_scan_report()?;
+        if let Some(report) = &last_scan {
+            metadata.insert(
+                "last_scan_events_processed".to_string(),
+                json!(report.events_processed),
+            );
+            metadata.insert(
+                "last_scan_successful_targets".to_string(),
+                json!(report.successful_targets.len()),
+            );
+            metadata.insert(
+                "last_scan_failed_targets".to_string(),
+                json!(report.failed_targets.len()),
+            );
+        }
 
         let (is_connected, healthy, description) = if !initialized {
             (
@@ -859,18 +946,27 @@ impl ExplorationProvider for DocumentNode {
             is_connected,
             healthy: healthy && config_healthy,
             description,
-            last_updated: None,
+            last_updated: last_scan
+                .as_ref()
+                .and_then(|report| report.time_range.map(|(_, completed_at)| completed_at)),
             lag_seconds: None,
-            recent_activity: Vec::new(),
+            recent_activity: last_scan
+                .as_ref()
+                .and_then(Self::recent_activity_for_report)
+                .into_iter()
+                .collect(),
             total_items: None,
             metadata,
         })
     }
 
-    fn get_ingestion_history(&self, _limit: u64) -> NodeResult<Vec<IngestionHistoryEntry>> {
-        Err(SinexError::invalid_state(
-            "ingestion history is not implemented for document ingestor sources",
-        ))
+    fn get_ingestion_history(&self, limit: u64) -> NodeResult<Vec<IngestionHistoryEntry>> {
+        Ok(self
+            .last_scan_report()?
+            .as_ref()
+            .map_or_else(Vec::new, |report| {
+                Self::ingestion_history_for_report(report, limit)
+            }))
     }
 
     fn export_data(&self, _path: &SanitizedPath, _format: ExportFormat) -> NodeResult<()> {
@@ -887,6 +983,7 @@ impl Clone for DocumentNode {
             config: self.config.clone(),
             stage_context: self.stage_context.clone(),
             acquisition: self.acquisition.clone(),
+            exploration: Arc::clone(&self.exploration),
         }
     }
 }
@@ -960,13 +1057,65 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn document_node_reports_ingestion_history_unavailable()
+    async fn document_node_reports_empty_ingestion_history_before_scan()
     -> ::xtask::sandbox::TestResult<()> {
         let node = DocumentNode::new();
-        let error = node
-            .get_ingestion_history(10)
-            .expect_err("document node should not report empty ingestion history as success");
-        assert!(error.to_string().contains("not implemented"));
+        let history = node.get_ingestion_history(10)?;
+
+        assert!(history.is_empty());
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn document_node_reports_last_scan_as_activity_and_history()
+    -> ::xtask::sandbox::TestResult<()> {
+        let node = DocumentNode::new();
+        let started_at =
+            Timestamp::from_unix_timestamp(1_700_000_000).expect("timestamp should be valid");
+        let finished_at =
+            Timestamp::from_unix_timestamp(1_700_000_123).expect("timestamp should be valid");
+        let report = DocumentNode::completed_report(
+            started_at,
+            finished_at,
+            std::time::Duration::from_secs(2),
+            2,
+            vec!["/tmp/doc-a.txt".to_string(), "/tmp/doc-b.txt".to_string()],
+            vec![(
+                "/tmp/doc-c.txt".to_string(),
+                "permission denied".to_string(),
+            )],
+            vec!["Skipped 1 unchanged document(s)".to_string()],
+        );
+
+        node.record_scan_report(&report)?;
+
+        let state = node.get_source_state()?;
+        assert_eq!(state.last_updated, Some(finished_at));
+        assert_eq!(state.recent_activity.len(), 1);
+        assert!(state.recent_activity[0].description.contains("emitted 2"));
+        assert_eq!(
+            state.metadata.get("last_scan_failed_targets"),
+            Some(&json!(1))
+        );
+
+        let history = node.get_ingestion_history(10)?;
+        assert_eq!(history.len(), 1);
+        assert_eq!(history[0].started_at, started_at);
+        assert_eq!(history[0].completed_at, Some(finished_at));
+        assert_eq!(history[0].events_generated, 2);
+        assert_eq!(
+            history[0].error.as_deref(),
+            Some("1 document target(s) failed")
+        );
+        assert_eq!(
+            history[0]
+                .scan_report
+                .as_ref()
+                .map(|report| report.failed_targets.len()),
+            Some(1)
+        );
+
+        assert!(node.get_ingestion_history(0)?.is_empty());
         Ok(())
     }
 }

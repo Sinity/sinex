@@ -449,7 +449,7 @@ where
                                 // / process.rs for the same shape) so systemd
                                 // records the unit as cleanly exited.
                                 if let Some(drain) = self.shutdown_tx.as_ref() {
-                                    drain.request_drain_and_warn(self.node.name());
+                                    let _ = drain.request_drain_and_warn(self.node.name());
                                 }
                                 error!(
                                     target: "sinex_metrics",
@@ -474,7 +474,7 @@ where
                             }
                             Settlement::DrainRuntimeUnit { reason } => {
                                 if let Some(drain) = self.shutdown_tx.as_ref() {
-                                    drain.request_drain_and_warn(self.node.name());
+                                    let _ = drain.request_drain_and_warn(self.node.name());
                                 }
                                 error!(
                                     target: "sinex_metrics",

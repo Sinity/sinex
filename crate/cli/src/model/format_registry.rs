@@ -305,6 +305,11 @@ pub fn build() -> HashMap<&'static str, FormatCapability> {
         FormatCapability::single_shot(TABLE_JSON_YAML),
     );
     m.insert(
+        "instructions hyprland-workspace",
+        FormatCapability::single_shot(TABLE_JSON_YAML)
+            .with_note("admits a typed Hyprland workspace desired-state instruction"),
+    );
+    m.insert(
         "tasks cancel",
         FormatCapability::single_shot(TABLE_JSON_YAML),
     );
@@ -710,9 +715,8 @@ fn family_for_path(path: &str) -> CommandFamily {
         "node" | "automata" | "ingestors" | "replay" | "dlq" | "ops" | "audit" | "lifecycle"
         | "git-ops" | "privacy" | "blob" => CommandFamily::Operate,
         "sources" => CommandFamily::Sources,
-        "declare" | "tasks" | "curation" | "semantics" | "llm" | "documents" | "annotate" => {
-            CommandFamily::Domain
-        }
+        "declare" | "instructions" | "tasks" | "curation" | "semantics" | "llm" | "documents"
+        | "annotate" => CommandFamily::Domain,
         "telemetry" | "throughput" => CommandFamily::Telemetry,
         "report" => CommandFamily::Report,
         "admin" | "state" => CommandFamily::Admin,
@@ -747,6 +751,7 @@ fn effect_for_path(path: &str, capability: &FormatCapability) -> CommandEffect {
         "git-ops create",
         "git-ops delete",
         "git-ops sync",
+        "instructions hyprland-workspace",
         "lifecycle archive",
         "lifecycle restore",
         "lifecycle tombstone approve",
@@ -816,6 +821,7 @@ fn mutation_guards_for_path(path: &str) -> &'static [CommandMutationGuard] {
         | "git-ops create"
         | "git-ops delete"
         | "git-ops sync"
+        | "instructions hyprland-workspace"
         | "lifecycle tombstone cancel"
         | "lifecycle tombstone create"
         | "node drain"
@@ -933,6 +939,7 @@ fn backing_rpc_methods_for_path(path: &str) -> &'static [&'static str] {
         "declare health effect" => &[methods::HEALTH_EFFECT_RECORD],
         "declare health intake" => &[methods::HEALTH_INTAKE_RECORD],
         "declare task" => &[methods::TASKS_CREATE],
+        "instructions hyprland-workspace" => &[methods::INSTRUCTIONS_HYPRLAND_WORKSPACE_SWITCH],
         "tasks cancel" => &[methods::TASKS_CANCEL],
         "tasks complete" => &[methods::TASKS_COMPLETE],
         "tasks list" => &[methods::TASKS_LIST],
@@ -1260,6 +1267,10 @@ mod tests {
         assert_eq!(effect_for("privacy audit"), Some(CommandEffect::ReadOnly));
         assert_eq!(
             effect_for("curation finalize"),
+            Some(CommandEffect::Mutating)
+        );
+        assert_eq!(
+            effect_for("instructions hyprland-workspace"),
             Some(CommandEffect::Mutating)
         );
         assert_eq!(effect_for("replay plan"), Some(CommandEffect::Mutating));

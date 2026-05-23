@@ -6,12 +6,13 @@ use reqwest::{ClientBuilder, StatusCode};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::Value;
 use sinex_primitives::constants::env_vars;
-use sinex_primitives::domain::{EventSource, NodeType};
+use sinex_primitives::domain::{EventSource, InstanceId, NodeType};
 use sinex_primitives::rpc::{
     JsonRpcError, RpcMethod,
     automata::{AUTOMATA_STATUS_METHOD, AutomataStatusRequest, AutomataStatusResponse},
     coordination::{
-        COORDINATION_INSTANCE_HEALTH_METHOD, COORDINATION_LIST_INSTANCES_METHOD,
+        COORDINATION_GET_LEADER_METHOD, COORDINATION_INSTANCE_HEALTH_METHOD,
+        COORDINATION_LIST_INSTANCES_METHOD, GetLeaderRequest, GetLeaderResponse,
         InstanceHealthRequest, InstanceHealthResponse, InstanceInfo, ListInstancesRequest,
         ListInstancesResponse,
     },
@@ -47,6 +48,10 @@ use sinex_primitives::rpc::{
         HealthEffectRecordResponse, HealthIntakeRecordRequest, HealthIntakeRecordResponse,
     },
     ingestors::{INGESTORS_STATUS_METHOD, IngestorsStatusRequest, IngestorsStatusResponse},
+    instructions::{
+        HyprlandWorkspaceSwitchRequest, HyprlandWorkspaceSwitchResponse,
+        INSTRUCTIONS_HYPRLAND_WORKSPACE_SWITCH_METHOD,
+    },
     lifecycle::{
         LIFECYCLE_ARCHIVE_METHOD, LIFECYCLE_RESTORE_METHOD, LIFECYCLE_STATUS_METHOD,
         LIFECYCLE_TOMBSTONE_APPROVE_METHOD, LIFECYCLE_TOMBSTONE_CANCEL_METHOD,
@@ -66,12 +71,13 @@ use sinex_primitives::rpc::{
         LlmRouteExplainRequest, LlmRouteExplainResponse,
     },
     nodes::{
-        NODES_DRAIN_METHOD, NODES_HEALTH_METHOD, NODES_LIST_ACTIVE_METHOD, NODES_RESUME_METHOD,
-        NODES_SET_HORIZON_METHOD,
+        NODES_DRAIN_METHOD, NODES_HEALTH_METHOD, NODES_LIST_ACTIVE_METHOD, NODES_LIST_METHOD,
+        NODES_RESUME_METHOD, NODES_SET_HORIZON_METHOD,
     },
     nodes::{
         NodeDrainRequest, NodeResumeRequest, NodeSetHorizonRequest, NodesHealthRequest,
-        NodesHealthResponse, NodesListActiveRequest, NodesListActiveResponse,
+        NodesHealthResponse, NodesListActiveRequest, NodesListActiveResponse, NodesListRequest,
+        NodesListResponse,
     },
     ops::{Operation as OpsOperation, OpsGetResponse, OpsListResponse, OpsStartResponse},
     privacy::{
@@ -99,21 +105,25 @@ use sinex_primitives::rpc::{
         SemanticEpochListResponse, SemanticEpochRecordResponse, SemanticLaneCreateRequest,
         SemanticLaneDiffRecordEntityRelationRequest, SemanticLaneDiffRecordResponse,
         SemanticLaneDiffsListRequest, SemanticLaneDiffsListResponse, SemanticLaneDiscardRequest,
-        SemanticLaneListRequest, SemanticLaneListResponse, SemanticLaneOutputsListRequest,
-        SemanticLaneOutputsListResponse, SemanticLaneOutputsWriteRequest,
-        SemanticLaneOutputsWriteResponse, SemanticLaneRecordResponse, SemanticLaneSetStatusRequest,
+        SemanticLaneDiscardResponse, SemanticLaneListRequest, SemanticLaneListResponse,
+        SemanticLaneOutputsListRequest, SemanticLaneOutputsListResponse,
+        SemanticLaneOutputsWriteRequest, SemanticLaneOutputsWriteResponse,
+        SemanticLaneRecordResponse, SemanticLaneSetStatusRequest,
     },
+    shadow::{SHADOW_LIST_METHOD, ShadowListRequest, ShadowListResponse},
     sources::{
-        SOURCES_ANNOTATE_METHOD, SOURCES_ARCHIVE_METHOD, SOURCES_CONTINUITY_EXPLAIN_GAP_METHOD,
-        SOURCES_CONTINUITY_GET_METHOD, SOURCES_CONTINUITY_LIST_METHOD, SOURCES_CONTINUITY_METHOD,
-        SOURCES_COVERAGE_METHOD, SOURCES_LIST_METHOD, SOURCES_READINESS_GET_METHOD,
+        SOURCES_ANNOTATE_METHOD, SOURCES_ARCHIVE_METHOD, SOURCES_BINDINGS_LIST_METHOD,
+        SOURCES_CONTINUITY_EXPLAIN_GAP_METHOD, SOURCES_CONTINUITY_GET_METHOD,
+        SOURCES_CONTINUITY_LIST_METHOD, SOURCES_CONTINUITY_METHOD, SOURCES_COVERAGE_METHOD,
+        SOURCES_LIST_METHOD, SOURCES_PRESETS_LIST_METHOD, SOURCES_READINESS_GET_METHOD,
         SOURCES_READINESS_LIST_METHOD, SOURCES_SHOW_METHOD, SOURCES_STAGE_METHOD,
         SourcesAnnotateRequest, SourcesAnnotateResponse, SourcesArchiveRequest,
-        SourcesArchiveResponse, SourcesContinuityRequest, SourcesContinuityResponse,
-        SourcesCoverageRequest, SourcesCoverageResponse, SourcesListRequest, SourcesListResponse,
-        SourcesReadinessGetRequest, SourcesReadinessGetResponse, SourcesReadinessListRequest,
-        SourcesReadinessListResponse, SourcesShowRequest, SourcesShowResponse, SourcesStageRequest,
-        SourcesStageResponse,
+        SourcesArchiveResponse, SourcesBindingsListRequest, SourcesBindingsListResponse,
+        SourcesContinuityRequest, SourcesContinuityResponse, SourcesCoverageRequest,
+        SourcesCoverageResponse, SourcesListRequest, SourcesListResponse,
+        SourcesPresetsListRequest, SourcesPresetsListResponse, SourcesReadinessGetRequest,
+        SourcesReadinessGetResponse, SourcesReadinessListRequest, SourcesReadinessListResponse,
+        SourcesShowRequest, SourcesShowResponse, SourcesStageRequest, SourcesStageResponse,
     },
     system::{
         SYSTEM_HEALTH_METHOD, SYSTEM_PING_METHOD, SYSTEM_VERSION_METHOD, SystemHealthRequest,
@@ -323,14 +333,6 @@ impl GatewayClient {
         })
     }
 
-    /// Call a JSON-RPC method by name with retry logic.
-    ///
-    /// This is the public escape hatch for commands whose RPC contract has not
-    /// yet been promoted to a typed client method (e.g. `sources.stage`).
-    pub async fn call_raw_rpc(&self, method: &str, params: Value) -> Result<Value> {
-        self.call_rpc(method, params).await
-    }
-
     /// Call a JSON-RPC method with retry logic
     async fn call_rpc(&self, method: &str, params: Value) -> Result<Value> {
         let mut attempt = 0;
@@ -495,6 +497,59 @@ impl GatewayClient {
         Ok(response.sources)
     }
 
+    /// List coordination instances.
+    pub async fn coordination_list_instances(
+        &self,
+        node_type: Option<String>,
+    ) -> Result<ListInstancesResponse> {
+        let request = ListInstancesRequest {
+            node_type: node_type
+                .map(|value| serde_json::from_value(Value::String(value)))
+                .transpose()?,
+        };
+        self.call_typed(COORDINATION_LIST_INSTANCES_METHOD, &request)
+            .await
+    }
+
+    /// Get the current coordination leader for a node type.
+    pub async fn coordination_get_leader(&self, node_type: String) -> Result<GetLeaderResponse> {
+        let request = GetLeaderRequest {
+            node_type: serde_json::from_value(Value::String(node_type))?,
+        };
+        self.call_typed(COORDINATION_GET_LEADER_METHOD, &request)
+            .await
+    }
+
+    /// Get coordination health for one instance.
+    pub async fn coordination_instance_health(
+        &self,
+        instance_id: String,
+    ) -> Result<InstanceHealthResponse> {
+        let request = InstanceHealthRequest {
+            instance_id: InstanceId::new(instance_id),
+        };
+        self.call_typed(COORDINATION_INSTANCE_HEALTH_METHOD, &request)
+            .await
+    }
+
+    /// List read-only shadow consumers.
+    pub async fn shadow_list(&self, prefix: Option<String>) -> Result<ShadowListResponse> {
+        let request = ShadowListRequest { prefix };
+        self.call_typed(SHADOW_LIST_METHOD, &request).await
+    }
+
+    /// Basic gateway ping.
+    pub async fn system_ping(&self) -> Result<String> {
+        self.call_typed(SYSTEM_PING_METHOD, &SystemPingRequest {})
+            .await
+    }
+
+    /// Gateway package version.
+    pub async fn system_version(&self) -> Result<String> {
+        self.call_typed(SYSTEM_VERSION_METHOD, &SystemVersionRequest {})
+            .await
+    }
+
     /// Create a new gitops source
     pub async fn gitops_create(
         &self,
@@ -609,6 +664,12 @@ impl GatewayClient {
     ) -> Result<NodesListActiveResponse> {
         let req = NodesListActiveRequest { stale_after_secs };
         self.call_typed(NODES_LIST_ACTIVE_METHOD, &req).await
+    }
+
+    /// List persisted node states from coordination KV state.
+    pub async fn nodes_list(&self) -> Result<NodesListResponse> {
+        self.call_typed(NODES_LIST_METHOD, &NodesListRequest {})
+            .await
     }
 
     /// Get aggregate node health from runtime registry state.
@@ -960,6 +1021,16 @@ impl GatewayClient {
         self.call_typed(TASKS_LIST_METHOD, &request).await
     }
 
+    // ==================== Instruction Commands ====================
+
+    pub async fn instructions_hyprland_workspace_switch(
+        &self,
+        request: HyprlandWorkspaceSwitchRequest,
+    ) -> Result<HyprlandWorkspaceSwitchResponse> {
+        self.call_typed(INSTRUCTIONS_HYPRLAND_WORKSPACE_SWITCH_METHOD, &request)
+            .await
+    }
+
     // ==================== Curation Commands ====================
 
     /// List curation proposals.
@@ -1031,7 +1102,7 @@ impl GatewayClient {
     pub async fn semantic_lane_discard(
         &self,
         request: SemanticLaneDiscardRequest,
-    ) -> Result<SemanticLaneRecordResponse> {
+    ) -> Result<SemanticLaneDiscardResponse> {
         self.call_typed(SEMANTIC_LANES_DISCARD_METHOD, &request)
             .await
     }
@@ -1113,6 +1184,26 @@ impl GatewayClient {
         request: SourcesCoverageRequest,
     ) -> Result<SourcesCoverageResponse> {
         self.call_typed(SOURCES_COVERAGE_METHOD, &request).await
+    }
+
+    pub async fn sources_presets_list(&self) -> Result<SourcesPresetsListResponse> {
+        self.call_typed(SOURCES_PRESETS_LIST_METHOD, &SourcesPresetsListRequest {})
+            .await
+    }
+
+    pub async fn sources_bindings_list(
+        &self,
+        source_family: Option<String>,
+        include_disabled: bool,
+    ) -> Result<SourcesBindingsListResponse> {
+        self.call_typed(
+            SOURCES_BINDINGS_LIST_METHOD,
+            &SourcesBindingsListRequest {
+                source_family,
+                include_disabled,
+            },
+        )
+        .await
     }
 
     pub async fn sources_annotate(

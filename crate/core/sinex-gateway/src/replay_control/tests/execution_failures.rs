@@ -1,4 +1,3 @@
-#[allow(unused_imports)]
 use super::*;
 #[sinex_test]
 async fn replay_execution_fails_when_outputs_never_become_query_visible(

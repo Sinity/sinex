@@ -1308,28 +1308,6 @@ impl HistoryDb {
         Ok(())
     }
 
-    /// Drop all known tables so the DB can be recreated from scratch.
-    fn drop_all_tables(&self) -> Result<()> {
-        self.conn.execute_batch(
-            r"
-            DROP TABLE IF EXISTS background_job_logs;
-            DROP TABLE IF EXISTS background_jobs;
-            DROP TABLE IF EXISTS trace_events;
-            DROP TABLE IF EXISTS invocation_eta_samples;
-            DROP TABLE IF EXISTS invocation_progress;
-            DROP TABLE IF EXISTS stage_timings;
-            DROP TABLE IF EXISTS invocation_packages;
-            DROP TABLE IF EXISTS build_diagnostics;
-            DROP TABLE IF EXISTS test_results;
-            DROP TABLE IF EXISTS exercise_results;
-            DROP TABLE IF EXISTS exercise_runs;
-            DROP TABLE IF EXISTS invocations;
-            DROP TABLE IF EXISTS metadata;
-            ",
-        )?;
-        Ok(())
-    }
-
     /// Check whether this database contains synthetic (seeded) data.
     pub fn check_synthetic(&self) -> Result<bool> {
         let exists = self
@@ -6249,6 +6227,56 @@ mod tests {
         let counts = db.get_current_diagnostic_counts()?;
         assert_eq!(counts.warnings, 1);
         assert_eq!(counts.errors, 0);
+        Ok(())
+    }
+
+    fn stored_diag_default() -> StoredDiagnostic {
+        StoredDiagnostic {
+            id: 0,
+            level: "warning".into(),
+            code: None,
+            message: "diagnostic".into(),
+            file_path: None,
+            line: None,
+            col: None,
+            rendered: None,
+            package: None,
+            fix_replacement: None,
+            fix_applicability: None,
+            fix_byte_start: None,
+            fix_byte_end: None,
+            source_command: None,
+            source_time: None,
+        }
+    }
+
+    #[sinex_test]
+    async fn stored_diagnostic_existing_file_filter_uses_workspace_root() -> TestResult<()> {
+        let dir = tempdir()?;
+        let source_path = dir.path().join("crate/example/src/lib.rs");
+        std::fs::create_dir_all(
+            source_path
+                .parent()
+                .expect("source path should have parent"),
+        )?;
+        std::fs::write(&source_path, "pub fn live() {}\n")?;
+
+        let live = StoredDiagnostic {
+            file_path: Some("crate/example/src/lib.rs".into()),
+            ..stored_diag_default()
+        };
+        let deleted = StoredDiagnostic {
+            file_path: Some("crate/example/src/deleted.rs".into()),
+            ..stored_diag_default()
+        };
+        let command_level = StoredDiagnostic {
+            file_path: None,
+            ..stored_diag_default()
+        };
+
+        assert!(live.points_to_existing_file(dir.path()));
+        assert!(!deleted.points_to_existing_file(dir.path()));
+        assert!(command_level.points_to_existing_file(dir.path()));
         Ok(())
     }
 

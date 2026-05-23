@@ -110,12 +110,6 @@ impl TransducerNode for EntityExtractor {
 
 // ── Entity extraction ──────────────────────────────────────────────────
 
-struct ExtractedEntity {
-    entity_type: EntityTypeName,
-    raw_name: String,
-    confidence: f64,
-}
-
 fn extract_text_fields(value: &serde_json::Value) -> String {
     let mut text = String::new();
 

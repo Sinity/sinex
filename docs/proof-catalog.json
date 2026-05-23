@@ -636,6 +636,36 @@
       }
     },
     {
+      "subject": "source_unit:instruction-expectation-reconciler",
+      "id": "instruction-expectation-reconciler",
+      "domain": "derived",
+      "implementation": "sinex-process",
+      "adapter": "DerivedNodeAdapter",
+      "output_event_type": "expectation.status",
+      "privacy_context": "metadata",
+      "material_policy": "synthesis_parents",
+      "checkpoint_policy": "append_stream",
+      "resource_shape": "event_stream_consumer",
+      "capabilities": [],
+      "source_unit_id": "instruction-expectation-reconciler",
+      "proposed": false,
+      "runner_pack": "process",
+      "checkpoint_family": {
+        "kind": "append_stream"
+      },
+      "runtime_shape": "continuous",
+      "package_impact": "no_new_output",
+      "implementation_mode": "rust_in_pack:process",
+      "build_impact": {
+        "crate_impact": "0",
+        "binary_impact": "0",
+        "nix_output_impact": "0",
+        "derivation_impact": "0",
+        "sqlx_validation_impact": "0",
+        "dedicated_build_rationale": null
+      }
+    },
+    {
       "subject": "source_unit:integration.polylogue",
       "id": "integration.polylogue",
       "domain": "integration",
@@ -1540,6 +1570,36 @@
       }
     },
     {
+      "subject": "source_unit:weechat.message",
+      "id": "weechat.message",
+      "domain": "irc",
+      "implementation": "sinex-source-worker",
+      "adapter": "AppendOnlyFileAdapter",
+      "output_event_type": "irc.message",
+      "privacy_context": "Command",
+      "material_policy": "append_only_log",
+      "checkpoint_policy": "append_only_cursor",
+      "resource_shape": "file_watcher",
+      "capabilities": [],
+      "source_unit_id": "weechat.message",
+      "proposed": false,
+      "runner_pack": "source-worker",
+      "checkpoint_family": {
+        "kind": "append_stream"
+      },
+      "runtime_shape": "on_demand",
+      "package_impact": "weechat_message_source_unit",
+      "implementation_mode": "rust_in_pack:source-worker",
+      "build_impact": {
+        "crate_impact": "0",
+        "binary_impact": "0",
+        "nix_output_impact": "0",
+        "derivation_impact": "0",
+        "sqlx_validation_impact": "0",
+        "dedicated_build_rationale": null
+      }
+    },
+    {
       "subject": "source_unit:wykop-entries",
       "id": "wykop-entries",
       "domain": "social",
@@ -2221,6 +2281,30 @@
       "retention_policy": "forever",
       "checkpoint_family": "append_stream",
       "occurrence_identity": "uuid5:(source_unit, hour_bucket, parent_event_ids)",
+      "access_policy": "event_stream_read",
+      "package_impact": "no_new_output",
+      "implementation_mode": "rust_in_pack:process",
+      "proof_obligations": []
+    },
+    {
+      "subject": "source_unit:instruction-expectation-reconciler",
+      "id": "instruction-expectation-reconciler",
+      "namespace": "derived",
+      "runner_pack": "process",
+      "modes": [
+        "continuous"
+      ],
+      "output_event_types": [
+        {
+          "source": "runtime.instruction",
+          "event_type": "expectation.status"
+        }
+      ],
+      "privacy_tier": "sensitive",
+      "runtime_shape": "continuous",
+      "retention_policy": "forever",
+      "checkpoint_family": "append_stream",
+      "occurrence_identity": "uuid5:(instruction_id, desired_event_source, desired_event_type)",
       "access_policy": "event_stream_read",
       "package_impact": "no_new_output",
       "implementation_mode": "rust_in_pack:process",
@@ -3162,7 +3246,7 @@
       "subject": "source_unit:weechat.message",
       "id": "weechat.message",
       "namespace": "irc",
-      "runner_pack": "",
+      "runner_pack": "source-worker",
       "modes": [
         "historical"
       ],
@@ -3173,13 +3257,13 @@
         }
       ],
       "privacy_tier": "sensitive",
-      "runtime_shape": "continuous",
+      "runtime_shape": "on_demand",
       "retention_policy": "forever",
       "checkpoint_family": "append_stream",
       "occurrence_identity": "material_anchor",
       "access_policy": "personal_irc_logs",
-      "package_impact": "",
-      "implementation_mode": "",
+      "package_impact": "weechat_message_source_unit",
+      "implementation_mode": "rust_in_pack:source-worker",
       "proof_obligations": [
         "anchor_line"
       ]
@@ -3700,6 +3784,34 @@
       "event_type": "integration.polylogue.conversation_indexed",
       "version": "1.0.0",
       "type_name": "sinex_primitives::events::payloads::integration::PolylogueConversationIndexedPayload"
+    },
+    {
+      "subject": "event_payload:irc/irc.join/1.0.0",
+      "source": "irc",
+      "event_type": "irc.join",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::irc::IrcJoinPayload"
+    },
+    {
+      "subject": "event_payload:irc/irc.message/1.0.0",
+      "source": "irc",
+      "event_type": "irc.message",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::irc::IrcMessagePayload"
+    },
+    {
+      "subject": "event_payload:irc/irc.part/1.0.0",
+      "source": "irc",
+      "event_type": "irc.part",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::irc::IrcPartPayload"
+    },
+    {
+      "subject": "event_payload:irc/irc.server_notice/1.0.0",
+      "source": "irc",
+      "event_type": "irc.server_notice",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::irc::IrcServerNoticePayload"
     },
     {
       "subject": "event_payload:journald/entry.written/1.0.0",
@@ -5001,7 +5113,7 @@
     {
       "subject": "xtask_command:verify.source-worker",
       "path": "verify.source-worker",
-      "about": "Source-worker integrity gate: dispatch cleanliness, NixOS binding drift, ingestor-crate deletion, workspace member count, and parser registration smoke"
+      "about": "Source-worker evidence gate: NixOS binding drift, parser registration, and privacy invocation"
     }
   ],
   "scenarios": [

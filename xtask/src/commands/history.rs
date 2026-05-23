@@ -2,6 +2,7 @@
 
 use color_eyre::eyre::Result;
 use console::style;
+use std::collections::BTreeMap;
 use std::time::Duration;
 use tabled::{builder::Builder, settings::Style};
 
@@ -1013,6 +1014,11 @@ fn apply_diagnostic_filters(
     });
 }
 
+fn retain_existing_file_diagnostics(diagnostics: &mut Vec<crate::history::StoredDiagnostic>) {
+    let workspace_root = crate::config::workspace_root();
+    diagnostics.retain(|diagnostic| diagnostic.points_to_existing_file(&workspace_root));
+}
+
 /// Format a file path + line for display (truncates long paths).
 fn format_file_loc(path: &Option<String>, line: Option<u32>) -> String {
     match (path, line) {
@@ -1046,6 +1052,38 @@ fn format_source_short(command: &Option<String>, time: &Option<String>) -> Strin
         })
         .unwrap_or("-");
     format!("{cmd} @ {time_short}")
+}
+
+fn diagnostic_source_command_counts(
+    diagnostics: &[crate::history::StoredDiagnostic],
+) -> Vec<(String, usize)> {
+    let mut counts = BTreeMap::<String, usize>::new();
+    for diagnostic in diagnostics {
+        let command = diagnostic
+            .source_command
+            .as_deref()
+            .unwrap_or("unknown")
+            .to_string();
+        *counts.entry(command).or_default() += 1;
+    }
+
+    let mut counts: Vec<_> = counts.into_iter().collect();
+    counts.sort_by(|(left_command, left_count), (right_command, right_count)| {
+        right_count
+            .cmp(left_count)
+            .then_with(|| left_command.cmp(right_command))
+    });
+    counts
+}
+
+fn format_diagnostic_source_command_counts(
+    diagnostics: &[crate::history::StoredDiagnostic],
+) -> String {
+    diagnostic_source_command_counts(diagnostics)
+        .into_iter()
+        .map(|(command, count)| format!("{command}: {count}"))
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 /// Render diagnostics table with mode-specific columns.
@@ -1151,6 +1189,7 @@ fn execute_diagnostics_current(
     ctx: &CommandContext,
 ) -> Result<CommandResult> {
     let mut diagnostics = db.get_current_diagnostics(level, file, package, command, fixable)?;
+    retain_existing_file_diagnostics(&mut diagnostics);
     apply_diagnostic_filters(
         &mut diagnostics,
         DiagnosticFilter::new(level, file, command, package, code, fixable),
@@ -1176,6 +1215,19 @@ fn execute_diagnostics_current(
                 style(diagnostics.len()).bold()
             );
             render_diagnostics_table(&diagnostics, mode);
+            if command.is_none() && diagnostic_source_command_counts(&diagnostics).len() > 1 {
+                println!(
+                    "Sources: {}",
+                    format_diagnostic_source_command_counts(&diagnostics)
+                );
+                println!(
+                    "  {}",
+                    style(
+                        "(Use `xtask history diagnostics --command check` to isolate the normal check surface.)"
+                    )
+                    .dim()
+                );
+            }
         }
     } else {
         ctx.print_json(&diagnostics)?;
@@ -1580,6 +1632,7 @@ fn execute_diagnostics_by_code(
     ctx: &CommandContext,
 ) -> Result<CommandResult> {
     let mut diagnostics = db.get_current_diagnostics(level, file, package, command, fixable)?;
+    retain_existing_file_diagnostics(&mut diagnostics);
     apply_diagnostic_filters(
         &mut diagnostics,
         DiagnosticFilter::new(level, file, command, package, code, fixable),
@@ -3362,6 +3415,31 @@ mod tests {
         assert_eq!(
             diagnostic.fix_applicability.as_deref(),
             Some("MachineApplicable")
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_diagnostic_source_command_counts_are_sorted_and_explicit()
+    -> ::xtask::sandbox::TestResult<()> {
+        let diagnostics = vec![
+            sample_diagnostic("warning", None, None, None, false, Some("lint")),
+            sample_diagnostic("warning", None, None, None, false, Some("check")),
+            sample_diagnostic("warning", None, None, None, false, Some("check")),
+            sample_diagnostic("warning", None, None, None, false, None),
+        ];
+
+        assert_eq!(
+            diagnostic_source_command_counts(&diagnostics),
+            vec![
+                ("check".to_string(), 2),
+                ("lint".to_string(), 1),
+                ("unknown".to_string(), 1),
+            ]
+        );
+        assert_eq!(
+            format_diagnostic_source_command_counts(&diagnostics),
+            "check: 2, lint: 1, unknown: 1"
         );
         Ok(())
     }

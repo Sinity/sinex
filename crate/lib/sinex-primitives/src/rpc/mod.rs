@@ -53,6 +53,7 @@ pub enum RpcDomain {
     GitOps,
     Health,
     Ingestors,
+    Instructions,
     Lifecycle,
     Llm,
     Nodes,
@@ -158,6 +159,7 @@ pub mod events;
 pub mod gitops;
 pub mod health;
 pub mod ingestors;
+pub mod instructions;
 pub mod lifecycle;
 pub mod llm;
 pub mod methods;
@@ -204,6 +206,7 @@ pub fn method_catalog() -> Vec<RpcMethodInfo> {
         health::HEALTH_EFFECT_RECORD_METHOD.info(),
         health::HEALTH_INTAKE_RECORD_METHOD.info(),
         ingestors::INGESTORS_STATUS_METHOD.info(),
+        instructions::INSTRUCTIONS_HYPRLAND_WORKSPACE_SWITCH_METHOD.info(),
         lifecycle::LIFECYCLE_ARCHIVE_METHOD.info(),
         lifecycle::LIFECYCLE_RESTORE_METHOD.info(),
         lifecycle::LIFECYCLE_STATUS_METHOD.info(),

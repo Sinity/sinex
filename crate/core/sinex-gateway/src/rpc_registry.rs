@@ -28,6 +28,7 @@ use sinex_primitives::rpc::{
     events::{EVENTS_ANNOTATE_METHOD, EVENTS_LINEAGE_METHOD, EVENTS_QUERY_METHOD},
     health::{HEALTH_EFFECT_RECORD_METHOD, HEALTH_INTAKE_RECORD_METHOD},
     ingestors::INGESTORS_STATUS_METHOD,
+    instructions::INSTRUCTIONS_HYPRLAND_WORKSPACE_SWITCH_METHOD,
     lifecycle::{
         LIFECYCLE_ARCHIVE_METHOD, LIFECYCLE_RESTORE_METHOD, LIFECYCLE_STATUS_METHOD,
         LIFECYCLE_TOMBSTONE_APPROVE_METHOD, LIFECYCLE_TOMBSTONE_CANCEL_METHOD,
@@ -90,15 +91,6 @@ use std::sync::Arc;
 
 /// Wraps an async function into a closure returning a pinned boxed future,
 /// preserving the handler's structured `SinexError` result.
-///
-/// # Examples
-/// ```ignore
-/// // 2-arg handler (pool_rpc)
-/// .pool_rpc("method", Role::ReadOnly, boxed!(handle_fn))
-///
-/// // 3-arg handler (pool_auth_rpc, nats_rpc)
-/// .pool_auth_rpc("method", Role::Admin, boxed!(handle_fn, 3))
-/// ```
 macro_rules! boxed {
     ($f:expr) => {
         |a, b| Box::pin(async move { $f(a, b).await })
@@ -324,88 +316,6 @@ impl RpcRegistry {
         self
     }
 
-    /// Register a handler for a method
-    ///
-    /// # Arguments
-    /// * `method` - The RPC method name (e.g., "system.health")
-    /// * `role` - The minimum role required to invoke this method
-    /// * `handler` - The async handler function
-    pub(crate) fn register<F>(mut self, method: &'static str, role: Role, handler: F) -> Self
-    where
-        F: for<'a> Fn(
-                JsonValue,
-                &'a ServiceContainer,
-                &'a RpcAuthContext,
-            ) -> Pin<Box<dyn Future<Output = Result<JsonValue>> + Send + 'a>>
-            + Send
-            + Sync
-            + 'static,
-    {
-        self.methods.insert(
-            method,
-            RegistryEntry {
-                handler: Arc::new(handler),
-                required_role: role,
-            },
-        );
-        self
-    }
-
-    /// Register a database-backed RPC handler (no auth context)
-    ///
-    /// Automatically extracts the `PgPool` from `ServiceContainer` and wraps the future.
-    pub(crate) fn pool_rpc<F>(mut self, method: &'static str, role: Role, f: F) -> Self
-    where
-        F: for<'a> Fn(
-                &'a sqlx::PgPool,
-                JsonValue,
-            ) -> Pin<Box<dyn Future<Output = Result<JsonValue>> + Send + 'a>>
-            + Send
-            + Sync
-            + 'static,
-    {
-        let f = Arc::new(f);
-        self.methods.insert(
-            method,
-            RegistryEntry {
-                handler: Arc::new(move |params, services, _auth| {
-                    let f = Arc::clone(&f);
-                    Box::pin(async move { f(services.pool(), params).await })
-                }),
-                required_role: role,
-            },
-        );
-        self
-    }
-
-    /// Register a database-backed RPC handler (with auth context)
-    ///
-    /// Automatically extracts the `PgPool` from `ServiceContainer` and passes auth context.
-    pub(crate) fn pool_auth_rpc<F>(mut self, method: &'static str, role: Role, f: F) -> Self
-    where
-        F: for<'a> Fn(
-                &'a sqlx::PgPool,
-                JsonValue,
-                &'a RpcAuthContext,
-            ) -> Pin<Box<dyn Future<Output = Result<JsonValue>> + Send + 'a>>
-            + Send
-            + Sync
-            + 'static,
-    {
-        let f = Arc::new(f);
-        self.methods.insert(
-            method,
-            RegistryEntry {
-                handler: Arc::new(move |params, services, auth| {
-                    let f = Arc::clone(&f);
-                    Box::pin(async move { f(services.pool(), params, auth).await })
-                }),
-                required_role: role,
-            },
-        );
-        self
-    }
-
     /// Register a typed replay-control RPC handler.
     ///
     /// The registry owns the JSON boundary and extracts the replay-control
@@ -443,40 +353,6 @@ impl RpcRegistry {
                     })
                 }),
                 required_role: method.role.into(),
-            },
-        );
-        self
-    }
-
-    /// Register a NATS-backed RPC handler (no auth context)
-    ///
-    /// Automatically extracts NATS client and environment from `ServiceContainer`.
-    pub(crate) fn nats_rpc<F>(mut self, method: &'static str, role: Role, f: F) -> Self
-    where
-        F: for<'a> Fn(
-                &'a async_nats::Client,
-                &'a sinex_primitives::environment::SinexEnvironment,
-                JsonValue,
-            ) -> Pin<Box<dyn Future<Output = Result<JsonValue>> + Send + 'a>>
-            + Send
-            + Sync
-            + 'static,
-    {
-        let f = Arc::new(f);
-        self.methods.insert(
-            method,
-            RegistryEntry {
-                handler: Arc::new(move |params, services, _auth| {
-                    let f = Arc::clone(&f);
-                    Box::pin(async move {
-                        let nats = services.nats_client().ok_or_else(|| {
-                            SinexError::configuration("NATS client is not available")
-                        })?;
-                        let env = services.environment();
-                        f(nats, env, params).await
-                    })
-                }),
-                required_role: role,
             },
         );
         self
@@ -715,12 +591,12 @@ fn build_registry_impl() -> RpcRegistry {
         handle_dlq_peek, handle_dlq_purge, handle_dlq_requeue, handle_documents_get,
         handle_documents_get_chunks, handle_documents_search, handle_events_annotate,
         handle_events_lineage, handle_events_query, handle_health_effect_record,
-        handle_health_intake_record, handle_ingestors_status, handle_lifecycle_archive,
-        handle_lifecycle_restore, handle_lifecycle_status, handle_link_entities,
-        handle_llm_budget_report, handle_llm_prompts_list, handle_llm_route_explain,
-        handle_nodes_drain, handle_nodes_health, handle_nodes_list, handle_nodes_list_active,
-        handle_nodes_resume, handle_nodes_set_horizon, handle_ops_cancel, handle_ops_get,
-        handle_ops_list, handle_ops_start, handle_private_mode_disable_service,
+        handle_health_intake_record, handle_hyprland_workspace_switch, handle_ingestors_status,
+        handle_lifecycle_archive, handle_lifecycle_restore, handle_lifecycle_status,
+        handle_link_entities, handle_llm_budget_report, handle_llm_prompts_list,
+        handle_llm_route_explain, handle_nodes_drain, handle_nodes_health, handle_nodes_list,
+        handle_nodes_list_active, handle_nodes_resume, handle_nodes_set_horizon, handle_ops_cancel,
+        handle_ops_get, handle_ops_list, handle_ops_start, handle_private_mode_disable_service,
         handle_private_mode_enable_service, handle_private_mode_status_service,
         handle_replay_approve_operation, handle_replay_cancel_operation,
         handle_replay_create_operation, handle_replay_execute_operation,
@@ -944,6 +820,10 @@ fn build_registry_impl() -> RpcRegistry {
         .pool_auth_typed_rpc(TASKS_STATUS_SET_METHOD, boxed!(handle_tasks_status_set, 3))
         .pool_auth_typed_rpc(TASKS_COMPLETE_METHOD, boxed!(handle_tasks_complete, 3))
         .pool_auth_typed_rpc(TASKS_CANCEL_METHOD, boxed!(handle_tasks_cancel, 3))
+        .pool_auth_typed_rpc(
+            INSTRUCTIONS_HYPRLAND_WORKSPACE_SWITCH_METHOD,
+            boxed!(handle_hyprland_workspace_switch, 3),
+        )
         .pool_auth_typed_rpc(
             SEMANTIC_EPOCHS_CREATE_METHOD,
             boxed!(handle_semantic_epoch_create, 3),

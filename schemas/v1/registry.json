@@ -310,6 +310,34 @@
       "content_hash": "6538704c100208e6a3315c19a3aa8ce2e473aae6a3ffd99a23250c5c574c92b2"
     },
     {
+      "source": "irc",
+      "event_type": "irc.join",
+      "version": "1.0.0",
+      "path": "irc/irc.join.json",
+      "content_hash": "fb5ed53f4712a3d8cd81d8189ffd835748fdc36504a7528e1f61de5f65257009"
+    },
+    {
+      "source": "irc",
+      "event_type": "irc.message",
+      "version": "1.0.0",
+      "path": "irc/irc.message.json",
+      "content_hash": "75cf78ad91aefbc44910f67f3214ecf12ee52577a6d4dcb15cf723daadaf50fb"
+    },
+    {
+      "source": "irc",
+      "event_type": "irc.part",
+      "version": "1.0.0",
+      "path": "irc/irc.part.json",
+      "content_hash": "606216659583ed44a0a7e955ce11d57613743fa3c8f9bee8ccbb7dc9911f276d"
+    },
+    {
+      "source": "irc",
+      "event_type": "irc.server_notice",
+      "version": "1.0.0",
+      "path": "irc/irc.server_notice.json",
+      "content_hash": "90e87f904556c067a2d5b645d9729f316adce9d56bc87ee32925f3f1c3ede09e"
+    },
+    {
       "source": "journald",
       "event_type": "entry.written",
       "version": "1.0.0",

@@ -67,7 +67,7 @@ impl TestAssemblerBuilder {
         let content_store_dir = tempfile::tempdir()?;
         let repo_path = Utf8PathBuf::from_path_buf(content_store_dir.path().to_path_buf())
             .map_err(|_| color_eyre::eyre::eyre!("tempdir path is not valid utf-8"))?;
-        MaterialContentStore::init(&repo_path, Some(self.label)).await?;
+        MaterialContentStore::init_with_config(&repo_path, Some(self.label), true).await?;
         let content_store = Arc::new(MaterialContentStore::new(ContentStoreConfig {
             root_path: repo_path,
             num_copies: None,
@@ -114,7 +114,7 @@ pub(super) async fn build_test_content_store(
     let content_store_dir = tempfile::tempdir()?;
     let repo_path = Utf8PathBuf::from_path_buf(content_store_dir.path().to_path_buf())
         .map_err(|_| color_eyre::eyre::eyre!("tempdir path is not valid utf-8"))?;
-    MaterialContentStore::init(&repo_path, Some(label)).await?;
+    MaterialContentStore::init_with_config(&repo_path, Some(label), true).await?;
     let content_store = Arc::new(MaterialContentStore::new(ContentStoreConfig {
         root_path: repo_path,
         num_copies: None,

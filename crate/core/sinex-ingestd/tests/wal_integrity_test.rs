@@ -23,7 +23,7 @@ async fn wal_recovers_state_after_crash(ctx: TestContext) -> TestResult<()> {
     let content_store_dir = tempfile::tempdir()?;
     let repo_path =
         camino::Utf8PathBuf::from_path_buf(content_store_dir.path().to_path_buf()).unwrap();
-    MaterialContentStore::init(&repo_path, Some("wal-test")).await?;
+    MaterialContentStore::init_with_config(&repo_path, Some("wal-test"), true).await?;
     let content_store = Arc::new(MaterialContentStore::new(ContentStoreConfig {
         root_path: repo_path,
         num_copies: None,

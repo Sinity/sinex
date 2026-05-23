@@ -134,7 +134,8 @@ pub fn build_proof_catalog(workspace_root: &Path) -> Result<ProofCatalog> {
     // can read deployment-shape fields (`runner_pack`, `runtime_shape`,
     // `checkpoint_family`, `package_impact`, `implementation_mode`) from the
     // binding (#1175 split). Live bindings beat proposed bindings when both
-    // exist; descriptors with no binding fall back to inert defaults.
+    // exist; validation rejects descriptors whose binding-derived fields
+    // would otherwise render empty.
     let mut binding_lookup: HashMap<&'static str, &'static SourceUnitBinding> = HashMap::new();
     for binding in proof::source_unit_bindings() {
         if binding.source_unit_id.is_empty() {
@@ -343,7 +344,26 @@ pub fn validate_proof_catalog(catalog: &ProofCatalog) -> ProofCatalogValidation 
         }
     }
 
+    let mut local_source_unit_tags = BTreeMap::<&str, Vec<&str>>::new();
     for unit in &catalog.source_units {
+        if unit.runner_pack.is_empty() {
+            errors.push(format!(
+                "{} has no runner_pack; add a SourceUnitBinding instead of rendering inert defaults",
+                unit.subject
+            ));
+        }
+        if unit.package_impact.is_empty() {
+            errors.push(format!(
+                "{} has no package_impact; add a SourceUnitBinding instead of rendering inert defaults",
+                unit.subject
+            ));
+        }
+        if unit.implementation_mode.is_empty() {
+            errors.push(format!(
+                "{} has no implementation_mode; add a SourceUnitBinding instead of rendering inert defaults",
+                unit.subject
+            ));
+        }
         for obligation_id in &unit.proof_obligations {
             if obligation_id.starts_with("obligation:")
                 && !obligations.contains_key(obligation_id.as_str())
@@ -353,12 +373,20 @@ pub fn validate_proof_catalog(catalog: &ProofCatalog) -> ProofCatalogValidation 
                     unit.subject
                 ));
             } else if !obligation_id.starts_with("obligation:") {
-                warnings.push(format!(
-                    "{} carries local source-unit proof tag {obligation_id}",
-                    unit.subject
-                ));
+                local_source_unit_tags
+                    .entry(unit.subject.as_str())
+                    .or_default()
+                    .push(obligation_id);
             }
         }
+    }
+    for (subject, mut tags) in local_source_unit_tags {
+        tags.sort_unstable();
+        warnings.push(format!(
+            "{subject} carries {} local source-unit proof tag(s): {}",
+            tags.len(),
+            tags.join(", ")
+        ));
     }
 
     for exemption in &catalog.exemptions {
@@ -464,9 +492,9 @@ fn source_unit_subject(
     unit: &'static proof::SourceUnitDescriptor,
     binding_lookup: &HashMap<&'static str, &'static SourceUnitBinding>,
 ) -> SourceUnitSubject {
-    // Deployment-shape fields live on the binding only (#1175). Descriptor with
-    // no binding falls back to inert defaults — the manifest validator surfaces
-    // those via `unmapped_runner_packs` / `unresolved_binding_source_unit_ids`.
+    // Deployment-shape fields live on the binding only (#1175). Validation
+    // rejects empty binding-derived fields so missing bindings cannot look
+    // like proof-catalog data.
     let binding = binding_lookup.get(unit.id).copied();
     let runner_pack = binding.map_or("", |b| b.runner_pack);
     let runtime_shape = binding.map_or(RuntimeShape::Continuous, |b| b.runtime_shape);
@@ -717,6 +745,43 @@ mod tests {
                 .iter()
                 .any(|error| error.contains("obligation:source_unit.missing")),
             "expected unknown catalog obligation validation error, got {:?}",
+            validation.errors
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn proof_catalog_validation_rejects_missing_binding_fields() -> TestResult<()> {
+        let workspace = crate::sandbox::orchestrator::find_workspace_root()?;
+        let mut catalog = build_proof_catalog(&workspace)?;
+        catalog.source_units[0].runner_pack.clear();
+        catalog.source_units[0].package_impact.clear();
+        catalog.source_units[0].implementation_mode.clear();
+
+        let validation = validate_proof_catalog(&catalog);
+
+        assert!(
+            validation
+                .errors
+                .iter()
+                .any(|error| error.contains("has no runner_pack")),
+            "expected missing runner_pack validation error, got {:?}",
+            validation.errors
+        );
+        assert!(
+            validation
+                .errors
+                .iter()
+                .any(|error| error.contains("has no package_impact")),
+            "expected missing package_impact validation error, got {:?}",
+            validation.errors
+        );
+        assert!(
+            validation
+                .errors
+                .iter()
+                .any(|error| error.contains("has no implementation_mode")),
+            "expected missing implementation_mode validation error, got {:?}",
             validation.errors
         );
         Ok(())

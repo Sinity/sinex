@@ -12,7 +12,7 @@ are read or interaction projections over the same DTOs.
 | Concern | Current shape | Target shape |
 | --- | --- | --- |
 | Command metadata | Clap leaf tree, `command_path()` match, and format registry all need manual updates. | A command catalog owns UX metadata; format validation and future projections read it. |
-| RPC methods | Some commands call typed `GatewayClient` methods, others use `call_raw_rpc` with string methods. | Promoted command paths use typed client methods and shared `sinex_primitives::rpc::methods` constants. |
+| RPC methods | Command paths call typed `GatewayClient` methods, but method metadata still lives across DTO modules, registry setup, CLI wrappers, and docs. | Typed RPC descriptors remain the single contract for method names, request/response DTOs, role, stability, and catalog metadata. |
 | Output | Many commands hand-match JSON/YAML/table and print their own sections. | Commands return through shared output helpers and view DTOs; bespoke renderers are limited to genuinely interactive surfaces. |
 | Runtime summary | `status`, `now`, `nodes`, `recent`, `watch`, and `tui` each assemble overlapping status/event views. | Shared runtime/event view models feed shortcut commands, TUI, and agent-facing projections. |
 | Projection surfaces | CLI, MCP, and future SinexFS risk defining separate JSON shapes. | MCP/SinexFS use gateway or CLI JSON read models with IDs, caveats, provenance refs, redaction metadata, and `generated_at`. |
@@ -31,9 +31,9 @@ are read or interaction projections over the same DTOs.
 
 1. Command catalog: add consolidated command metadata and make format matrix
    rendering read it.
-2. RPC promotion: remove raw RPC use from narrow command modules first
-   (`tasks`, `declare`, `annotate`), then work through `sources`, `documents`,
-   `ops`, and `audit`.
+2. RPC catalog promotion: keep CLI/MCP on typed client calls, then collapse
+   duplicated method metadata into typed descriptors that can feed registry,
+   docs, command catalog, and validation checks.
 3. Output spine: move table/JSON/YAML handling for common commands behind shared
    output helpers and typed view DTOs.
 4. Runtime views: make `status`, `now`, and TUI consume the same runtime snapshot

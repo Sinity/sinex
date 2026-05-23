@@ -103,9 +103,6 @@ workspace = true
 [dependencies.validator]
 workspace = true
 
-[dependencies.async-stream]
-version = "0.3"
-
 [dependencies.tokio-util]
 version = "0.7"
 
@@ -130,11 +127,6 @@ path = "../../lib/sinex-node-sdk"
 
 [features]
 default = []
-tokio-console = ["dep:console-subscriber"]
-
-[dependencies.console-subscriber]
-workspace = true
-optional = true
 
 [lints]
 workspace = true

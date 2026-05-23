@@ -6,10 +6,10 @@
 //! the worker on completion.
 
 use super::{
-    Arc, AtomicU64, CheckpointManager, DEFAULT_EVENT_CHANNEL_SIZE, DbPoolExt,
-    DispatchedScanOutcome, Event, FailedDispatchedScanOutcome, HashMap, JsonValue, Node,
-    NodeFactory, NodeHandles, NodeInitContext, NodeResult, NodeRunner, NodeScanCommand, Ordering,
-    ServiceInfo, SinexError, StreamExt, Utf8PathBuf, Uuid, create_checkpoint_kv, mpsc,
+    Arc, AtomicU64, CheckpointManager, DEFAULT_EVENT_CHANNEL_SIZE, DispatchedScanOutcome, Event,
+    FailedDispatchedScanOutcome, HashMap, JsonValue, Node, NodeFactory, NodeHandles,
+    NodeInitContext, NodeResult, NodeRunner, NodeScanCommand, Ordering, ServiceInfo, SinexError,
+    Utf8PathBuf, Uuid, create_checkpoint_kv, mpsc,
 };
 
 impl<T: Node + 'static> NodeRunner<T> {

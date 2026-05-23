@@ -1,6 +1,6 @@
 //! sinex-process — consolidated automata binary.
 //!
-//! Hosts twelve derived-node automata in a single binary. The automaton to run
+//! Hosts thirteen derived-node automata in a single binary. The automaton to run
 //! is selected by the `--automaton <name>` argument (or `SINEX_AUTOMATON` env).
 //!
 //! # Usage
@@ -24,6 +24,7 @@
 //! - `entity-extractor`   — entity extractor (`TransducerNode`)
 //! - `tag-applier`       — rule-based tag applier (`TransducerNode`)
 //! - `document-parser`    — document parser (`MultiOutputTransducerNode`)
+//! - `instruction-reconciler` — instruction expectation reconciler (`ScopeReconcilerNode`)
 
 #[cfg(not(target_env = "msvc"))]
 use mimalloc::MiMalloc;
@@ -35,7 +36,8 @@ static GLOBAL: MiMalloc = MiMalloc;
 use sinex_process::{
     AnalyticsAutomatonNode, DailySummarizerNode, DocumentParserNodeAdapter, EntityEnricherNode,
     EntityExtractorNode, EntityResolverNode, HealthAggregatorNode, HourlySummarizerNode,
-    RelationExtractorNode, SessionDetectorNode, TagApplierNode, TerminalCommandCanonicalizerNode,
+    InstructionExpectationReconcilerNode, RelationExtractorNode, SessionDetectorNode,
+    TagApplierNode, TerminalCommandCanonicalizerNode,
 };
 
 /// Extract `--automaton <name>` (or `SINEX_AUTOMATON`) from raw argv and return
@@ -84,7 +86,7 @@ fn extract_automaton(args: Vec<std::ffi::OsString>) -> (String, Vec<std::ffi::Os
     let name = automaton.unwrap_or_else(|| {
         eprintln!(
             "error: --automaton <name> is required (or set SINEX_AUTOMATON).\n\
-             Valid values: canonicalizer | analytics | health | session | hourly | daily | entity-extractor | tag-applier | entity-resolver | relation-extractor | entity-enricher | document-parser"
+             Valid values: canonicalizer | analytics | health | session | hourly | daily | entity-extractor | tag-applier | entity-resolver | relation-extractor | entity-enricher | document-parser | instruction-reconciler"
         );
         std::process::exit(1);
     });
@@ -115,10 +117,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         "entity-enricher" => run_node::<EntityEnricherNode>(filtered_args).await,
         "tag-applier" => run_node::<TagApplierNode>(filtered_args).await,
         "document-parser" => run_node::<DocumentParserNodeAdapter>(filtered_args).await,
+        "instruction-reconciler" => {
+            run_node::<InstructionExpectationReconcilerNode>(filtered_args).await
+        }
         other => {
             eprintln!(
                 "error: unknown automaton '{other}'.\n\
-                 Valid values: canonicalizer | analytics | health | session | hourly | daily | entity-extractor | tag-applier | entity-resolver | relation-extractor | entity-enricher | document-parser"
+                 Valid values: canonicalizer | analytics | health | session | hourly | daily | entity-extractor | tag-applier | entity-resolver | relation-extractor | entity-enricher | document-parser | instruction-reconciler"
             );
             std::process::exit(1);
         }
