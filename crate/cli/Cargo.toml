@@ -2,6 +2,10 @@
 name = "sinexctl"
 path = "src/main.rs"
 
+[[bin]]
+name = "sinex-mcp-server"
+path = "src/bin/sinex-mcp-server.rs"
+
 [lib]
 name = "sinexctl"
 path = "src/lib.rs"

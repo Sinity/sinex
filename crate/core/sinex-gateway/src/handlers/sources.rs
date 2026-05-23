@@ -17,7 +17,7 @@ use sinex_primitives::rpc::sources::{
     SourcesListResponse, SourcesPresetsListResponse, SourcesReadinessGetRequest,
     SourcesReadinessGetResponse, SourcesReadinessListRequest, SourcesReadinessListResponse,
     SourcesShowRequest, SourcesShowResponse, SourcesStageRequest, SourcesStageResponse,
-    TemporalEvidenceSummary,
+    TemporalEvidenceSummary, bridge_material_presets, external_producer_presets,
 };
 use sinex_primitives::{Result, SinexError};
 use sqlx::{FromRow, PgPool};
@@ -437,7 +437,7 @@ pub async fn handle_sources_coverage(pool: &PgPool, params: Value) -> Result<Val
 
 fn builtin_presets() -> Vec<SourcePresetDescriptor> {
     use SourcePresetDescriptor as P;
-    vec![
+    let mut presets = vec![
         // Terminal presets
         P {
             name: "atuin.default".into(),
@@ -481,15 +481,6 @@ fn builtin_presets() -> Vec<SourcePresetDescriptor> {
             material_format_hint: Some("sqlite".into()),
             resolver_preset: None,
         },
-        // Chat export presets
-        P {
-            name: "polylogue.exports.default".into(),
-            description: "Polylogue chat archive root".into(),
-            source_family: "chat".into(),
-            input_shape_kind: "directory".into(),
-            material_format_hint: None,
-            resolver_preset: None,
-        },
         // Generic presets
         P {
             name: "directory.watch".into(),
@@ -499,7 +490,10 @@ fn builtin_presets() -> Vec<SourcePresetDescriptor> {
             material_format_hint: None,
             resolver_preset: None,
         },
-    ]
+    ];
+    presets.extend(bridge_material_presets());
+    presets.extend(external_producer_presets());
+    presets
 }
 
 pub async fn handle_sources_presets_list(
@@ -513,6 +507,36 @@ pub async fn handle_sources_presets_list(
         SinexError::serialization("Failed to serialize sources.presets.list response")
             .with_std_error(&error)
     })
+}
+
+#[cfg(test)]
+mod preset_tests {
+    use super::builtin_presets;
+    use xtask::sandbox::prelude::*;
+
+    #[sinex_test]
+    async fn builtin_presets_include_external_bridge_surfaces() -> TestResult<()> {
+        let presets = builtin_presets();
+        let names: std::collections::BTreeSet<_> =
+            presets.iter().map(|preset| preset.name.as_str()).collect();
+
+        assert!(
+            names.contains("polylogue.exports.default"),
+            "Polylogue material bridge preset must be exposed through sources.presets.list"
+        );
+        assert!(
+            names.contains("lynchpin.generated.default"),
+            "Lynchpin generated-artifact preset must be exposed through sources.presets.list"
+        );
+
+        let lynchpin = presets
+            .iter()
+            .find(|preset| preset.name == "lynchpin.generated.default")
+            .ok_or_else(|| color_eyre::eyre::eyre!("lynchpin preset should exist"))?;
+        assert_eq!(lynchpin.source_family, "analysis");
+        assert_eq!(lynchpin.input_shape_kind, "directory");
+        Ok(())
+    }
 }
 
 // ── sources.bindings.list ───────────────────────────────────────

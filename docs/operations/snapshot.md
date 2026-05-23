@@ -85,6 +85,16 @@ tar -xaf /var/backup/sinex/2026-05-15.sinex.tar.zst -C "$RESTORE_DIR"
 
 ### 3. Verify the manifest
 
+Before extracting, the archive can be inspected directly:
+
+```bash
+sinexctl admin snapshot-inspect \
+    --archive /var/backup/sinex/2026-05-15.sinex.tar.zst
+```
+
+The command reads `manifest.json`, lists the archive, and reports any non-empty
+component paths from the manifest that are missing from the tar member list.
+
 ```bash
 cat "$RESTORE_DIR/manifest.json" | jq .
 ```
@@ -173,7 +183,7 @@ For a horizon-3 wipe (complete state replacement):
 1. Run `--dry-run` to confirm estimate and disk space.
 2. Stop services.
 3. Run the snapshot with a high compression level: `--compression 15`.
-4. Verify the manifest: `tar -tf <archive>` and inspect `manifest.json`.
+4. Verify the manifest: `sinexctl admin snapshot-inspect --archive <archive>`.
 5. Copy to off-machine storage (e.g., `rsync` to NAS or object storage).
 6. Proceed with the wipe only after confirming the archive is readable.
 

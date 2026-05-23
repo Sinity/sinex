@@ -205,6 +205,12 @@ impl ServiceContainer {
         &self.env
     }
 
+    /// Get the runtime state directory used by local gateway state files.
+    #[must_use]
+    pub fn state_dir(&self) -> &std::path::Path {
+        &self.config.state_dir
+    }
+
     /// Get a database pool for general operations
     /// Uses the content service pool as it's already used for system operations
     #[must_use]

@@ -110,6 +110,22 @@ impl EphemeralNatsBuilder {
 }
 
 impl EphemeralNatsBuilder {
+    fn store_tempdir() -> Result<TempDir> {
+        let root = crate::config::workspace_root().join(".sinex/test-tmp/nats");
+        std::fs::create_dir_all(&root).wrap_err_with(|| {
+            format!("failed to create NATS test store root {}", root.display())
+        })?;
+        tempfile::Builder::new()
+            .prefix("jetstream-")
+            .tempdir_in(&root)
+            .wrap_err_with(|| {
+                format!(
+                    "failed to create NATS JetStream store under {}",
+                    root.display()
+                )
+            })
+    }
+
     fn client_url(&self, port: u16) -> String {
         if self.tls.is_some() {
             format!("tls://127.0.0.1:{port}")
@@ -185,7 +201,7 @@ impl EphemeralNatsBuilder {
     pub async fn start(self) -> Result<EphemeralNats> {
         let binary = EphemeralNats::resolve_binary()?;
 
-        let store_dir = TempDir::new()?;
+        let store_dir = Self::store_tempdir()?;
         tokio::fs::create_dir_all(store_dir.path()).await?;
 
         // Nextest runs tests concurrently in separate processes.
@@ -857,7 +873,7 @@ pub async fn ensure_coordination_buckets(js: &jetstream::Context) -> Result<()> 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sandbox::sinex_test;
+    use crate::sandbox::{EnvGuard, sinex_test};
 
     #[sinex_test]
     async fn test_log_tail_surfaces_read_failures() -> Result<()> {
@@ -895,6 +911,28 @@ mod tests {
             err.to_string()
                 .contains("failed to poll nats-server child status during startup readiness"),
             "unexpected error: {err:#}"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn store_tempdir_uses_workspace_backed_root() -> Result<()> {
+        let root = TempDir::new()?;
+        let _guard = EnvGuard::set_single("SINEX_TEST_TMPDIR", root.path().as_os_str());
+
+        let store = EphemeralNatsBuilder::store_tempdir()?;
+        let expected_root = crate::config::workspace_root().join(".sinex/test-tmp/nats");
+        assert!(
+            store.path().starts_with(&expected_root),
+            "store path {} should live under workspace-backed NATS root {}",
+            store.path().display(),
+            expected_root.display()
+        );
+        assert!(
+            !store.path().starts_with(root.path()),
+            "store path {} should ignore generic tmp root {}",
+            store.path().display(),
+            root.path().display()
         );
         Ok(())
     }

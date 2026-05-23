@@ -239,7 +239,15 @@ let
       instances = binding.instances;
       resources = resolveResources binding.resources;
       nodeConfig =
-        if binding.adapterConfig != { } then builtins.toJSON binding.adapterConfig
+        if binding.adapterConfig != { } then builtins.toJSON (
+          {
+            # AdapterBackedIngestor reads this before opening the source adapter,
+            # so restarted source workers observe persisted private mode before
+            # resuming capture.
+            private_mode_state_dir = stateRoot;
+          }
+          // binding.adapterConfig
+        )
         else "";
       env = mkServiceEnv (
         [ "RUST_LOG=${nodesCfg.defaults.logLevel}" ]

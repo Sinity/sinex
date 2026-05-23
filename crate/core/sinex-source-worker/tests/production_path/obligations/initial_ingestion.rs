@@ -163,9 +163,27 @@ mod canary {
 
 #[cfg(test)]
 mod binary_path {
+    use sinex_primitives::privacy::{RuntimePrivateModeState, save_private_mode_state};
+    use sinex_primitives::temporal::Timestamp;
     use xtask::sandbox::prelude::*;
 
     const WEECHAT_MESSAGE: &str = "hello from source-worker binary";
+
+    fn weechat_node_config(log_path: &std::path::Path) -> serde_json::Value {
+        serde_json::json!({
+            "path": log_path,
+            "skip_empty": true,
+        })
+    }
+
+    async fn write_weechat_fixture(log_path: &std::path::Path, message: &str) -> TestResult<()> {
+        tokio::fs::write(
+            log_path,
+            format!("2024-01-15 14:23:45\tsinity\t{message}\n"),
+        )
+        .await?;
+        Ok(())
+    }
 
     /// Proves the real `sinex-source-worker scan` path for an adapter-backed
     /// source unit: binary launch, adapter config, parser, NATS publish,
@@ -179,11 +197,7 @@ mod binary_path {
 
         let tempdir = tempfile::tempdir()?;
         let log_path = tempdir.path().join("weechat.log");
-        tokio::fs::write(
-            &log_path,
-            format!("2024-01-15 14:23:45\tsinity\t{WEECHAT_MESSAGE}\n"),
-        )
-        .await?;
+        write_weechat_fixture(&log_path, WEECHAT_MESSAGE).await?;
         let worker_dir = tempdir.path().join("worker");
         tokio::fs::create_dir_all(&worker_dir).await?;
 
@@ -192,13 +206,7 @@ mod binary_path {
         config.database_url = ctx.database_url().to_string();
         config.namespace = Some(ctx.pipeline_namespace().prefix().to_string());
         config.work_dir = Some(worker_dir);
-        config.node_config = Some(
-            serde_json::json!({
-                "path": log_path,
-                "skip_empty": true,
-            })
-            .to_string(),
-        );
+        config.node_config = Some(weechat_node_config(&log_path).to_string());
 
         let output = run_test_source_worker_scan(config, &[], Some(&ctx)).await?;
         ctx.assert("source-worker scan processed one event").that(
@@ -237,6 +245,121 @@ mod binary_path {
 
         ctx.assert("persisted irc.message payload")
             .eq(&payload["message"].as_str(), &Some(WEECHAT_MESSAGE))?;
+
+        stack.shutdown().await?;
+        Ok(())
+    }
+
+    #[sinex_test(timeout = 120)]
+    async fn weechat_source_worker_private_mode_suppresses_before_acquisition(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        let ctx = ctx.with_nats().shared().await?;
+        let stack = TestCoreStack::new(&ctx).await?;
+
+        let tempdir = tempfile::tempdir()?;
+        let log_path = tempdir.path().join("weechat.log");
+        write_weechat_fixture(&log_path, "private mode should suppress this").await?;
+        let worker_dir = tempdir.path().join("worker");
+        tokio::fs::create_dir_all(&worker_dir).await?;
+        let state_dir = tempdir.path().join("state");
+        save_private_mode_state(
+            &state_dir,
+            &RuntimePrivateModeState::enabled_by(
+                "test-operator",
+                vec!["weechat".to_string()],
+                Timestamp::UNIX_EPOCH,
+            ),
+        )?;
+
+        let mut node_config = weechat_node_config(&log_path);
+        node_config["private_mode_state_dir"] =
+            serde_json::Value::String(state_dir.display().to_string());
+
+        let mut config = TestSourceWorkerConfig::new("weechat");
+        config.nats = ctx.nats_handle()?.connection_config();
+        config.database_url = ctx.database_url().to_string();
+        config.namespace = Some(ctx.pipeline_namespace().prefix().to_string());
+        config.work_dir = Some(worker_dir);
+        config.node_config = Some(node_config.to_string());
+
+        let output = run_test_source_worker_scan(config, &[], Some(&ctx)).await?;
+        ctx.assert("private-mode scan suppressed all events").that(
+            output.stdout.contains("Events processed: 0"),
+            "scan output should report no processed events when source-unit private mode is active",
+        )?;
+
+        let count: i64 = sqlx::query_scalar(
+            r"
+            SELECT COUNT(*)::bigint
+            FROM core.events
+            WHERE source = 'irc' AND event_type = 'irc.message'
+            ",
+        )
+        .fetch_one(ctx.pool())
+        .await?;
+        ctx.assert("suppressed private-mode scan persisted no irc.message events")
+            .eq(&count, &0)?;
+
+        stack.shutdown().await?;
+        Ok(())
+    }
+
+    #[sinex_test(timeout = 120)]
+    async fn weechat_source_worker_private_mode_out_of_scope_still_acquires(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        let ctx = ctx.with_nats().shared().await?;
+        let stack = TestCoreStack::new(&ctx).await?;
+
+        let tempdir = tempfile::tempdir()?;
+        let log_path = tempdir.path().join("weechat.log");
+        write_weechat_fixture(&log_path, "desktop scope should not suppress terminal").await?;
+        let worker_dir = tempdir.path().join("worker");
+        tokio::fs::create_dir_all(&worker_dir).await?;
+        let state_dir = tempdir.path().join("state");
+        save_private_mode_state(
+            &state_dir,
+            &RuntimePrivateModeState::enabled_by(
+                "test-operator",
+                vec!["desktop".to_string()],
+                Timestamp::UNIX_EPOCH,
+            ),
+        )?;
+
+        let mut node_config = weechat_node_config(&log_path);
+        node_config["private_mode_state_dir"] =
+            serde_json::Value::String(state_dir.display().to_string());
+
+        let mut config = TestSourceWorkerConfig::new("weechat");
+        config.nats = ctx.nats_handle()?.connection_config();
+        config.database_url = ctx.database_url().to_string();
+        config.namespace = Some(ctx.pipeline_namespace().prefix().to_string());
+        config.work_dir = Some(worker_dir);
+        config.node_config = Some(node_config.to_string());
+
+        let output = run_test_source_worker_scan(config, &[], Some(&ctx)).await?;
+        ctx.assert("out-of-scope private mode preserves acquisition").that(
+            output.stdout.contains("Events processed: 1"),
+            "scan output should report one processed event when private mode is scoped elsewhere",
+        )?;
+
+        WaitHelpers::wait_for_condition(
+            || async {
+                let count: i64 = sqlx::query_scalar(
+                    r"
+                    SELECT COUNT(*)::bigint
+                    FROM core.events
+                    WHERE source = 'irc' AND event_type = 'irc.message'
+                    ",
+                )
+                .fetch_one(ctx.pool())
+                .await?;
+                Ok::<bool, sqlx::Error>(count >= 1)
+            },
+            10,
+        )
+        .await?;
 
         stack.shutdown().await?;
         Ok(())

@@ -5,6 +5,11 @@ pub const SYSTEM_PING: &str = "system.ping";
 pub const SYSTEM_VERSION: &str = "system.version";
 pub const SYSTEM_HEALTH: &str = "system.health";
 
+// Privacy
+pub const PRIVACY_PRIVATE_MODE_STATUS: &str = "privacy.private_mode.status";
+pub const PRIVACY_PRIVATE_MODE_ENABLE: &str = "privacy.private_mode.enable";
+pub const PRIVACY_PRIVATE_MODE_DISABLE: &str = "privacy.private_mode.disable";
+
 // Events (composable query engine)
 pub const EVENTS_QUERY: &str = "events.query";
 pub const EVENTS_LINEAGE: &str = "events.lineage";
