@@ -794,10 +794,24 @@ impl FileDropPathFilter {
     }
 
     fn has_ignored_component(&self, path: &Utf8PathBuf) -> bool {
-        !self.ignored_directory_names.is_empty()
-            && path
+        if self.ignored_directory_names.is_empty() {
+            return false;
+        }
+
+        if self.watch_roots.is_empty() {
+            return path
                 .components()
-                .any(|component| self.ignored_directory_names.contains(component.as_str()))
+                .any(|component| self.ignored_directory_names.contains(component.as_str()));
+        }
+
+        self.watch_roots
+            .iter()
+            .filter_map(|root| path.strip_prefix(root).ok())
+            .any(|relative| {
+                relative
+                    .components()
+                    .any(|component| self.ignored_directory_names.contains(component.as_str()))
+            })
     }
 
     fn relative_depth(&self, path: &Utf8PathBuf) -> Option<usize> {
@@ -1164,6 +1178,40 @@ mod tests {
                 .as_deref()
                 .map(camino::Utf8Path::as_str),
             Some("/tmp/sinex-file-drop-root/src/lib.rs")
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn file_drop_ignored_directory_names_are_root_relative() -> xtask::sandbox::TestResult<()>
+    {
+        let material_id = dummy_material_id();
+        let root = Utf8PathBuf::from("/tmp/target/sinex-file-drop-root");
+        let filter = FileDropPathFilter::from_config(&FileDropConfig {
+            watch_paths: vec![root.clone()],
+            recursive: true,
+            max_depth: None,
+            ignored_directory_names: vec!["target".to_string()],
+            max_watches: default_file_drop_max_watches(),
+            events: vec![],
+        });
+        let event = Event::new(EventKind::Create(notify::event::CreateKind::File))
+            .add_path(std::path::PathBuf::from(
+                "/tmp/target/sinex-file-drop-root/kept.txt",
+            ))
+            .add_path(std::path::PathBuf::from(
+                "/tmp/target/sinex-file-drop-root/target/suppressed.txt",
+            ));
+
+        let records = records_from_file_drop_event(material_id, &event, &[], &filter);
+
+        assert_eq!(records.len(), 1);
+        assert_eq!(
+            records[0]
+                .logical_path
+                .as_deref()
+                .map(camino::Utf8Path::as_str),
+            Some("/tmp/target/sinex-file-drop-root/kept.txt")
         );
         Ok(())
     }
