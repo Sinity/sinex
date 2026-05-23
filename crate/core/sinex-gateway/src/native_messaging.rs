@@ -1,11 +1,10 @@
 #![doc = include_str!("../docs/native_messaging.md")]
 
 use crate::config::GatewayConfig;
-use color_eyre::eyre::{Context, Result, bail, eyre};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use sinex_primitives::SinexError;
 use sinex_primitives::env as shared_env;
+use sinex_primitives::{Result, SinexError};
 use std::collections::HashSet;
 use std::io::{self};
 use std::sync::Arc;
@@ -92,9 +91,9 @@ impl RateLimiter {
                 limit = limit_per_minute,
                 "Rate limit exceeded for extension"
             );
-            return Err(eyre!(
+            return Err(SinexError::resource_exhausted(format!(
                 "Rate limit exceeded for extension '{extension_id}': {limit_per_minute} requests/minute"
-            ));
+            )));
         }
 
         timestamps.push(now);
@@ -253,9 +252,9 @@ impl NativeMessagingConfig {
 
     fn enforce_extension(&self, message: &NativeMessage) -> Result<()> {
         if let Some(err) = &self.trusted_extensions_config_error {
-            return Err(eyre!(
+            return Err(SinexError::configuration(format!(
                 "Invalid {TRUSTED_EXTENSION_ENV} configuration: {err}"
-            ));
+            )));
         }
 
         // Issue 138: Fail closed - require explicit allowlist
@@ -265,7 +264,7 @@ impl NativeMessagingConfig {
                 reason = "no_trusted_extensions_configured",
                 "Rejected native messaging call: no trusted extensions configured (set SINEX_NATIVE_MESSAGING_TRUSTED_EXTENSIONS)"
             );
-            return Err(eyre!(
+            return Err(SinexError::permission_denied(
                 "No trusted extensions configured. Set SINEX_NATIVE_MESSAGING_TRUSTED_EXTENSIONS environment variable."
             ));
         }
@@ -276,7 +275,7 @@ impl NativeMessagingConfig {
                 reason = "missing_extension_id",
                 "Rejected native messaging call: extension metadata missing"
             );
-            return Err(eyre!("Missing extension_id"));
+            return Err(SinexError::permission_denied("Missing extension_id"));
         };
 
         let trusted = self
@@ -290,7 +289,9 @@ impl NativeMessagingConfig {
                     reason = "not_trusted",
                     "Extension is not in the trusted allow-list"
                 );
-                eyre!("Extension '{incoming_id}' is not in the trusted allow-list")
+                SinexError::permission_denied(format!(
+                    "Extension '{incoming_id}' is not in the trusted allow-list"
+                ))
             })?;
 
         if let Some(expected_secret) = &trusted.secret {
@@ -301,7 +302,7 @@ impl NativeMessagingConfig {
                     reason = "missing_secret",
                     "Trusted extension omitted the required secret"
                 );
-                return Err(eyre!("Missing extension_secret"));
+                return Err(SinexError::permission_denied("Missing extension_secret"));
             };
             if !secrets_match(expected_secret, provided) {
                 warn!(
@@ -310,7 +311,9 @@ impl NativeMessagingConfig {
                     reason = "invalid_secret",
                     "Extension provided an invalid secret"
                 );
-                bail!("Invalid secret for extension '{incoming_id}'");
+                return Err(SinexError::permission_denied(format!(
+                    "Invalid secret for extension '{incoming_id}'"
+                )));
             }
         }
 
@@ -330,14 +333,16 @@ impl NativeMessagingConfig {
     /// Capability configuration is mandatory (fail-closed).
     fn enforce_capabilities(&self, message: &NativeMessage) -> Result<()> {
         if let Some(err) = &self.capabilities_config_error {
-            return Err(eyre!("Invalid {CAPABILITIES_ENV} configuration: {err}"));
+            return Err(SinexError::configuration(format!(
+                "Invalid {CAPABILITIES_ENV} configuration: {err}"
+            )));
         }
 
         // Explicit capability map is required for native messaging.
         if self.capabilities.is_empty() {
-            return Err(eyre!(
+            return Err(SinexError::permission_denied(format!(
                 "Native messaging capabilities are not configured; set {CAPABILITIES_ENV}"
-            ));
+            )));
         }
 
         let Some(extension_id) = message.extension_id.as_deref() else {
@@ -346,9 +351,9 @@ impl NativeMessagingConfig {
         };
 
         let Some(caps) = self.capabilities.get(extension_id) else {
-            return Err(eyre!(
+            return Err(SinexError::permission_denied(format!(
                 "No capability profile configured for extension '{extension_id}'"
-            ));
+            )));
         };
 
         // Enforce method allowlist
@@ -362,9 +367,9 @@ impl NativeMessagingConfig {
                 reason = "method_not_allowed",
                 "Extension attempted to call disallowed method"
             );
-            return Err(eyre!(
+            return Err(SinexError::permission_denied(format!(
                 "Extension '{extension_id}' is not allowed to call method '{method}'"
-            ));
+            )));
         }
 
         // Enforce rate limiting
@@ -385,7 +390,9 @@ impl NativeMessagingConfig {
 
     fn enforce_host(&self, message: &NativeMessage) -> Result<()> {
         if let Some(err) = &self.trusted_hosts_config_error {
-            return Err(eyre!("Invalid {TRUSTED_HOSTS_ENV} configuration: {err}"));
+            return Err(SinexError::configuration(format!(
+                "Invalid {TRUSTED_HOSTS_ENV} configuration: {err}"
+            )));
         }
 
         if self.trusted_hosts.is_empty() {
@@ -398,7 +405,7 @@ impl NativeMessagingConfig {
                 reason = "missing_host",
                 "Rejected native messaging call: host metadata missing"
             );
-            return Err(eyre!("Missing host"));
+            return Err(SinexError::permission_denied("Missing host"));
         };
 
         if !self.trusted_hosts.iter().any(|allowed| allowed == host) {
@@ -408,7 +415,9 @@ impl NativeMessagingConfig {
                 reason = "host_not_trusted",
                 "Host is not in the trusted allow-list"
             );
-            return Err(eyre!("Host '{host}' is not in the trusted allow-list"));
+            return Err(SinexError::permission_denied(format!(
+                "Host '{host}' is not in the trusted allow-list"
+            )));
         }
 
         debug!(
@@ -431,7 +440,7 @@ impl NativeMessagingConfig {
                 reason = "missing_protocol_version",
                 "Rejected native messaging call: protocol version missing"
             );
-            return Err(eyre!("Missing protocol_version"));
+            return Err(SinexError::permission_denied("Missing protocol_version"));
         };
 
         if provided != expected {
@@ -442,9 +451,9 @@ impl NativeMessagingConfig {
                 reason = "protocol_version_mismatch",
                 "Rejected native messaging call: protocol version mismatch"
             );
-            return Err(eyre!(
+            return Err(SinexError::permission_denied(format!(
                 "Protocol version mismatch (expected '{expected}', got '{provided}')"
-            ));
+            )));
         }
 
         debug!(
@@ -459,7 +468,9 @@ impl NativeMessagingConfig {
     /// Returns the configured role if found, or `ReadOnly` as the default.
     fn resolve_extension_role(&self, extension_id: Option<&str>) -> Result<crate::auth::Role> {
         if let Some(err) = &self.extension_roles_config_error {
-            return Err(eyre!("Invalid {EXTENSION_ROLES_ENV} configuration: {err}"));
+            return Err(SinexError::configuration(format!(
+                "Invalid {EXTENSION_ROLES_ENV} configuration: {err}"
+            )));
         }
 
         Ok(extension_id
@@ -1008,7 +1019,7 @@ fn native_messaging_read_timeout(
     phase: &'static str,
     read_timeout: std::time::Duration,
     expected_bytes: Option<usize>,
-) -> color_eyre::Report {
+) -> SinexError {
     let mut error = SinexError::network(format!(
         "Native messaging {phase} read timed out after {read_timeout:?}"
     ))
@@ -1019,7 +1030,7 @@ fn native_messaging_read_timeout(
         error = error.with_context("expected_bytes", expected_bytes.to_string());
     }
 
-    error.into()
+    error
 }
 
 async fn read_message_from<R: AsyncRead + Unpin>(
@@ -1034,23 +1045,28 @@ async fn read_message_from<R: AsyncRead + Unpin>(
     match tokio::time::timeout(read_timeout, reader.read_exact(&mut len_bytes)).await {
         Ok(Ok(_)) => {}
         Ok(Err(e)) if e.kind() == io::ErrorKind::UnexpectedEof => return Ok(None),
-        Ok(Err(e)) => return Err(e.into()),
+        Ok(Err(e)) => {
+            return Err(SinexError::io("failed to read native messaging header")
+                .with_std_error(&e));
+        }
         Err(_) => return Err(native_messaging_read_timeout("header", read_timeout, None)),
     }
     let length = u32::from_le_bytes(len_bytes) as usize;
 
     if length > max_message_size {
-        bail!(
+        return Err(SinexError::resource_exhausted(format!(
             "Message too large: {} bytes (limit: {})",
             length,
             max_message_size
-        );
+        )));
     }
 
     let mut buffer = vec![0u8; length];
     match tokio::time::timeout(read_timeout, reader.read_exact(&mut buffer)).await {
         Ok(Ok(_)) => {}
-        Ok(Err(e)) => return Err(e.into()),
+        Ok(Err(e)) => {
+            return Err(SinexError::io("failed to read native messaging body").with_std_error(&e));
+        }
         Err(_) => {
             return Err(native_messaging_read_timeout(
                 "body",
@@ -1060,8 +1076,8 @@ async fn read_message_from<R: AsyncRead + Unpin>(
         }
     }
 
-    let message: NativeMessage =
-        serde_json::from_slice(&buffer).wrap_err("Failed to parse native message")?;
+    let message: NativeMessage = serde_json::from_slice(&buffer)
+        .map_err(|error| SinexError::parse("Failed to parse native message").with_std_error(&error))?;
 
     Ok(Some(message))
 }
