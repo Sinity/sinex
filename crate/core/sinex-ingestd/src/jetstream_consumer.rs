@@ -153,6 +153,9 @@ pub struct JetStreamConsumer {
     /// Limits I/O pressure while the consumer works through the backlog.
     /// Default: 4. Set to 0 to disable catch-up limiting (full speed).
     startup_catch_up_max_concurrent: usize,
+    /// When true, refuse missing durable + `DeliverPolicy::All` startup if the
+    /// raw-event stream is non-empty.
+    reject_initial_replay: bool,
     /// Per-(source, `event_type`) high-watermark of latest confirmed `event_id`.
     /// Used by the per-kind compaction strategy in `publish_confirmations_for_batch`
     /// to skip publishes that would not advance the watermark. Per #1306.
@@ -511,6 +514,7 @@ impl JetStreamConsumer {
                 time::macros::datetime!(2000-01-01 00:00:00 UTC),
             ),
             startup_catch_up_max_concurrent: 4,
+            reject_initial_replay: true,
             confirmation_watermark: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
         }
     }
@@ -536,6 +540,14 @@ impl JetStreamConsumer {
     #[must_use]
     pub fn with_startup_catch_up_max_concurrent(mut self, max_concurrent: usize) -> Self {
         self.startup_catch_up_max_concurrent = max_concurrent;
+        self
+    }
+
+    /// Set whether startup rejects a missing durable consumer on a non-empty
+    /// stream when using `DeliverPolicy::All`.
+    #[must_use]
+    pub fn with_reject_initial_replay(mut self, reject: bool) -> Self {
+        self.reject_initial_replay = reject;
         self
     }
 
@@ -786,7 +798,7 @@ impl JetStreamConsumer {
         consumer_spec.ack_wait = self.ack_wait;
         consumer_spec.max_ack_pending = self.max_ack_pending;
         consumer_spec.max_deliver = MAIN_CONSUMER_JETSTREAM_MAX_DELIVER;
-        consumer_spec.reject_initial_replay = true;
+        consumer_spec.reject_initial_replay = self.reject_initial_replay;
         let mut consumer = ensure_pull_consumer(&self.js, &consumer_spec)
             .await
             .map_err(|e| SinexError::network("Failed to create consumer").with_source(e))?;

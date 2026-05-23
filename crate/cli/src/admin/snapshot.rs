@@ -123,6 +123,22 @@ pub struct AdminSnapshotCommand {
     pub components: Vec<Component>,
 }
 
+/// Inspect a snapshot archive without restoring it.
+#[derive(Debug, Parser)]
+#[command(after_help = "\
+EXAMPLES:
+    sinexctl admin snapshot-inspect --archive /var/backup/sinex/latest.sinex.tar.zst
+
+NOTES:
+    This reads manifest.json from the archive and checks that non-empty
+    component paths named by the manifest are present in the tar member list.
+")]
+pub struct AdminSnapshotInspectCommand {
+    /// Snapshot archive to inspect.
+    #[arg(long)]
+    pub archive: PathBuf,
+}
+
 fn parse_component_str(s: &str) -> std::result::Result<Component, String> {
     Component::from_str(s).map_err(|e| e.to_string())
 }
@@ -137,6 +153,7 @@ pub struct SnapshotResult {
     pub output_path: Option<String>,
     pub archive_bytes: Option<u64>,
     pub uncompressed_bytes: u64,
+    pub source_unit_ids: Vec<String>,
     pub components_captured: Vec<ComponentSummary>,
 }
 
@@ -145,6 +162,25 @@ pub struct ComponentSummary {
     pub name: String,
     pub bytes: u64,
     pub blake3: String,
+}
+
+/// Operator-facing summary produced by `admin snapshot-inspect`.
+#[derive(Debug, Serialize)]
+pub struct SnapshotInspectResult {
+    pub archive_path: String,
+    pub snapshot_id: String,
+    pub created_at: String,
+    pub mode: String,
+    pub sinex_version: String,
+    pub git_sha: Option<String>,
+    pub host: String,
+    pub archive_entries: usize,
+    pub source_unit_count: usize,
+    pub source_unit_ids: Vec<String>,
+    pub component_count: usize,
+    pub components: Vec<ComponentSummary>,
+    pub missing_component_paths: Vec<String>,
+    pub manifest: SnapshotManifest,
 }
 
 // ── Entry point ─────────────────────────────────────────────────────────────
@@ -163,9 +199,14 @@ impl AdminSnapshotCommand {
             .clone()
             .unwrap_or_else(|| PathBuf::from("/var/lib/sinex"));
 
-        let database_url = self.database_url.clone().ok_or_else(|| {
-            eyre!("DATABASE_URL must be set (or pass --database-url) for Postgres capture")
-        })?;
+        let captures_postgres = self.components.iter().any(|c| c == &Component::Postgres);
+        let database_url = if captures_postgres {
+            Some(self.database_url.clone().ok_or_else(|| {
+                eyre!("DATABASE_URL must be set (or pass --database-url) for Postgres capture")
+            })?)
+        } else {
+            self.database_url.clone()
+        };
 
         // 1. Generate a snapshot ID (UUIDv7 formatted as a string).
         let snapshot_id = gen_snapshot_id();
@@ -226,7 +267,7 @@ impl AdminSnapshotCommand {
             &snapshot_id,
             &created_at,
             &state_dir,
-            &database_url,
+            database_url.as_deref(),
             &mut staging,
         );
 
@@ -244,7 +285,7 @@ impl AdminSnapshotCommand {
         snapshot_id: &str,
         created_at: &str,
         state_dir: &Path,
-        database_url: &str,
+        database_url: Option<&str>,
         staging: &mut StagingDir,
     ) -> Result<SnapshotResult> {
         let mut component_records: Vec<ComponentRecord> = Vec::new();
@@ -253,6 +294,9 @@ impl AdminSnapshotCommand {
 
         // 5–8. Capture each component.
         if component_set.contains("postgres") {
+            let database_url = database_url.ok_or_else(|| {
+                eyre!("DATABASE_URL must be set (or pass --database-url) for Postgres capture")
+            })?;
             let record = self.capture_postgres(database_url, staging, self.dry_run)?;
             component_records.push(record);
         }
@@ -299,6 +343,7 @@ impl AdminSnapshotCommand {
 
         // 9. Write manifest.
         let uncompressed_bytes: u64 = component_records.iter().map(|r| r.bytes).sum();
+        let source_unit_ids = discover_source_unit_ids(state_dir);
 
         let manifest = SnapshotManifest {
             snapshot_id: snapshot_id.to_string(),
@@ -307,6 +352,7 @@ impl AdminSnapshotCommand {
             git_sha: git_sha(),
             host: hostname(),
             mode: "quiesce".to_string(),
+            source_unit_ids: source_unit_ids.clone(),
             components: component_records.clone(),
             totals: Totals {
                 uncompressed_bytes,
@@ -338,6 +384,7 @@ impl AdminSnapshotCommand {
                 output_path: None,
                 archive_bytes: None,
                 uncompressed_bytes,
+                source_unit_ids,
                 components_captured: summaries,
             });
         }
@@ -370,6 +417,7 @@ impl AdminSnapshotCommand {
             output_path: Some(self.output.display().to_string()),
             archive_bytes: Some(archive_bytes),
             uncompressed_bytes,
+            source_unit_ids,
             components_captured: summaries,
         })
     }
@@ -512,6 +560,12 @@ impl AdminSnapshotCommand {
     }
 }
 
+impl AdminSnapshotInspectCommand {
+    pub fn execute(&self) -> Result<SnapshotInspectResult> {
+        inspect_snapshot_archive(&self.archive)
+    }
+}
+
 // ── Helpers ────────────────────────────────────────────────────────────────
 
 fn gen_snapshot_id() -> String {
@@ -543,6 +597,112 @@ fn git_sha() -> Option<String> {
     } else {
         None
     }
+}
+
+fn discover_source_unit_ids(state_dir: &Path) -> Vec<String> {
+    let candidates = [
+        state_dir.join("source-units.json"),
+        PathBuf::from("docs/source-units.json"),
+    ];
+
+    for candidate in candidates {
+        if let Ok(data) = std::fs::read_to_string(&candidate)
+            && let Some(ids) = parse_source_unit_ids(&data)
+            && !ids.is_empty()
+        {
+            return ids;
+        }
+    }
+
+    Vec::new()
+}
+
+fn parse_source_unit_ids(data: &str) -> Option<Vec<String>> {
+    let value: serde_json::Value = serde_json::from_str(data).ok()?;
+    let mut ids: Vec<String> = value
+        .get("source_units")?
+        .as_array()?
+        .iter()
+        .filter_map(|unit| unit.get("id")?.as_str())
+        .map(str::to_string)
+        .collect();
+    ids.sort();
+    ids.dedup();
+    Some(ids)
+}
+
+fn inspect_snapshot_archive(archive_path: &Path) -> Result<SnapshotInspectResult> {
+    let manifest = read_snapshot_manifest_from_archive(archive_path)?;
+    let entries = exec::tar_list_zstd(archive_path)
+        .with_context(|| format!("list snapshot archive {}", archive_path.display()))?;
+    let missing_component_paths = manifest
+        .components
+        .iter()
+        .filter(|component| component.bytes > 0)
+        .filter(|component| !archive_path_contains(&entries, &component.path))
+        .map(|component| component.path.clone())
+        .collect();
+    let components = manifest
+        .components
+        .iter()
+        .map(|component| ComponentSummary {
+            name: component.name.clone(),
+            bytes: component.bytes,
+            blake3: component.blake3.clone(),
+        })
+        .collect();
+
+    Ok(SnapshotInspectResult {
+        archive_path: archive_path.display().to_string(),
+        snapshot_id: manifest.snapshot_id.clone(),
+        created_at: manifest.created_at.clone(),
+        mode: manifest.mode.clone(),
+        sinex_version: manifest.sinex_version.clone(),
+        git_sha: manifest.git_sha.clone(),
+        host: manifest.host.clone(),
+        archive_entries: entries.len(),
+        source_unit_count: manifest.source_unit_ids.len(),
+        source_unit_ids: manifest.source_unit_ids.clone(),
+        component_count: manifest.components.len(),
+        components,
+        missing_component_paths,
+        manifest,
+    })
+}
+
+fn read_snapshot_manifest_from_archive(archive_path: &Path) -> Result<SnapshotManifest> {
+    let mut last_error = None;
+    for member in ["manifest.json", "./manifest.json"] {
+        match exec::tar_read_file_zstd(archive_path, member) {
+            Ok(bytes) => {
+                return serde_json::from_slice(&bytes)
+                    .with_context(|| format!("parse {member} from {}", archive_path.display()));
+            }
+            Err(error) => last_error = Some(error),
+        }
+    }
+
+    Err(last_error
+        .unwrap_or_else(|| eyre!("manifest.json not found in {}", archive_path.display()))
+        .wrap_err(format!(
+            "read manifest.json from {}",
+            archive_path.display()
+        )))
+}
+
+fn archive_path_contains(entries: &[String], wanted: &str) -> bool {
+    let wanted = normalize_archive_path(wanted);
+    entries.iter().any(|entry| {
+        let entry = normalize_archive_path(entry);
+        entry == wanted || entry.starts_with(&wanted)
+    })
+}
+
+fn normalize_archive_path(path: &str) -> String {
+    path.trim_start_matches("./")
+        .trim_end_matches('/')
+        .to_string()
+        + "/"
 }
 
 /// Estimate total bytes under a directory tree (best-effort, ignores errors).
@@ -727,6 +887,10 @@ pub fn format_snapshot_result(result: &SnapshotResult) -> String {
         "  Uncompressed: {}\n",
         format_bytes(result.uncompressed_bytes)
     ));
+    out.push_str(&format!(
+        "  Source units: {}\n",
+        result.source_unit_ids.len()
+    ));
     if let Some(archive_bytes) = result.archive_bytes {
         out.push_str(&format!("  Archive: {}\n", format_bytes(archive_bytes)));
         if result.uncompressed_bytes > 0 {
@@ -742,6 +906,38 @@ pub fn format_snapshot_result(result: &SnapshotResult) -> String {
             format_bytes(c.bytes),
             &c.blake3[..c.blake3.len().min(16)]
         ));
+    }
+    out
+}
+
+/// Render snapshot inspection as a human-readable table string.
+#[must_use]
+pub fn format_snapshot_inspect_result(result: &SnapshotInspectResult) -> String {
+    let mut out = String::new();
+    out.push_str("Sinex Snapshot Inspect\n");
+    out.push_str(&format!("  Archive: {}\n", result.archive_path));
+    out.push_str(&format!("  ID:      {}\n", result.snapshot_id));
+    out.push_str(&format!("  Created: {}\n", result.created_at));
+    out.push_str(&format!("  Mode:    {}\n", result.mode));
+    out.push_str(&format!("  Host:    {}\n", result.host));
+    out.push_str(&format!("  Entries: {}\n", result.archive_entries));
+    out.push_str(&format!("  Source units: {}\n", result.source_unit_count));
+    out.push_str("\n  Components:\n");
+    for component in &result.components {
+        out.push_str(&format!(
+            "    {:8}  {:>12}  {}\n",
+            component.name,
+            format_bytes(component.bytes),
+            &component.blake3[..component.blake3.len().min(16)]
+        ));
+    }
+    if result.missing_component_paths.is_empty() {
+        out.push_str("\n  Manifest paths: ok\n");
+    } else {
+        out.push_str("\n  Missing manifest paths:\n");
+        for path in &result.missing_component_paths {
+            out.push_str(&format!("    {path}\n"));
+        }
     }
     out
 }

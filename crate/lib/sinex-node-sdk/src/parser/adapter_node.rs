@@ -89,18 +89,27 @@ use sinex_primitives::events::builder::{EventBuilder, NoProvenance};
 use sinex_primitives::ids::Id;
 use sinex_primitives::parser::{MaterialAnchor, ParsedEventIntent, ParserContext};
 use sinex_primitives::primitives::Uuid;
+use sinex_primitives::privacy::{
+    RuntimePrivateModeState, load_private_mode_state, save_private_mode_state,
+};
 use sinex_primitives::temporal::Timestamp;
 
 use crate::NodeResult;
 use crate::acquisition_manager::{AcquisitionManager, AppendStreamAcquirer, RotationPolicy};
 use crate::ingestor_node::IngestorNode;
 use crate::parser::adapters::SqliteSnapshotLane;
-use crate::parser::{BindingConfig, InputShapeAdapter, MaterialParser};
+use crate::parser::{
+    BindingConfig, DriftEvent, InputShapeAdapter, MaterialParser, SourceRecordFingerprint,
+};
 use crate::runtime::stream::{
     Checkpoint, ContinuousStart, NodeCapabilities, NodeRuntimeState, ScanArgs, ScanReport,
     TimeHorizon,
 };
+use std::path::PathBuf;
 use std::sync::Arc;
+
+const MAX_RECENT_INPUT_DRIFTS: usize = 16;
+const PRIVATE_MODE_CONTROL_SUBJECT: &str = "sinex.control.privacy.private_mode";
 
 // =============================================================================
 // Typed node config — wraps adapter config + optional binding flags
@@ -126,7 +135,9 @@ use std::sync::Arc;
 /// ```json
 /// {
 ///   "path": "/home/user/.weechat/logs/irc.log",
-///   "binding_flags": { "private_mode_active": false }
+///   "binding_flags": { "private_mode_active": false },
+///   "private_mode_state_dir": "/var/lib/sinex",
+///   "private_mode_source_class": "desktop"
 /// }
 /// ```
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -140,6 +151,16 @@ pub struct AdapterNodeConfig {
     /// Optional runtime flags for `BindingConfig`-aware parsers.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub binding_flags: BTreeMap<String, bool>,
+
+    /// Optional state root used to derive `private_mode_active` from the
+    /// persisted runtime private-mode file.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub private_mode_state_dir: Option<PathBuf>,
+
+    /// Optional source-class override used when matching private-mode scope.
+    /// Defaults to the prefix before the first `.` in the source-unit id.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub private_mode_source_class: Option<String>,
 }
 
 impl AdapterNodeConfig {
@@ -152,6 +173,36 @@ impl AdapterNodeConfig {
             bc = bc.with_flag(name, value);
         }
         bc
+    }
+
+    /// Convert static binding flags and persisted private-mode state into a
+    /// parser [`BindingConfig`].
+    pub fn to_binding_config_for_source(
+        &self,
+        source_unit_id: &str,
+    ) -> Result<BindingConfig, crate::SinexError> {
+        let mut bc = self.to_binding_config();
+        let Some(state_dir) = &self.private_mode_state_dir else {
+            return Ok(bc);
+        };
+
+        let state = load_private_mode_state(state_dir)?;
+        let source_class = self
+            .private_mode_source_class
+            .as_deref()
+            .unwrap_or_else(|| {
+                source_unit_id
+                    .split_once('.')
+                    .map_or(source_unit_id, |(class, _)| class)
+            });
+        let source_unit = source_unit_id;
+        let scoped = state.affected_source_classes.is_empty()
+            || state
+                .affected_source_classes
+                .iter()
+                .any(|class| class == source_class || class == source_unit);
+        bc = bc.with_flag("private_mode_active", state.enabled && scoped);
+        Ok(bc)
     }
 
     /// Deserialize the flattened adapter JSON into the typed adapter config.
@@ -179,6 +230,19 @@ where
 
     /// Total events emitted across all scans.
     pub total_events_emitted: u64,
+
+    /// Last adapter-reported input fingerprint, used to detect substrate
+    /// shape drift across checkpointed drain cycles.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_input_fingerprint: Option<SourceRecordFingerprint>,
+
+    /// Bounded history of recently observed input-shape drift events.
+    ///
+    /// This is checkpoint-persisted operator evidence: logs are still emitted
+    /// for live diagnosis, while this field keeps the most recent drift records
+    /// available for later readiness and CLI/RPC surfaces.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub recent_input_drifts: Vec<DriftEvent>,
 }
 
 impl<C> Default for AdapterNodeState<C>
@@ -189,6 +253,21 @@ where
         Self {
             cursor: None,
             total_events_emitted: 0,
+            last_input_fingerprint: None,
+            recent_input_drifts: Vec::new(),
+        }
+    }
+}
+
+impl<C> AdapterNodeState<C>
+where
+    C: Clone + Serialize + DeserializeOwned,
+{
+    fn record_input_drift(&mut self, drift: DriftEvent) {
+        self.recent_input_drifts.push(drift);
+        if self.recent_input_drifts.len() > MAX_RECENT_INPUT_DRIFTS {
+            let excess = self.recent_input_drifts.len() - MAX_RECENT_INPUT_DRIFTS;
+            self.recent_input_drifts.drain(0..excess);
         }
     }
 }
@@ -229,9 +308,13 @@ where
     /// Adapter config deserialized from the node config at `initialize`.
     config: Option<A::Config>,
 
+    /// Original node config, retained so runtime-derived binding flags such as
+    /// `private_mode_active` can be refreshed before each acquisition.
+    node_config: Option<AdapterNodeConfig>,
+
     /// `BindingConfig` derived from `binding_flags` in the node config.
-    /// Held for the lifetime of the ingestor; passed to any `BindingConfig`-
-    /// aware parsers (currently `DeclarativeParser`).
+    /// Refreshed before each acquisition so live private-mode toggles do not
+    /// require node restart.
     binding_config: BindingConfig,
 
     /// Runtime handles captured during `initialize`.
@@ -260,6 +343,10 @@ where
     /// `snapshot_task`; both are `Some` together or both are `None`.
     snapshot_shutdown: Option<tokio::sync::watch::Sender<bool>>,
 
+    /// NATS control listener that mirrors private-mode broadcasts into the
+    /// configured local state directory for this adapter-backed source unit.
+    private_mode_control_task: Option<tokio::task::JoinHandle<()>>,
+
     _phantom: PhantomData<()>,
 }
 
@@ -282,6 +369,7 @@ where
             adapter: A::default(),
             parser: P::default(),
             config: None,
+            node_config: None,
             binding_config: BindingConfig::default(),
             runtime: None,
             stream_acquirer: None,
@@ -289,6 +377,7 @@ where
             rotation_policy: RotationPolicy::default(),
             snapshot_task: None,
             snapshot_shutdown: None,
+            private_mode_control_task: None,
             _phantom: PhantomData,
         }
     }
@@ -324,6 +413,68 @@ where
         self.stream_acquirer
             .as_ref()
             .and_then(super::super::acquisition_manager::AppendStreamAcquirer::current_material_id)
+    }
+
+    /// Observe adapter-level input shape before draining records.
+    ///
+    /// This is advisory: shape observation should surface drift, but a
+    /// fingerprinting failure must not prevent ingestion from reading the
+    /// underlying source.
+    fn observe_input_fingerprint(
+        &self,
+        config: &A::Config,
+        state: &mut AdapterNodeState<A::Cursor>,
+        source_unit_id: &sinex_primitives::parser::SourceUnitId,
+    ) {
+        match self.adapter.input_fingerprint(config) {
+            Ok(Some(current)) => {
+                if let Some(previous) = &state.last_input_fingerprint
+                    && let Some(drift) =
+                        SourceRecordFingerprint::diff(source_unit_id.clone(), previous, &current)
+                {
+                    warn!(
+                        source_unit = self.source_unit_id,
+                        format = drift.format.as_str(),
+                        previous_hash = drift.previous_hash.as_str(),
+                        current_hash = drift.current_hash.as_str(),
+                        added_keys = ?&drift.added_keys,
+                        removed_keys = ?&drift.removed_keys,
+                        type_changes = ?&drift.type_changes,
+                        "input shape drift detected"
+                    );
+                    state.record_input_drift(drift);
+                }
+                state.last_input_fingerprint = Some(current);
+            }
+            Ok(None) => {}
+            Err(e) => {
+                warn!(
+                    source_unit = self.source_unit_id,
+                    adapter_kind = A::KIND.as_str(),
+                    error = %e,
+                    "input fingerprint failed; continuing without shape drift check"
+                );
+            }
+        }
+    }
+
+    /// Refresh runtime-derived binding flags before an acquisition attempt.
+    ///
+    /// Static flags remain stable, but fields derived from the private-mode
+    /// state file must be re-read so live source-worker poll loops can react
+    /// to operator toggles without waiting for process restart.
+    fn refresh_binding_config(&mut self) -> NodeResult<()> {
+        let Some(config) = &self.node_config else {
+            return Ok(());
+        };
+        self.binding_config = config.to_binding_config_for_source(self.source_unit_id)?;
+        Ok(())
+    }
+
+    fn stop_private_mode_control_listener(&mut self) {
+        if let Some(task) = self.private_mode_control_task.take() {
+            task.abort();
+        }
     }
 
     /// Ensure the `AppendStreamAcquirer` is initialized, creating it from the
@@ -365,6 +516,16 @@ where
         cursor: Option<A::Cursor>,
         state: &mut AdapterNodeState<A::Cursor>,
     ) -> NodeResult<u64> {
+        self.refresh_binding_config()?;
+        if self.binding_config.is_truthy("private_mode_active") {
+            info!(
+                source_unit = self.source_unit_id,
+                adapter_kind = A::KIND.as_str(),
+                "private mode active for source unit; skipping adapter acquisition"
+            );
+            return Ok(0);
+        }
+
         let config = self.config.as_ref().ok_or_else(|| {
             crate::SinexError::lifecycle(
                 "AdapterBackedIngestor: adapter config not set (initialize not called)",
@@ -391,6 +552,8 @@ where
                 crate::SinexError::validation("invalid source_unit_id in AdapterBackedIngestor")
                     .with_std_error(&e)
             })?;
+
+        self.observe_input_fingerprint(config, state, &source_unit_id);
 
         let operation_id = Uuid::now_v7();
         let job_id = Uuid::now_v7();
@@ -422,6 +585,17 @@ where
         let mut emitted: u64 = 0;
 
         while let Some(record_result) = stream.next().await {
+            self.refresh_binding_config()?;
+            if self.binding_config.is_truthy("private_mode_active") {
+                info!(
+                    source_unit = self.source_unit_id,
+                    adapter_kind = A::KIND.as_str(),
+                    emitted,
+                    "private mode became active during adapter drain; stopping acquisition"
+                );
+                return Ok(emitted);
+            }
+
             let record = match record_result {
                 Ok(r) => r,
                 Err(e) => {
@@ -495,7 +669,11 @@ where
                 acquisition_time: Timestamp::now(),
             };
 
-            let intents = match self.parser.parse_record(record, &ctx).await {
+            let intents = match self
+                .parser
+                .parse_record_with_binding(record, &ctx, &self.binding_config)
+                .await
+            {
                 Ok(v) => v,
                 Err(e) => {
                     warn!(
@@ -565,6 +743,7 @@ where
         if let Some(task) = self.snapshot_task.take() {
             task.abort();
         }
+        self.stop_private_mode_control_listener();
     }
 }
 
@@ -635,7 +814,18 @@ where
             })?;
 
         self.acquisition_manager = Some(Arc::new(acq));
-        self.binding_config = config.to_binding_config();
+        self.binding_config = config.to_binding_config_for_source(self.source_unit_id)?;
+        self.node_config = Some(config.clone());
+        #[cfg(feature = "messaging")]
+        if let Some(state_dir) = config.private_mode_state_dir.clone()
+            && let Some(nats_client) = runtime.nats_client()
+        {
+            self.private_mode_control_task = Some(spawn_private_mode_control_listener(
+                nats_client,
+                state_dir,
+                self.source_unit_id,
+            ));
+        }
 
         // Merge user-supplied JSON over the parser's baseline. The parser
         // declares mandatory adapter fields (parser-specific SQL query,
@@ -832,6 +1022,7 @@ where
                 ),
             }
         }
+        self.stop_private_mode_control_listener();
 
         let checkpoint = cursor_to_checkpoint(state);
         Ok(ScanReport {
@@ -847,6 +1038,7 @@ where
     }
 
     async fn shutdown(&mut self, _state: &Self::State) -> NodeResult<()> {
+        self.stop_private_mode_control_listener();
         if let Some(acquirer) = self.stream_acquirer.as_mut() {
             acquirer.finalize("adapter-node-shutdown").await?;
         }
@@ -857,6 +1049,79 @@ where
 // =============================================================================
 // Helpers
 // =============================================================================
+
+#[derive(Debug, Deserialize)]
+struct PrivateModeControlUpdate {
+    state: RuntimePrivateModeState,
+}
+
+#[cfg(feature = "messaging")]
+fn spawn_private_mode_control_listener(
+    client: async_nats::Client,
+    state_dir: PathBuf,
+    source_unit_id: &'static str,
+) -> tokio::task::JoinHandle<()> {
+    let subject =
+        sinex_primitives::environment::environment().nats_subject(PRIVATE_MODE_CONTROL_SUBJECT);
+
+    tokio::spawn(async move {
+        let mut subscription = match client.subscribe(subject.clone()).await {
+            Ok(subscription) => subscription,
+            Err(error) => {
+                warn!(
+                    source_unit = source_unit_id,
+                    subject = %subject,
+                    error = %error,
+                    "failed to subscribe to private-mode control subject"
+                );
+                return;
+            }
+        };
+
+        info!(
+            source_unit = source_unit_id,
+            subject = %subject,
+            state_dir = %state_dir.display(),
+            "private-mode control listener started"
+        );
+
+        while let Some(message) = subscription.next().await {
+            match serde_json::from_slice::<PrivateModeControlUpdate>(&message.payload) {
+                Ok(update) => {
+                    if let Err(error) = save_private_mode_state(&state_dir, &update.state) {
+                        warn!(
+                            source_unit = source_unit_id,
+                            subject = %subject,
+                            error = %error,
+                            "failed to persist private-mode control update"
+                        );
+                    } else {
+                        debug!(
+                            source_unit = source_unit_id,
+                            subject = %subject,
+                            enabled = update.state.enabled,
+                            "persisted private-mode control update"
+                        );
+                    }
+                }
+                Err(error) => {
+                    warn!(
+                        source_unit = source_unit_id,
+                        subject = %subject,
+                        error = %error,
+                        "failed to parse private-mode control update"
+                    );
+                }
+            }
+        }
+
+        warn!(
+            source_unit = source_unit_id,
+            subject = %subject,
+            "private-mode control subscription closed"
+        );
+    })
+}
 
 /// Convert a `ParsedEventIntent` to an `Event<JsonValue>` ready for emission.
 ///
@@ -953,5 +1218,298 @@ where
             }
         }
         None => Checkpoint::None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::parser::{InputShapeKind, ParserResult, SourceRecord};
+    use async_trait::async_trait;
+    use futures::stream::{self, BoxStream};
+    use sinex_primitives::domain::{EventSource, EventType};
+    use sinex_primitives::parser::{ParserId, ParserManifest, SourceUnitId};
+    use sinex_primitives::privacy::ProcessingContext;
+    use sinex_primitives::privacy::{
+        RuntimePrivateModeState, load_private_mode_state, save_private_mode_state,
+    };
+    use xtask::sandbox::prelude::{TestContext, TestResult, WaitHelpers, sinex_test};
+
+    #[derive(Default)]
+    struct TestAdapter;
+
+    #[async_trait]
+    impl InputShapeAdapter for TestAdapter {
+        type Config = ();
+        type Cursor = u64;
+
+        const KIND: InputShapeKind = InputShapeKind::AppendOnlyFile;
+
+        async fn open(
+            &self,
+            _material_id: Id<SourceMaterial>,
+            _config: &Self::Config,
+            _cursor: Option<Self::Cursor>,
+        ) -> ParserResult<BoxStream<'static, ParserResult<SourceRecord>>> {
+            Ok(Box::pin(stream::empty()))
+        }
+
+        fn cursor_after(&self, _record: &SourceRecord) -> ParserResult<Self::Cursor> {
+            Ok(0)
+        }
+    }
+
+    #[derive(Default)]
+    struct FingerprintAdapter {
+        fingerprint: Option<SourceRecordFingerprint>,
+    }
+
+    #[async_trait]
+    impl InputShapeAdapter for FingerprintAdapter {
+        type Config = ();
+        type Cursor = u64;
+
+        const KIND: InputShapeKind = InputShapeKind::AppendOnlyFile;
+
+        async fn open(
+            &self,
+            _material_id: Id<SourceMaterial>,
+            _config: &Self::Config,
+            _cursor: Option<Self::Cursor>,
+        ) -> ParserResult<BoxStream<'static, ParserResult<SourceRecord>>> {
+            Ok(Box::pin(stream::empty()))
+        }
+
+        fn cursor_after(&self, _record: &SourceRecord) -> ParserResult<Self::Cursor> {
+            Ok(0)
+        }
+
+        fn input_fingerprint(
+            &self,
+            _config: &Self::Config,
+        ) -> ParserResult<Option<SourceRecordFingerprint>> {
+            Ok(self.fingerprint.clone())
+        }
+    }
+
+    #[derive(Default)]
+    struct TestParser;
+
+    #[async_trait]
+    impl MaterialParser for TestParser {
+        type Config = ();
+
+        fn manifest(&self) -> ParserManifest {
+            ParserManifest {
+                parser_id: ParserId::from_static("test-parser"),
+                parser_version: "1.0.0".to_string(),
+                accepted_input_shapes: vec![InputShapeKind::AppendOnlyFile],
+                source_unit_id: SourceUnitId::from_static("desktop.clipboard"),
+                declared_event_types: vec![(
+                    EventSource::from_static("test"),
+                    EventType::from_static("test.event"),
+                )],
+                privacy_contexts: vec![ProcessingContext::Metadata],
+                proof_obligations: Vec::new(),
+                description: String::new(),
+            }
+        }
+
+        async fn parse_record(
+            &mut self,
+            _record: SourceRecord,
+            _ctx: &ParserContext,
+        ) -> ParserResult<Vec<ParsedEventIntent>> {
+            Ok(Vec::new())
+        }
+    }
+
+    #[sinex_test]
+    async fn adapter_node_config_derives_private_mode_binding_flag()
+    -> xtask::sandbox::TestResult<()> {
+        let dir = tempfile::tempdir()?;
+        let state = RuntimePrivateModeState::enabled_by(
+            "sinity",
+            vec!["desktop".to_string()],
+            Timestamp::UNIX_EPOCH,
+        );
+        save_private_mode_state(dir.path(), &state)?;
+        let config = AdapterNodeConfig {
+            private_mode_state_dir: Some(dir.path().to_path_buf()),
+            ..Default::default()
+        };
+
+        let binding = config.to_binding_config_for_source("desktop.clipboard")?;
+
+        assert!(binding.is_truthy("private_mode_active"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn adapter_node_config_respects_private_mode_source_scope()
+    -> xtask::sandbox::TestResult<()> {
+        let dir = tempfile::tempdir()?;
+        let state = RuntimePrivateModeState::enabled_by(
+            "sinity",
+            vec!["desktop".to_string()],
+            Timestamp::UNIX_EPOCH,
+        );
+        save_private_mode_state(dir.path(), &state)?;
+        let config = AdapterNodeConfig {
+            private_mode_state_dir: Some(dir.path().to_path_buf()),
+            ..Default::default()
+        };
+
+        let binding = config.to_binding_config_for_source("terminal.zsh-history")?;
+
+        assert!(!binding.is_truthy("private_mode_active"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn adapter_backed_ingestor_refreshes_private_mode_binding()
+    -> xtask::sandbox::TestResult<()> {
+        let dir = tempfile::tempdir()?;
+        save_private_mode_state(dir.path(), &RuntimePrivateModeState::disabled())?;
+        let mut ingestor =
+            AdapterBackedIngestor::<TestAdapter, TestParser>::new("desktop.clipboard");
+        ingestor.node_config = Some(AdapterNodeConfig {
+            private_mode_state_dir: Some(dir.path().to_path_buf()),
+            ..Default::default()
+        });
+
+        ingestor.refresh_binding_config()?;
+        assert!(!ingestor.binding_config.is_truthy("private_mode_active"));
+
+        let state = RuntimePrivateModeState::enabled_by(
+            "sinity",
+            vec!["desktop".to_string()],
+            Timestamp::UNIX_EPOCH,
+        );
+        save_private_mode_state(dir.path(), &state)?;
+
+        ingestor.refresh_binding_config()?;
+        assert!(ingestor.binding_config.is_truthy("private_mode_active"));
+        Ok(())
+    }
+
+    #[cfg(feature = "messaging")]
+    #[sinex_test]
+    async fn adapter_private_mode_control_listener_persists_broadcast(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        let ctx = ctx.with_nats().shared().await?;
+        let dir = tempfile::tempdir()?;
+        save_private_mode_state(dir.path(), &RuntimePrivateModeState::disabled())?;
+        let handle = spawn_private_mode_control_listener(
+            ctx.nats_client(),
+            dir.path().to_path_buf(),
+            "desktop.clipboard",
+        );
+
+        let state = RuntimePrivateModeState::enabled_by(
+            "sinity",
+            vec!["desktop".to_string()],
+            Timestamp::UNIX_EPOCH,
+        );
+        let subject =
+            sinex_primitives::environment::environment().nats_subject(PRIVATE_MODE_CONTROL_SUBJECT);
+        ctx.nats_client()
+            .publish(
+                subject,
+                serde_json::to_vec(&serde_json::json!({
+                    "action": "enable",
+                    "timestamp": Timestamp::now(),
+                    "state": state,
+                }))?
+                .into(),
+            )
+            .await?;
+        ctx.nats_client().flush().await?;
+
+        let state_dir = dir.path().to_path_buf();
+        WaitHelpers::wait_for_condition(
+            || {
+                let state_dir = state_dir.clone();
+                async move {
+                    let state = load_private_mode_state(&state_dir)?;
+                    Ok::<_, crate::SinexError>(state.enabled)
+                }
+            },
+            10,
+        )
+        .await?;
+
+        let loaded = load_private_mode_state(dir.path())?;
+        assert!(loaded.enabled);
+        assert_eq!(loaded.actor, "sinity");
+        assert_eq!(loaded.affected_source_classes, vec!["desktop"]);
+        handle.abort();
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn adapter_node_state_defaults_missing_input_fingerprint()
+    -> xtask::sandbox::TestResult<()> {
+        let value = serde_json::json!({
+            "cursor": 7,
+            "total_events_emitted": 12
+        });
+
+        let state: AdapterNodeState<u64> = serde_json::from_value(value)?;
+
+        assert_eq!(state.cursor, Some(7));
+        assert_eq!(state.total_events_emitted, 12);
+        assert!(state.last_input_fingerprint.is_none());
+        assert!(state.recent_input_drifts.is_empty());
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn adapter_node_state_records_bounded_input_drift_history()
+    -> xtask::sandbox::TestResult<()> {
+        let source_unit_id = SourceUnitId::from_static("desktop.clipboard");
+        let mut ingestor =
+            AdapterBackedIngestor::<FingerprintAdapter, TestParser>::new("desktop.clipboard");
+        let mut state = AdapterNodeState::<u64>::default();
+
+        ingestor.adapter.fingerprint = Some(SourceRecordFingerprint::from_json(
+            &serde_json::json!({"count": 1}),
+        ));
+        ingestor.observe_input_fingerprint(&(), &mut state, &source_unit_id);
+        assert!(state.recent_input_drifts.is_empty());
+
+        ingestor.adapter.fingerprint = Some(SourceRecordFingerprint::from_json(
+            &serde_json::json!({"count": "1", "enabled": true}),
+        ));
+        ingestor.observe_input_fingerprint(&(), &mut state, &source_unit_id);
+
+        assert_eq!(state.recent_input_drifts.len(), 1);
+        let drift = &state.recent_input_drifts[0];
+        assert_eq!(drift.source_unit_id, source_unit_id);
+        assert_eq!(drift.added_keys, vec!["/enabled".to_string()]);
+        assert_eq!(
+            drift.type_changes,
+            vec![(
+                "/count".to_string(),
+                "integer".to_string(),
+                "string".to_string()
+            )]
+        );
+
+        for idx in 0..(MAX_RECENT_INPUT_DRIFTS + 3) {
+            let drift = SourceRecordFingerprint::diff(
+                source_unit_id.clone(),
+                &SourceRecordFingerprint::from_json(&serde_json::json!({ "idx": idx })),
+                &SourceRecordFingerprint::from_json(&serde_json::json!({ "idx": idx, "x": true })),
+            )
+            .ok_or_else(|| {
+                color_eyre::eyre::eyre!("different fingerprints should produce drift")
+            })?;
+            state.record_input_drift(drift);
+        }
+
+        assert_eq!(state.recent_input_drifts.len(), MAX_RECENT_INPUT_DRIFTS);
+        Ok(())
     }
 }

@@ -223,8 +223,17 @@ fn derive_source_record_inner(input: &DeriveInput) -> syn::Result<TokenStream> {
                 ctx: &_sdk_parser_types::ParserContext,
             ) -> ::sinex_node_sdk::parser::ParserResult<Vec<_sdk_parser_types::ParsedEventIntent>> {
                 let binding = _sdk_parser::BindingConfig::default();
+                self.parse_record_with_binding(record, ctx, &binding).await
+            }
+
+            async fn parse_record_with_binding(
+                &mut self,
+                record: _sdk_parser_types::SourceRecord,
+                ctx: &_sdk_parser_types::ParserContext,
+                binding: &_sdk_parser::BindingConfig,
+            ) -> ::sinex_node_sdk::parser::ParserResult<Vec<_sdk_parser_types::ParsedEventIntent>> {
                 let mut guard = __STATEFUL_PARSER.lock().unwrap_or_else(|e| e.into_inner());
-                guard.evaluate(record, ctx, &binding)
+                guard.evaluate(record, ctx, binding)
                     .map_err(|e| ::sinex_node_sdk::parser::ParserError::Field(e.to_string()))
             }
         }
@@ -236,11 +245,20 @@ fn derive_source_record_inner(input: &DeriveInput) -> syn::Result<TokenStream> {
                 ctx: &_sdk_parser_types::ParserContext,
             ) -> ::sinex_node_sdk::parser::ParserResult<Vec<_sdk_parser_types::ParsedEventIntent>> {
                 let binding = _sdk_parser::BindingConfig::default();
+                self.parse_record_with_binding(record, ctx, &binding).await
+            }
+
+            async fn parse_record_with_binding(
+                &mut self,
+                record: _sdk_parser_types::SourceRecord,
+                ctx: &_sdk_parser_types::ParserContext,
+                binding: &_sdk_parser::BindingConfig,
+            ) -> ::sinex_node_sdk::parser::ParserResult<Vec<_sdk_parser_types::ParsedEventIntent>> {
                 _sdk_parser::DeclarativeParser::evaluate(
                     Self::parser_spec(),
                     record,
                     ctx,
-                    &binding,
+                    binding,
                 ).map_err(|e| ::sinex_node_sdk::parser::ParserError::Field(e.to_string()))
             }
         }

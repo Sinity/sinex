@@ -336,7 +336,13 @@ async fn run_resubscribing_listener_stops_after_shutdown_signal() -> TestResult<
         }
     });
 
-    tokio::task::yield_now().await;
+    tokio::time::timeout(Duration::from_secs(1), async {
+        while handled_subscriptions.load(Ordering::SeqCst) == 0 {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .map_err(|_| color_eyre::eyre::eyre!("listener did not handle initial subscription"))?;
     shutdown_tx.send(true)?;
     tokio::time::timeout(Duration::from_secs(1), listener).await??;
 

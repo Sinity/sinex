@@ -176,12 +176,15 @@ journalctl -u sinex-gateway -u sinex-ingestd -f
 | Explain semantic composition beyond ancestry trace | [docs/architecture/semantic-trace-teardown.md](docs/architecture/semantic-trace-teardown.md) |
 | Run replay-safe semantic experiments | [docs/architecture/semantic-epochs-shadow-lanes.md](docs/architecture/semantic-epochs-shadow-lanes.md) |
 | Route model calls through prompts, policy, and budgets | [docs/architecture/prompt-router-budget.md](docs/architecture/prompt-router-budget.md) |
+| Promote generated suggestions through human or policy authority | [docs/architecture/proposal-judgment-finalizer.md](docs/architecture/proposal-judgment-finalizer.md) |
 | Bound active instruction and actuator loops | [docs/architecture/instruction-actuator-loops.md](docs/architecture/instruction-actuator-loops.md) |
+| Expose read-only evidence to coding agents | [docs/architecture/mcp-readonly-server.md](docs/architecture/mcp-readonly-server.md) |
 | Rename event taxonomy labels without parser replay | [docs/architecture/audited-semantic-renames.md](docs/architecture/audited-semantic-renames.md) |
 | Reason about replay evidence and source snapshots | [docs/architecture/evidence-lanes.md](docs/architecture/evidence-lanes.md) |
 | Reason about large aggregate provenance | [docs/architecture/high-fan-in-lineage.md](docs/architecture/high-fan-in-lineage.md) |
 | Coordinate late-arriving evidence in derived outputs | [docs/architecture/late-arriving-event-temporal-coordination.md](docs/architecture/late-arriving-event-temporal-coordination.md) |
 | Reason about runtime backpressure and loss policy | [docs/architecture/runtime-qos.md](docs/architecture/runtime-qos.md) |
+| Suppress live capture through private mode | [docs/architecture/runtime-private-mode.md](docs/architecture/runtime-private-mode.md) |
 | Drain and recover source-worker material cleanly | [docs/design/source-worker-drain-protocol.md](docs/design/source-worker-drain-protocol.md) |
 | Decide which surface owns a runtime or data concern | [docs/architecture/authority-surfaces.md](docs/architecture/authority-surfaces.md) |
 | Integrate an external tool or sibling project | [docs/architecture/integration-authority.md](docs/architecture/integration-authority.md) |

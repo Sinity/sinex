@@ -48,11 +48,13 @@ async fn telemetry_material_registered_before_gauge_event(ctx: TestContext) -> T
     let nats_client = ctx.nats_client();
     let namespace = ctx.pipeline_namespace().prefix().to_string();
     let pool = ctx.pool().clone();
+    let work_dir = tempfile::tempdir()?;
 
     let ingest_config = TestIngestdConfig {
         nats: nats.connection_config(),
         database_url: ctx.database_url().to_string(),
         namespace: Some(namespace.clone()),
+        work_dir: Some(work_dir.path().to_path_buf()),
         ..Default::default()
     };
     let mut ingest_handle = start_test_ingestd_with_config(ingest_config, Some(&ctx)).await?;

@@ -32,6 +32,10 @@ pub struct TestIngestdConfig {
     /// Database connection pool size for the spawned ingestd.
     /// Defaults to 4 (test-appropriate; production default is 50).
     pub database_pool_size: u32,
+    /// Whether the spawned ingestd should reject missing durable consumers on
+    /// non-empty raw-event streams. Tests default this off because catch-up
+    /// from pre-seeded messages is a normal harness pattern.
+    pub reject_initial_replay: bool,
 }
 
 impl Default for TestIngestdConfig {
@@ -48,6 +52,7 @@ impl Default for TestIngestdConfig {
             consumer_fetch_max_messages: 100,
             consumer_fetch_timeout_ms: 50,
             database_pool_size: 4,
+            reject_initial_replay: false,
         }
     }
 }
@@ -187,6 +192,52 @@ pub(crate) fn read_ingestd_debug_log(path: &std::path::Path) -> Result<Option<St
         Ok(None)
     } else {
         Ok(Some(content))
+    }
+}
+
+fn trailing_log_excerpt(content: &str, max_bytes: usize) -> (&str, bool) {
+    if content.len() <= max_bytes {
+        return (content, false);
+    }
+
+    let min_start = content.len() - max_bytes;
+    let start = content
+        .char_indices()
+        .map(|(index, _)| index)
+        .find(|index| *index >= min_start)
+        .unwrap_or(content.len());
+    let start = content[start..]
+        .find('\n')
+        .map(|offset| start + offset + 1)
+        .unwrap_or(start);
+    (&content[start..], true)
+}
+
+fn format_ingestd_debug_context(debug_log: &std::path::Path) -> String {
+    match read_ingestd_debug_log(debug_log) {
+        Ok(Some(content)) => {
+            let (excerpt, truncated) = trailing_log_excerpt(&content, 3000);
+            if truncated {
+                format!(
+                    "ingestd debug log at {} ({} bytes, trailing excerpt):\n{}",
+                    debug_log.display(),
+                    content.len(),
+                    excerpt
+                )
+            } else {
+                format!(
+                    "ingestd debug log at {} ({} bytes):\n{}",
+                    debug_log.display(),
+                    content.len(),
+                    excerpt
+                )
+            }
+        }
+        Ok(None) => format!("ingestd debug log at {} was empty", debug_log.display()),
+        Err(log_error) => format!(
+            "ingestd debug log at {} unavailable: {log_error:#}",
+            debug_log.display()
+        ),
     }
 }
 
@@ -1055,6 +1106,10 @@ pub async fn start_test_ingestd_with_config(
         "SINEX_INGESTD_CONSUMER_FETCH_TIMEOUT_MS",
         config.consumer_fetch_timeout_ms.to_string(),
     );
+    cmd.env(
+        "SINEX_INGESTD_REJECT_INITIAL_REPLAY",
+        config.reject_initial_replay.to_string(),
+    );
     // Disable schema validation and schema sync for test instances.
     // Test events use DynamicPayload with arbitrary payloads that don't conform
     // to registered JSON schemas. Without this, events fail validation and get
@@ -1084,14 +1139,20 @@ pub async fn start_test_ingestd_with_config(
         // but don't initialize NATS on the sandbox.
         if let Ok(nats) = sandbox.nats_handle() {
             let _ = nats;
-            wait_for_ready_notify(
+            if let Err(error) = wait_for_ready_notify(
                 "sinex-ingestd",
                 &notify_listener,
                 &mut child,
                 Duration::from_secs(Timeouts::STANDARD),
             )
             .await
-            .wrap_err("ingestd did not reach systemd READY state")?;
+            {
+                let _ = std::fs::remove_file(&notify_socket_path);
+                let _ = child.start_kill();
+                return Err(error)
+                    .wrap_err(format_ingestd_debug_context(&debug_log))
+                    .wrap_err("ingestd did not reach systemd READY state");
+            }
         }
     }
     let _ = std::fs::remove_file(&notify_socket_path);
@@ -1327,6 +1388,38 @@ mod tests {
             read_ingestd_debug_log(&debug_log)?,
             Some("line one\nline two\n".to_string())
         );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn format_ingestd_debug_context_includes_path_size_and_content() -> TestResult<()> {
+        let tempdir = tempfile::tempdir()?;
+        let debug_log = tempdir.path().join("ingestd.log");
+        fs::write(&debug_log, "startup failed\nmissing stream\n")?;
+        let context = format_ingestd_debug_context(&debug_log);
+
+        assert!(context.contains(debug_log.display().to_string().as_str()));
+        assert!(context.contains("(30 bytes)"));
+        assert!(context.contains("startup failed\nmissing stream\n"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn format_ingestd_debug_context_uses_tail_for_long_logs() -> TestResult<()> {
+        let tempdir = tempfile::tempdir()?;
+        let debug_log = tempdir.path().join("ingestd.log");
+        let content = format!("{}\nFINAL ROOT CAUSE\n", "startup chatter\n".repeat(400));
+        fs::write(&debug_log, &content)?;
+        let context = format_ingestd_debug_context(&debug_log);
+
+        assert!(context.contains(debug_log.display().to_string().as_str()));
+        assert!(context.contains("trailing excerpt"));
+        assert!(context.contains("FINAL ROOT CAUSE"));
+        assert!(
+            !context.contains("startup chatte\n"),
+            "excerpt should start on a line boundary: {context}"
+        );
+        assert!(!context.contains(content.as_str()));
         Ok(())
     }
 
