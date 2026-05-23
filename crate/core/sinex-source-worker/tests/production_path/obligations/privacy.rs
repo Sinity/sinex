@@ -60,6 +60,15 @@ pub async fn run(
     .await
     .map_err(|e| format!("privacy/clean-path: {e}"))?;
 
+    run_redaction_only(source_unit_id).await
+}
+
+/// Run only the privacy-engine/redacted-dispatch proof.
+///
+/// Use this when the caller has already verified clean fixture dispatch in the
+/// same case. It preserves the privacy proof while avoiding a duplicate
+/// initial-ingestion pass in `ALL_OBLIGATIONS`.
+pub async fn run_redaction_only(source_unit_id: &str) -> Result<(), String> {
     // Part 2: privacy engine redacts decoy secrets from raw text.
     let secret_text = format!("export TOKEN={DECOY_TOKEN}");
     let engine_result = privacy::engine()

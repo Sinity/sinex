@@ -69,17 +69,24 @@ pub async fn _run_case(
     obligation_names: &[&str],
 ) -> Vec<String> {
     let mut failures = Vec::new();
+    let mut initial_ingestion_verified = false;
     for &obligation in obligation_names {
-        let result = _run_obligation(
-            obligation,
-            source_unit_id,
-            adapter_kind,
-            fixture_data,
-            expected_event_types,
-        )
-        .await;
+        let result = if obligation == "privacy" && initial_ingestion_verified {
+            obligations::privacy::run_redaction_only(source_unit_id).await
+        } else {
+            _run_obligation(
+                obligation,
+                source_unit_id,
+                adapter_kind,
+                fixture_data,
+                expected_event_types,
+            )
+            .await
+        };
         if let Err(e) = result {
             failures.push(format!("[{source_unit_id}] obligation '{obligation}': {e}"));
+        } else if obligation == "initial_ingestion" {
+            initial_ingestion_verified = true;
         }
     }
     failures
