@@ -21,7 +21,6 @@ use axum::{
     response::IntoResponse,
     routing::{get, post},
 };
-use color_eyre::eyre::{WrapErr, eyre};
 use hyper_util::rt::{TokioExecutor, TokioIo};
 use hyper_util::server::conn::auto::Builder as HyperBuilder;
 use hyper_util::service::TowerToHyperService;
@@ -65,8 +64,8 @@ use std::{
 pub const DEFAULT_TCP_LISTEN: &str = "127.0.0.1:9999";
 
 fn send_token_watcher_ready(
-    ready_tx: &mut Option<tokio::sync::oneshot::Sender<color_eyre::eyre::Result<()>>>,
-    result: color_eyre::eyre::Result<()>,
+    ready_tx: &mut Option<tokio::sync::oneshot::Sender<SinexResult<()>>>,
+    result: SinexResult<()>,
     phase: &str,
 ) -> bool {
     if let Some(tx) = ready_tx.take()
@@ -255,19 +254,19 @@ impl GatewayAuth {
         }
     }
 
-    fn from_config(config: &GatewayConfig) -> color_eyre::eyre::Result<Self> {
+    fn from_config(config: &GatewayConfig) -> SinexResult<Self> {
         let (token, token_path) = config
             .auth_token_from_config()
-            .map_err(|err| eyre!(err.to_string()))?;
+            .map_err(|err| SinexError::configuration(err.to_string()))?;
 
         if let Some(ref t) = token {
             if t.trim().is_empty() {
-                return Err(eyre!(
+                return Err(SinexError::configuration(
                     "SINEX_RPC_TOKEN (or token file) is set but empty; refusing to start without a token"
                 ));
             }
         } else {
-            return Err(eyre!(
+            return Err(SinexError::configuration(
                 "SINEX_RPC_TOKEN is not set. Export a token (or SINEX_GATEWAY_ADMIN_TOKEN_FILE / SINEX_RPC_TOKEN_FILE) so the gateway can authenticate RPC clients."
             ));
         }
@@ -281,7 +280,7 @@ impl GatewayAuth {
     async fn start_file_watcher(
         self,
         shutdown: tokio::sync::watch::Receiver<bool>,
-    ) -> color_eyre::eyre::Result<Self> {
+    ) -> SinexResult<Self> {
         if let Some(ref path) = self.token_path {
             let token_clone = Arc::clone(&self.token);
             let path_clone = path.clone();
@@ -308,14 +307,14 @@ impl GatewayAuth {
             }
 
             let (ready_tx, ready_rx) =
-                tokio::sync::oneshot::channel::<color_eyre::eyre::Result<()>>();
+                tokio::sync::oneshot::channel::<SinexResult<()>>();
 
             std::thread::spawn(move || {
                 use notify::{Event, EventKind, RecursiveMode, Watcher};
                 let mut ready_tx = Some(ready_tx);
 
                 let watcher = notify::recommended_watcher(
-                    move |res: Result<Event, notify::Error>| {
+                    move |res: std::result::Result<Event, notify::Error>| {
                         match res {
                             Ok(event) => {
                                 match event.kind {
@@ -359,7 +358,8 @@ impl GatewayAuth {
                     Err(e) => {
                         send_token_watcher_ready(
                             &mut ready_tx,
-                            Err(eyre!("Failed to create file watcher: {e}")),
+                            Err(SinexError::configuration("Failed to create file watcher")
+                                .with_std_error(&e)),
                             "create",
                         );
                         error!(
@@ -375,7 +375,9 @@ impl GatewayAuth {
                 if let Err(e) = watcher.watch(&path_clone, RecursiveMode::NonRecursive) {
                     send_token_watcher_ready(
                         &mut ready_tx,
-                        Err(eyre!("Failed to watch token file {:?}: {e}", path_clone)),
+                        Err(SinexError::configuration("Failed to watch token file")
+                            .with_context("path", path_clone.display().to_string())
+                            .with_std_error(&e)),
                         "watch",
                     );
                     error!(
@@ -403,12 +405,17 @@ impl GatewayAuth {
             match tokio::time::timeout(Duration::from_secs(2), ready_rx).await {
                 Ok(Ok(Ok(()))) => {}
                 Ok(Ok(Err(err))) => return Err(err),
-                Ok(Err(err)) => return Err(err.into()),
+                Ok(Err(err)) => {
+                    return Err(SinexError::channel_receive(
+                        "token file watcher readiness channel closed",
+                    )
+                    .with_std_error(&err));
+                }
                 Err(_) => {
-                    return Err(eyre!(
+                    return Err(SinexError::timeout(format!(
                         "Timed out waiting for token file watcher to initialize for {:?}",
                         path
-                    ));
+                    )));
                 }
             }
         }
@@ -1388,13 +1395,13 @@ enum BindAddress {
 
 impl BindAddress {
     /// Create bind address from loaded gateway configuration.
-    fn from_config(config: &GatewayConfig) -> color_eyre::eyre::Result<Self> {
+    fn from_config(config: &GatewayConfig) -> SinexResult<Self> {
         let (host, port) = parse_tcp_listen(&config.tcp_listen)?;
         Ok(BindAddress::Tcp { host, port })
     }
 }
 
-fn parse_tcp_listen(spec: &str) -> color_eyre::eyre::Result<(String, u16)> {
+fn parse_tcp_listen(spec: &str) -> SinexResult<(String, u16)> {
     if let Ok(addr) = SocketAddr::from_str(spec) {
         return Ok((addr.ip().to_string(), addr.port()));
     }
@@ -1403,17 +1410,22 @@ fn parse_tcp_listen(spec: &str) -> color_eyre::eyre::Result<(String, u16)> {
         let (host_part, port_part) = spec.split_at(idx);
         let port = port_part[1..]
             .parse::<u16>()
-            .map_err(|_| eyre!("Invalid TCP port in {spec}"))?;
+            .map_err(|error| {
+                SinexError::configuration(format!("Invalid TCP port in {spec}"))
+                    .with_std_error(&error)
+            })?;
         let host = host_part.trim_matches(|c| c == '[' || c == ']').trim();
         if host.is_empty() {
-            return Err(eyre!("TCP host is empty in {spec}"));
+            return Err(SinexError::configuration(format!(
+                "TCP host is empty in {spec}"
+            )));
         }
         return Ok((host.to_string(), port));
     }
 
-    Err(eyre!(
+    Err(SinexError::configuration(format!(
         "Invalid TCP listen specification '{spec}'. Expected host:port."
-    ))
+    )))
 }
 
 /// Read RPC token from environment variables.
@@ -1453,16 +1465,16 @@ fn bind_tcp_listener(addr: &str) -> std::io::Result<tokio::net::TcpListener> {
 
 fn tls_paths_from_config(
     config: &GatewayConfig,
-) -> color_eyre::eyre::Result<(String, String, Option<String>)> {
+) -> SinexResult<(String, String, Option<String>)> {
     let cert = config.tls_cert.clone().ok_or_else(|| {
-        eyre!(
+        SinexError::configuration(
             "SINEX_GATEWAY_TLS_CERT is required for TCP bindings\n\n\
             For local development, run `xtask doctor --fix` to auto-generate certificates.\n\
             For production, provide proper certificates via environment variables."
         )
     })?;
     let key = config.tls_key.clone().ok_or_else(|| {
-        eyre!(
+        SinexError::configuration(
             "SINEX_GATEWAY_TLS_KEY is required for TCP bindings\n\n\
             For local development, run `xtask doctor --fix` to auto-generate certificates.\n\
             For production, provide proper certificates via environment variables."
@@ -1476,43 +1488,69 @@ fn load_rustls_config(
     cert_path: &str,
     key_path: &str,
     client_ca_path: Option<&str>,
-) -> color_eyre::eyre::Result<rustls::ServerConfig> {
+) -> SinexResult<rustls::ServerConfig> {
     ensure_rustls_crypto_provider()?;
 
-    let cert_chain: Vec<CertificateDer<'static>> = CertificateDer::pem_file_iter(cert_path)?
+    let cert_chain: Vec<CertificateDer<'static>> = CertificateDer::pem_file_iter(cert_path)
+        .map_err(|error| {
+            SinexError::configuration(format!("Failed to open TLS certificate from {cert_path}"))
+                .with_std_error(&error)
+        })?
         .collect::<std::result::Result<Vec<_>, _>>()
-        .map_err(|e| eyre!("Failed to read TLS certificate from {cert_path}: {e}"))?;
+        .map_err(|error| {
+            SinexError::configuration(format!("Failed to read TLS certificate from {cert_path}"))
+                .with_std_error(&error)
+        })?;
 
     let key = PrivateKeyDer::from_pem_file(key_path)
-        .map_err(|e| eyre!("Failed to read TLS private key from {key_path}: {e}"))?;
+        .map_err(|error| {
+            SinexError::configuration(format!("Failed to read TLS private key from {key_path}"))
+                .with_std_error(&error)
+        })?;
 
     if let Some(ca_path) = client_ca_path {
-        let client_certs: Vec<CertificateDer<'static>> = CertificateDer::pem_file_iter(ca_path)?
+        let client_certs: Vec<CertificateDer<'static>> = CertificateDer::pem_file_iter(ca_path)
+            .map_err(|error| {
+                SinexError::configuration(format!(
+                    "Failed to open client CA bundle from {ca_path}"
+                ))
+                .with_std_error(&error)
+            })?
             .collect::<std::result::Result<Vec<_>, _>>()
-            .map_err(|e| eyre!("Failed to read client CA bundle from {ca_path}: {e}"))?;
+            .map_err(|error| {
+                SinexError::configuration(format!(
+                    "Failed to read client CA bundle from {ca_path}"
+                ))
+                .with_std_error(&error)
+            })?;
         let mut roots = rustls::RootCertStore::empty();
         let (added, _ignored) = roots.add_parsable_certificates(client_certs);
         if added == 0 {
-            return Err(eyre!("No valid client CA certs found in {}", ca_path));
+            return Err(SinexError::configuration(format!(
+                "No valid client CA certs found in {ca_path}"
+            )));
         }
 
         let verifier = WebPkiClientVerifier::builder(Arc::new(roots))
             .build()
-            .map_err(|e| eyre!("Failed to build client verifier: {}", e))?;
+            .map_err(|error| {
+                SinexError::configuration("Failed to build client verifier")
+                    .with_std_error(&error)
+            })?;
 
         rustls::ServerConfig::builder()
             .with_client_cert_verifier(verifier)
             .with_single_cert(cert_chain, key)
-            .map_err(|e| eyre!("Invalid TLS cert/key: {}", e))
+            .map_err(|error| SinexError::configuration("Invalid TLS cert/key").with_std_error(&error))
     } else {
         rustls::ServerConfig::builder()
             .with_no_client_auth()
             .with_single_cert(cert_chain, key)
-            .map_err(|e| eyre!("Invalid TLS cert/key: {}", e))
+            .map_err(|error| SinexError::configuration("Invalid TLS cert/key").with_std_error(&error))
     }
 }
 
-fn ensure_rustls_crypto_provider() -> color_eyre::eyre::Result<()> {
+fn ensure_rustls_crypto_provider() -> SinexResult<()> {
     if rustls::crypto::CryptoProvider::get_default().is_some() {
         return Ok(());
     }
@@ -1520,7 +1558,7 @@ fn ensure_rustls_crypto_provider() -> color_eyre::eyre::Result<()> {
     match rustls::crypto::aws_lc_rs::default_provider().install_default() {
         Ok(()) => Ok(()),
         Err(_) if rustls::crypto::CryptoProvider::get_default().is_some() => Ok(()),
-        Err(_) => Err(eyre!(
+        Err(_) => Err(SinexError::configuration(
             "Failed to install Rustls crypto provider for gateway TLS configuration"
         )),
     }
@@ -1555,13 +1593,13 @@ fn require_mtls_for_remote(
     bind_address: &BindAddress,
     require_client_tls: bool,
     client_ca: Option<&str>,
-) -> color_eyre::eyre::Result<()> {
+) -> SinexResult<()> {
     let host_requires = match bind_address {
         BindAddress::Tcp { host, .. } => !is_loopback_host(host),
     };
 
     if (host_requires || require_client_tls) && client_ca.is_none() {
-        return Err(eyre!(
+        return Err(SinexError::configuration(
             "SINEX_GATEWAY_TLS_CLIENT_CA is required when mTLS is enforced (non-loopback or SINEX_GATEWAY_REQUIRE_CLIENT_TLS=1)"
         ));
     }
@@ -1715,9 +1753,9 @@ pub async fn spawn(
     config: &GatewayConfig,
     services: ServiceContainer,
     mut shutdown: tokio::sync::watch::Receiver<bool>,
-) -> color_eyre::eyre::Result<(
+) -> SinexResult<(
     std::net::SocketAddr,
-    tokio::task::JoinHandle<color_eyre::eyre::Result<()>>,
+    tokio::task::JoinHandle<SinexResult<()>>,
 )> {
     let bind_address = BindAddress::from_config(config)?;
 
@@ -1802,10 +1840,14 @@ pub async fn spawn(
     };
 
     let app = RpcServer::build_app(&limits, &config.cors_origins_list(), state);
-    let listener = bind_tcp_listener(&addr_str)
-        .wrap_err_with(|| format!("Failed to bind TCP listener to {addr_str}"))?;
+    let listener = bind_tcp_listener(&addr_str).map_err(|error| {
+        SinexError::network(format!("Failed to bind TCP listener to {addr_str}"))
+            .with_std_error(&error)
+    })?;
 
-    let local_addr = listener.local_addr()?;
+    let local_addr = listener.local_addr().map_err(|error| {
+        SinexError::network("Failed to read local TCP listener address").with_std_error(&error)
+    })?;
     info!("RPC server listening on TLS {}", local_addr);
 
     systemd_notify::notify_ready("sinex-gateway");
@@ -1845,11 +1887,13 @@ pub async fn run(
     config: &GatewayConfig,
     services: ServiceContainer,
     shutdown: tokio::sync::watch::Receiver<bool>,
-) -> color_eyre::eyre::Result<()> {
+) -> SinexResult<()> {
     let (_, handle) = spawn(config, services, shutdown).await?;
     match handle.await {
         Ok(res) => res,
-        Err(e) => Err(eyre!("RPC server task panicked: {}", e)),
+        Err(error) => {
+            Err(SinexError::service("RPC server task panicked").with_std_error(&error))
+        }
     }
 }
 
@@ -1861,7 +1905,7 @@ impl RpcServer {
         config: &GatewayConfig,
         services: &ServiceContainer,
         shutdown_rx: tokio::sync::watch::Receiver<bool>,
-    ) -> color_eyre::eyre::Result<(RateLimiter, Option<JoinHandle<()>>)> {
+    ) -> SinexResult<(RateLimiter, Option<JoinHandle<()>>)> {
         // Issue 143: Per-token rate limiting
         // Use distributed rate limiting via NATS KV when available, fall back to in-memory
         if let Some(nats) = services.nats_client() {
@@ -1947,7 +1991,7 @@ impl RpcServer {
     fn setup_tls_listener(
         config: &GatewayConfig,
         bind_address: &BindAddress,
-    ) -> color_eyre::eyre::Result<(String, TlsAcceptor)> {
+    ) -> SinexResult<(String, TlsAcceptor)> {
         let (cert_path, key_path, client_ca) = tls_paths_from_config(config)?;
         require_mtls_for_remote(
             bind_address,
@@ -1969,15 +2013,17 @@ impl RpcServer {
         acceptor: TlsAcceptor,
         app: Router,
         shutdown: &mut tokio::sync::watch::Receiver<bool>,
-    ) -> color_eyre::eyre::Result<()> {
+    ) -> SinexResult<()> {
         let active_connections = Arc::new(AtomicUsize::new(0));
         let drain_notify = Arc::new(tokio::sync::Notify::new());
 
         loop {
             tokio::select! {
                 accept_result = listener.accept() => {
-                    let (stream, peer) = accept_result
-                        .wrap_err("Failed to accept incoming TCP connection")?;
+                    let (stream, peer) = accept_result.map_err(|error| {
+                        SinexError::network("Failed to accept incoming TCP connection")
+                            .with_std_error(&error)
+                    })?;
                     let app_clone = app.clone();
                     let acceptor = acceptor.clone();
                     let active_connections = Arc::clone(&active_connections);
@@ -2074,10 +2120,10 @@ impl RpcServer {
     }
 
     async fn wait_for_background_tasks(
-        metrics_task: Option<JoinHandle<color_eyre::eyre::Result<()>>>,
-        cleanup_task: Option<JoinHandle<color_eyre::eyre::Result<()>>>,
-        sse_bus_task: Option<JoinHandle<color_eyre::eyre::Result<()>>>,
-    ) -> color_eyre::eyre::Result<()> {
+        metrics_task: Option<JoinHandle<SinexResult<()>>>,
+        cleanup_task: Option<JoinHandle<SinexResult<()>>>,
+        sse_bus_task: Option<JoinHandle<SinexResult<()>>>,
+    ) -> SinexResult<()> {
         Self::wait_for_background_tasks_with_timeout(
             metrics_task,
             cleanup_task,
@@ -2091,7 +2137,7 @@ impl RpcServer {
         task_name: &'static str,
         task: JoinHandle<()>,
         mut shutdown: tokio::sync::watch::Receiver<bool>,
-    ) -> JoinHandle<color_eyre::eyre::Result<()>> {
+    ) -> JoinHandle<SinexResult<()>> {
         tokio::spawn(async move {
             let mut task = task;
             tokio::select! {
@@ -2101,10 +2147,15 @@ impl RpcServer {
                             if *shutdown.borrow() {
                                 Ok(())
                             } else {
-                                Err(eyre!("{task_name} exited before gateway shutdown"))
+                                Err(SinexError::service(format!(
+                                    "{task_name} exited before gateway shutdown"
+                                )))
                             }
                         }
-                        Err(error) => Err(eyre!("{task_name} join failed: {error}")),
+                        Err(error) => Err(SinexError::service(format!(
+                            "{task_name} join failed"
+                        ))
+                        .with_std_error(&error)),
                     }
                 }
                 shutdown_result = shutdown.changed() => {
@@ -2117,18 +2168,22 @@ impl RpcServer {
                             if shutdown_requested {
                                 Ok(())
                             } else {
-                                Err(eyre!(
+                                Err(SinexError::service(format!(
                                     "{task_name} exited after shutdown channel closed without a shutdown signal"
-                                ))
+                                )))
                             }
                         }
                         Err(error) => {
                             if shutdown_requested {
-                                Err(eyre!("{task_name} join failed during shutdown: {error}"))
+                                Err(SinexError::service(format!(
+                                    "{task_name} join failed during shutdown"
+                                ))
+                                .with_std_error(&error))
                             } else {
-                                Err(eyre!(
+                                Err(SinexError::service(format!(
                                     "{task_name} join failed after shutdown channel closed without a shutdown signal: {error}"
                                 ))
+                                .with_std_error(&error))
                             }
                         }
                     }
@@ -2138,30 +2193,31 @@ impl RpcServer {
     }
 
     async fn wait_for_background_tasks_with_timeout(
-        metrics_task: Option<JoinHandle<color_eyre::eyre::Result<()>>>,
-        cleanup_task: Option<JoinHandle<color_eyre::eyre::Result<()>>>,
-        sse_bus_task: Option<JoinHandle<color_eyre::eyre::Result<()>>>,
+        metrics_task: Option<JoinHandle<SinexResult<()>>>,
+        cleanup_task: Option<JoinHandle<SinexResult<()>>>,
+        sse_bus_task: Option<JoinHandle<SinexResult<()>>>,
         shutdown_timeout: Duration,
-    ) -> color_eyre::eyre::Result<()> {
+    ) -> SinexResult<()> {
         let mut errors = Vec::new();
 
         async fn await_background_task(
-            task: JoinHandle<color_eyre::eyre::Result<()>>,
+            task: JoinHandle<SinexResult<()>>,
             task_name: &'static str,
             shutdown_timeout: Duration,
-        ) -> color_eyre::eyre::Result<()> {
+        ) -> SinexResult<()> {
             match tokio::time::timeout(shutdown_timeout, task).await {
                 Ok(Ok(Ok(()))) => {
                     info!(task = task_name, "Background task shut down successfully");
                     Ok(())
                 }
                 Ok(Ok(Err(error))) => Err(error),
-                Ok(Err(error)) => Err(eyre!(
+                Ok(Err(error)) => Err(SinexError::service(format!(
                     "{task_name} monitor join failed during shutdown: {error}"
-                )),
-                Err(_) => Err(eyre!(
+                ))
+                .with_source(error)),
+                Err(_) => Err(SinexError::timeout(format!(
                     "{task_name} did not shut down within {shutdown_timeout:?}"
-                )),
+                ))),
             }
         }
 
@@ -2203,7 +2259,9 @@ impl RpcServer {
                 .map(|error| error.to_string())
                 .collect::<Vec<_>>()
                 .join("; ");
-            Err(eyre!("Background task shutdown failed: {combined}"))
+            Err(SinexError::service(format!(
+                "Background task shutdown failed: {combined}"
+            )))
         }
     }
 }

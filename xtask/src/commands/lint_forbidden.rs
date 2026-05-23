@@ -171,7 +171,6 @@ impl XtaskCommand for LintForbiddenCommand {
             "crate/core/sinex-gateway/src/replay_control/mod.rs",
             "crate/core/sinex-gateway/src/replay_control/client.rs",
             "crate/core/sinex-gateway/src/replay_control/telemetry.rs",
-            "crate/core/sinex-gateway/src/rpc_server.rs",
             "crate/core/sinex-gateway/src/replay_control/execution/replay_writer.rs",
             "crate/core/sinex-gateway/src/replay_control/execution/mod.rs",
             "crate/core/sinex-gateway/src/replay_control/execution/collect.rs",
