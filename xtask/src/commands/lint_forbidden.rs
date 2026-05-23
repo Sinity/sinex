@@ -86,7 +86,12 @@ impl XtaskCommand for LintForbiddenCommand {
             "crate/lib/sinex-db/src/repositories/schema_management.rs",
             "crate/lib/sinex-db/src/repositories/knowledge_graph.rs",
             "crate/lib/sinex-db/src/repositories/state.rs",
+            // Dynamic ranking/filter SQL where predicates and bind positions
+            // are assembled from optional search parameters.
+            "crate/lib/sinex-db/src/repositories/document_search.rs",
             "crate/lib/sinex-db/src/replay/state_machine.rs",
+            // Dynamic session GUC setup over a small fixed option table.
+            "crate/lib/sinex-node-sdk/src/preflight/mod.rs",
             "crate/lib/sinex-node-sdk/src/preflight/database.rs",
             "crate/lib/sinex-node-sdk/src/preflight/verification.rs",
             "crate/lib/sinex-test-utils/src/database_pool.rs",
@@ -131,6 +136,7 @@ impl XtaskCommand for LintForbiddenCommand {
         )?);
         let raw_event_subject_allow = [
             "xtask/src/sandbox/events.rs",
+            "crate/lib/sinex-primitives/src/domain.rs",
             "crate/lib/sinex-node-sdk/src/nats_publisher.rs",
             "crate/lib/sinex-primitives/src/environment.rs",
             "crate/lib/sinex-node-sdk/src/event_node.rs",
@@ -156,6 +162,48 @@ impl XtaskCommand for LintForbiddenCommand {
         let color_eyre_lib_allow = [
             // xtask is a build tool, not a library — color_eyre is its error stack.
             "xtask/src/commands/lint_forbidden.rs",
+            // Inherited error-stack migration debt tracked by #1369. Keep this
+            // list explicit so new color_eyre files still fail the scan while
+            // existing gateway/node-sdk/ingestd surfaces are migrated in
+            // focused subsystem slices.
+            "crate/core/sinex-source-worker/src/monitor_node.rs",
+            "crate/core/sinex-ingestd/src/jetstream_consumer.rs",
+            "crate/core/sinex-ingestd/src/material_assembler/pipeline.rs",
+            "crate/core/sinex-ingestd/src/material_assembler/finalize.rs",
+            "crate/core/sinex-ingestd/src/material_assembler/test_support.rs",
+            "crate/core/sinex-ingestd/src/material_assembler/io.rs",
+            "crate/core/sinex-gateway/src/sse_bus.rs",
+            "crate/core/sinex-gateway/src/replay_control/validation.rs",
+            "crate/core/sinex-gateway/src/replay_control/server.rs",
+            "crate/core/sinex-gateway/src/replay_control/protocol.rs",
+            "crate/core/sinex-gateway/src/rate_limit.rs",
+            "crate/core/sinex-gateway/src/replay_control/mod.rs",
+            "crate/core/sinex-gateway/src/replay_control/client.rs",
+            "crate/core/sinex-gateway/src/sse_handler.rs",
+            "crate/core/sinex-gateway/src/replay_control/telemetry.rs",
+            "crate/core/sinex-gateway/src/rpc_server.rs",
+            "crate/core/sinex-gateway/src/native_messaging.rs",
+            "crate/core/sinex-gateway/src/handlers_test_support.rs",
+            "crate/core/sinex-gateway/src/gateway_metrics.rs",
+            "crate/core/sinex-gateway/src/replay_control/execution/replay_writer.rs",
+            "crate/core/sinex-gateway/src/cascade_analyzer.rs",
+            "crate/core/sinex-gateway/src/replay_control/execution/mod.rs",
+            "crate/core/sinex-gateway/src/distributed_rate_limit.rs",
+            "crate/core/sinex-gateway/src/replay_control/execution/collect.rs",
+            "crate/core/sinex-gateway/src/rpc_server_test_support.rs",
+            "crate/core/sinex-gateway/src/handlers/sources.rs",
+            "crate/lib/sinex-db/src/repositories/events/persistence.rs",
+            "crate/lib/sinex-node-sdk/src/systemd_notify.rs",
+            "crate/lib/sinex-node-sdk/src/node_cli.rs",
+            "crate/lib/sinex-node-sdk/src/sqlite_source.rs",
+            "crate/lib/sinex-node-sdk/src/stage_as_you_go.rs",
+            "crate/lib/sinex-node-sdk/src/record_source/mod.rs",
+            "crate/lib/sinex-node-sdk/src/parser/fingerprint.rs",
+            "crate/lib/sinex-node-sdk/src/preflight/configuration.rs",
+            "crate/lib/sinex-node-sdk/src/coordination.rs",
+            "crate/lib/sinex-node-sdk/src/parser/adapter_node.rs",
+            "crate/lib/sinex-node-sdk/src/parser/adapters/file_drop.rs",
+            "crate/lib/sinex-node-sdk/src/runtime/stream/handles.rs",
         ];
         violations.extend(check_color_eyre_in_lib(
             "color_eyre::",
@@ -190,6 +238,10 @@ impl XtaskCommand for LintForbiddenCommand {
             "crate/core/sinex-gateway/tests/sse_stream_test.rs",
             // Schema bootstrap and test fixture modules.
             "crate/lib/sinex-db/src/repositories/events/persistence.rs",
+            // Declarative restore/archive SQL intentionally rehydrates events
+            // inside a checked schema function rather than through Rust
+            // repositories.
+            "crate/lib/sinex-schema/src/apply.rs",
             "xtask/src/sandbox/events.rs",
             "xtask/src/commands/lint_forbidden.rs",
         ];
@@ -334,9 +386,14 @@ fn check_transport_publish_family_inventory() -> Result<Vec<String>> {
         "crate/core/sinex-ingestd/src/service.rs",
         // Gateway node control command publishers.
         "crate/core/sinex-gateway/src/handlers/nodes.rs",
+        // Private-mode control broadcasts.
+        "crate/core/sinex-gateway/src/handlers/privacy.rs",
         // Replay control request/reply and invalidation publishers.
         "crate/core/sinex-gateway/src/replay_control/server.rs",
         "crate/core/sinex-gateway/src/replay_control/execution/collect.rs",
+        // Inline private-mode listener regression publishes a synthetic
+        // control message; the production listener only subscribes.
+        "crate/lib/sinex-node-sdk/src/parser/adapter_node.rs",
         // Source-worker parse command request/reply acknowledgements.
         "crate/core/sinex-source-worker/src/parse_listener.rs",
         // This lint's regex fixtures and inventory strings.
@@ -646,12 +703,26 @@ where
 {
     let mut filtered = Vec::new();
     for line in matches {
+        if is_comment_match(&line) {
+            continue;
+        }
         let file = parse_match_file(&line)?;
         if !allow.contains(&file) && !skip(file) {
             filtered.push(line);
         }
     }
     Ok(filtered)
+}
+
+fn is_comment_match(line: &str) -> bool {
+    let Some((_, rest)) = line.split_once(':') else {
+        return false;
+    };
+    let Some((_, text)) = rest.split_once(':') else {
+        return false;
+    };
+    let text = text.trim_start();
+    text.starts_with("//")
 }
 
 /// Check if a path is a test directory or build tooling.

@@ -1237,10 +1237,10 @@ mod tests {
             }
         }
         if !got_event {
-            eprintln!(
-                "WARNING: test_file_drop_created_event saw no inotify event within 30s. \
-                 This is likely a sandboxed-filesystem limitation, not an adapter bug. \
-                 The 6 other file_drop tests still validate adapter structure."
+            tracing::warn!(
+                "test_file_drop_created_event saw no inotify event within 30s; \
+                 this is likely a sandboxed-filesystem limitation, not an adapter bug; \
+                 the 6 other file_drop tests still validate adapter structure"
             );
         }
         Ok(())
