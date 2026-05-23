@@ -541,6 +541,10 @@ fn decode_rpc_params<Req>(method: &str, params: JsonValue) -> Result<Req>
 where
     Req: DeserializeOwned,
 {
+    let params = match params {
+        JsonValue::Null => JsonValue::Object(Default::default()),
+        params => params,
+    };
     serde_path_to_error::deserialize(params).map_err(|error| {
         let path = error.path().to_string();
         SinexError::serialization("invalid RPC request parameters")
