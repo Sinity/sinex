@@ -184,6 +184,52 @@ fn make_postgres_snapshot_archive() -> TestResult<(TempDir, PathBuf)> {
     Ok((dir, archive_path))
 }
 
+fn make_nats_snapshot_archive_with_summary() -> TestResult<(TempDir, PathBuf)> {
+    use sinexctl::admin::manifest::{ComponentRecord, NatsExtras, SnapshotManifest, Totals};
+
+    let dir = tempfile::tempdir()?;
+    let staging = dir.path().join("staging");
+    let jetstream = staging.join("nats").join("jetstream");
+    fs::create_dir_all(jetstream.join("streams").join("events"))?;
+    fs::write(
+        jetstream.join("streams").join("events").join("meta.json"),
+        b"stream-state",
+    )?;
+    let nats_blake3 = snapshot_component_blake3(&staging.join("nats"))?;
+    fs::write(staging.join("nats").join("streams.summary.json"), b"[]")?;
+
+    let manifest = SnapshotManifest {
+        snapshot_id: "01970a7f-391b-7000-8000-000000000003".to_string(),
+        created_at: "2026-05-15T11:32:00Z".to_string(),
+        sinex_version: "0.1.0".to_string(),
+        git_sha: Some("abc1234".to_string()),
+        host: "sinnix-prime".to_string(),
+        mode: "quiesce".to_string(),
+        source_unit_ids: vec![],
+        components: vec![ComponentRecord {
+            name: "nats".to_string(),
+            path: "nats/jetstream/".to_string(),
+            bytes: 12,
+            blake3: nats_blake3,
+            extras: Some(ComponentExtras::Nats(NatsExtras {
+                member_paths: vec!["streams/events/meta.json".to_string()],
+            })),
+        }],
+        totals: Totals {
+            uncompressed_bytes: 12,
+            archive_bytes: Some(512),
+        },
+    };
+    fs::write(
+        staging.join("manifest.json"),
+        serde_json::to_vec_pretty(&manifest)?,
+    )?;
+
+    let archive_path = dir.path().join("nats-fixture.sinex.tar.zst");
+    exec::tar_create_zstd(&staging, &archive_path, 1, 1)?;
+    Ok((dir, archive_path))
+}
+
 fn make_executable_script(dir: &TempDir, name: &str, body: &str) -> TestResult<PathBuf> {
     let path = dir.path().join(name);
     fs::write(&path, body)?;
@@ -873,6 +919,38 @@ async fn snapshot_restore_executes_postgres_drill_with_row_count_check()
         "restore execution should compare restored postgres dump hash with the manifest"
     );
     assert!(target.join("postgres").join("sinex_prod.dump").exists());
+    Ok(())
+}
+
+#[sinex_test]
+async fn snapshot_restore_ignores_nats_summary_in_component_hash() -> xtask::sandbox::TestResult<()>
+{
+    let (_dir, archive_path) = make_nats_snapshot_archive_with_summary()?;
+    let target_parent = tempfile::tempdir()?;
+    let target = target_parent.path().join("nats-restore-target");
+
+    let cmd = AdminSnapshotRestoreCommand {
+        archive: archive_path,
+        target_dir: target,
+        dry_run: false,
+        allow_non_empty_target: false,
+        confirm_restore: true,
+        allow_active_services: true,
+        restore_database_url: None,
+        pg_restore_bin: None,
+        psql_bin: None,
+    };
+    let result = cmd.execute()?;
+    let observed = result
+        .observed_checks
+        .as_ref()
+        .ok_or_else(|| color_eyre::eyre::eyre!("restore execution should report observations"))?;
+
+    assert!(observed.checks_passed);
+    assert!(observed.failed_checks.is_empty());
+    assert_eq!(observed.nats_member_count, Some(1));
+    assert_eq!(observed.nats_member_paths_match, Some(true));
+    assert_eq!(observed.component_blake3_matches.get("nats"), Some(&true));
     Ok(())
 }
 

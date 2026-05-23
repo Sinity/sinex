@@ -1268,7 +1268,16 @@ fn observed_component_blake3(
         .filter_map(|component| {
             let observed = match component.name.as_str() {
                 "postgres" => blake3_file(&target_dir.join(&component.path)).ok(),
-                "state" | "cas" | "nats" => {
+                "nats" => {
+                    let component_root = target_dir.join(&component.name);
+                    component_root
+                        .exists()
+                        .then(|| {
+                            blake3_dir_excluding(&component_root, &["streams.summary.json"]).ok()
+                        })
+                        .flatten()
+                }
+                "state" | "cas" => {
                     let component_root = target_dir.join(&component.name);
                     component_root
                         .exists()
@@ -1455,7 +1464,12 @@ fn blake3_file(path: &Path) -> Result<String> {
 /// contents, then hash the concatenation of (`relative_path` + `file_hash`) pairs.
 /// This gives a stable content-addressed fingerprint of the tree.
 fn blake3_dir(dir: &Path) -> Result<String> {
+    blake3_dir_excluding(dir, &[])
+}
+
+fn blake3_dir_excluding(dir: &Path, excluded_relative_paths: &[&str]) -> Result<String> {
     let mut entries = collect_files_sorted(dir, dir);
+    entries.retain(|(rel_path, _)| !excluded_relative_paths.contains(&rel_path.as_str()));
     entries.sort_by(|(a, _), (b, _)| a.cmp(b));
 
     let mut hasher = blake3::Hasher::new();
