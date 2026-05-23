@@ -1080,7 +1080,7 @@ mod tests {
 
         let msg = timeout(Duration::from_secs(Timeouts::SHORT), dlq_sub.next())
             .await?
-            .ok_or_else(|| color_eyre::eyre::eyre!("missing DLQ message"))?;
+            .ok_or_else(|| SinexError::invalid_state("missing DLQ message"))?;
         let payload: JsonValue = serde_json::from_slice(&msg.payload)?;
         assert_eq!(payload["error"], "material_end_timestamp_invalid");
         assert_eq!(payload["material_id"], material_id.to_string());
@@ -1148,7 +1148,7 @@ mod tests {
 
         let msg = timeout(Duration::from_secs(Timeouts::SHORT), dlq_sub.next())
             .await?
-            .ok_or_else(|| color_eyre::eyre::eyre!("missing DLQ message"))?;
+            .ok_or_else(|| SinexError::invalid_state("missing DLQ message"))?;
         let payload: JsonValue = serde_json::from_slice(&msg.payload)?;
         assert_eq!(payload["error"], "material_stat_failed");
         assert_eq!(payload["material_id"], material_id.to_string());

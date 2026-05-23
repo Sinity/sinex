@@ -1587,7 +1587,7 @@ mod tests {
 
         let state = assembler
             .get_state_handle(&material_id)
-            .ok_or_else(|| color_eyre::eyre::eyre!("missing assembler state"))?;
+            .ok_or_else(|| SinexError::invalid_state("missing assembler state"))?;
         let state = state.lock().await;
         assert_eq!(state.buffered_slices.len(), 1);
         assert_eq!(state.buffered_bytes, 4);
@@ -1637,7 +1637,7 @@ mod tests {
 
         let msg = timeout(Duration::from_secs(Timeouts::SHORT), dlq_sub.next())
             .await?
-            .ok_or_else(|| color_eyre::eyre::eyre!("missing DLQ message"))?;
+            .ok_or_else(|| SinexError::invalid_state("missing DLQ message"))?;
         let payload: JsonValue = serde_json::from_slice(&msg.payload)?;
         assert_eq!(payload["error"], "buffered_slice_limit_exceeded");
         assert_eq!(payload["material_id"], material_id.to_string());

@@ -2820,11 +2820,12 @@ mod tests {
     #[sinex_test]
     async fn uuid_v7_guard_rejects_other_uuid_versions() -> TestResult<()> {
         assert!(is_uuid_v7(&Uuid::now_v7()));
+        let deterministic_timestamp =
+            Timestamp::from_const(time::macros::datetime!(2024-03-09 16:00:00.123 UTC));
         assert!(is_uuid_v7(&sinex_node_sdk::deterministic_event_id(
             "ingestd-guard",
             "source-anchor",
-            Timestamp::from_unix_timestamp_millis(1_710_000_000_123)
-                .ok_or_else(|| color_eyre::eyre::eyre!("test timestamp should be valid"))?
+            deterministic_timestamp
         )));
         assert!(!is_uuid_v7(&Uuid::new_v4()));
         assert!(!is_uuid_v7(
