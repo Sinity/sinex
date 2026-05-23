@@ -439,7 +439,7 @@ mod tests {
 
         let message = tokio::time::timeout(Duration::from_secs(5), sub.next())
             .await?
-            .ok_or_else(|| color_eyre::eyre::eyre!("handoff request not published"))?;
+            .ok_or_else(|| SinexError::processing("handoff request not published"))?;
         let request: HandoffRequest = serde_json::from_slice(&message.payload)?;
         assert_eq!(
             request.requester_instance_id,
@@ -636,7 +636,7 @@ mod tests {
         let metadata = kv_client
             .get_instance(&instance_id)
             .await?
-            .ok_or_else(|| color_eyre::eyre::eyre!("instance metadata missing from KV"))?;
+            .ok_or_else(|| SinexError::processing("instance metadata missing from KV"))?;
         assert!(
             metadata.last_heartbeat >= initial_last_heartbeat + 5,
             "leader maintenance should keep refreshing last_heartbeat beyond startup registration"

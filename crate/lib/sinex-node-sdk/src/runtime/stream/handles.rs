@@ -396,6 +396,7 @@ impl EventEmitter {
 #[cfg(test)]
 mod tests {
     use super::EventEmitter;
+    use crate::SinexError;
     use sinex_primitives::events::{Event, Provenance};
     use sinex_primitives::{EventSource, EventType, HostName, Id, OffsetKind, Timestamp, Uuid};
     use xtask::sandbox::sinex_test;
@@ -450,7 +451,7 @@ mod tests {
         let emitted = receiver
             .recv()
             .await
-            .ok_or_else(|| color_eyre::eyre::eyre!("missing emitted event"))?;
+            .ok_or_else(|| SinexError::processing("missing emitted event"))?;
         assert_eq!(emitted.payload_schema_id, Some(schema_id));
         Ok(())
     }
@@ -506,7 +507,7 @@ mod tests {
         let emitted = receiver
             .recv()
             .await
-            .ok_or_else(|| color_eyre::eyre::eyre!("missing emitted event"))?;
+            .ok_or_else(|| SinexError::processing("missing emitted event"))?;
         assert_eq!(emitted.payload_schema_id, Some(explicit_schema_id));
         Ok(())
     }
@@ -545,7 +546,7 @@ mod tests {
         let emitted = receiver
             .recv()
             .await
-            .ok_or_else(|| color_eyre::eyre::eyre!("missing emitted event"))?;
+            .ok_or_else(|| SinexError::processing("missing emitted event"))?;
         assert!(emitted.id.is_some());
         Ok(())
     }
@@ -586,7 +587,7 @@ mod tests {
         let emitted = receiver
             .recv()
             .await
-            .ok_or_else(|| color_eyre::eyre::eyre!("missing emitted event"))?;
+            .ok_or_else(|| SinexError::processing("missing emitted event"))?;
         assert_eq!(emitted.created_by_operation_id, Some(operation_id));
         Ok(())
     }

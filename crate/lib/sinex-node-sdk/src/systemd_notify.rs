@@ -88,7 +88,7 @@ mod tests {
     // Small inline tests are justified here because they exercise private
     // watchdog interval logic and process-global environment handling directly.
     use super::{notify_ready, notify_stopping, spawn_watchdog, stop_watchdog};
-    use color_eyre::eyre::eyre;
+    use crate::SinexError;
     use std::process;
     use std::sync::LazyLock;
     use tempfile::tempdir;
@@ -120,7 +120,7 @@ mod tests {
 
         unsafe { std::env::set_var("NOTIFY_SOCKET", &socket_path) };
 
-        let result = async {
+        let result: xtask::sandbox::TestResult<()> = async {
             let mut buf = [0_u8; 128];
 
             notify_ready("test-component");
@@ -141,7 +141,7 @@ mod tests {
             let stopping_msg = std::str::from_utf8(&buf[..stopping_len])?;
             assert!(stopping_msg.contains("STOPPING=1"));
 
-            Ok::<(), color_eyre::Report>(())
+            Ok(())
         }
         .await;
 
@@ -166,15 +166,19 @@ mod tests {
             std::env::set_var("WATCHDOG_PID", process::id().to_string());
         }
 
-        let result = async {
+        let result: xtask::sandbox::TestResult<()> = async {
             let handle = spawn_watchdog("test-component")
-                .ok_or_else(|| eyre!("watchdog task should start when env is configured"))?;
+                .ok_or_else(|| {
+                    SinexError::processing(
+                        "watchdog task should start when env is configured",
+                    )
+                })?;
             let mut buf = [0_u8; 128];
             let msg_len = timeout(Duration::from_secs(1), listener.recv(&mut buf)).await??;
             stop_watchdog(Some(handle), "test-component").await;
             let msg = std::str::from_utf8(&buf[..msg_len])?;
             assert!(msg.contains("WATCHDOG=1"));
-            Ok::<(), color_eyre::Report>(())
+            Ok(())
         }
         .await;
 
