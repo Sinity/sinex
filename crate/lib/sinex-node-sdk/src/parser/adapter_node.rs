@@ -20,9 +20,13 @@
 //! - Continuous mode for append-only adapters (tail loop with shutdown signal).
 //! - Cursor persistence via the standard `IngestorNode` state mechanism.
 //! - Conversion of `ParsedEventIntent` → `Event<JsonValue>` → `emit()`.
-//! - Long-lived source-material lifecycle: records from many drain cycles are
-//!   appended to the same [`AppendStreamAcquirer`], which auto-rotates at 100
-//!   MB or 1 hour (configurable). This prevents `O(poll_count)` material rows.
+//! - Long-lived source-material lifecycle: records without their own material
+//!   provenance are appended to the same [`AppendStreamAcquirer`], which
+//!   auto-rotates at 100 MB or 1 hour (configurable). This prevents
+//!   `O(poll_count)` material rows.
+//! - Already-materialized records keep their adapter-supplied source material
+//!   and anchor, which lets file-content adapters preserve byte-provenance
+//!   rather than re-wrapping file observations in a metadata stream.
 //!
 //! # Config shape
 //!
@@ -87,7 +91,7 @@ use sinex_primitives::events::Event;
 use sinex_primitives::events::SourceMaterial;
 use sinex_primitives::events::builder::{EventBuilder, NoProvenance};
 use sinex_primitives::ids::Id;
-use sinex_primitives::parser::{ParsedEventIntent, ParserContext};
+use sinex_primitives::parser::{MaterialAnchor, ParsedEventIntent, ParserContext};
 use sinex_primitives::primitives::Uuid;
 use sinex_primitives::privacy::{
     RuntimePrivateModeState, load_private_mode_state, save_private_mode_state,
@@ -100,7 +104,8 @@ use crate::acquisition_manager::{AcquisitionManager, AppendStreamAcquirer, Rotat
 use crate::ingestor_node::IngestorNode;
 use crate::parser::adapters::SqliteSnapshotLane;
 use crate::parser::{
-    BindingConfig, DriftEvent, InputShapeAdapter, MaterialParser, SourceRecordFingerprint,
+    BindingConfig, DriftEvent, InputShapeAdapter, MaterialParser, SourceRecord,
+    SourceRecordFingerprint,
 };
 use crate::runtime::stream::{
     Checkpoint, ContinuousStart, NodeCapabilities, NodeRuntimeState, ScanArgs, ScanReport,
@@ -414,6 +419,14 @@ where
     _phantom: PhantomData<()>,
 }
 
+struct MaterializedAdapterRecord {
+    record: SourceRecord,
+    material_id: Id<SourceMaterial>,
+    anchor_byte: i64,
+    offset_start: Option<i64>,
+    offset_end: Option<i64>,
+}
+
 impl<A, P> AdapterBackedIngestor<A, P>
 where
     A: InputShapeAdapter + Default,
@@ -566,6 +579,49 @@ where
             .expect("stream_acquirer initialized above"))
     }
 
+    async fn materialize_adapter_record(
+        &mut self,
+        record: SourceRecord,
+    ) -> NodeResult<MaterializedAdapterRecord> {
+        if record.material_id.to_uuid() != Uuid::nil() {
+            let (anchor_byte, offset_start, offset_end) =
+                anchor_offsets_for_materialized_record(&record.anchor);
+            return Ok(MaterializedAdapterRecord {
+                material_id: record.material_id,
+                record,
+                anchor_byte,
+                offset_start,
+                offset_end,
+            });
+        }
+
+        // Append record bytes to the long-lived stream material. The acquirer
+        // returns a source-material anchor that precisely locates this record
+        // within the growing material blob. The acquirer handles size/time-based
+        // rotation transparently, so raw.source_material_registry grows at
+        // O(rotation_count) across drain cycles rather than O(poll_count).
+        let record_bytes = record.bytes.as_slice();
+        let source_unit_id_for_anchor = self.source_unit_id;
+        let anchor = self
+            .ensure_stream_acquirer()
+            .await?
+            .append_with_anchor(record_bytes, source_unit_id_for_anchor)
+            .await
+            .map_err(|error| {
+                crate::SinexError::processing("append_with_anchor failed")
+                    .with_context("source_unit_id", self.source_unit_id)
+                    .with_std_error(&error)
+            })?;
+
+        Ok(MaterializedAdapterRecord {
+            record,
+            material_id: Id::<SourceMaterial>::from_uuid(anchor.material_id),
+            anchor_byte: anchor.offset_start,
+            offset_start: Some(anchor.offset_start),
+            offset_end: Some(anchor.offset_end),
+        })
+    }
+
     /// Open the adapter, drain all records through the parser, emit each
     /// `ParsedEventIntent` via the runtime, and append record bytes to the
     /// long-lived stream material.
@@ -691,36 +747,19 @@ where
                 }
             };
 
-            // Append record bytes to the long-lived stream material. The acquirer
-            // returns a SourceRecordAnchor with (material_id, offset_start,
-            // offset_end) that precisely locates this record within the growing
-            // material blob.  The acquirer handles size/time-based rotation
-            // transparently — `raw.source_material_registry` grows at
-            // O(rotation_count) across all drain cycles rather than O(poll_count).
-            let record_bytes = record.bytes.as_slice();
-            // Pre-load source_unit_id into a local: ensure_stream_acquirer
-            // takes &mut self, so we can't simultaneously hold &self.source_unit_id
-            // as an argument to append_with_anchor. Copy now (it's a &'static str
-            // so Copy semantics apply).
-            let source_unit_id_for_anchor = self.source_unit_id;
-            let anchor = match self
-                .ensure_stream_acquirer()
-                .await?
-                .append_with_anchor(record_bytes, source_unit_id_for_anchor)
-                .await
-            {
-                Ok(a) => a,
+            let materialized = match self.materialize_adapter_record(record).await {
+                Ok(materialized) => materialized,
                 Err(e) => {
                     warn!(
                         source_unit = self.source_unit_id,
                         error = %e,
-                        "append_with_anchor failed — skipping record so material provenance can be retried"
+                        "record materialization failed — skipping record so material provenance can be retried"
                     );
                     continue;
                 }
             };
 
-            let material_id = Id::<SourceMaterial>::from_uuid(anchor.material_id);
+            let material_id = materialized.material_id;
             if let Some(cursor) = next_cursor {
                 state.cursor = Some(cursor);
             }
@@ -728,7 +767,7 @@ where
             let ctx = ParserContext {
                 source_unit_id: source_unit_id.clone(),
                 source_material_id: material_id,
-                record_anchor: record.anchor.clone(),
+                record_anchor: materialized.record.anchor.clone(),
                 operation_id,
                 job_id,
                 host: host.clone(),
@@ -737,7 +776,7 @@ where
 
             let intents = match self
                 .parser
-                .parse_record_with_binding(record, &ctx, &self.binding_config)
+                .parse_record_with_binding(materialized.record, &ctx, &self.binding_config)
                 .await
             {
                 Ok(v) => v,
@@ -752,9 +791,16 @@ where
             };
 
             for intent in intents {
-                // Use the byte offset from the stream acquirer anchor so the event
-                // correctly references its position in the long-lived material.
-                match intent_to_event_with_anchor(intent, material_id, anchor.offset_start) {
+                // Use the materialization anchor so events reference their real
+                // material location, whether the record came from the default
+                // append stream or from an adapter-staged content material.
+                match intent_to_event_with_anchor(
+                    intent,
+                    material_id,
+                    materialized.anchor_byte,
+                    materialized.offset_start,
+                    materialized.offset_end,
+                ) {
                     Ok(event) => {
                         if let Err(e) = event_emitter.emit(event).await {
                             warn!(
@@ -1215,25 +1261,60 @@ fn merge_json_over(base: JsonValue, over: JsonValue) -> JsonValue {
     }
 }
 
+fn anchor_offsets_for_materialized_record(
+    anchor: &MaterialAnchor,
+) -> (i64, Option<i64>, Option<i64>) {
+    match anchor {
+        MaterialAnchor::ByteRange { start, len } => {
+            let start = (*start).min(i64::MAX as u64) as i64;
+            let len = (*len).min(i64::MAX as u64) as i64;
+            let end = start.saturating_add(len);
+            (start, Some(start), Some(end))
+        }
+        MaterialAnchor::Line { byte_start, .. } => {
+            let start = (*byte_start).min(i64::MAX as u64) as i64;
+            (start, Some(start), None)
+        }
+        MaterialAnchor::StreamFrame {
+            material_offset, ..
+        } => {
+            let start = (*material_offset).min(i64::MAX as u64) as i64;
+            (start, Some(start), None)
+        }
+        MaterialAnchor::SqliteRow { rowid, .. } => (*rowid, None, None),
+        MaterialAnchor::DirectoryEntry { .. } | MaterialAnchor::GitObject { .. } => (0, None, None),
+    }
+}
+
 /// Convert a `ParsedEventIntent` to an `Event<JsonValue>`, overriding `anchor_byte`
 /// with the stream-acquirer byte offset rather than the anchor embedded in the intent.
 ///
-/// When events are emitted from a long-lived source material managed by
-/// [`AppendStreamAcquirer`], the "natural" anchor inside `ParsedEventIntent` reflects
-/// a logical position within the *source record* (e.g. a `SQLite` rowid).  The real
-/// byte position in the material is the offset returned by `append_with_anchor`, which
-/// is what downstream queries need to replay or seek into the material blob.
+/// When events are emitted from an adapter-materialized source record, the
+/// intent anchor may reflect a logical position within the source record. The
+/// materialization step owns the real material anchor, either from
+/// `AppendStreamAcquirer` or from an adapter-supplied staged material.
 fn intent_to_event_with_anchor(
     intent: ParsedEventIntent,
     material_id: Id<SourceMaterial>,
     anchor_byte_override: i64,
+    offset_start: Option<i64>,
+    offset_end: Option<i64>,
 ) -> Result<Event<JsonValue>, String> {
     let builder: EventBuilder<JsonValue, NoProvenance> =
         EventBuilder::new_internal(intent.event_source, intent.event_type, intent.payload);
 
-    let built = builder
+    let mut builder = builder
         .from_material(material_id, anchor_byte_override)
-        .at_time(intent.ts_orig)
+        .at_time(intent.ts_orig);
+    if let (Some(start), Some(end)) = (offset_start, offset_end) {
+        builder = builder
+            .with_offset_start(start)
+            .map_err(|e| format!("EventBuilder::with_offset_start failed: {e}"))?
+            .with_offset_end(end)
+            .map_err(|e| format!("EventBuilder::with_offset_end failed: {e}"))?;
+    }
+
+    let built = builder
         .build()
         .map_err(|e| format!("EventBuilder::build failed: {e}"))?;
 
@@ -1402,6 +1483,38 @@ mod tests {
                 },
                 bytes: oversized,
                 logical_path: None,
+                source_ts_hint: None,
+                metadata: JsonValue::Null,
+            };
+            Ok(Box::pin(stream::iter(vec![Ok(record)])))
+        }
+
+        fn cursor_after(&self, _record: &SourceRecord) -> ParserResult<Self::Cursor> {
+            Ok(1)
+        }
+    }
+
+    #[derive(Default)]
+    struct AlreadyMaterializedRecordAdapter;
+
+    #[async_trait]
+    impl InputShapeAdapter for AlreadyMaterializedRecordAdapter {
+        type Config = ();
+        type Cursor = u64;
+
+        const KIND: InputShapeKind = InputShapeKind::AppendOnlyFile;
+
+        async fn open(
+            &self,
+            _material_id: Id<SourceMaterial>,
+            _config: &Self::Config,
+            _cursor: Option<Self::Cursor>,
+        ) -> ParserResult<BoxStream<'static, ParserResult<SourceRecord>>> {
+            let record = SourceRecord {
+                material_id: Id::from_uuid(Uuid::from_u128(42)),
+                anchor: MaterialAnchor::ByteRange { start: 17, len: 5 },
+                bytes: b"hello".to_vec(),
+                logical_path: Some(Utf8PathBuf::from("/tmp/materialized.txt")),
                 source_ts_hint: None,
                 metadata: JsonValue::Null,
             };
@@ -1696,6 +1809,51 @@ mod tests {
             ),
             "failed material append must not emit an event with degraded provenance"
         );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn adapter_backed_ingestor_preserves_already_materialized_record_provenance(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        let ctx = ctx.with_nats().shared().await?;
+        let (runtime, mut event_receiver) = make_adapter_runtime(&ctx).await?;
+        let mut ingestor =
+            AdapterBackedIngestor::<AlreadyMaterializedRecordAdapter, EmittingParser>::new(
+                "desktop.clipboard",
+            );
+        let mut state = AdapterNodeState::default();
+
+        ingestor
+            .initialize(AdapterNodeConfig::default(), &runtime, &mut state)
+            .await?;
+        let emitted = ingestor.drain_adapter(None, &mut state).await?;
+        let event = event_receiver
+            .recv()
+            .await
+            .ok_or_else(|| color_eyre::eyre::eyre!("expected emitted event"))?;
+
+        assert_eq!(emitted, 1);
+        assert_eq!(state.cursor, Some(1));
+        assert_eq!(
+            ingestor.current_material_id(),
+            None,
+            "pre-materialized records must not open the append-stream materializer",
+        );
+        assert_eq!(event.get_anchor_byte(), Some(17));
+        match event.provenance() {
+            sinex_primitives::events::Provenance::Material {
+                id,
+                offset_start,
+                offset_end,
+                ..
+            } => {
+                assert_eq!(id.to_uuid(), Uuid::from_u128(42));
+                assert_eq!(*offset_start, Some(17));
+                assert_eq!(*offset_end, Some(22));
+            }
+            other => panic!("expected material provenance, got {other:?}"),
+        }
         Ok(())
     }
 
