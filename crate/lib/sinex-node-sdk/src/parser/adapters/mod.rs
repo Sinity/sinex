@@ -11,6 +11,7 @@
 //! | [`AppendOnlyFileAdapter`] | `AppendOnlyFile` | line + byte offset | Log-file style |
 //! | [`SqliteRowAdapter`] | `SqliteQuery` | rowid | Read-only SQLite |
 //! | [`FileDropAdapter`] | `FileDrop` | `()` (anchor-only) | Live inotify watcher |
+//! | [`FileContentDropAdapter`] | `FileDrop` | `()` (anchor-only) | Live watcher with opt-in file-content materialization |
 //! | [`JournalctlStreamAdapter`] | `Subprocess` | journal cursor string | `journalctl -f -o json` |
 //! | [`DbusStreamAdapter`] | `DbusSubscription` | `()` (anchor-only) | D-Bus signals via mock or real backend |
 //! | [`UnixSocketStreamAdapter`] | `UnixSocket` | `()` (anchor-only) | Line-delimited socket (e.g. Hyprland IPC) |
@@ -56,10 +57,10 @@ pub use dbus_stream::{
     MockDbusBackend,
 };
 pub use file_drop::{
-    DEFAULT_FILE_DROP_MAX_WATCHES, FileDropAdapter, FileDropConfig, FileDropCursor,
-    FileDropEventKind, FileDropMoveRole, FileDropRecordMetadata, FileDropWatchBudget,
-    FileDropWatchMode, FileDropWatchPlan, FileDropWatchSurvey, choose_file_drop_watch_plan,
-    normalized_file_drop_watch_roots, survey_file_drop_watch_tree,
+    DEFAULT_FILE_DROP_MAX_WATCHES, FileContentDropAdapter, FileContentDropConfig, FileDropAdapter,
+    FileDropConfig, FileDropCursor, FileDropEventKind, FileDropMoveRole, FileDropRecordMetadata,
+    FileDropWatchBudget, FileDropWatchMode, FileDropWatchPlan, FileDropWatchSurvey,
+    choose_file_drop_watch_plan, normalized_file_drop_watch_roots, survey_file_drop_watch_tree,
 };
 pub use journalctl_stream::{
     BROADCAST_CAPACITY as JOURNALCTL_BROADCAST_CAPACITY, JournalctlCursor, JournalctlStreamAdapter,

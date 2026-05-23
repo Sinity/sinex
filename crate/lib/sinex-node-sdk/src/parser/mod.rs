@@ -60,6 +60,8 @@ pub use adapters::{
     DirectoryWalkAdapter,
     DirectoryWalkConfig,
     DirectoryWalkCursor,
+    FileContentDropAdapter,
+    FileContentDropConfig,
     FileDropAdapter,
     FileDropConfig,
     FileDropCursor,
