@@ -9,7 +9,7 @@ use sinex_primitives::rpc::tasks::{
     TaskCancelRequest, TaskCompleteRequest, TaskCreateRequest, TaskListRequest,
     TaskStateGetRequest, TaskStatusSetRequest, TaskUpdateRequest,
 };
-use sinex_primitives::task_domain::{TaskFieldUpdate, TaskState, TaskStatus};
+use sinex_primitives::task_domain::{TaskExternalRef, TaskFieldUpdate, TaskState, TaskStatus};
 use xtask::sandbox::prelude::*;
 
 #[sinex_test]
@@ -374,6 +374,8 @@ async fn tasks_list_rebuilds_and_filters_current_states(ctx: TestContext) -> Tes
         ctx.pool(),
         TaskListRequest {
             query: None,
+            external_system: None,
+            external_id: None,
             status: Some(TaskStatus::Open),
             project_id: Some("sinex".to_string()),
             tag: Some("work".to_string()),
@@ -420,6 +422,193 @@ async fn tasks_list_rebuilds_and_filters_current_states(ctx: TestContext) -> Tes
     .await?;
     assert_eq!(limited.total, 3);
     assert_eq!(limited.tasks.len(), 1);
+
+    Ok(())
+}
+
+#[sinex_test]
+async fn tasks_list_filters_external_refs(ctx: TestContext) -> TestResult<()> {
+    let auth = RpcAuthContext::system();
+    let github = handle_tasks_create(
+        ctx.pool(),
+        TaskCreateRequest {
+            task_id: None,
+            title: "External GitHub fixture".to_string(),
+            body: None,
+            external_refs: vec![TaskExternalRef {
+                system: "github".to_string(),
+                external_id: "1107".to_string(),
+                version: Some("issue-updated".to_string()),
+            }],
+            project_id: None,
+            tags: Vec::new(),
+            due_at: None,
+            priority: None,
+        },
+        &auth,
+    )
+    .await?;
+    handle_tasks_create(
+        ctx.pool(),
+        TaskCreateRequest {
+            task_id: None,
+            title: "External Taskwarrior fixture".to_string(),
+            body: None,
+            external_refs: vec![TaskExternalRef {
+                system: "taskwarrior".to_string(),
+                external_id: "task-1".to_string(),
+                version: None,
+            }],
+            project_id: None,
+            tags: Vec::new(),
+            due_at: None,
+            priority: None,
+        },
+        &auth,
+    )
+    .await?;
+
+    let by_system = handle_tasks_list(
+        ctx.pool(),
+        TaskListRequest {
+            external_system: Some("github".to_string()),
+            ..TaskListRequest::default()
+        },
+    )
+    .await?;
+    assert_eq!(by_system.total, 1);
+    assert_eq!(by_system.tasks[0].task_id, github.state.task_id);
+
+    let by_id = handle_tasks_list(
+        ctx.pool(),
+        TaskListRequest {
+            external_id: Some("1107".to_string()),
+            ..TaskListRequest::default()
+        },
+    )
+    .await?;
+    assert_eq!(by_id.total, 1);
+    assert_eq!(by_id.tasks[0].task_id, github.state.task_id);
+
+    Ok(())
+}
+
+#[sinex_test]
+async fn tasks_create_rejects_duplicate_external_ref(ctx: TestContext) -> TestResult<()> {
+    let auth = RpcAuthContext::system();
+    let external_ref = TaskExternalRef {
+        system: "github".to_string(),
+        external_id: "1107".to_string(),
+        version: None,
+    };
+    handle_tasks_create(
+        ctx.pool(),
+        TaskCreateRequest {
+            task_id: None,
+            title: "Original external task fixture".to_string(),
+            body: None,
+            external_refs: vec![external_ref.clone()],
+            project_id: None,
+            tags: Vec::new(),
+            due_at: None,
+            priority: None,
+        },
+        &auth,
+    )
+    .await?;
+
+    let duplicate = handle_tasks_create(
+        ctx.pool(),
+        TaskCreateRequest {
+            task_id: None,
+            title: "Duplicate external task fixture".to_string(),
+            body: None,
+            external_refs: vec![external_ref],
+            project_id: None,
+            tags: Vec::new(),
+            due_at: None,
+            priority: None,
+        },
+        &auth,
+    )
+    .await;
+
+    let error = duplicate.expect_err("duplicate external ref should be rejected");
+    assert!(
+        error
+            .to_string()
+            .contains("external ref already belongs to another task"),
+        "{error}"
+    );
+
+    Ok(())
+}
+
+#[sinex_test]
+async fn tasks_update_rejects_duplicate_external_ref(ctx: TestContext) -> TestResult<()> {
+    let auth = RpcAuthContext::system();
+    let external_ref = TaskExternalRef {
+        system: "github".to_string(),
+        external_id: "1107".to_string(),
+        version: None,
+    };
+    handle_tasks_create(
+        ctx.pool(),
+        TaskCreateRequest {
+            task_id: None,
+            title: "Existing external task fixture".to_string(),
+            body: None,
+            external_refs: vec![external_ref.clone()],
+            project_id: None,
+            tags: Vec::new(),
+            due_at: None,
+            priority: None,
+        },
+        &auth,
+    )
+    .await?;
+    let other = handle_tasks_create(
+        ctx.pool(),
+        TaskCreateRequest {
+            task_id: None,
+            title: "Other task fixture".to_string(),
+            body: None,
+            external_refs: Vec::new(),
+            project_id: None,
+            tags: Vec::new(),
+            due_at: None,
+            priority: None,
+        },
+        &auth,
+    )
+    .await?;
+
+    let duplicate = handle_tasks_update(
+        ctx.pool(),
+        TaskUpdateRequest {
+            task_id: other.state.task_id,
+            updated_at: None,
+            title: None,
+            body: None,
+            project_id: None,
+            tags: None,
+            due_at: None,
+            priority: None,
+            external_refs: Some(vec![external_ref]),
+            reason: Some("fixture duplicate".to_string()),
+            external_version: None,
+        },
+        &auth,
+    )
+    .await;
+
+    let error = duplicate.expect_err("duplicate external ref update should be rejected");
+    assert!(
+        error
+            .to_string()
+            .contains("external ref already belongs to another task"),
+        "{error}"
+    );
 
     Ok(())
 }

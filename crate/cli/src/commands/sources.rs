@@ -7,13 +7,15 @@ use sinex_primitives::rpc::sources::{
 };
 
 use sinex_primitives::Timestamp;
+use sinex_primitives::parser::SourceUnitId;
 use sinex_primitives::rpc::sources::{
-    SourceReadiness, SourceReadinessStatus, SourcesReadinessGetRequest,
+    CaveatSeverity, SourceReadiness, SourceReadinessStatus, SourcesReadinessGetRequest,
     SourcesReadinessGetResponse, SourcesReadinessListRequest, SourcesReadinessListResponse,
 };
 use sinex_primitives::rpc::sources::{
     SourcesAnnotateRequest, SourcesAnnotateResponse, SourcesArchiveRequest, SourcesArchiveResponse,
-    SourcesContinuityRequest, SourcesContinuityResponse,
+    SourcesContinuityRequest, SourcesContinuityResponse, SourcesDriftListRequest,
+    SourcesDriftListResponse,
 };
 use sinex_primitives::sources::SourceFamily;
 use sinex_primitives::sources::continuity::{
@@ -73,6 +75,7 @@ impl SourcesCommand {
             SourcesSubcommand::Archive(cmd) => cmd.execute(client, format).await,
             SourcesSubcommand::Continuity(cmd) => cmd.execute(client, format).await,
             SourcesSubcommand::Readiness(cmd) => cmd.execute(client, format).await,
+            SourcesSubcommand::Drift(cmd) => cmd.execute(client, format).await,
             SourcesSubcommand::ExplainGap(cmd) => cmd.execute(client, format).await,
         }
     }
@@ -96,6 +99,8 @@ pub enum SourcesSubcommand {
     Continuity(ContinuityCommand),
     /// Report source readiness, cost, freshness, and caveats
     Readiness(ReadinessCommand),
+    /// List recent source-shape drift observed by adapter-backed source units
+    Drift(DriftCommand),
     /// Explain a coverage gap at a specific timestamp
     #[command(name = "explain-gap")]
     ExplainGap(ExplainGapCommand),
@@ -971,4 +976,156 @@ fn format_readiness_detail(r: &SourceReadiness) -> String {
         }
     }
     lines.join("\n")
+}
+
+// ── Drift (#1103) ─────────────────────────────────────────────────────
+
+/// List recent source-shape drift observed by adapter-backed source units
+#[derive(Debug, Args)]
+pub struct DriftCommand {
+    /// Optional source-unit id filter.
+    #[arg(long = "source-unit")]
+    source_unit_id: Option<String>,
+
+    /// Maximum number of drift observations to return.
+    #[arg(long, default_value_t = 50)]
+    limit: usize,
+}
+
+impl DriftCommand {
+    async fn execute(&self, client: &GatewayClient, format: OutputFormat) -> Result<()> {
+        let source_unit_id = self
+            .source_unit_id
+            .as_deref()
+            .map(SourceUnitId::new)
+            .transpose()?;
+        let req = SourcesDriftListRequest {
+            source_unit_id,
+            limit: Some(self.limit),
+        };
+        let body: SourcesDriftListResponse = client.sources_drift_list(req).await?;
+        CommandOutput::single(body, format_drift_list).display(&format)?;
+        Ok(())
+    }
+}
+
+fn format_drift_list(response: &SourcesDriftListResponse) -> String {
+    use tabled::{builder::Builder, settings::Style};
+
+    if response.drifts.is_empty() {
+        return "No checkpointed source-shape drift found.".to_string();
+    }
+
+    let mut builder = Builder::new();
+    builder.push_record([
+        "SOURCE UNIT",
+        "IMPACT",
+        "CAVEATS",
+        "FORMAT",
+        "OBSERVED",
+        "ADDED",
+        "REMOVED",
+        "TYPE CHANGES",
+        "CHECKPOINT",
+    ]);
+
+    for drift in &response.drifts {
+        let caveats = drift.readiness_caveats();
+        let impact = strongest_caveat_severity(&caveats).map_or_else(
+            || "none".to_string(),
+            |severity| severity_label(severity).to_string(),
+        );
+        let caveat_codes = if caveats.is_empty() {
+            "none".to_string()
+        } else {
+            caveats
+                .iter()
+                .map(|caveat| caveat.code.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        };
+        builder.push_record([
+            drift.source_unit_id.as_str().to_string(),
+            impact,
+            caveat_codes,
+            drift.format.clone(),
+            drift.observed_at.clone(),
+            drift.added_keys.len().to_string(),
+            drift.removed_keys.len().to_string(),
+            drift.type_changes.len().to_string(),
+            drift.checkpoint_key.clone(),
+        ]);
+    }
+
+    let mut table = builder.build();
+    table.with(Style::rounded());
+    table.to_string()
+}
+
+fn strongest_caveat_severity(
+    caveats: &[sinex_primitives::rpc::sources::SourceCaveat],
+) -> Option<CaveatSeverity> {
+    caveats
+        .iter()
+        .map(|caveat| caveat.severity)
+        .max_by_key(|severity| caveat_severity_rank(*severity))
+}
+
+const fn caveat_severity_rank(severity: CaveatSeverity) -> u8 {
+    match severity {
+        CaveatSeverity::Info => 0,
+        CaveatSeverity::Warning => 1,
+        CaveatSeverity::Degraded => 2,
+        CaveatSeverity::Blocking => 3,
+    }
+}
+
+const fn severity_label(severity: CaveatSeverity) -> &'static str {
+    match severity {
+        CaveatSeverity::Info => "info",
+        CaveatSeverity::Warning => "warning",
+        CaveatSeverity::Degraded => "degraded",
+        CaveatSeverity::Blocking => "blocking",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sinex_primitives::rpc::sources::{
+        SourceShapeDriftObservation, SourceShapeTypeChange, caveat_codes,
+    };
+    use xtask::sandbox::prelude::*;
+
+    #[sinex_test]
+    async fn drift_table_surfaces_readiness_impact() -> TestResult<()> {
+        let response = SourcesDriftListResponse {
+            drifts: vec![SourceShapeDriftObservation {
+                checkpoint_key: "source-worker.default.fixture".to_string(),
+                source_unit_id: SourceUnitId::from_static("browser.history"),
+                consumer_group: Some("default".to_string()),
+                consumer_name: Some("fixture".to_string()),
+                previous_hash: "shape-old".to_string(),
+                current_hash: "shape-new".to_string(),
+                format: "sqlite_schema".to_string(),
+                added_keys: Vec::new(),
+                removed_keys: vec!["visit_id".to_string()],
+                type_changes: vec![SourceShapeTypeChange {
+                    key: "visit_time".to_string(),
+                    previous_type: "number".to_string(),
+                    current_type: "string".to_string(),
+                }],
+                required_input_keys: vec!["visit_id".to_string()],
+                observed_at: "2026-05-21T07:00:00Z".to_string(),
+            }],
+        };
+
+        let table = format_drift_list(&response);
+
+        assert!(table.contains("IMPACT"));
+        assert!(table.contains("blocking"));
+        assert!(table.contains(caveat_codes::PARSER_FIELD_TYPE_CHANGED));
+        assert!(table.contains(caveat_codes::PARSER_REQUIRED_FIELD_MISSING));
+        Ok(())
+    }
 }

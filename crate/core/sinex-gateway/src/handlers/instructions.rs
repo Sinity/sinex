@@ -58,6 +58,32 @@ pub async fn handle_hyprland_workspace_switch(
     let mut command_socket_response = None;
 
     if attempt.status == ActuationStatus::Attempted
+        && let Some(active_instruction_id) =
+            active_hyprland_workspace_instruction(pool, &instruction).await?
+    {
+        attempt.status = ActuationStatus::Rejected;
+        attempt.command_summary.command = None;
+        attempt.error = Some(format!(
+            "duplicate active workspace instruction with idempotency key {} is already pending observation: {active_instruction_id}",
+            instruction.idempotency_key
+        ));
+        return persist_attempt(
+            pool,
+            PendingInstructionAttempt {
+                instruction,
+                instruction_event: inserted_instruction,
+                attempt,
+                material_id,
+                observation_ready,
+                current_workspace_id,
+                command_socket_response,
+                instruction_event_id,
+            },
+        )
+        .await;
+    }
+
+    if attempt.status == ActuationStatus::Attempted
         && let Some(command) = attempt.command_summary.command.clone()
     {
         let Some(socket_path) =
@@ -190,6 +216,57 @@ async fn latest_hyprland_workspace(pool: &PgPool) -> Result<Option<i32>> {
                 .with_std_error(&error)
         })?;
     Ok(Some(payload.to_workspace_id))
+}
+
+async fn active_hyprland_workspace_instruction(
+    pool: &PgPool,
+    instruction: &DesktopWorkspaceSwitchInstructionPayload,
+) -> Result<Option<Uuid>> {
+    sqlx::query_scalar!(
+        r#"
+        SELECT i.id as "id!: Uuid"
+        FROM core.events i
+        WHERE i.source = 'runtime.instruction'
+          AND i.event_type = 'desktop.workspace.switch_requested'
+          AND i.payload->>'idempotency_key' = $1
+          AND i.payload->>'instruction_id' <> $2
+          AND COALESCE((i.payload->>'dry_run')::boolean, false) = false
+          AND EXISTS (
+              SELECT 1
+              FROM core.events a
+              WHERE a.source = 'runtime.instruction'
+                AND a.event_type = 'actuation.attempted'
+                AND i.id = ANY(a.source_event_ids)
+                AND a.payload->>'status' = 'attempted'
+          )
+          AND NOT EXISTS (
+              SELECT 1
+              FROM core.events s
+              WHERE s.source = 'runtime.instruction'
+                AND s.event_type = 'expectation.status'
+                AND s.payload->>'instruction_id' = i.payload->>'instruction_id'
+                AND s.payload->>'status' IN (
+                    'already_satisfied',
+                    'fulfilled',
+                    'timed_out',
+                    'contradicted',
+                    'impossible',
+                    'cancelled'
+                )
+          )
+        ORDER BY i.ts_orig DESC, i.id DESC
+        LIMIT 1
+        "#,
+        instruction.idempotency_key,
+        instruction.instruction_id.to_string(),
+    )
+    .fetch_optional(pool)
+    .await
+    .map_err(|error| {
+        SinexError::database("failed to query active Hyprland workspace instructions")
+            .with_context("idempotency_key", instruction.idempotency_key.clone())
+            .with_std_error(&error)
+    })
 }
 
 async fn register_instruction_material(

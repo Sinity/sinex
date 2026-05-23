@@ -201,6 +201,15 @@ pub const SOURCES_READINESS_GET_METHOD: RpcMethod<
     RpcMutability::ReadOnly,
 );
 
+pub const SOURCES_DRIFT_LIST_METHOD: RpcMethod<SourcesDriftListRequest, SourcesDriftListResponse> =
+    RpcMethod::new(
+        methods::SOURCES_DRIFT_LIST,
+        RpcRole::ReadOnly,
+        RpcDomain::Sources,
+        RpcStability::Experimental,
+        RpcMutability::ReadOnly,
+    );
+
 pub const SOURCES_STAGE_METHOD: RpcMethod<SourcesStageRequest, SourcesStageResponse> =
     RpcMethod::new(
         methods::SOURCES_STAGE,
@@ -1081,4 +1090,253 @@ pub struct SourcesReadinessGetResponse {
     /// `None` when no material has been registered for the requested source.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub readiness: Option<SourceReadiness>,
+}
+
+// ─────────────────────────────────────────────────────────────
+// sources.drift.list — checkpointed source-shape drift (#1103)
+// ─────────────────────────────────────────────────────────────
+
+/// Request: `sources.drift.list`
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+pub struct SourcesDriftListRequest {
+    /// Optional source-unit filter.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_unit_id: Option<SourceUnitId>,
+    /// Maximum drift observations to return. Defaults to 50.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limit: Option<usize>,
+}
+
+/// One scalar type-change observed in a source-shape drift event.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct SourceShapeTypeChange {
+    pub key: String,
+    pub previous_type: String,
+    pub current_type: String,
+}
+
+/// Checkpointed source-shape drift observed by an adapter-backed source unit.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct SourceShapeDriftObservation {
+    /// Checkpoint KV key that supplied this observation.
+    pub checkpoint_key: String,
+    /// Source unit that reported the drift.
+    pub source_unit_id: SourceUnitId,
+    /// Checkpoint consumer group, when recoverable from the KV key.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub consumer_group: Option<String>,
+    /// Checkpoint consumer name, when recoverable from the KV key.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub consumer_name: Option<String>,
+    pub previous_hash: String,
+    pub current_hash: String,
+    pub format: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub added_keys: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub removed_keys: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub type_changes: Vec<SourceShapeTypeChange>,
+    /// Parser-declared input keys that must be present for this drift surface.
+    ///
+    /// When populated by the producer, [`readiness_caveats`](Self::readiness_caveats)
+    /// can distinguish removed optional/previously-observed keys from removed
+    /// parser-required input keys.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub required_input_keys: Vec<String>,
+    pub observed_at: String,
+}
+
+impl SourceShapeDriftObservation {
+    /// Convert this checkpointed drift observation into readiness caveats.
+    #[must_use]
+    pub fn readiness_caveats(&self) -> Vec<SourceCaveat> {
+        self.readiness_caveats_with_required_fields(&self.required_input_keys)
+    }
+
+    /// Convert this drift observation into readiness caveats while honoring
+    /// parser-declared required input keys.
+    #[must_use]
+    pub fn readiness_caveats_with_required_fields(
+        &self,
+        required_input_keys: &[String],
+    ) -> Vec<SourceCaveat> {
+        source_shape_drift_readiness_caveats_with_required_fields(
+            &self.source_unit_id,
+            &self.current_hash,
+            self.added_keys.len(),
+            &self.removed_keys,
+            self.type_changes.len(),
+            required_input_keys,
+        )
+    }
+}
+
+/// Build the canonical readiness caveats for source-shape drift.
+///
+/// Added fields are advisory because existing parser mappings can usually
+/// ignore them. Removed fields and type changes are degraded because they are
+/// the shapes most likely to produce missing/defaulted parsed values.
+#[must_use]
+pub fn source_shape_drift_readiness_caveats(
+    source_unit_id: &SourceUnitId,
+    current_hash: &str,
+    added_key_count: usize,
+    removed_key_count: usize,
+    type_change_count: usize,
+) -> Vec<SourceCaveat> {
+    let mut caveats = Vec::new();
+    let evidence_ref = Some(format!("drift:{current_hash}"));
+
+    if type_change_count > 0 {
+        caveats.push(SourceCaveat {
+            code: caveat_codes::PARSER_FIELD_TYPE_CHANGED.to_string(),
+            severity: CaveatSeverity::Degraded,
+            message: format!(
+                "{} input field type(s) changed for source unit {}.",
+                type_change_count,
+                source_unit_id.as_str()
+            ),
+            evidence_ref: evidence_ref.clone(),
+        });
+    }
+
+    if removed_key_count > 0 {
+        caveats.push(SourceCaveat {
+            code: caveat_codes::PARSER_REQUIRED_FIELD_MISSING.to_string(),
+            severity: CaveatSeverity::Degraded,
+            message: format!(
+                "{} previously observed input field(s) are missing for source unit {}.",
+                removed_key_count,
+                source_unit_id.as_str()
+            ),
+            evidence_ref: evidence_ref.clone(),
+        });
+    }
+
+    if added_key_count > 0 && caveats.is_empty() {
+        caveats.push(SourceCaveat {
+            code: caveat_codes::SOURCE_SHAPE_CHANGED.to_string(),
+            severity: CaveatSeverity::Info,
+            message: format!(
+                "{} new input field(s) observed for source unit {}.",
+                added_key_count,
+                source_unit_id.as_str()
+            ),
+            evidence_ref,
+        });
+    }
+
+    caveats
+}
+
+/// Build readiness caveats for source-shape drift using parser-declared
+/// required input keys when they are available.
+///
+/// This is the fail-closed policy surface for parser manifests: removed fields
+/// that were only previously observed degrade readiness, while removed fields
+/// that the parser declares as required block readiness.
+#[must_use]
+pub fn source_shape_drift_readiness_caveats_with_required_fields(
+    source_unit_id: &SourceUnitId,
+    current_hash: &str,
+    added_key_count: usize,
+    removed_keys: &[String],
+    type_change_count: usize,
+    required_input_keys: &[String],
+) -> Vec<SourceCaveat> {
+    let mut caveats = Vec::new();
+    let evidence_ref = Some(format!("drift:{current_hash}"));
+    let required_missing = removed_required_input_keys(removed_keys, required_input_keys);
+
+    if type_change_count > 0 {
+        caveats.push(SourceCaveat {
+            code: caveat_codes::PARSER_FIELD_TYPE_CHANGED.to_string(),
+            severity: CaveatSeverity::Degraded,
+            message: format!(
+                "{} input field type(s) changed for source unit {}.",
+                type_change_count,
+                source_unit_id.as_str()
+            ),
+            evidence_ref: evidence_ref.clone(),
+        });
+    }
+
+    if !removed_keys.is_empty() {
+        let (severity, message) = if required_missing.is_empty() {
+            (
+                CaveatSeverity::Degraded,
+                format!(
+                    "{} previously observed input field(s) are missing for source unit {}.",
+                    removed_keys.len(),
+                    source_unit_id.as_str()
+                ),
+            )
+        } else {
+            (
+                CaveatSeverity::Blocking,
+                format!(
+                    "{} required input field(s) are missing for source unit {}: {}.",
+                    required_missing.len(),
+                    source_unit_id.as_str(),
+                    summarize_field_names(&required_missing)
+                ),
+            )
+        };
+        caveats.push(SourceCaveat {
+            code: caveat_codes::PARSER_REQUIRED_FIELD_MISSING.to_string(),
+            severity,
+            message,
+            evidence_ref: evidence_ref.clone(),
+        });
+    }
+
+    if added_key_count > 0 && caveats.is_empty() {
+        caveats.push(SourceCaveat {
+            code: caveat_codes::SOURCE_SHAPE_CHANGED.to_string(),
+            severity: CaveatSeverity::Info,
+            message: format!(
+                "{} new input field(s) observed for source unit {}.",
+                added_key_count,
+                source_unit_id.as_str()
+            ),
+            evidence_ref,
+        });
+    }
+
+    caveats
+}
+
+fn removed_required_input_keys(
+    removed_keys: &[String],
+    required_input_keys: &[String],
+) -> Vec<String> {
+    required_input_keys
+        .iter()
+        .filter(|required| removed_keys.iter().any(|removed| removed == *required))
+        .cloned()
+        .collect()
+}
+
+fn summarize_field_names(fields: &[String]) -> String {
+    const MAX_FIELD_NAMES: usize = 5;
+
+    let shown = fields
+        .iter()
+        .take(MAX_FIELD_NAMES)
+        .map(String::as_str)
+        .collect::<Vec<_>>()
+        .join(", ");
+    let hidden = fields.len().saturating_sub(MAX_FIELD_NAMES);
+    if hidden == 0 {
+        shown
+    } else {
+        format!("{shown}, +{hidden} more")
+    }
+}
+
+/// Response: `sources.drift.list`
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct SourcesDriftListResponse {
+    pub drifts: Vec<SourceShapeDriftObservation>,
 }

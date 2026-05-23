@@ -13,7 +13,6 @@
 //! - Stage timings: clippy ~18s ±10%, preflight ~0.3s
 
 use color_eyre::eyre::Result;
-use rand::{Rng, RngExt};
 use rusqlite::params;
 
 use crate::history::HistoryDb;
@@ -58,8 +57,6 @@ impl Default for SeedOptions {
 /// subsequent call to [`HistoryDb::start_invocation`] will clear the marker,
 /// transitioning the DB to real usage without any manual intervention.
 pub fn seed_history(db: &HistoryDb, options: &SeedOptions) -> Result<()> {
-    let mut rng = rand::rng();
-
     let now_unix = time::OffsetDateTime::now_utc().unix_timestamp();
     let window_secs = i64::from(options.days) * 86_400;
     let start_unix = now_unix - window_secs;
@@ -69,27 +66,24 @@ pub fn seed_history(db: &HistoryDb, options: &SeedOptions) -> Result<()> {
     let avg_gap = if total > 0 { window_secs / total } else { 3600 };
 
     // Diagnostic message count per-package starts high and trends down.
-    let mut pkg_diag_count: Vec<u32> = PACKAGES
-        .iter()
-        .map(|_| rng.random_range(4u32..=7))
-        .collect();
+    let mut pkg_diag_count: Vec<u32> = PACKAGES.iter().map(|_| fastrand::u32(4u32..=7)).collect();
 
     let mut current_ts = start_unix;
 
     for i in 0..options.invocations {
         // Advance time: avg gap ± 30%
-        let gap = avg_gap + rng.random_range(-(avg_gap / 3)..(avg_gap / 3));
+        let gap = avg_gap + fastrand::i64(-(avg_gap / 3)..(avg_gap / 3));
         current_ts += gap.max(60);
 
-        let command = weighted_command(&mut rng);
-        let success = rng.random_range(0u32..100) < 85;
+        let command = weighted_command();
+        let success = fastrand::u32(0..100) < 85;
         let status = if success { "success" } else { "failed" };
         let duration = match command {
-            "check" => rng.random_range(3.0f64..25.0),
-            "test" => rng.random_range(15.0..90.0),
-            "build" => rng.random_range(10.0..60.0),
-            "fix" => rng.random_range(2.0..15.0),
-            _ => rng.random_range(0.5..3.0),
+            "check" => random_f64_range(3.0, 25.0),
+            "test" => random_f64_range(15.0, 90.0),
+            "build" => random_f64_range(10.0, 60.0),
+            "fix" => random_f64_range(2.0, 15.0),
+            _ => random_f64_range(0.5, 3.0),
         };
 
         let started_at = format_ts(current_ts);
@@ -119,7 +113,7 @@ pub fn seed_history(db: &HistoryDb, options: &SeedOptions) -> Result<()> {
         // Add invocation_packages for check / build / test
         if matches!(command, "check" | "build" | "test") {
             // Pick 1-3 packages for this invocation
-            let pkg_count = rng.random_range(1usize..=3.min(PACKAGES.len()));
+            let pkg_count = fastrand::usize(1usize..=3.min(PACKAGES.len()));
             // Simple deterministic selection: pick sequentially from offset
             let offset = (i as usize) % PACKAGES.len();
             for j in 0..pkg_count {
@@ -136,7 +130,7 @@ pub fn seed_history(db: &HistoryDb, options: &SeedOptions) -> Result<()> {
             // Every ~5 check invocations, reduce diagnostic count
             if i % 5 == 0 {
                 for count in &mut pkg_diag_count {
-                    if *count > 0 && rng.random_range(0u32..3) == 0 {
+                    if *count > 0 && fastrand::u32(0..3) == 0 {
                         *count -= 1;
                     }
                 }
@@ -144,9 +138,9 @@ pub fn seed_history(db: &HistoryDb, options: &SeedOptions) -> Result<()> {
             for (pkg_idx, &count) in pkg_diag_count.iter().enumerate() {
                 let pkg = PACKAGES[pkg_idx];
                 for d in 0..count {
-                    let (level, code, message) = synthetic_diagnostic(&mut rng, d);
+                    let (level, code, message) = synthetic_diagnostic(d);
                     let file_path = format!("crate/lib/{pkg}/src/lib.rs");
-                    let line: i64 = 10 + i64::from(d) * 15 + rng.random_range(0i64..10);
+                    let line: i64 = 10 + i64::from(d) * 15 + fastrand::i64(0..10);
                     let _ = db.conn.execute(
                         r"
                         INSERT OR IGNORE INTO build_diagnostics
@@ -170,7 +164,7 @@ pub fn seed_history(db: &HistoryDb, options: &SeedOptions) -> Result<()> {
 
         // Add stage_timings for check / build
         if matches!(command, "check" | "build") {
-            let preflight_dur = 0.3 + rng.random_range(-0.05f64..0.1);
+            let preflight_dur = 0.3 + random_f64_range(-0.05, 0.1);
             let _ = db.conn.execute(
                 r"
                 INSERT INTO stage_timings (invocation_id, stage_name, started_at, duration_secs, success)
@@ -179,7 +173,7 @@ pub fn seed_history(db: &HistoryDb, options: &SeedOptions) -> Result<()> {
                 params![inv_id, started_at, preflight_dur],
             );
             if command == "check" {
-                let clippy_dur = 18.0 + rng.random_range(-1.8f64..1.8);
+                let clippy_dur = 18.0 + random_f64_range(-1.8, 1.8);
                 let _ = db.conn.execute(
                     r"
                     INSERT INTO stage_timings (invocation_id, stage_name, started_at, duration_secs, success)
@@ -192,9 +186,9 @@ pub fn seed_history(db: &HistoryDb, options: &SeedOptions) -> Result<()> {
 
         // Add test_results for test invocations
         if command == "test" {
-            let test_count = rng.random_range(20usize..80);
-            let fail_budget = if rng.random_range(0u32..100) < 5 {
-                rng.random_range(1usize..4)
+            let test_count = fastrand::usize(20..80);
+            let fail_budget = if fastrand::u32(0..100) < 5 {
+                fastrand::usize(1..4)
             } else {
                 0
             };
@@ -204,7 +198,7 @@ pub fn seed_history(db: &HistoryDb, options: &SeedOptions) -> Result<()> {
                 let test_status = if failed { "fail" } else { "pass" };
                 let pkg = PACKAGES[t % PACKAGES.len()];
                 let test_name = format!("{pkg}::tests::synthetic_test_{t}");
-                let dur = rng.random_range(0.01f64..2.0);
+                let dur = random_f64_range(0.01, 2.0);
                 let _ = db.conn.execute(
                     r"
                     INSERT OR IGNORE INTO test_results
@@ -223,8 +217,8 @@ pub fn seed_history(db: &HistoryDb, options: &SeedOptions) -> Result<()> {
     Ok(())
 }
 
-fn weighted_command(rng: &mut impl Rng) -> &'static str {
-    let roll: u32 = rng.random_range(0..100);
+fn weighted_command() -> &'static str {
+    let roll: u32 = fastrand::u32(0..100);
     let mut acc = 0;
     for &(cmd, weight) in COMMANDS {
         acc += weight;
@@ -235,7 +229,7 @@ fn weighted_command(rng: &mut impl Rng) -> &'static str {
     "check"
 }
 
-fn synthetic_diagnostic<'a>(rng: &mut impl Rng, idx: u32) -> (&'a str, &'a str, &'a str) {
+fn synthetic_diagnostic(idx: u32) -> (&'static str, &'static str, &'static str) {
     let warnings = [
         ("warning", "dead_code", "unused variable `result`"),
         ("warning", "unused_imports", "unused import: `std::fmt`"),
@@ -252,8 +246,12 @@ fn synthetic_diagnostic<'a>(rng: &mut impl Rng, idx: u32) -> (&'a str, &'a str, 
         ("error", "E0308", "mismatched types"),
         ("warning", "clippy::redundant_clone", "redundant clone"),
     ];
-    let i = (idx as usize + rng.random_range(0usize..3)) % warnings.len();
+    let i = (idx as usize + fastrand::usize(0..3)) % warnings.len();
     warnings[i]
+}
+
+fn random_f64_range(start: f64, end: f64) -> f64 {
+    start + fastrand::f64() * (end - start)
 }
 
 fn format_ts(unix: i64) -> String {

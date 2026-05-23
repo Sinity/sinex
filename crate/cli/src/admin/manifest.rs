@@ -52,8 +52,12 @@ pub struct ComponentRecord {
 pub enum ComponentExtras {
     /// `PostgreSQL` row counts per table.
     Postgres(PostgresExtras),
+    /// NATS `JetStream` state member paths.
+    Nats(NatsExtras),
     /// CAS blob count.
     Cas(CasExtras),
+    /// Runtime state metadata.
+    State(StateExtras),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -63,9 +67,23 @@ pub struct PostgresExtras {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NatsExtras {
+    /// Files observed under the captured `JetStream` state root.
+    pub member_paths: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CasExtras {
     /// Number of blobs in the repository.
     pub blob_count: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StateExtras {
+    /// Source units discovered from the captured state surface.
+    pub source_unit_ids: Vec<String>,
+    /// Whether runtime private-mode state was present in the captured state.
+    pub private_mode_state_present: bool,
 }
 
 /// Aggregate size totals for the snapshot.

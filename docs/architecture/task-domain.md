@@ -18,8 +18,9 @@ and first implementation slice.
 | Reducer | Shared domain reducer projects current task state. |
 | KG | Optional semantic links to projects/entities/files; not lifecycle owner. |
 
-Task state uses the reducer contract in `domain-reducers.md`. Task-specific code
-owns lifecycle semantics and typed validation.
+Task state uses the reducer contract in `domain-reducers.md`. Its typed reducer
+metadata is exported as `TASK_REDUCER_SPEC`; task-specific code owns lifecycle
+semantics and typed validation.
 
 ## Event Families
 
@@ -116,13 +117,16 @@ exists. Until then:
 | Mode | Policy |
 | --- | --- |
 | Import source material | Supported first: Taskwarrior exports are staged material. |
-| External id mirror | Preserve Taskwarrior UUID/status/version as `external_refs`. |
+| External id mirror | Preserve Taskwarrior UUID/status/version as `external_refs`; current-state queries can filter by external system/id. |
 | Projection export | Safe when Sinex is canonical for the exported subset. |
 | Peer canonical mirror | Requires explicit authority and conflict policy. |
 | Bidirectional sync | Out of scope for v1. |
 
 Taskwarrior must not become the hidden task ontology. It is an adapter over the
-task domain.
+task domain. A canonical task creation must not silently duplicate an existing
+task with the same `(external_ref.system, external_ref.external_id)` pair;
+importers should list by external identity, then update the matching Sinex task
+or create a new one when no match exists.
 
 ## Relations
 

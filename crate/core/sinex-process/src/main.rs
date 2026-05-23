@@ -96,8 +96,6 @@ fn extract_automaton(args: Vec<std::ffi::OsString>) -> (String, Vec<std::ffi::Os
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    human_panic::setup_panic!();
-
     let raw_args: Vec<std::ffi::OsString> = std::env::args_os().collect();
     let (automaton_name, filtered_args) = extract_automaton(raw_args);
 

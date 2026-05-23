@@ -4,7 +4,9 @@ use sinex_primitives::events::payloads::{
     TaskUpdatedPayload,
 };
 use sinex_primitives::task_domain::{
-    TaskFieldUpdate, TaskLifecycleInput, TaskSourceSystem, TaskStatus, reduce_task_event,
+    TASK_REDUCER_DOMAIN_ID, TASK_REDUCER_INPUT_EVENT_TYPES, TASK_REDUCER_SEMANTICS_VERSION,
+    TASK_REDUCER_SPEC, TaskFieldUpdate, TaskLifecycleInput, TaskSourceSystem, TaskStatus,
+    reduce_task_event,
 };
 use sinex_primitives::{Timestamp, Uuid};
 use xtask::sandbox::prelude::*;
@@ -34,6 +36,46 @@ async fn task_payloads_publish_stable_event_names() -> TestResult<()> {
     );
     assert_eq!(TaskCompletedPayload::EVENT_TYPE.as_str(), "task.completed");
     assert_eq!(TaskCancelledPayload::EVENT_TYPE.as_str(), "task.cancelled");
+    Ok(())
+}
+
+#[sinex_test]
+async fn task_reducer_exports_projection_spec() -> TestResult<()> {
+    assert_eq!(TASK_REDUCER_SPEC.domain_id, TASK_REDUCER_DOMAIN_ID);
+    assert_eq!(
+        TASK_REDUCER_SPEC.semantics_version,
+        TASK_REDUCER_SEMANTICS_VERSION
+    );
+    assert_eq!(TASK_REDUCER_SPEC.object_kind, "task");
+    assert_eq!(
+        TASK_REDUCER_SPEC.input_event_types,
+        TASK_REDUCER_INPUT_EVENT_TYPES
+    );
+    assert!(
+        TASK_REDUCER_SPEC
+            .input_event_types
+            .contains(&"task.created")
+    );
+    assert!(
+        TASK_REDUCER_SPEC
+            .input_event_types
+            .contains(&"task.updated")
+    );
+    assert!(
+        TASK_REDUCER_SPEC
+            .input_event_types
+            .contains(&"task.status_changed")
+    );
+    assert!(
+        TASK_REDUCER_SPEC
+            .input_event_types
+            .contains(&"task.completed")
+    );
+    assert!(
+        TASK_REDUCER_SPEC
+            .input_event_types
+            .contains(&"task.cancelled")
+    );
     Ok(())
 }
 

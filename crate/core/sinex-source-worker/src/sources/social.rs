@@ -152,6 +152,13 @@ impl MaterialParser for RedditCommentParser {
         }
         Ok(intents)
     }
+
+    fn required_input_keys(&self) -> Vec<String> {
+        ["id", "date", "subreddit"]
+            .into_iter()
+            .map(str::to_owned)
+            .collect()
+    }
 }
 
 fn parse_reddit_comment_row(
@@ -340,6 +347,13 @@ impl MaterialParser for RedditPostParser {
         }
         Ok(intents)
     }
+
+    fn required_input_keys(&self) -> Vec<String> {
+        ["id", "date", "subreddit"]
+            .into_iter()
+            .map(str::to_owned)
+            .collect()
+    }
 }
 
 fn parse_reddit_post_row(
@@ -526,6 +540,10 @@ impl MaterialParser for WykopEntryParser {
         }
         Ok(intents)
     }
+
+    fn required_input_keys(&self) -> Vec<String> {
+        vec!["/[]/entry_id".into(), "/[]/entry_created_at".into()]
+    }
 }
 
 fn parse_wykop_entry_row(
@@ -711,6 +729,10 @@ impl MaterialParser for WykopEntryCommentParser {
             )?);
         }
         Ok(intents)
+    }
+
+    fn required_input_keys(&self) -> Vec<String> {
+        vec!["/[]/comment_id".into(), "/[]/comment_created_at".into()]
     }
 }
 

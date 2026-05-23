@@ -104,11 +104,20 @@ fn run_in_pty(state_dir: &Path, args: &[&str]) -> Result<String> {
 fn normalize_screen(screen: &str) -> String {
     screen
         .lines()
+        .map(normalize_timing_footer)
         .map(str::trim_end)
         .collect::<Vec<_>>()
         .join("\n")
         .trim_end()
         .to_string()
+}
+
+fn normalize_timing_footer(line: &str) -> &str {
+    if line.starts_with("✓ history (") && line.ends_with("s)") {
+        "✓ history ([DURATION])"
+    } else {
+        line
+    }
 }
 
 fn read_pty_to_end(reader: &mut File, bytes: &mut Vec<u8>) -> Result<()> {

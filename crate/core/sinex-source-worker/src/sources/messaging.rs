@@ -138,6 +138,10 @@ impl MaterialParser for MessengerThreadParser {
 
         Ok(intents)
     }
+
+    fn required_input_keys(&self) -> Vec<String> {
+        vec!["/messages".to_owned()]
+    }
 }
 
 fn parse_message(

@@ -1,7 +1,6 @@
 //! Graph rendering in multiple formats
 
 use color_eyre::eyre::{Result, WrapErr};
-use guppy::graph::DependencyDirection;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 
@@ -218,21 +217,11 @@ impl Renderer for DotRenderer {
         let visible_packages: HashSet<String> =
             packages.iter().map(|p| p.name().to_string()).collect();
 
-        // Add edges for dependencies (only between visible packages)
+        // Add edges for active dependencies (only between visible packages)
         for pkg in &packages {
-            // Query forward dependencies (what this package depends on)
-            let query = self
-                .graph
-                .graph()
-                .query_forward(std::iter::once(pkg.id()))?;
-            let package_set = query.resolve();
-
-            // Iterate through all dependency links
-            for link in package_set.links(DependencyDirection::Forward) {
-                let from_pkg = link.from();
-                let to_pkg = link.to();
-                let from_name = from_pkg.name().to_string();
-                let to_name = to_pkg.name().to_string();
+            for dep in self.graph.all_dependencies(pkg.name())? {
+                let from_name = pkg.name().to_string();
+                let to_name = dep.name;
 
                 // Only add edge if both packages are visible
                 if visible_packages.contains(&from_name)
@@ -277,33 +266,18 @@ impl Renderer for JsonRenderer {
             })
             .collect();
 
-        // Create edges from package dependencies
+        // Create edges from active package dependencies
         let mut edges = Vec::new();
         for pkg in &packages {
-            let pkg_id = pkg.id();
-            // Query forward dependencies
-            let query = self
-                .graph
-                .graph()
-                .query_forward(vec![pkg_id])
-                .with_context(|| {
-                    format!("Failed to query forward dependencies for '{}'", pkg.name())
-                })?;
-            let resolved = query.resolve();
-            // Get all packages this one depends on
-            for dep_id in resolved.package_ids(guppy::graph::DependencyDirection::Forward) {
-                if pkg_id == dep_id {
-                    continue;
-                }
-                let dep_metadata = self.graph.graph().metadata(dep_id).with_context(|| {
-                    format!(
-                        "Failed to resolve dependency metadata while rendering '{}'",
-                        pkg.name()
-                    )
-                })?;
+            for dep in self.graph.all_dependencies(pkg.name()).with_context(|| {
+                format!(
+                    "Failed to resolve active dependencies while rendering '{}'",
+                    pkg.name()
+                )
+            })? {
                 edges.push(EdgeJson {
                     source: pkg.name().to_string(),
-                    target: dep_metadata.name().to_string(),
+                    target: dep.name,
                 });
             }
         }
@@ -321,6 +295,7 @@ pub struct AsciiRenderer {
     graph: WorkspaceGraph,
     focus: Option<String>,
     depth: usize,
+    styled: bool,
 }
 
 impl AsciiRenderer {
@@ -330,7 +305,14 @@ impl AsciiRenderer {
             graph: graph.clone(),
             focus,
             depth,
+            styled: true,
         }
+    }
+
+    /// Enable or disable ANSI styling in the rendered tree.
+    pub fn with_style(mut self, styled: bool) -> Self {
+        self.styled = styled;
+        self
     }
 
     /// Style a package name with optional focus highlight (cyan + bold)
@@ -342,6 +324,10 @@ impl AsciiRenderer {
     /// # Returns
     /// The styled string with ANSI color codes (or plain string if not focus)
     fn style_package(&self, name: &str, is_focus: bool) -> String {
+        if !self.styled {
+            return name.to_string();
+        }
+
         if is_focus {
             // Cyan + bold for focus package: \x1b[1;36m = bold cyan, \x1b[0m = reset
             format!("\x1b[1;36m{name}\x1b[0m")
@@ -358,6 +344,10 @@ impl AsciiRenderer {
     /// # Returns
     /// The styled string with ANSI gray color codes
     fn style_tree_chars(&self, chars: &str) -> String {
+        if !self.styled {
+            return chars.to_string();
+        }
+
         // Gray (bright black) color: \x1b[90m = bright black, \x1b[0m = reset
         format!("\x1b[90m{chars}\x1b[0m")
     }

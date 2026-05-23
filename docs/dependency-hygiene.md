@@ -23,19 +23,31 @@ rg "serde_yaml|serde_yml|yaml-rust|figment|Figment|Env::|Toml::|Yaml::|Json::" C
 | core service metadata | `sd-notify`, `shadow-rs`, gateway `once_cell`, ingestd `xtask-macros` | production/build | Remove if current service entrypoints no longer use them; otherwise add narrow machete ignores with the macro/build reason. | Gateway/ingestd owners. | `xtask check -p sinex-gateway`; `xtask check -p sinex-ingestd` |
 | library candidates | `sinex-db`: `async-trait`, `camino`, `mockall`, `urlencoding`; `sinex-primitives`: `rand`, `urlencoding`; `sinex-schema`: `blake3`, `pretty_assertions`, `proptest`, `rstest`, `tempfile`, `tokio-test` | mixed production/dev/test | Split by crate. Prefer removal for no-call-site deps; keep dev-only test helpers only with explicit tests or machete ignore. | Owning library crates. | package checks plus package tests for each crate |
 | proc-macro crate | `sinex-macros`: `color-eyre`, `tokio`, `xtask-macros` | likely stale dev/runtime deps | Remove if proc-macro tests still compile without them. | Macro crate owner. | `xtask check -p sinex-macros`; trybuild/proc-macro tests |
-| node crates | repeated `clap`, `color-eyre`, `human-panic`, `tokio`, `async-trait`, plus source-specific leftovers | production/runtime | Treat as an SDK-entrypoint cleanup train. Many node crates likely retained old standalone CLI deps after `node_entrypoint!`; remove crate by crate with node checks, not all at once. | Node SDK/runtime owners. | `xtask check -p <node-crate>`; node smoke tests where present |
+| node crates | repeated `clap`, `color-eyre`, `tokio`, `async-trait`, plus source-specific leftovers | production/runtime | Treat as an SDK-entrypoint cleanup train. Many node crates likely retained old standalone CLI deps after `node_entrypoint!`; remove crate by crate with node checks, not all at once. `human-panic` was removed in the dependency-compaction wave. | Node SDK/runtime owners. | `xtask check -p <node-crate>`; node smoke tests where present |
 | fuzz/test crates | fuzz `arbitrary`; e2e `parking_lot`, `tokio-stream`; workspace tests `time` | fuzz/test | Verify scanner false positives against fuzz/test targets. Keep with explicit ignore if generated fuzz/test macros need them; otherwise remove. | Test/fuzz owners. | `cargo machete --with-metadata`; targeted test/fuzz compile |
-| YAML output and manifests | `serde_yaml` in `sinexctl` and `xtask` | direct production/devtool | Keep for now with policy: YAML is a supported CLI output and xtask manifest/stack-plan format. Replacement is not a blind removal; it needs compatibility tests for supported YAML shape. | #775 / follow-up YAML policy slice. | CLI YAML tests; xtask docs/git-stack tests |
+| YAML output, manifests, and source front matter | `serde_yml` in `sinexctl`, `xtask`, and `sinex-source-worker` | direct production/devtool | Standardized on the workspace `serde_yml` crate. Do not reintroduce deprecated `serde_yaml` without compatibility evidence and a deliberate policy decision. | #775 / follow-up YAML policy slice. | CLI YAML tests; xtask docs/git-stack tests; knowledgebase front-matter parser tests |
 | duplicate versions | crypto/rand stack, `darling`, `dashmap`, `hashbrown`/`foldhash`, HTTP/reqwest/tower stack, `sysinfo`, `thiserror`, `toml`, `unicode-width`, `webpki-roots`, `which`, `whoami` | transitive and some direct | Do not churn all duplicates at once. Classify into direct-upgrade candidates vs transitive-only duplication. Prefer dependency upgrades where there is a single owning direct dependency. | Dependency owner per family. | `cargo tree --duplicates`; package checks for touched owners |
+
+## Classified Non-Wins
+
+These probes were checked during the 2026-05 dependency-compaction wave and
+should not be retried as blind patch bumps:
+
+| Candidate | Result | Why not |
+| --- | --- | --- |
+| `rusqlite` 0.32 -> 0.39 | rejected | Pulls `libsqlite3-sys` 0.37, which conflicts with SQLx 0.8's `libsqlite3-sys` 0.28 `links = "sqlite3"` requirement. This needs an SQLx-aligned SQLite native-link update, not an isolated rusqlite bump. |
+| `async-nats` 0.47 -> 0.48 | rejected for dependency compaction | Compiles, but duplicate count increases from 15 to 17 by adding `rand` 0.10, `rand_core` 0.10, `chacha20` 0.10, and `cpufeatures` 0.3 lanes. Revisit only for async-nats functionality or once the wider random/crypto stack is ready to move. |
+| `dashmap` 6.1 -> 6.2 | neutral | Compiles, but still depends on `hashbrown` 0.14 and does not reduce the duplicate graph. A future meaningful cleanup likely needs DashMap 7 after it leaves RC or a different state-map strategy. |
 
 ## Policy
 
 - `cargo machete` findings are candidates, not proof.
 - A dependency can close one of four ways: removed, deliberately adopted,
   isolated behind a feature/crate boundary, or kept with an explicit proof/ignore.
-- YAML support is an operator/API compatibility surface. Replacing `serde_yaml`
-  must preserve the documented YAML output and manifest formats or explicitly
-  narrow them in the CLI/docs.
+- YAML support is an operator/API compatibility surface. The workspace standard
+  is `serde_yml`; changes must preserve the documented YAML output,
+  manifest/stack-plan formats, and source front-matter parsing semantics or
+  explicitly narrow them in the CLI/docs.
 - Duplicate-version cleanup should happen by family. A PR that updates one
   direct dependency should state which duplicate family it reduced and which
   duplicates remain transitive-only.

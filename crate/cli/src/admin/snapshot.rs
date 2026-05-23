@@ -14,7 +14,8 @@ use walkdir::{DirEntry, WalkDir};
 
 use crate::admin::exec;
 use crate::admin::manifest::{
-    CasExtras, ComponentExtras, ComponentRecord, PostgresExtras, SnapshotManifest, Totals,
+    CasExtras, ComponentExtras, ComponentRecord, NatsExtras, PostgresExtras, SnapshotManifest,
+    StateExtras, Totals,
 };
 use crate::admin::staging::StagingDir;
 
@@ -230,6 +231,8 @@ pub struct SnapshotInspectResult {
     pub archive_entries: usize,
     pub source_unit_count: usize,
     pub source_unit_ids: Vec<String>,
+    pub state_source_unit_count: Option<usize>,
+    pub state_private_mode_state_present: Option<bool>,
     pub component_count: usize,
     pub components: Vec<ComponentSummary>,
     pub missing_component_paths: Vec<String>,
@@ -266,6 +269,7 @@ pub struct RestorePlanStep {
 pub struct RestoreDrillChecks {
     pub source_unit_count: usize,
     pub postgres_table_count: usize,
+    pub nats_member_count: Option<usize>,
     pub cas_blob_count: Option<u64>,
     pub private_mode_state_present: bool,
     pub missing_component_paths: Vec<String>,
@@ -274,10 +278,17 @@ pub struct RestoreDrillChecks {
 #[derive(Debug, Serialize)]
 pub struct RestoreObservedChecks {
     pub target_entry_count: usize,
+    pub checks_passed: bool,
+    pub failed_checks: Vec<String>,
     pub source_unit_count: usize,
     pub source_unit_ids_match: bool,
+    pub component_blake3: BTreeMap<String, String>,
+    pub component_blake3_matches: BTreeMap<String, bool>,
     pub postgres_row_counts: BTreeMap<String, i64>,
     pub postgres_row_counts_match: Option<bool>,
+    pub nats_state_present: bool,
+    pub nats_member_count: Option<usize>,
+    pub nats_member_paths_match: Option<bool>,
     pub cas_blob_count: Option<u64>,
     pub cas_blob_count_matches: Option<bool>,
     pub private_mode_state_present: bool,
@@ -404,13 +415,16 @@ impl AdminSnapshotCommand {
 
         if component_set.contains("nats") {
             let nats_src = state_dir.join("nats/jetstream");
-            let record = self.capture_dir_component(
+            let mut record = self.capture_dir_component(
                 "nats",
                 "nats/jetstream/",
                 &nats_src,
                 staging,
                 self.dry_run,
             )?;
+            record.extras = Some(ComponentExtras::Nats(NatsExtras {
+                member_paths: component_member_paths(&nats_src),
+            }));
             component_records.push(record);
 
             // Best-effort NATS stream listing (fails gracefully if NATS is down).
@@ -438,7 +452,13 @@ impl AdminSnapshotCommand {
         }
 
         if component_set.contains("state") {
-            let record = self.capture_state_component(state_dir, staging, self.dry_run)?;
+            let source_unit_ids = discover_source_unit_ids(state_dir);
+            let private_mode_state_present = state_dir.join("private-mode/state.json").exists();
+            let mut record = self.capture_state_component(state_dir, staging, self.dry_run)?;
+            record.extras = Some(ComponentExtras::State(StateExtras {
+                source_unit_ids,
+                private_mode_state_present,
+            }));
             component_records.push(record);
         }
 
@@ -568,14 +588,16 @@ impl AdminSnapshotCommand {
             let bytes = estimate_dir_bytes(src);
             (bytes, "dry-run".to_string())
         } else {
-            // e.g. staging/nats/jetstream/  ← will hold the content
-            let dst_dir = staging.path().join(name);
+            // e.g. staging/nats/jetstream/ holds the copied JetStream content,
+            // while staging/nats/ remains the component hash root.
+            let component_root = staging.path().join(name);
+            let dst_dir = staging.path().join(relative_path.trim_end_matches('/'));
             std::fs::create_dir_all(&dst_dir)
                 .with_context(|| format!("create {name} component dir in staging"))?;
             exec::cp_tree(src, &dst_dir)
                 .with_context(|| format!("copy {name} component from {}", src.display()))?;
-            let bytes = estimate_dir_bytes(&dst_dir);
-            let blake3 = blake3_dir(&dst_dir).unwrap_or_else(|_| "error".to_string());
+            let bytes = estimate_dir_bytes(&component_root);
+            let blake3 = blake3_dir(&component_root).unwrap_or_else(|_| "error".to_string());
             (bytes, blake3)
         };
 
@@ -934,6 +956,13 @@ fn inspect_snapshot_archive(archive_path: &Path) -> Result<SnapshotInspectResult
             blake3: component.blake3.clone(),
         })
         .collect();
+    let state_extras = manifest
+        .components
+        .iter()
+        .find_map(|component| match &component.extras {
+            Some(ComponentExtras::State(extras)) => Some(extras),
+            _ => None,
+        });
 
     Ok(SnapshotInspectResult {
         archive_path: archive_path.display().to_string(),
@@ -946,6 +975,9 @@ fn inspect_snapshot_archive(archive_path: &Path) -> Result<SnapshotInspectResult
         archive_entries: entries.len(),
         source_unit_count: manifest.source_unit_ids.len(),
         source_unit_ids: manifest.source_unit_ids.clone(),
+        state_source_unit_count: state_extras.map(|extras| extras.source_unit_ids.len()),
+        state_private_mode_state_present: state_extras
+            .map(|extras| extras.private_mode_state_present),
         component_count: manifest.components.len(),
         components,
         missing_component_paths,
@@ -1083,6 +1115,14 @@ fn restore_drill_checks(
             Some(ComponentExtras::Cas(extras)) => Some(extras.blob_count),
             _ => None,
         });
+    let nats_member_count =
+        manifest
+            .components
+            .iter()
+            .find_map(|component| match &component.extras {
+                Some(ComponentExtras::Nats(extras)) => Some(extras.member_paths.len()),
+                _ => None,
+            });
     let missing_component_paths = manifest
         .components
         .iter()
@@ -1094,10 +1134,10 @@ fn restore_drill_checks(
     RestoreDrillChecks {
         source_unit_count: manifest.source_unit_ids.len(),
         postgres_table_count,
+        nats_member_count,
         cas_blob_count,
-        private_mode_state_present: archive_path_contains(
-            archive_entries,
-            "state/private-mode/state.json",
+        private_mode_state_present: expected_private_mode_state_present(manifest).unwrap_or_else(
+            || archive_path_contains(archive_entries, "state/private-mode/state.json"),
         ),
         missing_component_paths,
     }
@@ -1118,31 +1158,154 @@ fn observe_restored_target(
             Some(ComponentExtras::Cas(extras)) => Some(extras.blob_count),
             _ => None,
         });
+    let expected_nats_member_paths =
+        manifest
+            .components
+            .iter()
+            .find_map(|component| match &component.extras {
+                Some(ComponentExtras::Nats(extras)) => Some(&extras.member_paths),
+                _ => None,
+            });
+    let component_blake3 = observed_component_blake3(manifest, target_dir);
+    let component_blake3_matches = expected_component_blake3_matches(manifest, &component_blake3);
+    let nats_state_root = target_dir.join("nats/jetstream");
+    let nats_state_present = nats_state_root.exists();
+    let nats_member_paths = nats_state_present.then(|| component_member_paths(&nats_state_root));
+    let nats_member_count = nats_member_paths.as_ref().map(Vec::len);
     let cas_blob_count = target_dir
         .join("cas/blob-repository")
         .exists()
         .then(|| count_files_recursive(&target_dir.join("cas/blob-repository")));
     let private_mode_state_present = target_dir.join("state/private-mode/state.json").exists();
-    let manifest_private_mode_state_present =
-        archive_path_contains(archive_entries, "state/private-mode/state.json");
+    let manifest_private_mode_state_present = expected_private_mode_state_present(manifest)
+        .unwrap_or_else(|| archive_path_contains(archive_entries, "state/private-mode/state.json"));
+    let source_unit_ids_match = source_unit_ids == manifest.source_unit_ids;
+    let postgres_row_counts_match = expected_postgres_row_counts.map(|expected| {
+        postgres_row_counts
+            .as_ref()
+            .is_some_and(|observed| observed == expected)
+    });
+    let nats_member_paths_match = expected_nats_member_paths.map(|expected| {
+        nats_member_paths
+            .as_ref()
+            .is_some_and(|observed| observed == expected)
+    });
+    let cas_blob_count_matches = expected_cas_blob_count
+        .map(|expected| cas_blob_count.map_or(expected == 0, |observed| observed == expected));
+    let private_mode_state_matches_manifest =
+        private_mode_state_present == manifest_private_mode_state_present;
+    let failed_checks = restore_failed_checks(RestoreFailedCheckInput {
+        source_unit_ids_match,
+        component_blake3_matches: &component_blake3_matches,
+        postgres_row_counts_match,
+        nats_member_paths_match,
+        cas_blob_count_matches,
+        private_mode_state_matches_manifest,
+    });
 
     RestoreObservedChecks {
         target_entry_count: count_files_recursive(target_dir) as usize,
+        checks_passed: failed_checks.is_empty(),
+        failed_checks,
         source_unit_count: source_unit_ids.len(),
-        source_unit_ids_match: source_unit_ids == manifest.source_unit_ids,
+        source_unit_ids_match,
+        component_blake3,
+        component_blake3_matches,
         postgres_row_counts: postgres_row_counts.clone().unwrap_or_default(),
-        postgres_row_counts_match: expected_postgres_row_counts.map(|expected| {
-            postgres_row_counts
-                .as_ref()
-                .is_some_and(|observed| observed == expected)
-        }),
+        postgres_row_counts_match,
+        nats_state_present,
+        nats_member_count,
+        nats_member_paths_match,
         cas_blob_count,
-        cas_blob_count_matches: expected_cas_blob_count
-            .map(|expected| cas_blob_count.map_or(expected == 0, |observed| observed == expected)),
+        cas_blob_count_matches,
         private_mode_state_present,
-        private_mode_state_matches_manifest: private_mode_state_present
-            == manifest_private_mode_state_present,
+        private_mode_state_matches_manifest,
     }
+}
+
+struct RestoreFailedCheckInput<'a> {
+    source_unit_ids_match: bool,
+    component_blake3_matches: &'a BTreeMap<String, bool>,
+    postgres_row_counts_match: Option<bool>,
+    nats_member_paths_match: Option<bool>,
+    cas_blob_count_matches: Option<bool>,
+    private_mode_state_matches_manifest: bool,
+}
+
+fn restore_failed_checks(input: RestoreFailedCheckInput<'_>) -> Vec<String> {
+    let mut failed = Vec::new();
+    if !input.source_unit_ids_match {
+        failed.push("source_unit_ids_match".to_string());
+    }
+    for (component, matched) in input.component_blake3_matches {
+        if !matched {
+            failed.push(format!("component_blake3_matches.{component}"));
+        }
+    }
+    if input.postgres_row_counts_match == Some(false) {
+        failed.push("postgres_row_counts_match".to_string());
+    }
+    if input.nats_member_paths_match == Some(false) {
+        failed.push("nats_member_paths_match".to_string());
+    }
+    if input.cas_blob_count_matches == Some(false) {
+        failed.push("cas_blob_count_matches".to_string());
+    }
+    if !input.private_mode_state_matches_manifest {
+        failed.push("private_mode_state_matches_manifest".to_string());
+    }
+    failed
+}
+
+fn observed_component_blake3(
+    manifest: &SnapshotManifest,
+    target_dir: &Path,
+) -> BTreeMap<String, String> {
+    manifest
+        .components
+        .iter()
+        .filter(|component| component.bytes > 0)
+        .filter_map(|component| {
+            let observed = match component.name.as_str() {
+                "postgres" => blake3_file(&target_dir.join(&component.path)).ok(),
+                "state" | "cas" | "nats" => {
+                    let component_root = target_dir.join(&component.name);
+                    component_root
+                        .exists()
+                        .then(|| blake3_dir(&component_root).ok())
+                        .flatten()
+                }
+                other => {
+                    let component_root = target_dir.join(other);
+                    component_root
+                        .exists()
+                        .then(|| blake3_dir(&component_root).ok())
+                        .flatten()
+                }
+            }?;
+            Some((component.name.clone(), observed))
+        })
+        .collect()
+}
+
+fn expected_component_blake3_matches(
+    manifest: &SnapshotManifest,
+    observed: &BTreeMap<String, String>,
+) -> BTreeMap<String, bool> {
+    manifest
+        .components
+        .iter()
+        .filter(|component| component.bytes > 0)
+        .filter(|component| !matches!(component.blake3.as_str(), "absent" | "dry-run" | "error"))
+        .map(|component| {
+            (
+                component.name.clone(),
+                observed
+                    .get(&component.name)
+                    .is_some_and(|actual| actual == &component.blake3),
+            )
+        })
+        .collect()
 }
 
 fn expected_postgres_row_counts(manifest: &SnapshotManifest) -> Option<&BTreeMap<String, i64>> {
@@ -1151,6 +1314,29 @@ fn expected_postgres_row_counts(manifest: &SnapshotManifest) -> Option<&BTreeMap
         .iter()
         .find_map(|component| match &component.extras {
             Some(ComponentExtras::Postgres(extras)) => Some(&extras.row_counts),
+            _ => None,
+        })
+}
+
+fn component_member_paths(root: &Path) -> Vec<String> {
+    if !root.exists() {
+        return Vec::new();
+    }
+
+    let mut members: Vec<_> = collect_files_sorted(root, root)
+        .into_iter()
+        .map(|(relative_path, _)| relative_path)
+        .collect();
+    members.sort();
+    members
+}
+
+fn expected_private_mode_state_present(manifest: &SnapshotManifest) -> Option<bool> {
+    manifest
+        .components
+        .iter()
+        .find_map(|component| match &component.extras {
+            Some(ComponentExtras::State(extras)) => Some(extras.private_mode_state_present),
             _ => None,
         })
 }
@@ -1392,6 +1578,21 @@ pub fn format_snapshot_inspect_result(result: &SnapshotInspectResult) -> String 
     out.push_str(&format!("  Host:    {}\n", result.host));
     out.push_str(&format!("  Entries: {}\n", result.archive_entries));
     out.push_str(&format!("  Source units: {}\n", result.source_unit_count));
+    if let Some(state_source_unit_count) = result.state_source_unit_count {
+        out.push_str(&format!(
+            "  State source units: {state_source_unit_count}\n"
+        ));
+    }
+    if let Some(private_mode_state_present) = result.state_private_mode_state_present {
+        out.push_str(&format!(
+            "  Private-mode state: {}\n",
+            if private_mode_state_present {
+                "present"
+            } else {
+                "absent"
+            }
+        ));
+    }
     out.push_str("\n  Components:\n");
     for component in &result.components {
         out.push_str(&format!(
@@ -1453,6 +1654,9 @@ pub fn format_snapshot_restore_plan_result(result: &SnapshotRestorePlanResult) -
         "    postgres tables: {}\n",
         result.drill_checks.postgres_table_count
     ));
+    if let Some(member_count) = result.drill_checks.nats_member_count {
+        out.push_str(&format!("    NATS members: {member_count}\n"));
+    }
     if let Some(blob_count) = result.drill_checks.cas_blob_count {
         out.push_str(&format!("    CAS blobs: {blob_count}\n"));
     }
@@ -1468,6 +1672,20 @@ pub fn format_snapshot_restore_plan_result(result: &SnapshotRestorePlanResult) -
     if let Some(observed) = &result.observed_checks {
         out.push_str("\n  Observed after restore:\n");
         out.push_str(&format!(
+            "    checks: {}\n",
+            if observed.checks_passed {
+                "passed"
+            } else {
+                "failed"
+            }
+        ));
+        if !observed.failed_checks.is_empty() {
+            out.push_str(&format!(
+                "    failed checks: {}\n",
+                observed.failed_checks.join(", ")
+            ));
+        }
+        out.push_str(&format!(
             "    target entries: {}\n",
             observed.target_entry_count
         ));
@@ -1482,6 +1700,30 @@ pub fn format_snapshot_restore_plan_result(result: &SnapshotRestorePlanResult) -
         ));
         if let Some(blob_count) = observed.cas_blob_count {
             out.push_str(&format!("    CAS blobs: {blob_count}\n"));
+        }
+        if let Some(member_count) = observed.nats_member_count {
+            let match_text = observed
+                .nats_member_paths_match
+                .map_or(
+                    "not declared",
+                    |matches| if matches { "match" } else { "mismatch" },
+                );
+            out.push_str(&format!(
+                "    NATS members: {member_count} ({match_text})\n"
+            ));
+        } else if observed.nats_state_present {
+            out.push_str("    NATS state: present\n");
+        }
+        if !observed.component_blake3_matches.is_empty() {
+            let matched = observed
+                .component_blake3_matches
+                .values()
+                .filter(|matches| **matches)
+                .count();
+            out.push_str(&format!(
+                "    component hashes: {matched}/{} match\n",
+                observed.component_blake3_matches.len()
+            ));
         }
         if let Some(matches) = observed.postgres_row_counts_match {
             out.push_str(&format!(

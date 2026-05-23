@@ -16,8 +16,8 @@ use sinex_primitives::rpc::tasks::{
     TaskUpdateRequest, TaskUpdateResponse,
 };
 use sinex_primitives::task_domain::{
-    TaskCancelledInput, TaskCompletedInput, TaskCreatedInput, TaskLifecycleInput, TaskSourceSystem,
-    TaskState, TaskStatusChangedInput, TaskUpdatedInput, reduce_task_event,
+    TaskCancelledInput, TaskCompletedInput, TaskCreatedInput, TaskExternalRef, TaskLifecycleInput,
+    TaskSourceSystem, TaskState, TaskStatusChangedInput, TaskUpdatedInput, reduce_task_event,
 };
 use sinex_primitives::{Id, Result, SinexError, Timestamp, Uuid};
 use sqlx::PgPool;
@@ -49,6 +49,7 @@ pub async fn handle_tasks_create(
     }
 
     let task_id = req.task_id.unwrap_or_else(Uuid::now_v7);
+    reject_duplicate_external_refs(pool, task_id, &req.external_refs).await?;
     let observed_at = Timestamp::now();
     let material_id =
         register_task_material(pool, auth, task_id, "created", title, req.body.as_deref()).await?;
@@ -182,6 +183,9 @@ pub async fn handle_tasks_update(
             SinexError::validation("tasks.update: title must not be empty")
                 .with_context("task_id", req.task_id.to_string()),
         );
+    }
+    if let Some(external_refs) = req.external_refs.as_ref() {
+        reject_duplicate_external_refs(pool, req.task_id, external_refs).await?;
     }
 
     let updated_at = req.updated_at.unwrap_or_else(Timestamp::now);
@@ -408,6 +412,32 @@ pub async fn handle_tasks_list(pool: &PgPool, req: TaskListRequest) -> Result<Ta
     {
         states.retain(|state| task_state_matches_query(state, query));
     }
+    if let Some(external_system) = req
+        .external_system
+        .as_deref()
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+    {
+        states.retain(|state| {
+            state
+                .external_refs
+                .iter()
+                .any(|external_ref| external_ref.system == external_system)
+        });
+    }
+    if let Some(external_id) = req
+        .external_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+    {
+        states.retain(|state| {
+            state
+                .external_refs
+                .iter()
+                .any(|external_ref| external_ref.external_id == external_id)
+        });
+    }
     if let Some(status) = req.status {
         states.retain(|state| state.status == status);
     }
@@ -562,6 +592,43 @@ fn normalize_task_list_limit(limit: Option<u32>) -> Result<u32> {
         Some(value) => Ok(value.min(MAX_TASK_LIST_LIMIT)),
         None => Ok(DEFAULT_TASK_LIST_LIMIT),
     }
+}
+
+async fn reject_duplicate_external_refs(
+    pool: &PgPool,
+    task_id: Uuid,
+    external_refs: &[TaskExternalRef],
+) -> Result<()> {
+    if external_refs.is_empty() {
+        return Ok(());
+    }
+
+    let states = reduce_task_rows_by_id(query_all_task_event_rows(pool).await?)?;
+    for external_ref in external_refs {
+        let system = external_ref.system.trim();
+        let external_id = external_ref.external_id.trim();
+        if system.is_empty() || external_id.is_empty() {
+            return Err(SinexError::validation(
+                "tasks: external refs require non-empty system and external_id",
+            )
+            .with_context("task_id", task_id.to_string()));
+        }
+        if let Some(existing) = states.iter().find(|state| {
+            state.task_id != task_id
+                && state.external_refs.iter().any(|candidate| {
+                    candidate.system == system && candidate.external_id == external_id
+                })
+        }) {
+            return Err(SinexError::validation(
+                "tasks: external ref already belongs to another task",
+            )
+            .with_context("task_id", task_id.to_string())
+            .with_context("existing_task_id", existing.task_id.to_string())
+            .with_context("external_system", system.to_string())
+            .with_context("external_id", external_id.to_string()));
+        }
+    }
+    Ok(())
 }
 
 fn task_state_matches_query(state: &TaskState, query: &str) -> bool {

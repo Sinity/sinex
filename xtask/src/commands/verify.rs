@@ -125,7 +125,7 @@ pub enum VerifySubcommand {
         #[arg(long)]
         dry_run: bool,
     },
-    /// Summarize executable proof claims, runner commands, and deferrals.
+    /// Summarize executable verification claims, runner commands, and deferrals.
     Claims {
         /// Emit JSON output.
         #[arg(long)]
@@ -445,7 +445,7 @@ fn execute_claims(
     if json && !ctx.is_json() {
         println!("{}", serde_json::to_string_pretty(&summary)?);
     } else if !json && ctx.is_human() {
-        println!("Proof claims");
+        println!("Verification claims");
         println!("  required:  {}", summary.required.len());
         println!("  advisory:  {}", summary.advisory.len());
         println!("  deferred:  {}", summary.deferred.len());
@@ -483,13 +483,13 @@ fn execute_claims(
     }
 
     let result = if summary.errors.is_empty() {
-        CommandResult::success().with_message("proof claims catalog is valid")
+        CommandResult::success().with_message("verification claim catalog is valid")
     } else {
         CommandResult::failure(crate::output::StructuredError::new(
             "PROOF_CLAIMS_INVALID",
-            "proof claims catalog has errors",
+            "verification claim catalog has errors",
         ))
-        .with_message("proof claims catalog has errors")
+        .with_message("verification claim catalog has errors")
     };
 
     if ctx.is_json() {
@@ -512,7 +512,7 @@ fn visible_claim_warnings(warnings: Vec<String>, include_demoted_detail: bool) -
 }
 
 fn is_local_source_unit_tag_warning(warning: &str) -> bool {
-    warning.contains(" local source-unit proof tag")
+    warning.contains(" local source-unit verification tag")
 }
 
 fn default_phase_manifest_path() -> PathBuf {
@@ -2239,7 +2239,7 @@ mod tests {
     async fn claim_warnings_hide_local_tags_until_demoted_detail_requested()
     -> ::xtask::sandbox::TestResult<()> {
         let warnings = vec![
-            "source_unit:terminal carries 2 local source-unit proof tag(s): anchor, timestamp"
+            "source_unit:terminal carries 2 local source-unit verification tag(s): anchor, timestamp"
                 .to_string(),
             "required proof subject `runtime_unit:*` has no runner binding".to_string(),
         ];

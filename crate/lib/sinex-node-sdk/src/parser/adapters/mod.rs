@@ -55,7 +55,11 @@ pub use dbus_stream::{
     DbusBackend, DbusBus, DbusMessage, DbusStreamAdapter, DbusStreamConfig, DbusStreamCursor,
     MockDbusBackend,
 };
-pub use file_drop::{FileDropAdapter, FileDropConfig, FileDropCursor, FileDropEventKind};
+pub use file_drop::{
+    FileDropAdapter, FileDropConfig, FileDropCursor, FileDropEventKind, FileDropMoveRole,
+    FileDropRecordMetadata, FileDropWatchBudget, FileDropWatchMode, FileDropWatchPlan,
+    FileDropWatchSurvey, choose_file_drop_watch_plan,
+};
 pub use journalctl_stream::{
     BROADCAST_CAPACITY as JOURNALCTL_BROADCAST_CAPACITY, JournalctlCursor, JournalctlStreamAdapter,
     JournalctlStreamConfig, JournalctlSubscriber, SharedJournalctlStream,

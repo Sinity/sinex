@@ -95,6 +95,28 @@ pub const SEMANTIC_LANE_OUTPUTS_WRITE_METHOD: RpcMethod<
     RpcMutability::Mutating,
 );
 
+pub const SEMANTIC_LANE_OUTPUTS_SEED_CANONICAL_GRAPH_METHOD: RpcMethod<
+    SemanticLaneOutputsSeedCanonicalGraphRequest,
+    SemanticLaneOutputsSeedCanonicalGraphResponse,
+> = RpcMethod::new(
+    methods::SEMANTIC_LANE_OUTPUTS_SEED_CANONICAL_GRAPH,
+    RpcRole::Write,
+    RpcDomain::Semantic,
+    RpcStability::Experimental,
+    RpcMutability::Mutating,
+);
+
+pub const SEMANTIC_LANE_OUTPUTS_SEED_ENTITY_EVENTS_METHOD: RpcMethod<
+    SemanticLaneOutputsSeedEntityEventsRequest,
+    SemanticLaneOutputsSeedEntityEventsResponse,
+> = RpcMethod::new(
+    methods::SEMANTIC_LANE_OUTPUTS_SEED_ENTITY_EVENTS,
+    RpcRole::Write,
+    RpcDomain::Semantic,
+    RpcStability::Experimental,
+    RpcMutability::Mutating,
+);
+
 pub const SEMANTIC_LANE_DIFFS_LIST_METHOD: RpcMethod<
     SemanticLaneDiffsListRequest,
     SemanticLaneDiffsListResponse,
@@ -222,6 +244,16 @@ pub struct SemanticLaneOutputsWriteRequest {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SemanticLaneOutputsSeedCanonicalGraphRequest {
+    pub lane_id: Uuid,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SemanticLaneOutputsSeedEntityEventsRequest {
+    pub lane_id: Uuid,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SemanticLaneDiffRecordEntityRelationRequest {
     #[serde(default)]
     pub diff_id: Option<Uuid>,
@@ -267,6 +299,18 @@ pub struct SemanticLaneOutputsListResponse {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SemanticLaneOutputsWriteResponse {
+    pub lane_id: Uuid,
+    pub written: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SemanticLaneOutputsSeedCanonicalGraphResponse {
+    pub lane_id: Uuid,
+    pub written: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SemanticLaneOutputsSeedEntityEventsResponse {
     pub lane_id: Uuid,
     pub written: u64,
 }

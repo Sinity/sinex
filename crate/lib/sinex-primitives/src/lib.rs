@@ -10,6 +10,7 @@ pub mod constants;
 pub mod coordination;
 pub mod deployment_readiness;
 pub mod domain;
+pub mod domain_reducer;
 pub mod env;
 pub mod environment;
 pub mod error;
@@ -90,6 +91,10 @@ pub use deployment_readiness::{
 pub use domain::{
     EventName, EventSource, EventType, HostName, OperationRunStatus, RecordedPath, SanitizedPath,
     ServiceName, SourceIdentifier, SourceMaterialFormat, SourceMaterialTimingInfoType,
+};
+pub use domain_reducer::{
+    DomainProjectionSpec, ProjectionConflictPolicy, ProjectionOrderingPolicy,
+    ProjectionOutputShape, ProjectionSettlementPolicy,
 };
 pub use env::strict_env_filter_source;
 pub use environment::{SinexEnvironment, environment};

@@ -62,13 +62,19 @@ async fn validate_time_range_rejects_inverted_and_equal_bounds() -> TestResult<(
 
 #[sinex_test]
 async fn mcp_tool_order_matches_catalog_order() -> TestResult<()> {
-    let tool_names = tools().iter().map(|tool| tool.name).collect::<Vec<_>>();
-    let catalog_names = tool_catalog()
-        .iter()
-        .map(|entry| entry.name)
-        .collect::<Vec<_>>();
+    let live_tools = tools();
+    let catalog = tool_catalog();
+    let tool_names = live_tools.iter().map(|tool| tool.name).collect::<Vec<_>>();
+    let catalog_names = catalog.iter().map(|entry| entry.name).collect::<Vec<_>>();
 
     assert_eq!(tool_names, catalog_names);
+    for (tool, entry) in live_tools.iter().zip(catalog.iter()) {
+        assert_eq!(
+            tool.description, entry.description,
+            "MCP tool `{}` must use catalog-owned description",
+            tool.name
+        );
+    }
     assert_read_only_tool_names()?;
     Ok(())
 }
@@ -377,6 +383,33 @@ async fn mcp_source_continuity_list_call_uses_gateway_fixture() -> TestResult<()
         "private_mode"
     );
     assert_eq!(response["redaction"]["raw_samples"], false);
+    Ok(())
+}
+
+#[sinex_test]
+async fn mcp_source_drift_call_uses_gateway_fixture() -> TestResult<()> {
+    let server = mount_mcp_gateway_fixture().await;
+    let client = fixture_gateway_client(&server)?;
+
+    let response = call_tool(
+        &client,
+        "sinex.source_drift",
+        json!({
+            "source_unit_id": "browser.history",
+            "limit": 5
+        }),
+    )
+    .await?;
+
+    assert_eq!(response["tool"], "sinex.source_drift");
+    assert_eq!(
+        response["items"]["result"]["drifts"][0]["source_unit_id"],
+        "browser.history"
+    );
+    assert_eq!(
+        response["items"]["result"]["drifts"][0]["type_changes"][0]["key"],
+        "visit_time"
+    );
     Ok(())
 }
 
@@ -1772,6 +1805,29 @@ async fn mount_mcp_gateway_fixture() -> MockServer {
                 }),
                 "sources.continuity.get" => json!({
                     "report": fixture_continuity_report()
+                }),
+                "sources.drift.list" => json!({
+                    "drifts": [
+                        {
+                            "checkpoint_key": "source-worker.default.fixture",
+                            "source_unit_id": body["params"]["source_unit_id"].as_str().unwrap_or("browser.history"),
+                            "consumer_group": "default",
+                            "consumer_name": "fixture",
+                            "previous_hash": "shape-old",
+                            "current_hash": "shape-new",
+                            "format": "sqlite",
+                            "added_keys": ["visit_duration"],
+                            "removed_keys": [],
+                            "type_changes": [
+                                {
+                                    "key": "visit_time",
+                                    "previous_type": "number",
+                                    "current_type": "string"
+                                }
+                            ],
+                            "observed_at": "2026-05-21T07:00:00Z"
+                        }
+                    ]
                 }),
                 "sources.continuity.explain_gap" => json!({
                     "source_family": body["params"]["source_family"].as_str().unwrap_or("terminal"),

@@ -2,9 +2,15 @@
 
 use color_eyre::eyre::{Result, WrapErr};
 use guppy::MetadataCommand;
-use guppy::graph::{DependencyDirection, PackageGraph};
+use guppy::PackageId;
+use guppy::graph::PackageGraph;
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet};
+use std::collections::BTreeMap;
+
+use crate::deps::active::{
+    active_direct_dependencies, active_direct_dependents_by_package,
+    active_package_ids_for_package, cargo_set_package_ids, workspace_cargo_set,
+};
 
 /// Workspace analyzer using guppy
 pub struct WorkspaceAnalyzer {
@@ -40,6 +46,27 @@ pub struct DuplicateDependency {
     pub name: String,
     /// List of versions present
     pub versions: Vec<String>,
+    /// Whether any workspace manifest directly requests at least one reported version.
+    pub direct_workspace_debt: bool,
+    /// Number of workspace packages that directly request any reported version.
+    pub direct_workspace_root_count: usize,
+    /// Whether this duplicate is only introduced transitively.
+    pub transitive_only: bool,
+    /// Per-version reachability from workspace roots.
+    pub version_details: Vec<DuplicateVersionDetail>,
+}
+
+/// Reachability detail for one version of a duplicate dependency.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DuplicateVersionDetail {
+    /// Package version.
+    pub version: String,
+    /// Workspace packages whose dependency closure reaches this version.
+    pub workspace_roots: Vec<String>,
+    /// Workspace packages that directly request this exact version.
+    pub direct_workspace_roots: Vec<String>,
+    /// Active packages that immediately depend on this exact version.
+    pub direct_dependents: Vec<String>,
 }
 
 impl WorkspaceAnalyzer {
@@ -143,36 +170,12 @@ impl WorkspaceAnalyzer {
                 .metadata(package_id)
                 .context("Failed to get package metadata")?;
 
-            // Query all forward dependencies (what this package depends on)
-            let query = self
-                .graph
-                .query_forward(std::iter::once(package_id))
-                .context("Failed to create forward dependency query")?;
-
-            // Resolve the query to get all dependencies
-            let package_set = query.resolve();
-
-            // A single PackageLink can carry the same dep through multiple kinds
-            // (e.g. crate is both a normal and dev dep). Emit one row per
-            // kind so downstream consumers can filter.
-            for link in package_set.links(DependencyDirection::Forward) {
-                let from_pkg = link.from();
-                let to_pkg = link.to();
-                let from_name = from_pkg.name();
-                let to_name = to_pkg.name();
-                for (req, kind) in [
-                    (link.normal(), "normal"),
-                    (link.build(), "build"),
-                    (link.dev(), "dev"),
-                ] {
-                    if req.is_present() {
-                        dependencies.push(DependencyInfo {
-                            dependent: from_name.to_string(),
-                            dependency: to_name.to_string(),
-                            kind: kind.to_string(),
-                        });
-                    }
-                }
+            for dependency in active_direct_dependencies(&self.graph, package_id, true)? {
+                dependencies.push(DependencyInfo {
+                    dependent: _package.name().to_string(),
+                    dependency: dependency.name,
+                    kind: dependency.kind.to_string(),
+                });
             }
         }
 
@@ -198,28 +201,65 @@ impl WorkspaceAnalyzer {
     /// # Ok::<(), color_eyre::eyre::Report>(())
     /// ```
     pub fn find_duplicates(&self) -> Result<Vec<DuplicateDependency>> {
-        // Map package name -> set of versions
-        let mut version_map: HashMap<String, HashSet<String>> = HashMap::new();
+        // Map package name -> version -> package IDs for that version.
+        let mut version_map: BTreeMap<String, BTreeMap<String, Vec<PackageId>>> = BTreeMap::new();
+        let workspace_roots_by_package = self.workspace_roots_by_reached_package()?;
+        let direct_roots_by_package = self.workspace_direct_roots_by_package()?;
+        let direct_dependents_by_package = active_direct_dependents_by_package(&self.graph, true)?;
+        let active_package_ids = cargo_set_package_ids(&workspace_cargo_set(&self.graph, true)?);
 
-        // Iterate over all packages in the graph
         for package in self.graph.packages() {
+            if !active_package_ids.contains(package.id()) {
+                continue;
+            }
+
             let name = package.name().to_string();
             let version = package.version().to_string();
 
-            version_map.entry(name).or_default().insert(version);
+            version_map
+                .entry(name)
+                .or_default()
+                .entry(version)
+                .or_default()
+                .push(package.id().clone());
         }
 
         // Find packages with multiple versions
         let mut duplicates = Vec::new();
 
-        for (name, versions) in version_map {
-            if versions.len() > 1 {
-                let mut versions_vec: Vec<String> = versions.into_iter().collect();
-                versions_vec.sort(); // Sort for consistent output
+        for (name, versions_by_id) in version_map {
+            if versions_by_id.len() > 1 {
+                let versions_vec: Vec<String> = versions_by_id.keys().cloned().collect();
+                let mut version_details = Vec::with_capacity(versions_by_id.len());
+
+                for (version, package_ids) in versions_by_id {
+                    version_details.push(DuplicateVersionDetail {
+                        version,
+                        workspace_roots: self.workspace_roots_for_package_ids(
+                            &package_ids,
+                            &workspace_roots_by_package,
+                        ),
+                        direct_workspace_roots: self.workspace_roots_for_package_ids(
+                            &package_ids,
+                            &direct_roots_by_package,
+                        ),
+                        direct_dependents: self.workspace_roots_for_package_ids(
+                            &package_ids,
+                            &direct_dependents_by_package,
+                        ),
+                    });
+                }
+                let direct_workspace_roots = Self::direct_workspace_roots(&version_details);
+                let direct_workspace_root_count = direct_workspace_roots.len();
+                let direct_workspace_debt = direct_workspace_root_count > 0;
 
                 duplicates.push(DuplicateDependency {
                     name,
                     versions: versions_vec,
+                    direct_workspace_debt,
+                    direct_workspace_root_count,
+                    transitive_only: !direct_workspace_debt,
+                    version_details,
                 });
             }
         }
@@ -228,6 +268,89 @@ impl WorkspaceAnalyzer {
         duplicates.sort_by(|a, b| a.name.cmp(&b.name));
 
         Ok(duplicates)
+    }
+
+    fn direct_workspace_roots(version_details: &[DuplicateVersionDetail]) -> Vec<String> {
+        let mut roots = Vec::new();
+
+        for detail in version_details {
+            roots.extend(detail.direct_workspace_roots.iter().cloned());
+        }
+
+        roots.sort();
+        roots.dedup();
+        roots
+    }
+
+    fn workspace_roots_by_reached_package(&self) -> Result<BTreeMap<PackageId, Vec<String>>> {
+        let workspace = self.graph.workspace();
+        let mut roots_by_package: BTreeMap<PackageId, Vec<String>> = BTreeMap::new();
+
+        for workspace_id in workspace.member_ids() {
+            let package = self
+                .graph
+                .metadata(workspace_id)
+                .context("Failed to get workspace package metadata")?;
+            let active_package_ids =
+                active_package_ids_for_package(&self.graph, workspace_id, true)?;
+
+            for reached_id in active_package_ids {
+                roots_by_package
+                    .entry(reached_id)
+                    .or_default()
+                    .push(package.name().to_string());
+            }
+        }
+
+        for roots in roots_by_package.values_mut() {
+            roots.sort();
+            roots.dedup();
+        }
+
+        Ok(roots_by_package)
+    }
+
+    fn workspace_direct_roots_by_package(&self) -> Result<BTreeMap<PackageId, Vec<String>>> {
+        let workspace = self.graph.workspace();
+        let mut roots_by_package: BTreeMap<PackageId, Vec<String>> = BTreeMap::new();
+
+        for workspace_id in workspace.member_ids() {
+            let package = self
+                .graph
+                .metadata(workspace_id)
+                .context("Failed to get workspace package metadata")?;
+            for dependency in active_direct_dependencies(&self.graph, workspace_id, true)? {
+                roots_by_package
+                    .entry(dependency.package_id)
+                    .or_default()
+                    .push(package.name().to_string());
+            }
+        }
+
+        for roots in roots_by_package.values_mut() {
+            roots.sort();
+            roots.dedup();
+        }
+
+        Ok(roots_by_package)
+    }
+
+    fn workspace_roots_for_package_ids(
+        &self,
+        package_ids: &[PackageId],
+        roots_by_package: &BTreeMap<PackageId, Vec<String>>,
+    ) -> Vec<String> {
+        let mut roots = Vec::new();
+
+        for package_id in package_ids {
+            if let Some(package_roots) = roots_by_package.get(package_id) {
+                roots.extend(package_roots.iter().cloned());
+            }
+        }
+
+        roots.sort();
+        roots.dedup();
+        roots
     }
 }
 
