@@ -21,11 +21,9 @@ async fn test_parse_command_round_trip_via_nats(ctx: TestContext) -> TestResult<
     let source_id = "weechat";
     let client = ctx.nats_client();
 
-    let _handle = spawn_parse_listener(client.clone(), source_id, dispatch)
+    let handle = spawn_parse_listener(client.clone(), source_id, dispatch)
         .await
         .map_err(|e| eyre!("spawn failed: {e}"))?;
-
-    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
     let operation_id = Uuid::now_v7();
     let material_id = Uuid::now_v7();
@@ -59,6 +57,7 @@ async fn test_parse_command_round_trip_via_nats(ctx: TestContext) -> TestResult<
         "dispatch material_id should match"
     );
 
+    handle.abort();
     Ok(())
 }
 
@@ -71,11 +70,9 @@ async fn test_parse_command_rejected_for_mismatched_source(ctx: TestContext) -> 
     let listener_source = "weechat";
     let client = ctx.nats_client();
 
-    let _handle = spawn_parse_listener(client.clone(), listener_source, dispatch)
+    let handle = spawn_parse_listener(client.clone(), listener_source, dispatch)
         .await
         .map_err(|e| eyre!("spawn failed: {e}"))?;
-
-    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
     let cmd = SourceParseCommand {
         operation_id: Uuid::now_v7(),
@@ -105,6 +102,7 @@ async fn test_parse_command_rejected_for_mismatched_source(ctx: TestContext) -> 
         "dispatch should not be called"
     );
 
+    handle.abort();
     Ok(())
 }
 
@@ -117,11 +115,9 @@ async fn test_concurrent_parse_commands(ctx: TestContext) -> TestResult<()> {
     let source_id = "weechat";
     let client = ctx.nats_client();
 
-    let _handle = spawn_parse_listener(client.clone(), source_id, dispatch)
+    let handle = spawn_parse_listener(client.clone(), source_id, dispatch)
         .await
         .map_err(|e| eyre!("spawn failed: {e}"))?;
-
-    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
     let subject = format!("sinex.control.sources.{source_id}.parse");
 
@@ -154,5 +150,6 @@ async fn test_concurrent_parse_commands(ctx: TestContext) -> TestResult<()> {
     assert!(ack2.accepted, "ack2 should be accepted");
     assert_eq!(calls.lock().unwrap().len(), 2, "both should be dispatched");
 
+    handle.abort();
     Ok(())
 }
