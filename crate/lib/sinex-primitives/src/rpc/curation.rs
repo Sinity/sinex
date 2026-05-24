@@ -6,6 +6,7 @@ use crate::events::{
     payloads::{CurationFinalizedPayload, CurationJudgmentPayload},
 };
 use crate::query::EventQueryResult;
+use crate::{Timestamp, Uuid};
 
 use serde::{Deserialize, Serialize};
 
@@ -27,6 +28,28 @@ pub const CURATION_JUDGMENTS_RECORD_METHOD: RpcMethod<
     CurationRecordJudgmentResponse,
 > = RpcMethod::new(
     methods::CURATION_JUDGMENTS_RECORD,
+    RpcRole::Write,
+    RpcDomain::Curation,
+    RpcStability::Experimental,
+    RpcMutability::Mutating,
+);
+
+pub const CURATION_DUPLICATE_CANDIDATES_LIST_METHOD: RpcMethod<
+    CurationListDuplicateCandidatesRequest,
+    CurationListDuplicateCandidatesResponse,
+> = RpcMethod::new(
+    methods::CURATION_DUPLICATE_CANDIDATES_LIST,
+    RpcRole::ReadOnly,
+    RpcDomain::Curation,
+    RpcStability::Experimental,
+    RpcMutability::ReadOnly,
+);
+
+pub const CURATION_DUPLICATE_JUDGMENTS_RECORD_METHOD: RpcMethod<
+    CurationRecordDuplicateJudgmentRequest,
+    CurationRecordDuplicateJudgmentResponse,
+> = RpcMethod::new(
+    methods::CURATION_DUPLICATE_JUDGMENTS_RECORD,
     RpcRole::Write,
     RpcDomain::Curation,
     RpcStability::Experimental,
@@ -81,6 +104,87 @@ pub struct CurationRecordJudgmentResponse {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CurationListDuplicateCandidatesRequest {
+    #[serde(default)]
+    pub source: Option<String>,
+    #[serde(default)]
+    pub event_type: Option<String>,
+    #[serde(default = "default_limit")]
+    pub limit: i64,
+    #[serde(default = "default_duplicate_events_per_cluster")]
+    pub events_per_cluster: i64,
+}
+
+impl Default for CurationListDuplicateCandidatesRequest {
+    fn default() -> Self {
+        Self {
+            source: None,
+            event_type: None,
+            limit: default_limit(),
+            events_per_cluster: default_duplicate_events_per_cluster(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CurationListDuplicateCandidatesResponse {
+    pub clusters: Vec<CurationDuplicateCandidateCluster>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CurationDuplicateCandidateCluster {
+    /// Replay-stable key for this candidate cluster.
+    pub cluster_id: String,
+    pub source: String,
+    pub event_type: String,
+    /// Logical key value drawn from `payload.natural_key_hash`,
+    /// `payload.natural_key`, or the event `equivalence_key`.
+    pub natural_key_hash: String,
+    pub event_count: i64,
+    pub material_count: i64,
+    pub events: Vec<CurationDuplicateCandidateEvent>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CurationDuplicateCandidateEvent {
+    pub event_id: Uuid,
+    pub source_material_id: Uuid,
+    pub ts_orig: Timestamp,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CurationDuplicateAction {
+    Merge,
+    Prefer,
+    Ignore,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CurationRecordDuplicateJudgmentRequest {
+    pub source: String,
+    pub event_type: String,
+    pub natural_key_hash: String,
+    pub event_ids: Vec<Uuid>,
+    pub action: CurationDuplicateAction,
+    #[serde(default)]
+    pub preferred_event_id: Option<Uuid>,
+    pub actor_kind: crate::events::payloads::CurationJudgmentActorKind,
+    #[serde(default)]
+    pub actor_id: Option<String>,
+    #[serde(default)]
+    pub comment: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CurationRecordDuplicateJudgmentResponse {
+    pub proposal: crate::events::payloads::CurationProposalPayload,
+    pub proposal_event: Event<JsonValue>,
+    pub judgment: CurationJudgmentPayload,
+    pub judgment_event: Event<JsonValue>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CurationFinalizeRequest {
     pub judgment_event_id: String,
 }
@@ -97,4 +201,8 @@ fn default_proposal_status() -> String {
 
 const fn default_limit() -> i64 {
     100
+}
+
+const fn default_duplicate_events_per_cluster() -> i64 {
+    10
 }

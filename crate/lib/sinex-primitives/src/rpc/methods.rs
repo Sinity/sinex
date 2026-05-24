@@ -17,6 +17,8 @@ pub const EVENTS_LINEAGE: &str = "events.lineage";
 // Curation
 pub const CURATION_PROPOSALS_LIST: &str = "curation.proposals.list";
 pub const CURATION_JUDGMENTS_RECORD: &str = "curation.judgments.record";
+pub const CURATION_DUPLICATE_CANDIDATES_LIST: &str = "curation.duplicate_candidates.list";
+pub const CURATION_DUPLICATE_JUDGMENTS_RECORD: &str = "curation.duplicate_judgments.record";
 pub const CURATION_FINALIZE: &str = "curation.finalize";
 
 // LLM prompt/router/budget
