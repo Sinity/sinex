@@ -33,6 +33,7 @@ Regenerate with `xtask docs sync` or `xtask docs command-reference`; verify drif
 | `deps` | Analyze workspace dependency structure and impact |
 | `history` | Query build, test, and runtime history recorded by xtask |
 | `analytics` | `xtask analytics` — developer intelligence analytics |
+| `freshness` | Inspect coordinator freshness keys and reuse decisions |
 | `git-stack` | Plan and materialize PR-sized git branch stacks from the current commit graph |
 | `doctor` | Probe developer-environment health and deployment readiness |
 | `ra-diagnose` | Diagnose rust-analyzer process footprint and local workspace contract |
@@ -107,6 +108,7 @@ Run the repo's primary nextest-backed test workflows
 | `-p, --package` | yes | no | Run tests for specific package(s) |
 | `--exclude` | yes | no | Exclude workspace package(s) from --all/workspace test runs |
 | `--test` | yes | no | Run tests from specific test binary target(s) (nextest --test) |
+| `--lib` | no | no | Run only library unit tests (nextest --lib) |
 | `--dry-run` | no | no | Print what would happen |
 | `--skip-preflight` | no | no | Skip automatic infrastructure setup (preflight is ON by default) |
 | `--ephemeral-postgres` | no | no | Run DB-backed tests inside a fresh throwaway Postgres cluster |
@@ -757,6 +759,7 @@ Query build, test, and runtime history recorded by xtask
 |---|---|
 | `list` | List recent invocations |
 | `stats` | Show statistics for a command (or all commands / all packages) |
+| `cost` | Summarise dev-loop wallclock cost without double-counting wrappers |
 | `tests` | Query test result history |
 | `diagnostics` | Query build diagnostics (warnings/errors) |
 | `stages` | Query pipeline stage timing data (G2) |
@@ -812,6 +815,18 @@ Show statistics for a command (or all commands / all packages)
 | `--all-commands` | no | no | Show stats for every command in the history (G4) |
 
 
+### `xtask history cost`
+
+Summarise dev-loop wallclock cost without double-counting wrappers
+
+**Arguments**
+
+| Flag | Value | Required | Description |
+|---|---|---|---|
+| `--command` | yes | no | Commands to include. Defaults to check+test |
+| `--days` | yes | no | How many days back to analyse |
+
+
 ### `xtask history tests`
 
 Query test result history
@@ -840,6 +855,9 @@ Query test result history
 | Flag | Value | Required | Description |
 |---|---|---|---|
 | `--limit` | yes | no |  |
+| `--days` | yes | no | Only include test results from the last N days |
+| `--min-runs` | yes | no | Require at least this many passing runs in the selected window |
+| `--latest-per-test` | no | no | Rank each test by its most recent passing result instead of historical average |
 | `--invocation` | yes | no | Test run selector: `latest`, `previous`, `latest-success`, `latest-failure`, invocation ID, `inv:<id>`, or `job:<id>` |
 
 
@@ -1245,6 +1263,28 @@ Stage-level timing breakdowns aggregated across invocations (J7)
 |---|---|---|---|
 | `--command` | yes | no | Filter by command |
 | `--limit` | yes | no | Number of slowest stages to show |
+
+
+## `xtask freshness`
+
+Inspect coordinator freshness keys and reuse decisions
+
+**Subcommands**
+
+| Command | Purpose |
+|---|---|
+| `explain` | Explain the freshness key for a command scope |
+
+### `xtask freshness explain`
+
+Explain the freshness key for a command scope
+
+**Arguments**
+
+| Flag | Value | Required | Description |
+|---|---|---|---|
+| `command` | yes | yes | Coordinated command to explain, such as check, build, fix, test, or vm |
+| `args` | yes | no | Arguments for the explained command. Use `--` before hyphen-prefixed args |
 
 
 ## `xtask git-stack`

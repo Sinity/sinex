@@ -4631,6 +4631,16 @@
       "about": "Apply automatic fixes across workspace packages"
     },
     {
+      "subject": "xtask_command:freshness",
+      "path": "freshness",
+      "about": "Inspect coordinator freshness keys and reuse decisions"
+    },
+    {
+      "subject": "xtask_command:freshness.explain",
+      "path": "freshness.explain",
+      "about": "Explain the freshness key for a command scope"
+    },
+    {
       "subject": "xtask_command:git-stack",
       "path": "git-stack",
       "about": "Plan and materialize PR-sized git branch stacks from the current commit graph"
@@ -4659,6 +4669,11 @@
       "subject": "xtask_command:history",
       "path": "history",
       "about": "Query build, test, and runtime history recorded by xtask"
+    },
+    {
+      "subject": "xtask_command:history.cost",
+      "path": "history.cost",
+      "about": "Summarise dev-loop wallclock cost without double-counting wrappers"
     },
     {
       "subject": "xtask_command:history.diagnostics",
