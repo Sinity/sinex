@@ -76,7 +76,6 @@ async fn replay_execution_records_outcome(ctx: TestContext) -> Result<()> {
         "fs-test",
         FileCreatedPayload::EVENT_TYPE.as_static_str(),
         "/tmp/replay-output.txt",
-        None,
     );
 
     let client = spawn_replay_control(replay, nats_client, Duration::from_secs(30)).await?;
@@ -298,7 +297,6 @@ async fn replay_execution_records_outcome(ctx: TestContext) -> Result<()> {
         "reexecution-test",
         FileCreatedPayload::EVENT_TYPE.as_static_str(),
         "/tmp/reexecution-root.txt",
-        None,
     );
     let reexecution_executed = client
         .execute(
@@ -352,22 +350,21 @@ async fn replay_execution_records_outcome(ctx: TestContext) -> Result<()> {
 }
 
 #[sinex_test]
-async fn replay_replacement_recording_follows_operation_outputs(ctx: TestContext) -> Result<()> {
+async fn replay_replacement_recording_follows_material_occurrence(ctx: TestContext) -> Result<()> {
     let ctx = ctx.with_nats().shared().await?;
     let replay = Arc::new(ReplayStateMachine::new(ctx.pool.clone()));
     let engine = ReplayExecutionEngine::new(replay.clone(), ctx.nats_client());
 
     let source_material = ctx
-        .create_source_material(Some("replay-replacement-old"))
+        .create_source_material(Some("replay-material-occurrence"))
         .await?;
-    let mut old_event = DynamicPayload::new(
+    let old_event = DynamicPayload::new(
         "fs-test",
         FileCreatedPayload::EVENT_TYPE.as_static_str(),
-        json!({ "path": "/tmp/replay-replacement-old.txt" }),
+        json!({ "path": "/tmp/replay-material-occurrence.txt" }),
     )
     .from_material(source_material)
     .build()?;
-    old_event.equivalence_key = Some("replacement-eq".to_string());
     let old_inserted = ctx.pool.events().insert(old_event).await?;
     let old_id = old_inserted.id.expect("old replay event must have an id");
     let execution_window = (
@@ -394,16 +391,24 @@ async fn replay_replacement_recording_follows_operation_outputs(ctx: TestContext
         .await?;
 
     let replacement_material = ctx
-        .create_source_material(Some("replay-replacement-new"))
+        .create_source_material(Some("replay-material-occurrence-other"))
         .await?;
-    let mut replacement_event = DynamicPayload::new(
+    let unrelated_event = DynamicPayload::new(
         "fs-test",
         FileCreatedPayload::EVENT_TYPE.as_static_str(),
-        json!({ "path": "/tmp/replay-replacement-new.txt" }),
+        json!({ "path": "/tmp/replay-material-occurrence-other.txt" }),
     )
     .from_material(replacement_material)
     .build()?;
-    replacement_event.equivalence_key = Some("replacement-eq".to_string());
+    ctx.pool.events().insert(unrelated_event).await?;
+
+    let mut replacement_event = DynamicPayload::new(
+        "fs-test",
+        FileCreatedPayload::EVENT_TYPE.as_static_str(),
+        json!({ "path": "/tmp/replay-material-occurrence.txt" }),
+    )
+    .from_material(source_material)
+    .build()?;
     replacement_event.created_by_operation_id = Some(operation_id);
     let replacement_inserted = ctx.pool.events().insert(replacement_event).await?;
     let replacement_id = replacement_inserted
@@ -424,27 +429,32 @@ async fn replay_replacement_recording_follows_operation_outputs(ctx: TestContext
     assert_eq!(replacements[0].0, old_id.to_uuid());
     assert_eq!(replacements[0].1, replacement_id);
     assert_eq!(replacements[0].2, "superseded");
+    assert_eq!(
+        replacements[0].4, None,
+        "material replay lineage must not carry derived-output slot keys"
+    );
 
     Ok(())
 }
 
 #[sinex_test]
-async fn replay_replacement_recording_skips_unmatched_old_events(ctx: TestContext) -> Result<()> {
+async fn replay_replacement_recording_rejects_cross_material_matches(
+    ctx: TestContext,
+) -> Result<()> {
     let ctx = ctx.with_nats().shared().await?;
     let replay = Arc::new(ReplayStateMachine::new(ctx.pool.clone()));
     let engine = ReplayExecutionEngine::new(replay.clone(), ctx.nats_client());
 
     let source_material = ctx
-        .create_source_material(Some("replay-replacement-unmatched-old"))
+        .create_source_material(Some("replay-material-unmatched-old"))
         .await?;
-    let mut old_event = DynamicPayload::new(
+    let old_event = DynamicPayload::new(
         "fs-test",
         FileCreatedPayload::EVENT_TYPE.as_static_str(),
-        json!({ "path": "/tmp/replay-replacement-unmatched-old.txt" }),
+        json!({ "path": "/tmp/replay-material-unmatched.txt" }),
     )
     .from_material(source_material)
     .build()?;
-    old_event.equivalence_key = Some("old-eq".to_string());
     let old_inserted = ctx.pool.events().insert(old_event).await?;
     let old_id = old_inserted.id.expect("old replay event must have an id");
     let execution_window = (
@@ -471,16 +481,15 @@ async fn replay_replacement_recording_skips_unmatched_old_events(ctx: TestContex
         .await?;
 
     let replacement_material = ctx
-        .create_source_material(Some("replay-replacement-unmatched-new"))
+        .create_source_material(Some("replay-material-unmatched-new"))
         .await?;
     let mut replacement_event = DynamicPayload::new(
         "fs-test",
         FileCreatedPayload::EVENT_TYPE.as_static_str(),
-        json!({ "path": "/tmp/replay-replacement-unmatched-new.txt" }),
+        json!({ "path": "/tmp/replay-material-unmatched.txt" }),
     )
     .from_material(replacement_material)
     .build()?;
-    replacement_event.equivalence_key = Some("new-eq".to_string());
     replacement_event.created_by_operation_id = Some(operation_id);
     ctx.pool.events().insert(replacement_event).await?;
 

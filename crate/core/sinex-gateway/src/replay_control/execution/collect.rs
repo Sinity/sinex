@@ -64,7 +64,11 @@ impl ReplayExecutionEngine {
             r#"
             SELECT
                 id AS "id!",
-                equivalence_key
+                source_material_id,
+                anchor_byte,
+                offset_start,
+                offset_end,
+                offset_kind
             FROM core.events
             WHERE created_by_operation_id = $1::uuid
             ORDER BY id
@@ -81,7 +85,11 @@ impl ReplayExecutionEngine {
             .into_iter()
             .map(|row| OperationOutputEvent {
                 id: row.id,
-                equivalence_key: row.equivalence_key,
+                source_material_id: row.source_material_id,
+                anchor_byte: row.anchor_byte,
+                offset_start: row.offset_start,
+                offset_end: row.offset_end,
+                offset_kind: row.offset_kind,
             })
             .collect())
     }

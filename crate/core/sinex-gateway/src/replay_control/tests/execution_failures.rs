@@ -309,14 +309,13 @@ async fn replay_execution_fails_when_replacement_recording_fails(ctx: TestContex
     let material_id = ctx
         .create_source_material(Some("replay-replacement-record-fail"))
         .await?;
-    let mut event = DynamicPayload::new(
+    let event = DynamicPayload::new(
         "replacement-record-fail-test",
         FileCreatedPayload::EVENT_TYPE.as_static_str(),
         json!({ "path": "/tmp/replay-replacement-record-fail.txt" }),
     )
     .from_material(material_id)
     .build()?;
-    event.equivalence_key = Some("replacement-record-eq".to_string());
     let inserted = ctx.pool.events().insert(event).await?;
     let target_id = inserted
         .id
@@ -361,7 +360,6 @@ async fn replay_execution_fails_when_replacement_recording_fails(ctx: TestContex
         "replacement-record-fail-test",
         FileCreatedPayload::EVENT_TYPE.as_static_str(),
         "/tmp/replay-replacement-record-fail-output.txt",
-        Some("replacement-record-eq"),
     );
 
     let executor = ReplayExecutionEngine::new(replay.clone(), nats_client)
