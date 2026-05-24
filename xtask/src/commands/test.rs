@@ -748,6 +748,7 @@ impl TestCommand {
         if self.no_ephemeral_postgres
             || self.skip_preflight
             || self.dry_run
+            || self.list
             || self.list_scenarios
             || self.subcommand.is_some()
             || std::env::var("SINEX_EPHEMERAL_POSTGRES_ACTIVE").is_ok()
