@@ -183,6 +183,44 @@ mod binary_path {
         })
     }
 
+    struct SourceWorkerIngestStack {
+        ingestd: TestIngestdHandle,
+        _work_dir: tempfile::TempDir,
+    }
+
+    impl SourceWorkerIngestStack {
+        async fn start(ctx: &Sandbox) -> TestResult<Self> {
+            ctx.reset_database_slot().await?;
+
+            let nats = ctx.nats_handle()?;
+            let work_dir = tempfile::tempdir()?;
+            let ingestd = start_test_ingestd_with_config(
+                TestIngestdConfig {
+                    nats: nats.connection_config(),
+                    database_url: ctx.database_url().to_string(),
+                    work_dir: Some(work_dir.path().to_path_buf()),
+                    namespace: Some(ctx.pipeline_namespace().prefix().to_string()),
+                    consumer_fetch_max_messages: 32,
+                    consumer_fetch_timeout_ms: 50,
+                    database_pool_size: 4,
+                    reject_initial_replay: false,
+                },
+                Some(ctx),
+            )
+            .await?;
+
+            Ok(Self {
+                ingestd,
+                _work_dir: work_dir,
+            })
+        }
+
+        async fn shutdown(mut self) -> TestResult<()> {
+            self.ingestd.stop().await?;
+            Ok(())
+        }
+    }
+
     async fn write_weechat_fixture(log_path: &std::path::Path, message: &str) -> TestResult<()> {
         tokio::fs::write(
             log_path,
@@ -205,7 +243,7 @@ mod binary_path {
         ctx: TestContext,
     ) -> TestResult<()> {
         let ctx = ctx.with_nats().shared().await?;
-        let stack = TestCoreStack::new(&ctx).await?;
+        let stack = SourceWorkerIngestStack::start(&ctx).await?;
 
         let tempdir = tempfile::tempdir()?;
         let log_path = tempdir.path().join("weechat.log");
@@ -267,7 +305,7 @@ mod binary_path {
         ctx: TestContext,
     ) -> TestResult<()> {
         let ctx = ctx.with_nats().shared().await?;
-        let stack = TestCoreStack::new(&ctx).await?;
+        let stack = SourceWorkerIngestStack::start(&ctx).await?;
 
         let tempdir = tempfile::tempdir()?;
         let log_path = tempdir.path().join("weechat.log");
@@ -322,7 +360,7 @@ mod binary_path {
         ctx: TestContext,
     ) -> TestResult<()> {
         let ctx = ctx.with_nats().shared().await?;
-        let stack = TestCoreStack::new(&ctx).await?;
+        let stack = SourceWorkerIngestStack::start(&ctx).await?;
 
         let tempdir = tempfile::tempdir()?;
         let log_path = tempdir.path().join("weechat.log");
@@ -380,7 +418,7 @@ mod binary_path {
         ctx: TestContext,
     ) -> TestResult<()> {
         let ctx = ctx.with_nats().shared().await?;
-        let stack = TestCoreStack::new(&ctx).await?;
+        let stack = SourceWorkerIngestStack::start(&ctx).await?;
 
         let tempdir = tempfile::tempdir()?;
         let history_path = tempdir.path().join(".bash_history");
@@ -439,7 +477,7 @@ mod binary_path {
         ctx: TestContext,
     ) -> TestResult<()> {
         let ctx = ctx.with_nats().shared().await?;
-        let stack = TestCoreStack::new(&ctx).await?;
+        let stack = SourceWorkerIngestStack::start(&ctx).await?;
 
         let tempdir = tempfile::tempdir()?;
         let log_path = tempdir.path().join("weechat.log");

@@ -142,7 +142,6 @@ pub(super) fn runtime_binary_requirements_for_target(
                 .any(|binary| binary == "production_path"))
     {
         push_runtime_requirement(&mut requirements, "sinex-ingestd", "sinex-ingestd");
-        push_runtime_requirement(&mut requirements, "sinex-gateway", "sinex-gateway");
     }
 
     requirements
@@ -511,11 +510,9 @@ mod tests {
 
         let requirements =
             runtime_binary_requirements_for_target(&plan, false, &["production_path".to_string()]);
-        assert_eq!(requirements.len(), 2);
+        assert_eq!(requirements.len(), 1);
         assert_eq!(requirements[0].package, "sinex-ingestd");
         assert_eq!(requirements[0].binary, "sinex-ingestd");
-        assert_eq!(requirements[1].package, "sinex-gateway");
-        assert_eq!(requirements[1].binary, "sinex-gateway");
         Ok(())
     }
 
