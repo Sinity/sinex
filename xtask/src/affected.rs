@@ -459,31 +459,20 @@ fn test_binary_for_nested_integration_module(
     let Some(file_name) = parts.last() else {
         return Ok(None);
     };
-    let Some(stem) = file_name.strip_suffix(".rs") else {
+    if file_name.strip_suffix(".rs").is_none() {
         return Ok(None);
-    };
+    }
 
-    let Some((root_relative_path, binary, module_relative_path)) =
-        nested_integration_root(&parts)
+    let Some((root_relative_path, binary, _module_relative_path)) = nested_integration_root(&parts)
     else {
         return Ok(None);
     };
 
-    let root_path = repo_root.join(root_relative_path);
-    if !root_path.exists() {
+    if !repo_root.join(root_relative_path).exists() {
         return Ok(None);
     }
 
-    let root_content = fs::read_to_string(&root_path)
-        .wrap_err_with(|| format!("failed to read {}", root_path.display()))?;
-    if root_content.contains(&format!("#[path = \"{module_relative_path}\"]"))
-        || root_content.contains(&format!("#[path=\"{module_relative_path}\"]"))
-        || root_content.contains(&format!("mod {stem};"))
-    {
-        Ok(Some(binary))
-    } else {
-        Ok(None)
-    }
+    Ok(Some(binary))
 }
 
 fn nested_integration_root(parts: &[&str]) -> Option<(String, String, String)> {
@@ -1016,6 +1005,30 @@ mod tests {
         let inferred = infer_test_binaries_for_test_filter_in(
             repo.path(),
             "test(browser_history_qutebrowser_initial_ingestion)",
+        )?;
+        assert_eq!(inferred, vec!["production_path".to_string()]);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_infer_test_binaries_maps_deep_nested_integration_modules() -> TestResult<()> {
+        let repo = tempfile::tempdir()?;
+        let root = repo
+            .path()
+            .join("crate/core/sinex-source-worker/tests/production_path.rs");
+        let nested = repo.path().join(
+            "crate/core/sinex-source-worker/tests/production_path/obligations/initial_ingestion.rs",
+        );
+        fs::create_dir_all(nested.parent().expect("nested parent"))?;
+        fs::write(&root, "#[path = \"production_path/obligations/mod.rs\"] mod obligations;\n")?;
+        fs::write(
+            &nested,
+            "#[sinex_test]\nasync fn weechat_source_worker_binary_scan_persists_message() {}\n",
+        )?;
+
+        let inferred = infer_test_binaries_for_test_filter_in(
+            repo.path(),
+            "test(weechat_source_worker_binary_scan_persists_message)",
         )?;
         assert_eq!(inferred, vec!["production_path".to_string()]);
         Ok(())
