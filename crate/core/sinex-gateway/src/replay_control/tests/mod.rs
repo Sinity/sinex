@@ -507,11 +507,10 @@ async fn replay_client_errors_when_broker_disappears(ctx: TestContext) -> Result
 
     // Shut down the broker to simulate a partition mid-flight.
     nats.shutdown().await?;
-    tokio::time::sleep(Duration::from_millis(200)).await;
 
     let scope = sample_scope();
     let err = client
-        .plan_with_timeout("test:user".into(), scope, Duration::from_secs(1))
+        .plan_with_timeout("test:user".into(), scope, Duration::from_millis(25))
         .await
         .expect_err("plan should fail after broker drop");
     assert!(
