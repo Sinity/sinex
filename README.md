@@ -167,17 +167,17 @@ journalctl -u sinex-gateway -u sinex-ingestd -f
 | Understand event schemas | [crate/lib/sinex-schema/docs/event-taxonomy.md](crate/lib/sinex-schema/docs/event-taxonomy.md) |
 | Separate notes, typed records, graph, and artifacts | [docs/architecture/knowledge-boundaries.md](docs/architecture/knowledge-boundaries.md) |
 | Define current-state projections for event-native domains | [docs/architecture/domain-reducers.md](docs/architecture/domain-reducers.md) |
-| Model tasks as event-native workflow objects | [docs/architecture/task-domain.md](docs/architecture/task-domain.md) |
-| Model sensitive health and self-observation logs | [docs/architecture/health-self-observation-domain.md](docs/architecture/health-self-observation-domain.md) |
+| Model tasks as event-native workflow objects | [issue #1107](https://github.com/Sinity/sinex/issues/1107) |
+| Model sensitive health and self-observation logs | [issue #1108](https://github.com/Sinity/sinex/issues/1108) |
 | Model declarations, omissions, and conceptual time | [docs/architecture/declarations-and-conceptual-time.md](docs/architecture/declarations-and-conceptual-time.md) |
 | Design interval-backed moment queries | [docs/architecture/moment-evidence-windows.md](docs/architecture/moment-evidence-windows.md) |
 | Define versioned SQL-shaped derivations | [docs/architecture/sql-derivation-engine.md](docs/architecture/sql-derivation-engine.md) |
-| Record replayable inference confidence and seeds | [docs/architecture/inference-decision-metadata.md](docs/architecture/inference-decision-metadata.md) |
+| Record replayable inference confidence and seeds | [issue #1118](https://github.com/Sinity/sinex/issues/1118) |
 | Explain semantic composition beyond ancestry trace | [docs/architecture/semantic-trace-teardown.md](docs/architecture/semantic-trace-teardown.md) |
 | Run replay-safe semantic experiments | [docs/architecture/semantic-epochs-shadow-lanes.md](docs/architecture/semantic-epochs-shadow-lanes.md) |
-| Route model calls through prompts, policy, and budgets | [docs/architecture/prompt-router-budget.md](docs/architecture/prompt-router-budget.md) |
+| Route model calls through prompts, policy, and budgets | [issue #1116](https://github.com/Sinity/sinex/issues/1116) |
 | Promote generated suggestions through human or policy authority | [docs/architecture/proposal-judgment-finalizer.md](docs/architecture/proposal-judgment-finalizer.md) |
-| Bound active instruction and actuator loops | [docs/architecture/instruction-actuator-loops.md](docs/architecture/instruction-actuator-loops.md) |
+| Bound active instruction and actuator loops | [issue #1104](https://github.com/Sinity/sinex/issues/1104) |
 | Expose read-only evidence to coding agents | [docs/architecture/mcp-readonly-server.md](docs/architecture/mcp-readonly-server.md) |
 | Rename event taxonomy labels without parser replay | [docs/architecture/audited-semantic-renames.md](docs/architecture/audited-semantic-renames.md) |
 | Reason about replay evidence and source snapshots | [docs/architecture/evidence-lanes.md](docs/architecture/evidence-lanes.md) |
