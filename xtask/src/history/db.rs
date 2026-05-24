@@ -1137,6 +1137,37 @@ impl HistoryDb {
                 terminal_summary TEXT
             );
 
+            CREATE TABLE IF NOT EXISTS proof_evidence (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                invocation_id INTEGER NOT NULL REFERENCES invocations(id) ON DELETE CASCADE,
+                command TEXT NOT NULL,
+                proof_kind TEXT NOT NULL,
+                scope_key TEXT NOT NULL,
+                input_fingerprint TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'running',
+                started_at TEXT NOT NULL,
+                finished_at TEXT,
+                duration_secs REAL,
+                scope_json TEXT,
+                artifact_json TEXT,
+                UNIQUE(invocation_id, proof_kind, scope_key, input_fingerprint)
+            );
+
+            CREATE TABLE IF NOT EXISTS test_proof_units (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                invocation_id INTEGER NOT NULL REFERENCES invocations(id) ON DELETE CASCADE,
+                proof_kind TEXT NOT NULL,
+                scope_key TEXT NOT NULL,
+                input_fingerprint TEXT NOT NULL,
+                manifest_json TEXT NOT NULL,
+                reusable INTEGER NOT NULL DEFAULT 0,
+                status TEXT NOT NULL DEFAULT 'running',
+                started_at TEXT NOT NULL,
+                finished_at TEXT,
+                duration_secs REAL,
+                UNIQUE(invocation_id, proof_kind, scope_key, input_fingerprint)
+            );
+
             CREATE TABLE IF NOT EXISTS invocation_eta_samples (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 invocation_id INTEGER NOT NULL REFERENCES invocations(id) ON DELETE CASCADE,
@@ -1223,6 +1254,10 @@ impl HistoryDb {
             CREATE INDEX IF NOT EXISTS idx_background_jobs_invocation ON background_jobs(invocation_id);
             CREATE INDEX IF NOT EXISTS idx_eta_samples_command_phase ON invocation_eta_samples(command, phase);
             CREATE INDEX IF NOT EXISTS idx_invocation_progress_invocation ON invocation_progress(invocation_id);
+            CREATE INDEX IF NOT EXISTS idx_proof_evidence_exact
+                ON proof_evidence(command, proof_kind, scope_key, input_fingerprint, status, finished_at);
+            CREATE INDEX IF NOT EXISTS idx_test_proof_units_exact
+                ON test_proof_units(proof_kind, scope_key, input_fingerprint, reusable, status, finished_at);
 
             CREATE TABLE IF NOT EXISTS exercise_runs (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1294,7 +1329,68 @@ impl HistoryDb {
         Ok(exists)
     }
 
+    fn table_exists(&self, table: &str) -> Result<bool> {
+        self.conn
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?1)",
+                params![table],
+                |row| row.get::<_, i64>(0),
+            )
+            .map(|value| value != 0)
+            .context("failed to inspect history DB tables")
+    }
+
+    fn ensure_proof_schema(&self) -> Result<()> {
+        if self.table_exists("proof_evidence")? && self.table_exists("test_proof_units")? {
+            return Ok(());
+        }
+        if self.conn.is_readonly(rusqlite::DatabaseName::Main)? {
+            return Ok(());
+        }
+        self.conn.execute_batch(
+            r"
+            CREATE TABLE IF NOT EXISTS proof_evidence (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                invocation_id INTEGER NOT NULL REFERENCES invocations(id) ON DELETE CASCADE,
+                command TEXT NOT NULL,
+                proof_kind TEXT NOT NULL,
+                scope_key TEXT NOT NULL,
+                input_fingerprint TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'running',
+                started_at TEXT NOT NULL,
+                finished_at TEXT,
+                duration_secs REAL,
+                scope_json TEXT,
+                artifact_json TEXT,
+                UNIQUE(invocation_id, proof_kind, scope_key, input_fingerprint)
+            );
+
+            CREATE TABLE IF NOT EXISTS test_proof_units (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                invocation_id INTEGER NOT NULL REFERENCES invocations(id) ON DELETE CASCADE,
+                proof_kind TEXT NOT NULL,
+                scope_key TEXT NOT NULL,
+                input_fingerprint TEXT NOT NULL,
+                manifest_json TEXT NOT NULL,
+                reusable INTEGER NOT NULL DEFAULT 0,
+                status TEXT NOT NULL DEFAULT 'running',
+                started_at TEXT NOT NULL,
+                finished_at TEXT,
+                duration_secs REAL,
+                UNIQUE(invocation_id, proof_kind, scope_key, input_fingerprint)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_proof_evidence_exact
+                ON proof_evidence(command, proof_kind, scope_key, input_fingerprint, status, finished_at);
+            CREATE INDEX IF NOT EXISTS idx_test_proof_units_exact
+                ON test_proof_units(proof_kind, scope_key, input_fingerprint, reusable, status, finished_at);
+            ",
+        )?;
+        Ok(())
+    }
+
     fn ensure_compat_schema(&self) -> Result<()> {
+        self.ensure_proof_schema()?;
         self.ensure_column_exists("invocations", "process_cpu_usage_avg", "REAL")?;
         self.ensure_column_exists("invocations", "process_memory_usage_max_mb", "REAL")?;
         self.ensure_column_exists("invocations", "root_process_cpu_usage_avg", "REAL")?;
@@ -1468,6 +1564,22 @@ impl HistoryDb {
                 WHERE id = ?5
                 ",
                 params![finished_at, duration_secs, exit_code, status.as_str(), id],
+            )?;
+            self.conn.execute(
+                r"
+                UPDATE proof_evidence
+                SET finished_at = ?1, duration_secs = ?2, status = ?3
+                WHERE invocation_id = ?4
+                ",
+                params![finished_at, duration_secs, status.as_str(), id],
+            )?;
+            self.conn.execute(
+                r"
+                UPDATE test_proof_units
+                SET finished_at = ?1, duration_secs = ?2, status = ?3
+                WHERE invocation_id = ?4
+                ",
+                params![finished_at, duration_secs, status.as_str(), id],
             )?;
             Ok(())
         })?;
@@ -2281,6 +2393,123 @@ impl HistoryDb {
             .context("failed to get last completed invocation with fingerprint")
     }
 
+    /// Get the newest successful invocation matching an exact freshness key.
+    ///
+    /// This is stricter than `get_last_completed_with_fingerprint`: it can find
+    /// an older valid proof even when a newer invocation for the same command
+    /// ran a different scope, and it never returns failed evidence.
+    pub fn get_successful_invocation_by_fingerprint(
+        &self,
+        command: &str,
+        tree_fingerprint: &str,
+        scope_key: &str,
+    ) -> Result<Option<InvocationWithFingerprint>> {
+        self.conn
+            .query_row(
+                r"
+                SELECT id, status, duration_secs, tree_fingerprint, scope_key
+                FROM invocations
+                WHERE command = ?1
+                  AND status = 'success'
+                  AND tree_fingerprint = ?2
+                  AND scope_key = ?3
+                ORDER BY started_at DESC
+                LIMIT 1
+                ",
+                params![command, tree_fingerprint, scope_key],
+                |row| {
+                    let status_str: String = row.get(1)?;
+                    Ok(InvocationWithFingerprint {
+                        id: row.get(0)?,
+                        status: parse_stored_invocation_status(status_str)?,
+                        duration_secs: row.get(2)?,
+                        tree_fingerprint: row.get(3)?,
+                        scope_key: row.get(4)?,
+                    })
+                },
+            )
+            .optional()
+            .context("failed to get successful invocation by fingerprint")
+    }
+
+    /// Get the newest successful proof evidence row matching an exact key.
+    pub fn get_successful_proof_evidence(
+        &self,
+        command: &str,
+        proof_kind: &str,
+        input_fingerprint: &str,
+        scope_key: &str,
+    ) -> Result<Option<ProofEvidence>> {
+        self.conn
+            .query_row(
+                r"
+                SELECT
+                    id,
+                    invocation_id,
+                    command,
+                    proof_kind,
+                    scope_key,
+                    input_fingerprint,
+                    status,
+                    started_at,
+                    finished_at,
+                    duration_secs,
+                    scope_json,
+                    artifact_json
+                FROM proof_evidence
+                WHERE command = ?1
+                  AND proof_kind = ?2
+                  AND input_fingerprint = ?3
+                  AND scope_key = ?4
+                  AND status = 'success'
+                ORDER BY finished_at DESC, id DESC
+                LIMIT 1
+                ",
+                params![command, proof_kind, input_fingerprint, scope_key],
+                row_to_proof_evidence,
+            )
+            .optional()
+            .context("failed to get successful proof evidence")
+    }
+
+    /// Get the newest successful reusable test proof unit matching an exact key.
+    pub fn get_successful_reusable_test_proof_unit(
+        &self,
+        proof_kind: &str,
+        input_fingerprint: &str,
+        scope_key: &str,
+    ) -> Result<Option<TestProofUnit>> {
+        self.conn
+            .query_row(
+                r"
+                SELECT
+                    id,
+                    invocation_id,
+                    proof_kind,
+                    scope_key,
+                    input_fingerprint,
+                    manifest_json,
+                    reusable,
+                    status,
+                    started_at,
+                    finished_at,
+                    duration_secs
+                FROM test_proof_units
+                WHERE proof_kind = ?1
+                  AND input_fingerprint = ?2
+                  AND scope_key = ?3
+                  AND reusable = 1
+                  AND status = 'success'
+                ORDER BY finished_at DESC, id DESC
+                LIMIT 1
+                ",
+                params![proof_kind, input_fingerprint, scope_key],
+                row_to_test_proof_unit,
+            )
+            .optional()
+            .context("failed to get successful reusable test proof unit")
+    }
+
     /// Update an invocation's tree fingerprint and scope key.
     ///
     /// Called after starting an invocation to record the coordination scope.
@@ -2295,6 +2524,131 @@ impl HistoryDb {
             params![tree_fingerprint, scope_key, id],
         )?;
         Ok(())
+    }
+
+    /// Record the proof unit represented by a coordinated invocation.
+    pub fn record_proof_evidence(
+        &self,
+        invocation_id: i64,
+        command: &str,
+        proof_kind: &str,
+        scope_key: &str,
+        input_fingerprint: &str,
+        scope_json: Option<&str>,
+        artifact_json: Option<&str>,
+    ) -> Result<()> {
+        with_sqlite_lock_retry("record proof evidence", || {
+            self.conn.execute(
+                r"
+                INSERT INTO proof_evidence (
+                    invocation_id,
+                    command,
+                    proof_kind,
+                    scope_key,
+                    input_fingerprint,
+                    status,
+                    started_at,
+                    finished_at,
+                    duration_secs,
+                    scope_json,
+                    artifact_json
+                )
+                SELECT
+                    id,
+                    ?2,
+                    ?3,
+                    ?4,
+                    ?5,
+                    status,
+                    started_at,
+                    finished_at,
+                    duration_secs,
+                    ?6,
+                    ?7
+                FROM invocations
+                WHERE id = ?1
+                ON CONFLICT(invocation_id, proof_kind, scope_key, input_fingerprint)
+                DO UPDATE SET
+                    command = excluded.command,
+                    status = excluded.status,
+                    started_at = excluded.started_at,
+                    finished_at = excluded.finished_at,
+                    duration_secs = excluded.duration_secs,
+                    scope_json = excluded.scope_json,
+                    artifact_json = excluded.artifact_json
+                ",
+                params![
+                    invocation_id,
+                    command,
+                    proof_kind,
+                    scope_key,
+                    input_fingerprint,
+                    scope_json,
+                    artifact_json
+                ],
+            )?;
+            Ok(())
+        })
+    }
+
+    /// Record the resolved test manifest as a proof unit.
+    pub fn record_test_proof_unit(
+        &self,
+        invocation_id: i64,
+        proof_kind: &str,
+        scope_key: &str,
+        input_fingerprint: &str,
+        manifest_json: &str,
+        reusable: bool,
+    ) -> Result<()> {
+        with_sqlite_lock_retry("record test proof unit", || {
+            self.conn.execute(
+                r"
+                INSERT INTO test_proof_units (
+                    invocation_id,
+                    proof_kind,
+                    scope_key,
+                    input_fingerprint,
+                    manifest_json,
+                    reusable,
+                    status,
+                    started_at,
+                    finished_at,
+                    duration_secs
+                )
+                SELECT
+                    id,
+                    ?2,
+                    ?3,
+                    ?4,
+                    ?5,
+                    ?6,
+                    status,
+                    started_at,
+                    finished_at,
+                    duration_secs
+                FROM invocations
+                WHERE id = ?1
+                ON CONFLICT(invocation_id, proof_kind, scope_key, input_fingerprint)
+                DO UPDATE SET
+                    manifest_json = excluded.manifest_json,
+                    reusable = excluded.reusable,
+                    status = excluded.status,
+                    started_at = excluded.started_at,
+                    finished_at = excluded.finished_at,
+                    duration_secs = excluded.duration_secs
+                ",
+                params![
+                    invocation_id,
+                    proof_kind,
+                    scope_key,
+                    input_fingerprint,
+                    manifest_json,
+                    i64::from(reusable)
+                ],
+            )?;
+            Ok(())
+        })
     }
 
     /// Update an invocation's semantic workload arguments.
@@ -4347,6 +4701,74 @@ pub struct InvocationWithFingerprint {
     pub scope_key: Option<String>,
 }
 
+/// A durable proof row produced by a successful xtask invocation.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProofEvidence {
+    pub id: i64,
+    pub invocation_id: i64,
+    pub command: String,
+    pub proof_kind: String,
+    pub scope_key: String,
+    pub input_fingerprint: String,
+    pub status: InvocationStatus,
+    pub started_at: String,
+    pub finished_at: Option<String>,
+    pub duration_secs: Option<f64>,
+    pub scope_json: Option<String>,
+    pub artifact_json: Option<String>,
+}
+
+fn row_to_proof_evidence(row: &rusqlite::Row<'_>) -> rusqlite::Result<ProofEvidence> {
+    let status_str: String = row.get(6)?;
+    Ok(ProofEvidence {
+        id: row.get(0)?,
+        invocation_id: row.get(1)?,
+        command: row.get(2)?,
+        proof_kind: row.get(3)?,
+        scope_key: row.get(4)?,
+        input_fingerprint: row.get(5)?,
+        status: parse_stored_invocation_status(status_str)?,
+        started_at: row.get(7)?,
+        finished_at: row.get(8)?,
+        duration_secs: row.get(9)?,
+        scope_json: row.get(10)?,
+        artifact_json: row.get(11)?,
+    })
+}
+
+/// A resolved test execution plan that can be reused when its inputs match.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TestProofUnit {
+    pub id: i64,
+    pub invocation_id: i64,
+    pub proof_kind: String,
+    pub scope_key: String,
+    pub input_fingerprint: String,
+    pub manifest_json: String,
+    pub reusable: bool,
+    pub status: InvocationStatus,
+    pub started_at: String,
+    pub finished_at: Option<String>,
+    pub duration_secs: Option<f64>,
+}
+
+fn row_to_test_proof_unit(row: &rusqlite::Row<'_>) -> rusqlite::Result<TestProofUnit> {
+    let status_str: String = row.get(7)?;
+    Ok(TestProofUnit {
+        id: row.get(0)?,
+        invocation_id: row.get(1)?,
+        proof_kind: row.get(2)?,
+        scope_key: row.get(3)?,
+        input_fingerprint: row.get(4)?,
+        manifest_json: row.get(5)?,
+        reusable: row.get::<_, i64>(6)? != 0,
+        status: parse_stored_invocation_status(status_str)?,
+        started_at: row.get(8)?,
+        finished_at: row.get(9)?,
+        duration_secs: row.get(10)?,
+    })
+}
+
 impl HistoryDb {
     /// R3: Compute the probability that `to_command` follows `from_command` within
     /// `window_mins` minutes, based on the `limit` most recent `from_command` successes.
@@ -5550,6 +5972,143 @@ mod tests {
         let last = db.get_last("check")?;
         assert!(last.is_some());
         assert_eq!(last.unwrap().id, id3);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn successful_fingerprint_lookup_finds_exact_older_proof() -> TestResult<()> {
+        let dir = tempdir()?;
+        let db_path = dir.path().join("test-exact-fingerprint.db");
+        let db = HistoryDb::open(&db_path)?;
+
+        let exact_id = db.start_invocation("check", None, None, None)?;
+        db.update_invocation_fingerprint(exact_id, "fp-a", "scope-a")?;
+        db.finish_invocation(exact_id, InvocationStatus::Success, Some(0), 0.1)?;
+
+        let failed_exact_id = db.start_invocation("check", None, None, None)?;
+        db.update_invocation_fingerprint(failed_exact_id, "fp-a", "scope-a")?;
+        db.finish_invocation(failed_exact_id, InvocationStatus::Failed, Some(1), 0.2)?;
+
+        let other_scope_id = db.start_invocation("check", None, None, None)?;
+        db.update_invocation_fingerprint(other_scope_id, "fp-b", "scope-b")?;
+        db.finish_invocation(other_scope_id, InvocationStatus::Success, Some(0), 0.3)?;
+
+        let found = db
+            .get_successful_invocation_by_fingerprint("check", "fp-a", "scope-a")?
+            .expect("older exact successful proof should be found");
+        assert_eq!(found.id, exact_id);
+
+        assert!(
+            db.get_successful_invocation_by_fingerprint("check", "fp-missing", "scope-a")?
+                .is_none()
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn proof_evidence_lookup_uses_exact_successful_key() -> TestResult<()> {
+        let dir = tempdir()?;
+        let db_path = dir.path().join("test-proof-evidence.db");
+        let db = HistoryDb::open(&db_path)?;
+
+        let exact_id = db.start_invocation("check", None, None, None)?;
+        db.record_proof_evidence(
+            exact_id,
+            "check",
+            "check.lint",
+            "scope-a",
+            "fp-a",
+            Some(r#"["--scope=packages:xtask","--lint"]"#),
+            None,
+        )?;
+        db.finish_invocation(exact_id, InvocationStatus::Success, Some(0), 0.1)?;
+
+        let failed_exact_id = db.start_invocation("check", None, None, None)?;
+        db.record_proof_evidence(
+            failed_exact_id,
+            "check",
+            "check.lint",
+            "scope-a",
+            "fp-a",
+            None,
+            None,
+        )?;
+        db.finish_invocation(failed_exact_id, InvocationStatus::Failed, Some(1), 0.2)?;
+
+        let other_kind_id = db.start_invocation("check", None, None, None)?;
+        db.record_proof_evidence(
+            other_kind_id,
+            "check",
+            "check.default",
+            "scope-a",
+            "fp-a",
+            None,
+            None,
+        )?;
+        db.finish_invocation(other_kind_id, InvocationStatus::Success, Some(0), 0.3)?;
+
+        let found = db
+            .get_successful_proof_evidence("check", "check.lint", "fp-a", "scope-a")?
+            .expect("older exact successful proof evidence should be found");
+        assert_eq!(found.invocation_id, exact_id);
+        assert_eq!(found.proof_kind, "check.lint");
+
+        assert!(
+            db.get_successful_proof_evidence("check", "check.fmt", "fp-a", "scope-a")?
+                .is_none()
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_proof_unit_lookup_requires_reusable_success() -> TestResult<()> {
+        let dir = tempdir()?;
+        let db_path = dir.path().join("test-proof-unit.db");
+        let db = HistoryDb::open(&db_path)?;
+
+        let non_reusable = db.start_invocation("test", None, None, None)?;
+        db.record_test_proof_unit(
+            non_reusable,
+            "test.nextest.plan",
+            "scope-a",
+            "fp-a",
+            r#"{"lib":false}"#,
+            false,
+        )?;
+        db.finish_invocation(non_reusable, InvocationStatus::Success, Some(0), 0.1)?;
+
+        let reusable_failed = db.start_invocation("test", None, None, None)?;
+        db.record_test_proof_unit(
+            reusable_failed,
+            "test.nextest.lib",
+            "scope-a",
+            "fp-a",
+            r#"{"lib":true}"#,
+            true,
+        )?;
+        db.finish_invocation(reusable_failed, InvocationStatus::Failed, Some(1), 0.2)?;
+
+        let reusable_success = db.start_invocation("test", None, None, None)?;
+        db.record_test_proof_unit(
+            reusable_success,
+            "test.nextest.lib",
+            "scope-a",
+            "fp-a",
+            r#"{"lib":true}"#,
+            true,
+        )?;
+        db.finish_invocation(reusable_success, InvocationStatus::Success, Some(0), 0.3)?;
+
+        let found = db
+            .get_successful_reusable_test_proof_unit("test.nextest.lib", "fp-a", "scope-a")?
+            .expect("successful reusable test proof should be found");
+        assert_eq!(found.invocation_id, reusable_success);
+        assert!(found.reusable);
+
+        assert!(
+            db.get_successful_reusable_test_proof_unit("test.nextest.plan", "fp-a", "scope-a")?
+                .is_none()
+        );
         Ok(())
     }
 

@@ -18,8 +18,8 @@ pub use db::{
     BackgroundJob, CommandStats, DiagnosticCounts, DiagnosticDelta, DiagnosticLifecycle,
     DiagnosticTrendPoint, ExerciseResultRow, ExerciseRunRow, FixSession, HistoryDb, Invocation,
     InvocationFull, InvocationProgress, InvocationStatus, InvocationTimelineEntry,
-    InvocationWithFingerprint, JobLifecycleStatus, LifecycleStatus, ResourceUsage, StageStats,
-    StageTiming, StageTrendPoint, StoredDiagnostic, WorkingSession,
+    InvocationWithFingerprint, JobLifecycleStatus, LifecycleStatus, ProofEvidence, ResourceUsage,
+    StageStats, StageTiming, StageTrendPoint, StoredDiagnostic, TestProofUnit, WorkingSession,
 };
 pub use query::{DiagnosticQuery, DiagnosticScope, InvocationQuery, TestResultQuery};
 pub use seed::SeedOptions;

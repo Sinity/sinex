@@ -881,11 +881,22 @@ impl CommandContext {
             match Self::resolve_coordination_fingerprint(
                 command,
                 args,
-                crate::coordinator::current_tree_fingerprint(),
+                crate::coordinator::current_scoped_tree_fingerprint(command, args),
             ) {
                 Ok((fingerprint, scope)) => {
                     if let Some(Err(error)) = self.try_with_history_db(|db| {
-                        db.update_invocation_fingerprint(inv_id, &fingerprint, &scope)
+                        db.update_invocation_fingerprint(inv_id, &fingerprint, &scope)?;
+                        let proof_kind = crate::coordinator::proof_kind(command, args);
+                        let scope_json = serde_json::to_string(args)?;
+                        db.record_proof_evidence(
+                            inv_id,
+                            command,
+                            &proof_kind,
+                            &scope,
+                            &fingerprint,
+                            Some(&scope_json),
+                            None,
+                        )
                     }) {
                         tracing::warn!(
                             target: "xtask::command",
