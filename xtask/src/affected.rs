@@ -1054,12 +1054,12 @@ mod tests {
         fs::write(&root, "#[path = \"production_path/obligations/mod.rs\"] mod obligations;\n")?;
         fs::write(
             &nested,
-            "#[sinex_test]\nasync fn weechat_source_worker_binary_scan_persists_message() {}\n",
+            "#[sinex_test]\nasync fn source_worker_binary_scan_private_mode_matrix() {}\n",
         )?;
 
         let inferred = infer_test_binaries_for_test_filter_in(
             repo.path(),
-            "test(weechat_source_worker_binary_scan_persists_message)",
+            "test(source_worker_binary_scan_private_mode_matrix)",
         )?;
         assert_eq!(inferred, vec!["production_path".to_string()]);
         Ok(())
