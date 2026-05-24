@@ -604,8 +604,10 @@ impl ReplayStateMachine {
             },
             "total_events": total,
             "root_event_ids": root_event_ids,
-            "anchor_churn_pct": 0.0,
-            "time_quality_flip_pct": 0.0,
+            "anchor_churn_pct": serde_json::Value::Null,
+            "anchor_churn_status": "not_measured",
+            "time_quality_flip_pct": serde_json::Value::Null,
+            "time_quality_flip_status": "not_measured",
             "schema_boundary_crossed": schema_boundary_crossed_count > 0,
             "schema_boundary_crossed_count": schema_boundary_crossed_count,
             "top_event_types": top_types

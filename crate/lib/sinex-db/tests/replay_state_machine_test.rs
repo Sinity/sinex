@@ -66,6 +66,16 @@ async fn replay_preview_nulls_cascade_impact_when_metadata_queries_fail(
         serde_json::json!([root_id.to_uuid()]),
         "preview summaries must carry root ids for downstream replay execution"
     );
+    assert!(
+        preview["anchor_churn_pct"].is_null(),
+        "unmeasured anchor churn must not be reported as zero"
+    );
+    assert_eq!(preview["anchor_churn_status"], "not_measured");
+    assert!(
+        preview["time_quality_flip_pct"].is_null(),
+        "unmeasured time-quality flips must not be reported as zero"
+    );
+    assert_eq!(preview["time_quality_flip_status"], "not_measured");
     Ok(())
 }
 

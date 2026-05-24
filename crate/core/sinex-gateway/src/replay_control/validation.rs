@@ -40,14 +40,15 @@ pub(super) const MAX_CASCADE_DEPTH_WARN: u64 = 5;
 struct ReplayGate {
     name: &'static str,
     tripped: bool,
+    advisory: bool,
     override_allowed: bool,
     override_flag: &'static str,
     observed: String,
     threshold: String,
 }
 
-fn preview_f64(preview: &JsonValue, key: &str) -> f64 {
-    preview.get(key).and_then(JsonValue::as_f64).unwrap_or(0.0)
+fn preview_f64(preview: &JsonValue, key: &str) -> Option<f64> {
+    preview.get(key).and_then(JsonValue::as_f64)
 }
 
 fn preview_u64(preview: &JsonValue, key: &str) -> u64 {
@@ -70,23 +71,33 @@ fn replay_gates(preview: &JsonValue, overrides: &ReplayGateOverrides) -> [Replay
     [
         ReplayGate {
             name: "anchor_churn_threshold_percent",
-            tripped: anchor_churn_pct > ANCHOR_CHURN_THRESHOLD_PERCENT,
+            tripped: anchor_churn_pct.is_some_and(|pct| pct > ANCHOR_CHURN_THRESHOLD_PERCENT),
+            advisory: anchor_churn_pct.is_none(),
             override_allowed: overrides.allow_anchor_churn,
             override_flag: "--allow-anchor-churn",
-            observed: format!("{anchor_churn_pct:.2}%"),
+            observed: anchor_churn_pct.map_or_else(
+                || "not measured (advisory)".to_string(),
+                |pct| format!("{pct:.2}%"),
+            ),
             threshold: format!("{ANCHOR_CHURN_THRESHOLD_PERCENT:.2}%"),
         },
         ReplayGate {
             name: "time_quality_flip_threshold_percent",
-            tripped: time_quality_flip_pct > TIME_QUALITY_FLIP_THRESHOLD_PERCENT,
+            tripped: time_quality_flip_pct
+                .is_some_and(|pct| pct > TIME_QUALITY_FLIP_THRESHOLD_PERCENT),
+            advisory: time_quality_flip_pct.is_none(),
             override_allowed: overrides.allow_time_quality_flips,
             override_flag: "--allow-time-quality-flips",
-            observed: format!("{time_quality_flip_pct:.2}%"),
+            observed: time_quality_flip_pct.map_or_else(
+                || "not measured (advisory)".to_string(),
+                |pct| format!("{pct:.2}%"),
+            ),
             threshold: format!("{TIME_QUALITY_FLIP_THRESHOLD_PERCENT:.2}%"),
         },
         ReplayGate {
             name: "max_cascade_depth_warn",
             tripped: max_observed_depth > MAX_CASCADE_DEPTH_WARN,
+            advisory: false,
             override_allowed: overrides.allow_deep_cascade,
             override_flag: "--allow-deep-cascade",
             observed: max_observed_depth.to_string(),
@@ -95,6 +106,7 @@ fn replay_gates(preview: &JsonValue, overrides: &ReplayGateOverrides) -> [Replay
         ReplayGate {
             name: "require_force_on_schema_mismatch",
             tripped: schema_boundary_crossed,
+            advisory: false,
             override_allowed: overrides.force_schema_mismatch,
             override_flag: "--force-schema-mismatch",
             observed: schema_boundary_crossed.to_string(),
@@ -111,6 +123,7 @@ pub(super) fn replay_gate_report(preview: &JsonValue) -> JsonValue {
             serde_json::json!({
                 "name": gate.name,
                 "tripped": gate.tripped,
+                "advisory": gate.advisory,
                 "override_flag": gate.override_flag,
                 "observed": gate.observed,
                 "threshold": gate.threshold,
@@ -499,6 +512,31 @@ mod tests {
         let report = replay_gate_report(&preview);
         assert_eq!(report["tripped"].as_u64(), Some(4));
         assert!(format!("{report}").contains("--force-schema-mismatch"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn replay_gates_report_unmeasured_metrics_as_advisory() -> Result<()> {
+        let preview = serde_json::json!({
+            "anchor_churn_pct": null,
+            "time_quality_flip_pct": null,
+            "max_observed_depth": 0,
+            "schema_boundary_crossed": false,
+        });
+
+        let report = replay_gate_report(&preview);
+        assert_eq!(report["tripped"].as_u64(), Some(0));
+        let gates = report["gates"]
+            .as_array()
+            .expect("gate report should include gates");
+        assert!(
+            gates
+                .iter()
+                .filter(|gate| gate["advisory"].as_bool() == Some(true))
+                .all(|gate| gate["observed"].as_str() == Some("not measured (advisory)")),
+            "unmeasured metrics should be advisory, not rendered as zero: {report}"
+        );
+        ensure_replay_gates_pass(Uuid::now_v7(), &preview, &ReplayGateOverrides::default())?;
         Ok(())
     }
 
