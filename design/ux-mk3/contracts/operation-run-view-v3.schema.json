@@ -1,0 +1,61 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "OperationRunView v3",
+  "type": "object",
+  "required": [
+    "ref",
+    "domain",
+    "kind",
+    "status",
+    "authority",
+    "actions"
+  ],
+  "properties": {
+    "ref": {
+      "$ref": "sinex-object-ref-v3.schema.json"
+    },
+    "domain": {
+      "type": "string"
+    },
+    "kind": {
+      "type": "string"
+    },
+    "status": {
+      "enum": [
+        "preview",
+        "pending",
+        "running",
+        "succeeded",
+        "failed",
+        "cancelled",
+        "audited"
+      ]
+    },
+    "authority": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "affected_refs": {
+      "type": "array",
+      "items": {
+        "$ref": "sinex-object-ref-v3.schema.json"
+      }
+    },
+    "progress": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "caveats": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "actions": {
+      "type": "array",
+      "items": {
+        "$ref": "action-availability-v3.schema.json"
+      }
+    }
+  }
+}
