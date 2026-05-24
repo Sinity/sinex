@@ -42,6 +42,34 @@ const SHARED_FINGERPRINT_INPUTS: &[&str] = &[
     ".config/nextest.toml",
 ];
 
+/// Human/machine-readable explanation of the current coordinator freshness key.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FreshnessExplanation {
+    pub command: String,
+    pub args: Vec<String>,
+    pub should_coordinate: bool,
+    pub fresh_reuse_enabled: bool,
+    pub scope_key: String,
+    pub tree_fingerprint: String,
+    pub scope: FreshnessScopeExplanation,
+    pub shared_inputs: Vec<String>,
+}
+
+/// Scope inputs that feed a coordinator freshness fingerprint.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum FreshnessScopeExplanation {
+    Workspace,
+    Packages { packages: Vec<PackageScopeInput> },
+}
+
+/// Package-to-path mapping used by scoped fingerprints.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PackageScopeInput {
+    pub package: String,
+    pub path: String,
+}
+
 /// Result of a coordination request.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "action", rename_all = "snake_case")]
@@ -968,6 +996,41 @@ fn scoped_tree_fingerprint_in(cwd: &Path, command: &str, args: &[String]) -> Res
 
 fn scoped_tree_fingerprint(command: &str, args: &[String]) -> Result<String> {
     scoped_tree_fingerprint_in(Path::new("."), command, args)
+}
+
+/// Explain the current coordinator freshness key without mutating state.
+///
+/// This is the auditable counterpart to `scoped_tree_fingerprint`: consumers can
+/// see the command/scope inputs before trusting a fresh-hit decision.
+pub fn explain_freshness(command: &str, args: &[String]) -> Result<FreshnessExplanation> {
+    let packages = extract_explicit_packages(command, args);
+    let scope = if packages.is_empty() {
+        FreshnessScopeExplanation::Workspace
+    } else {
+        let mut packages = packages
+            .into_iter()
+            .map(|package| PackageScopeInput {
+                path: package_to_path(&package),
+                package,
+            })
+            .collect::<Vec<_>>();
+        packages.sort_unstable_by(|left, right| left.package.cmp(&right.package));
+        FreshnessScopeExplanation::Packages { packages }
+    };
+
+    Ok(FreshnessExplanation {
+        command: command.to_string(),
+        args: args.to_vec(),
+        should_coordinate: JobCoordinator::should_coordinate(command, args),
+        fresh_reuse_enabled: supports_fresh_reuse(command),
+        scope_key: scope_key(command, args),
+        tree_fingerprint: scoped_tree_fingerprint(command, args)?,
+        scope,
+        shared_inputs: SHARED_FINGERPRINT_INPUTS
+            .iter()
+            .map(|input| (*input).to_string())
+            .collect(),
+    })
 }
 
 /// Compute scope key: hash of command-specific parameters that define

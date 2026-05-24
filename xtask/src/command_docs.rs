@@ -30,7 +30,7 @@ const HELP_CATEGORIES: &[HelpCategory] = &[
     },
     HelpCategory {
         title: "Analysis",
-        command_paths: &["deps", "history", "analytics", "git-stack"],
+        command_paths: &["deps", "history", "analytics", "freshness", "git-stack"],
     },
     HelpCategory {
         title: "Diagnostics",
@@ -232,6 +232,18 @@ const GUIDE_SECTIONS: &[GuideSection] = &[
                 when: "a dependency change might widen the rebuild/test blast radius",
                 examples: &["xtask deps impact", "xtask deps impact sinex-gateway"],
                 notes: &[],
+            },
+            GuideEntry {
+                path: "freshness explain",
+                fallback_summary: "Explain coordinator freshness inputs",
+                when: "you need to audit why a check/build/fix scope can or cannot reuse prior proof",
+                examples: &[
+                    "xtask freshness explain check -- -p xtask",
+                    "xtask --json freshness explain test -- -p sinex-db -E 'test(name)'",
+                ],
+                notes: &[
+                    "This command explains keys and reuse decisions only; it does not mark advisory signals as proof.",
+                ],
             },
             GuideEntry {
                 path: "git-stack split",
