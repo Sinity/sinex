@@ -59,7 +59,10 @@ pub(super) struct ScopeInvalidationBucket {
 }
 
 impl ReplayExecutionEngine {
+    #[cfg(not(test))]
     const EXECUTION_STATE_POLL_INTERVAL: Duration = Duration::from_millis(250);
+    #[cfg(test)]
+    const EXECUTION_STATE_POLL_INTERVAL: Duration = Duration::from_millis(25);
 
     pub(super) fn new(replay: Arc<ReplayStateMachine>, nats_client: Client) -> Self {
         let js = jetstream::new(nats_client.clone());
