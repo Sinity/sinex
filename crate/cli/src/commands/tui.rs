@@ -18,6 +18,11 @@ use ratatui::{
 use sinex_primitives::query::{
     EventQuery, EventQueryResult, QueryResultEvent, SortDirection, TimeRange,
 };
+use sinex_primitives::rpc::dlq::{DlqMessagePeek, DlqPeekResponse};
+use sinex_primitives::rpc::lifecycle::LifecycleStatusResponse;
+use sinex_primitives::rpc::ops::Operation as OpsOperation;
+use sinex_primitives::rpc::privacy::PrivateModeStateResponse;
+use sinex_primitives::rpc::replay::{ReplayOperation, ReplayState};
 use sinex_primitives::rpc::sources::{
     SourceReadiness, SourceReadinessStatus, SourcesReadinessListRequest,
 };
@@ -60,7 +65,7 @@ KEYBOARD SHORTCUTS:
     k/↑        Previous item
 ")]
 pub struct TuiCommand {
-    /// Starting tab (dashboard, nodes, sources, events, dlq)
+    /// Starting tab (dashboard, operations, nodes, sources, events, dlq)
     #[arg(long, value_enum, default_value_t = Tab::Dashboard)]
     tab: Tab,
 
@@ -72,6 +77,8 @@ pub struct TuiCommand {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 enum Tab {
     Dashboard,
+    #[value(alias = "ops")]
+    Operations,
     #[value(alias = "node")]
     Nodes,
     #[value(alias = "source")]
@@ -90,6 +97,11 @@ struct App {
     // Live data
     nodes: Vec<InstanceInfo>,
     dlq_stats: Option<DlqListResponse>,
+    dlq_peek: Option<DlqPeekResponse>,
+    ops_operations: Vec<OpsOperation>,
+    replay_operations: Vec<ReplayOperation>,
+    lifecycle_status: Option<LifecycleStatusResponse>,
+    private_mode: Option<PrivateModeStateResponse>,
     source_readiness: Vec<SourceReadiness>,
     source_continuity: Vec<SourceContinuityReport>,
     recent_events: Vec<EventCardView>,
@@ -117,6 +129,11 @@ impl App {
             refresh_interval,
             nodes: Vec::new(),
             dlq_stats: None,
+            dlq_peek: None,
+            ops_operations: Vec::new(),
+            replay_operations: Vec::new(),
+            lifecycle_status: None,
+            private_mode: None,
             source_readiness: Vec::new(),
             source_continuity: Vec::new(),
             recent_events: Vec::new(),
@@ -138,7 +155,8 @@ impl App {
 
     fn next_tab(&mut self) {
         let next = match self.current_tab {
-            Tab::Dashboard => Tab::Nodes,
+            Tab::Dashboard => Tab::Operations,
+            Tab::Operations => Tab::Nodes,
             Tab::Nodes => Tab::Sources,
             Tab::Sources => Tab::Events,
             Tab::Events => Tab::Dlq,
@@ -150,7 +168,8 @@ impl App {
     fn previous_tab(&mut self) {
         let previous = match self.current_tab {
             Tab::Dashboard => Tab::Dlq,
-            Tab::Nodes => Tab::Dashboard,
+            Tab::Operations => Tab::Dashboard,
+            Tab::Nodes => Tab::Operations,
             Tab::Sources => Tab::Nodes,
             Tab::Events => Tab::Sources,
             Tab::Dlq => Tab::Events,
@@ -189,6 +208,7 @@ impl App {
     fn current_list_len(&self) -> usize {
         match self.current_tab {
             Tab::Dashboard => 0,
+            Tab::Operations => operations_room_cards(self).len(),
             Tab::Nodes => self.nodes.len(),
             Tab::Sources => self.source_readiness.len(),
             Tab::Events => self.recent_events.len(),
@@ -293,6 +313,48 @@ impl App {
             Err(e) => {
                 if self.error.is_none() {
                     self.error = Some(format!("Failed to fetch DLQ: {e}"));
+                }
+            }
+        }
+        match self.client.dlq_peek(Some(5)).await {
+            Ok(peek) => self.dlq_peek = Some(peek),
+            Err(e) => {
+                if self.error.is_none() {
+                    self.error = Some(format!("Failed to fetch DLQ previews: {e}"));
+                }
+            }
+        }
+
+        // Fetch operation-room read models.
+        match self.client.ops_list(None, None, Some(10)).await {
+            Ok(operations) => self.ops_operations = operations,
+            Err(e) => {
+                if self.error.is_none() {
+                    self.error = Some(format!("Failed to fetch operations: {e}"));
+                }
+            }
+        }
+        match self.client.replay_list_filtered(None, None, Some(10)).await {
+            Ok(operations) => self.replay_operations = operations,
+            Err(e) => {
+                if self.error.is_none() {
+                    self.error = Some(format!("Failed to fetch replay operations: {e}"));
+                }
+            }
+        }
+        match self.client.lifecycle_status().await {
+            Ok(status) => self.lifecycle_status = Some(status),
+            Err(e) => {
+                if self.error.is_none() {
+                    self.error = Some(format!("Failed to fetch lifecycle status: {e}"));
+                }
+            }
+        }
+        match self.client.private_mode_status().await {
+            Ok(state) => self.private_mode = Some(state),
+            Err(e) => {
+                if self.error.is_none() {
+                    self.error = Some(format!("Failed to fetch private-mode status: {e}"));
                 }
             }
         }
@@ -441,10 +503,11 @@ where
                     app.select_previous();
                 }
                 KeyCode::Char('1') => app.switch_tab(Tab::Dashboard),
-                KeyCode::Char('2') => app.switch_tab(Tab::Nodes),
-                KeyCode::Char('3') => app.switch_tab(Tab::Sources),
-                KeyCode::Char('4') => app.switch_tab(Tab::Events),
-                KeyCode::Char('5') => app.switch_tab(Tab::Dlq),
+                KeyCode::Char('2') => app.switch_tab(Tab::Operations),
+                KeyCode::Char('3') => app.switch_tab(Tab::Nodes),
+                KeyCode::Char('4') => app.switch_tab(Tab::Sources),
+                KeyCode::Char('5') => app.switch_tab(Tab::Events),
+                KeyCode::Char('6') => app.switch_tab(Tab::Dlq),
                 _ => {}
             }
         }
@@ -512,6 +575,7 @@ fn ui(f: &mut Frame, app: &App) {
     // Content area
     match app.current_tab {
         Tab::Dashboard => render_dashboard(f, chunks[1], app),
+        Tab::Operations => render_operations(f, chunks[1], app),
         Tab::Nodes => render_nodes(f, chunks[1], app),
         Tab::Sources => render_sources(f, chunks[1], app),
         Tab::Events => render_events(f, chunks[1], app),
@@ -529,10 +593,11 @@ fn ui(f: &mut Frame, app: &App) {
 fn render_tabs(f: &mut Frame, area: Rect, app: &App) {
     let tabs = [
         ("1:Dashboard", Tab::Dashboard),
-        ("2:Nodes", Tab::Nodes),
-        ("3:Sources", Tab::Sources),
-        ("4:Events", Tab::Events),
-        ("5:DLQ", Tab::Dlq),
+        ("2:Ops", Tab::Operations),
+        ("3:Nodes", Tab::Nodes),
+        ("4:Sources", Tab::Sources),
+        ("5:Events", Tab::Events),
+        ("6:DLQ", Tab::Dlq),
     ];
 
     let mut tab_spans = vec![];
@@ -670,6 +735,606 @@ fn render_dashboard(f: &mut Frame, area: Rect, app: &App) {
     })
     .block(Block::default().title("Nodes").borders(Borders::ALL));
     f.render_widget(nodes_list, chunks[1]);
+}
+
+fn render_operations(f: &mut Frame, area: Rect, app: &App) {
+    let chunks = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+        .split(area);
+    let cards = operations_room_cards(app);
+    let items: Vec<ListItem> = cards
+        .iter()
+        .enumerate()
+        .map(|(index, card)| {
+            let style = if index == app.selected_index {
+                Style::default()
+                    .fg(operation_card_color(card))
+                    .add_modifier(Modifier::REVERSED)
+            } else {
+                Style::default().fg(operation_card_color(card))
+            };
+            ListItem::new(format!(
+                "{:<10} {:<10} {}",
+                card.authority,
+                card.phase,
+                truncate_chars(&card.title, 58)
+            ))
+            .style(style)
+        })
+        .collect();
+    let empty_label = if app.loading {
+        "Loading operations..."
+    } else if app.error.is_some() {
+        "Operations unavailable; see status footer"
+    } else {
+        "No operation read models available"
+    };
+    let list = List::new(if items.is_empty() {
+        vec![ListItem::new(empty_label)]
+    } else {
+        items
+    })
+    .block(
+        Block::default()
+            .title(format!("Operations Room ({} cards)", cards.len()))
+            .borders(Borders::ALL),
+    );
+    f.render_widget(list, chunks[0]);
+
+    let Some(card) = cards.get(app.selected_index) else {
+        f.render_widget(
+            Paragraph::new("Select an operation card to inspect authority and next actions.")
+                .block(
+                    Block::default()
+                        .title("Authority Grammar")
+                        .borders(Borders::ALL),
+                )
+                .wrap(Wrap { trim: true }),
+            chunks[1],
+        );
+        return;
+    };
+    render_operation_card_detail(f, chunks[1], card);
+}
+
+fn render_operation_card_detail(f: &mut Frame, area: Rect, card: &OperationRoomCard) {
+    let mut lines = vec![
+        Line::from(vec![
+            Span::styled("Authority  ", Style::default().fg(Color::DarkGray)),
+            Span::styled(
+                card.authority.clone(),
+                Style::default().add_modifier(Modifier::BOLD),
+            ),
+        ]),
+        Line::from(vec![
+            Span::styled("Phase      ", Style::default().fg(Color::DarkGray)),
+            Span::raw(card.phase.clone()),
+        ]),
+        Line::from(vec![
+            Span::styled("Progress   ", Style::default().fg(Color::DarkGray)),
+            Span::raw(card.progress.clone()),
+        ]),
+        Line::from(""),
+        Line::from(Span::styled(
+            "Affected Refs",
+            Style::default().add_modifier(Modifier::BOLD),
+        )),
+    ];
+    if card.affected_refs.is_empty() {
+        lines.push(Line::from("none reported"));
+    } else {
+        for ref_ in card.affected_refs.iter().take(8) {
+            lines.push(Line::from(ref_.clone()));
+        }
+    }
+
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "Caveats",
+        Style::default().add_modifier(Modifier::BOLD),
+    )));
+    if card.caveats.is_empty() {
+        lines.push(Line::from("none"));
+    } else {
+        for caveat in card.caveats.iter().take(8) {
+            lines.push(Line::from(caveat.clone()));
+        }
+    }
+
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "Actions",
+        Style::default().add_modifier(Modifier::BOLD),
+    )));
+    for action in &card.actions {
+        lines.push(Line::from(format!(
+            "{} [{}] — {}",
+            action.label,
+            action_state_label(action.state),
+            action.command
+        )));
+    }
+
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "Audit",
+        Style::default().add_modifier(Modifier::BOLD),
+    )));
+    for audit_ref in &card.audit_refs {
+        lines.push(Line::from(audit_ref.clone()));
+    }
+
+    f.render_widget(
+        Paragraph::new(lines)
+            .block(
+                Block::default()
+                    .title(card.title.clone())
+                    .borders(Borders::ALL),
+            )
+            .wrap(Wrap { trim: true }),
+        area,
+    );
+}
+
+#[derive(Debug, Clone)]
+struct OperationRoomCard {
+    title: String,
+    authority: String,
+    phase: String,
+    progress: String,
+    affected_refs: Vec<String>,
+    caveats: Vec<String>,
+    actions: Vec<OperationRoomAction>,
+    audit_refs: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+struct OperationRoomAction {
+    label: String,
+    state: ActionAvailabilityState,
+    command: String,
+}
+
+impl OperationRoomAction {
+    fn new(
+        label: impl Into<String>,
+        state: ActionAvailabilityState,
+        command: impl Into<String>,
+    ) -> Self {
+        Self {
+            label: label.into(),
+            state,
+            command: command.into(),
+        }
+    }
+}
+
+fn operations_room_cards(app: &App) -> Vec<OperationRoomCard> {
+    let mut cards = Vec::new();
+    cards.extend(
+        app.replay_operations
+            .iter()
+            .take(6)
+            .map(replay_operation_card),
+    );
+    cards.extend(app.ops_operations.iter().take(6).map(ops_operation_card));
+    cards.push(dlq_operation_card(app));
+    if let Some(card) = derived_node_dlq_card(app) {
+        cards.push(card);
+    }
+    cards.push(lifecycle_operation_card(app));
+    cards.push(state_snapshot_operation_card());
+    cards.push(privacy_operation_card(app));
+    cards
+}
+
+fn replay_operation_card(operation: &ReplayOperation) -> OperationRoomCard {
+    let progress = format!(
+        "{} / {} events, batch {}",
+        operation.checkpoint.processed_events,
+        operation.checkpoint.total_events,
+        operation.checkpoint.batch_number
+    );
+    let mut actions = vec![
+        OperationRoomAction::new(
+            "monitor",
+            ActionAvailabilityState::Enabled,
+            format!("sinexctl replay watch {}", operation.operation_id),
+        ),
+        OperationRoomAction::new(
+            "status",
+            ActionAvailabilityState::Enabled,
+            format!("sinexctl replay status {}", operation.operation_id),
+        ),
+    ];
+    match operation.state {
+        ReplayState::Planning => actions.push(OperationRoomAction::new(
+            "preview",
+            ActionAvailabilityState::Enabled,
+            format!("sinexctl replay preview {}", operation.operation_id),
+        )),
+        ReplayState::Previewed => actions.push(OperationRoomAction::new(
+            "confirm",
+            ActionAvailabilityState::Dangerous,
+            format!("sinexctl replay approve {}", operation.operation_id),
+        )),
+        ReplayState::Approved => actions.push(OperationRoomAction::new(
+            "execute",
+            ActionAvailabilityState::Dangerous,
+            format!("sinexctl replay execute {}", operation.operation_id),
+        )),
+        ReplayState::Executing | ReplayState::Cancelling | ReplayState::Committing => {
+            actions.push(OperationRoomAction::new(
+                "cancel",
+                ActionAvailabilityState::Dangerous,
+                format!(
+                    "sinexctl replay cancel {} --reason <reason>",
+                    operation.operation_id
+                ),
+            ));
+        }
+        ReplayState::Completed | ReplayState::Failed | ReplayState::Cancelled => {}
+    }
+    OperationRoomCard {
+        title: format!("replay {}", operation.operation_id),
+        authority: "write".to_string(),
+        phase: format!("{:?}", operation.state).to_lowercase(),
+        progress,
+        affected_refs: replay_scope_refs(operation),
+        caveats: replay_caveats(operation),
+        actions,
+        audit_refs: vec![format!("sinexctl audit {}", operation.operation_id)],
+    }
+}
+
+fn replay_scope_refs(operation: &ReplayOperation) -> Vec<String> {
+    let scope = &operation.scope;
+    let mut refs = vec![format!("node: {}", scope.node_id)];
+    if let Some((start, end)) = &scope.time_window {
+        refs.push(format!("time: {start} -> {end}"));
+    }
+    if let Some(materials) = &scope.material_filter {
+        refs.push(format!("materials: {}", materials.len()));
+    }
+    if let Some(source_unit_id) = &scope.source_unit_id {
+        refs.push(format!("source-unit: {source_unit_id}"));
+    }
+    if let Some(source_material_id) = &scope.source_material_id {
+        refs.push(format!("source-material: {source_material_id}"));
+    }
+    if let Some(parser_id) = &scope.parser_id {
+        refs.push(format!("parser: {parser_id}"));
+    }
+    refs
+}
+
+fn replay_caveats(operation: &ReplayOperation) -> Vec<String> {
+    let mut caveats = Vec::new();
+    if operation.scope.is_staged_source_scope() {
+        caveats.push("staged-source replay: inspect source readiness before execute".to_string());
+    }
+    if !operation.state.is_terminal()
+        && matches!(
+            operation.state,
+            ReplayState::Previewed | ReplayState::Approved | ReplayState::Executing
+        )
+    {
+        caveats.push("mutating replay phase: confirmation/audit trail required".to_string());
+    }
+    if let Some(error) = &operation.error_details {
+        caveats.push(format!("error: {}", truncate_chars(error, 96)));
+    }
+    caveats
+}
+
+fn ops_operation_card(operation: &OpsOperation) -> OperationRoomCard {
+    OperationRoomCard {
+        title: format!("operation {} ({})", operation.id, operation.operation_type),
+        authority: "ops".to_string(),
+        phase: format!("{:?}", operation.result_status).to_lowercase(),
+        progress: operation
+            .duration_ms
+            .map_or_else(|| "duration unknown".to_string(), |ms| format!("{ms}ms")),
+        affected_refs: operation
+            .scope
+            .as_ref()
+            .map_or_else(Vec::new, |scope| vec![summarize_json_scope(scope)]),
+        caveats: operation
+            .result_message
+            .as_ref()
+            .map_or_else(Vec::new, |message| vec![message.clone()]),
+        actions: vec![
+            OperationRoomAction::new(
+                "inspect",
+                ActionAvailabilityState::Enabled,
+                format!("sinexctl ops get {}", operation.id),
+            ),
+            OperationRoomAction::new(
+                "cancel",
+                ActionAvailabilityState::Dangerous,
+                format!("sinexctl ops cancel {} -r <reason>", operation.id),
+            ),
+        ],
+        audit_refs: vec![format!("sinexctl audit {}", operation.id)],
+    }
+}
+
+fn dlq_operation_card(app: &App) -> OperationRoomCard {
+    let stats = app.dlq_stats.as_ref();
+    let total = stats.map_or(0, |stats| stats.total_messages);
+    let bytes = stats.map_or(0, |stats| stats.total_bytes);
+    let mut caveats = Vec::new();
+    if total > 0 {
+        caveats.push(
+            "requeue/purge is mutating; inspect peek output and source readiness first".to_string(),
+        );
+    }
+    OperationRoomCard {
+        title: "raw-ingest DLQ".to_string(),
+        authority: if total > 0 { "admin" } else { "read" }.to_string(),
+        phase: if total > 0 { "blocked" } else { "clear" }.to_string(),
+        progress: format!("{total} message(s), {}", format_bytes(bytes)),
+        affected_refs: stats.map_or_else(Vec::new, |stats| {
+            vec![format!("seq {}..{}", stats.first_seq, stats.last_seq)]
+        }),
+        caveats,
+        actions: vec![
+            OperationRoomAction::new(
+                "peek",
+                ActionAvailabilityState::Enabled,
+                "sinexctl dlq peek --limit 10",
+            ),
+            OperationRoomAction::new(
+                "requeue",
+                ActionAvailabilityState::Dangerous,
+                "sinexctl dlq requeue --all",
+            ),
+            OperationRoomAction::new(
+                "purge",
+                ActionAvailabilityState::Dangerous,
+                "sinexctl dlq purge --confirm",
+            ),
+        ],
+        audit_refs: vec!["sinexctl dlq list".to_string()],
+    }
+}
+
+fn derived_node_dlq_card(app: &App) -> Option<OperationRoomCard> {
+    let message = app
+        .dlq_peek
+        .as_ref()?
+        .messages
+        .iter()
+        .find(|message| is_derived_node_material_dlq(message))?;
+    Some(OperationRoomCard {
+        title: "derived-node telemetry DLQ material gap".to_string(),
+        authority: "admin".to_string(),
+        phase: "blocked".to_string(),
+        progress: format!(
+            "sample seq {}, retry {}",
+            message.sequence, message.retry_count
+        ),
+        affected_refs: vec![
+            format!("subject: {}", message.subject),
+            format!(
+                "original: {}",
+                message.original_subject.as_deref().unwrap_or("unknown")
+            ),
+            format!(
+                "failed event sample: {}",
+                truncate_chars(&message.payload_preview, 96)
+            ),
+        ],
+        caveats: vec![
+            "first-class DLQ class: likely missing source-material registration for derived telemetry".to_string(),
+            "requeue will probably re-DLQ until the Source Readiness Cockpit row is fixed".to_string(),
+            "downstream projections may miss derived-node telemetry until repaired".to_string(),
+        ],
+        actions: vec![
+            OperationRoomAction::new(
+                "inspect source",
+                ActionAvailabilityState::Enabled,
+                "sinexctl tui --tab sources",
+            ),
+            OperationRoomAction::new(
+                "peek",
+                ActionAvailabilityState::Enabled,
+                "sinexctl dlq peek --limit 10",
+            ),
+            OperationRoomAction::new(
+                "requeue after repair",
+                ActionAvailabilityState::Dangerous,
+                "sinexctl dlq requeue --all",
+            ),
+        ],
+        audit_refs: vec!["Ref #1241 derived-node telemetry DLQ verification".to_string()],
+    })
+}
+
+fn is_derived_node_material_dlq(message: &DlqMessagePeek) -> bool {
+    let haystack = format!(
+        "{} {} {}",
+        message.subject,
+        message.original_subject.as_deref().unwrap_or_default(),
+        message.payload_preview
+    )
+    .to_ascii_lowercase();
+    haystack.contains("derived")
+        && (haystack.contains("source_material")
+            || haystack.contains("source material")
+            || haystack.contains("material"))
+}
+
+fn lifecycle_operation_card(app: &App) -> OperationRoomCard {
+    let affected_refs = app
+        .lifecycle_status
+        .as_ref()
+        .map_or_else(Vec::new, |status| {
+            status
+                .tiers
+                .iter()
+                .map(|tier| {
+                    format!(
+                        "{:?}: {} event(s), {} source(s)",
+                        tier.tier, tier.event_count, tier.distinct_sources
+                    )
+                })
+                .collect()
+        });
+    let total_events = app
+        .lifecycle_status
+        .as_ref()
+        .map_or(0, |status| status.total_events);
+    OperationRoomCard {
+        title: "lifecycle archive/restore/tombstone".to_string(),
+        authority: "admin".to_string(),
+        phase: "guarded".to_string(),
+        progress: format!("{total_events} event(s) across lifecycle tiers"),
+        affected_refs,
+        caveats: vec![
+            "archive/restore supports dry-run; tombstone is destructive and preview/approve gated"
+                .to_string(),
+        ],
+        actions: vec![
+            OperationRoomAction::new(
+                "archive dry-run",
+                ActionAvailabilityState::Enabled,
+                "sinexctl lifecycle archive --limit 1000",
+            ),
+            OperationRoomAction::new(
+                "restore dry-run",
+                ActionAvailabilityState::Enabled,
+                "sinexctl lifecycle restore <event-id>...",
+            ),
+            OperationRoomAction::new(
+                "tombstone preview",
+                ActionAvailabilityState::Dangerous,
+                "sinexctl lifecycle tombstone preview <operation-id>",
+            ),
+            OperationRoomAction::new(
+                "tombstone approve",
+                ActionAvailabilityState::Dangerous,
+                "sinexctl lifecycle tombstone approve <operation-id>",
+            ),
+        ],
+        audit_refs: vec!["sinexctl lifecycle status".to_string()],
+    }
+}
+
+fn state_snapshot_operation_card() -> OperationRoomCard {
+    OperationRoomCard {
+        title: "state snapshot and restore drill".to_string(),
+        authority: "admin".to_string(),
+        phase: "target".to_string(),
+        progress: "snapshot is read-only; restore requires explicit plan".to_string(),
+        affected_refs: vec!["runtime state bundle".to_string()],
+        caveats: vec!["restore drill must not look like navigation; require explicit target directory and plan review".to_string()],
+        actions: vec![
+            OperationRoomAction::new(
+                "snapshot",
+                ActionAvailabilityState::Enabled,
+                "sinexctl state snapshot",
+            ),
+            OperationRoomAction::new(
+                "inspect",
+                ActionAvailabilityState::Enabled,
+                "sinexctl state inspect --archive <archive>",
+            ),
+            OperationRoomAction::new(
+                "restore plan",
+                ActionAvailabilityState::Dangerous,
+                "sinexctl state restore --archive <archive> --target-dir <dir> --dry-run",
+            ),
+        ],
+        audit_refs: vec!["state snapshot artifact path".to_string()],
+    }
+}
+
+fn privacy_operation_card(app: &App) -> OperationRoomCard {
+    let state = app.private_mode.as_ref().map(|response| &response.state);
+    let enabled = state.is_some_and(|state| state.enabled);
+    let mut affected_refs = state.map_or_else(Vec::new, |state| {
+        let mut refs = vec![format!("actor: {}", state.actor)];
+        if state.affected_source_classes.is_empty() {
+            refs.push("source classes: all/default".to_string());
+        } else {
+            refs.push(format!(
+                "source classes: {}",
+                state.affected_source_classes.join(", ")
+            ));
+        }
+        if let Some(operation_id) = &state.updated_by_operation_id {
+            refs.push(format!("operation: {operation_id}"));
+        }
+        refs
+    });
+    if affected_refs.is_empty() {
+        affected_refs.push("private-mode state unavailable".to_string());
+    }
+    OperationRoomCard {
+        title: "privacy export/delete/redact authority".to_string(),
+        authority: "write".to_string(),
+        phase: if enabled { "private-mode" } else { "normal" }.to_string(),
+        progress: if enabled {
+            "private mode enabled".to_string()
+        } else {
+            "private mode disabled".to_string()
+        },
+        affected_refs,
+        caveats: vec![
+            "privacy export requires explicit scope".to_string(),
+            "delete/redact remain target operations until concrete command surfaces land"
+                .to_string(),
+        ],
+        actions: vec![
+            OperationRoomAction::new(
+                "audit",
+                ActionAvailabilityState::Enabled,
+                "sinexctl privacy audit",
+            ),
+            OperationRoomAction::new(
+                "export scoped",
+                ActionAvailabilityState::Dangerous,
+                "sinexctl privacy export --since 24h --source <source> --output <file>",
+            ),
+            OperationRoomAction::new(
+                "delete",
+                ActionAvailabilityState::Target,
+                "not implemented: privacy delete",
+            ),
+            OperationRoomAction::new(
+                "redact",
+                ActionAvailabilityState::Target,
+                "not implemented: privacy redact",
+            ),
+        ],
+        audit_refs: vec!["sinexctl privacy private-mode status".to_string()],
+    }
+}
+
+fn operation_card_color(card: &OperationRoomCard) -> Color {
+    if card.phase.contains("failed") || card.phase.contains("blocked") {
+        Color::Red
+    } else if card
+        .actions
+        .iter()
+        .any(|action| matches!(action.state, ActionAvailabilityState::Dangerous))
+    {
+        Color::Yellow
+    } else {
+        Color::White
+    }
+}
+
+fn summarize_json_scope(scope: &serde_json::Value) -> String {
+    match scope {
+        serde_json::Value::Object(map) => {
+            let keys = map.keys().take(6).cloned().collect::<Vec<_>>().join(", ");
+            format!("scope keys: {keys}")
+        }
+        other => truncate_chars(&other.to_string(), 96),
+    }
 }
 
 fn render_nodes(f: &mut Frame, area: Rect, app: &App) {
@@ -1497,7 +2162,7 @@ fn format_event_time(card: &EventCardView) -> String {
 
 fn render_help_overlay(f: &mut Frame, area: Rect) {
     let width = area.width.saturating_mul(2) / 3;
-    let height = 12;
+    let height = 13;
     let x = area.x + area.width.saturating_sub(width) / 2;
     let y = area.y + area.height.saturating_sub(height) / 2;
     let popup = Rect {
@@ -1516,6 +2181,7 @@ fn render_help_overlay(f: &mut Frame, area: Rect) {
         Line::from("?: toggle this help panel"),
         Line::from("q or Esc: quit"),
         Line::from(""),
+        Line::from("Operations cards label current, dangerous, target, and disabled actions."),
         Line::from("Copy feedback appears in the status bar."),
         Line::from("Context-pack action is target-only until #1095."),
     ];
