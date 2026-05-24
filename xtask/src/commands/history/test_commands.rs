@@ -2,8 +2,9 @@ use color_eyre::eyre::Result;
 use console::style;
 use tabled::{builder::Builder, settings::Style};
 
+use crate::affected;
 use crate::command::{CommandContext, CommandResult};
-use crate::history::HistoryDb;
+use crate::history::{HistoricalSlowTest, HistoryDb};
 
 /// History tests subcommand variants
 #[derive(Debug, Clone, clap::Subcommand)]
@@ -256,7 +257,7 @@ pub(super) fn execute_tests_slowest(
         })
         .transpose()?;
     let tests = if latest_per_test {
-        db.get_slowest_latest_tests_filtered(limit, since.as_deref())?
+        get_current_slowest_latest_tests(db, limit, since.as_deref())?
     } else {
         db.get_slowest_tests_filtered(limit, since.as_deref(), min_runs)?
     };
@@ -300,6 +301,39 @@ pub(super) fn execute_tests_slowest(
         .with_message(format!("Found {} slowest tests", tests.len()))
         .with_data(serde_json::to_value(&tests)?)
         .with_duration(ctx.elapsed()))
+}
+
+fn get_current_slowest_latest_tests(
+    db: &HistoryDb,
+    limit: usize,
+    since: Option<&str>,
+) -> Result<Vec<HistoricalSlowTest>> {
+    let candidate_limit = limit.saturating_mul(5).max(limit);
+    let tests = db.get_slowest_latest_tests_filtered(candidate_limit, since)?;
+    let mut current_tests = Vec::with_capacity(limit.min(tests.len()));
+    for test in tests {
+        if current_test_exists(&test)? {
+            current_tests.push(test);
+        }
+        if current_tests.len() == limit {
+            break;
+        }
+    }
+    Ok(current_tests)
+}
+
+fn current_test_exists(test: &HistoricalSlowTest) -> Result<bool> {
+    let Some(test_name) = historical_test_leaf(&test.test_name) else {
+        return Ok(true);
+    };
+    let packages = affected::infer_packages_for_test_filter(&format!("test({test_name})"))?;
+    Ok(packages.iter().any(|package| package == &test.package))
+}
+
+fn historical_test_leaf(test_name: &str) -> Option<&str> {
+    let after_binary = test_name.rsplit_once('$').map_or(test_name, |(_, name)| name);
+    let leaf = after_binary.rsplit("::").next().unwrap_or(after_binary);
+    (!leaf.is_empty()).then_some(leaf)
 }
 
 fn execute_tests_flaky(
