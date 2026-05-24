@@ -36,9 +36,6 @@ workspace = true
 [dev-dependencies.tokio]
 workspace = true
 
-[dev-dependencies.xtask]
-path = "../../../xtask"
-
 [dev-dependencies.sinex-primitives]
 path = "../sinex-primitives"
 features = [
