@@ -427,6 +427,7 @@ impl AdminSnapshotCommand {
                 &nats_src,
                 staging,
                 self.dry_run,
+                mode.tolerates_vanished_files(),
             )?;
             record.extras = Some(ComponentExtras::Nats(NatsExtras {
                 member_paths: component_member_paths(&nats_src),
@@ -452,6 +453,7 @@ impl AdminSnapshotCommand {
                 &cas_src,
                 staging,
                 self.dry_run,
+                mode.tolerates_vanished_files(),
             )?;
             record.extras = Some(ComponentExtras::Cas(CasExtras { blob_count }));
             component_records.push(record);
@@ -460,7 +462,12 @@ impl AdminSnapshotCommand {
         if component_set.contains("state") {
             let source_unit_ids = discover_source_unit_ids(state_dir);
             let private_mode_state_present = state_dir.join("private-mode/state.json").exists();
-            let mut record = self.capture_state_component(state_dir, staging, self.dry_run)?;
+            let mut record = self.capture_state_component(
+                state_dir,
+                staging,
+                self.dry_run,
+                mode.tolerates_vanished_files(),
+            )?;
             record.extras = Some(ComponentExtras::State(StateExtras {
                 source_unit_ids,
                 private_mode_state_present,
@@ -586,6 +593,7 @@ impl AdminSnapshotCommand {
         src: &Path,
         staging: &StagingDir,
         dry_run: bool,
+        tolerate_vanished_files: bool,
     ) -> Result<ComponentRecord> {
         let (bytes, blake3) = if !src.exists() {
             // Component directory absent — capture nothing, record zeros.
@@ -600,8 +608,14 @@ impl AdminSnapshotCommand {
             let dst_dir = staging.path().join(relative_path.trim_end_matches('/'));
             std::fs::create_dir_all(&dst_dir)
                 .with_context(|| format!("create {name} component dir in staging"))?;
-            exec::cp_tree(src, &dst_dir)
-                .with_context(|| format!("copy {name} component from {}", src.display()))?;
+            if tolerate_vanished_files {
+                exec::cp_tree_live(src, &dst_dir).with_context(|| {
+                    format!("live-copy {name} component from {}", src.display())
+                })?;
+            } else {
+                exec::cp_tree(src, &dst_dir)
+                    .with_context(|| format!("copy {name} component from {}", src.display()))?;
+            }
             let bytes = estimate_dir_bytes(&component_root);
             let blake3 = blake3_dir(&component_root).unwrap_or_else(|_| "error".to_string());
             (bytes, blake3)
@@ -621,10 +635,12 @@ impl AdminSnapshotCommand {
         state_dir: &Path,
         staging: &StagingDir,
         dry_run: bool,
+        tolerate_vanished_files: bool,
     ) -> Result<ComponentRecord> {
         // Capture everything under state_dir that is NOT already handled by
-        // nats/cas components (to avoid double-counting).
-        let skip = ["nats", "blob-repository"];
+        // dedicated components (to avoid double-counting and live-copying
+        // mutable database storage as ordinary runtime state).
+        let skip = ["postgresql", "nats", "blob-repository"];
 
         if !state_dir.exists() {
             return Ok(ComponentRecord {
@@ -656,13 +672,23 @@ impl AdminSnapshotCommand {
                     let dst_sub = dst_dir.join(&fname);
                     std::fs::create_dir_all(&dst_sub)
                         .with_context(|| format!("create state sub-dir {}", dst_sub.display()))?;
-                    exec::cp_tree(&src_entry, &dst_sub).with_context(|| {
-                        format!(
-                            "copy state entry {} -> {}",
-                            src_entry.display(),
-                            dst_sub.display()
-                        )
-                    })?;
+                    if tolerate_vanished_files {
+                        exec::cp_tree_live(&src_entry, &dst_sub).with_context(|| {
+                            format!(
+                                "live-copy state entry {} -> {}",
+                                src_entry.display(),
+                                dst_sub.display()
+                            )
+                        })?;
+                    } else {
+                        exec::cp_tree(&src_entry, &dst_sub).with_context(|| {
+                            format!(
+                                "copy state entry {} -> {}",
+                                src_entry.display(),
+                                dst_sub.display()
+                            )
+                        })?;
+                    }
                 } else {
                     let dst_file = dst_dir.join(&fname);
                     std::fs::copy(&src_entry, &dst_file).with_context(|| {
@@ -903,6 +929,10 @@ impl SnapshotMode {
 
     const fn requires_quiescence(self) -> bool {
         matches!(self, Self::Quiesce)
+    }
+
+    const fn tolerates_vanished_files(self) -> bool {
+        matches!(self, Self::Live)
     }
 }
 
