@@ -337,48 +337,24 @@ fn spawn_replay_output_inserter(
     source: &'static str,
     event_type: &'static str,
     path: &'static str,
-    equivalence_key: Option<&'static str>,
 ) -> tokio::task::JoinHandle<Result<NodeScanCommand>> {
     tokio::spawn(async move {
         let command = command_rx
             .await
             .map_err(|_| test_error("fake replay output inserter did not receive scan command"))?;
-        let logical_source_identifier = command
+        let material_id = command
             .args
             .replay
             .as_ref()
             .and_then(|replay| replay.materials.first())
-            .map_or_else(
-                || path.to_string(),
-                ReplayExecutionEngine::logical_source_identifier,
-            );
-        let material_id = Uuid::now_v7();
-        let source_identifier = format!("{logical_source_identifier}#material={material_id}");
-        sqlx::query!(
-            r#"
-            INSERT INTO raw.source_material_registry (
-                id,
-                material_kind,
-                source_identifier,
-                status,
-                timing_info_type,
-                metadata
-            )
-            VALUES ($1::uuid, 'annex', $2, 'completed', 'realtime', $3::jsonb)
-            "#,
-            material_id,
-            source_identifier,
-            json!({ "logical_source_identifier": logical_source_identifier }),
-        )
-        .execute(&pool)
-        .await?;
+            .map(|material| material.source_material_id)
+            .ok_or_else(|| {
+                test_error("fake replay output inserter requires a replay source material")
+            })?;
         let mut event = DynamicPayload::new(source, event_type, json!({ "path": path }))
             .from_material(Id::from_uuid(material_id))
             .build()?;
         event.created_by_operation_id = Some(command.operation_id);
-        if let Some(equivalence_key) = equivalence_key {
-            event.equivalence_key = Some(equivalence_key.to_string());
-        }
         pool.events().insert(event).await?;
         Ok(command)
     })

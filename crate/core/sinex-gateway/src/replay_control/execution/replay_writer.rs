@@ -2,8 +2,8 @@
 //! `ReplayExecutionEngine`. See `execution/mod.rs` for the engine type.
 
 use super::{
-    ReplayExecutionEngine, ScopeInvalidationBucket, StreamExt, replay_scope_drift_error,
-    stale_preview_missing_root_ids_error,
+    MaterialOccurrenceKey, OperationOutputEvent, ReplayExecutionEngine, ScopeInvalidationBucket,
+    StreamExt, replay_scope_drift_error, stale_preview_missing_root_ids_error,
 };
 use sinex_db::repositories::DbPoolExt;
 use sinex_node_sdk::runtime::stream::{
@@ -18,32 +18,67 @@ use tracing::{debug, error, info, warn};
 
 use sinex_db::replay::state_machine::{ReplayCheckpoint, ReplayScope, ReplayState};
 
+fn material_occurrence_key(event: &OperationOutputEvent) -> Option<MaterialOccurrenceKey> {
+    Some(MaterialOccurrenceKey {
+        source_material_id: event.source_material_id?,
+        anchor_byte: event.anchor_byte?,
+        offset_start: event.offset_start,
+        offset_end: event.offset_end,
+        offset_kind: event.offset_kind.clone(),
+    })
+}
+
+fn replacement_relation_kind(
+    old_count: usize,
+    new_count: usize,
+) -> sinex_db::repositories::ReplacementKind {
+    use sinex_db::repositories::ReplacementKind;
+
+    match (old_count, new_count) {
+        (1, 1) => ReplacementKind::Superseded,
+        (1, _) => ReplacementKind::Split,
+        (_, 1) => ReplacementKind::Collapsed,
+        _ => ReplacementKind::Recomputed,
+    }
+}
+
 impl ReplayExecutionEngine {
-    /// Record replacement relations between archived (old) events and newly-created events.
+    /// Record replacement relations between archived material events and newly-created events.
     ///
     /// After a successful replay scan, this queries for:
     /// - Old events: from `audit.archived_events` matching `cascade_ids`
     /// - New events: from `core.events` with `created_by_operation_id = operation_id`
     ///
-    /// Matching strategy: events sharing the same `equivalence_key` are `Superseded`.
-    /// Unmatched archived events are left without a replacement relation rather than
-    /// fabricating a false old→new lineage edge.
+    /// Matching strategy: material replay uses physical source occurrence coordinates:
+    /// `(source_material_id, anchor_byte, offset_start, offset_end, offset_kind)`.
+    /// `equivalence_key` is a derived-output slot concept and is intentionally not
+    /// part of material replay lineage.
     pub(crate) async fn record_event_replacements(
         &self,
         pool: &sqlx::PgPool,
         operation_id: Uuid,
         cascade_ids: &[Uuid],
     ) -> Result<()> {
-        use sinex_db::repositories::{ReplacementKind, ReplacementRecord};
+        use sinex_db::repositories::ReplacementRecord;
 
         if cascade_ids.is_empty() {
             return Ok(());
         }
 
-        // Query equivalence_key + scope_key for archived old events
+        // Query physical occurrence coordinates for archived material events.
         let old_rows = sqlx::query!(
-            r#"SELECT id as "id!", scope_key, equivalence_key
-             FROM audit.archived_events WHERE id = ANY($1::uuid[])"#,
+            r#"SELECT
+                id as "id!",
+                scope_key,
+                source_material_id,
+                anchor_byte,
+                offset_start,
+                offset_end,
+                offset_kind
+             FROM audit.archived_events
+             WHERE id = ANY($1::uuid[])
+               AND source_material_id IS NOT NULL
+               AND anchor_byte IS NOT NULL"#,
             cascade_ids,
         )
         .fetch_all(pool)
@@ -52,6 +87,7 @@ impl ReplayExecutionEngine {
             SinexError::database("Failed to query archived events for replacement matching")
                 .with_std_error(&err)
         })?;
+        let old_row_count = old_rows.len();
 
         // Query the actual events emitted by this replay operation. Re-querying
         // the original scope window can miss replacements or bind unrelated
@@ -69,57 +105,76 @@ impl ReplayExecutionEngine {
             return Ok(());
         }
 
-        // Build equivalence_key → new_event_ids index, preserving all outputs
-        // with the same key (e.g. deterministic re-runs that produce two events
-        // with the same equivalence_key must all be recorded, not collapsed).
-        let mut eq_key_to_new: HashMap<String, Vec<Uuid>> = HashMap::new();
+        // Build source occurrence → new_event_ids index, preserving every output
+        // at the same occurrence. Multiple outputs at the same physical position
+        // are represented as split/collapsed/recomputed relations by count.
+        let mut occurrence_to_new: HashMap<MaterialOccurrenceKey, Vec<Uuid>> = HashMap::new();
         for event in &new_events {
-            if let Some(ref eq_key) = event.equivalence_key {
-                eq_key_to_new
-                    .entry(eq_key.clone())
-                    .or_default()
-                    .push(event.id);
+            if let Some(key) = material_occurrence_key(event) {
+                occurrence_to_new.entry(key).or_default().push(event.id);
             }
         }
 
-        // Build replacement records
-        let mut replacements = Vec::with_capacity(old_rows.len());
+        let mut old_by_occurrence: HashMap<MaterialOccurrenceKey, Vec<_>> = HashMap::new();
+        let mut skipped_old_count = 0usize;
+        for row in old_rows {
+            let Some(source_material_id) = row.source_material_id else {
+                skipped_old_count += 1;
+                continue;
+            };
+            let Some(anchor_byte) = row.anchor_byte else {
+                skipped_old_count += 1;
+                continue;
+            };
+            old_by_occurrence
+                .entry(MaterialOccurrenceKey {
+                    source_material_id,
+                    anchor_byte,
+                    offset_start: row.offset_start,
+                    offset_end: row.offset_end,
+                    offset_kind: row.offset_kind,
+                })
+                .or_default()
+                .push((row.id, row.scope_key));
+        }
+
+        let mut replacements = Vec::with_capacity(old_row_count);
         let mut unmatched_count = 0usize;
-        for row in &old_rows {
-            let Some(new_event_ids) = row
-                .equivalence_key
-                .as_ref()
-                .and_then(|eq| eq_key_to_new.get(eq))
-            else {
-                unmatched_count += 1;
+        for (key, old_events) in old_by_occurrence {
+            let Some(new_event_ids) = occurrence_to_new.get(&key) else {
+                unmatched_count += old_events.len();
                 continue;
             };
 
-            for &new_event_id in new_event_ids {
-                replacements.push(ReplacementRecord {
-                    old_event_id: row.id,
-                    new_event_id,
-                    relation_kind: ReplacementKind::Superseded,
-                    scope_key: row.scope_key.clone(),
-                    equivalence_key: row.equivalence_key.clone(),
-                });
+            let relation_kind = replacement_relation_kind(old_events.len(), new_event_ids.len());
+            for (old_event_id, scope_key) in old_events {
+                for &new_event_id in new_event_ids {
+                    replacements.push(ReplacementRecord {
+                        old_event_id,
+                        new_event_id,
+                        relation_kind,
+                        scope_key: scope_key.clone(),
+                        equivalence_key: None,
+                    });
+                }
             }
         }
 
-        if unmatched_count > 0 {
+        if unmatched_count > 0 || skipped_old_count > 0 {
             warn!(
                 operation_id = %operation_id,
                 unmatched_count,
-                old_count = old_rows.len(),
+                skipped_old_count,
+                old_count = cascade_ids.len(),
                 new_count = new_events.len(),
-                "Skipped replay replacement records without an equivalence-key match"
+                "Skipped replay replacement records without a material-occurrence match"
             );
         }
 
         if replacements.is_empty() {
             debug!(
                 operation_id = %operation_id,
-                old_count = old_rows.len(),
+                old_count = cascade_ids.len(),
                 new_count = new_events.len(),
                 "No replay replacement matches found — skipping replacement recording"
             );
@@ -142,7 +197,7 @@ impl ReplayExecutionEngine {
         info!(
             operation_id = %operation_id,
             replacement_count = count,
-            old_events = old_rows.len(),
+            old_events = cascade_ids.len(),
             new_events = new_events.len(),
             "Recorded event replacement relations"
         );
