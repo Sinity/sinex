@@ -2,19 +2,57 @@
 
 Status: design record for #1112.
 
-Small synthesis events should keep using `source_event_ids[]`. Large summaries,
-clusters, context packs, and moment/evidence outputs need a compact lineage
-representation that preserves synthesis provenance without stuffing thousands of
-parent IDs into one event row.
+## Resolution: Hierarchical Aggregation Is The Dominant Shape
 
-This is not a third provenance class. A high-fan-in output is still synthesis:
-it is derived from events. The parent set is represented by a derivation scope
-instead of only an inline UUID array.
+The original concern — that day summaries or weekly rollups would produce
+`source_event_ids[]` arrays with thousands of entries, blowing past PostgreSQL
+TOAST thresholds and stressing cascade walks — was framed against a flat
+aggregation model. That shape does not actually arise in practice.
 
-## Representation
+Aggregations are expressed **hierarchically**:
 
-Use side tables for large fan-in. Do not add a second material provenance path
-and do not store huge parent lists in event payload JSON.
+- minute aggregations parent up to 60 raw events;
+- hourly aggregations parent up to ~60 minute aggregations;
+- day summaries parent up to 24 hourly aggregations;
+- weekly rollups parent 7 day summaries; and so on.
+
+Each layer fans in to at most ~60–100 children. `source_event_ids[]` stays
+small at every level, TOAST is a non-issue, and the existing UUID-array
+provenance keeps working unmodified through arbitrarily deep aggregation
+stacks.
+
+Producers writing aggregation chains MUST express them this way. The
+substrate guidance is: never aggregate flat from raw events to a long-window
+summary — always pass through the natural intermediate windows. This keeps
+cascade walks shallow at each step, makes partial invalidation tractable, and
+preserves the per-layer trace story.
+
+Previously considered: a `Provenance::Query { query_hash, scope }` form with
+side tables (`derivation_scopes`, `derivation_scope_members`,
+`event_derivation_scopes`) was sketched as an answer to the
+thousands-of-parents shape. That sketch is preserved below for cases where it
+still applies, but it is no longer the primary answer for aggregation
+lineage.
+
+## Remaining Case: Query-Based / Non-Aggregation High Fan-In
+
+Hierarchical aggregation does not cover every conceivable high-fan-in
+synthesis. Two residual shapes can still legitimately need a representation
+other than an inline UUID array:
+
+1. **Cross-cutting synthesis.** A single event genuinely derived from many
+   disparate parents that do not share a natural windowing dimension — for
+   example, a context pack that pulls evidence from semantically related but
+   temporally scattered events, or a moment-evidence bundle assembled from a
+   hand-picked set.
+2. **Query-defined derivation.** An output whose parentage is most honestly
+   described as "all events matching this versioned query at this time" — the
+   set may be large but its definition is the query, not an enumeration.
+
+For these residual shapes, the side-table model below remains a reasonable
+representation. It is not required for hierarchical aggregation, and it is
+not a third provenance class: the output is still synthesis, with the parent
+set expressed via a derivation scope instead of an inline array.
 
 ```sql
 create table core.derivation_scopes (
@@ -50,14 +88,15 @@ create table core.event_derivation_scopes (
 );
 ```
 
-The `core.events` XOR provenance constraint remains conceptually unchanged:
-material events cite source material; synthesis events cite parent events. For
-large fan-in, the synthesis parentage is discovered through
-`event_derivation_scopes` and `derivation_scope_members`.
+The `core.events` XOR provenance constraint stays conceptually unchanged:
+material events cite source material; synthesis events cite parent events.
+For the residual high-fan-in cases, the synthesis parentage is discovered
+through `event_derivation_scopes` and `derivation_scope_members` rather than
+inline arrays.
 
-## Exact Membership
+## Exact Membership vs Query-Defined Lineage
 
-Exact membership rows are required when:
+Where the side-table model is used, exact membership rows are required when:
 
 - replay must cascade precisely through individual input events;
 - trace output must explain specific evidence items;
@@ -69,67 +108,69 @@ Query-defined lineage without member rows is acceptable only when:
 
 - the source query is deterministic and versioned;
 - `input_query_hash`, `input_count`, and `input_set_hash` are stored;
-- replay can reconstruct the set or explicitly report that exact membership was
-  compacted and cannot be expanded without rerunning the query;
+- replay can reconstruct the set or explicitly report that exact membership
+  was compacted and cannot be expanded without rerunning the query;
 - the output is advisory/read-model evidence rather than a deletion/replay
   cascade authority.
 
 ## Trace Semantics
 
-`sinexctl trace` should render:
+`sinexctl trace` for hierarchical aggregation should render the parent stack
+naturally — each layer shows up as a normal synthesis node with its small
+parent array, and trace traversal walks layer by layer.
+
+For scope-backed synthesis, trace should render:
 
 ```text
 derived event
-  └─ derivation scope: daily_summary/2026-05-16
-       ├─ producer: daily-summarizer@semver
-       ├─ input_count: 18423
+  └─ derivation scope: context_pack/2026-05-16-velocity
+       ├─ producer: context-pack-builder@semver
+       ├─ input_count: 312
        ├─ input_set_hash: blake3:...
        └─ members: expandable on demand
 ```
 
-Default trace output should show the scope node and summary fields. Expansion
-should be explicit and paginated.
+Default trace output should show the scope node and summary fields.
+Expansion should be explicit and paginated.
 
 ## Replay Preview
 
-Replay preview for scoped derivations:
+Hierarchical aggregation replays one layer at a time using the existing
+per-event cascade — no new machinery required.
+
+For scope-backed synthesis:
 
 1. Recompute the scope query under the target semantics version.
 2. Compare old and new `input_count`.
 3. Compare old and new `input_set_hash`.
-4. If hashes match, descendants may be left untouched unless producer semantics
-   changed.
+4. If hashes match, descendants may be left untouched unless producer
+   semantics changed.
 5. If hashes differ, show added/removed sample members and affected derived
    outputs.
 6. Recompute by creating new immutable derived events and superseding or
    invalidating old outputs through normal replay/operation records.
 
-Late-arrival settlement should use the same scope hashes to distinguish “new
-evidence arrived” from “producer semantics changed.”
-
-## First Producer
-
-Daily summarizer is the first good producer:
-
-- parent count is naturally high;
-- output is already windowed and replayable by time range;
-- trace can show a daily scope without expanding thousands of events;
-- late-arrival behavior can later connect to the settlement model.
-
-Context packs and moment-query evidence packs should reuse the same scope model
-once their artifact contracts exist.
+Late-arrival settlement should use the same scope hashes to distinguish "new
+evidence arrived" from "producer semantics changed."
 
 ## Archive Cascade
 
 Archive/replay cascade must traverse both inline `source_event_ids[]` and
-derivation-scope membership when exact members exist. If a scope is query-defined
-without exact members, cascade should mark the derived output as scope-affected
-and require replay preview to recompute membership before destructive archive.
+derivation-scope membership when exact members exist. For hierarchical
+aggregation this is just the normal cascade walk through the layered
+arrays. If a scope is query-defined without exact members, cascade should
+mark the derived output as scope-affected and require replay preview to
+recompute membership before destructive archive.
 
 ## Guardrails
 
-- Keep `source_event_ids[]` for small fan-in derivations.
+- Express aggregations hierarchically by default. Never aggregate flat from
+  raw events to a long-window summary.
+- Keep `source_event_ids[]` for ordinary derivations, including each layer of
+  a hierarchical aggregation chain.
+- Reach for the side-table scope model only for genuinely cross-cutting or
+  query-defined synthesis where hierarchical decomposition is unnatural.
 - Do not introduce material provenance for event-derived summaries.
 - Do not mutate aggregate event payloads in place.
 - Do not hide large parent lists inside JSON payloads.
-- Require pagination for member expansion.
+- Require pagination for member expansion when scopes are used.
