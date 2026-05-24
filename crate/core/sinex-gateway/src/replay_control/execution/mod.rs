@@ -49,7 +49,20 @@ pub(super) struct ReplayExecutionEngine {
 #[derive(Debug)]
 struct OperationOutputEvent {
     id: Uuid,
-    equivalence_key: Option<String>,
+    source_material_id: Option<Uuid>,
+    anchor_byte: Option<i64>,
+    offset_start: Option<i64>,
+    offset_end: Option<i64>,
+    offset_kind: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct MaterialOccurrenceKey {
+    source_material_id: Uuid,
+    anchor_byte: i64,
+    offset_start: Option<i64>,
+    offset_end: Option<i64>,
+    offset_kind: Option<String>,
 }
 
 #[derive(Debug)]
