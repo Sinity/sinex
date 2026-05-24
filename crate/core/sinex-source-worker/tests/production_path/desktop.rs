@@ -141,9 +141,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn desktop_window_manager_unix_socket_adapter_parses_hyprland_frame(
-        _ctx: TestContext,
-    ) -> TestResult<()> {
+    async fn desktop_window_manager_unix_socket_adapter_parses_hyprland_frame() -> TestResult<()> {
         use futures::StreamExt;
         use sinex_node_sdk::parser::{
             InputShapeAdapter, MaterialParser, UnixSocketStreamAdapter, UnixSocketStreamConfig,

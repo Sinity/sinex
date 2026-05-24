@@ -22,9 +22,7 @@ async fn wykop_jsonl_parsers_declare_required_input_keys() -> TestResult<()> {
 }
 
 #[sinex_test]
-async fn wykop_entry_required_timestamp_removal_blocks_readiness(
-    _ctx: TestContext,
-) -> TestResult<()> {
+async fn wykop_entry_required_timestamp_removal_blocks_readiness() -> TestResult<()> {
     let before = SourceRecordFingerprint::from_jsonl_bytes(
         br#"{"entry_id":76315507,"entry_created_at":"2024-05-18 06:53:25","entry_content":"x"}
 "#,

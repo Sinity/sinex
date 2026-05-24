@@ -85,9 +85,7 @@ async fn test_fs_binding_uses_content_drop_adapter() -> TestResult<()> {
 }
 
 #[sinex_test]
-async fn test_fs_source_worker_config_deserializes_as_file_content_drop(
-    _ctx: TestContext,
-) -> TestResult<()> {
+async fn test_fs_source_worker_config_deserializes_as_file_content_drop() -> TestResult<()> {
     use camino::Utf8PathBuf;
     use sinex_node_sdk::parser::{AdapterNodeConfig, FileContentDropConfig};
 

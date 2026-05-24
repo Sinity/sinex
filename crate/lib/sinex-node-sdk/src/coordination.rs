@@ -258,7 +258,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn serialize_handoff_request_round_trips(_ctx: TestContext) -> TestResult<()> {
+    async fn serialize_handoff_request_round_trips() -> TestResult<()> {
         let request = HandoffRequest {
             requester_instance_id: "requester-1".to_string(),
             requester_version: NodeVersion::current()?,
@@ -278,7 +278,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn decode_handoff_request_reports_malformed_payload(_ctx: TestContext) -> TestResult<()> {
+    async fn decode_handoff_request_reports_malformed_payload() -> TestResult<()> {
         let err = NodeCoordination::decode_handoff_request(b"{not-json", "handoff request")
             .expect_err("malformed handoff payload should be rejected");
         assert!(
@@ -289,9 +289,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn forward_handoff_requests_closes_channel_when_subscription_ends(
-        _ctx: TestContext,
-    ) -> TestResult<()> {
+    async fn forward_handoff_requests_closes_channel_when_subscription_ends() -> TestResult<()> {
         let (handoff_sender, mut handoff_receiver) = mpsc::channel(1);
         let handoff_drops = CoordinationPrimitive::event_counter(0, "coordination_handoff_drops");
 

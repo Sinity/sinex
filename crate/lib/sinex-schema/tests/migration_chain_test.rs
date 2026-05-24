@@ -350,7 +350,7 @@ async fn declarative_diff_detects_polluted_telemetry_view_kind(ctx: TestContext)
 }
 
 #[sinex_test]
-async fn declarative_table_registry_is_non_empty(_ctx: TestContext) -> TestResult<()> {
+async fn declarative_table_registry_is_non_empty() -> TestResult<()> {
     let tables = sinex_schema::schema::all_tables();
     assert!(
         !tables.is_empty(),

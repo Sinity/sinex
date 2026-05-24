@@ -71,7 +71,7 @@ async fn test_service_container_env_database_url(ctx: TestContext) -> TestResult
 
 /// Test initialization fails gracefully with invalid database URL
 #[sinex_test]
-async fn test_service_container_invalid_database_url(_ctx: TestContext) -> TestResult<()> {
+async fn test_service_container_invalid_database_url() -> TestResult<()> {
     let mut env = EnvGuard::new();
     let temp_dir = TempDir::new()?;
     set_content_store_path(&mut env, temp_dir.path());
@@ -90,7 +90,7 @@ async fn test_service_container_invalid_database_url(_ctx: TestContext) -> TestR
 
 /// Test initialization fails when no database URL is provided
 #[sinex_test]
-async fn test_service_container_no_database_url(_ctx: TestContext) -> TestResult<()> {
+async fn test_service_container_no_database_url() -> TestResult<()> {
     let mut env = EnvGuard::new();
     env.clear("DATABASE_URL");
     let temp_dir = TempDir::new()?;

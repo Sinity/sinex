@@ -15,9 +15,7 @@ async fn spotify_parser_declares_required_array_element_keys() -> TestResult<()>
 }
 
 #[sinex_test]
-async fn spotify_required_array_field_removal_blocks_readiness(
-    _ctx: TestContext,
-) -> TestResult<()> {
+async fn spotify_required_array_field_removal_blocks_readiness() -> TestResult<()> {
     let before = SourceRecordFingerprint::from_json(&serde_json::json!([
         {
             "ts": "2026-01-01T00:00:00Z",

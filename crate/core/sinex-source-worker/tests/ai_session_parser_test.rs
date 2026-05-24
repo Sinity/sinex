@@ -61,9 +61,7 @@ fn record_for(bytes: &[u8]) -> SourceRecord {
 
 /// Two conversations with 2 and 1 messages respectively → 3 total intents.
 #[sinex_test]
-async fn claude_parses_two_conversations_into_correct_intent_count(
-    _ctx: TestContext,
-) -> TestResult<()> {
+async fn claude_parses_two_conversations_into_correct_intent_count() -> TestResult<()> {
     let json = serde_json::json!([
         {
             "uuid": "conv-aaa",

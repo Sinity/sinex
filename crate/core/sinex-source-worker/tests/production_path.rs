@@ -703,9 +703,7 @@ mod coverage_matrix {
     }
 
     #[sinex_test]
-    async fn source_worker_smoke_matrix_covers_every_registered_factory(
-        _ctx: TestContext,
-    ) -> TestResult<()> {
+    async fn source_worker_smoke_matrix_covers_every_registered_factory() -> TestResult<()> {
         let factory_ids: BTreeSet<String> = registered_node_factory_ids()
             .into_iter()
             .map(|id| id.as_str().to_string())
@@ -731,9 +729,7 @@ mod coverage_matrix {
     }
 
     #[sinex_test]
-    async fn source_worker_smoke_matrix_entries_are_actionable(
-        _ctx: TestContext,
-    ) -> TestResult<()> {
+    async fn source_worker_smoke_matrix_entries_are_actionable() -> TestResult<()> {
         let registry = SourceUnitRegistry::from_inventory();
         let mut seen = BTreeMap::new();
 

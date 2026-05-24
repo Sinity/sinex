@@ -29,9 +29,7 @@ async fn conversation_parsers_declare_required_input_keys() -> TestResult<()> {
 }
 
 #[sinex_test]
-async fn claude_required_conversation_field_removal_blocks_readiness(
-    _ctx: TestContext,
-) -> TestResult<()> {
+async fn claude_required_conversation_field_removal_blocks_readiness() -> TestResult<()> {
     let before = SourceRecordFingerprint::from_json(&serde_json::json!([
         {
             "uuid": "conversation-1",

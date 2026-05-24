@@ -26,9 +26,7 @@ async fn activitywatch_parser_declares_required_sqlite_keys() -> TestResult<()> 
 }
 
 #[sinex_test]
-async fn activitywatch_required_join_column_removal_blocks_readiness(
-    _ctx: TestContext,
-) -> TestResult<()> {
+async fn activitywatch_required_join_column_removal_blocks_readiness() -> TestResult<()> {
     let before = rusqlite::Connection::open_in_memory()?;
     before.execute_batch(
         "CREATE TABLE buckets (
