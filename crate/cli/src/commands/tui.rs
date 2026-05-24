@@ -13,10 +13,9 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Block, Borders, List, ListItem, Paragraph},
 };
-use sinex_primitives::query::{
-    EventQuery, EventQueryResult, QueryResultEvent, SortDirection, TimeRange,
-};
+use sinex_primitives::query::{EventQuery, EventQueryResult, SortDirection, TimeRange};
 use sinex_primitives::temporal::Timestamp;
+use sinex_primitives::views::{EventCardListView, EventCardView};
 use std::io;
 use std::time::Instant;
 use time::Duration;
@@ -79,7 +78,7 @@ struct App {
     // Live data
     nodes: Vec<InstanceInfo>,
     dlq_stats: Option<DlqListResponse>,
-    recent_events: Vec<QueryResultEvent>,
+    recent_events: Vec<EventCardView>,
     gateway_version: String,
 
     // State
@@ -197,7 +196,9 @@ impl App {
             ..Default::default()
         };
         match self.client.query_events(query).await {
-            Ok(EventQueryResult::Events { events, .. }) => self.recent_events = events,
+            Ok(EventQueryResult::Events { events, .. }) => {
+                self.recent_events = EventCardListView::from_query_events(&events).cards;
+            }
             Ok(_) => {} // aggregation result, shouldn't happen
             Err(e) => {
                 if self.error.is_none() {
@@ -514,13 +515,13 @@ fn render_events(f: &mut Frame, area: Rect, app: &App) {
         .recent_events
         .iter()
         .enumerate()
-        .map(|(i, e)| {
+        .map(|(i, card)| {
             let style = if i == app.selected_index {
                 Style::default().add_modifier(Modifier::REVERSED)
             } else {
                 Style::default()
             };
-            let timestamp = e.event.ts_orig.map_or_else(
+            let timestamp = card.timestamp.original.map_or_else(
                 || "unknown".to_string(),
                 |ts| {
                     ts.format(time::macros::format_description!(
@@ -529,15 +530,10 @@ fn render_events(f: &mut Frame, area: Rect, app: &App) {
                     .unwrap_or_else(|_| "invalid".to_string())
                 },
             );
-            let raw_snippet = e.snippet.as_deref().unwrap_or("");
-            let snippet = if raw_snippet.len() > 60 {
-                format!("{}...", &raw_snippet[..57])
-            } else {
-                raw_snippet.to_string()
-            };
+            let snippet = truncate_chars(&card.summary, 60);
             ListItem::new(format!(
                 "{} [{}] {} - {}",
-                timestamp, e.event.source, e.event.event_type, snippet
+                timestamp, card.source.raw, card.event_type, snippet
             ))
             .style(style)
         })
@@ -557,6 +553,18 @@ fn render_events(f: &mut Frame, area: Rect, app: &App) {
             .borders(Borders::ALL),
     );
     f.render_widget(list, area);
+}
+
+fn truncate_chars(input: &str, max_chars: usize) -> String {
+    if input.chars().count() <= max_chars {
+        return input.to_string();
+    }
+    let keep = max_chars.saturating_sub(3);
+    let end = input
+        .char_indices()
+        .nth(keep)
+        .map_or(input.len(), |(index, _)| index);
+    format!("{}...", &input[..end])
 }
 
 fn render_dlq(f: &mut Frame, area: Rect, app: &App) {

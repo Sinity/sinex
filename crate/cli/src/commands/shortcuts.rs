@@ -16,6 +16,7 @@ use sinex_primitives::rpc::sources::{
     SourceReadiness, SourceReadinessStatus, SourcesReadinessListRequest,
 };
 use sinex_primitives::temporal::Timestamp;
+use sinex_primitives::views::{EventCardListView, EventCardView, ViewEnvelope};
 use sinex_primitives::{
     RuntimeStatusSignal, RuntimeStatusSignalStatus, RuntimeStatusWarning, RuntimeTargetDescriptor,
     RuntimeTargetKind,
@@ -819,24 +820,20 @@ impl RecentCommand {
             EventQueryResult::Events { events, .. } => events,
             _ => vec![],
         };
+        let event_cards = EventCardListView::from_query_events(&events);
+        let envelope = ViewEnvelope::new("sinexctl.recent", event_cards).with_query_echo(json!({
+            "since": self.since,
+            "limit": self.limit,
+            "source": self.source,
+        }));
 
         match format {
             OutputFormat::Json | OutputFormat::Dot => {
-                let payload = json!({
-                    "since": self.since,
-                    "count": events.len(),
-                    "events": events,
-                });
-                println!("{}", format_json(&payload)?);
+                println!("{}", format_json(&envelope)?);
                 return Ok(());
             }
             OutputFormat::Yaml => {
-                let payload = json!({
-                    "since": self.since,
-                    "count": events.len(),
-                    "events": events,
-                });
-                println!("{}", format_yaml(&payload)?);
+                println!("{}", format_yaml(&envelope)?);
                 return Ok(());
             }
             OutputFormat::Table => {}
@@ -854,36 +851,47 @@ impl RecentCommand {
         );
         println!("{}", style("─".repeat(80)).dim());
 
-        for result_event in &events {
-            let timestamp = result_event.event.ts_orig.map_or_else(
-                || "unknown".to_string(),
-                |ts| {
-                    ts.format(time::macros::format_description!(
-                        "[hour]:[minute]:[second]"
-                    ))
-                    .unwrap_or_else(|_| "invalid".to_string())
-                },
-            );
-            let source = style(result_event.event.source.as_str()).cyan();
-            let event_type = style(result_event.event.event_type.as_str()).yellow();
-            let snippet = result_event.snippet.as_deref().unwrap_or("");
-            let snippet_display = if snippet.len() > 60 {
-                format!("{}...", &snippet[..57])
-            } else {
-                snippet.to_string()
-            };
-
-            println!(
-                "{} [{}] {} - {}",
-                style(timestamp).dim(),
-                source,
-                event_type,
-                snippet_display
-            );
+        for card in &envelope.payload.cards {
+            println!("{}", format_event_card_line(card));
         }
 
         Ok(())
     }
+}
+
+fn format_event_card_line(card: &EventCardView) -> String {
+    let timestamp = card.timestamp.original.map_or_else(
+        || "unknown".to_string(),
+        |ts| {
+            ts.format(time::macros::format_description!(
+                "[hour]:[minute]:[second]"
+            ))
+            .unwrap_or_else(|_| "invalid".to_string())
+        },
+    );
+    let source = style(card.source.raw.as_str()).cyan();
+    let event_type = style(card.event_type.as_str()).yellow();
+    let summary = truncate_chars(&card.summary, 60);
+
+    format!(
+        "{} [{}] {} - {}",
+        style(timestamp).dim(),
+        source,
+        event_type,
+        summary
+    )
+}
+
+fn truncate_chars(input: &str, max_chars: usize) -> String {
+    if input.chars().count() <= max_chars {
+        return input.to_string();
+    }
+    let keep = max_chars.saturating_sub(3);
+    let end = input
+        .char_indices()
+        .nth(keep)
+        .map_or(input.len(), |(index, _)| index);
+    format!("{}...", &input[..end])
 }
 
 /// Show recent errors only
