@@ -151,6 +151,17 @@ pub fn infer_test_binaries_for_test_filter(filter: &str) -> Result<Vec<String>> 
     infer_test_binaries_for_test_filter_in(&repo_root, filter)
 }
 
+/// Infer whether a simple test-name filter targets only library unit tests.
+///
+/// This complements [`infer_test_binaries_for_test_filter`]. Inline tests in
+/// `src/` do not have a nextest `--test` target, but nextest can narrow them
+/// with `--lib`; doing so avoids enumerating every integration-test binary in a
+/// package for a single library unit test.
+pub fn infer_lib_target_for_test_filter(filter: &str) -> Result<bool> {
+    let repo_root = crate::config::workspace_root();
+    infer_lib_target_for_test_filter_in(&repo_root, filter)
+}
+
 fn infer_packages_for_test_filter_in(repo_root: &Path, filter: &str) -> Result<Vec<String>> {
     let Some(test_names) = extract_simple_test_name_terms(filter) else {
         return Ok(Vec::new());
@@ -211,6 +222,41 @@ fn infer_test_binaries_for_test_filter_in(repo_root: &Path, filter: &str) -> Res
     let mut binaries: Vec<String> = binaries.into_iter().collect();
     binaries.sort();
     Ok(binaries)
+}
+
+fn infer_lib_target_for_test_filter_in(repo_root: &Path, filter: &str) -> Result<bool> {
+    let Some(test_names) = extract_simple_test_name_terms(filter) else {
+        return Ok(false);
+    };
+
+    let mut covered_test_names = HashSet::new();
+    let mut non_lib_match = false;
+
+    for relative_path in candidate_rust_paths(repo_root)? {
+        let full_path = repo_root.join(&relative_path);
+        let content = fs::read_to_string(&full_path)
+            .wrap_err_with(|| format!("failed to read {}", full_path.display()))?;
+
+        let matched_test_names: Vec<&String> = test_names
+            .iter()
+            .filter(|test_name| content_mentions_test_name(&content, test_name))
+            .collect();
+
+        if matched_test_names.is_empty() {
+            continue;
+        }
+
+        if is_library_unit_test_path(&relative_path) {
+            covered_test_names.extend(matched_test_names.into_iter().cloned());
+        } else {
+            non_lib_match = true;
+        }
+    }
+
+    Ok(!non_lib_match
+        && test_names
+            .iter()
+            .all(|test_name| covered_test_names.contains(test_name)))
 }
 
 /// Get list of changed files from git.
@@ -389,6 +435,27 @@ fn test_binary_for_path(path: &str) -> Option<String> {
     }
 
     None
+}
+
+fn is_library_unit_test_path(path: &str) -> bool {
+    let parts: Vec<&str> = path.split('/').collect();
+
+    // Crate library unit tests: crate/<category>/<crate>/src/*.rs, excluding
+    // binary entrypoints and src/bin targets which are not covered by --lib.
+    if parts.len() >= 5 && parts[0] == "crate" && parts[3] == "src" {
+        return parts.get(4).copied() != Some("bin")
+            && parts.last().copied() != Some("main.rs")
+            && parts.last().copied() != Some("bin.rs");
+    }
+
+    // xtask is a crate rooted at xtask/src.
+    if parts.len() >= 3 && parts[0] == "xtask" && parts[1] == "src" {
+        return parts.get(2).copied() != Some("bin")
+            && parts.last().copied() != Some("main.rs")
+            && parts.last().copied() != Some("bin.rs");
+    }
+
+    false
 }
 
 fn extract_simple_test_name_terms(filter: &str) -> Option<Vec<String>> {
@@ -777,6 +844,48 @@ mod tests {
             "test(test_batch_large_payloads) | test(inline_unit_test)",
         )?;
         assert!(inferred.is_empty());
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_infer_lib_target_for_test_filter_maps_inline_unit_tests() -> TestResult<()> {
+        let repo = tempfile::tempdir()?;
+        let inline_test = repo
+            .path()
+            .join("crate/lib/sinex-node-sdk/src/coordination.rs");
+        fs::create_dir_all(inline_test.parent().expect("inline parent"))?;
+        fs::write(
+            &inline_test,
+            "#[sinex_test]\nasync fn leader_maintenance_heartbeat_refreshes_registered_metadata() {}\n",
+        )?;
+
+        assert!(infer_lib_target_for_test_filter_in(
+            repo.path(),
+            "test(leader_maintenance_heartbeat_refreshes_registered_metadata)",
+        )?);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_infer_lib_target_rejects_mixed_integration_coverage() -> TestResult<()> {
+        let repo = tempfile::tempdir()?;
+        let inline_test = repo.path().join("xtask/src/inline_tests.rs");
+        let integration_test = repo.path().join("xtask/tests/command_contract.rs");
+        fs::create_dir_all(inline_test.parent().expect("inline parent"))?;
+        fs::create_dir_all(integration_test.parent().expect("integration parent"))?;
+        fs::write(
+            &inline_test,
+            "#[sinex_test]\nasync fn inline_unit_test() {}\n",
+        )?;
+        fs::write(
+            &integration_test,
+            "#[sinex_test]\nasync fn command_catalog_exposes_core_public_surface() {}\n",
+        )?;
+
+        assert!(!infer_lib_target_for_test_filter_in(
+            repo.path(),
+            "test(inline_unit_test) | test(command_catalog_exposes_core_public_surface)",
+        )?);
         Ok(())
     }
 
