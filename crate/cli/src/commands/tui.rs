@@ -2242,3 +2242,266 @@ fn render_dlq(f: &mut Frame, area: Rect, app: &App) {
     let list = List::new(items).block(Block::default().title(block_title).borders(Borders::ALL));
     f.render_widget(list, area);
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ratatui::backend::TestBackend;
+    use sinex_primitives::rpc::sources::{
+        CaveatSeverity, SourceCaveat, SourceReadinessCost, caveat_codes,
+    };
+    use sinex_primitives::views::{
+        ActionAvailability, ActionSideEffect, CaveatView, EventSourceView, EventTimestampView,
+        PrivacyStateView, SinexObjectRef,
+    };
+    use xtask::sandbox::prelude::*;
+
+    #[sinex_test]
+    async fn ux_mk3_source_state_matrix_snapshot() -> TestResult<()> {
+        let rows = [
+            readiness_fixture(
+                "ux.runtime.ready",
+                SourceReadinessStatus::Available,
+                Vec::new(),
+                Some(12),
+            ),
+            readiness_fixture(
+                "ux.runtime.stale",
+                SourceReadinessStatus::Stale,
+                Vec::new(),
+                Some(900_000),
+            ),
+            readiness_fixture(
+                "ux.runtime.drift",
+                SourceReadinessStatus::Partial,
+                vec![caveat(
+                    caveat_codes::PARSER_VERSION_DRIFT,
+                    "parser version drift",
+                )],
+                Some(30),
+            ),
+            readiness_fixture(
+                "ux.runtime.unparsed",
+                SourceReadinessStatus::Partial,
+                vec![caveat(
+                    caveat_codes::MATERIAL_STAGED_UNPARSED,
+                    "material staged but not parsed",
+                )],
+                Some(30),
+            ),
+            readiness_fixture(
+                "ux.runtime.blocked",
+                SourceReadinessStatus::Blocked,
+                vec![caveat(
+                    caveat_codes::POLICY_RAW_MATERIAL_BLOCKED,
+                    "policy blocks raw material",
+                )],
+                None,
+            ),
+        ];
+        let matrix = rows
+            .iter()
+            .map(|source| {
+                serde_json::json!({
+                    "fixture": source.source_identifier,
+                    "status": format!("{:?}", source.status).to_lowercase(),
+                    "cockpit_state": source_state_label(source_cockpit_state(source)),
+                    "caveats": source.caveats.iter().map(|c| c.code.as_str()).collect::<Vec<_>>(),
+                })
+            })
+            .collect::<Vec<_>>();
+
+        insta::assert_json_snapshot!("ux_mk3_source_state_matrix", matrix);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn ux_mk3_event_card_view_dto_snapshot() -> TestResult<()> {
+        let cards = vec![
+            event_card_fixture(
+                "ux.event.full_provenance",
+                PrivacyStateKind::RawVisible,
+                vec![
+                    SinexObjectRef::new(SinexObjectKind::MaterialAnchor, "material:fixture:42")
+                        .with_label("fixture.csv:42"),
+                ],
+                Vec::new(),
+            ),
+            event_card_fixture(
+                "ux.event.redacted",
+                PrivacyStateKind::Redacted,
+                vec![
+                    SinexObjectRef::new(SinexObjectKind::MaterialAnchor, "material:fixture:secret")
+                        .with_label("redacted fixture"),
+                ],
+                vec![CaveatView {
+                    id: "privacy.redacted".to_string(),
+                    message: "payload field redacted by fixture policy".to_string(),
+                    ref_: None,
+                }],
+            ),
+            event_card_fixture(
+                "ux.event.missing_material_anchor",
+                PrivacyStateKind::MetadataOnly,
+                Vec::new(),
+                vec![CaveatView {
+                    id: "event.missing_material_anchor".to_string(),
+                    message: "event has no material anchor reference".to_string(),
+                    ref_: None,
+                }],
+            ),
+        ];
+
+        insta::assert_json_snapshot!("ux_mk3_event_card_view_dtos", cards);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn ux_mk3_operations_room_terminal_grid_snapshot() -> TestResult<()> {
+        let card = OperationRoomCard {
+            title: "operation ux.operation.failed/audited".to_string(),
+            authority: "admin".to_string(),
+            phase: "failed".to_string(),
+            progress: "42 / 100 events, batch 3".to_string(),
+            affected_refs: vec![
+                "node: fixture.replay".to_string(),
+                "source-material: material-fixture".to_string(),
+            ],
+            caveats: vec![
+                "mutating replay phase: confirmation/audit trail required".to_string(),
+                "error: fixture replay failed after preview".to_string(),
+            ],
+            actions: vec![
+                OperationRoomAction::new(
+                    "status",
+                    ActionAvailabilityState::Enabled,
+                    "sinexctl replay status op-fixture",
+                ),
+                OperationRoomAction::new(
+                    "execute",
+                    ActionAvailabilityState::Dangerous,
+                    "sinexctl replay execute op-fixture",
+                ),
+                OperationRoomAction::new(
+                    "context pack",
+                    ActionAvailabilityState::Target,
+                    "not implemented: context pack",
+                ),
+            ],
+            audit_refs: vec!["sinexctl audit op-fixture".to_string()],
+        };
+        let mut terminal = Terminal::new(TestBackend::new(84, 22))?;
+        terminal.draw(|f| render_operation_card_detail(f, f.area(), &card))?;
+
+        insta::assert_snapshot!(
+            "ux_mk3_operations_room_terminal_grid",
+            buffer_to_text(terminal.backend().buffer())
+        );
+        Ok(())
+    }
+
+    fn readiness_fixture(
+        id: &str,
+        status: SourceReadinessStatus,
+        caveats: Vec<SourceCaveat>,
+        parsed_event_count: Option<u64>,
+    ) -> SourceReadiness {
+        SourceReadiness {
+            binding_id: None,
+            source_family: "ux-mk3".to_string(),
+            source_unit_id: None,
+            parser_id: None,
+            source_identifier: id.to_string(),
+            status,
+            cost: SourceReadinessCost::LocalFast,
+            freshness_seconds: Some(30),
+            material_count: 1,
+            parsed_event_count,
+            last_success_at: Some("2026-05-24T12:00:00Z".to_string()),
+            caveats,
+            evidence: serde_json::json!({"fixture": id}),
+        }
+    }
+
+    fn caveat(code: &str, message: &str) -> SourceCaveat {
+        SourceCaveat {
+            code: code.to_string(),
+            severity: CaveatSeverity::Degraded,
+            message: message.to_string(),
+            evidence_ref: Some("ux-mk3/fixture".to_string()),
+        }
+    }
+
+    fn event_card_fixture(
+        id: &str,
+        privacy: PrivacyStateKind,
+        material_refs: Vec<SinexObjectRef>,
+        caveats: Vec<CaveatView>,
+    ) -> EventCardView {
+        EventCardView {
+            ref_: SinexObjectRef::new(SinexObjectKind::Event, id),
+            timestamp: EventTimestampView {
+                original: Some(Timestamp::UNIX_EPOCH),
+                ingested: Some(Timestamp::UNIX_EPOCH),
+                quality: "fixture".to_string(),
+            },
+            source: EventSourceView {
+                family: "ux-mk3".to_string(),
+                raw: "fixture.source".to_string(),
+                unit_ref: Some(SinexObjectRef::new(
+                    SinexObjectKind::SourceUnit,
+                    "ux.fixture-source",
+                )),
+            },
+            event_type: "ux.fixture".to_string(),
+            summary: id.to_string(),
+            payload_preview: Some(serde_json::json!({
+                "fixture": id,
+                "stable": true
+            })),
+            material_refs,
+            privacy_state: PrivacyStateView {
+                state: privacy,
+                reason: Some("ux fixture".to_string()),
+            },
+            caveats,
+            trace_refs: vec![SinexObjectRef::new(
+                SinexObjectKind::ReplayRun,
+                "replay-fixture",
+            )],
+            projection_badges: vec!["ux-mk3".to_string()],
+            actions: vec![
+                ActionAvailability::read("trace", "Trace", ActionAvailabilityState::Enabled)
+                    .with_command_equivalent(format!("sinexctl trace {id}")),
+                ActionAvailability {
+                    id: "redact".to_string(),
+                    label: "Redact".to_string(),
+                    state: ActionAvailabilityState::Target,
+                    reason: Some("target-only fixture".to_string()),
+                    command_equivalent: None,
+                    rpc_method: None,
+                    side_effect: ActionSideEffect::Destructive,
+                    requires_confirmation: true,
+                    dry_run_available: true,
+                    audit_output_ref: None,
+                },
+            ],
+        }
+    }
+
+    fn buffer_to_text(buffer: &ratatui::buffer::Buffer) -> String {
+        let width = usize::from(buffer.area.width);
+        buffer
+            .content()
+            .chunks(width)
+            .map(|row| {
+                row.iter()
+                    .map(ratatui::buffer::Cell::symbol)
+                    .collect::<String>()
+                    .trim_end()
+                    .to_string()
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+}
