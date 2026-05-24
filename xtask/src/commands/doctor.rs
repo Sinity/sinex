@@ -129,6 +129,8 @@ struct DevShmSnapshot {
 struct RustAnalyzerDoctorReport {
     config_path: String,
     config_present: bool,
+    diagnostic_role: &'static str,
+    proof_authority: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     config: Option<RustAnalyzerConfigSummary>,
     target_dir: String,
@@ -672,6 +674,8 @@ fn execute_rust_analyzer_check(
     Ok(RustAnalyzerDoctorReport {
         config_path: config_path.display().to_string(),
         config_present: config_path.is_file(),
+        diagnostic_role: "advisory",
+        proof_authority: false,
         config,
         target_dir: target_dir.display().to_string(),
         process_count: processes.len(),
@@ -1536,6 +1540,15 @@ fn print_test_db_report(report: &TestDbDoctorReport) {
 
 fn print_rust_analyzer_report(report: &RustAnalyzerDoctorReport) {
     println!("\n{}", style("Rust Analyzer:").bold());
+    println!(
+        "  Authority:          {} ({})",
+        report.diagnostic_role,
+        if report.proof_authority {
+            "proof-producing"
+        } else {
+            "not proof"
+        }
+    );
     println!(
         "  Config:             {} ({})",
         report.config_path,
