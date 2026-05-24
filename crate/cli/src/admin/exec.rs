@@ -43,10 +43,12 @@ pub fn pg_dump(database_url: &str, dump_path: &Path) -> Result<Vec<u8>> {
     Ok(output.stderr)
 }
 
-/// Query `PostgreSQL` for live row-count estimates (from `pg_stat_user_tables`).
+/// Query `PostgreSQL` for exact durable row counts.
 ///
-/// Uses `psql` with `-t` (tuples only) and `-A` (unaligned) to produce
-/// `schema.table|count` lines.  Returns a map of `"schema.table" → count`.
+/// Uses `psql` with `-t` (tuples only) and `-A` (unaligned) to list durable
+/// user tables, then counts each table exactly. Temporary schemas are excluded:
+/// they can appear in `pg_stat_user_tables` while active sessions exist, but
+/// they are not restore-stable archive content.
 pub fn pg_row_counts(database_url: &str) -> Result<BTreeMap<String, i64>> {
     pg_row_counts_with(database_url, None)
 }
@@ -55,16 +57,17 @@ pub fn pg_row_counts_with(
     database_url: &str,
     psql_bin: Option<&Path>,
 ) -> Result<BTreeMap<String, i64>> {
-    let sql = "SELECT schemaname || '.' || relname, n_live_tup \
+    let sql = "SELECT schemaname || '.' || relname \
                FROM pg_stat_user_tables \
                WHERE schemaname NOT LIKE '\\_%' ESCAPE '\\' \
+                 AND schemaname NOT LIKE 'pg_temp_%' \
+                 AND schemaname NOT LIKE 'pg_toast_temp_%' \
                ORDER BY 1;";
 
     let output = Command::new(psql_bin.unwrap_or_else(|| Path::new("psql")))
         .args([
             "--tuples-only",
             "--no-align",
-            "--field-separator=|",
             "--command",
             sql,
             database_url,
@@ -85,19 +88,43 @@ pub fn pg_row_counts_with(
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let mut map = BTreeMap::new();
+    let mut tables = Vec::new();
     for line in stdout.lines() {
         let line = line.trim();
         if line.is_empty() {
             continue;
         }
-        if let Some((table, count_str)) = line.split_once('|')
-            && let Ok(count) = count_str.trim().parse::<i64>()
-        {
-            map.insert(table.trim().to_string(), count);
-        }
+        tables.push(line.to_string());
     }
-    Ok(map)
+    pg_exact_row_counts(database_url, tables, psql_bin)
+}
+
+/// Execute a SQL command through `psql`.
+pub fn psql_execute(database_url: &str, sql: &str, psql_bin: Option<&Path>) -> Result<()> {
+    let output = Command::new(psql_bin.unwrap_or_else(|| Path::new("psql")))
+        .args([
+            "--no-align",
+            "--tuples-only",
+            "--command",
+            sql,
+            database_url,
+        ])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .context("spawn psql")?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        bail!(
+            "psql command failed (exit {}): {}",
+            output.status.code().unwrap_or(-1),
+            stderr.trim()
+        );
+    }
+
+    Ok(())
 }
 
 /// Restore a custom-format `pg_dump` archive into `database_url`.
