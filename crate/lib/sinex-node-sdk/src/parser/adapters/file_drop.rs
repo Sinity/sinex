@@ -158,6 +158,7 @@ impl FileDropRecordMetadata {
         self
     }
 
+    #[cfg(any(feature = "messaging", test))]
     fn with_materialized_content(mut self, content_size_bytes: u64) -> Self {
         self.content_materialized = Some(true);
         self.content_size_bytes = Some(content_size_bytes);
@@ -165,6 +166,7 @@ impl FileDropRecordMetadata {
         self
     }
 
+    #[cfg(any(feature = "messaging", test))]
     fn with_skipped_content(mut self, content_size_bytes: u64, reason: &str) -> Self {
         self.content_materialized = Some(false);
         self.content_size_bytes = Some(content_size_bytes);
@@ -1085,11 +1087,10 @@ mod tests {
         let dir = TempDir::new()?;
         let file_path = dir.path().join("created.txt");
         tokio::fs::write(&file_path, b"materialized").await?;
-        let utf8_path = Utf8PathBuf::from_path_buf(file_path.clone())
-            .map_err(|path| {
-                SinexError::validation("test path is not valid UTF-8")
-                    .with_context("path", path.display().to_string())
-            })?;
+        let utf8_path = Utf8PathBuf::from_path_buf(file_path.clone()).map_err(|path| {
+            SinexError::validation("test path is not valid UTF-8")
+                .with_context("path", path.display().to_string())
+        })?;
         let original_material_id = dummy_material_id();
         let record = SourceRecord {
             material_id: original_material_id,
@@ -1138,11 +1139,10 @@ mod tests {
         let dir = TempDir::new()?;
         let file_path = dir.path().join("oversized.txt");
         tokio::fs::write(&file_path, b"too large").await?;
-        let utf8_path = Utf8PathBuf::from_path_buf(file_path.clone())
-            .map_err(|path| {
-                SinexError::validation("test path is not valid UTF-8")
-                    .with_context("path", path.display().to_string())
-            })?;
+        let utf8_path = Utf8PathBuf::from_path_buf(file_path.clone()).map_err(|path| {
+            SinexError::validation("test path is not valid UTF-8")
+                .with_context("path", path.display().to_string())
+        })?;
         let original_material_id = dummy_material_id();
         let record = SourceRecord {
             material_id: original_material_id,
