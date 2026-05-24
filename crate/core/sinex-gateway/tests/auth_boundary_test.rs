@@ -76,7 +76,7 @@ async fn registry_rejects_insufficient_roles_for_every_method(ctx: TestContext) 
 }
 
 #[sinex_test]
-async fn registry_has_expected_role_distribution(_ctx: TestContext) -> TestResult<()> {
+async fn registry_has_expected_role_distribution() -> TestResult<()> {
     let registry = rpc_registry::build_registry();
     let method_roles = registry.method_roles();
 

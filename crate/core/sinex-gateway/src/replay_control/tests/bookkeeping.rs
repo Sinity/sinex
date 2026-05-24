@@ -208,7 +208,7 @@ async fn replay_execution_surfaces_cancellation_bookkeeping_corruption(
 }
 
 #[sinex_test]
-async fn replay_list_rejects_missing_operations_payload(_ctx: TestContext) -> Result<()> {
+async fn replay_list_rejects_missing_operations_payload() -> Result<()> {
     let err =
         ReplayControlClient::require_operations(ReplayControlResponse::success(None, None, None))
             .expect_err("list responses without operations must be rejected");

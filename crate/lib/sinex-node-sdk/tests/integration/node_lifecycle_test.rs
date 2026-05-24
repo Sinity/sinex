@@ -431,7 +431,7 @@ async fn test_node_graceful_shutdown(ctx: TestContext) -> color_eyre::Result<()>
 
 /// Test node lifecycle under concurrent operations
 #[sinex_test]
-async fn test_node_concurrent_lifecycle(_ctx: TestContext) -> color_eyre::Result<()> {
+async fn test_node_concurrent_lifecycle() -> color_eyre::Result<()> {
     info!("Testing node lifecycle under concurrency");
 
     // Start multiple nodes concurrently to test coordination

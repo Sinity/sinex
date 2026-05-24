@@ -377,19 +377,36 @@ impl HistoryDb {
     /// Only counts passing tests — failed/timed-out tests would inflate durations
     /// with timeout ceilings rather than reflecting real execution time.
     pub fn get_slowest_tests(&self, limit: usize) -> Result<Vec<HistoricalSlowTest>> {
+        self.get_slowest_tests_filtered(limit, None, 1)
+    }
+
+    /// Get slowest tests by average duration with optional time/run filters.
+    ///
+    /// Only counts passing tests — failed/timed-out tests would inflate durations
+    /// with timeout ceilings rather than reflecting real execution time.
+    pub fn get_slowest_tests_filtered(
+        &self,
+        limit: usize,
+        since: Option<&str>,
+        min_runs: usize,
+    ) -> Result<Vec<HistoricalSlowTest>> {
+        let min_runs = i64::try_from(min_runs).unwrap_or(i64::MAX);
         let mut stmt = self.conn.prepare(
             r"
-            SELECT test_name, package, AVG(duration_secs) as avg_duration, COUNT(*) as runs
+            SELECT test_name, package, AVG(test_results.duration_secs) as avg_duration, COUNT(*) as runs
             FROM test_results
-            WHERE duration_secs IS NOT NULL
-              AND status = 'pass'
+            JOIN invocations ON invocations.id = test_results.invocation_id
+            WHERE test_results.duration_secs IS NOT NULL
+              AND test_results.status = 'pass'
+              AND (?1 IS NULL OR invocations.started_at >= ?1)
             GROUP BY test_name, package
+            HAVING COUNT(*) >= ?2
             ORDER BY avg_duration DESC
-            LIMIT ?1
+            LIMIT ?3
             ",
         )?;
 
-        let rows = stmt.query_map([limit], |row| {
+        let rows = stmt.query_map(rusqlite::params![since, min_runs, limit as i64], |row| {
             Ok(HistoricalSlowTest {
                 test_name: row.get(0)?,
                 package: row.get(1)?,

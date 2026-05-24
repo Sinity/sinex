@@ -652,10 +652,14 @@ impl JobCoordinator {
 ///
 /// `flock(LOCK_EX)` blocks indefinitely; in a multi-process environment
 /// a stuck holder would cause all callers to hang forever. We use the
-/// non-blocking variant and retry up to ~500 ms before returning an error.
+/// non-blocking variant and retry for a bounded window before returning an
+/// error. The window is intentionally seconds, not milliseconds: tree
+/// fingerprinting and queue updates can legitimately hold the coordinator
+/// during agent-driven parallel launches.
 fn lock_exclusive_retry(mut file: fs::File) -> Result<Flock<fs::File>> {
-    const MAX_RETRIES: u32 = 10;
+    const MAX_RETRIES: u32 = 100;
     const RETRY_INTERVAL: std::time::Duration = std::time::Duration::from_millis(50);
+    const MAX_WAIT_MS: u32 = MAX_RETRIES * 50;
     for i in 0..MAX_RETRIES {
         match Flock::lock(file, FlockArg::LockExclusiveNonblock) {
             Ok(lock) => return Ok(lock),
@@ -664,7 +668,9 @@ fn lock_exclusive_retry(mut file: fs::File) -> Result<Flock<fs::File>> {
                 std::thread::sleep(RETRY_INTERVAL);
             }
             Err((_unlocked_file, nix::errno::Errno::EWOULDBLOCK)) => {
-                bail!("coordinator: could not acquire lock after {MAX_RETRIES} retries (500 ms)");
+                bail!(
+                    "coordinator: could not acquire lock after {MAX_RETRIES} retries ({MAX_WAIT_MS} ms)"
+                );
             }
             Err((_unlocked_file, e)) => return Err(e).wrap_err("coordinator: flock failed"),
         }

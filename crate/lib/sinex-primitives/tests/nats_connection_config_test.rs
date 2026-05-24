@@ -15,7 +15,7 @@ async fn nats_config_requires_tls_scheme_when_enabled() -> TestResult<()> {
 }
 
 #[sinex_test]
-async fn nats_config_accepts_nkey_seed_file(_ctx: TestContext) -> TestResult<()> {
+async fn nats_config_accepts_nkey_seed_file() -> TestResult<()> {
     let seed = KeyPair::new_user()
         .seed()
         .expect("nkey seed should be generated");

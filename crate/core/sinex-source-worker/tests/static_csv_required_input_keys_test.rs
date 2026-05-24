@@ -13,7 +13,7 @@ use sinex_source_worker::sources::{
 use xtask::sandbox::prelude::*;
 
 #[sinex_test]
-async fn static_csv_parsers_declare_required_input_keys(_ctx: TestContext) -> TestResult<()> {
+async fn static_csv_parsers_declare_required_input_keys() -> TestResult<()> {
     assert_eq!(
         RaindropBookmarkParser.required_input_keys(),
         vec!["id", "url", "created", "favorite"]
@@ -34,7 +34,7 @@ async fn static_csv_parsers_declare_required_input_keys(_ctx: TestContext) -> Te
 }
 
 #[sinex_test]
-async fn raindrop_required_header_removal_blocks_readiness(_ctx: TestContext) -> TestResult<()> {
+async fn raindrop_required_header_removal_blocks_readiness() -> TestResult<()> {
     let before = SourceRecordFingerprint::from_csv_bytes(
         b"id,title,note,excerpt,url,folder,tags,created,cover,highlights,favorite\n",
     )?;
