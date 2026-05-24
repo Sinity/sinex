@@ -212,13 +212,11 @@ fn pascal_to_snake_case(input: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::pascal_to_snake_case;
-    use xtask::sandbox::prelude::*;
 
-    #[sinex_test]
-    async fn snake_case_conversion() -> TestResult<()> {
+    #[test]
+    fn snake_case_conversion() {
         assert_eq!(pascal_to_snake_case("Healthy"), "healthy");
         assert_eq!(pascal_to_snake_case("FailedRetryable"), "failed_retryable");
         assert_eq!(pascal_to_snake_case("Ingestor"), "ingestor");
-        Ok(())
     }
 }

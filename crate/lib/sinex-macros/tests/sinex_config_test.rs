@@ -5,8 +5,8 @@
 
 use std::{ffi::OsString, path::PathBuf};
 
+use color_eyre::eyre::Result;
 use sinex_macros::SinexConfig;
-use xtask::sandbox::TestResult;
 
 // ---------------------------------------------------------------------------
 // Type-driven helper selection — `bool` → `bool_or`, `String` → `var_or`,
@@ -114,7 +114,7 @@ fn clear_env(keys: &[&str]) {
 }
 
 #[test]
-fn sinex_config_derive_loads_env_contracts() -> TestResult<()> {
+fn sinex_config_derive_loads_env_contracts() -> Result<()> {
     let _env_snapshot = EnvSnapshot::capture(ENV_KEYS);
     clear_env(ENV_KEYS);
 
