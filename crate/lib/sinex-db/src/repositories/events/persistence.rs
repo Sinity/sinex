@@ -2141,12 +2141,9 @@ impl<'a> EventRepository<'a> {
     }
 }
 
-/// Relation kind for replay replacement records.
+/// Relation kind for event replacements.
 ///
-/// Material replay records use physical source occurrence coordinates to decide
-/// whether an archived event and a replay output describe the same occurrence.
-/// Derived-output replacement records may use reducer-local slot metadata, but
-/// that metadata is not material replay identity.
+/// Describes how old events relate to their replacement events.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReplacementKind {
     /// 1:1 — one old event directly replaced by one new event
@@ -2170,7 +2167,7 @@ impl ReplacementKind {
     }
 }
 
-/// A single replay replacement relation to be recorded.
+/// A single replacement relation to be recorded.
 #[derive(Debug, Clone)]
 pub struct ReplacementRecord {
     pub old_event_id: Uuid,
@@ -2181,13 +2178,10 @@ pub struct ReplacementRecord {
 }
 
 impl EventRepository<'_> {
-    /// Record replay replacement relations for an operation.
+    /// Record event replacement relations for a replay operation.
     ///
     /// Inserts rows into `audit.event_replacements` linking archived (old) events
-    /// to their replacement (new) events under a given operation. Callers are
-    /// responsible for using the correct identity model for the replay kind:
-    /// material occurrence coordinates for material replay, reducer-local slot
-    /// keys only for derived recomputation.
+    /// to their replacement (new) events under a given operation.
     pub async fn record_replacements(
         &self,
         operation_id: Uuid,
@@ -2721,7 +2715,8 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn stream_batch_insert_strategy_prefers_copy_for_large_material_batches() -> Result<()> {
+    async fn stream_batch_insert_strategy_prefers_copy_for_large_material_batches()
+    -> Result<()> {
         let batch = (0..COPY_BATCH_THRESHOLD)
             .map(|_| base_stream_batch_row())
             .collect::<Result<Vec<_>>>()?;
@@ -2733,7 +2728,8 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn stream_batch_insert_strategy_prefers_synthesis_for_parent_batches() -> Result<()> {
+    async fn stream_batch_insert_strategy_prefers_synthesis_for_parent_batches()
+    -> Result<()> {
         let mut row = base_stream_batch_row()?;
         row.source_event_ids = Some(vec![EventId::from_uuid(Uuid::now_v7())]);
         let batch = vec![row];

@@ -670,8 +670,7 @@ impl ArchivedEvents {
                 Self::schema_name(),
                 Self::table_name()
             ),
-            // Legacy nullable 1:1 marker. Material replay lineage is represented
-            // through audit.event_replacements using source occurrence identity.
+            // Fast lookup by replay replacement target.
             format!(
                 "CREATE INDEX IF NOT EXISTS ix_archived_events_superseded_by_event_id ON {}.{}(superseded_by_event_id) WHERE superseded_by_event_id IS NOT NULL",
                 Self::schema_name(),
@@ -1071,14 +1070,11 @@ impl EventTombstones {
 
 /// **Table: `audit.event_replacements`**
 ///
-/// A many-to-many relation tracking replay replacement records.
+/// A many-to-many relation tracking which events were replaced by which new events
+/// during replay or scope recomputation operations.
 ///
-/// Material replay replacement identity is physical source occurrence identity:
-/// `(source_material_id, anchor_byte, offset_start, offset_end, offset_kind)`.
-/// The `scope_key` and `equivalence_key` columns are nullable metadata for
-/// derived-output recomputation slots; they are not material replay identity.
-///
-/// The table supports:
+/// Unlike `audit.archived_events.superseded_by_event_id` (which is a 1:1 optimization),
+/// this table is the primary design center for replacement lineage. It supports:
 ///
 /// - **1:1 replacement** (`superseded`): one old event directly replaced by one new
 /// - **many:1 collapse** (`collapsed`): multiple old events collapsed into one new
