@@ -1,6 +1,6 @@
 use clap::Subcommand;
 use color_eyre::eyre::eyre;
-use sinex_primitives::rpc::replay::ReplayState;
+use sinex_primitives::rpc::replay::{ReplayGateOverrides, ReplayState};
 use sinex_primitives::rpc::sources::{SourcesShowRequest, SourcesShowResponse};
 use sinex_primitives::sources::continuity::{MaterialReplayabilityScorecard, Replayability};
 use tokio::time::{Duration, sleep};
@@ -91,12 +91,44 @@ pub enum ReplayCommands {
     Execute {
         /// Operation ID
         operation_id: String,
+
+        /// Permit replay when previewed anchor churn exceeds the default threshold
+        #[arg(long)]
+        allow_anchor_churn: bool,
+
+        /// Permit replay when timestamp-quality flips exceed the default threshold
+        #[arg(long)]
+        allow_time_quality_flips: bool,
+
+        /// Permit replay when previewed cascade depth exceeds the default warning gate
+        #[arg(long)]
+        allow_deep_cascade: bool,
+
+        /// Permit replay across a payload-schema boundary
+        #[arg(long)]
+        force_schema_mismatch: bool,
     },
 
     /// Approve and execute in one step (convenience)
     Submit {
         /// Operation ID
         operation_id: String,
+
+        /// Permit replay when previewed anchor churn exceeds the default threshold
+        #[arg(long)]
+        allow_anchor_churn: bool,
+
+        /// Permit replay when timestamp-quality flips exceed the default threshold
+        #[arg(long)]
+        allow_time_quality_flips: bool,
+
+        /// Permit replay when previewed cascade depth exceeds the default warning gate
+        #[arg(long)]
+        allow_deep_cascade: bool,
+
+        /// Permit replay across a payload-schema boundary
+        #[arg(long)]
+        force_schema_mismatch: bool,
     },
 
     /// Cancel a replay operation
@@ -166,7 +198,37 @@ pub enum ReplayCommands {
         /// Dry-run: stop after preview without approving or executing any changes
         #[arg(long)]
         dry_run: bool,
+
+        /// Permit replay when previewed anchor churn exceeds the default threshold
+        #[arg(long)]
+        allow_anchor_churn: bool,
+
+        /// Permit replay when timestamp-quality flips exceed the default threshold
+        #[arg(long)]
+        allow_time_quality_flips: bool,
+
+        /// Permit replay when previewed cascade depth exceeds the default warning gate
+        #[arg(long)]
+        allow_deep_cascade: bool,
+
+        /// Permit replay across a payload-schema boundary
+        #[arg(long)]
+        force_schema_mismatch: bool,
     },
+}
+
+fn replay_gate_overrides(
+    allow_anchor_churn: bool,
+    allow_time_quality_flips: bool,
+    allow_deep_cascade: bool,
+    force_schema_mismatch: bool,
+) -> ReplayGateOverrides {
+    ReplayGateOverrides {
+        allow_anchor_churn,
+        allow_time_quality_flips,
+        allow_deep_cascade,
+        force_schema_mismatch,
+    }
 }
 
 /// CLI filter for replay states (maps to `ReplayState`)
@@ -256,13 +318,45 @@ impl ReplayCommands {
                 CommandOutput::single(operation, format_replay_approve_table).display(&format)?;
             }
 
-            Self::Execute { operation_id } => {
-                let operation = client.replay_execute(operation_id).await?;
+            Self::Execute {
+                operation_id,
+                allow_anchor_churn,
+                allow_time_quality_flips,
+                allow_deep_cascade,
+                force_schema_mismatch,
+            } => {
+                let operation = client
+                    .replay_execute_with_overrides(
+                        operation_id,
+                        replay_gate_overrides(
+                            *allow_anchor_churn,
+                            *allow_time_quality_flips,
+                            *allow_deep_cascade,
+                            *force_schema_mismatch,
+                        ),
+                    )
+                    .await?;
                 CommandOutput::single(operation, format_replay_execute_table).display(&format)?;
             }
 
-            Self::Submit { operation_id } => {
-                let operation = client.replay_submit(operation_id).await?;
+            Self::Submit {
+                operation_id,
+                allow_anchor_churn,
+                allow_time_quality_flips,
+                allow_deep_cascade,
+                force_schema_mismatch,
+            } => {
+                let operation = client
+                    .replay_submit_with_overrides(
+                        operation_id,
+                        replay_gate_overrides(
+                            *allow_anchor_churn,
+                            *allow_time_quality_flips,
+                            *allow_deep_cascade,
+                            *force_schema_mismatch,
+                        ),
+                    )
+                    .await?;
                 CommandOutput::single(operation, format_replay_submit_table).display(&format)?;
             }
 
@@ -322,6 +416,10 @@ impl ReplayCommands {
                 materials,
                 event_types,
                 dry_run,
+                allow_anchor_churn,
+                allow_time_quality_flips,
+                allow_deep_cascade,
+                force_schema_mismatch,
             } => {
                 execute_run(
                     client,
@@ -331,6 +429,12 @@ impl ReplayCommands {
                     materials,
                     event_types,
                     *dry_run,
+                    replay_gate_overrides(
+                        *allow_anchor_churn,
+                        *allow_time_quality_flips,
+                        *allow_deep_cascade,
+                        *force_schema_mismatch,
+                    ),
                     &format,
                 )
                 .await?;
@@ -402,6 +506,7 @@ async fn execute_run(
     materials: &[String],
     event_types: &[String],
     dry_run: bool,
+    gate_overrides: ReplayGateOverrides,
     format: &OutputFormat,
 ) -> Result<()> {
     eprintln!("Creating replay plan for node '{node}'...");
@@ -476,7 +581,9 @@ async fn execute_run(
     client.replay_approve(&op_id).await?;
 
     eprintln!("Executing replay...");
-    let operation = client.replay_execute(&op_id).await?;
+    let operation = client
+        .replay_execute_with_overrides(&op_id, gate_overrides)
+        .await?;
 
     execute_watch(client, &op_id, 2, format).await?;
 
@@ -528,6 +635,60 @@ fn format_replay_preview_table(operation: &ReplayOperation, preview: &serde_json
         )
     {
         output.push_str(&format!("  Time Window:   {start} to {end}\n"));
+    }
+
+    output.push_str(&format!(
+        "  Anchor Churn: {:.2}%\n",
+        preview
+            .get("anchor_churn_pct")
+            .and_then(serde_json::Value::as_f64)
+            .unwrap_or(0.0)
+    ));
+    output.push_str(&format!(
+        "  Time Quality Flips: {:.2}%\n",
+        preview
+            .get("time_quality_flip_pct")
+            .and_then(serde_json::Value::as_f64)
+            .unwrap_or(0.0)
+    ));
+    output.push_str(&format!(
+        "  Max Cascade Depth: {}\n",
+        preview
+            .get("max_observed_depth")
+            .and_then(serde_json::Value::as_u64)
+            .unwrap_or(0)
+    ));
+    output.push_str(&format!(
+        "  Schema Boundary: {}\n",
+        preview
+            .get("schema_boundary_crossed")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false)
+    ));
+
+    if let Some(gates) = preview
+        .get("replay_gates")
+        .and_then(|v| v.get("gates"))
+        .and_then(serde_json::Value::as_array)
+    {
+        let tripped = gates
+            .iter()
+            .filter(|gate| {
+                gate.get("tripped")
+                    .and_then(serde_json::Value::as_bool)
+                    .unwrap_or(false)
+            })
+            .filter_map(|gate| {
+                let name = gate.get("name").and_then(serde_json::Value::as_str)?;
+                let flag = gate
+                    .get("override_flag")
+                    .and_then(serde_json::Value::as_str)?;
+                Some(format!("{name} ({flag})"))
+            })
+            .collect::<Vec<_>>();
+        if !tripped.is_empty() {
+            output.push_str(&format!("  Gates Tripped: {}\n", tripped.join(", ")));
+        }
     }
 
     // Cascade impact section
@@ -991,6 +1152,24 @@ mod tests {
         };
         let preview = json!({
             "total_events": 3,
+            "anchor_churn_pct": 6.25,
+            "time_quality_flip_pct": 0.0,
+            "max_observed_depth": 7,
+            "schema_boundary_crossed": true,
+            "replay_gates": {
+                "gates": [
+                    {
+                        "name": "anchor_churn_threshold_percent",
+                        "tripped": true,
+                        "override_flag": "--allow-anchor-churn"
+                    },
+                    {
+                        "name": "require_force_on_schema_mismatch",
+                        "tripped": true,
+                        "override_flag": "--force-schema-mismatch"
+                    }
+                ]
+            },
             "safety_analysis": {
                 "status": "failed",
                 "error": "integrity analyzer unavailable",
@@ -1001,6 +1180,12 @@ mod tests {
         let rendered = format_replay_preview_table(&operation, &preview);
 
         assert!(rendered.contains("Safety Warning: analysis failed"));
+        assert!(rendered.contains("Anchor Churn: 6.25%"));
+        assert!(rendered.contains("Max Cascade Depth: 7"));
+        assert!(rendered.contains("Schema Boundary: true"));
+        assert!(rendered.contains(
+            "Gates Tripped: anchor_churn_threshold_percent (--allow-anchor-churn), require_force_on_schema_mismatch (--force-schema-mismatch)"
+        ));
         assert!(rendered.contains("Safety Error:   integrity analyzer unavailable"));
         assert!(rendered.contains(
             "Safety Detail:  Cascade impact could not be determined. Approve with caution."

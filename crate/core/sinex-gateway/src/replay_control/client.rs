@@ -10,6 +10,7 @@ use async_nats::connection::State as NatsState;
 use parking_lot::Mutex;
 use sinex_db::replay::state_machine::{ReplayOperation, ReplayScope, ReplayState};
 use sinex_primitives::environment::SinexEnvironment;
+use sinex_primitives::rpc::replay::ReplayGateOverrides;
 use sinex_primitives::{Result, SinexError, Uuid};
 use std::sync::Arc;
 use std::time::Duration;
@@ -220,6 +221,16 @@ impl ReplayControlClient {
     }
 
     pub async fn submit(&self, operation_id: Uuid, submitter: String) -> Result<ReplayOperation> {
+        self.submit_with_overrides(operation_id, submitter, ReplayGateOverrides::default())
+            .await
+    }
+
+    pub async fn submit_with_overrides(
+        &self,
+        operation_id: Uuid,
+        submitter: String,
+        gate_overrides: ReplayGateOverrides,
+    ) -> Result<ReplayOperation> {
         validate_actor_for_action(&submitter, ReplayAction::Approve)?;
         validate_actor_for_action(&submitter, ReplayAction::Execute)?;
 
@@ -227,6 +238,7 @@ impl ReplayControlClient {
             self.send(ReplayControlRequest::Submit {
                 operation_id,
                 submitter,
+                gate_overrides,
             })
             .await?,
         )
@@ -238,6 +250,22 @@ impl ReplayControlClient {
         executor: String,
         dry_run: bool,
     ) -> Result<ReplayOperation> {
+        self.execute_with_overrides(
+            operation_id,
+            executor,
+            dry_run,
+            ReplayGateOverrides::default(),
+        )
+        .await
+    }
+
+    pub async fn execute_with_overrides(
+        &self,
+        operation_id: Uuid,
+        executor: String,
+        dry_run: bool,
+        gate_overrides: ReplayGateOverrides,
+    ) -> Result<ReplayOperation> {
         // Validate executor identity
         validate_actor_for_action(&executor, ReplayAction::Execute)?;
 
@@ -246,6 +274,7 @@ impl ReplayControlClient {
                 operation_id,
                 executor,
                 dry_run,
+                gate_overrides,
             })
             .await?,
         )

@@ -273,6 +273,23 @@ pub struct ReplayPreviewResponse {
     pub preview: Value,
 }
 
+/// Explicit operator overrides for replay preview gates.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ReplayGateOverrides {
+    /// Permit replay when previewed anchor churn exceeds the default threshold.
+    #[serde(default)]
+    pub allow_anchor_churn: bool,
+    /// Permit replay when timestamp-quality flips exceed the default threshold.
+    #[serde(default)]
+    pub allow_time_quality_flips: bool,
+    /// Permit replay when cascade depth exceeds the default warning gate.
+    #[serde(default)]
+    pub allow_deep_cascade: bool,
+    /// Permit replay across a payload-schema boundary.
+    #[serde(default)]
+    pub force_schema_mismatch: bool,
+}
+
 // ─────────────────────────────────────────────────────────────
 // replay.approve_operation
 // ─────────────────────────────────────────────────────────────
@@ -297,6 +314,8 @@ pub struct ReplayApproveResponse {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReplaySubmitRequest {
     pub operation_id: String,
+    #[serde(default)]
+    pub gate_overrides: ReplayGateOverrides,
 }
 
 /// Response: `replay.submit_operation`
@@ -319,6 +338,8 @@ pub struct ReplayExecuteRequest {
     /// expansion is valid. No side effects are persisted.
     #[serde(default)]
     pub dry_run: bool,
+    #[serde(default)]
+    pub gate_overrides: ReplayGateOverrides,
 }
 
 /// Response: `replay.execute_operation`
