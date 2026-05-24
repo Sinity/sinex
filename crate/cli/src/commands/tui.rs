@@ -11,11 +11,13 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, List, ListItem, Paragraph},
+    widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Wrap},
 };
 use sinex_primitives::query::{EventQuery, EventQueryResult, SortDirection, TimeRange};
 use sinex_primitives::temporal::Timestamp;
-use sinex_primitives::views::{EventCardListView, EventCardView};
+use sinex_primitives::views::{
+    ActionAvailabilityState, EventCardListView, EventCardView, PrivacyStateKind, SinexObjectKind,
+};
 use std::io;
 use std::time::Instant;
 use time::Duration;
@@ -86,6 +88,7 @@ struct App {
     last_refresh: Instant,
     error: Option<String>,
     selected_index: usize,
+    show_help: bool,
 }
 
 impl App {
@@ -105,6 +108,7 @@ impl App {
                 .unwrap_or(Instant::now()),
             error: None,
             selected_index: 0,
+            show_help: false,
         }
     }
 
@@ -147,6 +151,15 @@ impl App {
             Tab::Nodes => self.nodes.len(),
             Tab::Events => self.recent_events.len(),
             Tab::Dlq => 0, // DLQ shows stats, not a navigable list
+        }
+    }
+
+    fn clamp_selection(&mut self) {
+        let len = self.current_list_len();
+        if len == 0 {
+            self.selected_index = 0;
+        } else if self.selected_index >= len {
+            self.selected_index = len - 1;
         }
     }
 
@@ -198,6 +211,7 @@ impl App {
         match self.client.query_events(query).await {
             Ok(EventQueryResult::Events { events, .. }) => {
                 self.recent_events = EventCardListView::from_query_events(&events).cards;
+                self.clamp_selection();
             }
             Ok(_) => {} // aggregation result, shouldn't happen
             Err(e) => {
@@ -276,6 +290,9 @@ where
                 KeyCode::Char('r') => {
                     app.refresh().await;
                 }
+                KeyCode::Char('?') => {
+                    app.show_help = !app.show_help;
+                }
                 KeyCode::Down | KeyCode::Char('j') => {
                     app.select_next();
                 }
@@ -320,6 +337,10 @@ fn ui(f: &mut Frame, app: &App) {
 
     // Status bar
     render_status_bar(f, chunks[2], app);
+
+    if app.show_help {
+        render_help_overlay(f, f.area());
+    }
 }
 
 fn render_tabs(f: &mut Frame, area: Rect, app: &App) {
@@ -369,7 +390,7 @@ fn render_status_bar(f: &mut Frame, area: Rect, app: &App) {
         format!("Error: {err} | Press 'r' to retry")
     } else {
         format!(
-            "Gateway v{} | {} | ↑↓/jk:navigate Tab/←→:switch r:refresh q:quit",
+            "Gateway v{} | {} | ↑↓/jk:navigate Tab/←→:switch r:refresh ?:help q:quit",
             app.gateway_version, refresh_info
         )
     };
@@ -511,6 +532,11 @@ fn render_nodes(f: &mut Frame, area: Rect, app: &App) {
 }
 
 fn render_events(f: &mut Frame, area: Rect, app: &App) {
+    let chunks = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(56), Constraint::Percentage(44)])
+        .split(area);
+
     let items: Vec<ListItem> = app
         .recent_events
         .iter()
@@ -539,20 +565,215 @@ fn render_events(f: &mut Frame, area: Rect, app: &App) {
         })
         .collect();
 
+    let empty_label = if app.loading {
+        "Loading recent events..."
+    } else if app.error.is_some() {
+        "Recent events unavailable; see status footer"
+    } else {
+        "No recent events in the last hour"
+    };
+    let title = if app.loading && !app.recent_events.is_empty() {
+        format!(
+            "Recent Events ({} in last hour, refreshing)",
+            app.recent_events.len()
+        )
+    } else {
+        format!("Recent Events ({} in last hour)", app.recent_events.len())
+    };
     let list = List::new(if items.is_empty() {
-        vec![ListItem::new("No recent events")]
+        vec![ListItem::new(empty_label)]
     } else {
         items
     })
-    .block(
-        Block::default()
-            .title(format!(
-                "Recent Events ({} in last hour)",
-                app.recent_events.len()
+    .block(Block::default().title(title).borders(Borders::ALL));
+    f.render_widget(list, chunks[0]);
+
+    render_event_inspector(f, chunks[1], app);
+}
+
+fn render_event_inspector(f: &mut Frame, area: Rect, app: &App) {
+    let Some(card) = app.recent_events.get(app.selected_index) else {
+        let message = if app.loading {
+            "Loading selected event..."
+        } else if app.error.is_some() {
+            "Event inspector unavailable while refresh has errors."
+        } else {
+            "Select an event to inspect."
+        };
+        let panel = Paragraph::new(message)
+            .block(Block::default().title("Inspector").borders(Borders::ALL))
+            .wrap(Wrap { trim: true });
+        f.render_widget(panel, area);
+        return;
+    };
+
+    let mut lines = vec![
+        Line::from(vec![
+            Span::styled("ID  ", Style::default().fg(Color::DarkGray)),
+            Span::raw(card.ref_.id.clone()),
+        ]),
+        Line::from(vec![
+            Span::styled("Type  ", Style::default().fg(Color::DarkGray)),
+            Span::raw(format!("{} / {}", card.source.raw, card.event_type)),
+        ]),
+        Line::from(vec![
+            Span::styled("Time  ", Style::default().fg(Color::DarkGray)),
+            Span::raw(format_event_time(card)),
+        ]),
+        Line::from(vec![
+            Span::styled("Privacy  ", Style::default().fg(Color::DarkGray)),
+            Span::raw(privacy_state_label(card.privacy_state.state)),
+        ]),
+        Line::from(""),
+        Line::from(Span::styled(
+            "Summary",
+            Style::default().add_modifier(Modifier::BOLD),
+        )),
+        Line::from(card.summary.clone()),
+        Line::from(""),
+        Line::from(Span::styled(
+            "Refs",
+            Style::default().add_modifier(Modifier::BOLD),
+        )),
+    ];
+
+    if card.material_refs.is_empty() && card.trace_refs.is_empty() {
+        lines.push(Line::from("none"));
+    } else {
+        for ref_ in card.material_refs.iter().chain(card.trace_refs.iter()) {
+            lines.push(Line::from(format!(
+                "{}:{} {}",
+                object_kind_label(&ref_.kind),
+                ref_.id,
+                ref_.label.as_deref().unwrap_or("")
+            )));
+        }
+    }
+
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "Actions",
+        Style::default().add_modifier(Modifier::BOLD),
+    )));
+    for action in &card.actions {
+        let state = action_state_label(action.state);
+        let reason = action
+            .reason
+            .as_deref()
+            .map_or_else(String::new, |reason| format!(" — {reason}"));
+        lines.push(Line::from(format!(
+            "{} [{}]{}",
+            action.label, state, reason
+        )));
+    }
+
+    if !card.caveats.is_empty() {
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            "Caveats",
+            Style::default().add_modifier(Modifier::BOLD),
+        )));
+        for caveat in &card.caveats {
+            lines.push(Line::from(format!("{}: {}", caveat.id, caveat.message)));
+        }
+    }
+
+    let panel = Paragraph::new(lines)
+        .block(Block::default().title("Inspector").borders(Borders::ALL))
+        .wrap(Wrap { trim: true });
+    f.render_widget(panel, area);
+}
+
+fn privacy_state_label(state: PrivacyStateKind) -> &'static str {
+    match state {
+        PrivacyStateKind::RawVisible => "raw visible",
+        PrivacyStateKind::MetadataOnly => "metadata only",
+        PrivacyStateKind::Redacted => "redacted",
+        PrivacyStateKind::Suppressed => "suppressed",
+        PrivacyStateKind::PermissionDenied => "permission denied",
+        PrivacyStateKind::PolicyBlocked => "policy blocked",
+        PrivacyStateKind::TombstonePending => "tombstone pending",
+        PrivacyStateKind::ExportRestricted => "export restricted",
+    }
+}
+
+fn action_state_label(state: ActionAvailabilityState) -> &'static str {
+    match state {
+        ActionAvailabilityState::Enabled => "current",
+        ActionAvailabilityState::Disabled => "disabled",
+        ActionAvailabilityState::Target => "target",
+        ActionAvailabilityState::Loading => "loading",
+        ActionAvailabilityState::Dangerous => "dangerous",
+        ActionAvailabilityState::Partial => "partial",
+        ActionAvailabilityState::Unavailable => "unavailable",
+    }
+}
+
+fn object_kind_label(kind: &SinexObjectKind) -> &'static str {
+    match kind {
+        SinexObjectKind::Event => "event",
+        SinexObjectKind::SourceUnit => "source-unit",
+        SinexObjectKind::SourceMaterial => "source-material",
+        SinexObjectKind::MaterialAnchor => "material-anchor",
+        SinexObjectKind::Document => "document",
+        SinexObjectKind::DocumentChunk => "document-chunk",
+        SinexObjectKind::Task => "task",
+        SinexObjectKind::SemanticLane => "semantic-lane",
+        SinexObjectKind::SemanticEntity => "semantic-entity",
+        SinexObjectKind::SemanticRelation => "semantic-relation",
+        SinexObjectKind::Operation => "operation",
+        SinexObjectKind::ReplayRun => "replay-run",
+        SinexObjectKind::Snapshot => "snapshot",
+        SinexObjectKind::DlqMessage => "dlq-message",
+        SinexObjectKind::ContextPack => "context-pack",
+        SinexObjectKind::MomentCandidate => "moment-candidate",
+        SinexObjectKind::PrivacySession => "privacy-session",
+        SinexObjectKind::Caveat => "caveat",
+        SinexObjectKind::RpcMethod => "rpc-method",
+        SinexObjectKind::Command => "command",
+    }
+}
+
+fn format_event_time(card: &EventCardView) -> String {
+    card.timestamp.original.map_or_else(
+        || "unknown".to_string(),
+        |ts| {
+            ts.format(time::macros::format_description!(
+                "[year]-[month]-[day] [hour]:[minute]:[second]"
             ))
-            .borders(Borders::ALL),
+            .unwrap_or_else(|_| "invalid".to_string())
+        },
+    )
+}
+
+fn render_help_overlay(f: &mut Frame, area: Rect) {
+    let width = area.width.saturating_mul(2) / 3;
+    let height = 12;
+    let x = area.x + area.width.saturating_sub(width) / 2;
+    let y = area.y + area.height.saturating_sub(height) / 2;
+    let popup = Rect {
+        x,
+        y,
+        width,
+        height: height.min(area.height),
+    };
+    let lines = vec![
+        Line::from("Tab / arrows: switch workbench surface"),
+        Line::from("j/k or up/down: move selection"),
+        Line::from("r: refresh all panes"),
+        Line::from("?: toggle this help panel"),
+        Line::from("q or Esc: quit"),
+        Line::from(""),
+        Line::from("Event actions are descriptive in this slice."),
+        Line::from("Target actions show the reason in the inspector."),
+    ];
+    f.render_widget(Clear, popup);
+    f.render_widget(
+        Paragraph::new(lines)
+            .block(Block::default().title("Help").borders(Borders::ALL))
+            .wrap(Wrap { trim: true }),
+        popup,
     );
-    f.render_widget(list, area);
 }
 
 fn truncate_chars(input: &str, max_chars: usize) -> String {
