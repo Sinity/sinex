@@ -4271,6 +4271,81 @@ mod tests {
     }
 
     #[sinex_test]
+    async fn test_execute_tests_slowest_classifies_optimization_candidates()
+    -> ::xtask::sandbox::TestResult<()> {
+        let db = seeded_history_db("tests-slowest-classification.db")?;
+        let ctx = silent_ctx();
+
+        let invocation = db.start_invocation("test", None, None, None)?;
+        db.finish_invocation(invocation, InvocationStatus::Success, Some(0), 14.0)?;
+        db.store_test_results(
+            invocation,
+            &[
+                StoredTestResult {
+                    test_name:
+                        "xtask::xtask$command_catalog::tests::command_catalog_exposes_core_public_surface"
+                            .into(),
+                    package: "xtask".into(),
+                    status: TestStatus::Pass,
+                    duration_secs: Some(9.0),
+                    attempt: 1,
+                    output: None,
+                },
+                StoredTestResult {
+                    test_name: "sinex-node-sdk::settlement_fault_injection$opens_circuit".into(),
+                    package: "sinex-node-sdk".into(),
+                    status: TestStatus::Pass,
+                    duration_secs: Some(4.0),
+                    attempt: 1,
+                    output: None,
+                },
+                StoredTestResult {
+                    test_name: "sinex-gateway::replay_control::tests::node_never_reports_completion"
+                        .into(),
+                    package: "sinex-gateway".into(),
+                    status: TestStatus::Pass,
+                    duration_secs: Some(2.0),
+                    attempt: 1,
+                    output: None,
+                },
+            ],
+        )?;
+
+        let result = execute_tests_slowest(&db, None, 10, None, 1, false, &ctx)?;
+        let data = result.data.expect("slowest test data should be present");
+        let tests = data
+            .as_array()
+            .expect("aggregate slowest data should be an array");
+
+        assert_eq!(tests.len(), 3);
+        assert_eq!(
+            tests[0]
+                .get("optimization_kind")
+                .and_then(serde_json::Value::as_str),
+            Some("setup_overhead_candidate")
+        );
+        assert_eq!(
+            tests[1]
+                .get("optimization_kind")
+                .and_then(serde_json::Value::as_str),
+            Some("direct_runtime_candidate")
+        );
+        assert_eq!(
+            tests[2]
+                .get("optimization_kind")
+                .and_then(serde_json::Value::as_str),
+            Some("runtime_path_candidate")
+        );
+        assert!(
+            tests[0]
+                .get("recommendation")
+                .and_then(serde_json::Value::as_str)
+                .is_some_and(|value| value.contains("setup"))
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
     async fn test_execute_diagnostics_delta_respects_command_and_filters()
     -> ::xtask::sandbox::TestResult<()> {
         let db = seeded_history_db("diag-delta.db")?;
