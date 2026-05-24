@@ -182,7 +182,7 @@ async fn replay_execution_records_outcome(ctx: TestContext) -> Result<()> {
     let mut replay_batch = consumer
         .fetch()
         .max_messages(8)
-        .expires(Duration::from_secs(2))
+        .expires(Duration::from_millis(100))
         .messages()
         .await?;
     let mut replay_payloads = Vec::new();
