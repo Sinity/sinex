@@ -1462,6 +1462,7 @@ impl XtaskCommand for TestCommand {
             &execution_plan,
             effective_lib_target,
             &effective_test_binaries,
+            effective_filter.as_deref(),
         );
         let runtime_binary_reports = if runtime_binary_requirements.is_empty() {
             Vec::new()
