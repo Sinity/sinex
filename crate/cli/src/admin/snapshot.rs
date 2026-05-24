@@ -887,12 +887,26 @@ impl AdminSnapshotRestoreCommand {
             )
         })?;
         let dump_path = self.target_dir.join(&component.path);
-        exec::pg_restore(
+        exec::psql_execute(
+            restore_database_url,
+            "CREATE EXTENSION IF NOT EXISTS timescaledb; SELECT timescaledb_pre_restore();",
+            self.psql_bin.as_deref(),
+        )
+        .context("prepare TimescaleDB restore mode")?;
+        let restore_result = exec::pg_restore(
             restore_database_url,
             &dump_path,
             self.pg_restore_bin.as_deref(),
         )
-        .with_context(|| format!("restore postgres dump {}", dump_path.display()))?;
+        .with_context(|| format!("restore postgres dump {}", dump_path.display()));
+        let post_restore_result = exec::psql_execute(
+            restore_database_url,
+            "SELECT timescaledb_post_restore();",
+            self.psql_bin.as_deref(),
+        )
+        .context("leave TimescaleDB restore mode");
+        restore_result?;
+        post_restore_result?;
         let observed = exec::pg_exact_row_counts(
             restore_database_url,
             expected_row_counts.keys().cloned(),
@@ -1246,7 +1260,7 @@ fn observe_restored_target(
     let postgres_row_counts_match = expected_postgres_row_counts.map(|expected| {
         postgres_row_counts
             .as_ref()
-            .is_some_and(|observed| observed == expected)
+            .is_some_and(|observed| observed == &expected)
     });
     let nats_member_paths_match = expected_nats_member_paths.map(|expected| {
         nats_member_paths
@@ -1380,14 +1394,28 @@ fn expected_component_blake3_matches(
         .collect()
 }
 
-fn expected_postgres_row_counts(manifest: &SnapshotManifest) -> Option<&BTreeMap<String, i64>> {
+fn expected_postgres_row_counts(manifest: &SnapshotManifest) -> Option<BTreeMap<String, i64>> {
     manifest
         .components
         .iter()
         .find_map(|component| match &component.extras {
-            Some(ComponentExtras::Postgres(extras)) => Some(&extras.row_counts),
+            Some(ComponentExtras::Postgres(extras)) => Some(
+                extras
+                    .row_counts
+                    .iter()
+                    .filter(|(table, _)| durable_postgres_row_count_key(table))
+                    .map(|(table, count)| (table.clone(), *count))
+                    .collect(),
+            ),
             _ => None,
         })
+}
+
+fn durable_postgres_row_count_key(table: &str) -> bool {
+    let Some((schema, _relation)) = table.split_once('.') else {
+        return false;
+    };
+    !schema.starts_with("pg_temp_") && !schema.starts_with("pg_toast_temp_")
 }
 
 fn component_member_paths(root: &Path) -> Vec<String> {
