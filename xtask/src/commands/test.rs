@@ -1407,17 +1407,19 @@ impl XtaskCommand for TestCommand {
             return Ok(CommandResult::success().with_detail("tests listed"));
         }
 
-        let runtime_binary_reports =
-            if runtime_binary_requirements_for_target(&execution_plan, effective_lib_target)
-                .is_empty()
-            {
-                Vec::new()
-            } else {
-                let runtime_stage = ctx.start_stage("runtime-binaries");
-                let result = prepare_runtime_binaries_for_plan(ctx, &execution_plan);
-                ctx.finish_stage(runtime_stage, result.is_ok());
-                result?
-            };
+        let runtime_binary_requirements = runtime_binary_requirements_for_target(
+            &execution_plan,
+            effective_lib_target,
+            &effective_test_binaries,
+        );
+        let runtime_binary_reports = if runtime_binary_requirements.is_empty() {
+            Vec::new()
+        } else {
+            let runtime_stage = ctx.start_stage("runtime-binaries");
+            let result = prepare_runtime_binaries_for_plan(ctx, &runtime_binary_requirements);
+            ctx.finish_stage(runtime_stage, result.is_ok());
+            result?
+        };
 
         // Prime database pool — pre-provision all slots upfront
         if self.prime {

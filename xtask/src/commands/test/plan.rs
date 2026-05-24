@@ -128,12 +128,39 @@ pub(super) fn runtime_binary_requirements_for_plan(
 pub(super) fn runtime_binary_requirements_for_target(
     execution_plan: &NextestExecutionPlan,
     lib_target: bool,
+    test_binaries: &[String],
 ) -> Vec<RuntimeBinaryRequirement> {
     if lib_target {
         return Vec::new();
     }
 
-    runtime_binary_requirements_for_plan(execution_plan)
+    let mut requirements = runtime_binary_requirements_for_plan(execution_plan);
+    if workload_scope_includes_any(&execution_plan.workload_scope, &["sinex-source-worker"])
+        && (test_binaries.is_empty()
+            || test_binaries
+                .iter()
+                .any(|binary| binary == "production_path"))
+    {
+        push_runtime_requirement(&mut requirements, "sinex-ingestd", "sinex-ingestd");
+        push_runtime_requirement(&mut requirements, "sinex-gateway", "sinex-gateway");
+    }
+
+    requirements
+}
+
+fn push_runtime_requirement(
+    requirements: &mut Vec<RuntimeBinaryRequirement>,
+    package: &'static str,
+    binary: &'static str,
+) {
+    if requirements
+        .iter()
+        .any(|requirement| requirement.package == package)
+    {
+        return;
+    }
+
+    requirements.push(RuntimeBinaryRequirement { package, binary });
 }
 
 pub(super) fn test_database_required_for_plan(execution_plan: &NextestExecutionPlan) -> bool {
@@ -151,9 +178,8 @@ fn workload_scope_includes_any(scope: &WorkloadScope, packages: &[&str]) -> bool
 
 pub(super) fn prepare_runtime_binaries_for_plan(
     ctx: &CommandContext,
-    execution_plan: &NextestExecutionPlan,
+    requirements: &[RuntimeBinaryRequirement],
 ) -> Result<Vec<serde_json::Value>> {
-    let requirements = runtime_binary_requirements_for_plan(execution_plan);
     if requirements.is_empty() {
         return Ok(Vec::new());
     }
@@ -459,8 +485,37 @@ mod tests {
             workload_scope: WorkloadScope::Packages(vec!["sinex-node-sdk".to_string()]),
         };
 
-        assert!(runtime_binary_requirements_for_target(&plan, true).is_empty());
-        assert!(!runtime_binary_requirements_for_target(&plan, false).is_empty());
+        assert!(runtime_binary_requirements_for_target(&plan, true, &[]).is_empty());
+        assert!(!runtime_binary_requirements_for_target(&plan, false, &[]).is_empty());
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn runtime_binary_requirements_include_ingestd_for_source_worker_production_path()
+    -> ::xtask::sandbox::TestResult<()> {
+        let plan = NextestExecutionPlan {
+            runner_packages: vec!["sinex-source-worker".to_string()],
+            excluded_packages: Vec::new(),
+            workload_scope: WorkloadScope::Packages(vec!["sinex-source-worker".to_string()]),
+        };
+
+        assert!(
+            runtime_binary_requirements_for_target(
+                &plan,
+                false,
+                &["parse_listener_integration_test".to_string()],
+            )
+            .is_empty(),
+            "non-production-path source-worker integration tests should not pay ingestd prep"
+        );
+
+        let requirements =
+            runtime_binary_requirements_for_target(&plan, false, &["production_path".to_string()]);
+        assert_eq!(requirements.len(), 2);
+        assert_eq!(requirements[0].package, "sinex-ingestd");
+        assert_eq!(requirements[0].binary, "sinex-ingestd");
+        assert_eq!(requirements[1].package, "sinex-gateway");
+        assert_eq!(requirements[1].binary, "sinex-gateway");
         Ok(())
     }
 
