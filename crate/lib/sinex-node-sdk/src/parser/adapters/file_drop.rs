@@ -1130,8 +1130,7 @@ mod tests {
     async fn content_drop_keeps_oversized_file_as_observation_record(
         ctx: xtask::sandbox::prelude::TestContext,
     ) -> xtask::sandbox::prelude::TestResult<()> {
-        let ctx = ctx.with_nats().dedicated().await?;
-        AcquisitionManager::bootstrap_streams(&ctx.nats_client()).await?;
+        let ctx = ctx.with_nats().shared().await?;
         let acquisition = Arc::new(AcquisitionManager::with_defaults(
             ctx.nats_client(),
             "file-content-drop-oversized-test",
