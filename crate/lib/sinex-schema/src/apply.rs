@@ -661,7 +661,7 @@ async fn stale_db_check_constraint_names(
     let prefix = spec.constraint_name_prefix();
     let current = spec.constraint_name();
     let pattern = format!("{prefix}%");
-    let rows = sqlx::query!(
+    let rows = sqlx::query_scalar::<_, String>(
         r"
         SELECT c.conname
         FROM pg_constraint c
@@ -672,16 +672,15 @@ async fn stale_db_check_constraint_names(
           AND c.contype = 'c'
           AND (c.conname = $3 OR c.conname LIKE $4)
         ",
-        spec.schema,
-        spec.table,
-        legacy,
-        pattern,
     )
+    .bind(spec.schema)
+    .bind(spec.table)
+    .bind(legacy)
+    .bind(pattern)
     .fetch_all(pool)
     .await?;
     Ok(rows
         .into_iter()
-        .map(|row| row.conname)
         .filter(|name| name != &current)
         .collect())
 }

@@ -268,23 +268,18 @@ pub(crate) async fn actual_column_nullability(
     schema: &str,
     table: &str,
 ) -> Result<HashMap<String, bool>, ApplyError> {
-    let rows = sqlx::query!(
+    let rows = sqlx::query_as::<_, (String, String)>(
         "SELECT column_name, is_nullable
          FROM information_schema.columns
          WHERE table_schema = $1 AND table_name = $2",
-        schema,
-        table,
     )
+    .bind(schema)
+    .bind(table)
     .fetch_all(pool)
     .await?;
     Ok(rows
         .into_iter()
-        .map(|row| {
-            (
-                row.column_name.unwrap_or_default(),
-                row.is_nullable.as_deref() == Some("NO"),
-            )
-        })
+        .map(|(column_name, is_nullable)| (column_name, is_nullable == "NO"))
         .collect())
 }
 
