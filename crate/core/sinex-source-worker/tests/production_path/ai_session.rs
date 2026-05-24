@@ -68,7 +68,7 @@ mod tests {
     ]"#;
 
     #[sinex_test]
-    async fn ai_session_claude_obligations(_ctx: TestContext) -> TestResult<()> {
+    async fn ai_session_claude_obligations() -> TestResult<()> {
         let failures = crate::_run_case(
             "ai-session-claude",
             crate::AdapterKind::StaticFile,
@@ -85,7 +85,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn ai_session_chatgpt_obligations(_ctx: TestContext) -> TestResult<()> {
+    async fn ai_session_chatgpt_obligations() -> TestResult<()> {
         let failures = crate::_run_case(
             "ai-session-chatgpt",
             crate::AdapterKind::StaticFile,

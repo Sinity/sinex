@@ -45,7 +45,7 @@ mod tests {
     // -------------------------------------------------------------------------
 
     #[sinex_test]
-    async fn terminal_atuin_history_obligations(_ctx: TestContext) -> TestResult<()> {
+    async fn terminal_atuin_history_obligations() -> TestResult<()> {
         let failures = crate::_run_case(
             "terminal.atuin-history",
             crate::AdapterKind::SqliteRow,
@@ -66,7 +66,7 @@ mod tests {
     // -------------------------------------------------------------------------
 
     #[sinex_test]
-    async fn terminal_bash_history_obligations(_ctx: TestContext) -> TestResult<()> {
+    async fn terminal_bash_history_obligations() -> TestResult<()> {
         let failures = crate::_run_case(
             "terminal.bash-history",
             crate::AdapterKind::AppendOnlyFile,
@@ -87,7 +87,7 @@ mod tests {
     // -------------------------------------------------------------------------
 
     #[sinex_test]
-    async fn terminal_zsh_history_plain_obligations(_ctx: TestContext) -> TestResult<()> {
+    async fn terminal_zsh_history_plain_obligations() -> TestResult<()> {
         let failures = crate::_run_case(
             "terminal.zsh-history",
             crate::AdapterKind::AppendOnlyFile,
@@ -108,7 +108,7 @@ mod tests {
     // -------------------------------------------------------------------------
 
     #[sinex_test]
-    async fn terminal_zsh_history_extended_obligations(_ctx: TestContext) -> TestResult<()> {
+    async fn terminal_zsh_history_extended_obligations() -> TestResult<()> {
         let failures = crate::_run_case(
             "terminal.zsh-history",
             crate::AdapterKind::AppendOnlyFile,
@@ -129,7 +129,7 @@ mod tests {
     // -------------------------------------------------------------------------
 
     #[sinex_test]
-    async fn terminal_text_history_obligations(_ctx: TestContext) -> TestResult<()> {
+    async fn terminal_text_history_obligations() -> TestResult<()> {
         let failures = crate::_run_case(
             "terminal.text-history",
             crate::AdapterKind::AppendOnlyFile,
@@ -150,7 +150,7 @@ mod tests {
     // -------------------------------------------------------------------------
 
     #[sinex_test]
-    async fn terminal_fish_history_obligations(_ctx: TestContext) -> TestResult<()> {
+    async fn terminal_fish_history_obligations() -> TestResult<()> {
         let failures = crate::_run_case(
             "terminal.fish-history",
             crate::AdapterKind::SqliteRow,

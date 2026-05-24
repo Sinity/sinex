@@ -273,7 +273,7 @@ mod tests {
     use xtask::sandbox::{EnvGuard, sinex_test};
 
     #[sinex_test]
-    async fn actor_validation_rejects_empty_actor(_ctx: TestContext) -> Result<()> {
+    async fn actor_validation_rejects_empty_actor() -> Result<()> {
         let result = validate_actor_for_action("", ReplayAction::Plan);
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("cannot be empty"));
@@ -281,7 +281,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn actor_validation_rejects_invalid_role(_ctx: TestContext) -> Result<()> {
+    async fn actor_validation_rejects_invalid_role() -> Result<()> {
         let result = validate_actor_for_action("invalid:user", ReplayAction::Plan);
         assert!(result.is_err());
         let err_msg = result.unwrap_err().to_string();
@@ -290,7 +290,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn actor_validation_rejects_empty_identifier(_ctx: TestContext) -> Result<()> {
+    async fn actor_validation_rejects_empty_identifier() -> Result<()> {
         let result = validate_actor_for_action("user:", ReplayAction::Plan);
         assert!(result.is_err());
         assert!(
@@ -303,7 +303,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn actor_validation_accepts_valid_actors(_ctx: TestContext) -> Result<()> {
+    async fn actor_validation_accepts_valid_actors() -> Result<()> {
         assert!(validate_actor_for_action("user:alice", ReplayAction::Plan).is_ok());
         assert!(validate_actor_for_action("admin:root", ReplayAction::Plan).is_ok());
         assert!(validate_actor_for_action("service:replay-worker", ReplayAction::Plan).is_ok());
@@ -314,7 +314,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn replay_test_actor_flag_rejects_invalid_boolean(_ctx: TestContext) -> Result<()> {
+    async fn replay_test_actor_flag_rejects_invalid_boolean() -> Result<()> {
         let mut env = EnvGuard::new();
         env.set("SINEX_ALLOW_TEST_ACTORS", "certainly");
 
@@ -325,7 +325,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn privileged_actions_reject_user_role(_ctx: TestContext) -> Result<()> {
+    async fn privileged_actions_reject_user_role() -> Result<()> {
         let result = validate_actor_for_action("user:alice", ReplayAction::Execute);
         assert!(result.is_err());
         assert!(

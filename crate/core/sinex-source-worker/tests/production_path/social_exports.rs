@@ -24,7 +24,7 @@ id,permalink,date,ip,subreddit,gildings,title,url,body
 "#;
 
     #[sinex_test]
-    async fn reddit_gdpr_comments_obligations(_ctx: TestContext) -> TestResult<()> {
+    async fn reddit_gdpr_comments_obligations() -> TestResult<()> {
         let failures = crate::_run_case(
             "reddit-gdpr-comments",
             crate::AdapterKind::StaticFile,
@@ -41,7 +41,7 @@ id,permalink,date,ip,subreddit,gildings,title,url,body
     }
 
     #[sinex_test]
-    async fn reddit_gdpr_posts_obligations(_ctx: TestContext) -> TestResult<()> {
+    async fn reddit_gdpr_posts_obligations() -> TestResult<()> {
         let failures = crate::_run_case(
             "reddit-gdpr-posts",
             crate::AdapterKind::StaticFile,
@@ -58,7 +58,7 @@ id,permalink,date,ip,subreddit,gildings,title,url,body
     }
 
     #[sinex_test]
-    async fn wykop_entries_obligations(_ctx: TestContext) -> TestResult<()> {
+    async fn wykop_entries_obligations() -> TestResult<()> {
         let failures = crate::_run_case(
             "wykop-entries",
             crate::AdapterKind::StaticFile,
@@ -75,7 +75,7 @@ id,permalink,date,ip,subreddit,gildings,title,url,body
     }
 
     #[sinex_test]
-    async fn wykop_entry_comments_obligations(_ctx: TestContext) -> TestResult<()> {
+    async fn wykop_entry_comments_obligations() -> TestResult<()> {
         let failures = crate::_run_case(
             "wykop-entry-comments",
             crate::AdapterKind::StaticFile,

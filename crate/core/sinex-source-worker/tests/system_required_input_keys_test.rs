@@ -10,7 +10,7 @@ use sinex_source_worker::sources::system::{journald::JournaldParser, systemd::Sy
 use xtask::sandbox::prelude::*;
 
 #[sinex_test]
-async fn system_json_parsers_declare_required_input_keys(_ctx: TestContext) -> TestResult<()> {
+async fn system_json_parsers_declare_required_input_keys() -> TestResult<()> {
     assert_eq!(
         JournaldParser.required_input_keys(),
         vec!["/MESSAGE", "/__CURSOR", "/__REALTIME_TIMESTAMP"]
@@ -31,7 +31,7 @@ async fn system_json_parsers_declare_required_input_keys(_ctx: TestContext) -> T
 }
 
 #[sinex_test]
-async fn journald_required_cursor_removal_blocks_readiness(_ctx: TestContext) -> TestResult<()> {
+async fn journald_required_cursor_removal_blocks_readiness() -> TestResult<()> {
     let before = SourceRecordFingerprint::from_json(&json!({
         "__CURSOR": "s=abc;i=1",
         "__REALTIME_TIMESTAMP": "1700000000000000",
@@ -61,7 +61,7 @@ async fn journald_required_cursor_removal_blocks_readiness(_ctx: TestContext) ->
 }
 
 #[sinex_test]
-async fn systemd_required_unit_removal_blocks_readiness(_ctx: TestContext) -> TestResult<()> {
+async fn systemd_required_unit_removal_blocks_readiness() -> TestResult<()> {
     let before = SourceRecordFingerprint::from_json(&json!({
         "__CURSOR": "s=abc;i=1",
         "__REALTIME_TIMESTAMP": "1700000000000000",

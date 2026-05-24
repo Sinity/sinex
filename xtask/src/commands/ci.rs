@@ -351,6 +351,24 @@ async fn execute_workspace(
         .run_ok()?;
     ctx.finish_stage(stage, true);
 
+    // Heavy slice for sinex-macros: compile-fail tests prove proc-macro
+    // diagnostics stay intentional, but they are too expensive for every
+    // default local package test loop.
+    if ctx.is_human() {
+        println!("Running heavy slice (sinex-macros trybuild)...");
+    }
+    let stage = ctx.start_stage("heavy_macros_tests");
+    ProcessBuilder::new("xtask")
+        .args([
+            "test",
+            "--heavy",
+            "-p",
+            "sinex-macros",
+            "--allow-contended-host",
+        ])
+        .run_ok()?;
+    ctx.finish_stage(stage, true);
+
     // Heavy slice for sinex-primitives: runs the trybuild compile-failure
     // tests (`proof_descriptor_compile_failures` + `id_type_mismatch_is_compile_error`)
     // that the full-suite run skips. Gated to one package so unrelated heavy

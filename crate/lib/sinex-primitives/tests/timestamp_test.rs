@@ -234,9 +234,7 @@ async fn test_timestamp_precision(ctx: TestContext) -> color_eyre::Result<()> {
 }
 
 #[sinex_test]
-async fn test_timestamp_rfc3339_format_falls_back_for_non_minute_offset(
-    _ctx: TestContext,
-) -> TestResult<()> {
+async fn test_timestamp_rfc3339_format_falls_back_for_non_minute_offset() -> TestResult<()> {
     let offset = time::UtcOffset::from_hms(1, 2, 3).expect("test offset must be valid");
     let timestamp = Timestamp::new(
         time::PrimitiveDateTime::new(

@@ -132,9 +132,7 @@ async fn settlement_halts_on_checkpoint_cas_failure(ctx: TestContext) -> TestRes
 // so checkpoint advance MUST NOT happen for that event. This test asserts the
 // invariant directly on the settlement vocabulary.
 #[sinex_test]
-async fn settlement_blocks_checkpoint_advance_on_output_failure(
-    _ctx: TestContext,
-) -> TestResult<()> {
+async fn settlement_blocks_checkpoint_advance_on_output_failure() -> TestResult<()> {
     let policy = DefaultFailurePolicy;
 
     // Output-emission transient infra failure → Retry (no progress proposal).
@@ -206,7 +204,7 @@ async fn settlement_blocks_checkpoint_advance_on_output_failure(
 // produces the same idempotency key (exactly-once routing under at-least-once
 // delivery).
 #[sinex_test]
-async fn settlement_routes_poison_event_to_dlq_exactly_once(_ctx: TestContext) -> TestResult<()> {
+async fn settlement_routes_poison_event_to_dlq_exactly_once() -> TestResult<()> {
     let policy = DefaultFailurePolicy;
     let bad = SinexError::validation("poison event: schema violation");
     let settlement = policy.settle(
@@ -479,9 +477,7 @@ async fn settlement_quarantines_and_halts_when_dlq_unavailable_runtime(
 // Original policy-level scenario 7 is preserved for the contract-only
 // invariant — the runtime test above replaces it for actual coverage.
 #[sinex_test]
-async fn settlement_quarantines_and_halts_when_dlq_unavailable(
-    _ctx: TestContext,
-) -> TestResult<()> {
+async fn settlement_quarantines_and_halts_when_dlq_unavailable() -> TestResult<()> {
     /// Custom policy that escalates `Network`/`Timeout` errors observed during
     /// `DlqRouting` to `TransportDegraded` -> `HaltNode`. This is the contract
     /// the runtime must implement when DLQ itself is down: there is no useful
@@ -618,7 +614,7 @@ async fn settlement_opens_circuit_breaker_when_nats_down_runtime(
 // Original policy-level scenario 8 preserved for the contract-only
 // invariant — the runtime test above replaces it for actual coverage.
 #[sinex_test]
-async fn settlement_opens_circuit_breaker_when_nats_down(_ctx: TestContext) -> TestResult<()> {
+async fn settlement_opens_circuit_breaker_when_nats_down() -> TestResult<()> {
     let policy = DefaultFailurePolicy;
     let nats_down = SinexError::network("NATS publish ack timed out");
 
@@ -665,9 +661,7 @@ async fn settlement_opens_circuit_breaker_when_nats_down(_ctx: TestContext) -> T
 //     blocks checkpoint advance (the same invariant tested in scenario 2).
 // -------------------------------------------------------------------------
 #[sinex_test]
-async fn receipt_durability_domains_match_settlement_vocabulary(
-    _ctx: TestContext,
-) -> TestResult<()> {
+async fn receipt_durability_domains_match_settlement_vocabulary() -> TestResult<()> {
     let remote = Receipt::JetStreamAccepted {
         stream: "events".into(),
         sequence: 1,

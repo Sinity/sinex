@@ -27,7 +27,7 @@ fn sui(s: &'static str) -> SourceUnitId {
 /// Verify that "weechat" is in the parser registry and that a well-formed log
 /// line dispatches without error.
 #[sinex_test]
-async fn weechat_parser_registered_and_dispatches(_ctx: TestContext) -> TestResult<()> {
+async fn weechat_parser_registered_and_dispatches() -> TestResult<()> {
     // Factory must be present.
     assert!(
         find_parser_factory(&sui("weechat")).is_some(),
@@ -56,7 +56,7 @@ async fn weechat_parser_registered_and_dispatches(_ctx: TestContext) -> TestResu
 
 /// Join events should produce irc.join.
 #[sinex_test]
-async fn weechat_join_line_produces_irc_join(_ctx: TestContext) -> TestResult<()> {
+async fn weechat_join_line_produces_irc_join() -> TestResult<()> {
     let dispatch = default_parser_dispatch();
     let log_line = b"2024-06-01 10:00:00\t-->\tuser (~user@host) joined #general";
     let outcome =
@@ -73,7 +73,7 @@ async fn weechat_join_line_produces_irc_join(_ctx: TestContext) -> TestResult<()
 
 /// Verify "weechat.message" is in the registry and produces irc.message events.
 #[sinex_test]
-async fn weechat_message_declarative_registered(_ctx: TestContext) -> TestResult<()> {
+async fn weechat_message_declarative_registered() -> TestResult<()> {
     assert!(
         find_parser_factory(&sui("weechat.message")).is_some(),
         "declarative 'weechat.message' parser must be registered"
@@ -99,7 +99,7 @@ async fn weechat_message_declarative_registered(_ctx: TestContext) -> TestResult
 // ---------------------------------------------------------------------------
 
 #[sinex_test]
-async fn unknown_source_produces_registry_error(_ctx: TestContext) -> TestResult<()> {
+async fn unknown_source_produces_registry_error() -> TestResult<()> {
     let dispatch = default_parser_dispatch();
     let result = dispatch("no-such-source-unit-xyz", b"data", None);
     assert!(result.is_err(), "unknown source must produce an error");
@@ -116,7 +116,7 @@ async fn unknown_source_produces_registry_error(_ctx: TestContext) -> TestResult
 // ---------------------------------------------------------------------------
 
 #[sinex_test]
-async fn noop_node_factory_registered(_ctx: TestContext) -> TestResult<()> {
+async fn noop_node_factory_registered() -> TestResult<()> {
     assert!(
         find_node_factory(&sui("noop")).is_some(),
         "node factory for 'noop' must be registered"
@@ -135,7 +135,7 @@ async fn noop_node_factory_registered(_ctx: TestContext) -> TestResult<()> {
 // ---------------------------------------------------------------------------
 
 #[sinex_test]
-async fn fs_adapter_factory_and_parser_bridge_registered(_ctx: TestContext) -> TestResult<()> {
+async fn fs_adapter_factory_and_parser_bridge_registered() -> TestResult<()> {
     assert!(
         find_node_factory(&sui("fs")).is_some(),
         "adapter-backed node factory for 'fs' must be registered"
@@ -152,7 +152,7 @@ async fn fs_adapter_factory_and_parser_bridge_registered(_ctx: TestContext) -> T
 // ---------------------------------------------------------------------------
 
 #[sinex_test]
-async fn weechat_descriptor_registered(_ctx: TestContext) -> TestResult<()> {
+async fn weechat_descriptor_registered() -> TestResult<()> {
     use sinex_source_worker::SourceUnitRegistry;
     let registry = SourceUnitRegistry::from_inventory();
     assert!(

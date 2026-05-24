@@ -10,7 +10,7 @@ e86b7115-e01d-45ce-98ed-b8c7248b93a3,2024-03-21T10:50:00+01:00,2024-03-21T12:40:
 ";
 
     #[sinex_test]
-    async fn sleep_merged_summary_obligations(_ctx: TestContext) -> TestResult<()> {
+    async fn sleep_merged_summary_obligations() -> TestResult<()> {
         let failures = crate::_run_case(
             "sleep-merged-summary",
             crate::AdapterKind::StaticFile,
