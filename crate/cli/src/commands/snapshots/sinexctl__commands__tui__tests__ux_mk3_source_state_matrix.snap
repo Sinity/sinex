@@ -1,0 +1,42 @@
+---
+source: crate/cli/src/commands/tui.rs
+expression: matrix
+---
+[
+  {
+    "caveats": [],
+    "cockpit_state": "ready",
+    "fixture": "ux.runtime.ready",
+    "status": "available"
+  },
+  {
+    "caveats": [],
+    "cockpit_state": "stale",
+    "fixture": "ux.runtime.stale",
+    "status": "stale"
+  },
+  {
+    "caveats": [
+      "parser.version_drift"
+    ],
+    "cockpit_state": "drift",
+    "fixture": "ux.runtime.drift",
+    "status": "partial"
+  },
+  {
+    "caveats": [
+      "material.staged_unparsed"
+    ],
+    "cockpit_state": "unparsed",
+    "fixture": "ux.runtime.unparsed",
+    "status": "partial"
+  },
+  {
+    "caveats": [
+      "policy.raw_material_blocked"
+    ],
+    "cockpit_state": "blocked",
+    "fixture": "ux.runtime.blocked",
+    "status": "blocked"
+  }
+]
