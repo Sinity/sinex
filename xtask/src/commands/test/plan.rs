@@ -125,6 +125,17 @@ pub(super) fn runtime_binary_requirements_for_plan(
     requirements
 }
 
+pub(super) fn runtime_binary_requirements_for_target(
+    execution_plan: &NextestExecutionPlan,
+    lib_target: bool,
+) -> Vec<RuntimeBinaryRequirement> {
+    if lib_target {
+        return Vec::new();
+    }
+
+    runtime_binary_requirements_for_plan(execution_plan)
+}
+
 pub(super) fn test_database_required_for_plan(execution_plan: &NextestExecutionPlan) -> bool {
     workload_scope_includes_any(&execution_plan.workload_scope, DATABASE_TEST_PACKAGES)
 }
@@ -436,6 +447,20 @@ mod tests {
         };
 
         assert!(runtime_binary_requirements_for_plan(&plan).is_empty());
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn runtime_binary_requirements_skip_lib_only_targets()
+    -> ::xtask::sandbox::TestResult<()> {
+        let plan = NextestExecutionPlan {
+            runner_packages: vec!["sinex-node-sdk".to_string()],
+            excluded_packages: Vec::new(),
+            workload_scope: WorkloadScope::Packages(vec!["sinex-node-sdk".to_string()]),
+        };
+
+        assert!(runtime_binary_requirements_for_target(&plan, true).is_empty());
+        assert!(!runtime_binary_requirements_for_target(&plan, false).is_empty());
         Ok(())
     }
 

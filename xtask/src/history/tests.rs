@@ -1441,6 +1441,7 @@ impl HistoryDb {
     pub fn get_tests_by_package(&self, invocation_id: i64) -> Result<Vec<PackageTestStats>> {
         let mut stmt = self.conn.prepare(
             r"
+            WITH
             latest_tests AS (
                 SELECT t.test_name, t.package, t.status, COALESCE(t.duration_secs, 0.0) as dur
                 FROM test_results t
