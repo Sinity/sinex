@@ -27,7 +27,7 @@ use std::sync::{
 use tokio::task::yield_now;
 use tokio::time::{Duration, timeout};
 use tracing::{debug, info, warn};
-use xtask::sandbox::{TestContext, sinex_test, timing::Timeouts};
+use xtask::sandbox::{sinex_test, timing::Timeouts};
 
 use crate::support::runtime::TestRuntimeBuilder;
 
