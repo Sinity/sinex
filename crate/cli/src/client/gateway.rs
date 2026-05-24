@@ -27,9 +27,10 @@ use sinex_primitives::rpc::{
         DlqRequeueRequest, DlqRequeueResponse,
     },
     documents::{
-        DOCUMENTS_GET_CHUNKS_METHOD, DOCUMENTS_GET_METHOD, DOCUMENTS_SEARCH_METHOD,
-        DocumentsGetChunksRequest, DocumentsGetChunksResponse, DocumentsGetRequest,
-        DocumentsGetResponse, DocumentsSearchRequest, DocumentsSearchResponse,
+        DOCUMENTS_GET_CHUNKS_METHOD, DOCUMENTS_GET_CHUNKS_REDACTED_METHOD, DOCUMENTS_GET_METHOD,
+        DOCUMENTS_SEARCH_METHOD, DocumentsGetChunksRedactedResponse, DocumentsGetChunksRequest,
+        DocumentsGetChunksResponse, DocumentsGetRequest, DocumentsGetResponse,
+        DocumentsSearchRequest, DocumentsSearchResponse,
     },
     events::{
         EVENTS_ANNOTATE_METHOD, EVENTS_LINEAGE_METHOD, EVENTS_QUERY_METHOD, EventsAnnotateRequest,
@@ -1335,6 +1336,14 @@ impl GatewayClient {
         request: DocumentsGetChunksRequest,
     ) -> Result<DocumentsGetChunksResponse> {
         self.call_typed(DOCUMENTS_GET_CHUNKS_METHOD, &request).await
+    }
+
+    pub async fn documents_get_chunks_redacted(
+        &self,
+        request: DocumentsGetChunksRequest,
+    ) -> Result<DocumentsGetChunksRedactedResponse> {
+        self.call_typed(DOCUMENTS_GET_CHUNKS_REDACTED_METHOD, &request)
+            .await
     }
 
     // ==================== Operations Log Commands ====================

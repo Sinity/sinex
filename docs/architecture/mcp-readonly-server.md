@@ -69,6 +69,7 @@ HTTP/SSE transport is a follow-up only when there is a real consumer.
 | `sinex.replay_status` | `replay.operation_status` | one replay operation state |
 | `sinex.documents_search` | `documents.search` | ranked document metadata with text/headline/side-data redacted |
 | `sinex.documents_get` | `documents.get` | document metadata with side-data redacted |
+| `sinex.documents_chunks` | `documents.get_chunks_redacted` | document chunk offsets and anchors with text redacted |
 | `sinex.semantic_epochs` | `semantic.epochs.list` | semantic epoch registry listing |
 | `sinex.semantic_lanes` | `semantic.lanes.list` | semantic lane registry listing |
 | `sinex.semantic_lane_outputs` | `semantic.lane_outputs.list` | isolated semantic lane output records |
@@ -123,8 +124,8 @@ Deliberate omissions:
 - no raw blob retrieval tool, because `content.retrieve_blob` returns raw
   material content and needs a redacted/policy-shaped variant before MCP
   exposure;
-- no document chunk-text tool, because `documents.get_chunks` returns raw text
-  by design and needs a separate redaction/policy shape before MCP exposure;
+- no raw document chunk-text tool, because `documents.get_chunks` returns raw
+  text by design; MCP uses `documents.get_chunks_redacted` instead;
 - no workbench-inspect tool until its gateway read surface can enforce the same
   redaction contract as the source-material detail tool;
 - no context-pack tools until #1095 provides a stable read model.

@@ -83,6 +83,16 @@ impl HistoryDb {
         invocation_id: i64,
         diagnostics: &[crate::cargo_diagnostics::CompilerDiagnostic],
     ) -> Result<()> {
+        self.record_diagnostics_batch_with_authority(invocation_id, diagnostics, "proof")
+    }
+
+    /// Record multiple diagnostics with an explicit proof/advisory authority.
+    pub fn record_diagnostics_batch_with_authority(
+        &self,
+        invocation_id: i64,
+        diagnostics: &[crate::cargo_diagnostics::CompilerDiagnostic],
+        authority: &str,
+    ) -> Result<()> {
         if diagnostics.is_empty() {
             return Ok(());
         }
@@ -92,8 +102,9 @@ impl HistoryDb {
                 r"
                 INSERT OR IGNORE INTO build_diagnostics
                     (invocation_id, level, code, message, file_path, line, col, rendered,
-                     package, fix_replacement, fix_applicability, fix_byte_start, fix_byte_end)
-                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
+                     package, fix_replacement, fix_applicability, fix_byte_start, fix_byte_end,
+                     authority)
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
                 ",
             )?;
             for diag in diagnostics {
@@ -111,6 +122,7 @@ impl HistoryDb {
                     diag.fix_applicability,
                     diag.fix_byte_start,
                     diag.fix_byte_end,
+                    authority,
                 ])?;
             }
         }
@@ -152,7 +164,7 @@ impl HistoryDb {
             r"
             SELECT d.id, d.level, d.code, d.message, d.file_path, d.line, d.col, d.rendered,
                    d.package, d.fix_replacement, d.fix_applicability, d.fix_byte_start, d.fix_byte_end,
-                   i.command, i.started_at
+                   COALESCE(d.authority, 'proof'), i.command, i.started_at
             FROM build_diagnostics d
             JOIN invocations i ON d.invocation_id = i.id
             WHERE d.invocation_id = ?1
@@ -241,7 +253,7 @@ impl HistoryDb {
             r"
             SELECT d.id, d.level, d.code, d.message, d.file_path, d.line, d.col, d.rendered,
                    d.package, d.fix_replacement, d.fix_applicability, d.fix_byte_start, d.fix_byte_end,
-                   i.command, i.started_at
+                   COALESCE(d.authority, 'proof'), i.command, i.started_at
             FROM build_diagnostics d
             JOIN invocations i ON d.invocation_id = i.id
             JOIN latest_per_package lpp ON d.package = lpp.package
@@ -383,7 +395,7 @@ impl HistoryDb {
             r"
             SELECT d.id, d.level, d.code, d.message, d.file_path, d.line, d.col, d.rendered,
                    d.package, d.fix_replacement, d.fix_applicability, d.fix_byte_start, d.fix_byte_end,
-                   i.command, i.started_at
+                   COALESCE(d.authority, 'proof'), i.command, i.started_at
             FROM build_diagnostics d
             JOIN invocations i ON d.invocation_id = i.id
             WHERE 1=1
@@ -633,7 +645,7 @@ pub struct DiagnosticLifecycle {
     pub occurrence_count: usize,
 }
 
-/// Map a full diagnostic row (15 columns) to `StoredDiagnostic`.
+/// Map a full diagnostic row (16 columns) to `StoredDiagnostic`.
 pub(super) fn row_to_diagnostic_full(row: &rusqlite::Row) -> rusqlite::Result<StoredDiagnostic> {
     Ok(StoredDiagnostic {
         id: row.get(0)?,
@@ -649,8 +661,9 @@ pub(super) fn row_to_diagnostic_full(row: &rusqlite::Row) -> rusqlite::Result<St
         fix_applicability: row.get(10)?,
         fix_byte_start: row.get(11)?,
         fix_byte_end: row.get(12)?,
-        source_command: row.get(13)?,
-        source_time: row.get(14)?,
+        authority: row.get(13)?,
+        source_command: row.get(14)?,
+        source_time: row.get(15)?,
     })
 }
 
@@ -670,6 +683,8 @@ pub struct StoredDiagnostic {
     pub fix_applicability: Option<String>,
     pub fix_byte_start: Option<u32>,
     pub fix_byte_end: Option<u32>,
+    /// Whether this diagnostic is proof-producing (`proof`) or advisory telemetry.
+    pub authority: String,
     /// Source command that produced this diagnostic (e.g. "check")
     pub source_command: Option<String>,
     /// When the source invocation ran

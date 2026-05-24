@@ -36,6 +36,17 @@ pub const DOCUMENTS_GET_CHUNKS_METHOD: RpcMethod<
     RpcMutability::ReadOnly,
 );
 
+pub const DOCUMENTS_GET_CHUNKS_REDACTED_METHOD: RpcMethod<
+    DocumentsGetChunksRequest,
+    DocumentsGetChunksRedactedResponse,
+> = RpcMethod::new(
+    methods::DOCUMENTS_GET_CHUNKS_REDACTED,
+    RpcRole::ReadOnly,
+    RpcDomain::Documents,
+    RpcStability::Experimental,
+    RpcMutability::ReadOnly,
+);
+
 /// Request for `documents.search`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DocumentsSearchRequest {
@@ -144,4 +155,27 @@ pub struct DocumentsChunkEntry {
 pub struct DocumentsGetChunksResponse {
     pub document_id: Uuid,
     pub chunks: Vec<DocumentsChunkEntry>,
+}
+
+/// A single redacted chunk record returned within `documents.get_chunks_redacted`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DocumentsRedactedChunkEntry {
+    pub document_id: Uuid,
+    pub chunk_index: i32,
+    pub byte_offset_start: i64,
+    pub byte_offset_end: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_anchor_start: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_anchor_end: Option<i64>,
+    pub text_redacted: bool,
+    pub redaction_reason: String,
+    pub text_byte_len: i64,
+}
+
+/// Response for `documents.get_chunks_redacted`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DocumentsGetChunksRedactedResponse {
+    pub document_id: Uuid,
+    pub chunks: Vec<DocumentsRedactedChunkEntry>,
 }
