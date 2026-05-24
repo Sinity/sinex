@@ -2282,6 +2282,45 @@ async fn test_rust_analyzer_cli_stderr_summary_omits_empty_output()
 }
 
 #[sinex_test]
+async fn test_rust_analyzer_cli_scan_summarizes_raw_stderr_before_truncation()
+-> ::xtask::sandbox::TestResult<()> {
+    let mut stderr = String::new();
+    for _ in 0..128 {
+        stderr.push_str(
+            "2026-05-22T06:29:49.34967273+02:00 ERROR Overloaded deref on type str is not a projection\n",
+        );
+    }
+
+    let scan = build_rust_analyzer_cli_diagnostic_scan(
+        vec!["rust-analyzer".to_string(), "diagnostics".to_string()],
+        Some(1),
+        "",
+        &stderr,
+    )?;
+    let summary = scan
+        .stderr_summary
+        .expect("known internal errors should be summarized");
+
+    assert_eq!(summary.categories, vec!["rust_analyzer_internal_errors"]);
+    assert_eq!(summary.internal_errors, 128);
+    assert_eq!(summary.internal_error_kinds, vec!["overloaded_deref"]);
+    assert_eq!(summary.other_errors, 0);
+    assert!(
+        !summary
+            .remediation_actions
+            .contains(&RA_ACTION_CLASSIFY_UNCATEGORIZED_STDERR),
+        "truncating stored stderr must not create artificial uncategorized errors"
+    );
+    assert!(
+        scan.stderr
+            .as_deref()
+            .is_some_and(|stderr| stderr.ends_with("... [truncated]")),
+        "stored stderr remains truncated for report size"
+    );
+    Ok(())
+}
+
+#[sinex_test]
 async fn test_rust_analyzer_remediation_actions_are_bucket_specific()
 -> ::xtask::sandbox::TestResult<()> {
     assert_eq!(
