@@ -3959,7 +3959,8 @@ mod tests {
             }],
         )?;
 
-        let result = execute_tests_slowest(&db, Some(&older.to_string()), 10, None, 1, &ctx)?;
+        let result =
+            execute_tests_slowest(&db, Some(&older.to_string()), 10, None, 1, false, &ctx)?;
         let data = result.data.expect("slowest test data should be present");
         let tests = data
             .as_array()

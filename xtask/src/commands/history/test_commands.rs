@@ -17,6 +17,9 @@ pub enum HistoryTestsSubcommand {
         /// Require at least this many passing runs in the selected window.
         #[arg(long, default_value = "1")]
         min_runs: usize,
+        /// Rank each test by its most recent passing result instead of historical average.
+        #[arg(long)]
+        latest_per_test: bool,
         /// Test run selector: `latest`, `previous`, `latest-success`, `latest-failure`,
         /// invocation ID, `inv:<id>`, or `job:<id>`
         #[arg(long)]
@@ -114,8 +117,17 @@ pub(super) fn execute_tests(
             limit,
             days,
             min_runs,
+            latest_per_test,
             invocation,
-        } => execute_tests_slowest(db, invocation.as_deref(), *limit, *days, *min_runs, ctx),
+        } => execute_tests_slowest(
+            db,
+            invocation.as_deref(),
+            *limit,
+            *days,
+            *min_runs,
+            *latest_per_test,
+            ctx,
+        ),
         HistoryTestsSubcommand::Flaky { limit } => execute_tests_flaky(db, *limit, ctx),
         HistoryTestsSubcommand::GettingSlower {
             threshold_pct,
@@ -179,6 +191,7 @@ pub(super) fn execute_tests_slowest(
     limit: usize,
     days: Option<u32>,
     min_runs: usize,
+    latest_per_test: bool,
     ctx: &CommandContext,
 ) -> Result<CommandResult> {
     if let Some(invocation) = invocation {
@@ -242,13 +255,23 @@ pub(super) fn execute_tests_slowest(
             )
         })
         .transpose()?;
-    let tests = db.get_slowest_tests_filtered(limit, since.as_deref(), min_runs)?;
+    let tests = if latest_per_test {
+        db.get_slowest_latest_tests_filtered(limit, since.as_deref())?
+    } else {
+        db.get_slowest_tests_filtered(limit, since.as_deref(), min_runs)?
+    };
 
     if ctx.is_human() {
         if tests.is_empty() {
             println!("No test timing data found.");
         } else {
-            if let Some(days) = days {
+            if latest_per_test {
+                if let Some(days) = days {
+                    println!("Window: last {days} day(s), latest passing result per test");
+                } else {
+                    println!("Window: all history, latest passing result per test");
+                }
+            } else if let Some(days) = days {
                 println!("Window: last {days} day(s), min runs: {min_runs}");
             } else if min_runs > 1 {
                 println!("Window: all history, min runs: {min_runs}");
