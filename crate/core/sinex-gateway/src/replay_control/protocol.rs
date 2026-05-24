@@ -6,6 +6,7 @@
 
 use serde::{Deserialize, Serialize};
 use sinex_db::replay::state_machine::{ReplayOperation, ReplayScope, ReplayState};
+use sinex_primitives::rpc::replay::ReplayGateOverrides;
 use sinex_primitives::{SinexError, Uuid};
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -25,12 +26,16 @@ pub enum ReplayControlRequest {
     Submit {
         operation_id: Uuid,
         submitter: String,
+        #[serde(default)]
+        gate_overrides: ReplayGateOverrides,
     },
     Execute {
         operation_id: Uuid,
         executor: String,
         #[serde(default)]
         dry_run: bool,
+        #[serde(default)]
+        gate_overrides: ReplayGateOverrides,
     },
     Cancel {
         operation_id: Uuid,

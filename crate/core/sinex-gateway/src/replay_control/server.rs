@@ -12,7 +12,8 @@ use tracing::{error, info, warn};
 use super::execution::{ReplayExecutionEngine, ReplayPreviewSummary};
 use super::protocol::{ReplayControlRequest, ReplayControlResponse};
 use super::validation::{
-    ReplayAction, ensure_preview_allowed, run_safety_analysis, validate_actor_for_action,
+    ReplayAction, ensure_preview_allowed, replay_gate_report, run_safety_analysis,
+    validate_actor_for_action,
 };
 use super::{ReplayControlError, ReplayControlHealthState};
 
@@ -277,7 +278,24 @@ impl ReplayControlServer {
                     })?;
                 let safety = run_safety_analysis(replay.pool(), &root_ids).await;
                 if let serde_json::Value::Object(ref mut map) = preview {
+                    let max_observed_depth = safety
+                        .get("max_depth")
+                        .and_then(serde_json::Value::as_u64)
+                        .or_else(|| {
+                            map.get("cascade_impact")
+                                .and_then(|cascade| cascade.get("max_depth"))
+                                .and_then(serde_json::Value::as_u64)
+                        })
+                        .unwrap_or(0);
+                    map.insert(
+                        "max_observed_depth".to_string(),
+                        serde_json::json!(max_observed_depth),
+                    );
                     map.insert("safety_analysis".to_string(), safety);
+                }
+                let gate_report = replay_gate_report(&preview);
+                if let serde_json::Value::Object(ref mut map) = preview {
+                    map.insert("replay_gates".to_string(), gate_report);
                 }
 
                 replay.update_preview(operation_id, preview.clone()).await?;
@@ -298,17 +316,21 @@ impl ReplayControlServer {
             ReplayControlRequest::Submit {
                 operation_id,
                 submitter,
+                gate_overrides,
             } => {
                 validate_actor_for_action(&submitter, ReplayAction::Approve)?;
                 validate_actor_for_action(&submitter, ReplayAction::Execute)?;
 
-                let updated = executor.submit(operation_id, submitter).await?;
+                let updated = executor
+                    .submit_with_overrides(operation_id, submitter, gate_overrides)
+                    .await?;
                 ReplayControlResponse::success(Some(updated), None, None)
             }
             ReplayControlRequest::Execute {
                 operation_id,
                 executor: actor,
                 dry_run,
+                gate_overrides,
             } => {
                 // Server-side validation of executor (defense in depth)
                 validate_actor_for_action(&actor, ReplayAction::Execute)?;
@@ -318,7 +340,9 @@ impl ReplayControlServer {
                         "Replay execute does not support dry-run semantics; use preview before approval instead",
                     ));
                 }
-                let updated = executor.execute(operation_id, actor).await?;
+                let updated = executor
+                    .execute_with_overrides(operation_id, actor, gate_overrides)
+                    .await?;
                 ReplayControlResponse::success(Some(updated), None, None)
             }
             ReplayControlRequest::Cancel {

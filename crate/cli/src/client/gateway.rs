@@ -92,10 +92,10 @@ use sinex_primitives::rpc::{
         REPLAY_LIST_OPERATIONS_METHOD, REPLAY_OPERATION_STATUS_METHOD,
         REPLAY_PREVIEW_OPERATION_METHOD, REPLAY_SUBMIT_OPERATION_METHOD, ReplayApproveRequest,
         ReplayApproveResponse, ReplayCancelRequest, ReplayCancelResponse, ReplayCreateRequest,
-        ReplayCreateResponse, ReplayExecuteRequest, ReplayExecuteResponse, ReplayListRequest,
-        ReplayListResponse, ReplayOperation, ReplayPreviewRequest, ReplayPreviewResponse,
-        ReplayScope, ReplayState, ReplayStatusRequest, ReplayStatusResponse, ReplaySubmitRequest,
-        ReplaySubmitResponse,
+        ReplayCreateResponse, ReplayExecuteRequest, ReplayExecuteResponse, ReplayGateOverrides,
+        ReplayListRequest, ReplayListResponse, ReplayOperation, ReplayPreviewRequest,
+        ReplayPreviewResponse, ReplayScope, ReplayState, ReplayStatusRequest, ReplayStatusResponse,
+        ReplaySubmitRequest, ReplaySubmitResponse,
     },
     semantic::{
         SEMANTIC_EPOCHS_CREATE_METHOD, SEMANTIC_EPOCHS_LIST_METHOD,
@@ -822,12 +822,25 @@ impl GatewayClient {
 
     /// Submit a replay plan for execution
     pub async fn replay_submit(&self, operation_id: &str) -> Result<ReplayOperation> {
+        self.replay_submit_with_overrides(operation_id, ReplayGateOverrides::default())
+            .await
+    }
+
+    pub async fn replay_submit_with_overrides(
+        &self,
+        operation_id: &str,
+        gate_overrides: ReplayGateOverrides,
+    ) -> Result<ReplayOperation> {
         match self.replay_status(operation_id).await?.state {
             ReplayState::Planning => {
                 self.replay_preview(operation_id).await?;
             }
             ReplayState::Previewed => {}
-            ReplayState::Approved => return self.replay_execute(operation_id).await,
+            ReplayState::Approved => {
+                return self
+                    .replay_execute_with_overrides(operation_id, gate_overrides)
+                    .await;
+            }
             ReplayState::Executing | ReplayState::Committing | ReplayState::Cancelling => {
                 return Err(color_eyre::eyre::eyre!(
                     "Replay operation {operation_id} is already in progress"
@@ -842,6 +855,7 @@ impl GatewayClient {
 
         let req = ReplaySubmitRequest {
             operation_id: operation_id.to_string(),
+            gate_overrides,
         };
         let response: ReplaySubmitResponse = self
             .call_typed(REPLAY_SUBMIT_OPERATION_METHOD, &req)
@@ -909,9 +923,19 @@ impl GatewayClient {
 
     /// Execute an approved replay operation.
     pub async fn replay_execute(&self, operation_id: &str) -> Result<ReplayOperation> {
+        self.replay_execute_with_overrides(operation_id, ReplayGateOverrides::default())
+            .await
+    }
+
+    pub async fn replay_execute_with_overrides(
+        &self,
+        operation_id: &str,
+        gate_overrides: ReplayGateOverrides,
+    ) -> Result<ReplayOperation> {
         let req = ReplayExecuteRequest {
             operation_id: operation_id.to_string(),
             dry_run: false,
+            gate_overrides,
         };
         let response: ReplayExecuteResponse = self
             .call_typed(REPLAY_EXECUTE_OPERATION_METHOD, &req)

@@ -581,6 +581,7 @@ impl ReplayStateMachine {
 
         let total = repo.count_scope_events(scope).await?;
         let top_types = repo.get_top_event_types(scope).await?;
+        let schema_boundary_crossed_count = repo.count_schema_boundary_crossed(scope).await?;
 
         let normalized = scope.normalized_filters();
         let mut material_summary = serde_json::Value::Null;
@@ -603,6 +604,10 @@ impl ReplayStateMachine {
             },
             "total_events": total,
             "root_event_ids": root_event_ids,
+            "anchor_churn_pct": 0.0,
+            "time_quality_flip_pct": 0.0,
+            "schema_boundary_crossed": schema_boundary_crossed_count > 0,
+            "schema_boundary_crossed_count": schema_boundary_crossed_count,
             "top_event_types": top_types
                 .into_iter()
                 .map(|row| serde_json::json!({
@@ -635,7 +640,7 @@ impl ReplayStateMachine {
                 .map_err(|e| SinexError::database(format!("cascade preview begin: {e}")))?;
 
             // Expand the cascade via repo_tx (borrows &mut tx).
-            let (all_cascade_ids, derived_ids) = {
+            let (all_cascade_ids, derived_ids, max_depth) = {
                 let mut repo_tx = EventRepositoryTx::new(&mut tx);
                 let session_id = format!("preview_{}", Uuid::now_v7().simple());
 
@@ -647,7 +652,7 @@ impl ReplayStateMachine {
                     .populate_cascade_roots(&table_name, &root_ids)
                     .await
                     .map_err(|e| SinexError::database(format!("populate roots: {e}")))?;
-                repo_tx
+                let max_depth = repo_tx
                     .expand_cascade(&table_name, 64)
                     .await
                     .map_err(|e| SinexError::database(format!("expand cascade: {e}")))?;
@@ -669,7 +674,7 @@ impl ReplayStateMachine {
                     .filter(|id| !root_set.contains(id))
                     .copied()
                     .collect();
-                (all_ids, derived)
+                (all_ids, derived, max_depth)
             };
 
             let affected_nodes =
@@ -685,6 +690,7 @@ impl ReplayStateMachine {
                 "cascade_total": all_cascade_ids.len(),
                 "direct_events": root_ids.len(),
                 "derived_events": derived_ids.len(),
+                "max_depth": max_depth,
                 "affected_nodes": affected_nodes,
                 "affected_scopes": affected_scopes.into_iter()
                     .map(|(et, sk)| serde_json::json!({"event_type": et, "scope_key": sk}))

@@ -57,6 +57,60 @@ async fn replay_execute_rejects_zero_event_preview_before_execution(
 }
 
 #[sinex_test]
+async fn replay_execute_rejects_target_canonical_gate_without_override(
+    ctx: TestContext,
+) -> Result<()> {
+    let ctx = ctx.with_nats().dedicated().await?;
+    let replay = Arc::new(ReplayStateMachine::new(ctx.pool.clone()));
+    let client =
+        spawn_replay_control(replay.clone(), ctx.nats_client(), Duration::from_secs(30)).await?;
+
+    let operation = replay
+        .create_operation(sample_scope(), "test:planner".to_string())
+        .await?;
+    let now = Timestamp::now();
+    replay
+        .update_preview(
+            operation.operation_id,
+            json!({
+                "total_events": 1,
+                "root_event_ids": [Uuid::now_v7()],
+                "time_window": {
+                    "start": now.format_rfc3339(),
+                    "end": (now + time::Duration::seconds(1)).format_rfc3339(),
+                },
+                "anchor_churn_pct": 6.0,
+                "time_quality_flip_pct": 0.0,
+                "max_observed_depth": 0,
+                "schema_boundary_crossed": false,
+            }),
+        )
+        .await?;
+    replay
+        .approve(operation.operation_id, "admin:approver".to_string())
+        .await?;
+
+    let err = client
+        .execute(
+            operation.operation_id,
+            "service:executor-node".into(),
+            false,
+        )
+        .await
+        .expect_err("anchor churn must require an explicit override");
+    assert!(
+        err.to_string().contains("--allow-anchor-churn"),
+        "unexpected error: {err}"
+    );
+
+    let stored = replay.load_operation(operation.operation_id).await?;
+    assert_eq!(stored.state, ReplayState::Failed);
+    assert!(stored.executor_node.is_none());
+
+    Ok(())
+}
+
+#[sinex_test]
 async fn replay_preview_rejects_refresh_after_approval(ctx: TestContext) -> Result<()> {
     let ctx = ctx.with_nats().dedicated().await?;
     let replay = Arc::new(ReplayStateMachine::new(ctx.pool.clone()));

@@ -6,6 +6,7 @@ use sinex_db::replay::state_machine::{
 };
 use sinex_primitives::domain::{EventSource, EventType, NodeName};
 use sinex_primitives::environment::{SinexEnvironment, environment};
+use sinex_primitives::rpc::replay::ReplayGateOverrides;
 use sinex_primitives::{Result, SinexError, Timestamp, Uuid};
 use std::sync::Arc;
 #[cfg(test)]
@@ -13,7 +14,9 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 use tracing::{error, info};
 
-use super::validation::{replay_scope_drift_error, stale_preview_missing_root_ids_error};
+use super::validation::{
+    ensure_replay_gates_pass, replay_scope_drift_error, stale_preview_missing_root_ids_error,
+};
 
 pub(super) const REPLAY_OUTPUT_VISIBILITY_TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -136,10 +139,21 @@ impl ReplayExecutionEngine {
         self
     }
 
+    #[cfg(test)]
     pub(super) async fn execute(
         &self,
         operation_id: Uuid,
         executor_name: String,
+    ) -> Result<ReplayOperation> {
+        self.execute_with_overrides(operation_id, executor_name, ReplayGateOverrides::default())
+            .await
+    }
+
+    pub(super) async fn execute_with_overrides(
+        &self,
+        operation_id: Uuid,
+        executor_name: String,
+        gate_overrides: ReplayGateOverrides,
     ) -> Result<ReplayOperation> {
         let Some(_execution_lock) = self.replay.acquire_execution_lock(operation_id).await? else {
             return Err(SinexError::invalid_state(format!(
@@ -154,7 +168,9 @@ impl ReplayExecutionEngine {
             "Starting replay execution"
         );
 
-        let result = self.run_operation(operation_id, &executor_name).await;
+        let result = self
+            .run_operation(operation_id, &executor_name, &gate_overrides)
+            .await;
         let bookkeeping_error = self
             .handle_execution_finish(operation_id, &result)
             .await
@@ -180,10 +196,11 @@ impl ReplayExecutionEngine {
         }
     }
 
-    pub(super) async fn submit(
+    pub(super) async fn submit_with_overrides(
         &self,
         operation_id: Uuid,
         submitter: String,
+        gate_overrides: ReplayGateOverrides,
     ) -> Result<ReplayOperation> {
         let Some(_execution_lock) = self.replay.acquire_execution_lock(operation_id).await? else {
             return Err(SinexError::invalid_state(format!(
@@ -198,7 +215,9 @@ impl ReplayExecutionEngine {
             "Submitting replay preview for immediate execution"
         );
 
-        let result = self.run_submitted_operation(operation_id, &submitter).await;
+        let result = self
+            .run_submitted_operation(operation_id, &submitter, &gate_overrides)
+            .await;
         let bookkeeping_error = self
             .handle_execution_finish(operation_id, &result)
             .await
@@ -322,9 +341,11 @@ impl ReplayExecutionEngine {
         &self,
         operation_id: Uuid,
         executor_name: &str,
+        gate_overrides: &ReplayGateOverrides,
     ) -> Result<ReplayOperation> {
-        let (initial, total_events, execution_window, preview_root_ids) =
-            self.prepare_operation(operation_id, executor_name).await?;
+        let (initial, total_events, execution_window, preview_root_ids) = self
+            .prepare_operation(operation_id, executor_name, gate_overrides)
+            .await?;
 
         // Initialize checkpoint
         let mut checkpoint = ReplayCheckpoint {
@@ -358,9 +379,10 @@ impl ReplayExecutionEngine {
         &self,
         operation_id: Uuid,
         submitter: &str,
+        gate_overrides: &ReplayGateOverrides,
     ) -> Result<ReplayOperation> {
         let (initial, total_events, execution_window, preview_root_ids) = self
-            .prepare_submitted_operation(operation_id, submitter)
+            .prepare_submitted_operation(operation_id, submitter, gate_overrides)
             .await?;
 
         let mut checkpoint = ReplayCheckpoint {
@@ -393,6 +415,7 @@ impl ReplayExecutionEngine {
         &self,
         operation_id: Uuid,
         executor_name: &str,
+        gate_overrides: &ReplayGateOverrides,
     ) -> Result<(ReplayOperation, u64, (Timestamp, Timestamp), Vec<Uuid>)> {
         let op = self.replay.load_operation(operation_id).await?;
         if op.state != ReplayState::Approved {
@@ -402,6 +425,14 @@ impl ReplayExecutionEngine {
             ))
             .with_context("state", format!("{:?}", op.state)));
         }
+
+        let preview = op.preview_summary.as_ref().ok_or_else(|| {
+            SinexError::invalid_state(format!(
+                "Operation {} is missing preview summary; run preview before execution",
+                operation_id
+            ))
+        })?;
+        ensure_replay_gates_pass(operation_id, preview, gate_overrides)?;
 
         let (total_events, execution_window, preview_root_ids) =
             Self::execution_inputs_from_operation(operation_id, &op)?;
@@ -424,7 +455,17 @@ impl ReplayExecutionEngine {
         &self,
         operation_id: Uuid,
         submitter: &str,
+        gate_overrides: &ReplayGateOverrides,
     ) -> Result<(ReplayOperation, u64, (Timestamp, Timestamp), Vec<Uuid>)> {
+        let pending = self.replay.load_operation(operation_id).await?;
+        let preview = pending.preview_summary.as_ref().ok_or_else(|| {
+            SinexError::invalid_state(format!(
+                "Operation {} is missing preview summary; run preview before execution",
+                operation_id
+            ))
+        })?;
+        ensure_replay_gates_pass(operation_id, preview, gate_overrides)?;
+
         let executor_node = NodeName::new(submitter);
         let operation = self
             .replay
