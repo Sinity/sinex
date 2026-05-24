@@ -1092,7 +1092,13 @@ impl AppendStreamAcquirer {
     }
 
     async fn begin_stream_material(&mut self, source_identifier: &str) -> NodeResult<()> {
-        self.current_handle = Some(self.manager.begin_material(source_identifier).await?);
+        self.current_handle = Some(
+            self.manager
+                .build_material(source_identifier)
+                .publish_begin_before_return()
+                .begin()
+                .await?,
+        );
         self.current_source_identifier = Some(source_identifier.to_string());
         Ok(())
     }
@@ -1648,6 +1654,62 @@ mod tests {
             tokio::fs::read(handle.temp_path()).await?,
             b"one\ntwo\nthree\n"
         );
+        stream.finalize("test-complete").await?;
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn append_stream_publishes_begin_before_exposing_material_id(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        let ctx = ctx.with_nats().shared().await?;
+        let namespace = format!("append-stream-eager-begin-{}", Uuid::now_v7());
+        let work_dir = tempfile::tempdir()?;
+        let manager = Arc::new(
+            AcquisitionManager::new_with_namespace(
+                ctx.nats_client(),
+                RotationPolicy {
+                    max_bytes: Bytes::from(4),
+                    max_age_seconds: Seconds::from_secs(3600),
+                },
+                "append-stream-eager-begin-test".to_string(),
+                Some(namespace),
+            )
+            .with_work_dir(work_dir.path()),
+        );
+        let mut stream = AppendStreamAcquirer::new(manager);
+
+        let first = stream
+            .append_with_anchor(b"1234", "test://eager-begin")
+            .await?;
+        let first_handle = stream
+            .current_handle
+            .as_ref()
+            .ok_or_else(|| SinexError::invalid_state("stream material should be active"))?;
+        assert!(
+            first_handle.pending_begin.is_none(),
+            "stream material BEGIN must be acked before callers can observe the material ID"
+        );
+        let first_material_id = first.material_id;
+
+        let second = stream.append_with_anchor(b"5", "test://eager-begin").await?;
+        let rotated_handle = stream
+            .current_handle
+            .as_ref()
+            .ok_or_else(|| SinexError::invalid_state("rotated stream material should be active"))?;
+        assert_ne!(
+            second.material_id, first_material_id,
+            "append after a full material should rotate to a fresh source material"
+        );
+        assert_eq!(
+            rotated_handle.material_id, second.material_id,
+            "current handle should be the rotated material used for the second anchor"
+        );
+        assert!(
+            rotated_handle.pending_begin.is_none(),
+            "rotated stream material BEGIN must be acked before event anchors use it"
+        );
+
         stream.finalize("test-complete").await?;
         Ok(())
     }
