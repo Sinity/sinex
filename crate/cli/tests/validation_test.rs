@@ -718,6 +718,40 @@ async fn mcp_documents_get_call_uses_gateway_fixture() -> TestResult<()> {
 }
 
 #[sinex_test]
+async fn mcp_documents_chunks_call_uses_redacted_gateway_fixture() -> TestResult<()> {
+    let server = mount_mcp_gateway_fixture().await;
+    let client = fixture_gateway_client(&server)?;
+
+    let response = call_tool(
+        &client,
+        "sinex.documents_chunks",
+        json!({ "document_id": fixture_document_id(), "limit": 2 }),
+    )
+    .await?;
+
+    assert_eq!(response["tool"], "sinex.documents_chunks");
+    assert_eq!(response["query"]["document_id"], fixture_document_id());
+    assert_eq!(
+        response["items"]["result"]["chunks"][0]["document_id"],
+        fixture_document_id()
+    );
+    assert_eq!(
+        response["items"]["result"]["chunks"][0]["redaction_reason"],
+        "mcp_document_chunk_text_redacted"
+    );
+    assert_eq!(
+        response["items"]["result"]["chunks"][0]["text_redacted"],
+        true
+    );
+    assert!(response["items"]["result"]["chunks"][0]["text"].is_null());
+    assert!(
+        !response.to_string().contains("ghp_fixture_secret"),
+        "MCP document chunks leaked raw document chunk text"
+    );
+    Ok(())
+}
+
+#[sinex_test]
 async fn mcp_semantic_epochs_call_uses_gateway_fixture() -> TestResult<()> {
     let server = mount_mcp_gateway_fixture().await;
     let client = fixture_gateway_client(&server)?;
@@ -1939,6 +1973,22 @@ async fn mount_mcp_gateway_fixture() -> MockServer {
                     },
                     "created_at": "2026-05-19T11:00:00Z",
                     "updated_at": "2026-05-19T11:45:00Z"
+                }),
+                "documents.get_chunks_redacted" => json!({
+                    "document_id": body["params"]["document_id"].as_str().unwrap_or(fixture_document_id()),
+                    "chunks": [
+                        {
+                            "document_id": body["params"]["document_id"].as_str().unwrap_or(fixture_document_id()),
+                            "chunk_index": 0,
+                            "byte_offset_start": 0,
+                            "byte_offset_end": 48,
+                            "source_anchor_start": 10,
+                            "source_anchor_end": 58,
+                            "text_redacted": true,
+                            "redaction_reason": "mcp_document_chunk_text_redacted",
+                            "text_byte_len": 48
+                        }
+                    ]
                 }),
                 "semantic.epochs.list" => json!({
                     "epochs": [

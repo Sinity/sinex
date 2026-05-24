@@ -797,6 +797,22 @@ impl CommandContext {
         Ok(())
     }
 
+    /// Record advisory diagnostics that must not be mistaken for proof output.
+    pub fn record_advisory_diagnostics(
+        &self,
+        diagnostics: &[crate::cargo_diagnostics::CompilerDiagnostic],
+    ) -> Result<()> {
+        if diagnostics.is_empty() {
+            return Ok(());
+        }
+        if let Some(inv_id) = self.invocation_id {
+            self.with_history_db(|db| {
+                db.record_diagnostics_batch_with_authority(inv_id, diagnostics, "advisory")
+            });
+        }
+        Ok(())
+    }
+
     /// Record which packages were compiled in this invocation (for package-scoped supersession).
     pub fn record_compiled_packages(
         &self,
