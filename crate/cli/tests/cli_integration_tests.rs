@@ -481,6 +481,7 @@ mod tui_tests {
             .success()
             .stdout(predicate::str::contains("TUI"))
             .stdout(predicate::str::contains("--tab"))
+            .stdout(predicate::str::contains("operations"))
             .stdout(predicate::str::contains("--refresh"))
             .stdout(predicate::str::contains("KEYBOARD SHORTCUTS"));
         Ok(())
