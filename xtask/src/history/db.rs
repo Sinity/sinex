@@ -61,6 +61,10 @@ const SQLITE_QUERY_BUSY_TIMEOUT: Duration = Duration::from_secs(1);
 const SQLITE_STALE_CLEANUP_BUSY_TIMEOUT: Duration = Duration::from_millis(50);
 const HISTORY_DB_INTEGRITY_CHECK_INTERVAL: Duration = Duration::from_hours(6);
 const HISTORY_DB_INTEGRITY_STAMP_EXTENSION: &str = "db.integrity.json";
+#[cfg(not(test))]
+const ZOMBIE_REAPER_SIGTERM_GRACE: Duration = Duration::from_secs(2);
+#[cfg(test)]
+const ZOMBIE_REAPER_SIGTERM_GRACE: Duration = Duration::from_millis(25);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum HistoryDbOpenMode {
@@ -153,7 +157,7 @@ fn try_reap_zombie_pid(pid: i64) -> Result<()> {
     let _ = nix::sys::signal::kill(nix_pid, nix::sys::signal::Signal::SIGTERM);
 
     // Grace period
-    std::thread::sleep(Duration::from_secs(2));
+    std::thread::sleep(ZOMBIE_REAPER_SIGTERM_GRACE);
 
     // SIGKILL if still alive
     if nix::sys::signal::kill(nix_pid, None).is_ok() {
