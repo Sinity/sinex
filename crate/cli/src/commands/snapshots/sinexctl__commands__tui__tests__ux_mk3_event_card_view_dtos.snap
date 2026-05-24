@@ -1,0 +1,200 @@
+---
+source: crate/cli/src/commands/tui.rs
+expression: cards
+---
+[
+  {
+    "ref": {
+      "kind": "event",
+      "id": "ux.event.full_provenance"
+    },
+    "timestamp": {
+      "original": "1970-01-01T00:00:00Z",
+      "ingested": "1970-01-01T00:00:00Z",
+      "quality": "fixture"
+    },
+    "source": {
+      "family": "ux-mk3",
+      "raw": "fixture.source",
+      "unit_ref": {
+        "kind": "source_unit",
+        "id": "ux.fixture-source"
+      }
+    },
+    "event_type": "ux.fixture",
+    "summary": "ux.event.full_provenance",
+    "payload_preview": {
+      "fixture": "ux.event.full_provenance",
+      "stable": true
+    },
+    "material_refs": [
+      {
+        "kind": "material_anchor",
+        "id": "material:fixture:42",
+        "label": "fixture.csv:42"
+      }
+    ],
+    "privacy_state": {
+      "state": "raw_visible",
+      "reason": "ux fixture"
+    },
+    "trace_refs": [
+      {
+        "kind": "replay_run",
+        "id": "replay-fixture"
+      }
+    ],
+    "projection_badges": [
+      "ux-mk3"
+    ],
+    "actions": [
+      {
+        "id": "trace",
+        "label": "Trace",
+        "state": "enabled",
+        "command_equivalent": "sinexctl trace ux.event.full_provenance",
+        "side_effect": "read"
+      },
+      {
+        "id": "redact",
+        "label": "Redact",
+        "state": "target",
+        "reason": "target-only fixture",
+        "side_effect": "destructive",
+        "requires_confirmation": true,
+        "dry_run_available": true
+      }
+    ]
+  },
+  {
+    "ref": {
+      "kind": "event",
+      "id": "ux.event.redacted"
+    },
+    "timestamp": {
+      "original": "1970-01-01T00:00:00Z",
+      "ingested": "1970-01-01T00:00:00Z",
+      "quality": "fixture"
+    },
+    "source": {
+      "family": "ux-mk3",
+      "raw": "fixture.source",
+      "unit_ref": {
+        "kind": "source_unit",
+        "id": "ux.fixture-source"
+      }
+    },
+    "event_type": "ux.fixture",
+    "summary": "ux.event.redacted",
+    "payload_preview": {
+      "fixture": "ux.event.redacted",
+      "stable": true
+    },
+    "material_refs": [
+      {
+        "kind": "material_anchor",
+        "id": "material:fixture:secret",
+        "label": "redacted fixture"
+      }
+    ],
+    "privacy_state": {
+      "state": "redacted",
+      "reason": "ux fixture"
+    },
+    "caveats": [
+      {
+        "id": "privacy.redacted",
+        "message": "payload field redacted by fixture policy"
+      }
+    ],
+    "trace_refs": [
+      {
+        "kind": "replay_run",
+        "id": "replay-fixture"
+      }
+    ],
+    "projection_badges": [
+      "ux-mk3"
+    ],
+    "actions": [
+      {
+        "id": "trace",
+        "label": "Trace",
+        "state": "enabled",
+        "command_equivalent": "sinexctl trace ux.event.redacted",
+        "side_effect": "read"
+      },
+      {
+        "id": "redact",
+        "label": "Redact",
+        "state": "target",
+        "reason": "target-only fixture",
+        "side_effect": "destructive",
+        "requires_confirmation": true,
+        "dry_run_available": true
+      }
+    ]
+  },
+  {
+    "ref": {
+      "kind": "event",
+      "id": "ux.event.missing_material_anchor"
+    },
+    "timestamp": {
+      "original": "1970-01-01T00:00:00Z",
+      "ingested": "1970-01-01T00:00:00Z",
+      "quality": "fixture"
+    },
+    "source": {
+      "family": "ux-mk3",
+      "raw": "fixture.source",
+      "unit_ref": {
+        "kind": "source_unit",
+        "id": "ux.fixture-source"
+      }
+    },
+    "event_type": "ux.fixture",
+    "summary": "ux.event.missing_material_anchor",
+    "payload_preview": {
+      "fixture": "ux.event.missing_material_anchor",
+      "stable": true
+    },
+    "privacy_state": {
+      "state": "metadata_only",
+      "reason": "ux fixture"
+    },
+    "caveats": [
+      {
+        "id": "event.missing_material_anchor",
+        "message": "event has no material anchor reference"
+      }
+    ],
+    "trace_refs": [
+      {
+        "kind": "replay_run",
+        "id": "replay-fixture"
+      }
+    ],
+    "projection_badges": [
+      "ux-mk3"
+    ],
+    "actions": [
+      {
+        "id": "trace",
+        "label": "Trace",
+        "state": "enabled",
+        "command_equivalent": "sinexctl trace ux.event.missing_material_anchor",
+        "side_effect": "read"
+      },
+      {
+        "id": "redact",
+        "label": "Redact",
+        "state": "target",
+        "reason": "target-only fixture",
+        "side_effect": "destructive",
+        "requires_confirmation": true,
+        "dry_run_available": true
+      }
+    ]
+  }
+]
