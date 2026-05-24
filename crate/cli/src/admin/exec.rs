@@ -6,6 +6,7 @@
 
 use color_eyre::eyre::{Context, Result, bail, eyre};
 use std::collections::BTreeMap;
+use std::io::ErrorKind;
 use std::path::Path;
 use std::process::{Command, Stdio};
 
@@ -444,4 +445,102 @@ pub fn cp_tree(src: &Path, dst_parent: &Path) -> Result<()> {
         );
     }
     Ok(())
+}
+
+/// Copy a directory tree recursively while tolerating source files that vanish.
+///
+/// Live snapshots read active runtime directories, so queue/spool files can be
+/// deleted between directory enumeration and file copy. Quiesce-mode snapshots
+/// should keep using [`cp_tree`] so those races remain visible when services are
+/// expected to be stopped.
+pub fn cp_tree_live(src: &Path, dst_parent: &Path) -> Result<()> {
+    std::fs::create_dir_all(dst_parent)
+        .with_context(|| format!("create live-copy destination {}", dst_parent.display()))?;
+    copy_dir_contents_live(src, dst_parent)
+}
+
+fn copy_dir_contents_live(src: &Path, dst: &Path) -> Result<()> {
+    let entries = match std::fs::read_dir(src) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(()),
+        Err(error) => {
+            return Err(error)
+                .with_context(|| format!("read live-copy source dir {}", src.display()));
+        }
+    };
+
+    for entry in entries {
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(error) if error.kind() == ErrorKind::NotFound => continue,
+            Err(error) => return Err(error).context("read live-copy source dir entry"),
+        };
+        let src_path = entry.path();
+        let dst_path = dst.join(entry.file_name());
+        copy_entry_live(&src_path, &dst_path)?;
+    }
+    Ok(())
+}
+
+fn copy_entry_live(src: &Path, dst: &Path) -> Result<()> {
+    let metadata = match std::fs::symlink_metadata(src) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(()),
+        Err(error) => {
+            return Err(error)
+                .with_context(|| format!("read live-copy source metadata {}", src.display()));
+        }
+    };
+
+    if metadata.file_type().is_symlink() {
+        let target = match std::fs::read_link(src) {
+            Ok(target) => target,
+            Err(error) if error.kind() == ErrorKind::NotFound => return Ok(()),
+            Err(error) => {
+                return Err(error)
+                    .with_context(|| format!("read live-copy symlink {}", src.display()));
+            }
+        };
+        #[cfg(unix)]
+        {
+            let _ = std::fs::remove_file(dst);
+            std::os::unix::fs::symlink(target, dst)
+                .with_context(|| format!("create live-copy symlink {}", dst.display()))?;
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = target;
+        }
+        return Ok(());
+    }
+
+    if metadata.is_dir() {
+        std::fs::create_dir_all(dst)
+            .with_context(|| format!("create live-copy dir {}", dst.display()))?;
+        let _ = std::fs::set_permissions(dst, metadata.permissions());
+        return copy_dir_contents_live(src, dst);
+    }
+
+    if metadata.is_file() {
+        if let Some(parent) = dst.parent() {
+            std::fs::create_dir_all(parent)
+                .with_context(|| format!("create live-copy parent {}", parent.display()))?;
+        }
+        match std::fs::copy(src, dst) {
+            Ok(_) => {
+                let _ = std::fs::set_permissions(dst, metadata.permissions());
+                Ok(())
+            }
+            Err(error) if error.kind() == ErrorKind::NotFound => Ok(()),
+            Err(error) => Err(error).with_context(|| {
+                format!(
+                    "copy live source file {} -> {}",
+                    src.display(),
+                    dst.display()
+                )
+            }),
+        }
+    } else {
+        Ok(())
+    }
 }
