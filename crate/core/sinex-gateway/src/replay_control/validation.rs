@@ -6,8 +6,10 @@
 //! and reused as defense-in-depth checks on both sides of the NATS bus.
 
 use crate::cascade_analyzer::{CascadeAnalyzerConfig, Severity, StreamingCascadeAnalyzer};
+use serde_json::Value as JsonValue;
 use sinex_db::replay::state_machine::{ReplayOperation, ReplayState};
 use sinex_primitives::env as shared_env;
+use sinex_primitives::rpc::replay::ReplayGateOverrides;
 use sinex_primitives::{Result, SinexError, Uuid};
 use std::collections::HashSet;
 use tracing::warn;
@@ -28,6 +30,154 @@ pub(super) enum ReplayAction {
     Approve,
     Execute,
     Cancel,
+}
+
+pub(super) const ANCHOR_CHURN_THRESHOLD_PERCENT: f64 = 5.0;
+pub(super) const TIME_QUALITY_FLIP_THRESHOLD_PERCENT: f64 = 2.0;
+pub(super) const MAX_CASCADE_DEPTH_WARN: u64 = 5;
+
+#[derive(Debug, Clone)]
+struct ReplayGate {
+    name: &'static str,
+    tripped: bool,
+    override_allowed: bool,
+    override_flag: &'static str,
+    observed: String,
+    threshold: String,
+}
+
+fn preview_f64(preview: &JsonValue, key: &str) -> f64 {
+    preview.get(key).and_then(JsonValue::as_f64).unwrap_or(0.0)
+}
+
+fn preview_u64(preview: &JsonValue, key: &str) -> u64 {
+    preview.get(key).and_then(JsonValue::as_u64).unwrap_or(0)
+}
+
+fn preview_bool(preview: &JsonValue, key: &str) -> bool {
+    preview
+        .get(key)
+        .and_then(JsonValue::as_bool)
+        .unwrap_or(false)
+}
+
+fn replay_gates(preview: &JsonValue, overrides: &ReplayGateOverrides) -> [ReplayGate; 4] {
+    let anchor_churn_pct = preview_f64(preview, "anchor_churn_pct");
+    let time_quality_flip_pct = preview_f64(preview, "time_quality_flip_pct");
+    let max_observed_depth = preview_u64(preview, "max_observed_depth");
+    let schema_boundary_crossed = preview_bool(preview, "schema_boundary_crossed");
+
+    [
+        ReplayGate {
+            name: "anchor_churn_threshold_percent",
+            tripped: anchor_churn_pct > ANCHOR_CHURN_THRESHOLD_PERCENT,
+            override_allowed: overrides.allow_anchor_churn,
+            override_flag: "--allow-anchor-churn",
+            observed: format!("{anchor_churn_pct:.2}%"),
+            threshold: format!("{ANCHOR_CHURN_THRESHOLD_PERCENT:.2}%"),
+        },
+        ReplayGate {
+            name: "time_quality_flip_threshold_percent",
+            tripped: time_quality_flip_pct > TIME_QUALITY_FLIP_THRESHOLD_PERCENT,
+            override_allowed: overrides.allow_time_quality_flips,
+            override_flag: "--allow-time-quality-flips",
+            observed: format!("{time_quality_flip_pct:.2}%"),
+            threshold: format!("{TIME_QUALITY_FLIP_THRESHOLD_PERCENT:.2}%"),
+        },
+        ReplayGate {
+            name: "max_cascade_depth_warn",
+            tripped: max_observed_depth > MAX_CASCADE_DEPTH_WARN,
+            override_allowed: overrides.allow_deep_cascade,
+            override_flag: "--allow-deep-cascade",
+            observed: max_observed_depth.to_string(),
+            threshold: MAX_CASCADE_DEPTH_WARN.to_string(),
+        },
+        ReplayGate {
+            name: "require_force_on_schema_mismatch",
+            tripped: schema_boundary_crossed,
+            override_allowed: overrides.force_schema_mismatch,
+            override_flag: "--force-schema-mismatch",
+            observed: schema_boundary_crossed.to_string(),
+            threshold: "false".to_string(),
+        },
+    ]
+}
+
+pub(super) fn replay_gate_report(preview: &JsonValue) -> JsonValue {
+    let overrides = ReplayGateOverrides::default();
+    let gates = replay_gates(preview, &overrides)
+        .into_iter()
+        .map(|gate| {
+            serde_json::json!({
+                "name": gate.name,
+                "tripped": gate.tripped,
+                "override_flag": gate.override_flag,
+                "observed": gate.observed,
+                "threshold": gate.threshold,
+            })
+        })
+        .collect::<Vec<_>>();
+
+    serde_json::json!({
+        "defaults": {
+            "anchor_churn_threshold_percent": ANCHOR_CHURN_THRESHOLD_PERCENT,
+            "time_quality_flip_threshold_percent": TIME_QUALITY_FLIP_THRESHOLD_PERCENT,
+            "max_cascade_depth_warn": MAX_CASCADE_DEPTH_WARN,
+            "require_force_on_schema_mismatch": true,
+        },
+        "tripped": gates
+            .iter()
+            .filter(|gate| gate.get("tripped").and_then(JsonValue::as_bool).unwrap_or(false))
+            .count(),
+        "gates": gates,
+    })
+}
+
+pub(super) fn ensure_replay_gates_pass(
+    operation_id: Uuid,
+    preview: &JsonValue,
+    overrides: &ReplayGateOverrides,
+) -> Result<()> {
+    let blocked = replay_gates(preview, overrides)
+        .into_iter()
+        .filter(|gate| gate.tripped && !gate.override_allowed)
+        .collect::<Vec<_>>();
+    if blocked.is_empty() {
+        return Ok(());
+    }
+
+    let gate_names = blocked
+        .iter()
+        .map(|gate| gate.name)
+        .collect::<Vec<_>>()
+        .join(", ");
+    let override_flags = blocked
+        .iter()
+        .map(|gate| gate.override_flag)
+        .collect::<Vec<_>>()
+        .join(", ");
+    let observed = blocked
+        .iter()
+        .map(|gate| {
+            format!(
+                "{}={} threshold={}",
+                gate.name, gate.observed, gate.threshold
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("; ");
+
+    Err(
+        SinexError::invalid_state("Replay preview trips TARGET_CANONICAL gate defaults")
+            .with_context("operation_id", operation_id.to_string())
+            .with_context("tripped_gates", gate_names)
+            .with_context("override_flags", override_flags)
+            .with_context("observed", observed)
+            .with_context(
+                "hint",
+                "refresh preview or pass the explicit override flag(s)",
+            ),
+    )
 }
 
 pub(super) fn ensure_preview_allowed(operation: &ReplayOperation) -> Result<()> {
@@ -334,6 +484,94 @@ mod tests {
                 .to_string()
                 .contains("cannot perform this replay action")
         );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn replay_gates_report_tripped_defaults() -> Result<()> {
+        let preview = serde_json::json!({
+            "anchor_churn_pct": 6.0,
+            "time_quality_flip_pct": 3.0,
+            "max_observed_depth": 6,
+            "schema_boundary_crossed": true,
+        });
+
+        let report = replay_gate_report(&preview);
+        assert_eq!(report["tripped"].as_u64(), Some(4));
+        assert!(format!("{report}").contains("--force-schema-mismatch"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn replay_gates_reject_without_required_overrides() -> Result<()> {
+        let cases = [
+            (
+                "anchor_churn_threshold_percent",
+                serde_json::json!({
+                    "anchor_churn_pct": 5.01,
+                    "time_quality_flip_pct": 0.0,
+                    "max_observed_depth": 0,
+                    "schema_boundary_crossed": false,
+                }),
+            ),
+            (
+                "time_quality_flip_threshold_percent",
+                serde_json::json!({
+                    "anchor_churn_pct": 0.0,
+                    "time_quality_flip_pct": 2.01,
+                    "max_observed_depth": 0,
+                    "schema_boundary_crossed": false,
+                }),
+            ),
+            (
+                "max_cascade_depth_warn",
+                serde_json::json!({
+                    "anchor_churn_pct": 0.0,
+                    "time_quality_flip_pct": 0.0,
+                    "max_observed_depth": 6,
+                    "schema_boundary_crossed": false,
+                }),
+            ),
+            (
+                "require_force_on_schema_mismatch",
+                serde_json::json!({
+                    "anchor_churn_pct": 0.0,
+                    "time_quality_flip_pct": 0.0,
+                    "max_observed_depth": 0,
+                    "schema_boundary_crossed": true,
+                }),
+            ),
+        ];
+
+        for (gate_name, preview) in cases {
+            let error =
+                ensure_replay_gates_pass(Uuid::now_v7(), &preview, &ReplayGateOverrides::default())
+                    .expect_err("tripped gate must require an explicit override");
+            assert!(error.to_string().contains("TARGET_CANONICAL"));
+            assert!(
+                format!("{error:#}").contains(gate_name),
+                "expected error for {gate_name}, got {error:#}"
+            );
+        }
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn replay_gates_accept_matching_overrides() -> Result<()> {
+        let preview = serde_json::json!({
+            "anchor_churn_pct": 6.0,
+            "time_quality_flip_pct": 3.0,
+            "max_observed_depth": 6,
+            "schema_boundary_crossed": true,
+        });
+        let overrides = ReplayGateOverrides {
+            allow_anchor_churn: true,
+            allow_time_quality_flips: true,
+            allow_deep_cascade: true,
+            force_schema_mismatch: true,
+        };
+
+        ensure_replay_gates_pass(Uuid::now_v7(), &preview, &overrides)?;
         Ok(())
     }
 }

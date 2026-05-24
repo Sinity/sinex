@@ -408,6 +408,50 @@ impl ReplayRepository<'_> {
             .unwrap_or(0))
     }
 
+    /// Count replay roots whose persisted payload schema no longer matches
+    /// the current active schema for their `(source, event_type)` pair.
+    pub async fn count_schema_boundary_crossed(&self, scope: &ReplayScope) -> Result<i64> {
+        let window = resolve_time_window(scope);
+        let mut qb = build_filter_query(
+            scope,
+            window,
+            "SELECT COUNT(*)::bigint as count FROM core.events",
+        );
+        qb.push(
+            r#"
+            AND (
+              (
+                payload_schema_id IS NULL
+                AND EXISTS (
+                  SELECT 1
+                  FROM sinex_schemas.event_payload_schemas s
+                  WHERE s.source = events.source
+                    AND s.event_type = events.event_type
+                    AND s.is_active = true
+                )
+              )
+              OR (
+                payload_schema_id IS NOT NULL
+                AND NOT EXISTS (
+                  SELECT 1
+                  FROM sinex_schemas.event_payload_schemas s
+                  WHERE s.id = payload_schema_id
+                    AND s.source = events.source
+                    AND s.event_type = events.event_type
+                    AND s.is_active = true
+                )
+              )
+            )
+            "#,
+        );
+        Ok(qb
+            .build_query_scalar::<Option<i64>>()
+            .fetch_one(self.pool)
+            .await
+            .map_err(|e| SinexError::database(format!("count schema boundary crossings: {e}")))?
+            .unwrap_or(0))
+    }
+
     // ── Cascade query helpers ────────────────────────────────────────────
 
     /// Load distinct source names for derived events.
