@@ -80,7 +80,12 @@ pub async fn handle_replay_execute_operation(
 ) -> Result<ReplayExecuteResponse> {
     let operation_id = parse_operation_uuid(&req.operation_id)?;
     let operation = client
-        .execute(operation_id, auth.replay_actor(), req.dry_run)
+        .execute_with_overrides(
+            operation_id,
+            auth.replay_actor(),
+            req.dry_run,
+            req.gate_overrides,
+        )
         .await
         .map_err(|error| {
             SinexError::service("failed to execute replay operation").with_source(error)
@@ -97,7 +102,7 @@ pub async fn handle_replay_submit_operation(
 ) -> Result<ReplaySubmitResponse> {
     let operation_id = parse_operation_uuid(&req.operation_id)?;
     let operation = client
-        .submit(operation_id, auth.replay_actor())
+        .submit_with_overrides(operation_id, auth.replay_actor(), req.gate_overrides)
         .await
         .map_err(|error| {
             SinexError::service("failed to submit replay operation").with_source(error)
