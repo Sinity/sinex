@@ -615,6 +615,16 @@ fn format_replay_plan_table(operation: &ReplayOperation) -> String {
     output
 }
 
+fn format_optional_percent(preview: &serde_json::Value, key: &str) -> String {
+    preview
+        .get(key)
+        .and_then(serde_json::Value::as_f64)
+        .map_or_else(
+            || "not measured".to_string(),
+            |value| format!("{value:.2}%"),
+        )
+}
+
 fn format_replay_preview_table(operation: &ReplayOperation, preview: &serde_json::Value) -> String {
     let mut output = String::new();
     output.push_str("Replay Preview:\n");
@@ -638,18 +648,12 @@ fn format_replay_preview_table(operation: &ReplayOperation, preview: &serde_json
     }
 
     output.push_str(&format!(
-        "  Anchor Churn: {:.2}%\n",
-        preview
-            .get("anchor_churn_pct")
-            .and_then(serde_json::Value::as_f64)
-            .unwrap_or(0.0)
+        "  Anchor Churn: {}\n",
+        format_optional_percent(preview, "anchor_churn_pct")
     ));
     output.push_str(&format!(
-        "  Time Quality Flips: {:.2}%\n",
-        preview
-            .get("time_quality_flip_pct")
-            .and_then(serde_json::Value::as_f64)
-            .unwrap_or(0.0)
+        "  Time Quality Flips: {}\n",
+        format_optional_percent(preview, "time_quality_flip_pct")
     ));
     output.push_str(&format!(
         "  Max Cascade Depth: {}\n",
@@ -1152,15 +1156,17 @@ mod tests {
         };
         let preview = json!({
             "total_events": 3,
-            "anchor_churn_pct": 6.25,
-            "time_quality_flip_pct": 0.0,
+            "anchor_churn_pct": null,
+            "time_quality_flip_pct": null,
             "max_observed_depth": 7,
             "schema_boundary_crossed": true,
             "replay_gates": {
                 "gates": [
                     {
                         "name": "anchor_churn_threshold_percent",
-                        "tripped": true,
+                        "tripped": false,
+                        "advisory": true,
+                        "observed": "not measured (advisory)",
                         "override_flag": "--allow-anchor-churn"
                     },
                     {
@@ -1180,12 +1186,15 @@ mod tests {
         let rendered = format_replay_preview_table(&operation, &preview);
 
         assert!(rendered.contains("Safety Warning: analysis failed"));
-        assert!(rendered.contains("Anchor Churn: 6.25%"));
+        assert!(rendered.contains("Anchor Churn: not measured"));
+        assert!(rendered.contains("Time Quality Flips: not measured"));
         assert!(rendered.contains("Max Cascade Depth: 7"));
         assert!(rendered.contains("Schema Boundary: true"));
-        assert!(rendered.contains(
-            "Gates Tripped: anchor_churn_threshold_percent (--allow-anchor-churn), require_force_on_schema_mismatch (--force-schema-mismatch)"
-        ));
+        assert!(
+            rendered.contains(
+                "Gates Tripped: require_force_on_schema_mismatch (--force-schema-mismatch)"
+            )
+        );
         assert!(rendered.contains("Safety Error:   integrity analyzer unavailable"));
         assert!(rendered.contains(
             "Safety Detail:  Cascade impact could not be determined. Approve with caution."
