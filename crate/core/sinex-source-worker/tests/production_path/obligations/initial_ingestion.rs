@@ -168,6 +168,11 @@ mod binary_path {
     use xtask::sandbox::prelude::*;
 
     const WEECHAT_MESSAGE: &str = "hello from source-worker binary";
+    const WEECHAT_SUPPRESSED_MESSAGE: &str = "private mode should suppress this";
+    const WEECHAT_MALFORMED_STATE_MESSAGE: &str =
+        "malformed private-mode state should suppress this";
+    const WEECHAT_OUT_OF_SCOPE_MESSAGE: &str = "desktop scope should not suppress terminal";
+    const BASH_SUPPRESSED_COMMAND: &str = "echo private mode should suppress bash history";
 
     fn weechat_node_config(log_path: &std::path::Path) -> serde_json::Value {
         serde_json::json!({
@@ -235,96 +240,46 @@ mod binary_path {
         Ok(())
     }
 
-    /// Proves the real `sinex-source-worker scan` path for an adapter-backed
-    /// source unit: binary launch, adapter config, parser, NATS publish,
-    /// ingestd persistence, and DB payload visibility.
-    #[sinex_test(timeout = 120)]
-    async fn weechat_source_worker_binary_scan_persists_message(
-        ctx: TestContext,
-    ) -> TestResult<()> {
-        let ctx = ctx.with_nats().shared().await?;
-        let stack = SourceWorkerIngestStack::start(&ctx).await?;
-
-        let tempdir = tempfile::tempdir()?;
-        let log_path = tempdir.path().join("weechat.log");
-        write_weechat_fixture(&log_path, WEECHAT_MESSAGE).await?;
-        let worker_dir = tempdir.path().join("worker");
-        tokio::fs::create_dir_all(&worker_dir).await?;
-
-        let mut config = TestSourceWorkerConfig::new("weechat");
-        config.nats = ctx.nats_handle()?.connection_config();
-        config.database_url = ctx.database_url().to_string();
-        config.namespace = Some(ctx.pipeline_namespace().prefix().to_string());
-        config.work_dir = Some(worker_dir);
-        config.node_config = Some(weechat_node_config(&log_path).to_string());
-
-        let output = run_test_source_worker_scan(config, &[], Some(&ctx)).await?;
-        ctx.assert("source-worker scan processed one event").that(
-            output.stdout.contains("Events processed: 1"),
-            "scan output should report one processed event",
-        )?;
-
-        WaitHelpers::wait_for_condition(
-            || async {
-                let count: i64 = sqlx::query_scalar(
-                    r"
-                    SELECT COUNT(*)::bigint
-                    FROM core.events
-                    WHERE source = 'irc' AND event_type = 'irc.message'
-                    ",
-                )
-                .fetch_one(ctx.pool())
-                .await?;
-                Ok::<bool, sqlx::Error>(count >= 1)
-            },
-            10,
-        )
-        .await?;
-
-        let payload: serde_json::Value = sqlx::query_scalar(
+    async fn count_irc_messages(ctx: &Sandbox, message: &str) -> TestResult<i64> {
+        let count = sqlx::query_scalar(
             r"
-            SELECT payload
+            SELECT COUNT(*)::bigint
             FROM core.events
-            WHERE source = 'irc' AND event_type = 'irc.message'
-            ORDER BY ts_orig
-            LIMIT 1
+            WHERE source = 'irc'
+              AND event_type = 'irc.message'
+              AND payload->>'message' = $1
             ",
         )
+        .bind(message)
         .fetch_one(ctx.pool())
         .await?;
-
-        ctx.assert("persisted irc.message payload")
-            .eq(&payload["message"].as_str(), &Some(WEECHAT_MESSAGE))?;
-
-        stack.shutdown().await?;
-        Ok(())
+        Ok(count)
     }
 
-    #[sinex_test(timeout = 120)]
-    async fn weechat_source_worker_private_mode_suppresses_before_acquisition(
-        ctx: TestContext,
-    ) -> TestResult<()> {
-        let ctx = ctx.with_nats().shared().await?;
-        let stack = SourceWorkerIngestStack::start(&ctx).await?;
+    async fn count_bash_commands(ctx: &Sandbox, command: &str) -> TestResult<i64> {
+        let count = sqlx::query_scalar(
+            r"
+            SELECT COUNT(*)::bigint
+            FROM core.events
+            WHERE source = 'shell.history'
+              AND event_type = 'command.imported'
+              AND payload->>'command' = $1
+            ",
+        )
+        .bind(command)
+        .fetch_one(ctx.pool())
+        .await?;
+        Ok(count)
+    }
 
-        let tempdir = tempfile::tempdir()?;
-        let log_path = tempdir.path().join("weechat.log");
-        write_weechat_fixture(&log_path, "private mode should suppress this").await?;
-        let worker_dir = tempdir.path().join("worker");
+    async fn run_weechat_scan(
+        ctx: &Sandbox,
+        tempdir: &tempfile::TempDir,
+        case: &str,
+        node_config: serde_json::Value,
+    ) -> TestResult<String> {
+        let worker_dir = tempdir.path().join(format!("worker-{case}"));
         tokio::fs::create_dir_all(&worker_dir).await?;
-        let state_dir = tempdir.path().join("state");
-        save_private_mode_state(
-            &state_dir,
-            &RuntimePrivateModeState::enabled_by(
-                "test-operator",
-                vec!["weechat".to_string()],
-                Timestamp::UNIX_EPOCH,
-            ),
-        )?;
-
-        let mut node_config = weechat_node_config(&log_path);
-        node_config["private_mode_state_dir"] =
-            serde_json::Value::String(state_dir.display().to_string());
 
         let mut config = TestSourceWorkerConfig::new("weechat");
         config.nats = ctx.nats_handle()?.connection_config();
@@ -333,115 +288,18 @@ mod binary_path {
         config.work_dir = Some(worker_dir);
         config.node_config = Some(node_config.to_string());
 
-        let output = run_test_source_worker_scan(config, &[], Some(&ctx)).await?;
-        ctx.assert("private-mode scan suppressed all events").that(
-            output.stdout.contains("Events processed: 0"),
-            "scan output should report no processed events when source-unit private mode is active",
-        )?;
-
-        let count: i64 = sqlx::query_scalar(
-            r"
-            SELECT COUNT(*)::bigint
-            FROM core.events
-            WHERE source = 'irc' AND event_type = 'irc.message'
-            ",
-        )
-        .fetch_one(ctx.pool())
-        .await?;
-        ctx.assert("suppressed private-mode scan persisted no irc.message events")
-            .eq(&count, &0)?;
-
-        stack.shutdown().await?;
-        Ok(())
+        let output = run_test_source_worker_scan(config, &[], Some(ctx)).await?;
+        Ok(output.stdout)
     }
 
-    #[sinex_test(timeout = 120)]
-    async fn weechat_source_worker_malformed_private_mode_state_fails_closed(
-        ctx: TestContext,
-    ) -> TestResult<()> {
-        let ctx = ctx.with_nats().shared().await?;
-        let stack = SourceWorkerIngestStack::start(&ctx).await?;
-
-        let tempdir = tempfile::tempdir()?;
-        let log_path = tempdir.path().join("weechat.log");
-        write_weechat_fixture(
-            &log_path,
-            "malformed private-mode state should suppress this",
-        )
-        .await?;
-        let worker_dir = tempdir.path().join("worker");
+    async fn run_bash_scan(
+        ctx: &Sandbox,
+        tempdir: &tempfile::TempDir,
+        case: &str,
+        node_config: serde_json::Value,
+    ) -> TestResult<String> {
+        let worker_dir = tempdir.path().join(format!("worker-{case}"));
         tokio::fs::create_dir_all(&worker_dir).await?;
-        let state_dir = tempdir.path().join("state");
-        let private_mode_path = sinex_primitives::privacy::private_mode_state_path(&state_dir);
-        let private_mode_parent = private_mode_path
-            .parent()
-            .ok_or_else(|| color_eyre::eyre::eyre!("private-mode state path must have parent"))?;
-        tokio::fs::create_dir_all(private_mode_parent).await?;
-        tokio::fs::write(&private_mode_path, b"{not-json").await?;
-
-        let mut node_config = weechat_node_config(&log_path);
-        node_config["private_mode_state_dir"] =
-            serde_json::Value::String(state_dir.display().to_string());
-
-        let mut config = TestSourceWorkerConfig::new("weechat");
-        config.nats = ctx.nats_handle()?.connection_config();
-        config.database_url = ctx.database_url().to_string();
-        config.namespace = Some(ctx.pipeline_namespace().prefix().to_string());
-        config.work_dir = Some(worker_dir);
-        config.node_config = Some(node_config.to_string());
-
-        let output = run_test_source_worker_scan(config, &[], Some(&ctx)).await?;
-        ctx.assert("malformed private-mode state suppressed all events")
-            .that(
-                output.stdout.contains("Events processed: 0"),
-                "scan output should report no processed events when private-mode state is unreadable",
-            )?;
-
-        let count: i64 = sqlx::query_scalar(
-            r"
-            SELECT COUNT(*)::bigint
-            FROM core.events
-            WHERE source = 'irc' AND event_type = 'irc.message'
-            ",
-        )
-        .fetch_one(ctx.pool())
-        .await?;
-        ctx.assert("fail-closed malformed state persisted no irc.message events")
-            .eq(&count, &0)?;
-
-        stack.shutdown().await?;
-        Ok(())
-    }
-
-    #[sinex_test(timeout = 120)]
-    async fn bash_history_source_worker_private_mode_suppresses_before_acquisition(
-        ctx: TestContext,
-    ) -> TestResult<()> {
-        let ctx = ctx.with_nats().shared().await?;
-        let stack = SourceWorkerIngestStack::start(&ctx).await?;
-
-        let tempdir = tempfile::tempdir()?;
-        let history_path = tempdir.path().join(".bash_history");
-        write_bash_fixture(
-            &history_path,
-            "echo private mode should suppress bash history",
-        )
-        .await?;
-        let worker_dir = tempdir.path().join("worker");
-        tokio::fs::create_dir_all(&worker_dir).await?;
-        let state_dir = tempdir.path().join("state");
-        save_private_mode_state(
-            &state_dir,
-            &RuntimePrivateModeState::enabled_by(
-                "test-operator",
-                vec!["terminal".to_string()],
-                Timestamp::UNIX_EPOCH,
-            ),
-        )?;
-
-        let mut node_config = append_only_node_config(&history_path);
-        node_config["private_mode_state_dir"] =
-            serde_json::Value::String(state_dir.display().to_string());
 
         let mut config = TestSourceWorkerConfig::new("terminal.bash-history");
         config.nats = ctx.nats_handle()?.connection_config();
@@ -450,41 +308,109 @@ mod binary_path {
         config.work_dir = Some(worker_dir);
         config.node_config = Some(node_config.to_string());
 
-        let output = run_test_source_worker_scan(config, &[], Some(&ctx)).await?;
+        let output = run_test_source_worker_scan(config, &[], Some(ctx)).await?;
+        Ok(output.stdout)
+    }
+
+    /// Proves the real `sinex-source-worker scan` path for adapter-backed
+    /// source units: binary launch, adapter config, parser, NATS publish,
+    /// ingestd persistence, DB payload visibility, and private-mode policy.
+    #[sinex_test(timeout = 120)]
+    async fn source_worker_binary_scan_private_mode_matrix(ctx: TestContext) -> TestResult<()> {
+        let ctx = ctx.with_nats().shared().await?;
+        let stack = SourceWorkerIngestStack::start(&ctx).await?;
+        let tempdir = tempfile::tempdir()?;
+
+        let log_path = tempdir.path().join("weechat.log");
+        write_weechat_fixture(&log_path, WEECHAT_MESSAGE).await?;
+        let output = run_weechat_scan(&ctx, &tempdir, "baseline", weechat_node_config(&log_path))
+            .await?;
+        ctx.assert("source-worker scan processed one event").that(
+            output.contains("Events processed: 1"),
+            "scan output should report one processed event",
+        )?;
+        WaitHelpers::wait_for_condition(
+            || async {
+                let count = count_irc_messages(&ctx, WEECHAT_MESSAGE)
+                    .await
+                    .map_err(|error| sqlx::Error::Protocol(error.to_string()))?;
+                Ok::<bool, sqlx::Error>(count >= 1)
+            },
+            10,
+        )
+        .await?;
+
+        let log_path = tempdir.path().join("weechat-private.log");
+        write_weechat_fixture(&log_path, WEECHAT_SUPPRESSED_MESSAGE).await?;
+        let state_dir = tempdir.path().join("weechat-state");
+        save_private_mode_state(
+            &state_dir,
+            &RuntimePrivateModeState::enabled_by(
+                "test-operator",
+                vec!["weechat".to_string()],
+                Timestamp::UNIX_EPOCH,
+            ),
+        )?;
+        let mut node_config = weechat_node_config(&log_path);
+        node_config["private_mode_state_dir"] =
+            serde_json::Value::String(state_dir.display().to_string());
+        let output = run_weechat_scan(&ctx, &tempdir, "weechat-private", node_config).await?;
+        ctx.assert("private-mode scan suppressed all events").that(
+            output.contains("Events processed: 0"),
+            "scan output should report no processed events when source-unit private mode is active",
+        )?;
+        let count = count_irc_messages(&ctx, WEECHAT_SUPPRESSED_MESSAGE).await?;
+        ctx.assert("suppressed private-mode scan persisted no irc.message events")
+            .eq(&count, &0)?;
+
+        let log_path = tempdir.path().join("weechat-malformed-state.log");
+        write_weechat_fixture(&log_path, WEECHAT_MALFORMED_STATE_MESSAGE).await?;
+        let state_dir = tempdir.path().join("malformed-state");
+        let private_mode_path = sinex_primitives::privacy::private_mode_state_path(&state_dir);
+        let private_mode_parent = private_mode_path
+            .parent()
+            .ok_or_else(|| color_eyre::eyre::eyre!("private-mode state path must have parent"))?;
+        tokio::fs::create_dir_all(private_mode_parent).await?;
+        tokio::fs::write(&private_mode_path, b"{not-json").await?;
+        let mut node_config = weechat_node_config(&log_path);
+        node_config["private_mode_state_dir"] =
+            serde_json::Value::String(state_dir.display().to_string());
+        let output = run_weechat_scan(&ctx, &tempdir, "weechat-malformed", node_config).await?;
+        ctx.assert("malformed private-mode state suppressed all events")
+            .that(
+                output.contains("Events processed: 0"),
+                "scan output should report no processed events when private-mode state is unreadable",
+            )?;
+        let count = count_irc_messages(&ctx, WEECHAT_MALFORMED_STATE_MESSAGE).await?;
+        ctx.assert("fail-closed malformed state persisted no irc.message events")
+            .eq(&count, &0)?;
+
+        let history_path = tempdir.path().join(".bash_history");
+        write_bash_fixture(&history_path, BASH_SUPPRESSED_COMMAND).await?;
+        let state_dir = tempdir.path().join("terminal-state");
+        save_private_mode_state(
+            &state_dir,
+            &RuntimePrivateModeState::enabled_by(
+                "test-operator",
+                vec!["terminal".to_string()],
+                Timestamp::UNIX_EPOCH,
+            ),
+        )?;
+        let mut node_config = append_only_node_config(&history_path);
+        node_config["private_mode_state_dir"] =
+            serde_json::Value::String(state_dir.display().to_string());
+        let output = run_bash_scan(&ctx, &tempdir, "bash-private", node_config).await?;
         ctx.assert("private-mode bash scan suppressed all events").that(
-            output.stdout.contains("Events processed: 0"),
+            output.contains("Events processed: 0"),
             "scan output should report no processed events when terminal private mode is active",
         )?;
-
-        let count: i64 = sqlx::query_scalar(
-            r"
-            SELECT COUNT(*)::bigint
-            FROM core.events
-            WHERE source = 'shell.history' AND event_type = 'command.imported'
-            ",
-        )
-        .fetch_one(ctx.pool())
-        .await?;
+        let count = count_bash_commands(&ctx, BASH_SUPPRESSED_COMMAND).await?;
         ctx.assert("suppressed private-mode scan persisted no shell.history events")
             .eq(&count, &0)?;
 
-        stack.shutdown().await?;
-        Ok(())
-    }
-
-    #[sinex_test(timeout = 120)]
-    async fn weechat_source_worker_private_mode_out_of_scope_still_acquires(
-        ctx: TestContext,
-    ) -> TestResult<()> {
-        let ctx = ctx.with_nats().shared().await?;
-        let stack = SourceWorkerIngestStack::start(&ctx).await?;
-
-        let tempdir = tempfile::tempdir()?;
-        let log_path = tempdir.path().join("weechat.log");
-        write_weechat_fixture(&log_path, "desktop scope should not suppress terminal").await?;
-        let worker_dir = tempdir.path().join("worker");
-        tokio::fs::create_dir_all(&worker_dir).await?;
-        let state_dir = tempdir.path().join("state");
+        let log_path = tempdir.path().join("weechat-out-of-scope.log");
+        write_weechat_fixture(&log_path, WEECHAT_OUT_OF_SCOPE_MESSAGE).await?;
+        let state_dir = tempdir.path().join("desktop-state");
         save_private_mode_state(
             &state_dir,
             &RuntimePrivateModeState::enabled_by(
@@ -493,35 +419,19 @@ mod binary_path {
                 Timestamp::UNIX_EPOCH,
             ),
         )?;
-
         let mut node_config = weechat_node_config(&log_path);
         node_config["private_mode_state_dir"] =
             serde_json::Value::String(state_dir.display().to_string());
-
-        let mut config = TestSourceWorkerConfig::new("weechat");
-        config.nats = ctx.nats_handle()?.connection_config();
-        config.database_url = ctx.database_url().to_string();
-        config.namespace = Some(ctx.pipeline_namespace().prefix().to_string());
-        config.work_dir = Some(worker_dir);
-        config.node_config = Some(node_config.to_string());
-
-        let output = run_test_source_worker_scan(config, &[], Some(&ctx)).await?;
+        let output = run_weechat_scan(&ctx, &tempdir, "weechat-out-of-scope", node_config).await?;
         ctx.assert("out-of-scope private mode preserves acquisition").that(
-            output.stdout.contains("Events processed: 1"),
+            output.contains("Events processed: 1"),
             "scan output should report one processed event when private mode is scoped elsewhere",
         )?;
-
         WaitHelpers::wait_for_condition(
             || async {
-                let count: i64 = sqlx::query_scalar(
-                    r"
-                    SELECT COUNT(*)::bigint
-                    FROM core.events
-                    WHERE source = 'irc' AND event_type = 'irc.message'
-                    ",
-                )
-                .fetch_one(ctx.pool())
-                .await?;
+                let count = count_irc_messages(&ctx, WEECHAT_OUT_OF_SCOPE_MESSAGE)
+                    .await
+                    .map_err(|error| sqlx::Error::Protocol(error.to_string()))?;
                 Ok::<bool, sqlx::Error>(count >= 1)
             },
             10,
