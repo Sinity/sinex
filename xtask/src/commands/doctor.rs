@@ -977,16 +977,27 @@ fn run_rust_analyzer_cli_diagnostics(
         .stderr(std::process::Stdio::piped())
         .output()
         .wrap_err("spawn rust-analyzer diagnostics")?;
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = truncate_report_text(String::from_utf8_lossy(&output.stderr).trim(), 4096);
+    build_rust_analyzer_cli_diagnostic_scan(
+        command,
+        output.status.code(),
+        &String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr).trim(),
+    )
+}
 
-    let diagnostics = parse_rust_analyzer_cli_diagnostics(&stdout);
-    let status = rust_analyzer_cli_scan_status(output.status.code(), diagnostics.len());
-    let stderr_summary = summarize_rust_analyzer_cli_stderr(&stderr);
-
+fn build_rust_analyzer_cli_diagnostic_scan(
+    command: Vec<String>,
+    exit_code: Option<i32>,
+    stdout: &str,
+    raw_stderr: &str,
+) -> Result<RustAnalyzerCliDiagnosticScan> {
+    let diagnostics = parse_rust_analyzer_cli_diagnostics(stdout);
+    let status = rust_analyzer_cli_scan_status(exit_code, diagnostics.len());
+    let stderr_summary = summarize_rust_analyzer_cli_stderr(raw_stderr);
+    let stderr = truncate_report_text(raw_stderr, 4096);
     Ok(RustAnalyzerCliDiagnosticScan {
         command,
-        exit_code: output.status.code(),
+        exit_code,
         status,
         stderr_summary,
         diagnostics,
