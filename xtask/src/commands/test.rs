@@ -20,7 +20,7 @@ use modes::{
 use plan::{
     HEAVY_TEST_THREAD_CAP, NextestExecutionPlan, default_heavy_test_threads, normalize_packages,
     prepare_runtime_binaries_for_plan, resolve_nextest_execution_plan,
-    runtime_binary_requirements_for_plan, test_database_required_for_plan,
+    runtime_binary_requirements_for_target, test_database_required_for_plan,
 };
 use scenarios::{
     ScenarioSelection, merge_nextest_filters, render_scenario_catalog, scenario_nextest_filter,
@@ -1378,7 +1378,9 @@ impl XtaskCommand for TestCommand {
         }
 
         let runtime_binary_reports =
-            if runtime_binary_requirements_for_plan(&execution_plan).is_empty() {
+            if runtime_binary_requirements_for_target(&execution_plan, effective_lib_target)
+                .is_empty()
+            {
                 Vec::new()
             } else {
                 let runtime_stage = ctx.start_stage("runtime-binaries");

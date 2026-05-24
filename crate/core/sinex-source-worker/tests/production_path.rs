@@ -38,15 +38,15 @@ pub enum AdapterKind {
     UnixSocket,
 }
 
-/// Canonical list of every obligation supported by the harness.
+/// Canonical parser-fixture obligations exercised by each source-unit case.
 ///
 /// Per-source-unit tests pass this to `_run_case(...)` when they need full
-/// coverage. Update this list and `_run_obligation` whenever a new obligation
-/// family is added.
+/// parser-contract coverage. Shared obligations that do not inspect parser
+/// output, such as drain-controller state transitions, belong in one shared
+/// test instead of being repeated for every source-unit fixture.
 pub const ALL_OBLIGATIONS: &[&str] = &[
     "initial_ingestion",
     "replay",
-    "drain",
     "isolation",
     "privacy",
 ];
@@ -499,6 +499,8 @@ async fn dispatch_record_fixture_with_anchor(
 mod coverage_matrix {
     use std::collections::{BTreeMap, BTreeSet};
 
+    use crate::AdapterKind;
+    use crate::obligations::drain;
     use sinex_primitives::parser::SourceUnitId;
     use sinex_source_worker::dispatch::find_parser_factory;
     use sinex_source_worker::node_factory::registered_node_factory_ids;
@@ -792,6 +794,15 @@ mod coverage_matrix {
                 entry.source_unit_id
             );
         }
+
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn source_worker_drain_obligation_covers_shared_controller() -> TestResult<()> {
+        drain::run("source-worker.shared-drain", AdapterKind::StaticFile, b"")
+            .await
+            .map_err(|message| SinexError::processing(message))?;
 
         Ok(())
     }
