@@ -12,6 +12,7 @@ use serde::Serialize;
 use sinex_primitives::{DeploymentReadinessDescriptor, privacy::load_private_mode_state};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
+use walkdir::WalkDir;
 
 const DEPLOYMENT_READY_TIMEOUT: Duration = Duration::from_secs(5);
 const RECOMMENDED_INOTIFY_MAX_USER_WATCHES: u64 = 524_288;
@@ -137,6 +138,7 @@ struct RustAnalyzerDoctorReport {
     process_count: usize,
     total_rss_mb: f64,
     processes: Vec<RustAnalyzerProcess>,
+    workspace_contract: RustAnalyzerWorkspaceContractSummary,
     #[serde(skip_serializing_if = "Option::is_none")]
     cli_diagnostics: Option<RustAnalyzerCliDiagnosticScan>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -166,6 +168,12 @@ struct RustAnalyzerProcess {
     pid: u32,
     rss_mb: f64,
     command: String,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+struct RustAnalyzerWorkspaceContractSummary {
+    xtask_dev_dependency_count: usize,
+    xtask_dev_dependency_packages: Vec<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -625,6 +633,7 @@ fn execute_rust_analyzer_check(
     let root = crate::config::workspace_root();
     let config_path = root.join("rust-analyzer.toml");
     let config = analyze_rust_analyzer_config(&config_path)?;
+    let workspace_contract = summarize_rust_analyzer_workspace_contract(&root)?;
     let target_dir = std::env::var("CARGO_TARGET_DIR").map_or_else(
         |_| crate::config::workspace_target_dir_for(&root),
         PathBuf::from,
@@ -681,6 +690,7 @@ fn execute_rust_analyzer_check(
         process_count: processes.len(),
         total_rss_mb,
         processes,
+        workspace_contract,
         cli_diagnostics,
         history_recorded_diagnostics: None,
         warnings,
@@ -844,6 +854,66 @@ fn collect_rust_analyzer_processes() -> Result<Vec<RustAnalyzerProcess>> {
 
     processes.sort_by_key(|process| process.pid);
     Ok(processes)
+}
+
+fn summarize_rust_analyzer_workspace_contract(
+    root: &Path,
+) -> Result<RustAnalyzerWorkspaceContractSummary> {
+    let mut xtask_dev_dependency_packages = Vec::new();
+
+    for entry in WalkDir::new(root)
+        .follow_links(false)
+        .into_iter()
+        .filter_entry(|entry| rust_analyzer_manifest_walk_entry(root, entry.path()))
+    {
+        let entry = entry?;
+        if entry.file_type().is_file() && entry.file_name() == "Cargo.toml" {
+            let manifest_path = entry.path();
+            let contents = std::fs::read_to_string(manifest_path)
+                .with_context(|| format!("failed to read {}", manifest_path.display()))?;
+            let parsed = toml::from_str::<toml::Value>(&contents)
+                .with_context(|| format!("failed to parse {}", manifest_path.display()))?;
+            if manifest_has_xtask_dev_dependency(&parsed) {
+                let package = toml_at(&parsed, &["package", "name"])
+                    .and_then(toml::Value::as_str)
+                    .map_or_else(|| manifest_path.display().to_string(), ToString::to_string);
+                if !xtask_dev_dependency_packages.contains(&package) {
+                    xtask_dev_dependency_packages.push(package);
+                }
+            }
+        }
+    }
+
+    xtask_dev_dependency_packages.sort();
+    Ok(RustAnalyzerWorkspaceContractSummary {
+        xtask_dev_dependency_count: xtask_dev_dependency_packages.len(),
+        xtask_dev_dependency_packages,
+    })
+}
+
+fn rust_analyzer_manifest_walk_entry(root: &Path, path: &Path) -> bool {
+    if path == root {
+        return true;
+    }
+    let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+        return true;
+    };
+    !matches!(
+        name,
+        ".git" | ".direnv" | ".sinex" | "target" | "node_modules"
+    ) && !name.starts_with("result")
+}
+
+fn manifest_has_xtask_dev_dependency(manifest: &toml::Value) -> bool {
+    toml_at(manifest, &["dev-dependencies", "xtask"]).is_some()
+        || manifest
+            .get("target")
+            .and_then(toml::Value::as_table)
+            .is_some_and(|targets| {
+                targets
+                    .values()
+                    .any(|target| toml_at(target, &["dev-dependencies", "xtask"]).is_some())
+            })
 }
 
 fn is_rust_analyzer_process(comm: &str, command: &str) -> bool {
@@ -1575,6 +1645,25 @@ fn print_rust_analyzer_report(report: &RustAnalyzerDoctorReport) {
     println!(
         "  Processes:          {} ({:.0} MB RSS total)",
         report.process_count, report.total_rss_mb
+    );
+    println!(
+        "  Xtask dev-deps:     {} package(s){}",
+        report.workspace_contract.xtask_dev_dependency_count,
+        if report
+            .workspace_contract
+            .xtask_dev_dependency_packages
+            .is_empty()
+        {
+            String::new()
+        } else {
+            format!(
+                " [{}]",
+                report
+                    .workspace_contract
+                    .xtask_dev_dependency_packages
+                    .join(", ")
+            )
+        }
     );
     for process in &report.processes {
         println!(

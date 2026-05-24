@@ -1932,6 +1932,70 @@ async fn test_rust_analyzer_report_is_explicitly_advisory() -> ::xtask::sandbox:
 }
 
 #[sinex_test]
+async fn test_rust_analyzer_workspace_contract_lists_xtask_dev_deps()
+-> ::xtask::sandbox::TestResult<()> {
+    let dir = tempfile::tempdir()?;
+    fs::create_dir_all(dir.path().join("crate/lib/uses-xtask"))?;
+    fs::create_dir_all(dir.path().join("crate/lib/no-xtask"))?;
+    fs::create_dir_all(dir.path().join("target/ignored"))?;
+    fs::write(
+        dir.path().join("crate/lib/uses-xtask/Cargo.toml"),
+        r#"
+[package]
+name = "uses-xtask"
+version = "0.1.0"
+
+[dev-dependencies]
+xtask = { path = "../../../xtask" }
+"#,
+    )?;
+    fs::write(
+        dir.path().join("crate/lib/no-xtask/Cargo.toml"),
+        r#"
+[package]
+name = "no-xtask"
+version = "0.1.0"
+
+[dev-dependencies]
+serde = "1"
+"#,
+    )?;
+    fs::write(
+        dir.path().join("target/ignored/Cargo.toml"),
+        r#"
+[package]
+name = "ignored-target"
+version = "0.1.0"
+
+[dev-dependencies]
+xtask = { path = "../../xtask" }
+"#,
+    )?;
+
+    let summary = summarize_rust_analyzer_workspace_contract(dir.path())?;
+    assert_eq!(summary.xtask_dev_dependency_count, 1);
+    assert_eq!(summary.xtask_dev_dependency_packages, vec!["uses-xtask"]);
+    Ok(())
+}
+
+#[sinex_test]
+async fn test_manifest_has_xtask_target_dev_dependency() -> ::xtask::sandbox::TestResult<()> {
+    let manifest = toml::from_str::<toml::Value>(
+        r#"
+[package]
+name = "target-uses-xtask"
+version = "0.1.0"
+
+[target.'cfg(unix)'.dev-dependencies]
+xtask = { path = "../../../xtask" }
+"#,
+    )?;
+
+    assert!(manifest_has_xtask_dev_dependency(&manifest));
+    Ok(())
+}
+
+#[sinex_test]
 async fn test_rust_analyzer_config_summary_accepts_workspace_contract()
 -> ::xtask::sandbox::TestResult<()> {
     let value = toml::from_str::<toml::Value>(
