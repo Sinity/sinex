@@ -13,7 +13,7 @@ use crate::model::OutputFormat;
 /// Runtime-state snapshot and restore commands.
 #[derive(Debug, Subcommand)]
 pub enum StateCommands {
-    /// Create a quiesce-mode snapshot of the complete sinex runtime state.
+    /// Create a snapshot of the complete sinex runtime state.
     Snapshot(AdminSnapshotCommand),
     /// Inspect a snapshot archive manifest and member list.
     Inspect(AdminSnapshotInspectCommand),
