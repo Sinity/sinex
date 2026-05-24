@@ -33,7 +33,7 @@ use std::time::Duration;
 use xtask::sandbox::prelude::*;
 
 const NODE_FOR_POLICY: &str = "settlement-fault-policy-test";
-const FAULT_INJECTION_PUBLISH_TIMEOUT: Duration = Duration::from_millis(250);
+const FAULT_INJECTION_PUBLISH_TIMEOUT: Duration = Duration::from_millis(50);
 
 fn ctx_for(operation: RuntimeOperation, phase: RuntimePhase, attempts: u32) -> FailureContext {
     FailureContext {
