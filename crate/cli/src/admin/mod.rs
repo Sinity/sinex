@@ -19,7 +19,7 @@ use snapshot::{
 /// Admin subcommands.
 #[derive(Debug, Subcommand)]
 pub enum AdminCommands {
-    /// Create a quiesce-mode snapshot of the complete sinex runtime state.
+    /// Create a snapshot of the complete sinex runtime state.
     Snapshot(AdminSnapshotCommand),
     /// Inspect a snapshot archive manifest and member list.
     SnapshotInspect(AdminSnapshotInspectCommand),
