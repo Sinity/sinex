@@ -169,6 +169,8 @@ pub struct ChangedStrictReport {
 pub struct PackageCheckResult {
     pub package: String,
     pub success: bool,
+    pub reused: bool,
+    pub proof_invocation_id: Option<i64>,
     pub exit_code: Option<i32>,
     /// First lines of stderr/stdout on failure (capped at 20 lines for compactness).
     pub output_excerpt: Option<String>,
@@ -207,10 +209,37 @@ pub fn run_changed_strict(
         .tempdir()
         .map_err(|e| eyre!("failed to create changed-strict child history dir: {e}"))?;
     let child_history_db = child_history_dir.path().join("xtask-history.db");
+    let history_db =
+        crate::history::HistoryDb::open(&crate::config::config().history_db_path()).ok();
 
     for pkg in &pkg_list {
-        let mut args = vec!["check".to_string(), "-p".to_string(), pkg.clone()];
-        args.extend_from_slice(extra_check_args);
+        let mut check_args = vec!["-p".to_string(), pkg.clone()];
+        check_args.extend_from_slice(extra_check_args);
+
+        let proof_hit = history_db.as_ref().and_then(|db| {
+            let fingerprint =
+                crate::coordinator::current_scoped_tree_fingerprint("check", &check_args).ok()?;
+            let scope_key = crate::coordinator::compute_scope_key("check", &check_args);
+            let proof_kind = crate::coordinator::proof_kind("check", &check_args);
+            db.get_successful_proof_evidence("check", &proof_kind, &fingerprint, &scope_key)
+                .ok()
+                .flatten()
+        });
+
+        if let Some(proof) = proof_hit {
+            package_results.push(PackageCheckResult {
+                package: pkg.clone(),
+                success: true,
+                reused: true,
+                proof_invocation_id: Some(proof.invocation_id),
+                exit_code: Some(0),
+                output_excerpt: None,
+            });
+            continue;
+        }
+
+        let mut args = vec!["check".to_string()];
+        args.extend(check_args);
 
         let output = Command::new(xtask_bin)
             .args(&args)
@@ -249,6 +278,8 @@ pub fn run_changed_strict(
         package_results.push(PackageCheckResult {
             package: pkg.clone(),
             success,
+            reused: false,
+            proof_invocation_id: None,
             exit_code: output.status.code(),
             output_excerpt,
         });
