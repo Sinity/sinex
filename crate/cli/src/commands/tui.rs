@@ -1,8 +1,10 @@
+use base64::Engine;
 use clap::{Args, ValueEnum};
 use color_eyre::Result;
 use crossterm::{
     event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind},
     execute,
+    style::Print,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
 use ratatui::{
@@ -13,7 +15,9 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Wrap},
 };
-use sinex_primitives::query::{EventQuery, EventQueryResult, SortDirection, TimeRange};
+use sinex_primitives::query::{
+    EventQuery, EventQueryResult, QueryResultEvent, SortDirection, TimeRange,
+};
 use sinex_primitives::temporal::Timestamp;
 use sinex_primitives::views::{
     ActionAvailabilityState, EventCardListView, EventCardView, PrivacyStateKind, SinexObjectKind,
@@ -81,6 +85,7 @@ struct App {
     nodes: Vec<InstanceInfo>,
     dlq_stats: Option<DlqListResponse>,
     recent_events: Vec<EventCardView>,
+    recent_event_rows: Vec<QueryResultEvent>,
     gateway_version: String,
 
     // State
@@ -89,6 +94,10 @@ struct App {
     error: Option<String>,
     selected_index: usize,
     show_help: bool,
+    copy_menu_open: bool,
+    copy_index: usize,
+    payload_raw: bool,
+    feedback: Option<String>,
 }
 
 impl App {
@@ -101,6 +110,7 @@ impl App {
             nodes: Vec::new(),
             dlq_stats: None,
             recent_events: Vec::new(),
+            recent_event_rows: Vec::new(),
             gateway_version: String::from("unknown"),
             loading: false,
             last_refresh: Instant::now()
@@ -109,30 +119,45 @@ impl App {
             error: None,
             selected_index: 0,
             show_help: false,
+            copy_menu_open: false,
+            copy_index: 0,
+            payload_raw: false,
+            feedback: None,
         }
     }
 
     fn next_tab(&mut self) {
-        self.current_tab = match self.current_tab {
+        let next = match self.current_tab {
             Tab::Dashboard => Tab::Nodes,
             Tab::Nodes => Tab::Events,
             Tab::Events => Tab::Dlq,
             Tab::Dlq => Tab::Dashboard,
         };
-        self.selected_index = 0;
+        self.switch_tab(next);
     }
 
     fn previous_tab(&mut self) {
-        self.current_tab = match self.current_tab {
+        let previous = match self.current_tab {
             Tab::Dashboard => Tab::Dlq,
             Tab::Nodes => Tab::Dashboard,
             Tab::Events => Tab::Nodes,
             Tab::Dlq => Tab::Events,
         };
+        self.switch_tab(previous);
+    }
+
+    fn switch_tab(&mut self, tab: Tab) {
+        self.current_tab = tab;
         self.selected_index = 0;
+        self.copy_menu_open = false;
+        self.copy_index = 0;
     }
 
     fn select_next(&mut self) {
+        if self.copy_menu_open {
+            self.select_next_copy_action();
+            return;
+        }
         let max_index = self.current_list_len().saturating_sub(1);
         if self.selected_index < max_index {
             self.selected_index += 1;
@@ -140,6 +165,10 @@ impl App {
     }
 
     fn select_previous(&mut self) {
+        if self.copy_menu_open {
+            self.select_previous_copy_action();
+            return;
+        }
         if self.selected_index > 0 {
             self.selected_index -= 1;
         }
@@ -158,8 +187,62 @@ impl App {
         let len = self.current_list_len();
         if len == 0 {
             self.selected_index = 0;
+            self.copy_menu_open = false;
+            self.copy_index = 0;
         } else if self.selected_index >= len {
             self.selected_index = len - 1;
+        }
+    }
+
+    fn selected_event_card(&self) -> Option<&EventCardView> {
+        self.recent_events.get(self.selected_index)
+    }
+
+    fn selected_event_row(&self) -> Option<&QueryResultEvent> {
+        self.recent_event_rows.get(self.selected_index)
+    }
+
+    fn selected_copy_actions(&self) -> Vec<EventCopyAction> {
+        self.selected_event_card().map_or_else(Vec::new, |card| {
+            event_copy_actions(card, self.selected_event_row())
+        })
+    }
+
+    fn select_next_copy_action(&mut self) {
+        let max_index = self.selected_copy_actions().len().saturating_sub(1);
+        if self.copy_index < max_index {
+            self.copy_index += 1;
+        }
+    }
+
+    fn select_previous_copy_action(&mut self) {
+        if self.copy_index > 0 {
+            self.copy_index -= 1;
+        }
+    }
+
+    fn toggle_copy_menu(&mut self) {
+        if self.current_tab != Tab::Events || self.recent_events.is_empty() {
+            self.feedback = Some("No selected event to copy from.".to_string());
+            self.copy_menu_open = false;
+            return;
+        }
+        self.copy_menu_open = !self.copy_menu_open;
+        self.copy_index = 0;
+        if self.copy_menu_open {
+            self.feedback = Some("Copy menu open; select an item and press Enter.".to_string());
+        }
+    }
+
+    fn toggle_payload_mode(&mut self) {
+        if self.current_tab == Tab::Events {
+            self.payload_raw = !self.payload_raw;
+            let mode = if self.payload_raw {
+                "raw JSON"
+            } else {
+                "pretty"
+            };
+            self.feedback = Some(format!("Payload renderer: {mode}."));
         }
     }
 
@@ -211,6 +294,7 @@ impl App {
         match self.client.query_events(query).await {
             Ok(EventQueryResult::Events { events, .. }) => {
                 self.recent_events = EventCardListView::from_query_events(&events).cards;
+                self.recent_event_rows = events;
                 self.clamp_selection();
             }
             Ok(_) => {} // aggregation result, shouldn't happen
@@ -218,6 +302,7 @@ impl App {
                 if self.error.is_none() {
                     self.error = Some(format!("Failed to fetch events: {e}"));
                 }
+                self.recent_event_rows.clear();
             }
         }
 
@@ -279,7 +364,12 @@ where
         {
             match key.code {
                 KeyCode::Char('q') | KeyCode::Esc => {
-                    app.should_quit = true;
+                    if app.copy_menu_open {
+                        app.copy_menu_open = false;
+                        app.feedback = Some("Copy menu closed.".to_string());
+                    } else {
+                        app.should_quit = true;
+                    }
                 }
                 KeyCode::Tab | KeyCode::Right => {
                     app.next_tab();
@@ -293,16 +383,25 @@ where
                 KeyCode::Char('?') => {
                     app.show_help = !app.show_help;
                 }
+                KeyCode::Char('c') => {
+                    app.toggle_copy_menu();
+                }
+                KeyCode::Char('p') => {
+                    app.toggle_payload_mode();
+                }
+                KeyCode::Enter | KeyCode::Char('y') => {
+                    copy_selected_action(app)?;
+                }
                 KeyCode::Down | KeyCode::Char('j') => {
                     app.select_next();
                 }
                 KeyCode::Up | KeyCode::Char('k') => {
                     app.select_previous();
                 }
-                KeyCode::Char('1') => app.current_tab = Tab::Dashboard,
-                KeyCode::Char('2') => app.current_tab = Tab::Nodes,
-                KeyCode::Char('3') => app.current_tab = Tab::Events,
-                KeyCode::Char('4') => app.current_tab = Tab::Dlq,
+                KeyCode::Char('1') => app.switch_tab(Tab::Dashboard),
+                KeyCode::Char('2') => app.switch_tab(Tab::Nodes),
+                KeyCode::Char('3') => app.switch_tab(Tab::Events),
+                KeyCode::Char('4') => app.switch_tab(Tab::Dlq),
                 _ => {}
             }
         }
@@ -312,6 +411,46 @@ where
         }
     }
     Ok(())
+}
+
+fn copy_selected_action(app: &mut App) -> Result<()> {
+    if !app.copy_menu_open {
+        return Ok(());
+    }
+    let actions = app.selected_copy_actions();
+    let Some(action) = actions.get(app.copy_index) else {
+        app.feedback = Some("No copy action selected.".to_string());
+        return Ok(());
+    };
+    match action.value.as_deref() {
+        Some(value) => match copy_to_terminal_clipboard(value) {
+            Ok(()) => {
+                app.feedback = Some(format!(
+                    "Copied {} via OSC52 clipboard request.",
+                    action.label
+                ));
+                app.copy_menu_open = false;
+            }
+            Err(error) => {
+                app.feedback = Some(format!("Copy failed for {}: {error}", action.label));
+            }
+        },
+        None => {
+            let reason = action
+                .disabled_reason
+                .as_deref()
+                .unwrap_or("copy action is unavailable");
+            app.feedback = Some(format!("Cannot copy {}: {reason}", action.label));
+        }
+    }
+    Ok(())
+}
+
+fn copy_to_terminal_clipboard(text: &str) -> io::Result<()> {
+    let encoded = base64::engine::general_purpose::STANDARD.encode(text.as_bytes());
+    let sequence = format!("\x1b]52;c;{encoded}\x07");
+    let mut stdout = io::stdout();
+    execute!(stdout, Print(sequence))
 }
 
 fn ui(f: &mut Frame, app: &App) {
@@ -386,16 +525,20 @@ fn render_status_bar(f: &mut Frame, area: Rect, app: &App) {
         "Auto-refresh: off".to_string()
     };
 
-    let status_text = if let Some(err) = &app.error {
+    let status_text = if let Some(feedback) = &app.feedback {
+        format!("{feedback} | c:copy p:payload r:refresh ?:help q:quit")
+    } else if let Some(err) = &app.error {
         format!("Error: {err} | Press 'r' to retry")
     } else {
         format!(
-            "Gateway v{} | {} | ↑↓/jk:navigate Tab/←→:switch r:refresh ?:help q:quit",
+            "Gateway v{} | {} | ↑↓/jk:navigate Tab/←→:switch c:copy p:payload r:refresh ?:help q:quit",
             app.gateway_version, refresh_info
         )
     };
 
-    let style = if app.error.is_some() {
+    let style = if app.feedback.is_some() {
+        Style::default().fg(Color::Yellow)
+    } else if app.error.is_some() {
         Style::default().fg(Color::Red)
     } else {
         Style::default().fg(Color::DarkGray)
@@ -589,6 +732,9 @@ fn render_events(f: &mut Frame, area: Rect, app: &App) {
     f.render_widget(list, chunks[0]);
 
     render_event_inspector(f, chunks[1], app);
+    if app.copy_menu_open {
+        render_copy_menu(f, chunks[1], app);
+    }
 }
 
 fn render_event_inspector(f: &mut Frame, area: Rect, app: &App) {
@@ -632,10 +778,27 @@ fn render_event_inspector(f: &mut Frame, area: Rect, app: &App) {
         Line::from(card.summary.clone()),
         Line::from(""),
         Line::from(Span::styled(
-            "Refs",
+            if app.payload_raw {
+                "Payload Raw JSON"
+            } else {
+                "Payload"
+            },
             Style::default().add_modifier(Modifier::BOLD),
         )),
     ];
+
+    lines.extend(payload_lines(
+        card,
+        app.selected_event_row(),
+        app.payload_raw,
+    ));
+    lines.extend([
+        Line::from(""),
+        Line::from(Span::styled(
+            "Refs",
+            Style::default().add_modifier(Modifier::BOLD),
+        )),
+    ]);
 
     if card.material_refs.is_empty() && card.trace_refs.is_empty() {
         lines.push(Line::from("none"));
@@ -666,6 +829,9 @@ fn render_event_inspector(f: &mut Frame, area: Rect, app: &App) {
             action.label, state, reason
         )));
     }
+    lines.push(Line::from(
+        "Context pack [target] — disabled until context packs land (#1095)",
+    ));
 
     if !card.caveats.is_empty() {
         lines.push(Line::from(""));
@@ -682,6 +848,216 @@ fn render_event_inspector(f: &mut Frame, area: Rect, app: &App) {
         .block(Block::default().title("Inspector").borders(Borders::ALL))
         .wrap(Wrap { trim: true });
     f.render_widget(panel, area);
+}
+
+fn render_copy_menu(f: &mut Frame, area: Rect, app: &App) {
+    let width = area.width.saturating_sub(4).max(1);
+    let height = app
+        .selected_copy_actions()
+        .len()
+        .saturating_add(4)
+        .min(area.height as usize)
+        .max(6) as u16;
+    let popup = Rect {
+        x: area.x + 2.min(area.width),
+        y: area.y + 2.min(area.height),
+        width,
+        height,
+    };
+    let actions = app.selected_copy_actions();
+    let items = if actions.is_empty() {
+        vec![ListItem::new("No copyable event selected")]
+    } else {
+        actions
+            .iter()
+            .enumerate()
+            .map(|(index, action)| {
+                let state = if let Some(reason) = &action.disabled_reason {
+                    format!("disabled: {reason}")
+                } else {
+                    "copyable".to_string()
+                };
+                let style = if index == app.copy_index {
+                    Style::default().add_modifier(Modifier::REVERSED)
+                } else if action.disabled_reason.is_some() {
+                    Style::default().fg(Color::DarkGray)
+                } else {
+                    Style::default()
+                };
+                ListItem::new(format!("{} — {state}", action.label)).style(style)
+            })
+            .collect()
+    };
+    f.render_widget(Clear, popup);
+    f.render_widget(
+        List::new(items).block(
+            Block::default()
+                .title("Copy Menu (Enter/y copies, Esc closes)")
+                .borders(Borders::ALL),
+        ),
+        popup,
+    );
+}
+
+fn payload_lines(
+    card: &EventCardView,
+    row: Option<&QueryResultEvent>,
+    raw: bool,
+) -> Vec<Line<'static>> {
+    let payload = row
+        .map(|row| &row.event.payload)
+        .or(card.payload_preview.as_ref());
+    let Some(payload) = payload else {
+        return vec![Line::from("payload unavailable")];
+    };
+
+    let rendered = if raw {
+        serde_json::to_string_pretty(payload)
+    } else {
+        render_pretty_payload(payload)
+    };
+    match rendered {
+        Ok(text) => text
+            .lines()
+            .take(12)
+            .map(|line| Line::from(truncate_chars(line, 96)))
+            .collect(),
+        Err(error) => vec![
+            Line::from(format!("payload rendering failed: {error}")),
+            Line::from("press p to switch to raw JSON"),
+        ],
+    }
+}
+
+fn render_pretty_payload(payload: &serde_json::Value) -> serde_json::Result<String> {
+    match payload {
+        serde_json::Value::Object(map) => {
+            let mut lines = Vec::new();
+            for (key, value) in map.iter().take(12) {
+                let value = match value {
+                    serde_json::Value::String(value) => value.clone(),
+                    other => serde_json::to_string(other)?,
+                };
+                lines.push(format!("{key}: {}", truncate_chars(&value, 84)));
+            }
+            if map.len() > 12 {
+                lines.push(format!("... {} more field(s)", map.len() - 12));
+            }
+            Ok(lines.join("\n"))
+        }
+        other => serde_json::to_string_pretty(other),
+    }
+}
+
+#[derive(Debug, Clone)]
+struct EventCopyAction {
+    label: String,
+    value: Option<String>,
+    disabled_reason: Option<String>,
+}
+
+impl EventCopyAction {
+    fn available(label: impl Into<String>, value: impl Into<String>) -> Self {
+        Self {
+            label: label.into(),
+            value: Some(value.into()),
+            disabled_reason: None,
+        }
+    }
+
+    fn disabled(label: impl Into<String>, reason: impl Into<String>) -> Self {
+        Self {
+            label: label.into(),
+            value: None,
+            disabled_reason: Some(reason.into()),
+        }
+    }
+}
+
+fn event_copy_actions(
+    card: &EventCardView,
+    row: Option<&QueryResultEvent>,
+) -> Vec<EventCopyAction> {
+    let mut actions = Vec::new();
+    let event_id = &card.ref_.id;
+    if event_id == "unpersisted" {
+        actions.push(EventCopyAction::disabled(
+            "event id",
+            "event has no stable persisted id",
+        ));
+        actions.push(EventCopyAction::disabled(
+            "trace command",
+            "event has no stable persisted id",
+        ));
+        actions.push(EventCopyAction::disabled(
+            "explain command",
+            "event has no stable persisted id",
+        ));
+    } else {
+        actions.push(EventCopyAction::available("event id", event_id.clone()));
+        actions.push(EventCopyAction::available(
+            "trace command",
+            format!("sinexctl trace {event_id}"),
+        ));
+        actions.push(EventCopyAction::available(
+            "citation",
+            format!("sinex:event:{event_id}"),
+        ));
+        actions.push(EventCopyAction::available(
+            "explain command",
+            format!("sinexctl explain {event_id}"),
+        ));
+    }
+
+    actions.push(EventCopyAction::available(
+        "reselect query",
+        format!(
+            "sinexctl query --source {} --event-type {} -n 20",
+            card.source.raw, card.event_type
+        ),
+    ));
+    match row {
+        Some(row) => {
+            let event_json = serde_json::to_string_pretty(&row.event)
+                .unwrap_or_else(|error| format!("event JSON render failed: {error}"));
+            actions.push(EventCopyAction::available("event JSON", event_json));
+            let payload_json = serde_json::to_string_pretty(&row.event.payload)
+                .unwrap_or_else(|error| format!("payload JSON render failed: {error}"));
+            actions.push(EventCopyAction::available("payload JSON", payload_json));
+        }
+        None => {
+            actions.push(EventCopyAction::disabled(
+                "event JSON",
+                "raw query event is unavailable",
+            ));
+            actions.push(EventCopyAction::disabled(
+                "payload JSON",
+                "raw query event is unavailable",
+            ));
+        }
+    }
+
+    if let Some(anchor) = card
+        .material_refs
+        .iter()
+        .find(|ref_| matches!(ref_.kind, SinexObjectKind::MaterialAnchor))
+    {
+        actions.push(EventCopyAction::available(
+            "source anchor",
+            anchor.id.clone(),
+        ));
+    } else {
+        actions.push(EventCopyAction::disabled(
+            "source anchor",
+            "selected event has no material anchor",
+        ));
+    }
+
+    actions.push(EventCopyAction::disabled(
+        "context pack",
+        "target-only; tracked by #1095",
+    ));
+    actions
 }
 
 fn privacy_state_label(state: PrivacyStateKind) -> &'static str {
@@ -760,12 +1136,15 @@ fn render_help_overlay(f: &mut Frame, area: Rect) {
     let lines = vec![
         Line::from("Tab / arrows: switch workbench surface"),
         Line::from("j/k or up/down: move selection"),
+        Line::from("c: open copy menu for selected event"),
+        Line::from("Enter/y: copy selected copy-menu item"),
+        Line::from("p: toggle pretty/raw payload renderer"),
         Line::from("r: refresh all panes"),
         Line::from("?: toggle this help panel"),
         Line::from("q or Esc: quit"),
         Line::from(""),
-        Line::from("Event actions are descriptive in this slice."),
-        Line::from("Target actions show the reason in the inspector."),
+        Line::from("Copy feedback appears in the status bar."),
+        Line::from("Context-pack action is target-only until #1095."),
     ];
     f.render_widget(Clear, popup);
     f.render_widget(
