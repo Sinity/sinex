@@ -1533,6 +1533,15 @@ fn format_source_short(command: &Option<String>, time: &Option<String>) -> Strin
     format!("{cmd} @ {time_short}")
 }
 
+fn format_source_with_authority(diagnostic: &crate::history::StoredDiagnostic) -> String {
+    let source = format_source_short(&diagnostic.source_command, &diagnostic.source_time);
+    if diagnostic.authority == "proof" {
+        source
+    } else {
+        format!("{source}/{}", diagnostic.authority)
+    }
+}
+
 fn diagnostic_source_command_counts(
     diagnostics: &[crate::history::StoredDiagnostic],
 ) -> Vec<(String, usize)> {
@@ -1584,7 +1593,7 @@ fn render_diagnostics_table(
                 let file_loc = format_file_loc(&diag.file_path, diag.line);
                 let package = diag.package.as_deref().unwrap_or("-");
                 let message = truncate_message(&diag.message, 50);
-                let source = format_source_short(&diag.source_command, &diag.source_time);
+                let source = format_source_with_authority(diag);
                 builder.push_record([
                     diag.level.clone(),
                     package.to_string(),
@@ -1596,18 +1605,20 @@ fn render_diagnostics_table(
             }
         }
         DiagnosticsDisplayMode::All | DiagnosticsDisplayMode::Invocation => {
-            builder.push_record(["LEVEL", "PACKAGE", "CODE", "FILE", "MESSAGE"]);
+            builder.push_record(["LEVEL", "PACKAGE", "CODE", "FILE", "MESSAGE", "SOURCE"]);
             for diag in diagnostics {
                 let code = diag.code.as_deref().unwrap_or("-");
                 let file_loc = format_file_loc(&diag.file_path, diag.line);
                 let package = diag.package.as_deref().unwrap_or("-");
                 let message = truncate_message(&diag.message, 55);
+                let source = format_source_with_authority(diag);
                 builder.push_record([
                     diag.level.clone(),
                     package.to_string(),
                     code.to_string(),
                     file_loc,
                     message,
+                    source,
                 ]);
             }
         }
@@ -3770,6 +3781,7 @@ mod tests {
             fix_applicability: fixable.then(|| "MachineApplicable".to_string()),
             fix_byte_start: None,
             fix_byte_end: None,
+            authority: "proof".to_string(),
             source_command: command.map(str::to_string),
             source_time: None,
         }

@@ -1103,7 +1103,8 @@ impl HistoryDb {
                 fix_replacement TEXT,
                 fix_applicability TEXT,
                 fix_byte_start INTEGER,
-                fix_byte_end INTEGER
+                fix_byte_end INTEGER,
+                authority TEXT NOT NULL DEFAULT 'proof'
             );
 
             CREATE TABLE IF NOT EXISTS invocation_packages (
@@ -1335,6 +1336,11 @@ impl HistoryDb {
         self.ensure_column_exists("invocations", "shm_used_max_mb", "REAL")?;
         self.ensure_column_exists("invocations", "process_count_max", "INTEGER")?;
         self.ensure_column_exists("invocations", "resource_sample_count", "INTEGER")?;
+        self.ensure_column_exists(
+            "build_diagnostics",
+            "authority",
+            "TEXT NOT NULL DEFAULT 'proof'",
+        )?;
         Ok(())
     }
 
@@ -3801,7 +3807,8 @@ impl HistoryDb {
         let mut diag_stmt = self.conn.prepare(
             r"SELECT id, level, code, message, file_path, line, col, rendered, package,
                      fix_replacement, fix_applicability, fix_byte_start, fix_byte_end,
-                     NULL as source_command, NULL as source_time
+                     COALESCE(authority, 'proof') as authority, NULL as source_command,
+                     NULL as source_time
               FROM build_diagnostics
               WHERE invocation_id = ?1
               ORDER BY level, package, file_path",
@@ -6115,6 +6122,39 @@ mod tests {
         assert_eq!(diags[0].level, "warning");
         assert_eq!(diags[1].level, "error");
         assert_eq!(diags[2].level, "info");
+        assert!(diags.iter().all(|diag| diag.authority == "proof"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_record_advisory_diagnostics_keeps_authority() -> TestResult<()> {
+        let dir = tempdir()?;
+        let db_path = dir.path().join("test-advisory-diagnostics.db");
+        let db = HistoryDb::open(&db_path)?;
+
+        let inv_id = db.start_invocation("ra-diagnose", None, None, None)?;
+        db.finish_invocation(inv_id, InvocationStatus::Success, Some(0), 0.5)?;
+
+        use crate::cargo_diagnostics::CompilerDiagnostic;
+        db.record_diagnostics_batch_with_authority(
+            inv_id,
+            &[CompilerDiagnostic {
+                level: "warning".into(),
+                code: Some("ra".into()),
+                message: "rust-analyzer advisory".into(),
+                package: Some("sinex-primitives".into()),
+                ..Default::default()
+            }],
+            "advisory",
+        )?;
+
+        let diagnostics = db.get_diagnostics(inv_id)?;
+        assert_eq!(diagnostics.len(), 1);
+        assert_eq!(diagnostics[0].authority, "advisory");
+        assert_eq!(
+            diagnostics[0].source_command.as_deref(),
+            Some("ra-diagnose")
+        );
         Ok(())
     }
 
@@ -6348,6 +6388,7 @@ mod tests {
             fix_applicability: None,
             fix_byte_start: None,
             fix_byte_end: None,
+            authority: "proof".into(),
             source_command: None,
             source_time: None,
         }

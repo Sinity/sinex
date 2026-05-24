@@ -368,7 +368,7 @@ pub(super) fn execute_tests_slowest(
     let tests = if latest_per_test {
         get_current_slowest_latest_tests(db, limit, since.as_deref())?
     } else {
-        db.get_slowest_tests_filtered(limit, since.as_deref(), min_runs)?
+        get_current_slowest_average_tests(db, limit, since.as_deref(), min_runs)?
     };
     let candidates: Vec<_> = tests
         .into_iter()
@@ -402,10 +402,7 @@ pub(super) fn execute_tests_slowest(
                 };
                 println!(
                     "{display_name:<50} {:<20} {:<24} {:>10.3} {:>6}",
-                    test.package,
-                    test.optimization_kind,
-                    test.avg_duration_secs,
-                    test.passing_runs
+                    test.package, test.optimization_kind, test.avg_duration_secs, test.passing_runs
                 );
             }
         }
@@ -438,16 +435,42 @@ fn get_current_slowest_latest_tests(
     Ok(current_tests)
 }
 
+fn get_current_slowest_average_tests(
+    db: &HistoryDb,
+    limit: usize,
+    since: Option<&str>,
+    min_runs: usize,
+) -> Result<Vec<HistoricalSlowTest>> {
+    let candidate_limit = limit.saturating_mul(5).max(limit);
+    let tests = db.get_slowest_tests_filtered(candidate_limit, since, min_runs)?;
+    let mut current_tests = Vec::with_capacity(limit.min(tests.len()));
+    for test in tests {
+        if current_test_exists(&test)? {
+            current_tests.push(test);
+        }
+        if current_tests.len() == limit {
+            break;
+        }
+    }
+    Ok(current_tests)
+}
+
 fn current_test_exists(test: &HistoricalSlowTest) -> Result<bool> {
-    let Some(test_name) = historical_test_leaf(&test.test_name) else {
+    current_test_exists_parts(&test.test_name, &test.package)
+}
+
+fn current_test_exists_parts(test_name: &str, package: &str) -> Result<bool> {
+    let Some(test_name) = historical_test_leaf(test_name) else {
         return Ok(true);
     };
     let packages = affected::infer_packages_for_test_filter(&format!("test({test_name})"))?;
-    Ok(packages.iter().any(|package| package == &test.package))
+    Ok(packages.iter().any(|candidate| candidate == package))
 }
 
 fn historical_test_leaf(test_name: &str) -> Option<&str> {
-    let after_binary = test_name.rsplit_once('$').map_or(test_name, |(_, name)| name);
+    let after_binary = test_name
+        .rsplit_once('$')
+        .map_or(test_name, |(_, name)| name);
     let leaf = after_binary.rsplit("::").next().unwrap_or(after_binary);
     (!leaf.is_empty()).then_some(leaf)
 }
@@ -1077,7 +1100,7 @@ fn execute_tests_duration_p95(
     limit: usize,
     ctx: &CommandContext,
 ) -> Result<CommandResult> {
-    let results = db.get_test_duration_p95(limit)?;
+    let results = get_current_test_duration_p95(db, limit)?;
 
     if ctx.is_human() {
         if results.is_empty() {
@@ -1110,6 +1133,23 @@ fn execute_tests_duration_p95(
     Ok(CommandResult::success()
         .with_message(format!("{} tests with P95 data", results.len()))
         .with_duration(ctx.elapsed()))
+}
+
+fn get_current_test_duration_p95(
+    db: &HistoryDb,
+    limit: usize,
+) -> Result<Vec<(String, String, f64)>> {
+    let candidate_limit = limit.saturating_mul(5).max(limit);
+    let mut current = Vec::with_capacity(limit);
+    for (name, package, p95) in db.get_test_duration_p95(candidate_limit)? {
+        if current_test_exists_parts(&name, &package)? {
+            current.push((name, package, p95));
+        }
+        if current.len() == limit {
+            break;
+        }
+    }
+    Ok(current)
 }
 
 /// Tests newly failing in recent runs that previously passed (G7 --regression).

@@ -18,7 +18,9 @@ use sinex_primitives::parser::SourceUnitId;
 use sinex_primitives::query::{EventQuery, LineageDirection, LineageQuery};
 use sinex_primitives::rpc::automata::AutomataStatusResponse;
 use sinex_primitives::rpc::curation::CurationListProposalsRequest;
-use sinex_primitives::rpc::documents::{DocumentsGetRequest, DocumentsSearchRequest};
+use sinex_primitives::rpc::documents::{
+    DocumentsGetChunksRequest, DocumentsGetRequest, DocumentsSearchRequest,
+};
 use sinex_primitives::rpc::ingestors::IngestorsStatusResponse;
 use sinex_primitives::rpc::llm::{
     LlmBudgetReportRequest, LlmPromptsListRequest, LlmRouteExplainRequest,
@@ -248,6 +250,15 @@ struct DocumentsSearchArgs {
 #[derive(Debug, Deserialize, Serialize)]
 struct DocumentsGetArgs {
     document_id: Uuid,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+struct DocumentsChunksArgs {
+    document_id: Uuid,
+    #[serde(default)]
+    limit: Option<u32>,
+    #[serde(default)]
+    offset: Option<u64>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -538,6 +549,13 @@ pub fn tool_catalog() -> Vec<McpCatalogEntry> {
             kind: McpSurfaceKind::Tool,
             description: "Read-only document metadata lookup with side data redacted.",
             backing_rpc_methods: &[methods::DOCUMENTS_GET],
+            read_only: true,
+        },
+        McpCatalogEntry {
+            name: "sinex.documents_chunks",
+            kind: McpSurfaceKind::Tool,
+            description: "Read-only document chunk anchors with text redacted.",
+            backing_rpc_methods: &[methods::DOCUMENTS_GET_CHUNKS_REDACTED],
             read_only: true,
         },
         McpCatalogEntry {
@@ -1115,6 +1133,28 @@ pub fn tools() -> Vec<McpTool> {
                 "additionalProperties": false
             }),
         ),
+        mcp_tool(
+            "sinex.documents_chunks",
+            json!({
+                "type": "object",
+                "required": ["document_id"],
+                "properties": {
+                    "document_id": { "type": "string", "format": "uuid" },
+                    "limit": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 200,
+                        "default": 50
+                    },
+                    "offset": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "default": 0
+                    }
+                },
+                "additionalProperties": false
+            }),
+        ),
         mcp_tool("sinex.semantic_epochs", limit_schema(100)),
         mcp_tool(
             "sinex.semantic_lanes",
@@ -1553,6 +1593,7 @@ pub async fn call_tool(client: &GatewayClient, name: &str, arguments: Value) -> 
         "sinex.replay_status" => replay_status(client, arguments).await,
         "sinex.documents_search" => documents_search(client, arguments).await,
         "sinex.documents_get" => documents_get(client, arguments).await,
+        "sinex.documents_chunks" => documents_chunks(client, arguments).await,
         "sinex.semantic_epochs" => semantic_epochs(client, arguments).await,
         "sinex.semantic_lanes" => semantic_lanes(client, arguments).await,
         "sinex.semantic_lane_outputs" => semantic_lane_outputs(client, arguments).await,
@@ -1860,6 +1901,21 @@ async fn documents_get(client: &GatewayClient, arguments: Value) -> Result<Value
     redact_document_side_data(&mut response);
     Ok(envelope(
         "sinex.documents_get",
+        json!(args),
+        json!({ "result": response }),
+    ))
+}
+
+async fn documents_chunks(client: &GatewayClient, arguments: Value) -> Result<Value> {
+    let args: DocumentsChunksArgs = serde_json::from_value(arguments)?;
+    let request = DocumentsGetChunksRequest {
+        document_id: args.document_id,
+        limit: args.limit,
+        offset: args.offset,
+    };
+    let response = client.documents_get_chunks_redacted(request).await?;
+    Ok(envelope(
+        "sinex.documents_chunks",
         json!(args),
         json!({ "result": response }),
     ))
