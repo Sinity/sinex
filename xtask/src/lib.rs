@@ -55,10 +55,10 @@ pub mod watcher;
 
 use command::{CommandContext, HistoryAccessMode, XtaskCommand};
 use commands::{
-    AnalyticsCommand, BuildCommand, CheckCommand, DoctorCommand, FixCommand, GitStackCommand,
-    JobsCommand, PrivacyCommand, RaDiagnoseCommand, ResetCommand, SchemaCommand, StatusCommand,
-    TestCommand, ci::CiCommand, completions::CompletionsCommand, source_units::SourceUnitsCommand,
-    verify::VerifyCommand,
+    AnalyticsCommand, BuildCommand, CheckCommand, DoctorCommand, FixCommand, FreshnessCommand,
+    GitStackCommand, JobsCommand, PrivacyCommand, RaDiagnoseCommand, ResetCommand, SchemaCommand,
+    StatusCommand, TestCommand, ci::CiCommand, completions::CompletionsCommand,
+    source_units::SourceUnitsCommand, verify::VerifyCommand,
 };
 use config::config;
 pub use config::workspace_target_dir_for;
@@ -292,6 +292,8 @@ enum Commands {
     #[command(hide = true)]
     Analytics(AnalyticsCommand),
     #[command(hide = true)]
+    Freshness(FreshnessCommand),
+    #[command(hide = true)]
     GitStack(GitStackCommand),
 
     // ─── Diagnostics ───────────────────────────────────────────────
@@ -418,6 +420,7 @@ pub async fn run_cli() -> Result<()> {
         Commands::Deps(cmd) => ("deps", None, None, cmd.metadata()),
         Commands::History(cmd) => ("history", None, None, cmd.metadata()),
         Commands::Analytics(cmd) => ("analytics", None, None, cmd.metadata()),
+        Commands::Freshness(cmd) => ("freshness", None, None, cmd.metadata()),
         Commands::GitStack(cmd) => ("git-stack", None, None, cmd.metadata()),
         Commands::Docs(cmd) => ("docs", None, None, cmd.metadata()),
         Commands::SourceUnits(cmd) => ("source-units", None, None, cmd.metadata()),
@@ -539,6 +542,7 @@ pub async fn run_cli() -> Result<()> {
             Commands::Deps(cmd) => cmd.execute(&ctx).await,
             Commands::History(cmd) => cmd.execute(&ctx).await,
             Commands::Analytics(cmd) => cmd.execute(&ctx).await,
+            Commands::Freshness(cmd) => cmd.execute(&ctx).await,
             Commands::GitStack(cmd) => cmd.execute(&ctx).await,
             Commands::Docs(cmd) => cmd.execute(&ctx).await,
             Commands::SourceUnits(cmd) => cmd.execute(&ctx).await,
