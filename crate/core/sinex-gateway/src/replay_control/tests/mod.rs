@@ -557,7 +557,13 @@ async fn replay_control_reconnects_when_subscription_closes_after_startup(
     );
 
     nats.shutdown().await?;
-    tokio::time::sleep(Duration::from_secs(1)).await;
+    for _ in 0..40 {
+        let snapshot = client.health_snapshot();
+        if !snapshot.connected && snapshot.last_error.is_some() {
+            break;
+        }
+        sleep(Duration::from_millis(25)).await;
+    }
 
     assert!(
         !server_task.is_finished(),
