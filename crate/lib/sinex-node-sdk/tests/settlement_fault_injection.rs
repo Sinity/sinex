@@ -33,6 +33,7 @@ use std::time::Duration;
 use xtask::sandbox::prelude::*;
 
 const NODE_FOR_POLICY: &str = "settlement-fault-policy-test";
+const FAULT_INJECTION_PUBLISH_TIMEOUT: Duration = Duration::from_millis(250);
 
 fn ctx_for(operation: RuntimeOperation, phase: RuntimePhase, attempts: u32) -> FailureContext {
     FailureContext {
@@ -410,7 +411,8 @@ async fn settlement_quarantines_and_halts_when_dlq_unavailable_runtime(
     let publisher = NatsPublisher::with_namespace(
         ctx.nats_client(),
         Some(ctx.pipeline_namespace().prefix().to_string()),
-    );
+    )
+    .with_publish_ack_timeout(FAULT_INJECTION_PUBLISH_TIMEOUT);
 
     let event = DynamicPayload::new("test", "test.event", serde_json::json!({"smoke": true}))
         .from_material(Id::new())
@@ -535,7 +537,8 @@ async fn settlement_opens_circuit_breaker_when_nats_down_runtime(
     let publisher = NatsPublisher::with_namespace(
         ctx.nats_client(),
         Some(ctx.pipeline_namespace().prefix().to_string()),
-    );
+    )
+    .with_publish_ack_timeout(FAULT_INJECTION_PUBLISH_TIMEOUT);
 
     // Shut NATS down — every subsequent publish must surface a transport
     // failure rather than succeeding silently.
