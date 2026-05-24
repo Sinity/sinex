@@ -9,7 +9,9 @@
 
 use async_trait::async_trait;
 use camino::Utf8PathBuf;
-use futures::stream::{BoxStream, StreamExt};
+#[cfg(feature = "messaging")]
+use futures::StreamExt;
+use futures::stream::BoxStream;
 use notify::event::ModifyKind;
 use notify::{Event, EventKind, RecursiveMode, Watcher};
 use schemars::JsonSchema;

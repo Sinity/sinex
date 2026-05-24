@@ -158,6 +158,7 @@ fn make_postgres_snapshot_archive() -> TestResult<(TempDir, PathBuf)> {
 
     let mut row_counts = BTreeMap::new();
     row_counts.insert("core.events".to_string(), 7);
+    row_counts.insert("pg_temp_141.sinex_batch_staging".to_string(), 50);
     let manifest = SnapshotManifest {
         snapshot_id: "01970a7f-391b-7000-8000-000000000002".to_string(),
         created_at: "2026-05-15T11:31:00Z".to_string(),
@@ -898,7 +899,15 @@ async fn snapshot_restore_executes_postgres_drill_with_row_count_check()
     let target = target_parent.path().join("postgres-restore-target");
     let tools = tempfile::tempdir()?;
     let pg_restore = make_executable_script(&tools, "pg_restore", "#!/bin/sh\nexit 0\n")?;
-    let psql = make_executable_script(&tools, "psql", "#!/bin/sh\nprintf '7\\n'\n")?;
+    let psql_log = target_parent.path().join("psql.log");
+    let psql = make_executable_script(
+        &tools,
+        "psql",
+        &format!(
+            "#!/bin/sh\nprintf '%s\\n' \"$@\" >> {}\ncase \"$*\" in\n  *'count(*)'*) printf '7\\n' ;;\nesac\nexit 0\n",
+            psql_log.display()
+        ),
+    )?;
 
     let cmd = AdminSnapshotRestoreCommand {
         archive: archive_path,
@@ -920,6 +929,12 @@ async fn snapshot_restore_executes_postgres_drill_with_row_count_check()
     assert!(observed.checks_passed);
     assert!(observed.failed_checks.is_empty());
     assert_eq!(observed.postgres_row_counts.get("core.events"), Some(&7));
+    assert!(
+        !observed
+            .postgres_row_counts
+            .contains_key("pg_temp_141.sinex_batch_staging"),
+        "temporary staging tables must not be part of durable restore comparisons"
+    );
     assert_eq!(observed.postgres_row_counts_match, Some(true));
     assert_eq!(
         observed.component_blake3_matches.get("postgres"),
@@ -927,6 +942,23 @@ async fn snapshot_restore_executes_postgres_drill_with_row_count_check()
         "restore execution should compare restored postgres dump hash with the manifest"
     );
     assert!(target.join("postgres").join("sinex_prod.dump").exists());
+    let psql_calls = fs::read_to_string(psql_log)?;
+    assert!(
+        psql_calls.contains("CREATE EXTENSION IF NOT EXISTS timescaledb"),
+        "postgres restore should install TimescaleDB before entering restore mode\n{psql_calls}"
+    );
+    assert!(
+        psql_calls.contains("timescaledb_pre_restore()"),
+        "postgres restore should enter TimescaleDB restore mode\n{psql_calls}"
+    );
+    assert!(
+        psql_calls.contains("timescaledb_post_restore()"),
+        "postgres restore should leave TimescaleDB restore mode\n{psql_calls}"
+    );
+    assert!(
+        !psql_calls.contains("pg_temp_141"),
+        "postgres restore should not query temp-table manifest rows\n{psql_calls}"
+    );
     Ok(())
 }
 
