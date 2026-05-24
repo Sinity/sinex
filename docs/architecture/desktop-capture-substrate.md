@@ -66,7 +66,7 @@ editor context, notifications, and accessibility (where enabled).
 
 ## State Snapshots
 
-`state.captured` is emitted on three triggers, not just on a 5-minute timer:
+`state.captured` is emitted on four triggers, not just on a 5-minute timer:
 
 1. Periodic timer (baseline reconstruction, covers missed events).
 2. On workspace switch (a natural context boundary).
@@ -84,8 +84,9 @@ terminal set. Enrichment runs as a short-lived async task off the event loop:
 
 - PID via `hyprctl activewindow -j`, `PWD` via `/proc/{pid}/environ` or title
   (Kitty shell integration writes CWD into the title).
-- `git -C "$CWD" rev-parse --show-toplevel` and `branch --show-current` with a
-  tight (~200ms) timeout; missing git output is a normal outcome.
+- `git -C "$CWD" rev-parse --show-toplevel` and
+  `git -C "$CWD" branch --show-current` with a tight (~200ms) timeout; missing
+  git output is a normal outcome.
 - SSH detection from terminal-ingestor command history when available.
 
 CWD goes through `ProcessingContext::Command` before storage — path redaction
