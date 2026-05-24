@@ -1,11 +1,11 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use sinex_primitives::events::EventPayload;
-use color_eyre::eyre::Result;
+use xtask::sandbox::prelude::*;
 
 // Test 1: Basic EventPayload derive
-#[test]
-fn test_event_payload_derives_correctly() -> Result<()> {
+#[sinex_test]
+async fn test_event_payload_derives_correctly() -> TestResult<()> {
     #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, sinex_macros::EventPayload)]
     #[event_payload(source = "test-source", event_type = "test.event")]
     pub struct TestPayload {
@@ -21,8 +21,8 @@ fn test_event_payload_derives_correctly() -> Result<()> {
 }
 
 // Test 2: Custom version
-#[test]
-fn test_event_payload_custom_version() -> Result<()> {
+#[sinex_test]
+async fn test_event_payload_custom_version() -> TestResult<()> {
     #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, sinex_macros::EventPayload)]
     #[event_payload(
         source = "custom-source",
@@ -38,8 +38,8 @@ fn test_event_payload_custom_version() -> Result<()> {
 }
 
 // Test 3: With optional fields
-#[test]
-fn test_event_payload_with_optional_fields() -> Result<()> {
+#[sinex_test]
+async fn test_event_payload_with_optional_fields() -> TestResult<()> {
     #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, sinex_macros::EventPayload)]
     #[event_payload(source = "optional-source", event_type = "optional.event")]
     pub struct OptionalPayload {
@@ -53,8 +53,8 @@ fn test_event_payload_with_optional_fields() -> Result<()> {
 }
 
 // Test 4: Multiple fields with different types
-#[test]
-fn test_event_payload_multiple_fields() -> Result<()> {
+#[sinex_test]
+async fn test_event_payload_multiple_fields() -> TestResult<()> {
     #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, sinex_macros::EventPayload)]
     #[event_payload(source = "multi-source", event_type = "multi.event")]
     pub struct MultiFieldPayload {
@@ -72,8 +72,8 @@ fn test_event_payload_multiple_fields() -> Result<()> {
 }
 
 // Test 5: Serialization of derived payload
-#[test]
-fn test_event_payload_serialization() -> Result<()> {
+#[sinex_test]
+async fn test_event_payload_serialization() -> TestResult<()> {
     #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, sinex_macros::EventPayload)]
     #[event_payload(source = "serial-source", event_type = "serial.event")]
     pub struct SerializePayload {
@@ -94,8 +94,8 @@ fn test_event_payload_serialization() -> Result<()> {
 }
 
 // Test 6: Nested struct in payload
-#[test]
-fn test_event_payload_with_nested_struct() -> Result<()> {
+#[sinex_test]
+async fn test_event_payload_with_nested_struct() -> TestResult<()> {
     #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
     pub struct NestedData {
         pub field1: String,
@@ -114,8 +114,8 @@ fn test_event_payload_with_nested_struct() -> Result<()> {
 }
 
 // Test 7: Constants are accessible
-#[test]
-fn test_event_payload_constants_accessible() -> Result<()> {
+#[sinex_test]
+async fn test_event_payload_constants_accessible() -> TestResult<()> {
     #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, sinex_macros::EventPayload)]
     #[event_payload(source = "const-source", event_type = "const.event")]
     pub struct ConstPayload {
@@ -134,8 +134,8 @@ fn test_event_payload_constants_accessible() -> Result<()> {
 }
 
 // Test 8: Multiple payloads with different sources/types
-#[test]
-fn test_multiple_event_payloads() -> Result<()> {
+#[sinex_test]
+async fn test_multiple_event_payloads() -> TestResult<()> {
     #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, sinex_macros::EventPayload)]
     #[event_payload(source = "source-a", event_type = "event.a")]
     pub struct PayloadA {
@@ -158,8 +158,8 @@ fn test_multiple_event_payloads() -> Result<()> {
 }
 
 // Test 9: Payload with complex generic types
-#[test]
-fn test_event_payload_with_generics() -> Result<()> {
+#[sinex_test]
+async fn test_event_payload_with_generics() -> TestResult<()> {
     #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, sinex_macros::EventPayload)]
     #[event_payload(source = "generic-source", event_type = "generic.event")]
     pub struct GenericPayload {
@@ -173,8 +173,8 @@ fn test_event_payload_with_generics() -> Result<()> {
 }
 
 // Test 10: Minimal payload (single field)
-#[test]
-fn test_event_payload_minimal() -> Result<()> {
+#[sinex_test]
+async fn test_event_payload_minimal() -> TestResult<()> {
     #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, sinex_macros::EventPayload)]
     #[event_payload(source = "minimal-source", event_type = "minimal.event")]
     pub struct MinimalPayload {
@@ -193,8 +193,8 @@ fn test_event_payload_minimal() -> Result<()> {
 }
 
 // Test 11: Generic payloads preserve impl generics
-#[test]
-fn test_event_payload_const_generic() -> Result<()> {
+#[sinex_test]
+async fn test_event_payload_const_generic() -> TestResult<()> {
     use std::marker::PhantomData;
 
     #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, sinex_macros::EventPayload)]
@@ -216,8 +216,8 @@ fn test_event_payload_const_generic() -> Result<()> {
     Ok(())
 }
 
-#[test]
-fn test_event_payload_enum_derives_schema_contract() -> Result<()> {
+#[sinex_test]
+async fn test_event_payload_enum_derives_schema_contract() -> TestResult<()> {
     #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, sinex_macros::EventPayload)]
     #[serde(untagged)]
     #[event_payload(source = "enum-source", event_type = "enum.event")]
