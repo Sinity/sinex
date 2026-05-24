@@ -32,6 +32,16 @@ use crate::config::config;
 use crate::history::{InvocationStatus, JobLifecycleStatus};
 use crate::output::OutputFormat;
 
+const SHARED_FINGERPRINT_INPUTS: &[&str] = &[
+    "Cargo.toml",
+    "Cargo.lock",
+    "rust-toolchain",
+    "rust-toolchain.toml",
+    "flake.nix",
+    "flake.lock",
+    ".config/nextest.toml",
+];
+
 /// Result of a coordination request.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "action", rename_all = "snake_case")]
@@ -951,6 +961,7 @@ fn scoped_tree_fingerprint_in(cwd: &Path, command: &str, args: &[String]) -> Res
         let prefix = package_to_path(pkg);
         hash_dirty_content(cwd, &mut hasher, &[&prefix])?;
     }
+    hash_dirty_content(cwd, &mut hasher, SHARED_FINGERPRINT_INPUTS)?;
 
     Ok(format!("{:x}", hasher.finalize()))
 }
@@ -2016,6 +2027,36 @@ mod tests {
         assert_ne!(
             fp_one, fp_two,
             "scoped untracked content changes must invalidate freshness even when the path set is unchanged"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_scoped_tree_fingerprint_includes_shared_workspace_inputs() -> TestResult<()> {
+        let dir = tempfile::tempdir()?;
+        run_git(&["init", "-q"], dir.path())?;
+        run_git(&["config", "user.name", "Sinex Test"], dir.path())?;
+        run_git(&["config", "user.email", "sinex@example.test"], dir.path())?;
+        std::fs::create_dir_all(dir.path().join("crate/lib/sinex-db/src"))?;
+        std::fs::write(
+            dir.path().join("crate/lib/sinex-db/src/lib.rs"),
+            "fn db() {}\n",
+        )?;
+        std::fs::write(dir.path().join("Cargo.lock"), "# v1\n")?;
+        run_git(
+            &["add", "crate/lib/sinex-db/src/lib.rs", "Cargo.lock"],
+            dir.path(),
+        )?;
+        run_git(&["commit", "-qm", "init"], dir.path())?;
+        let args = vec!["-p".into(), "sinex-db".into()];
+
+        let fp_one = scoped_tree_fingerprint_in(dir.path(), "check", &args)?;
+        std::fs::write(dir.path().join("Cargo.lock"), "# v2\n")?;
+        let fp_two = scoped_tree_fingerprint_in(dir.path(), "check", &args)?;
+
+        assert_ne!(
+            fp_one, fp_two,
+            "scoped package freshness must include shared workspace inputs like Cargo.lock"
         );
         Ok(())
     }
