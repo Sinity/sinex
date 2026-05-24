@@ -97,7 +97,11 @@ pub struct AdminSnapshotCommand {
     #[arg(long, default_value = "0")]
     pub workers: u32,
 
-    /// Snapshot mode. Only `quiesce` is supported in this MVP.
+    /// Snapshot mode.
+    ///
+    /// `quiesce` requires sinex services to be stopped, or stops them with
+    /// `--auto-stop`. `live` captures without stopping services and records
+    /// that weaker consistency mode in the manifest.
     #[arg(long, default_value = "quiesce")]
     pub mode: String,
 
@@ -299,12 +303,7 @@ pub struct RestoreObservedChecks {
 
 impl AdminSnapshotCommand {
     pub fn execute(&self) -> Result<SnapshotResult> {
-        if self.mode != "quiesce" {
-            bail!(
-                "only mode=quiesce is supported in this MVP; got `{}`",
-                self.mode
-            );
-        }
+        let mode = SnapshotMode::parse(&self.mode)?;
 
         let state_dir = self
             .state_dir
@@ -325,7 +324,7 @@ impl AdminSnapshotCommand {
         let created_at = current_rfc3339();
 
         // 2. Verify/stop services.
-        if !self.dry_run {
+        if !self.dry_run && mode.requires_quiescence() {
             let active = exec::active_sinex_services();
             if !active.is_empty() {
                 if self.auto_stop {
@@ -342,6 +341,8 @@ impl AdminSnapshotCommand {
                     );
                 }
             }
+        } else if !self.dry_run && self.auto_stop && !mode.requires_quiescence() {
+            eprintln!("Ignoring --auto-stop for live snapshot mode; services remain active.");
         }
 
         // 3. Probe disk free.
@@ -376,6 +377,7 @@ impl AdminSnapshotCommand {
 
         // Run the capture, ensuring staging is cleaned up on any failure.
         let result = self.run_capture(
+            mode,
             &snapshot_id,
             &created_at,
             &state_dir,
@@ -394,6 +396,7 @@ impl AdminSnapshotCommand {
 
     fn run_capture(
         &self,
+        mode: SnapshotMode,
         snapshot_id: &str,
         created_at: &str,
         state_dir: &Path,
@@ -472,7 +475,7 @@ impl AdminSnapshotCommand {
             sinex_version: env!("CARGO_PKG_VERSION").to_string(),
             git_sha: git_sha(),
             host: hostname(),
-            mode: "quiesce".to_string(),
+            mode: mode.as_str().to_string(),
             source_unit_ids: source_unit_ids.clone(),
             components: component_records.clone(),
             totals: Totals {
@@ -533,7 +536,7 @@ impl AdminSnapshotCommand {
             .collect();
 
         Ok(SnapshotResult {
-            mode: "quiesce",
+            mode: mode.as_str(),
             snapshot_id: snapshot_id.to_string(),
             output_path: Some(self.output.display().to_string()),
             archive_bytes: Some(archive_bytes),
@@ -872,6 +875,33 @@ impl AdminSnapshotRestoreCommand {
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SnapshotMode {
+    Quiesce,
+    Live,
+}
+
+impl SnapshotMode {
+    fn parse(raw: &str) -> Result<Self> {
+        match raw {
+            "quiesce" => Ok(Self::Quiesce),
+            "live" => Ok(Self::Live),
+            other => bail!("unsupported snapshot mode `{other}`; expected `quiesce` or `live`"),
+        }
+    }
+
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::Quiesce => "quiesce",
+            Self::Live => "live",
+        }
+    }
+
+    const fn requires_quiescence(self) -> bool {
+        matches!(self, Self::Quiesce)
+    }
+}
 
 fn gen_snapshot_id() -> String {
     sinex_primitives::Uuid::now_v7().to_string()
