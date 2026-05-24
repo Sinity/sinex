@@ -431,8 +431,10 @@ async fn test_node_graceful_shutdown(ctx: TestContext) -> color_eyre::Result<()>
 
 /// Test node lifecycle under concurrent operations
 #[sinex_test]
-async fn test_node_concurrent_lifecycle() -> color_eyre::Result<()> {
+async fn test_node_concurrent_lifecycle(ctx: TestContext) -> color_eyre::Result<()> {
     info!("Testing node lifecycle under concurrency");
+
+    let ctx = Arc::new(ctx.with_nats().shared().await?);
 
     // Start multiple nodes concurrently to test coordination
     let node_count = 3;
@@ -441,11 +443,9 @@ async fn test_node_concurrent_lifecycle() -> color_eyre::Result<()> {
 
     for i in 0..node_count {
         let counter = completion_count.clone();
+        let task_ctx = ctx.clone();
 
         let handle = tokio::spawn(async move {
-            // Each task creates its own context
-            let task_ctx = TestContext::new().await?;
-
             let runtime = TestRuntimeBuilder::new(&task_ctx, format!("concurrent_test_{i}"))
                 .build()
                 .await?;
