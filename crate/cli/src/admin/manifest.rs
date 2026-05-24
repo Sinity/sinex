@@ -19,7 +19,7 @@ pub struct SnapshotManifest {
     pub git_sha: Option<String>,
     /// Hostname of the machine that produced the snapshot.
     pub host: String,
-    /// Snapshot mode — currently always `"quiesce"`.
+    /// Snapshot mode: `"quiesce"` or `"live"`.
     pub mode: String,
     /// Source-unit IDs known at snapshot time.
     #[serde(default)]
