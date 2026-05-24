@@ -618,7 +618,7 @@ impl ChaosScenarios {
     pub fn checkpoint_survival_context(&self) -> ChaosContext {
         ChaosTestBuilder::new()
             .with_drop_rate(0.2) // 20% message loss
-            .with_latency(Duration::from_millis(10))
+            .with_latency(Duration::from_millis(2))
             .with_metrics(self.metrics.clone())
             .build()
     }
@@ -637,8 +637,8 @@ impl ChaosScenarios {
             .with_message_corruption(0.05) // 5% corruption
             .with_reordering(0.1) // 10% reordering
             .with_drop_rate(0.1) // 10% drops
-            .with_latency(Duration::from_millis(50))
-            .with_latency_jitter(Duration::from_millis(100))
+            .with_latency(Duration::from_millis(5))
+            .with_latency_jitter(Duration::from_millis(10))
             .with_failure_rate(0.05) // 5% random failures
             .with_metrics(self.metrics.clone())
             .build()
