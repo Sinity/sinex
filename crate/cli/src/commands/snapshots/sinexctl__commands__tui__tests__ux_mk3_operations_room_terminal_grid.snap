@@ -1,0 +1,26 @@
+---
+source: crate/cli/src/commands/tui.rs
+expression: buffer_to_text(terminal.backend().buffer())
+---
+┌operation ux.operation.failed/audited─────────────────────────────────────────────┐
+│Authority  admin                                                                  │
+│Phase      failed                                                                 │
+│Progress   42 / 100 events, batch 3                                               │
+│                                                                                  │
+│Affected Refs                                                                     │
+│node: fixture.replay                                                              │
+│source-material: material-fixture                                                 │
+│                                                                                  │
+│Caveats                                                                           │
+│mutating replay phase: confirmation/audit trail required                          │
+│error: fixture replay failed after preview                                        │
+│                                                                                  │
+│Actions                                                                           │
+│status [current] — sinexctl replay status op-fixture                              │
+│execute [dangerous] — sinexctl replay execute op-fixture                          │
+│context pack [target] — not implemented: context pack                             │
+│                                                                                  │
+│Audit                                                                             │
+│sinexctl audit op-fixture                                                         │
+│                                                                                  │
+└──────────────────────────────────────────────────────────────────────────────────┘
