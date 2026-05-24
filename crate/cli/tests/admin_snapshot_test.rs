@@ -24,7 +24,11 @@ fn make_fake_state_dir() -> TestResult<TempDir> {
     let dir = tempfile::tempdir()?;
     let root = dir.path();
 
-    // postgres — not in state dir, but pg_dump goes to staging
+    // postgres — captured through pg_dump, not the generic state component.
+    let postgres = root.join("postgresql");
+    fs::create_dir_all(&postgres)?;
+    fs::write(postgres.join("PG_VERSION"), b"18")?;
+
     // nats/jetstream
     let nats_js = root.join("nats").join("jetstream");
     fs::create_dir_all(&nats_js)?;
@@ -512,6 +516,10 @@ async fn snapshot_archive_preserves_component_paths_and_nats_member_manifest()
             .join("blob-repository")
             .join("blob1.bin")
             .exists()
+    );
+    assert!(
+        !target.join("state").join("postgresql").exists(),
+        "state component must not copy postgres storage; postgres is captured via pg_dump"
     );
     let observed = restore
         .observed_checks
