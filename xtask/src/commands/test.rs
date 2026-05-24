@@ -20,7 +20,7 @@ use modes::{
 use plan::{
     HEAVY_TEST_THREAD_CAP, NextestExecutionPlan, default_heavy_test_threads, normalize_packages,
     prepare_runtime_binaries_for_plan, resolve_nextest_execution_plan,
-    runtime_binary_requirements_for_plan, test_database_required_for_plan,
+    runtime_binary_requirements_for_target, test_database_required_for_plan,
 };
 use scenarios::{
     ScenarioSelection, merge_nextest_filters, render_scenario_catalog, scenario_nextest_filter,
@@ -548,6 +548,36 @@ impl TestCommand {
                 None
             }
         })
+    }
+
+    fn narrow_test_db_pool_size(
+        &self,
+        execution_plan: &NextestExecutionPlan,
+        effective_filter: Option<&str>,
+        effective_test_binaries: &[String],
+        effective_lib_target: bool,
+    ) -> Option<usize> {
+        if self.prime
+            || self.all
+            || self.heavy
+            || self.include_ignored
+            || self.update_snapshots
+            || self.has_scenario_filter()
+            || std::env::var_os("SINEX_TEST_DB_POOL_SIZE").is_some()
+        {
+            return None;
+        }
+        if execution_plan.runner_packages.len() != 1 {
+            return None;
+        }
+        if !effective_lib_target && effective_test_binaries.is_empty() {
+            return None;
+        }
+
+        let test_terms = effective_filter.and_then(affected::simple_test_name_term_count)?;
+        let requested_threads = self.effective_threads().unwrap_or(test_terms);
+        let concurrent_tests = test_terms.min(requested_threads.max(1)).max(1);
+        Some((concurrent_tests * 2).clamp(4, 16))
     }
 
     fn semantic_invocation_args(
@@ -1378,7 +1408,9 @@ impl XtaskCommand for TestCommand {
         }
 
         let runtime_binary_reports =
-            if runtime_binary_requirements_for_plan(&execution_plan).is_empty() {
+            if runtime_binary_requirements_for_target(&execution_plan, effective_lib_target)
+                .is_empty()
+            {
                 Vec::new()
             } else {
                 let runtime_stage = ctx.start_stage("runtime-binaries");
@@ -1401,6 +1433,14 @@ impl XtaskCommand for TestCommand {
 
         if self.update_snapshots {
             runner.add_env("INSTA_UPDATE", "always");
+        }
+        if let Some(pool_size) = self.narrow_test_db_pool_size(
+            &execution_plan,
+            effective_filter.as_deref(),
+            &effective_test_binaries,
+            effective_lib_target,
+        ) {
+            runner.add_env("SINEX_TEST_DB_POOL_SIZE", pool_size.to_string());
         }
 
         if use_fail_fast {
@@ -1789,6 +1829,67 @@ mod tests {
         assert!(
             args.contains(&"--lib".to_string()),
             "library target selector should be part of the coordination identity: {args:?}"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_narrow_test_db_pool_size_scales_with_exact_filter()
+    -> ::xtask::sandbox::TestResult<()> {
+        let mut _guard = crate::sandbox::prelude::EnvGuard::new();
+        _guard.clear("SINEX_TEST_DB_POOL_SIZE");
+        let command = TestCommand::default();
+        let plan = NextestExecutionPlan {
+            runner_packages: vec!["sinex-source-worker".to_string()],
+            excluded_packages: Vec::new(),
+            workload_scope: WorkloadScope::Packages(vec!["sinex-source-worker".to_string()]),
+        };
+
+        assert_eq!(
+            command.narrow_test_db_pool_size(
+                &plan,
+                Some("test(one) | test(two)"),
+                &[],
+                true,
+            ),
+            Some(4)
+        );
+
+        assert_eq!(
+            command.narrow_test_db_pool_size(&plan, Some("test(one)"), &[], false),
+            None,
+            "package-wide filtered runs should keep the normal pool unless target narrowed"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_narrow_test_db_pool_size_skips_broad_or_configured_runs()
+    -> ::xtask::sandbox::TestResult<()> {
+        let plan = NextestExecutionPlan {
+            runner_packages: vec!["sinex-source-worker".to_string()],
+            excluded_packages: Vec::new(),
+            workload_scope: WorkloadScope::Packages(vec!["sinex-source-worker".to_string()]),
+        };
+        let broad = TestCommand {
+            all: true,
+            ..Default::default()
+        };
+        assert_eq!(
+            broad.narrow_test_db_pool_size(&plan, Some("test(one)"), &[], true),
+            None
+        );
+
+        let _guard =
+            crate::sandbox::prelude::EnvGuard::set_single("SINEX_TEST_DB_POOL_SIZE", "48");
+        assert_eq!(
+            TestCommand::default().narrow_test_db_pool_size(
+                &plan,
+                Some("test(one)"),
+                &[],
+                true,
+            ),
+            None
         );
         Ok(())
     }
