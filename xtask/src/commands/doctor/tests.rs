@@ -1923,6 +1923,15 @@ async fn test_rust_analyzer_process_matcher_ignores_flag_names() -> ::xtask::san
 }
 
 #[sinex_test]
+async fn test_rust_analyzer_report_is_explicitly_advisory() -> ::xtask::sandbox::TestResult<()> {
+    let report = execute_rust_analyzer_check(false, "warning")?;
+
+    assert_eq!(report.diagnostic_role, "advisory");
+    assert!(!report.proof_authority);
+    Ok(())
+}
+
+#[sinex_test]
 async fn test_rust_analyzer_config_summary_accepts_workspace_contract()
 -> ::xtask::sandbox::TestResult<()> {
     let value = toml::from_str::<toml::Value>(
