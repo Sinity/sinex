@@ -1317,18 +1317,85 @@ impl XtaskCommand for TestCommand {
                 &effective_test_binaries,
                 effective_lib_target,
             );
-            ctx.record_coordination_fingerprint("test", &coordination_args);
             ctx.record_invocation_args(&coordination_args);
+            let runtime_binary_requirements = runtime_binary_requirements_for_target(
+                &execution_plan,
+                effective_lib_target,
+                &effective_test_binaries,
+                effective_filter.as_deref(),
+            );
+            let db_pool_size = self.narrow_test_db_pool_size(
+                &execution_plan,
+                effective_filter.as_deref(),
+                &effective_test_binaries,
+                effective_lib_target,
+            );
+            let proof_kind = crate::coordinator::proof_kind("test", &coordination_args);
+            let input_fingerprint =
+                crate::coordinator::current_scoped_tree_fingerprint("test", &coordination_args)?;
+            let scope_key = crate::coordinator::compute_scope_key("test", &coordination_args);
+            let reusable = proof_kind == "test.nextest.lib";
+            let reusable_proof = if reusable {
+                ctx.try_with_history_db_query(|db| {
+                    db.get_successful_reusable_test_proof_unit(
+                        &proof_kind,
+                        &input_fingerprint,
+                        &scope_key,
+                    )
+                })
+                .and_then(|result| result.ok())
+                .flatten()
+            } else {
+                None
+            };
 
             if ctx.is_human() {
                 println!("Dry run: nextest plan resolved");
                 println!("  scope: {}", workload_scope.encode_marker());
+                if !execution_plan.runner_packages.is_empty() {
+                    println!("  packages: {}", execution_plan.runner_packages.join(", "));
+                }
                 if !execution_plan.excluded_packages.is_empty() {
                     println!(
                         "  excluded: {}",
                         execution_plan.excluded_packages.join(", ")
                     );
                 }
+                if !effective_test_binaries.is_empty() {
+                    println!("  test binaries: {}", effective_test_binaries.join(", "));
+                }
+                println!("  lib target: {}", effective_lib_target);
+                if let Some(filter) = &effective_filter {
+                    println!("  filter: {filter}");
+                }
+                if runtime_binary_requirements.is_empty() {
+                    println!("  runtime binaries: none");
+                } else {
+                    println!(
+                        "  runtime binaries: {}",
+                        runtime_binary_requirements
+                            .iter()
+                            .map(|requirement| {
+                                format!("{}:{}", requirement.package, requirement.binary)
+                            })
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    );
+                }
+                println!(
+                    "  db pool size override: {}",
+                    db_pool_size
+                        .map(|value| value.to_string())
+                        .unwrap_or_else(|| "default".to_string())
+                );
+                let reuse_state = if let Some(proof) = &reusable_proof {
+                    format!("hit invocation {}", proof.invocation_id)
+                } else if reusable {
+                    "eligible, no exact proof yet".to_string()
+                } else {
+                    "disabled for runtime or mutating test shape".to_string()
+                };
+                println!("  reuse eligibility: {reuse_state}");
             }
             return Ok(CommandResult::success()
                 .with_message("test dry-run passed")
@@ -1340,6 +1407,21 @@ impl XtaskCommand for TestCommand {
                     "test_binaries": effective_test_binaries,
                     "lib": effective_lib_target,
                     "filter": effective_filter,
+                    "scenario_selection": scenario_selection,
+                    "runtime_binary_requirements": runtime_binary_requirements,
+                    "db_pool_size": db_pool_size,
+                    "reuse": {
+                        "eligible": reusable,
+                        "proof_kind": proof_kind,
+                        "input_fingerprint": input_fingerprint,
+                        "scope_key": scope_key,
+                        "hit": reusable_proof,
+                        "reason": if reusable {
+                            "lib-only nextest proof can be reused when the exact manifest and input fingerprint match"
+                        } else {
+                            "runtime, scenario, ignored, snapshot, or listing test shapes are never reused"
+                        },
+                    },
                 }))
                 .with_duration(ctx.elapsed()));
         }
@@ -1620,6 +1702,75 @@ impl XtaskCommand for TestCommand {
             // H7: Surface flaky tests after a clean run
             let (flaky, flaky_issue) = load_flaky_tests(ctx, 5);
             let (analysis, analysis_issue) = load_current_test_analysis(ctx);
+            let proof_kind = crate::coordinator::proof_kind("test", &coordination_args);
+            let test_proof_unit = if let Some(invocation_id) = ctx.invocation_id() {
+                let input_fingerprint =
+                    crate::coordinator::current_scoped_tree_fingerprint("test", &coordination_args)
+                        .ok();
+                let scope_key = Some(crate::coordinator::compute_scope_key(
+                    "test",
+                    &coordination_args,
+                ));
+                match (input_fingerprint, scope_key) {
+                    (Some(input_fingerprint), Some(scope_key)) => {
+                        let reusable = proof_kind == "test.nextest.lib";
+                        let manifest = serde_json::json!({
+                            "scope": workload_scope.encode_marker(),
+                            "runner_packages": execution_plan.runner_packages,
+                            "excluded_packages": execution_plan.excluded_packages,
+                            "test_binaries": effective_test_binaries,
+                            "lib": effective_lib_target,
+                            "filter": effective_filter,
+                            "scenario_selection": scenario_selection,
+                            "runtime_binary_requirements": runtime_binary_requirements,
+                            "db_pool_size": self.narrow_test_db_pool_size(
+                                &execution_plan,
+                                effective_filter.as_deref(),
+                                &effective_test_binaries,
+                                effective_lib_target,
+                            ),
+                            "passed": stats.passed,
+                            "ignored": stats.ignored,
+                        });
+                        match serde_json::to_string(&manifest)
+                            .map_err(color_eyre::eyre::Report::from)
+                            .and_then(|manifest_json| {
+                                if let Some(result) = ctx.try_with_history_db(|db| {
+                                    db.record_test_proof_unit(
+                                        invocation_id,
+                                        &proof_kind,
+                                        &scope_key,
+                                        &input_fingerprint,
+                                        &manifest_json,
+                                        reusable,
+                                    )
+                                }) {
+                                    result?;
+                                }
+                                Ok(())
+                            }) {
+                            Ok(()) => Some(serde_json::json!({
+                                "proof_kind": proof_kind,
+                                "scope_key": scope_key,
+                                "input_fingerprint": input_fingerprint,
+                                "reusable": reusable,
+                            })),
+                            Err(error) => {
+                                tracing::warn!(
+                                    target: "xtask::test",
+                                    invocation_id,
+                                    error = %error,
+                                    "failed to record test proof unit"
+                                );
+                                None
+                            }
+                        }
+                    }
+                    _ => None,
+                }
+            } else {
+                None
+            };
             if ctx.is_human() && !flaky.is_empty() {
                 eprintln!(
                     "\n⚠  {} test{} passed on retry (flaky):",
@@ -1657,6 +1808,7 @@ impl XtaskCommand for TestCommand {
                     "failed": stats.failed,
                     "ignored": stats.ignored,
                     "runtime_binaries": runtime_binary_reports.clone(),
+                    "test_proof_unit": test_proof_unit,
                     "scenario_selection": scenario_selection.clone(),
                     "flaky": flaky,
                     "flaky_issue": flaky_issue.clone(),
@@ -1870,8 +2022,8 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_semantic_invocation_args_include_lib_target()
-    -> ::xtask::sandbox::TestResult<()> {
+    async fn test_semantic_invocation_args_include_lib_target() -> ::xtask::sandbox::TestResult<()>
+    {
         let command = TestCommand::default();
 
         let args = command.semantic_invocation_args(
@@ -1900,12 +2052,7 @@ mod tests {
         };
 
         assert_eq!(
-            command.narrow_test_db_pool_size(
-                &plan,
-                Some("test(one) | test(two)"),
-                &[],
-                true,
-            ),
+            command.narrow_test_db_pool_size(&plan, Some("test(one) | test(two)"), &[], true,),
             Some(4)
         );
         assert_eq!(
@@ -1938,15 +2085,9 @@ mod tests {
             None
         );
 
-        let _guard =
-            crate::sandbox::prelude::EnvGuard::set_single("SINEX_TEST_DB_POOL_SIZE", "48");
+        let _guard = crate::sandbox::prelude::EnvGuard::set_single("SINEX_TEST_DB_POOL_SIZE", "48");
         assert_eq!(
-            TestCommand::default().narrow_test_db_pool_size(
-                &plan,
-                Some("test(one)"),
-                &[],
-                true,
-            ),
+            TestCommand::default().narrow_test_db_pool_size(&plan, Some("test(one)"), &[], true,),
             None
         );
         Ok(())

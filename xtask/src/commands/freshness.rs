@@ -2,7 +2,7 @@ use crate::command::{
     CommandContext, CommandMetadata, CommandResult, HistoryAccessMode, XtaskCommand,
 };
 use crate::coordinator::{self, FreshnessScopeExplanation};
-use crate::history::InvocationWithFingerprint;
+use crate::history::ProofEvidence;
 use color_eyre::eyre::Result;
 use serde::Serialize;
 
@@ -44,7 +44,7 @@ struct FreshnessReuseExplanation {
     enabled: bool,
     decision: FreshnessDecision,
     reason: String,
-    last_completed: Option<InvocationWithFingerprint>,
+    last_completed: Option<ProofEvidence>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -104,9 +104,14 @@ fn explain_reuse(
         };
     }
 
-    let Some(last_result) =
-        ctx.try_with_history_db_query(|db| db.get_last_completed_with_fingerprint(&key.command))
-    else {
+    let Some(last_result) = ctx.try_with_history_db_query(|db| {
+        db.get_successful_proof_evidence(
+            &key.command,
+            &key.proof_kind,
+            &key.tree_fingerprint,
+            &key.scope_key,
+        )
+    }) else {
         return FreshnessReuseExplanation {
             enabled: true,
             decision: FreshnessDecision::HistoryUnavailable,
@@ -118,7 +123,7 @@ fn explain_reuse(
         };
     };
 
-    let last_completed = match last_result {
+    let matching_invocation = match last_result {
         Ok(value) => value,
         Err(error) => {
             return FreshnessReuseExplanation {
@@ -130,42 +135,22 @@ fn explain_reuse(
         }
     };
 
-    let Some(last) = last_completed else {
+    let Some(last) = matching_invocation else {
         return FreshnessReuseExplanation {
             enabled: true,
             decision: FreshnessDecision::Miss,
-            reason: "no prior completed invocation with a freshness fingerprint".to_string(),
+            reason: "no prior successful invocation matches this exact freshness key".to_string(),
             last_completed: None,
         };
     };
 
-    let fingerprint_matches = last.tree_fingerprint.as_deref() == Some(&key.tree_fingerprint);
-    let scope_matches = last.scope_key.as_deref() == Some(&key.scope_key);
-    let decision = if fingerprint_matches && scope_matches {
-        FreshnessDecision::Hit
-    } else {
-        FreshnessDecision::Miss
-    };
-    let reason = match (fingerprint_matches, scope_matches) {
-        (true, true) => format!("last completed invocation #{} matches this key", last.id),
-        (false, true) => format!(
-            "last completed invocation #{} has a different tree fingerprint",
-            last.id
-        ),
-        (true, false) => format!(
-            "last completed invocation #{} has a different scope key",
-            last.id
-        ),
-        (false, false) => format!(
-            "last completed invocation #{} has a different tree fingerprint and scope key",
-            last.id
-        ),
-    };
-
     FreshnessReuseExplanation {
         enabled: true,
-        decision,
-        reason,
+        decision: FreshnessDecision::Hit,
+        reason: format!(
+            "successful invocation #{} matches this exact proof key",
+            last.invocation_id
+        ),
         last_completed: Some(last),
     }
 }
@@ -174,6 +159,7 @@ fn print_explanation(key: &coordinator::FreshnessExplanation, reuse: &FreshnessR
     println!("Freshness: {}", render_command(&key.command, &key.args));
     println!("  Coordinated:        {}", yes_no(key.should_coordinate));
     println!("  Fresh reuse:        {}", yes_no(key.fresh_reuse_enabled));
+    println!("  Proof kind:         {}", key.proof_kind);
     println!("  Scope key:          {}", short_hash(&key.scope_key));
     println!(
         "  Tree fingerprint:   {}",
