@@ -110,7 +110,10 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
     use tokio::sync::mpsc;
     use uuid::Uuid;
-    use xtask::sandbox::{EnvGuard, EphemeralNats, TestContext, TestResult, sinex_test};
+    use xtask::sandbox::{
+        EnvGuard, EphemeralNats, TestContext, TestResult, sinex_test,
+        timing::WaitHelpers,
+    };
 
     struct TestRuntimeHarness {
         runtime: NodeRuntimeState,
@@ -207,18 +210,24 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn current_metadata_refreshes_last_heartbeat(ctx: TestContext) -> TestResult<()> {
-        let harness = build_runtime(&ctx, "coordination-heartbeat").await?;
-        let coordination =
-            NodeCoordination::from_runtime(&harness.runtime, "coord-test".to_string())?;
-
-        let first = coordination.current_metadata();
-        tokio::time::sleep(Duration::from_millis(1100)).await;
-        let second = coordination.current_metadata();
+    async fn instance_metadata_allows_fresh_heartbeat_override() -> TestResult<()> {
+        let mut instance = NodeInstance::new(
+            "coord-test".to_string(),
+            ServiceName::new("coordination-heartbeat"),
+        )?;
+        instance.start_time = SystemTime::UNIX_EPOCH;
+        let started_at = instance_started_at(&instance);
+        let current_heartbeat = sinex_primitives::temporal::Timestamp::now().unix_timestamp();
 
         assert!(
-            second.last_heartbeat > first.last_heartbeat,
-            "current_metadata should refresh last_heartbeat"
+            current_heartbeat > started_at,
+            "test setup should make the current heartbeat newer than startup"
+        );
+        let metadata = instance_metadata_at(&instance, Some(current_heartbeat));
+
+        assert_eq!(
+            metadata.last_heartbeat, current_heartbeat,
+            "metadata should use the fresh heartbeat override"
         );
         Ok(())
     }
@@ -609,7 +618,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn leader_maintenance_heartbeat_refreshes_registered_metadata(
+    async fn leader_maintenance_refreshes_metadata_without_restarting_process_future(
         ctx: TestContext,
     ) -> TestResult<()> {
         let mut env = EnvGuard::new();
@@ -620,19 +629,44 @@ mod tests {
         let initial_last_heartbeat = coordination.current_metadata().last_heartbeat;
         let instance_id = coordination.instance.instance_id.clone();
         let kv_client = coordination.kv_client.clone();
+        let starts = Arc::new(AtomicUsize::new(0));
+        let starts_for_task = starts.clone();
 
         let run_handle = tokio::spawn(async move {
-            let _ = tokio::time::timeout(
-                Duration::from_secs(4),
-                coordination.run_coordination_loop(|| async {
-                    tokio::time::sleep(Duration::from_secs(4)).await;
-                    Ok::<(), SinexError>(())
-                }),
-            )
-            .await;
+            let _ = coordination
+                .run_coordination_loop(move || {
+                    let starts = starts_for_task.clone();
+                    async move {
+                        starts.fetch_add(1, Ordering::SeqCst);
+                        std::future::pending::<Result<()>>().await
+                    }
+                })
+                .await;
         });
 
-        tokio::time::sleep(Duration::from_secs(2)).await;
+        WaitHelpers::wait_for_condition(
+            || {
+                let kv_client = kv_client.clone();
+                let instance_id = instance_id.clone();
+                let starts = starts.clone();
+                async move {
+                    let metadata =
+                        kv_client
+                            .get_instance(&instance_id)
+                            .await?
+                            .ok_or_else(|| {
+                                SinexError::processing("instance metadata missing from KV")
+                            })?;
+                    Ok::<bool, SinexError>(
+                        starts.load(Ordering::SeqCst) == 1
+                            && metadata.last_heartbeat >= initial_last_heartbeat + 1,
+                    )
+                }
+            },
+            3,
+        )
+        .await?;
+
         let metadata = kv_client
             .get_instance(&instance_id)
             .await?
@@ -641,40 +675,6 @@ mod tests {
             metadata.last_heartbeat >= initial_last_heartbeat + 1,
             "leader maintenance should keep refreshing last_heartbeat beyond startup registration"
         );
-
-        run_handle.abort();
-        let _ = run_handle.await;
-        Ok(())
-    }
-
-    #[sinex_test]
-    async fn leader_maintenance_does_not_restart_process_events_future(
-        ctx: TestContext,
-    ) -> TestResult<()> {
-        let mut env = EnvGuard::new();
-        env.set("SINEX_COORDINATION_HEARTBEAT", "1");
-        let harness = build_runtime(&ctx, "coordination-single-process-future").await?;
-        let mut coordination =
-            NodeCoordination::from_runtime(&harness.runtime, "coord-test".to_string())?;
-        let starts = Arc::new(AtomicUsize::new(0));
-        let starts_for_task = starts.clone();
-
-        let run_handle = tokio::spawn(async move {
-            let _ = tokio::time::timeout(
-                Duration::from_secs(4),
-                coordination.run_coordination_loop(move || {
-                    let starts = starts_for_task.clone();
-                    async move {
-                        starts.fetch_add(1, Ordering::SeqCst);
-                        tokio::time::sleep(Duration::from_secs(4)).await;
-                        Ok::<(), SinexError>(())
-                    }
-                }),
-            )
-            .await;
-        });
-
-        tokio::time::sleep(Duration::from_secs(2)).await;
         assert_eq!(
             starts.load(Ordering::SeqCst),
             1,

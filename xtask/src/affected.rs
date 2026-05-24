@@ -162,6 +162,14 @@ pub fn infer_lib_target_for_test_filter(filter: &str) -> Result<bool> {
     infer_lib_target_for_test_filter_in(&repo_root, filter)
 }
 
+/// Count simple `test(name)` terms in a nextest filter.
+///
+/// Returns `None` for complex filters where xtask deliberately should not infer
+/// exact test shape.
+pub fn simple_test_name_term_count(filter: &str) -> Option<usize> {
+    extract_simple_test_name_terms(filter).map(|terms| terms.len())
+}
+
 fn infer_packages_for_test_filter_in(repo_root: &Path, filter: &str) -> Result<Vec<String>> {
     let Some(test_names) = extract_simple_test_name_terms(filter) else {
         return Ok(Vec::new());
@@ -204,11 +212,17 @@ fn infer_test_binaries_for_test_filter_in(repo_root: &Path, filter: &str) -> Res
             .filter(|test_name| content_mentions_test_name(&content, test_name))
             .collect();
 
-        if !matched_test_names.is_empty()
-            && let Some(binary) = test_binary_for_path(&relative_path)
-        {
-            covered_test_names.extend(matched_test_names.into_iter().cloned());
-            binaries.insert(binary);
+        if !matched_test_names.is_empty() {
+            let binary = if let Some(binary) = test_binary_for_path(&relative_path) {
+                Some(binary)
+            } else {
+                test_binary_for_nested_integration_module(repo_root, &relative_path)?
+            };
+
+            if let Some(binary) = binary {
+                covered_test_names.extend(matched_test_names.into_iter().cloned());
+                binaries.insert(binary);
+            }
         }
     }
 
@@ -432,6 +446,86 @@ fn test_binary_for_path(path: &str) -> Option<String> {
     // xtask integration tests: xtask/tests/foo.rs.
     if parts.len() == 3 && parts[0] == "xtask" && parts[1] == "tests" {
         return Some(stem.to_string());
+    }
+
+    None
+}
+
+fn test_binary_for_nested_integration_module(
+    repo_root: &Path,
+    path: &str,
+) -> Result<Option<String>> {
+    let parts: Vec<&str> = path.split('/').collect();
+    let Some(file_name) = parts.last() else {
+        return Ok(None);
+    };
+    let Some(stem) = file_name.strip_suffix(".rs") else {
+        return Ok(None);
+    };
+
+    let Some((root_relative_path, binary, module_relative_path)) =
+        nested_integration_root(&parts)
+    else {
+        return Ok(None);
+    };
+
+    let root_path = repo_root.join(root_relative_path);
+    if !root_path.exists() {
+        return Ok(None);
+    }
+
+    let root_content = fs::read_to_string(&root_path)
+        .wrap_err_with(|| format!("failed to read {}", root_path.display()))?;
+    if root_content.contains(&format!("#[path = \"{module_relative_path}\"]"))
+        || root_content.contains(&format!("#[path=\"{module_relative_path}\"]"))
+        || root_content.contains(&format!("mod {stem};"))
+    {
+        Ok(Some(binary))
+    } else {
+        Ok(None)
+    }
+}
+
+fn nested_integration_root(parts: &[&str]) -> Option<(String, String, String)> {
+    // Workspace integration-test crates: tests/e2e/tests/foo/bar.rs belongs
+    // to nextest target `foo` when tests/e2e/tests/foo.rs includes it.
+    if parts.len() > 4
+        && parts.first().copied() == Some("tests")
+        && parts.get(2).copied() == Some("tests")
+    {
+        let root = *parts.get(3)?;
+        return Some((
+            format!("{}/{}/tests/{root}.rs", parts[0], parts[1]),
+            root.to_string(),
+            parts[3..].join("/"),
+        ));
+    }
+
+    // Crate-local integration tests: crate/<category>/<crate>/tests/foo/bar.rs
+    // belongs to nextest target `foo` when tests/foo.rs includes it.
+    if parts.len() > 5
+        && parts.first().copied() == Some("crate")
+        && parts.get(3).copied() == Some("tests")
+    {
+        let root = *parts.get(4)?;
+        return Some((
+            format!("{}/{}/{}/tests/{root}.rs", parts[0], parts[1], parts[2]),
+            root.to_string(),
+            parts[4..].join("/"),
+        ));
+    }
+
+    // xtask integration tests: xtask/tests/foo/bar.rs belongs to target `foo`.
+    if parts.len() > 3
+        && parts.first().copied() == Some("xtask")
+        && parts.get(1).copied() == Some("tests")
+    {
+        let root = *parts.get(2)?;
+        return Some((
+            format!("xtask/tests/{root}.rs"),
+            root.to_string(),
+            parts[2..].join("/"),
+        ));
     }
 
     None
@@ -890,7 +984,18 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_infer_test_binaries_ignores_nested_integration_modules() -> TestResult<()> {
+    async fn test_simple_test_name_term_count_rejects_complex_filters() -> TestResult<()> {
+        assert_eq!(
+            simple_test_name_term_count("test(one) | test(two)"),
+            Some(2)
+        );
+        assert_eq!(simple_test_name_term_count("!test(one)"), None);
+        assert_eq!(simple_test_name_term_count("package(foo)"), None);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_infer_test_binaries_maps_nested_integration_modules() -> TestResult<()> {
         let repo = tempfile::tempdir()?;
         let root = repo
             .path()
@@ -899,7 +1004,10 @@ mod tests {
             .path()
             .join("crate/core/sinex-source-worker/tests/production_path/browser.rs");
         fs::create_dir_all(nested.parent().expect("nested parent"))?;
-        fs::write(&root, "#[path = \"production_path/browser.rs\"] mod browser;\n")?;
+        fs::write(
+            &root,
+            "#[path = \"production_path/browser.rs\"] mod browser;\n",
+        )?;
         fs::write(
             &nested,
             "#[sinex_test]\nasync fn browser_history_qutebrowser_initial_ingestion() {}\n",
@@ -909,10 +1017,7 @@ mod tests {
             repo.path(),
             "test(browser_history_qutebrowser_initial_ingestion)",
         )?;
-        assert!(
-            inferred.is_empty(),
-            "nested integration-test modules must not be inferred as standalone --test targets"
-        );
+        assert_eq!(inferred, vec!["production_path".to_string()]);
         Ok(())
     }
 

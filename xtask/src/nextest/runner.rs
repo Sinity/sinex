@@ -181,11 +181,10 @@ impl<'a> TestRunner<'a> {
             // Output format for parsing (libtest-json-plus includes test stdout for failures)
             "--message-format".to_string(),
             "libtest-json-plus".to_string(),
-            // Output behavior is controlled by .config/nextest.toml — don't override here.
-            // Overriding with CLI args would supersede profile settings and cause issues like
-            // duplicated output (immediate-final) or mismatches between profiles.
+            // Keep skipped-test floods out of filtered runs. Passing-test
+            // metadata is still repaired from JUnit at the end of the run.
             "--status-level".to_string(),
-            "all".to_string(),
+            "pass".to_string(),
         ]);
 
         cmd_args.extend(self.args.clone());
