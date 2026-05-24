@@ -678,10 +678,6 @@ fn lock_exclusive_retry(mut file: fs::File) -> Result<Flock<fs::File>> {
     unreachable!()
 }
 
-/// Compute tree fingerprint: sha256 of `git status --porcelain` output.
-///
-/// Properties: deterministic (same tree → same hash), fast (~50ms),
-/// captures staged, unstaged, and untracked changes.
 fn summarize_git_error(output: &std::process::Output) -> String {
     let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
     if !stderr.is_empty() {
@@ -727,16 +723,105 @@ fn refresh_git_index(cwd: &Path) -> Result<()> {
     Ok(())
 }
 
+fn hash_labeled_bytes(hasher: &mut Sha256, label: &str, bytes: &[u8]) {
+    hasher.update(label.as_bytes());
+    hasher.update(b"\x00");
+    hasher.update((bytes.len() as u64).to_le_bytes());
+    hasher.update(b"\x00");
+    hasher.update(bytes);
+    hasher.update(b"\x00");
+}
+
+fn hash_git_output(
+    cwd: &Path,
+    hasher: &mut Sha256,
+    label: &str,
+    args: &[&str],
+    description: &str,
+) -> Result<()> {
+    let output = git_output(cwd, args, description)?;
+    hash_labeled_bytes(hasher, label, &output.stdout);
+    Ok(())
+}
+
+fn hash_untracked_file_contents(cwd: &Path, hasher: &mut Sha256, pathspecs: &[&str]) -> Result<()> {
+    let mut args = vec!["ls-files", "--others", "--exclude-standard", "-z", "--"];
+    args.extend_from_slice(pathspecs);
+    let output = git_output(
+        cwd,
+        &args,
+        "ls-files --others --exclude-standard -z for fingerprint",
+    )?;
+    let mut paths = output
+        .stdout
+        .split(|byte| *byte == 0)
+        .filter(|entry| !entry.is_empty())
+        .collect::<Vec<_>>();
+    paths.sort_unstable();
+
+    for path_bytes in paths {
+        hash_labeled_bytes(hasher, "untracked-path", path_bytes);
+        let rel_path = String::from_utf8_lossy(path_bytes);
+        let contents = fs::read(cwd.join(rel_path.as_ref())).with_context(|| {
+            format!("failed to read untracked file for fingerprint: {rel_path}")
+        })?;
+        hash_labeled_bytes(hasher, "untracked-content", &contents);
+    }
+
+    Ok(())
+}
+
+fn hash_dirty_content(cwd: &Path, hasher: &mut Sha256, pathspecs: &[&str]) -> Result<()> {
+    let mut cached_args = vec![
+        "diff",
+        "--binary",
+        "--no-ext-diff",
+        "--cached",
+        "HEAD",
+        "--",
+    ];
+    cached_args.extend_from_slice(pathspecs);
+    hash_git_output(
+        cwd,
+        hasher,
+        "staged-diff",
+        &cached_args,
+        "diff --binary --cached HEAD for fingerprint",
+    )?;
+
+    let mut unstaged_args = vec!["diff", "--binary", "--no-ext-diff", "--"];
+    unstaged_args.extend_from_slice(pathspecs);
+    hash_git_output(
+        cwd,
+        hasher,
+        "unstaged-diff",
+        &unstaged_args,
+        "diff --binary for fingerprint",
+    )?;
+
+    hash_untracked_file_contents(cwd, hasher, pathspecs)
+}
+
+/// Compute tree fingerprint: sha256 of committed tree identity plus dirty content.
+///
+/// Properties: deterministic (same tree → same hash), conservative, and
+/// content-sensitive for staged, unstaged, and untracked changes.
 fn tree_fingerprint_in(cwd: &Path) -> Result<String> {
     // Refresh the git index so status reflects actual filesystem state.
     // Without this, rapid edits within the same second can go undetected
     // because git caches stat data (mtime, size) in the index.
     refresh_git_index(cwd)?;
 
-    let output = git_output(cwd, &["status", "--porcelain"], "status --porcelain")?;
-
     let mut hasher = Sha256::new();
-    hasher.update(&output.stdout);
+    hasher.update(b"sinex-tree-fingerprint-v2\x00");
+    hash_git_output(
+        cwd,
+        &mut hasher,
+        "head",
+        &["rev-parse", "HEAD"],
+        "rev-parse HEAD for whole-tree fingerprint",
+    )?;
+    hash_dirty_content(cwd, &mut hasher, &[])?;
     Ok(format!("{:x}", hasher.finalize()))
 }
 
@@ -845,13 +930,14 @@ fn scoped_tree_fingerprint_in(cwd: &Path, command: &str, args: &[String]) -> Res
     //
     // Domain separator + version is intentional: changing the seeding format
     // later should bump the version to invalidate old cache entries.
-    hasher.update(b"sinex-tree-fingerprint-v1\x00");
-    let head_oid = git_output(
+    hasher.update(b"sinex-tree-fingerprint-v2\x00");
+    hash_git_output(
         cwd,
+        &mut hasher,
+        "head",
         &["rev-parse", "HEAD"],
         "rev-parse HEAD for fingerprint seeding",
     )?;
-    hasher.update(&head_oid.stdout);
     // packages was already pulled from CLI args; sort for deterministic
     // fingerprint regardless of -p order.
     let mut sorted_packages: Vec<&String> = packages.iter().collect();
@@ -863,20 +949,7 @@ fn scoped_tree_fingerprint_in(cwd: &Path, command: &str, args: &[String]) -> Res
 
     for pkg in &sorted_packages {
         let prefix = package_to_path(pkg);
-        // Include tracked changes (staged + unstaged)
-        let diff_out = git_output(
-            cwd,
-            &["diff", "--name-only", "HEAD", "--", &prefix],
-            "diff --name-only HEAD -- <prefix>",
-        )?;
-        hasher.update(&diff_out.stdout);
-        // Include untracked files in this package's directory
-        let untracked = git_output(
-            cwd,
-            &["ls-files", "--others", "--exclude-standard", "--", &prefix],
-            "ls-files --others --exclude-standard -- <prefix>",
-        )?;
-        hasher.update(&untracked.stdout);
+        hash_dirty_content(cwd, &mut hasher, &[&prefix])?;
     }
 
     Ok(format!("{:x}", hasher.finalize()))
@@ -1859,6 +1932,91 @@ mod tests {
         let fingerprint = tree_fingerprint_in(dir.path())?;
 
         assert!(!fingerprint.is_empty());
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_tree_fingerprint_distinguishes_dirty_content_same_path() -> TestResult<()> {
+        let dir = tempfile::tempdir()?;
+        run_git(&["init", "-q"], dir.path())?;
+        run_git(&["config", "user.name", "Sinex Test"], dir.path())?;
+        run_git(&["config", "user.email", "sinex@example.test"], dir.path())?;
+        std::fs::write(dir.path().join("tracked.txt"), "clean\n")?;
+        run_git(&["add", "tracked.txt"], dir.path())?;
+        run_git(&["commit", "-qm", "init"], dir.path())?;
+
+        std::fs::write(dir.path().join("tracked.txt"), "dirty one\n")?;
+        let fp_one = tree_fingerprint_in(dir.path())?;
+        std::fs::write(dir.path().join("tracked.txt"), "dirty two\n")?;
+        let fp_two = tree_fingerprint_in(dir.path())?;
+
+        assert_ne!(
+            fp_one, fp_two,
+            "dirty tracked content changes must invalidate freshness even when the path set is unchanged"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_scoped_tree_fingerprint_distinguishes_dirty_content_same_path() -> TestResult<()>
+    {
+        let dir = tempfile::tempdir()?;
+        run_git(&["init", "-q"], dir.path())?;
+        run_git(&["config", "user.name", "Sinex Test"], dir.path())?;
+        run_git(&["config", "user.email", "sinex@example.test"], dir.path())?;
+        std::fs::create_dir_all(dir.path().join("crate/lib/sinex-db/src"))?;
+        std::fs::write(
+            dir.path().join("crate/lib/sinex-db/src/lib.rs"),
+            "fn db() {}\n",
+        )?;
+        run_git(&["add", "crate/lib/sinex-db/src/lib.rs"], dir.path())?;
+        run_git(&["commit", "-qm", "init"], dir.path())?;
+        let args = vec!["-p".into(), "sinex-db".into()];
+
+        std::fs::write(
+            dir.path().join("crate/lib/sinex-db/src/lib.rs"),
+            "fn db() { let _x = 1; }\n",
+        )?;
+        let fp_one = scoped_tree_fingerprint_in(dir.path(), "check", &args)?;
+        std::fs::write(
+            dir.path().join("crate/lib/sinex-db/src/lib.rs"),
+            "fn db() { let _x = 2; }\n",
+        )?;
+        let fp_two = scoped_tree_fingerprint_in(dir.path(), "check", &args)?;
+
+        assert_ne!(
+            fp_one, fp_two,
+            "scoped dirty content changes must invalidate freshness even when the path set is unchanged"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_scoped_tree_fingerprint_distinguishes_untracked_content_same_path()
+    -> TestResult<()> {
+        let dir = tempfile::tempdir()?;
+        run_git(&["init", "-q"], dir.path())?;
+        run_git(&["config", "user.name", "Sinex Test"], dir.path())?;
+        run_git(&["config", "user.email", "sinex@example.test"], dir.path())?;
+        std::fs::create_dir_all(dir.path().join("crate/lib/sinex-db/src"))?;
+        std::fs::write(
+            dir.path().join("crate/lib/sinex-db/src/lib.rs"),
+            "fn db() {}\n",
+        )?;
+        run_git(&["add", "crate/lib/sinex-db/src/lib.rs"], dir.path())?;
+        run_git(&["commit", "-qm", "init"], dir.path())?;
+        let args = vec!["-p".into(), "sinex-db".into()];
+        let scratch = dir.path().join("crate/lib/sinex-db/src/scratch.rs");
+
+        std::fs::write(&scratch, "const VALUE: u8 = 1;\n")?;
+        let fp_one = scoped_tree_fingerprint_in(dir.path(), "check", &args)?;
+        std::fs::write(&scratch, "const VALUE: u8 = 2;\n")?;
+        let fp_two = scoped_tree_fingerprint_in(dir.path(), "check", &args)?;
+
+        assert_ne!(
+            fp_one, fp_two,
+            "scoped untracked content changes must invalidate freshness even when the path set is unchanged"
+        );
         Ok(())
     }
 
