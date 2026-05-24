@@ -468,11 +468,42 @@ fn test_binary_for_nested_integration_module(
         return Ok(None);
     };
 
-    if !repo_root.join(root_relative_path).exists() {
+    if !repo_root.join(&root_relative_path).exists() {
+        if let Some(aggregator_binary) =
+            nested_integration_aggregator(repo_root, &root_relative_path, &binary)?
+        {
+            return Ok(Some(aggregator_binary));
+        }
         return Ok(None);
     }
 
     Ok(Some(binary))
+}
+
+fn nested_integration_aggregator(
+    repo_root: &Path,
+    root_relative_path: &str,
+    module_name: &str,
+) -> Result<Option<String>> {
+    let Some((tests_dir, root_file)) = root_relative_path.rsplit_once('/') else {
+        return Ok(None);
+    };
+    let Some(root_stem) = root_file.strip_suffix(".rs") else {
+        return Ok(None);
+    };
+
+    let candidate = format!("{tests_dir}/{root_stem}_tests.rs");
+    let candidate_path = repo_root.join(&candidate);
+    if !candidate_path.exists() {
+        return Ok(None);
+    }
+    let content = fs::read_to_string(&candidate_path)
+        .wrap_err_with(|| format!("failed to read {}", candidate_path.display()))?;
+    if content.contains(&format!("mod {module_name};")) {
+        Ok(Some(format!("{root_stem}_tests")))
+    } else {
+        Ok(None)
+    }
 }
 
 fn nested_integration_root(parts: &[&str]) -> Option<(String, String, String)> {
@@ -1031,6 +1062,31 @@ mod tests {
             "test(weechat_source_worker_binary_scan_persists_message)",
         )?;
         assert_eq!(inferred, vec!["production_path".to_string()]);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_infer_test_binaries_maps_aggregated_nested_integration_modules()
+    -> TestResult<()> {
+        let repo = tempfile::tempdir()?;
+        let root = repo
+            .path()
+            .join("crate/lib/sinex-node-sdk/tests/integration_tests.rs");
+        let nested = repo
+            .path()
+            .join("crate/lib/sinex-node-sdk/tests/integration/node_lifecycle_test.rs");
+        fs::create_dir_all(nested.parent().expect("nested parent"))?;
+        fs::write(&root, "mod integration;\nmod support;\n")?;
+        fs::write(
+            &nested,
+            "#[sinex_test]\nasync fn test_node_concurrent_lifecycle() {}\n",
+        )?;
+
+        let inferred = infer_test_binaries_for_test_filter_in(
+            repo.path(),
+            "test(test_node_concurrent_lifecycle)",
+        )?;
+        assert_eq!(inferred, vec!["integration_tests".to_string()]);
         Ok(())
     }
 
