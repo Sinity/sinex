@@ -566,11 +566,11 @@ async fn state_snapshot_dry_run_uses_snapshot_implementation() -> xtask::sandbox
     Ok(())
 }
 
-/// Live snapshots are intentionally unsupported until there is a real hot
-/// capture implementation. The binary path must fail closed rather than
-/// silently running the quiesce-mode code with a misleading mode label.
+/// Live snapshots are an explicit weaker-consistency mode. The command should
+/// accept the mode, preserve it in the snapshot path, and avoid creating an
+/// archive during dry-run.
 #[sinex_test]
-async fn state_snapshot_live_mode_fails_closed() -> xtask::sandbox::TestResult<()> {
+async fn state_snapshot_live_mode_dry_run_reports_estimates() -> xtask::sandbox::TestResult<()> {
     let output_dir = tempfile::tempdir()?;
     let output_path = output_dir.path().join("state-live.tar.zst");
 
@@ -591,16 +591,16 @@ async fn state_snapshot_live_mode_fails_closed() -> xtask::sandbox::TestResult<(
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        !output.status.success(),
-        "live snapshot mode must fail closed until implemented\nstdout: {stdout}\nstderr: {stderr}"
+        output.status.success(),
+        "live snapshot dry-run must succeed\nstdout: {stdout}\nstderr: {stderr}"
     );
     assert!(
-        stderr.contains("only mode=quiesce is supported"),
-        "stderr should explain the unsupported live mode\nstdout: {stdout}\nstderr: {stderr}"
+        stdout.contains("Mode: dry-run"),
+        "stdout should report dry-run mode for the command result\nstdout: {stdout}\nstderr: {stderr}"
     );
     assert!(
         !output_path.exists(),
-        "unsupported live mode must not create an archive at {output_path:?}"
+        "live dry-run must not create an archive at {output_path:?}"
     );
 
     Ok(())
@@ -1140,6 +1140,38 @@ async fn library_dry_run_returns_valid_result() -> xtask::sandbox::TestResult<()
         );
     }
 
+    Ok(())
+}
+
+#[sinex_test]
+async fn library_live_snapshot_archive_records_live_manifest() -> xtask::sandbox::TestResult<()> {
+    let state_dir = make_fake_state_dir()?;
+    let output_dir = tempfile::tempdir()?;
+    let output_path = output_dir.path().join("live.tar.zst");
+
+    let cmd = AdminSnapshotCommand {
+        output: output_path.clone(),
+        compression: 1,
+        workers: 0,
+        mode: "live".to_string(),
+        dry_run: false,
+        database_url: None,
+        state_dir: Some(state_dir.path().to_path_buf()),
+        auto_stop: false,
+        components: vec![Component::Nats, Component::Cas, Component::State],
+    };
+
+    let result = cmd.execute()?;
+    assert_eq!(result.mode, "live");
+    assert!(output_path.exists(), "live snapshot should create archive");
+
+    let inspect = AdminSnapshotInspectCommand {
+        archive: output_path,
+    }
+    .execute()?;
+    assert_eq!(inspect.mode, "live");
+    assert_eq!(inspect.manifest.mode, "live");
+    assert!(inspect.missing_component_paths.is_empty());
     Ok(())
 }
 
