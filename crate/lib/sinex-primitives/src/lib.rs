@@ -30,6 +30,7 @@ pub mod rpc;
 pub mod runtime_target;
 pub mod schema_constraints;
 pub mod semantic;
+pub mod views;
 
 /// Re-exports used by macros generated from `sinex-macros`.
 /// Not part of the stable public surface; do not depend on this from
@@ -131,3 +132,4 @@ pub use validation::{
     sanitize_filename_component, validate_json, validate_json_value, validate_path,
     validate_path_within_root,
 };
+pub use views::*;
