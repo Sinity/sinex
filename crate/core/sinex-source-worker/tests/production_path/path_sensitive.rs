@@ -17,7 +17,7 @@ This is the body. It has a [[wikilink]] and a #body-tag.
 ";
 
     #[sinex_test]
-    async fn knowledgebase_vault_obligations(_ctx: TestContext) -> TestResult<()> {
+    async fn knowledgebase_vault_obligations() -> TestResult<()> {
         let failures = crate::_run_case_with_logical_path(
             "knowledgebase-vault",
             crate::AdapterKind::StaticFile,
@@ -35,7 +35,7 @@ This is the body. It has a [[wikilink]] and a #body-tag.
     }
 
     #[sinex_test]
-    async fn git_commit_history_obligations(_ctx: TestContext) -> TestResult<()> {
+    async fn git_commit_history_obligations() -> TestResult<()> {
         let repo = tempfile::tempdir()?;
         initialize_git_repo(repo.path())?;
 

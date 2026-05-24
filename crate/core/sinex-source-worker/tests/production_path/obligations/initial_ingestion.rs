@@ -144,7 +144,7 @@ mod canary {
     /// tests inside the fenced regions of this file or by calling `run()`
     /// directly from their own `#[sinex_test]`.
     #[sinex_test]
-    async fn weechat_message_canary(_ctx: TestContext) -> TestResult<()> {
+    async fn weechat_message_canary() -> TestResult<()> {
         let result = super::run(
             "weechat.message",
             crate::AdapterKind::AppendOnlyFile,

@@ -127,7 +127,7 @@ async fn process_events_through_chaos(chaos: &ChaosContext, count: usize) -> (us
 }
 
 #[sinex_test(timeout = 60)]
-async fn test_node_recovers_from_network_partition(_ctx: TestContext) -> TestResult<()> {
+async fn test_node_recovers_from_network_partition() -> TestResult<()> {
     let scenarios = ChaosScenarios::new();
 
     // Verify partition starts inactive
@@ -158,7 +158,7 @@ async fn test_node_recovers_from_network_partition(_ctx: TestContext) -> TestRes
 }
 
 #[sinex_test(timeout = 60)]
-async fn test_checkpoint_survives_message_loss(_ctx: TestContext) -> TestResult<()> {
+async fn test_checkpoint_survives_message_loss() -> TestResult<()> {
     let scenarios = ChaosScenarios::new();
 
     // Create checkpoint survival context (20% drop rate, some latency)
@@ -189,7 +189,7 @@ async fn test_checkpoint_survives_message_loss(_ctx: TestContext) -> TestResult<
 }
 
 #[sinex_test(timeout = 60)]
-async fn test_node_handles_corrupted_messages(_ctx: TestContext) -> TestResult<()> {
+async fn test_node_handles_corrupted_messages() -> TestResult<()> {
     // Build chaos context with 50% corruption rate for reliable testing
     let chaos = ChaosTestBuilder::new().with_message_corruption(0.5).build();
 
@@ -212,7 +212,7 @@ async fn test_node_handles_corrupted_messages(_ctx: TestContext) -> TestResult<(
 }
 
 #[sinex_test(timeout = 60)]
-async fn test_node_handles_message_reordering(_ctx: TestContext) -> TestResult<()> {
+async fn test_node_handles_message_reordering() -> TestResult<()> {
     // Build chaos context with 30% reordering rate
     let chaos = ChaosTestBuilder::new().with_reordering(0.3).build();
 
@@ -236,7 +236,7 @@ async fn test_node_handles_message_reordering(_ctx: TestContext) -> TestResult<(
 }
 
 #[sinex_test(timeout = 60)]
-async fn test_node_handles_slow_consumer_scenario(_ctx: TestContext) -> TestResult<()> {
+async fn test_node_handles_slow_consumer_scenario() -> TestResult<()> {
     let scenarios = ChaosScenarios::new();
 
     // Create slow consumer context with 10ms delay per message
@@ -263,7 +263,7 @@ async fn test_node_handles_slow_consumer_scenario(_ctx: TestContext) -> TestResu
 }
 
 #[sinex_test(timeout = 90)]
-async fn test_worst_case_chaos_scenario(_ctx: TestContext) -> TestResult<()> {
+async fn test_worst_case_chaos_scenario() -> TestResult<()> {
     let scenarios = ChaosScenarios::new();
 
     // Create worst-case context (5% corruption, 10% reorder, 10% drop, high latency, 5% failures)

@@ -47,7 +47,7 @@ async fn setup_test_content_store() -> TestResult<(MaterialContentStore, TempDir
 
 #[ignore = "requires external content-store infrastructure"]
 #[sinex_test]
-async fn test_file_add_and_retrieve(_ctx: TestContext) -> TestResult<()> {
+async fn test_file_add_and_retrieve() -> TestResult<()> {
     let (content_store, temp_dir) = setup_test_content_store().await?;
 
     // Create a test file
@@ -72,7 +72,7 @@ async fn test_file_add_and_retrieve(_ctx: TestContext) -> TestResult<()> {
 
 #[ignore = "requires external content-store infrastructure"]
 #[sinex_test]
-async fn test_large_file_handling(_ctx: TestContext) -> TestResult<()> {
+async fn test_large_file_handling() -> TestResult<()> {
     let (content_store, temp_dir) = setup_test_content_store().await?;
 
     // Create 1MB of data
@@ -96,7 +96,7 @@ async fn test_large_file_handling(_ctx: TestContext) -> TestResult<()> {
 
 #[ignore = "requires external content-store infrastructure"]
 #[sinex_test]
-async fn test_content_key_lookup(_ctx: TestContext) -> TestResult<()> {
+async fn test_content_key_lookup() -> TestResult<()> {
     let (content_store, temp_dir) = setup_test_content_store().await?;
 
     // Create a test file with known content
@@ -124,7 +124,7 @@ async fn test_content_key_lookup(_ctx: TestContext) -> TestResult<()> {
 
 #[ignore = "requires external content-store infrastructure"]
 #[sinex_test]
-async fn test_drop_content(_ctx: TestContext) -> TestResult<()> {
+async fn test_drop_content() -> TestResult<()> {
     let (content_store, temp_dir) = setup_test_content_store().await?;
 
     // Create and add a file
@@ -148,7 +148,7 @@ async fn test_drop_content(_ctx: TestContext) -> TestResult<()> {
 
 #[ignore = "requires external content-store infrastructure"]
 #[sinex_test]
-async fn test_fsck(_ctx: TestContext) -> TestResult<()> {
+async fn test_fsck() -> TestResult<()> {
     let (content_store, temp_dir) = setup_test_content_store().await?;
 
     // Add some files
@@ -175,7 +175,7 @@ async fn test_fsck(_ctx: TestContext) -> TestResult<()> {
 
 #[ignore = "requires external content-store infrastructure (legacy git-annex)"]
 #[sinex_test]
-async fn test_git_annex_configuration(_ctx: TestContext) -> TestResult<()> {
+async fn test_git_annex_configuration() -> TestResult<()> {
     system_test_preflight()?;
 
     let temp_dir = TempDir::new()?;
@@ -232,7 +232,7 @@ async fn test_git_annex_configuration(_ctx: TestContext) -> TestResult<()> {
 
 #[ignore = "requires external content-store infrastructure"]
 #[sinex_test(timeout = 30)]
-async fn test_concurrent_file_operations(_ctx: TestContext) -> TestResult<()> {
+async fn test_concurrent_file_operations() -> TestResult<()> {
     let (content_store, temp_dir) = setup_test_content_store().await?;
     let content_store = std::sync::Arc::new(content_store);
     let mut handles = vec![];
@@ -277,7 +277,7 @@ async fn test_concurrent_file_operations(_ctx: TestContext) -> TestResult<()> {
 
 #[ignore = "requires external content-store infrastructure"]
 #[sinex_test]
-async fn test_files_in_subdirectories(_ctx: TestContext) -> TestResult<()> {
+async fn test_files_in_subdirectories() -> TestResult<()> {
     let (content_store, temp_dir) = setup_test_content_store().await?;
 
     // Create subdirectory structure
@@ -303,7 +303,7 @@ async fn test_files_in_subdirectories(_ctx: TestContext) -> TestResult<()> {
 
 #[ignore = "requires external content-store infrastructure"]
 #[sinex_test(timeout = 30)]
-async fn test_content_store_deduplication(_ctx: TestContext) -> TestResult<()> {
+async fn test_content_store_deduplication() -> TestResult<()> {
     let (content_store, temp_dir) = setup_test_content_store().await?;
 
     let content = b"Duplicate content for dedup test";

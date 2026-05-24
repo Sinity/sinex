@@ -12,7 +12,7 @@ use sinex_source_worker::sources::{
 use xtask::sandbox::prelude::*;
 
 #[sinex_test]
-async fn conversation_parsers_declare_required_input_keys(_ctx: TestContext) -> TestResult<()> {
+async fn conversation_parsers_declare_required_input_keys() -> TestResult<()> {
     assert_eq!(
         ClaudeSessionParser.required_input_keys(),
         vec!["/[]/uuid", "/[]/chat_messages"]
@@ -29,9 +29,7 @@ async fn conversation_parsers_declare_required_input_keys(_ctx: TestContext) -> 
 }
 
 #[sinex_test]
-async fn claude_required_conversation_field_removal_blocks_readiness(
-    _ctx: TestContext,
-) -> TestResult<()> {
+async fn claude_required_conversation_field_removal_blocks_readiness() -> TestResult<()> {
     let before = SourceRecordFingerprint::from_json(&serde_json::json!([
         {
             "uuid": "conversation-1",

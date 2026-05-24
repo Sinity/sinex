@@ -8,7 +8,7 @@
 use xtask::sandbox::prelude::*;
 
 #[sinex_test]
-async fn test_fs_descriptor_registered(_ctx: TestContext) -> TestResult<()> {
+async fn test_fs_descriptor_registered() -> TestResult<()> {
     use sinex_primitives::parser::SourceUnitId;
     use sinex_source_worker::registry::SourceUnitRegistry;
 
@@ -42,7 +42,7 @@ async fn test_fs_descriptor_registered(_ctx: TestContext) -> TestResult<()> {
 }
 
 #[sinex_test]
-async fn test_fs_adapter_factory_and_parser_registered(_ctx: TestContext) -> TestResult<()> {
+async fn test_fs_adapter_factory_and_parser_registered() -> TestResult<()> {
     use sinex_primitives::parser::SourceUnitId;
     use sinex_source_worker::dispatch::find_parser_factory;
     use sinex_source_worker::node_factory::find_node_factory;
@@ -64,7 +64,7 @@ async fn test_fs_adapter_factory_and_parser_registered(_ctx: TestContext) -> Tes
 }
 
 #[sinex_test]
-async fn test_fs_binding_uses_content_drop_adapter(_ctx: TestContext) -> TestResult<()> {
+async fn test_fs_binding_uses_content_drop_adapter() -> TestResult<()> {
     let binding = sinex_primitives::proof::source_unit_bindings()
         .find(|binding| binding.source_unit_id == "fs")
         .expect("fs source-unit binding must be registered");
@@ -85,9 +85,7 @@ async fn test_fs_binding_uses_content_drop_adapter(_ctx: TestContext) -> TestRes
 }
 
 #[sinex_test]
-async fn test_fs_source_worker_config_deserializes_as_file_content_drop(
-    _ctx: TestContext,
-) -> TestResult<()> {
+async fn test_fs_source_worker_config_deserializes_as_file_content_drop() -> TestResult<()> {
     use camino::Utf8PathBuf;
     use sinex_node_sdk::parser::{AdapterNodeConfig, FileContentDropConfig};
 

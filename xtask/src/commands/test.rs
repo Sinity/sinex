@@ -208,6 +208,10 @@ pub struct TestCommand {
     #[arg(long = "test", value_name = "TEST_BINARY")]
     pub test_binaries: Vec<String>,
 
+    /// Run only library unit tests (nextest --lib)
+    #[arg(long)]
+    pub lib: bool,
+
     /// Print what would happen
     #[arg(long)]
     pub dry_run: bool,
@@ -514,6 +518,20 @@ impl TestCommand {
         affected::infer_test_binaries_for_test_filter(filter)
     }
 
+    fn effective_lib_target(&self, filter: Option<&str>, test_binaries: &[String]) -> Result<bool> {
+        if self.lib {
+            return Ok(true);
+        }
+        if !self.test_binaries.is_empty() || !test_binaries.is_empty() {
+            return Ok(false);
+        }
+        let Some(filter) = filter else {
+            return Ok(false);
+        };
+
+        affected::infer_lib_target_for_test_filter(filter)
+    }
+
     fn requests_non_fast_scenario_lane(&self) -> bool {
         self.scenario_lanes
             .iter()
@@ -536,6 +554,7 @@ impl TestCommand {
         &self,
         scope: &WorkloadScope,
         test_binaries: &[String],
+        lib_target: bool,
     ) -> Vec<String> {
         let mut args = Vec::new();
 
@@ -571,6 +590,9 @@ impl TestCommand {
         }
         for test_binary in test_binaries {
             args.push(format!("--test={test_binary}"));
+        }
+        if lib_target {
+            args.push("--lib".to_string());
         }
         for package in normalize_packages(&self.exclude_packages) {
             args.push(format!("--exclude={package}"));
@@ -660,6 +682,9 @@ impl TestCommand {
         for test_binary in &self.test_binaries {
             args.push("--test".to_string());
             args.push(test_binary.clone());
+        }
+        if self.lib {
+            args.push("--lib".to_string());
         }
         if let Some(threads) = self.threads {
             args.push(format!("--threads={threads}"));
@@ -1132,6 +1157,9 @@ impl XtaskCommand for TestCommand {
                         args.push("--test".to_string());
                         args.push(test_binary.clone());
                     }
+                    if self.lib {
+                        args.push("--lib".to_string());
+                    }
                     if let Some(threads) = self.threads {
                         args.push(format!("--threads={threads}"));
                     }
@@ -1150,9 +1178,12 @@ impl XtaskCommand for TestCommand {
                         self.resolve_execution_plan(None, self.filter.as_deref(), &[])?;
                     let effective_test_binaries =
                         self.effective_test_binaries(self.filter.as_deref())?;
+                    let effective_lib_target = self
+                        .effective_lib_target(self.filter.as_deref(), &effective_test_binaries)?;
                     let coordination_args = self.semantic_invocation_args(
                         &execution_plan.workload_scope,
                         &effective_test_binaries,
+                        effective_lib_target,
                     );
                     return crate::coordinator::coordinate_and_spawn_with_scope(
                         "test",
@@ -1192,14 +1223,19 @@ impl XtaskCommand for TestCommand {
                 merge_nextest_filters(self.filter.as_deref(), scenario_selection.filter.as_deref());
             let effective_test_binaries =
                 self.effective_test_binaries(effective_filter.as_deref())?;
+            let effective_lib_target =
+                self.effective_lib_target(effective_filter.as_deref(), &effective_test_binaries)?;
             let execution_plan = self.resolve_execution_plan(
                 Some(ctx),
                 effective_filter.as_deref(),
                 &scenario_selection.packages,
             )?;
             let workload_scope = execution_plan.workload_scope.clone();
-            let coordination_args =
-                self.semantic_invocation_args(&workload_scope, &effective_test_binaries);
+            let coordination_args = self.semantic_invocation_args(
+                &workload_scope,
+                &effective_test_binaries,
+                effective_lib_target,
+            );
             ctx.record_coordination_fingerprint("test", &coordination_args);
             ctx.record_invocation_args(&coordination_args);
 
@@ -1221,6 +1257,7 @@ impl XtaskCommand for TestCommand {
                     "runner_packages": execution_plan.runner_packages,
                     "excluded_packages": execution_plan.excluded_packages,
                     "test_binaries": effective_test_binaries,
+                    "lib": effective_lib_target,
                     "filter": effective_filter,
                 }))
                 .with_duration(ctx.elapsed()));
@@ -1292,6 +1329,8 @@ impl XtaskCommand for TestCommand {
         let effective_filter =
             merge_nextest_filters(self.filter.as_deref(), scenario_selection.filter.as_deref());
         let effective_test_binaries = self.effective_test_binaries(effective_filter.as_deref())?;
+        let effective_lib_target =
+            self.effective_lib_target(effective_filter.as_deref(), &effective_test_binaries)?;
         let execution_plan = self.resolve_execution_plan(
             Some(ctx),
             effective_filter.as_deref(),
@@ -1304,8 +1343,11 @@ impl XtaskCommand for TestCommand {
             &effective_test_binaries,
         )?;
         let workload_scope = execution_plan.workload_scope.clone();
-        let coordination_args =
-            self.semantic_invocation_args(&workload_scope, &effective_test_binaries);
+        let coordination_args = self.semantic_invocation_args(
+            &workload_scope,
+            &effective_test_binaries,
+            effective_lib_target,
+        );
         ctx.record_coordination_fingerprint("test", &coordination_args);
         ctx.record_invocation_args(&coordination_args);
 
@@ -1324,6 +1366,9 @@ impl XtaskCommand for TestCommand {
             }
             for test_binary in &effective_test_binaries {
                 cmd = cmd.args(["--test", test_binary]);
+            }
+            if effective_lib_target {
+                cmd = cmd.arg("--lib");
             }
             if let Some(filter) = &effective_filter {
                 cmd = cmd.args(["-E", filter]);
@@ -1385,6 +1430,9 @@ impl XtaskCommand for TestCommand {
         for test_binary in &effective_test_binaries {
             runner.add_arg("--test");
             runner.add_arg(test_binary);
+        }
+        if effective_lib_target {
+            runner.add_arg("--lib");
         }
         if let Some(ref filter) = effective_filter {
             runner.add_arg("-E");
@@ -1685,7 +1733,7 @@ mod tests {
             ..Default::default()
         };
 
-        let args = command.semantic_invocation_args(&WorkloadScope::Workspace, &[]);
+        let args = command.semantic_invocation_args(&WorkloadScope::Workspace, &[], false);
         assert!(args.contains(&"--heavy".to_string()));
 
         // The thread cap is min(available_parallelism, HEAVY_TEST_THREAD_CAP).
@@ -1717,11 +1765,30 @@ mod tests {
         let args = command.semantic_invocation_args(
             &WorkloadScope::Packages(vec!["sinex-e2e-tests".to_string()]),
             &["large_payload_test".to_string()],
+            false,
         );
 
         assert!(
             args.contains(&"--test=large_payload_test".to_string()),
             "test binary selector should be part of the coordination identity: {args:?}"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_semantic_invocation_args_include_lib_target()
+    -> ::xtask::sandbox::TestResult<()> {
+        let command = TestCommand::default();
+
+        let args = command.semantic_invocation_args(
+            &WorkloadScope::Packages(vec!["sinex-node-sdk".to_string()]),
+            &[],
+            true,
+        );
+
+        assert!(
+            args.contains(&"--lib".to_string()),
+            "library target selector should be part of the coordination identity: {args:?}"
         );
         Ok(())
     }
@@ -1734,7 +1801,7 @@ mod tests {
             ..Default::default()
         };
 
-        let args = command.semantic_invocation_args(&WorkloadScope::Workspace, &[]);
+        let args = command.semantic_invocation_args(&WorkloadScope::Workspace, &[], false);
         assert!(
             args.contains(&"--exclude=sinex-e2e-tests".to_string()),
             "package excludes must be part of coordination identity: {args:?}"

@@ -21,7 +21,7 @@ fn lines(result: &sinex_node_sdk::AppendOnlyFilePollResult) -> Vec<&str> {
 }
 
 #[sinex_test]
-async fn poll_preserves_partial_trailing_line(_ctx: TestContext) -> TestResult<()> {
+async fn poll_preserves_partial_trailing_line() -> TestResult<()> {
     let dir = tempdir()?;
     let path = utf8_path(&dir.path().join("history.log"));
 
@@ -62,7 +62,7 @@ async fn poll_preserves_partial_trailing_line(_ctx: TestContext) -> TestResult<(
 }
 
 #[sinex_test]
-async fn poll_rejects_invalid_utf8_without_checkpoint(_ctx: TestContext) -> TestResult<()> {
+async fn poll_rejects_invalid_utf8_without_checkpoint() -> TestResult<()> {
     let dir = tempdir()?;
     let path = utf8_path(&dir.path().join("history.log"));
 
@@ -86,7 +86,7 @@ async fn poll_rejects_invalid_utf8_without_checkpoint(_ctx: TestContext) -> Test
 }
 
 #[sinex_test]
-async fn record_source_gap_fills_from_record_checkpoint(_ctx: TestContext) -> TestResult<()> {
+async fn record_source_gap_fills_from_record_checkpoint() -> TestResult<()> {
     let dir = tempdir()?;
     let path = utf8_path(&dir.path().join("history.log"));
 
@@ -125,7 +125,7 @@ async fn record_source_gap_fills_from_record_checkpoint(_ctx: TestContext) -> Te
 
 #[cfg(unix)]
 #[sinex_test]
-async fn poll_detects_rotation_and_restarts_from_new_file(_ctx: TestContext) -> TestResult<()> {
+async fn poll_detects_rotation_and_restarts_from_new_file() -> TestResult<()> {
     let dir = tempdir()?;
     let path = utf8_path(&dir.path().join("history.log"));
     let rotated = dir.path().join("history.log.1");
@@ -150,7 +150,7 @@ async fn poll_detects_rotation_and_restarts_from_new_file(_ctx: TestContext) -> 
 
 #[cfg(unix)]
 #[sinex_test]
-async fn poll_advances_to_end_after_same_inode_truncation(_ctx: TestContext) -> TestResult<()> {
+async fn poll_advances_to_end_after_same_inode_truncation() -> TestResult<()> {
     let dir = tempdir()?;
     let path = utf8_path(&dir.path().join("history.log"));
 
@@ -178,7 +178,7 @@ async fn poll_advances_to_end_after_same_inode_truncation(_ctx: TestContext) -> 
 
 #[cfg(not(unix))]
 #[sinex_test]
-async fn poll_restarts_from_beginning_after_truncation(_ctx: TestContext) -> TestResult<()> {
+async fn poll_restarts_from_beginning_after_truncation() -> TestResult<()> {
     let dir = tempdir()?;
     let path = utf8_path(&dir.path().join("history.log"));
 

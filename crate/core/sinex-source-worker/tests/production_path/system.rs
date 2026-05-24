@@ -30,7 +30,7 @@ const UDEV_FIXTURE: &[u8] = b"/sys/bus/usb/devices/1-1";
 // ---------------------------------------------------------------------------
 
 #[sinex_test]
-async fn test_system_journald_initial_ingestion(_ctx: TestContext) -> TestResult<()> {
+async fn test_system_journald_initial_ingestion() -> TestResult<()> {
     super::obligations::initial_ingestion::run(
         "system.journald",
         super::AdapterKind::Journal,
@@ -46,7 +46,7 @@ async fn test_system_journald_initial_ingestion(_ctx: TestContext) -> TestResult
 // ---------------------------------------------------------------------------
 
 #[sinex_test]
-async fn test_system_systemd_initial_ingestion(_ctx: TestContext) -> TestResult<()> {
+async fn test_system_systemd_initial_ingestion() -> TestResult<()> {
     super::obligations::initial_ingestion::run(
         "system.systemd",
         super::AdapterKind::Journal,
@@ -62,7 +62,7 @@ async fn test_system_systemd_initial_ingestion(_ctx: TestContext) -> TestResult<
 // ---------------------------------------------------------------------------
 
 #[sinex_test]
-async fn test_system_dbus_initial_ingestion(_ctx: TestContext) -> TestResult<()> {
+async fn test_system_dbus_initial_ingestion() -> TestResult<()> {
     // The dbus parser reads interface/member from record metadata. In dispatch
     // mode, record metadata is populated from the adapter. For the bare-bytes
     // dispatch path, we feed the raw body bytes; the parser falls back to
@@ -82,7 +82,7 @@ async fn test_system_dbus_initial_ingestion(_ctx: TestContext) -> TestResult<()>
 // ---------------------------------------------------------------------------
 
 #[sinex_test]
-async fn test_system_udev_initial_ingestion(_ctx: TestContext) -> TestResult<()> {
+async fn test_system_udev_initial_ingestion() -> TestResult<()> {
     super::obligations::initial_ingestion::run(
         "system.udev",
         super::AdapterKind::FileDrop,
@@ -98,7 +98,7 @@ async fn test_system_udev_initial_ingestion(_ctx: TestContext) -> TestResult<()>
 // ---------------------------------------------------------------------------
 
 #[sinex_test]
-async fn test_system_monitor_descriptor_registered(_ctx: TestContext) -> TestResult<()> {
+async fn test_system_monitor_descriptor_registered() -> TestResult<()> {
     // system.monitor is a fire-once lifecycle event, not dispatch-driven.
     // Verify the source unit descriptor is in the inventory.
     use sinex_primitives::parser::SourceUnitId;
@@ -122,7 +122,7 @@ async fn test_system_monitor_descriptor_registered(_ctx: TestContext) -> TestRes
 
 // Verify the node factory for system.monitor is registered.
 #[sinex_test]
-async fn test_system_monitor_factory_registered(_ctx: TestContext) -> TestResult<()> {
+async fn test_system_monitor_factory_registered() -> TestResult<()> {
     use sinex_primitives::parser::SourceUnitId;
     use sinex_source_worker::node_factory::find_node_factory;
 

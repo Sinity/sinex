@@ -46,7 +46,7 @@ const EVENT_TYPE: &str = "note.observed";
 
 fn wikilink_re() -> &'static Result<Regex, regex::Error> {
     static RE: OnceLock<Result<Regex, regex::Error>> = OnceLock::new();
-    RE.get_or_init(|| Regex::new(r"\[\[([^\]|#]+?)(?:\|[^\]]*)?]]"))
+    RE.get_or_init(|| Regex::new(r"\[\[([^\]|#]+)(?:#[^\]|]*)?(?:\|[^\]]*)?]]"))
 }
 
 fn body_tag_re() -> &'static Result<Regex, regex::Error> {

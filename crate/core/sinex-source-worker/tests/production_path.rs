@@ -69,17 +69,24 @@ pub async fn _run_case(
     obligation_names: &[&str],
 ) -> Vec<String> {
     let mut failures = Vec::new();
+    let mut initial_ingestion_verified = false;
     for &obligation in obligation_names {
-        let result = _run_obligation(
-            obligation,
-            source_unit_id,
-            adapter_kind,
-            fixture_data,
-            expected_event_types,
-        )
-        .await;
+        let result = if obligation == "privacy" && initial_ingestion_verified {
+            obligations::privacy::run_redaction_only(source_unit_id).await
+        } else {
+            _run_obligation(
+                obligation,
+                source_unit_id,
+                adapter_kind,
+                fixture_data,
+                expected_event_types,
+            )
+            .await
+        };
         if let Err(e) = result {
             failures.push(format!("[{source_unit_id}] obligation '{obligation}': {e}"));
+        } else if obligation == "initial_ingestion" {
+            initial_ingestion_verified = true;
         }
     }
     failures
@@ -169,17 +176,24 @@ async fn _run_case_with_record_fixture(
     obligation_names: &[&str],
 ) -> Vec<String> {
     let mut failures = Vec::new();
+    let mut initial_ingestion_verified = false;
     for &obligation in obligation_names {
-        let result = _run_record_fixture_obligation(
-            obligation,
-            source_unit_id,
-            adapter_kind,
-            fixture.clone(),
-            expected_event_types,
-        )
-        .await;
+        let result = if obligation == "privacy" && initial_ingestion_verified {
+            run_record_fixture_privacy_redaction_only(source_unit_id, fixture.clone()).await
+        } else {
+            _run_record_fixture_obligation(
+                obligation,
+                source_unit_id,
+                adapter_kind,
+                fixture.clone(),
+                expected_event_types,
+            )
+            .await
+        };
         if let Err(e) = result {
             failures.push(format!("[{source_unit_id}] obligation '{obligation}': {e}"));
+        } else if obligation == "initial_ingestion" {
+            initial_ingestion_verified = true;
         }
     }
     failures
@@ -365,11 +379,18 @@ async fn run_record_fixture_privacy(
     fixture: RecordFixtureSpec<'_>,
     expected_event_types: &[&str],
 ) -> Result<(), String> {
-    use sinex_primitives::privacy::{self, ProcessingContext};
-
     run_record_fixture_initial_ingestion(source_unit_id, fixture.clone(), expected_event_types)
         .await
         .map_err(|e| format!("privacy/clean-path: {e}"))?;
+
+    run_record_fixture_privacy_redaction_only(source_unit_id, fixture).await
+}
+
+async fn run_record_fixture_privacy_redaction_only(
+    source_unit_id: &str,
+    fixture: RecordFixtureSpec<'_>,
+) -> Result<(), String> {
+    use sinex_primitives::privacy::{self, ProcessingContext};
 
     let secret_text = "export TOKEN=ghp_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
     let engine_result = privacy::engine()
@@ -682,9 +703,7 @@ mod coverage_matrix {
     }
 
     #[sinex_test]
-    async fn source_worker_smoke_matrix_covers_every_registered_factory(
-        _ctx: TestContext,
-    ) -> TestResult<()> {
+    async fn source_worker_smoke_matrix_covers_every_registered_factory() -> TestResult<()> {
         let factory_ids: BTreeSet<String> = registered_node_factory_ids()
             .into_iter()
             .map(|id| id.as_str().to_string())
@@ -710,9 +729,7 @@ mod coverage_matrix {
     }
 
     #[sinex_test]
-    async fn source_worker_smoke_matrix_entries_are_actionable(
-        _ctx: TestContext,
-    ) -> TestResult<()> {
+    async fn source_worker_smoke_matrix_entries_are_actionable() -> TestResult<()> {
         let registry = SourceUnitRegistry::from_inventory();
         let mut seen = BTreeMap::new();
 

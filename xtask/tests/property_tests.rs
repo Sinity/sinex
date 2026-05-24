@@ -11,7 +11,7 @@ use sinex_primitives::temporal;
 use xtask::command::CommandResult;
 use xtask::history::{HistoryDb, InvocationQuery, InvocationStatus};
 use xtask::output::{OutputFormat, Status, StructuredError};
-use xtask::sandbox::sinex_proptest;
+use xtask::sandbox::{sinex_proptest, sinex_test};
 
 // ============================================================================
 // Strategy Generators
@@ -437,125 +437,130 @@ sinex_proptest! {
 // HistoryDb Roundtrip Invariants
 // ============================================================================
 
-sinex_proptest! {
-    /// Any finished invocation can be retrieved by ID from the recent list.
-    ///
-    /// This is the core storage roundtrip guarantee: whatever was written
-    /// to the history DB must be queryable back. If this invariant breaks,
-    /// all history-based commands (`xtask history list`, `xtask status`, etc.)
-    /// would show incomplete or stale data.
-    ///
-    /// Uses `.expect()` for DB setup — proptest catches panics as test failures,
-    /// so a failed DB open surfaces as a falsification rather than a broken harness.
-    fn historydb_finished_invocation_is_retrievable(
-        command in prop_oneof![
-            Just("check"), Just("test"), Just("build"), Just("fix")
-        ],
-        exit_code in 0i32..=1i32,
-        duration_secs in 0.1f64..=60.0f64
-    ) -> TestResult<()> {
-        let db = HistoryDb::open_in_memory().expect("in-memory DB open must succeed");
+/// Any finished invocation can be retrieved by ID from the recent list.
+///
+/// This is the core storage roundtrip guarantee: whatever was written to the
+/// history DB must be queryable back. The invariant is finite over command
+/// family, success/failure status, and representative durations, so a boundary
+/// matrix preserves the behavior proof without opening a fresh SQLite database
+/// for dozens of randomized proptest cases.
+#[sinex_test]
+async fn historydb_finished_invocation_is_retrievable() -> xtask::sandbox::TestResult<()> {
+    for command in ["check", "test", "build", "fix"] {
+        for (exit_code, status) in [
+            (0, InvocationStatus::Success),
+            (1, InvocationStatus::Failed),
+        ] {
+            for duration_secs in [0.1, 1.0, 60.0] {
+                let db = HistoryDb::open_in_memory().expect("in-memory DB open must succeed");
 
-        let inv_id = db.start_invocation(command, None, None, None)
-            .expect("start_invocation must succeed");
-        let status = if exit_code == 0 {
-            InvocationStatus::Success
-        } else {
-            InvocationStatus::Failed
-        };
-        db.finish_invocation(inv_id, status, Some(exit_code), duration_secs)
-            .expect("finish_invocation must succeed");
+                let inv_id = db
+                    .start_invocation(command, None, None, None)
+                    .expect("start_invocation must succeed");
+                db.finish_invocation(inv_id, status.clone(), Some(exit_code), duration_secs)
+                    .expect("finish_invocation must succeed");
 
-        let exact = db
-            .get_invocation(inv_id)
-            .expect("get_invocation must succeed")
-            .expect("written invocation must exist");
-        let recent = InvocationQuery::new()
-            .for_invocation(inv_id)
-            .run(&db)
-            .expect("InvocationQuery::for_invocation must succeed");
+                let exact = db
+                    .get_invocation(inv_id)
+                    .expect("get_invocation must succeed")
+                    .expect("written invocation must exist");
+                let recent = InvocationQuery::new()
+                    .for_invocation(inv_id)
+                    .run(&db)
+                    .expect("InvocationQuery::for_invocation must succeed");
 
-        prop_assert_eq!(exact.id, inv_id, "exact lookup must preserve invocation id");
-        prop_assert_eq!(recent.len(), 1, "exact query must only return the requested invocation");
-        prop_assert_eq!(&recent[0].command, &command, "command must round-trip");
-        prop_assert_eq!(recent[0].exit_code, Some(exit_code), "exit_code must round-trip");
-
-        Ok(())
-    }
-
-    /// get_recent_filtered never returns more entries than the requested limit.
-    ///
-    /// The limit parameter is a hard upper bound, not a hint. Violating this
-    /// would overflow agent-facing JSON payloads and break UX assumptions
-    /// (e.g. `xtask history list --limit 5` returning 20 entries).
-    #[cases(32)]
-    fn historydb_recent_respects_limit(
-        write_count in 5usize..=15usize,
-        query_limit in 1usize..=4usize
-    ) -> TestResult<()> {
-        // write_count (5–15) > query_limit (1–4) guarantees the cap is always exercised
-        let db = HistoryDb::open_in_memory().expect("in-memory DB open must succeed");
-
-        for _ in 0..write_count {
-            let id = db.start_invocation("check", None, None, None)
-                .expect("start_invocation must succeed");
-            db.finish_invocation(id, InvocationStatus::Success, Some(0), 1.0)
-                .expect("finish_invocation must succeed");
+                assert_eq!(exact.id, inv_id, "exact lookup must preserve invocation id");
+                assert_eq!(
+                    recent.len(),
+                    1,
+                    "exact query must only return the requested invocation"
+                );
+                assert_eq!(&recent[0].command, command, "command must round-trip");
+                assert_eq!(
+                    recent[0].exit_code,
+                    Some(exit_code),
+                    "exit_code must round-trip"
+                );
+            }
         }
-
-        let results = InvocationQuery::new()
-            .limit(query_limit)
-            .run(&db)
-            .expect("InvocationQuery::limit must succeed");
-
-        prop_assert!(
-            results.len() <= query_limit,
-            "get_recent_filtered({}) returned {} entries — must be ≤ {}",
-            query_limit, results.len(), query_limit
-        );
-
-        Ok(())
     }
 
-    /// Offset pagination produces non-overlapping pages.
-    ///
-    /// Page 0 and page 1 (same page size) must not share any invocation IDs.
-    /// Broken pagination would cause `xtask history list --offset N` to show
-    /// duplicate entries or skip entries silently.
-    #[cases(32)]
-    fn historydb_offset_pages_are_disjoint(
-        total in 6usize..=12usize,
-        page_size in 2usize..=3usize
-    ) -> TestResult<()> {
-        let db = HistoryDb::open_in_memory().expect("in-memory DB open must succeed");
+    Ok(())
+}
 
-        for _ in 0..total {
-            let id = db.start_invocation("check", None, None, None)
-                .expect("start_invocation must succeed");
-            db.finish_invocation(id, InvocationStatus::Success, Some(0), 0.5)
-                .expect("finish_invocation must succeed");
+/// get_recent_filtered never returns more entries than the requested limit.
+///
+/// This is a bounded pagination contract, not a randomized parser surface. A
+/// fixed boundary matrix exercises the cap without paying repeated proptest DB
+/// setup cost on every local and CI run.
+#[sinex_test]
+async fn historydb_recent_respects_limit() -> xtask::sandbox::TestResult<()> {
+    for write_count in [5usize, 6, 15] {
+        for query_limit in [1usize, 2, 4] {
+            let db = HistoryDb::open_in_memory().expect("in-memory DB open must succeed");
+
+            for _ in 0..write_count {
+                let id = db
+                    .start_invocation("check", None, None, None)
+                    .expect("start_invocation must succeed");
+                db.finish_invocation(id, InvocationStatus::Success, Some(0), 1.0)
+                    .expect("finish_invocation must succeed");
+            }
+
+            let results = InvocationQuery::new()
+                .limit(query_limit)
+                .run(&db)
+                .expect("InvocationQuery::limit must succeed");
+
+            assert!(
+                results.len() <= query_limit,
+                "get_recent_filtered({query_limit}) returned {} entries; must be <= {query_limit}",
+                results.len()
+            );
         }
-
-        let page0 = InvocationQuery::new()
-            .limit(page_size)
-            .offset(0)
-            .run(&db)
-            .expect("page0 query must succeed");
-        let page1 = InvocationQuery::new()
-            .limit(page_size)
-            .offset(page_size)
-            .run(&db)
-            .expect("page1 query must succeed");
-
-        let ids0: std::collections::HashSet<i64> = page0.iter().map(|i| i.id).collect();
-        let ids1: std::collections::HashSet<i64> = page1.iter().map(|i| i.id).collect();
-
-        let overlap: Vec<_> = ids0.intersection(&ids1).collect();
-        prop_assert!(
-            overlap.is_empty(),
-            "pages 0 and 1 must not share entries, but shared: {:?}", overlap
-        );
-
-        Ok(())
     }
+
+    Ok(())
+}
+
+/// Offset pagination produces non-overlapping pages.
+///
+/// Page 0 and page 1 with the same page size must not share invocation IDs.
+#[sinex_test]
+async fn historydb_offset_pages_are_disjoint() -> xtask::sandbox::TestResult<()> {
+    for total in [6usize, 7, 12] {
+        for page_size in [2usize, 3] {
+            let db = HistoryDb::open_in_memory().expect("in-memory DB open must succeed");
+
+            for _ in 0..total {
+                let id = db
+                    .start_invocation("check", None, None, None)
+                    .expect("start_invocation must succeed");
+                db.finish_invocation(id, InvocationStatus::Success, Some(0), 0.5)
+                    .expect("finish_invocation must succeed");
+            }
+
+            let page0 = InvocationQuery::new()
+                .limit(page_size)
+                .offset(0)
+                .run(&db)
+                .expect("page0 query must succeed");
+            let page1 = InvocationQuery::new()
+                .limit(page_size)
+                .offset(page_size)
+                .run(&db)
+                .expect("page1 query must succeed");
+
+            let ids0: std::collections::HashSet<i64> = page0.iter().map(|i| i.id).collect();
+            let ids1: std::collections::HashSet<i64> = page1.iter().map(|i| i.id).collect();
+
+            let overlap: Vec<_> = ids0.intersection(&ids1).collect();
+            assert!(
+                overlap.is_empty(),
+                "pages 0 and 1 must not share entries, but shared: {overlap:?}"
+            );
+        }
+    }
+
+    Ok(())
 }

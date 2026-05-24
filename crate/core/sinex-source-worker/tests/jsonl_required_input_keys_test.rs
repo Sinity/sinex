@@ -9,7 +9,7 @@ use sinex_source_worker::sources::social::{WykopEntryCommentParser, WykopEntryPa
 use xtask::sandbox::prelude::*;
 
 #[sinex_test]
-async fn wykop_jsonl_parsers_declare_required_input_keys(_ctx: TestContext) -> TestResult<()> {
+async fn wykop_jsonl_parsers_declare_required_input_keys() -> TestResult<()> {
     assert_eq!(
         WykopEntryParser.required_input_keys(),
         vec!["/[]/entry_id", "/[]/entry_created_at"]
@@ -22,9 +22,7 @@ async fn wykop_jsonl_parsers_declare_required_input_keys(_ctx: TestContext) -> T
 }
 
 #[sinex_test]
-async fn wykop_entry_required_timestamp_removal_blocks_readiness(
-    _ctx: TestContext,
-) -> TestResult<()> {
+async fn wykop_entry_required_timestamp_removal_blocks_readiness() -> TestResult<()> {
     let before = SourceRecordFingerprint::from_jsonl_bytes(
         br#"{"entry_id":76315507,"entry_created_at":"2024-05-18 06:53:25","entry_content":"x"}
 "#,
@@ -49,7 +47,7 @@ async fn wykop_entry_required_timestamp_removal_blocks_readiness(
 }
 
 #[sinex_test]
-async fn wykop_comment_required_id_removal_blocks_readiness(_ctx: TestContext) -> TestResult<()> {
+async fn wykop_comment_required_id_removal_blocks_readiness() -> TestResult<()> {
     let before = SourceRecordFingerprint::from_jsonl_bytes(
         br#"{"comment_id":279391731,"comment_created_at":"2025-02-16 08:21:58","entry_id":80205363}
 "#,
