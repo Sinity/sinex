@@ -756,7 +756,8 @@ impl TestCommand {
             return Ok(None);
         }
 
-        let requested = self.ephemeral_postgres || self.test_postgres_auto_requested();
+        let auto_requested = self.test_postgres_auto_requested();
+        let requested = self.ephemeral_postgres || auto_requested;
         if !requested {
             return Ok(None);
         }
@@ -764,17 +765,66 @@ impl TestCommand {
         let scenario_selection = self.resolve_scenario_selection(ctx)?;
         let effective_filter =
             merge_nextest_filters(self.filter.as_deref(), scenario_selection.filter.as_deref());
+        let effective_test_binaries = self.effective_test_binaries(effective_filter.as_deref())?;
+        let effective_lib_target =
+            self.effective_lib_target(effective_filter.as_deref(), &effective_test_binaries)?;
         let execution_plan = self.resolve_execution_plan(
             Some(ctx),
             effective_filter.as_deref(),
             &scenario_selection.packages,
         )?;
 
+        if self.should_skip_auto_ephemeral_postgres_for_exact_target(
+            auto_requested,
+            &execution_plan,
+            effective_filter.as_deref(),
+            &effective_test_binaries,
+            effective_lib_target,
+        ) {
+            return Ok(None);
+        }
+
         if self.ephemeral_postgres || test_database_required_for_plan(&execution_plan) {
             Ok(Some(execution_plan))
         } else {
             Ok(None)
         }
+    }
+
+    fn should_skip_auto_ephemeral_postgres_for_exact_target(
+        &self,
+        auto_requested: bool,
+        execution_plan: &NextestExecutionPlan,
+        effective_filter: Option<&str>,
+        effective_test_binaries: &[String],
+        effective_lib_target: bool,
+    ) -> bool {
+        auto_requested
+            && !self.ephemeral_postgres
+            && self.is_exact_targeted_test(
+                execution_plan,
+                effective_filter,
+                effective_test_binaries,
+                effective_lib_target,
+            )
+    }
+
+    fn is_exact_targeted_test(
+        &self,
+        execution_plan: &NextestExecutionPlan,
+        effective_filter: Option<&str>,
+        effective_test_binaries: &[String],
+        effective_lib_target: bool,
+    ) -> bool {
+        if execution_plan.runner_packages.len() != 1 {
+            return false;
+        }
+        if !effective_lib_target && effective_test_binaries.is_empty() {
+            return false;
+        }
+        effective_filter
+            .and_then(affected::simple_test_name_term_count)
+            .is_some()
     }
 
     async fn execute_with_ephemeral_postgres(
@@ -1896,6 +1946,60 @@ mod tests {
                 true,
             ),
             None
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_postgres_auto_skips_exact_targeted_runs() -> ::xtask::sandbox::TestResult<()> {
+        let command = TestCommand {
+            packages: vec!["sinex-node-sdk".to_string()],
+            filter: Some("test(sqlite_harness_captures_snapshot_evidence)".to_string()),
+            ..Default::default()
+        };
+        let plan = NextestExecutionPlan {
+            runner_packages: vec!["sinex-node-sdk".to_string()],
+            excluded_packages: Vec::new(),
+            workload_scope: WorkloadScope::Packages(vec!["sinex-node-sdk".to_string()]),
+        };
+
+        assert!(
+            command.should_skip_auto_ephemeral_postgres_for_exact_target(
+                true,
+                &plan,
+                command.filter.as_deref(),
+                &[],
+                true,
+            ),
+            "auto ephemeral Postgres should not wrap exact targeted lib tests"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_explicit_ephemeral_postgres_keeps_exact_targeted_runs()
+    -> ::xtask::sandbox::TestResult<()> {
+        let command = TestCommand {
+            ephemeral_postgres: true,
+            packages: vec!["sinex-node-sdk".to_string()],
+            filter: Some("test(sqlite_harness_captures_snapshot_evidence)".to_string()),
+            ..Default::default()
+        };
+        let plan = NextestExecutionPlan {
+            runner_packages: vec!["sinex-node-sdk".to_string()],
+            excluded_packages: Vec::new(),
+            workload_scope: WorkloadScope::Packages(vec!["sinex-node-sdk".to_string()]),
+        };
+
+        assert!(
+            !command.should_skip_auto_ephemeral_postgres_for_exact_target(
+                true,
+                &plan,
+                command.filter.as_deref(),
+                &[],
+                true,
+            ),
+            "explicit --ephemeral-postgres must still force the wrapper"
         );
         Ok(())
     }
