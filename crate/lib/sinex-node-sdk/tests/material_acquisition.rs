@@ -1260,6 +1260,80 @@ async fn material_acquisition_cancel_mid_slice(ctx: TestContext) -> Result<()> {
     Ok(())
 }
 
+/// Stage helpers must close already-started materials on capture failure.
+#[sinex_test]
+async fn stage_material_append_failure_does_not_leave_sensing_material(
+    ctx: TestContext,
+) -> Result<()> {
+    let work_dir = tempfile::tempdir()?;
+    let (ctx, _nats, nats_client, mut ingest_handle) =
+        setup_material_ingestd(ctx, Some(work_dir.path().to_path_buf()), |_| {}).await?;
+
+    let manager = material_manager(&ctx, nats_client.clone(), "stage-source");
+    let source_identifier = "oversized-stage-material";
+    let oversized_payload = vec![0u8; 600 * 1024];
+
+    let error = stage_material(
+        &manager,
+        source_identifier,
+        &oversized_payload,
+        "oversized append",
+        None,
+    )
+    .await
+    .expect_err("oversized material append should fail");
+    assert!(
+        error.to_string().contains("source_material_id"),
+        "stage errors should preserve the affected material id: {error}"
+    );
+
+    ctx.timing()
+        .wait_for_condition(
+            || {
+                let pool = ctx.pool.clone();
+                async move {
+                    let status = sqlx::query_scalar!(
+                        r#"
+                        SELECT status
+                        FROM raw.source_material_registry
+                        WHERE metadata->>'logical_source_identifier' = $1
+                        ORDER BY staged_at DESC
+                        LIMIT 1
+                        "#,
+                        source_identifier
+                    )
+                    .fetch_optional(&pool)
+                    .await?;
+
+                    Ok::<bool, sqlx::Error>(status.as_deref() == Some(material_status::FAILED))
+                }
+            },
+            DEFAULT_WAIT_SECS,
+        )
+        .await?;
+
+    let sensing_count: Option<i64> = sqlx::query_scalar!(
+        r#"
+        SELECT COUNT(*)
+        FROM raw.source_material_registry
+        WHERE metadata->>'logical_source_identifier' = $1
+          AND status = $2
+        "#,
+        source_identifier,
+        material_status::SENSING
+    )
+    .fetch_one(&ctx.pool)
+    .await?;
+    assert_eq!(
+        sensing_count.unwrap_or_default(),
+        0,
+        "failed stage helper capture should not leave sensing materials behind"
+    );
+
+    ingest_handle.stop().await?;
+    Ok(())
+}
+
 /// Test out-of-order slice handling
 #[sinex_test(timeout = 60)]
 async fn material_acquisition_out_of_order_slices(ctx: TestContext) -> Result<()> {
