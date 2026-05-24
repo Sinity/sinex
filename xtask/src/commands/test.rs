@@ -577,7 +577,7 @@ impl TestCommand {
         let test_terms = effective_filter.and_then(affected::simple_test_name_term_count)?;
         let requested_threads = self.effective_threads().unwrap_or(test_terms);
         let concurrent_tests = test_terms.min(requested_threads.max(1)).max(1);
-        Some((concurrent_tests * 2).clamp(4, 16))
+        Some((concurrent_tests * 2).clamp(2, 16))
     }
 
     fn semantic_invocation_args(
@@ -1853,6 +1853,10 @@ mod tests {
                 true,
             ),
             Some(4)
+        );
+        assert_eq!(
+            command.narrow_test_db_pool_size(&plan, Some("test(one)"), &[], true),
+            Some(2)
         );
 
         assert_eq!(
