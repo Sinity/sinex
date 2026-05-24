@@ -189,6 +189,12 @@ impl IngestService {
         }
 
         let observer = Self::init_observer(&nats_client);
+        if let Err(error) = observer.prime().await {
+            warn!(
+                %error,
+                "Failed to prime ingestd self-observation materializer; telemetry events may retry before the source material is registered"
+            );
+        }
 
         let service = Self {
             config: config.clone(),
