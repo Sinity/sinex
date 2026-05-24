@@ -162,6 +162,14 @@ pub fn infer_lib_target_for_test_filter(filter: &str) -> Result<bool> {
     infer_lib_target_for_test_filter_in(&repo_root, filter)
 }
 
+/// Count simple `test(name)` terms in a nextest filter.
+///
+/// Returns `None` for complex filters where xtask deliberately should not infer
+/// exact test shape.
+pub fn simple_test_name_term_count(filter: &str) -> Option<usize> {
+    extract_simple_test_name_terms(filter).map(|terms| terms.len())
+}
+
 fn infer_packages_for_test_filter_in(repo_root: &Path, filter: &str) -> Result<Vec<String>> {
     let Some(test_names) = extract_simple_test_name_terms(filter) else {
         return Ok(Vec::new());
@@ -972,6 +980,17 @@ mod tests {
             repo.path(),
             "test(inline_unit_test) | test(command_catalog_exposes_core_public_surface)",
         )?);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_simple_test_name_term_count_rejects_complex_filters() -> TestResult<()> {
+        assert_eq!(
+            simple_test_name_term_count("test(one) | test(two)"),
+            Some(2)
+        );
+        assert_eq!(simple_test_name_term_count("!test(one)"), None);
+        assert_eq!(simple_test_name_term_count("package(foo)"), None);
         Ok(())
     }
 
