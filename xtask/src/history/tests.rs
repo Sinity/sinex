@@ -724,6 +724,8 @@ pub struct TestSuiteAnalysis {
     pub failure_summary: Vec<PackageFailureSummary>,
     /// Host-pressure context for timing-sensitive failures in this run.
     pub host_pressure: Option<HostPressureFailureClassification>,
+    /// Invocation elapsed time compared with summed test-body duration.
+    pub run_overhead: Option<TestRunOverhead>,
     /// Total counts
     pub total_passed: usize,
     pub total_failed: usize,
@@ -732,6 +734,16 @@ pub struct TestSuiteAnalysis {
     /// Invocation metadata
     pub invocation_id: i64,
     pub started_at: String,
+}
+
+/// Test-run overhead that is outside recorded test-body execution time.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct TestRunOverhead {
+    pub invocation_duration_secs: f64,
+    pub test_body_duration_secs: f64,
+    pub non_test_overhead_secs: f64,
+    pub test_body_ratio: f64,
+    pub classification: &'static str,
 }
 
 /// Host-pressure context for interpreting timing-sensitive test failures.
@@ -743,6 +755,36 @@ pub struct HostPressureFailureClassification {
     pub host_io_pressure_full_avg10_max: Option<f64>,
     pub host_memory_pressure_full_avg10_max: Option<f64>,
     pub host_cpu_pressure_some_avg10_max: Option<f64>,
+}
+
+fn classify_test_run_overhead(
+    invocation_duration_secs: Option<f64>,
+    test_body_duration_secs: f64,
+) -> Option<TestRunOverhead> {
+    let invocation_duration_secs = invocation_duration_secs?;
+    if invocation_duration_secs <= 0.0 || !invocation_duration_secs.is_finite() {
+        return None;
+    }
+
+    let non_test_overhead_secs = (invocation_duration_secs - test_body_duration_secs).max(0.0);
+    let test_body_ratio = (test_body_duration_secs / invocation_duration_secs).clamp(0.0, 1.0);
+    let classification = if non_test_overhead_secs < 1.0 {
+        "negligible"
+    } else if test_body_ratio < 0.25 {
+        "runner_setup_dominated"
+    } else if test_body_ratio < 0.75 {
+        "mixed"
+    } else {
+        "test_body_dominated"
+    };
+
+    Some(TestRunOverhead {
+        invocation_duration_secs,
+        test_body_duration_secs,
+        non_test_overhead_secs,
+        test_body_ratio,
+        classification,
+    })
 }
 
 fn is_probable_timeout_duration(duration_secs: f64) -> bool {
@@ -1041,12 +1083,12 @@ impl HistoryDb {
     /// Produces bucketed duration distributions, probable timeout detection,
     /// and per-package failure summaries.
     pub fn analyze_test_run(&self, invocation_id: i64) -> Result<Option<TestSuiteAnalysis>> {
-        let started_at = match self.conn.query_row(
-            r"SELECT started_at FROM invocations WHERE id = ?1 AND command = 'test'",
+        let (started_at, invocation_duration_secs) = match self.conn.query_row(
+            r"SELECT started_at, duration_secs FROM invocations WHERE id = ?1 AND command = 'test'",
             [invocation_id],
-            |row| row.get::<_, String>(0),
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, Option<f64>>(1)?)),
         ) {
-            Ok(started_at) => started_at,
+            Ok(row) => row,
             Err(rusqlite::Error::QueryReturnedNoRows) => return Ok(None),
             Err(error) => return Err(error.into()),
         };
@@ -1176,6 +1218,8 @@ impl HistoryDb {
             resource_usage.as_ref(),
             has_timing_sensitive_failure,
         );
+        let run_overhead =
+            classify_test_run_overhead(invocation_duration_secs, total_duration_secs);
 
         // Per-package failure summary
         let mut pkg_map: std::collections::HashMap<String, (usize, usize, Vec<String>)> =
@@ -1216,6 +1260,7 @@ impl HistoryDb {
             probable_timeouts,
             failure_summary,
             host_pressure,
+            run_overhead,
             total_passed,
             total_failed,
             total_ignored,
@@ -2358,6 +2403,14 @@ mod tests {
         assert_eq!(analysis.slowest_tests.len(), 3);
         assert_eq!(analysis.slowest_tests[0].test_name, "test_two");
         assert_eq!(analysis.slowest_tests[0].status, "fail");
+        let overhead = analysis
+            .run_overhead
+            .as_ref()
+            .expect("finished invocation duration should produce overhead summary");
+        assert_eq!(overhead.invocation_duration_secs, 5.0);
+        assert_eq!(overhead.test_body_duration_secs, 2.0);
+        assert_eq!(overhead.non_test_overhead_secs, 3.0);
+        assert_eq!(overhead.classification, "mixed");
 
         // Failure summary should have pkg-a with 1 failure
         assert_eq!(analysis.failure_summary.len(), 1);
