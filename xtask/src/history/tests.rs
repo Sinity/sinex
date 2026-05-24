@@ -766,9 +766,12 @@ fn classify_test_run_overhead(
         return None;
     }
 
+    let raw_test_body_ratio = test_body_duration_secs / invocation_duration_secs;
     let non_test_overhead_secs = (invocation_duration_secs - test_body_duration_secs).max(0.0);
-    let test_body_ratio = (test_body_duration_secs / invocation_duration_secs).clamp(0.0, 1.0);
-    let classification = if non_test_overhead_secs < 1.0 {
+    let test_body_ratio = raw_test_body_ratio.clamp(0.0, 1.0);
+    let classification = if raw_test_body_ratio > 1.10 {
+        "parallel_test_bodies"
+    } else if non_test_overhead_secs < 1.0 {
         "negligible"
     } else if test_body_ratio < 0.25 {
         "runner_setup_dominated"
@@ -2417,6 +2420,53 @@ mod tests {
         assert_eq!(analysis.failure_summary[0].package, "pkg-a");
         assert_eq!(analysis.failure_summary[0].failed_count, 1);
         assert_eq!(analysis.failure_summary[0].passed_count, 1);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_run_overhead_classifies_parallel_test_body_sums() -> TestResult<()> {
+        let (_dir, db, inv_id) = test_db_with_invocation()?;
+        db.conn.execute(
+            r"
+            UPDATE invocations
+            SET status = 'success',
+                duration_secs = 10.0
+            WHERE id = ?1
+            ",
+            [inv_id],
+        )?;
+        db.store_test_results(
+            inv_id,
+            &[
+                TestResult {
+                    test_name: "parallel_one".into(),
+                    package: "pkg-a".into(),
+                    status: TestStatus::Pass,
+                    duration_secs: Some(8.0),
+                    attempt: 1,
+                    output: None,
+                },
+                TestResult {
+                    test_name: "parallel_two".into(),
+                    package: "pkg-a".into(),
+                    status: TestStatus::Pass,
+                    duration_secs: Some(7.0),
+                    attempt: 1,
+                    output: None,
+                },
+            ],
+        )?;
+
+        let analysis = db.analyze_last_run()?.expect("should have analysis");
+        let overhead = analysis
+            .run_overhead
+            .as_ref()
+            .expect("finished invocation duration should produce overhead summary");
+        assert_eq!(overhead.invocation_duration_secs, 10.0);
+        assert_eq!(overhead.test_body_duration_secs, 15.0);
+        assert_eq!(overhead.non_test_overhead_secs, 0.0);
+        assert_eq!(overhead.test_body_ratio, 1.0);
+        assert_eq!(overhead.classification, "parallel_test_bodies");
         Ok(())
     }
 
