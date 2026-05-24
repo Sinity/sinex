@@ -1,0 +1,108 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "EventCardView v3",
+  "type": "object",
+  "required": [
+    "ref",
+    "timestamp",
+    "source",
+    "event_type",
+    "summary",
+    "actions"
+  ],
+  "properties": {
+    "ref": {
+      "$ref": "sinex-object-ref-v3.schema.json"
+    },
+    "timestamp": {
+      "type": "object",
+      "properties": {
+        "original": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "ingested": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "quality": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": true
+    },
+    "source": {
+      "type": "object",
+      "required": [
+        "family",
+        "raw"
+      ],
+      "properties": {
+        "family": {
+          "type": "string"
+        },
+        "raw": {
+          "type": "string"
+        },
+        "unit_ref": {
+          "type": [
+            "object",
+            "null"
+          ]
+        }
+      }
+    },
+    "event_type": {
+      "type": "string"
+    },
+    "summary": {
+      "type": "string"
+    },
+    "payload_preview": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "additionalProperties": true
+    },
+    "material_refs": {
+      "type": "array",
+      "items": {
+        "$ref": "sinex-object-ref-v3.schema.json"
+      }
+    },
+    "privacy_state": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "caveats": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "trace_refs": {
+      "type": "array",
+      "items": {
+        "$ref": "sinex-object-ref-v3.schema.json"
+      }
+    },
+    "projection_badges": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "actions": {
+      "type": "array",
+      "items": {
+        "$ref": "action-availability-v3.schema.json"
+      }
+    }
+  },
+  "additionalProperties": false
+}
