@@ -2,7 +2,7 @@
 
 use color_eyre::eyre::Result;
 use console::style;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::time::Duration;
 use tabled::{builder::Builder, settings::Style};
 
@@ -925,7 +925,24 @@ struct CostInvocationRow {
     started_at: time::OffsetDateTime,
     finished_at: time::OffsetDateTime,
     duration_secs: Option<f64>,
+    status: String,
+    cancel_reason: Option<String>,
+    is_background: bool,
+    tree_fingerprint: Option<String>,
+    scope_key: Option<String>,
     is_stale_cleanup: bool,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+struct RepeatedProofCandidate {
+    command: String,
+    scope_key: String,
+    tree_fingerprint: String,
+    run_count: usize,
+    repeated_invocation_count: usize,
+    total_hours: f64,
+    repeated_hours: f64,
+    invocation_ids: Vec<i64>,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -936,12 +953,18 @@ struct HistoryCostSummary {
     stale_cleanup_rows_excluded: usize,
     raw_invocation_hours: f64,
     wrapper_invocation_hours: f64,
+    wrapper_wait_hours: f64,
     non_wrapper_invocation_hours: f64,
     unique_wall_hours: f64,
     stage_hours: f64,
     wrapper_adjustment_hours: f64,
     overlap_after_wrapper_adjustment_hours: f64,
     stage_unaccounted_hours: f64,
+    cancelled_foreground_hours: f64,
+    stale_pid_rows: usize,
+    stale_pid_hours: f64,
+    repeated_proof_hours: f64,
+    repeated_proof_candidates: Vec<RepeatedProofCandidate>,
 }
 
 fn execute_cost(
@@ -968,6 +991,8 @@ fn execute_cost(
     let rows_sql = format!(
         r"
         SELECT id, command, args_json, started_at, finished_at, duration_secs,
+               status, cancel_reason, is_background,
+               tree_fingerprint, scope_key,
                COALESCE(cancel_reason = 'stale_pid' AND cancelled_by = 'open_time_sweep', 0)
                    AS is_stale_cleanup
         FROM invocations
@@ -1006,41 +1031,7 @@ fn execute_cost(
         .and_then(serde_json::Value::as_f64)
         .unwrap_or(0.0);
 
-    let stale_cleanup_rows_excluded = rows.iter().filter(|row| row.is_stale_cleanup).count();
-    let included_rows = rows
-        .iter()
-        .filter(|row| !row.is_stale_cleanup)
-        .collect::<Vec<_>>();
-    let wrapper_ids = provable_wrapper_invocation_ids(&included_rows);
-
-    let raw_secs = included_rows
-        .iter()
-        .filter_map(|row| row.duration_secs)
-        .sum::<f64>();
-    let wrapper_secs = included_rows
-        .iter()
-        .filter(|row| wrapper_ids.contains(&row.id))
-        .filter_map(|row| row.duration_secs)
-        .sum::<f64>();
-    let non_wrapper_secs = raw_secs - wrapper_secs;
-    let unique_wall_secs = unique_wall_secs(&included_rows);
-    let overlap_after_wrapper_secs = (non_wrapper_secs - unique_wall_secs).max(0.0);
-    let stage_unaccounted_secs = (non_wrapper_secs - stage_secs).max(0.0);
-
-    let summary = HistoryCostSummary {
-        days,
-        commands,
-        invocation_count: included_rows.len(),
-        stale_cleanup_rows_excluded,
-        raw_invocation_hours: secs_to_hours(raw_secs),
-        wrapper_invocation_hours: secs_to_hours(wrapper_secs),
-        non_wrapper_invocation_hours: secs_to_hours(non_wrapper_secs),
-        unique_wall_hours: secs_to_hours(unique_wall_secs),
-        stage_hours: secs_to_hours(stage_secs),
-        wrapper_adjustment_hours: secs_to_hours(wrapper_secs),
-        overlap_after_wrapper_adjustment_hours: secs_to_hours(overlap_after_wrapper_secs),
-        stage_unaccounted_hours: secs_to_hours(stage_unaccounted_secs),
-    };
+    let summary = build_history_cost_summary(days, commands, &rows, stage_secs);
 
     if ctx.is_human() {
         println!(
@@ -1057,6 +1048,10 @@ fn execute_cost(
         builder.push_record([
             "provable wrapper rows".to_string(),
             format!("{:.2}", summary.wrapper_invocation_hours),
+        ]);
+        builder.push_record([
+            "wrapper wait".to_string(),
+            format!("{:.2}", summary.wrapper_wait_hours),
         ]);
         builder.push_record([
             "non-wrapper request sum".to_string(),
@@ -1077,6 +1072,22 @@ fn execute_cost(
         builder.push_record([
             "non-wrapper time without stages".to_string(),
             format!("{:.2}", summary.stage_unaccounted_hours),
+        ]);
+        builder.push_record([
+            "cancelled foreground".to_string(),
+            format!("{:.2}", summary.cancelled_foreground_hours),
+        ]);
+        builder.push_record([
+            "stale-pid rows".to_string(),
+            summary.stale_pid_rows.to_string(),
+        ]);
+        builder.push_record([
+            "stale-pid recorded duration".to_string(),
+            format!("{:.2}", summary.stale_pid_hours),
+        ]);
+        builder.push_record([
+            "repeated proof candidates".to_string(),
+            format!("{:.2}", summary.repeated_proof_hours),
         ]);
         let mut table = builder.build();
         table.with(Style::rounded());
@@ -1107,6 +1118,23 @@ fn cost_row_from_json(
     let started_at = parse_history_time(&json_string(&row, "started_at")?, "started_at")?;
     let finished_at = parse_history_time(&json_string(&row, "finished_at")?, "finished_at")?;
     let duration_secs = row.get("duration_secs").and_then(serde_json::Value::as_f64);
+    let status = json_string(&row, "status")?;
+    let cancel_reason = row
+        .get("cancel_reason")
+        .and_then(serde_json::Value::as_str)
+        .map(ToOwned::to_owned);
+    let is_background = row
+        .get("is_background")
+        .and_then(serde_json::Value::as_i64)
+        .is_some_and(|value| value != 0);
+    let tree_fingerprint = row
+        .get("tree_fingerprint")
+        .and_then(serde_json::Value::as_str)
+        .map(ToOwned::to_owned);
+    let scope_key = row
+        .get("scope_key")
+        .and_then(serde_json::Value::as_str)
+        .map(ToOwned::to_owned);
     let is_stale_cleanup = row
         .get("is_stale_cleanup")
         .and_then(serde_json::Value::as_i64)
@@ -1119,8 +1147,81 @@ fn cost_row_from_json(
         started_at,
         finished_at,
         duration_secs,
+        status,
+        cancel_reason,
+        is_background,
+        tree_fingerprint,
+        scope_key,
         is_stale_cleanup,
     })
+}
+
+fn build_history_cost_summary(
+    days: u32,
+    commands: Vec<String>,
+    rows: &[CostInvocationRow],
+    stage_secs: f64,
+) -> HistoryCostSummary {
+    let stale_cleanup_rows_excluded = rows.iter().filter(|row| row.is_stale_cleanup).count();
+    let included_rows = rows
+        .iter()
+        .filter(|row| !row.is_stale_cleanup)
+        .collect::<Vec<_>>();
+    let wrapper_ids = provable_wrapper_invocation_ids(&included_rows);
+    let repeated_proof_candidates = repeated_proof_candidates(&included_rows, &wrapper_ids);
+
+    let raw_secs = included_rows
+        .iter()
+        .filter_map(|row| row.duration_secs)
+        .sum::<f64>();
+    let wrapper_secs = included_rows
+        .iter()
+        .filter(|row| wrapper_ids.contains(&row.id))
+        .filter_map(|row| row.duration_secs)
+        .sum::<f64>();
+    let non_wrapper_secs = raw_secs - wrapper_secs;
+    let unique_wall_secs = unique_wall_secs(&included_rows);
+    let overlap_after_wrapper_secs = (non_wrapper_secs - unique_wall_secs).max(0.0);
+    let stage_unaccounted_secs = (non_wrapper_secs - stage_secs).max(0.0);
+    let cancelled_foreground_secs = included_rows
+        .iter()
+        .filter(|row| row.status == "cancelled" && !row.is_background)
+        .filter_map(|row| row.duration_secs)
+        .sum::<f64>();
+    let stale_pid_rows = rows
+        .iter()
+        .filter(|row| row.cancel_reason.as_deref() == Some("stale_pid"))
+        .count();
+    let stale_pid_secs = rows
+        .iter()
+        .filter(|row| row.cancel_reason.as_deref() == Some("stale_pid"))
+        .filter_map(|row| row.duration_secs)
+        .sum::<f64>();
+    let repeated_proof_hours = repeated_proof_candidates
+        .iter()
+        .map(|candidate| candidate.repeated_hours)
+        .sum::<f64>();
+
+    HistoryCostSummary {
+        days,
+        commands,
+        invocation_count: included_rows.len(),
+        stale_cleanup_rows_excluded,
+        raw_invocation_hours: secs_to_hours(raw_secs),
+        wrapper_invocation_hours: secs_to_hours(wrapper_secs),
+        wrapper_wait_hours: secs_to_hours(wrapper_secs),
+        non_wrapper_invocation_hours: secs_to_hours(non_wrapper_secs),
+        unique_wall_hours: secs_to_hours(unique_wall_secs),
+        stage_hours: secs_to_hours(stage_secs),
+        wrapper_adjustment_hours: secs_to_hours(wrapper_secs),
+        overlap_after_wrapper_adjustment_hours: secs_to_hours(overlap_after_wrapper_secs),
+        stage_unaccounted_hours: secs_to_hours(stage_unaccounted_secs),
+        cancelled_foreground_hours: secs_to_hours(cancelled_foreground_secs),
+        stale_pid_rows,
+        stale_pid_hours: secs_to_hours(stale_pid_secs),
+        repeated_proof_hours,
+        repeated_proof_candidates,
+    }
 }
 
 fn parse_history_time(value: &str, field: &'static str) -> Result<time::OffsetDateTime> {
@@ -1150,15 +1251,11 @@ fn sql_string_literal(value: &str) -> String {
 
 fn secs_to_hours(secs: f64) -> f64 {
     let hours = secs / 3600.0;
-    if hours.abs() < 0.000_001 {
-        0.0
-    } else {
-        hours
-    }
+    if hours.abs() < 0.000_001 { 0.0 } else { hours }
 }
 
-fn provable_wrapper_invocation_ids(rows: &[&CostInvocationRow]) -> std::collections::BTreeSet<i64> {
-    let mut wrapper_ids = std::collections::BTreeSet::new();
+fn provable_wrapper_invocation_ids(rows: &[&CostInvocationRow]) -> BTreeSet<i64> {
+    let mut wrapper_ids = BTreeSet::new();
     for candidate in rows {
         if !is_potential_wrapper(candidate) {
             continue;
@@ -1215,6 +1312,76 @@ fn unique_wall_secs(rows: &[&CostInvocationRow]) -> f64 {
         total += (end - start).as_seconds_f64();
     }
     total
+}
+
+fn repeated_proof_candidates(
+    rows: &[&CostInvocationRow],
+    wrapper_ids: &BTreeSet<i64>,
+) -> Vec<RepeatedProofCandidate> {
+    let mut groups: BTreeMap<(String, String, String), Vec<&CostInvocationRow>> = BTreeMap::new();
+
+    for row in rows {
+        if wrapper_ids.contains(&row.id) || row.status != "success" {
+            continue;
+        }
+        let Some(tree_fingerprint) = row.tree_fingerprint.as_deref() else {
+            continue;
+        };
+        let Some(scope_key) = row.scope_key.as_deref() else {
+            continue;
+        };
+        groups
+            .entry((
+                row.command.clone(),
+                scope_key.to_string(),
+                tree_fingerprint.to_string(),
+            ))
+            .or_default()
+            .push(*row);
+    }
+
+    let mut candidates = groups
+        .into_iter()
+        .filter_map(|((command, scope_key, tree_fingerprint), mut group)| {
+            if group.len() < 2 {
+                return None;
+            }
+            group.sort_by_key(|row| row.started_at);
+            let total_secs = group
+                .iter()
+                .filter_map(|row| row.duration_secs)
+                .sum::<f64>();
+            let repeated_secs = group
+                .iter()
+                .skip(1)
+                .filter_map(|row| row.duration_secs)
+                .sum::<f64>();
+            if repeated_secs <= 0.0 {
+                return None;
+            }
+
+            Some(RepeatedProofCandidate {
+                command,
+                scope_key,
+                tree_fingerprint,
+                run_count: group.len(),
+                repeated_invocation_count: group.len() - 1,
+                total_hours: secs_to_hours(total_secs),
+                repeated_hours: secs_to_hours(repeated_secs),
+                invocation_ids: group.into_iter().map(|row| row.id).collect(),
+            })
+        })
+        .collect::<Vec<_>>();
+
+    candidates.sort_by(|left, right| {
+        right
+            .repeated_hours
+            .total_cmp(&left.repeated_hours)
+            .then_with(|| left.command.cmp(&right.command))
+            .then_with(|| left.scope_key.cmp(&right.scope_key))
+    });
+    candidates.truncate(10);
+    candidates
 }
 
 fn execute_export(db: &HistoryDb, limit: usize, ctx: &CommandContext) -> Result<CommandResult> {
@@ -3633,6 +3800,127 @@ mod tests {
             }],
         )
         .map(|_| ())
+    }
+
+    fn cost_row(
+        id: i64,
+        command: &str,
+        started_after_secs: i64,
+        duration_secs: f64,
+        args_json: Option<&str>,
+    ) -> CostInvocationRow {
+        let started_at =
+            time::OffsetDateTime::UNIX_EPOCH + time::Duration::seconds(started_after_secs);
+        let finished_at = started_at + time::Duration::seconds_f64(duration_secs);
+
+        CostInvocationRow {
+            id,
+            command: command.to_string(),
+            args_json: args_json.map(ToOwned::to_owned),
+            started_at,
+            finished_at,
+            duration_secs: Some(duration_secs),
+            status: "success".to_string(),
+            cancel_reason: None,
+            is_background: false,
+            tree_fingerprint: None,
+            scope_key: None,
+            is_stale_cleanup: false,
+        }
+    }
+
+    #[sinex_test]
+    async fn test_history_cost_summary_separates_wrappers_overlap_and_stages()
+    -> ::xtask::sandbox::TestResult<()> {
+        let rows = vec![
+            cost_row(1, "test", 0, 120.0, None),
+            cost_row(
+                2,
+                "test",
+                10,
+                100.0,
+                Some(r#"["--scope=packages:sinex-db"]"#),
+            ),
+            cost_row(3, "check", 60, 120.0, Some(r#"["-p","sinex-db"]"#)),
+        ];
+
+        let summary =
+            build_history_cost_summary(7, vec!["check".into(), "test".into()], &rows, 90.0);
+
+        assert_eq!(summary.invocation_count, 3);
+        assert_eq!(summary.raw_invocation_hours, 340.0 / 3600.0);
+        assert_eq!(summary.wrapper_invocation_hours, 120.0 / 3600.0);
+        assert_eq!(summary.wrapper_wait_hours, 120.0 / 3600.0);
+        assert_eq!(summary.non_wrapper_invocation_hours, 220.0 / 3600.0);
+        assert_eq!(summary.unique_wall_hours, 180.0 / 3600.0);
+        assert_eq!(
+            summary.overlap_after_wrapper_adjustment_hours,
+            40.0 / 3600.0
+        );
+        assert_eq!(summary.stage_hours, 90.0 / 3600.0);
+        assert_eq!(summary.stage_unaccounted_hours, 130.0 / 3600.0);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_history_cost_summary_reports_cancelled_and_stale_pid_buckets()
+    -> ::xtask::sandbox::TestResult<()> {
+        let mut cancelled = cost_row(1, "test", 0, 30.0, Some(r#"["-p","sinex-db"]"#));
+        cancelled.status = "cancelled".to_string();
+        cancelled.cancel_reason = Some("user_cancel".to_string());
+
+        let mut background_cancelled = cost_row(2, "test", 40, 40.0, Some(r#"["-p","sinex-db"]"#));
+        background_cancelled.status = "cancelled".to_string();
+        background_cancelled.is_background = true;
+
+        let mut stale = cost_row(3, "test", 90, 50.0, None);
+        stale.status = "cancelled".to_string();
+        stale.cancel_reason = Some("stale_pid".to_string());
+        stale.is_stale_cleanup = true;
+
+        let rows = vec![cancelled, background_cancelled, stale];
+        let summary = build_history_cost_summary(7, vec!["test".into()], &rows, 0.0);
+
+        assert_eq!(summary.invocation_count, 2);
+        assert_eq!(summary.stale_cleanup_rows_excluded, 1);
+        assert_eq!(summary.cancelled_foreground_hours, 30.0 / 3600.0);
+        assert_eq!(summary.stale_pid_rows, 1);
+        assert_eq!(summary.stale_pid_hours, 50.0 / 3600.0);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_history_cost_summary_ranks_repeated_successful_proofs()
+    -> ::xtask::sandbox::TestResult<()> {
+        let mut first = cost_row(1, "check", 0, 10.0, Some(r#"["-p","sinex-db"]"#));
+        first.tree_fingerprint = Some("fingerprint-a".to_string());
+        first.scope_key = Some("scope-a".to_string());
+
+        let mut second = cost_row(2, "check", 20, 20.0, Some(r#"["-p","sinex-db"]"#));
+        second.tree_fingerprint = Some("fingerprint-a".to_string());
+        second.scope_key = Some("scope-a".to_string());
+
+        let mut third = cost_row(3, "check", 50, 30.0, Some(r#"["-p","sinex-db"]"#));
+        third.tree_fingerprint = Some("fingerprint-a".to_string());
+        third.scope_key = Some("scope-a".to_string());
+
+        let mut failed_repeat = cost_row(4, "check", 90, 40.0, Some(r#"["-p","sinex-db"]"#));
+        failed_repeat.status = "failed".to_string();
+        failed_repeat.tree_fingerprint = Some("fingerprint-a".to_string());
+        failed_repeat.scope_key = Some("scope-a".to_string());
+
+        let rows = vec![first, second, third, failed_repeat];
+        let summary = build_history_cost_summary(7, vec!["check".into()], &rows, 0.0);
+
+        assert_eq!(summary.repeated_proof_hours, 50.0 / 3600.0);
+        assert_eq!(summary.repeated_proof_candidates.len(), 1);
+        let candidate = &summary.repeated_proof_candidates[0];
+        assert_eq!(candidate.command, "check");
+        assert_eq!(candidate.run_count, 3);
+        assert_eq!(candidate.repeated_invocation_count, 2);
+        assert_eq!(candidate.invocation_ids, vec![1, 2, 3]);
+        assert_eq!(candidate.repeated_hours, 50.0 / 3600.0);
+        Ok(())
     }
 
     #[sinex_test]
