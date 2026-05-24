@@ -419,6 +419,54 @@ impl HistoryDb {
             .context("failed to collect slowest tests")
     }
 
+    /// Get slowest tests by each test's latest passing result.
+    ///
+    /// This answers "what is currently slow?" after optimization work has
+    /// changed a test's cost profile, while `get_slowest_tests_filtered`
+    /// remains the historical-average view.
+    pub fn get_slowest_latest_tests_filtered(
+        &self,
+        limit: usize,
+        since: Option<&str>,
+    ) -> Result<Vec<HistoricalSlowTest>> {
+        let mut stmt = self.conn.prepare(
+            r"
+            WITH latest AS (
+                SELECT
+                    test_results.test_name,
+                    test_results.package,
+                    test_results.duration_secs,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY test_results.test_name, test_results.package
+                        ORDER BY invocations.started_at DESC, test_results.id DESC
+                    ) as rn
+                FROM test_results
+                JOIN invocations ON invocations.id = test_results.invocation_id
+                WHERE test_results.duration_secs IS NOT NULL
+                  AND test_results.status = 'pass'
+                  AND (?1 IS NULL OR invocations.started_at >= ?1)
+            )
+            SELECT test_name, package, duration_secs
+            FROM latest
+            WHERE rn = 1
+            ORDER BY duration_secs DESC
+            LIMIT ?2
+            ",
+        )?;
+
+        let rows = stmt.query_map(rusqlite::params![since, limit as i64], |row| {
+            Ok(HistoricalSlowTest {
+                test_name: row.get(0)?,
+                package: row.get(1)?,
+                avg_duration_secs: row.get(2)?,
+                passing_runs: 1,
+            })
+        })?;
+
+        rows.collect::<Result<Vec<_>, _>>()
+            .context("failed to collect slowest latest tests")
+    }
+
     /// Get the slowest concrete test results from one invocation.
     pub fn get_slowest_tests_for_invocation(
         &self,
@@ -2164,6 +2212,56 @@ mod tests {
         assert_eq!(slowest[0].test_name, "test_slow");
         assert!(slowest[0].avg_duration_secs > 4.0); // avg duration > 4s
         assert_eq!(slowest[1].test_name, "test_fast");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_get_slowest_latest_tests_uses_current_result() -> TestResult<()> {
+        let (_dir, db, older_inv) = test_db_with_invocation()?;
+
+        db.store_test_results(
+            older_inv,
+            &[TestResult {
+                test_name: "changed_cost".into(),
+                package: "pkg".into(),
+                status: TestStatus::Pass,
+                duration_secs: Some(20.0),
+                attempt: 1,
+                output: None,
+            }],
+        )?;
+
+        let newer_inv = db.start_invocation("test", None, None, None)?;
+        db.finish_invocation(newer_inv, InvocationStatus::Success, Some(0), 3.0)?;
+        db.store_test_results(
+            newer_inv,
+            &[
+                TestResult {
+                    test_name: "changed_cost".into(),
+                    package: "pkg".into(),
+                    status: TestStatus::Pass,
+                    duration_secs: Some(0.2),
+                    attempt: 1,
+                    output: None,
+                },
+                TestResult {
+                    test_name: "currently_slow".into(),
+                    package: "pkg".into(),
+                    status: TestStatus::Pass,
+                    duration_secs: Some(3.0),
+                    attempt: 1,
+                    output: None,
+                },
+            ],
+        )?;
+
+        let slowest = db.get_slowest_latest_tests_filtered(10, None)?;
+
+        assert_eq!(slowest.len(), 2);
+        assert_eq!(slowest[0].test_name, "currently_slow");
+        assert_eq!(slowest[0].avg_duration_secs, 3.0);
+        assert_eq!(slowest[1].test_name, "changed_cost");
+        assert_eq!(slowest[1].avg_duration_secs, 0.2);
         Ok(())
     }
 
