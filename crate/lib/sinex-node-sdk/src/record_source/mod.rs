@@ -1759,7 +1759,12 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn sqlite_harness_captures_snapshot_evidence(ctx: TestContext) -> TestResult<()> {
+    async fn sqlite_harness_records_snapshot_success_and_failure_evidence(
+        ctx: TestContext,
+    ) -> TestResult<()> {
+        let ctx = ctx.with_nats().shared().await?;
+        let scope = PipelineScope::new(&ctx).await?;
+
         let temp = tempfile::NamedTempFile::new()?;
         let conn = rusqlite::Connection::open(temp.path())?;
         conn.execute(
@@ -1793,8 +1798,6 @@ mod tests {
             |row: &TestRow| row.row_id,
         )
         .with_snapshot_policy(SqliteSnapshotPolicy::disabled().with_first_observation(true));
-        let ctx = ctx.with_nats().shared().await?;
-        let scope = PipelineScope::new(&ctx).await?;
         let acquisition = Arc::new(AcquisitionManager::new_with_namespace(
             ctx.nats_client(),
             crate::acquisition_manager::RotationPolicy::default(),
@@ -1860,14 +1863,7 @@ mod tests {
             links[0].metadata["source_identifier"],
             "test://sqlite-snapshot"
         );
-        scope.shutdown().await?;
-        Ok(())
-    }
 
-    #[sinex_test]
-    async fn sqlite_harness_reports_snapshot_failure_without_blocking_row_stream(
-        ctx: TestContext,
-    ) -> TestResult<()> {
         let missing_path = Utf8PathBuf::from("/tmp/sinex-missing-snapshot-source.sqlite");
         let source = RecordSources::sqlite(
             missing_path.clone(),
@@ -1884,8 +1880,6 @@ mod tests {
             |row: &TestRow| row.row_id,
         )
         .with_snapshot_policy(SqliteSnapshotPolicy::disabled().with_first_observation(true));
-        let ctx = ctx.with_nats().shared().await?;
-        let scope = PipelineScope::new(&ctx).await?;
         let acquisition = Arc::new(AcquisitionManager::new_with_namespace(
             ctx.nats_client(),
             crate::acquisition_manager::RotationPolicy::default(),
