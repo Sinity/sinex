@@ -124,6 +124,12 @@ impl CheckCommand {
         if self.skip_tests {
             args.push("--skip-tests".to_string());
         }
+        if let Some(base_ref) = &self.changed_strict {
+            args.push("--changed-strict".to_string());
+            if let Some(base_ref) = base_ref {
+                args.push(base_ref.clone());
+            }
+        }
 
         args.push(scope.encode_marker());
         args
@@ -317,6 +323,12 @@ impl XtaskCommand for CheckCommand {
             }
             if this.allow_contended_host {
                 args.push("--allow-contended-host".to_string());
+            }
+            if let Some(base_ref) = &this.changed_strict {
+                args.push("--changed-strict".to_string());
+                if let Some(base_ref) = base_ref {
+                    args.push(base_ref.clone());
+                }
             }
             for p in &this.packages {
                 args.push("-p".to_string());
@@ -829,7 +841,8 @@ async fn run_changed_strict_command(
         );
         for pr in &report.package_results {
             let mark = if pr.success { "✓" } else { "✗" };
-            println!("  {mark} {}", pr.package);
+            let reused = if pr.reused { " (fresh)" } else { "" };
+            println!("  {mark} {}{reused}", pr.package);
             if let Some(ref excerpt) = pr.output_excerpt {
                 for line in excerpt.lines().take(5) {
                     println!("    {line}");

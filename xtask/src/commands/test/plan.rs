@@ -1,4 +1,5 @@
 use color_eyre::eyre::Result;
+use serde::Serialize;
 
 use crate::command::{CommandContext, WorkloadScope};
 use crate::process::ProcessBuilder;
@@ -30,7 +31,7 @@ const DATABASE_TEST_PACKAGES: &[&str] = &[
     "sinex-workspace-tests",
 ];
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Serialize)]
 pub(super) struct RuntimeBinaryRequirement {
     pub(super) package: &'static str,
     pub(super) binary: &'static str,
@@ -164,8 +165,10 @@ fn source_worker_production_path_requires_ingestd(
     test_binaries: &[String],
     filter: Option<&str>,
 ) -> bool {
-    let production_path_selected =
-        test_binaries.is_empty() || test_binaries.iter().any(|binary| binary == "production_path");
+    let production_path_selected = test_binaries.is_empty()
+        || test_binaries
+            .iter()
+            .any(|binary| binary == "production_path");
     if !production_path_selected {
         return false;
     }
@@ -493,8 +496,8 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn runtime_binary_requirements_skip_lib_only_targets()
-    -> ::xtask::sandbox::TestResult<()> {
+    async fn runtime_binary_requirements_skip_lib_only_targets() -> ::xtask::sandbox::TestResult<()>
+    {
         let plan = NextestExecutionPlan {
             runner_packages: vec!["sinex-node-sdk".to_string()],
             excluded_packages: Vec::new(),

@@ -29,7 +29,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::command::{CommandContext, CommandResult};
 use crate::config::config;
-use crate::history::{InvocationStatus, JobLifecycleStatus};
+use crate::history::JobLifecycleStatus;
 use crate::output::OutputFormat;
 
 const SHARED_FINGERPRINT_INPUTS: &[&str] = &[
@@ -49,6 +49,7 @@ pub struct FreshnessExplanation {
     pub args: Vec<String>,
     pub should_coordinate: bool,
     pub fresh_reuse_enabled: bool,
+    pub proof_kind: String,
     pub scope_key: String,
     pub tree_fingerprint: String,
     pub scope: FreshnessScopeExplanation,
@@ -292,8 +293,9 @@ impl JobCoordinator {
             }
         } else {
             // No state — check for fresh result (check/build only), then start new
-            if supports_fresh_reuse(command)
-                && let Some(fresh) = self.check_fresh(command, &tree_fingerprint, &scope_key)
+            if supports_fresh_reuse_for(command, spawn_args)
+                && let Some(fresh) =
+                    self.check_fresh(command, spawn_args, &tree_fingerprint, &scope_key)
             {
                 // R5: Log fresh decision with structured fields
                 let job_id = match &fresh {
@@ -505,6 +507,7 @@ impl JobCoordinator {
     fn check_fresh(
         &self,
         command: &str,
+        args: &[String],
         tree_fingerprint: &str,
         scope_key: &str,
     ) -> Option<CoordinationResult> {
@@ -524,14 +527,41 @@ impl JobCoordinator {
             }
         };
 
-        match db.get_last_completed_with_fingerprint(command) {
-            Ok(Some(last))
-                if last.tree_fingerprint.as_deref() == Some(tree_fingerprint)
-                    && last.scope_key.as_deref() == Some(scope_key)
-                    && last.status == InvocationStatus::Success =>
-            {
+        let proof_kind = proof_kind(command, args);
+
+        if command == "test" {
+            match db.get_successful_reusable_test_proof_unit(
+                &proof_kind,
+                tree_fingerprint,
+                scope_key,
+            ) {
+                Ok(Some(unit)) => {
+                    return Some(CoordinationResult::Fresh {
+                        job_id: unit.invocation_id,
+                        status: "success".to_string(),
+                        duration_secs: unit.duration_secs.unwrap_or(0.0),
+                    });
+                }
+                Ok(None) => {}
+                Err(error) => {
+                    tracing::warn!(
+                        target: "xtask::coordinator",
+                        path = %history_db_path.display(),
+                        error = %error,
+                        command,
+                        proof_kind,
+                        "coordinator freshness test proof query failed"
+                    );
+                    return None;
+                }
+            }
+            return None;
+        }
+
+        match db.get_successful_proof_evidence(command, &proof_kind, tree_fingerprint, scope_key) {
+            Ok(Some(last)) => {
                 return Some(CoordinationResult::Fresh {
-                    job_id: last.id,
+                    job_id: last.invocation_id,
                     status: "success".to_string(),
                     duration_secs: last.duration_secs.unwrap_or(0.0),
                 });
@@ -899,7 +929,7 @@ fn package_to_path(pkg: &str) -> String {
 
 /// R1: Extract package names from -p/--package flags in command args.
 fn extract_explicit_packages(command: &str, args: &[String]) -> Vec<String> {
-    if !matches!(command, "check" | "build" | "test") {
+    if !matches!(command, "check" | "build" | "fix" | "test") {
         return vec![];
     }
 
@@ -1022,7 +1052,8 @@ pub fn explain_freshness(command: &str, args: &[String]) -> Result<FreshnessExpl
         command: command.to_string(),
         args: args.to_vec(),
         should_coordinate: JobCoordinator::should_coordinate(command, args),
-        fresh_reuse_enabled: supports_fresh_reuse(command),
+        fresh_reuse_enabled: supports_fresh_reuse_for(command, args),
+        proof_kind: proof_kind(command, args),
         scope_key: scope_key(command, args),
         tree_fingerprint: scoped_tree_fingerprint(command, args)?,
         scope,
@@ -1062,24 +1093,113 @@ fn supports_fresh_reuse(command: &str) -> bool {
     matches!(command, "check" | "build" | "fix")
 }
 
+fn supports_fresh_reuse_for(command: &str, args: &[String]) -> bool {
+    supports_fresh_reuse(command) || (command == "test" && test_scope_is_fresh_reusable(args))
+}
+
+fn test_scope_is_fresh_reusable(args: &[String]) -> bool {
+    let has_lib_target = args.iter().any(|arg| arg == "--lib");
+    let has_runtime_or_mutating_flag = args.iter().any(|arg| {
+        matches!(
+            arg.as_str(),
+            "--heavy"
+                | "--include-ignored"
+                | "--list"
+                | "--list-scenarios"
+                | "--prime"
+                | "--update-snapshots"
+                | "--ephemeral-postgres"
+                | "--no-ephemeral-postgres"
+        ) || arg.starts_with("--scenario-")
+    });
+    has_lib_target && !has_runtime_or_mutating_flag
+}
+
+/// Human-readable proof unit class for a coordinated command.
+pub fn proof_kind(command: &str, args: &[String]) -> String {
+    match command {
+        "check" => {
+            let mut modes = Vec::new();
+            for flag in [
+                "--all",
+                "--fix",
+                "--full",
+                "--lint",
+                "--fmt",
+                "--forbidden",
+                "--nix",
+                "--skip-tests",
+                "--changed-strict",
+            ] {
+                if args.iter().any(|arg| arg == flag) {
+                    modes.push(flag.trim_start_matches('-').replace('-', "_"));
+                }
+            }
+            if modes.is_empty() {
+                "check.default".to_string()
+            } else {
+                modes.sort_unstable();
+                format!("check.{}", modes.join("+"))
+            }
+        }
+        "fix" => {
+            if args.iter().any(|arg| arg == "--check") {
+                "fix.check".to_string()
+            } else {
+                "fix.apply".to_string()
+            }
+        }
+        "test" => {
+            if test_scope_is_fresh_reusable(args) {
+                "test.nextest.lib".to_string()
+            } else {
+                "test.nextest.plan".to_string()
+            }
+        }
+        other => format!("{other}.default"),
+    }
+}
+
 /// Extract scope-relevant arguments for a command.
 ///
 /// Handles the tricky case where `-p sinex-db` is two separate args:
 /// the flag `-p` and its value `sinex-db` are both captured.
 fn extract_scope_args(command: &str, args: &[String]) -> Vec<String> {
-    if let Some(marker) = args.iter().find(|arg| arg.starts_with("--scope=")) {
-        return vec![marker.clone()];
+    let marker = args
+        .iter()
+        .find(|arg| arg.starts_with("--scope="))
+        .cloned()
+        .or_else(|| canonical_package_scope_marker(command, args));
+
+    fn is_package_value_flag(command: &str, arg: &str) -> bool {
+        matches!(command, "build" | "check" | "fix" | "test")
+            && matches!(arg, "-p" | "--package" | "--packages")
     }
 
-    fn is_value_flag(command: &str, arg: &str) -> bool {
+    fn is_package_combined_flag(command: &str, arg: &str) -> bool {
+        matches!(command, "build" | "check" | "fix" | "test")
+            && ((arg.starts_with("-p") && arg.len() > 2)
+                || arg.starts_with("--package=")
+                || arg.starts_with("--packages="))
+    }
+
+    fn value_flag_prefix(command: &str, arg: &str) -> Option<&'static str> {
         // Flags that take a separate next-arg value
         match command {
-            "build" => matches!(arg, "-p" | "--package"),
-            "test" => matches!(arg, "-p" | "--package" | "-E"),
-            // Check and fix scope: -p narrows the scope; lint/fmt flags are intentionally
-            // excluded — they don't change which packages are compiled.
-            "check" | "fix" => matches!(arg, "-p" | "--package"),
-            _ => false,
+            "check" => match arg {
+                "--changed-strict" => Some("--changed-strict="),
+                _ => None,
+            },
+            "test" => match arg {
+                "-E" | "--filter" => Some("--filter="),
+                "--test" => Some("--test="),
+                "--exclude" => Some("--exclude="),
+                "--scenario-tag" => Some("--scenario-tag="),
+                "--scenario-category" => Some("--scenario-category="),
+                "--scenario-lane" => Some("--scenario-lane="),
+                _ => None,
+            },
+            _ => None,
         }
     }
 
@@ -1087,46 +1207,101 @@ fn extract_scope_args(command: &str, args: &[String]) -> Vec<String> {
         // Flags that are scope-relevant on their own (no value)
         match command {
             "build" => arg == "--release" || arg.starts_with("--all"),
-            "test" => arg == "--heavy" || arg == "--include-ignored" || arg == "--all",
-            "check" | "fix" => arg == "--all",
+            "test" => matches!(
+                arg,
+                "--heavy"
+                    | "--include-ignored"
+                    | "--all"
+                    | "--lib"
+                    | "--list-scenarios"
+                    | "--update-snapshots"
+            ),
+            "check" | "fix" => {
+                matches!(
+                    arg,
+                    "--all"
+                        | "--fix"
+                        | "--full"
+                        | "--lint"
+                        | "--fmt"
+                        | "--forbidden"
+                        | "--nix"
+                        | "--heavy"
+                        | "--skip-tests"
+                ) || arg.starts_with("--changed-strict=")
+            }
             _ => false,
         }
     }
 
-    fn is_combined_flag(command: &str, arg: &str) -> bool {
+    fn canonical_combined_flag(command: &str, arg: &str) -> Option<String> {
         // Flags with value attached: --package=foo, -p=foo, -Etest(name)
         match command {
-            "build" => (arg.starts_with("-p") && arg.len() > 2) || arg.starts_with("--package="),
             "test" => {
-                (arg.starts_with("-p") && arg.len() > 2)
-                    || arg.starts_with("--package=")
-                    || (arg.starts_with("-E") && arg.len() > 2)
+                if let Some(filter) = arg.strip_prefix("-E").filter(|value| !value.is_empty()) {
+                    Some(format!("--filter={filter}"))
+                } else if arg.starts_with("--filter=")
+                    || arg.starts_with("--test=")
+                    || arg.starts_with("--exclude=")
+                    || arg.starts_with("--scenario-tag=")
+                    || arg.starts_with("--scenario-category=")
+                    || arg.starts_with("--scenario-lane=")
+                {
+                    Some(arg.to_string())
+                } else {
+                    None
+                }
             }
-            "check" | "fix" => {
-                (arg.starts_with("-p") && arg.len() > 2) || arg.starts_with("--package=")
-            }
-            _ => false,
+            _ => None,
         }
     }
 
     let mut relevant = Vec::new();
-    let mut take_next = false;
+    if let Some(marker) = marker {
+        relevant.push(marker);
+    }
+    let mut take_next: Option<&'static str> = None;
+    let mut skip_next = false;
 
     for arg in args {
-        if take_next {
-            relevant.push(arg.clone());
-            take_next = false;
+        if skip_next {
+            skip_next = false;
             continue;
         }
-        if is_value_flag(command, arg) {
+        if arg.starts_with("--scope=") {
+            continue;
+        }
+        if is_package_value_flag(command, arg) {
+            skip_next = true;
+            continue;
+        }
+        if is_package_combined_flag(command, arg) {
+            continue;
+        }
+        if let Some(prefix) = take_next.take() {
+            relevant.push(format!("{prefix}{arg}"));
+            continue;
+        }
+        if let Some(prefix) = value_flag_prefix(command, arg) {
+            take_next = Some(prefix);
+        } else if is_standalone_flag(command, arg) {
             relevant.push(arg.clone());
-            take_next = true; // Next arg is the value
-        } else if is_standalone_flag(command, arg) || is_combined_flag(command, arg) {
-            relevant.push(arg.clone());
+        } else if let Some(canonical) = canonical_combined_flag(command, arg) {
+            relevant.push(canonical);
         }
     }
 
     relevant
+}
+
+fn canonical_package_scope_marker(command: &str, args: &[String]) -> Option<String> {
+    let mut packages = extract_explicit_packages(command, args);
+    if packages.is_empty() {
+        return None;
+    }
+    packages.sort();
+    packages.dedup();
+    Some(format!("--scope=packages:{}", packages.join(",")))
 }
 
 /// Describe the command's workload scope using only scope-relevant arguments.
@@ -1673,6 +1848,14 @@ pub fn current_tree_fingerprint() -> Result<String> {
     tree_fingerprint()
 }
 
+/// Scoped tree fingerprint exposed for foreground command recording.
+///
+/// This mirrors the coordinator's background freshness key so foreground
+/// invocations and `--bg` requests write comparable history rows.
+pub fn current_scoped_tree_fingerprint(command: &str, args: &[String]) -> Result<String> {
+    scoped_tree_fingerprint(command, args)
+}
+
 /// Scope key exposed for callers (e.g., recording in history DB).
 #[must_use]
 pub fn compute_scope_key(command: &str, args: &[String]) -> String {
@@ -1684,6 +1867,7 @@ pub fn compute_scope_key(command: &str, args: &[String]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::history::InvocationStatus;
     use crate::sandbox::sinex_test;
     #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt;
@@ -1752,6 +1936,18 @@ mod tests {
         assert!(supports_fresh_reuse("fix"));
         assert!(!supports_fresh_reuse("test"));
         assert!(!supports_fresh_reuse("vm"));
+        assert!(supports_fresh_reuse_for(
+            "test",
+            &["--scope=packages:xtask".into(), "--lib".into()]
+        ));
+        assert!(!supports_fresh_reuse_for(
+            "test",
+            &[
+                "--scope=packages:xtask".into(),
+                "--lib".into(),
+                "--update-snapshots".into()
+            ]
+        ));
         Ok(())
     }
 
@@ -1816,6 +2012,33 @@ mod tests {
     }
 
     #[sinex_test]
+    async fn test_scope_key_canonicalizes_package_scope_marker() -> TestResult<()> {
+        assert_eq!(
+            scope_key("check", &["-p".into(), "xtask".into()]),
+            scope_key("check", &["--scope=packages:xtask".into()])
+        );
+        assert_eq!(
+            scope_key(
+                "test",
+                &[
+                    "-p".into(),
+                    "xtask".into(),
+                    "-E".into(),
+                    "test(example)".into()
+                ]
+            ),
+            scope_key(
+                "test",
+                &[
+                    "--scope=packages:xtask".into(),
+                    "--filter=test(example)".into()
+                ]
+            )
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
     async fn test_check_fresh_returns_none_when_history_db_is_unopenable() -> TestResult<()> {
         let tempdir = tempfile::tempdir()?;
         let _history_db_guard = env_set_path("XTASK_HISTORY_DB", tempdir.path());
@@ -1823,7 +2046,7 @@ mod tests {
 
         assert!(
             coordinator
-                .check_fresh("check", "tree-fingerprint", "scope-key")
+                .check_fresh("check", &[], "tree-fingerprint", "scope-key")
                 .is_none(),
             "unopenable history DB should disable freshness checks instead of panicking"
         );
@@ -1844,12 +2067,12 @@ mod tests {
         // -p vs --all → different scope
         assert_ne!(scope_key("check", &args_p1), scope_key("check", &args_all));
 
-        // Lint flags don't affect scope (same compilation target)
-        assert_eq!(
+        // Lint flags affect proof identity even though they target the same package.
+        assert_ne!(
             scope_key("check", &args_lint),
             scope_key("check", &args_empty)
         );
-        assert_eq!(
+        assert_ne!(
             scope_key("check", &["-p".into(), "sinex-db".into(), "--lint".into()]),
             scope_key("check", &["-p".into(), "sinex-db".into()])
         );
@@ -3250,9 +3473,9 @@ mod tests {
 
     #[sinex_test]
     async fn test_extract_explicit_packages_unknown_command() -> TestResult<()> {
-        // Non-compilable commands return empty (fix, etc.)
+        // Non-coordinated commands return empty.
         let args = vec!["-p".into(), "sinex-db".into()];
-        let pkgs = extract_explicit_packages("fix", &args);
+        let pkgs = extract_explicit_packages("doctor", &args);
         assert!(pkgs.is_empty());
         Ok(())
     }
@@ -3306,19 +3529,14 @@ mod tests {
             Ok(())
         }
 
-        /// Non-scope flags do not change the scope key.
+        /// Output/background flags do not change the scope key.
         ///
-        /// Flags like --lint, --fmt, --forbidden, --bg, --json change *how* to run
-        /// the command but not *what* is being compiled. Two agents targeting the
-        /// same package must share one background job even if one passes --lint and
-        /// the other doesn't.
+        /// Flags like --bg and --json change command plumbing, not proof identity.
+        /// Verification-mode flags such as --lint and --fmt are intentionally
+        /// excluded because they prove a different surface than plain check.
         fn prop_scope_key_ignores_non_scope_flags(
             pkg in "[a-z][a-z0-9-]{2,15}",
             extra in prop_oneof![
-                Just("--lint"),
-                Just("--fmt"),
-                Just("--forbidden"),
-                Just("--full"),
                 Just("--bg"),
                 Just("--json"),
             ]
