@@ -193,6 +193,7 @@ pub fn method_catalog() -> Vec<RpcMethodInfo> {
         dlq::DLQ_PEEK_METHOD.info(),
         dlq::DLQ_PURGE_METHOD.info(),
         dlq::DLQ_REQUEUE_METHOD.info(),
+        documents::DOCUMENTS_GET_CHUNKS_REDACTED_METHOD.info(),
         documents::DOCUMENTS_GET_CHUNKS_METHOD.info(),
         documents::DOCUMENTS_GET_METHOD.info(),
         documents::DOCUMENTS_SEARCH_METHOD.info(),

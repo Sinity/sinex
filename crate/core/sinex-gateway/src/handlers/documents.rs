@@ -10,8 +10,9 @@
 use sinex_db::DbPoolExt;
 use sinex_db::repositories::{DocumentSearchQuery, SearchMode};
 use sinex_primitives::rpc::documents::{
-    DocumentsChunkEntry, DocumentsGetChunksRequest, DocumentsGetChunksResponse,
-    DocumentsGetRequest, DocumentsGetResponse, DocumentsSearchRequest, DocumentsSearchResponse,
+    DocumentsChunkEntry, DocumentsGetChunksRedactedResponse, DocumentsGetChunksRequest,
+    DocumentsGetChunksResponse, DocumentsGetRequest, DocumentsGetResponse,
+    DocumentsRedactedChunkEntry, DocumentsSearchRequest, DocumentsSearchResponse,
     DocumentsSearchResult,
 };
 use sinex_primitives::{Result, SinexError};
@@ -154,4 +155,43 @@ pub async fn handle_documents_get_chunks(
     };
 
     Ok(response)
+}
+
+// ── documents.get_chunks_redacted ────────────────────────────────────────────
+
+/// Handle `documents.get_chunks_redacted` — chunk metadata without raw text.
+pub async fn handle_documents_get_chunks_redacted(
+    pool: &PgPool,
+    req: DocumentsGetChunksRequest,
+) -> Result<DocumentsGetChunksRedactedResponse> {
+    const REDACTION_REASON: &str = "mcp_document_chunk_text_redacted";
+    const DEFAULT_LIMIT: u32 = 50;
+    const MAX_LIMIT: u32 = 200;
+
+    let document_id = req.document_id;
+    let limit = req.limit.unwrap_or(DEFAULT_LIMIT).min(MAX_LIMIT) as usize;
+    let offset = req.offset.unwrap_or(0) as usize;
+
+    let chunks = pool
+        .documents()
+        .get_document_chunks(document_id, limit, offset)
+        .await?;
+
+    Ok(DocumentsGetChunksRedactedResponse {
+        document_id,
+        chunks: chunks
+            .into_iter()
+            .map(|c| DocumentsRedactedChunkEntry {
+                document_id: c.document_id,
+                chunk_index: c.chunk_index,
+                byte_offset_start: c.byte_offset_start,
+                byte_offset_end: c.byte_offset_end,
+                source_anchor_start: c.source_anchor_start,
+                source_anchor_end: c.source_anchor_end,
+                text_redacted: true,
+                redaction_reason: REDACTION_REASON.to_string(),
+                text_byte_len: i64::try_from(c.text.len()).unwrap_or(i64::MAX),
+            })
+            .collect(),
+    })
 }

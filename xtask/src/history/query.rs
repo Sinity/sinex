@@ -493,6 +493,7 @@ impl HistoryDb {
                 let select = "SELECT bd.id, bd.level, bd.code, bd.message, bd.file_path, \
                     bd.line, bd.col, bd.rendered, bd.package, bd.fix_replacement, \
                     bd.fix_applicability, bd.fix_byte_start, bd.fix_byte_end, \
+                    COALESCE(bd.authority, 'proof') as authority, \
                     i.command as source_command, i.started_at as source_time \
                     FROM build_diagnostics bd \
                     JOIN latest_per_package lpp ON bd.package = lpp.package \
@@ -506,6 +507,7 @@ impl HistoryDb {
                 let select = "SELECT bd.id, bd.level, bd.code, bd.message, bd.file_path, \
                     bd.line, bd.col, bd.rendered, bd.package, bd.fix_replacement, \
                     bd.fix_applicability, bd.fix_byte_start, bd.fix_byte_end, \
+                    COALESCE(bd.authority, 'proof') as authority, \
                     i.command as source_command, i.started_at as source_time \
                     FROM build_diagnostics bd \
                     JOIN invocations i ON bd.invocation_id = i.id";
@@ -515,6 +517,7 @@ impl HistoryDb {
                 let select = "SELECT bd.id, bd.level, bd.code, bd.message, bd.file_path, \
                     bd.line, bd.col, bd.rendered, bd.package, bd.fix_replacement, \
                     bd.fix_applicability, bd.fix_byte_start, bd.fix_byte_end, \
+                    COALESCE(bd.authority, 'proof') as authority, \
                     i.command as source_command, i.started_at as source_time \
                     FROM build_diagnostics bd \
                     JOIN invocations i ON bd.invocation_id = i.id";
@@ -568,8 +571,9 @@ impl HistoryDb {
                 fix_applicability: row.get(10)?,
                 fix_byte_start: row.get(11)?,
                 fix_byte_end: row.get(12)?,
-                source_command: row.get(13)?,
-                source_time: row.get(14)?,
+                authority: row.get(13)?,
+                source_command: row.get(14)?,
+                source_time: row.get(15)?,
             })
         })?;
 

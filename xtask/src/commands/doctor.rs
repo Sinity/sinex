@@ -574,7 +574,7 @@ impl XtaskCommand for RaDiagnoseCommand {
                 .iter()
                 .map(rust_analyzer_diagnostic_to_compiler_diagnostic)
                 .collect::<Vec<_>>();
-            ctx.record_diagnostics(&diagnostics)?;
+            ctx.record_advisory_diagnostics(&diagnostics)?;
             report.history_recorded_diagnostics = Some(diagnostics.len());
         }
         if ctx.is_human() {

@@ -126,6 +126,15 @@
     "response_type": "sinex_primitives::rpc::dlq::DlqRequeueResponse"
   },
   {
+    "name": "documents.get_chunks_redacted",
+    "role": "read_only",
+    "domain": "documents",
+    "stability": "experimental",
+    "mutability": "read_only",
+    "request_type": "sinex_primitives::rpc::documents::DocumentsGetChunksRequest",
+    "response_type": "sinex_primitives::rpc::documents::DocumentsGetChunksRedactedResponse"
+  },
+  {
     "name": "documents.get_chunks",
     "role": "read_only",
     "domain": "documents",

@@ -178,3 +178,4 @@ pub const LIFECYCLE_TOMBSTONE_STATUS: &str = "lifecycle.tombstone.status";
 pub const DOCUMENTS_SEARCH: &str = "documents.search";
 pub const DOCUMENTS_GET: &str = "documents.get";
 pub const DOCUMENTS_GET_CHUNKS: &str = "documents.get_chunks";
+pub const DOCUMENTS_GET_CHUNKS_REDACTED: &str = "documents.get_chunks_redacted";
