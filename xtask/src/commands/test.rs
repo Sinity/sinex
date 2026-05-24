@@ -1955,7 +1955,9 @@ mod tests {
     async fn test_postgres_auto_skips_exact_targeted_runs() -> ::xtask::sandbox::TestResult<()> {
         let command = TestCommand {
             packages: vec!["sinex-node-sdk".to_string()],
-            filter: Some("test(sqlite_harness_captures_snapshot_evidence)".to_string()),
+            filter: Some(
+                "test(sqlite_harness_records_snapshot_success_and_failure_evidence)".to_string(),
+            ),
             ..Default::default()
         };
         let plan = NextestExecutionPlan {
@@ -1983,7 +1985,9 @@ mod tests {
         let command = TestCommand {
             ephemeral_postgres: true,
             packages: vec!["sinex-node-sdk".to_string()],
-            filter: Some("test(sqlite_harness_captures_snapshot_evidence)".to_string()),
+            filter: Some(
+                "test(sqlite_harness_records_snapshot_success_and_failure_evidence)".to_string(),
+            ),
             ..Default::default()
         };
         let plan = NextestExecutionPlan {
