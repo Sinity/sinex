@@ -1,10 +1,119 @@
 use color_eyre::eyre::Result;
 use console::style;
+use serde::Serialize;
 use tabled::{builder::Builder, settings::Style};
 
 use crate::affected;
 use crate::command::{CommandContext, CommandResult};
 use crate::history::{HistoricalSlowTest, HistoryDb};
+
+#[derive(Debug, Clone, Serialize)]
+struct SlowTestCandidate {
+    test_name: String,
+    package: String,
+    avg_duration_secs: f64,
+    passing_runs: i64,
+    optimization_kind: &'static str,
+    recommendation: &'static str,
+}
+
+impl SlowTestCandidate {
+    fn from_slow_test(test: HistoricalSlowTest) -> Self {
+        let classification = classify_slow_test(&test);
+        Self {
+            test_name: test.test_name,
+            package: test.package,
+            avg_duration_secs: test.avg_duration_secs,
+            passing_runs: test.passing_runs,
+            optimization_kind: classification.kind,
+            recommendation: classification.recommendation,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct SlowTestClassification {
+    kind: &'static str,
+    recommendation: &'static str,
+}
+
+fn classify_slow_test(test: &HistoricalSlowTest) -> SlowTestClassification {
+    let name = test.test_name.to_ascii_lowercase();
+    let package = test.package.as_str();
+
+    if package == "xtask"
+        && contains_any(
+            &name,
+            &[
+                "command_catalog",
+                "proof_catalog",
+                "docs",
+                "format_registry",
+            ],
+        )
+    {
+        return SlowTestClassification {
+            kind: "setup_overhead_candidate",
+            recommendation: "inspect unused sandbox/setup and broad metadata fixture work",
+        };
+    }
+
+    if contains_any(
+        &name,
+        &[
+            "sleep",
+            "timeout",
+            "fault_injection",
+            "chaos",
+            "property",
+            "trybuild",
+            "compile_fail",
+        ],
+    ) {
+        return SlowTestClassification {
+            kind: "direct_runtime_candidate",
+            recommendation: "replace fixed waits or oversized cases with deterministic evidence",
+        };
+    }
+
+    if contains_any(
+        &name,
+        &[
+            "production_path",
+            "binary_path",
+            "replay_control",
+            "material_acquisition",
+            "checkpoint",
+            "settlement",
+            "dlq",
+            "nats",
+        ],
+    ) || matches!(
+        package,
+        "sinex-source-worker" | "sinex-gateway" | "sinex-ingestd"
+    ) {
+        return SlowTestClassification {
+            kind: "runtime_path_candidate",
+            recommendation: "check runtime startup/prep and gate reuse before weakening coverage",
+        };
+    }
+
+    if test.passing_runs > 1 {
+        return SlowTestClassification {
+            kind: "proof_reuse_candidate",
+            recommendation: "deduplicate repeated exact successful proof before rewriting test",
+        };
+    }
+
+    SlowTestClassification {
+        kind: "inspect_if_recurring",
+        recommendation: "collect more runs before optimizing this test directly",
+    }
+}
+
+fn contains_any(haystack: &str, needles: &[&str]) -> bool {
+    needles.iter().any(|needle| haystack.contains(needle))
+}
 
 /// History tests subcommand variants
 #[derive(Debug, Clone, clap::Subcommand)]
@@ -261,9 +370,13 @@ pub(super) fn execute_tests_slowest(
     } else {
         db.get_slowest_tests_filtered(limit, since.as_deref(), min_runs)?
     };
+    let candidates: Vec<_> = tests
+        .into_iter()
+        .map(SlowTestCandidate::from_slow_test)
+        .collect();
 
     if ctx.is_human() {
-        if tests.is_empty() {
+        if candidates.is_empty() {
             println!("No test timing data found.");
         } else {
             if latest_per_test {
@@ -278,28 +391,31 @@ pub(super) fn execute_tests_slowest(
                 println!("Window: all history, min runs: {min_runs}");
             }
             println!(
-                "{:<50} {:<20} {:>10} {:>6}",
-                "TEST", "PACKAGE", "AVG (s)", "RUNS"
+                "{:<50} {:<20} {:<24} {:>10} {:>6}",
+                "TEST", "PACKAGE", "KIND", "AVG (s)", "RUNS"
             );
-            for test in &tests {
+            for test in &candidates {
                 let display_name = if test.test_name.len() > 48 {
                     format!("...{}", &test.test_name[test.test_name.len() - 45..])
                 } else {
                     test.test_name.clone()
                 };
                 println!(
-                    "{display_name:<50} {:<20} {:>10.3} {:>6}",
-                    test.package, test.avg_duration_secs, test.passing_runs
+                    "{display_name:<50} {:<20} {:<24} {:>10.3} {:>6}",
+                    test.package,
+                    test.optimization_kind,
+                    test.avg_duration_secs,
+                    test.passing_runs
                 );
             }
         }
     } else {
-        ctx.print_json(&tests)?;
+        ctx.print_json(&candidates)?;
     }
 
     Ok(CommandResult::success()
-        .with_message(format!("Found {} slowest tests", tests.len()))
-        .with_data(serde_json::to_value(&tests)?)
+        .with_message(format!("Found {} slowest tests", candidates.len()))
+        .with_data(serde_json::to_value(&candidates)?)
         .with_duration(ctx.elapsed()))
 }
 
