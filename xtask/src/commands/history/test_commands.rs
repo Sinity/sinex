@@ -709,6 +709,14 @@ pub(super) fn execute_tests_analyze(
                     analysis.total_ignored
                 );
                 println!("  Total duration: {:.1}s", analysis.total_duration_secs);
+                if let Some(overhead) = &analysis.run_overhead {
+                    println!(
+                        "  Invocation elapsed: {:.1}s; non-test overhead: {:.1}s ({})",
+                        overhead.invocation_duration_secs,
+                        overhead.non_test_overhead_secs,
+                        overhead.classification
+                    );
+                }
 
                 // Duration distribution
                 println!("\n{}", style("Duration Distribution:").bold());
