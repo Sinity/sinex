@@ -321,12 +321,89 @@ mod binary_path {
         let stack = SourceWorkerIngestStack::start(&ctx).await?;
         let tempdir = tempfile::tempdir()?;
 
-        let log_path = tempdir.path().join("weechat.log");
-        write_weechat_fixture(&log_path, WEECHAT_MESSAGE).await?;
-        let output = run_weechat_scan(&ctx, &tempdir, "baseline", weechat_node_config(&log_path))
-            .await?;
+        let baseline_log_path = tempdir.path().join("weechat.log");
+        write_weechat_fixture(&baseline_log_path, WEECHAT_MESSAGE).await?;
+
+        let private_log_path = tempdir.path().join("weechat-private.log");
+        write_weechat_fixture(&private_log_path, WEECHAT_SUPPRESSED_MESSAGE).await?;
+        let private_state_dir = tempdir.path().join("weechat-state");
+        save_private_mode_state(
+            &private_state_dir,
+            &RuntimePrivateModeState::enabled_by(
+                "test-operator",
+                vec!["weechat".to_string()],
+                Timestamp::UNIX_EPOCH,
+            ),
+        )?;
+        let mut private_config = weechat_node_config(&private_log_path);
+        private_config["private_mode_state_dir"] =
+            serde_json::Value::String(private_state_dir.display().to_string());
+
+        let malformed_log_path = tempdir.path().join("weechat-malformed-state.log");
+        write_weechat_fixture(&malformed_log_path, WEECHAT_MALFORMED_STATE_MESSAGE).await?;
+        let malformed_state_dir = tempdir.path().join("malformed-state");
+        let private_mode_path =
+            sinex_primitives::privacy::private_mode_state_path(&malformed_state_dir);
+        let private_mode_parent = private_mode_path
+            .parent()
+            .ok_or_else(|| color_eyre::eyre::eyre!("private-mode state path must have parent"))?;
+        tokio::fs::create_dir_all(private_mode_parent).await?;
+        tokio::fs::write(&private_mode_path, b"{not-json").await?;
+        let mut malformed_config = weechat_node_config(&malformed_log_path);
+        malformed_config["private_mode_state_dir"] =
+            serde_json::Value::String(malformed_state_dir.display().to_string());
+
+        let history_path = tempdir.path().join(".bash_history");
+        write_bash_fixture(&history_path, BASH_SUPPRESSED_COMMAND).await?;
+        let bash_state_dir = tempdir.path().join("terminal-state");
+        save_private_mode_state(
+            &bash_state_dir,
+            &RuntimePrivateModeState::enabled_by(
+                "test-operator",
+                vec!["terminal".to_string()],
+                Timestamp::UNIX_EPOCH,
+            ),
+        )?;
+        let mut bash_config = append_only_node_config(&history_path);
+        bash_config["private_mode_state_dir"] =
+            serde_json::Value::String(bash_state_dir.display().to_string());
+
+        let out_of_scope_log_path = tempdir.path().join("weechat-out-of-scope.log");
+        write_weechat_fixture(&out_of_scope_log_path, WEECHAT_OUT_OF_SCOPE_MESSAGE).await?;
+        let out_of_scope_state_dir = tempdir.path().join("desktop-state");
+        save_private_mode_state(
+            &out_of_scope_state_dir,
+            &RuntimePrivateModeState::enabled_by(
+                "test-operator",
+                vec!["desktop".to_string()],
+                Timestamp::UNIX_EPOCH,
+            ),
+        )?;
+        let mut out_of_scope_config = weechat_node_config(&out_of_scope_log_path);
+        out_of_scope_config["private_mode_state_dir"] =
+            serde_json::Value::String(out_of_scope_state_dir.display().to_string());
+
+        let (
+            baseline_output,
+            private_output,
+            malformed_output,
+            bash_output,
+            out_of_scope_output,
+        ) = tokio::try_join!(
+            run_weechat_scan(
+                &ctx,
+                &tempdir,
+                "baseline",
+                weechat_node_config(&baseline_log_path),
+            ),
+            run_weechat_scan(&ctx, &tempdir, "weechat-private", private_config),
+            run_weechat_scan(&ctx, &tempdir, "weechat-malformed", malformed_config),
+            run_bash_scan(&ctx, &tempdir, "bash-private", bash_config),
+            run_weechat_scan(&ctx, &tempdir, "weechat-out-of-scope", out_of_scope_config),
+        )?;
+
         ctx.assert("source-worker scan processed one event").that(
-            output.contains("Events processed: 1"),
+            baseline_output.contains("Events processed: 1"),
             "scan output should report one processed event",
         )?;
         WaitHelpers::wait_for_condition(
@@ -340,91 +417,33 @@ mod binary_path {
         )
         .await?;
 
-        let log_path = tempdir.path().join("weechat-private.log");
-        write_weechat_fixture(&log_path, WEECHAT_SUPPRESSED_MESSAGE).await?;
-        let state_dir = tempdir.path().join("weechat-state");
-        save_private_mode_state(
-            &state_dir,
-            &RuntimePrivateModeState::enabled_by(
-                "test-operator",
-                vec!["weechat".to_string()],
-                Timestamp::UNIX_EPOCH,
-            ),
-        )?;
-        let mut node_config = weechat_node_config(&log_path);
-        node_config["private_mode_state_dir"] =
-            serde_json::Value::String(state_dir.display().to_string());
-        let output = run_weechat_scan(&ctx, &tempdir, "weechat-private", node_config).await?;
         ctx.assert("private-mode scan suppressed all events").that(
-            output.contains("Events processed: 0"),
+            private_output.contains("Events processed: 0"),
             "scan output should report no processed events when source-unit private mode is active",
         )?;
         let count = count_irc_messages(&ctx, WEECHAT_SUPPRESSED_MESSAGE).await?;
         ctx.assert("suppressed private-mode scan persisted no irc.message events")
             .eq(&count, &0)?;
 
-        let log_path = tempdir.path().join("weechat-malformed-state.log");
-        write_weechat_fixture(&log_path, WEECHAT_MALFORMED_STATE_MESSAGE).await?;
-        let state_dir = tempdir.path().join("malformed-state");
-        let private_mode_path = sinex_primitives::privacy::private_mode_state_path(&state_dir);
-        let private_mode_parent = private_mode_path
-            .parent()
-            .ok_or_else(|| color_eyre::eyre::eyre!("private-mode state path must have parent"))?;
-        tokio::fs::create_dir_all(private_mode_parent).await?;
-        tokio::fs::write(&private_mode_path, b"{not-json").await?;
-        let mut node_config = weechat_node_config(&log_path);
-        node_config["private_mode_state_dir"] =
-            serde_json::Value::String(state_dir.display().to_string());
-        let output = run_weechat_scan(&ctx, &tempdir, "weechat-malformed", node_config).await?;
         ctx.assert("malformed private-mode state suppressed all events")
             .that(
-                output.contains("Events processed: 0"),
+                malformed_output.contains("Events processed: 0"),
                 "scan output should report no processed events when private-mode state is unreadable",
             )?;
         let count = count_irc_messages(&ctx, WEECHAT_MALFORMED_STATE_MESSAGE).await?;
         ctx.assert("fail-closed malformed state persisted no irc.message events")
             .eq(&count, &0)?;
 
-        let history_path = tempdir.path().join(".bash_history");
-        write_bash_fixture(&history_path, BASH_SUPPRESSED_COMMAND).await?;
-        let state_dir = tempdir.path().join("terminal-state");
-        save_private_mode_state(
-            &state_dir,
-            &RuntimePrivateModeState::enabled_by(
-                "test-operator",
-                vec!["terminal".to_string()],
-                Timestamp::UNIX_EPOCH,
-            ),
-        )?;
-        let mut node_config = append_only_node_config(&history_path);
-        node_config["private_mode_state_dir"] =
-            serde_json::Value::String(state_dir.display().to_string());
-        let output = run_bash_scan(&ctx, &tempdir, "bash-private", node_config).await?;
         ctx.assert("private-mode bash scan suppressed all events").that(
-            output.contains("Events processed: 0"),
+            bash_output.contains("Events processed: 0"),
             "scan output should report no processed events when terminal private mode is active",
         )?;
         let count = count_bash_commands(&ctx, BASH_SUPPRESSED_COMMAND).await?;
         ctx.assert("suppressed private-mode scan persisted no shell.history events")
             .eq(&count, &0)?;
 
-        let log_path = tempdir.path().join("weechat-out-of-scope.log");
-        write_weechat_fixture(&log_path, WEECHAT_OUT_OF_SCOPE_MESSAGE).await?;
-        let state_dir = tempdir.path().join("desktop-state");
-        save_private_mode_state(
-            &state_dir,
-            &RuntimePrivateModeState::enabled_by(
-                "test-operator",
-                vec!["desktop".to_string()],
-                Timestamp::UNIX_EPOCH,
-            ),
-        )?;
-        let mut node_config = weechat_node_config(&log_path);
-        node_config["private_mode_state_dir"] =
-            serde_json::Value::String(state_dir.display().to_string());
-        let output = run_weechat_scan(&ctx, &tempdir, "weechat-out-of-scope", node_config).await?;
         ctx.assert("out-of-scope private mode preserves acquisition").that(
-            output.contains("Events processed: 1"),
+            out_of_scope_output.contains("Events processed: 1"),
             "scan output should report one processed event when private mode is scoped elsewhere",
         )?;
         WaitHelpers::wait_for_condition(
