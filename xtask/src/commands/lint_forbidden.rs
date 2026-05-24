@@ -63,7 +63,11 @@ impl XtaskCommand for LintForbiddenCommand {
         // are auto-skipped. All inline mod tests must use #[sinex_test].
         // Add individual file paths here only for genuine proc-macro or
         // trybuild fixtures that cannot use #[sinex_test].
-        let rust_test_allow: [&str; 0] = [];
+        let rust_test_allow = [
+            // Proc-macro crate: pure inline unit test after removing the xtask
+            // dev-dependency cycle that made rust-analyzer diagnostics noisier.
+            "crate/lib/sinex-macros/src/db_check.rs",
+        ];
         // Runtime sqlx::query() is allowed for:
         // - Session control (SET, ROLLBACK, RESET)
         // - Advisory locks
