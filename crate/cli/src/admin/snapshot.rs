@@ -1,5 +1,5 @@
-//! `sinexctl admin snapshot` — quiesce-mode backup of the complete sinex
-//! runtime state surface.
+//! `sinexctl admin snapshot` — backup of the complete sinex runtime state
+//! surface.
 //!
 //! Captures Postgres (via `pg_dump`), NATS `JetStream` state, the CAS blob
 //! repository, and remaining per-source-worker state files into a single
@@ -59,7 +59,7 @@ impl Component {
 
 // ── CLI definition ────────────────────────────────────────────────────────────
 
-/// Create a quiesce-mode snapshot of the complete sinex runtime state.
+/// Create a snapshot of the complete sinex runtime state.
 #[derive(Debug, Parser)]
 #[command(after_help = "\
 EXAMPLES:
@@ -71,6 +71,9 @@ EXAMPLES:
 
     # Estimate sizes without writing anything
     sinexctl state snapshot --output /var/backup/sinex/latest.sinex.tar.zst --dry-run
+
+    # Capture without stopping services for urgent forensic preservation
+    sinexctl state snapshot --output /var/backup/sinex/live.sinex.tar.zst --mode live
 
     # Automatically stop services and snapshot postgres + CAS only
     sinexctl state snapshot --output /var/backup/sinex/pg-cas.tar.zst \\

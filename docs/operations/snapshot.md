@@ -4,8 +4,11 @@
 sinex runtime state surface — Postgres, NATS JetStream, CAS blob repository,
 and per-source-worker state — into a single zstd-compressed tar archive.
 
-This is a **quiesce-mode** backup: services must be stopped before the snapshot
-runs.  A live snapshot (`--mode live`) is not available in this MVP.
+The default is a **quiesce-mode** backup: services must be stopped before the
+snapshot runs, or `--auto-stop` can stop `sinex-*` services for the command.
+`--mode live` is available for urgent forensic capture while services remain
+active; it records `mode: live` in `manifest.json` and should be treated as a
+weaker-consistency artifact.
 The older `sinexctl admin snapshot*` paths remain as maintenance aliases; use
 the `sinexctl state ...` surface for operator runbooks.
 
@@ -20,6 +23,10 @@ sinexctl state snapshot --output /var/backup/sinex/$(date +%Y-%m-%d).sinex.tar.z
 
 # Estimate sizes without writing anything
 sinexctl state snapshot --output /var/backup/sinex/check.tar.zst --dry-run
+
+# Capture without stopping services when preserving the live state is more
+# important than component-level consistency
+sinexctl state snapshot --output /var/backup/sinex/live-forensics.sinex.tar.zst --mode live
 ```
 
 ## Command reference
@@ -28,7 +35,7 @@ sinexctl state snapshot --output /var/backup/sinex/check.tar.zst --dry-run
 sinexctl state snapshot --output <path>
   [--compression <1-19>]           # zstd level, default 3
   [--workers <N>]                  # zstd parallel workers, default all cores
-  [--mode quiesce]                 # only quiesce supported in MVP
+  [--mode quiesce|live]            # quiesce default; live does not stop services
   [--dry-run]                      # estimate sizes, no archive
   [--database-url <url>]           # override DATABASE_URL
   [--state-dir <path>]             # override SINEX_STATE_DIR (default /var/lib/sinex)
@@ -281,10 +288,20 @@ For a horizon-3 wipe (complete state replacement):
 5. Copy to off-machine storage (e.g., `rsync` to NAS or object storage).
 6. Proceed with the wipe only after confirming the archive is readable.
 
+## Consistency modes
+
+`--mode quiesce` is the normal backup mode. It refuses to run while `sinex-*`
+services are active unless `--auto-stop` is supplied, then captures Postgres,
+NATS, CAS, and runtime state after quiescence.
+
+`--mode live` is for forensic preservation when stopping services is not
+acceptable. It does not stop services and ignores `--auto-stop`; the archive
+may contain components observed at slightly different moments, and the manifest
+records `mode: live` so restore drills and future readers can distinguish it
+from a quiesced backup.
+
 ## Known limitations
 
-- **No live mode** — services must be stopped.  A future `--mode live` option
-  is deferred.
 - **No in-place Postgres/live restore execution** — `state restore` can execute
   isolated file-backed drills, but destructive live restore writes remain
   manual per this runbook.
