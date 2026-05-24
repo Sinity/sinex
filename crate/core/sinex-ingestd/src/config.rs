@@ -172,9 +172,13 @@ pub struct IngestdConfig {
     #[validate(range(min = 0))]
     pub ts_orig_lower_bound_unix: i64,
 
-    /// Maximum buffered out-of-order slices per material assembly
+    /// Maximum buffered out-of-order slices per material assembly.
     ///
-    /// Set via: `SINEX_INGESTD_MAX_BUFFERED_SLICES=100`
+    /// A single delayed slice can cause many later slices to accumulate. The
+    /// material size and slice timeout limits remain the corruption bounds, so
+    /// this default is sized to absorb ordinary JetStream reordering bursts.
+    ///
+    /// Set via: `SINEX_INGESTD_MAX_BUFFERED_SLICES=4096`
     #[serde(default = "default_max_buffered_slices")]
     #[builder(default = default_max_buffered_slices())]
     #[validate(range(min = 1, max = 10000))]
@@ -1056,7 +1060,7 @@ fn validate_fetch_timeout(value: &Milliseconds) -> Result<(), ValidationError> {
 fn default_max_buffered_slices() -> usize {
     match shared_env::strict_parsed("SINEX_INGESTD_MAX_BUFFERED_SLICES") {
         Ok(Some(value)) => value,
-        Ok(None) => 100,
+        Ok(None) => 4096,
         Err(error) => {
             error!(
                 target: "sinex_metrics",
@@ -1065,7 +1069,7 @@ fn default_max_buffered_slices() -> usize {
                 %error,
                 "Invalid env override for max buffered slices; using default"
             );
-            100
+            4096
         }
     }
 }
