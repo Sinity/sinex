@@ -934,21 +934,21 @@ fn extract_explicit_packages(command: &str, args: &[String]) -> Vec<String> {
         return vec![];
     }
 
+    let mut packages = Vec::new();
     if let Some(marker) = args.iter().find(|arg| arg.starts_with("--scope=")) {
         let raw = marker.trim_start_matches("--scope=");
-        if let Some(packages) = raw.strip_prefix("packages:") {
-            return packages
+        if let Some(marker_packages) = raw.strip_prefix("packages:") {
+            marker_packages
                 .split(',')
                 .filter(|entry| !entry.is_empty())
                 .map(ToOwned::to_owned)
-                .collect();
+                .for_each(|package| packages.push(package));
         }
         // Unknown --scope= format: fall through and parse -p/--package flags
         // instead of silently dropping them.  A future scope variant will get
         // package resolution for free without a separate special-case here.
     }
 
-    let mut packages = Vec::new();
     let mut take_next = false;
 
     for arg in args {
@@ -968,9 +968,18 @@ fn extract_explicit_packages(command: &str, args: &[String]) -> Vec<String> {
             packages.push(pkg.to_string());
         } else if let Some(pkg) = arg.strip_prefix("-p").filter(|s| !s.is_empty()) {
             packages.push(pkg.to_string());
+        } else if let Some(runtime) = arg.strip_prefix("--runtime-binary=") {
+            let package = runtime
+                .split_once(':')
+                .map_or(runtime, |(package, _)| package);
+            if !package.is_empty() {
+                packages.push(package.to_string());
+            }
         }
     }
 
+    packages.sort();
+    packages.dedup();
     packages
 }
 
@@ -1212,6 +1221,7 @@ fn extract_scope_args(command: &str, args: &[String]) -> Vec<String> {
                 "-E" | "--filter" => Some("--filter="),
                 "--test" => Some("--test="),
                 "--exclude" => Some("--exclude="),
+                "--runtime-binary" => Some("--runtime-binary="),
                 "--threads" => Some("--threads="),
                 "--retries" => Some("--retries="),
                 "--timeout" => Some("--timeout="),
@@ -1268,6 +1278,7 @@ fn extract_scope_args(command: &str, args: &[String]) -> Vec<String> {
                     || arg.starts_with("--test=")
                     || arg.starts_with("--exclude=")
                     || arg.starts_with("--test-arg=")
+                    || arg.starts_with("--runtime-binary=")
                     || arg.starts_with("--threads=")
                     || arg.starts_with("--retries=")
                     || arg.starts_with("--timeout=")
@@ -2052,6 +2063,7 @@ mod tests {
             "--retries=2",
             "--timeout=30s",
             "--db-pool-size-env=48",
+            "--runtime-binary=sinex-ingestd:sinex-ingestd",
             "--debug",
             "--fail-fast",
             "--impact-mode=aggressive",
@@ -2066,6 +2078,23 @@ mod tests {
                 "{flag} must be part of the test proof scope key"
             );
         }
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_runtime_binary_requirements_extend_package_fingerprint_scope() -> TestResult<()> {
+        let packages = extract_explicit_packages(
+            "test",
+            &[
+                "--scope=packages:sinex-db".into(),
+                "--runtime-binary=sinex-ingestd:sinex-ingestd".into(),
+            ],
+        );
+
+        assert_eq!(
+            packages,
+            vec!["sinex-db".to_string(), "sinex-ingestd".to_string()]
+        );
         Ok(())
     }
 
