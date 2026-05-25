@@ -11,6 +11,14 @@
 //!
 //! Compiler diagnostics are captured and stored in the history database for
 //! later analysis via `xtask history diagnostics`.
+//!
+//! ## Proof Authority
+//!
+//! This command's proof surface is rustc/clippy compiler output only. Native
+//! rust-analyzer diagnostics are advisory and MUST NOT gate check success or
+//! proof reuse — they are not a correctness proof (proc macros, build scripts,
+//! cfgs, generated surfaces, and RA engine failures cause divergence from
+//! rustc). See #1221 for the RA advisory surface.
 
 use color_eyre::eyre::{Result, eyre};
 
