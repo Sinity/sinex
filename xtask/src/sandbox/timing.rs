@@ -1013,7 +1013,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_wait_helpers_custom_condition(ctx: Sandbox) -> TestResult<()> {
+    async fn test_wait_helpers_custom_condition() -> TestResult<()> {
         let counter = Arc::new(AtomicUsize::new(0));
         let counter_clone = counter.clone();
 
@@ -1041,7 +1041,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_wait_helpers_multiple_conditions(ctx: Sandbox) -> TestResult<()> {
+    async fn test_wait_helpers_multiple_conditions() -> TestResult<()> {
         let counter1 = Arc::new(AtomicUsize::new(0));
         let counter2 = Arc::new(AtomicUsize::new(0));
 
@@ -1082,7 +1082,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_timing_patterns_event_processing(ctx: Sandbox) -> TestResult<()> {
+    async fn test_timing_patterns_event_processing() -> TestResult<()> {
         let counter = TimingPatterns::wait_for_event_processing(5, Duration::from_secs(5))
             .map_err(|_| SinexError::unknown("Failed to create counter"))?;
 
@@ -1097,7 +1097,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_timing_patterns_test_phases(ctx: Sandbox) -> TestResult<()> {
+    async fn test_timing_patterns_test_phases() -> TestResult<()> {
         let phases = vec!["setup", "execution", "validation", "cleanup"];
         let (tracker, phase_names) = TimingPatterns::create_test_phases(&phases);
 
@@ -1225,9 +1225,8 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_timing_utils_event_counter(ctx: Sandbox) -> TestResult<()> {
-        let timing = ctx.timing();
-        let counter = timing.event_counter(10);
+    async fn test_timing_utils_event_counter() -> TestResult<()> {
+        let counter = CoordinationPrimitive::event_counter(10, "test_timing_utils_event_counter");
 
         // Increment concurrently
         let handles: Vec<_> = (0..10)
