@@ -741,6 +741,9 @@ impl TestCommand {
         if self.no_reuse {
             args.push("--no-reuse".to_string());
         }
+        if !matches!(self.impact_mode, crate::impact::ImpactMode::Balanced) {
+            args.push(format!("--impact-mode={}", self.impact_mode.as_str()));
+        }
         if let Some(ref f) = self.filter {
             args.push("-E".to_string());
             args.push(f.clone());
@@ -1170,84 +1173,7 @@ impl XtaskCommand for TestCommand {
                     );
                 }
                 None => {
-                    // Default nextest mode — serialize nextest-specific flags
-                    if self.debug {
-                        args.push("--debug".to_string());
-                    }
-                    if self.fail_fast {
-                        args.push("--fail-fast".to_string());
-                    }
-                    if self.all {
-                        args.push("--all".to_string());
-                    }
-                    if self.heavy {
-                        args.push("--heavy".to_string());
-                    }
-                    if self.include_ignored {
-                        args.push("--include-ignored".to_string());
-                    }
-                    if self.list {
-                        args.push("--list".to_string());
-                    }
-                    if self.skip_preflight {
-                        args.push("--skip-preflight".to_string());
-                    }
-                    if self.ephemeral_postgres {
-                        args.push("--ephemeral-postgres".to_string());
-                    }
-                    if self.no_ephemeral_postgres {
-                        args.push("--no-ephemeral-postgres".to_string());
-                    }
-                    if self.prime {
-                        args.push("--prime".to_string());
-                    }
-                    if self.dry_run {
-                        args.push("--dry-run".to_string());
-                    }
-                    if self.update_snapshots {
-                        args.push("--update-snapshots".to_string());
-                    }
-                    if self.allow_contended_host {
-                        args.push("--allow-contended-host".to_string());
-                    }
-                    if self.no_reuse {
-                        args.push("--no-reuse".to_string());
-                    }
-                    if !matches!(self.impact_mode, crate::impact::ImpactMode::Balanced) {
-                        args.push(format!("--impact-mode={}", self.impact_mode.as_str()));
-                    }
-                    if let Some(ref f) = self.filter {
-                        args.push("-E".to_string());
-                        args.push(f.clone());
-                    }
-                    for p in &self.packages {
-                        args.push("-p".to_string());
-                        args.push(p.clone());
-                    }
-                    for p in &self.exclude_packages {
-                        args.push("--exclude".to_string());
-                        args.push(p.clone());
-                    }
-                    for test_binary in &self.test_binaries {
-                        args.push("--test".to_string());
-                        args.push(test_binary.clone());
-                    }
-                    if self.lib {
-                        args.push("--lib".to_string());
-                    }
-                    if let Some(threads) = self.threads {
-                        args.push(format!("--threads={threads}"));
-                    }
-                    if let Some(retries) = self.retries {
-                        args.push(format!("--retries={retries}"));
-                    }
-                    if let Some(ref timeout) = self.timeout {
-                        args.push(format!("--timeout={timeout}"));
-                    }
-                    if !self.args.is_empty() {
-                        args.push("--".to_string());
-                        args.extend(self.args.clone());
-                    }
+                    args = self.nextest_invocation_args(false);
 
                     let execution_plan =
                         self.resolve_execution_plan(None, self.filter.as_deref(), None)?;
@@ -2442,6 +2368,36 @@ mod tests {
         assert_eq!(
             crate::coordinator::proof_kind("test", &args),
             "test.nextest.plan"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_nextest_invocation_args_include_reuse_and_impact_flags()
+    -> ::xtask::sandbox::TestResult<()> {
+        let command = TestCommand {
+            no_reuse: true,
+            impact_mode: crate::impact::ImpactMode::Aggressive,
+            packages: vec!["xtask".to_string()],
+            filter: Some("test(freshness_explain)".to_string()),
+            ..Default::default()
+        };
+
+        let args = command.nextest_invocation_args(false);
+
+        assert!(args.contains(&"--no-reuse".to_string()));
+        assert!(args.contains(&"--impact-mode=aggressive".to_string()));
+        assert_eq!(
+            args.windows(2)
+                .find(|window| window[0] == "-p")
+                .map(|window| window[1].as_str()),
+            Some("xtask")
+        );
+        assert_eq!(
+            args.windows(2)
+                .find(|window| window[0] == "-E")
+                .map(|window| window[1].as_str()),
+            Some("test(freshness_explain)")
         );
         Ok(())
     }
