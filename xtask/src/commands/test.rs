@@ -591,6 +591,24 @@ impl TestCommand {
         Some((concurrent_tests * 2).clamp(2, 16))
     }
 
+    pub(crate) fn freshness_explain_args(
+        &self,
+        ctx: Option<&CommandContext>,
+    ) -> Result<Vec<String>> {
+        let effective_filter = self.filter.clone();
+        let effective_test_binaries = self.effective_test_binaries(effective_filter.as_deref())?;
+        let effective_lib_target =
+            self.effective_lib_target(effective_filter.as_deref(), &effective_test_binaries)?;
+        let execution_plan = self.resolve_execution_plan(ctx, effective_filter.as_deref(), None)?;
+
+        Ok(self.semantic_invocation_args(
+            &execution_plan.workload_scope,
+            effective_filter.as_deref(),
+            &effective_test_binaries,
+            effective_lib_target,
+        ))
+    }
+
     fn semantic_invocation_args(
         &self,
         scope: &WorkloadScope,
