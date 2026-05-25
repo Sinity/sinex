@@ -123,6 +123,7 @@ impl EventRecordExt for EventRecord {
             source_run_id: self.source_run_id,
             payload_schema_id: self.payload_schema_id,
             provenance,
+            anchor_payload_hash: self.anchor_payload_hash.clone(),
             associated_blob_ids: self
                 .associated_blob_ids
                 .map(|ids| ids.into_iter().collect()),
