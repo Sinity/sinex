@@ -960,10 +960,7 @@ impl TestCommand {
             );
         }
 
-        let mut nested_test_args = self.nextest_invocation_args(true);
-        nested_test_args.retain(|arg| arg != "--ephemeral-postgres");
-        nested_test_args.push("--no-ephemeral-postgres".to_string());
-        nested_test_args.push("--allow-contended-host".to_string());
+        let nested_test_args = self.ephemeral_postgres_nested_test_args();
 
         let xtask_exe = std::env::current_exe()
             .map_err(|e| color_eyre::eyre::eyre!("failed to resolve current xtask binary: {e}"))?;
@@ -1003,6 +1000,16 @@ impl TestCommand {
 
     fn allocate_ephemeral_postgres_port() -> Result<u16> {
         Ok(crate::sandbox::orchestrator::allocate_free_port()?.port())
+    }
+
+    fn ephemeral_postgres_nested_test_args(&self) -> Vec<String> {
+        let mut args = self.nextest_invocation_args(true);
+        args.retain(|arg| arg != "--ephemeral-postgres");
+        args.push("--no-ephemeral-postgres".to_string());
+        if !args.iter().any(|arg| arg == "--allow-contended-host") {
+            args.push("--allow-contended-host".to_string());
+        }
+        args
     }
 
     fn resolve_execution_plan(
@@ -2380,6 +2387,30 @@ mod tests {
                 "ephemeral test Postgres must not hard-code the ci postgres default port"
             );
         }
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_ephemeral_postgres_nested_args_deduplicate_contention_flag()
+    -> ::xtask::sandbox::TestResult<()> {
+        let command = TestCommand {
+            ephemeral_postgres: true,
+            allow_contended_host: true,
+            packages: vec!["sinex-e2e-tests".to_string()],
+            ..Default::default()
+        };
+
+        let args = command.ephemeral_postgres_nested_test_args();
+
+        assert!(!args.contains(&"--ephemeral-postgres".to_string()));
+        assert!(args.contains(&"--no-ephemeral-postgres".to_string()));
+        assert_eq!(
+            args.iter()
+                .filter(|arg| arg.as_str() == "--allow-contended-host")
+                .count(),
+            1,
+            "nested test command must not pass duplicate Clap singleton flags: {args:?}"
+        );
         Ok(())
     }
 
