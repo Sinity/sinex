@@ -1109,7 +1109,7 @@ let
 
             if [ -n "$CONFIGURED_HYPRLAND_SIGNATURE" ]; then
               HYPRLAND_SIGNATURE="$CONFIGURED_HYPRLAND_SIGNATURE"
-            elif [ "$HYPRLAND_EVENT_SOCKET_COUNT" -ne 1 ]; then
+            elif [ "$HYPRLAND_EVENT_SOCKET_COUNT" -eq 0 ]; then
               HYPRLAND_SIGNATURE=""
             fi
           fi
