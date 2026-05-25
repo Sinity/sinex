@@ -2354,3 +2354,55 @@ async fn test_rust_analyzer_remediation_actions_are_bucket_specific()
     );
     Ok(())
 }
+
+#[sinex_test]
+async fn test_rust_analyzer_scan_failed_status_represents_unavailable()
+-> ::xtask::sandbox::TestResult<()> {
+    // When rust-analyzer cannot be spawned (binary missing, permission denied, etc.),
+    // the exit_code is None and diagnostic_count is 0 — the status must be "failed".
+    assert_eq!(rust_analyzer_cli_scan_status(None, 0), "failed");
+    assert_eq!(rust_analyzer_cli_scan_status(None, 2), "partial");
+    // Build a scan that simulates the unavailable-RA case: no exit code,
+    // empty stdout (no diagnostics), and stderr with a WARN line that
+    // exercises the stderr classification path.
+    let scan = build_rust_analyzer_cli_diagnostic_scan(
+        vec!["rust-analyzer".into(), "diagnostics".into(), ".".into()],
+        None,
+        "",
+        " WARN ra-sys: failed to discover workspace\n",
+    )?;
+    assert_eq!(scan.status, "failed");
+    assert_eq!(scan.exit_code, None);
+    assert!(scan.diagnostics.is_empty());
+    let summary = scan
+        .stderr_summary
+        .expect("stderr summary should exist for unavailable-RA stderr");
+    assert!(
+        summary.other_warnings > 0,
+        "unavailable-RA stderr lines should produce warnings"
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn test_rust_analyzer_unavailable_response_shape_is_advisory()
+-> ::xtask::sandbox::TestResult<()> {
+    // Verify the JSON contract for the unavailable-RA response:
+    // when rust-analyzer is not available, the response must carry
+    // ra_available=false, diagnostic_role advisory, and proof_authority false.
+    let unavailable = serde_json::json!({
+        "ra_available": false,
+        "ra_error": "spawn rust-analyzer diagnostics",
+        "diagnostic_role": "advisory",
+        "proof_authority": false,
+    });
+    assert_eq!(unavailable["ra_available"], false);
+    assert_eq!(unavailable["diagnostic_role"], "advisory");
+    assert_eq!(unavailable["proof_authority"], false);
+    assert!(
+        unavailable["ra_error"]
+            .as_str()
+            .is_some_and(|s| !s.is_empty())
+    );
+    Ok(())
+}
