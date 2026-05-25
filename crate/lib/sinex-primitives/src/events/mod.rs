@@ -69,6 +69,11 @@ pub struct Event<T = JsonValue> {
     #[serde(flatten)]
     pub provenance: Provenance,
 
+    /// BLAKE3 hash of source-material byte range (material events only).
+    /// NULL for synthesis. 32 bytes. Verified on replay — mismatch → DLQ.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub anchor_payload_hash: Option<Vec<u8>>,
+
     /// Array of associated blob IDs (screenshots, recordings, etc.)
     pub associated_blob_ids: Option<Vec<Uuid>>,
 
