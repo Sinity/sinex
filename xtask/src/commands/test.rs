@@ -231,6 +231,10 @@ pub struct TestCommand {
     #[arg(long, value_enum, default_value_t = crate::impact::ImpactMode::Balanced)]
     pub impact_mode: crate::impact::ImpactMode,
 
+    /// Bypass exact proof reuse for this invocation.
+    #[arg(long)]
+    pub no_reuse: bool,
+
     /// Allow broad tests to start even when host PSI is already severe.
     #[arg(long)]
     pub allow_contended_host: bool,
@@ -600,6 +604,9 @@ impl TestCommand {
         if self.allow_contended_host {
             args.push("--allow-contended-host".to_string());
         }
+        if self.no_reuse {
+            args.push("--no-reuse".to_string());
+        }
         if !matches!(self.impact_mode, crate::impact::ImpactMode::Balanced) {
             args.push(format!("--impact-mode={}", self.impact_mode.as_str()));
         }
@@ -730,6 +737,9 @@ impl TestCommand {
         }
         if self.allow_contended_host {
             args.push("--allow-contended-host".to_string());
+        }
+        if self.no_reuse {
+            args.push("--no-reuse".to_string());
         }
         if let Some(ref f) = self.filter {
             args.push("-E".to_string());
@@ -1309,7 +1319,7 @@ impl XtaskCommand for TestCommand {
             let input_fingerprint =
                 crate::coordinator::current_scoped_tree_fingerprint("test", &coordination_args)?;
             let scope_key = crate::coordinator::compute_scope_key("test", &coordination_args);
-            let reusable = proof_kind == "test.nextest.exact";
+            let reusable = !self.no_reuse && proof_kind == "test.nextest.exact";
             let reusable_proof = if reusable {
                 ctx.try_with_history_db_query(|db| {
                     db.get_successful_reusable_test_proof_unit(
@@ -1361,7 +1371,9 @@ impl XtaskCommand for TestCommand {
                     "  db pool size override: {}",
                     db_pool_size.map_or_else(|| "default".to_string(), |value| value.to_string())
                 );
-                let reuse_state = if let Some(proof) = &reusable_proof {
+                let reuse_state = if self.no_reuse {
+                    "disabled by --no-reuse".to_string()
+                } else if let Some(proof) = &reusable_proof {
                     format!("hit invocation {}", proof.invocation_id)
                 } else if reusable {
                     "eligible, no exact proof yet".to_string()
@@ -1480,7 +1492,7 @@ impl XtaskCommand for TestCommand {
                     println!("  accepted risk: {risk}");
                 }
             }
-            if plan.can_reuse_exact_proof() {
+            if !self.no_reuse && plan.can_reuse_exact_proof() {
                 let proof_args = crate::impact::exact_proof_args_for_plan(plan);
                 let (proof_kind, input_fingerprint, scope_key) =
                     crate::impact::exact_test_proof_key(&proof_args)?;
@@ -1536,7 +1548,8 @@ impl XtaskCommand for TestCommand {
             .as_ref()
             .and_then(|plan| plan.impact_filter.clone())
             .or_else(|| self.filter.clone());
-        let (impact_packages, reused_package_proofs) = if effective_filter.is_none()
+        let (impact_packages, reused_package_proofs) = if !self.no_reuse
+            && effective_filter.is_none()
             && let Some(packages) = raw_impact_packages.as_ref()
         {
             let (remaining, reused) =
@@ -1575,12 +1588,6 @@ impl XtaskCommand for TestCommand {
             effective_filter.as_deref(),
             impact_packages.as_deref(),
         )?;
-        self.guard_broad_start_pressure(
-            ctx,
-            &execution_plan,
-            effective_filter.as_deref(),
-            &effective_test_binaries,
-        )?;
         let workload_scope = execution_plan.workload_scope.clone();
         let coordination_args = self.semantic_invocation_args(
             &workload_scope,
@@ -1590,6 +1597,49 @@ impl XtaskCommand for TestCommand {
         );
         ctx.record_coordination_fingerprint("test", &coordination_args);
         ctx.record_invocation_args(&coordination_args);
+        if !self.no_reuse {
+            let proof_kind = crate::coordinator::proof_kind("test", &coordination_args);
+            if proof_kind == "test.nextest.exact" {
+                let input_fingerprint = crate::coordinator::current_scoped_tree_fingerprint(
+                    "test",
+                    &coordination_args,
+                )?;
+                let scope_key = crate::coordinator::compute_scope_key("test", &coordination_args);
+                let reusable_proof = ctx
+                    .try_with_history_db_query(|db| {
+                        db.get_successful_reusable_test_proof_unit(
+                            &proof_kind,
+                            &input_fingerprint,
+                            &scope_key,
+                        )
+                    })
+                    .and_then(std::result::Result::ok)
+                    .flatten();
+                if let Some(proof) = reusable_proof {
+                    if ctx.is_human() {
+                        println!(
+                            "Skipping tests: exact reusable proof from invocation {}",
+                            proof.invocation_id
+                        );
+                    }
+                    return Ok(CommandResult::success()
+                        .with_message("tests skipped by exact proof")
+                        .with_detail(format!("reused_invocation={}", proof.invocation_id))
+                        .with_duration(ctx.elapsed())
+                        .with_data(serde_json::json!({
+                            "impact_plan": impact_plan.clone(),
+                            "reused_proof": proof,
+                            "reused_package_proofs": reused_package_proofs,
+                        })));
+                }
+            }
+        }
+        self.guard_broad_start_pressure(
+            ctx,
+            &execution_plan,
+            effective_filter.as_deref(),
+            &effective_test_binaries,
+        )?;
 
         // List: show tests only
         if self.list {
@@ -1791,7 +1841,7 @@ impl XtaskCommand for TestCommand {
                 ));
                 match (input_fingerprint, scope_key) {
                     (Some(input_fingerprint), Some(scope_key)) => {
-                        let reusable = proof_kind == "test.nextest.exact";
+                        let reusable = !self.no_reuse && proof_kind == "test.nextest.exact";
                         let manifest = serde_json::json!({
                             "scope": workload_scope.encode_marker(),
                             "runner_packages": execution_plan.runner_packages,
@@ -2311,6 +2361,85 @@ mod tests {
         assert_eq!(reused[0].invocation_id, invocation_id);
         assert_eq!(reused[0].proof_kind, "test.nextest.exact");
         assert_eq!(reused[0].scope_key, scope_key);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_execute_reuses_exact_test_proof_before_nextest()
+    -> ::xtask::sandbox::TestResult<()> {
+        let mut _env = crate::sandbox::prelude::EnvGuard::new();
+        _env.clear("NEXTEST_RUN_ID");
+        let dir = tempfile::tempdir()?;
+        let db_path = dir.path().join("test.db");
+        let db = HistoryDb::open(&db_path)?;
+        let command = TestCommand {
+            packages: vec!["xtask".to_string()],
+            skip_preflight: true,
+            ..Default::default()
+        };
+        let proof_args = command.semantic_invocation_args(
+            &WorkloadScope::Packages(vec!["xtask".to_string()]),
+            None,
+            &[],
+            false,
+        );
+        let input_fingerprint =
+            crate::coordinator::current_scoped_tree_fingerprint("test", &proof_args)?;
+        let scope_key = crate::coordinator::compute_scope_key("test", &proof_args);
+        let invocation_id = db.start_invocation("test", None, None, None)?;
+        db.record_test_proof_unit(
+            invocation_id,
+            "test.nextest.exact",
+            &scope_key,
+            &input_fingerprint,
+            r#"{"scope":"packages:xtask"}"#,
+            true,
+        )?;
+        db.finish_invocation(
+            invocation_id,
+            crate::history::InvocationStatus::Success,
+            Some(0),
+            0.1,
+        )?;
+        drop(db);
+
+        let ctx = test_context(db_path);
+        let result = command.execute(&ctx).await?;
+
+        assert_eq!(result.status, crate::output::Status::Success);
+        assert_eq!(
+            result.message.as_deref(),
+            Some("tests skipped by exact proof")
+        );
+        assert_eq!(
+            result
+                .data
+                .as_ref()
+                .and_then(|data| { data["reused_proof"]["invocation_id"].as_i64() }),
+            Some(invocation_id)
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_no_reuse_changes_test_proof_kind_to_plan() -> ::xtask::sandbox::TestResult<()> {
+        let command = TestCommand {
+            no_reuse: true,
+            ..Default::default()
+        };
+
+        let args = command.semantic_invocation_args(
+            &WorkloadScope::Packages(vec!["xtask".to_string()]),
+            None,
+            &[],
+            false,
+        );
+
+        assert!(args.contains(&"--no-reuse".to_string()));
+        assert_eq!(
+            crate::coordinator::proof_kind("test", &args),
+            "test.nextest.plan"
+        );
         Ok(())
     }
 
