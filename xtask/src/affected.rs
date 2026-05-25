@@ -16,6 +16,7 @@ use walkdir::WalkDir;
 #[derive(Clone, Debug)]
 struct WorkspaceMetadata {
     packages: Vec<String>,
+    forward_deps: HashMap<String, HashSet<String>>,
     reverse_deps: HashMap<String, HashSet<String>>,
 }
 
@@ -73,14 +74,21 @@ impl WorkspaceMetadata {
 
         Ok(Self {
             packages,
+            forward_deps,
             reverse_deps,
         })
     }
 
     /// Load workspace metadata from cargo (single call).
     fn load() -> Result<Self> {
+        Self::load_in(Path::new("."))
+    }
+
+    /// Load workspace metadata from cargo in a specific workspace root.
+    fn load_in(cwd: &Path) -> Result<Self> {
         let output = ProcessBuilder::cargo()
             .args(["metadata", "--format-version", "1", "--no-deps"])
+            .current_dir(cwd)
             .with_description("cargo metadata")
             .run()
             .context("failed to run cargo metadata")?;
@@ -89,6 +97,29 @@ impl WorkspaceMetadata {
             serde_json::from_str(&output.stdout).context("failed to parse cargo metadata")?;
         Self::parse_metadata(&metadata)
     }
+}
+
+/// Return the requested workspace packages plus their transitive workspace dependencies.
+pub fn package_dependency_closure(packages: &[String]) -> Result<Vec<String>> {
+    let metadata = if let Some(m) = WORKSPACE_METADATA.get() {
+        m
+    } else {
+        let m = WorkspaceMetadata::load()?;
+        WORKSPACE_METADATA.get_or_init(|| m)
+    };
+    Ok(package_dependency_closure_from_forward(
+        packages,
+        &metadata.forward_deps,
+    ))
+}
+
+/// Return the dependency closure using metadata loaded from a specific workspace root.
+pub fn package_dependency_closure_in(cwd: &Path, packages: &[String]) -> Result<Vec<String>> {
+    let metadata = WorkspaceMetadata::load_in(cwd)?;
+    Ok(package_dependency_closure_from_forward(
+        packages,
+        &metadata.forward_deps,
+    ))
 }
 
 /// Get the list of packages affected by current git changes.
@@ -685,6 +716,30 @@ fn transitive_dependents(
     affected
 }
 
+fn package_dependency_closure_from_forward(
+    packages: &[String],
+    forward_deps: &HashMap<String, HashSet<String>>,
+) -> Vec<String> {
+    let workspace_packages: HashSet<&str> = forward_deps.keys().map(String::as_str).collect();
+    let mut closure: HashSet<String> = packages.iter().cloned().collect();
+    let mut to_process: Vec<String> = packages.iter().cloned().collect();
+
+    while let Some(pkg) = to_process.pop() {
+        let Some(deps) = forward_deps.get(&pkg) else {
+            continue;
+        };
+        for dep in deps {
+            if workspace_packages.contains(dep.as_str()) && closure.insert(dep.clone()) {
+                to_process.push(dep.clone());
+            }
+        }
+    }
+
+    let mut closure: Vec<String> = closure.into_iter().collect();
+    closure.sort();
+    closure
+}
+
 /// Returns true when any `nixos/**/*.nix` or `flake.nix`/`flake.lock` file is dirty.
 ///
 /// Used by `xtask check --full` to suggest running the NixOS compatibility gate:
@@ -1209,6 +1264,37 @@ mod tests {
         assert_eq!(
             parsed.reverse_deps.get("sinex-primitives"),
             Some(&HashSet::from(["xtask".to_string()]))
+        );
+        assert_eq!(
+            parsed.forward_deps.get("xtask"),
+            Some(&HashSet::from(["sinex-primitives".to_string()]))
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_package_dependency_closure_includes_transitive_workspace_deps() -> TestResult<()>
+    {
+        let forward_deps = HashMap::from([
+            (
+                "sinex-db".to_string(),
+                HashSet::from(["sinex-primitives".to_string(), "sqlx".to_string()]),
+            ),
+            (
+                "sinex-primitives".to_string(),
+                HashSet::from(["sinex-macros".to_string()]),
+            ),
+            ("sinex-macros".to_string(), HashSet::new()),
+        ]);
+
+        assert_eq!(
+            package_dependency_closure_from_forward(&["sinex-db".to_string()], &forward_deps),
+            vec![
+                "sinex-db".to_string(),
+                "sinex-macros".to_string(),
+                "sinex-primitives".to_string(),
+            ],
+            "package-scoped proof fingerprints must include dirty workspace dependencies but not external crates"
         );
         Ok(())
     }
