@@ -114,6 +114,7 @@ Run the repo's primary nextest-backed test workflows
 | `--heavy` | no | no | Run heavy/ignored tests |
 | `-a, --all` | no | no | Run ALL packages (disables affected mode default) |
 | `--impact-mode` | yes | no | Impact planner mode for bare `xtask test` |
+| `--no-reuse` | no | no | Bypass exact proof reuse for this invocation |
 | `--allow-contended-host` | no | no | Allow broad tests to start even when host PSI is already severe |
 | `--update-snapshots` | no | no | Update insta snapshots (sets `INSTA_UPDATE=always`) |
 | `args` | yes | no | Arguments passed to the test binary (not supported by nextest directly, usually) |
