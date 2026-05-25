@@ -1433,3 +1433,90 @@ async fn chaos_injector_produces_clean_snapshot(ctx: TestContext) -> TestResult<
     setup.handle.abort();
     Ok(())
 }
+
+/// Verify bisect-retry poison isolation at scale: a batch with ~5% bad rows
+/// isolates all poison rows to DLQ while preserving good siblings.
+#[sinex_test(timeout = 60)]
+async fn jetstream_consumer_bisect_isolates_multiple_poison_rows_in_large_batch(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let suffix = format!("scale-split-{}", Uuid::now_v7().to_string().to_lowercase());
+    let hooks = TestHooks::builder().route_db_errors_to_dlq().build().0;
+    let setup =
+        start_consumer_with_hooks(&ctx, &suffix, Duration::from_secs(Timeouts::STANDARD), &hooks)
+            .await?;
+
+    let total_events = 60usize;
+    let poison_count = 3usize; // 5% bad rows
+    let good_count = total_events - poison_count;
+    let env = ctx.env();
+    let subject_prefix = format!("scale-split.{suffix}");
+
+    let mut expected_good_ids = Vec::new();
+    let mut expected_bad_ids = Vec::new();
+
+    // Publish interleaved good and bad events.
+    for i in 0..total_events {
+        let is_poison = i % (total_events / poison_count) == 0 && expected_bad_ids.len() < poison_count;
+        let event_id = Uuid::now_v7();
+        let subject = env.nats_subject_with_namespace(
+            Some(&setup.namespace),
+            &format!("events.raw.{subject_prefix}.event-{i}"),
+        );
+        let event = if is_poison {
+            expected_bad_ids.push(event_id);
+            json!({
+                "id": event_id.to_string(),
+                "source": format!("scale-split.{suffix}"),
+                "event_type": "batch.scale.poison",
+                "payload": { "kind": "poison" },
+                "ts_orig": sinex_primitives::temporal::now().format_rfc3339(),
+                "host": "test-host",
+                "source_material_id": FIXTURE_SOURCE_MATERIAL_ID,
+                "anchor_byte": -1,
+            })
+        } else {
+            expected_good_ids.push(event_id);
+            json!({
+                "id": event_id.to_string(),
+                "source": format!("scale-split.{suffix}"),
+                "event_type": "batch.scale.good",
+                "payload": { "kind": "committable", "index": i },
+                "ts_orig": sinex_primitives::temporal::now().format_rfc3339(),
+                "host": "test-host",
+                "source_material_id": FIXTURE_SOURCE_MATERIAL_ID,
+                "anchor_byte": i as i64,
+            })
+        };
+        setup
+            .nats_client
+            .publish(subject, serde_json::to_vec(&event)?.into())
+            .await?;
+    }
+    setup.nats_client.flush().await?;
+
+    // Wait for all good events to persist.
+    WaitHelpers::wait_for_event_count(&ctx.pool, good_count, Timeouts::STANDARD).await?;
+
+    // Verify each good event is persisted.
+    for event_id in &expected_good_ids {
+        WaitHelpers::wait_for_event_id(&ctx.pool, (*event_id).into(), Timeouts::SHORT).await?;
+    }
+
+    // Verify poison events are NOT persisted (DLQ'd instead).
+    for event_id in &expected_bad_ids {
+        let persisted = ctx
+            .pool
+            .events()
+            .get_by_ids(&[Id::<sinex_db::Event>::from_uuid(*event_id)])
+            .await?;
+        assert!(
+            persisted.is_empty(),
+            "poison event {event_id} must not be persisted"
+        );
+    }
+
+    setup.handle.abort();
+    Ok(())
+}
