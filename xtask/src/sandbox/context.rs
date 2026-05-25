@@ -91,6 +91,30 @@ struct TestDependencyEdgeArtifact {
     origin: String,
 }
 
+#[derive(Debug, serde::Serialize)]
+struct TestExecutionManifestArtifact<'a> {
+    test_name: &'a str,
+    package: Option<String>,
+    module_path: &'a str,
+    source_file: &'a str,
+    source_line: u32,
+    binary_id: Option<String>,
+    pid: u32,
+    attempt_id: String,
+    planner_version: &'static str,
+}
+
+#[derive(Debug, serde::Serialize)]
+#[serde(tag = "artifact_kind", rename_all = "snake_case")]
+enum ImpactArtifactEnvelope<'a> {
+    DependencyEdges {
+        edges: &'a [TestDependencyEdgeArtifact],
+    },
+    TestExecutionManifest {
+        manifest: TestExecutionManifestArtifact<'a>,
+    },
+}
+
 fn format_cleanup_failure_context(
     message: &str,
     namespace: &str,
@@ -1455,24 +1479,72 @@ fn sanitize_artifact_component(raw: &str) -> String {
         .collect()
 }
 
-fn persist_dependency_edges(test_name: &str, edges: &[TestDependencyEdgeArtifact]) {
-    if edges.is_empty() {
-        return;
-    }
+fn impact_artifact_dir() -> std::path::PathBuf {
     let run_id = std::env::var("SINEX_IMPACT_ARTIFACT_RUN_ID")
         .or_else(|_| std::env::var("NEXTEST_RUN_ID"))
         .unwrap_or_else(|_| "manual".to_string());
-    let dir = crate::config::workspace_root()
+    crate::config::workspace_root()
         .join(".sinex")
         .join("test-artifacts")
         .join("impact")
-        .join(sanitize_artifact_component(&run_id));
+        .join(sanitize_artifact_component(&run_id))
+}
+
+pub fn persist_test_execution_manifest(
+    test_name: &str,
+    module_path: &str,
+    source_file: &str,
+    source_line: u32,
+) {
+    let dir = impact_artifact_dir();
     if let Err(error) = fs::create_dir_all(&dir) {
         warn!("failed to create impact artifact directory: {}", error);
         return;
     }
-    let path = dir.join(format!("{}.json", sanitize_artifact_component(test_name)));
-    match serde_json::to_string_pretty(edges) {
+    let manifest = TestExecutionManifestArtifact {
+        test_name,
+        package: std::env::var("CARGO_PKG_NAME").ok(),
+        module_path,
+        source_file,
+        source_line,
+        binary_id: std::env::var("NEXTEST_BIN_EXE").ok(),
+        pid: std::process::id(),
+        attempt_id: std::env::var("NEXTEST_ATTEMPT")
+            .ok()
+            .unwrap_or_else(|| "1".to_string()),
+        planner_version: crate::impact::IMPACT_PLANNER_VERSION,
+    };
+    let envelope = ImpactArtifactEnvelope::TestExecutionManifest { manifest };
+    let path = dir.join(format!(
+        "{}.manifest.json",
+        sanitize_artifact_component(test_name)
+    ));
+    match serde_json::to_string_pretty(&envelope) {
+        Ok(mut rendered) => {
+            rendered.push('\n');
+            if let Err(error) = fs::write(&path, rendered) {
+                warn!("failed to write impact execution manifest: {}", error);
+            }
+        }
+        Err(error) => warn!("failed to serialize impact execution manifest: {}", error),
+    }
+}
+
+fn persist_dependency_edges(test_name: &str, edges: &[TestDependencyEdgeArtifact]) {
+    if edges.is_empty() {
+        return;
+    }
+    let dir = impact_artifact_dir();
+    if let Err(error) = fs::create_dir_all(&dir) {
+        warn!("failed to create impact artifact directory: {}", error);
+        return;
+    }
+    let path = dir.join(format!(
+        "{}.edges.json",
+        sanitize_artifact_component(test_name)
+    ));
+    let envelope = ImpactArtifactEnvelope::DependencyEdges { edges };
+    match serde_json::to_string_pretty(&envelope) {
         Ok(mut rendered) => {
             rendered.push('\n');
             if let Err(error) = fs::write(&path, rendered) {

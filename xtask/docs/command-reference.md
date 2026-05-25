@@ -113,6 +113,7 @@ Run the repo's primary nextest-backed test workflows
 | `--include-ignored` | no | no | Include tests marked `#[ignore]` |
 | `--heavy` | no | no | Run heavy/ignored tests |
 | `-a, --all` | no | no | Run ALL packages (disables affected mode default) |
+| `--impact-mode` | yes | no | Impact planner mode for bare `xtask test` |
 | `--allow-contended-host` | no | no | Allow broad tests to start even when host PSI is already severe |
 | `--update-snapshots` | no | no | Update insta snapshots (sets `INSTA_UPDATE=always`) |
 | `args` | yes | no | Arguments passed to the test binary (not supported by nextest directly, usually) |
@@ -1291,11 +1292,44 @@ Explain the freshness key for a command scope
 | Command | Purpose |
 |---|---|
 | `explain` | Explain the default `xtask test` impact plan for the current diff |
+| `seed` | Run tests in evidence-seeding mode |
+| `seed-coverage` | Run one nextest filter under LLVM coverage and import covered line regions |
 | `audit` | Sample skipped tests by forcing a broader local run |
 
 ### `xtask impact explain`
 
 Explain the default `xtask test` impact plan for the current diff
+
+**Arguments**
+
+| Flag | Value | Required | Description |
+|---|---|---|---|
+| `--mode` | yes | no | Planner mode to explain |
+
+
+### `xtask impact seed`
+
+Run tests in evidence-seeding mode
+
+**Arguments**
+
+| Flag | Value | Required | Description |
+|---|---|---|---|
+| `-p, --package` | yes | no | Package to seed |
+| `-E, --filter` | yes | no | Optional nextest filter |
+
+
+### `xtask impact seed-coverage`
+
+Run one nextest filter under LLVM coverage and import covered line regions
+
+**Arguments**
+
+| Flag | Value | Required | Description |
+|---|---|---|---|
+| `-p, --package` | yes | no | Package to seed |
+| `-E, --filter` | yes | yes | Exact nextest filter for one test, for example `test(my_test)` |
+| `--test-name` | yes | no | Test name to record when it cannot be inferred from `-E test(name)` |
 
 
 ### `xtask impact audit`
@@ -1307,6 +1341,7 @@ Sample skipped tests by forcing a broader local run
 | Flag | Value | Required | Description |
 |---|---|---|---|
 | `--sample-skips` | yes | no | Number of skipped proof decisions to sample |
+| `--mode` | yes | no | Planner mode to audit |
 
 
 ## `xtask git-stack`

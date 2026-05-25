@@ -558,6 +558,7 @@ pub fn sinex_prop(attr: TokenStream, item: TokenStream) -> TokenStream {
         quote! {
             #trace_stmt
             let test_name = stringify!(#fn_name);
+            ::xtask::sandbox::persist_test_execution_manifest(test_name, module_path!(), file!(), line!());
             let start = std::time::Instant::now();
             eprintln!("🔄 {} [prop, timeout: {}s, cases: {}]", test_name.replace('_', " "), #timeout_secs, #cases);
             let _test_temp_env = ::xtask::sandbox::prepare_test_temp_env(test_name)?;
@@ -638,6 +639,7 @@ pub fn sinex_prop(attr: TokenStream, item: TokenStream) -> TokenStream {
         quote! {
             #trace_stmt
             let test_name = stringify!(#fn_name);
+            ::xtask::sandbox::persist_test_execution_manifest(test_name, module_path!(), file!(), line!());
             let start = std::time::Instant::now();
             eprintln!("🔄 {} [prop, cases: {}]", test_name.replace('_', " "), #cases);
             #runner_setup
@@ -1078,6 +1080,7 @@ fn expand_rstest_variant(
         #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
         #fn_vis #new_sig {
             let test_name = stringify!(#fn_name);
+            ::xtask::sandbox::persist_test_execution_manifest(test_name, module_path!(), file!(), line!());
             let start = ::std::time::Instant::now();
             eprintln!("🔄 {} [rstest case, timeout: {}s]", test_name.replace('_', " "), #timeout_secs);
 
@@ -1124,6 +1127,7 @@ fn expand_async_context_test(
         #fn_vis async fn #fn_name() -> ::xtask::sandbox::TestResult<()> {
             let test_future = async {
                 let test_name = stringify!(#fn_name);
+                ::xtask::sandbox::persist_test_execution_manifest(test_name, module_path!(), file!(), line!());
                 let start = std::time::Instant::now();
                 eprintln!("🔄 {} [timeout: {}s]", test_name.replace('_', " "), #timeout_secs);
                 #serial_guard
@@ -1203,6 +1207,7 @@ fn expand_simple_async_test(
         #fn_vis async fn #fn_name() -> ::xtask::sandbox::TestResult<()> {
             let test_future = async {
                 let test_name = stringify!(#fn_name);
+                ::xtask::sandbox::persist_test_execution_manifest(test_name, module_path!(), file!(), line!());
                 let start = std::time::Instant::now();
                 eprintln!("🔄 {} [simple, timeout: {}s]", test_name.replace('_', " "), #timeout_secs);
                 #serial_guard
@@ -1597,7 +1602,6 @@ mod tests {
         assert!(error.contains("timout"));
     }
 
-    #[test]
     #[test]
     fn sinex_test_attrs_reject_scenario_metadata() {
         let error = parse_err(quote!(scenario = "runtime.restart"));

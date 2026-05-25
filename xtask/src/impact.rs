@@ -1,20 +1,76 @@
 //! Machine-derived test impact planning.
 
 use std::collections::BTreeSet;
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::process::Command;
 
-use color_eyre::eyre::Result;
+use color_eyre::eyre::{Result, WrapErr};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
+use walkdir::WalkDir;
 
 use crate::{affected, coordinator, history::HistoryDb};
+
+pub const IMPACT_PLANNER_VERSION: &str = "impact-v2";
+pub const IMPACT_COVERAGE_SCHEMA_VERSION: &str = "coverage-regions-v2";
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, clap::ValueEnum)]
+#[serde(rename_all = "snake_case")]
+pub enum ImpactMode {
+    Off,
+    Balanced,
+    Aggressive,
+}
+
+impl Default for ImpactMode {
+    fn default() -> Self {
+        Self::Balanced
+    }
+}
+
+impl ImpactMode {
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Off => "off",
+            Self::Balanced => "balanced",
+            Self::Aggressive => "aggressive",
+        }
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ChangedItem {
     pub path: String,
     pub package: Option<String>,
+    pub hunks: Vec<ChangedHunk>,
+    pub rust_items: Vec<RustItemSpan>,
+    pub content_hash: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ChangedHunk {
+    pub line_start: u32,
+    pub line_end: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RustItemSpan {
+    pub file_path: String,
+    pub item_kind: String,
+    pub item_name: String,
+    pub line_start: u32,
+    pub line_end: u32,
+    pub signature_hash: String,
+    pub body_hash: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ImpactPlan {
+    pub planner_version: String,
+    pub mode: ImpactMode,
+    pub coverage_schema_version: String,
     pub changed: Vec<ChangedItem>,
     pub affected_packages: Vec<String>,
     pub impacted_tests: Vec<ImpactedTest>,
@@ -37,6 +93,8 @@ pub struct ImpactEvidence {
     pub source: ImpactEvidenceSource,
     pub subject: String,
     pub reason: String,
+    pub line_start: Option<u32>,
+    pub line_end: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -44,6 +102,8 @@ pub struct ImpactEvidence {
 pub enum ImpactEvidenceSource {
     CoverageRegion,
     DependencyEdge,
+    RustItemSpan,
+    TestExecutionManifest,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -61,6 +121,7 @@ pub enum ImpactAction {
     RunWorkspace,
     ReuseExactProof,
     SkipPackage,
+    AuditSkippedTests,
 }
 
 impl ImpactPlan {
@@ -86,13 +147,31 @@ pub fn plan_default_test_impact() -> Result<ImpactPlan> {
 }
 
 pub fn plan_default_test_impact_with_history(history: Option<&HistoryDb>) -> Result<ImpactPlan> {
+    plan_default_test_impact_with_history_and_mode(history, ImpactMode::Balanced)
+}
+
+pub fn plan_default_test_impact_with_history_and_mode(
+    history: Option<&HistoryDb>,
+    mode: ImpactMode,
+) -> Result<ImpactPlan> {
     let changed_files = affected::changed_files()?;
+    let hunks = changed_hunks()?;
+    let item_index = RustItemIndex::for_changed_files(&changed_files)?;
     let affected_packages = affected::affected_packages()?;
     let impacted_tests = match history {
-        Some(history) => history.impacted_tests_for_changed_files(&changed_files)?,
+        Some(history) => {
+            history.impacted_tests_for_changed_files_and_hunks(&changed_files, &hunks)?
+        }
         None => Vec::new(),
     };
-    plan_from_changed_files(changed_files, affected_packages, impacted_tests)
+    plan_from_changed_files_with_mode(
+        changed_files,
+        hunks,
+        item_index,
+        affected_packages,
+        impacted_tests,
+        mode,
+    )
 }
 
 pub fn plan_from_changed_files(
@@ -100,11 +179,76 @@ pub fn plan_from_changed_files(
     affected_packages: Vec<String>,
     impacted_tests: Vec<ImpactedTest>,
 ) -> Result<ImpactPlan> {
+    plan_from_changed_files_with_mode(
+        changed_files,
+        Vec::new(),
+        RustItemIndex::default(),
+        affected_packages,
+        impacted_tests,
+        ImpactMode::Balanced,
+    )
+}
+
+pub fn plan_from_changed_files_with_mode(
+    changed_files: Vec<String>,
+    hunks: Vec<FileChangedHunks>,
+    item_index: RustItemIndex,
+    affected_packages: Vec<String>,
+    impacted_tests: Vec<ImpactedTest>,
+    mode: ImpactMode,
+) -> Result<ImpactPlan> {
+    if matches!(mode, ImpactMode::Off) {
+        let mut changed = changed_items(changed_files, hunks, item_index)?;
+        changed.sort_by(|left, right| left.path.cmp(&right.path));
+        let mut decisions = Vec::new();
+        let affected_packages = affected_packages.into_iter().collect::<BTreeSet<_>>();
+        if affected_packages.is_empty() {
+            decisions.push(ImpactDecision {
+                action: ImpactAction::RunWorkspace,
+                reason: "impact mode is off and changes do not map to package scope".to_string(),
+                subject: Some("workspace".to_string()),
+            });
+        } else {
+            for package in &affected_packages {
+                decisions.push(ImpactDecision {
+                    action: ImpactAction::RunPackage,
+                    reason: "impact mode is off; package scope is the default affected scope"
+                        .to_string(),
+                    subject: Some(package.clone()),
+                });
+            }
+        }
+        return Ok(ImpactPlan {
+            planner_version: IMPACT_PLANNER_VERSION.to_string(),
+            mode,
+            coverage_schema_version: IMPACT_COVERAGE_SCHEMA_VERSION.to_string(),
+            changed,
+            affected_packages: affected_packages.into_iter().collect(),
+            impacted_tests,
+            impact_filter: None,
+            scope_args: Vec::new(),
+            decisions,
+            accepted_risks: Vec::new(),
+            evidence_gaps: Vec::new(),
+        });
+    }
+
     let mut changed = changed_files
         .into_iter()
-        .map(|path| ChangedItem {
-            package: affected::package_for_path(&path),
-            path,
+        .map(|path| {
+            let file_hunks = hunks
+                .iter()
+                .find(|item| item.path == path)
+                .map_or_else(Vec::new, |item| item.hunks.clone());
+            let rust_items = item_index.items_for_file(&path);
+            let content_hash = hash_file_if_exists(&path);
+            ChangedItem {
+                package: affected::package_for_path(&path),
+                path,
+                hunks: file_hunks,
+                rust_items,
+                content_hash,
+            }
         })
         .collect::<Vec<_>>();
     changed.sort_by(|left, right| left.path.cmp(&right.path));
@@ -137,20 +281,12 @@ pub fn plan_from_changed_files(
         if packages.is_empty() {
             packages = affected_packages.clone();
         }
-        let covered_subjects = impacted_tests
-            .iter()
-            .flat_map(|test| {
-                test.evidence
-                    .iter()
-                    .map(|evidence| evidence.subject.clone())
-            })
-            .collect::<BTreeSet<_>>();
         for item in &changed {
-            if !covered_subjects.contains(&item.path) {
+            if !changed_item_fully_covered(item, &impacted_tests) {
                 evidence_gaps.push(item.path.clone());
             }
         }
-        if evidence_gaps.is_empty() {
+        if evidence_gaps.is_empty() || matches!(mode, ImpactMode::Aggressive) {
             let filter = impacted_tests
                 .iter()
                 .map(|test| format!("test({})", test.test_name))
@@ -159,10 +295,26 @@ pub fn plan_from_changed_files(
             impact_filter = Some(filter.clone());
             decisions.push(ImpactDecision {
                 action: ImpactAction::RunImpactedTests,
-                reason: "history recorded test-to-file coverage or dependency edges for every changed file"
+                reason: if evidence_gaps.is_empty() {
+                    "history recorded hunk-level coverage or dependency edges for every changed hunk"
+                } else {
+                    "aggressive impact mode accepts incomplete evidence and records the risk"
+                }
                     .to_string(),
                 subject: Some(format!("{} test(s)", impacted_tests.len())),
             });
+            if matches!(mode, ImpactMode::Aggressive) && !evidence_gaps.is_empty() {
+                accepted_risks.push(format!(
+                    "aggressive impact mode skipped package fallback despite {} uncovered changed file(s)",
+                    evidence_gaps.len()
+                ));
+                decisions.push(ImpactDecision {
+                    action: ImpactAction::AuditSkippedTests,
+                    reason: "aggressive impact selection requires skipped-scope audit sampling"
+                        .to_string(),
+                    subject: Some("impact-audit".to_string()),
+                });
+            }
             packages
                 .iter()
                 .flat_map(|package| ["-p".to_string(), package.clone()])
@@ -224,6 +376,9 @@ pub fn plan_from_changed_files(
     };
 
     Ok(ImpactPlan {
+        planner_version: IMPACT_PLANNER_VERSION.to_string(),
+        mode,
+        coverage_schema_version: IMPACT_COVERAGE_SCHEMA_VERSION.to_string(),
         changed,
         affected_packages: affected_packages.into_iter().collect(),
         impacted_tests,
@@ -264,6 +419,267 @@ pub fn exact_test_proof_key(args: &[String]) -> Result<(String, String, String)>
     let input_fingerprint = coordinator::current_scoped_tree_fingerprint("test", args)?;
     let scope_key = coordinator::compute_scope_key("test", args);
     Ok((proof_kind, input_fingerprint, scope_key))
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct FileChangedHunks {
+    pub path: String,
+    pub hunks: Vec<ChangedHunk>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RustItemIndex {
+    pub items: Vec<RustItemSpan>,
+}
+
+impl RustItemIndex {
+    pub fn for_changed_files(changed_files: &[String]) -> Result<Self> {
+        let mut items = Vec::new();
+        for path in changed_files {
+            if !path.ends_with(".rs") {
+                continue;
+            }
+            let parsed = rust_items_for_file(Path::new(path))?;
+            items.extend(parsed);
+        }
+        Ok(Self { items })
+    }
+
+    #[must_use]
+    pub fn items_for_file(&self, path: &str) -> Vec<RustItemSpan> {
+        self.items
+            .iter()
+            .filter(|item| item.file_path == path)
+            .cloned()
+            .collect()
+    }
+}
+
+fn changed_items(
+    changed_files: Vec<String>,
+    hunks: Vec<FileChangedHunks>,
+    item_index: RustItemIndex,
+) -> Result<Vec<ChangedItem>> {
+    Ok(changed_files
+        .into_iter()
+        .map(|path| {
+            let file_hunks = hunks
+                .iter()
+                .find(|item| item.path == path)
+                .map_or_else(Vec::new, |item| item.hunks.clone());
+            ChangedItem {
+                package: affected::package_for_path(&path),
+                rust_items: item_index.items_for_file(&path),
+                content_hash: hash_file_if_exists(&path),
+                path,
+                hunks: file_hunks,
+            }
+        })
+        .collect())
+}
+
+fn changed_item_fully_covered(item: &ChangedItem, impacted_tests: &[ImpactedTest]) -> bool {
+    let file_evidence = impacted_tests
+        .iter()
+        .flat_map(|test| &test.evidence)
+        .filter(|evidence| evidence.subject == item.path)
+        .collect::<Vec<_>>();
+    if file_evidence.is_empty() {
+        return false;
+    }
+    if item.hunks.is_empty() {
+        return true;
+    }
+    item.hunks.iter().all(|hunk| {
+        file_evidence
+            .iter()
+            .any(|evidence| match (evidence.line_start, evidence.line_end) {
+                (Some(start), Some(end)) => {
+                    ranges_overlap(hunk.line_start, hunk.line_end, start, end)
+                }
+                _ => false,
+            })
+    })
+}
+
+#[must_use]
+pub fn ranges_overlap(left_start: u32, left_end: u32, right_start: u32, right_end: u32) -> bool {
+    left_start <= right_end && right_start <= left_end
+}
+
+pub fn changed_hunks() -> Result<Vec<FileChangedHunks>> {
+    let output = Command::new("git")
+        .args(["diff", "--unified=0", "--no-ext-diff", "--", "*.rs"])
+        .output()
+        .context("failed to run git diff for impact hunks")?;
+    if !output.status.success() {
+        return Ok(Vec::new());
+    }
+    let text = String::from_utf8_lossy(&output.stdout);
+    Ok(parse_unified_zero_hunks(&text))
+}
+
+#[must_use]
+pub fn parse_unified_zero_hunks(diff: &str) -> Vec<FileChangedHunks> {
+    let mut files = Vec::<FileChangedHunks>::new();
+    let mut current_path: Option<String> = None;
+    for line in diff.lines() {
+        if let Some(path) = line.strip_prefix("+++ b/") {
+            current_path = Some(path.to_string());
+            files.push(FileChangedHunks {
+                path: path.to_string(),
+                hunks: Vec::new(),
+            });
+            continue;
+        }
+        let Some(rest) = line.strip_prefix("@@ ") else {
+            continue;
+        };
+        let Some(path) = current_path.as_ref() else {
+            continue;
+        };
+        let Some(new_part) = rest.split_whitespace().find(|part| part.starts_with('+')) else {
+            continue;
+        };
+        let hunk = parse_new_hunk_range(new_part);
+        if let Some(hunk) = hunk
+            && let Some(file) = files.iter_mut().find(|file| file.path == *path)
+        {
+            file.hunks.push(hunk);
+        }
+    }
+    files.retain(|file| !file.hunks.is_empty());
+    files
+}
+
+fn parse_new_hunk_range(raw: &str) -> Option<ChangedHunk> {
+    let raw = raw.strip_prefix('+')?;
+    let (start, len) = raw
+        .split_once(',')
+        .map_or((raw, "1"), |(start, len)| (start, len));
+    let start = start.parse::<u32>().ok()?;
+    let len = len.parse::<u32>().ok()?;
+    let line_end = if len == 0 { start } else { start + len - 1 };
+    Some(ChangedHunk {
+        line_start: start,
+        line_end,
+    })
+}
+
+fn hash_file_if_exists(path: &str) -> Option<String> {
+    let bytes = fs::read(path).ok()?;
+    Some(format!("{:x}", Sha256::digest(bytes)))
+}
+
+pub fn rust_items_for_file(path: &Path) -> Result<Vec<RustItemSpan>> {
+    let rendered = fs::read_to_string(path)
+        .with_context(|| format!("failed to read Rust source {}", path.display()))?;
+    let _ = syn::parse_file(&rendered)
+        .with_context(|| format!("failed to parse Rust source {}", path.display()))?;
+    Ok(scan_rust_items(path, &rendered))
+}
+
+fn scan_rust_items(path: &Path, source: &str) -> Vec<RustItemSpan> {
+    let mut items = Vec::new();
+    let lines = source.lines().collect::<Vec<_>>();
+    let mut idx = 0usize;
+    while idx < lines.len() {
+        let line = lines[idx].trim_start();
+        let Some((kind, name)) = parse_item_header(line) else {
+            idx += 1;
+            continue;
+        };
+        let start = idx + 1;
+        let mut end = start;
+        let mut brace_balance = line.matches('{').count() as i64 - line.matches('}').count() as i64;
+        let mut cursor = idx + 1;
+        while cursor < lines.len() {
+            let cursor_line = lines[cursor];
+            brace_balance += cursor_line.matches('{').count() as i64;
+            brace_balance -= cursor_line.matches('}').count() as i64;
+            end = cursor + 1;
+            if brace_balance <= 0 && (line.contains('{') || cursor_line.trim_end().ends_with(';')) {
+                break;
+            }
+            cursor += 1;
+        }
+        let span_text = lines[start - 1..end].join("\n");
+        let signature = lines[start - 1].trim();
+        items.push(RustItemSpan {
+            file_path: path.to_string_lossy().into_owned(),
+            item_kind: kind.to_string(),
+            item_name: name,
+            line_start: u32::try_from(start).unwrap_or(u32::MAX),
+            line_end: u32::try_from(end).unwrap_or(u32::MAX),
+            signature_hash: format!("{:x}", Sha256::digest(signature.as_bytes())),
+            body_hash: format!("{:x}", Sha256::digest(span_text.as_bytes())),
+        });
+        idx = end.max(idx + 1);
+    }
+    items
+}
+
+fn parse_item_header(line: &str) -> Option<(&'static str, String)> {
+    let line = line
+        .strip_prefix("pub(crate) ")
+        .or_else(|| line.strip_prefix("pub(super) "))
+        .or_else(|| line.strip_prefix("pub "))
+        .unwrap_or(line);
+    for keyword in [
+        "async fn",
+        "fn",
+        "struct",
+        "enum",
+        "trait",
+        "impl",
+        "mod",
+        "macro_rules!",
+    ] {
+        if let Some(rest) = line.strip_prefix(keyword) {
+            let kind = if keyword == "async fn" { "fn" } else { keyword };
+            let name = rest
+                .trim_start()
+                .trim_start_matches('!')
+                .split(|ch: char| {
+                    ch == '<' || ch == '(' || ch == '{' || ch == ':' || ch.is_whitespace()
+                })
+                .next()
+                .unwrap_or("")
+                .trim()
+                .to_string();
+            if !name.is_empty() {
+                return Some((kind, name));
+            }
+        }
+    }
+    None
+}
+
+pub fn workspace_rust_item_index() -> Result<RustItemIndex> {
+    let root = crate::config::workspace_root();
+    let mut items = Vec::new();
+    for entry in WalkDir::new(&root)
+        .into_iter()
+        .filter_entry(|entry| {
+            let path = entry.path();
+            !path.components().any(|component| {
+                let value = component.as_os_str().to_string_lossy();
+                matches!(value.as_ref(), ".git" | "target" | ".sinex" | ".direnv")
+            })
+        })
+        .flatten()
+    {
+        let path = entry.path();
+        if path.extension().and_then(std::ffi::OsStr::to_str) != Some("rs") {
+            continue;
+        }
+        let relative = path.strip_prefix(&root).unwrap_or(path);
+        let relative_path = PathBuf::from(relative);
+        if let Ok(mut parsed) = rust_items_for_file(&relative_path) {
+            items.append(&mut parsed);
+        }
+    }
+    Ok(RustItemIndex { items })
 }
 
 #[cfg(test)]
@@ -322,6 +738,8 @@ mod tests {
                     source: ImpactEvidenceSource::CoverageRegion,
                     subject: "crate/lib/sinex-node-sdk/src/stage_as_you_go.rs".to_string(),
                     reason: "covered line range".to_string(),
+                    line_start: None,
+                    line_end: None,
                 }],
             }],
         )?;
@@ -339,6 +757,63 @@ mod tests {
                 "-E".to_string(),
                 "test(stage_as_you_go_records_material)".to_string()
             ]
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn impact_plan_falls_back_when_changed_hunk_is_not_covered() -> TestResult<()> {
+        let plan = plan_from_changed_files_with_mode(
+            vec!["xtask/src/impact.rs".to_string()],
+            vec![FileChangedHunks {
+                path: "xtask/src/impact.rs".to_string(),
+                hunks: vec![ChangedHunk {
+                    line_start: 90,
+                    line_end: 90,
+                }],
+            }],
+            RustItemIndex::default(),
+            vec!["xtask".to_string()],
+            vec![ImpactedTest {
+                package: Some("xtask".to_string()),
+                test_name: "impact_manifest_test".to_string(),
+                evidence: vec![ImpactEvidence {
+                    source: ImpactEvidenceSource::CoverageRegion,
+                    subject: "xtask/src/impact.rs".to_string(),
+                    reason: "covered line range".to_string(),
+                    line_start: Some(10),
+                    line_end: Some(20),
+                }],
+            }],
+            ImpactMode::Balanced,
+        )?;
+
+        assert_eq!(plan.decisions[0].action, ImpactAction::RunPackage);
+        assert_eq!(plan.evidence_gaps, vec!["xtask/src/impact.rs"]);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn parse_unified_zero_hunks_extracts_new_line_ranges() -> TestResult<()> {
+        let hunks = parse_unified_zero_hunks(
+            "\
+diff --git a/xtask/src/impact.rs b/xtask/src/impact.rs\n\
+--- a/xtask/src/impact.rs\n\
++++ b/xtask/src/impact.rs\n\
+@@ -10,0 +11,2 @@\n\
++one\n\
++two\n",
+        );
+
+        assert_eq!(
+            hunks,
+            vec![FileChangedHunks {
+                path: "xtask/src/impact.rs".to_string(),
+                hunks: vec![ChangedHunk {
+                    line_start: 11,
+                    line_end: 12,
+                }],
+            }]
         );
         Ok(())
     }

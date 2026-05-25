@@ -4818,6 +4818,16 @@
       "about": "Explain the default `xtask test` impact plan for the current diff"
     },
     {
+      "subject": "xtask_command:impact.seed",
+      "path": "impact.seed",
+      "about": "Run tests in evidence-seeding mode"
+    },
+    {
+      "subject": "xtask_command:impact.seed-coverage",
+      "path": "impact.seed-coverage",
+      "about": "Run one nextest filter under LLVM coverage and import covered line regions"
+    },
+    {
       "subject": "xtask_command:infra",
       "path": "infra",
       "about": "Manage local infrastructure (Postgres, NATS, VMs)"

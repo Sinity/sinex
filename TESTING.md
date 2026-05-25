@@ -23,6 +23,10 @@ xtask test -p sinex-e2e-tests -E 'test(test_batch_large_payloads)'
 # Impact planning and exact proof reuse
 xtask impact explain
 xtask impact audit --sample-skips 10
+xtask impact seed -p xtask -E 'test(name)'
+xtask impact seed-coverage -p xtask -E 'test(name)'
+xtask test --impact-mode=off --all
+xtask test --impact-mode=aggressive
 
 # Source-material resource profiles
 xtask test -p sinex-node-sdk -E 'test(source_material_scenario_batches_row_stream_records_with_stable_anchors)'
@@ -33,10 +37,15 @@ xtask test -p sinex-node-sdk --heavy -E 'test(source_material_resource_storage_b
 `xtask test` is the primary test entrypoint. It handles the repo's preflight,
 runtime binary preparation for e2e/node-sdk tests, and nextest wiring; use
 `xtask test --help` for the current option surface.
-Bare `xtask test` uses machine-derived impact planning by default. It runs
-affected package scopes for changed code, records accepted-risk decisions, and
-may reuse an exact previous proof only when the manifest and input fingerprint
-match. Use `--all` for a deliberate full pass.
+Bare `xtask test` uses machine-derived impact planning in balanced mode by
+default. It runs affected package scopes unless the changed hunks have recorded
+test-manifest, dependency-edge, or LLVM coverage-region evidence, records
+accepted-risk decisions, and may reuse an exact previous proof only when the
+manifest and input fingerprint match. Use `--impact-mode=off --all` for a
+deliberate full pass, `xtask impact seed` after broad runs to populate test
+entrypoint/dependency evidence, and `xtask impact seed-coverage` for exact
+per-test LLVM line coverage. Aggressive mode is available for local iteration
+when you accept hunk-coverage gaps and want the planner to use partial evidence.
 
 ## CI-Parity Validation
 
