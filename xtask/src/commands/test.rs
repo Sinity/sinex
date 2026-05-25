@@ -525,6 +525,9 @@ impl TestCommand {
         if !self.test_binaries.is_empty() {
             return Ok(normalize_packages(&self.test_binaries));
         }
+        if !self.packages.is_empty() {
+            return Ok(Vec::new());
+        }
 
         let Some(filter) = filter else {
             return Ok(Vec::new());
@@ -2133,6 +2136,24 @@ mod tests {
         assert!(
             args.contains(&"--test=large_payload_test".to_string()),
             "test binary selector should be part of the coordination identity: {args:?}"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_explicit_package_scope_disables_test_binary_inference()
+    -> ::xtask::sandbox::TestResult<()> {
+        let command = TestCommand {
+            packages: vec!["xtask".to_string()],
+            filter: Some("test(run)".to_string()),
+            ..Default::default()
+        };
+
+        let binaries = command.effective_test_binaries(command.filter.as_deref())?;
+
+        assert!(
+            binaries.is_empty(),
+            "explicit package scope must not infer integration-test binaries from other packages: {binaries:?}"
         );
         Ok(())
     }
