@@ -67,6 +67,9 @@ pub enum Events {
     // Internal Provenance
     SourceEventIds,
 
+    // Integrity
+    AnchorPayloadHash,
+
     AssociatedBlobIds,
 
     // Metadata
@@ -188,6 +191,7 @@ impl Events {
             .col(ColumnDef::new(Events::OffsetEnd).big_integer())
             .col(ColumnDef::new(Events::OffsetKind).text().check(Expr::cust("offset_kind IN ('byte', 'line', 'rowid', 'logical')")))
             .col(ColumnDef::new(Events::SourceEventIds).array(ColumnType::Custom(Alias::new("UUID").into_iden())))
+            .col(ColumnDef::new(Events::AnchorPayloadHash).custom(Alias::new("bytea")).check(Expr::cust("anchor_payload_hash IS NULL OR length(anchor_payload_hash) = 32")))
             .col(ColumnDef::new(Events::AssociatedBlobIds).array(ColumnType::Custom(Alias::new("UUID").into_iden())))
             .col(ColumnDef::new(Events::PayloadSchemaId).custom(Alias::new("UUID")))
             .col(ColumnDef::new(Events::SourceRunId).custom(Alias::new("UUID")))
