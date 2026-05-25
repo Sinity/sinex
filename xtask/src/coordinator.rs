@@ -1197,6 +1197,9 @@ fn extract_scope_args(command: &str, args: &[String]) -> Vec<String> {
                 "-E" | "--filter" => Some("--filter="),
                 "--test" => Some("--test="),
                 "--exclude" => Some("--exclude="),
+                "--threads" => Some("--threads="),
+                "--retries" => Some("--retries="),
+                "--timeout" => Some("--timeout="),
                 _ => None,
             },
             _ => None,
@@ -1209,7 +1212,18 @@ fn extract_scope_args(command: &str, args: &[String]) -> Vec<String> {
             "build" => arg == "--release" || arg.starts_with("--all"),
             "test" => matches!(
                 arg,
-                "--heavy" | "--include-ignored" | "--all" | "--lib" | "--update-snapshots"
+                "--debug"
+                    | "--fail-fast"
+                    | "--heavy"
+                    | "--include-ignored"
+                    | "--all"
+                    | "--lib"
+                    | "--list"
+                    | "--prime"
+                    | "--update-snapshots"
+                    | "--ephemeral-postgres"
+                    | "--no-ephemeral-postgres"
+                    | "--no-reuse"
             ),
             "check" | "fix" => {
                 matches!(
@@ -1239,6 +1253,12 @@ fn extract_scope_args(command: &str, args: &[String]) -> Vec<String> {
                     || arg.starts_with("--test=")
                     || arg.starts_with("--exclude=")
                     || arg.starts_with("--test-arg=")
+                    || arg.starts_with("--threads=")
+                    || arg.starts_with("--retries=")
+                    || arg.starts_with("--timeout=")
+                    || arg.starts_with("--impact-mode=")
+                    || arg.starts_with("--impact-planner-version=")
+                    || arg.starts_with("--impact-coverage-schema=")
                 {
                     Some(arg.to_string())
                 } else {
@@ -2005,6 +2025,30 @@ mod tests {
         );
 
         assert_eq!(packages, vec!["xtask".to_string()]);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_test_execution_shape_flags_are_scope_relevant() -> TestResult<()> {
+        let base = vec!["-p".into(), "xtask".into()];
+        for flag in [
+            "--threads=1",
+            "--retries=2",
+            "--timeout=30s",
+            "--debug",
+            "--fail-fast",
+            "--impact-mode=aggressive",
+            "--impact-planner-version=impact-v2",
+            "--impact-coverage-schema=llvm-json-v1",
+        ] {
+            let mut with_flag = base.clone();
+            with_flag.push(flag.to_string());
+            assert_ne!(
+                scope_key("test", &base),
+                scope_key("test", &with_flag),
+                "{flag} must be part of the test proof scope key"
+            );
+        }
         Ok(())
     }
 
