@@ -127,6 +127,8 @@ pub struct EventRecord {
     pub offset_kind: Option<String>,
     pub source_event_ids: Option<Vec<Uuid>>,
 
+    pub anchor_payload_hash: Option<Vec<u8>>,
+
     pub associated_blob_ids: Option<Vec<Uuid>>,
 
     // Metadata
