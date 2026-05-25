@@ -807,7 +807,7 @@ async fn ensure_template_database_named(
     let mut admin_conn = connect_admin_with_retry(admin_url).await?;
     let lock_key = advisory_lock_key(template_name);
 
-    let ensure_deadline = std::time::Instant::now() + Duration::from_secs(45);
+    let ensure_deadline = std::time::Instant::now() + Duration::from_secs(10);
     let mut backoff = Duration::from_millis(25);
     loop {
         // Take shared lock and check for reusable template
