@@ -46,8 +46,7 @@ pub use evidence::{
     EvidenceBundle, EvidenceCapture, EvidenceCaptureLevel, EvidenceCollectorKind,
     EvidenceCollectorRegistration, EvidenceCollectorStatus, EvidenceRuntimeSnapshot,
     EvidenceTimelineEvent, FileEvidenceSummary, LogEvidenceSummary, NatsConsumerEvidence,
-    NatsEvidenceSummary, NatsStreamEvidence, ProofMetadata, ScenarioCategory, ScenarioCostTier,
-    ScenarioLane, ScenarioMetadata, SourceMaterialEvidenceRow, TestEvidence,
+    NatsEvidenceSummary, NatsStreamEvidence, SourceMaterialEvidenceRow, TestEvidence,
 };
 
 // Re-export key types used by internal sandbox submodules via `super::` / `crate::sandbox::`

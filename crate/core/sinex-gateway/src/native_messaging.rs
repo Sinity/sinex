@@ -265,7 +265,7 @@ impl NativeMessagingConfig {
                 "Rejected native messaging call: no trusted extensions configured (set SINEX_NATIVE_MESSAGING_TRUSTED_EXTENSIONS)"
             );
             return Err(SinexError::permission_denied(
-                "No trusted extensions configured. Set SINEX_NATIVE_MESSAGING_TRUSTED_EXTENSIONS environment variable."
+                "No trusted extensions configured. Set SINEX_NATIVE_MESSAGING_TRUSTED_EXTENSIONS environment variable.",
             ));
         }
 
@@ -1046,8 +1046,7 @@ async fn read_message_from<R: AsyncRead + Unpin>(
         Ok(Ok(_)) => {}
         Ok(Err(e)) if e.kind() == io::ErrorKind::UnexpectedEof => return Ok(None),
         Ok(Err(e)) => {
-            return Err(SinexError::io("failed to read native messaging header")
-                .with_std_error(&e));
+            return Err(SinexError::io("failed to read native messaging header").with_std_error(&e));
         }
         Err(_) => return Err(native_messaging_read_timeout("header", read_timeout, None)),
     }
@@ -1055,9 +1054,7 @@ async fn read_message_from<R: AsyncRead + Unpin>(
 
     if length > max_message_size {
         return Err(SinexError::resource_exhausted(format!(
-            "Message too large: {} bytes (limit: {})",
-            length,
-            max_message_size
+            "Message too large: {length} bytes (limit: {max_message_size})"
         )));
     }
 
@@ -1076,8 +1073,9 @@ async fn read_message_from<R: AsyncRead + Unpin>(
         }
     }
 
-    let message: NativeMessage = serde_json::from_slice(&buffer)
-        .map_err(|error| SinexError::parse("Failed to parse native message").with_std_error(&error))?;
+    let message: NativeMessage = serde_json::from_slice(&buffer).map_err(|error| {
+        SinexError::parse("Failed to parse native message").with_std_error(&error)
+    })?;
 
     Ok(Some(message))
 }
@@ -1182,9 +1180,7 @@ async fn dispatch_method(
     };
 
     // Use shared dispatch table from rpc_server
-    crate::rpc_server::dispatch_rpc_method("native", services, method, params, &auth)
-        .await
-        .map_err(Into::into)
+    crate::rpc_server::dispatch_rpc_method("native", services, method, params, &auth).await
 }
 
 /// Run the native messaging loop using stdin/stdout transport.

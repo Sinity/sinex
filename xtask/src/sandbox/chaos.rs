@@ -63,10 +63,8 @@ impl ChaosConfig {
         if !self.latency.is_zero() {
             sleep(self.latency).await;
         }
-        if self.failure_rate > 0.0 {
-            if random_bool(self.failure_rate) {
-                return Err(eyre!("chaos: induced failure"));
-            }
+        if self.failure_rate > 0.0 && random_bool(self.failure_rate) {
+            return Err(eyre!("chaos: induced failure"));
         }
         op().await
     }
@@ -383,11 +381,9 @@ impl ChaosContext {
     /// Check if a message should be dropped.
     #[must_use]
     pub fn should_drop(&self) -> bool {
-        if self.drop_rate > 0.0 {
-            if random_bool(self.drop_rate) {
-                self.metrics.record_dropped();
-                return true;
-            }
+        if self.drop_rate > 0.0 && random_bool(self.drop_rate) {
+            self.metrics.record_dropped();
+            return true;
         }
         false
     }
@@ -395,12 +391,10 @@ impl ChaosContext {
     /// Apply chaos to an event, potentially corrupting it.
     #[must_use]
     pub fn maybe_corrupt(&self, mut event: Event<JsonValue>) -> Event<JsonValue> {
-        if self.corruption_rate > 0.0 {
-            if random_bool(self.corruption_rate) {
-                self.metrics.record_corrupted();
-                // Corrupt the payload by replacing with garbage
-                event.payload = JsonValue::String(format!("CORRUPTED_{}", fastrand::u64(..)));
-            }
+        if self.corruption_rate > 0.0 && random_bool(self.corruption_rate) {
+            self.metrics.record_corrupted();
+            // Corrupt the payload by replacing with garbage
+            event.payload = JsonValue::String(format!("CORRUPTED_{}", fastrand::u64(..)));
         }
         event
     }
@@ -464,11 +458,9 @@ impl ChaosContext {
     /// Check if operation should fail randomly.
     #[must_use]
     pub fn should_fail(&self) -> bool {
-        if self.failure_rate > 0.0 {
-            if random_bool(self.failure_rate) {
-                self.metrics.record_failed();
-                return true;
-            }
+        if self.failure_rate > 0.0 && random_bool(self.failure_rate) {
+            self.metrics.record_failed();
+            return true;
         }
         false
     }

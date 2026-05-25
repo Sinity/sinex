@@ -19,8 +19,8 @@
 //! against any DB state — including a database with prior materials —
 //! without aliasing onto existing readiness rows.
 //!
-//! The suite registers under the `readiness::tri_state_fixture` scenario tag
-//! so it surfaces in `xtask test --list-scenarios` and the CI scenario lanes.
+//! The suite intentionally uses plain `#[sinex_test]`; impact selection should
+//! come from changed code, runtime dependencies, and exact proof fingerprints.
 
 use sinex_db::DbPoolExt;
 use sinex_primitives::rpc::sources::SourceReadinessStatus;
@@ -82,14 +82,7 @@ async fn seed_event(pool: &DbPool, source: &str, material_id: Uuid) -> TestResul
     Ok(())
 }
 
-#[sinex_test(
-    scenario = "readiness::tri_state_fixture::missing",
-    category = "source_material",
-    lane = "fast",
-    tags = "readiness,tri_state_fixture",
-    subjects = "issue:1174,issue:1099,explore:readiness",
-    claims = "assertion:readiness.missing_returns_none"
-)]
+#[sinex_test]
 async fn readiness_missing_source_returns_none(ctx: TestContext) -> TestResult<()> {
     // No registry row, no events. The readiness API must report `None`
     // for the targeted source identifier rather than fabricating a row.
@@ -122,14 +115,7 @@ async fn readiness_missing_source_returns_none(ctx: TestContext) -> TestResult<(
     Ok(())
 }
 
-#[sinex_test(
-    scenario = "readiness::tri_state_fixture::staged_unparsed",
-    category = "source_material",
-    lane = "fast",
-    tags = "readiness,tri_state_fixture",
-    subjects = "issue:1174,issue:1099,explore:readiness",
-    claims = "assertion:readiness.staged_unparsed_partial"
-)]
+#[sinex_test]
 async fn readiness_staged_unparsed_reports_partial(ctx: TestContext) -> TestResult<()> {
     // Material registered but never finalized. The readiness API must
     // report `Partial` with the `material.staged_unparsed` caveat — the
@@ -173,14 +159,7 @@ async fn readiness_staged_unparsed_reports_partial(ctx: TestContext) -> TestResu
     Ok(())
 }
 
-#[sinex_test(
-    scenario = "readiness::tri_state_fixture::available",
-    category = "source_material",
-    lane = "fast",
-    tags = "readiness,tri_state_fixture",
-    subjects = "issue:1174,issue:1099,explore:readiness",
-    claims = "assertion:readiness.available_completed"
-)]
+#[sinex_test]
 async fn readiness_available_completed_with_events(ctx: TestContext) -> TestResult<()> {
     // Material completed AND parsed events reference it — readiness must
     // resolve to `Available` (the green-path operator state) and must NOT
@@ -228,14 +207,7 @@ async fn readiness_available_completed_with_events(ctx: TestContext) -> TestResu
     Ok(())
 }
 
-#[sinex_test(
-    scenario = "readiness::tri_state_fixture::distinct_in_one_run",
-    category = "source_material",
-    lane = "fast",
-    tags = "readiness,tri_state_fixture",
-    subjects = "issue:1174,issue:1099,explore:readiness",
-    claims = "assertion:readiness.tri_state_distinct"
-)]
+#[sinex_test]
 async fn readiness_tri_state_distinct_in_one_run(ctx: TestContext) -> TestResult<()> {
     // The bundled assertion: stage all three states inside a single
     // database slot and confirm the readiness API distinguishes between

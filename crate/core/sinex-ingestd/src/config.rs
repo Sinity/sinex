@@ -176,7 +176,7 @@ pub struct IngestdConfig {
     ///
     /// A single delayed slice can cause many later slices to accumulate. The
     /// material size and slice timeout limits remain the corruption bounds, so
-    /// this default is sized to absorb ordinary JetStream reordering bursts.
+    /// this default is sized to absorb ordinary `JetStream` reordering bursts.
     ///
     /// Set via: `SINEX_INGESTD_MAX_BUFFERED_SLICES=4096`
     #[serde(default = "default_max_buffered_slices")]

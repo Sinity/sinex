@@ -12,7 +12,7 @@ use quote::{ToTokens, quote};
 use syn::parse::Parser;
 use syn::{
     Error, Expr, ExprLit, FnArg, ItemFn, Lit, Meta, MetaNameValue, Pat, PatType, Type, TypePath,
-    parse_macro_input, parse_quote, punctuated::Punctuated, spanned::Spanned, token::Comma,
+    parse_macro_input, punctuated::Punctuated, spanned::Spanned, token::Comma,
 };
 
 /// Configuration parsed from `sinex_test` attributes
@@ -21,115 +21,6 @@ struct SinexTestConfig {
     timeout: Option<u64>,
     trace: bool,
     serial_scope: SerialScope,
-    scenario: Option<ScenarioAttr>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct ScenarioAttr {
-    id: String,
-    category: ScenarioCategory,
-    lane: ScenarioLane,
-    cost_tier: Option<ScenarioCostTier>,
-    tags: Vec<String>,
-    fixtures: Vec<String>,
-    subject_refs: Vec<String>,
-    claim_ids: Vec<String>,
-    assertion_ids: Vec<String>,
-    reproducer: Option<String>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ScenarioCategory {
-    SourceMaterial,
-    Replay,
-    Runtime,
-    NodeAdapter,
-    Gateway,
-    Schema,
-    CommandContract,
-    DeploymentBoundary,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ScenarioLane {
-    Fast,
-    Heavy,
-    Soak,
-    Vm,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ScenarioCostTier {
-    Fast,
-    Integration,
-    Heavy,
-    Soak,
-    Vm,
-}
-
-#[derive(Debug, Default)]
-struct PartialScenarioAttr {
-    id: Option<String>,
-    category: Option<ScenarioCategory>,
-    lane: Option<ScenarioLane>,
-    cost_tier: Option<ScenarioCostTier>,
-    tags: Vec<String>,
-    fixtures: Vec<String>,
-    subject_refs: Vec<String>,
-    claim_ids: Vec<String>,
-    assertion_ids: Vec<String>,
-    reproducer: Option<String>,
-}
-
-impl PartialScenarioAttr {
-    fn has_any_field(&self) -> bool {
-        self.id.is_some()
-            || self.category.is_some()
-            || self.lane.is_some()
-            || self.cost_tier.is_some()
-            || !self.tags.is_empty()
-            || !self.fixtures.is_empty()
-            || !self.subject_refs.is_empty()
-            || !self.claim_ids.is_empty()
-            || !self.assertion_ids.is_empty()
-            || self.reproducer.is_some()
-    }
-
-    fn finish(self) -> Result<Option<ScenarioAttr>, Error> {
-        if !self.has_any_field() {
-            return Ok(None);
-        }
-        let Some(id) = self.id else {
-            return Err(Error::new(
-                proc_macro2::Span::call_site(),
-                "`scenario` is required when any scenario metadata is provided",
-            ));
-        };
-        let Some(category) = self.category else {
-            return Err(Error::new(
-                proc_macro2::Span::call_site(),
-                "`category` is required when scenario metadata is provided",
-            ));
-        };
-        let Some(lane) = self.lane else {
-            return Err(Error::new(
-                proc_macro2::Span::call_site(),
-                "`lane` is required when scenario metadata is provided",
-            ));
-        };
-        Ok(Some(ScenarioAttr {
-            id,
-            category,
-            lane,
-            cost_tier: self.cost_tier,
-            tags: self.tags,
-            fixtures: self.fixtures,
-            subject_refs: self.subject_refs,
-            claim_ids: self.claim_ids,
-            assertion_ids: self.assertion_ids,
-            reproducer: self.reproducer,
-        }))
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -140,21 +31,7 @@ enum SerialScope {
 }
 
 /// Known `sinex_test` attribute names for error reporting.
-const KNOWN_SINEX_TEST_ATTRS: &[&str] = &[
-    "timeout",
-    "trace",
-    "serial",
-    "scope",
-    "scenario",
-    "category",
-    "lane",
-    "cost_tier",
-    "tags",
-    "fixtures",
-    "subjects",
-    "claims",
-    "reproducer",
-];
+const KNOWN_SINEX_TEST_ATTRS: &[&str] = &["timeout", "trace", "serial", "scope"];
 
 fn parse_u64_lit(lit: &Lit, field_name: &str) -> Result<u64, Error> {
     match lit {
@@ -200,113 +77,6 @@ fn parse_serial_scope_lit(lit: &Lit, field_name: &str) -> Result<SerialScope, Er
     }
 }
 
-fn parse_string_lit(lit: &Lit, field_name: &str) -> Result<String, Error> {
-    match lit {
-        Lit::Str(lit_str) => Ok(lit_str.value()),
-        _ => Err(Error::new(
-            lit.span(),
-            format!("`{field_name}` must be a string literal"),
-        )),
-    }
-}
-
-fn parse_csv_lit(lit: &Lit, field_name: &str) -> Result<Vec<String>, Error> {
-    parse_string_lit(lit, field_name).map(|value| {
-        value
-            .split(',')
-            .map(str::trim)
-            .filter(|item| !item.is_empty())
-            .map(ToOwned::to_owned)
-            .collect()
-    })
-}
-
-fn parse_scenario_category_lit(lit: &Lit, field_name: &str) -> Result<ScenarioCategory, Error> {
-    match parse_string_lit(lit, field_name)?.as_str() {
-        "source_material" => Ok(ScenarioCategory::SourceMaterial),
-        "replay" => Ok(ScenarioCategory::Replay),
-        "runtime" => Ok(ScenarioCategory::Runtime),
-        "node_adapter" => Ok(ScenarioCategory::NodeAdapter),
-        "gateway" => Ok(ScenarioCategory::Gateway),
-        "schema" => Ok(ScenarioCategory::Schema),
-        "command_contract" => Ok(ScenarioCategory::CommandContract),
-        "deployment_boundary" => Ok(ScenarioCategory::DeploymentBoundary),
-        other => Err(Error::new(
-            lit.span(),
-            format!(
-                "invalid `{field_name}` value `{other}`; expected one of: source_material, replay, runtime, node_adapter, gateway, schema, command_contract, deployment_boundary"
-            ),
-        )),
-    }
-}
-
-fn parse_scenario_lane_lit(lit: &Lit, field_name: &str) -> Result<ScenarioLane, Error> {
-    match parse_string_lit(lit, field_name)?.as_str() {
-        "fast" => Ok(ScenarioLane::Fast),
-        "heavy" => Ok(ScenarioLane::Heavy),
-        "soak" => Ok(ScenarioLane::Soak),
-        "vm" => Ok(ScenarioLane::Vm),
-        other => Err(Error::new(
-            lit.span(),
-            format!("invalid `{field_name}` value `{other}`; expected fast, heavy, soak, or vm"),
-        )),
-    }
-}
-
-fn parse_scenario_cost_tier_lit(lit: &Lit, field_name: &str) -> Result<ScenarioCostTier, Error> {
-    match parse_string_lit(lit, field_name)?.as_str() {
-        "fast" => Ok(ScenarioCostTier::Fast),
-        "integration" => Ok(ScenarioCostTier::Integration),
-        "heavy" => Ok(ScenarioCostTier::Heavy),
-        "soak" => Ok(ScenarioCostTier::Soak),
-        "vm" => Ok(ScenarioCostTier::Vm),
-        other => Err(Error::new(
-            lit.span(),
-            format!(
-                "invalid `{field_name}` value `{other}`; expected fast, integration, heavy, soak, or vm"
-            ),
-        )),
-    }
-}
-
-fn apply_scenario_name_value(
-    path: &syn::Path,
-    value: &Expr,
-    scenario: &mut PartialScenarioAttr,
-) -> Result<bool, Error> {
-    let lit = lit_from_expr(value, &path.to_token_stream().to_string())?;
-    if path.is_ident("scenario") {
-        scenario.id = Some(parse_string_lit(lit, "scenario")?);
-    } else if path.is_ident("category") {
-        scenario.category = Some(parse_scenario_category_lit(lit, "category")?);
-    } else if path.is_ident("lane") {
-        scenario.lane = Some(parse_scenario_lane_lit(lit, "lane")?);
-    } else if path.is_ident("cost_tier") {
-        scenario.cost_tier = Some(parse_scenario_cost_tier_lit(lit, "cost_tier")?);
-    } else if path.is_ident("tags") {
-        scenario.tags = parse_csv_lit(lit, "tags")?;
-    } else if path.is_ident("fixtures") {
-        scenario.fixtures = parse_csv_lit(lit, "fixtures")?;
-    } else if path.is_ident("subjects") {
-        scenario.subject_refs = parse_csv_lit(lit, "subjects")?;
-    } else if path.is_ident("claims") {
-        let (claim_ids, assertion_ids) = split_claims_and_assertions(parse_csv_lit(lit, "claims")?);
-        scenario.claim_ids = claim_ids;
-        scenario.assertion_ids = assertion_ids;
-    } else if path.is_ident("reproducer") {
-        scenario.reproducer = Some(parse_string_lit(lit, "reproducer")?);
-    } else {
-        return Ok(false);
-    }
-    Ok(true)
-}
-
-fn split_claims_and_assertions(claims: Vec<String>) -> (Vec<String>, Vec<String>) {
-    claims
-        .into_iter()
-        .partition(|claim| claim.trim().starts_with("claim:"))
-}
-
 fn lit_from_expr<'a>(expr: &'a Expr, field_name: &str) -> Result<&'a Lit, Error> {
     if let Expr::Lit(expr_lit) = expr {
         Ok(&expr_lit.lit)
@@ -330,9 +100,7 @@ fn parse_sinex_test_attrs_tokens(
         timeout: None,
         trace: false,
         serial_scope: SerialScope::None,
-        scenario: None,
     };
-    let mut scenario = PartialScenarioAttr::default();
 
     if attr_tokens.is_empty() {
         return Ok(config);
@@ -405,8 +173,6 @@ fn parse_sinex_test_attrs_tokens(
                         Err(error) => return Err(error),
                     }
                 }
-                Meta::NameValue(MetaNameValue { path, value, .. })
-                    if apply_scenario_name_value(&path, &value, &mut scenario)? => {}
                 Meta::Path(path) if path.is_ident("trace") => {
                     config.trace = true;
                 }
@@ -434,7 +200,6 @@ fn parse_sinex_test_attrs_tokens(
                 }
             }
         }
-        config.scenario = scenario.finish()?;
         return Ok(config);
     }
 
@@ -478,8 +243,6 @@ fn parse_sinex_test_attrs_tokens(
                 }
                 Err(error) => return Err(error),
             }
-        } else if apply_scenario_name_value(&nv.path, &nv.value, &mut scenario)? {
-            config.scenario = scenario.finish()?;
         } else {
             let name = nv.path.to_token_stream().to_string();
             let err = Error::new(
@@ -1241,126 +1004,6 @@ fn serial_guard_tokens(scope: SerialScope) -> proc_macro2::TokenStream {
     }
 }
 
-fn scenario_category_tokens(category: ScenarioCategory) -> proc_macro2::TokenStream {
-    match category {
-        ScenarioCategory::SourceMaterial => {
-            quote!(::xtask::sandbox::ScenarioCategory::SourceMaterial)
-        }
-        ScenarioCategory::Replay => quote!(::xtask::sandbox::ScenarioCategory::Replay),
-        ScenarioCategory::Runtime => quote!(::xtask::sandbox::ScenarioCategory::Runtime),
-        ScenarioCategory::NodeAdapter => quote!(::xtask::sandbox::ScenarioCategory::NodeAdapter),
-        ScenarioCategory::Gateway => quote!(::xtask::sandbox::ScenarioCategory::Gateway),
-        ScenarioCategory::Schema => quote!(::xtask::sandbox::ScenarioCategory::Schema),
-        ScenarioCategory::CommandContract => {
-            quote!(::xtask::sandbox::ScenarioCategory::CommandContract)
-        }
-        ScenarioCategory::DeploymentBoundary => {
-            quote!(::xtask::sandbox::ScenarioCategory::DeploymentBoundary)
-        }
-    }
-}
-
-fn scenario_lane_tokens(lane: ScenarioLane) -> proc_macro2::TokenStream {
-    match lane {
-        ScenarioLane::Fast => quote!(::xtask::sandbox::ScenarioLane::Fast),
-        ScenarioLane::Heavy => quote!(::xtask::sandbox::ScenarioLane::Heavy),
-        ScenarioLane::Soak => quote!(::xtask::sandbox::ScenarioLane::Soak),
-        ScenarioLane::Vm => quote!(::xtask::sandbox::ScenarioLane::Vm),
-    }
-}
-
-fn scenario_cost_tier_tokens(cost_tier: ScenarioCostTier) -> proc_macro2::TokenStream {
-    match cost_tier {
-        ScenarioCostTier::Fast => quote!(::xtask::sandbox::ScenarioCostTier::Fast),
-        ScenarioCostTier::Integration => quote!(::xtask::sandbox::ScenarioCostTier::Integration),
-        ScenarioCostTier::Heavy => quote!(::xtask::sandbox::ScenarioCostTier::Heavy),
-        ScenarioCostTier::Soak => quote!(::xtask::sandbox::ScenarioCostTier::Soak),
-        ScenarioCostTier::Vm => quote!(::xtask::sandbox::ScenarioCostTier::Vm),
-    }
-}
-
-fn string_vec_tokens(values: &[String]) -> proc_macro2::TokenStream {
-    if values.is_empty() {
-        quote!(::std::vec::Vec::<::std::string::String>::new())
-    } else {
-        quote!(::std::vec![#(::std::string::String::from(#values)),*])
-    }
-}
-
-fn scenario_setup_tokens(scenario: Option<&ScenarioAttr>) -> proc_macro2::TokenStream {
-    let Some(scenario) = scenario else {
-        return quote! {};
-    };
-    let id = &scenario.id;
-    let category = scenario_category_tokens(scenario.category);
-    let lane = scenario_lane_tokens(scenario.lane);
-    let cost_tier = scenario.cost_tier.map(scenario_cost_tier_tokens);
-    let tags = string_vec_tokens(&scenario.tags);
-    let fixtures = string_vec_tokens(&scenario.fixtures);
-    let subject_refs = string_vec_tokens(&scenario.subject_refs);
-    let proof_subject_refs = subject_refs.clone();
-    let claim_ids = string_vec_tokens(&scenario.claim_ids);
-    let proof_claim_ids = claim_ids.clone();
-    let assertion_ids = string_vec_tokens(&scenario.assertion_ids);
-    let proof_assertion_ids = assertion_ids.clone();
-    let proof_reproducer = scenario.reproducer.as_ref().map_or_else(
-        || quote!(::std::option::Option::None),
-        |reproducer| quote!(::std::option::Option::Some(::std::string::String::from(#reproducer))),
-    );
-    let reproducer = scenario
-        .reproducer
-        .as_ref()
-        .map(|reproducer| quote!(.with_reproducer(#reproducer)));
-    let cost_tier = cost_tier.map(|cost_tier| quote!(.with_cost_tier(#cost_tier)));
-
-    quote! {
-        ctx.set_scenario_metadata(
-            ::xtask::sandbox::ScenarioMetadata::new(#id, #category, #lane)
-                #cost_tier
-                .with_tags(#tags)
-                .with_fixtures(#fixtures)
-                .with_subject_refs(#subject_refs)
-                .with_claim_ids(#claim_ids)
-                .with_assertion_ids(#assertion_ids)
-                #reproducer
-        );
-        ctx.set_proof_metadata(::xtask::sandbox::ProofMetadata {
-            runner_id: ::std::option::Option::Some(
-                ::std::string::String::from("runner:rust.nextest.scenario")
-            ),
-            subject_refs: #proof_subject_refs,
-            claim_ids: #proof_claim_ids,
-            assertion_ids: #proof_assertion_ids,
-            status: ::std::option::Option::None,
-            reproducer: #proof_reproducer,
-            environment: ::xtask::sandbox::prelude::JsonValue::Null,
-        });
-    }
-}
-
-fn test_attrs_for_config(
-    attrs: &[syn::Attribute],
-    scenario: Option<&ScenarioAttr>,
-) -> Vec<syn::Attribute> {
-    let mut test_attrs = attrs.to_vec();
-    let has_ignore = test_attrs.iter().any(|attr| attr.path().is_ident("ignore"));
-    if let Some(scenario) = scenario
-        && !matches!(scenario.lane, ScenarioLane::Fast)
-        && !has_ignore
-    {
-        let lane = match scenario.lane {
-            ScenarioLane::Fast => "fast",
-            ScenarioLane::Heavy => "heavy",
-            ScenarioLane::Soak => "soak",
-            ScenarioLane::Vm => "vm",
-        };
-        let reason =
-            format!("sinex scenario lane {lane}; run with xtask test --scenario-lane {lane}");
-        test_attrs.push(parse_quote!(#[ignore = #reason]));
-    }
-    test_attrs
-}
-
 /// Generate rstest-compatible test output.
 fn expand_rstest_variant(
     input: &ItemFn,
@@ -1470,12 +1113,10 @@ fn expand_async_context_test(
     fn_body: &syn::Block,
     timeout_secs: u64,
     serial_scope: SerialScope,
-    scenario: Option<&ScenarioAttr>,
 ) -> proc_macro2::TokenStream {
     let fn_name = &input.sig.ident;
     let fn_vis = &input.vis;
     let serial_guard = serial_guard_tokens(serial_scope);
-    let scenario_setup = scenario_setup_tokens(scenario);
 
     quote! {
         #(#test_attrs)*
@@ -1489,7 +1130,6 @@ fn expand_async_context_test(
                 let _test_temp_env = ::xtask::sandbox::prepare_test_temp_env(test_name)?;
 
                 let ctx = ::xtask::Sandbox::with_name(test_name).await?;
-                #scenario_setup
                 let ctx_failure_snapshot = ctx.failure_snapshot();
 
                 // Progress reporter: only spawn for genuinely long timeouts.
@@ -1631,24 +1271,6 @@ fn expand_sinex_test(config: SinexTestConfig, input: ItemFn) -> TokenStream {
         false
     });
 
-    if config.scenario.is_some() && !takes_context {
-        return syn::Error::new_spanned(
-            &input.sig,
-            "sinex_test scenario metadata requires a TestContext/Sandbox parameter so evidence can carry the scenario",
-        )
-        .to_compile_error()
-        .into();
-    }
-
-    if config.scenario.is_some() && attrs.has_rstest_cases {
-        return syn::Error::new_spanned(
-            &input.sig,
-            "sinex_test scenario metadata is not supported on rstest case expansion yet; use one scenario test function per case",
-        )
-        .to_compile_error()
-        .into();
-    }
-
     // Dispatch to the appropriate code generation variant
     if attrs.has_rstest_cases {
         return expand_rstest_variant(
@@ -1662,16 +1284,13 @@ fn expand_sinex_test(config: SinexTestConfig, input: ItemFn) -> TokenStream {
 
     let fn_body = *input.block.clone();
 
-    let test_attrs = test_attrs_for_config(&attrs.test_attrs, config.scenario.as_ref());
-
     let output = if takes_context {
         expand_async_context_test(
             &input,
-            &test_attrs,
+            &attrs.test_attrs,
             &fn_body,
             timeout_secs,
             config.serial_scope,
-            config.scenario.as_ref(),
         )
     } else {
         expand_simple_async_test(
@@ -1927,9 +1546,8 @@ pub fn sinex_bench(attr: TokenStream, item: TokenStream) -> TokenStream {
 #[cfg(test)]
 mod tests {
     use super::{
-        ScenarioCategory, ScenarioCostTier, ScenarioLane, SerialScope, expand_async_context_test,
-        expand_simple_async_test, parse_sinex_test_attrs_tokens, serial_guard_tokens,
-        test_attrs_for_config,
+        SerialScope, expand_async_context_test, expand_simple_async_test,
+        parse_sinex_test_attrs_tokens, serial_guard_tokens,
     };
     use quote::quote;
     use syn::{ItemFn, parse2};
@@ -1980,46 +1598,11 @@ mod tests {
     }
 
     #[test]
-    fn sinex_test_attrs_parse_scenario_metadata() {
-        let config = parse_ok(quote!(
-            timeout = 45,
-            scenario = "source-material.row-stream.v1",
-            category = "source_material",
-            lane = "fast",
-            cost_tier = "integration",
-            tags = "source_material,row_stream,anchors",
-            fixtures = "postgres,nats,ingestd",
-            subjects = "issue:315,node:terminal",
-            claims = "claim:source_material.material_provenance,batched-records,stable-anchors",
-            reproducer = "xtask test -p sinex-node-sdk -E 'test(name)'"
-        ));
-
-        let scenario = config.scenario.expect("scenario should parse");
-        assert_eq!(scenario.id, "source-material.row-stream.v1");
-        assert_eq!(scenario.category, ScenarioCategory::SourceMaterial);
-        assert_eq!(scenario.lane, ScenarioLane::Fast);
-        assert_eq!(scenario.cost_tier, Some(ScenarioCostTier::Integration));
-        assert_eq!(scenario.tags, ["source_material", "row_stream", "anchors"]);
-        assert_eq!(scenario.fixtures, ["postgres", "nats", "ingestd"]);
-        assert_eq!(scenario.subject_refs, ["issue:315", "node:terminal"]);
-        assert_eq!(
-            scenario.claim_ids,
-            ["claim:source_material.material_provenance"]
-        );
-        assert_eq!(
-            scenario.assertion_ids,
-            ["batched-records", "stable-anchors"]
-        );
-        assert_eq!(
-            scenario.reproducer.as_deref(),
-            Some("xtask test -p sinex-node-sdk -E 'test(name)'")
-        );
-    }
-
     #[test]
-    fn sinex_test_attrs_reject_incomplete_scenario_metadata() {
+    fn sinex_test_attrs_reject_scenario_metadata() {
         let error = parse_err(quote!(scenario = "runtime.restart"));
-        assert!(error.contains("category"));
+        assert!(error.contains("unknown sinex_test attribute"));
+        assert!(error.contains("scenario"));
     }
 
     fn parse_item_fn(tokens: proc_macro2::TokenStream) -> ItemFn {
@@ -2060,7 +1643,7 @@ mod tests {
         });
 
         let rendered =
-            expand_async_context_test(&input, &[], &input.block, 30, SerialScope::Workspace, None)
+            expand_async_context_test(&input, &[], &input.block, 30, SerialScope::Workspace)
                 .to_string();
         assert_eq!(
             count_occurrences(&rendered, "acquire_workspace_test_guard"),
@@ -2072,45 +1655,6 @@ mod tests {
             "rendered tokens: {rendered}"
         );
         assert!(rendered.contains("timeout"), "rendered tokens: {rendered}");
-    }
-
-    #[test]
-    fn async_context_expansion_sets_scenario_metadata() {
-        let input = parse_item_fn(quote! {
-            async fn scenario_context_test(ctx: ::xtask::sandbox::TestContext) -> ::xtask::sandbox::TestResult<()> {
-                let _ = ctx;
-                Ok(())
-            }
-        });
-        let scenario = super::ScenarioAttr {
-            id: "runtime.restart".to_string(),
-            category: ScenarioCategory::Runtime,
-            lane: ScenarioLane::Heavy,
-            cost_tier: Some(ScenarioCostTier::Integration),
-            tags: vec!["runtime".to_string(), "restart".to_string()],
-            fixtures: vec!["nats".to_string()],
-            subject_refs: vec!["issue:324".to_string()],
-            claim_ids: Vec::new(),
-            assertion_ids: vec!["restart-recovers".to_string()],
-            reproducer: Some("xtask test --scenario-tag restart --heavy".to_string()),
-        };
-        let test_attrs = test_attrs_for_config(&[], Some(&scenario));
-
-        let rendered = expand_async_context_test(
-            &input,
-            &test_attrs,
-            &input.block,
-            90,
-            SerialScope::None,
-            Some(&scenario),
-        )
-        .to_string();
-
-        assert!(rendered.contains("set_scenario_metadata"));
-        assert!(rendered.contains("ScenarioCategory :: Runtime"));
-        assert!(rendered.contains("ScenarioLane :: Heavy"));
-        assert!(rendered.contains("ScenarioCostTier :: Integration"));
-        assert!(rendered.contains("ignore"));
     }
 
     #[test]

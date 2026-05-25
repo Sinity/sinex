@@ -65,7 +65,7 @@
         "xtask check -p sinex-db",
         "xtask test -p sinex-node-sdk",
         "xtask test -p sinex-db",
-        "xtask test --scenario-category source_material"
+        "xtask test -p sinex-node-sdk"
       ],
       "boundary_checks": [
         "xtask docs check",
@@ -118,7 +118,7 @@
       "title": "Prove the vertical staged-source slice",
       "issues": [1051, 1130, 1131, 1132, 1136, 1137],
       "required_checks": [
-        "xtask test --scenario-category source_material",
+        "xtask test -p sinex-node-sdk",
         "xtask test -p sinex-ingestd",
         "xtask test -p sinex-gateway",
         "xtask test -p sinexctl"
@@ -133,7 +133,7 @@
         {
           "impact": "new parser fixture corpus",
           "commands": [
-            "xtask test --scenario-category source_material"
+            "xtask test -p sinex-node-sdk"
           ]
         }
       ]
@@ -167,7 +167,7 @@
       "issues": [1052, 1053, 1068, 1070, 1074, 1075, 1088, 1089, 1090, 1091, 1092],
       "required_checks": [
         "xtask check -p sinex-primitives",
-        "xtask test --scenario-category source_material"
+        "xtask test -p sinex-node-sdk"
       ],
       "boundary_checks": [
         "xtask docs check"

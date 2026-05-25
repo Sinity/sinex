@@ -34,16 +34,16 @@ Useful options:
 - `--threads 12,24` sweeps concurrency settings.
 - `--target <pkg|workspace>` narrows the benchmark scope.
 
-Product/runtime resource-shape benchmarks can also live as proof-carrying
-scenario tests when the important output is a structured measurement artifact
-rather than the wall-clock duration of a whole nextest run. For example:
+Product/runtime resource-shape checks should live as ordinary Rust tests when
+the important output is a structured measurement artifact rather than the
+wall-clock duration of a whole nextest run. For example:
 
 ```bash
-xtask test -p sinex-node-sdk --scenario-tag frame_amplification
-xtask test -p sinex-node-sdk --scenario-tag storage_profile --heavy
+xtask test -p sinex-node-sdk -E 'test(source_material_scenario_batches_row_stream_records_with_stable_anchors)'
+xtask test -p sinex-node-sdk --heavy
 ```
 
-These scenario artifacts are observed/advisory by default. Promote a resource
+These artifacts are observed/advisory by default. Promote a resource
 metric into `xtask/config/perf-contracts.toml` only when the threshold is tied
 to a documented correctness or operational invariant rather than a local timing
 sample.

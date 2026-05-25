@@ -528,8 +528,8 @@ fn copy_selected_action(app: &mut App) -> Result<()> {
         app.feedback = Some("No copy action selected.".to_string());
         return Ok(());
     };
-    match action.value.as_deref() {
-        Some(value) => match copy_to_terminal_clipboard(value) {
+    if let Some(value) = action.value.as_deref() {
+        match copy_to_terminal_clipboard(value) {
             Ok(()) => {
                 app.feedback = Some(format!(
                     "Copied {} via OSC52 clipboard request.",
@@ -540,14 +540,13 @@ fn copy_selected_action(app: &mut App) -> Result<()> {
             Err(error) => {
                 app.feedback = Some(format!("Copy failed for {}: {error}", action.label));
             }
-        },
-        None => {
-            let reason = action
-                .disabled_reason
-                .as_deref()
-                .unwrap_or("copy action is unavailable");
-            app.feedback = Some(format!("Cannot copy {}: {reason}", action.label));
         }
+    } else {
+        let reason = action
+            .disabled_reason
+            .as_deref()
+            .unwrap_or("copy action is unavailable");
+        app.feedback = Some(format!("Cannot copy {}: {reason}", action.label));
     }
     Ok(())
 }
@@ -2054,25 +2053,22 @@ fn event_copy_actions(
             card.source.raw, card.event_type
         ),
     ));
-    match row {
-        Some(row) => {
-            let event_json = serde_json::to_string_pretty(&row.event)
-                .unwrap_or_else(|error| format!("event JSON render failed: {error}"));
-            actions.push(EventCopyAction::available("event JSON", event_json));
-            let payload_json = serde_json::to_string_pretty(&row.event.payload)
-                .unwrap_or_else(|error| format!("payload JSON render failed: {error}"));
-            actions.push(EventCopyAction::available("payload JSON", payload_json));
-        }
-        None => {
-            actions.push(EventCopyAction::disabled(
-                "event JSON",
-                "raw query event is unavailable",
-            ));
-            actions.push(EventCopyAction::disabled(
-                "payload JSON",
-                "raw query event is unavailable",
-            ));
-        }
+    if let Some(row) = row {
+        let event_json = serde_json::to_string_pretty(&row.event)
+            .unwrap_or_else(|error| format!("event JSON render failed: {error}"));
+        actions.push(EventCopyAction::available("event JSON", event_json));
+        let payload_json = serde_json::to_string_pretty(&row.event.payload)
+            .unwrap_or_else(|error| format!("payload JSON render failed: {error}"));
+        actions.push(EventCopyAction::available("payload JSON", payload_json));
+    } else {
+        actions.push(EventCopyAction::disabled(
+            "event JSON",
+            "raw query event is unavailable",
+        ));
+        actions.push(EventCopyAction::disabled(
+            "payload JSON",
+            "raw query event is unavailable",
+        ));
     }
 
     if let Some(anchor) = card

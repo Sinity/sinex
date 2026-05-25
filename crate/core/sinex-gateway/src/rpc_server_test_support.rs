@@ -28,14 +28,14 @@ pub fn gateway_auth_mode_from_env() -> Result<GatewayAuthModeSnapshot> {
         Some(token) => {
             if token.trim().is_empty() {
                 Err(SinexError::configuration(
-                    "SINEX_RPC_TOKEN (or SINEX_GATEWAY_ADMIN_TOKEN_FILE / SINEX_RPC_TOKEN_FILE) is set but empty; refusing to start without a token"
+                    "SINEX_RPC_TOKEN (or SINEX_GATEWAY_ADMIN_TOKEN_FILE / SINEX_RPC_TOKEN_FILE) is set but empty; refusing to start without a token",
                 ))
             } else {
                 Ok(GatewayAuthModeSnapshot::StaticToken)
             }
         }
         None => Err(SinexError::configuration(
-            "SINEX_RPC_TOKEN is not set. Export a token (or SINEX_GATEWAY_ADMIN_TOKEN_FILE / SINEX_RPC_TOKEN_FILE) so the gateway can authenticate RPC clients."
+            "SINEX_RPC_TOKEN is not set. Export a token (or SINEX_GATEWAY_ADMIN_TOKEN_FILE / SINEX_RPC_TOKEN_FILE) so the gateway can authenticate RPC clients.",
         )),
     }
 }
@@ -51,7 +51,7 @@ pub fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
 }
 
 pub fn read_token_from_env() -> Result<Option<String>> {
-    Ok(read_token_from_env_inner()?)
+    read_token_from_env_inner()
 }
 
 pub fn rpc_server_limits_snapshot() -> Result<RpcServerLimitsSnapshot> {
@@ -71,5 +71,5 @@ pub fn validate_jsonrpc_value(value: &Value) -> Result<()> {
     let request: JsonRpcRequest = serde_json::from_value(value.clone()).map_err(|error| {
         SinexError::validation("Invalid JSON-RPC request payload").with_std_error(&error)
     })?;
-    Ok(validate_jsonrpc_request(&request)?)
+    validate_jsonrpc_request(&request)
 }

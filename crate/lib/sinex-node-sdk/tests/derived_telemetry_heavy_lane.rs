@@ -98,19 +98,8 @@ fn make_event(value: u64) -> std::result::Result<Event<JsonValue>, SinexError> {
     Ok(event)
 }
 
-#[sinex_test(
-    timeout = 180,
-    serial,
-    scenario = "derived-telemetry.lag-percentile-under-load.v1",
-    category = "node_adapter",
-    lane = "heavy",
-    cost_tier = "heavy",
-    tags = "derived_node,telemetry,lag,percentile,throughput",
-    fixtures = "in_process",
-    subjects = "issue:561,node-sdk:derived-node",
-    claims = "lag-p99-stays-bounded-under-synthetic-burst,tick-runtime-p99-stays-bounded-for-noop-transducer,reservoir-evicts-on-overflow",
-    reproducer = "xtask test -p sinex-node-sdk --scenario-tag derived_node --heavy"
-)]
+#[ignore = "heavy test; run with xtask test --heavy"]
+#[sinex_test(timeout = 180, serial)]
 async fn derived_telemetry_lag_percentile_under_load(_ctx: TestContext) -> TestResult<()> {
     const EVENT_COUNT: u64 = 5000;
     const LAG_P99_BOUND_MS: f64 = 50.0;

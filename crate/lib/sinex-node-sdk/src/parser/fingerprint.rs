@@ -931,11 +931,11 @@ mod tests {
     use super::*;
     use crate::parser::{FieldSource, FieldSpec, FieldType, InputFormat};
     use serde_json::json;
+    use sinex_primitives::SinexError;
     use sinex_primitives::domain::{EventSource, EventType};
     use sinex_primitives::parser::{ParserId, SourceUnitId};
     use sinex_primitives::privacy::ProcessingContext;
     use sinex_primitives::rpc::sources::{CaveatSeverity, caveat_codes};
-    use sinex_primitives::SinexError;
     use xtask::sandbox::prelude::sinex_test;
 
     #[sinex_test]

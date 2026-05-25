@@ -268,9 +268,10 @@ impl ReplayExecutionEngine {
         if preview_root_ids.is_empty() {
             // Stale preview: root_event_ids not available. Require a fresh preview
             // to enable ID-level staleness detection.
-            return Err(
-                stale_preview_missing_root_ids_error(operation_id, expected_total_events).into(),
-            );
+            return Err(stale_preview_missing_root_ids_error(
+                operation_id,
+                expected_total_events,
+            ));
         }
         if root_ids.as_slice() != preview_root_ids {
             return Err(replay_scope_drift_error(
@@ -278,8 +279,7 @@ impl ReplayExecutionEngine {
                 expected_total_events,
                 preview_root_ids,
                 &root_ids,
-            )
-            .into());
+            ));
         }
 
         let normalized = scope.normalized_filters();
@@ -452,7 +452,7 @@ impl ReplayExecutionEngine {
                         &cascade_ids,
                         &scope_metadata,
                         operation_id,
-                        SinexError::nats(format!("NATS request to {} failed", scan_subject))
+                        SinexError::nats(format!("NATS request to {scan_subject} failed"))
                             .with_std_error(&error),
                     )
                     .await;
@@ -530,8 +530,7 @@ impl ReplayExecutionEngine {
                         let Some(msg) = maybe_msg else {
                             return Err::<u64, ReplayScanFailure>(ReplayScanFailure {
                                 error: SinexError::nats(format!(
-                                    "Replay progress stream closed before node '{}' reported completion",
-                                    target_node_name
+                                    "Replay progress stream closed before node '{target_node_name}' reported completion"
                                 )),
                                 emitted_count: events_emitted,
                                 restore_archived_cascade: events_emitted == 0,
@@ -625,9 +624,7 @@ impl ReplayExecutionEngine {
                             Err(error) => {
                                 return Err::<u64, ReplayScanFailure>(ReplayScanFailure {
                                     error: SinexError::service(format!(
-                                        "Failed to reload replay operation {} while waiting for progress: {}",
-                                        operation_id,
-                                        error
+                                        "Failed to reload replay operation {operation_id} while waiting for progress: {error}"
                                     ))
                                     .with_source(error),
                                     emitted_count: events_emitted,

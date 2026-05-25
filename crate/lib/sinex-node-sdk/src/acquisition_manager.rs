@@ -1692,7 +1692,9 @@ mod tests {
         );
         let first_material_id = first.material_id;
 
-        let second = stream.append_with_anchor(b"5", "test://eager-begin").await?;
+        let second = stream
+            .append_with_anchor(b"5", "test://eager-begin")
+            .await?;
         let rotated_handle = stream
             .current_handle
             .as_ref()

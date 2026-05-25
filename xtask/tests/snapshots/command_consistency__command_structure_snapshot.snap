@@ -166,6 +166,19 @@ expression: json
         },
         {
           "global": false,
+          "help": "Use planner to select workload (supplements affected-scope with failure history)",
+          "long": "plan",
+          "name": "plan",
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "short": null,
+          "takes_value": false
+        },
+        {
+          "global": false,
           "help": "Skip test compilation check (faster, but may miss test errors)",
           "long": "skip-tests",
           "name": "skip_tests",
@@ -215,6 +228,29 @@ expression: json
           "required": false,
           "short": null,
           "takes_value": false
+        },
+        {
+          "global": false,
+          "help": "Allow broad checks to start even when host PSI is already severe",
+          "long": "allow-contended-host",
+          "name": "allow_contended_host",
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "short": null,
+          "takes_value": false
+        },
+        {
+          "global": false,
+          "help": "API drift guard: check only packages that own Rust files changed between HEAD and the merge-base of the given ref (default `origin/master`). Emits a JSON report of changed files, affected packages, and per-package results. Non-zero exit if any per-package check fails. This flag is opt-in and does not alter the default check behaviour",
+          "long": "changed-strict",
+          "name": "changed_strict",
+          "possible_values": [],
+          "required": false,
+          "short": null,
+          "takes_value": true
         }
       ],
       "name": "check",
@@ -317,49 +353,6 @@ expression: json
         },
         {
           "global": false,
-          "help": "Run tests whose sinex_test scenario metadata includes this tag",
-          "long": "scenario-tag",
-          "name": "scenario_tags",
-          "possible_values": [],
-          "required": false,
-          "short": null,
-          "takes_value": true
-        },
-        {
-          "global": false,
-          "help": "Run tests whose sinex_test scenario metadata uses this category",
-          "long": "scenario-category",
-          "name": "scenario_categories",
-          "possible_values": [],
-          "required": false,
-          "short": null,
-          "takes_value": true
-        },
-        {
-          "global": false,
-          "help": "Run tests whose sinex_test scenario metadata uses this lane",
-          "long": "scenario-lane",
-          "name": "scenario_lanes",
-          "possible_values": [],
-          "required": false,
-          "short": null,
-          "takes_value": true
-        },
-        {
-          "global": false,
-          "help": "List discovered sinex_test scenarios instead of running tests",
-          "long": "list-scenarios",
-          "name": "list_scenarios",
-          "possible_values": [
-            "true",
-            "false"
-          ],
-          "required": false,
-          "short": null,
-          "takes_value": false
-        },
-        {
-          "global": false,
           "help": "Run tests for specific package(s)",
           "long": "package",
           "name": "packages",
@@ -367,6 +360,39 @@ expression: json
           "required": false,
           "short": "p",
           "takes_value": true
+        },
+        {
+          "global": false,
+          "help": "Exclude workspace package(s) from --all/workspace test runs",
+          "long": "exclude",
+          "name": "exclude_packages",
+          "possible_values": [],
+          "required": false,
+          "short": null,
+          "takes_value": true
+        },
+        {
+          "global": false,
+          "help": "Run tests from specific test binary target(s) (nextest --test)",
+          "long": "test",
+          "name": "test_binaries",
+          "possible_values": [],
+          "required": false,
+          "short": null,
+          "takes_value": true
+        },
+        {
+          "global": false,
+          "help": "Run only library unit tests (nextest --lib)",
+          "long": "lib",
+          "name": "lib",
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "short": null,
+          "takes_value": false
         },
         {
           "global": false,
@@ -386,6 +412,32 @@ expression: json
           "help": "Skip automatic infrastructure setup (preflight is ON by default)",
           "long": "skip-preflight",
           "name": "skip_preflight",
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "short": null,
+          "takes_value": false
+        },
+        {
+          "global": false,
+          "help": "Run DB-backed tests inside a fresh throwaway Postgres cluster",
+          "long": "ephemeral-postgres",
+          "name": "ephemeral_postgres",
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "short": null,
+          "takes_value": false
+        },
+        {
+          "global": false,
+          "help": "Disable SINEX_TEST_POSTGRES=ephemeral auto-wrapping for this invocation",
+          "long": "no-ephemeral-postgres",
+          "name": "no_ephemeral_postgres",
           "possible_values": [
             "true",
             "false"
@@ -435,6 +487,19 @@ expression: json
         },
         {
           "global": false,
+          "help": "Allow broad tests to start even when host PSI is already severe",
+          "long": "allow-contended-host",
+          "name": "allow_contended_host",
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "short": null,
+          "takes_value": false
+        },
+        {
+          "global": false,
           "help": "Update insta snapshots (sets `INSTA_UPDATE=always`)",
           "long": "update-snapshots",
           "name": "update_snapshots",
@@ -470,7 +535,6 @@ expression: json
               "possible_values": [
                 "sweeps",
                 "refine",
-                "bisect",
                 "stress",
                 "soak"
               ],
@@ -507,6 +571,42 @@ expression: json
               "required": false,
               "short": null,
               "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Test database pool sizes to sweep (comma-separated). Enables ephemeral Postgres mode",
+              "long": "db-pool-sizes",
+              "name": "db_pool_sizes",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Use the system-impact preset for measured test concurrency calibration",
+              "long": "system-impact",
+              "name": "system_impact",
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false,
+              "short": null,
+              "takes_value": false
+            },
+            {
+              "global": false,
+              "help": "Include aggressive over-subscription points in the system-impact preset",
+              "long": "system-impact-extended",
+              "name": "system_impact_extended",
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false,
+              "short": null,
+              "takes_value": false
             },
             {
               "global": false,
@@ -586,6 +686,32 @@ expression: json
               "help": "Dry run (compile only, no test execution)",
               "long": "dry-run",
               "name": "dry_run",
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false,
+              "short": null,
+              "takes_value": false
+            },
+            {
+              "global": false,
+              "help": "Continue running benchmark scenarios after a scenario fails",
+              "long": "continue-on-fail",
+              "name": "continue_on_fail",
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false,
+              "short": null,
+              "takes_value": false
+            },
+            {
+              "global": false,
+              "help": "Allow DB benchmark runs while other heavy workloads or high IO pressure are active",
+              "long": "allow-contended-host",
+              "name": "allow_contended_host",
               "possible_values": [
                 "true",
                 "false"
@@ -903,23 +1029,6 @@ expression: json
         }
       ],
       "name": "build",
-      "subcommands": []
-    },
-    {
-      "about": "Execute the minimum workflow sequence to reach a target state",
-      "args": [
-        {
-          "global": false,
-          "help": "Target operation to reach (check, test, build)",
-          "long": null,
-          "name": "target",
-          "possible_values": [],
-          "required": true,
-          "short": null,
-          "takes_value": true
-        }
-      ],
-      "name": "work",
       "subcommands": []
     },
     {
@@ -1364,7 +1473,7 @@ expression: json
               "args": [
                 {
                   "global": false,
-                  "help": "Test category: smoke, integration, performance, chaos, all",
+                  "help": "Test category: smoke, integration, performance, chaos, production-shape, all",
                   "long": "category",
                   "name": "category",
                   "possible_values": [],
@@ -1784,6 +1893,19 @@ expression: json
           "required": false,
           "short": null,
           "takes_value": false
+        },
+        {
+          "global": false,
+          "help": "Show recommended next actions (planner)",
+          "long": "next",
+          "name": "next",
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "short": null,
+          "takes_value": false
         }
       ],
       "name": "status",
@@ -1853,6 +1975,32 @@ expression: json
               "required": false,
               "short": null,
               "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Only report duplicates directly requested by workspace manifests",
+              "long": "direct-only",
+              "name": "direct_only",
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false,
+              "short": null,
+              "takes_value": false
+            },
+            {
+              "global": false,
+              "help": "Only report duplicates introduced through transitive dependencies",
+              "long": "transitive-only",
+              "name": "transitive_only",
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false,
+              "short": null,
+              "takes_value": false
             }
           ],
           "name": "duplicates",
@@ -1920,6 +2068,62 @@ expression: json
             }
           ],
           "name": "impact",
+          "subcommands": []
+        },
+        {
+          "about": "Update Cargo.lock through the xtask dependency surface",
+          "args": [
+            {
+              "global": false,
+              "help": "Package spec to update; forwarded as repeated `cargo update -p <SPEC>`",
+              "long": "package",
+              "name": "packages",
+              "possible_values": [],
+              "required": false,
+              "short": "p",
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Update dependencies recursively for the selected packages",
+              "long": "recursive",
+              "name": "recursive",
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false,
+              "short": null,
+              "takes_value": false
+            },
+            {
+              "global": false,
+              "help": "Preview the update without writing Cargo.lock",
+              "long": "dry-run",
+              "name": "dry_run",
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false,
+              "short": null,
+              "takes_value": false
+            },
+            {
+              "global": false,
+              "help": "Update the whole lockfile instead of named packages",
+              "long": "all",
+              "name": "all",
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false,
+              "short": null,
+              "takes_value": false
+            }
+          ],
+          "name": "update",
           "subcommands": []
         },
         {
@@ -2126,6 +2330,19 @@ expression: json
               "required": false,
               "short": null,
               "takes_value": false
+            },
+            {
+              "global": false,
+              "help": "Include watchdog/stale-pid cancellation rows normally hidden as zombie noise",
+              "long": "include-zombies",
+              "name": "include_zombies",
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false,
+              "short": null,
+              "takes_value": false
             }
           ],
           "name": "list",
@@ -2195,6 +2412,33 @@ expression: json
           "subcommands": []
         },
         {
+          "about": "Summarise dev-loop wallclock cost without double-counting wrappers",
+          "args": [
+            {
+              "global": false,
+              "help": "Commands to include. Defaults to check+test",
+              "long": "command",
+              "name": "commands",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "How many days back to analyse",
+              "long": "days",
+              "name": "days",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            }
+          ],
+          "name": "cost",
+          "subcommands": []
+        },
+        {
           "about": "Query test result history",
           "args": [],
           "name": "tests",
@@ -2211,6 +2455,39 @@ expression: json
                   "required": false,
                   "short": null,
                   "takes_value": true
+                },
+                {
+                  "global": false,
+                  "help": "Only include test results from the last N days",
+                  "long": "days",
+                  "name": "days",
+                  "possible_values": [],
+                  "required": false,
+                  "short": null,
+                  "takes_value": true
+                },
+                {
+                  "global": false,
+                  "help": "Require at least this many passing runs in the selected window",
+                  "long": "min-runs",
+                  "name": "min_runs",
+                  "possible_values": [],
+                  "required": false,
+                  "short": null,
+                  "takes_value": true
+                },
+                {
+                  "global": false,
+                  "help": "Rank each test by its most recent passing result instead of historical average",
+                  "long": "latest-per-test",
+                  "name": "latest_per_test",
+                  "possible_values": [
+                    "true",
+                    "false"
+                  ],
+                  "required": false,
+                  "short": null,
+                  "takes_value": false
                 },
                 {
                   "global": false,
@@ -2857,6 +3134,19 @@ expression: json
               "required": false,
               "short": null,
               "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Include watchdog/stale-pid cancellation rows normally hidden as zombie noise",
+              "long": "include-zombies",
+              "name": "include_zombies",
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false,
+              "short": null,
+              "takes_value": false
             }
           ],
           "name": "timeline",
@@ -2921,6 +3211,19 @@ expression: json
               "required": false,
               "short": null,
               "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Include watchdog/stale-pid cancellation rows normally hidden as zombie noise",
+              "long": "include-zombies",
+              "name": "include_zombies",
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false,
+              "short": null,
+              "takes_value": false
             }
           ],
           "name": "sessions",
@@ -3172,9 +3475,95 @@ expression: json
               "required": false,
               "short": null,
               "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Include watchdog/stale-pid cancellation rows normally hidden as zombie noise",
+              "long": "include-zombies",
+              "name": "include_zombies",
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false,
+              "short": null,
+              "takes_value": false
             }
           ],
           "name": "resources",
+          "subcommands": []
+        },
+        {
+          "about": "Current host pressure snapshot, with Sinnix observability join when available",
+          "args": [
+            {
+              "global": false,
+              "help": "Also run sinnix-observe for a host-level attribution report when available",
+              "long": "observe",
+              "name": "observe",
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false,
+              "short": null,
+              "takes_value": false
+            },
+            {
+              "global": false,
+              "help": "Sample /proc/PID/io and show the processes doing the most physical IO",
+              "long": "top-io",
+              "name": "top_io",
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false,
+              "short": null,
+              "takes_value": false
+            },
+            {
+              "global": false,
+              "help": "Sampling window for --top-io, in milliseconds",
+              "long": "sample-ms",
+              "name": "sample_ms",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Time window passed to sinnix-observe --since",
+              "long": "since",
+              "name": "since",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Duration passed to sinnix-observe --duration",
+              "long": "duration",
+              "name": "duration",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Row limit passed to sinnix-observe --limit",
+              "long": "limit",
+              "name": "limit",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            }
+          ],
+          "name": "pressure",
           "subcommands": []
         },
         {
@@ -3202,6 +3591,70 @@ expression: json
             }
           ],
           "name": "stages",
+          "subcommands": []
+        }
+      ]
+    },
+    {
+      "about": "Inspect coordinator freshness keys and reuse decisions",
+      "args": [],
+      "name": "freshness",
+      "subcommands": [
+        {
+          "about": "Explain the freshness key for a command scope",
+          "args": [
+            {
+              "global": false,
+              "help": "Coordinated command to explain, such as check, build, fix, test, or vm",
+              "long": null,
+              "name": "command",
+              "possible_values": [],
+              "required": true,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Arguments for the explained command. Use `--` before hyphen-prefixed args",
+              "long": null,
+              "name": "args",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            }
+          ],
+          "name": "explain",
+          "subcommands": []
+        }
+      ]
+    },
+    {
+      "about": null,
+      "args": [],
+      "name": "impact",
+      "subcommands": [
+        {
+          "about": "Explain the default `xtask test` impact plan for the current diff",
+          "args": [],
+          "name": "explain",
+          "subcommands": []
+        },
+        {
+          "about": "Sample skipped tests by forcing a broader local run",
+          "args": [
+            {
+              "global": false,
+              "help": "Number of skipped proof decisions to sample",
+              "long": "sample-skips",
+              "name": "sample_skips",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            }
+          ],
+          "name": "audit",
           "subcommands": []
         }
       ]
@@ -3552,9 +4005,78 @@ expression: json
           "required": false,
           "short": null,
           "takes_value": false
+        },
+        {
+          "global": false,
+          "help": "Reclaim stale target-dir artifacts (cargo-sweep + incremental/ prune)",
+          "long": "reclaim",
+          "name": "reclaim",
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "short": null,
+          "takes_value": false
+        },
+        {
+          "global": false,
+          "help": "Inspect managed test database footprint and /dev/shm headroom",
+          "long": "test-db",
+          "name": "test_db",
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "short": null,
+          "takes_value": false
+        },
+        {
+          "global": false,
+          "help": "Inspect rust-analyzer process footprint and local config",
+          "long": "rust-analyzer",
+          "name": "rust_analyzer",
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "short": null,
+          "takes_value": false
         }
       ],
       "name": "doctor",
+      "subcommands": []
+    },
+    {
+      "about": "Diagnose rust-analyzer process footprint and local workspace contract",
+      "args": [
+        {
+          "global": false,
+          "help": "Also run rust-analyzer's batch diagnostics subcommand",
+          "long": "collect-diagnostics",
+          "name": "collect_diagnostics",
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "short": null,
+          "takes_value": false
+        },
+        {
+          "global": false,
+          "help": "Minimum severity for --collect-diagnostics",
+          "long": "severity",
+          "name": "severity",
+          "possible_values": [],
+          "required": false,
+          "short": null,
+          "takes_value": true
+        }
+      ],
+      "name": "ra-diagnose",
       "subcommands": []
     },
     {
@@ -3674,6 +4196,407 @@ expression: json
             }
           ],
           "name": "config",
+          "subcommands": []
+        }
+      ]
+    },
+    {
+      "about": "Schema verification command group",
+      "args": [],
+      "name": "schema",
+      "subcommands": [
+        {
+          "about": "Detect strict schema drift that declarative apply does not reconcile",
+          "args": [
+            {
+              "global": false,
+              "help": "Database URL to inspect. Defaults to DATABASE_URL",
+              "long": "database-url",
+              "name": "database_url",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            }
+          ],
+          "name": "strict-diff",
+          "subcommands": []
+        }
+      ]
+    },
+    {
+      "about": "Verify phase plans and performance contracts",
+      "args": [],
+      "name": "verify",
+      "subcommands": [
+        {
+          "about": "Inspect and validate the phase verification manifest",
+          "args": [
+            {
+              "global": false,
+              "help": "Select one phase by id",
+              "long": "phase",
+              "name": "phase",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Show all phases",
+              "long": "all",
+              "name": "all",
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false,
+              "short": null,
+              "takes_value": false
+            },
+            {
+              "global": false,
+              "help": "Validate the manifest contract and exit",
+              "long": "check",
+              "name": "check",
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false,
+              "short": null,
+              "takes_value": false
+            },
+            {
+              "global": false,
+              "help": "Manifest path",
+              "long": "manifest",
+              "name": "manifest",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            }
+          ],
+          "name": "plan",
+          "subcommands": []
+        },
+        {
+          "about": "Run perf sweeps and enforce contract budgets",
+          "args": [
+            {
+              "global": false,
+              "help": "Nextest profile",
+              "long": "profile",
+              "name": "profile",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Runs per thread scenario",
+              "long": "runs",
+              "name": "runs",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Thread scenarios",
+              "long": "threads",
+              "name": "threads",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Target package list (comma-delimited) or `workspace`",
+              "long": "target",
+              "name": "target",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Contract file path",
+              "long": "contracts",
+              "name": "contracts",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Output directory for verify artifacts",
+              "long": "output-dir",
+              "name": "output_dir",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "History DB path for benchmark series",
+              "long": "history-db",
+              "name": "history_db",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            }
+          ],
+          "name": "perf",
+          "subcommands": []
+        },
+        {
+          "about": "Print summary from a perf report JSON",
+          "args": [
+            {
+              "global": false,
+              "help": "Report file path (defaults to latest pointer)",
+              "long": "report",
+              "name": "report",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            }
+          ],
+          "name": "report",
+          "subcommands": []
+        },
+        {
+          "about": "Compare two perf reports",
+          "args": [
+            {
+              "global": false,
+              "help": null,
+              "long": "current",
+              "name": "current",
+              "possible_values": [],
+              "required": true,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": null,
+              "long": "previous",
+              "name": "previous",
+              "possible_values": [],
+              "required": true,
+              "short": null,
+              "takes_value": true
+            }
+          ],
+          "name": "compare",
+          "subcommands": []
+        },
+        {
+          "about": "Run perf only",
+          "args": [
+            {
+              "global": false,
+              "help": null,
+              "long": "profile",
+              "name": "profile",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": null,
+              "long": "runs",
+              "name": "runs",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": null,
+              "long": "threads",
+              "name": "threads",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": null,
+              "long": "target",
+              "name": "target",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": null,
+              "long": "contracts",
+              "name": "contracts",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": null,
+              "long": "output-dir",
+              "name": "output_dir",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": null,
+              "long": "history-db",
+              "name": "history_db",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            }
+          ],
+          "name": "all",
+          "subcommands": []
+        },
+        {
+          "about": "Source-worker evidence gate: NixOS binding drift, parser registration, and privacy invocation",
+          "args": [
+            {
+              "global": false,
+              "help": "Path to the JSON file exported by `config.services.sinex.sources.exportedJson` (from the NixOS module)",
+              "long": "bindings-json",
+              "name": "bindings_json",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Emit JSON output",
+              "long": "json",
+              "name": "json",
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false,
+              "short": null,
+              "takes_value": false
+            }
+          ],
+          "name": "source-worker",
+          "subcommands": []
+        },
+        {
+          "about": "Operationalize the 2026-05-11 closure-verification policy: fetch an issue body via `gh`, extract AC checkboxes and shell code blocks marked `verify`, and run each command, reporting pass/fail per command",
+          "args": [
+            {
+              "global": false,
+              "help": "GitHub issue number to verify",
+              "long": null,
+              "name": "issue",
+              "possible_values": [],
+              "required": true,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Emit JSON output",
+              "long": "json",
+              "name": "json",
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false,
+              "short": null,
+              "takes_value": false
+            },
+            {
+              "global": false,
+              "help": "Dry-run: parse and print commands without executing them",
+              "long": "dry-run",
+              "name": "dry_run",
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false,
+              "short": null,
+              "takes_value": false
+            }
+          ],
+          "name": "closure",
+          "subcommands": []
+        },
+        {
+          "about": "Summarize executable verification claims, runner commands, and deferrals",
+          "args": [
+            {
+              "global": false,
+              "help": "Emit JSON output",
+              "long": "json",
+              "name": "json",
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false,
+              "short": null,
+              "takes_value": false
+            },
+            {
+              "global": false,
+              "help": "Show advisory obligations as well as required obligations",
+              "long": "advisory",
+              "name": "advisory",
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false,
+              "short": null,
+              "takes_value": false
+            },
+            {
+              "global": false,
+              "help": "Include deferred obligations and exemptions",
+              "long": "deferrals",
+              "name": "deferrals",
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false,
+              "short": null,
+              "takes_value": false
+            }
+          ],
+          "name": "claims",
           "subcommands": []
         }
       ]
@@ -3969,6 +4892,49 @@ expression: json
             }
           ],
           "name": "proof-catalog",
+          "subcommands": []
+        },
+        {
+          "about": "Generate the public RPC method catalog from typed descriptors",
+          "args": [
+            {
+              "global": false,
+              "help": "Output file (default: docs/rpc-catalog.json)",
+              "long": "output",
+              "name": "output",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Print to stdout instead of writing a file",
+              "long": "stdout",
+              "name": "stdout",
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false,
+              "short": null,
+              "takes_value": false
+            },
+            {
+              "global": false,
+              "help": "Exit non-zero if the generated output would change",
+              "long": "check",
+              "name": "check",
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false,
+              "short": null,
+              "takes_value": false
+            }
+          ],
+          "name": "rpc-catalog",
           "subcommands": []
         },
         {
@@ -4466,7 +5432,7 @@ expression: json
         },
         {
           "global": false,
-          "help": "Wipe the entire .sinex/preflight/ directory (forces full preflight on next run)",
+          "help": "Wipe the configured preflight state directory (forces full preflight on next run)",
           "long": "preflight",
           "name": "preflight",
           "possible_values": [
@@ -4505,7 +5471,7 @@ expression: json
         },
         {
           "global": false,
-          "help": "Delete the xtask history database",
+          "help": "Archive the xtask history database and start a fresh one",
           "long": "history",
           "name": "history",
           "possible_values": [
@@ -4544,6 +5510,32 @@ expression: json
         },
         {
           "global": false,
+          "help": "Delete stale per-test temporary directories",
+          "long": "test-tmp",
+          "name": "test_tmp",
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "short": null,
+          "takes_value": false
+        },
+        {
+          "global": false,
+          "help": "Kill stale orphaned compiler/linker processes for this checkout's target dirs",
+          "long": "stale-build-processes",
+          "name": "stale_build_processes",
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "short": null,
+          "takes_value": false
+        },
+        {
+          "global": false,
           "help": "Wipe the cargo target/ directory (forces clean recompilation)",
           "long": "target",
           "name": "target",
@@ -4570,6 +5562,73 @@ expression: json
         }
       ],
       "name": "reset",
+      "subcommands": []
+    },
+    {
+      "about": "Internal detached process watchdog — not for human use",
+      "args": [
+        {
+          "global": false,
+          "help": "PID of the background job process to monitor",
+          "long": "target-pid",
+          "name": "target_pid",
+          "possible_values": [],
+          "required": true,
+          "short": null,
+          "takes_value": true
+        },
+        {
+          "global": false,
+          "help": "Maximum seconds to allow before killing the target",
+          "long": "max-secs",
+          "name": "max_secs",
+          "possible_values": [],
+          "required": true,
+          "short": null,
+          "takes_value": true
+        },
+        {
+          "global": false,
+          "help": "Invocation ID to mark as cancelled on timeout",
+          "long": "invocation-id",
+          "name": "invocation_id",
+          "possible_values": [],
+          "required": true,
+          "short": null,
+          "takes_value": true
+        },
+        {
+          "global": false,
+          "help": "Background job ID to mark as killed on timeout",
+          "long": "job-id",
+          "name": "job_id",
+          "possible_values": [],
+          "required": true,
+          "short": null,
+          "takes_value": true
+        },
+        {
+          "global": false,
+          "help": "Path to the history DB file",
+          "long": "db-path",
+          "name": "db_path",
+          "possible_values": [],
+          "required": true,
+          "short": null,
+          "takes_value": true
+        },
+        {
+          "global": false,
+          "help": "Directory containing the job's exit_code file (written on timeout)",
+          "long": "job-dir",
+          "name": "job_dir",
+          "possible_values": [],
+          "required": true,
+          "short": null,
+          "takes_value": true
+        }
+      ],
+      "name": "__reap",
       "subcommands": []
     }
   ]

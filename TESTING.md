@@ -20,27 +20,23 @@ xtask test --heavy
 # Targeted e2e loop; simple test(name) filters infer the test binary automatically.
 xtask test -p sinex-e2e-tests -E 'test(test_batch_large_payloads)'
 
-# Proof-carrying runtime scenarios
-xtask test --list-scenarios
-xtask test --scenario-tag row_stream
-xtask test --scenario-category source_material
-xtask test --scenario-lane heavy --heavy
+# Impact planning and exact proof reuse
+xtask impact explain
+xtask impact audit --sample-skips 10
 
 # Source-material resource profiles
-xtask test -p sinex-node-sdk --scenario-tag frame_amplification
-xtask test -p sinex-node-sdk --scenario-tag duplicate_content
-xtask test -p sinex-node-sdk --scenario-tag storage_profile --heavy
+xtask test -p sinex-node-sdk -E 'test(source_material_scenario_batches_row_stream_records_with_stable_anchors)'
+xtask test -p sinex-node-sdk -E 'test(source_material_scenario_duplicate_content_reuses_blob_identity)'
+xtask test -p sinex-node-sdk --heavy -E 'test(source_material_resource_storage_backend_profile)'
 ```
 
 `xtask test` is the primary test entrypoint. It handles the repo's preflight,
 runtime binary preparation for e2e/node-sdk tests, and nextest wiring; use
 `xtask test --help` for the current option surface.
-Scenario selectors discover `#[sinex_test(... scenario = ...)]` metadata and
-compile it down to ordinary nextest package/filter arguments. Scenario semantics
-belong in Rust tests and evidence bundles, not in product-runtime xtask commands.
-Resource-shape scenarios emit machine-readable JSON artifacts under
-`.sinex/test-artifacts/`; these are observed/advisory benchmark records unless a
-specific scenario assertion encodes a correctness invariant.
+Bare `xtask test` uses machine-derived impact planning by default. It runs
+affected package scopes for changed code, records accepted-risk decisions, and
+may reuse an exact previous proof only when the manifest and input fingerprint
+match. Use `--all` for a deliberate full pass.
 
 ## CI-Parity Validation
 
