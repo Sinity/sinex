@@ -1510,6 +1510,8 @@ mod tests {
         assert!(rendered.contains("# xtask Command Guide"));
         assert!(rendered.contains("## Agent Defaults"));
         assert!(rendered.contains("`xtask check`"));
+        assert!(rendered.contains("`xtask fix --smart`"));
+        assert!(!rendered.contains("xtask fix --check"));
     }
 
     #[test]

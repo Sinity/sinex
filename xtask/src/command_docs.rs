@@ -69,7 +69,7 @@ const GUIDE_SECTIONS: &[GuideSection] = &[
                 path: "fix",
                 fallback_summary: "Apply automatic formatting and lint fixes",
                 when: "formatting or clippy fixes are mechanical and you want the repo-approved autofix pass first",
-                examples: &["xtask fix", "xtask fix --check"],
+                examples: &["xtask fix", "xtask fix --smart"],
                 notes: &[],
             },
             GuideEntry {
