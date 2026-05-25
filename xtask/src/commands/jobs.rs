@@ -47,6 +47,10 @@ pub enum JobsSubcommand {
     Output {
         #[arg(value_name = "JOB_ID")]
         id: i64,
+        /// Show stdout explicitly (default)
+        #[arg(long, conflicts_with = "stderr")]
+        stdout: bool,
+        /// Show stderr instead of stdout
         #[arg(long)]
         stderr: bool,
     },
@@ -93,7 +97,7 @@ impl XtaskCommand for JobsCommand {
                 let job_query = JobQueryManager::new(cfg.jobs_dir())?;
                 execute_status(&job_query, *id, *follow, ctx).await
             }
-            JobsSubcommand::Output { id, stderr } => {
+            JobsSubcommand::Output { id, stderr, .. } => {
                 let job_query = JobQueryManager::new(cfg.jobs_dir())?;
                 execute_output(&job_query, *id, *stderr, ctx)
             }
@@ -1058,6 +1062,7 @@ fn resource_usage_probe_from_result(
 mod tests {
     use super::*;
     use crate::sandbox::sinex_test;
+    use clap::Parser;
     use tempfile::tempdir;
 
     #[sinex_test]
@@ -1121,6 +1126,36 @@ mod tests {
         assert_eq!(status_to_str(JobLifecycleStatus::Failed), "failed");
         assert_eq!(status_to_str(JobLifecycleStatus::Orphaned), "orphaned");
         assert_eq!(status_to_str(JobLifecycleStatus::Killed), "killed");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn jobs_output_accepts_explicit_stdout_selector() -> ::xtask::sandbox::TestResult<()> {
+        let cli = crate::Cli::try_parse_from(["xtask", "jobs", "output", "42", "--stdout"])?;
+        let Some(crate::Commands::Jobs(JobsCommand {
+            subcommand: JobsSubcommand::Output { id, stdout, stderr },
+        })) = cli.command
+        else {
+            panic!("expected jobs output command");
+        };
+
+        assert_eq!(id, 42);
+        assert!(stdout);
+        assert!(!stderr);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn jobs_output_rejects_conflicting_stream_selectors() -> ::xtask::sandbox::TestResult<()>
+    {
+        let error = match crate::Cli::try_parse_from([
+            "xtask", "jobs", "output", "42", "--stdout", "--stderr",
+        ]) {
+            Ok(_) => panic!("stdout and stderr selectors should conflict"),
+            Err(error) => error,
+        };
+
+        assert_eq!(error.kind(), clap::error::ErrorKind::ArgumentConflict);
         Ok(())
     }
 
