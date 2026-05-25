@@ -33,6 +33,9 @@ impl BuildCommand {
         if self.release {
             args.push("--release".to_string());
         }
+        if self.dry_run {
+            args.push("--dry-run".to_string());
+        }
         args.push(scope.encode_marker());
         args
     }
@@ -93,6 +96,15 @@ impl XtaskCommand for BuildCommand {
     }
 
     async fn execute(&self, ctx: &CommandContext) -> Result<CommandResult> {
+        if self.dry_run && ctx.is_background() {
+            let (_, workload_scope) = self.resolve_execution_plan(None)?;
+            let coordination_args = self.semantic_invocation_args(&workload_scope);
+            ctx.record_invocation_args(&coordination_args);
+            return Ok(
+                CommandResult::success().with_detail("dry-run passed (would build packages)")
+            );
+        }
+
         // Handle background execution
         if ctx.is_background() {
             let mut args = Vec::new();
