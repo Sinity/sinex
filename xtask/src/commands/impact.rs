@@ -264,29 +264,8 @@ fn audit(
     let impact_run_id = ctx
         .try_with_history_db(|db| db.record_impact_plan(ctx.invocation_id(), "audit", &plan))
         .transpose()?;
-    let mut sampled_skips = plan
-        .decisions
-        .iter()
-        .filter(|decision| {
-            matches!(
-                decision.action,
-                crate::impact::ImpactAction::ReuseExactProof
-                    | crate::impact::ImpactAction::AuditSkippedTests
-            )
-        })
-        .take(sample_skips)
-        .cloned()
-        .collect::<Vec<_>>();
-    if sampled_skips.is_empty() && plan.impact_filter.is_some() {
-        sampled_skips = plan
-            .decisions
-            .iter()
-            .filter(|decision| decision.action == crate::impact::ImpactAction::RunImpactedTests)
-            .take(sample_skips.max(1))
-            .cloned()
-            .collect();
-    }
-    let audit_command = audit_command_for_plan(&plan);
+    let sampled_skips = audit_sample_decisions(&plan, sample_skips);
+    let audit_command = audit_command_for_sample(&plan, &sampled_skips);
     if ctx.is_human() {
         println!("Impact audit");
         println!("  sampled skipped decisions: {}", sampled_skips.len());
@@ -508,6 +487,47 @@ fn audit_command_for_plan(plan: &crate::impact::ImpactPlan) -> Option<(String, V
     Some((xtask, args))
 }
 
+fn audit_sample_decisions(
+    plan: &crate::impact::ImpactPlan,
+    sample_skips: usize,
+) -> Vec<crate::impact::ImpactDecision> {
+    if sample_skips == 0 {
+        return Vec::new();
+    }
+    let sampled_skips = plan
+        .decisions
+        .iter()
+        .filter(|decision| {
+            matches!(
+                decision.action,
+                crate::impact::ImpactAction::ReuseExactProof
+                    | crate::impact::ImpactAction::AuditSkippedTests
+            )
+        })
+        .take(sample_skips)
+        .cloned()
+        .collect::<Vec<_>>();
+    if !sampled_skips.is_empty() || plan.impact_filter.is_none() {
+        return sampled_skips;
+    }
+    plan.decisions
+        .iter()
+        .filter(|decision| decision.action == crate::impact::ImpactAction::RunImpactedTests)
+        .take(sample_skips)
+        .cloned()
+        .collect()
+}
+
+fn audit_command_for_sample(
+    plan: &crate::impact::ImpactPlan,
+    sampled_skips: &[crate::impact::ImpactDecision],
+) -> Option<(String, Vec<String>)> {
+    if sampled_skips.is_empty() {
+        return None;
+    }
+    audit_command_for_plan(plan)
+}
+
 fn current_xtask() -> Result<String> {
     std::env::current_exe()
         .map(PathBuf::from)
@@ -544,6 +564,10 @@ fn sanitize_artifact_component(raw: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::impact::{
+        IMPACT_COVERAGE_SCHEMA_VERSION, IMPACT_PLANNER_VERSION, ImpactAction, ImpactDecision,
+        ImpactMode, ImpactPlan,
+    };
     use crate::sandbox::sinex_test;
 
     #[sinex_test]
@@ -582,5 +606,58 @@ mod tests {
         assert_eq!(regions[1]["line_start"], 12);
         assert_eq!(regions[1]["line_end"], 14);
         Ok(())
+    }
+
+    #[sinex_test]
+    async fn impact_audit_sample_zero_does_not_force_broad_run() -> TestResult<()> {
+        let plan = test_plan(
+            Some("test(targeted_case)".to_string()),
+            vec![ImpactDecision {
+                action: ImpactAction::RunImpactedTests,
+                reason: "targeted proof exists".to_string(),
+                subject: Some("1 test(s)".to_string()),
+            }],
+        );
+
+        let sampled = audit_sample_decisions(&plan, 0);
+
+        assert!(sampled.is_empty());
+        assert!(audit_command_for_sample(&plan, &sampled).is_none());
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn impact_audit_samples_impacted_tests_only_when_requested() -> TestResult<()> {
+        let plan = test_plan(
+            Some("test(targeted_case)".to_string()),
+            vec![ImpactDecision {
+                action: ImpactAction::RunImpactedTests,
+                reason: "targeted proof exists".to_string(),
+                subject: Some("1 test(s)".to_string()),
+            }],
+        );
+
+        let sampled = audit_sample_decisions(&plan, 1);
+
+        assert_eq!(sampled.len(), 1);
+        assert_eq!(sampled[0].action, ImpactAction::RunImpactedTests);
+        assert!(audit_command_for_sample(&plan, &sampled).is_some());
+        Ok(())
+    }
+
+    fn test_plan(impact_filter: Option<String>, decisions: Vec<ImpactDecision>) -> ImpactPlan {
+        ImpactPlan {
+            planner_version: IMPACT_PLANNER_VERSION.to_string(),
+            mode: ImpactMode::Balanced,
+            coverage_schema_version: IMPACT_COVERAGE_SCHEMA_VERSION.to_string(),
+            changed: Vec::new(),
+            affected_packages: Vec::new(),
+            impacted_tests: Vec::new(),
+            impact_filter,
+            scope_args: Vec::new(),
+            decisions,
+            accepted_risks: Vec::new(),
+            evidence_gaps: Vec::new(),
+        }
     }
 }
