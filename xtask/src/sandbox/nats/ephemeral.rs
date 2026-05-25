@@ -736,10 +736,10 @@ impl ChaosConfig {
     }
 
     fn maybe_fail(&self, message: &str) -> Result<()> {
-        if self.failure_rate > 0.0 {
-            if self.failure_rate >= 1.0 || fastrand::f64() < self.failure_rate {
-                return Err(eyre!("{}", message));
-            }
+        if self.failure_rate > 0.0
+            && (self.failure_rate >= 1.0 || fastrand::f64() < self.failure_rate)
+        {
+            return Err(eyre!("{}", message));
         }
         Ok(())
     }

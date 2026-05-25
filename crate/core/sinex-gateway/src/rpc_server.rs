@@ -262,12 +262,12 @@ impl GatewayAuth {
         if let Some(ref t) = token {
             if t.trim().is_empty() {
                 return Err(SinexError::configuration(
-                    "SINEX_RPC_TOKEN (or token file) is set but empty; refusing to start without a token"
+                    "SINEX_RPC_TOKEN (or token file) is set but empty; refusing to start without a token",
                 ));
             }
         } else {
             return Err(SinexError::configuration(
-                "SINEX_RPC_TOKEN is not set. Export a token (or SINEX_GATEWAY_ADMIN_TOKEN_FILE / SINEX_RPC_TOKEN_FILE) so the gateway can authenticate RPC clients."
+                "SINEX_RPC_TOKEN is not set. Export a token (or SINEX_GATEWAY_ADMIN_TOKEN_FILE / SINEX_RPC_TOKEN_FILE) so the gateway can authenticate RPC clients.",
             ));
         }
 
@@ -306,8 +306,7 @@ impl GatewayAuth {
                 });
             }
 
-            let (ready_tx, ready_rx) =
-                tokio::sync::oneshot::channel::<SinexResult<()>>();
+            let (ready_tx, ready_rx) = tokio::sync::oneshot::channel::<SinexResult<()>>();
 
             std::thread::spawn(move || {
                 use notify::{Event, EventKind, RecursiveMode, Watcher};
@@ -413,8 +412,7 @@ impl GatewayAuth {
                 }
                 Err(_) => {
                     return Err(SinexError::timeout(format!(
-                        "Timed out waiting for token file watcher to initialize for {:?}",
-                        path
+                        "Timed out waiting for token file watcher to initialize for {path:?}"
                     )));
                 }
             }
@@ -1408,12 +1406,9 @@ fn parse_tcp_listen(spec: &str) -> SinexResult<(String, u16)> {
 
     if let Some(idx) = spec.rfind(':') {
         let (host_part, port_part) = spec.split_at(idx);
-        let port = port_part[1..]
-            .parse::<u16>()
-            .map_err(|error| {
-                SinexError::configuration(format!("Invalid TCP port in {spec}"))
-                    .with_std_error(&error)
-            })?;
+        let port = port_part[1..].parse::<u16>().map_err(|error| {
+            SinexError::configuration(format!("Invalid TCP port in {spec}")).with_std_error(&error)
+        })?;
         let host = host_part.trim_matches(|c| c == '[' || c == ']').trim();
         if host.is_empty() {
             return Err(SinexError::configuration(format!(
@@ -1463,21 +1458,19 @@ fn bind_tcp_listener(addr: &str) -> std::io::Result<tokio::net::TcpListener> {
     socket.listen(TCP_LISTEN_BACKLOG)
 }
 
-fn tls_paths_from_config(
-    config: &GatewayConfig,
-) -> SinexResult<(String, String, Option<String>)> {
+fn tls_paths_from_config(config: &GatewayConfig) -> SinexResult<(String, String, Option<String>)> {
     let cert = config.tls_cert.clone().ok_or_else(|| {
         SinexError::configuration(
             "SINEX_GATEWAY_TLS_CERT is required for TCP bindings\n\n\
             For local development, run `xtask doctor --fix` to auto-generate certificates.\n\
-            For production, provide proper certificates via environment variables."
+            For production, provide proper certificates via environment variables.",
         )
     })?;
     let key = config.tls_key.clone().ok_or_else(|| {
         SinexError::configuration(
             "SINEX_GATEWAY_TLS_KEY is required for TCP bindings\n\n\
             For local development, run `xtask doctor --fix` to auto-generate certificates.\n\
-            For production, provide proper certificates via environment variables."
+            For production, provide proper certificates via environment variables.",
         )
     })?;
     let client_ca = config.tls_client_ca.clone();
@@ -1502,26 +1495,21 @@ fn load_rustls_config(
                 .with_std_error(&error)
         })?;
 
-    let key = PrivateKeyDer::from_pem_file(key_path)
-        .map_err(|error| {
-            SinexError::configuration(format!("Failed to read TLS private key from {key_path}"))
-                .with_std_error(&error)
-        })?;
+    let key = PrivateKeyDer::from_pem_file(key_path).map_err(|error| {
+        SinexError::configuration(format!("Failed to read TLS private key from {key_path}"))
+            .with_std_error(&error)
+    })?;
 
     if let Some(ca_path) = client_ca_path {
         let client_certs: Vec<CertificateDer<'static>> = CertificateDer::pem_file_iter(ca_path)
             .map_err(|error| {
-                SinexError::configuration(format!(
-                    "Failed to open client CA bundle from {ca_path}"
-                ))
-                .with_std_error(&error)
+                SinexError::configuration(format!("Failed to open client CA bundle from {ca_path}"))
+                    .with_std_error(&error)
             })?
             .collect::<std::result::Result<Vec<_>, _>>()
             .map_err(|error| {
-                SinexError::configuration(format!(
-                    "Failed to read client CA bundle from {ca_path}"
-                ))
-                .with_std_error(&error)
+                SinexError::configuration(format!("Failed to read client CA bundle from {ca_path}"))
+                    .with_std_error(&error)
             })?;
         let mut roots = rustls::RootCertStore::empty();
         let (added, _ignored) = roots.add_parsable_certificates(client_certs);
@@ -1534,19 +1522,22 @@ fn load_rustls_config(
         let verifier = WebPkiClientVerifier::builder(Arc::new(roots))
             .build()
             .map_err(|error| {
-                SinexError::configuration("Failed to build client verifier")
-                    .with_std_error(&error)
+                SinexError::configuration("Failed to build client verifier").with_std_error(&error)
             })?;
 
         rustls::ServerConfig::builder()
             .with_client_cert_verifier(verifier)
             .with_single_cert(cert_chain, key)
-            .map_err(|error| SinexError::configuration("Invalid TLS cert/key").with_std_error(&error))
+            .map_err(|error| {
+                SinexError::configuration("Invalid TLS cert/key").with_std_error(&error)
+            })
     } else {
         rustls::ServerConfig::builder()
             .with_no_client_auth()
             .with_single_cert(cert_chain, key)
-            .map_err(|error| SinexError::configuration("Invalid TLS cert/key").with_std_error(&error))
+            .map_err(|error| {
+                SinexError::configuration("Invalid TLS cert/key").with_std_error(&error)
+            })
     }
 }
 
@@ -1559,7 +1550,7 @@ fn ensure_rustls_crypto_provider() -> SinexResult<()> {
         Ok(()) => Ok(()),
         Err(_) if rustls::crypto::CryptoProvider::get_default().is_some() => Ok(()),
         Err(_) => Err(SinexError::configuration(
-            "Failed to install Rustls crypto provider for gateway TLS configuration"
+            "Failed to install Rustls crypto provider for gateway TLS configuration",
         )),
     }
 }
@@ -1600,7 +1591,7 @@ fn require_mtls_for_remote(
 
     if (host_requires || require_client_tls) && client_ca.is_none() {
         return Err(SinexError::configuration(
-            "SINEX_GATEWAY_TLS_CLIENT_CA is required when mTLS is enforced (non-loopback or SINEX_GATEWAY_REQUIRE_CLIENT_TLS=1)"
+            "SINEX_GATEWAY_TLS_CLIENT_CA is required when mTLS is enforced (non-loopback or SINEX_GATEWAY_REQUIRE_CLIENT_TLS=1)",
         ));
     }
     Ok(())
@@ -1891,9 +1882,7 @@ pub async fn run(
     let (_, handle) = spawn(config, services, shutdown).await?;
     match handle.await {
         Ok(res) => res,
-        Err(error) => {
-            Err(SinexError::service("RPC server task panicked").with_std_error(&error))
-        }
+        Err(error) => Err(SinexError::service("RPC server task panicked").with_std_error(&error)),
     }
 }
 

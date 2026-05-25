@@ -145,45 +145,6 @@ async fn assert_no_additional_slice_payload(
     }
 }
 
-fn source_material_proof(
-    runner_id: &str,
-    assertion_ids: &[&str],
-    reproducer: &str,
-) -> ProofMetadata {
-    source_material_proof_with_subjects(
-        runner_id,
-        &["https://github.com/Sinity/sinex/issues/315"],
-        assertion_ids,
-        reproducer,
-    )
-}
-
-fn source_material_proof_with_subjects(
-    runner_id: &str,
-    subject_refs: &[&str],
-    assertion_ids: &[&str],
-    reproducer: &str,
-) -> ProofMetadata {
-    ProofMetadata {
-        runner_id: Some(runner_id.to_string()),
-        subject_refs: subject_refs
-            .iter()
-            .map(|subject| (*subject).to_string())
-            .collect(),
-        claim_ids: Vec::new(),
-        assertion_ids: assertion_ids
-            .iter()
-            .map(|assertion| (*assertion).to_string())
-            .collect(),
-        status: Some("asserted_by_test".to_string()),
-        reproducer: Some(reproducer.to_string()),
-        environment: serde_json::json!({
-            "plane": "isolated-dev",
-            "stack": ["node-sdk", "nats", "ingestd", "postgres"],
-        }),
-    }
-}
-
 async fn fetch_material_blob_summary(
     pool: &sqlx::PgPool,
     material_id: Uuid,
@@ -382,30 +343,10 @@ async fn material_acquisition_basic_flow(ctx: TestContext) -> Result<()> {
 
 /// Scenario: tiny logical row-stream records travel as one physical source frame
 /// while preserving per-record byte anchors all the way to persisted material state.
-#[sinex_test(
-    timeout = 120,
-    scenario = "source-material.row-stream-batched-anchors.v1",
-    category = "source_material",
-    lane = "fast",
-    cost_tier = "integration",
-    tags = "source_material,row_stream,anchors,material_spool",
-    fixtures = "postgres,nats,ingestd,material_spool",
-    subjects = "issue:315,issue:324,node-sdk:source-material",
-    claims = "tiny-logical-records-batched,per-record-byte-anchors-preserved,material-ledger-total-bytes-matches-source-frame",
-    reproducer = "xtask test -p sinex-node-sdk --scenario-tag row_stream"
-)]
+#[sinex_test(timeout = 120)]
 async fn source_material_scenario_batches_row_stream_records_with_stable_anchors(
     ctx: TestContext,
 ) -> Result<()> {
-    ctx.set_proof_metadata(source_material_proof(
-        "source-material.row-stream-batched-anchors.v1",
-        &[
-            "tiny-logical-records-batched",
-            "per-record-byte-anchors-preserved",
-            "material-ledger-total-bytes-matches-source-frame",
-        ],
-        "xtask test -p sinex-node-sdk -E 'test(source_material_scenario_batches_row_stream_records_with_stable_anchors)'",
-    ));
     ctx.record_evidence_event(
         "scenario.start",
         "starting batched row-stream source-material scenario",
@@ -533,33 +474,8 @@ async fn source_material_scenario_batches_row_stream_records_with_stable_anchors
 
 /// Scenario: source-material batching exposes a trendable resource profile for
 /// tiny logical record bursts without hard-coding arbitrary performance gates.
-#[sinex_test(
-    timeout = 120,
-    scenario = "source-material.resource-frame-amplification.v1",
-    category = "source_material",
-    lane = "fast",
-    cost_tier = "integration",
-    tags = "source_material,row_stream,resource_shape,frame_amplification",
-    fixtures = "postgres,nats,ingestd,material_spool",
-    subjects = "issue:317,issue:324,node-sdk:source-material",
-    claims = "tiny-record-burst-uses-single-slice-frame,frame-amplification-profile-is-machine-readable,material-ledger-total-bytes-matches-record-burst",
-    reproducer = "xtask test -p sinex-node-sdk --scenario-tag frame_amplification"
-)]
+#[sinex_test(timeout = 120)]
 async fn source_material_resource_frame_amplification_profile(ctx: TestContext) -> Result<()> {
-    ctx.set_proof_metadata(source_material_proof_with_subjects(
-        "source-material.resource-frame-amplification.v1",
-        &[
-            "https://github.com/Sinity/sinex/issues/317",
-            "https://github.com/Sinity/sinex/issues/324",
-        ],
-        &[
-            "tiny-record-burst-uses-single-slice-frame",
-            "frame-amplification-profile-is-machine-readable",
-            "material-ledger-total-bytes-matches-record-burst",
-        ],
-        "xtask test -p sinex-node-sdk --scenario-tag frame_amplification",
-    ));
-
     let work_dir = tempfile::tempdir()?;
     let (ctx, _nats, nats_client, mut ingest_handle) =
         setup_material_ingestd(ctx, Some(work_dir.path().to_path_buf()), |_| {}).await?;
@@ -657,35 +573,10 @@ async fn source_material_resource_frame_amplification_profile(ctx: TestContext) 
 
 /// Scenario: duplicate source bytes captured through independent material IDs
 /// converge on the same `BLAKE3` blob identity through normal ingestd finalization.
-#[sinex_test(
-    timeout = 120,
-    scenario = "source-material.resource-duplicate-finalization.v1",
-    category = "source_material",
-    lane = "fast",
-    cost_tier = "integration",
-    tags = "source_material,resource_shape,duplicate_content,redelivery,blob_dedup",
-    fixtures = "postgres,nats,ingestd,material_spool",
-    subjects = "issue:315,issue:317,issue:324,node-sdk:source-material",
-    claims = "duplicate-content-reuses-one-blob,duplicate-finalization-has-no-redelivery-loop,duplicate-finalization-profile-is-machine-readable",
-    reproducer = "xtask test -p sinex-node-sdk --scenario-tag duplicate_content"
-)]
+#[sinex_test(timeout = 120)]
 async fn source_material_scenario_duplicate_content_reuses_blob_identity(
     ctx: TestContext,
 ) -> Result<()> {
-    ctx.set_proof_metadata(source_material_proof_with_subjects(
-        "source-material.duplicate-content-blob-identity.v1",
-        &[
-            "https://github.com/Sinity/sinex/issues/315",
-            "https://github.com/Sinity/sinex/issues/317",
-            "https://github.com/Sinity/sinex/issues/324",
-        ],
-        &[
-            "duplicate-content-reuses-blake3-blob",
-            "source-material-ids-remain-distinct",
-            "normal-acquisition-path-finalizes-both-materials",
-        ],
-        "xtask test -p sinex-node-sdk -E 'test(source_material_scenario_duplicate_content_reuses_blob_identity)'",
-    ));
     ctx.record_evidence_event(
         "scenario.start",
         "starting duplicate-content source-material scenario",
@@ -838,34 +729,9 @@ async fn source_material_scenario_duplicate_content_reuses_blob_identity(
 /// Scenario: material storage chooses local CAS for small material and the
 /// large-object backend for large material, with subprocess counts measured at
 /// the SDK boundary.
-#[sinex_test(
-    timeout = 240,
-    serial,
-    scenario = "source-material.resource-storage-backends.v1",
-    category = "source_material",
-    lane = "heavy",
-    cost_tier = "heavy",
-    tags = "source_material,resource_shape,storage_profile,local_cas,git_annex",
-    fixtures = "postgres,nats,ingestd,material_spool,git_annex",
-    subjects = "issue:317,issue:324,node-sdk:source-material,node-sdk:content-store",
-    claims = "small-material-uses-local-cas-without-git-annex-subprocess,large-material-uses-git-annex-with-observed-subprocess-count,storage-backend-profile-is-machine-readable",
-    reproducer = "xtask test -p sinex-node-sdk --scenario-tag storage_profile --heavy"
-)]
+#[ignore = "heavy test; run with xtask test --heavy"]
+#[sinex_test(timeout = 240, serial)]
 async fn source_material_resource_storage_backend_profile(ctx: TestContext) -> Result<()> {
-    ctx.set_proof_metadata(source_material_proof_with_subjects(
-        "source-material.resource-storage-backends.v1",
-        &[
-            "https://github.com/Sinity/sinex/issues/317",
-            "https://github.com/Sinity/sinex/issues/324",
-        ],
-        &[
-            "small-material-uses-local-cas-without-git-annex-subprocess",
-            "large-material-uses-git-annex-with-observed-subprocess-count",
-            "storage-backend-profile-is-machine-readable",
-        ],
-        "xtask test -p sinex-node-sdk --scenario-tag storage_profile --heavy",
-    ));
-
     let work_dir = tempfile::tempdir()?;
     let (ctx, _nats, nats_client, mut ingest_handle) =
         setup_material_ingestd(ctx, Some(work_dir.path().to_path_buf()), |_| {}).await?;
@@ -1337,14 +1203,6 @@ async fn stage_material_append_failure_does_not_leave_sensing_material(
 /// Test out-of-order slice handling
 #[sinex_test(timeout = 60)]
 async fn material_acquisition_out_of_order_slices(ctx: TestContext) -> Result<()> {
-    ctx.set_proof_metadata(source_material_proof(
-        "source-material.out-of-order-slices.v1",
-        &[
-            "out-of-order-material-frames-complete",
-            "buffered-slice-ledger-bytes-match-material",
-        ],
-        "xtask test -p sinex-node-sdk -E 'test(material_acquisition_out_of_order_slices)'",
-    ));
     // `TestContext` is acquired from a pool and cleaned for us; don't do extra per-test DB resets.
     let work_dir = tempfile::tempdir()?;
     let (ctx, nats, nats_client, mut ingest_handle) =
@@ -1485,14 +1343,6 @@ async fn material_acquisition_out_of_order_slices(ctx: TestContext) -> Result<()
 /// Ensure end-before-begin ordering is tolerated (end is NAKed and later finalized).
 #[sinex_test(timeout = 60)]
 async fn material_acquisition_end_before_begin(ctx: TestContext) -> Result<()> {
-    ctx.set_proof_metadata(source_material_proof(
-        "source-material.end-before-begin-retry.v1",
-        &[
-            "out-of-order-material-end-frame-retries",
-            "later-begin-and-slices-finalize-material",
-        ],
-        "xtask test -p sinex-node-sdk -E 'test(material_acquisition_end_before_begin)'",
-    ));
     let work_dir = tempfile::tempdir()?;
     let (ctx, nats, nats_client, mut ingest_handle) =
         setup_material_ingestd(ctx, Some(work_dir.path().to_path_buf()), |_| {}).await?;
@@ -1601,27 +1451,9 @@ async fn material_acquisition_end_before_begin(ctx: TestContext) -> Result<()> {
 }
 
 /// Ensure material assembly resumes correctly after ingestd restart
-#[sinex_test(
-    timeout = 90,
-    scenario = "runtime.material-acquisition-restart-recovery.v1",
-    category = "runtime",
-    lane = "heavy",
-    cost_tier = "integration",
-    tags = "runtime,restart,recovery,source_material",
-    fixtures = "postgres,nats,ingestd,material_spool",
-    subjects = "issue:324,node-sdk:material-acquisition,component:ingestd",
-    claims = "restart-with-pending-material-state-recovers,material-ledger-total-bytes-match-post-restart-finalization",
-    reproducer = "xtask test -p sinex-node-sdk --scenario-tag restart --heavy"
-)]
+#[ignore = "heavy test; run with xtask test --heavy"]
+#[sinex_test(timeout = 90)]
 async fn material_acquisition_restart_recovery(ctx: TestContext) -> Result<()> {
-    ctx.set_proof_metadata(source_material_proof(
-        "source-material.restart-recovery.v1",
-        &[
-            "restart-with-pending-material-state-recovers",
-            "material-ledger-total-bytes-match-post-restart-finalization",
-        ],
-        "xtask test -p sinex-node-sdk -E 'test(material_acquisition_restart_recovery)'",
-    ));
     let ctx = ctx
         .with_tracing("sinex_ingestd=debug")
         .with_nats()

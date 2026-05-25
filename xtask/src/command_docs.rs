@@ -30,7 +30,14 @@ const HELP_CATEGORIES: &[HelpCategory] = &[
     },
     HelpCategory {
         title: "Analysis",
-        command_paths: &["deps", "history", "analytics", "freshness", "git-stack"],
+        command_paths: &[
+            "deps",
+            "history",
+            "analytics",
+            "freshness",
+            "impact",
+            "git-stack",
+        ],
     },
     HelpCategory {
         title: "Diagnostics",

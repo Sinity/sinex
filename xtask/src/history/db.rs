@@ -44,7 +44,8 @@ pub use diagnostics::{
     StoredDiagnostic,
 };
 use sinex_primitives::temporal::Timestamp;
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
 use std::time::Duration;
@@ -65,6 +66,16 @@ const HISTORY_DB_INTEGRITY_STAMP_EXTENSION: &str = "db.integrity.json";
 const ZOMBIE_REAPER_SIGTERM_GRACE: Duration = Duration::from_secs(2);
 #[cfg(test)]
 const ZOMBIE_REAPER_SIGTERM_GRACE: Duration = Duration::from_millis(25);
+
+#[derive(Debug, Deserialize)]
+struct TestDependencyEdgeArtifact {
+    test_name: String,
+    package: Option<String>,
+    edge_kind: String,
+    subject: String,
+    fingerprint: Option<String>,
+    origin: String,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum HistoryDbOpenMode {
@@ -1168,6 +1179,51 @@ impl HistoryDb {
                 UNIQUE(invocation_id, proof_kind, scope_key, input_fingerprint)
             );
 
+            CREATE TABLE IF NOT EXISTS test_dependency_edges (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                invocation_id INTEGER REFERENCES invocations(id) ON DELETE CASCADE,
+                test_name TEXT NOT NULL,
+                package TEXT,
+                edge_kind TEXT NOT NULL,
+                subject TEXT NOT NULL,
+                fingerprint TEXT,
+                origin TEXT NOT NULL,
+                recorded_at TEXT NOT NULL DEFAULT (datetime('now')),
+                UNIQUE(invocation_id, test_name, edge_kind, subject, origin)
+            );
+
+            CREATE TABLE IF NOT EXISTS coverage_regions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                invocation_id INTEGER REFERENCES invocations(id) ON DELETE CASCADE,
+                test_name TEXT NOT NULL,
+                package TEXT,
+                file_path TEXT NOT NULL,
+                function_name TEXT,
+                line_start INTEGER,
+                line_end INTEGER,
+                region_hash TEXT,
+                recorded_at TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+
+            CREATE TABLE IF NOT EXISTS impact_runs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                invocation_id INTEGER REFERENCES invocations(id) ON DELETE SET NULL,
+                mode TEXT NOT NULL,
+                changed_json TEXT NOT NULL,
+                plan_json TEXT NOT NULL,
+                accepted_risk_json TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+
+            CREATE TABLE IF NOT EXISTS impact_decisions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                impact_run_id INTEGER NOT NULL REFERENCES impact_runs(id) ON DELETE CASCADE,
+                action TEXT NOT NULL,
+                subject TEXT,
+                reason TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+
             CREATE TABLE IF NOT EXISTS invocation_eta_samples (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 invocation_id INTEGER NOT NULL REFERENCES invocations(id) ON DELETE CASCADE,
@@ -1258,6 +1314,21 @@ impl HistoryDb {
                 ON proof_evidence(command, proof_kind, scope_key, input_fingerprint, status, finished_at);
             CREATE INDEX IF NOT EXISTS idx_test_proof_units_exact
                 ON test_proof_units(proof_kind, scope_key, input_fingerprint, reusable, status, finished_at);
+            CREATE INDEX IF NOT EXISTS idx_test_dependency_edges_subject
+                ON test_dependency_edges(edge_kind, subject, package, test_name);
+            CREATE INDEX IF NOT EXISTS idx_coverage_regions_path
+                ON coverage_regions(file_path, package, test_name);
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_coverage_regions_identity
+                ON coverage_regions(
+                    invocation_id,
+                    test_name,
+                    file_path,
+                    COALESCE(function_name, ''),
+                    COALESCE(line_start, -1),
+                    COALESCE(line_end, -1)
+                );
+            CREATE INDEX IF NOT EXISTS idx_impact_runs_invocation ON impact_runs(invocation_id);
+            CREATE INDEX IF NOT EXISTS idx_impact_decisions_run ON impact_decisions(impact_run_id);
 
             CREATE TABLE IF NOT EXISTS exercise_runs (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1389,8 +1460,87 @@ impl HistoryDb {
         Ok(())
     }
 
+    fn ensure_impact_schema(&self) -> Result<()> {
+        if self.table_exists("test_dependency_edges")?
+            && self.table_exists("coverage_regions")?
+            && self.table_exists("impact_runs")?
+            && self.table_exists("impact_decisions")?
+        {
+            return Ok(());
+        }
+        if self.conn.is_readonly(rusqlite::DatabaseName::Main)? {
+            return Ok(());
+        }
+        self.conn.execute_batch(
+            r"
+            CREATE TABLE IF NOT EXISTS test_dependency_edges (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                invocation_id INTEGER REFERENCES invocations(id) ON DELETE CASCADE,
+                test_name TEXT NOT NULL,
+                package TEXT,
+                edge_kind TEXT NOT NULL,
+                subject TEXT NOT NULL,
+                fingerprint TEXT,
+                origin TEXT NOT NULL,
+                recorded_at TEXT NOT NULL DEFAULT (datetime('now')),
+                UNIQUE(invocation_id, test_name, edge_kind, subject, origin)
+            );
+
+            CREATE TABLE IF NOT EXISTS coverage_regions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                invocation_id INTEGER REFERENCES invocations(id) ON DELETE CASCADE,
+                test_name TEXT NOT NULL,
+                package TEXT,
+                file_path TEXT NOT NULL,
+                function_name TEXT,
+                line_start INTEGER,
+                line_end INTEGER,
+                region_hash TEXT,
+                recorded_at TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+
+            CREATE TABLE IF NOT EXISTS impact_runs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                invocation_id INTEGER REFERENCES invocations(id) ON DELETE SET NULL,
+                mode TEXT NOT NULL,
+                changed_json TEXT NOT NULL,
+                plan_json TEXT NOT NULL,
+                accepted_risk_json TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+
+            CREATE TABLE IF NOT EXISTS impact_decisions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                impact_run_id INTEGER NOT NULL REFERENCES impact_runs(id) ON DELETE CASCADE,
+                action TEXT NOT NULL,
+                subject TEXT,
+                reason TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_test_dependency_edges_subject
+                ON test_dependency_edges(edge_kind, subject, package, test_name);
+            CREATE INDEX IF NOT EXISTS idx_coverage_regions_path
+                ON coverage_regions(file_path, package, test_name);
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_coverage_regions_identity
+                ON coverage_regions(
+                    invocation_id,
+                    test_name,
+                    file_path,
+                    COALESCE(function_name, ''),
+                    COALESCE(line_start, -1),
+                    COALESCE(line_end, -1)
+                );
+            CREATE INDEX IF NOT EXISTS idx_impact_runs_invocation ON impact_runs(invocation_id);
+            CREATE INDEX IF NOT EXISTS idx_impact_decisions_run ON impact_decisions(impact_run_id);
+            ",
+        )?;
+        Ok(())
+    }
+
     fn ensure_compat_schema(&self) -> Result<()> {
         self.ensure_proof_schema()?;
+        self.ensure_impact_schema()?;
         self.ensure_column_exists("invocations", "process_cpu_usage_avg", "REAL")?;
         self.ensure_column_exists("invocations", "process_memory_usage_max_mb", "REAL")?;
         self.ensure_column_exists("invocations", "root_process_cpu_usage_avg", "REAL")?;
@@ -2648,6 +2798,237 @@ impl HistoryDb {
                 ],
             )?;
             Ok(())
+        })
+    }
+
+    pub fn record_impact_plan(
+        &self,
+        invocation_id: Option<i64>,
+        mode: &str,
+        plan: &crate::impact::ImpactPlan,
+    ) -> Result<i64> {
+        let changed_json = serde_json::to_string(&plan.changed)?;
+        let plan_json = serde_json::to_string(plan)?;
+        let accepted_risk_json = serde_json::to_string(&plan.accepted_risks)?;
+        with_sqlite_lock_retry("record impact plan", || {
+            self.conn.execute(
+                r"
+                INSERT INTO impact_runs (
+                    invocation_id,
+                    mode,
+                    changed_json,
+                    plan_json,
+                    accepted_risk_json
+                )
+                VALUES (?1, ?2, ?3, ?4, ?5)
+                ",
+                params![
+                    invocation_id,
+                    mode,
+                    changed_json,
+                    plan_json,
+                    accepted_risk_json
+                ],
+            )?;
+            let run_id = self.conn.last_insert_rowid();
+            for decision in &plan.decisions {
+                self.conn.execute(
+                    r"
+                    INSERT INTO impact_decisions (
+                        impact_run_id,
+                        action,
+                        subject,
+                        reason
+                    )
+                    VALUES (?1, ?2, ?3, ?4)
+                    ",
+                    params![
+                        run_id,
+                        format!("{:?}", decision.action),
+                        decision.subject.as_deref(),
+                        decision.reason.as_str()
+                    ],
+                )?;
+            }
+            Ok(run_id)
+        })
+    }
+
+    pub fn impacted_tests_for_changed_files(
+        &self,
+        changed_files: &[String],
+    ) -> Result<Vec<crate::impact::ImpactedTest>> {
+        if changed_files.is_empty()
+            || !self.table_exists("coverage_regions")?
+            || !self.table_exists("test_dependency_edges")?
+        {
+            return Ok(Vec::new());
+        }
+
+        let mut tests: BTreeMap<(Option<String>, String), Vec<crate::impact::ImpactEvidence>> =
+            BTreeMap::new();
+        for path in changed_files {
+            self.collect_coverage_impacts(path, &mut tests)?;
+            self.collect_dependency_edge_impacts(path, &mut tests)?;
+        }
+
+        Ok(tests
+            .into_iter()
+            .map(
+                |((package, test_name), evidence)| crate::impact::ImpactedTest {
+                    package,
+                    test_name,
+                    evidence,
+                },
+            )
+            .collect())
+    }
+
+    fn collect_coverage_impacts(
+        &self,
+        path: &str,
+        tests: &mut BTreeMap<(Option<String>, String), Vec<crate::impact::ImpactEvidence>>,
+    ) -> Result<()> {
+        let mut stmt = self.conn.prepare(
+            r"
+            SELECT DISTINCT
+                test_name,
+                package,
+                COALESCE(function_name, ''),
+                COALESCE(line_start, -1),
+                COALESCE(line_end, -1)
+            FROM coverage_regions
+            WHERE file_path = ?1 OR file_path = ?2
+            ORDER BY package, test_name
+            ",
+        )?;
+        let dotted = format!("./{path}");
+        let rows = stmt.query_map(params![path, dotted], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, Option<String>>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, i64>(3)?,
+                row.get::<_, i64>(4)?,
+            ))
+        })?;
+        for row in rows {
+            let (test_name, package, function_name, line_start, line_end) = row?;
+            let reason = if function_name.is_empty() {
+                "LLVM coverage touched this file".to_string()
+            } else if line_start >= 0 && line_end >= 0 {
+                format!("LLVM coverage touched {function_name}:{line_start}-{line_end}")
+            } else {
+                format!("LLVM coverage touched {function_name}")
+            };
+            tests
+                .entry((package, test_name))
+                .or_default()
+                .push(crate::impact::ImpactEvidence {
+                    source: crate::impact::ImpactEvidenceSource::CoverageRegion,
+                    subject: path.to_string(),
+                    reason,
+                });
+        }
+        Ok(())
+    }
+
+    fn collect_dependency_edge_impacts(
+        &self,
+        path: &str,
+        tests: &mut BTreeMap<(Option<String>, String), Vec<crate::impact::ImpactEvidence>>,
+    ) -> Result<()> {
+        let mut stmt = self.conn.prepare(
+            r"
+            SELECT DISTINCT test_name, package, edge_kind, origin
+            FROM test_dependency_edges
+            WHERE subject = ?1
+              AND edge_kind IN ('file', 'rust_item', 'rust_module', 'runtime_file')
+            ORDER BY package, test_name
+            ",
+        )?;
+        let rows = stmt.query_map(params![path], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, Option<String>>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
+            ))
+        })?;
+        for row in rows {
+            let (test_name, package, edge_kind, origin) = row?;
+            tests
+                .entry((package, test_name))
+                .or_default()
+                .push(crate::impact::ImpactEvidence {
+                    source: crate::impact::ImpactEvidenceSource::DependencyEdge,
+                    subject: path.to_string(),
+                    reason: format!("test declared {edge_kind} dependency from {origin}"),
+                });
+        }
+        Ok(())
+    }
+
+    pub fn import_test_dependency_artifacts(
+        &self,
+        invocation_id: i64,
+        artifact_dir: &Path,
+    ) -> Result<usize> {
+        if !artifact_dir.exists() {
+            return Ok(0);
+        }
+        let mut imported = 0;
+        with_sqlite_lock_retry("import test dependency artifacts", || {
+            for entry in fs::read_dir(artifact_dir).wrap_err_with(|| {
+                format!(
+                    "failed to read impact artifact directory {}",
+                    artifact_dir.display()
+                )
+            })? {
+                let entry = entry?;
+                let path = entry.path();
+                if path.extension().and_then(std::ffi::OsStr::to_str) != Some("json") {
+                    continue;
+                }
+                let rendered = fs::read_to_string(&path).wrap_err_with(|| {
+                    format!("failed to read impact artifact {}", path.display())
+                })?;
+                let edges: Vec<TestDependencyEdgeArtifact> = serde_json::from_str(&rendered)
+                    .wrap_err_with(|| {
+                        format!("failed to parse impact artifact {}", path.display())
+                    })?;
+                for edge in edges {
+                    let changed = self.conn.execute(
+                        r"
+                        INSERT INTO test_dependency_edges (
+                            invocation_id,
+                            test_name,
+                            package,
+                            edge_kind,
+                            subject,
+                            fingerprint,
+                            origin
+                        )
+                        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+                        ON CONFLICT(invocation_id, test_name, edge_kind, subject, origin)
+                        DO UPDATE SET
+                            package = excluded.package,
+                            fingerprint = excluded.fingerprint
+                        ",
+                        params![
+                            invocation_id,
+                            edge.test_name,
+                            edge.package,
+                            edge.edge_kind,
+                            edge.subject,
+                            edge.fingerprint,
+                            edge.origin
+                        ],
+                    )?;
+                    imported += changed;
+                }
+            }
+            Ok(imported)
         })
     }
 
@@ -5041,6 +5422,43 @@ mod tests {
         Ok(())
     }
 
+    #[sinex_test]
+    async fn test_impact_import_and_query_dependency_edges() -> TestResult<()> {
+        let dir = tempdir()?;
+        let db = HistoryDb::open(&dir.path().join("test-history.db"))?;
+        let invocation_id = db.start_invocation("test", None, None, None)?;
+        let artifact_dir = dir.path().join("impact").join("invocation");
+        fs::create_dir_all(&artifact_dir)?;
+        fs::write(
+            artifact_dir.join("edge.json"),
+            r#"[
+              {
+                "test_name": "stage_as_you_go_records_material",
+                "package": "sinex-node-sdk",
+                "edge_kind": "file",
+                "subject": "crate/lib/sinex-node-sdk/src/stage_as_you_go.rs",
+                "fingerprint": null,
+                "origin": "unit-test"
+              }
+            ]"#,
+        )?;
+
+        let imported = db.import_test_dependency_artifacts(invocation_id, &artifact_dir)?;
+        assert_eq!(imported, 1);
+        let impacted = db.impacted_tests_for_changed_files(&[String::from(
+            "crate/lib/sinex-node-sdk/src/stage_as_you_go.rs",
+        )])?;
+
+        assert_eq!(impacted.len(), 1);
+        assert_eq!(impacted[0].package.as_deref(), Some("sinex-node-sdk"));
+        assert_eq!(impacted[0].test_name, "stage_as_you_go_records_material");
+        assert_eq!(
+            impacted[0].evidence[0].source,
+            crate::impact::ImpactEvidenceSource::DependencyEdge
+        );
+        Ok(())
+    }
+
     #[cfg(unix)]
     #[sinex_test]
     async fn test_history_db_open_surfaces_empty_db_cleanup_failures() -> TestResult<()> {
@@ -6080,7 +6498,7 @@ mod tests {
         let reusable_failed = db.start_invocation("test", None, None, None)?;
         db.record_test_proof_unit(
             reusable_failed,
-            "test.nextest.lib",
+            "test.nextest.exact",
             "scope-a",
             "fp-a",
             r#"{"lib":true}"#,
@@ -6091,7 +6509,7 @@ mod tests {
         let reusable_success = db.start_invocation("test", None, None, None)?;
         db.record_test_proof_unit(
             reusable_success,
-            "test.nextest.lib",
+            "test.nextest.exact",
             "scope-a",
             "fp-a",
             r#"{"lib":true}"#,
@@ -6100,7 +6518,7 @@ mod tests {
         db.finish_invocation(reusable_success, InvocationStatus::Success, Some(0), 0.3)?;
 
         let found = db
-            .get_successful_reusable_test_proof_unit("test.nextest.lib", "fp-a", "scope-a")?
+            .get_successful_reusable_test_proof_unit("test.nextest.exact", "fp-a", "scope-a")?
             .expect("successful reusable test proof should be found");
         assert_eq!(found.invocation_id, reusable_success);
         assert!(found.reusable);

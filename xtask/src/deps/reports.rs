@@ -88,8 +88,7 @@ pub fn write_duplicates_report<W: Write>(
                     .count();
                 writeln!(
                     writer,
-                    "  {} direct workspace debt, {} transitive upstream",
-                    direct_count, transitive_count
+                    "  {direct_count} direct workspace debt, {transitive_count} transitive upstream"
                 )?;
                 writeln!(writer)?;
 

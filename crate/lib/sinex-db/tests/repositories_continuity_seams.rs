@@ -11,8 +11,8 @@
 //!   - `Discontinuity`    — gap > 60s with no privacy / partial markers
 //!   - `RecoveredPartial` — one chunk has `status = recovered_partial`
 //!
-//! The suite registers under the `continuity::seam_classification` scenario
-//! tag so it appears in `xtask test --list-scenarios`.
+//! The suite uses ordinary test names and harness-recorded dependencies; it
+//! must not rely on inert taxonomy metadata for scheduling or proof claims.
 
 use sinex_db::repositories::DbPoolExt;
 use sinex_primitives::sources::SourceFamily;
@@ -83,14 +83,7 @@ async fn seed_event(
     Ok(())
 }
 
-#[sinex_test(
-    scenario = "continuity::seam_classification::expected_continuation",
-    category = "source_material",
-    lane = "fast",
-    tags = "continuity,seam_classification",
-    subjects = "issue:1085,db:continuity",
-    claims = "assertion:seam.expected_continuation"
-)]
+#[sinex_test]
 async fn seam_classification_emits_expected_continuation(ctx: TestContext) -> TestResult<()> {
     // Two registry rows representing the two adjacent chunks. They must
     // have distinct `source_identifier`s — `uk_sm_registry_source_identifier`
@@ -139,14 +132,7 @@ async fn seam_classification_emits_expected_continuation(ctx: TestContext) -> Te
     Ok(())
 }
 
-#[sinex_test(
-    scenario = "continuity::seam_classification::overlap",
-    category = "source_material",
-    lane = "fast",
-    tags = "continuity,seam_classification",
-    subjects = "issue:1085,db:continuity",
-    claims = "assertion:seam.overlap"
-)]
+#[sinex_test]
 async fn seam_classification_emits_overlap(ctx: TestContext) -> TestResult<()> {
     let suffix = Uuid::now_v7();
     let id_a = format!("seam-overlap-a-{suffix}");
@@ -192,14 +178,7 @@ async fn seam_classification_emits_overlap(ctx: TestContext) -> TestResult<()> {
     Ok(())
 }
 
-#[sinex_test(
-    scenario = "continuity::seam_classification::discontinuity",
-    category = "source_material",
-    lane = "fast",
-    tags = "continuity,seam_classification",
-    subjects = "issue:1085,db:continuity",
-    claims = "assertion:seam.discontinuity"
-)]
+#[sinex_test]
 async fn seam_classification_emits_discontinuity(ctx: TestContext) -> TestResult<()> {
     let suffix = Uuid::now_v7();
     let id_a = format!("seam-discont-a-{suffix}");
@@ -250,14 +229,7 @@ async fn seam_classification_emits_discontinuity(ctx: TestContext) -> TestResult
     Ok(())
 }
 
-#[sinex_test(
-    scenario = "continuity::seam_classification::recovered_partial",
-    category = "source_material",
-    lane = "fast",
-    tags = "continuity,seam_classification",
-    subjects = "issue:1085,db:continuity",
-    claims = "assertion:seam.recovered_partial"
-)]
+#[sinex_test]
 async fn seam_classification_emits_recovered_partial(ctx: TestContext) -> TestResult<()> {
     let suffix = Uuid::now_v7();
     let id_a = format!("seam-recpartial-a-{suffix}");

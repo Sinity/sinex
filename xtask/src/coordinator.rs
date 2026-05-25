@@ -1098,24 +1098,23 @@ fn supports_fresh_reuse_for(command: &str, args: &[String]) -> bool {
 }
 
 fn test_scope_is_fresh_reusable(args: &[String]) -> bool {
-    let has_lib_target = args.iter().any(|arg| arg == "--lib");
     let has_runtime_or_mutating_flag = args.iter().any(|arg| {
         matches!(
             arg.as_str(),
             "--heavy"
                 | "--include-ignored"
                 | "--list"
-                | "--list-scenarios"
                 | "--prime"
                 | "--update-snapshots"
                 | "--ephemeral-postgres"
                 | "--no-ephemeral-postgres"
-        ) || arg.starts_with("--scenario-")
+        )
     });
-    has_lib_target && !has_runtime_or_mutating_flag
+    !has_runtime_or_mutating_flag
 }
 
 /// Human-readable proof unit class for a coordinated command.
+#[must_use]
 pub fn proof_kind(command: &str, args: &[String]) -> String {
     match command {
         "check" => {
@@ -1151,7 +1150,7 @@ pub fn proof_kind(command: &str, args: &[String]) -> String {
         }
         "test" => {
             if test_scope_is_fresh_reusable(args) {
-                "test.nextest.lib".to_string()
+                "test.nextest.exact".to_string()
             } else {
                 "test.nextest.plan".to_string()
             }
@@ -1194,9 +1193,6 @@ fn extract_scope_args(command: &str, args: &[String]) -> Vec<String> {
                 "-E" | "--filter" => Some("--filter="),
                 "--test" => Some("--test="),
                 "--exclude" => Some("--exclude="),
-                "--scenario-tag" => Some("--scenario-tag="),
-                "--scenario-category" => Some("--scenario-category="),
-                "--scenario-lane" => Some("--scenario-lane="),
                 _ => None,
             },
             _ => None,
@@ -1209,12 +1205,7 @@ fn extract_scope_args(command: &str, args: &[String]) -> Vec<String> {
             "build" => arg == "--release" || arg.starts_with("--all"),
             "test" => matches!(
                 arg,
-                "--heavy"
-                    | "--include-ignored"
-                    | "--all"
-                    | "--lib"
-                    | "--list-scenarios"
-                    | "--update-snapshots"
+                "--heavy" | "--include-ignored" | "--all" | "--lib" | "--update-snapshots"
             ),
             "check" | "fix" => {
                 matches!(
@@ -1243,9 +1234,6 @@ fn extract_scope_args(command: &str, args: &[String]) -> Vec<String> {
                 } else if arg.starts_with("--filter=")
                     || arg.starts_with("--test=")
                     || arg.starts_with("--exclude=")
-                    || arg.starts_with("--scenario-tag=")
-                    || arg.starts_with("--scenario-category=")
-                    || arg.starts_with("--scenario-lane=")
                 {
                     Some(arg.to_string())
                 } else {
@@ -1936,6 +1924,10 @@ mod tests {
         assert!(supports_fresh_reuse("fix"));
         assert!(!supports_fresh_reuse("test"));
         assert!(!supports_fresh_reuse("vm"));
+        assert!(supports_fresh_reuse_for(
+            "test",
+            &["--scope=packages:xtask".into()]
+        ));
         assert!(supports_fresh_reuse_for(
             "test",
             &["--scope=packages:xtask".into(), "--lib".into()]

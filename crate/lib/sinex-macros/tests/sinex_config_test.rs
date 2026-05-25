@@ -89,7 +89,10 @@ struct EnvSnapshot {
 impl EnvSnapshot {
     fn capture(keys: &'static [&'static str]) -> Self {
         Self {
-            values: keys.iter().map(|key| (*key, std::env::var_os(key))).collect(),
+            values: keys
+                .iter()
+                .map(|key| (*key, std::env::var_os(key)))
+                .collect(),
         }
     }
 }

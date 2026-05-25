@@ -972,7 +972,7 @@ async fn materialize_file_content_record(
         Some(max_capture_bytes),
     )
     .await
-    .map_err(|error| ParserError::Sinex(error))?;
+    .map_err(ParserError::Sinex)?;
 
     Ok(SourceRecord {
         material_id: Id::from_uuid(material_id),

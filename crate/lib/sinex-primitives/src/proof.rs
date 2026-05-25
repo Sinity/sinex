@@ -666,15 +666,6 @@ inventory::submit! {
 
 inventory::submit! {
     Claim {
-        id: "claim:scenario.metadata_surface",
-        kind: ProofClaimKind::Scenario,
-        subject: SubjectQuery::from_static("scenario:*"),
-        statement: "scenario tests declare discoverable subject refs, catalog claim ids, assertion ids, runner id, and reproducer metadata; persisted evidence may attach that metadata when an evidence bundle is written",
-    }
-}
-
-inventory::submit! {
-    Claim {
         id: "claim:record_source.cursor_and_anchor_laws",
         kind: ProofClaimKind::Law,
         subject: SubjectQuery::from_static("node_adapter:record_source_harness"),
@@ -687,7 +678,7 @@ inventory::submit! {
         id: "claim:xtask.command_catalog_introspection",
         kind: ProofClaimKind::CommandContract,
         subject: SubjectQuery::from_static("xtask_command:*"),
-        statement: "public xtask command contracts should be derived from clap introspection and covered by ordinary Rust scenarios",
+        statement: "public xtask command contracts should be derived from clap introspection and covered by ordinary Rust tests",
     }
 }
 
@@ -711,16 +702,6 @@ inventory::submit! {
 
 inventory::submit! {
     RunnerBinding {
-        id: "runner:rust.nextest.scenario",
-        runner: "cargo-nextest",
-        subject: SubjectQuery::from_static("scenario:*"),
-        claims: &["claim:scenario.metadata_surface"],
-        command: "xtask test --scenario-tag <tag>",
-    }
-}
-
-inventory::submit! {
-    RunnerBinding {
         id: "runner:rust.sdk.source_laws",
         runner: "cargo-nextest",
         subject: SubjectQuery::from_static("runtime_unit:*"),
@@ -728,7 +709,7 @@ inventory::submit! {
             "claim:source_material.material_provenance",
             "claim:source_material.bounded_physical_frames",
         ],
-        command: "xtask test -p sinex-node-sdk --scenario-category source_material",
+        command: "xtask test -p sinex-node-sdk",
     }
 }
 
@@ -738,7 +719,7 @@ inventory::submit! {
         runner: "cargo-nextest",
         subject: SubjectQuery::from_static("node_adapter:record_source_harness"),
         claims: &["claim:record_source.cursor_and_anchor_laws"],
-        command: "xtask test -p sinex-node-sdk --scenario-tag source_adapter_laws",
+        command: "xtask test -p sinex-node-sdk -E 'test(harness_materializes_records_and_finalizes_sink)'",
     }
 }
 
@@ -748,7 +729,7 @@ inventory::submit! {
         runner: "cargo-nextest",
         subject: SubjectQuery::from_static("xtask_command:*"),
         claims: &["claim:xtask.command_catalog_introspection"],
-        command: "xtask test -p xtask --scenario-tag command_contract",
+        command: "xtask test -p xtask -E 'test(command_catalog_exposes_core_public_surface)'",
     }
 }
 
@@ -772,7 +753,7 @@ inventory::submit! {
         subject: SubjectQuery::from_static("runtime_unit:*"),
         claim_id: "claim:source_material.material_provenance",
         runner_binding_id: "runner:rust.sdk.source_laws",
-        reason: "runtime units are the material-provenance boundary currently backed by source-material law scenarios",
+        reason: "runtime units are the material-provenance boundary currently backed by source-material law tests",
     }
 }
 
@@ -811,23 +792,12 @@ inventory::submit! {
 
 inventory::submit! {
     ProofObligation {
-        id: "obligation:scenario.metadata_surface",
-        level: ProofObligationLevel::Required,
-        subject: SubjectQuery::from_static("scenario:*"),
-        claim_id: "claim:scenario.metadata_surface",
-        runner_binding_id: "runner:rust.nextest.scenario",
-        reason: "scenario metadata must be discoverable and attach to persisted failure evidence without implying successful proof artifacts exist yet",
-    }
-}
-
-inventory::submit! {
-    ProofObligation {
         id: "obligation:xtask.command_catalog_introspection",
         level: ProofObligationLevel::Required,
         subject: SubjectQuery::from_static("xtask_command:*"),
         claim_id: "claim:xtask.command_catalog_introspection",
         runner_binding_id: "runner:rust.xtask.command_contracts",
-        reason: "command-surface contracts should live in ordinary test/scenario infrastructure rather than xtask exercise entries",
+        reason: "command-surface contracts should live in ordinary Rust test infrastructure rather than xtask exercise entries",
     }
 }
 
@@ -1203,7 +1173,6 @@ mod tests {
         assert!(bindings.contains(&"source_unit:terminal.atuin-history"));
         assert!(claims().any(|claim| claim.id == "claim:source_material.material_provenance"));
         assert!(claims().any(|claim| claim.id == "claim:source_unit.package_impact_visible"));
-        assert!(runner_bindings().any(|binding| binding.id == "runner:rust.nextest.scenario"));
         assert!(runner_bindings().any(|binding| binding.id == "runner:xtask.source_units"));
         Ok(())
     }

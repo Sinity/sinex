@@ -520,8 +520,7 @@ mod tests {
     async fn parse_slice_offset_accepts_valid_header() -> TestResult<()> {
         let mut headers = HeaderMap::new();
         headers.insert("Offset", "42");
-        let offset = parse_slice_offset(SUBJECT, Some(&headers))
-            .map_err(SinexError::validation)?;
+        let offset = parse_slice_offset(SUBJECT, Some(&headers)).map_err(SinexError::validation)?;
         assert_eq!(offset, 42);
         Ok(())
     }

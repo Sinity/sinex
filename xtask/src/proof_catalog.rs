@@ -1,9 +1,9 @@
 //! Proof catalog projection.
 //!
 //! The catalog is a generated developer surface: it joins proof inventory from
-//! `sinex-primitives`, EventPayload inventory, xtask command metadata, and
-//! discovered scenario annotations. Runtime semantics stay in Rust tests and
-//! SDK descriptors; this module only projects them into one inspectable graph.
+//! `sinex-primitives`, EventPayload inventory, and xtask command metadata.
+//! Runtime semantics stay in Rust tests and SDK descriptors; this module only
+//! projects grounded declarations into one inspectable graph.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::Path;
@@ -18,7 +18,6 @@ use sinex_primitives::proof::{
 };
 
 use crate::command_catalog::{CommandInfo, collect_command_catalog};
-use crate::commands::test::{ScenarioCatalogEntry, discover_scenario_catalog};
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ProofCatalog {
@@ -31,7 +30,6 @@ pub struct ProofCatalog {
     pub exemptions: Vec<Exemption>,
     pub event_payloads: Vec<EventPayloadSubject>,
     pub xtask_commands: Vec<XtaskCommandSubject>,
-    pub scenarios: Vec<ScenarioSubject>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -76,23 +74,6 @@ pub struct XtaskCommandSubject {
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
-pub struct ScenarioSubject {
-    pub subject: String,
-    pub id: String,
-    pub test_name: String,
-    pub package: Option<String>,
-    pub path: String,
-    pub category: String,
-    pub lane: String,
-    pub cost_tier: String,
-    pub tags: Vec<String>,
-    pub fixtures: Vec<String>,
-    pub subject_refs: Vec<String>,
-    pub claim_ids: Vec<String>,
-    pub assertion_ids: Vec<String>,
-}
-
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct ProofCatalogValidation {
     pub errors: Vec<String>,
     pub warnings: Vec<String>,
@@ -116,7 +97,7 @@ impl ProofCatalogValidation {
     }
 }
 
-pub fn build_proof_catalog(workspace_root: &Path) -> Result<ProofCatalog> {
+pub fn build_proof_catalog(_workspace_root: &Path) -> Result<ProofCatalog> {
     crate::source_unit_inventory::link_source_unit_inventories();
 
     let mut runtime_units_by_subject: BTreeMap<&'static str, SourceUnitBinding> = BTreeMap::new();
@@ -176,7 +157,6 @@ pub fn build_proof_catalog(workspace_root: &Path) -> Result<ProofCatalog> {
         exemptions,
         event_payloads: collect_event_payload_subjects(),
         xtask_commands: collect_xtask_command_subjects(),
-        scenarios: collect_scenario_subjects(workspace_root)?,
     })
 }
 
@@ -243,15 +223,6 @@ pub fn validate_proof_catalog(catalog: &ProofCatalog) -> ProofCatalogValidation 
             .iter()
             .map(|command| command.subject.as_str()),
     );
-    check_unique(
-        &mut errors,
-        "scenario id",
-        catalog
-            .scenarios
-            .iter()
-            .map(|scenario| scenario.id.as_str()),
-    );
-
     let claim_ids = catalog
         .claims
         .iter()
@@ -395,26 +366,6 @@ pub fn validate_proof_catalog(catalog: &ProofCatalog) -> ProofCatalogValidation 
                 "{} references unknown proof obligation {}",
                 exemption.id, exemption.obligation_id
             ));
-        }
-    }
-
-    for scenario in &catalog.scenarios {
-        if scenario.subject_refs.is_empty() {
-            errors.push(format!("scenario:{} has no subject refs", scenario.id));
-        }
-        if scenario.claim_ids.is_empty() && scenario.assertion_ids.is_empty() {
-            errors.push(format!(
-                "scenario:{} has neither catalog claim ids nor assertion ids",
-                scenario.id
-            ));
-        }
-        for claim_id in &scenario.claim_ids {
-            if !claim_ids.contains(claim_id.as_str()) {
-                errors.push(format!(
-                    "scenario:{} references unknown catalog claim {claim_id}",
-                    scenario.id
-                ));
-            }
         }
     }
 
@@ -617,33 +568,6 @@ fn collect_command_subject(
     }
 }
 
-fn collect_scenario_subjects(workspace_root: &Path) -> Result<Vec<ScenarioSubject>> {
-    let mut subjects = discover_scenario_catalog(workspace_root)?
-        .into_iter()
-        .map(scenario_subject)
-        .collect::<Vec<_>>();
-    subjects.sort_by(|left, right| left.subject.cmp(&right.subject));
-    Ok(subjects)
-}
-
-fn scenario_subject(entry: ScenarioCatalogEntry) -> ScenarioSubject {
-    ScenarioSubject {
-        subject: format!("scenario:{}", entry.id),
-        id: entry.id,
-        test_name: entry.test_name,
-        package: entry.package,
-        path: entry.path,
-        category: entry.category,
-        lane: entry.lane,
-        cost_tier: entry.cost_tier,
-        tags: entry.tags,
-        fixtures: entry.fixtures,
-        subject_refs: entry.subject_refs,
-        claim_ids: entry.claim_ids,
-        assertion_ids: entry.assertion_ids,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -813,29 +737,14 @@ mod tests {
         assert!(json["source_units"].is_array());
         assert!(json["event_payloads"].is_array());
         assert!(json["xtask_commands"].is_array());
-        assert!(json["scenarios"].is_array());
         Ok(())
     }
 
     #[sinex_test]
-    async fn proof_catalog_validation_rejects_dangling_catalog_claims() -> TestResult<()> {
+    async fn proof_catalog_validation_rejects_dangling_obligation_claims() -> TestResult<()> {
         let workspace = crate::sandbox::orchestrator::find_workspace_root()?;
         let mut catalog = build_proof_catalog(&workspace)?;
-        catalog.scenarios.push(ScenarioSubject {
-            subject: "scenario:demo".to_string(),
-            id: "demo".to_string(),
-            test_name: "demo_test".to_string(),
-            package: Some("xtask".to_string()),
-            path: "xtask/src/demo.rs".to_string(),
-            category: "command_contract".to_string(),
-            lane: "fast".to_string(),
-            cost_tier: "fast".to_string(),
-            tags: Vec::new(),
-            fixtures: Vec::new(),
-            subject_refs: vec!["xtask_command:test".to_string()],
-            claim_ids: vec!["claim:missing".to_string()],
-            assertion_ids: Vec::new(),
-        });
+        catalog.obligations[0].claim_id = "claim:missing";
 
         let validation = validate_proof_catalog(&catalog);
         assert!(

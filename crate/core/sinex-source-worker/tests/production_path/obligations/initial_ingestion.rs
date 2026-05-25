@@ -383,24 +383,19 @@ mod binary_path {
         out_of_scope_config["private_mode_state_dir"] =
             serde_json::Value::String(out_of_scope_state_dir.display().to_string());
 
-        let (
-            baseline_output,
-            private_output,
-            malformed_output,
-            bash_output,
-            out_of_scope_output,
-        ) = tokio::try_join!(
-            run_weechat_scan(
-                &ctx,
-                &tempdir,
-                "baseline",
-                weechat_node_config(&baseline_log_path),
-            ),
-            run_weechat_scan(&ctx, &tempdir, "weechat-private", private_config),
-            run_weechat_scan(&ctx, &tempdir, "weechat-malformed", malformed_config),
-            run_bash_scan(&ctx, &tempdir, "bash-private", bash_config),
-            run_weechat_scan(&ctx, &tempdir, "weechat-out-of-scope", out_of_scope_config),
-        )?;
+        let (baseline_output, private_output, malformed_output, bash_output, out_of_scope_output) =
+            tokio::try_join!(
+                run_weechat_scan(
+                    &ctx,
+                    &tempdir,
+                    "baseline",
+                    weechat_node_config(&baseline_log_path),
+                ),
+                run_weechat_scan(&ctx, &tempdir, "weechat-private", private_config),
+                run_weechat_scan(&ctx, &tempdir, "weechat-malformed", malformed_config),
+                run_bash_scan(&ctx, &tempdir, "bash-private", bash_config),
+                run_weechat_scan(&ctx, &tempdir, "weechat-out-of-scope", out_of_scope_config),
+            )?;
 
         ctx.assert("source-worker scan processed one event").that(
             baseline_output.contains("Events processed: 1"),

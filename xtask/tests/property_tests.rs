@@ -457,7 +457,7 @@ async fn historydb_finished_invocation_is_retrievable() -> xtask::sandbox::TestR
                 let inv_id = db
                     .start_invocation(command, None, None, None)
                     .expect("start_invocation must succeed");
-                db.finish_invocation(inv_id, status.clone(), Some(exit_code), duration_secs)
+                db.finish_invocation(inv_id, status, Some(exit_code), duration_secs)
                     .expect("finish_invocation must succeed");
 
                 let exact = db
