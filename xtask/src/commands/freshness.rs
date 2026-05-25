@@ -2,7 +2,7 @@ use crate::command::{
     CommandContext, CommandMetadata, CommandResult, HistoryAccessMode, XtaskCommand,
 };
 use crate::coordinator::{self, FreshnessScopeExplanation};
-use crate::history::ProofEvidence;
+use crate::history::{ProofEvidence, TestProofUnit};
 use color_eyre::eyre::Result;
 use serde::Serialize;
 
@@ -44,7 +44,14 @@ struct FreshnessReuseExplanation {
     enabled: bool,
     decision: FreshnessDecision,
     reason: String,
-    last_completed: Option<ProofEvidence>,
+    last_completed: Option<FreshnessCompletedProof>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "source", rename_all = "snake_case")]
+enum FreshnessCompletedProof {
+    ProofEvidence(ProofEvidence),
+    TestProofUnit(TestProofUnit),
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -104,6 +111,51 @@ fn explain_reuse(
         };
     }
 
+    if key.command == "test" {
+        let Some(last_result) = ctx.try_with_history_db_query(|db| {
+            db.get_successful_reusable_test_proof_unit(
+                &key.proof_kind,
+                &key.tree_fingerprint,
+                &key.scope_key,
+            )
+        }) else {
+            return FreshnessReuseExplanation {
+                enabled: true,
+                decision: FreshnessDecision::HistoryUnavailable,
+                reason: format!(
+                    "history DB unavailable at {}",
+                    ctx.history_db_path().display()
+                ),
+                last_completed: None,
+            };
+        };
+
+        return match last_result {
+            Ok(Some(last)) => FreshnessReuseExplanation {
+                enabled: true,
+                decision: FreshnessDecision::Hit,
+                reason: format!(
+                    "successful test proof unit #{} matches this exact proof key",
+                    last.invocation_id
+                ),
+                last_completed: Some(FreshnessCompletedProof::TestProofUnit(last)),
+            },
+            Ok(None) => FreshnessReuseExplanation {
+                enabled: true,
+                decision: FreshnessDecision::Miss,
+                reason: "no prior successful test proof unit matches this exact freshness key"
+                    .to_string(),
+                last_completed: None,
+            },
+            Err(error) => FreshnessReuseExplanation {
+                enabled: true,
+                decision: FreshnessDecision::HistoryUnavailable,
+                reason: format!("history query failed: {error}"),
+                last_completed: None,
+            },
+        };
+    }
+
     let Some(last_result) = ctx.try_with_history_db_query(|db| {
         db.get_successful_proof_evidence(
             &key.command,
@@ -151,7 +203,7 @@ fn explain_reuse(
             "successful invocation #{} matches this exact proof key",
             last.invocation_id
         ),
-        last_completed: Some(last),
+        last_completed: Some(FreshnessCompletedProof::ProofEvidence(last)),
     }
 }
 
@@ -202,6 +254,7 @@ const fn yes_no(value: bool) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::history::HistoryDb;
     use crate::output::{OutputFormat, OutputWriter};
     use crate::sandbox::prelude::*;
 
@@ -226,6 +279,53 @@ mod tests {
         assert_ne!(data["reuse"]["decision"], "disabled");
         assert_eq!(data["proof_kind"], "test.nextest.exact");
         assert_eq!(data["scope"]["kind"], "packages");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn freshness_explain_test_hits_test_proof_units() -> TestResult<()> {
+        let dir = tempfile::tempdir()?;
+        let db_path = dir.path().join("history.db");
+        let db = HistoryDb::open(&db_path)?;
+        let args = vec!["-p".to_string(), "xtask".to_string()];
+        let key = coordinator::explain_freshness("test", &args)?;
+        let invocation_id = db.start_invocation("test", None, None, None)?;
+        db.record_test_proof_unit(
+            invocation_id,
+            &key.proof_kind,
+            &key.scope_key,
+            &key.tree_fingerprint,
+            r#"{"scope":"packages:xtask"}"#,
+            true,
+        )?;
+        db.finish_invocation(
+            invocation_id,
+            crate::history::InvocationStatus::Success,
+            Some(0),
+            0.1,
+        )?;
+        drop(db);
+        let ctx = CommandContext::new_with_db_override(
+            OutputWriter::new(OutputFormat::Json),
+            false,
+            None,
+            "freshness",
+            db_path,
+        );
+        let command = FreshnessExplainCommand {
+            command: "test".to_string(),
+            args,
+        };
+
+        let result = command.execute(&ctx).await?;
+        let data = result.data.expect("freshness explain should emit data");
+
+        assert_eq!(data["reuse"]["decision"], "hit");
+        assert_eq!(data["reuse"]["last_completed"]["source"], "test_proof_unit");
+        assert_eq!(
+            data["reuse"]["last_completed"]["invocation_id"],
+            invocation_id
+        );
         Ok(())
     }
 
