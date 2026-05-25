@@ -1135,7 +1135,14 @@ fn test_scope_is_fresh_reusable(args: &[String]) -> bool {
             arg.as_str(),
             "--heavy"
                 | "--include-ignored"
+                | "--debug"
+                | "--fuzz"
+                | "--mutants"
+                | "--coverage"
+                | "--bench"
                 | "--list"
+                | "--dry-run"
+                | "-l"
                 | "--prime"
                 | "--update-snapshots"
                 | "--ephemeral-postgres"
@@ -2008,6 +2015,18 @@ mod tests {
                 "--lib".into(),
                 "--update-snapshots".into()
             ]
+        ));
+        assert!(!supports_fresh_reuse_for(
+            "test",
+            &["--scope=packages:xtask".into(), "--dry-run".into()]
+        ));
+        assert!(!supports_fresh_reuse_for(
+            "test",
+            &["--scope=packages:xtask".into(), "--debug".into()]
+        ));
+        assert!(!supports_fresh_reuse_for(
+            "test",
+            &["--scope=packages:xtask".into(), "-l".into()]
         ));
         assert!(!supports_fresh_reuse_for(
             "test",
@@ -3675,6 +3694,10 @@ sinex-primitives = { path = "../sinex-primitives" }
             "test",
             &["--dry-run".into()]
         ));
+        let explanation = explain_freshness("test", &["--dry-run".into()])?;
+        assert!(!explanation.should_coordinate);
+        assert!(!explanation.fresh_reuse_enabled);
+        assert_eq!(explanation.proof_kind, "test.nextest.plan");
         Ok(())
     }
 
