@@ -1108,6 +1108,7 @@ fn test_scope_is_fresh_reusable(args: &[String]) -> bool {
                 | "--update-snapshots"
                 | "--ephemeral-postgres"
                 | "--no-ephemeral-postgres"
+                | "--no-reuse"
         )
     });
     !has_runtime_or_mutating_flag
@@ -1939,6 +1940,10 @@ mod tests {
                 "--lib".into(),
                 "--update-snapshots".into()
             ]
+        ));
+        assert!(!supports_fresh_reuse_for(
+            "test",
+            &["--scope=packages:xtask".into(), "--no-reuse".into()]
         ));
         Ok(())
     }
