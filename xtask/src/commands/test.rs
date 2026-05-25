@@ -38,6 +38,31 @@ struct ReusedImpactPackageProof {
     scope_key: String,
 }
 
+/// Proof coverage state for a single package scope in test planning.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+enum ProofCoverageState {
+    /// An exact reusable proof exists in the history DB for this scope.
+    Covered,
+    /// No proof exists but the scope is eligible for reuse.
+    Missing,
+    /// A proof existed but its fingerprint or scope no longer matches.
+    /// Stale detection requires a separate DB query for non-matching
+    /// fingerprints; not yet wired into classification.
+    #[allow(dead_code)]
+    Stale,
+    /// The scope shape cannot be reused (runtime, listing, mutating, heavy, etc.).
+    Ineligible,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct PackageProofCoverage {
+    package: String,
+    state: ProofCoverageState,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    proof_invocation_id: Option<i64>,
+}
+
 fn failing_test_details_issue(ctx: &CommandContext, error: Option<&color_eyre::Report>) -> String {
     match error {
         Some(error) => format!(
@@ -762,6 +787,75 @@ impl TestCommand {
         Ok((remaining, reused))
     }
 
+    /// Classify proof coverage for each package scope.
+    ///
+    /// Returns a `PackageProofCoverage` per package with one of:
+    /// - `Covered`: exact reusable proof exists for this scope
+    /// - `Missing`: eligible but no proof found
+    /// - `Ineligible`: scope shape cannot be reused
+    fn classify_package_proof_coverage(
+        &self,
+        ctx: &CommandContext,
+        packages: &[String],
+    ) -> Vec<PackageProofCoverage> {
+        packages
+            .iter()
+            .map(|package| {
+                if !self.can_consume_exact_test_proof() {
+                    return PackageProofCoverage {
+                        package: package.clone(),
+                        state: ProofCoverageState::Ineligible,
+                        proof_invocation_id: None,
+                    };
+                }
+                let proof_args = self.exact_package_proof_args(package);
+                let proof_kind = crate::coordinator::proof_kind("test", &proof_args);
+                if proof_kind != "test.nextest.exact" {
+                    return PackageProofCoverage {
+                        package: package.clone(),
+                        state: ProofCoverageState::Ineligible,
+                        proof_invocation_id: None,
+                    };
+                }
+                let input_fingerprint =
+                    crate::coordinator::current_scoped_tree_fingerprint("test", &proof_args);
+                let scope_key = crate::coordinator::compute_scope_key("test", &proof_args);
+                match input_fingerprint {
+                    Ok(fingerprint) => {
+                        let reusable_proof = ctx
+                            .try_with_history_db_query(|db| {
+                                db.get_successful_reusable_test_proof_unit(
+                                    &proof_kind,
+                                    &fingerprint,
+                                    &scope_key,
+                                )
+                            })
+                            .and_then(std::result::Result::ok)
+                            .flatten();
+                        if let Some(proof) = reusable_proof {
+                            PackageProofCoverage {
+                                package: package.clone(),
+                                state: ProofCoverageState::Covered,
+                                proof_invocation_id: Some(proof.invocation_id),
+                            }
+                        } else {
+                            PackageProofCoverage {
+                                package: package.clone(),
+                                state: ProofCoverageState::Missing,
+                                proof_invocation_id: None,
+                            }
+                        }
+                    }
+                    Err(_) => PackageProofCoverage {
+                        package: package.clone(),
+                        state: ProofCoverageState::Ineligible,
+                        proof_invocation_id: None,
+                    },
+                }
+            })
+            .collect()
+    }
+
     fn nextest_invocation_args(&self, force_skip_preflight: bool) -> Vec<String> {
         let mut args = Vec::new();
         if self.debug {
@@ -1389,7 +1483,66 @@ impl XtaskCommand for TestCommand {
                     "disabled for runtime or mutating test shape".to_string()
                 };
                 println!("  reuse eligibility: {reuse_state}");
+
+                // Per-package proof coverage classification
+                if !execution_plan.runner_packages.is_empty() {
+                    let coverage =
+                        self.classify_package_proof_coverage(ctx, &execution_plan.runner_packages);
+                    let covered: Vec<_> = coverage
+                        .iter()
+                        .filter(|c| c.state == ProofCoverageState::Covered)
+                        .collect();
+                    let missing: Vec<_> = coverage
+                        .iter()
+                        .filter(|c| c.state == ProofCoverageState::Missing)
+                        .collect();
+                    let ineligible: Vec<_> = coverage
+                        .iter()
+                        .filter(|c| c.state == ProofCoverageState::Ineligible)
+                        .collect();
+                    if !covered.is_empty() {
+                        println!(
+                            "  proof covered: {}",
+                            covered
+                                .iter()
+                                .map(|c| format!(
+                                    "{}@{}",
+                                    c.package,
+                                    c.proof_invocation_id.unwrap_or(0)
+                                ))
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        );
+                    }
+                    if !missing.is_empty() {
+                        println!(
+                            "  proof missing: {}",
+                            missing
+                                .iter()
+                                .map(|c| c.package.as_str())
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        );
+                    }
+                    if !ineligible.is_empty() {
+                        println!(
+                            "  proof ineligible: {}",
+                            ineligible
+                                .iter()
+                                .map(|c| c.package.as_str())
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        );
+                    }
+                }
             }
+            // Build coverage array for JSON output
+            let proof_coverage: Vec<PackageProofCoverage> =
+                if execution_plan.runner_packages.is_empty() {
+                    Vec::new()
+                } else {
+                    self.classify_package_proof_coverage(ctx, &execution_plan.runner_packages)
+                };
             return Ok(CommandResult::success()
                 .with_message("test dry-run passed")
                 .with_detail(format!("scope={}", workload_scope.encode_marker()))
@@ -1402,6 +1555,7 @@ impl XtaskCommand for TestCommand {
                     "filter": effective_filter,
                     "runtime_binary_requirements": runtime_binary_requirements,
                     "db_pool_size": db_pool_size,
+                    "proof_coverage": proof_coverage,
                     "reuse": {
                         "eligible": reusable,
                         "proof_kind": proof_kind,
@@ -2779,6 +2933,112 @@ mod tests {
             issue.as_deref(),
             Some("Current test invocation ID unavailable for analysis")
         );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_classify_package_proof_coverage_covered() -> ::xtask::sandbox::TestResult<()> {
+        let mut _env = crate::sandbox::prelude::EnvGuard::new();
+        _env.clear("NEXTEST_RUN_ID");
+        let dir = tempfile::tempdir()?;
+        let db_path = dir.path().join("test.db");
+        let db = HistoryDb::open(&db_path)?;
+        let command = TestCommand {
+            packages: vec!["xtask".to_string()],
+            skip_preflight: true,
+            ..Default::default()
+        };
+        let proof_args = command.semantic_invocation_args(
+            &WorkloadScope::Packages(vec!["xtask".to_string()]),
+            None,
+            &[],
+            false,
+        );
+        let input_fingerprint =
+            crate::coordinator::current_scoped_tree_fingerprint("test", &proof_args)?;
+        let scope_key = crate::coordinator::compute_scope_key("test", &proof_args);
+        let invocation_id = db.start_invocation("test", None, None, None)?;
+        db.record_test_proof_unit(
+            invocation_id,
+            "test.nextest.exact",
+            &scope_key,
+            &input_fingerprint,
+            r#"{"scope":"packages:xtask"}"#,
+            true,
+        )?;
+        db.finish_invocation(
+            invocation_id,
+            crate::history::InvocationStatus::Success,
+            Some(0),
+            0.1,
+        )?;
+        drop(db);
+
+        let ctx = test_context(db_path);
+        let coverage = command.classify_package_proof_coverage(&ctx, &["xtask".to_string()]);
+        assert_eq!(coverage.len(), 1);
+        assert_eq!(coverage[0].state, super::ProofCoverageState::Covered);
+        assert_eq!(coverage[0].proof_invocation_id, Some(invocation_id));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_classify_package_proof_coverage_missing() -> ::xtask::sandbox::TestResult<()> {
+        let mut _env = crate::sandbox::prelude::EnvGuard::new();
+        _env.clear("NEXTEST_RUN_ID");
+        let dir = tempfile::tempdir()?;
+        let db_path = dir.path().join("test.db");
+        let _db = HistoryDb::open(&db_path)?;
+        let command = TestCommand {
+            packages: vec!["xtask".to_string()],
+            skip_preflight: true,
+            ..Default::default()
+        };
+        let ctx = test_context(db_path);
+        let coverage = command.classify_package_proof_coverage(&ctx, &["xtask".to_string()]);
+        assert_eq!(coverage.len(), 1);
+        assert_eq!(coverage[0].state, super::ProofCoverageState::Missing);
+        assert!(coverage[0].proof_invocation_id.is_none());
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_classify_package_proof_coverage_ineligible_no_reuse()
+    -> ::xtask::sandbox::TestResult<()> {
+        let mut _env = crate::sandbox::prelude::EnvGuard::new();
+        _env.clear("NEXTEST_RUN_ID");
+        let dir = tempfile::tempdir()?;
+        let db_path = dir.path().join("test.db");
+        let _db = HistoryDb::open(&db_path)?;
+        let command = TestCommand {
+            packages: vec!["xtask".to_string()],
+            skip_preflight: true,
+            no_reuse: true,
+            ..Default::default()
+        };
+        let ctx = test_context(db_path);
+        let coverage = command.classify_package_proof_coverage(&ctx, &["xtask".to_string()]);
+        assert_eq!(coverage.len(), 1);
+        assert_eq!(coverage[0].state, super::ProofCoverageState::Ineligible);
+        assert!(coverage[0].proof_invocation_id.is_none());
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_classify_package_proof_coverage_empty_packages()
+    -> ::xtask::sandbox::TestResult<()> {
+        let mut _env = crate::sandbox::prelude::EnvGuard::new();
+        _env.clear("NEXTEST_RUN_ID");
+        let dir = tempfile::tempdir()?;
+        let db_path = dir.path().join("test.db");
+        let _db = HistoryDb::open(&db_path)?;
+        let command = TestCommand {
+            skip_preflight: true,
+            ..Default::default()
+        };
+        let ctx = test_context(db_path);
+        let coverage = command.classify_package_proof_coverage(&ctx, &[]);
+        assert!(coverage.is_empty());
         Ok(())
     }
 }
