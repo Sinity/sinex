@@ -233,7 +233,6 @@ impl<T> EventBuilder<T, HasProvenance> {
             equivalence_key: None,
             created_by_operation_id,
             node_model: None,
-            anchor_payload_hash: None,
         })
     }
 }
