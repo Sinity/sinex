@@ -1803,3 +1803,86 @@ async fn get_by_ids_rejects_more_than_1000_ids(ctx: TestContext) -> TestResult<(
 
     Ok(())
 }
+
+/// Verify that the replacement matching query used by the replay writer
+/// distinguishes material events (matched by physical coordinates) from
+/// derived/synthesis events (matched by equivalence_key elsewhere).
+///
+/// The replay writer filters to events WHERE `source_material_id IS NOT NULL
+/// AND anchor_byte IS NOT NULL`. This matches only material-provenance events;
+/// derived events are excluded from physical-coordinate replacement.
+#[sinex_test]
+async fn test_replacement_query_distinguishes_material_from_derived(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let pool = &ctx.pool;
+
+    // Register source material
+    let material_record = pool
+        .source_materials()
+        .register_in_flight(
+            sinex_db::repositories::source_materials::material_types::STREAM,
+            Some("test-replacement-material"),
+            json!({}),
+        )
+        .await?;
+    let material_id =
+        Id::<sinex_db::models::SourceMaterial>::from_uuid(material_record.id);
+
+    // Insert a material-provenance event
+    let mat_payload = FileCreatedPayload::test_default(
+        RecordedPath::from_observed("/tmp/replacement-mat.txt")
+            .map_err(|e| color_eyre::eyre::eyre!(e))?,
+    );
+    let mat_event = Event::builder(mat_payload)
+        .with_provenance(Provenance::from_material(material_id, 0, None, None))
+        .build()?;
+    let mat_inserted = pool.events().insert(mat_event).await?;
+    let mat_event_id = mat_inserted.id.expect("material event id");
+
+    // Insert a source event first (parent for synthesis)
+    let parent_payload = FileCreatedPayload::test_default(
+        RecordedPath::from_observed("/tmp/replacement-parent.txt")
+            .map_err(|e| color_eyre::eyre::eyre!(e))?,
+    );
+    let parent_event = Event::builder(parent_payload)
+        .with_provenance(Provenance::from_material(material_id, 100, None, None))
+        .build()?;
+    let parent_inserted = pool.events().insert(parent_event).await?;
+    let parent_id = parent_inserted.id.expect("parent event id");
+
+    // Insert a synthesis-provenance event (derived from parent, no material)
+    let syn_payload = FileCreatedPayload::test_default(
+        RecordedPath::from_observed("/tmp/replacement-derived.txt")
+            .map_err(|e| color_eyre::eyre::eyre!(e))?,
+    );
+    let syn_event = Event::builder(syn_payload)
+        .from_parents(vec![parent_id])?
+        .build()?;
+    let syn_inserted = pool.events().insert(syn_event).await?;
+    let syn_event_id = syn_inserted.id.expect("synthesis event id");
+
+    // The replacement matching query from replay_writer.rs —
+    // filters to material events only.
+    let matched_ids: Vec<Uuid> = sqlx::query_scalar(
+        r"
+        SELECT id FROM core.events
+        WHERE source_material_id IS NOT NULL
+          AND anchor_byte IS NOT NULL
+        ",
+    )
+    .fetch_all(pool)
+    .await?;
+
+    assert!(
+        matched_ids.contains(&mat_event_id.as_uuid()),
+        "material event must match the replacement query"
+    );
+    assert!(
+        !matched_ids.contains(&syn_event_id.as_uuid()),
+        "derived event must NOT match the material replacement query — \
+         derived replacement uses equivalence_key, not physical coordinates"
+    );
+
+    Ok(())
+}
