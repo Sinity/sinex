@@ -427,7 +427,8 @@ async fn test_interpret_gateway_ready_response_passes_serving_true()
                 "components":{
                     "database":{"status":"healthy","connected":true},
                     "nats":{"status":"unhealthy","connected":false,"latency_ms":42.0,"detail":"timed out"},
-                    "replay_control":{"status":"healthy","enabled":true,"connected":true}
+                    "replay_control":{"status":"healthy","enabled":true,"connected":true},
+                    "sse_confirmation":{"status":"healthy","connected":true}
                 }
             }"#,
     );
@@ -436,6 +437,7 @@ async fn test_interpret_gateway_ready_response_passes_serving_true()
     assert!(item.description.contains("healthy=false"));
     assert!(item.description.contains("status=degraded"));
     assert!(item.description.contains("NATS unavailable"));
+    assert!(!item.description.contains("components="));
     Ok(())
 }
 

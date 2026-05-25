@@ -912,7 +912,8 @@ async fn test_completions_all_shells() -> TestResult<()> {
 
         assert!(
             output.status.success(),
-            "Completions for {shell} should succeed"
+            "Completions for {shell} should succeed: stderr={}",
+            String::from_utf8_lossy(&output.stderr)
         );
     }
     Ok(())

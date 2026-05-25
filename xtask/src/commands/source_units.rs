@@ -971,16 +971,16 @@ mod tests {
     use crate::sandbox::prelude::*;
 
     #[sinex_test]
-    async fn adapter_schema_export_covers_all_nine_adapters() -> TestResult<()> {
+    async fn adapter_schema_export_covers_all_adapters() -> TestResult<()> {
         let manifest = build_source_unit_manifest();
 
-        // All 9 adapter types must appear in the adapters block.
         let expected_adapters = [
             "AppendOnlyFileAdapter",
             "ChainedAdapter",
             "ClipboardPollingAdapter",
             "DbusStreamAdapter",
             "DirectoryWalkAdapter",
+            "FileContentDropAdapter",
             "FileDropAdapter",
             "JournalctlStreamAdapter",
             "SqliteRowAdapter",
@@ -1160,10 +1160,10 @@ mod tests {
             .iter()
             .find(|unit| unit.id == "desktop.clipboard")
             .expect("desktop descriptor should be rendered from canonical registry");
-        assert_eq!(desktop.runner_pack, "desktop");
+        assert_eq!(desktop.runner_pack, "source-worker");
         assert_eq!(desktop.access_policy, "target_runtime_bridge:clipboard");
-        assert_eq!(desktop.package_impact, "no_new_output");
-        assert_eq!(desktop.implementation_mode, "rust_in_pack:desktop");
+        assert_eq!(desktop.package_impact, "desktop_clipboard");
+        assert_eq!(desktop.implementation_mode, "rust_in_pack:source-worker");
         assert_eq!(desktop.crate_impact, "0");
         assert_eq!(desktop.binary_impact, "0");
         assert_eq!(desktop.nix_output_impact, "0");

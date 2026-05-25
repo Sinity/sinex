@@ -270,9 +270,14 @@ async fn snapshot_analytics_workspace_health_seeded() -> ::xtask::sandbox::TestR
     );
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    // `analytics workspace-health --json` emits the health object first, then
-    // the CommandResult envelope as a second JSON value. Parse only the first.
-    let mut data = parse_first_json(&stdout)?;
+    // Older implementations emitted the health object directly; newer ones emit
+    // the standard CommandResult envelope. Keep the snapshot on the payload.
+    let parsed = parse_first_json(&stdout)?;
+    let mut data = parsed
+        .get("data")
+        .filter(|_| parsed.get("status").is_some() && parsed.get("command").is_some())
+        .cloned()
+        .unwrap_or(parsed);
 
     // Scrub all computed metrics — values depend on seed content and timing.
     // We assert the top-level key set via the snapshot shape; values are volatile.

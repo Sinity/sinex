@@ -487,6 +487,33 @@ expression: json
         },
         {
           "global": false,
+          "help": "Impact planner mode for bare `xtask test`",
+          "long": "impact-mode",
+          "name": "impact_mode",
+          "possible_values": [
+            "off",
+            "balanced",
+            "aggressive"
+          ],
+          "required": false,
+          "short": null,
+          "takes_value": true
+        },
+        {
+          "global": false,
+          "help": "Bypass exact proof reuse for this invocation",
+          "long": "no-reuse",
+          "name": "no_reuse",
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "short": null,
+          "takes_value": false
+        },
+        {
+          "global": false,
           "help": "Allow broad tests to start even when host PSI is already severe",
           "long": "allow-contended-host",
           "name": "allow_contended_host",
@@ -1774,7 +1801,20 @@ expression: json
             },
             {
               "global": false,
-              "help": null,
+              "help": "Show stdout explicitly (default)",
+              "long": "stdout",
+              "name": "stdout",
+              "possible_values": [
+                "true",
+                "false"
+              ],
+              "required": false,
+              "short": null,
+              "takes_value": false
+            },
+            {
+              "global": false,
+              "help": "Show stderr instead of stdout",
               "long": "stderr",
               "name": "stderr",
               "possible_values": [
@@ -3636,8 +3676,87 @@ expression: json
       "subcommands": [
         {
           "about": "Explain the default `xtask test` impact plan for the current diff",
-          "args": [],
+          "args": [
+            {
+              "global": false,
+              "help": "Planner mode to explain",
+              "long": "mode",
+              "name": "mode",
+              "possible_values": [
+                "off",
+                "balanced",
+                "aggressive"
+              ],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            }
+          ],
           "name": "explain",
+          "subcommands": []
+        },
+        {
+          "about": "Run tests in evidence-seeding mode",
+          "args": [
+            {
+              "global": false,
+              "help": "Package to seed",
+              "long": "package",
+              "name": "package",
+              "possible_values": [],
+              "required": false,
+              "short": "p",
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Optional nextest filter",
+              "long": "filter",
+              "name": "filter",
+              "possible_values": [],
+              "required": false,
+              "short": "E",
+              "takes_value": true
+            }
+          ],
+          "name": "seed",
+          "subcommands": []
+        },
+        {
+          "about": "Run one nextest filter under LLVM coverage and import covered line regions",
+          "args": [
+            {
+              "global": false,
+              "help": "Package to seed",
+              "long": "package",
+              "name": "package",
+              "possible_values": [],
+              "required": false,
+              "short": "p",
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Exact nextest filter for one test, for example `test(my_test)`",
+              "long": "filter",
+              "name": "filter",
+              "possible_values": [],
+              "required": true,
+              "short": "E",
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Test name to record when it cannot be inferred from `-E test(name)`",
+              "long": "test-name",
+              "name": "test_name",
+              "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            }
+          ],
+          "name": "seed-coverage",
           "subcommands": []
         },
         {
@@ -3649,6 +3768,20 @@ expression: json
               "long": "sample-skips",
               "name": "sample_skips",
               "possible_values": [],
+              "required": false,
+              "short": null,
+              "takes_value": true
+            },
+            {
+              "global": false,
+              "help": "Planner mode to audit",
+              "long": "mode",
+              "name": "mode",
+              "possible_values": [
+                "off",
+                "balanced",
+                "aggressive"
+              ],
               "required": false,
               "short": null,
               "takes_value": true

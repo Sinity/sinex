@@ -10,6 +10,10 @@ expression: json
     "overall": "[volatile]",
     "postgres": "[volatile]",
     "postgres_extensions": "[volatile]",
+    "private_mode": {
+      "available": true,
+      "message": "disabled"
+    },
     "tls": "[volatile]",
     "tools": "[volatile]"
   },
