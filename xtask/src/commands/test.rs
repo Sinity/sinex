@@ -2866,17 +2866,26 @@ mod tests {
         let result = command.execute(&ctx).await?;
 
         assert_eq!(result.status, crate::output::Status::Success);
-        assert_eq!(
-            result.message.as_deref(),
-            Some("tests skipped by exact proof")
-        );
-        assert_eq!(
-            result
-                .data
-                .as_ref()
-                .and_then(|data| { data["reused_proof"]["invocation_id"].as_i64() }),
-            Some(invocation_id)
-        );
+        // Explicit -p packages now go through package-level subtraction first,
+        // so the skip message reflects that path.
+        assert!(result.message.as_deref().map_or(false, |msg| {
+            msg == "tests skipped by exact proof" || msg == "tests skipped by package proofs"
+        }));
+        // Proof data may be in reused_proof (exact path) or reused_package_proofs (package path).
+        let reused_invocation: Option<i64> = result
+            .data
+            .as_ref()
+            .and_then(|data| {
+                data["reused_proof"]["invocation_id"]
+                    .as_i64()
+                    .or_else(|| {
+                        data["reused_package_proofs"]
+                            .as_array()
+                            .and_then(|proofs| proofs.first())
+                            .and_then(|p| p["invocation_id"].as_i64())
+                    })
+            });
+        assert_eq!(reused_invocation, Some(invocation_id));
         Ok(())
     }
 

@@ -9,7 +9,7 @@ expression: json
       "args": [
         {
           "global": false,
-          "help": "Packages to fix (default: all workspace packages)",
+          "help": "Packages to fix (default: affected packages, falling back to workspace)",
           "long": "package",
           "name": "packages",
           "possible_values": [],
@@ -32,7 +32,33 @@ expression: json
         },
         {
           "global": false,
-          "help": "Thorough mode: iterate packages individually for maximum fix coverage. Slower but catches more fixes since clippy --fix only applies to freshly compiled code",
+          "help": "Format only: run cargo fmt on resolved packages and stop. Fast path for the common \"format my changes\" workflow",
+          "long": "fmt-only",
+          "name": "fmt_only",
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "short": null,
+          "takes_value": false
+        },
+        {
+          "global": false,
+          "help": "Run clippy --fix after cargo fix (opt-in). Without this flag, xtask fix runs fmt + cargo fix only",
+          "long": "clippy",
+          "name": "clippy",
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "short": null,
+          "takes_value": false
+        },
+        {
+          "global": false,
+          "help": "Thorough mode: iterate packages individually with per-package clippy --fix. Implies --clippy. Slower but maximal fix coverage",
           "long": "thorough",
           "name": "thorough",
           "possible_values": [
