@@ -1785,8 +1785,10 @@ pub fn coordination_to_result(result: &CoordinationResult, ctx: &CommandContext)
                     println!(
                         "⏳ Queued: waiting for the active coordinated slot to finish assigning its next job id"
                     );
+                    println!("   Monitor: xtask jobs active");
                 } else {
                     println!("⏳ Queued: waiting for job {current_job_id} to complete");
+                    println!("   Monitor: xtask jobs status {current_job_id}");
                 }
             }
             CommandResult::success()
@@ -1799,6 +1801,11 @@ pub fn coordination_to_result(result: &CoordinationResult, ctx: &CommandContext)
                     "action": "queued",
                     "current_job_id": (!pending_job_assignment).then_some(current_job_id),
                     "current_job_pending_assignment": pending_job_assignment,
+                    "hint": if pending_job_assignment {
+                        "Monitor with: xtask jobs active".to_string()
+                    } else {
+                        format!("Monitor with: xtask jobs status {current_job_id}")
+                    },
                 }))
         }
         CoordinationResult::Started { job_id } => {
@@ -3582,6 +3589,7 @@ sinex-primitives = { path = "../sinex-primitives" }
         let data = result.data.as_ref().expect("should have data");
         assert_eq!(data["action"], "queued");
         assert_eq!(data["current_job_id"], 55);
+        assert_eq!(data["hint"], "Monitor with: xtask jobs status 55");
         Ok(())
     }
 
@@ -3600,6 +3608,7 @@ sinex-primitives = { path = "../sinex-primitives" }
         assert_eq!(data["action"], "queued");
         assert_eq!(data["current_job_id"], serde_json::Value::Null);
         assert_eq!(data["current_job_pending_assignment"], true);
+        assert_eq!(data["hint"], "Monitor with: xtask jobs active");
         Ok(())
     }
 
