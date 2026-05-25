@@ -2764,6 +2764,45 @@ impl HistoryDb {
             .context("failed to get successful reusable test proof unit")
     }
 
+    /// Look up any test proof unit for a given scope key, ignoring the fingerprint.
+    ///
+    /// Used to detect stale proofs: a proof existed for this scope in a prior run
+    /// but the current input fingerprint no longer matches (source/tooling changed).
+    pub fn get_any_successful_test_proof_for_scope(
+        &self,
+        proof_kind: &str,
+        scope_key: &str,
+    ) -> Result<Option<TestProofUnit>> {
+        self.conn
+            .query_row(
+                r"
+                SELECT
+                    id,
+                    invocation_id,
+                    proof_kind,
+                    scope_key,
+                    input_fingerprint,
+                    manifest_json,
+                    reusable,
+                    status,
+                    started_at,
+                    finished_at,
+                    duration_secs
+                FROM test_proof_units
+                WHERE proof_kind = ?1
+                  AND scope_key = ?2
+                  AND reusable = 1
+                  AND status = 'success'
+                ORDER BY finished_at DESC, id DESC
+                LIMIT 1
+                ",
+                params![proof_kind, scope_key],
+                row_to_test_proof_unit,
+            )
+            .optional()
+            .context("failed to get any successful test proof for scope")
+    }
+
     /// Update an invocation's tree fingerprint and scope key.
     ///
     /// Called after starting an invocation to record the coordination scope.

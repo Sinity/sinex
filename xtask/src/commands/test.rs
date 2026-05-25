@@ -47,9 +47,6 @@ enum ProofCoverageState {
     /// No proof exists but the scope is eligible for reuse.
     Missing,
     /// A proof existed but its fingerprint or scope no longer matches.
-    /// Stale detection requires a separate DB query for non-matching
-    /// fingerprints; not yet wired into classification.
-    #[allow(dead_code)]
     Stale,
     /// The scope shape cannot be reused (runtime, listing, mutating, heavy, etc.).
     Ineligible,
@@ -839,10 +836,29 @@ impl TestCommand {
                                 proof_invocation_id: Some(proof.invocation_id),
                             }
                         } else {
-                            PackageProofCoverage {
-                                package: package.clone(),
-                                state: ProofCoverageState::Missing,
-                                proof_invocation_id: None,
+                            // No exact match — check for stale proof (same scope,
+                            // different fingerprint from a prior run).
+                            let stale_proof = ctx
+                                .try_with_history_db_query(|db| {
+                                    db.get_any_successful_test_proof_for_scope(
+                                        &proof_kind,
+                                        &scope_key,
+                                    )
+                                })
+                                .and_then(std::result::Result::ok)
+                                .flatten();
+                            if let Some(proof) = stale_proof {
+                                PackageProofCoverage {
+                                    package: package.clone(),
+                                    state: ProofCoverageState::Stale,
+                                    proof_invocation_id: Some(proof.invocation_id),
+                                }
+                            } else {
+                                PackageProofCoverage {
+                                    package: package.clone(),
+                                    state: ProofCoverageState::Missing,
+                                    proof_invocation_id: None,
+                                }
                             }
                         }
                     }
@@ -1500,10 +1516,28 @@ impl XtaskCommand for TestCommand {
                         .iter()
                         .filter(|c| c.state == ProofCoverageState::Ineligible)
                         .collect();
+                    let stale: Vec<_> = coverage
+                        .iter()
+                        .filter(|c| c.state == ProofCoverageState::Stale)
+                        .collect();
                     if !covered.is_empty() {
                         println!(
                             "  proof covered: {}",
                             covered
+                                .iter()
+                                .map(|c| format!(
+                                    "{}@{}",
+                                    c.package,
+                                    c.proof_invocation_id.unwrap_or(0)
+                                ))
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        );
+                    }
+                    if !stale.is_empty() {
+                        println!(
+                            "  proof stale: {}",
+                            stale
                                 .iter()
                                 .map(|c| format!(
                                     "{}@{}",
@@ -3158,6 +3192,49 @@ mod tests {
         let ctx = test_context(db_path);
         let coverage = command.classify_package_proof_coverage(&ctx, &[]);
         assert!(coverage.is_empty());
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_classify_package_proof_coverage_stale() -> ::xtask::sandbox::TestResult<()> {
+        // A proof exists for the scope but with a different (old) fingerprint
+        // than the current tree — it should be classified as Stale.
+        let mut _env = crate::sandbox::prelude::EnvGuard::new();
+        _env.clear("NEXTEST_RUN_ID");
+        let dir = tempfile::tempdir()?;
+        let db_path = dir.path().join("test.db");
+        let db = HistoryDb::open(&db_path)?;
+        let command = TestCommand {
+            packages: vec!["xtask".to_string()],
+            skip_preflight: true,
+            ..Default::default()
+        };
+        // Record a proof with a deliberately different (stale) fingerprint
+        let proof_args = command.exact_package_proof_args("xtask");
+        let scope_key = crate::coordinator::compute_scope_key("test", &proof_args);
+        let stale_fingerprint = "0000000000000000000000000000000000000000000000000000000000000000";
+        let invocation_id = db.start_invocation("test", None, None, None)?;
+        db.record_test_proof_unit(
+            invocation_id,
+            "test.nextest.exact",
+            &scope_key,
+            stale_fingerprint,
+            r#"{"scope":"packages:xtask"}"#,
+            true,
+        )?;
+        db.finish_invocation(
+            invocation_id,
+            crate::history::InvocationStatus::Success,
+            Some(0),
+            0.1,
+        )?;
+        drop(db);
+
+        let ctx = test_context(db_path);
+        let coverage = command.classify_package_proof_coverage(&ctx, &["xtask".to_string()]);
+        assert_eq!(coverage.len(), 1);
+        assert_eq!(coverage[0].state, super::ProofCoverageState::Stale);
+        assert_eq!(coverage[0].proof_invocation_id, Some(invocation_id));
         Ok(())
     }
 }
