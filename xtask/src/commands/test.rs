@@ -464,6 +464,10 @@ impl TestCommand {
             && !matches!(self.impact_mode, crate::impact::ImpactMode::Off)
     }
 
+    fn can_consume_exact_test_proof(&self) -> bool {
+        !self.no_reuse && !self.list
+    }
+
     fn guard_broad_start_pressure(
         &self,
         ctx: &CommandContext,
@@ -1248,7 +1252,8 @@ impl XtaskCommand for TestCommand {
             let input_fingerprint =
                 crate::coordinator::current_scoped_tree_fingerprint("test", &coordination_args)?;
             let scope_key = crate::coordinator::compute_scope_key("test", &coordination_args);
-            let reusable = !self.no_reuse && proof_kind == "test.nextest.exact";
+            let reusable =
+                self.can_consume_exact_test_proof() && proof_kind == "test.nextest.exact";
             let reusable_proof = if reusable {
                 ctx.try_with_history_db_query(|db| {
                     db.get_successful_reusable_test_proof_unit(
@@ -1302,6 +1307,8 @@ impl XtaskCommand for TestCommand {
                 );
                 let reuse_state = if self.no_reuse {
                     "disabled by --no-reuse".to_string()
+                } else if self.list {
+                    "disabled for --list".to_string()
                 } else if let Some(proof) = &reusable_proof {
                     format!("hit invocation {}", proof.invocation_id)
                 } else if reusable {
@@ -1421,7 +1428,7 @@ impl XtaskCommand for TestCommand {
                     println!("  accepted risk: {risk}");
                 }
             }
-            if !self.no_reuse && plan.can_reuse_exact_proof() {
+            if self.can_consume_exact_test_proof() && plan.can_reuse_exact_proof() {
                 let proof_args = crate::impact::exact_proof_args_for_plan(plan);
                 let (proof_kind, input_fingerprint, scope_key) =
                     crate::impact::exact_test_proof_key(&proof_args)?;
@@ -1477,7 +1484,7 @@ impl XtaskCommand for TestCommand {
             .as_ref()
             .and_then(|plan| plan.impact_filter.clone())
             .or_else(|| self.filter.clone());
-        let (impact_packages, reused_package_proofs) = if !self.no_reuse
+        let (impact_packages, reused_package_proofs) = if self.can_consume_exact_test_proof()
             && effective_filter.is_none()
             && let Some(packages) = raw_impact_packages.as_ref()
         {
@@ -1524,9 +1531,37 @@ impl XtaskCommand for TestCommand {
             &effective_test_binaries,
             effective_lib_target,
         );
-        ctx.record_coordination_fingerprint("test", &coordination_args);
         ctx.record_invocation_args(&coordination_args);
-        if !self.no_reuse {
+
+        // List is an introspection command, not a proof-producing or proof-consuming
+        // test run. Keep it before proof fingerprints and reuse gates.
+        if self.list {
+            let mut cmd = ProcessBuilder::cargo().args(["nextest", "list"]);
+            if execution_plan.runner_packages.is_empty() {
+                cmd = cmd.arg("--workspace");
+                for package in &execution_plan.excluded_packages {
+                    cmd = cmd.args(["--exclude", package]);
+                }
+            } else {
+                for package in &execution_plan.runner_packages {
+                    cmd = cmd.args(["-p", package]);
+                }
+            }
+            for test_binary in &effective_test_binaries {
+                cmd = cmd.args(["--test", test_binary]);
+            }
+            if effective_lib_target {
+                cmd = cmd.arg("--lib");
+            }
+            if let Some(filter) = &effective_filter {
+                cmd = cmd.args(["-E", filter]);
+            }
+            cmd.run_ok()?;
+            return Ok(CommandResult::success().with_detail("tests listed"));
+        }
+
+        ctx.record_coordination_fingerprint("test", &coordination_args);
+        if self.can_consume_exact_test_proof() {
             let proof_kind = crate::coordinator::proof_kind("test", &coordination_args);
             if proof_kind == "test.nextest.exact" {
                 let input_fingerprint = crate::coordinator::current_scoped_tree_fingerprint(
@@ -1569,32 +1604,6 @@ impl XtaskCommand for TestCommand {
             effective_filter.as_deref(),
             &effective_test_binaries,
         )?;
-
-        // List: show tests only
-        if self.list {
-            let mut cmd = ProcessBuilder::cargo().args(["nextest", "list"]);
-            if execution_plan.runner_packages.is_empty() {
-                cmd = cmd.arg("--workspace");
-                for package in &execution_plan.excluded_packages {
-                    cmd = cmd.args(["--exclude", package]);
-                }
-            } else {
-                for package in &execution_plan.runner_packages {
-                    cmd = cmd.args(["-p", package]);
-                }
-            }
-            for test_binary in &effective_test_binaries {
-                cmd = cmd.args(["--test", test_binary]);
-            }
-            if effective_lib_target {
-                cmd = cmd.arg("--lib");
-            }
-            if let Some(filter) = &effective_filter {
-                cmd = cmd.args(["-E", filter]);
-            }
-            cmd.run_ok()?;
-            return Ok(CommandResult::success().with_detail("tests listed"));
-        }
 
         let runtime_binary_requirements = runtime_binary_requirements_for_target(
             &execution_plan,
@@ -1770,7 +1779,8 @@ impl XtaskCommand for TestCommand {
                 ));
                 match (input_fingerprint, scope_key) {
                     (Some(input_fingerprint), Some(scope_key)) => {
-                        let reusable = !self.no_reuse && proof_kind == "test.nextest.exact";
+                        let reusable = self.can_consume_exact_test_proof()
+                            && proof_kind == "test.nextest.exact";
                         let manifest = serde_json::json!({
                             "scope": workload_scope.encode_marker(),
                             "runner_packages": execution_plan.runner_packages,
@@ -2369,6 +2379,29 @@ mod tests {
             crate::coordinator::proof_kind("test", &args),
             "test.nextest.plan"
         );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_list_disables_exact_test_proof_reuse() -> ::xtask::sandbox::TestResult<()> {
+        let command = TestCommand {
+            list: true,
+            packages: vec!["xtask".to_string()],
+            ..Default::default()
+        };
+
+        let args = command.semantic_invocation_args(
+            &WorkloadScope::Packages(vec!["xtask".to_string()]),
+            None,
+            &[],
+            false,
+        );
+
+        assert_eq!(
+            crate::coordinator::proof_kind("test", &args),
+            "test.nextest.exact"
+        );
+        assert!(!command.can_consume_exact_test_proof());
         Ok(())
     }
 
