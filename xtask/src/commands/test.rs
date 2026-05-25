@@ -2081,15 +2081,29 @@ impl XtaskCommand for TestCommand {
                         match serde_json::to_string(&manifest)
                             .map_err(color_eyre::eyre::Report::from)
                             .and_then(|manifest_json| {
+                                let filter_for_proof = effective_filter.clone();
                                 if let Some(result) = ctx.try_with_history_db(|db| {
-                                    db.record_test_proof_unit(
+                                    let r = db.record_test_proof_unit(
                                         invocation_id,
                                         &proof_kind,
                                         &scope_key,
                                         &input_fingerprint,
                                         &manifest_json,
                                         reusable,
-                                    )
+                                    );
+                                    // Store test filter for per-test-name evidence (#1393 Phase 3).
+                                    if r.is_ok() {
+                                        if let Some(ref filter) = filter_for_proof {
+                                            let _ = db.set_test_proof_filter(
+                                                invocation_id,
+                                                &proof_kind,
+                                                &scope_key,
+                                                &input_fingerprint,
+                                                filter,
+                                            );
+                                        }
+                                    }
+                                    r
                                 }) {
                                     result?;
                                 }
@@ -2872,19 +2886,14 @@ mod tests {
             msg == "tests skipped by exact proof" || msg == "tests skipped by package proofs"
         }));
         // Proof data may be in reused_proof (exact path) or reused_package_proofs (package path).
-        let reused_invocation: Option<i64> = result
-            .data
-            .as_ref()
-            .and_then(|data| {
-                data["reused_proof"]["invocation_id"]
-                    .as_i64()
-                    .or_else(|| {
-                        data["reused_package_proofs"]
-                            .as_array()
-                            .and_then(|proofs| proofs.first())
-                            .and_then(|p| p["invocation_id"].as_i64())
-                    })
-            });
+        let reused_invocation: Option<i64> = result.data.as_ref().and_then(|data| {
+            data["reused_proof"]["invocation_id"].as_i64().or_else(|| {
+                data["reused_package_proofs"]
+                    .as_array()
+                    .and_then(|proofs| proofs.first())
+                    .and_then(|p| p["invocation_id"].as_i64())
+            })
+        });
         assert_eq!(reused_invocation, Some(invocation_id));
         Ok(())
     }
