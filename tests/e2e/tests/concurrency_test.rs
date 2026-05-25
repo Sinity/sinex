@@ -440,3 +440,67 @@ async fn test_atomic_operations_correctness(ctx: TestContext) -> TestResult<()> 
 
     Ok(())
 }
+
+/// Test truly concurrent event submission: multiple tokio tasks publish
+/// simultaneously and the system persists exactly the right number of events
+/// without loss or duplication.
+#[sinex_test]
+#[ignore = "heavy: run with xtask test --heavy"]
+async fn test_concurrent_parallel_publish_exact_count(ctx: TestContext) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let _scope = ctx.pipeline().await?;
+    let concurrent_tasks = 4usize;
+    let events_per_task = 25usize;
+    let total_expected = concurrent_tasks * events_per_task;
+
+    // Build payload sets per task (sequentially, but the publishing happens concurrently).
+    let task_payloads: Vec<Vec<DynamicPayload>> = (0..concurrent_tasks)
+        .map(|task_id| {
+            let source = format!("concurrent-parallel-{task_id}");
+            (0..events_per_task)
+                .map(|i| {
+                    DynamicPayload::new(
+                        source.clone(),
+                        "concurrent.parallel",
+                        serde_json::json!({ "task_id": task_id, "sequence": i }),
+                    )
+                })
+                .collect()
+        })
+        .collect();
+
+    // Publish all task payload sets concurrently via futures::join_all.
+    let publish_futures: Vec<_> = task_payloads
+        .iter()
+        .map(|payloads| ctx.publish_many(payloads.clone()))
+        .collect();
+    let results = futures::future::join_all(publish_futures).await;
+    for result in results {
+        result?;
+    }
+
+    // Wait for all expected events to persist
+    ctx.timing()
+        .wait_for_event_count(total_expected)
+        .await?;
+
+    // Verify exact count per task (no loss, no duplication)
+    let pool = ctx.pool();
+    let mut grand_total: i64 = 0;
+    for task_id in 0..concurrent_tasks {
+        let source_obj = EventSource::from(format!("concurrent-parallel-{task_id}"));
+        let count = pool.events().count_by_source(&source_obj).await?;
+        assert_eq!(
+            count, events_per_task as i64,
+            "task {task_id}: expected {events_per_task} events, got {count}"
+        );
+        grand_total += count;
+    }
+
+    assert_eq!(
+        grand_total, total_expected as i64,
+        "grand total: expected {total_expected} events across {concurrent_tasks} concurrent tasks, got {grand_total}"
+    );
+
+    Ok(())
+}
