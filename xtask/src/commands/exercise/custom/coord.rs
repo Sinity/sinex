@@ -28,7 +28,7 @@ pub fn custom_coord_fresh_check(dir: &Path, verbose: bool) -> Vec<StepOutcome> {
     let is_fresh = action_str.as_ref().and_then(|v| v.as_str()) == Some("fresh");
     steps.push(outcome);
 
-    // Wait for the job to complete (if we got a job_id and it's not fresh)
+    // Wait for the job to complete (if we got a job_id and it is waitable)
     if let Some(id) = job_id {
         if is_fresh {
             // Fresh result — no real job to wait on, skip to second check
@@ -180,7 +180,7 @@ pub fn custom_coord_attach_check(dir: &Path, verbose: bool) -> Vec<StepOutcome> 
     steps.push(outcome);
 
     // 3. Wait for the original job to finish (cleanup)
-    // Skip if first build returned "fresh" — the job_id is historical, not waitable
+    // Skip if first build returned "fresh" — it has an invocation_id, not a waitable job_id
     if first_is_fresh {
         steps.push(StepOutcome {
             label: "wait_cleanup".into(),
