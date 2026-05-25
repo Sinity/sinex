@@ -1121,7 +1121,12 @@ fn supports_fresh_reuse(command: &str) -> bool {
 }
 
 fn supports_fresh_reuse_for(command: &str, args: &[String]) -> bool {
-    supports_fresh_reuse(command) || (command == "test" && test_scope_is_fresh_reusable(args))
+    match command {
+        "check" => supports_fresh_reuse(command) && !args.iter().any(|arg| arg == "--fix"),
+        "build" => supports_fresh_reuse(command),
+        "test" => test_scope_is_fresh_reusable(args),
+        _ => false,
+    }
 }
 
 fn test_scope_is_fresh_reusable(args: &[String]) -> bool {
@@ -1984,6 +1989,9 @@ mod tests {
         assert!(!supports_fresh_reuse("fix"));
         assert!(!supports_fresh_reuse("test"));
         assert!(!supports_fresh_reuse("vm"));
+        assert!(supports_fresh_reuse_for("check", &[]));
+        assert!(supports_fresh_reuse_for("check", &["--full".into()]));
+        assert!(!supports_fresh_reuse_for("check", &["--fix".into()]));
         assert!(!supports_fresh_reuse_for("fix", &[]));
         assert!(supports_fresh_reuse_for(
             "test",
