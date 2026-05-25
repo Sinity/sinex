@@ -782,7 +782,8 @@ impl<'a> EventRepository<'a> {
                             scope_key,
                             equivalence_key,
                             created_by_operation_id::uuid as "created_by_operation_id: uuid::Uuid",
-                            node_model
+                            node_model,
+                            anchor_payload_hash as "anchor_payload_hash: Vec<u8>"
                         "#,
                         id.to_uuid(),
                         event_source.as_str(),
@@ -921,7 +922,8 @@ impl<'a> EventRepository<'a> {
                 scope_key,
                 equivalence_key,
                 created_by_operation_id::uuid as "created_by_operation_id: uuid::Uuid",
-                node_model
+                node_model,
+                anchor_payload_hash as "anchor_payload_hash: Vec<u8>"
             "#,
             id.to_uuid(),
             event.source.as_str(),
@@ -1178,7 +1180,7 @@ impl<'a> EventRepository<'a> {
                 source_material_id, offset_start, offset_end, offset_kind,
                 anchor_byte, associated_blob_ids,
                 temporal_policy, semantics_version, scope_key, equivalence_key,
-                created_by_operation_id, node_model
+                created_by_operation_id, node_model, anchor_payload_hash
             ) ",
         );
         builder.push_values(0..ids.len(), |mut b, idx| {
@@ -1398,7 +1400,7 @@ impl<'a> EventRepository<'a> {
                 source_material_id, anchor_byte, offset_start, offset_end, offset_kind,
                 source_event_ids, payload_schema_id, source_run_id, associated_blob_ids,
                 temporal_policy, semantics_version, scope_key, equivalence_key,
-                created_by_operation_id, node_model
+                created_by_operation_id, node_model, anchor_payload_hash
             ) ",
         );
 
@@ -2552,6 +2554,7 @@ mod tests {
             payload_schema_id: None,
             source_run_id: None,
             associated_blob_ids: None,
+            anchor_payload_hash: None,
             temporal_policy: None,
             semantics_version: None,
             scope_key: None,
@@ -2580,6 +2583,7 @@ mod tests {
             offset_end: None,
             offset_kind: None,
             source_event_ids: None,
+            anchor_payload_hash: None,
             associated_blob_ids: None,
             payload_schema_id: None,
             source_run_id: None,
