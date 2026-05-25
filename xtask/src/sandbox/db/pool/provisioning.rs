@@ -263,14 +263,16 @@ pub(super) async fn wait_for_database_absence_admin(
     conn: &mut PgConnection,
     name: &str,
 ) -> TestResult<()> {
-    const MAX_ATTEMPTS: usize = 20;
-    for attempt in 0..MAX_ATTEMPTS {
+    // Fast path: DROP DATABASE WITH (FORCE) is synchronous on local PG.
+    if !database_exists_admin(conn, name).await? {
+        return Ok(());
+    }
+    const MAX_ATTEMPTS: usize = 5;
+    for _attempt in 0..MAX_ATTEMPTS {
+        tokio::time::sleep(Duration::from_millis(100)).await;
         if !database_exists_admin(conn, name).await? {
             return Ok(());
         }
-
-        let delay = Duration::from_millis(50 + (attempt as u64 * 10));
-        tokio::time::sleep(delay).await;
     }
 
     Err(eyre!("Database {name} still present after drop attempts"))
@@ -311,7 +313,7 @@ async fn acquire_slot_lifecycle_lock(
             Ok(got_lock.then_some(lock_id))
         }
         SlotLifecycleLockMode::Wait => {
-            let deadline = std::time::Instant::now() + Duration::from_mins(1);
+            let deadline = std::time::Instant::now() + Duration::from_secs(10);
             let mut backoff = Duration::from_millis(25);
             loop {
                 let got_lock: bool = sqlx::query_scalar("SELECT pg_try_advisory_lock($1)")
@@ -323,7 +325,7 @@ async fn acquire_slot_lifecycle_lock(
                 }
                 if std::time::Instant::now() >= deadline {
                     return Err(eyre!(
-                        "Could not acquire slot lifecycle lock for {db_name} within 60s. \
+                        "Could not acquire slot lifecycle lock for {db_name} within 10s. \
                          Another process may be provisioning or recreating it."
                     ));
                 }
