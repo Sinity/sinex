@@ -1271,6 +1271,7 @@ fn extract_scope_args(command: &str, args: &[String]) -> Vec<String> {
                     || arg.starts_with("--threads=")
                     || arg.starts_with("--retries=")
                     || arg.starts_with("--timeout=")
+                    || arg.starts_with("--db-pool-size-env=")
                     || arg.starts_with("--impact-mode=")
                     || arg.starts_with("--impact-planner-version=")
                     || arg.starts_with("--impact-coverage-schema=")
@@ -2050,6 +2051,7 @@ mod tests {
             "--threads=1",
             "--retries=2",
             "--timeout=30s",
+            "--db-pool-size-env=48",
             "--debug",
             "--fail-fast",
             "--impact-mode=aggressive",

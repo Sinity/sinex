@@ -618,6 +618,12 @@ impl TestCommand {
         if self.no_reuse {
             args.push("--no-reuse".to_string());
         }
+        if let Some(pool_size) = std::env::var_os("SINEX_TEST_DB_POOL_SIZE") {
+            args.push(format!(
+                "--db-pool-size-env={}",
+                pool_size.to_string_lossy()
+            ));
+        }
         if self.ephemeral_postgres {
             args.push("--ephemeral-postgres".to_string());
         }
@@ -2141,6 +2147,26 @@ mod tests {
         assert!(
             args.contains(&"--all".to_string()),
             "--all must be part of the proof identity: {args:?}"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_semantic_invocation_args_include_configured_db_pool_size()
+    -> ::xtask::sandbox::TestResult<()> {
+        let _guard = crate::sandbox::prelude::EnvGuard::set_single("SINEX_TEST_DB_POOL_SIZE", "48");
+        let command = TestCommand::default();
+
+        let args = command.semantic_invocation_args(
+            &WorkloadScope::Packages(vec!["sinex-node-sdk".to_string()]),
+            Some("test(one)"),
+            &[],
+            true,
+        );
+
+        assert!(
+            args.contains(&"--db-pool-size-env=48".to_string()),
+            "configured DB pool size must be part of the proof identity: {args:?}"
         );
         Ok(())
     }
