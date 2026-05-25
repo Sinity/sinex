@@ -621,9 +621,6 @@ impl TestCommand {
         if self.debug {
             args.push("--debug".to_string());
         }
-        if self.fail_fast {
-            args.push("--fail-fast".to_string());
-        }
         if self.heavy {
             args.push("--heavy".to_string());
         }
@@ -632,9 +629,6 @@ impl TestCommand {
         }
         if self.all {
             args.push("--all".to_string());
-        }
-        if self.allow_contended_host {
-            args.push("--allow-contended-host".to_string());
         }
         if self.no_reuse {
             args.push("--no-reuse".to_string());
@@ -2257,6 +2251,33 @@ mod tests {
         assert!(
             args.contains(&"--runtime-binary=sinex-ingestd:sinex-ingestd".to_string()),
             "runtime binary requirements must be part of proof identity: {args:?}"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_semantic_invocation_args_ignore_success_irrelevant_scheduling_flags()
+    -> ::xtask::sandbox::TestResult<()> {
+        let command = TestCommand {
+            fail_fast: true,
+            allow_contended_host: true,
+            ..Default::default()
+        };
+
+        let args = command.semantic_invocation_args(
+            &WorkloadScope::Packages(vec!["xtask".to_string()]),
+            Some("test(example)"),
+            &[],
+            true,
+        );
+
+        assert!(
+            !args.contains(&"--fail-fast".to_string()),
+            "--fail-fast affects failure scheduling, not successful proof identity: {args:?}"
+        );
+        assert!(
+            !args.contains(&"--allow-contended-host".to_string()),
+            "host-pressure override affects command admission, not proof identity: {args:?}"
         );
         Ok(())
     }

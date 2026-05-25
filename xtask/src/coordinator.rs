@@ -1289,7 +1289,6 @@ fn extract_scope_args(command: &str, args: &[String]) -> Vec<String> {
             "test" => matches!(
                 arg,
                 "--debug"
-                    | "--fail-fast"
                     | "--heavy"
                     | "--include-ignored"
                     | "--all"
@@ -2181,7 +2180,6 @@ mod tests {
             "--db-pool-size-env=48",
             "--runtime-binary=sinex-ingestd:sinex-ingestd",
             "--debug",
-            "--fail-fast",
             "--impact-mode=aggressive",
             "--impact-planner-version=impact-v2",
             "--impact-coverage-schema=llvm-json-v1",
@@ -2242,13 +2240,16 @@ mod tests {
 
     #[sinex_test]
     async fn test_scope_key_ignores_irrelevant() -> TestResult<()> {
-        // --fail-fast, --skip-preflight, --prime are NOT scope-relevant for tests
+        // --fail-fast, --skip-preflight, and host-contention overrides are not
+        // proof-relevant for successful test runs: if the run is green, the
+        // selected tests passed regardless of those scheduling guards.
         let args1 = vec!["-p".into(), "sinex-db".into()];
         let args2 = vec![
             "-p".into(),
             "sinex-db".into(),
             "--fail-fast".into(),
             "--skip-preflight".into(),
+            "--allow-contended-host".into(),
         ];
         assert_eq!(scope_key("test", &args1), scope_key("test", &args2));
         Ok(())
