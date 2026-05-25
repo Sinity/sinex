@@ -65,6 +65,8 @@ pub struct StreamBatchRow {
     pub source_run_id: Option<Uuid>,
     /// Associated blob IDs
     pub associated_blob_ids: Option<Vec<Uuid>>,
+    /// BLAKE3 hash of source-material byte range (material events only)
+    pub anchor_payload_hash: Option<Vec<u8>>,
 
     // Synthetic event metadata (nullable — only set for derived/synthesized events)
     /// Temporal policy used for `ts_orig` derivation
