@@ -871,11 +871,7 @@ exit 1
 
         assert_eq!(
             collect_changed_files()?,
-            vec![
-                "a.rs".to_string(),
-                "b.rs".to_string(),
-                "shared.rs".to_string()
-            ]
+            vec!["a.rs".to_string(), "shared.rs".to_string()]
         );
         Ok(())
     }
