@@ -69,6 +69,11 @@ pub struct Event<T = JsonValue> {
     #[serde(flatten)]
     pub provenance: Provenance,
 
+    /// BLAKE3 hash of source-material byte range (material events only).
+    /// NULL for synthesis. 32 bytes. Verified on replay — mismatch → DLQ.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub anchor_payload_hash: Option<Vec<u8>>,
+
     /// Array of associated blob IDs (screenshots, recordings, etc.)
     pub associated_blob_ids: Option<Vec<Uuid>>,
 
@@ -197,6 +202,7 @@ impl<T: Serialize> Event<T> {
             source_run_id: self.source_run_id,
             payload_schema_id: self.payload_schema_id,
             provenance: self.provenance,
+            anchor_payload_hash: self.anchor_payload_hash.clone(),
             associated_blob_ids: self.associated_blob_ids,
             temporal_policy: self.temporal_policy,
             semantics_version: self.semantics_version,
@@ -225,6 +231,7 @@ impl Event<JsonValue> {
             source_run_id: self.source_run_id,
             payload_schema_id: self.payload_schema_id,
             provenance: self.provenance.clone(),
+            anchor_payload_hash: self.anchor_payload_hash.clone(),
             associated_blob_ids: self.associated_blob_ids.clone(),
             temporal_policy: self.temporal_policy,
             semantics_version: self.semantics_version.clone(),
@@ -255,6 +262,7 @@ impl Event<JsonValue> {
             source_run_id: None,
             payload_schema_id: None,
             provenance,
+            anchor_payload_hash: None,
             associated_blob_ids: None,
             temporal_policy: None,
             semantics_version: None,
