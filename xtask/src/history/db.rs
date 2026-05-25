@@ -1214,6 +1214,7 @@ impl HistoryDb {
                 started_at TEXT NOT NULL,
                 finished_at TEXT,
                 duration_secs REAL,
+                test_filter TEXT,
                 UNIQUE(invocation_id, proof_kind, scope_key, input_fingerprint)
             );
 
@@ -1518,6 +1519,7 @@ impl HistoryDb {
                 started_at TEXT NOT NULL,
                 finished_at TEXT,
                 duration_secs REAL,
+                test_filter TEXT,
                 UNIQUE(invocation_id, proof_kind, scope_key, input_fingerprint)
             );
 
@@ -1527,6 +1529,12 @@ impl HistoryDb {
                 ON test_proof_units(proof_kind, scope_key, input_fingerprint, reusable, status, finished_at);
             ",
         )?;
+        // Add test_filter column for test-name granularity evidence (#1393 Phase 3).
+        // The column is nullable — broad runs without a filter leave it NULL.
+        let _ = self.conn.execute(
+            "ALTER TABLE test_proof_units ADD COLUMN test_filter TEXT",
+            [],
+        );
         Ok(())
     }
 
@@ -2747,7 +2755,8 @@ impl HistoryDb {
                     status,
                     started_at,
                     finished_at,
-                    duration_secs
+                    duration_secs,
+                    test_filter
                 FROM test_proof_units
                 WHERE proof_kind = ?1
                   AND input_fingerprint = ?2
@@ -2787,7 +2796,8 @@ impl HistoryDb {
                     status,
                     started_at,
                     finished_at,
-                    duration_secs
+                    duration_secs,
+                    test_filter
                 FROM test_proof_units
                 WHERE proof_kind = ?1
                   AND scope_key = ?2
@@ -5503,6 +5513,7 @@ pub struct TestProofUnit {
     pub scope_key: String,
     pub input_fingerprint: String,
     pub manifest_json: String,
+    pub test_filter: Option<String>,
     pub reusable: bool,
     pub status: InvocationStatus,
     pub started_at: String,
@@ -5524,6 +5535,7 @@ fn row_to_test_proof_unit(row: &rusqlite::Row<'_>) -> rusqlite::Result<TestProof
         started_at: row.get(8)?,
         finished_at: row.get(9)?,
         duration_secs: row.get(10)?,
+        test_filter: row.get(11)?,
     })
 }
 
