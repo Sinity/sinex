@@ -353,6 +353,7 @@ impl EventValidator {
             source_run_id: None,
             payload_schema_id: None,
             provenance: Provenance::from_material(Id::<SourceMaterial>::new(), 0, None, None),
+            anchor_payload_hash: None,
             associated_blob_ids: None,
             temporal_policy: None,
             semantics_version: None,
