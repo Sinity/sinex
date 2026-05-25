@@ -951,6 +951,9 @@ fn extract_explicit_packages(command: &str, args: &[String]) -> Vec<String> {
     let mut take_next = false;
 
     for arg in args {
+        if command == "test" && arg == "--" {
+            break;
+        }
         if take_next {
             packages.push(arg.clone());
             take_next = false;
@@ -1985,6 +1988,23 @@ mod tests {
                 "case-name".into(),
             ]
         ));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_test_binary_args_do_not_become_package_scope() -> TestResult<()> {
+        let packages = extract_explicit_packages(
+            "test",
+            &[
+                "-p".into(),
+                "xtask".into(),
+                "--".into(),
+                "-p".into(),
+                "fake-test-arg".into(),
+            ],
+        );
+
+        assert_eq!(packages, vec!["xtask".to_string()]);
         Ok(())
     }
 
