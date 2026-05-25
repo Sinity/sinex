@@ -81,9 +81,9 @@ pub enum CoordinationResult {
     Superseded { old_job_id: i64, new_job_id: i64 },
     /// Running job has same scope + tree — wait for its results.
     Attached { job_id: i64 },
-    /// Last completed job already validated this scope + tree (check/build only).
+    /// Last completed invocation already validated this scope + tree.
     Fresh {
-        job_id: i64,
+        invocation_id: i64,
         status: String,
         duration_secs: f64,
     },
@@ -299,8 +299,8 @@ impl JobCoordinator {
                     self.check_fresh(command, spawn_args, &tree_fingerprint, &scope_key)
             {
                 // R5: Log fresh decision with structured fields
-                let job_id = match &fresh {
-                    CoordinationResult::Fresh { job_id, .. } => *job_id,
+                let invocation_id = match &fresh {
+                    CoordinationResult::Fresh { invocation_id, .. } => *invocation_id,
                     _ => -1,
                 };
                 tracing::info!(
@@ -309,7 +309,7 @@ impl JobCoordinator {
                     decision = "fresh",
                     scope_key = %scope_key,
                     tree_fingerprint = %tree_fingerprint,
-                    job_id = job_id,
+                    invocation_id = invocation_id,
                     "coordinator: fresh — no recompilation needed"
                 );
                 return Ok(fresh);
@@ -334,22 +334,53 @@ impl JobCoordinator {
                 CoordinationResult::Fresh { .. } => "fresh",
                 CoordinationResult::Queued { .. } => "queued",
             };
-            let job_id = match &result {
+            match &result {
+                CoordinationResult::Fresh { invocation_id, .. } => {
+                    tracing::info!(
+                        target: "xtask::coordinator",
+                        command = command,
+                        decision = decision,
+                        scope_key = %scope_key,
+                        tree_fingerprint = %tree_fingerprint,
+                        invocation_id = invocation_id,
+                        "coordinator decision"
+                    );
+                }
                 CoordinationResult::Started { job_id }
-                | CoordinationResult::Attached { job_id } => *job_id,
-                CoordinationResult::Superseded { new_job_id, .. } => *new_job_id,
-                CoordinationResult::Fresh { job_id, .. } => *job_id,
-                CoordinationResult::Queued { current_job_id } => *current_job_id,
-            };
-            tracing::info!(
-                target: "xtask::coordinator",
-                command = command,
-                decision = decision,
-                scope_key = %scope_key,
-                tree_fingerprint = %tree_fingerprint,
-                job_id = job_id,
-                "coordinator decision"
-            );
+                | CoordinationResult::Attached { job_id } => {
+                    tracing::info!(
+                        target: "xtask::coordinator",
+                        command = command,
+                        decision = decision,
+                        scope_key = %scope_key,
+                        tree_fingerprint = %tree_fingerprint,
+                        job_id = job_id,
+                        "coordinator decision"
+                    );
+                }
+                CoordinationResult::Superseded { new_job_id, .. } => {
+                    tracing::info!(
+                        target: "xtask::coordinator",
+                        command = command,
+                        decision = decision,
+                        scope_key = %scope_key,
+                        tree_fingerprint = %tree_fingerprint,
+                        job_id = new_job_id,
+                        "coordinator decision"
+                    );
+                }
+                CoordinationResult::Queued { current_job_id } => {
+                    tracing::info!(
+                        target: "xtask::coordinator",
+                        command = command,
+                        decision = decision,
+                        scope_key = %scope_key,
+                        tree_fingerprint = %tree_fingerprint,
+                        job_id = current_job_id,
+                        "coordinator decision"
+                    );
+                }
+            }
         }
 
         // Lock released on drop of lock_file
@@ -538,7 +569,7 @@ impl JobCoordinator {
             ) {
                 Ok(Some(unit)) => {
                     return Some(CoordinationResult::Fresh {
-                        job_id: unit.invocation_id,
+                        invocation_id: unit.invocation_id,
                         status: "success".to_string(),
                         duration_secs: unit.duration_secs.unwrap_or(0.0),
                     });
@@ -562,7 +593,7 @@ impl JobCoordinator {
         match db.get_successful_proof_evidence(command, &proof_kind, tree_fingerprint, scope_key) {
             Ok(Some(last)) => {
                 return Some(CoordinationResult::Fresh {
-                    job_id: last.invocation_id,
+                    invocation_id: last.invocation_id,
                     status: "success".to_string(),
                     duration_secs: last.duration_secs.unwrap_or(0.0),
                 });
@@ -1719,15 +1750,15 @@ pub fn update_coordinator_state(command: &str, bg_result: &CommandResult) -> Res
 pub fn coordination_to_result(result: &CoordinationResult, ctx: &CommandContext) -> CommandResult {
     match result {
         CoordinationResult::Fresh {
-            job_id,
+            invocation_id,
             status,
             duration_secs,
         } => coordination_fresh_result(
-            *job_id,
+            *invocation_id,
             status,
             *duration_secs,
             ctx,
-            fresh_packages_probe(*job_id),
+            fresh_packages_probe(*invocation_id),
         ),
         CoordinationResult::Attached { job_id } => {
             tracing::info!(
@@ -1832,16 +1863,16 @@ struct FreshPackagesProbe {
     issue: Option<String>,
 }
 
-fn fresh_packages_probe(job_id: i64) -> FreshPackagesProbe {
+fn fresh_packages_probe(invocation_id: i64) -> FreshPackagesProbe {
     let cfg = config();
     let db_path = cfg.history_db_path();
     let result = crate::history::HistoryDb::open(&db_path)
-        .and_then(|db| db.get_compiled_packages_for_invocation(job_id));
-    fresh_packages_probe_from_result(job_id, &db_path, result)
+        .and_then(|db| db.get_compiled_packages_for_invocation(invocation_id));
+    fresh_packages_probe_from_result(invocation_id, &db_path, result)
 }
 
 fn fresh_packages_probe_from_result(
-    job_id: i64,
+    invocation_id: i64,
     db_path: &std::path::Path,
     result: color_eyre::eyre::Result<Vec<String>>,
 ) -> FreshPackagesProbe {
@@ -1853,7 +1884,7 @@ fn fresh_packages_probe_from_result(
         Err(error) => FreshPackagesProbe {
             packages: Vec::new(),
             issue: Some(format!(
-                "failed to load compiled packages for fresh job {job_id} from {}: {error:#}",
+                "failed to load compiled packages for fresh invocation {invocation_id} from {}: {error:#}",
                 db_path.display()
             )),
         },
@@ -1861,7 +1892,7 @@ fn fresh_packages_probe_from_result(
 }
 
 fn coordination_fresh_result(
-    job_id: i64,
+    invocation_id: i64,
     status: &str,
     duration_secs: f64,
     ctx: &CommandContext,
@@ -1869,7 +1900,7 @@ fn coordination_fresh_result(
 ) -> CommandResult {
     tracing::info!(
         target: "xtask::coordinator",
-        job_id = job_id,
+        invocation_id = invocation_id,
         action = "fresh",
         cached_status = status,
         cached_duration_secs = duration_secs,
@@ -1879,7 +1910,7 @@ fn coordination_fresh_result(
     if ctx.is_human() {
         if packages_probe.packages.is_empty() {
             println!(
-                "✅ Fresh: last check already validated this code state (job {job_id}, {status} in {duration_secs:.1}s)"
+                "✅ Fresh: last invocation already validated this code state (invocation {invocation_id}, {status} in {duration_secs:.1}s)"
             );
         } else {
             let pkg_list = if packages_probe.packages.len() <= 4 {
@@ -1892,7 +1923,7 @@ fn coordination_fresh_result(
                 )
             };
             println!(
-                "✅ Fresh: last check already validated {pkg_list} (job {job_id}, {duration_secs:.1}s)"
+                "✅ Fresh: last invocation already validated {pkg_list} (invocation {invocation_id}, {duration_secs:.1}s)"
             );
         }
         if let Some(issue) = &packages_probe.issue {
@@ -1901,10 +1932,10 @@ fn coordination_fresh_result(
     }
 
     let mut result = CommandResult::success()
-        .with_message(format!("Fresh result from job {job_id}"))
+        .with_message(format!("Fresh result from invocation {invocation_id}"))
         .with_data(serde_json::json!({
             "action": "fresh",
-            "job_id": job_id,
+            "invocation_id": invocation_id,
             "cached_status": status,
             "cached_duration_secs": duration_secs,
             "compiled_packages": packages_probe.packages,
@@ -3498,7 +3529,8 @@ sinex-primitives = { path = "../sinex-primitives" }
         assert!(result.is_success());
         let data = result.data.as_ref().expect("should have data");
         assert_eq!(data["action"], "fresh");
-        assert_eq!(data["job_id"], 42);
+        assert_eq!(data["invocation_id"], 42);
+        assert_eq!(data["job_id"], serde_json::Value::Null);
         assert_eq!(data["cached_status"], "success");
         assert_eq!(data["cached_duration_secs"], 3.5);
         assert_eq!(
@@ -3542,7 +3574,7 @@ sinex-primitives = { path = "../sinex-primitives" }
         );
         assert!(probe.packages.is_empty());
         let issue = probe.issue.expect("probe failure should surface");
-        assert!(issue.contains("failed to load compiled packages for fresh job 7"));
+        assert!(issue.contains("failed to load compiled packages for fresh invocation 7"));
         assert!(issue.contains("/tmp/test-history.db"));
         assert!(issue.contains("history exploded"));
         Ok(())
@@ -3679,7 +3711,7 @@ sinex-primitives = { path = "../sinex-primitives" }
             CoordinationResult::Started { job_id: 1 },
             CoordinationResult::Attached { job_id: 2 },
             CoordinationResult::Fresh {
-                job_id: 3,
+                invocation_id: 3,
                 status: "success".into(),
                 duration_secs: 1.5,
             },
