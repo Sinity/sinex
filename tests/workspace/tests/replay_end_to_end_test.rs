@@ -441,22 +441,26 @@ async fn replay_end_to_end_seeds_executes_archives(ctx: TestContext) -> TestResu
         "replay-reingested events must be material-provenance (source_material_id set, source_event_ids NULL)"
     );
 
-    // Verify no cross-material contamination: only the targeted material_id
-    // should be in scope. Other materials untouched.
-    let other_material_count: i64 = sqlx::query_scalar(
-        r"
-        SELECT COUNT(*)::bigint FROM core.events
-        WHERE source_material_id IS NOT NULL
-          AND source_material_id != $1::uuid
-        ",
-    )
-    .bind(*material_id.as_uuid())
-    .fetch_one(pool)
-    .await?;
-    // On a fresh test DB, this should be 0 — but only assert if we didn't
-    // seed other materials. The key invariant: replay of material A doesn't
-    // touch material B.
-    let _ = other_material_count; // documented invariant; zero in this test
+    // Verify no cross-material contamination: seed a second material, replay
+    // only the first, and assert the second's events are untouched.
+    let (_material_b_id, event_b_ids) = stack
+        .seed_material_with_events("test-node-b", "file.created", 2)
+        .await?;
+    assert_eq!(event_b_ids.len(), 2, "seeded 2 events for material B");
+
+    // After replay of material A, material B's events should still be live
+    // in core.events — replay is scoped to one material_id.
+    for event_id in &event_b_ids {
+        let live_count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*)::bigint FROM core.events WHERE id = $1::uuid")
+                .bind(event_id.as_uuid())
+                .fetch_one(pool)
+                .await?;
+        assert_eq!(
+            live_count, 1,
+            "material B event {event_id} should remain in core.events — replay of material A must not cross material boundaries"
+        );
+    }
 
     // ── Step 11: Verify scan command was dispatched to the fake node ──────
     let dispatched_command = scan_command_rx.await.map_err(|_| {
