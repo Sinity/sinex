@@ -67,14 +67,17 @@ pub enum DuplicateDependencyClass {
 }
 
 impl DuplicateDependencyClass {
+    #[must_use]
     pub const fn is_direct_workspace(self) -> bool {
         matches!(self, Self::DirectWorkspace)
     }
 
+    #[must_use]
     pub const fn is_transitive_upstream(self) -> bool {
         matches!(self, Self::TransitiveUpstream)
     }
 
+    #[must_use]
     pub const fn label(self) -> &'static str {
         match self {
             Self::DirectWorkspace => "direct workspace debt",

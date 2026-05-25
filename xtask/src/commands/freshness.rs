@@ -206,7 +206,7 @@ mod tests {
     use crate::sandbox::prelude::*;
 
     #[sinex_test]
-    async fn freshness_explain_marks_test_reuse_disabled() -> TestResult<()> {
+    async fn freshness_explain_marks_exact_test_reuse_enabled() -> TestResult<()> {
         let ctx = CommandContext::new(
             OutputWriter::new(OutputFormat::Json),
             false,
@@ -222,8 +222,9 @@ mod tests {
         let data = result.data.expect("freshness explain should emit data");
 
         assert_eq!(data["command"], "test");
-        assert_eq!(data["fresh_reuse_enabled"], false);
-        assert_eq!(data["reuse"]["decision"], "disabled");
+        assert_eq!(data["fresh_reuse_enabled"], true);
+        assert_ne!(data["reuse"]["decision"], "disabled");
+        assert_eq!(data["proof_kind"], "test.nextest.exact");
         assert_eq!(data["scope"]["kind"], "packages");
         Ok(())
     }

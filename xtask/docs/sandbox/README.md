@@ -197,94 +197,61 @@ EVIDENCE: <path>.evidence.json SUMMARY: <path>.summary.txt (<error>)
 ```
 
 The evidence bundle contains the failing test, error, pool state, context state,
-process snapshot, timeline events, proof metadata, capture summaries, and
-artifact references. Captured tracing logs are attached automatically when
-present. Runtime scenarios should also attach taxonomy metadata through
-`#[sinex_test(...)]` so the test can be selected by tag and the failure evidence
-can be read without decoding the test name.
-
-Scenario categories are intentionally product-shaped but still test-owned:
-`source_material`, `replay`, `runtime`, `node_adapter`, `gateway`, `schema`,
-`command_contract`, and `deployment_boundary`.
-
-Scenario lanes describe run policy:
-
-- `fast`: included in the normal local loop.
-- `heavy`: ignored by default; run intentionally with `xtask test --heavy` or a matching scenario selector.
-- `soak`: long-running stress/soak coverage; run intentionally.
-- `vm`: exported VM/deployment-boundary scenarios; run through the VM surface.
-
-Cost tiers are evidence metadata, not scheduling logic: `fast`, `integration`,
-`heavy`, `soak`, and `vm`.
+process snapshot, timeline events, capture summaries, and artifact references.
+Captured tracing logs are attached automatically when present. Runtime
+dependencies observed through harness entrypoints are emitted as impact artifacts
+under `.sinex/test-artifacts/impact/`; scheduling decisions must come from
+machine-derived impact data and exact proof fingerprints, not hand-written test
+taxonomy labels.
 
 ```rust
-#[sinex_test(
-    timeout = 120,
-    scenario = "source-material.row-stream-batched-anchors.v1",
-    category = "source_material",
-    lane = "fast",
-    cost_tier = "integration",
-    tags = "source_material,row_stream,anchors",
-    fixtures = "postgres,nats,ingestd,material_spool",
-    subjects = "issue:315,node-sdk:source-material",
-    claims = "tiny-logical-records-batched,per-record-byte-anchors-preserved",
-    reproducer = "xtask test -p sinex-node-sdk --scenario-tag row_stream"
-)]
-async fn source_material_scenario(ctx: TestContext) -> Result<()> {
+#[sinex_test(timeout = 120)]
+async fn source_material_row_stream_preserves_anchors(ctx: TestContext) -> Result<()> {
     // test body
     Ok(())
 }
 ```
 
-Use scenario selectors to stay on the normal nextest plane:
+Use ordinary nextest filters for exact test selection:
 
 ```bash
-xtask test --list-scenarios
-xtask test --scenario-tag row_stream
-xtask test --scenario-category source_material
-xtask test --scenario-lane heavy --heavy
+xtask test -p sinex-node-sdk -E 'test(source_material_row_stream_preserves_anchors)'
+xtask impact explain
 ```
 
-Resource-shape benchmarks should use the same scenario surface when the metric
-belongs to product/runtime behavior rather than the xtask command runner. Keep
-the test assertions limited to correctness invariants, and write measured
-resource profiles as JSON evidence artifacts:
+Resource-shape tests should stay in Rust tests when the metric belongs to
+product/runtime behavior rather than the xtask command runner. Keep assertions
+limited to correctness invariants, and write measured resource profiles as JSON
+evidence artifacts:
 
 ```bash
-xtask test -p sinex-node-sdk --scenario-tag frame_amplification
-xtask test -p sinex-node-sdk --scenario-tag duplicate_content
-xtask test -p sinex-node-sdk --scenario-tag storage_profile --heavy
+xtask test -p sinex-node-sdk -E 'test(source_material_scenario_batches_row_stream_records_with_stable_anchors)'
+xtask test -p sinex-node-sdk -E 'test(source_material_scenario_duplicate_content_reuses_blob_identity)'
+xtask test -p sinex-node-sdk --heavy -E 'test(source_material_resource_storage_backend_profile)'
 ```
 
 Those artifacts are trendable input records. They are not perf contracts unless
 a later change deliberately promotes a measured metric into a documented gate.
 
-Migration note: the source-material row-stream and restart-recovery slice is
-now represented by `sinex-node-sdk` scenario tests, not `xtask exercise`.
+Migration note: source-material row-stream and restart-recovery coverage lives
+in `sinex-node-sdk` Rust tests, not `xtask exercise` and not taxonomy metadata.
 Future `xtask exercise` entries that validate product/runtime behavior rather
 than xtask command contracts should be treated as migration-only and moved into
-`#[sinex_test(... scenario = ...)]` coverage.
+ordinary `#[sinex_test]` coverage.
 
 Tests can opt into richer collectors before failing:
 
 ```rust
 ctx.record_evidence_event("fixture", "created source material", json!({"source": "terminal"}));
-ctx.set_proof_metadata(ProofMetadata {
-    runner_id: Some("runner:terminal-source-material".into()),
-    subject_refs: vec!["subject:node/terminal".into()],
-    claim_ids: vec!["claim:source-material-provenance".into()],
-    status: Some("failed".into()),
-    reproducer: Some("xtask test -p xtask -E 'test(name)'".into()),
-    environment: json!({"profile": "fast"}),
-});
 ctx.capture_db_evidence("db").await?;
 ctx.capture_nats_evidence("nats").await?;
 ctx.capture_material_directory_evidence("spool", spool_dir)?;
 ```
 
 Use named collectors for source-material, NATS, DB, logs, process, and custom
-scenario evidence. `xtask test` only surfaces the artifact paths; scenario
-semantics live in Rust tests and the evidence bundle schema.
+evidence. `xtask test` surfaces artifact paths and records runtime dependency
+edges for impact planning; semantics live in Rust tests and production code
+contracts.
 
 Override the artifact directory with `SINEX_TEST_FAIL_DIR`.
 

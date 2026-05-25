@@ -111,8 +111,7 @@ mod tests {
     use tokio::sync::mpsc;
     use uuid::Uuid;
     use xtask::sandbox::{
-        EnvGuard, EphemeralNats, TestContext, TestResult, sinex_test,
-        timing::WaitHelpers,
+        EnvGuard, EphemeralNats, TestContext, TestResult, sinex_test, timing::WaitHelpers,
     };
 
     struct TestRuntimeHarness {
@@ -651,15 +650,12 @@ mod tests {
                 let starts = starts.clone();
                 async move {
                     let metadata =
-                        kv_client
-                            .get_instance(&instance_id)
-                            .await?
-                            .ok_or_else(|| {
-                                SinexError::processing("instance metadata missing from KV")
-                            })?;
+                        kv_client.get_instance(&instance_id).await?.ok_or_else(|| {
+                            SinexError::processing("instance metadata missing from KV")
+                        })?;
                     Ok::<bool, SinexError>(
                         starts.load(Ordering::SeqCst) == 1
-                            && metadata.last_heartbeat >= initial_last_heartbeat + 1,
+                            && metadata.last_heartbeat > initial_last_heartbeat,
                     )
                 }
             },
@@ -672,7 +668,7 @@ mod tests {
             .await?
             .ok_or_else(|| SinexError::processing("instance metadata missing from KV"))?;
         assert!(
-            metadata.last_heartbeat >= initial_last_heartbeat + 1,
+            metadata.last_heartbeat > initial_last_heartbeat,
             "leader maintenance should keep refreshing last_heartbeat beyond startup registration"
         );
         assert_eq!(

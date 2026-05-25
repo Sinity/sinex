@@ -34,6 +34,7 @@ Regenerate with `xtask docs sync` or `xtask docs command-reference`; verify drif
 | `history` | Query build, test, and runtime history recorded by xtask |
 | `analytics` | `xtask analytics` — developer intelligence analytics |
 | `freshness` | Inspect coordinator freshness keys and reuse decisions |
+| `impact` |  |
 | `git-stack` | Plan and materialize PR-sized git branch stacks from the current commit graph |
 | `doctor` | Probe developer-environment health and deployment readiness |
 | `ra-diagnose` | Diagnose rust-analyzer process footprint and local workspace contract |
@@ -101,10 +102,6 @@ Run the repo's primary nextest-backed test workflows
 | `--prime` | no | no | Prime database before testing |
 | `-l, --list` | no | no | List tests instead of running |
 | `-E, --filter` | yes | no | Filter tests by name pattern (nextest -E filter) |
-| `--scenario-tag` | yes | no | Run tests whose sinex_test scenario metadata includes this tag |
-| `--scenario-category` | yes | no | Run tests whose sinex_test scenario metadata uses this category |
-| `--scenario-lane` | yes | no | Run tests whose sinex_test scenario metadata uses this lane |
-| `--list-scenarios` | no | no | List discovered sinex_test scenarios instead of running tests |
 | `-p, --package` | yes | no | Run tests for specific package(s) |
 | `--exclude` | yes | no | Exclude workspace package(s) from --all/workspace test runs |
 | `--test` | yes | no | Run tests from specific test binary target(s) (nextest --test) |
@@ -1285,6 +1282,31 @@ Explain the freshness key for a command scope
 |---|---|---|---|
 | `command` | yes | yes | Coordinated command to explain, such as check, build, fix, test, or vm |
 | `args` | yes | no | Arguments for the explained command. Use `--` before hyphen-prefixed args |
+
+
+## `xtask impact`
+
+**Subcommands**
+
+| Command | Purpose |
+|---|---|
+| `explain` | Explain the default `xtask test` impact plan for the current diff |
+| `audit` | Sample skipped tests by forcing a broader local run |
+
+### `xtask impact explain`
+
+Explain the default `xtask test` impact plan for the current diff
+
+
+### `xtask impact audit`
+
+Sample skipped tests by forcing a broader local run
+
+**Arguments**
+
+| Flag | Value | Required | Description |
+|---|---|---|---|
+| `--sample-skips` | yes | no | Number of skipped proof decisions to sample |
 
 
 ## `xtask git-stack`

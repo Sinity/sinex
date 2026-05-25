@@ -1594,17 +1594,7 @@ mod tests {
         Ok(())
     }
 
-    #[sinex_test(
-        scenario = "source-adapter.record-source-harness-laws.v1",
-        category = "node_adapter",
-        lane = "fast",
-        cost_tier = "fast",
-        tags = "source_adapter_laws,record_source,anchors,checkpoint",
-        fixtures = "mock_record_source,capturing_record_sink",
-        subjects = "node_adapter:record_source_harness,issue:485",
-        claims = "claim:record_source.cursor_and_anchor_laws",
-        reproducer = "xtask test -p sinex-node-sdk --scenario-tag source_adapter_laws"
-    )]
+    #[sinex_test]
     async fn harness_materializes_records_and_finalizes_sink(_ctx: TestContext) -> TestResult<()> {
         let sink = CapturingRecordSink::default();
         let source = MockRecordSource::new(
@@ -1665,11 +1655,10 @@ mod tests {
     async fn append_only_source_reads_complete_lines_from_checkpoint() -> TestResult<()> {
         let temp = tempfile::NamedTempFile::new()?;
         tokio::fs::write(temp.path(), b"one\ntwo\npartial").await?;
-        let path = Utf8PathBuf::from_path_buf(temp.path().to_path_buf())
-            .map_err(|path| {
-                SinexError::validation("temporary path was not valid UTF-8")
-                    .with_context("path", format!("{path:?}"))
-            })?;
+        let path = Utf8PathBuf::from_path_buf(temp.path().to_path_buf()).map_err(|path| {
+            SinexError::validation("temporary path was not valid UTF-8")
+                .with_context("path", format!("{path:?}"))
+        })?;
         let source = RecordSources::append_only_utf8_file(path);
         let batch = source
             .read_batch(&source.initial_checkpoint(), RecordReadHorizon::Unbounded)
@@ -1774,11 +1763,10 @@ mod tests {
         conn.execute("INSERT INTO history (value) VALUES ('one'), ('two')", [])?;
         drop(conn);
 
-        let db_path = Utf8PathBuf::from_path_buf(temp.path().to_path_buf())
-            .map_err(|path| {
-                SinexError::validation("temporary path was not valid UTF-8")
-                    .with_context("path", format!("{path:?}"))
-            })?;
+        let db_path = Utf8PathBuf::from_path_buf(temp.path().to_path_buf()).map_err(|path| {
+            SinexError::validation("temporary path was not valid UTF-8")
+                .with_context("path", format!("{path:?}"))
+        })?;
         let source = RecordSources::sqlite(
             db_path.clone(),
             "test://sqlite-snapshot",

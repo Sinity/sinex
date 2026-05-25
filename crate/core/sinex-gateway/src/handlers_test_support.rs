@@ -13,11 +13,11 @@ use crate::handlers::rpc_handlers::{
     validate_entity_name as validate_entity_name_inner,
 };
 pub fn decode_note_content(base64_content: &str) -> Result<String> {
-    decode_note_content_inner(base64_content).map_err(Into::into)
+    decode_note_content_inner(base64_content)
 }
 
 pub fn validate_entity_name(name: &str) -> Result<()> {
-    validate_entity_name_inner(name).map_err(Into::into)
+    validate_entity_name_inner(name)
 }
 
 pub fn validate_entity_link(from_id: &str, to_id: &str) -> Result<()> {
@@ -33,13 +33,13 @@ pub fn validate_entity_link(from_id: &str, to_id: &str) -> Result<()> {
         .map_err(|error| {
             SinexError::validation("Invalid or missing to_entity_id").with_std_error(&error)
         })?;
-    validate_entity_link_ids_inner(&from, &to).map_err(Into::into)
+    validate_entity_link_ids_inner(&from, &to)
 }
 
 pub fn decode_blob_content(content_b64: &str, limit: usize) -> Result<Vec<u8>> {
-    decode_blob_content_inner(content_b64, limit).map_err(Into::into)
+    decode_blob_content_inner(content_b64, limit)
 }
 
 pub fn parse_replay_state(value: &str) -> Result<ReplayState> {
-    parse_replay_state_inner(value).map_err(Into::into)
+    parse_replay_state_inner(value)
 }

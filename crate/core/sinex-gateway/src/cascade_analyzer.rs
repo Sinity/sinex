@@ -241,10 +241,10 @@ impl StreamingCascadeAnalyzer {
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || c == '_')
         {
-            return Err(SinexError::validation(
-                "Session ID contains invalid characters",
-            )
-            .with_context("allowed_characters", "ascii_alphanumeric_or_underscore"));
+            return Err(
+                SinexError::validation("Session ID contains invalid characters")
+                    .with_context("allowed_characters", "ascii_alphanumeric_or_underscore"),
+            );
         }
 
         Ok(())
@@ -447,12 +447,9 @@ impl StreamingCascadeAnalyzer {
         table_name: &str,
     ) -> Result<usize> {
         let mut repo = EventRepositoryTx::new(tx);
-        let count = repo
-            .cascade_node_count(table_name)
-            .await
-            .map_err(|error| {
-                SinexError::database("Failed to count cascade nodes").with_source(error)
-            })?;
+        let count = repo.cascade_node_count(table_name).await.map_err(|error| {
+            SinexError::database("Failed to count cascade nodes").with_source(error)
+        })?;
         Ok(count as usize)
     }
 
@@ -667,12 +664,12 @@ impl StreamingCascadeAnalyzer {
 
         // Check for cycles
         if result.len() != event_ids.len() {
-            return Err(SinexError::validation(
-                "Circular dependencies detected in cascade plan",
-            )
-            .with_context("error_class", "cascade_cycle_detected")
-            .with_context("processed_events", result.len().to_string())
-            .with_context("requested_events", event_ids.len().to_string()));
+            return Err(
+                SinexError::validation("Circular dependencies detected in cascade plan")
+                    .with_context("error_class", "cascade_cycle_detected")
+                    .with_context("processed_events", result.len().to_string())
+                    .with_context("requested_events", event_ids.len().to_string()),
+            );
         }
 
         // Reverse to get deletion order (children before parents)

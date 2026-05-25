@@ -91,17 +91,7 @@ mod tests {
     use super::*;
     use crate::sandbox::prelude::*;
 
-    #[sinex_test(
-        scenario = "xtask.command-catalog-core-surface.v1",
-        category = "command_contract",
-        lane = "fast",
-        cost_tier = "fast",
-        tags = "command_contract,catalog,xtask",
-        fixtures = "clap_command_tree",
-        subjects = "xtask_command:check,xtask_command:test,xtask_command:docs,issue:485",
-        claims = "claim:xtask.command_catalog_introspection",
-        reproducer = "xtask test -p xtask --scenario-tag command_contract"
-    )]
+    #[sinex_test]
     async fn command_catalog_exposes_core_public_surface(_ctx: TestContext) -> TestResult<()> {
         let commands = collect_command_catalog();
 

@@ -92,6 +92,16 @@ pub trait EventPublisher {
 
 impl EventPublisher for Sandbox {
     async fn publish<P: Publishable>(&self, payload: P) -> TestResult<Event<JsonValue>> {
+        self.record_dependency_edge(
+            "event_type",
+            format!(
+                "{}:{}",
+                payload.source().as_str(),
+                payload.event_type().as_str()
+            ),
+            None,
+            "harness.publish",
+        );
         self.publish_event_internal(
             payload.source(),
             payload.event_type(),

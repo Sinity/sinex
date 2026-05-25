@@ -1,4 +1,4 @@
-//! Required input-key declarations for the ActivityWatch SQLite parser.
+//! Required input-key declarations for the `ActivityWatch` `SQLite` parser.
 
 use sinex_node_sdk::parser::{MaterialParser, SourceRecordFingerprint};
 use sinex_primitives::{

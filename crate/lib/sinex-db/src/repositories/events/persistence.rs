@@ -2715,8 +2715,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn stream_batch_insert_strategy_prefers_copy_for_large_material_batches()
-    -> Result<()> {
+    async fn stream_batch_insert_strategy_prefers_copy_for_large_material_batches() -> Result<()> {
         let batch = (0..COPY_BATCH_THRESHOLD)
             .map(|_| base_stream_batch_row())
             .collect::<Result<Vec<_>>>()?;
@@ -2728,8 +2727,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn stream_batch_insert_strategy_prefers_synthesis_for_parent_batches()
-    -> Result<()> {
+    async fn stream_batch_insert_strategy_prefers_synthesis_for_parent_batches() -> Result<()> {
         let mut row = base_stream_batch_row()?;
         row.source_event_ids = Some(vec![EventId::from_uuid(Uuid::now_v7())]);
         let batch = vec![row];
