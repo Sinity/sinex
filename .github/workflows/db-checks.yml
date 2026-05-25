@@ -14,7 +14,7 @@ jobs:
     outputs:
       schema: ${{ steps.filter.outputs.schema }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v4
       - id: filter
         uses: dorny/paths-filter@v3
         with:
@@ -36,7 +36,7 @@ jobs:
       group: db-checks-schema-${{ github.head_ref || github.ref_name }}
       cancel-in-progress: true
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v4
 
       - name: Prepare cache directories
         run: |

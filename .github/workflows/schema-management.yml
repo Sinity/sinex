@@ -16,7 +16,7 @@ jobs:
       group: schema-management-validate-${{ github.ref }}
       cancel-in-progress: true
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v4
 
       - name: Cache npm dependencies
         uses: actions/cache@v4
@@ -78,7 +78,7 @@ jobs:
       group: schema-management-sync-${{ github.ref }}
       cancel-in-progress: true
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v4
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
 
@@ -132,7 +132,7 @@ jobs:
       group: schema-management-deploy
       cancel-in-progress: true
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v4
 
       - uses: ./.github/actions/nix-bootstrap
         with:
