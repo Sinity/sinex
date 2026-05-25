@@ -581,7 +581,8 @@ Show full output of a job
 | Flag | Value | Required | Description |
 |---|---|---|---|
 | `id` | yes | yes |  |
-| `--stderr` | no | no |  |
+| `--stdout` | no | no | Show stdout explicitly (default) |
+| `--stderr` | no | no | Show stderr instead of stdout |
 
 
 ### `xtask jobs wait`
