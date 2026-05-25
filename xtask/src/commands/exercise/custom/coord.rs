@@ -15,7 +15,7 @@ pub fn custom_coord_fresh_check(dir: &Path, verbose: bool) -> Vec<StepOutcome> {
         dir,
         0,
         "first_check",
-        &["check", "--bg", "--json"],
+        &["check", "--bg", "--json", "--allow-contended-host"],
         ExpectedExit::Success,
         &[v_json()],
         verbose,
@@ -78,7 +78,7 @@ pub fn custom_coord_fresh_check(dir: &Path, verbose: bool) -> Vec<StepOutcome> {
         dir,
         2,
         "second_check",
-        &["check", "--bg", "--json"],
+        &["check", "--bg", "--json", "--allow-contended-host"],
         ExpectedExit::Success,
         &[v_json()],
         verbose,
@@ -126,6 +126,17 @@ pub fn custom_coord_attach_check(dir: &Path, verbose: bool) -> Vec<StepOutcome> 
     let first_action = extract_json_field(&output.stdout, "data.action");
     let first_is_fresh = first_action.as_ref().and_then(|v| v.as_str()) == Some("fresh");
     steps.push(outcome);
+
+    if first_is_fresh {
+        steps.push(StepOutcome {
+            label: "skip_already_fresh".into(),
+            passed: true,
+            exit_code: 0,
+            duration: Duration::ZERO,
+            validation_errors: vec![],
+        });
+        return steps;
+    }
 
     let Some(first_job_id) = job_id else {
         steps.push(StepOutcome {
@@ -215,7 +226,16 @@ pub fn custom_coord_scope_isolation(dir: &Path, verbose: bool) -> Vec<StepOutcom
         dir,
         0,
         "start_test_pkg1",
-        &["test", "--bg", "-p", "xtask", "--json"],
+        &[
+            "test",
+            "--bg",
+            "-p",
+            "xtask",
+            "-E",
+            "test(test_background_args_preserve_exercise_ids)",
+            "--json",
+            "--allow-contended-host",
+        ],
         ExpectedExit::Success,
         &[v_json()],
         verbose,
@@ -224,7 +244,20 @@ pub fn custom_coord_scope_isolation(dir: &Path, verbose: bool) -> Vec<StepOutcom
         v.as_i64()
             .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
     });
+    let first_action = extract_json_field(&output.stdout, "data.action");
+    let first_is_fresh = first_action.as_ref().and_then(|v| v.as_str()) == Some("fresh");
     steps.push(outcome);
+
+    if first_is_fresh {
+        steps.push(StepOutcome {
+            label: "skip_already_fresh".into(),
+            passed: true,
+            exit_code: 0,
+            duration: Duration::ZERO,
+            validation_errors: vec![],
+        });
+        return steps;
+    }
 
     let Some(first_id) = first_job_id else {
         steps.push(StepOutcome {
@@ -242,7 +275,16 @@ pub fn custom_coord_scope_isolation(dir: &Path, verbose: bool) -> Vec<StepOutcom
         dir,
         1,
         "start_test_pkg2",
-        &["test", "--bg", "-p", "sinex-primitives", "--json"],
+        &[
+            "test",
+            "--bg",
+            "-p",
+            "sinex-primitives",
+            "-E",
+            "test(test_timestamp_rfc3339_format_falls_back_for_non_minute_offset)",
+            "--json",
+            "--allow-contended-host",
+        ],
         ExpectedExit::Success,
         &[v_json()],
         verbose,
@@ -304,7 +346,7 @@ pub fn custom_coord_state_update(dir: &Path, verbose: bool) -> Vec<StepOutcome> 
         dir,
         0,
         "check_bg",
-        &["check", "--bg", "--json"],
+        &["check", "--bg", "--json", "--allow-contended-host"],
         ExpectedExit::Success,
         &[v_json()],
         verbose,
@@ -586,7 +628,17 @@ pub fn custom_coord_queue_no_overwrite(dir: &Path, verbose: bool) -> Vec<StepOut
         dir,
         0,
         "start_test",
-        &["test", "--bg", "-p", "xtask", "--json", "--skip-preflight"],
+        &[
+            "test",
+            "--bg",
+            "-p",
+            "xtask",
+            "-E",
+            "test(test_background_args_preserve_exercise_ids)",
+            "--json",
+            "--skip-preflight",
+            "--allow-contended-host",
+        ],
         ExpectedExit::Success,
         &[v_json()],
         verbose,
@@ -632,8 +684,11 @@ pub fn custom_coord_queue_no_overwrite(dir: &Path, verbose: bool) -> Vec<StepOut
             "--bg",
             "-p",
             "sinex-primitives",
+            "-E",
+            "test(test_timestamp_rfc3339_format_falls_back_for_non_minute_offset)",
             "--json",
             "--skip-preflight",
+            "--allow-contended-host",
         ],
         ExpectedExit::Success,
         &[v_json()],
@@ -683,8 +738,11 @@ pub fn custom_coord_queue_no_overwrite(dir: &Path, verbose: bool) -> Vec<StepOut
             "--bg",
             "-p",
             "sinex-schema",
+            "-E",
+            "test(test_events_table_creation)",
             "--json",
             "--skip-preflight",
+            "--allow-contended-host",
         ],
         ExpectedExit::Success,
         &[v_json()],

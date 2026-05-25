@@ -8,7 +8,7 @@
 //! xtask exercise --all        # Run all tiers
 //! xtask exercise --tier 2     # Specific tier
 //! xtask exercise --list       # Show catalog
-//! xtask exercise -E t4.bg_job_lifecycle  # Specific exercise
+//! xtask exercise --id t4.bg_job_lifecycle  # Specific exercise
 //! ```
 
 use std::collections::HashSet;
@@ -147,6 +147,61 @@ impl ExerciseCommand {
             .clone()
             .unwrap_or_else(|| workspace_root().join("xtask/config/exercise-baseline.json"))
     }
+
+    fn background_args(&self) -> Vec<String> {
+        let mut args = Vec::new();
+        if self.all {
+            args.push("--all".to_string());
+        }
+        for t in &self.tiers {
+            args.push("--tier".to_string());
+            args.push(t.as_arg().to_string());
+        }
+        for e in &self.exercises {
+            args.push("--id".to_string());
+            args.push(e.clone());
+        }
+        if self.list {
+            args.push("--list".to_string());
+        }
+        if self.dry_run {
+            args.push("--dry-run".to_string());
+        }
+        if self.skip_infra {
+            args.push("--skip-infra".to_string());
+        }
+        if self.verbose {
+            args.push("--verbose".to_string());
+        }
+        if self.fail_fast {
+            args.push("--fail-fast".to_string());
+        }
+        if self.seed {
+            args.push("--seed".to_string());
+            args.push("--seed-days".to_string());
+            args.push(self.seed_days.to_string());
+            args.push("--seed-invocations".to_string());
+            args.push(self.seed_invocations.to_string());
+        }
+        if self.activate {
+            args.push("--activate".to_string());
+        }
+        if let Some(audit_path) = &self.audit_file {
+            args.push("--audit-file".to_string());
+            args.push(audit_path.display().to_string());
+        }
+        if self.ci_check {
+            args.push("--ci-check".to_string());
+        }
+        if let Some(baseline) = &self.baseline {
+            args.push("--baseline".to_string());
+            args.push(baseline.display().to_string());
+        }
+        if self.update_baseline {
+            args.push("--update-baseline".to_string());
+        }
+        args
+    }
 }
 
 impl XtaskCommand for ExerciseCommand {
@@ -157,57 +212,7 @@ impl XtaskCommand for ExerciseCommand {
     async fn execute(&self, ctx: &CommandContext) -> Result<CommandResult> {
         // Handle background execution
         if ctx.is_background() {
-            let mut args = Vec::new();
-            if self.all {
-                args.push("--all".to_string());
-            }
-            for t in &self.tiers {
-                args.push("--tier".to_string());
-                args.push(t.as_arg().to_string());
-            }
-            for e in &self.exercises {
-                args.push("-E".to_string());
-                args.push(e.clone());
-            }
-            if self.list {
-                args.push("--list".to_string());
-            }
-            if self.dry_run {
-                args.push("--dry-run".to_string());
-            }
-            if self.skip_infra {
-                args.push("--skip-infra".to_string());
-            }
-            if self.verbose {
-                args.push("--verbose".to_string());
-            }
-            if self.fail_fast {
-                args.push("--fail-fast".to_string());
-            }
-            if self.seed {
-                args.push("--seed".to_string());
-                args.push("--seed-days".to_string());
-                args.push(self.seed_days.to_string());
-                args.push("--seed-invocations".to_string());
-                args.push(self.seed_invocations.to_string());
-            }
-            if self.activate {
-                args.push("--activate".to_string());
-            }
-            if let Some(audit_path) = &self.audit_file {
-                args.push("--audit-file".to_string());
-                args.push(audit_path.display().to_string());
-            }
-            if self.ci_check {
-                args.push("--ci-check".to_string());
-            }
-            if let Some(baseline) = &self.baseline {
-                args.push("--baseline".to_string());
-                args.push(baseline.display().to_string());
-            }
-            if self.update_baseline {
-                args.push("--update-baseline".to_string());
-            }
+            let args = self.background_args();
             return ctx.spawn_background("exercise", &args);
         }
 
@@ -1047,6 +1052,30 @@ mod tests {
         assert!(!meta.modifies_state);
         assert!(meta.track_in_history);
         assert!(meta.timeout.is_some());
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_background_args_preserve_exercise_ids() -> ::xtask::sandbox::TestResult<()> {
+        let cmd = ExerciseCommand {
+            exercises: vec![
+                "t4.coord_attach_check".to_string(),
+                "t4.coord_scope_isolation".to_string(),
+            ],
+            skip_infra: true,
+            ..ExerciseCommand::default()
+        };
+
+        assert_eq!(
+            cmd.background_args(),
+            vec![
+                "--id",
+                "t4.coord_attach_check",
+                "--id",
+                "t4.coord_scope_isolation",
+                "--skip-infra",
+            ]
+        );
         Ok(())
     }
 
