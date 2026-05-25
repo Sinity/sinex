@@ -70,7 +70,7 @@ pub fn build_catalog() -> Vec<ExerciseDef> {
 
     v.push(
         def("t1.status_doctor_json", "Status doctor (JSON)", T1).step(
-            step("doctor", &["status", "--doctor", "--json"])
+            step("doctor", &["doctor", "--json"])
                 .v(v_json())
                 .v(v_has(&["status", "data"])),
         ),
@@ -134,7 +134,7 @@ pub fn build_catalog() -> Vec<ExerciseDef> {
         def("t1.no_command_error", "No subcommand exits non-zero", T1).step(
             step("nocommand", &[])
                 .exit(Failure)
-                .v(v_stderr("No command")),
+                .v(v_stderr("unrecognized subcommand")),
         ),
     );
 
@@ -153,7 +153,13 @@ pub fn build_catalog() -> Vec<ExerciseDef> {
         ),
     );
 
-    v.push(def("t1.infra_env", "Infra env prints vars", T1).step(step("env", &["infra", "env"])));
+    v.push(
+        def("t1.infra_status_json", "Infra status returns JSON", T1).step(
+            step("status", &["infra", "status", "--json"])
+                .v(v_json())
+                .v(v_has(&["status", "data"])),
+        ),
+    );
 
     v.push(
         def("t1.fix_help", "Fix --help output", T1)
