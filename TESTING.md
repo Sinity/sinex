@@ -41,11 +41,14 @@ Bare `xtask test` uses machine-derived impact planning in balanced mode by
 default. It runs affected package scopes unless the changed hunks have recorded
 test-manifest, dependency-edge, or LLVM coverage-region evidence, records
 accepted-risk decisions, and may reuse an exact previous proof only when the
-manifest and input fingerprint match. Use `--impact-mode=off --all` for a
-deliberate full pass, `xtask impact seed` after broad runs to populate test
-entrypoint/dependency evidence, and `xtask impact seed-coverage` for exact
-per-test LLVM line coverage. Aggressive mode is available for local iteration
-when you accept hunk-coverage gaps and want the planner to use partial evidence.
+manifest and input fingerprint match. When a balanced impact plan still falls
+back to multiple package scopes, `xtask test` subtracts package scopes that
+already have exact reusable proofs and runs only the unproven remainder. Use
+`--impact-mode=off --all` for a deliberate full pass, `xtask impact seed` after
+broad runs to populate test entrypoint/dependency evidence, and
+`xtask impact seed-coverage` for exact per-test LLVM line coverage. Aggressive
+mode is available for local iteration when you accept hunk-coverage gaps and
+want the planner to use partial evidence.
 
 ## CI-Parity Validation
 
