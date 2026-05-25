@@ -295,6 +295,7 @@ where
             equivalence_key,
             created_by_operation_id,
             node_model: Some(self.node.node_model()),
+            anchor_payload_hash: None,
         })
     }
 }
