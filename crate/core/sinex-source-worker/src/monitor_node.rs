@@ -131,8 +131,13 @@ async fn fire_monitor_once(
     if events.is_empty() {
         debug!(
             source_unit_id,
-            "monitor closure returned 0 events — skipping"
+            "monitor closure returned 0 events — finalizing with empty slice to prevent slice_arrival_timeout"
         );
+        // Write an empty slice so the assembler sees at least one slice
+        // before FINALIZE. Without this, the periodic timeout check can
+        // fire between BEGIN and FINALIZE, routing the material to DLQ
+        // as slice_arrival_timeout (#1320).
+        acq.append_slice(&mut mat_handle, &[]).await?;
         acq.finalize(mat_handle, "monitor-empty").await?;
         return Ok(());
     }
