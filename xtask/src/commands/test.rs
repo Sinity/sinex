@@ -1210,6 +1210,9 @@ impl XtaskCommand for TestCommand {
                     if self.allow_contended_host {
                         args.push("--allow-contended-host".to_string());
                     }
+                    if self.no_reuse {
+                        args.push("--no-reuse".to_string());
+                    }
                     if !matches!(self.impact_mode, crate::impact::ImpactMode::Balanced) {
                         args.push(format!("--impact-mode={}", self.impact_mode.as_str()));
                     }
