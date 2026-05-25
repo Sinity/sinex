@@ -82,7 +82,11 @@ impl Drop for TestTempEnv {
 /// This function creates a temporary directory using the system's temporary
 /// directory with proper validation and cleanup.
 pub fn temp_dir() -> TestResult<TempDir> {
-    tempfile::tempdir().map_err(|e| eyre!("Failed to create temporary directory: {e}"))
+    let root = workspace_test_temp_root()?;
+    tempfile::Builder::new()
+        .prefix("sinex-test-")
+        .tempdir_in(root.as_std_path())
+        .map_err(|e| eyre!("Failed to create temporary directory: {e}"))
 }
 
 /// Create a test file with validated path and content
@@ -234,9 +238,8 @@ mod tests {
         assert!(temp_dir.path().exists());
         assert!(temp_dir.path().is_dir());
 
-        // Should be in system temp directory
-        let system_temp = std::env::temp_dir();
-        assert!(temp_dir.path().starts_with(&system_temp));
+        // Should be in the workspace-backed test temp root.
+        assert!(temp_dir.path().starts_with(workspace_test_temp_root()?));
 
         // Directory should be automatically cleaned up when dropped
         let _temp_path = temp_dir.path().to_path_buf();

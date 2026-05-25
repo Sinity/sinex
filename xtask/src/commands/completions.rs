@@ -106,16 +106,97 @@ fn postprocess_zsh(script: &str) -> String {
     )
 }
 
+fn ensure_completion_bin_names(cmd: &mut clap::Command, parent_bin_name: &str) {
+    for subcommand in cmd.get_subcommands_mut() {
+        let bin_name = format!("{parent_bin_name} {}", subcommand.get_name());
+        subcommand.set_bin_name(bin_name.clone());
+        ensure_completion_bin_names(subcommand, &bin_name);
+    }
+}
+
+fn prepare_completion_command(command: clap::Command) -> clap::Command {
+    command
+        .disable_help_subcommand(true)
+        .mut_subcommands(prepare_completion_command)
+}
+
+fn shell_words<'a>(words: impl IntoIterator<Item = &'a str>) -> String {
+    words.into_iter().collect::<Vec<_>>().join(" ")
+}
+
+fn command_options(cmd: &clap::Command) -> Vec<String> {
+    let mut options = Vec::new();
+    for arg in cmd.get_opts().filter(|arg| !arg.is_hide_set()) {
+        if let Some(short) = arg.get_short() {
+            options.push(format!("-{short}"));
+        }
+        if let Some(long) = arg.get_long() {
+            options.push(format!("--{long}"));
+        }
+    }
+    options.sort();
+    options.dedup();
+    options
+}
+
+fn generate_basic_bash(cmd: &clap::Command) {
+    let commands = cmd
+        .get_subcommands()
+        .filter(|subcommand| !subcommand.is_hide_set())
+        .map(clap::Command::get_name)
+        .collect::<Vec<_>>();
+    let global_options = command_options(cmd);
+    let completions_subcommands = cmd
+        .find_subcommand("completions")
+        .map(|subcommand| {
+            subcommand
+                .get_subcommands()
+                .filter(|nested| !nested.is_hide_set())
+                .map(clap::Command::get_name)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+
+    println!(
+        r#"_xtask() {{
+    local cur command
+    COMPREPLY=()
+    cur="${{COMP_WORDS[COMP_CWORD]}}"
+    command="${{COMP_WORDS[1]}}"
+
+    if [[ $COMP_CWORD -eq 1 ]]; then
+        COMPREPLY=( $(compgen -W "{commands} {global_options}" -- "$cur") )
+        return 0
+    fi
+
+    case "$command" in
+        completions)
+            COMPREPLY=( $(compgen -W "{completion_shells}" -- "$cur") )
+            return 0
+            ;;
+    esac
+
+    COMPREPLY=( $(compgen -W "{global_options}" -- "$cur") )
+}}
+complete -F _xtask xtask"#,
+        commands = shell_words(commands),
+        global_options = global_options.join(" "),
+        completion_shells = shell_words(completions_subcommands),
+    );
+}
+
 impl CompletionsCommand {
     /// Generate completions for the given CLI command.
     pub fn generate_for(subcommand: &CompletionsSubcommand) -> Result<()> {
         use clap::CommandFactory;
-        let mut cmd = crate::Cli::command().bin_name("xtask");
+        let mut cmd = prepare_completion_command(crate::Cli::command()).bin_name("xtask");
+        cmd.build();
+        ensure_completion_bin_names(&mut cmd, "xtask");
         let name = cmd.get_name().to_string();
 
         match subcommand {
             CompletionsSubcommand::Bash => {
-                generate(shells::Bash, &mut cmd, name, &mut std::io::stdout());
+                generate_basic_bash(&cmd);
             }
             CompletionsSubcommand::Zsh => {
                 let mut buf = Vec::new();

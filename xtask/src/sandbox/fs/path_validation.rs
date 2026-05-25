@@ -143,6 +143,7 @@ fn validate_not_system_critical(path: &Utf8Path) -> PathValidationResult<()> {
     // directory lives under a system path such as /run/user/<uid>.
     if path.starts_with(&get_safe_temp_base()?)
         || path_str.contains("sinex-tests")
+        || path_str.contains("sinex-test-")
         || path_str.starts_with("/run/user/")
         || path_str.starts_with("/run/")
     {
@@ -228,9 +229,8 @@ mod tests {
 
     #[sinex_test]
     async fn test_validate_test_path_accepts_safe_paths() -> TestResult<()> {
-        // These should be accepted (assuming /tmp exists)
-        let temp_path = format!("{}/test-file.txt", env::temp_dir().to_string_lossy());
-        assert!(validate_test_path(&temp_path).is_ok());
+        let temp_path = create_test_temp_file("path-validation", "test-file.txt")?;
+        assert!(validate_test_path(temp_path.as_str()).is_ok());
 
         Ok(())
     }

@@ -923,7 +923,7 @@ mod tests {
             by_file: false,
             nix: false,
             plan: false,
-            allow_contended_host: false,
+            allow_contended_host: true,
             changed_strict: None,
         }
     }

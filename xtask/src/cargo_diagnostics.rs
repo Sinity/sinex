@@ -777,8 +777,10 @@ mod tests {
 
         let result = parse_cargo_json_output(json_line, true)?;
         assert_eq!(result.warnings, 1);
-        assert_eq!(result.compiled_packages.len(), 1);
-        assert!(result.compiled_packages.contains("sinex-db"));
+        assert!(
+            result.compiled_packages.is_empty(),
+            "compiler-message diagnostics are attribution, not proof of a fresh compile"
+        );
 
         let diag = &result.diagnostics[0];
         assert_eq!(diag.package.as_deref(), Some("sinex-db"));
