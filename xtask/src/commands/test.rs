@@ -218,6 +218,10 @@ pub struct TestCommand {
     #[arg(short, long)]
     pub all: bool,
 
+    /// Impact planner mode for bare `xtask test`.
+    #[arg(long, value_enum, default_value_t = crate::impact::ImpactMode::Balanced)]
+    pub impact_mode: crate::impact::ImpactMode,
+
     /// Allow broad tests to start even when host PSI is already severe.
     #[arg(long)]
     pub allow_contended_host: bool,
@@ -444,6 +448,7 @@ impl TestCommand {
             && !self.include_ignored
             && !self.update_snapshots
             && !self.prime
+            && !matches!(self.impact_mode, crate::impact::ImpactMode::Off)
     }
 
     fn guard_broad_start_pressure(
@@ -586,6 +591,17 @@ impl TestCommand {
         if self.allow_contended_host {
             args.push("--allow-contended-host".to_string());
         }
+        if !matches!(self.impact_mode, crate::impact::ImpactMode::Balanced) {
+            args.push(format!("--impact-mode={}", self.impact_mode.as_str()));
+        }
+        args.push(format!(
+            "--impact-planner-version={}",
+            crate::impact::IMPACT_PLANNER_VERSION
+        ));
+        args.push(format!(
+            "--impact-coverage-schema={}",
+            crate::impact::IMPACT_COVERAGE_SCHEMA_VERSION
+        ));
         if self.update_snapshots {
             args.push("--update-snapshots".to_string());
         }
@@ -1125,6 +1141,9 @@ impl XtaskCommand for TestCommand {
                     if self.allow_contended_host {
                         args.push("--allow-contended-host".to_string());
                     }
+                    if !matches!(self.impact_mode, crate::impact::ImpactMode::Balanced) {
+                        args.push(format!("--impact-mode={}", self.impact_mode.as_str()));
+                    }
                     if let Some(ref f) = self.filter {
                         args.push("-E".to_string());
                         args.push(f.clone());
@@ -1366,19 +1385,25 @@ impl XtaskCommand for TestCommand {
         let impact_plan = if self.uses_automatic_impact() {
             Some(
                 match ctx.try_with_history_db_query(|db| {
-                    crate::impact::plan_default_test_impact_with_history(Some(db))
+                    crate::impact::plan_default_test_impact_with_history_and_mode(
+                        Some(db),
+                        self.impact_mode,
+                    )
                 }) {
                     Some(result) => result?,
-                    None => crate::impact::plan_default_test_impact()?,
+                    None => crate::impact::plan_default_test_impact_with_history_and_mode(
+                        None,
+                        self.impact_mode,
+                    )?,
                 },
             )
         } else {
             None
         };
         if let Some(plan) = &impact_plan {
-            if let Some(result) = ctx
-                .try_with_history_db(|db| db.record_impact_plan(ctx.invocation_id(), "auto", plan))
-                && let Err(error) = result
+            if let Some(result) = ctx.try_with_history_db(|db| {
+                db.record_impact_plan(ctx.invocation_id(), self.impact_mode.as_str(), plan)
+            }) && let Err(error) = result
             {
                 tracing::warn!(target: "xtask::test", error = %error, "failed to record impact plan");
             }

@@ -50,7 +50,7 @@ pub use evidence::{
 };
 
 // Re-export key types used by internal sandbox submodules via `super::` / `crate::sandbox::`
-pub use context::Sandbox;
+pub use context::{Sandbox, persist_test_execution_manifest};
 pub use nats::EphemeralNats;
 
 // Re-export types that downstream crates import directly from `xtask::sandbox::`
