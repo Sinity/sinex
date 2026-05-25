@@ -482,7 +482,7 @@ async fn test_concurrent_coordination_stress(ctx: TestContext) -> Result<()> {
 
 /// Verify that KV coordination works over mTLS.
 #[sinex_test]
-async fn test_kv_functionality_with_mtls(_ctx: TestContext) -> Result<()> {
+async fn test_kv_functionality_with_mtls() -> Result<()> {
     use std::path::PathBuf;
     use xtask::sandbox::EphemeralNats;
 
