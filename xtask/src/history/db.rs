@@ -6019,9 +6019,18 @@ mod tests {
             ));
         };
         let message = format!("{error:#}");
-        assert!(message.contains("failed to clean up stale invocations"));
-        assert!(message.contains("failed to mark stale invocations as cancelled"));
-        assert!(message.contains("no such column: finished_at"));
+        assert!(
+            message.contains("failed to clean up stale invocations"),
+            "{message}"
+        );
+        assert!(
+            message.contains("failed to repair stale open-time-sweep invocation durations"),
+            "{message}"
+        );
+        assert!(
+            message.contains("no such column: duration_secs"),
+            "{message}"
+        );
         Ok(())
     }
 

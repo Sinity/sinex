@@ -8,7 +8,6 @@ expression: json
     "active_jobs": "[volatile]",
     "baseline_velocity": "[volatile]",
     "diagnostics": "[volatile]",
-    "files_changed": "[volatile]",
     "git": "[volatile]",
     "health": "[volatile]",
     "health_indicator": "[volatile]",
@@ -23,7 +22,6 @@ expression: json
     "services": "[volatile]",
     "stash_count": "[volatile]",
     "summary": "[volatile]",
-    "uncommitted_count": "[volatile]",
     "velocity": "[volatile]",
     "warnings": "[volatile]"
   },

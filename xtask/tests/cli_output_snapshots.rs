@@ -49,6 +49,25 @@ fn scrub(json: &mut Value, path: &[&str], placeholder: Value) {
     }
 }
 
+/// Remove a nested JSON value whose presence is environment-dependent.
+fn remove_path(json: &mut Value, path: &[&str]) {
+    match path {
+        [] => {}
+        [key] => {
+            if let Some(obj) = json.as_object_mut() {
+                obj.remove(*key);
+            }
+        }
+        [key, rest @ ..] => {
+            if let Some(obj) = json.as_object_mut()
+                && let Some(nested) = obj.get_mut(*key)
+            {
+                remove_path(nested, rest);
+            }
+        }
+    }
+}
+
 /// Scrub top-level envelope volatiles shared by all commands.
 fn scrub_envelope(json: &mut Value) {
     scrub(json, &["timestamp"], json!("[timestamp]"));
@@ -109,6 +128,12 @@ async fn snapshot_status_summary_json() -> ::xtask::sandbox::TestResult<()> {
     // Scrub envelope
     scrub_envelope(&mut json);
 
+    // Dirty-only fields appear only when the checkout has local edits. Their
+    // values are covered by the scrubbed `git` object, so do not let local
+    // cleanliness change the snapshot shape.
+    remove_path(&mut json, &["data", "files_changed"]);
+    remove_path(&mut json, &["data", "uncommitted_count"]);
+
     // Scrub all volatile data fields
     for path in [
         &["data", "summary"][..],
@@ -135,9 +160,7 @@ async fn snapshot_status_summary_json() -> ::xtask::sandbox::TestResult<()> {
         &["data", "runtime_snapshot"],
         &["data", "runtime_target"],
         // Working tree state: varies by uncommitted files, stash, last commit
-        &["data", "uncommitted_count"],
         &["data", "stash_count"],
-        &["data", "files_changed"],
         &["data", "last_commit"],
         // Warning messages depend on workspace state
         &["data", "warnings"],
