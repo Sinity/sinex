@@ -7,6 +7,7 @@
 //! not flags. Bare `xtask test` runs the default nextest path.
 
 use color_eyre::eyre::Result;
+use serde::Serialize;
 use std::path::PathBuf;
 
 use crate::affected;
@@ -28,6 +29,14 @@ use console::style;
 
 mod modes;
 mod plan;
+
+#[derive(Debug, Clone, Serialize)]
+struct ReusedImpactPackageProof {
+    package: String,
+    invocation_id: i64,
+    proof_kind: String,
+    scope_key: String,
+}
 
 fn failing_test_details_issue(ctx: &CommandContext, error: Option<&color_eyre::Report>) -> String {
     match error {
@@ -629,6 +638,56 @@ impl TestCommand {
 
         args.push(scope.encode_marker());
         args
+    }
+
+    fn exact_package_proof_args(&self, package: &str) -> Vec<String> {
+        self.semantic_invocation_args(
+            &WorkloadScope::Packages(vec![package.to_string()]),
+            None,
+            &[],
+            false,
+        )
+    }
+
+    fn subtract_reusable_impact_package_proofs(
+        &self,
+        ctx: &CommandContext,
+        packages: &[String],
+    ) -> Result<(Vec<String>, Vec<ReusedImpactPackageProof>)> {
+        let mut remaining = Vec::new();
+        let mut reused = Vec::new();
+        for package in packages {
+            let proof_args = self.exact_package_proof_args(package);
+            let proof_kind = crate::coordinator::proof_kind("test", &proof_args);
+            if proof_kind != "test.nextest.exact" {
+                remaining.push(package.clone());
+                continue;
+            }
+            let input_fingerprint =
+                crate::coordinator::current_scoped_tree_fingerprint("test", &proof_args)?;
+            let scope_key = crate::coordinator::compute_scope_key("test", &proof_args);
+            let reusable_proof = ctx
+                .try_with_history_db_query(|db| {
+                    db.get_successful_reusable_test_proof_unit(
+                        &proof_kind,
+                        &input_fingerprint,
+                        &scope_key,
+                    )
+                })
+                .and_then(std::result::Result::ok)
+                .flatten();
+            if let Some(proof) = reusable_proof {
+                reused.push(ReusedImpactPackageProof {
+                    package: package.clone(),
+                    invocation_id: proof.invocation_id,
+                    proof_kind,
+                    scope_key,
+                });
+            } else {
+                remaining.push(package.clone());
+            }
+        }
+        Ok((remaining, reused))
     }
 
     fn nextest_invocation_args(&self, force_skip_preflight: bool) -> Vec<String> {
@@ -1470,13 +1529,44 @@ impl XtaskCommand for TestCommand {
         let use_fail_fast = self.fail_fast;
 
         // Affected mode is default ON, --all disables it.
-        let impact_packages = impact_plan
+        let raw_impact_packages = impact_plan
             .as_ref()
             .and_then(crate::impact::packages_for_plan);
         let effective_filter = impact_plan
             .as_ref()
             .and_then(|plan| plan.impact_filter.clone())
             .or_else(|| self.filter.clone());
+        let (impact_packages, reused_package_proofs) = if effective_filter.is_none()
+            && let Some(packages) = raw_impact_packages.as_ref()
+        {
+            let (remaining, reused) =
+                self.subtract_reusable_impact_package_proofs(ctx, packages)?;
+            if ctx.is_human() && !reused.is_empty() {
+                println!(
+                    "Reusing {} package proof{}: {}",
+                    reused.len(),
+                    if reused.len() == 1 { "" } else { "s" },
+                    reused
+                        .iter()
+                        .map(|proof| format!("{}@{}", proof.package, proof.invocation_id))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                );
+            }
+            if remaining.is_empty() && !reused.is_empty() {
+                return Ok(CommandResult::success()
+                    .with_message("tests skipped by impact package proofs")
+                    .with_detail(format!("reused_packages={}", reused.len()))
+                    .with_duration(ctx.elapsed())
+                    .with_data(serde_json::json!({
+                        "impact_plan": impact_plan.clone(),
+                        "reused_package_proofs": reused,
+                    })));
+            }
+            (Some(remaining), reused)
+        } else {
+            (raw_impact_packages, Vec::new())
+        };
         let effective_test_binaries = self.effective_test_binaries(effective_filter.as_deref())?;
         let effective_lib_target =
             self.effective_lib_target(effective_filter.as_deref(), &effective_test_binaries)?;
@@ -1661,6 +1751,7 @@ impl XtaskCommand for TestCommand {
                 "failed": stats.failed,
                 "ignored": stats.ignored,
                 "impact_plan": impact_plan.clone(),
+                "reused_package_proofs": reused_package_proofs,
                 "runtime_binaries": runtime_binary_reports.clone(),
                 "failures": failures,
                 "failure_details_issue": failure_details_issue.clone(),
@@ -1718,6 +1809,7 @@ impl XtaskCommand for TestCommand {
                             "passed": stats.passed,
                             "ignored": stats.ignored,
                             "impact_plan": impact_plan.clone(),
+                            "reused_package_proofs": reused_package_proofs.clone(),
                         });
                         match serde_json::to_string(&manifest)
                             .map_err(color_eyre::eyre::Report::from)
@@ -1795,6 +1887,7 @@ impl XtaskCommand for TestCommand {
                     "failed": stats.failed,
                     "ignored": stats.ignored,
                     "impact_plan": impact_plan.clone(),
+                    "reused_package_proofs": reused_package_proofs,
                     "runtime_binaries": runtime_binary_reports.clone(),
                     "test_proof_unit": test_proof_unit,
                     "flaky": flaky,
@@ -2153,6 +2246,71 @@ mod tests {
             args.contains(&"--exclude=sinex-e2e-tests".to_string()),
             "package excludes must be part of coordination identity: {args:?}"
         );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_exact_package_proof_args_match_reusable_package_scope()
+    -> ::xtask::sandbox::TestResult<()> {
+        let command = TestCommand::default();
+
+        let args = command.exact_package_proof_args("xtask");
+
+        assert_eq!(
+            crate::coordinator::proof_kind("test", &args),
+            "test.nextest.exact"
+        );
+        assert!(
+            args.contains(&"--scope=packages:xtask".to_string()),
+            "package proof args should use the same scope marker as executed package tests: {args:?}"
+        );
+        assert!(
+            !args.iter().any(|arg| arg.starts_with("--filter=")),
+            "package proof subtraction must not claim coverage of a filtered test plan: {args:?}"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_subtract_reusable_impact_package_proofs_keeps_unproven_packages()
+    -> ::xtask::sandbox::TestResult<()> {
+        let dir = tempfile::tempdir()?;
+        let db_path = dir.path().join("test.db");
+        let db = HistoryDb::open(&db_path)?;
+        let command = TestCommand::default();
+        let proof_args = command.exact_package_proof_args("xtask");
+        let input_fingerprint =
+            crate::coordinator::current_scoped_tree_fingerprint("test", &proof_args)?;
+        let scope_key = crate::coordinator::compute_scope_key("test", &proof_args);
+        let invocation_id = db.start_invocation("test", None, None, None)?;
+        db.record_test_proof_unit(
+            invocation_id,
+            "test.nextest.exact",
+            &scope_key,
+            &input_fingerprint,
+            r#"{"scope":"packages:xtask"}"#,
+            true,
+        )?;
+        db.finish_invocation(
+            invocation_id,
+            crate::history::InvocationStatus::Success,
+            Some(0),
+            0.1,
+        )?;
+        drop(db);
+
+        let ctx = test_context(db_path);
+        let (remaining, reused) = command.subtract_reusable_impact_package_proofs(
+            &ctx,
+            &["xtask".to_string(), "sinex-primitives".to_string()],
+        )?;
+
+        assert_eq!(remaining, vec!["sinex-primitives".to_string()]);
+        assert_eq!(reused.len(), 1);
+        assert_eq!(reused[0].package, "xtask");
+        assert_eq!(reused[0].invocation_id, invocation_id);
+        assert_eq!(reused[0].proof_kind, "test.nextest.exact");
+        assert_eq!(reused[0].scope_key, scope_key);
         Ok(())
     }
 
