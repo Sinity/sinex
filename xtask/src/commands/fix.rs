@@ -8,7 +8,7 @@ use color_eyre::eyre::{Result, eyre};
 /// Apply automatic fixes across workspace packages.
 #[derive(Debug, Clone, Default, clap::Args)]
 pub struct FixCommand {
-    /// Packages to fix (default: all workspace packages)
+    /// Packages to fix (default: affected packages, falling back to workspace)
     #[arg(short = 'p', long = "package")]
     pub packages: Vec<String>,
 
@@ -16,8 +16,18 @@ pub struct FixCommand {
     #[arg(short = 'a', long)]
     pub all: bool,
 
-    /// Thorough mode: iterate packages individually for maximum fix coverage.
-    /// Slower but catches more fixes since clippy --fix only applies to freshly compiled code.
+    /// Format only: run cargo fmt on resolved packages and stop.
+    /// Fast path for the common "format my changes" workflow.
+    #[arg(long)]
+    pub fmt_only: bool,
+
+    /// Run clippy --fix after cargo fix (opt-in).
+    /// Without this flag, xtask fix runs fmt + cargo fix only.
+    #[arg(long)]
+    pub clippy: bool,
+
+    /// Thorough mode: iterate packages individually with per-package clippy --fix.
+    /// Implies --clippy. Slower but maximal fix coverage.
     #[arg(short, long)]
     pub thorough: bool,
 
@@ -43,6 +53,12 @@ impl XtaskCommand for FixCommand {
             if self.all {
                 args.push("--all".to_string());
             }
+            if self.fmt_only {
+                args.push("--fmt-only".to_string());
+            }
+            if self.clippy {
+                args.push("--clippy".to_string());
+            }
             if self.thorough {
                 args.push("--thorough".to_string());
             }
@@ -62,13 +78,6 @@ impl XtaskCommand for FixCommand {
             ));
         }
 
-        // Ensure DB/NATS/schema are ready — cargo fix and clippy --fix compile against sqlx
-        // which requires the database to be available for compile-time query verification.
-        let preflight_stage = ctx.start_stage("preflight");
-        let ready = preflight::ensure_ready(ctx);
-        ctx.finish_stage(preflight_stage, ready.is_ok());
-        ready?;
-
         // Determine which packages to fix
         let packages = if self.smart {
             self.resolve_smart_packages(ctx)?
@@ -76,8 +85,13 @@ impl XtaskCommand for FixCommand {
             self.resolve_packages()?
         };
 
-        // H2/H3: Capture pre-fix diagnostic snapshot
-        let pre_fix = ctx.with_history_db(crate::history::HistoryDb::get_current_diagnostic_counts);
+        // H2/H3: Capture pre-fix diagnostic snapshot (only when compiling)
+        let will_compile = !self.fmt_only && !packages.is_empty();
+        let pre_fix = if will_compile {
+            ctx.with_history_db(crate::history::HistoryDb::get_current_diagnostic_counts)
+        } else {
+            None
+        };
 
         // H3: Advisory if there are current errors (fix won't resolve compile errors)
         if ctx.is_human()
@@ -103,6 +117,37 @@ impl XtaskCommand for FixCommand {
             });
         }
 
+        // --fmt-only: no preflight needed (fmt doesn't compile).
+        // Workspace-wide format when no specific packages are selected.
+        if self.fmt_only {
+            if ctx.is_human() {
+                if packages.is_empty() {
+                    println!("Formatting entire workspace...");
+                } else {
+                    println!("Formatting {} package(s)...", packages.len());
+                }
+            }
+            let fmt_stage = ctx.start_stage("fmt");
+            self.run_fmt(&packages, ctx.is_human())?;
+            ctx.finish_stage(fmt_stage, true);
+            let label = if packages.is_empty() {
+                "workspace"
+            } else {
+                "packages"
+            };
+            return Ok(CommandResult::success()
+                .with_message("formatted")
+                .with_detail(format!("formatted {label}"))
+                .with_duration(ctx.elapsed()));
+        }
+
+        // Ensure DB/NATS/schema are ready — cargo fix and clippy --fix compile against sqlx
+        // which requires the database to be available for compile-time query verification.
+        let preflight_stage = ctx.start_stage("preflight");
+        let ready = preflight::ensure_ready(ctx);
+        ctx.finish_stage(preflight_stage, ready.is_ok());
+        ready?;
+
         if ctx.is_human() {
             if packages.is_empty() {
                 println!("Applying automatic fixes to entire workspace...");
@@ -114,7 +159,7 @@ impl XtaskCommand for FixCommand {
             }
         }
 
-        // Run formatting first (always workspace-wide)
+        // Run formatting first
         let fmt_stage = ctx.start_stage("fmt");
         self.run_fmt(&packages, ctx.is_human())?;
         ctx.finish_stage(fmt_stage, true);
@@ -125,14 +170,26 @@ impl XtaskCommand for FixCommand {
             self.run_thorough_fixes(ctx)?;
             ctx.finish_stage(thorough_stage, true);
         } else {
-            // Normal mode: single pass (fast but may miss some fixes)
+            // Normal mode: cargo fix (always), clippy --fix only if --clippy
             let cargo_fix_stage = ctx.start_stage("cargo_fix");
             self.run_cargo_fix(&packages, ctx.is_human())?;
             ctx.finish_stage(cargo_fix_stage, true);
 
-            let clippy_fix_stage = ctx.start_stage("clippy_fix");
-            self.run_clippy_fix(ctx, &packages)?;
-            ctx.finish_stage(clippy_fix_stage, true);
+            if self.clippy {
+                let clippy_fix_stage = ctx.start_stage("clippy_fix");
+                let clippy_result = self.run_clippy_fix(ctx, &packages);
+                if let Err(ref e) = clippy_result {
+                    if ctx.is_human() {
+                        eprintln!(
+                            "clippy --fix failed: {e}\n\
+                             Check changed files with: git diff --name-only\n\
+                             Revert with: git checkout -- <files>"
+                        );
+                    }
+                }
+                ctx.finish_stage(clippy_fix_stage, clippy_result.is_ok());
+                clippy_result?;
+            }
         }
 
         // H2: Post-fix summary with before/after context
