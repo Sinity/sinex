@@ -722,7 +722,7 @@ fn package_dependency_closure_from_forward(
 ) -> Vec<String> {
     let workspace_packages: HashSet<&str> = forward_deps.keys().map(String::as_str).collect();
     let mut closure: HashSet<String> = packages.iter().cloned().collect();
-    let mut to_process: Vec<String> = packages.iter().cloned().collect();
+    let mut to_process: Vec<String> = packages.to_vec();
 
     while let Some(pkg) = to_process.pop() {
         let Some(deps) = forward_deps.get(&pkg) else {
