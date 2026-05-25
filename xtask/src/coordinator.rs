@@ -1277,7 +1277,6 @@ fn extract_scope_args(command: &str, args: &[String]) -> Vec<String> {
                 } else if arg.starts_with("--filter=")
                     || arg.starts_with("--test=")
                     || arg.starts_with("--exclude=")
-                    || arg.starts_with("--test-arg=")
                     || arg.starts_with("--runtime-binary=")
                     || arg.starts_with("--threads=")
                     || arg.starts_with("--retries=")
@@ -1301,12 +1300,14 @@ fn extract_scope_args(command: &str, args: &[String]) -> Vec<String> {
         relevant.push(marker);
     }
     let mut take_next: Option<&'static str> = None;
+    let mut test_arg_index = 0usize;
     let mut iter = args.iter();
 
     while let Some(arg) = iter.next() {
         if command == "test" && arg == "--" {
             for test_arg in iter {
-                relevant.push(format!("--test-arg={test_arg}"));
+                relevant.push(format!("--test-arg[{test_arg_index:04}]={test_arg}"));
+                test_arg_index += 1;
             }
             break;
         }
@@ -1328,6 +1329,11 @@ fn extract_scope_args(command: &str, args: &[String]) -> Vec<String> {
             take_next = Some(prefix);
         } else if is_standalone_flag(command, arg) {
             relevant.push(arg.clone());
+        } else if command == "test"
+            && let Some(test_arg) = arg.strip_prefix("--test-arg=")
+        {
+            relevant.push(format!("--test-arg[{test_arg_index:04}]={test_arg}"));
+            test_arg_index += 1;
         } else if let Some(canonical) = canonical_combined_flag(command, arg) {
             relevant.push(canonical);
         }
@@ -2035,6 +2041,36 @@ mod tests {
                 "case-name".into(),
             ]
         ));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_test_binary_args_preserve_order_in_scope_key() -> TestResult<()> {
+        let first_order = scope_key(
+            "test",
+            &[
+                "-p".into(),
+                "xtask".into(),
+                "--".into(),
+                "--exact".into(),
+                "case-name".into(),
+            ],
+        );
+        let second_order = scope_key(
+            "test",
+            &[
+                "-p".into(),
+                "xtask".into(),
+                "--".into(),
+                "case-name".into(),
+                "--exact".into(),
+            ],
+        );
+
+        assert_ne!(
+            first_order, second_order,
+            "test binary args are order-sensitive and must not be sorted into the same proof key"
+        );
         Ok(())
     }
 
