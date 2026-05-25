@@ -453,15 +453,33 @@ impl XtaskCommand for DoctorCommand {
         }
 
         if self.rust_analyzer {
-            let rust_analyzer = execute_rust_analyzer_check(false, "warning")?;
-            let rust_analyzer_value = serde_json::to_value(&rust_analyzer)?;
-            merge_result_data(&mut result, "rust_analyzer", rust_analyzer_value);
-            if !rust_analyzer.warnings.is_empty() && result.status == Status::Success {
-                result.status = Status::Partial;
-            }
-            result.warnings.extend(rust_analyzer.warnings.clone());
-            if ctx.is_human() {
-                print_rust_analyzer_report(&rust_analyzer);
+            match execute_rust_analyzer_check(false, "warning") {
+                Ok(rust_analyzer) => {
+                    let rust_analyzer_value = serde_json::to_value(&rust_analyzer)?;
+                    merge_result_data(&mut result, "rust_analyzer", rust_analyzer_value);
+                    if !rust_analyzer.warnings.is_empty() && result.status == Status::Success {
+                        result.status = Status::Partial;
+                    }
+                    result.warnings.extend(rust_analyzer.warnings.clone());
+                    if ctx.is_human() {
+                        print_rust_analyzer_report(&rust_analyzer);
+                    }
+                }
+                Err(error) => {
+                    if ctx.is_human() {
+                        eprintln!("  rust-analyzer: unavailable ({error})");
+                    }
+                    merge_result_data(
+                        &mut result,
+                        "rust_analyzer",
+                        serde_json::json!({
+                            "available": false,
+                            "error": format!("{error:#}"),
+                            "diagnostic_role": "advisory",
+                            "proof_authority": false,
+                        }),
+                    );
+                }
             }
         }
 
@@ -567,7 +585,26 @@ impl XtaskCommand for RaDiagnoseCommand {
     }
 
     async fn execute(&self, ctx: &CommandContext) -> Result<CommandResult> {
-        let mut report = execute_rust_analyzer_check(self.collect_diagnostics, &self.severity)?;
+        let mut report = match execute_rust_analyzer_check(self.collect_diagnostics, &self.severity)
+        {
+            Ok(report) => report,
+            Err(error) => {
+                let message = format!("rust-analyzer unavailable: {error}");
+                if ctx.is_human() {
+                    eprintln!("  rust-analyzer: unavailable ({error})");
+                }
+                return Ok(CommandResult::success()
+                    .with_message("rust-analyzer unavailable")
+                    .with_detail(&message)
+                    .with_data(serde_json::json!({
+                        "ra_available": false,
+                        "ra_error": format!("{error:#}"),
+                        "diagnostic_role": "advisory",
+                        "proof_authority": false,
+                    }))
+                    .with_duration(ctx.elapsed()));
+            }
+        };
         if let Some(scan) = &report.cli_diagnostics {
             let diagnostics = scan
                 .diagnostics
