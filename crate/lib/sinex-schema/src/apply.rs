@@ -679,10 +679,7 @@ async fn stale_db_check_constraint_names(
     .bind(pattern)
     .fetch_all(pool)
     .await?;
-    Ok(rows
-        .into_iter()
-        .filter(|name| name != &current)
-        .collect())
+    Ok(rows.into_iter().filter(|name| name != &current).collect())
 }
 
 async fn ensure_required_extensions(pool: &PgPool) -> Result<(), ApplyError> {

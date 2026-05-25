@@ -1060,7 +1060,7 @@ fn summarize_rust_analyzer_cli_stderr(stderr: &str) -> Option<RustAnalyzerCliStd
         classify_rust_analyzer_cycle_edges(&cyclic_dependency_edges, |from, to| {
             from != to && from != "xtask" && to != "xtask"
         });
-    internal_error_kinds.sort();
+    internal_error_kinds.sort_unstable();
 
     let mut categories = Vec::new();
     if cyclic_dependency_warnings > 0 {

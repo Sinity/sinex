@@ -44,12 +44,7 @@ pub enum AdapterKind {
 /// parser-contract coverage. Shared obligations that do not inspect parser
 /// output, such as drain-controller state transitions, belong in one shared
 /// test instead of being repeated for every source-unit fixture.
-pub const ALL_OBLIGATIONS: &[&str] = &[
-    "initial_ingestion",
-    "replay",
-    "isolation",
-    "privacy",
-];
+pub const ALL_OBLIGATIONS: &[&str] = &["initial_ingestion", "replay", "isolation", "privacy"];
 
 // ---------------------------------------------------------------------------
 // Internal case runner
@@ -802,7 +797,7 @@ mod coverage_matrix {
     async fn source_worker_drain_obligation_covers_shared_controller() -> TestResult<()> {
         drain::run("source-worker.shared-drain", AdapterKind::StaticFile, b"")
             .await
-            .map_err(|message| SinexError::processing(message))?;
+            .map_err(SinexError::processing)?;
 
         Ok(())
     }

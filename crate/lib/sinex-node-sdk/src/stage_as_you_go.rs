@@ -65,10 +65,10 @@ impl StageCleanupConfig {
 #[cfg(test)]
 mod tests {
     use super::StageAsYouGoContext;
+    use crate::SinexError;
     use crate::acquisition_manager::{AcquisitionManager, SOURCE_MATERIAL_END_SUBJECT};
     use crate::ids::deterministic_material_event_id;
     use crate::runtime::stream::EventEmitter;
-    use crate::SinexError;
     use sinex_primitives::environment::environment;
     use sinex_primitives::{DynamicPayload, Id, events::Provenance};
     use std::sync::Arc;

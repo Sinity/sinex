@@ -167,12 +167,9 @@ mod tests {
         }
 
         let result: xtask::sandbox::TestResult<()> = async {
-            let handle = spawn_watchdog("test-component")
-                .ok_or_else(|| {
-                    SinexError::processing(
-                        "watchdog task should start when env is configured",
-                    )
-                })?;
+            let handle = spawn_watchdog("test-component").ok_or_else(|| {
+                SinexError::processing("watchdog task should start when env is configured")
+            })?;
             let mut buf = [0_u8; 128];
             let msg_len = timeout(Duration::from_secs(1), listener.recv(&mut buf)).await??;
             stop_watchdog(Some(handle), "test-component").await;

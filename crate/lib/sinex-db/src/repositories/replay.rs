@@ -418,7 +418,7 @@ impl ReplayRepository<'_> {
             "SELECT COUNT(*)::bigint as count FROM core.events",
         );
         qb.push(
-            r#"
+            r"
             AND (
               (
                 payload_schema_id IS NULL
@@ -442,7 +442,7 @@ impl ReplayRepository<'_> {
                 )
               )
             )
-            "#,
+            ",
         );
         Ok(qb
             .build_query_scalar::<Option<i64>>()

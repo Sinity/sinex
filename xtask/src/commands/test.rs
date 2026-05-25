@@ -22,18 +22,12 @@ use plan::{
     prepare_runtime_binaries_for_plan, resolve_nextest_execution_plan,
     runtime_binary_requirements_for_target, test_database_required_for_plan,
 };
-use scenarios::{
-    ScenarioSelection, merge_nextest_filters, render_scenario_catalog, scenario_nextest_filter,
-    scenario_packages, select_scenarios, validate_scenario_filters,
-};
 
 // UI & System monitoring
 use console::style;
 
 mod modes;
 mod plan;
-pub(crate) mod scenarios;
-pub(crate) use scenarios::{ScenarioCatalogEntry, discover_scenario_catalog};
 
 fn failing_test_details_issue(ctx: &CommandContext, error: Option<&color_eyre::Report>) -> String {
     match error {
@@ -179,22 +173,6 @@ pub struct TestCommand {
     /// Filter tests by name pattern (nextest -E filter)
     #[arg(long, short = 'E')]
     pub filter: Option<String>,
-
-    /// Run tests whose sinex_test scenario metadata includes this tag
-    #[arg(long = "scenario-tag", value_name = "TAG")]
-    pub scenario_tags: Vec<String>,
-
-    /// Run tests whose sinex_test scenario metadata uses this category
-    #[arg(long = "scenario-category", value_name = "CATEGORY")]
-    pub scenario_categories: Vec<String>,
-
-    /// Run tests whose sinex_test scenario metadata uses this lane
-    #[arg(long = "scenario-lane", value_name = "LANE")]
-    pub scenario_lanes: Vec<String>,
-
-    /// List discovered sinex_test scenarios instead of running tests
-    #[arg(long)]
-    pub list_scenarios: bool,
 
     /// Run tests for specific package(s)
     #[arg(long = "package", short = 'p')]
@@ -451,6 +429,23 @@ pub struct VmArgs {
 }
 
 impl TestCommand {
+    fn uses_automatic_impact(&self) -> bool {
+        self.subcommand.is_none()
+            && !self.all
+            && self.packages.is_empty()
+            && self.exclude_packages.is_empty()
+            && self.test_binaries.is_empty()
+            && !self.lib
+            && self.filter.is_none()
+            && self.args.is_empty()
+            && !self.list
+            && !self.dry_run
+            && !self.heavy
+            && !self.include_ignored
+            && !self.update_snapshots
+            && !self.prime
+    }
+
     fn guard_broad_start_pressure(
         &self,
         ctx: &CommandContext,
@@ -458,7 +453,7 @@ impl TestCommand {
         effective_filter: Option<&str>,
         effective_test_binaries: &[String],
     ) -> Result<()> {
-        if self.allow_contended_host || self.list || self.list_scenarios || self.dry_run {
+        if self.allow_contended_host || self.list || self.dry_run {
             return Ok(());
         }
 
@@ -484,7 +479,7 @@ impl TestCommand {
         effective_filter: Option<&str>,
         effective_test_binaries: &[String],
     ) -> bool {
-        if self.list || self.list_scenarios || self.dry_run {
+        if self.list || self.dry_run {
             return false;
         }
         if self.all || self.heavy || self.include_ignored || self.update_snapshots {
@@ -492,12 +487,6 @@ impl TestCommand {
         }
         if self.threads.is_some_and(|threads| threads >= 12) {
             return true;
-        }
-        if !self.scenario_lanes.is_empty()
-            || !self.scenario_tags.is_empty()
-            || !self.scenario_categories.is_empty()
-        {
-            return self.requests_non_fast_scenario_lane();
         }
         effective_filter.is_none()
             && effective_test_binaries.is_empty()
@@ -532,15 +521,9 @@ impl TestCommand {
         affected::infer_lib_target_for_test_filter(filter)
     }
 
-    fn requests_non_fast_scenario_lane(&self) -> bool {
-        self.scenario_lanes
-            .iter()
-            .any(|lane| !lane.trim().eq_ignore_ascii_case("fast"))
-    }
-
     fn effective_threads(&self) -> Option<usize> {
         self.threads.or_else(|| {
-            if (self.heavy || self.requests_non_fast_scenario_lane()) && !self.debug {
+            if self.heavy && !self.debug {
                 let cpu_count = std::thread::available_parallelism()
                     .map_or(HEAVY_TEST_THREAD_CAP, std::num::NonZeroUsize::get);
                 Some(default_heavy_test_threads(cpu_count))
@@ -562,7 +545,6 @@ impl TestCommand {
             || self.heavy
             || self.include_ignored
             || self.update_snapshots
-            || self.has_scenario_filter()
             || std::env::var_os("SINEX_TEST_DB_POOL_SIZE").is_some()
         {
             return None;
@@ -583,6 +565,7 @@ impl TestCommand {
     fn semantic_invocation_args(
         &self,
         scope: &WorkloadScope,
+        filter: Option<&str>,
         test_binaries: &[String],
         lib_target: bool,
     ) -> Vec<String> {
@@ -606,17 +589,8 @@ impl TestCommand {
         if self.update_snapshots {
             args.push("--update-snapshots".to_string());
         }
-        if let Some(ref filter) = self.filter {
+        if let Some(filter) = filter {
             args.push(format!("--filter={filter}"));
-        }
-        for tag in &self.scenario_tags {
-            args.push(format!("--scenario-tag={tag}"));
-        }
-        for category in &self.scenario_categories {
-            args.push(format!("--scenario-category={category}"));
-        }
-        for lane in &self.scenario_lanes {
-            args.push(format!("--scenario-lane={lane}"));
         }
         for test_binary in test_binaries {
             args.push(format!("--test={test_binary}"));
@@ -626,9 +600,6 @@ impl TestCommand {
         }
         for package in normalize_packages(&self.exclude_packages) {
             args.push(format!("--exclude={package}"));
-        }
-        if self.list_scenarios {
-            args.push("--list-scenarios".to_string());
         }
         if let Some(threads) = self.effective_threads() {
             args.push(format!("--threads={threads}"));
@@ -664,9 +635,6 @@ impl TestCommand {
         if self.list {
             args.push("--list".to_string());
         }
-        if self.list_scenarios {
-            args.push("--list-scenarios".to_string());
-        }
         if self.skip_preflight || force_skip_preflight {
             args.push("--skip-preflight".to_string());
         }
@@ -691,15 +659,6 @@ impl TestCommand {
         if let Some(ref f) = self.filter {
             args.push("-E".to_string());
             args.push(f.clone());
-        }
-        for tag in &self.scenario_tags {
-            args.push(format!("--scenario-tag={tag}"));
-        }
-        for category in &self.scenario_categories {
-            args.push(format!("--scenario-category={category}"));
-        }
-        for lane in &self.scenario_lanes {
-            args.push(format!("--scenario-lane={lane}"));
         }
         for p in &self.packages {
             args.push("-p".to_string());
@@ -749,7 +708,6 @@ impl TestCommand {
             || self.skip_preflight
             || self.dry_run
             || self.list
-            || self.list_scenarios
             || self.subcommand.is_some()
             || std::env::var("SINEX_EPHEMERAL_POSTGRES_ACTIVE").is_ok()
             || std::env::var("NEXTEST_RUN_ID").is_ok()
@@ -763,17 +721,12 @@ impl TestCommand {
             return Ok(None);
         }
 
-        let scenario_selection = self.resolve_scenario_selection(ctx)?;
-        let effective_filter =
-            merge_nextest_filters(self.filter.as_deref(), scenario_selection.filter.as_deref());
+        let effective_filter = self.filter.clone();
         let effective_test_binaries = self.effective_test_binaries(effective_filter.as_deref())?;
         let effective_lib_target =
             self.effective_lib_target(effective_filter.as_deref(), &effective_test_binaries)?;
-        let execution_plan = self.resolve_execution_plan(
-            Some(ctx),
-            effective_filter.as_deref(),
-            &scenario_selection.packages,
-        )?;
+        let execution_plan =
+            self.resolve_execution_plan(Some(ctx), effective_filter.as_deref(), None)?;
 
         if self.should_skip_auto_ephemeral_postgres_for_exact_target(
             auto_requested,
@@ -851,6 +804,7 @@ impl TestCommand {
         let mut nested_test_args = self.nextest_invocation_args(true);
         nested_test_args.retain(|arg| arg != "--ephemeral-postgres");
         nested_test_args.push("--no-ephemeral-postgres".to_string());
+        nested_test_args.push("--allow-contended-host".to_string());
 
         let xtask_exe = std::env::current_exe()
             .map_err(|e| color_eyre::eyre::eyre!("failed to resolve current xtask binary: {e}"))?;
@@ -892,14 +846,12 @@ impl TestCommand {
         &self,
         ctx: Option<&CommandContext>,
         filter: Option<&str>,
-        scenario_packages: &[String],
+        impact_packages: Option<&[String]>,
     ) -> Result<NextestExecutionPlan> {
         let explicit_packages = normalize_packages(&self.packages);
         let requested_excludes = normalize_packages(&self.exclude_packages);
         let inferred_packages = if self.all {
             Vec::new()
-        } else if !scenario_packages.is_empty() && explicit_packages.is_empty() {
-            scenario_packages.to_vec()
         } else if let Some(filter) = filter {
             let inferred_result = if let Some(ctx) = ctx {
                 let stage = ctx.start_stage("scope-inference");
@@ -924,35 +876,49 @@ impl TestCommand {
             Vec::new()
         };
 
-        let affected_packages =
-            if !self.all && explicit_packages.is_empty() && inferred_packages.is_empty() {
-                let affected_result = if let Some(ctx) = ctx {
-                    let stage = ctx.start_stage("affected");
-                    let packages = affected::affected_packages();
-                    ctx.finish_stage(stage, packages.is_ok());
-                    packages
-                } else {
-                    affected::affected_packages()
-                };
-                let affected_packages = normalize_packages(&affected_result?);
-                if affected_packages.is_empty() {
-                    if let Some(ctx) = ctx
-                        && ctx.is_human()
-                    {
-                        println!("No changes detected. Running ALL tests.");
-                    }
-                    None
-                } else {
-                    if let Some(ctx) = ctx
-                        && ctx.is_human()
-                    {
-                        println!("{}", affected::affected_summary(&affected_packages));
-                    }
-                    Some(affected_packages)
-                }
-            } else {
+        let affected_packages = if let Some(impact_packages) = impact_packages {
+            let impact_packages = normalize_packages(impact_packages);
+            if impact_packages.is_empty() {
                 None
+            } else {
+                if let Some(ctx) = ctx
+                    && ctx.is_human()
+                {
+                    println!(
+                        "Impact-selected package scope: {}",
+                        impact_packages.join(", ")
+                    );
+                }
+                Some(impact_packages)
+            }
+        } else if !self.all && explicit_packages.is_empty() && inferred_packages.is_empty() {
+            let affected_result = if let Some(ctx) = ctx {
+                let stage = ctx.start_stage("affected");
+                let packages = affected::affected_packages();
+                ctx.finish_stage(stage, packages.is_ok());
+                packages
+            } else {
+                affected::affected_packages()
             };
+            let affected_packages = normalize_packages(&affected_result?);
+            if affected_packages.is_empty() {
+                if let Some(ctx) = ctx
+                    && ctx.is_human()
+                {
+                    println!("No changes detected. Running ALL tests.");
+                }
+                None
+            } else {
+                if let Some(ctx) = ctx
+                    && ctx.is_human()
+                {
+                    println!("{}", affected::affected_summary(&affected_packages));
+                }
+                Some(affected_packages)
+            }
+        } else {
+            None
+        };
 
         let execution_plan = resolve_nextest_execution_plan(
             &explicit_packages,
@@ -971,57 +937,6 @@ impl TestCommand {
         }
 
         Ok(execution_plan)
-    }
-
-    fn has_scenario_filter(&self) -> bool {
-        self.list_scenarios
-            || !self.scenario_tags.is_empty()
-            || !self.scenario_categories.is_empty()
-            || !self.scenario_lanes.is_empty()
-    }
-
-    fn resolve_scenario_selection(&self, ctx: &CommandContext) -> Result<ScenarioSelection> {
-        if !self.has_scenario_filter() {
-            return Ok(ScenarioSelection::default());
-        }
-
-        validate_scenario_filters(&self.scenario_categories, &self.scenario_lanes)?;
-
-        let workspace_root = crate::sandbox::orchestrator::find_workspace_root()?;
-        let catalog = scenarios::discover_scenario_catalog(&workspace_root)?;
-        let entries = select_scenarios(
-            catalog,
-            &self.scenario_tags,
-            &self.scenario_categories,
-            &self.scenario_lanes,
-        );
-
-        if entries.is_empty() && !self.list_scenarios {
-            return Err(color_eyre::eyre::eyre!(
-                "No sinex_test scenario matched tag(s) [{}], categor(ies) [{}], lane(s) [{}]",
-                self.scenario_tags.join(", "),
-                self.scenario_categories.join(", "),
-                self.scenario_lanes.join(", "),
-            ));
-        }
-
-        if ctx.is_human() && !entries.is_empty() && !self.list_scenarios {
-            println!(
-                "Selected {} scenario test(s): {}",
-                entries.len(),
-                entries
-                    .iter()
-                    .map(|entry| entry.test_name.as_str())
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            );
-        }
-
-        Ok(ScenarioSelection {
-            filter: scenario_nextest_filter(&entries),
-            packages: scenario_packages(&entries),
-            entries,
-        })
     }
 }
 
@@ -1189,9 +1104,6 @@ impl XtaskCommand for TestCommand {
                     if self.list {
                         args.push("--list".to_string());
                     }
-                    if self.list_scenarios {
-                        args.push("--list-scenarios".to_string());
-                    }
                     if self.skip_preflight {
                         args.push("--skip-preflight".to_string());
                     }
@@ -1216,15 +1128,6 @@ impl XtaskCommand for TestCommand {
                     if let Some(ref f) = self.filter {
                         args.push("-E".to_string());
                         args.push(f.clone());
-                    }
-                    for tag in &self.scenario_tags {
-                        args.push(format!("--scenario-tag={tag}"));
-                    }
-                    for category in &self.scenario_categories {
-                        args.push(format!("--scenario-category={category}"));
-                    }
-                    for lane in &self.scenario_lanes {
-                        args.push(format!("--scenario-lane={lane}"));
                     }
                     for p in &self.packages {
                         args.push("-p".to_string());
@@ -1256,13 +1159,14 @@ impl XtaskCommand for TestCommand {
                     }
 
                     let execution_plan =
-                        self.resolve_execution_plan(None, self.filter.as_deref(), &[])?;
+                        self.resolve_execution_plan(None, self.filter.as_deref(), None)?;
                     let effective_test_binaries =
                         self.effective_test_binaries(self.filter.as_deref())?;
                     let effective_lib_target = self
                         .effective_lib_target(self.filter.as_deref(), &effective_test_binaries)?;
                     let coordination_args = self.semantic_invocation_args(
                         &execution_plan.workload_scope,
+                        self.filter.as_deref(),
                         &effective_test_binaries,
                         effective_lib_target,
                     );
@@ -1296,24 +1200,17 @@ impl XtaskCommand for TestCommand {
         }
 
         if self.dry_run {
-            let scenario_selection = self.resolve_scenario_selection(ctx)?;
-            if self.list_scenarios {
-                return render_scenario_catalog(ctx, &scenario_selection.entries);
-            }
-            let effective_filter =
-                merge_nextest_filters(self.filter.as_deref(), scenario_selection.filter.as_deref());
+            let effective_filter = self.filter.clone();
             let effective_test_binaries =
                 self.effective_test_binaries(effective_filter.as_deref())?;
             let effective_lib_target =
                 self.effective_lib_target(effective_filter.as_deref(), &effective_test_binaries)?;
-            let execution_plan = self.resolve_execution_plan(
-                Some(ctx),
-                effective_filter.as_deref(),
-                &scenario_selection.packages,
-            )?;
+            let execution_plan =
+                self.resolve_execution_plan(Some(ctx), effective_filter.as_deref(), None)?;
             let workload_scope = execution_plan.workload_scope.clone();
             let coordination_args = self.semantic_invocation_args(
                 &workload_scope,
+                effective_filter.as_deref(),
                 &effective_test_binaries,
                 effective_lib_target,
             );
@@ -1334,7 +1231,7 @@ impl XtaskCommand for TestCommand {
             let input_fingerprint =
                 crate::coordinator::current_scoped_tree_fingerprint("test", &coordination_args)?;
             let scope_key = crate::coordinator::compute_scope_key("test", &coordination_args);
-            let reusable = proof_kind == "test.nextest.lib";
+            let reusable = proof_kind == "test.nextest.exact";
             let reusable_proof = if reusable {
                 ctx.try_with_history_db_query(|db| {
                     db.get_successful_reusable_test_proof_unit(
@@ -1343,7 +1240,7 @@ impl XtaskCommand for TestCommand {
                         &scope_key,
                     )
                 })
-                .and_then(|result| result.ok())
+                .and_then(std::result::Result::ok)
                 .flatten()
             } else {
                 None
@@ -1364,7 +1261,7 @@ impl XtaskCommand for TestCommand {
                 if !effective_test_binaries.is_empty() {
                     println!("  test binaries: {}", effective_test_binaries.join(", "));
                 }
-                println!("  lib target: {}", effective_lib_target);
+                println!("  lib target: {effective_lib_target}");
                 if let Some(filter) = &effective_filter {
                     println!("  filter: {filter}");
                 }
@@ -1384,9 +1281,7 @@ impl XtaskCommand for TestCommand {
                 }
                 println!(
                     "  db pool size override: {}",
-                    db_pool_size
-                        .map(|value| value.to_string())
-                        .unwrap_or_else(|| "default".to_string())
+                    db_pool_size.map_or_else(|| "default".to_string(), |value| value.to_string())
                 );
                 let reuse_state = if let Some(proof) = &reusable_proof {
                     format!("hit invocation {}", proof.invocation_id)
@@ -1407,7 +1302,6 @@ impl XtaskCommand for TestCommand {
                     "test_binaries": effective_test_binaries,
                     "lib": effective_lib_target,
                     "filter": effective_filter,
-                    "scenario_selection": scenario_selection,
                     "runtime_binary_requirements": runtime_binary_requirements,
                     "db_pool_size": db_pool_size,
                     "reuse": {
@@ -1417,9 +1311,9 @@ impl XtaskCommand for TestCommand {
                         "scope_key": scope_key,
                         "hit": reusable_proof,
                         "reason": if reusable {
-                            "lib-only nextest proof can be reused when the exact manifest and input fingerprint match"
+                            "nextest proof can be reused when the exact manifest and input fingerprint match"
                         } else {
-                            "runtime, scenario, ignored, snapshot, or listing test shapes are never reused"
+                            "runtime, ignored, snapshot, or listing test shapes are never reused"
                         },
                     },
                 }))
@@ -1469,6 +1363,72 @@ impl XtaskCommand for TestCommand {
             ));
         }
 
+        let impact_plan = if self.uses_automatic_impact() {
+            Some(
+                match ctx.try_with_history_db_query(|db| {
+                    crate::impact::plan_default_test_impact_with_history(Some(db))
+                }) {
+                    Some(result) => result?,
+                    None => crate::impact::plan_default_test_impact()?,
+                },
+            )
+        } else {
+            None
+        };
+        if let Some(plan) = &impact_plan {
+            if let Some(result) = ctx
+                .try_with_history_db(|db| db.record_impact_plan(ctx.invocation_id(), "auto", plan))
+                && let Err(error) = result
+            {
+                tracing::warn!(target: "xtask::test", error = %error, "failed to record impact plan");
+            }
+            if ctx.is_human() {
+                println!(
+                    "Impact planner: {} changed file(s), {} affected package(s), {} impacted test(s)",
+                    plan.changed.len(),
+                    plan.affected_packages.len(),
+                    plan.impacted_tests.len()
+                );
+                if let Some(filter) = &plan.impact_filter {
+                    println!("  impact filter: {filter}");
+                }
+                for risk in &plan.accepted_risks {
+                    println!("  accepted risk: {risk}");
+                }
+            }
+            if plan.can_reuse_exact_proof() {
+                let proof_args = crate::impact::exact_proof_args_for_plan(plan);
+                let (proof_kind, input_fingerprint, scope_key) =
+                    crate::impact::exact_test_proof_key(&proof_args)?;
+                let reusable_proof = ctx
+                    .try_with_history_db_query(|db| {
+                        db.get_successful_reusable_test_proof_unit(
+                            &proof_kind,
+                            &input_fingerprint,
+                            &scope_key,
+                        )
+                    })
+                    .and_then(std::result::Result::ok)
+                    .flatten();
+                if let Some(proof) = reusable_proof {
+                    if ctx.is_human() {
+                        println!(
+                            "Skipping tests: exact reusable proof from invocation {}",
+                            proof.invocation_id
+                        );
+                    }
+                    return Ok(CommandResult::success()
+                        .with_message("tests skipped by exact impact proof")
+                        .with_detail(format!("reused_invocation={}", proof.invocation_id))
+                        .with_duration(ctx.elapsed())
+                        .with_data(serde_json::json!({
+                            "impact_plan": plan,
+                            "reused_proof": proof,
+                        })));
+                }
+            }
+        }
+
         // Preflight is default ON unless explicitly disabled
         if !self.skip_preflight {
             let stage = ctx.start_stage("preflight");
@@ -1484,20 +1444,21 @@ impl XtaskCommand for TestCommand {
         let profile = if self.debug { "debug" } else { "default" };
         let use_fail_fast = self.fail_fast;
 
-        // Affected mode is default ON, --all disables it
-        let scenario_selection = self.resolve_scenario_selection(ctx)?;
-        if self.list_scenarios {
-            return render_scenario_catalog(ctx, &scenario_selection.entries);
-        }
-        let effective_filter =
-            merge_nextest_filters(self.filter.as_deref(), scenario_selection.filter.as_deref());
+        // Affected mode is default ON, --all disables it.
+        let impact_packages = impact_plan
+            .as_ref()
+            .and_then(crate::impact::packages_for_plan);
+        let effective_filter = impact_plan
+            .as_ref()
+            .and_then(|plan| plan.impact_filter.clone())
+            .or_else(|| self.filter.clone());
         let effective_test_binaries = self.effective_test_binaries(effective_filter.as_deref())?;
         let effective_lib_target =
             self.effective_lib_target(effective_filter.as_deref(), &effective_test_binaries)?;
         let execution_plan = self.resolve_execution_plan(
             Some(ctx),
             effective_filter.as_deref(),
-            &scenario_selection.packages,
+            impact_packages.as_deref(),
         )?;
         self.guard_broad_start_pressure(
             ctx,
@@ -1508,6 +1469,7 @@ impl XtaskCommand for TestCommand {
         let workload_scope = execution_plan.workload_scope.clone();
         let coordination_args = self.semantic_invocation_args(
             &workload_scope,
+            effective_filter.as_deref(),
             &effective_test_binaries,
             effective_lib_target,
         );
@@ -1615,7 +1577,7 @@ impl XtaskCommand for TestCommand {
             runner.add_arg(filter);
         }
 
-        if self.include_ignored || self.heavy || self.requests_non_fast_scenario_lane() {
+        if self.include_ignored || self.heavy {
             // Use --run-ignored=all to run both regular and ignored tests
             // Note: --ignored alone would run ONLY ignored tests
             // Note: --all only affects package selection (all vs affected), not ignored tests
@@ -1673,8 +1635,8 @@ impl XtaskCommand for TestCommand {
                 "passed": stats.passed,
                 "failed": stats.failed,
                 "ignored": stats.ignored,
+                "impact_plan": impact_plan.clone(),
                 "runtime_binaries": runtime_binary_reports.clone(),
-                "scenario_selection": scenario_selection.clone(),
                 "failures": failures,
                 "failure_details_issue": failure_details_issue.clone(),
                 "analysis": analysis,
@@ -1713,7 +1675,7 @@ impl XtaskCommand for TestCommand {
                 ));
                 match (input_fingerprint, scope_key) {
                     (Some(input_fingerprint), Some(scope_key)) => {
-                        let reusable = proof_kind == "test.nextest.lib";
+                        let reusable = proof_kind == "test.nextest.exact";
                         let manifest = serde_json::json!({
                             "scope": workload_scope.encode_marker(),
                             "runner_packages": execution_plan.runner_packages,
@@ -1721,7 +1683,6 @@ impl XtaskCommand for TestCommand {
                             "test_binaries": effective_test_binaries,
                             "lib": effective_lib_target,
                             "filter": effective_filter,
-                            "scenario_selection": scenario_selection,
                             "runtime_binary_requirements": runtime_binary_requirements,
                             "db_pool_size": self.narrow_test_db_pool_size(
                                 &execution_plan,
@@ -1731,6 +1692,7 @@ impl XtaskCommand for TestCommand {
                             ),
                             "passed": stats.passed,
                             "ignored": stats.ignored,
+                            "impact_plan": impact_plan.clone(),
                         });
                         match serde_json::to_string(&manifest)
                             .map_err(color_eyre::eyre::Report::from)
@@ -1807,9 +1769,9 @@ impl XtaskCommand for TestCommand {
                     "passed": stats.passed,
                     "failed": stats.failed,
                     "ignored": stats.ignored,
+                    "impact_plan": impact_plan.clone(),
                     "runtime_binaries": runtime_binary_reports.clone(),
                     "test_proof_unit": test_proof_unit,
-                    "scenario_selection": scenario_selection.clone(),
                     "flaky": flaky,
                     "flaky_issue": flaky_issue.clone(),
                     "analysis": analysis,
@@ -1979,7 +1941,7 @@ mod tests {
             ..Default::default()
         };
 
-        let args = command.semantic_invocation_args(&WorkloadScope::Workspace, &[], false);
+        let args = command.semantic_invocation_args(&WorkloadScope::Workspace, None, &[], false);
         assert!(args.contains(&"--heavy".to_string()));
 
         // The thread cap is min(available_parallelism, HEAVY_TEST_THREAD_CAP).
@@ -2010,6 +1972,7 @@ mod tests {
 
         let args = command.semantic_invocation_args(
             &WorkloadScope::Packages(vec!["sinex-e2e-tests".to_string()]),
+            None,
             &["large_payload_test".to_string()],
             false,
         );
@@ -2028,6 +1991,7 @@ mod tests {
 
         let args = command.semantic_invocation_args(
             &WorkloadScope::Packages(vec!["sinex-node-sdk".to_string()]),
+            None,
             &[],
             true,
         );
@@ -2159,7 +2123,7 @@ mod tests {
             ..Default::default()
         };
 
-        let args = command.semantic_invocation_args(&WorkloadScope::Workspace, &[], false);
+        let args = command.semantic_invocation_args(&WorkloadScope::Workspace, None, &[], false);
         assert!(
             args.contains(&"--exclude=sinex-e2e-tests".to_string()),
             "package excludes must be part of coordination identity: {args:?}"

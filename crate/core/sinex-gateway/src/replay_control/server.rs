@@ -168,8 +168,7 @@ impl ReplayControlServer {
             ))
             .with_std_error(&error)),
             Err(_) => Err(SinexError::timeout(format!(
-                "timed out subscribing to replay control subject {subject} after {:?}",
-                REPLAY_CONTROL_SUBSCRIBE_ATTEMPT_TIMEOUT
+                "timed out subscribing to replay control subject {subject} after {REPLAY_CONTROL_SUBSCRIBE_ATTEMPT_TIMEOUT:?}"
             ))),
         }
     }

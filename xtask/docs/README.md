@@ -15,7 +15,7 @@ development.
 - [`command-guide.md`](command-guide.md): concise, high-signal operator guide for the commands humans and agents should actually remember and reach for.
 - [`command-reference.md`](command-reference.md): generated public command tree with the current flags and subcommands.
 - [`verification.md`](verification.md): performance contracts, verification lanes, and CI-parity details.
-- [`../docs/proof-catalog.json`](../../docs/proof-catalog.json): generated proof graph joining Rust descriptors, payload inventory, command metadata, and scenario annotations.
+- [`../docs/proof-catalog.json`](../../docs/proof-catalog.json): generated proof graph joining Rust descriptors, payload inventory, and command metadata.
 - [`../.config/ast-grep/README.md`](../.config/ast-grep/README.md): generated rule catalog for the repo's `ast-grep` policy surface.
 - [`sandbox/README.md`](sandbox/README.md): test harness architecture and sandbox patterns.
 - [`commands/jobs.md`](commands/jobs.md): background job model and how it differs from history.
@@ -25,12 +25,12 @@ development.
 
 - **Core loop**: `xtask check`, `xtask fix`, `xtask test`, and `xtask build`.
 - **Runtime/infra**: `xtask infra`, `xtask run`, `xtask status`, `xtask doctor`, `xtask jobs`, and `xtask reset`.
-- **Investigation**: `xtask history`, `xtask analytics`, and `xtask deps`.
+- **Investigation**: `xtask history`, `xtask analytics`, `xtask impact`, and `xtask deps`.
 - **Docs/context**: `xtask docs sync`, `xtask docs check`, `xtask docs agents`, `xtask docs proof-catalog`, `xtask docs ast-grep-catalog`, `xtask docs schema-bundle`, and `xtask docs snapshot`.
 
 `xtask exercise` remains a command-contract and xtask-surface regression runner.
-Product/runtime semantics should live in Rust tests, proof-carrying scenarios,
-benchmarks, or VM tests instead of new exercise entries.
+Product/runtime semantics should live in Rust tests, benchmarks, or VM tests
+instead of new exercise entries or inert proof labels.
 
 The generated command guide is the selective memory surface. The generated
 reference is the live public command tree. Together they replace hand-maintained

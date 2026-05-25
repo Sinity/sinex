@@ -170,8 +170,7 @@ impl ReplayExecutionEngine {
     ) -> Result<ReplayOperation> {
         let Some(_execution_lock) = self.replay.acquire_execution_lock(operation_id).await? else {
             return Err(SinexError::invalid_state(format!(
-                "Operation {} is already executing on another node",
-                operation_id
+                "Operation {operation_id} is already executing on another node"
             )));
         };
 
@@ -217,8 +216,7 @@ impl ReplayExecutionEngine {
     ) -> Result<ReplayOperation> {
         let Some(_execution_lock) = self.replay.acquire_execution_lock(operation_id).await? else {
             return Err(SinexError::invalid_state(format!(
-                "Operation {} is already executing on another node",
-                operation_id
+                "Operation {operation_id} is already executing on another node"
             )));
         };
 
@@ -433,16 +431,14 @@ impl ReplayExecutionEngine {
         let op = self.replay.load_operation(operation_id).await?;
         if op.state != ReplayState::Approved {
             return Err(SinexError::invalid_state(format!(
-                "Operation {} must be approved before execution",
-                operation_id
+                "Operation {operation_id} must be approved before execution"
             ))
             .with_context("state", format!("{:?}", op.state)));
         }
 
         let preview = op.preview_summary.as_ref().ok_or_else(|| {
             SinexError::invalid_state(format!(
-                "Operation {} is missing preview summary; run preview before execution",
-                operation_id
+                "Operation {operation_id} is missing preview summary; run preview before execution"
             ))
         })?;
         ensure_replay_gates_pass(operation_id, preview, gate_overrides)?;
@@ -473,8 +469,7 @@ impl ReplayExecutionEngine {
         let pending = self.replay.load_operation(operation_id).await?;
         let preview = pending.preview_summary.as_ref().ok_or_else(|| {
             SinexError::invalid_state(format!(
-                "Operation {} is missing preview summary; run preview before execution",
-                operation_id
+                "Operation {operation_id} is missing preview summary; run preview before execution"
             ))
         })?;
         ensure_replay_gates_pass(operation_id, preview, gate_overrides)?;
@@ -503,8 +498,7 @@ impl ReplayExecutionEngine {
     ) -> Result<(u64, (Timestamp, Timestamp), Vec<Uuid>)> {
         let preview = operation.preview_summary.clone().ok_or_else(|| {
             SinexError::invalid_state(format!(
-                "Operation {} is missing preview summary; run preview before execution",
-                operation_id
+                "Operation {operation_id} is missing preview summary; run preview before execution"
             ))
         })?;
         let preview_summary: ReplayPreviewSummary =
@@ -514,15 +508,17 @@ impl ReplayExecutionEngine {
         let total_events = preview_summary.total_events;
         if total_events == 0 {
             return Err(SinexError::invalid_state(format!(
-                "Operation {} preview matches zero events; refresh preview before execution",
-                operation_id
+                "Operation {operation_id} preview matches zero events; refresh preview before execution"
             )));
         }
         let mut preview_root_ids = preview_summary.root_event_ids;
         preview_root_ids.sort_unstable();
         preview_root_ids.dedup();
         if preview_root_ids.is_empty() {
-            return Err(stale_preview_missing_root_ids_error(operation_id, total_events).into());
+            return Err(stale_preview_missing_root_ids_error(
+                operation_id,
+                total_events,
+            ));
         }
         if preview_root_ids.len() as u64 != total_events {
             return Err(SinexError::invalid_state(format!(

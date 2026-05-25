@@ -274,7 +274,7 @@ fn infer_lib_target_for_test_filter_in(repo_root: &Path, filter: &str) -> Result
 }
 
 /// Get list of changed files from git.
-fn changed_files() -> Result<Vec<String>> {
+pub fn changed_files() -> Result<Vec<String>> {
     let repo_root =
         std::env::current_dir().context("failed to determine current working directory")?;
     changed_files_in(&repo_root)
@@ -1051,7 +1051,10 @@ mod tests {
             "crate/core/sinex-source-worker/tests/production_path/obligations/initial_ingestion.rs",
         );
         fs::create_dir_all(nested.parent().expect("nested parent"))?;
-        fs::write(&root, "#[path = \"production_path/obligations/mod.rs\"] mod obligations;\n")?;
+        fs::write(
+            &root,
+            "#[path = \"production_path/obligations/mod.rs\"] mod obligations;\n",
+        )?;
         fs::write(
             &nested,
             "#[sinex_test]\nasync fn source_worker_binary_scan_private_mode_matrix() {}\n",
@@ -1066,8 +1069,8 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_infer_test_binaries_maps_aggregated_nested_integration_modules()
-    -> TestResult<()> {
+    async fn test_infer_test_binaries_maps_aggregated_nested_integration_modules() -> TestResult<()>
+    {
         let repo = tempfile::tempdir()?;
         let root = repo
             .path()

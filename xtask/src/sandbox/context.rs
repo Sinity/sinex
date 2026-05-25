@@ -69,6 +69,7 @@ use sinex_db::DbPool;
 use sinex_db::DbPoolExt;
 use sinex_primitives::events::Publishable;
 use sinex_primitives::{Event, Id, SourceMaterial, Uuid};
+use std::fs;
 use std::result::Result as StdResult;
 use std::sync::Arc;
 use std::sync::mpsc;
@@ -79,6 +80,16 @@ use tokio::sync::Mutex as AsyncMutex;
 use tokio::sync::OnceCell as AsyncOnceCell;
 use tokio::task::JoinHandle;
 use tracing::warn;
+
+#[derive(Debug, Clone, serde::Serialize)]
+struct TestDependencyEdgeArtifact {
+    test_name: String,
+    package: Option<String>,
+    edge_kind: String,
+    subject: String,
+    fingerprint: Option<String>,
+    origin: String,
+}
 
 fn format_cleanup_failure_context(
     message: &str,
@@ -147,6 +158,7 @@ pub struct Sandbox {
     background: Arc<AsyncMutex<BackgroundRegistry>>,
     captured_logs: Arc<Mutex<Vec<String>>>,
     evidence: Arc<Mutex<TestEvidence>>,
+    dependency_edges: Arc<Mutex<Vec<TestDependencyEdgeArtifact>>>,
     baseline_events: i64,
     _tracing_enabled: bool,
     nats: Option<Arc<EphemeralNats>>,
@@ -282,6 +294,7 @@ impl Sandbox {
     /// Accessor for the shared database pool.
     #[must_use]
     pub fn pool(&self) -> &DbPool {
+        self.record_dependency_edge("service", "postgres", None, "harness.pool");
         &self.pool
     }
 
@@ -403,6 +416,7 @@ impl Sandbox {
             background: Arc::new(AsyncMutex::new(BackgroundRegistry::default())),
             captured_logs: Arc::new(Mutex::new(Vec::new())),
             evidence: Arc::new(Mutex::new(TestEvidence::default())),
+            dependency_edges: Arc::new(Mutex::new(Vec::new())),
             baseline_events,
             _tracing_enabled: false,
             nats: None,
@@ -420,9 +434,29 @@ impl Sandbox {
         Ok(ctx)
     }
 
+    pub(crate) fn record_dependency_edge(
+        &self,
+        edge_kind: impl Into<String>,
+        subject: impl Into<String>,
+        fingerprint: Option<String>,
+        origin: impl Into<String>,
+    ) {
+        self.dependency_edges
+            .lock()
+            .push(TestDependencyEdgeArtifact {
+                test_name: self.test_name.clone(),
+                package: std::env::var("CARGO_PKG_NAME").ok(),
+                edge_kind: edge_kind.into(),
+                subject: subject.into(),
+                fingerprint,
+                origin: origin.into(),
+            });
+    }
+
     /// Configure NATS for this test context using a fluent builder.
     #[must_use]
     pub fn with_nats(self) -> NatsSetup {
+        self.record_dependency_edge("service", "nats", None, "harness.with_nats");
         NatsSetup::new(self)
     }
 
@@ -447,6 +481,7 @@ impl Sandbox {
     #[must_use]
     #[allow(clippy::panic)] // Deliberate: programmer error if NATS not initialized
     pub fn nats_client(&self) -> NatsClient {
+        self.record_dependency_edge("service", "nats", None, "harness.nats_client");
         // First check the primary nats_client field
         if let Some(client) = &self.nats_client {
             return client.clone();
@@ -462,6 +497,7 @@ impl Sandbox {
 
     /// Lazily initialize shared NATS without consuming self.
     pub async fn ensure_nats(&self) -> TestResult<NatsClient> {
+        self.record_dependency_edge("service", "nats", None, "harness.ensure_nats");
         // If already initialized via with_nats/with_shared_nats, use that
         if let Some(client) = &self.nats_client {
             return Ok(client.clone());
@@ -663,7 +699,7 @@ impl Sandbox {
             .record_event(self.elapsed_ms_u64(), label, message, fields);
     }
 
-    /// Register a named evidence collector that a scenario expects to capture.
+    /// Register a named evidence collector that a test expects to capture.
     pub fn register_evidence_collector(
         &self,
         name: impl Into<String>,
@@ -671,16 +707,6 @@ impl Sandbox {
         level: EvidenceCaptureLevel,
     ) {
         self.evidence.lock().register_collector(name, kind, level);
-    }
-
-    /// Attach proof/scenario metadata to the eventual evidence envelope.
-    pub fn set_proof_metadata(&self, proof: ProofMetadata) {
-        self.evidence.lock().set_proof(proof);
-    }
-
-    /// Attach scenario taxonomy metadata to the eventual evidence envelope.
-    pub fn set_scenario_metadata(&self, scenario: evidence::ScenarioMetadata) {
-        self.evidence.lock().set_scenario(scenario);
     }
 
     /// Add a human note to the evidence envelope.
@@ -1417,6 +1443,46 @@ fn looks_like_error_log(log: &str) -> bool {
         || lower.contains(" error:")
 }
 
+fn sanitize_artifact_component(raw: &str) -> String {
+    raw.chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.') {
+                ch
+            } else {
+                '_'
+            }
+        })
+        .collect()
+}
+
+fn persist_dependency_edges(test_name: &str, edges: &[TestDependencyEdgeArtifact]) {
+    if edges.is_empty() {
+        return;
+    }
+    let run_id = std::env::var("SINEX_IMPACT_ARTIFACT_RUN_ID")
+        .or_else(|_| std::env::var("NEXTEST_RUN_ID"))
+        .unwrap_or_else(|_| "manual".to_string());
+    let dir = crate::config::workspace_root()
+        .join(".sinex")
+        .join("test-artifacts")
+        .join("impact")
+        .join(sanitize_artifact_component(&run_id));
+    if let Err(error) = fs::create_dir_all(&dir) {
+        warn!("failed to create impact artifact directory: {}", error);
+        return;
+    }
+    let path = dir.join(format!("{}.json", sanitize_artifact_component(test_name)));
+    match serde_json::to_string_pretty(edges) {
+        Ok(mut rendered) => {
+            rendered.push('\n');
+            if let Err(error) = fs::write(&path, rendered) {
+                warn!("failed to write impact dependency artifact: {}", error);
+            }
+        }
+        Err(error) => warn!("failed to serialize impact dependency artifact: {}", error),
+    }
+}
+
 /// Cleanup implementation for Sandbox
 impl Drop for Sandbox {
     fn drop(&mut self) {
@@ -1527,6 +1593,9 @@ impl Drop for Sandbox {
                 let _ = rx.recv_timeout(Duration::from_secs(20));
             }
         }
+
+        let dependency_edges = self.dependency_edges.lock().clone();
+        persist_dependency_edges(&self.test_name, &dependency_edges);
 
         let duration = self.start_time.elapsed();
         if duration > Duration::from_secs(5) {

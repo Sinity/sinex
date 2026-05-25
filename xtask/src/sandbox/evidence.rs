@@ -1,7 +1,7 @@
-//! Structured evidence artifacts for sandbox and scenario tests.
+//! Structured evidence artifacts for sandbox tests.
 //!
 //! The harness owns evidence collection because it owns isolated runtime state,
-//! but the schema is deliberately plain Rust data so scenario code can reuse it
+//! but the schema is deliberately plain Rust data so tests can reuse it
 //! without depending on xtask command semantics.
 
 use color_eyre::eyre::{Context, Result as EyreResult};
@@ -188,211 +188,7 @@ impl EvidenceCapture {
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
-pub struct ProofMetadata {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub runner_id: Option<String>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub subject_refs: Vec<String>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub claim_ids: Vec<String>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub assertion_ids: Vec<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub status: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub reproducer: Option<String>,
-    #[serde(default, skip_serializing_if = "JsonValue::is_null")]
-    pub environment: JsonValue,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum ScenarioCategory {
-    SourceMaterial,
-    Replay,
-    Runtime,
-    NodeAdapter,
-    Gateway,
-    Schema,
-    CommandContract,
-    DeploymentBoundary,
-}
-
-impl ScenarioCategory {
-    #[must_use]
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::SourceMaterial => "source_material",
-            Self::Replay => "replay",
-            Self::Runtime => "runtime",
-            Self::NodeAdapter => "node_adapter",
-            Self::Gateway => "gateway",
-            Self::Schema => "schema",
-            Self::CommandContract => "command_contract",
-            Self::DeploymentBoundary => "deployment_boundary",
-        }
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum ScenarioLane {
-    Fast,
-    Heavy,
-    Soak,
-    Vm,
-}
-
-impl ScenarioLane {
-    #[must_use]
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::Fast => "fast",
-            Self::Heavy => "heavy",
-            Self::Soak => "soak",
-            Self::Vm => "vm",
-        }
-    }
-
-    #[must_use]
-    pub fn default_cost_tier(&self) -> ScenarioCostTier {
-        match self {
-            Self::Fast => ScenarioCostTier::Fast,
-            Self::Heavy => ScenarioCostTier::Heavy,
-            Self::Soak => ScenarioCostTier::Soak,
-            Self::Vm => ScenarioCostTier::Vm,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum ScenarioCostTier {
-    Fast,
-    Integration,
-    Heavy,
-    Soak,
-    Vm,
-}
-
-impl ScenarioCostTier {
-    #[must_use]
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::Fast => "fast",
-            Self::Integration => "integration",
-            Self::Heavy => "heavy",
-            Self::Soak => "soak",
-            Self::Vm => "vm",
-        }
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct ScenarioMetadata {
-    pub id: String,
-    pub category: ScenarioCategory,
-    pub lane: ScenarioLane,
-    pub cost_tier: ScenarioCostTier,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub tags: Vec<String>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub fixtures: Vec<String>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub subject_refs: Vec<String>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub claim_ids: Vec<String>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub assertion_ids: Vec<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub reproducer: Option<String>,
-}
-
-impl ScenarioMetadata {
-    #[must_use]
-    pub fn new(id: impl Into<String>, category: ScenarioCategory, lane: ScenarioLane) -> Self {
-        let cost_tier = lane.default_cost_tier();
-        Self {
-            id: id.into(),
-            category,
-            lane,
-            cost_tier,
-            tags: Vec::new(),
-            fixtures: Vec::new(),
-            subject_refs: Vec::new(),
-            claim_ids: Vec::new(),
-            assertion_ids: Vec::new(),
-            reproducer: None,
-        }
-    }
-
-    #[must_use]
-    pub fn with_cost_tier(mut self, cost_tier: ScenarioCostTier) -> Self {
-        self.cost_tier = cost_tier;
-        self
-    }
-
-    #[must_use]
-    pub fn with_tags<I, S>(mut self, tags: I) -> Self
-    where
-        I: IntoIterator<Item = S>,
-        S: Into<String>,
-    {
-        self.tags = tags.into_iter().map(Into::into).collect();
-        self
-    }
-
-    #[must_use]
-    pub fn with_fixtures<I, S>(mut self, fixtures: I) -> Self
-    where
-        I: IntoIterator<Item = S>,
-        S: Into<String>,
-    {
-        self.fixtures = fixtures.into_iter().map(Into::into).collect();
-        self
-    }
-
-    #[must_use]
-    pub fn with_subject_refs<I, S>(mut self, subject_refs: I) -> Self
-    where
-        I: IntoIterator<Item = S>,
-        S: Into<String>,
-    {
-        self.subject_refs = subject_refs.into_iter().map(Into::into).collect();
-        self
-    }
-
-    #[must_use]
-    pub fn with_claim_ids<I, S>(mut self, claim_ids: I) -> Self
-    where
-        I: IntoIterator<Item = S>,
-        S: Into<String>,
-    {
-        self.claim_ids = claim_ids.into_iter().map(Into::into).collect();
-        self
-    }
-
-    #[must_use]
-    pub fn with_assertion_ids<I, S>(mut self, assertion_ids: I) -> Self
-    where
-        I: IntoIterator<Item = S>,
-        S: Into<String>,
-    {
-        self.assertion_ids = assertion_ids.into_iter().map(Into::into).collect();
-        self
-    }
-
-    #[must_use]
-    pub fn with_reproducer(mut self, reproducer: impl Into<String>) -> Self {
-        self.reproducer = Some(reproducer.into());
-        self
-    }
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct TestEvidence {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub scenario: Option<ScenarioMetadata>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub timeline: Vec<EvidenceTimelineEvent>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -403,8 +199,6 @@ pub struct TestEvidence {
     pub artifacts: Vec<EvidenceArtifactRef>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub notes: Vec<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub proof: Option<ProofMetadata>,
 }
 
 impl TestEvidence {
@@ -444,14 +238,6 @@ impl TestEvidence {
             self.attach_artifact(artifact);
         }
         self.captures.push(capture);
-    }
-
-    pub fn set_proof(&mut self, proof: ProofMetadata) {
-        self.proof = Some(proof);
-    }
-
-    pub fn set_scenario(&mut self, scenario: ScenarioMetadata) {
-        self.scenario = Some(scenario);
     }
 
     pub fn add_note(&mut self, note: impl Into<String>) {
@@ -796,48 +582,6 @@ pub fn render_human_summary(bundle: &EvidenceBundle) -> String {
         }
     }
 
-    if let Some(proof) = &bundle.evidence.proof {
-        lines.push("proof:".to_string());
-        if let Some(runner_id) = &proof.runner_id {
-            lines.push(format!("  - runner: {runner_id}"));
-        }
-        if !proof.subject_refs.is_empty() {
-            lines.push(format!("  - subjects: {}", proof.subject_refs.join(", ")));
-        }
-        if !proof.claim_ids.is_empty() {
-            lines.push(format!("  - claims: {}", proof.claim_ids.join(", ")));
-        }
-        if !proof.assertion_ids.is_empty() {
-            lines.push(format!(
-                "  - assertions: {}",
-                proof.assertion_ids.join(", ")
-            ));
-        }
-    }
-
-    if let Some(scenario) = &bundle.evidence.scenario {
-        lines.push("scenario:".to_string());
-        lines.push(format!("  - id: {}", scenario.id));
-        lines.push(format!("  - category: {}", scenario.category.as_str()));
-        lines.push(format!("  - lane: {}", scenario.lane.as_str()));
-        lines.push(format!("  - cost: {}", scenario.cost_tier.as_str()));
-        if !scenario.tags.is_empty() {
-            lines.push(format!("  - tags: {}", scenario.tags.join(", ")));
-        }
-        if !scenario.fixtures.is_empty() {
-            lines.push(format!("  - fixtures: {}", scenario.fixtures.join(", ")));
-        }
-        if !scenario.claim_ids.is_empty() {
-            lines.push(format!("  - claims: {}", scenario.claim_ids.join(", ")));
-        }
-        if !scenario.assertion_ids.is_empty() {
-            lines.push(format!(
-                "  - assertions: {}",
-                scenario.assertion_ids.join(", ")
-            ));
-        }
-    }
-
     lines.join("\n")
 }
 
@@ -867,7 +611,7 @@ mod tests {
     }
 
     #[test]
-    fn evidence_bundle_keeps_proof_and_timeline_shape() {
+    fn evidence_bundle_keeps_diagnostic_timeline_shape() {
         let mut evidence = TestEvidence::default();
         evidence.record_event(12, "fixture", "created stack", json!({"stack": "core"}));
         evidence.register_collector(
@@ -882,29 +626,6 @@ mod tests {
             json!({"event_count": 1, "source_material_count": 1}),
             None,
         ));
-        evidence.set_proof(ProofMetadata {
-            runner_id: Some("runner:test".to_string()),
-            subject_refs: vec!["subject:node/terminal".to_string()],
-            claim_ids: vec!["claim:material-provenance".to_string()],
-            assertion_ids: vec!["stable-anchors".to_string()],
-            status: Some("failed".to_string()),
-            reproducer: Some("xtask test -p xtask".to_string()),
-            environment: json!({"profile": "fast"}),
-        });
-        evidence.set_scenario(
-            ScenarioMetadata::new(
-                "source-material.example",
-                ScenarioCategory::SourceMaterial,
-                ScenarioLane::Fast,
-            )
-            .with_cost_tier(ScenarioCostTier::Integration)
-            .with_tags(["source_material", "anchors"])
-            .with_fixtures(["postgres", "nats"])
-            .with_subject_refs(["subject:node/terminal"])
-            .with_claim_ids(["claim:material-provenance"])
-            .with_assertion_ids(["stable-anchors"])
-            .with_reproducer("xtask test -p xtask -E 'test(name)'"),
-        );
 
         let bundle = EvidenceBundle::failed(
             "sample_test",
@@ -924,28 +645,14 @@ mod tests {
         assert_eq!(rendered["schema_version"], EVIDENCE_SCHEMA_VERSION);
         assert_eq!(rendered["timeline"][0]["label"], "fixture");
         assert_eq!(rendered["captures"][0]["status"], "captured");
-        assert_eq!(
-            rendered["proof"]["claim_ids"][0],
-            "claim:material-provenance"
-        );
-        assert_eq!(rendered["proof"]["assertion_ids"][0], "stable-anchors");
-        assert_eq!(rendered["scenario"]["id"], "source-material.example");
-        assert_eq!(rendered["scenario"]["category"], "source_material");
-        assert_eq!(rendered["scenario"]["cost_tier"], "integration");
+        assert!(rendered.get("proof").is_none());
+        assert!(rendered.get("scenario").is_none());
     }
 
     #[test]
     fn human_summary_mentions_key_artifacts() {
         let mut evidence = TestEvidence::default();
         evidence.record_event(1, "start", "fixture initialized", JsonValue::Null);
-        evidence.set_scenario(
-            ScenarioMetadata::new(
-                "runtime.restart",
-                ScenarioCategory::Runtime,
-                ScenarioLane::Heavy,
-            )
-            .with_tags(["restart"]),
-        );
         evidence.attach_artifact(EvidenceArtifactRef::new(
             "db",
             "database",
@@ -970,8 +677,6 @@ mod tests {
         let summary = render_human_summary(&bundle);
 
         assert!(summary.contains("timeline:"));
-        assert!(summary.contains("scenario:"));
-        assert!(summary.contains("runtime.restart"));
         assert!(summary.contains("/tmp/db.json"));
     }
 }

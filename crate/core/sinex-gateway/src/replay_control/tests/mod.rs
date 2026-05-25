@@ -134,8 +134,7 @@ async fn wait_for_operation_state(
         sleep(Duration::from_millis(25)).await;
     }
     Err(test_error(format!(
-        "operation {operation_id} did not reach state {:?} before timeout",
-        target
+        "operation {operation_id} did not reach state {target:?} before timeout"
     )))
 }
 

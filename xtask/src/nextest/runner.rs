@@ -194,9 +194,13 @@ impl<'a> TestRunner<'a> {
 
         // Spawn nextest with streaming output
         // Enable experimental libtest-json output format
+        let impact_artifact_run_id = history.map(|(_, id)| format!("invocation-{id}"));
         let mut process = ProcessBuilder::cargo()
             .args(cmd_args.iter().map(String::as_str).collect::<Vec<_>>())
             .env("NEXTEST_EXPERIMENTAL_LIBTEST_JSON", "1");
+        if let Some(run_id) = &impact_artifact_run_id {
+            process = process.env("SINEX_IMPACT_ARTIFACT_RUN_ID", run_id);
+        }
         for (k, v) in &self.extra_env {
             process = process.env(k, v);
         }
@@ -281,6 +285,18 @@ impl<'a> TestRunner<'a> {
                     }
                     Ok(_) => {} // No metadata in JUnit XML
                     Err(e) => eprintln!("⚠️  Failed to parse JUnit XML: {e}"),
+                }
+            }
+            if let Some(run_id) = &impact_artifact_run_id {
+                let artifact_dir = crate::config::workspace_root()
+                    .join(".sinex")
+                    .join("test-artifacts")
+                    .join("impact")
+                    .join(run_id);
+                match db.import_test_dependency_artifacts(invocation_id, &artifact_dir) {
+                    Ok(n) if n > 0 => eprintln!("📋 Imported {n} test impact edge(s)"),
+                    Ok(_) => {}
+                    Err(e) => eprintln!("⚠️  Failed to import test impact edges: {e}"),
                 }
             }
         }
