@@ -1235,6 +1235,7 @@ fn extract_scope_args(command: &str, args: &[String]) -> Vec<String> {
                 } else if arg.starts_with("--filter=")
                     || arg.starts_with("--test=")
                     || arg.starts_with("--exclude=")
+                    || arg.starts_with("--test-arg=")
                 {
                     Some(arg.to_string())
                 } else {
@@ -1250,18 +1251,20 @@ fn extract_scope_args(command: &str, args: &[String]) -> Vec<String> {
         relevant.push(marker);
     }
     let mut take_next: Option<&'static str> = None;
-    let mut skip_next = false;
+    let mut iter = args.iter();
 
-    for arg in args {
-        if skip_next {
-            skip_next = false;
-            continue;
+    while let Some(arg) = iter.next() {
+        if command == "test" && arg == "--" {
+            for test_arg in iter {
+                relevant.push(format!("--test-arg={test_arg}"));
+            }
+            break;
         }
         if arg.starts_with("--scope=") {
             continue;
         }
         if is_package_value_flag(command, arg) {
-            skip_next = true;
+            let _ = iter.next();
             continue;
         }
         if is_package_combined_flag(command, arg) {
@@ -1944,6 +1947,43 @@ mod tests {
         assert!(!supports_fresh_reuse_for(
             "test",
             &["--scope=packages:xtask".into(), "--no-reuse".into()]
+        ));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_test_binary_args_are_scope_relevant() -> TestResult<()> {
+        let without_args = scope_key("test", &["-p".into(), "xtask".into()]);
+        let with_args = scope_key(
+            "test",
+            &[
+                "-p".into(),
+                "xtask".into(),
+                "--".into(),
+                "--exact".into(),
+                "case-name".into(),
+            ],
+        );
+        let with_args_as_semantic = scope_key(
+            "test",
+            &[
+                "--scope=packages:xtask".into(),
+                "--test-arg=--exact".into(),
+                "--test-arg=case-name".into(),
+            ],
+        );
+
+        assert_ne!(without_args, with_args);
+        assert_eq!(with_args, with_args_as_semantic);
+        assert!(supports_fresh_reuse_for(
+            "test",
+            &[
+                "-p".into(),
+                "xtask".into(),
+                "--".into(),
+                "--exact".into(),
+                "case-name".into(),
+            ]
         ));
         Ok(())
     }
