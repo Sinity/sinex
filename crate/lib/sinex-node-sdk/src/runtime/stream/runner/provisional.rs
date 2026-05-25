@@ -155,6 +155,7 @@ impl<T: Node + 'static> NodeRunner<T> {
             source_run_id,
             payload_schema_id,
             provenance,
+            anchor_payload_hash: None,
             associated_blob_ids,
             temporal_policy: None,
             semantics_version: None,
@@ -162,6 +163,7 @@ impl<T: Node + 'static> NodeRunner<T> {
             equivalence_key: None,
             created_by_operation_id: None,
             node_model: None,
+            anchor_payload_hash: None,
         })
     }
 
