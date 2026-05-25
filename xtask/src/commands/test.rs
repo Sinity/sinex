@@ -662,6 +662,9 @@ impl TestCommand {
         if let Some(ref timeout) = self.timeout {
             args.push(format!("--timeout={timeout}"));
         }
+        for arg in &self.args {
+            args.push(format!("--test-arg={arg}"));
+        }
 
         args.push(scope.encode_marker());
         args
@@ -2484,6 +2487,37 @@ mod tests {
                 "{flag} must bypass direct exact proof consumption"
             );
         }
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_semantic_invocation_args_include_test_binary_args()
+    -> ::xtask::sandbox::TestResult<()> {
+        let command = TestCommand {
+            packages: vec!["xtask".to_string()],
+            args: vec!["--exact".to_string(), "case-name".to_string()],
+            ..Default::default()
+        };
+
+        let args = command.semantic_invocation_args(
+            &WorkloadScope::Packages(vec!["xtask".to_string()]),
+            None,
+            &[],
+            false,
+        );
+
+        assert!(
+            args.contains(&"--test-arg=--exact".to_string()),
+            "test binary args should be part of the proof identity: {args:?}"
+        );
+        assert!(
+            args.contains(&"--test-arg=case-name".to_string()),
+            "test binary args should be part of the proof identity: {args:?}"
+        );
+        assert_eq!(
+            crate::coordinator::proof_kind("test", &args),
+            "test.nextest.exact"
+        );
         Ok(())
     }
 
