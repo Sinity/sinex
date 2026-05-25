@@ -225,6 +225,7 @@ impl<T> EventBuilder<T, HasProvenance> {
             source_run_id: self.source_run_id,
             payload_schema_id: self.payload_schema_id,
             provenance,
+            anchor_payload_hash: None,
             associated_blob_ids: self.associated_blob_ids,
             temporal_policy: None,
             semantics_version: None,
@@ -232,6 +233,7 @@ impl<T> EventBuilder<T, HasProvenance> {
             equivalence_key: None,
             created_by_operation_id,
             node_model: None,
+            anchor_payload_hash: None,
         })
     }
 }
