@@ -624,6 +624,27 @@ impl TestCommand {
                 pool_size.to_string_lossy()
             ));
         }
+        let execution_plan = NextestExecutionPlan {
+            runner_packages: match scope {
+                WorkloadScope::Workspace => Vec::new(),
+                WorkloadScope::Packages(packages) | WorkloadScope::Affected(packages) => {
+                    packages.clone()
+                }
+            },
+            excluded_packages: Vec::new(),
+            workload_scope: scope.clone(),
+        };
+        for requirement in runtime_binary_requirements_for_target(
+            &execution_plan,
+            lib_target,
+            test_binaries,
+            filter,
+        ) {
+            args.push(format!(
+                "--runtime-binary={}:{}",
+                requirement.package, requirement.binary
+            ));
+        }
         if self.ephemeral_postgres {
             args.push("--ephemeral-postgres".to_string());
         }
@@ -2167,6 +2188,25 @@ mod tests {
         assert!(
             args.contains(&"--db-pool-size-env=48".to_string()),
             "configured DB pool size must be part of the proof identity: {args:?}"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_semantic_invocation_args_include_runtime_binary_requirements()
+    -> ::xtask::sandbox::TestResult<()> {
+        let command = TestCommand::default();
+
+        let args = command.semantic_invocation_args(
+            &WorkloadScope::Packages(vec!["sinex-db".to_string()]),
+            None,
+            &[],
+            false,
+        );
+
+        assert!(
+            args.contains(&"--runtime-binary=sinex-ingestd:sinex-ingestd".to_string()),
+            "runtime binary requirements must be part of proof identity: {args:?}"
         );
         Ok(())
     }
