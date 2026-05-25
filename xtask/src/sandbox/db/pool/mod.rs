@@ -1932,7 +1932,7 @@ mod tests {
     async fn test_serial_test_lock_path_uses_repo_local_state_root() -> TestResult<()> {
         let path = serial_test_lock_path();
         assert!(
-            path.ends_with(".sinex/state/test-locks/db-pool-serial.lock"),
+            path.ends_with("dev-state/state/test-locks/db-pool-serial.lock"),
             "unexpected serial lock path: {}",
             path.display()
         );

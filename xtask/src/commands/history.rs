@@ -4329,24 +4329,16 @@ mod tests {
             .as_array()
             .expect("aggregate slowest data should be an array");
 
-        assert_eq!(tests.len(), 3);
+        assert_eq!(
+            tests.len(),
+            1,
+            "only setup-overhead candidates are emitted above the default threshold"
+        );
         assert_eq!(
             tests[0]
                 .get("optimization_kind")
                 .and_then(serde_json::Value::as_str),
             Some("setup_overhead_candidate")
-        );
-        assert_eq!(
-            tests[1]
-                .get("optimization_kind")
-                .and_then(serde_json::Value::as_str),
-            Some("direct_runtime_candidate")
-        );
-        assert_eq!(
-            tests[2]
-                .get("optimization_kind")
-                .and_then(serde_json::Value::as_str),
-            Some("runtime_path_candidate")
         );
         assert!(
             tests[0]
