@@ -465,7 +465,11 @@ impl TestCommand {
     }
 
     fn can_consume_exact_test_proof(&self) -> bool {
-        !self.no_reuse && !self.list
+        !self.no_reuse
+            && !self.list
+            && !self.prime
+            && !self.ephemeral_postgres
+            && !self.no_ephemeral_postgres
     }
 
     fn guard_broad_start_pressure(
@@ -613,6 +617,15 @@ impl TestCommand {
         }
         if self.no_reuse {
             args.push("--no-reuse".to_string());
+        }
+        if self.ephemeral_postgres {
+            args.push("--ephemeral-postgres".to_string());
+        }
+        if self.no_ephemeral_postgres {
+            args.push("--no-ephemeral-postgres".to_string());
+        }
+        if self.prime {
+            args.push("--prime".to_string());
         }
         if !matches!(self.impact_mode, crate::impact::ImpactMode::Balanced) {
             args.push(format!("--impact-mode={}", self.impact_mode.as_str()));
@@ -2421,6 +2434,56 @@ mod tests {
             "test.nextest.exact"
         );
         assert!(!command.can_consume_exact_test_proof());
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_runtime_shape_flags_disable_exact_test_proof_reuse()
+    -> ::xtask::sandbox::TestResult<()> {
+        for (flag, command) in [
+            (
+                "--prime",
+                TestCommand {
+                    prime: true,
+                    packages: vec!["xtask".to_string()],
+                    ..Default::default()
+                },
+            ),
+            (
+                "--ephemeral-postgres",
+                TestCommand {
+                    ephemeral_postgres: true,
+                    packages: vec!["xtask".to_string()],
+                    ..Default::default()
+                },
+            ),
+            (
+                "--no-ephemeral-postgres",
+                TestCommand {
+                    no_ephemeral_postgres: true,
+                    packages: vec!["xtask".to_string()],
+                    ..Default::default()
+                },
+            ),
+        ] {
+            let args = command.semantic_invocation_args(
+                &WorkloadScope::Packages(vec!["xtask".to_string()]),
+                None,
+                &[],
+                false,
+            );
+
+            assert!(args.contains(&flag.to_string()), "{flag} missing: {args:?}");
+            assert_eq!(
+                crate::coordinator::proof_kind("test", &args),
+                "test.nextest.plan",
+                "{flag} must not produce an exact reusable proof key"
+            );
+            assert!(
+                !command.can_consume_exact_test_proof(),
+                "{flag} must bypass direct exact proof consumption"
+            );
+        }
         Ok(())
     }
 
