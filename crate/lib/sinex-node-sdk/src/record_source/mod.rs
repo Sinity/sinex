@@ -1595,7 +1595,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn harness_materializes_records_and_finalizes_sink(_ctx: TestContext) -> TestResult<()> {
+    async fn harness_materializes_records_and_finalizes_sink() -> TestResult<()> {
         let sink = CapturingRecordSink::default();
         let source = MockRecordSource::new(
             "test://record-framework",

@@ -6,7 +6,7 @@ use async_nats::jetstream::stream::Config as StreamConfig;
 use std::time::Duration;
 
 #[sinex_test]
-async fn test_nats_connect_failure(_ctx: TestContext) -> TestResult<()> {
+async fn test_nats_connect_failure() -> TestResult<()> {
     let listener = std::net::TcpListener::bind(("127.0.0.1", 0))?;
     let addr = listener.local_addr()?;
     drop(listener);

@@ -100,7 +100,7 @@ fn make_event(value: u64) -> std::result::Result<Event<JsonValue>, SinexError> {
 
 #[ignore = "heavy test; run with xtask test --heavy"]
 #[sinex_test(timeout = 180, serial)]
-async fn derived_telemetry_lag_percentile_under_load(_ctx: TestContext) -> TestResult<()> {
+async fn derived_telemetry_lag_percentile_under_load() -> TestResult<()> {
     const EVENT_COUNT: u64 = 5000;
     const LAG_P99_BOUND_MS: f64 = 50.0;
     const RUNTIME_P99_BOUND_MS: f64 = 5.0;
