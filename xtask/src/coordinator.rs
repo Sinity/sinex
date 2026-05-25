@@ -164,7 +164,8 @@ impl JobCoordinator {
     #[must_use]
     pub fn should_coordinate(command: &str, args: &[String]) -> bool {
         match command {
-            "check" | "build" | "fix" => true,
+            "check" | "fix" => true,
+            "build" => !args.iter().any(|arg| arg == "--dry-run"),
             "test" => {
                 // Exclude non-coordinatable test modes
                 let excluded = [
@@ -1123,7 +1124,7 @@ fn supports_fresh_reuse(command: &str) -> bool {
 fn supports_fresh_reuse_for(command: &str, args: &[String]) -> bool {
     match command {
         "check" => supports_fresh_reuse(command) && !args.iter().any(|arg| arg == "--fix"),
-        "build" => supports_fresh_reuse(command),
+        "build" => supports_fresh_reuse(command) && !args.iter().any(|arg| arg == "--dry-run"),
         "test" => test_scope_is_fresh_reusable(args),
         _ => false,
     }
@@ -1188,6 +1189,13 @@ pub fn proof_kind(command: &str, args: &[String]) -> String {
                 "fix.apply".to_string()
             }
         }
+        "build" => {
+            if args.iter().any(|arg| arg == "--dry-run") {
+                "build.dry_run".to_string()
+            } else {
+                "build.default".to_string()
+            }
+        }
         "test" => {
             if test_scope_is_fresh_reusable(args) {
                 "test.nextest.exact".to_string()
@@ -1246,7 +1254,7 @@ fn extract_scope_args(command: &str, args: &[String]) -> Vec<String> {
     fn is_standalone_flag(command: &str, arg: &str) -> bool {
         // Flags that are scope-relevant on their own (no value)
         match command {
-            "build" => arg == "--release" || arg.starts_with("--all"),
+            "build" => arg == "--release" || arg.starts_with("--all") || arg == "--dry-run",
             "test" => matches!(
                 arg,
                 "--debug"
@@ -1960,6 +1968,10 @@ mod tests {
     async fn test_should_coordinate() -> TestResult<()> {
         assert!(JobCoordinator::should_coordinate("check", &[]));
         assert!(JobCoordinator::should_coordinate("build", &[]));
+        assert!(!JobCoordinator::should_coordinate(
+            "build",
+            &["--dry-run".into()]
+        ));
         assert!(JobCoordinator::should_coordinate("vm", &["test".into()]));
         assert!(JobCoordinator::should_coordinate(
             "test",
@@ -1999,6 +2011,8 @@ mod tests {
         assert!(supports_fresh_reuse_for("check", &[]));
         assert!(supports_fresh_reuse_for("check", &["--full".into()]));
         assert!(!supports_fresh_reuse_for("check", &["--fix".into()]));
+        assert!(supports_fresh_reuse_for("build", &[]));
+        assert!(!supports_fresh_reuse_for("build", &["--dry-run".into()]));
         assert!(!supports_fresh_reuse_for("fix", &[]));
         assert!(supports_fresh_reuse_for(
             "test",
