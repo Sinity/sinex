@@ -13,7 +13,7 @@
 
 use serde_json::json;
 use sinex_primitives::events::Publishable;
-use sinex_primitives::{EventSource, EventType, Pagination};
+use sinex_primitives::{EventSource, EventType};
 use xtask::sandbox::prelude::*;
 
 #[allow(dead_code)]
@@ -41,9 +41,7 @@ enum ExpectedBehavior {
 /// Path traversal attack: source="../../etc/passwd"
 /// Expected: Source field values are safely stored as data via parameterized queries
 #[sinex_test]
-async fn test_filesystem_path_traversal_protection(ctx: TestContext) -> TestResult<()> {
-    let pool = ctx.pool();
-
+async fn test_filesystem_path_traversal_protection() -> TestResult<()> {
     // Source identifiers are validated domain values, not arbitrary file paths.
     // Path-traversal strings should be rejected at the identifier boundary.
     let rejected = EventSource::new("../../etc/passwd");
@@ -66,11 +64,6 @@ async fn test_filesystem_path_traversal_protection(ctx: TestContext) -> TestResu
     let payload_json = payload.to_json_value()?;
     assert!(!payload_json.is_null(), "Payload should be valid JSON");
 
-    // Parameterized queries still protect legitimate queries that carry the
-    // malicious string as payload data.
-    let _pagination = Pagination::new(Some(100), None);
-    let _repo = pool.events();
-
     Ok(())
 }
 
@@ -80,7 +73,7 @@ async fn test_filesystem_path_traversal_protection(ctx: TestContext) -> TestResu
 /// - "..", "~", "~root", absolute paths, symlink patterns
 /// All should be stored as data without causing directory traversal
 #[sinex_test]
-async fn test_comprehensive_path_traversal_scenarios(_ctx: TestContext) -> TestResult<()> {
+async fn test_comprehensive_path_traversal_scenarios() -> TestResult<()> {
     // Test that various path traversal patterns are safely handled as data.
     // These patterns should not cause filesystem access or SQL injection.
 
@@ -130,7 +123,7 @@ async fn test_comprehensive_path_traversal_scenarios(_ctx: TestContext) -> TestR
 /// 3. SQL injection in payload: {"field": "'; UPDATE events SET ..."}
 /// All are safely handled via parameterized queries
 #[sinex_test]
-async fn test_sql_injection_protection(_ctx: TestContext) -> TestResult<()> {
+async fn test_sql_injection_protection() -> TestResult<()> {
     // Test SQL injection attempts are safely handled as data via parameterized queries.
     // The system uses sqlx::query!() macros which prevent injection at compile time.
 
@@ -193,10 +186,7 @@ async fn test_sql_injection_protection(_ctx: TestContext) -> TestResult<()> {
 /// Unicode normalization attacks use decomposed characters (é = e + combining accent)
 /// instead of precomposed (é). Test that both forms persist safely.
 #[sinex_test]
-async fn test_unicode_normalization_attacks(ctx: TestContext) -> TestResult<()> {
-    let pool = ctx.pool();
-    let _repo = pool.events();
-
+async fn test_unicode_normalization_attacks() -> TestResult<()> {
     // Composed form: é (single character U+00E9)
     let composed = "café";
 
@@ -237,7 +227,7 @@ async fn test_unicode_normalization_attacks(ctx: TestContext) -> TestResult<()> 
 /// Null bytes (\u{0000}) in strings can cause truncation in C/C++ code.
 /// Test that the system handles them safely (either persists or returns clean error).
 #[sinex_test]
-async fn test_null_byte_injection(_ctx: TestContext) -> TestResult<()> {
+async fn test_null_byte_injection() -> TestResult<()> {
     // Test that null byte injection attempts are safely handled as data.
     // JSON format preserves these characters, and parameterized queries prevent issues.
 
@@ -282,7 +272,7 @@ async fn test_null_byte_injection(_ctx: TestContext) -> TestResult<()> {
 /// - System either accepts it successfully, OR
 /// - Returns a clean error (not a panic/crash/OOM)
 #[sinex_test]
-async fn test_resource_exhaustion_protection(_ctx: TestContext) -> TestResult<()> {
+async fn test_resource_exhaustion_protection() -> TestResult<()> {
     // Test resource exhaustion protection - system should handle large payloads gracefully.
     // JSON serialization should not panic or crash with large strings.
 
@@ -334,7 +324,7 @@ async fn test_resource_exhaustion_protection(_ctx: TestContext) -> TestResult<()
 /// Expected: Stored verbatim as data (no execution context in database).
 /// When retrieved, they are treated as data, not code.
 #[sinex_test]
-async fn test_malicious_input_validation(_ctx: TestContext) -> TestResult<()> {
+async fn test_malicious_input_validation() -> TestResult<()> {
     // Test that XSS payloads are safely handled as literal data.
     // JSON encoding ensures these are stored as strings, not executed.
 
@@ -387,7 +377,7 @@ async fn test_malicious_input_validation(_ctx: TestContext) -> TestResult<()> {
 /// - Time-based attacks (slow queries that don't timeout)
 /// - Filtering bypass attempts
 #[sinex_test]
-async fn test_query_interface_exploits(_ctx: TestContext) -> TestResult<()> {
+async fn test_query_interface_exploits() -> TestResult<()> {
     // Test that query interfaces safely handle special characters via parameterized queries.
     // These patterns should not cause SQL injection or bypass filters.
 
@@ -405,10 +395,6 @@ async fn test_query_interface_exploits(_ctx: TestContext) -> TestResult<()> {
             EventSource::new(special_source).is_err(),
             "special-character source {special_source:?} must be rejected as an EventSource identifier"
         );
-        let _pagination = Pagination::new(Some(100), None);
-        // Parameterized queries still protect literal attack strings carried in
-        // payload data.
-
         let payload = DynamicPayload::new(
             "query.test-source",
             "query.test",
