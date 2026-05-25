@@ -809,18 +809,18 @@ impl RunCommand {
 
         let instance_id = instance_id.unwrap_or_else(|| format!("{}-{}", name, std::process::id()));
 
-        if ctx.is_background() {
-            return self
-                .run_background(package, binary, &instance_id, *automaton, ctx)
-                .await;
-        }
-
         if self.dry_run {
             println!("Would run: {name} (package: {package}, instance: {instance_id})");
             if self.watch {
                 println!("  (with --watch)");
             }
             return Ok(CommandResult::success().with_detail("dry-run passed"));
+        }
+
+        if ctx.is_background() {
+            return self
+                .run_background(package, binary, &instance_id, *automaton, ctx)
+                .await;
         }
 
         if self.watch {
