@@ -253,6 +253,42 @@ const GUIDE_SECTIONS: &[GuideSection] = &[
                 ],
             },
             GuideEntry {
+                path: "impact explain",
+                fallback_summary: "Explain the current test impact plan",
+                when: "you need to see exactly why the default test loop will run, skip, or broaden scope",
+                examples: &[
+                    "xtask impact explain",
+                    "xtask impact explain --mode aggressive",
+                ],
+                notes: &[
+                    "Balanced mode is the default and only narrows to tests when changed hunks have matching machine-derived evidence.",
+                ],
+            },
+            GuideEntry {
+                path: "impact seed",
+                fallback_summary: "Run tests in impact evidence-seeding mode",
+                when: "you deliberately want a broad or targeted test run to populate test entrypoint and dependency evidence for later impact planning",
+                examples: &[
+                    "xtask impact seed",
+                    "xtask impact seed -p xtask -E 'test(name)'",
+                ],
+                notes: &[
+                    "This runs `xtask test --impact-mode=off`; it does not use hand-authored labels to drive skipping.",
+                ],
+            },
+            GuideEntry {
+                path: "impact seed-coverage",
+                fallback_summary: "Seed per-test LLVM coverage regions",
+                when: "you want hunk-addressable coverage evidence for an exact test before relying on narrower impact runs",
+                examples: &[
+                    "xtask impact seed-coverage -p xtask -E 'test(name)'",
+                    "xtask impact seed-coverage -p sinex-db -E 'test(test_name)'",
+                ],
+                notes: &[
+                    "The filter must identify one test via `test(name)` or `--test-name`; ambiguous expressions are rejected.",
+                ],
+            },
+            GuideEntry {
                 path: "git-stack split",
                 fallback_summary: "Plan and materialize a stacked PR split from the current branch",
                 when: "a long local commit train needs to be broken into reviewable slices with generated PR bodies and squash commits",

@@ -7554,6 +7554,7 @@ dependencies = [
  "sinex-schema",
  "sinex-source-worker",
  "sqlx",
+ "syn 2.0.117",
  "sysinfo",
  "tabled",
  "tempfile",
