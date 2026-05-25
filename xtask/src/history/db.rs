@@ -2895,6 +2895,33 @@ impl HistoryDb {
     }
 
     /// Record the resolved test manifest as a proof unit.
+    /// Store the effective test filter for a proof unit, enabling per-test-name
+    /// granularity evidence lookups (#1393 Phase 3).
+    pub fn set_test_proof_filter(
+        &self,
+        invocation_id: i64,
+        proof_kind: &str,
+        scope_key: &str,
+        input_fingerprint: &str,
+        test_filter: &str,
+    ) -> Result<()> {
+        with_sqlite_lock_retry("set test proof filter", || {
+            self.conn.execute(
+                "UPDATE test_proof_units SET test_filter = ?5
+                 WHERE invocation_id = ?1 AND proof_kind = ?2
+                   AND scope_key = ?3 AND input_fingerprint = ?4",
+                params![
+                    invocation_id,
+                    proof_kind,
+                    scope_key,
+                    input_fingerprint,
+                    test_filter
+                ],
+            )?;
+            Ok(())
+        })
+    }
+
     pub fn record_test_proof_unit(
         &self,
         invocation_id: i64,
