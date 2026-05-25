@@ -169,6 +169,12 @@ impl XtaskCommand for ExerciseCommand {
                 args.push("-E".to_string());
                 args.push(e.clone());
             }
+            if self.list {
+                args.push("--list".to_string());
+            }
+            if self.dry_run {
+                args.push("--dry-run".to_string());
+            }
             if self.skip_infra {
                 args.push("--skip-infra".to_string());
             }
@@ -177,6 +183,16 @@ impl XtaskCommand for ExerciseCommand {
             }
             if self.fail_fast {
                 args.push("--fail-fast".to_string());
+            }
+            if self.seed {
+                args.push("--seed".to_string());
+                args.push("--seed-days".to_string());
+                args.push(self.seed_days.to_string());
+                args.push("--seed-invocations".to_string());
+                args.push(self.seed_invocations.to_string());
+            }
+            if self.activate {
+                args.push("--activate".to_string());
             }
             if let Some(audit_path) = &self.audit_file {
                 args.push("--audit-file".to_string());
