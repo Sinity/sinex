@@ -1117,7 +1117,7 @@ fn coordination_family(command: &str) -> &str {
 }
 
 fn supports_fresh_reuse(command: &str) -> bool {
-    matches!(command, "check" | "build" | "fix")
+    matches!(command, "check" | "build")
 }
 
 fn supports_fresh_reuse_for(command: &str, args: &[String]) -> bool {
@@ -1981,9 +1981,10 @@ mod tests {
     async fn test_supports_fresh_reuse_only_for_buildish_commands() -> TestResult<()> {
         assert!(supports_fresh_reuse("check"));
         assert!(supports_fresh_reuse("build"));
-        assert!(supports_fresh_reuse("fix"));
+        assert!(!supports_fresh_reuse("fix"));
         assert!(!supports_fresh_reuse("test"));
         assert!(!supports_fresh_reuse("vm"));
+        assert!(!supports_fresh_reuse_for("fix", &[]));
         assert!(supports_fresh_reuse_for(
             "test",
             &["--scope=packages:xtask".into()]
