@@ -17,16 +17,12 @@ pub const IMPACT_COVERAGE_SCHEMA_VERSION: &str = "coverage-regions-v2";
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, clap::ValueEnum)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum ImpactMode {
     Off,
+    #[default]
     Balanced,
     Aggressive,
-}
-
-impl Default for ImpactMode {
-    fn default() -> Self {
-        Self::Balanced
-    }
 }
 
 impl ImpactMode {

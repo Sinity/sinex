@@ -530,7 +530,6 @@ fn audit_command_for_sample(
 
 fn current_xtask() -> Result<String> {
     std::env::current_exe()
-        .map(PathBuf::from)
         .map(|path| path.to_string_lossy().into_owned())
         .context("failed to resolve current xtask executable")
 }
