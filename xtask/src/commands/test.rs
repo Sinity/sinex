@@ -951,7 +951,7 @@ impl TestCommand {
             .unwrap_or_else(|| PathBuf::from(".sinex/ci-pgdata"));
         let data_dir = base_dir.join("current");
         let socket_dir = base_dir.join("run");
-        let port = 5433;
+        let port = Self::allocate_ephemeral_postgres_port()?;
 
         if ctx.is_human() {
             println!(
@@ -999,6 +999,10 @@ impl TestCommand {
                 .with_duration(ctx.elapsed())),
             Err(error) => Err(error),
         }
+    }
+
+    fn allocate_ephemeral_postgres_port() -> Result<u16> {
+        Ok(crate::sandbox::orchestrator::allocate_free_port()?.port())
     }
 
     fn resolve_execution_plan(
@@ -2359,6 +2363,23 @@ mod tests {
             ),
             "explicit --ephemeral-postgres must still force the wrapper"
         );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_ephemeral_postgres_port_avoids_fixed_ci_default()
+    -> ::xtask::sandbox::TestResult<()> {
+        let reserved = std::net::TcpListener::bind("127.0.0.1:5433").ok();
+
+        let port = TestCommand::allocate_ephemeral_postgres_port()?;
+
+        assert_ne!(port, 0);
+        if reserved.is_some() {
+            assert_ne!(
+                port, 5433,
+                "ephemeral test Postgres must not hard-code the ci postgres default port"
+            );
+        }
         Ok(())
     }
 
