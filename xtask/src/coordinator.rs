@@ -906,6 +906,7 @@ fn package_to_path(pkg: &str) -> String {
     match pkg {
         "sinexctl" => "crate/cli/".to_string(),
         "xtask" => "xtask/".to_string(),
+        "xtask-macros" => "xtask/macros/".to_string(),
         "sinex-e2e-tests" => "tests/e2e/".to_string(),
         _ => {
             let name_underscore = pkg.replace('-', "_");
@@ -988,6 +989,17 @@ fn scoped_tree_fingerprint_in(cwd: &Path, command: &str, args: &[String]) -> Res
         // No -p flag: use whole-workspace fingerprint (safe, over-inclusive)
         return tree_fingerprint_in(cwd);
     }
+    let fingerprint_packages = match crate::affected::package_dependency_closure_in(cwd, &packages)
+    {
+        Ok(closure) => closure,
+        Err(error) => {
+            tracing::warn!(
+                error = %error,
+                "failed to resolve package dependency closure for scoped freshness; falling back to whole-tree fingerprint"
+            );
+            return tree_fingerprint_in(cwd);
+        }
+    };
 
     // Refresh git index (same as tree_fingerprint)
     refresh_git_index(cwd)?;
@@ -1009,9 +1021,10 @@ fn scoped_tree_fingerprint_in(cwd: &Path, command: &str, args: &[String]) -> Res
         &["rev-parse", "HEAD"],
         "rev-parse HEAD for fingerprint seeding",
     )?;
-    // packages was already pulled from CLI args; sort for deterministic
-    // fingerprint regardless of -p order.
-    let mut sorted_packages: Vec<&String> = packages.iter().collect();
+    // fingerprint_packages includes the requested packages plus their transitive
+    // workspace dependencies. Sort for deterministic fingerprint regardless of
+    // -p order or metadata order.
+    let mut sorted_packages: Vec<&String> = fingerprint_packages.iter().collect();
     sorted_packages.sort_unstable();
     for pkg in &sorted_packages {
         hasher.update(pkg.as_bytes());
@@ -1040,7 +1053,9 @@ pub fn explain_freshness(command: &str, args: &[String]) -> Result<FreshnessExpl
     let scope = if packages.is_empty() {
         FreshnessScopeExplanation::Workspace
     } else {
-        let mut packages = packages
+        let fingerprint_packages =
+            crate::affected::package_dependency_closure(&packages).unwrap_or(packages);
+        let mut packages = fingerprint_packages
             .into_iter()
             .map(|package| PackageScopeInput {
                 path: package_to_path(&package),
@@ -2449,6 +2464,71 @@ mod tests {
     }
 
     #[sinex_test]
+    async fn test_scoped_tree_fingerprint_includes_dirty_workspace_dependencies() -> TestResult<()>
+    {
+        let dir = tempfile::tempdir()?;
+        run_git(&["init", "-q"], dir.path())?;
+        run_git(&["config", "user.name", "Sinex Test"], dir.path())?;
+        run_git(&["config", "user.email", "sinex@example.test"], dir.path())?;
+        std::fs::write(
+            dir.path().join("Cargo.toml"),
+            r#"[workspace]
+members = ["crate/lib/sinex-primitives", "crate/lib/sinex-db"]
+resolver = "2"
+"#,
+        )?;
+        std::fs::create_dir_all(dir.path().join("crate/lib/sinex-primitives/src"))?;
+        std::fs::write(
+            dir.path().join("crate/lib/sinex-primitives/Cargo.toml"),
+            r#"[package]
+name = "sinex-primitives"
+version = "0.1.0"
+edition = "2024"
+"#,
+        )?;
+        std::fs::write(
+            dir.path().join("crate/lib/sinex-primitives/src/lib.rs"),
+            "pub fn primitive() -> u8 { 1 }\n",
+        )?;
+        std::fs::create_dir_all(dir.path().join("crate/lib/sinex-db/src"))?;
+        std::fs::write(
+            dir.path().join("crate/lib/sinex-db/Cargo.toml"),
+            r#"[package]
+name = "sinex-db"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+sinex-primitives = { path = "../sinex-primitives" }
+"#,
+        )?;
+        std::fs::write(
+            dir.path().join("crate/lib/sinex-db/src/lib.rs"),
+            "pub fn db() -> u8 { sinex_primitives::primitive() }\n",
+        )?;
+        run_git(&["add", "."], dir.path())?;
+        run_git(&["commit", "-qm", "init"], dir.path())?;
+        let args = vec!["-p".into(), "sinex-db".into()];
+
+        std::fs::write(
+            dir.path().join("crate/lib/sinex-primitives/src/lib.rs"),
+            "pub fn primitive() -> u8 { 2 }\n",
+        )?;
+        let fp_one = scoped_tree_fingerprint_in(dir.path(), "test", &args)?;
+        std::fs::write(
+            dir.path().join("crate/lib/sinex-primitives/src/lib.rs"),
+            "pub fn primitive() -> u8 { 3 }\n",
+        )?;
+        let fp_two = scoped_tree_fingerprint_in(dir.path(), "test", &args)?;
+
+        assert_ne!(
+            fp_one, fp_two,
+            "package-scoped test proofs must invalidate on dirty workspace dependencies"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
     async fn test_build_release_different_scope() -> TestResult<()> {
         let args1: Vec<String> = vec![];
         let args2: Vec<String> = vec!["--release".into()];
@@ -3585,6 +3665,7 @@ mod tests {
     async fn test_package_to_path_well_known() -> TestResult<()> {
         assert_eq!(package_to_path("sinexctl"), "crate/cli/");
         assert_eq!(package_to_path("xtask"), "xtask/");
+        assert_eq!(package_to_path("xtask-macros"), "xtask/macros/");
         assert_eq!(package_to_path("sinex-e2e-tests"), "tests/e2e/");
         Ok(())
     }
