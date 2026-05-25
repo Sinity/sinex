@@ -2408,10 +2408,32 @@ mod tests {
 
         std::fs::create_dir_all(dir.path().join("crate/lib/sinex-db/src"))?;
         std::fs::write(
+            dir.path().join("Cargo.toml"),
+            r#"[workspace]
+members = ["crate/lib/sinex-db", "crate/lib/sinex-primitives"]
+"#,
+        )?;
+        std::fs::write(
+            dir.path().join("crate/lib/sinex-db/Cargo.toml"),
+            r#"[package]
+name = "sinex-db"
+version = "0.0.0"
+edition = "2024"
+"#,
+        )?;
+        std::fs::write(
             dir.path().join("crate/lib/sinex-db/src/lib.rs"),
             "fn db() {}\n",
         )?;
         std::fs::create_dir_all(dir.path().join("crate/lib/sinex-primitives/src"))?;
+        std::fs::write(
+            dir.path().join("crate/lib/sinex-primitives/Cargo.toml"),
+            r#"[package]
+name = "sinex-primitives"
+version = "0.0.0"
+edition = "2024"
+"#,
+        )?;
         std::fs::write(
             dir.path().join("crate/lib/sinex-primitives/src/lib.rs"),
             "fn p() {}\n",
@@ -2419,7 +2441,10 @@ mod tests {
         run_git(
             &[
                 "add",
+                "Cargo.toml",
+                "crate/lib/sinex-db/Cargo.toml",
                 "crate/lib/sinex-db/src/lib.rs",
+                "crate/lib/sinex-primitives/Cargo.toml",
                 "crate/lib/sinex-primitives/src/lib.rs",
             ],
             dir.path(),
@@ -3022,9 +3047,13 @@ sinex-primitives = { path = "../sinex-primitives" }
     async fn test_extract_scope_args_build_package() -> TestResult<()> {
         let args: Vec<String> = vec!["-p".into(), "sinex-db".into(), "--release".into()];
         let scope = extract_scope_args("build", &args);
-        assert!(scope.contains(&"-p".to_string()));
-        assert!(scope.contains(&"sinex-db".to_string()));
-        assert!(scope.contains(&"--release".to_string()));
+        assert_eq!(
+            scope,
+            vec![
+                "--scope=packages:sinex-db".to_string(),
+                "--release".to_string()
+            ]
+        );
         Ok(())
     }
 
@@ -3032,7 +3061,7 @@ sinex-primitives = { path = "../sinex-primitives" }
     async fn test_extract_scope_args_build_combined() -> TestResult<()> {
         let args: Vec<String> = vec!["--package=sinex-db".into()];
         let scope = extract_scope_args("build", &args);
-        assert!(scope.contains(&"--package=sinex-db".to_string()));
+        assert_eq!(scope, vec!["--scope=packages:sinex-db"]);
         Ok(())
     }
 
@@ -3045,10 +3074,13 @@ sinex-primitives = { path = "../sinex-primitives" }
             "xtask".into(),
         ];
         let scope = extract_scope_args("test", &args);
-        assert!(scope.contains(&"-E".to_string()));
-        assert!(scope.contains(&"test(my_test)".to_string()));
-        assert!(scope.contains(&"-p".to_string()));
-        assert!(scope.contains(&"xtask".to_string()));
+        assert_eq!(
+            scope,
+            vec![
+                "--scope=packages:xtask".to_string(),
+                "--filter=test(my_test)".to_string(),
+            ]
+        );
         Ok(())
     }
 
@@ -3062,10 +3094,15 @@ sinex-primitives = { path = "../sinex-primitives" }
             "--prime".into(),
         ];
         let scope = extract_scope_args("test", &args);
-        assert_eq!(scope.len(), 2); // Only -p and sinex-db
+        assert_eq!(
+            scope,
+            vec![
+                "--scope=packages:sinex-db".to_string(),
+                "--prime".to_string(),
+            ]
+        );
         assert!(!scope.contains(&"--fail-fast".to_string()));
         assert!(!scope.contains(&"--skip-preflight".to_string()));
-        assert!(!scope.contains(&"--prime".to_string()));
         Ok(())
     }
 
@@ -3080,12 +3117,15 @@ sinex-primitives = { path = "../sinex-primitives" }
             "--forbidden".into(),
         ];
         let scope = extract_scope_args("check", &args);
-        assert!(scope.contains(&"-p".to_string()));
-        assert!(scope.contains(&"sinex-db".to_string()));
-        // Lint flags are not scope-relevant
-        assert!(!scope.contains(&"--lint".to_string()));
-        assert!(!scope.contains(&"--fmt".to_string()));
-        assert!(!scope.contains(&"--forbidden".to_string()));
+        assert_eq!(
+            scope,
+            vec![
+                "--scope=packages:sinex-db".to_string(),
+                "--lint".to_string(),
+                "--fmt".to_string(),
+                "--forbidden".to_string(),
+            ]
+        );
         Ok(())
     }
 
@@ -3093,17 +3133,16 @@ sinex-primitives = { path = "../sinex-primitives" }
     async fn test_extract_scope_args_check_all_flag() -> TestResult<()> {
         let args: Vec<String> = vec!["--all".into(), "--lint".into()];
         let scope = extract_scope_args("check", &args);
-        assert!(scope.contains(&"--all".to_string()));
-        assert!(!scope.contains(&"--lint".to_string()));
+        assert_eq!(scope, vec!["--all", "--lint"]);
         Ok(())
     }
 
     #[sinex_test]
     async fn test_extract_scope_args_check_lint_only_empty() -> TestResult<()> {
-        // Lint-only flags produce empty scope (same compilation target as bare check)
+        // Lint/fmt/forbidden are proof-mode selectors even without package scope.
         let args: Vec<String> = vec!["--fmt".into(), "--lint".into(), "--forbidden".into()];
         let scope = extract_scope_args("check", &args);
-        assert!(scope.is_empty());
+        assert_eq!(scope, vec!["--fmt", "--lint", "--forbidden"]);
         Ok(())
     }
 
@@ -3662,19 +3701,19 @@ sinex-primitives = { path = "../sinex-primitives" }
 
     #[sinex_test]
     async fn test_extract_scope_args_build_short_combined() -> TestResult<()> {
-        // -psinex-db (no space) should be captured as a combined flag
+        // -psinex-db (no space) canonicalizes to the package scope marker.
         let args: Vec<String> = vec!["-psinex-db".into()];
         let scope = extract_scope_args("build", &args);
-        assert_eq!(scope, vec!["-psinex-db"]);
+        assert_eq!(scope, vec!["--scope=packages:sinex-db"]);
         Ok(())
     }
 
     #[sinex_test]
     async fn test_extract_scope_args_test_combined_filter() -> TestResult<()> {
-        // -Etest(my_test) (no space) should be captured
+        // -Etest(my_test) (no space) canonicalizes to the long filter form.
         let args: Vec<String> = vec!["-Etest(my_test)".into()];
         let scope = extract_scope_args("test", &args);
-        assert_eq!(scope, vec!["-Etest(my_test)"]);
+        assert_eq!(scope, vec!["--filter=test(my_test)"]);
         Ok(())
     }
 
@@ -3682,10 +3721,13 @@ sinex-primitives = { path = "../sinex-primitives" }
     async fn test_extract_scope_args_test_heavy_flag() -> TestResult<()> {
         let args: Vec<String> = vec!["--heavy".into(), "-p".into(), "sinex-db".into()];
         let scope = extract_scope_args("test", &args);
-        assert!(scope.contains(&"--heavy".to_string()));
-        assert!(scope.contains(&"-p".to_string()));
-        assert!(scope.contains(&"sinex-db".to_string()));
-        assert_eq!(scope.len(), 3);
+        assert_eq!(
+            scope,
+            vec![
+                "--scope=packages:sinex-db".to_string(),
+                "--heavy".to_string(),
+            ]
+        );
         Ok(())
     }
 
