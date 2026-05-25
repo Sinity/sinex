@@ -1090,18 +1090,18 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn source_unit_manifest_groups_terminal_runner_pack() -> TestResult<()> {
+    async fn source_unit_manifest_groups_source_worker_runner_pack() -> TestResult<()> {
         let manifest = build_source_unit_manifest();
-        let terminal = manifest
+        let source_worker = manifest
             .runner_packs
             .iter()
-            .find(|pack| pack.id == "terminal")
-            .expect("terminal runner pack is registered");
+            .find(|pack| pack.id == "source-worker")
+            .expect("source-worker runner pack is registered");
 
-        assert!(terminal.source_unit_count >= 2);
-        assert_eq!(terminal.shared_binary, "sinex-terminal-ingestor");
+        assert!(source_worker.source_unit_count >= 2);
+        assert_eq!(source_worker.shared_binary, "sinex-source-worker");
         assert!(
-            terminal
+            source_worker
                 .source_unit_ids
                 .contains(&"terminal.atuin-history".to_string())
         );
