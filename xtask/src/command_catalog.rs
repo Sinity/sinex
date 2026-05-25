@@ -92,7 +92,7 @@ mod tests {
     use crate::sandbox::prelude::*;
 
     #[sinex_test]
-    async fn command_catalog_exposes_core_public_surface(_ctx: TestContext) -> TestResult<()> {
+    async fn command_catalog_exposes_core_public_surface() -> TestResult<()> {
         let commands = collect_command_catalog();
 
         assert!(
