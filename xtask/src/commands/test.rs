@@ -605,6 +605,9 @@ impl TestCommand {
         if self.include_ignored {
             args.push("--include-ignored".to_string());
         }
+        if self.all {
+            args.push("--all".to_string());
+        }
         if self.allow_contended_host {
             args.push("--allow-contended-host".to_string());
         }
@@ -2106,6 +2109,22 @@ mod tests {
         assert!(
             args.contains(&"--lib".to_string()),
             "library target selector should be part of the coordination identity: {args:?}"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_semantic_invocation_args_include_all_scope() -> ::xtask::sandbox::TestResult<()> {
+        let command = TestCommand {
+            all: true,
+            ..Default::default()
+        };
+
+        let args = command.semantic_invocation_args(&WorkloadScope::Workspace, None, &[], false);
+
+        assert!(
+            args.contains(&"--all".to_string()),
+            "--all must be part of the proof identity: {args:?}"
         );
         Ok(())
     }
