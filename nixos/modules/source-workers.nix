@@ -1105,7 +1105,7 @@ let
               if [ -z "$HYPRLAND_SIGNATURE" ]; then
                 HYPRLAND_SIGNATURE="$("$BASENAME" "$("$DIRNAME" "$socket_path")")"
               fi
-            done < <("$FIND" "$RUNTIME_ROOT/hypr" -mindepth 2 -maxdepth 2 -type s -name '.socket2.sock' 2>/dev/null | "$SORT")
+            done < <("$FIND" "$RUNTIME_ROOT/hypr" -mindepth 2 -maxdepth 2 -type s -name '.socket2.sock' 2>/dev/null | "$SORT" -r)
 
             if [ -n "$CONFIGURED_HYPRLAND_SIGNATURE" ]; then
               HYPRLAND_SIGNATURE="$CONFIGURED_HYPRLAND_SIGNATURE"
