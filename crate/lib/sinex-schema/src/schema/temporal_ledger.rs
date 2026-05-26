@@ -128,13 +128,25 @@ impl TemporalLedger {
 
     /// Generates the trigger that enforces the append-only nature of the temporal ledger.
     /// This is a critical invariant that guarantees the history of data capture cannot be altered.
+    ///
+    /// Exception: when an audited cascade is in progress (signalled by
+    /// `sinex.operation_id` session variable), DELETEs are permitted so the
+    /// `ON DELETE CASCADE` FK from `raw.source_material_registry` can fire as
+    /// declared. Without this exception, deleting any source material always
+    /// failed with "temporal_ledger is append-only", which silently broke the
+    /// entire archive/replay cascade for material-provenance events. UPDATE
+    /// is still unconditionally forbidden.
     #[must_use]
     pub fn create_append_only_trigger_sql() -> &'static str {
         r"
         CREATE OR REPLACE FUNCTION raw.fn_temporal_ledger_append_only()
         RETURNS TRIGGER LANGUAGE plpgsql AS $$
+        DECLARE
+          op_id TEXT := current_setting('sinex.operation_id', true);
         BEGIN
-            -- Disallow any UPDATE or DELETE operations on this table.
+            IF TG_OP = 'DELETE' AND op_id IS NOT NULL AND op_id <> '' THEN
+                RETURN OLD;
+            END IF;
             RAISE EXCEPTION 'Table raw.temporal_ledger is append-only (operation % is forbidden)', TG_OP;
         END $$;
 
