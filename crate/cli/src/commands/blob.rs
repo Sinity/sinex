@@ -631,8 +631,7 @@ impl BlobVerifyIntegrityCommand {
         .wrap_err_with(|| format!("open content-store root {}", self.content_store_path))?;
 
         let mut report =
-            verify_event_anchor_hashes(&pool, &content_store, self.material_id, self.limit)
-                .await?;
+            verify_event_anchor_hashes(&pool, &content_store, self.material_id, self.limit).await?;
 
         if self.apply_mismatches && !report.mismatches.is_empty() {
             report.archived_mismatches =
@@ -763,8 +762,7 @@ async fn verify_event_anchor_hashes(
             continue;
         };
 
-        let Some(cas_path) =
-            content_store.path_if_local(&format!("SINEXBLAKE3-{blob_hash}"))?
+        let Some(cas_path) = content_store.path_if_local(&format!("SINEXBLAKE3-{blob_hash}"))?
         else {
             report.missing_blob += 1;
             continue;
@@ -842,10 +840,7 @@ fn format_verify_integrity_report(report: &BlobVerifyIntegrityReport) -> String 
     s.push_str(&format!("  Mismatched:      {}\n", report.mismatched));
     s.push_str(&format!("  Missing offsets: {}\n", report.missing_offsets));
     s.push_str(&format!("  Missing blob:    {}\n", report.missing_blob));
-    s.push_str(&format!(
-        "  Missing CAS file:{}\n",
-        report.missing_cas_file
-    ));
+    s.push_str(&format!("  Missing CAS file:{}\n", report.missing_cas_file));
     s.push_str(&format!("  Read errors:     {}\n", report.read_errors));
     s.push_str(&format!(
         "  Archived (apply-mismatches): {}\n",
