@@ -425,6 +425,11 @@ struct MaterializedAdapterRecord {
     anchor_byte: i64,
     offset_start: Option<i64>,
     offset_end: Option<i64>,
+    /// BLAKE3 hash of the record payload bytes (#1447). `None` for adapter
+    /// paths where the byte range cannot be cheaply isolated, e.g. directory-
+    /// entry anchors that carry only a path. Synthesis events stay `None`
+    /// regardless.
+    anchor_payload_hash: Option<[u8; 32]>,
 }
 
 impl<A, P> AdapterBackedIngestor<A, P>
@@ -586,12 +591,22 @@ where
         if record.material_id.to_uuid() != Uuid::nil() {
             let (anchor_byte, offset_start, offset_end) =
                 anchor_offsets_for_materialized_record(&record.anchor);
+            // Pre-materialized adapter records (file-drop content staging,
+            // SQLite row snapshots) already own their anchor; hash the record
+            // payload bytes as the integrity witness. Records with non-byte
+            // anchors (directory entries, git objects) carry only a logical
+            // identifier in `bytes`, so we still hash whatever the adapter
+            // chose to emit — verify just re-runs the same hashing on the
+            // same byte range and confirms consistency, not authenticity.
+            let anchor_payload_hash =
+                blake3::hash(record.bytes.as_slice()).as_bytes().to_owned();
             return Ok(MaterializedAdapterRecord {
                 material_id: record.material_id,
                 record,
                 anchor_byte,
                 offset_start,
                 offset_end,
+                anchor_payload_hash: Some(anchor_payload_hash),
             });
         }
 
@@ -601,6 +616,7 @@ where
         // rotation transparently, so raw.source_material_registry grows at
         // O(rotation_count) across drain cycles rather than O(poll_count).
         let record_bytes = record.bytes.as_slice();
+        let anchor_payload_hash = blake3::hash(record_bytes).as_bytes().to_owned();
         let source_unit_id_for_anchor = self.source_unit_id;
         let anchor = self
             .ensure_stream_acquirer()
@@ -619,6 +635,7 @@ where
             anchor_byte: anchor.offset_start,
             offset_start: Some(anchor.offset_start),
             offset_end: Some(anchor.offset_end),
+            anchor_payload_hash: Some(anchor_payload_hash),
         })
     }
 
@@ -799,6 +816,7 @@ where
                 }
             };
 
+            let anchor_payload_hash = materialized.anchor_payload_hash;
             for intent in intents {
                 // Use the materialization anchor so events reference their real
                 // material location, whether the record came from the default
@@ -809,6 +827,7 @@ where
                     materialized.anchor_byte,
                     materialized.offset_start,
                     materialized.offset_end,
+                    anchor_payload_hash,
                 ) {
                     Ok(event) => {
                         if let Err(e) = event_emitter.emit(event).await {
@@ -1308,6 +1327,7 @@ fn intent_to_event_with_anchor(
     anchor_byte_override: i64,
     offset_start: Option<i64>,
     offset_end: Option<i64>,
+    anchor_payload_hash: Option<[u8; 32]>,
 ) -> Result<Event<JsonValue>, String> {
     let builder: EventBuilder<JsonValue, NoProvenance> =
         EventBuilder::new_internal(intent.event_source, intent.event_type, intent.payload);
@@ -1321,6 +1341,9 @@ fn intent_to_event_with_anchor(
             .map_err(|e| format!("EventBuilder::with_offset_start failed: {e}"))?
             .with_offset_end(end)
             .map_err(|e| format!("EventBuilder::with_offset_end failed: {e}"))?;
+    }
+    if let Some(hash) = anchor_payload_hash {
+        builder = builder.with_anchor_payload_hash(hash);
     }
 
     let built = builder
