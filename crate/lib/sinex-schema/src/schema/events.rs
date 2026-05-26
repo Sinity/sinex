@@ -765,10 +765,13 @@ impl ArchivedEvents {
           -- ON DELETE CASCADE but is not enforced by TimescaleDB (#579).
           DELETE FROM core.event_cluster_members WHERE event_id = OLD.id;
 
-          -- Cascade validation cache (no archive table — cache entries are disposable
-          -- and will be recomputed on next read). The FK on event_id is also not
-          -- enforced by TimescaleDB (#579).
-          DELETE FROM sinex_schemas.validation_cache WHERE event_id = OLD.id;
+          -- validation_cache was removed from the schema but the cascade DELETE
+          -- here was left in place, blocking every event delete with a missing-
+          -- relation error. Guard with a to_regclass() check so the cascade is a
+          -- no-op when the table is absent and survives any future reintroduction.
+          IF to_regclass('sinex_schemas.validation_cache') IS NOT NULL THEN
+            DELETE FROM sinex_schemas.validation_cache WHERE event_id = OLD.id;
+          END IF;
 
           RETURN OLD;
         END $$;
