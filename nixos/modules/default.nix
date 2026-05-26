@@ -1156,6 +1156,38 @@ in
                     otherwise consume watch budget without adding useful user signal.
                   '';
                 };
+                ignoredFileSuffixes = mkOption {
+                  type = strList;
+                  default = [
+                    # SQLite write-ahead and shared-memory companions; rewritten
+                    # on every commit by the owning database, never useful as a
+                    # standalone capture.
+                    "-wal"
+                    "-shm"
+                    "-journal"
+                    ".wal"
+                    # pytest's testmondata WAL; same churn pattern as SQLite WAL.
+                    ".testmondata"
+                    ".testmondata-wal"
+                    # Editor swap / lock / temp files.
+                    ".swp"
+                    ".swx"
+                    ".swo"
+                    "~"
+                    ".tmp"
+                    ".part"
+                    ".crdownload"
+                  ];
+                  description = ''
+                    File-name suffixes excluded from fs source-worker records.
+                    Volatile files (SQLite -wal/-shm, pytest testmondata,
+                    editor swap/temp files) produce per-write churn with no
+                    standalone capture value and bloat the CAS — issue #1543
+                    saw 449 GB accumulate from substrate.duckdb.wal and
+                    .testmondata-wal alone. Matched as case-sensitive suffix
+                    on the file basename.
+                  '';
+                };
                 instances = mkOption { type = nullOr positive; default = null; description = "Instance override (null ⇒ inherit defaults)."; };
                 batch = mkOption {
                   type = nullOr (batchModule { defaultSize = 100; defaultTimeout = 5; });
