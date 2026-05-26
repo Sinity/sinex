@@ -1997,8 +1997,8 @@ fn extract_closure_command_entries(body: &str, source: &str) -> Vec<ClosureComma
         }
 
         if in_code_block && in_verify_section {
-            // Accept all non-comment, non-empty lines from verify-section blocks
-            // whose language is bash, sh, verify, or unspecified.
+            // Accept non-comment, non-empty lines from verify-section blocks
+            // whose language is bash, sh, verify, shell, or unspecified.
             let lang_ok = code_lang.is_empty()
                 || code_lang == "bash"
                 || code_lang == "sh"
@@ -2008,7 +2008,14 @@ fn extract_closure_command_entries(body: &str, source: &str) -> Vec<ClosureComma
             if lang_ok && !trimmed.is_empty() && !trimmed.starts_with('#') {
                 // Strip leading `$ ` prompt if present.
                 let cmd = trimmed.strip_prefix("$ ").unwrap_or(trimmed);
-                commands.push(cmd.to_string());
+                // Skip prose lines that happen to live inside a fenced block.
+                // Without this guard, narrative lines like
+                // `git push pre-push drift guard` or bare `xtask` get treated
+                // as commands and always fail, producing false-positive
+                // closure regressions (#1552).
+                if looks_like_runnable_command(cmd) {
+                    commands.push(cmd.to_string());
+                }
             }
         } else if !in_code_block && in_verify_section {
             // Bare `$ command` lines outside code blocks in a verify section.
@@ -2095,6 +2102,39 @@ fn looks_like_shell_command(candidate: &str) -> bool {
         || candidate.starts_with("rg ")
         || candidate.starts_with("nix ")
         || candidate.starts_with("SINEX_")
+}
+
+/// Stricter form of `looks_like_shell_command` used when scanning lines inside
+/// fenced code blocks for closure-verification commands. A bare `xtask` or
+/// other zero-argument invocation is almost certainly prose that happened to
+/// land inside a fence; require at least a subcommand or argument. Surfaced by
+/// #1552 — bare `xtask` and prose lines like `git push pre-push drift guard`
+/// kept producing false-positive closure regressions.
+fn looks_like_runnable_command(candidate: &str) -> bool {
+    let parts: Vec<&str> = candidate.split_whitespace().collect();
+    if parts.is_empty() {
+        return false;
+    }
+    let head = parts[0];
+    // For env-prefixed forms (SINEX_FOO=bar xtask ...), skip the prefix tokens
+    // and re-check the first real command token.
+    let cmd_idx = parts.iter().position(|tok| !tok.contains('='));
+    let cmd = match cmd_idx.and_then(|i| parts.get(i)) {
+        Some(c) => *c,
+        None => return false,
+    };
+    let cmd_args = parts.len() - cmd_idx.unwrap_or(0) - 1;
+    if cmd_args == 0 {
+        // Bare command (e.g. `xtask`) — almost always prose at the start of a
+        // sentence. Reject. Exception: simple non-xtask commands like `gh`,
+        // `git` that print useful help are still useless for closure replay,
+        // so reject those too.
+        return false;
+    }
+    match cmd {
+        "xtask" | "sinexctl" | "git" | "gh" | "rg" | "nix" | "psql" | "nats" => true,
+        _ => looks_like_shell_command(head),
+    }
 }
 
 fn parse_closure_matrix_line(line: &str) -> Option<(String, String)> {
@@ -2367,6 +2407,47 @@ mod tests {
         assert_eq!(cmds.len(), 1);
         assert_eq!(cmds[0].command, "xtask check -p xtask");
         assert_eq!(cmds[0].source, "comment[0]@2026-05-19T00:00:00Z");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn extract_closure_commands_skips_prose_inside_fenced_blocks()
+    -> ::xtask::sandbox::TestResult<()> {
+        // Closure comments sometimes describe verification narratively inside
+        // a fenced block. The verifier must not try to execute prose as a
+        // shell command. Regression test for #1552.
+        let body = "## Verification\n\n```\n\
+            git push pre-push drift guard passes\n\
+            xtask\n\
+            python script outputs success\n\
+            xtask check -p xtask\n\
+            ```\n";
+        let cmds = extract_closure_command_entries(body, "body");
+        let extracted: Vec<&str> = cmds.iter().map(|c| c.command.as_str()).collect();
+        assert_eq!(
+            extracted,
+            vec!["xtask check -p xtask"],
+            "only the runnable command should be extracted; prose and bare commands must be skipped (got {extracted:?})",
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn looks_like_runnable_command_filters_prose_and_bare_commands()
+    -> ::xtask::sandbox::TestResult<()> {
+        assert!(!looks_like_runnable_command(""));
+        assert!(!looks_like_runnable_command("xtask"));
+        assert!(!looks_like_runnable_command("git"));
+        assert!(!looks_like_runnable_command(
+            "git push pre-push drift guard"
+        ));
+        assert!(!looks_like_runnable_command("python -m pytest"));
+        assert!(looks_like_runnable_command("xtask check -p xtask"));
+        assert!(looks_like_runnable_command("git log --oneline -3"));
+        assert!(looks_like_runnable_command("gh pr view 1234"));
+        assert!(looks_like_runnable_command(
+            "SINEX_FOO=bar xtask test -p xtask"
+        ));
         Ok(())
     }
 
