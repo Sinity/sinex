@@ -1443,9 +1443,13 @@ async fn jetstream_consumer_bisect_isolates_multiple_poison_rows_in_large_batch(
     let ctx = ctx.with_nats().shared().await?;
     let suffix = format!("scale-split-{}", Uuid::now_v7().to_string().to_lowercase());
     let hooks = TestHooks::builder().route_db_errors_to_dlq().build().0;
-    let setup =
-        start_consumer_with_hooks(&ctx, &suffix, Duration::from_secs(Timeouts::STANDARD), &hooks)
-            .await?;
+    let setup = start_consumer_with_hooks(
+        &ctx,
+        &suffix,
+        Duration::from_secs(Timeouts::STANDARD),
+        &hooks,
+    )
+    .await?;
 
     let total_events = 60usize;
     let poison_count = 3usize; // 5% bad rows
@@ -1458,7 +1462,8 @@ async fn jetstream_consumer_bisect_isolates_multiple_poison_rows_in_large_batch(
 
     // Publish interleaved good and bad events.
     for i in 0..total_events {
-        let is_poison = i % (total_events / poison_count) == 0 && expected_bad_ids.len() < poison_count;
+        let is_poison =
+            i % (total_events / poison_count) == 0 && expected_bad_ids.len() < poison_count;
         let event_id = Uuid::now_v7();
         let subject = env.nats_subject_with_namespace(
             Some(&setup.namespace),
