@@ -8,6 +8,7 @@ use sinex_node_sdk::content_store::{
     cas_fsck::check_cas,
     gc::{BlobGcReport, sweep_orphans_detailed},
 };
+use sinex_primitives::Uuid;
 
 use crate::Result;
 use crate::fmt::{CommandOutput, format_bytes};
@@ -21,6 +22,8 @@ pub enum BlobCommands {
     Fsck(BlobFsckCommand),
     /// Migrate blobs from legacy git-annex to local BLAKE3 CAS.
     Migrate(BlobMigrateCommand),
+    /// Re-hash material-provenance event payloads against `anchor_payload_hash` (#1447).
+    VerifyIntegrity(BlobVerifyIntegrityCommand),
 }
 
 impl BlobCommands {
@@ -29,6 +32,7 @@ impl BlobCommands {
             Self::SweepOrphans(cmd) => cmd.execute(format).await,
             Self::Fsck(cmd) => cmd.execute(format).await,
             Self::Migrate(cmd) => cmd.execute(format).await,
+            Self::VerifyIntegrity(cmd) => cmd.execute(format).await,
         }
     }
 }
@@ -541,4 +545,232 @@ fn format_blob_migrate_summary(summary: &BlobMigrateSummary) -> String {
         output.push_str(&format!("    {} -> {}\n", m.annex_key, m.cas_key));
     }
     output
+}
+
+// ── VerifyIntegrity ─────────────────────────────────────────────────────────
+
+#[derive(Debug, Parser)]
+#[command(after_help = "\
+EXAMPLES:
+    # Verify every event with anchor_payload_hash set
+    sinexctl blob verify-integrity
+
+    # Verify only events from one source material
+    sinexctl blob verify-integrity --material-id 019e5be2-...
+
+    # Bound the audit to N events
+    sinexctl blob verify-integrity --limit 1000
+")]
+pub struct BlobVerifyIntegrityCommand {
+    /// Content-store root path (the directory that holds `sinex-cas/`).
+    #[arg(long, env = "SINEX_CONTENT_STORE_PATH")]
+    pub content_store_path: Utf8PathBuf,
+
+    /// Verify only events tied to this `raw.source_material_registry.id`.
+    #[arg(long)]
+    pub material_id: Option<Uuid>,
+
+    /// Cap the number of events checked (0 = unbounded).
+    #[arg(long, default_value_t = 0)]
+    pub limit: u64,
+}
+
+#[derive(Debug, Default, Serialize)]
+pub struct BlobVerifyIntegrityReport {
+    pub examined: u64,
+    pub matched: u64,
+    pub mismatched: u64,
+    pub missing_offsets: u64,
+    pub missing_blob: u64,
+    pub missing_cas_file: u64,
+    pub read_errors: u64,
+    pub mismatches: Vec<BlobVerifyIntegrityMismatch>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct BlobVerifyIntegrityMismatch {
+    pub event_id: Uuid,
+    pub material_id: Uuid,
+    pub anchor_byte: i64,
+    pub offset_start: Option<i64>,
+    pub offset_end: Option<i64>,
+    pub stored_hash_hex: String,
+    pub recomputed_hash_hex: String,
+}
+
+impl BlobVerifyIntegrityCommand {
+    pub async fn execute(&self, format: OutputFormat) -> Result<()> {
+        let database_url = std::env::var("DATABASE_URL").map_err(|_| {
+            eyre!(
+                "DATABASE_URL not set. Set it in your environment before running blob verify-integrity."
+            )
+        })?;
+        let pool = create_pool(&database_url)
+            .await
+            .wrap_err("connect database for blob integrity verification")?;
+
+        let content_store = MaterialContentStore::new(ContentStoreConfig {
+            root_path: self.content_store_path.clone(),
+            num_copies: None,
+            large_files: None,
+            ..Default::default()
+        })
+        .wrap_err_with(|| format!("open content-store root {}", self.content_store_path))?;
+
+        let report =
+            verify_event_anchor_hashes(&pool, &content_store, self.material_id, self.limit)
+                .await?;
+
+        CommandOutput::single(report, format_verify_integrity_report).display(&format)
+    }
+}
+
+async fn verify_event_anchor_hashes(
+    pool: &sqlx::PgPool,
+    content_store: &MaterialContentStore,
+    material_id: Option<Uuid>,
+    limit: u64,
+) -> Result<BlobVerifyIntegrityReport> {
+    let mut report = BlobVerifyIntegrityReport::default();
+
+    let rows = sqlx::query!(
+        r#"
+        SELECT
+            e.id AS "id!: Uuid",
+            e.source_material_id AS "source_material_id!: Uuid",
+            e.anchor_byte,
+            e.offset_start,
+            e.offset_end,
+            e.anchor_payload_hash AS "anchor_payload_hash!: Vec<u8>",
+            b.checksum_blake3
+        FROM core.events e
+        JOIN raw.source_material_registry r ON r.id = e.source_material_id
+        LEFT JOIN core.blobs b ON b.id = r.optional_blob_id
+        WHERE e.anchor_payload_hash IS NOT NULL
+          AND ($1::uuid IS NULL OR e.source_material_id = $1)
+        ORDER BY e.id
+        LIMIT CASE WHEN $2::bigint = 0 THEN NULL ELSE $2 END
+        "#,
+        material_id,
+        i64::try_from(limit).unwrap_or(i64::MAX),
+    )
+    .fetch_all(pool)
+    .await
+    .wrap_err("query material-provenance events with anchor_payload_hash")?;
+
+    for row in rows {
+        report.examined += 1;
+
+        let Some(stored) = (row.anchor_payload_hash.len() == 32)
+            .then(|| <[u8; 32]>::try_from(row.anchor_payload_hash.as_slice()).ok())
+            .flatten()
+        else {
+            report.read_errors += 1;
+            continue;
+        };
+
+        let Some(blob_hash) = row.checksum_blake3 else {
+            report.missing_blob += 1;
+            continue;
+        };
+
+        let Some(cas_path) =
+            content_store.path_if_local(&format!("SINEXBLAKE3-{blob_hash}"))?
+        else {
+            report.missing_blob += 1;
+            continue;
+        };
+
+        let material_bytes = match tokio::fs::read(cas_path.as_std_path()).await {
+            Ok(bytes) => bytes,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                report.missing_cas_file += 1;
+                continue;
+            }
+            Err(error) => {
+                tracing::warn!(
+                    error = %error,
+                    cas_path = %cas_path,
+                    "Failed to read CAS file for integrity verification"
+                );
+                report.read_errors += 1;
+                continue;
+            }
+        };
+
+        // Two anchor shapes:
+        //   - Stream records carry offset_start/offset_end (a byte range inside
+        //     a rotation buffer). The hash was computed over that exact range.
+        //   - Pre-materialized records (file-drop content staging, SQLite
+        //     snapshots) wrote the whole record payload as the entire material
+        //     content, with offsets None or 0..len. The hash covers all bytes.
+        let payload: &[u8] = match (row.offset_start, row.offset_end) {
+            (Some(start), Some(end)) if start >= 0 && end >= start => {
+                let lo = usize::try_from(start).unwrap_or(usize::MAX);
+                let hi = usize::try_from(end).unwrap_or(usize::MAX);
+                if hi > material_bytes.len() {
+                    report.read_errors += 1;
+                    continue;
+                }
+                &material_bytes[lo..hi]
+            }
+            (None, None) => material_bytes.as_slice(),
+            _ => {
+                report.missing_offsets += 1;
+                continue;
+            }
+        };
+
+        let recomputed = *blake3::hash(payload).as_bytes();
+        if recomputed == stored {
+            report.matched += 1;
+        } else {
+            report.mismatched += 1;
+            report.mismatches.push(BlobVerifyIntegrityMismatch {
+                event_id: row.id,
+                material_id: row.source_material_id,
+                anchor_byte: row.anchor_byte.unwrap_or(0),
+                offset_start: row.offset_start,
+                offset_end: row.offset_end,
+                stored_hash_hex: hash_to_hex(&stored),
+                recomputed_hash_hex: hash_to_hex(&recomputed),
+            });
+        }
+    }
+
+    Ok(report)
+}
+
+fn hash_to_hex(bytes: &[u8; 32]) -> String {
+    blake3::Hash::from_bytes(*bytes).to_hex().to_string()
+}
+
+fn format_verify_integrity_report(report: &BlobVerifyIntegrityReport) -> String {
+    let mut s = String::new();
+    s.push_str("Anchor Payload Hash Verification\n");
+    s.push_str(&format!("  Examined:        {}\n", report.examined));
+    s.push_str(&format!("  Matched:         {}\n", report.matched));
+    s.push_str(&format!("  Mismatched:      {}\n", report.mismatched));
+    s.push_str(&format!("  Missing offsets: {}\n", report.missing_offsets));
+    s.push_str(&format!("  Missing blob:    {}\n", report.missing_blob));
+    s.push_str(&format!(
+        "  Missing CAS file:{}\n",
+        report.missing_cas_file
+    ));
+    s.push_str(&format!("  Read errors:     {}\n", report.read_errors));
+    if !report.mismatches.is_empty() {
+        s.push_str("\nMismatches:\n");
+        for m in &report.mismatches {
+            s.push_str(&format!(
+                "  event={} material={} range=[{:?},{:?}] stored={} recomputed={}\n",
+                m.event_id,
+                m.material_id,
+                m.offset_start,
+                m.offset_end,
+                &m.stored_hash_hex[..16],
+                &m.recomputed_hash_hex[..16],
+            ));
+        }
+    }
+    s
 }
