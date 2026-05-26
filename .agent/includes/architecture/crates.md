@@ -1,4 +1,4 @@
-## Workspace Map (19 Workspace Members)
+## Workspace Map (14 Workspace Members)
 
 ### What to import from where
 
@@ -8,7 +8,7 @@
 | Event creation | `sinex_primitives::events::payloads::*` | `EventPayload` trait, typed payload structs |
 | Dynamic events | `sinex_primitives::events::{DynamicPayload, builder::EventBuilder}` | For runtime source/type |
 | DB access | `sinex_db::DbPoolExt` | `pool.events()`, `pool.blobs()`, `pool.source_materials()` etc. |
-| Node SDK | `sinex_node_sdk::*` | `IngestorNode`, `AutomatonNode`, `NodeConfig`, `node_entrypoint!` |
+| Node SDK | `sinex_node_sdk::*` | `IngestorNode`, `NodeConfig`, `node_entrypoint!`, runtime adapters |
 | Derived nodes | `sinex_node_sdk::{TransducerNode, WindowedNode, ScopeReconcilerNode}` | Via `DerivedNodeAdapter<N>` |
 | Privacy | `sinex_primitives::privacy::*` | `privacy::engine()`, `ProcessingContext` |
 | Domain enums | `sinex_primitives::domain::*` | `OperationStatus`, `HealthStatus`, `DataTier`, `NodeType` etc. |
@@ -28,20 +28,16 @@ crate/
   core/
     sinex-ingestd/       Ingestion daemon: NATS consumer -> batch writes -> confirmations
     sinex-gateway/       API gateway: JSON-RPC, SSE subscriptions, native messaging
-  nodes/
-    sinex-fs-ingestor/            file.created/modified/deleted
-    sinex-terminal-ingestor/      shell.command, shell.history
-    sinex-desktop-ingestor/       window.focused/closed, clipboard.*
-    sinex-system-ingestor/        systemd.*, device.*, login.*
-    sinex-document-ingestor/      document.parsed, document.extracted
-    sinex-browser-ingestor/       webhistory/page.visited (csv/json/sqlite dumps)
-    sinex-process/                Consolidated automata (#944): canonicalizer, analytics,
-                                  health, session-detector, hourly/daily summarizers
+    sinex-source-worker/ Unified source-unit host; parser/input-shape adapters live under
+                         `src/sources/` instead of per-domain ingestor crates
+    sinex-process/       Consolidated automata (#944): canonicalizer, analytics,
+                         health, session-detector, hourly/daily summarizers,
+                         entity/relation shadow-lane workers
   cli/
     sinexctl               Unified CLI: query, trace, telemetry, context, report, import
   tests/
     vm-suite               NixOS VM test binary
 tests/e2e/                 End-to-end integration tests
 tests/workspace/           Workspace-level test harness
-xtask/                     Build automation (~105K lines, sandbox test infra)
+xtask/                     Build automation, sandbox test infra, dev-loop tooling
 ```

@@ -21,6 +21,7 @@ enum EventCopyColumnType {
     Uuid,
     Text,
     Jsonb,
+    Bytea,
     Timestamptz,
     Integer,
     Bigint,
@@ -33,6 +34,7 @@ impl EventCopyColumnType {
             Self::Uuid => "UUID",
             Self::Text => "TEXT",
             Self::Jsonb => "JSONB",
+            Self::Bytea => "BYTEA",
             Self::Timestamptz => "TIMESTAMPTZ",
             Self::Integer => "INTEGER",
             Self::Bigint => "BIGINT",
@@ -44,9 +46,12 @@ impl EventCopyColumnType {
         match self {
             Self::Uuid => format!("{column_name}::uuid"),
             Self::UuidArray => format!("{column_name}::uuid[]"),
-            Self::Text | Self::Jsonb | Self::Timestamptz | Self::Integer | Self::Bigint => {
-                column_name.to_owned()
-            }
+            Self::Text
+            | Self::Jsonb
+            | Self::Bytea
+            | Self::Timestamptz
+            | Self::Integer
+            | Self::Bigint => column_name.to_owned(),
         }
     }
 
@@ -55,6 +60,10 @@ impl EventCopyColumnType {
             Self::Uuid => matches_uuid_type(column_type),
             Self::Text => matches!(column_type, ColumnType::Text),
             Self::Jsonb => matches!(column_type, ColumnType::JsonBinary),
+            Self::Bytea => matches!(
+                column_type,
+                ColumnType::Custom(iden) if iden.to_string().eq_ignore_ascii_case("bytea")
+            ),
             Self::Timestamptz => matches!(column_type, ColumnType::TimestampWithTimeZone),
             Self::Integer => matches!(column_type, ColumnType::Integer),
             Self::Bigint => matches!(column_type, ColumnType::BigInteger),
@@ -104,7 +113,7 @@ impl EventCopyColumn {
 
 const DB_MANAGED_EVENT_COLUMNS: [&str; 2] = ["ts_coided", "ts_persisted"];
 
-const EVENT_COPY_COLUMNS: [EventCopyColumn; 22] = [
+const EVENT_COPY_COLUMNS: [EventCopyColumn; 23] = [
     EventCopyColumn {
         event: Events::Id,
         copy_type: EventCopyColumnType::Uuid,
@@ -164,6 +173,10 @@ const EVENT_COPY_COLUMNS: [EventCopyColumn; 22] = [
     EventCopyColumn {
         event: Events::SourceRunId,
         copy_type: EventCopyColumnType::Uuid,
+    },
+    EventCopyColumn {
+        event: Events::AnchorPayloadHash,
+        copy_type: EventCopyColumnType::Bytea,
     },
     EventCopyColumn {
         event: Events::AssociatedBlobIds,
@@ -392,6 +405,12 @@ impl<'a> CopyRowWriter<'a> {
         Ok(())
     }
 
+    fn bytea_field(&mut self, event: Events, value: Option<&[u8]>) -> Result<(), Error> {
+        self.begin_field(event)?;
+        write_bytea_field(self.buf, value);
+        Ok(())
+    }
+
     fn begin_field(&mut self, event: Events) -> Result<(), Error> {
         let actual_name = event.to_string();
         let expected = copy_columns().get(self.fields_written).ok_or_else(|| {
@@ -487,6 +506,10 @@ impl ToPostgresCopy for Event<JsonValue> {
             let source_run_id_str = self.source_run_id.map(|id| id.to_string());
             writer.field(Events::SourceRunId, source_run_id_str.as_deref())?;
         }
+        writer.bytea_field(
+            Events::AnchorPayloadHash,
+            self.anchor_payload_hash.as_deref(),
+        )?;
         writer.field(
             Events::AssociatedBlobIds,
             associated_blob_ids_str.as_deref(),
@@ -569,6 +592,10 @@ impl ToPostgresCopy for StreamBatchRow {
             let source_run_id_str = self.source_run_id.map(|id| id.to_string());
             writer.field(Events::SourceRunId, source_run_id_str.as_deref())?;
         }
+        writer.bytea_field(
+            Events::AnchorPayloadHash,
+            self.anchor_payload_hash.as_deref(),
+        )?;
         writer.field(
             Events::AssociatedBlobIds,
             associated_blob_ids_str.as_deref(),
@@ -599,6 +626,21 @@ pub(crate) fn write_i64_field(buf: &mut Vec<u8>, val: Option<i64>) {
         Some(v) => {
             let mut itoa_buf = itoa::Buffer::new();
             buf.extend_from_slice(itoa_buf.format(v).as_bytes());
+        }
+        None => buf.extend_from_slice(b"\\N"),
+    }
+}
+
+pub(crate) fn write_bytea_field(buf: &mut Vec<u8>, val: Option<&[u8]>) {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+
+    match val {
+        Some(bytes) => {
+            buf.extend_from_slice(b"\\\\x");
+            for &byte in bytes {
+                buf.push(HEX[(byte >> 4) as usize]);
+                buf.push(HEX[(byte & 0x0f) as usize]);
+            }
         }
         None => buf.extend_from_slice(b"\\N"),
     }
@@ -668,6 +710,7 @@ mod tests {
             source_event_ids: None,
             payload_schema_id: None,
             source_run_id: None,
+            anchor_payload_hash: None,
             associated_blob_ids: None,
             temporal_policy: None,
             semantics_version: None,
@@ -689,7 +732,7 @@ mod tests {
 
     /// The COPY format must have exactly one field per authoritative writable event column.
     #[sinex_test]
-    async fn produces_exactly_22_fields() -> ::xtask::sandbox::TestResult<()> {
+    async fn produces_exactly_declared_field_count() -> ::xtask::sandbox::TestResult<()> {
         let fields = row_fields(&minimal_row());
         assert_eq!(
             fields.len(),
@@ -723,6 +766,7 @@ mod tests {
             Events::SourceEventIds,
             Events::PayloadSchemaId,
             Events::SourceRunId,
+            Events::AnchorPayloadHash,
             Events::AssociatedBlobIds,
             Events::TemporalPolicy,
             Events::SemanticsVersion,
@@ -752,6 +796,7 @@ mod tests {
             host: sinex_primitives::domain::HostName::from_static("localhost"),
             source_run_id: None,
             payload_schema_id: None,
+            anchor_payload_hash: None,
             provenance: crate::Provenance::Material {
                 id: Id::new(),
                 anchor_byte: 0,

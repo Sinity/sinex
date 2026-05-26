@@ -15,6 +15,7 @@ async fn event_validator_rejects_future_ts_orig() -> xtask::sandbox::TestResult<
         host: HostName::from_static("validator"),
         source_run_id: None,
         payload_schema_id: None,
+        anchor_payload_hash: None,
         provenance: Provenance::from_material(Id::<SourceMaterial>::new(), 0, None, None),
         associated_blob_ids: None,
         temporal_policy: None,

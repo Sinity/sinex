@@ -200,20 +200,20 @@ Two antipatterns to avoid:
   tree. If you're describing what *will* land, say so. If you're
   describing what *did* land, the verification commands prove it.
 
-## Source-unit promotion gate (ingestors)
+## Source-unit promotion gate
 
-A new ingestor is not promotable until its
+A new source unit is not promotable until its
 [`SourceUnitDescriptor`](crate/lib/sinex-primitives/docs/source_unit.md)
 is filled in and the declared proof obligations pass. The descriptor is
 the executable form of the contract — identity, emitted
 `(source, event_type)` pairs, checkpoint family, privacy tier, runtime
 shape, horizons, retention, proof obligations, occurrence identity.
 
-Register with `register_source_unit!` in the ingestor crate's
-`src/lib.rs`. See `crate/nodes/sinex-terminal-ingestor/src/lib.rs` for
-the canonical example.
+Register with `register_source_unit!` in the source-unit module. See
+`crate/core/sinex-source-worker/src/sources/terminal/zsh_history.rs` for a
+canonical terminal-history example.
 
-This is a hard gate, not a convention: a PR adding a new ingestor
+This is a hard gate, not a convention: a PR adding a new source unit
 without a descriptor should be sent back. The descriptor compiles
 against typed fields, so a missing or malformed one fails at build
 time.

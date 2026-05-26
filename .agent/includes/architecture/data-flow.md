@@ -50,13 +50,13 @@ sinex-primitives         Foundation: types, validation, errors, domain enums, ID
             |
             +-- sinex-node-sdk    Node runtime + CLI: lifecycle, checkpoints, replay
                     |
-                    +-- All ingestors (fs, terminal, desktop, system, document)
+                    +-- Source-worker adapters (fs, terminal, desktop, system, document, browser, exports)
                     +-- All automata (canonicalizer, analytics, health)
             +-- sinex-gateway     API layer: JSON-RPC, SSE, native messaging, content orchestration
 
 sinexctl                 Unified CLI (query, trace, telemetry, context, report, import)
 
-xtask                    Build automation (~115K lines, ~20% of total)
+xtask                    Build automation, sandbox test infra, dev-loop tooling
 ```
 
 ### NATS Subject Topology
@@ -94,14 +94,15 @@ Each synthesis event carries `node_model`, `temporal_policy`, and `semantics_ver
 - Hourly summarizer — Windowed, hourly rollups
 - Daily summarizer — Windowed, daily rollups
 
-Entity extractor is not yet implemented (#331). Document parsing/chunking is
-designed but not wired (#733). Richer derivations are the open frontier.
+Entity/relation shadow-lane automata are present in `sinex-process`; activation
+as the main consumer substrate is tracked by #1087/#1346. Richer derivations
+remain the open frontier.
 
 ### WindowedNode Example: Session Detector
 
 ```rust
 // Groups events by temporal proximity. Gap > 5 minutes = new session boundary.
-// Actual implementation: crate/nodes/sinex-process/src/automata/session.rs
+// Actual implementation: crate/core/sinex-process/src/automata/session.rs
 struct SessionDetector;
 
 impl WindowedNode for SessionDetector {

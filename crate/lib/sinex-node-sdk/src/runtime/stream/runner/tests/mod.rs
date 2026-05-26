@@ -554,6 +554,7 @@ fn runtime_test_material_event(
         equivalence_key: None,
         created_by_operation_id: None,
         node_model: None,
+        anchor_payload_hash: None,
     })
 }
 

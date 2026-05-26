@@ -162,6 +162,7 @@ impl DemoCommand {
                     source_event_ids: None,
                     payload_schema_id: None,
                     source_run_id: None,
+                    anchor_payload_hash: None,
                     associated_blob_ids: None,
                     temporal_policy: None,
                     semantics_version: None,
