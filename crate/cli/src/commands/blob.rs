@@ -573,6 +573,15 @@ pub struct BlobVerifyIntegrityCommand {
     /// Cap the number of events checked (0 = unbounded).
     #[arg(long, default_value_t = 0)]
     pub limit: u64,
+
+    /// On mismatch, archive the offending events with reason
+    /// "anchor_payload_hash mismatch" so a replay can re-emit them from the
+    /// current source-material bytes. The archive cascade is the same
+    /// machinery the replay flow uses; events move to
+    /// `audit.archived_events` and `core.events` no longer carries them.
+    /// Without this flag, mismatches are reported only.
+    #[arg(long = "apply-mismatches")]
+    pub apply_mismatches: bool,
 }
 
 #[derive(Debug, Default, Serialize)]
@@ -584,6 +593,10 @@ pub struct BlobVerifyIntegrityReport {
     pub missing_blob: u64,
     pub missing_cas_file: u64,
     pub read_errors: u64,
+    /// Count of mismatched events archived when `--apply-mismatches` is set.
+    /// Zero in dry-run.
+    #[serde(default)]
+    pub archived_mismatches: u64,
     pub mismatches: Vec<BlobVerifyIntegrityMismatch>,
 }
 
@@ -617,12 +630,88 @@ impl BlobVerifyIntegrityCommand {
         })
         .wrap_err_with(|| format!("open content-store root {}", self.content_store_path))?;
 
-        let report =
+        let mut report =
             verify_event_anchor_hashes(&pool, &content_store, self.material_id, self.limit)
                 .await?;
 
+        if self.apply_mismatches && !report.mismatches.is_empty() {
+            report.archived_mismatches =
+                archive_mismatches(&pool, &report.mismatches).await? as u64;
+        }
+
         CommandOutput::single(report, format_verify_integrity_report).display(&format)
     }
+}
+
+async fn archive_mismatches(
+    pool: &sqlx::PgPool,
+    mismatches: &[BlobVerifyIntegrityMismatch],
+) -> Result<usize> {
+    use sinex_db::DbPoolExt;
+    let ids: Vec<Uuid> = mismatches.iter().map(|m| m.event_id).collect();
+    let operation_id = Uuid::now_v7();
+
+    // Log the operation so the cascade has an audit trail. Match the
+    // operation_type pattern used elsewhere in the codebase: snake_case,
+    // namespaced by intent.
+    sqlx::query(
+        r#"
+        INSERT INTO core.operations_log (
+            operation_type, operator, scope, result_status, result_message
+        ) VALUES ($1, $2, $3, 'running', $4)
+        "#,
+    )
+    .bind("archive.integrity_mismatch")
+    .bind("sinexctl:blob-verify-integrity")
+    .bind(serde_json::json!({
+        "event_count": ids.len(),
+        "reason": "anchor_payload_hash mismatch",
+    }))
+    .bind(format!(
+        "blob verify-integrity --apply-mismatches: archiving {} mismatched event(s)",
+        ids.len()
+    ))
+    .execute(pool)
+    .await
+    .wrap_err("log archive.integrity_mismatch operation")?;
+
+    let count = pool
+        .events()
+        .execute_cascade_archive(
+            &ids,
+            "anchor_payload_hash mismatch",
+            &operation_id.to_string(),
+            "sinexctl:blob-verify-integrity",
+        )
+        .await
+        .wrap_err("execute archive cascade for integrity mismatches")?;
+
+    sqlx::query(
+        r#"
+        UPDATE core.operations_log
+        SET result_status = 'success',
+            result_message = $1
+        WHERE operator = 'sinexctl:blob-verify-integrity'
+          AND result_status = 'running'
+          AND scope->>'reason' = 'anchor_payload_hash mismatch'
+          AND id = (
+            SELECT id FROM core.operations_log
+            WHERE operator = 'sinexctl:blob-verify-integrity'
+              AND result_status = 'running'
+              AND scope->>'reason' = 'anchor_payload_hash mismatch'
+            ORDER BY id DESC LIMIT 1
+          )
+        "#,
+    )
+    .bind(format!(
+        "archived {count} of {} mismatched events via cascade",
+        ids.len()
+    ))
+    .execute(pool)
+    .await
+    .wrap_err("update operations_log success status")?;
+
+    Ok(count as usize)
 }
 
 async fn verify_event_anchor_hashes(
@@ -758,6 +847,10 @@ fn format_verify_integrity_report(report: &BlobVerifyIntegrityReport) -> String 
         report.missing_cas_file
     ));
     s.push_str(&format!("  Read errors:     {}\n", report.read_errors));
+    s.push_str(&format!(
+        "  Archived (apply-mismatches): {}\n",
+        report.archived_mismatches
+    ));
     if !report.mismatches.is_empty() {
         s.push_str("\nMismatches:\n");
         for m in &report.mismatches {
