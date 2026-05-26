@@ -416,11 +416,10 @@ async fn replay_end_to_end_seeds_executes_archives(ctx: TestContext) -> TestResu
     // Material replay uses physical occurrence coordinates for matching, not
     // equivalence_key. Verify that replacement records exist and have NULL
     // equivalence_key (the derived-output concept is intentionally absent).
-    let replacement_count: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*)::bigint FROM audit.event_replacements",
-    )
-    .fetch_one(pool)
-    .await?;
+    let replacement_count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*)::bigint FROM audit.event_replacements")
+            .fetch_one(pool)
+            .await?;
     assert!(
         replacement_count > 0,
         "replay should produce replacement records linking old→new events"
