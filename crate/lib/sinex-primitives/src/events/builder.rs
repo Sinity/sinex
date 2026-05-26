@@ -26,6 +26,7 @@ pub struct EventBuilder<T, P> {
     pub(crate) payload_schema_id: Option<Uuid>,
     pub(crate) provenance_data: Option<Provenance>,
     pub(crate) associated_blob_ids: Option<Vec<Uuid>>,
+    pub(crate) anchor_payload_hash: Option<Vec<u8>>,
     pub(crate) _state: std::marker::PhantomData<P>,
 }
 
@@ -48,6 +49,7 @@ impl<T> EventBuilder<T, NoProvenance> {
             payload_schema_id: None,
             provenance_data: None,
             associated_blob_ids: None,
+            anchor_payload_hash: None,
             _state: std::marker::PhantomData,
         }
     }
@@ -93,6 +95,7 @@ impl<T> EventBuilder<T, NoProvenance> {
             payload_schema_id: self.payload_schema_id,
             provenance_data: Some(provenance),
             associated_blob_ids: self.associated_blob_ids,
+            anchor_payload_hash: self.anchor_payload_hash,
             _state: std::marker::PhantomData,
         }
     }
@@ -164,6 +167,29 @@ impl<T> EventBuilder<T, HasProvenance> {
         self
     }
 
+    /// Stamp a precomputed 32-byte BLAKE3 hash on the event.
+    ///
+    /// Per #1447 the field is only meaningful on material-provenance events —
+    /// synthesis events derive their identity from parent event ids. Setting a
+    /// hash on a synthesis-provenance builder is silently dropped at `build()`
+    /// time to keep the on-the-wire shape honest. Use
+    /// [`Self::with_anchor_payload_from_bytes`] when you have the payload bytes
+    /// and want the BLAKE3 computed for you.
+    #[must_use]
+    pub fn with_anchor_payload_hash(mut self, hash: [u8; 32]) -> Self {
+        self.anchor_payload_hash = Some(hash.to_vec());
+        self
+    }
+
+    /// Compute and stamp the 32-byte BLAKE3 hash of the supplied source-material
+    /// byte range. Only meaningful on material-provenance events (see
+    /// [`Self::with_anchor_payload_hash`]).
+    #[must_use]
+    pub fn with_anchor_payload_from_bytes(self, bytes: &[u8]) -> Self {
+        let hash = blake3::hash(bytes);
+        self.with_anchor_payload_hash(*hash.as_bytes())
+    }
+
     /// Set operation ID on both the provenance (if Synthesis) and the event-level
     /// `created_by_operation_id` field.
     pub fn with_operation(mut self, operation_id: Id<OperationMarker>) -> Self {
@@ -215,6 +241,15 @@ impl<T> EventBuilder<T, HasProvenance> {
         // column, so keep the event-level field aligned with provenance.
         let created_by_operation_id = provenance.operation_uuid();
 
+        // anchor_payload_hash is only meaningful on material provenance; the
+        // verify path keys off (source_material_id, anchor_byte, len) and
+        // synthesis events derive identity from parent event ids. Drop any
+        // hash supplied to a synthesis builder to keep on-the-wire honest.
+        let anchor_payload_hash = match &provenance {
+            Provenance::Material { .. } => self.anchor_payload_hash,
+            Provenance::Synthesis { .. } => None,
+        };
+
         Ok(Event {
             id: self.id,
             source: self.source,
@@ -225,7 +260,7 @@ impl<T> EventBuilder<T, HasProvenance> {
             source_run_id: self.source_run_id,
             payload_schema_id: self.payload_schema_id,
             provenance,
-            anchor_payload_hash: None,
+            anchor_payload_hash,
             associated_blob_ids: self.associated_blob_ids,
             temporal_policy: None,
             semantics_version: None,

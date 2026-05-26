@@ -25,6 +25,51 @@ async fn material_event_builder_sets_fields() -> TestResult<()> {
 }
 
 #[sinex_test]
+async fn material_event_builder_stamps_anchor_payload_hash() -> TestResult<()> {
+    let payload = FileCreatedPayload::test_default(
+        RecordedPath::from_observed("/test.txt").map_err(|e| color_eyre::eyre::eyre!(e))?,
+    );
+    let bytes = b"the captured byte range";
+    let event = Event::builder(payload)
+        .from_material(Id::<SourceMaterial>::new(), 0)
+        .with_anchor_payload_from_bytes(bytes)
+        .build()?;
+
+    let expected = *blake3::hash(bytes).as_bytes();
+    assert_eq!(
+        event.anchor_payload_hash.as_deref(),
+        Some(&expected[..]),
+        "material-provenance events should carry the BLAKE3 of the captured byte range",
+    );
+    assert_eq!(
+        event.anchor_payload_hash.as_ref().map(|h| h.len()),
+        Some(32),
+        "anchor_payload_hash must be exactly 32 bytes (matches DB CHECK length=32)",
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn synthesis_event_builder_drops_anchor_payload_hash() -> TestResult<()> {
+    let parent_ids = vec![EventId::new(), EventId::new()];
+    let payload = KittyCommandExecutedPayload::test_default("derived");
+    // A caller can supply a hash on a synthesis builder; build() must drop it
+    // because synthesis events derive identity from parent event ids, not from
+    // a source-material byte range. The XOR CHECK on core.events would also
+    // reject a synthesis row with a hash anyway, but defending in Rust keeps
+    // the on-the-wire shape honest.
+    let event = Event::builder(payload)
+        .from_parents(parent_ids)?
+        .with_anchor_payload_from_bytes(b"not a material payload")
+        .build()?;
+    assert!(
+        event.anchor_payload_hash.is_none(),
+        "synthesis events must never carry anchor_payload_hash",
+    );
+    Ok(())
+}
+
+#[sinex_test]
 async fn synthesis_event_builder_tracks_parents() -> TestResult<()> {
     let parent_ids = vec![EventId::new(), EventId::new()];
     let payload = KittyCommandExecutedPayload::test_default("analysis pipeline");
