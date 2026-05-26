@@ -99,22 +99,24 @@ where
     #[cfg(not(feature = "messaging"))]
     pub(super) async fn observe_runtime_snapshot(&self) {}
 
-    /// Emit per-event processing-latency gauges (point-in-time + percentile)
-    /// so operators can see how a derived node is keeping up with its input
-    /// stream. Each call records the latest sample into the in-process
-    /// reservoirs and emits both the last-value gauge and the latest
-    /// percentile read.
+    /// Emit a per-event processing-latency snapshot so operators can see how a
+    /// derived node is keeping up with its input stream. Each call records the
+    /// latest sample into the in-process reservoirs and publishes a single
+    /// `derived.latency_snapshot` event capturing the last sample plus the
+    /// current reservoir/window readings.
     ///
-    /// Gauges:
-    /// - `derived.event_lag_ms` — last lag sample (wall time between
-    ///   upstream `ts_orig` and dispatch).
-    /// - `derived.tick_runtime_ms` — last runtime sample.
-    /// - `derived.event_lag_p50_ms`, `derived.event_lag_p99_ms` — sliding
-    ///   reservoir percentiles over the last `DEFAULT_LATENCY_RESERVOIR`
-    ///   samples.
-    /// - `derived.tick_runtime_p99_ms` — same reservoir, runtime samples.
-    /// - `derived.throughput_eps` — events per second over the live
+    /// Fields on the snapshot payload:
+    /// - `event_lag_ms` — last lag sample (wall time between upstream
+    ///   `ts_orig` and dispatch).
+    /// - `tick_runtime_ms` — last runtime sample.
+    /// - `event_lag_p50_ms`, `event_lag_p99_ms` — sliding reservoir
+    ///   percentiles over the last `DEFAULT_LATENCY_RESERVOIR` samples.
+    /// - `tick_runtime_p99_ms` — same reservoir, runtime samples.
+    /// - `throughput_eps` — events per second over the live
     ///   `THROUGHPUT_WINDOW`.
+    ///
+    /// Replaces the prior six separate `metric.gauge` emissions with one event;
+    /// see issue #1556.
     #[cfg(feature = "messaging")]
     pub(super) async fn observe_processing_latency(&mut self, lag_ms: f64, runtime_ms: f64) {
         // Feed the windows regardless of self_observer presence so unit
@@ -131,51 +133,22 @@ where
             return;
         };
         let labels = self.derived_metric_labels();
-
-        if lag_ms.is_finite()
-            && let Err(error) = obs
-                .emit_gauge("derived.event_lag_ms", lag_ms, Some(labels.clone()))
-                .await
-        {
-            log_self_observation_failure(self.node.name(), "derived.event_lag_ms", &error);
-        }
-
-        if runtime_ms.is_finite()
-            && let Err(error) = obs
-                .emit_gauge("derived.tick_runtime_ms", runtime_ms, Some(labels.clone()))
-                .await
-        {
-            log_self_observation_failure(self.node.name(), "derived.tick_runtime_ms", &error);
-        }
-
-        if let Some(p50) = self.lag_window.percentile(0.5)
-            && let Err(error) = obs
-                .emit_gauge("derived.event_lag_p50_ms", p50, Some(labels.clone()))
-                .await
-        {
-            log_self_observation_failure(self.node.name(), "derived.event_lag_p50_ms", &error);
-        }
-        if let Some(p99) = self.lag_window.percentile(0.99)
-            && let Err(error) = obs
-                .emit_gauge("derived.event_lag_p99_ms", p99, Some(labels.clone()))
-                .await
-        {
-            log_self_observation_failure(self.node.name(), "derived.event_lag_p99_ms", &error);
-        }
-        if let Some(p99) = self.runtime_window.percentile(0.99)
-            && let Err(error) = obs
-                .emit_gauge("derived.tick_runtime_p99_ms", p99, Some(labels.clone()))
-                .await
-        {
-            log_self_observation_failure(self.node.name(), "derived.tick_runtime_p99_ms", &error);
-        }
-
         let eps = self.throughput_window.eps(Instant::now());
+
         if let Err(error) = obs
-            .emit_gauge("derived.throughput_eps", eps, Some(labels))
+            .emit_derived_node_latency_snapshot(
+                self.node.name(),
+                lag_ms.is_finite().then_some(lag_ms),
+                runtime_ms.is_finite().then_some(runtime_ms),
+                self.lag_window.percentile(0.5),
+                self.lag_window.percentile(0.99),
+                self.runtime_window.percentile(0.99),
+                eps,
+                labels,
+            )
             .await
         {
-            log_self_observation_failure(self.node.name(), "derived.throughput_eps", &error);
+            log_self_observation_failure(self.node.name(), "derived.latency_snapshot", &error);
         }
     }
 
