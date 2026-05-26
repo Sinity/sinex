@@ -277,6 +277,63 @@ pub struct NodeProcessingStatsPayload {
     pub error_count: u64,
 }
 
+/// Derived-node per-event latency snapshot
+///
+/// Single-event replacement for the six separate `metric.gauge` emissions that
+/// `DerivedNodeAdapter::observe_processing_latency` previously produced
+/// (`derived.event_lag_ms`, `derived.tick_runtime_ms`, the two
+/// `event_lag_p{50,99}_ms` reservoir percentiles, `derived.tick_runtime_p99_ms`,
+/// and `derived.throughput_eps`). Reducing six rows-per-snapshot to one row
+/// cuts derived-node telemetry volume by ~6x without any information loss; see
+/// issue #1556.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
+#[event_payload(source = "sinex.node", event_type = "derived.latency_snapshot")]
+pub struct DerivedNodeLatencySnapshotPayload {
+    /// Derived-node name (e.g., "session-detector")
+    pub node_name: String,
+    /// Last lag sample (ms) — wall time between upstream `ts_orig` and dispatch
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::validation::reject_non_finite_optional_f64"
+    )]
+    pub event_lag_ms: Option<f64>,
+    /// Last per-event tick runtime (ms)
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::validation::reject_non_finite_optional_f64"
+    )]
+    pub tick_runtime_ms: Option<f64>,
+    /// Sliding-reservoir p50 of `event_lag_ms` over the latency reservoir
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::validation::reject_non_finite_optional_f64"
+    )]
+    pub event_lag_p50_ms: Option<f64>,
+    /// Sliding-reservoir p99 of `event_lag_ms`
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::validation::reject_non_finite_optional_f64"
+    )]
+    pub event_lag_p99_ms: Option<f64>,
+    /// Sliding-reservoir p99 of `tick_runtime_ms`
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::validation::reject_non_finite_optional_f64"
+    )]
+    pub tick_runtime_p99_ms: Option<f64>,
+    /// Events per second over the live throughput window
+    #[serde(deserialize_with = "crate::validation::reject_non_finite_f64")]
+    pub throughput_eps: f64,
+    /// Dimensional labels (node_model, source_run_id, etc.)
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub labels: HashMap<String, String>,
+}
+
 /// Replay operation metrics
 ///
 /// Addresses Issue 145: Replay Control Metrics
