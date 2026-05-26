@@ -220,6 +220,18 @@ pub struct FileDropConfig {
     #[serde(default)]
     pub ignored_directory_names: Vec<String>,
 
+    /// File-name suffix patterns to suppress before records leave the adapter.
+    ///
+    /// Matched as a case-sensitive suffix on the file's basename. Use this to
+    /// drop transient/volatile files (SQLite `-wal` / `-shm`, pytest's
+    /// `.testmondata-wal`, editor swap files) that would otherwise stage
+    /// hundreds of materials per minute and bloat the CAS without producing
+    /// meaningful user signal. Surfaced by issue #1543 — the live
+    /// `sinex_prod` deployment accumulated 449 GB of duckdb.wal and
+    /// testmondata-wal captures before the fs source-worker was stopped.
+    #[serde(default)]
+    pub ignored_file_suffixes: Vec<String>,
+
     /// Maximum native watches the adapter should plan for before applying the
     /// host kernel limit.
     #[serde(default = "default_file_drop_max_watches")]
@@ -990,6 +1002,7 @@ struct FileDropPathFilter {
     watch_roots: Vec<Utf8PathBuf>,
     max_depth: Option<usize>,
     ignored_directory_names: HashSet<String>,
+    ignored_file_suffixes: Vec<String>,
 }
 
 impl FileDropPathFilter {
@@ -998,6 +1011,7 @@ impl FileDropPathFilter {
             watch_roots: normalized_file_drop_watch_roots(config),
             max_depth: config.max_depth,
             ignored_directory_names: config.ignored_directory_names.iter().cloned().collect(),
+            ignored_file_suffixes: config.ignored_file_suffixes.clone(),
         }
     }
 
@@ -1007,11 +1021,15 @@ impl FileDropPathFilter {
             watch_roots: Vec::new(),
             max_depth: None,
             ignored_directory_names: HashSet::new(),
+            ignored_file_suffixes: Vec::new(),
         }
     }
 
     fn includes(&self, path: &Utf8PathBuf) -> bool {
         if self.has_ignored_component(path) {
+            return false;
+        }
+        if self.has_ignored_file_suffix(path) {
             return false;
         }
 
@@ -1021,6 +1039,18 @@ impl FileDropPathFilter {
 
         self.relative_depth(path)
             .is_none_or(|depth| depth <= max_depth)
+    }
+
+    fn has_ignored_file_suffix(&self, path: &Utf8PathBuf) -> bool {
+        if self.ignored_file_suffixes.is_empty() {
+            return false;
+        }
+        let Some(name) = path.file_name() else {
+            return false;
+        };
+        self.ignored_file_suffixes
+            .iter()
+            .any(|suffix| name.ends_with(suffix))
     }
 
     fn has_ignored_component(&self, path: &Utf8PathBuf) -> bool {
@@ -1202,6 +1232,7 @@ mod tests {
             recursive: false,
             max_depth: None,
             ignored_directory_names: Vec::new(),
+            ignored_file_suffixes: Vec::new(),
             max_watches: default_file_drop_max_watches(),
             events: vec![FileDropEventKind::Created],
         };
@@ -1291,6 +1322,7 @@ mod tests {
             recursive: false,
             max_depth: None,
             ignored_directory_names: Vec::new(),
+            ignored_file_suffixes: Vec::new(),
             max_watches: default_file_drop_max_watches(),
             events: vec![],
         };
@@ -1313,6 +1345,7 @@ mod tests {
             recursive: false,
             max_depth: None,
             ignored_directory_names: Vec::new(),
+            ignored_file_suffixes: Vec::new(),
             max_watches: default_file_drop_max_watches(),
             events: vec![],
         };
@@ -1333,6 +1366,7 @@ mod tests {
             recursive: false,
             max_depth: None,
             ignored_directory_names: Vec::new(),
+            ignored_file_suffixes: Vec::new(),
             max_watches: default_file_drop_max_watches(),
             events: vec![FileDropEventKind::Created],
         };
@@ -1363,6 +1397,7 @@ mod tests {
             recursive: false,
             max_depth: None,
             ignored_directory_names: Vec::new(),
+            ignored_file_suffixes: Vec::new(),
             max_watches: default_file_drop_max_watches(),
             events: vec![FileDropEventKind::Created],
         };
@@ -1542,6 +1577,7 @@ mod tests {
             recursive: true,
             max_depth: None,
             ignored_directory_names: vec!["target".to_string(), ".git".to_string()],
+            ignored_file_suffixes: Vec::new(),
             max_watches: default_file_drop_max_watches(),
             events: vec![],
         });
@@ -1572,6 +1608,63 @@ mod tests {
     }
 
     #[sinex_test]
+    async fn file_drop_ignored_file_suffixes_suppress_volatile_records()
+    -> xtask::sandbox::TestResult<()> {
+        let material_id = dummy_material_id();
+        let root = Utf8PathBuf::from("/tmp/sinex-fd-suffix-root");
+        let filter = FileDropPathFilter::from_config(&FileDropConfig {
+            watch_paths: vec![root.clone()],
+            recursive: true,
+            max_depth: None,
+            ignored_directory_names: Vec::new(),
+            ignored_file_suffixes: vec![
+                "-wal".to_string(),
+                "-shm".to_string(),
+                ".wal".to_string(),
+                ".testmondata-wal".to_string(),
+            ],
+            max_watches: default_file_drop_max_watches(),
+            events: vec![],
+        });
+        let event = Event::new(EventKind::Modify(notify::event::ModifyKind::Data(
+            notify::event::DataChange::Content,
+        )))
+        .add_path(std::path::PathBuf::from(
+            "/tmp/sinex-fd-suffix-root/data/substrate.duckdb.wal",
+        ))
+        .add_path(std::path::PathBuf::from(
+            "/tmp/sinex-fd-suffix-root/data/foo-wal",
+        ))
+        .add_path(std::path::PathBuf::from(
+            "/tmp/sinex-fd-suffix-root/data/foo-shm",
+        ))
+        .add_path(std::path::PathBuf::from(
+            "/tmp/sinex-fd-suffix-root/proj/.testmondata-wal",
+        ))
+        .add_path(std::path::PathBuf::from(
+            "/tmp/sinex-fd-suffix-root/notes/wal.txt",
+        ))
+        .add_path(std::path::PathBuf::from(
+            "/tmp/sinex-fd-suffix-root/notes/regular.txt",
+        ));
+
+        let records = records_from_file_drop_event(material_id, &event, &[], &filter);
+
+        let kept: Vec<&str> = records
+            .iter()
+            .filter_map(|r| r.logical_path.as_deref().map(camino::Utf8Path::as_str))
+            .collect();
+        assert_eq!(
+            kept,
+            vec![
+                "/tmp/sinex-fd-suffix-root/notes/wal.txt",
+                "/tmp/sinex-fd-suffix-root/notes/regular.txt",
+            ]
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
     async fn file_drop_ignored_directory_names_are_root_relative() -> xtask::sandbox::TestResult<()>
     {
         let material_id = dummy_material_id();
@@ -1581,6 +1674,7 @@ mod tests {
             recursive: true,
             max_depth: None,
             ignored_directory_names: vec!["target".to_string()],
+            ignored_file_suffixes: Vec::new(),
             max_watches: default_file_drop_max_watches(),
             events: vec![],
         });
@@ -1616,6 +1710,7 @@ mod tests {
             recursive: true,
             max_depth: None,
             ignored_directory_names: vec!["target".to_string()],
+            ignored_file_suffixes: Vec::new(),
             max_watches: default_file_drop_max_watches(),
             events: vec![],
         });
@@ -1648,6 +1743,7 @@ mod tests {
             recursive: true,
             max_depth: Some(1),
             ignored_directory_names: Vec::new(),
+            ignored_file_suffixes: Vec::new(),
             max_watches: default_file_drop_max_watches(),
             events: vec![],
         });
@@ -1771,6 +1867,7 @@ mod tests {
             recursive: true,
             max_depth: None,
             ignored_directory_names: Vec::new(),
+            ignored_file_suffixes: Vec::new(),
             max_watches: default_file_drop_max_watches(),
             events: vec![],
         };
@@ -1794,6 +1891,7 @@ mod tests {
             recursive: true,
             max_depth: None,
             ignored_directory_names: Vec::new(),
+            ignored_file_suffixes: Vec::new(),
             max_watches: NonZeroUsize::new(1).unwrap(),
             events: vec![],
         };
@@ -1820,6 +1918,7 @@ mod tests {
             recursive: true,
             max_depth: None,
             ignored_directory_names: Vec::new(),
+            ignored_file_suffixes: Vec::new(),
             max_watches: default_file_drop_max_watches(),
             events: vec![],
         };
@@ -1846,6 +1945,7 @@ mod tests {
             recursive: true,
             max_depth: None,
             ignored_directory_names: vec!["target".to_string()],
+            ignored_file_suffixes: Vec::new(),
             max_watches: default_file_drop_max_watches(),
             events: vec![],
         };
@@ -1879,6 +1979,7 @@ mod tests {
             recursive: true,
             max_depth: None,
             ignored_directory_names: vec![".git".to_string()],
+            ignored_file_suffixes: Vec::new(),
             max_watches: default_file_drop_max_watches(),
             events: vec![],
         };
@@ -1911,6 +2012,7 @@ mod tests {
             recursive: true,
             max_depth: Some(1),
             ignored_directory_names: Vec::new(),
+            ignored_file_suffixes: Vec::new(),
             max_watches: default_file_drop_max_watches(),
             events: vec![],
         };
@@ -1942,6 +2044,7 @@ mod tests {
             recursive: true,
             max_depth: None,
             ignored_directory_names: Vec::new(),
+            ignored_file_suffixes: Vec::new(),
             max_watches: NonZeroUsize::new(1).unwrap(),
             events: vec![],
         };
@@ -1970,6 +2073,7 @@ mod tests {
             recursive: true,
             max_depth: None,
             ignored_directory_names: Vec::new(),
+            ignored_file_suffixes: Vec::new(),
             max_watches: NonZeroUsize::new(3).unwrap(),
             events: vec![],
         };
