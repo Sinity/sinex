@@ -480,9 +480,7 @@ async fn test_concurrent_parallel_publish_exact_count(ctx: TestContext) -> TestR
     }
 
     // Wait for all expected events to persist
-    ctx.timing()
-        .wait_for_event_count(total_expected)
-        .await?;
+    ctx.timing().wait_for_event_count(total_expected).await?;
 
     // Verify exact count per task (no loss, no duplication)
     let pool = ctx.pool();

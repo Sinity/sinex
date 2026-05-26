@@ -284,12 +284,18 @@ mod tests {
 
     fn make_instruction(wid: i32) -> DesktopWorkspaceSwitchInstructionPayload {
         DesktopWorkspaceSwitchInstructionPayload::hyprland_operator_direct(
-            Uuid::now_v7(), wid, "test-operator", None, false,
+            Uuid::now_v7(),
+            wid,
+            "test-operator",
+            None,
+            false,
         )
         .expect("valid instruction")
     }
 
-    fn now() -> Timestamp { Timestamp::now() }
+    fn now() -> Timestamp {
+        Timestamp::now()
+    }
 
     #[test]
     fn plan_noop_when_already_at_desired() {
@@ -321,9 +327,16 @@ mod tests {
 
     #[test]
     fn plan_rejects_invalid_workspace() {
-        assert!(DesktopWorkspaceSwitchInstructionPayload::hyprland_operator_direct(
-            Uuid::now_v7(), 0, "test", None, false
-        ).is_err());
+        assert!(
+            DesktopWorkspaceSwitchInstructionPayload::hyprland_operator_direct(
+                Uuid::now_v7(),
+                0,
+                "test",
+                None,
+                false
+            )
+            .is_err()
+        );
     }
 
     #[test]
@@ -337,9 +350,8 @@ mod tests {
 
     #[test]
     fn expectation_contradicted_when_observed_differs() {
-        let s = evaluate_hyprland_workspace_expectation(
-            &make_instruction(3), 7, Uuid::now_v7(), now(),
-        );
+        let s =
+            evaluate_hyprland_workspace_expectation(&make_instruction(3), 7, Uuid::now_v7(), now());
         assert_eq!(s.status, InstructionExpectationStatus::Contradicted);
     }
 
@@ -352,23 +364,35 @@ mod tests {
 
     #[test]
     fn idempotency_key_deterministic() {
-        assert_eq!(make_instruction(3).idempotency_key, make_instruction(3).idempotency_key);
+        assert_eq!(
+            make_instruction(3).idempotency_key,
+            make_instruction(3).idempotency_key
+        );
     }
 
     #[test]
     fn idempotency_key_differs_by_workspace() {
-        assert_ne!(make_instruction(1).idempotency_key, make_instruction(2).idempotency_key);
+        assert_ne!(
+            make_instruction(1).idempotency_key,
+            make_instruction(2).idempotency_key
+        );
     }
 
     #[test]
     fn command_renders_dispatch() {
-        let cmd = HyprlandWorkspaceCommand { dispatch: HyprlandDispatch::Workspace, workspace_id: 5 };
+        let cmd = HyprlandWorkspaceCommand {
+            dispatch: HyprlandDispatch::Workspace,
+            workspace_id: 5,
+        };
         assert_eq!(cmd.command_socket_message(), "dispatch workspace 5");
     }
 
     #[test]
     fn command_rejects_shell_injection() {
-        let cmd = HyprlandWorkspaceCommand { dispatch: HyprlandDispatch::Workspace, workspace_id: 1 };
+        let cmd = HyprlandWorkspaceCommand {
+            dispatch: HyprlandDispatch::Workspace,
+            workspace_id: 1,
+        };
         let r = cmd.command_socket_message();
         assert!(!r.contains(';') && !r.contains('|') && !r.contains('$'));
     }
