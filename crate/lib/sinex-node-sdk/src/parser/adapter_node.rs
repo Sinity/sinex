@@ -598,8 +598,7 @@ where
             // identifier in `bytes`, so we still hash whatever the adapter
             // chose to emit — verify just re-runs the same hashing on the
             // same byte range and confirms consistency, not authenticity.
-            let anchor_payload_hash =
-                blake3::hash(record.bytes.as_slice()).as_bytes().to_owned();
+            let anchor_payload_hash = blake3::hash(record.bytes.as_slice()).as_bytes().to_owned();
             return Ok(MaterializedAdapterRecord {
                 material_id: record.material_id,
                 record,
