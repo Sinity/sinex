@@ -954,6 +954,7 @@ fn admitted_to_stream_rows(batch: &[&AdmittedEvent]) -> IngestdResult<Vec<Stream
                 payload_schema_id: event.payload_schema_id,
                 source_run_id: event.source_run_id,
                 associated_blob_ids: event.associated_blob_ids.clone(),
+                anchor_payload_hash: event.anchor_payload_hash.clone(),
                 temporal_policy: event.temporal_policy.map(|policy| policy.to_string()),
                 semantics_version: event.semantics_version.clone(),
                 scope_key: event.scope_key.clone(),

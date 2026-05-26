@@ -31,7 +31,7 @@ WHERE c.command LIKE 'cargo test%'
 
 | Surface | Current Owner |
 |---------|---------------|
-| Capture | source units over staged materials, input-shape adapters, and parsers; deployed legacy ingestors under `crate/nodes/` |
+| Capture | source units over staged materials, input-shape adapters, and parsers under `crate/core/sinex-source-worker/src/sources/` |
 | Query / control | `sinex-gateway` + `sinexctl` |
 | Persistence | `sinex-ingestd` + PostgreSQL |
 | Derived state | automata and replay-aware node runtime |
@@ -50,9 +50,10 @@ decision about whether staged local parsers always cross NATS or can run closer
 to persistence.
 
 ```text
-Ingestors          Automata             Clients
+Source worker      Automata             Clients
   fs, terminal,      analytics,           CLI, browser
-  desktop, system    derived nodes        extension
+  desktop, system,   derived nodes        extension
+  browser, exports
        │                 │                    │
        ▼                 ▼                    │
   ┌────────────────────────────────────────┐  │

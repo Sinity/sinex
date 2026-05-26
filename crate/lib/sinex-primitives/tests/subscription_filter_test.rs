@@ -38,6 +38,7 @@ fn test_event(source: &str, event_type: &str, host: &str, payload: serde_json::V
         equivalence_key: None,
         created_by_operation_id: None,
         node_model: None,
+        anchor_payload_hash: None,
     }
 }
 
