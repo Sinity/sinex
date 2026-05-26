@@ -129,7 +129,7 @@ pub async fn handle_curation_list_duplicate_candidates(
                 source,
                 event_type,
                 source_material_id,
-                COALESCE(payload->>'natural_key_hash', payload->>'natural_key', equivalence_key) AS natural_key_hash,
+                COALESCE(NULLIF(payload->>'natural_key_hash', ''), NULLIF(payload->>'natural_key', ''), equivalence_key) AS natural_key_hash,
                 ts_orig
             FROM core.events
             WHERE source_material_id IS NOT NULL
@@ -176,7 +176,7 @@ pub async fn handle_curation_list_duplicate_candidates(
             WHERE source = $1
               AND event_type = $2
               AND source_material_id IS NOT NULL
-              AND COALESCE(payload->>'natural_key_hash', payload->>'natural_key', equivalence_key) = $3
+              AND COALESCE(NULLIF(payload->>'natural_key_hash', ''), NULLIF(payload->>'natural_key', ''), equivalence_key) = $3
             ORDER BY ts_orig DESC, id DESC
             LIMIT $4
             ",
