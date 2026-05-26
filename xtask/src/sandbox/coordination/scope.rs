@@ -174,6 +174,7 @@ impl<'ctx> PipelineScope<'ctx> {
             host: crate::sandbox::local_test_host(),
             source_run_id: None,
             payload_schema_id: None,
+            anchor_payload_hash: None,
             provenance: sinex_primitives::events::Provenance::Material {
                 id: material_id,
                 anchor_byte: 0,

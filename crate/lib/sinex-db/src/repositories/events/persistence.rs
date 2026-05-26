@@ -702,6 +702,7 @@ impl<'a> EventRepository<'a> {
         let payload = event.payload.clone();
         let source_run_id = event.source_run_id;
         let payload_schema_id = event.payload_schema_id;
+        let anchor_payload_hash = event.anchor_payload_hash.clone();
         let created_by_operation_id = resolved_created_by_operation_id(&event)?;
 
         // Synthetic event metadata
@@ -727,6 +728,7 @@ impl<'a> EventRepository<'a> {
                 let host = host.clone();
                 let payload = payload.clone();
                 let source_run_id = source_run_id;
+                let anchor_payload_hash = anchor_payload_hash.clone();
                 let offset_kind = offset_kind.clone();
                 let temporal_policy_str = temporal_policy_str.clone();
                 let semantics_version = semantics_version.clone();
@@ -751,14 +753,14 @@ impl<'a> EventRepository<'a> {
                             source_material_id, offset_start, offset_end, offset_kind,
                             anchor_byte, associated_blob_ids,
                             temporal_policy, semantics_version, scope_key, equivalence_key,
-                            created_by_operation_id, node_model
+                            created_by_operation_id, node_model, anchor_payload_hash
                         ) VALUES (
                             $1::uuid, $2, $3, $4, $5,
                             $6, $7, $8, $9::uuid, $10::uuid[],
                             $11::uuid, $12, $13, $14,
                             $15, $16::uuid[],
                             $17, $18, $19, $20,
-                            $21::uuid, $22
+                            $21::uuid, $22, $23
                         )
                         RETURNING
                             id as "id!: uuid::Uuid",
@@ -808,7 +810,8 @@ impl<'a> EventRepository<'a> {
                         scope_key,
                         equivalence_key,
                         created_by_operation_id,
-                        node_model_str
+                        node_model_str,
+                        anchor_payload_hash
                     )
                     .fetch_one(&mut **tx)
                     .await
@@ -866,6 +869,7 @@ impl<'a> EventRepository<'a> {
                 .collect::<Vec<_>>()
         });
         let associated_blob_uuids = event.associated_blob_ids.clone();
+        let anchor_payload_hash = event.anchor_payload_hash.clone();
 
         // Postgres timestamps are microsecond precision. Persist the sub-microsecond
         // remainder separately so we can reconstruct full nanosecond timestamps on read.
@@ -891,14 +895,14 @@ impl<'a> EventRepository<'a> {
                 source_material_id, offset_start, offset_end, offset_kind,
                 anchor_byte, associated_blob_ids,
                 temporal_policy, semantics_version, scope_key, equivalence_key,
-                created_by_operation_id, node_model
+                created_by_operation_id, node_model, anchor_payload_hash
             ) VALUES (
                 $1::uuid, $2, $3, $4, $5,
                 $6, $7, $8, $9::uuid, $10::uuid[],
                 $11::uuid, $12, $13, $14,
                 $15, $16::uuid[],
                 $17, $18, $19, $20,
-                $21::uuid, $22
+                $21::uuid, $22, $23
             )
             RETURNING
                 id as "id!: uuid::Uuid",
@@ -948,7 +952,8 @@ impl<'a> EventRepository<'a> {
             event.scope_key,
             event.equivalence_key,
             created_by_operation_id,
-            node_model_str
+            node_model_str,
+            anchor_payload_hash
         )
         .fetch_one(&mut **tx)
         .await
@@ -1091,6 +1096,7 @@ impl<'a> EventRepository<'a> {
         let mut ts_orig_subnanos = Vec::with_capacity(events.len());
         let mut source_run_ids: Vec<Option<Uuid>> = Vec::with_capacity(events.len());
         let mut payload_schema_ids = Vec::with_capacity(events.len());
+        let mut anchor_payload_hashes = Vec::with_capacity(events.len());
         let mut source_event_ids = Vec::with_capacity(events.len());
         let mut source_material_ids = Vec::with_capacity(events.len());
         let mut offset_starts = Vec::with_capacity(events.len());
@@ -1151,6 +1157,7 @@ impl<'a> EventRepository<'a> {
             ts_orig_subnanos.push(ts_orig_subnano);
             source_run_ids.push(event.source_run_id);
             payload_schema_ids.push(event.payload_schema_id);
+            anchor_payload_hashes.push(event.anchor_payload_hash.clone());
             source_event_ids.push(source_event_uuids);
             source_material_ids.push(source_material_id.map(|id| id.to_uuid()));
             offset_starts.push(offset_start);
@@ -1213,6 +1220,7 @@ impl<'a> EventRepository<'a> {
             b.push_bind(created_by_operation_ids[idx])
                 .push_unseparated("::uuid");
             b.push_bind(&node_models[idx]);
+            b.push_bind(&anchor_payload_hashes[idx]);
         });
 
         builder.build().execute(&mut **tx).await.map_err(|e| {
@@ -1358,6 +1366,7 @@ impl<'a> EventRepository<'a> {
         let mut payload_schema_ids = Vec::with_capacity(batch.len());
         let mut source_run_ids: Vec<Option<Uuid>> = Vec::with_capacity(batch.len());
         let mut associated_blob_ids = Vec::with_capacity(batch.len());
+        let mut anchor_payload_hashes = Vec::with_capacity(batch.len());
 
         for row in batch {
             // Postgres timestamps are microsecond precision. Store sub-microsecond
@@ -1384,6 +1393,7 @@ impl<'a> EventRepository<'a> {
             payload_schema_ids.push(row.payload_schema_id);
             source_run_ids.push(row.source_run_id);
             associated_blob_ids.push(row.associated_blob_ids.clone());
+            anchor_payload_hashes.push(row.anchor_payload_hash.clone());
         }
 
         // Synthetic event metadata vectors
@@ -1434,6 +1444,7 @@ impl<'a> EventRepository<'a> {
             b.push_bind(created_by_op_ids[idx])
                 .push_unseparated("::uuid");
             b.push_bind(&node_models[idx]);
+            b.push_bind(&anchor_payload_hashes[idx]);
         });
 
         builder.push(" ON CONFLICT (id) DO NOTHING RETURNING id::uuid");

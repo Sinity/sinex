@@ -37,6 +37,7 @@ fn stream_batch_material_row(
         source_event_ids: None,
         payload_schema_id: None,
         source_run_id: None,
+        anchor_payload_hash: None,
         associated_blob_ids: None,
         temporal_policy: None,
         semantics_version: None,
@@ -304,6 +305,7 @@ async fn stream_batch_copy_roundtrip_diverse_payloads(ctx: TestContext) -> TestR
             source_event_ids: None,
             payload_schema_id: None,
             source_run_id: None,
+            anchor_payload_hash: None,
             associated_blob_ids: None,
             temporal_policy: None,
             semantics_version: None,
@@ -588,6 +590,7 @@ async fn stream_batch_insert_rejects_self_referential_synthesis_rows(
         source_event_ids: Some(vec![EventId::from_uuid(event_id)]),
         payload_schema_id: None,
         source_run_id: None,
+        anchor_payload_hash: None,
         associated_blob_ids: None,
         temporal_policy: None,
         semantics_version: None,
@@ -635,6 +638,7 @@ async fn stream_batch_insert_rejects_intra_batch_synthesis_cycles(
             source_event_ids: Some(vec![EventId::from_uuid(second_id)]),
             payload_schema_id: None,
             source_run_id: None,
+            anchor_payload_hash: None,
             associated_blob_ids: None,
             temporal_policy: None,
             semantics_version: None,
@@ -658,6 +662,7 @@ async fn stream_batch_insert_rejects_intra_batch_synthesis_cycles(
             source_event_ids: Some(vec![EventId::from_uuid(first_id)]),
             payload_schema_id: None,
             source_run_id: None,
+            anchor_payload_hash: None,
             associated_blob_ids: None,
             temporal_policy: None,
             semantics_version: None,
@@ -1826,8 +1831,7 @@ async fn test_replacement_query_distinguishes_material_from_derived(
             json!({}),
         )
         .await?;
-    let material_id =
-        Id::<sinex_db::models::SourceMaterial>::from_uuid(material_record.id);
+    let material_id = Id::<sinex_db::models::SourceMaterial>::from_uuid(material_record.id);
 
     // Insert a material-provenance event
     let mat_payload = FileCreatedPayload::test_default(
