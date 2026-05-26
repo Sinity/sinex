@@ -689,6 +689,7 @@ let
         max_capture_bytes = 10485760;
         max_watches = sat.maxWatches;
         ignored_directory_names = sat.ignoredDirectoryNames;
+        ignored_file_suffixes = sat.ignoredFileSuffixes;
       };
     in
     {
