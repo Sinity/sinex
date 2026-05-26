@@ -609,7 +609,9 @@ fn command_path(cmd: &Commands) -> String {
             use sinexctl::commands::curation::CurationSubcommand;
             match cmd.subcommand() {
                 CurationSubcommand::Proposals(_) => "curation proposals".to_string(),
+                CurationSubcommand::Duplicates(_) => "curation duplicates".to_string(),
                 CurationSubcommand::Judge(_) => "curation judge".to_string(),
+                CurationSubcommand::DuplicateJudge(_) => "curation duplicate-judge".to_string(),
                 CurationSubcommand::Finalize(_) => "curation finalize".to_string(),
             }
         }
@@ -1219,6 +1221,10 @@ mod tests {
                 "curation proposals",
             ),
             (
+                vec!["sinexctl", "curation", "duplicates"],
+                "curation duplicates",
+            ),
+            (
                 vec![
                     "sinexctl",
                     "curation",
@@ -1228,6 +1234,26 @@ mod tests {
                     "accept",
                 ],
                 "curation judge",
+            ),
+            (
+                vec![
+                    "sinexctl",
+                    "curation",
+                    "duplicate-judge",
+                    "--source",
+                    "webhistory",
+                    "--event-type",
+                    "page.visited",
+                    "--natural-key-hash",
+                    "visit-1",
+                    "--event-id",
+                    "0196ed62-8f7a-7000-8000-000000000001",
+                    "--event-id",
+                    "0196ed62-8f7a-7000-8000-000000000002",
+                    "--action",
+                    "merge",
+                ],
+                "curation duplicate-judge",
             ),
             (
                 vec![
