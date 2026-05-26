@@ -1384,10 +1384,10 @@ impl StateRepository<'_> {
                     as "checkpoint_recorded_at?: sinex_primitives::temporal::Timestamp",
                 pending.pending_invalidation_count as "pending_invalidation_count?",
                 error_rate.error_rate_5m as "error_rate_5m?",
-                lag_p50.event_lag_p50_ms as "event_lag_p50_ms?",
-                lag_p99.event_lag_p99_ms as "event_lag_p99_ms?",
-                tick_p99.tick_runtime_p99_ms as "tick_runtime_p99_ms?",
-                throughput.throughput_eps as "throughput_eps?",
+                latency.event_lag_p50_ms as "event_lag_p50_ms?",
+                latency.event_lag_p99_ms as "event_lag_p99_ms?",
+                latency.tick_runtime_p99_ms as "tick_runtime_p99_ms?",
+                latency.throughput_eps as "throughput_eps?",
                 COALESCE(outputs.recent_output_count, 0)::bigint as "recent_output_count!",
                 outputs.last_output_at as "last_output_at?: sinex_primitives::temporal::Timestamp",
                 outputs.last_replay_at as "last_replay_at?: sinex_primitives::temporal::Timestamp"
@@ -1463,53 +1463,22 @@ impl StateRepository<'_> {
                 LIMIT 1
             ) error_rate ON true
             LEFT JOIN LATERAL (
+                -- Per-event latency snapshot collapses the four percentile/eps
+                -- gauges (event_lag_p50/p99, tick_runtime_p99, throughput_eps)
+                -- into one event. See issue #1556 and DerivedNodeLatencySnapshotPayload.
                 SELECT
-                    (e.payload->>'value')::float8 AS event_lag_p50_ms
+                    (e.payload->>'event_lag_p50_ms')::float8 AS event_lag_p50_ms,
+                    (e.payload->>'event_lag_p99_ms')::float8 AS event_lag_p99_ms,
+                    (e.payload->>'tick_runtime_p99_ms')::float8 AS tick_runtime_p99_ms,
+                    (e.payload->>'throughput_eps')::float8 AS throughput_eps
                 FROM core.events e
-                WHERE e.source = 'sinex'
-                  AND e.event_type = 'metric.gauge'
-                  AND e.payload->>'name' = 'derived.event_lag_p50_ms'
-                  AND e.payload->'labels'->>'node' = nm.name::text
+                WHERE e.source = 'sinex.node'
+                  AND e.event_type = 'derived.latency_snapshot'
+                  AND e.payload->>'node_name' = nm.name::text
                   AND (nr.id IS NULL OR e.payload->'labels'->>'source_run_id' = nr.id::text)
                 ORDER BY e.id DESC
                 LIMIT 1
-            ) lag_p50 ON true
-            LEFT JOIN LATERAL (
-                SELECT
-                    (e.payload->>'value')::float8 AS event_lag_p99_ms
-                FROM core.events e
-                WHERE e.source = 'sinex'
-                  AND e.event_type = 'metric.gauge'
-                  AND e.payload->>'name' = 'derived.event_lag_p99_ms'
-                  AND e.payload->'labels'->>'node' = nm.name::text
-                  AND (nr.id IS NULL OR e.payload->'labels'->>'source_run_id' = nr.id::text)
-                ORDER BY e.id DESC
-                LIMIT 1
-            ) lag_p99 ON true
-            LEFT JOIN LATERAL (
-                SELECT
-                    (e.payload->>'value')::float8 AS tick_runtime_p99_ms
-                FROM core.events e
-                WHERE e.source = 'sinex'
-                  AND e.event_type = 'metric.gauge'
-                  AND e.payload->>'name' = 'derived.tick_runtime_p99_ms'
-                  AND e.payload->'labels'->>'node' = nm.name::text
-                  AND (nr.id IS NULL OR e.payload->'labels'->>'source_run_id' = nr.id::text)
-                ORDER BY e.id DESC
-                LIMIT 1
-            ) tick_p99 ON true
-            LEFT JOIN LATERAL (
-                SELECT
-                    (e.payload->>'value')::float8 AS throughput_eps
-                FROM core.events e
-                WHERE e.source = 'sinex'
-                  AND e.event_type = 'metric.gauge'
-                  AND e.payload->>'name' = 'derived.throughput_eps'
-                  AND e.payload->'labels'->>'node' = nm.name::text
-                  AND (nr.id IS NULL OR e.payload->'labels'->>'source_run_id' = nr.id::text)
-                ORDER BY e.id DESC
-                LIMIT 1
-            ) throughput ON true
+            ) latency ON true
             LEFT JOIN LATERAL (
                 SELECT
                     COUNT(*) FILTER (
