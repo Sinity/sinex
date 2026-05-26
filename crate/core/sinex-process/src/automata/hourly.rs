@@ -1,13 +1,13 @@
-//! Hourly summarizer -- [`WindowedNode`] implementation.
+//! Hourly summarizer -- [`Windowed`] implementation.
 //!
 //! Model classification: **Windowed** -- accumulates
 //! `activity.window.summary` inputs into completed UTC-hour summaries.
 
 use serde::{Deserialize, Serialize};
 use sinex_node_sdk::derived_node::{
-    DerivedAggregationMeta, DerivedOutput, DerivedTriggerContext, WindowedNodeAdapter,
+    DerivedAggregationMeta, DerivedOutput, AutomatonContext, WindowedNodeAdapter,
 };
-use sinex_node_sdk::{InputProvenanceFilter, NodeLogicError, WindowedNode};
+use sinex_node_sdk::{InputProvenanceFilter, NodeLogicError, Windowed};
 use sinex_primitives::Uuid;
 use sinex_primitives::activity::{ActivitySourceKind, primary_activity_source};
 use sinex_primitives::events::{
@@ -112,7 +112,7 @@ impl HourlySummaryState {
 #[derive(Default)]
 pub struct HourlySummarizer;
 
-impl WindowedNode for HourlySummarizer {
+impl Windowed for HourlySummarizer {
     type State = HourlySummaryState;
     type Input = ActivityWindowSummaryPayload;
     type Output = ActivityHourlySummaryPayload;
@@ -145,7 +145,7 @@ impl WindowedNode for HourlySummarizer {
         &mut self,
         state: &mut Self::State,
         input: Self::Input,
-        context: &DerivedTriggerContext,
+        context: &AutomatonContext,
     ) -> Result<(), NodeLogicError> {
         let bucket_start = floor_to_hour(input.window_end);
         let event_id = context.trigger_uuid();
@@ -173,7 +173,7 @@ impl WindowedNode for HourlySummarizer {
     async fn emit(
         &mut self,
         state: &mut Self::State,
-        _context: &DerivedTriggerContext,
+        _context: &AutomatonContext,
     ) -> Result<Option<DerivedOutput<Self::Output>>, NodeLogicError> {
         let Some(hour_start) = state.hour_start else {
             return Ok(None);
@@ -269,10 +269,10 @@ register_source_unit_binding! {
         "derived",
     )
     .implementation("sinex-process")
-    .adapter("DerivedNodeAdapter")
+    .adapter("AutomatonRuntime")
     .output_event_type("activity.summary.hourly")
     .privacy_context("inherits_from_parents")
-    .material_policy("synthesis_parents")
+    .material_policy("derived_parents")
     .checkpoint_policy("append_stream")
     .resource_shape("event_stream_consumer")
     .source_unit_id("hourly-summarizer")

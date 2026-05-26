@@ -1,13 +1,13 @@
-//! Daily summarizer -- [`WindowedNode`] implementation.
+//! Daily summarizer -- [`Windowed`] implementation.
 //!
 //! Model classification: **Windowed** -- accumulates
 //! `activity.summary.hourly` inputs into completed UTC-day summaries.
 
 use serde::{Deserialize, Serialize};
 use sinex_node_sdk::derived_node::{
-    DerivedAggregationMeta, DerivedOutput, DerivedTriggerContext, WindowedNodeAdapter,
+    DerivedAggregationMeta, DerivedOutput, AutomatonContext, WindowedNodeAdapter,
 };
-use sinex_node_sdk::{InputProvenanceFilter, NodeLogicError, WindowedNode};
+use sinex_node_sdk::{InputProvenanceFilter, NodeLogicError, Windowed};
 use sinex_primitives::Uuid;
 use sinex_primitives::activity::{ActivitySourceKind, primary_activity_source};
 use sinex_primitives::events::{
@@ -115,7 +115,7 @@ impl DailySummaryState {
 #[derive(Default)]
 pub struct DailySummarizer;
 
-impl WindowedNode for DailySummarizer {
+impl Windowed for DailySummarizer {
     type State = DailySummaryState;
     type Input = ActivityHourlySummaryPayload;
     type Output = ActivityDailySummaryPayload;
@@ -148,7 +148,7 @@ impl WindowedNode for DailySummarizer {
         &mut self,
         state: &mut Self::State,
         input: Self::Input,
-        context: &DerivedTriggerContext,
+        context: &AutomatonContext,
     ) -> Result<(), NodeLogicError> {
         let bucket_start = floor_to_day(input.hour_start);
         let event_id = context.trigger_uuid();
@@ -176,7 +176,7 @@ impl WindowedNode for DailySummarizer {
     async fn emit(
         &mut self,
         state: &mut Self::State,
-        _context: &DerivedTriggerContext,
+        _context: &AutomatonContext,
     ) -> Result<Option<DerivedOutput<Self::Output>>, NodeLogicError> {
         let Some(day_start) = state.day_start else {
             return Ok(None);
@@ -273,10 +273,10 @@ register_source_unit_binding! {
         "derived",
     )
     .implementation("sinex-process")
-    .adapter("DerivedNodeAdapter")
+    .adapter("AutomatonRuntime")
     .output_event_type("activity.summary.daily")
     .privacy_context("inherits_from_parents")
-    .material_policy("synthesis_parents")
+    .material_policy("derived_parents")
     .checkpoint_policy("append_stream")
     .resource_shape("event_stream_consumer")
     .source_unit_id("daily-summarizer")

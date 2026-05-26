@@ -24,7 +24,7 @@ and only useful if RPO < (full-backup interval) matters.
 |---|---|---|
 | Disk corruption / hardware failure on the DB volume | Yes | Source materials are unaffected, but the schema, derived events (automaton output), and operator-only state (`core.runs`, `audit.archived_events`, `core.tags`, etc.) only live in PG. |
 | Accidental schema drop / table truncate | Yes | Same reason. |
-| Bad replay or a buggy automaton emitting wrong synthesis events | No | Use `lifecycle.tombstone.create` to mark the bad operation; replay or re-derive. |
+| Bad replay or a buggy automaton emitting wrong derived events | No | Use `lifecycle.tombstone.create` to mark the bad operation; replay or re-derive. |
 | Single-row corruption from a privacy-policy change | No | Replay the affected source-material slice with new privacy rules. |
 | Full host loss including the data volume | Yes, plus source materials | Both layers need restore. Source materials should already be on a separate filesystem or backed up via the operator's regular file-level backup. |
 

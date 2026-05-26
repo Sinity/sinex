@@ -9,7 +9,7 @@ This document preserves the valuable concepts from the pipeline.rs implementatio
 The event pipeline pattern provides a composable, stage-based approach to event processing. While not immediately necessary, it could become valuable for:
 
 1. **Post-provenance processing** in ingestd
-2. **Complex event synthesis** in automata
+2. **Complex event derived** in automata
 3. **Declarative transformations** (SQL-as-Automaton)
 
 ## Core Concepts
@@ -86,7 +86,7 @@ let pipeline = EventPipeline::new(config)
 pipeline.process_stream(event_stream).await?;
 ```
 
-### 2. Automaton Synthesis Pipeline
+### 2. Automaton Derived Pipeline
 
 For complex multi-step processing:
 

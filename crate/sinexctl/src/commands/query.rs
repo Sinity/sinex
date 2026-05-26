@@ -69,7 +69,7 @@ pub struct QueryCommand {
     #[arg(long, short = 'u')]
     until: Option<String>,
 
-    /// Filter to synthesis events (those with provenance lineage)
+    /// Filter to derived events (those with provenance lineage)
     #[arg(long)]
     has_lineage: bool,
 

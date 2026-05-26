@@ -64,7 +64,7 @@ impl EventRecordExt for EventRecord {
                 let operation_id = self
                     .created_by_operation_id
                     .map(sinex_primitives::Id::from_uuid);
-                Provenance::Synthesis {
+                Provenance::Derived {
                     source_event_ids: non_empty,
                     operation_id,
                 }
@@ -86,7 +86,7 @@ impl EventRecordExt for EventRecord {
             }
             (Some(_), Some(_), _) => {
                 return Err(sinex_primitives::SinexError::invalid_state(
-                    "event record contains both synthesis and material provenance",
+                    "event record contains both derived and material provenance",
                 ));
             }
             (None, Some(_), None) => {
@@ -156,7 +156,7 @@ pub type ExtractedProvenance = (
 
 pub fn extract_provenance(event: &Event<JsonValue>) -> DbResult<ExtractedProvenance> {
     match &event.provenance {
-        Provenance::Synthesis {
+        Provenance::Derived {
             source_event_ids, ..
         } => {
             let ids = source_event_ids.iter().copied().collect();

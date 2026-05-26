@@ -34,7 +34,7 @@ async fn cascade_prereqs_available(pool: &PgPool) -> color_eyre::Result<bool> {
     Ok(exists)
 }
 
-/// Insert a strict parent-child chain of synthesis events, length `depth`.
+/// Insert a strict parent-child chain of derived events, length `depth`.
 /// Returns the chain in root-to-leaf order. Each event's `source_event_ids`
 /// points at the previous event, so cascade expansion from the root must
 /// walk the full chain.

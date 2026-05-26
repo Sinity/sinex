@@ -1,4 +1,4 @@
-//! Rule-based tag automaton — deterministic `TransducerNode` applying
+//! Rule-based tag automaton — deterministic `Transducer` applying
 //! configured rules to events and emitting `knowledge.tag_applied` events.
 //!
 //! ## v1 rules
@@ -19,13 +19,13 @@
 //!
 //! ## Output
 //!
-//! `knowledge.tag_applied` synthesis events with `tag_source = "rule"`.
+//! `knowledge.tag_applied` derived events with `tag_source = "rule"`.
 //! Entity ID is the source event ID — tags are applied to the event
 //! that triggered them, not to a resolved entity.
 //!
-use sinex_node_sdk::derived_node::{DerivedOutput, DerivedTriggerContext, TransducerNodeAdapter};
+use sinex_node_sdk::derived_node::{DerivedOutput, AutomatonContext, TransducerNodeAdapter};
 use sinex_node_sdk::tags;
-use sinex_node_sdk::{InputProvenanceFilter, NodeLogicError, TransducerNode};
+use sinex_node_sdk::{InputProvenanceFilter, NodeLogicError, Transducer};
 use sinex_primitives::events::EventPayload;
 use sinex_primitives::events::payloads::KnowledgeTagAppliedPayload;
 use sinex_primitives::privacy::ProcessingContext;
@@ -33,7 +33,7 @@ use sinex_primitives::privacy::ProcessingContext;
 #[derive(Debug, Clone, Default)]
 pub struct TagApplier;
 
-impl TransducerNode for TagApplier {
+impl Transducer for TagApplier {
     type State = ();
     type Input = serde_json::Value;
     type Output = KnowledgeTagAppliedPayload;
@@ -66,7 +66,7 @@ impl TransducerNode for TagApplier {
         &mut self,
         _state: &mut Self::State,
         input: serde_json::Value,
-        context: &DerivedTriggerContext,
+        context: &AutomatonContext,
     ) -> Result<Option<DerivedOutput<KnowledgeTagAppliedPayload>>, NodeLogicError> {
         let rules = evaluate_rules(&input, context);
         // v1: emit first matching tag only. v2: emit all matches.
@@ -90,7 +90,7 @@ impl TransducerNode for TagApplier {
     }
 }
 
-fn evaluate_rules(input: &serde_json::Value, context: &DerivedTriggerContext) -> Vec<String> {
+fn evaluate_rules(input: &serde_json::Value, context: &AutomatonContext) -> Vec<String> {
     let mut tags = Vec::new();
 
     let event_type = context.event_type.as_str();
@@ -181,10 +181,10 @@ register_source_unit_binding! {
         "derived",
     )
     .implementation("sinex-process")
-    .adapter("DerivedNodeAdapter")
+    .adapter("AutomatonRuntime")
     .output_event_type("knowledge.tag_applied")
     .privacy_context("inherits_from_parents")
-    .material_policy("synthesis_parents")
+    .material_policy("derived_parents")
     .checkpoint_policy("append_stream")
     .resource_shape("event_stream_consumer")
     .source_unit_id("tag-applier")

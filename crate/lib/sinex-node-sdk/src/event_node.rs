@@ -3,7 +3,7 @@
 use crate::{NodeResult, nats_publisher::NatsPublisher};
 use serde::{Deserialize, Serialize};
 use sinex_primitives::domain::HostName;
-use sinex_primitives::events::{Event, admission::AdmittedEventIntent};
+use sinex_primitives::events::{Event, admission::EventIntent};
 use sinex_primitives::{JsonValue, Uuid};
 use std::path::{Path, PathBuf};
 use std::sync::{
@@ -63,7 +63,7 @@ pub struct EventBatcherConfig {
     /// Maximum time to wait for a batch to fill
     pub batch_timeout_ms: u64,
     /// Source unit identifier for the admission envelope (e.g., "fs-watcher").
-    /// Required for production use — the batcher constructs an `AdmittedEventIntent`.
+    /// Required for production use — the batcher constructs an `EventIntent`.
     #[serde(default)]
     pub source_unit_id: String,
     /// Parser identifier for the admission envelope (e.g., "inotify-watcher").
@@ -597,7 +597,7 @@ impl EventBatcher {
 
         let event_count = events.len();
 
-        let intent = AdmittedEventIntent::new(
+        let intent = EventIntent::new(
             if source_unit_id.is_empty() {
                 "unknown"
             } else {

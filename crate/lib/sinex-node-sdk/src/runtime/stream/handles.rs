@@ -259,7 +259,7 @@ pub struct EventEmitter {
     /// Optional emit tracker installed by `HealthReporter::enable_emit_stall_detection`.
     /// Bumped on every successful `emit()` so the reporter can detect emit-rate stalls.
     /// Slot is `Arc<parking_lot::RwLock<...>>` because `EventEmitter` is constructed by
-    /// the runtime before the `IngestorNodeAdapter::initialize` hook installs the tracker.
+    /// the runtime before the `SourceUnitRuntime::initialize` hook installs the tracker.
     emit_tracker: Arc<parking_lot::RwLock<Option<Arc<crate::health_reporter::EmitTracker>>>>,
 }
 

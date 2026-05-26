@@ -1,5 +1,5 @@
 //! `core.documents` and `core.document_chunks` — projections of the
-//! synthesis events emitted by the document-layer parser (`#733`).
+//! derived events emitted by the document-layer parser (`#733`).
 //!
 //! Both tables are application-managed projections of the
 //! `document.parsed` / `document.chunked` events; rebuild semantics live

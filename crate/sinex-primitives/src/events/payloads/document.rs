@@ -1,9 +1,9 @@
-//! Document ingestion + synthesis event payloads.
+//! Document ingestion + derived event payloads.
 //!
 //! `DocumentIngestedPayload` is the material-provenance event emitted by
 //! `sinex-document-ingestor` when a file is staged into the source-material
 //! registry. The `DocumentParsedPayload` and `DocumentChunkedPayload` events
-//! are synthesis-provenance outputs of the document-layer parser (issue
+//! are derived-provenance outputs of the document-layer parser (issue
 //! [#733], design doc `docs/architecture/document-layer-v1.md`): a document
 //! is the queryable text unit derived from one source — for v1, either a
 //! Dendron markdown file or a single terminal command's canonicalized
@@ -65,7 +65,7 @@ impl DocumentKind {
     }
 }
 
-/// Synthesis event emitted once per parsed document.
+/// Derived event emitted once per parsed document.
 ///
 /// Provenance is `from_parents([parent_event_id])`:
 /// - For Dendron, the parent is the originating `document.ingested` event.
@@ -119,7 +119,7 @@ impl DocumentParsedPayload {
     }
 }
 
-/// Synthesis event emitted once per chunk of a parsed document.
+/// Derived event emitted once per chunk of a parsed document.
 ///
 /// Provenance is `from_parents([document_parsed_event_id])` — chunks are
 /// derived from the document, not directly from the source material. This

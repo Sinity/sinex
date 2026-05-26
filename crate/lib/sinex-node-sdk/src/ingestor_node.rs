@@ -1,4 +1,4 @@
-//! `IngestorNode` trait for reducing boilerplate in ingestor nodes.
+//! `SourceUnit` trait for reducing boilerplate in ingestor nodes.
 //!
 //! This module provides a high-level abstraction (similar to `AutomatonNode`) but tailored
 //! for Ingestors, which typically produce events from external sources rather than
@@ -50,7 +50,7 @@ impl<S: Default> Default for IngestorState<S> {
 }
 
 /// Trait for simplified Ingestor implementation.
-pub trait IngestorNode: Send + Sync + 'static {
+pub trait SourceUnit: Send + Sync + 'static {
     /// Configuration type (from config file/env)
     type Config: Clone + Send + Sync + Serialize + DeserializeOwned + Default;
 
@@ -140,8 +140,8 @@ pub trait IngestorNode: Send + Sync + 'static {
     }
 }
 
-/// Adapter implementing `Node` for `IngestorNode`.
-pub struct IngestorNodeAdapter<I: IngestorNode> {
+/// Adapter implementing `Node` for `SourceUnit`.
+pub struct SourceUnitRuntime<I: SourceUnit> {
     ingestor: I,
     state: IngestorState<I::State>,
     shutdown_config: ShutdownConfig,
@@ -153,7 +153,7 @@ pub struct IngestorNodeAdapter<I: IngestorNode> {
     self_observer: Option<Arc<crate::self_observation::SelfObserver>>,
 }
 
-impl<I: IngestorNode> IngestorNodeAdapter<I> {
+impl<I: SourceUnit> SourceUnitRuntime<I> {
     pub fn new(ingestor: I) -> Self {
         Self {
             ingestor,
@@ -195,13 +195,13 @@ impl<I: IngestorNode> IngestorNodeAdapter<I> {
     }
 }
 
-impl<I: IngestorNode + Default> Default for IngestorNodeAdapter<I> {
+impl<I: SourceUnit + Default> Default for SourceUnitRuntime<I> {
     fn default() -> Self {
         Self::new(I::default())
     }
 }
 
-impl<I: IngestorNode> IngestorNodeAdapter<I> {
+impl<I: SourceUnit> SourceUnitRuntime<I> {
     async fn cleanup_hot_reload_file_best_effort(
         path: &Path,
         node_name: &str,
@@ -472,7 +472,7 @@ impl<I: IngestorNode> IngestorNodeAdapter<I> {
     }
 }
 
-impl<I: IngestorNode> Node for IngestorNodeAdapter<I> {
+impl<I: SourceUnit> Node for SourceUnitRuntime<I> {
     type Config = I::Config;
 
     async fn initialize(&mut self, init: NodeInitContext<Self::Config>) -> NodeResult<()> {
@@ -554,7 +554,7 @@ impl<I: IngestorNode> Node for IngestorNodeAdapter<I> {
             .initialize(config, &runtime, &mut self.state.user_state)
             .await?;
 
-        info!("IngestorNode {} initialized", self.ingestor.name());
+        info!("SourceUnit {} initialized", self.ingestor.name());
         Ok(())
     }
 
@@ -708,7 +708,7 @@ impl<I: IngestorNode> Node for IngestorNodeAdapter<I> {
     }
 }
 
-impl<I: IngestorNode> ExplorationProvider for IngestorNodeAdapter<I> {
+impl<I: SourceUnit> ExplorationProvider for SourceUnitRuntime<I> {
     fn get_source_state(&self) -> NodeResult<SourceState> {
         self.ingestor.get_source_state(&self.state.user_state)
     }
@@ -727,13 +727,13 @@ impl<I: IngestorNode> ExplorationProvider for IngestorNodeAdapter<I> {
 #[cfg(test)]
 mod tests {
     // Inline because these cover a private shutdown-signaling helper.
-    use super::{IngestorNodeAdapter, IngestorState};
+    use super::{SourceUnitRuntime, IngestorState};
     use crate::checkpoint::{CheckpointManager, CheckpointState};
     use crate::runtime::stream::{
         Checkpoint, ContinuousStart, NodeCapabilities, ScanArgs, ScanReport, TimeHorizon,
     };
     use crate::shutdown::ShutdownConfig;
-    use crate::{IngestorNode, NodeResult};
+    use crate::{SourceUnit, NodeResult};
     use futures::TryStreamExt;
     use serde::{Deserialize, Serialize};
     use sinex_primitives::Timestamp;
@@ -749,7 +749,7 @@ mod tests {
     #[derive(Default)]
     struct TestIngestor;
 
-    impl IngestorNode for TestIngestor {
+    impl SourceUnit for TestIngestor {
         type Config = ();
         type State = TestState;
 
@@ -856,7 +856,7 @@ mod tests {
         .save_to_file(&checkpoint_path)
         .await?;
 
-        let mut adapter = IngestorNodeAdapter::new(TestIngestor);
+        let mut adapter = SourceUnitRuntime::new(TestIngestor);
         adapter.shutdown_config = ShutdownConfig {
             checkpoint_path: Some(checkpoint_path.clone()),
             ..ShutdownConfig::default()
@@ -907,7 +907,7 @@ mod tests {
         let checkpoint_path = temp_dir.path().join("corrupt-hot-reload.checkpoint.json");
         tokio::fs::write(&checkpoint_path, "{ definitely not valid json").await?;
 
-        let mut adapter = IngestorNodeAdapter::new(TestIngestor);
+        let mut adapter = SourceUnitRuntime::new(TestIngestor);
         adapter.shutdown_config = ShutdownConfig {
             checkpoint_path: Some(checkpoint_path.clone()),
             ..ShutdownConfig::default()
@@ -959,7 +959,7 @@ mod tests {
         })?;
         kv.put(&key, corrupt.into()).await?;
 
-        let mut adapter = IngestorNodeAdapter::new(TestIngestor);
+        let mut adapter = SourceUnitRuntime::new(TestIngestor);
         adapter.checkpoint_manager = Some(Arc::new(manager));
 
         let error = adapter
@@ -985,7 +985,7 @@ mod tests {
             "fresh-consumer".to_string(),
         );
 
-        let mut adapter = IngestorNodeAdapter::new(TestIngestor);
+        let mut adapter = SourceUnitRuntime::new(TestIngestor);
         adapter.checkpoint_manager = Some(Arc::new(manager));
         adapter
             .load_state()
@@ -1040,7 +1040,7 @@ mod tests {
         .save_to_file(&checkpoint_path)
         .await?;
 
-        let mut adapter = IngestorNodeAdapter::new(TestIngestor);
+        let mut adapter = SourceUnitRuntime::new(TestIngestor);
         adapter.shutdown_config = ShutdownConfig {
             checkpoint_path: Some(checkpoint_path.clone()),
             ..ShutdownConfig::default()
@@ -1102,7 +1102,7 @@ mod tests {
         .save_to_file(&checkpoint_path)
         .await?;
 
-        let mut adapter = IngestorNodeAdapter::new(TestIngestor);
+        let mut adapter = SourceUnitRuntime::new(TestIngestor);
         adapter.shutdown_config = ShutdownConfig {
             checkpoint_path: Some(checkpoint_path.clone()),
             ..ShutdownConfig::default()

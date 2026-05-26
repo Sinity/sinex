@@ -27,7 +27,7 @@ The `SinexError` type provides structured, context-rich error reporting across t
 
 ## Specialized Collections & Units
 
-- **NonEmptyVec**: A wrapper that guarantees at least one element, used primarily for synthesis provenance (must have at least one parent event).
+- **NonEmptyVec**: A wrapper that guarantees at least one element, used primarily for derived provenance (must have at least one parent event).
 - **Type-Safe Units**: Dedicated types for `Bytes`, `Seconds`, and `Nanoseconds` prevent units-of-measure errors (e.g., adding seconds to milliseconds).
 - **Pagination & TimeRange**: Standardized types for query parameters ensure consistent API behavior across all repositories.
 

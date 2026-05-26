@@ -113,7 +113,7 @@ impl<T> EventBuilder<T, NoProvenance> {
     where
         I: IntoIterator<Item = EventId>,
     {
-        let provenance = Provenance::from_synthesis(parents).ok_or_else(|| {
+        let provenance = Provenance::from_derived(parents).ok_or_else(|| {
             SinexError::validation("from_parents requires at least one parent ID")
         })?;
         Ok(self.with_provenance(provenance))
@@ -170,8 +170,8 @@ impl<T> EventBuilder<T, HasProvenance> {
     /// Stamp a precomputed 32-byte BLAKE3 hash on the event.
     ///
     /// Per #1447 the field is only meaningful on material-provenance events —
-    /// synthesis events derive their identity from parent event ids. Setting a
-    /// hash on a synthesis-provenance builder is silently dropped at `build()`
+    /// derived events derive their identity from parent event ids. Setting a
+    /// hash on a derived-provenance builder is silently dropped at `build()`
     /// time to keep the on-the-wire shape honest. Use
     /// [`Self::with_anchor_payload_from_bytes`] when you have the payload bytes
     /// and want the BLAKE3 computed for you.
@@ -190,10 +190,10 @@ impl<T> EventBuilder<T, HasProvenance> {
         self.with_anchor_payload_hash(*hash.as_bytes())
     }
 
-    /// Set operation ID on both the provenance (if Synthesis) and the event-level
+    /// Set operation ID on both the provenance (if Derived) and the event-level
     /// `created_by_operation_id` field.
     pub fn with_operation(mut self, operation_id: Id<OperationMarker>) -> Self {
-        if let Some(Provenance::Synthesis {
+        if let Some(Provenance::Derived {
             operation_id: ref mut op_id,
             ..
         }) = self.provenance_data
@@ -237,17 +237,17 @@ impl<T> EventBuilder<T, HasProvenance> {
             }
         }
 
-        // Auto-sync: synthesis operation lineage lives in the dedicated DB
+        // Auto-sync: derived operation lineage lives in the dedicated DB
         // column, so keep the event-level field aligned with provenance.
         let created_by_operation_id = provenance.operation_uuid();
 
         // anchor_payload_hash is only meaningful on material provenance; the
         // verify path keys off (source_material_id, anchor_byte, len) and
-        // synthesis events derive identity from parent event ids. Drop any
-        // hash supplied to a synthesis builder to keep on-the-wire honest.
+        // derived events derive identity from parent event ids. Drop any
+        // hash supplied to a derived builder to keep on-the-wire honest.
         let anchor_payload_hash = match &provenance {
             Provenance::Material { .. } => self.anchor_payload_hash,
-            Provenance::Synthesis { .. } => None,
+            Provenance::Derived { .. } => None,
         };
 
         Ok(Event {
@@ -278,10 +278,10 @@ impl<T> EventBuilder<T, HasProvenance> {
 ///
 /// Serializes to flat fields for the NATS wire format:
 /// - Material: `{"source_material_id": "...", "anchor_byte": 0, ...}`
-/// - Synthesis: `{"source_event_ids": ["...", "..."]}`
+/// - Derived: `{"source_event_ids": ["...", "..."]}`
 ///
 /// **Construct via [`Provenance::from_material`] or
-/// [`Provenance::from_synthesis`]**, not via struct literals. The variant
+/// [`Provenance::from_derived`]**, not via struct literals. The variant
 /// fields are `pub` for pattern matching but raw struct construction
 /// bypasses the [`EventBuilder`] typestate guarantees that the
 /// architecture relies on (see issue #559). The XOR provenance check at
@@ -298,7 +298,7 @@ pub enum Provenance {
         offset_kind: OffsetKind,
     },
     /// Event derived from other events (synthesized event)
-    Synthesis {
+    Derived {
         source_event_ids: NonEmptyVec<EventId>,
         operation_id: Option<Id<OperationMarker>>,
     },
@@ -402,7 +402,7 @@ impl Serialize for Provenance {
                 source_event_ids: None,
                 operation_id: None,
             },
-            Provenance::Synthesis {
+            Provenance::Derived {
                 source_event_ids,
                 operation_id,
             } => ProvenanceWire {
@@ -469,9 +469,9 @@ impl<'de> Deserialize<'de> for Provenance {
             }
             (None, Some(ids)) => {
                 let source_event_ids = canonicalize_source_event_ids(ids).ok_or_else(|| {
-                    serde::de::Error::custom("source_event_ids cannot be empty for Synthesis")
+                    serde::de::Error::custom("source_event_ids cannot be empty for Derived")
                 })?;
-                Ok(Provenance::Synthesis {
+                Ok(Provenance::Derived {
                     source_event_ids,
                     operation_id: wire.operation_id,
                 })
@@ -509,8 +509,8 @@ impl Provenance {
         }
     }
 
-    pub fn from_synthesis<I: IntoIterator<Item = EventId>>(ids: I) -> Option<Self> {
-        canonicalize_source_event_ids(ids).map(|source_event_ids| Provenance::Synthesis {
+    pub fn from_derived<I: IntoIterator<Item = EventId>>(ids: I) -> Option<Self> {
+        canonicalize_source_event_ids(ids).map(|source_event_ids| Provenance::Derived {
             source_event_ids,
             operation_id: None,
         })
@@ -519,10 +519,10 @@ impl Provenance {
     #[must_use]
     pub fn into_canonical(self) -> Self {
         match self {
-            Provenance::Synthesis {
+            Provenance::Derived {
                 source_event_ids,
                 operation_id,
-            } => Provenance::Synthesis {
+            } => Provenance::Derived {
                 source_event_ids: canonicalize_non_empty_source_event_ids(source_event_ids),
                 operation_id,
             },
@@ -530,11 +530,11 @@ impl Provenance {
         }
     }
 
-    /// Set the operation ID on Synthesis provenance.
+    /// Set the operation ID on Derived provenance.
     /// No-op on Material provenance.
     #[must_use]
     pub fn with_operation(mut self, op_id: Id<OperationMarker>) -> Self {
-        if let Provenance::Synthesis {
+        if let Provenance::Derived {
             ref mut operation_id,
             ..
         } = self
@@ -544,11 +544,11 @@ impl Provenance {
         self
     }
 
-    /// Get the operation ID if this is Synthesis provenance.
+    /// Get the operation ID if this is Derived provenance.
     #[must_use]
     pub fn operation_id(&self) -> Option<Id<OperationMarker>> {
         match self {
-            Provenance::Synthesis { operation_id, .. } => *operation_id,
+            Provenance::Derived { operation_id, .. } => *operation_id,
             Provenance::Material { .. } => None,
         }
     }

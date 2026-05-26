@@ -40,7 +40,7 @@ use tokio::sync::watch;
 use tracing::{debug, info, warn};
 
 use sinex_node_sdk::{
-    IngestorNode, IngestorNodeAdapter, NodeResult,
+    SourceUnit, SourceUnitRuntime, NodeResult,
     acquisition_manager::RotationPolicy,
     node_cli::{NodeCli, NodeCliRunner},
     runtime::stream::{
@@ -236,16 +236,16 @@ async fn drive_monitor_phase(
 }
 
 // =============================================================================
-// MonitorDriverNode — IngestorNode bridge
+// MonitorDriverNode — SourceUnit bridge
 // =============================================================================
 
-/// An `IngestorNode` that bridges the SDK lifecycle into `drive_monitor_phase`.
+/// An `SourceUnit` that bridges the SDK lifecycle into `drive_monitor_phase`.
 ///
 /// `initialize()` captures the `NodeRuntimeState` into `runtime_snapshot`.
 /// `run_continuous()` then drives `drive_monitor_phase` directly, giving the
 /// monitor closure full SDK access (NATS, `AcquisitionManager`, etc.).
 ///
-/// This bridges the gap that `IngestorNode::run_continuous` does not receive
+/// This bridges the gap that `SourceUnit::run_continuous` does not receive
 /// `NodeRuntimeState` directly.
 #[derive(Default)]
 pub struct MonitorDriverNode {
@@ -271,7 +271,7 @@ impl MonitorDriverNode {
     }
 }
 
-impl IngestorNode for MonitorDriverNode {
+impl SourceUnit for MonitorDriverNode {
     type Config = serde_json::Value;
     type State = MonitorState;
 
@@ -384,7 +384,7 @@ impl IngestorNode for MonitorDriverNode {
 
 /// Entry point called by [`register_monitor_unit!`]-generated factory functions.
 ///
-/// Wires up the standard SDK CLI + runner via `IngestorNodeAdapter`, which
+/// Wires up the standard SDK CLI + runner via `SourceUnitRuntime`, which
 /// calls `initialize()` (capturing runtime) then `run_continuous()` (driving
 /// `drive_monitor_phase`).
 ///
@@ -400,7 +400,7 @@ pub async fn run_monitor_unit_delegated(
 
     let parsed = NodeCli::parse_from(args);
     let node = MonitorDriverNode::new(source_unit_id, phase, emit_fn);
-    let adapter = IngestorNodeAdapter::new(node);
+    let adapter = SourceUnitRuntime::new(node);
     let mut runner = NodeCliRunner::new(adapter);
     runner.run(parsed).await.map_err(std::convert::Into::into)
 }

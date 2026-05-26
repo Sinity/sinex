@@ -1,4 +1,4 @@
-//! Entity enricher — [`ScopeReconcilerNode`] implementation.
+//! Entity enricher — [`ScopeReconciler`] implementation.
 //!
 //! Model classification: **`ScopeReconciler`** — each resolved entity is its own
 //! scope. On every `entity.resolved` event, the per-entity state is updated with
@@ -11,9 +11,9 @@
 
 use serde::{Deserialize, Serialize};
 use sinex_node_sdk::derived_node::{
-    DerivedOutput, DerivedTriggerContext, ScopeReconcilerNodeAdapter,
+    DerivedOutput, AutomatonContext, ScopeReconcilerNodeAdapter,
 };
-use sinex_node_sdk::{InputProvenanceFilter, NodeLogicError, ScopeReconcilerNode};
+use sinex_node_sdk::{InputProvenanceFilter, NodeLogicError, ScopeReconciler};
 use sinex_primitives::Uuid;
 use sinex_primitives::domain::{EntityTypeName, SyntheticTemporalPolicy};
 use sinex_primitives::events::EventPayload;
@@ -82,7 +82,7 @@ pub struct EntityEnricher {
     pub config: EnricherConfig,
 }
 
-impl ScopeReconcilerNode for EntityEnricher {
+impl ScopeReconciler for EntityEnricher {
     type State = EnricherState;
     type Input = EntityResolvedPayload;
     type Output = EntityEnrichedPayload;
@@ -111,7 +111,7 @@ impl ScopeReconcilerNode for EntityEnricher {
         ProcessingContext::Metadata
     }
 
-    fn scope_keys(&self, input: &Self::Input, _context: &DerivedTriggerContext) -> Vec<String> {
+    fn scope_keys(&self, input: &Self::Input, _context: &AutomatonContext) -> Vec<String> {
         // Each entity is its own scope.
         vec![input.entity_id.to_string()]
     }
@@ -121,7 +121,7 @@ impl ScopeReconcilerNode for EntityEnricher {
         state: &mut Self::State,
         scope_key: &str,
         input: Self::Input,
-        context: &DerivedTriggerContext,
+        context: &AutomatonContext,
     ) -> Result<Vec<DerivedOutput<Self::Output>>, NodeLogicError> {
         let now = context.require_ts_orig()?;
         let entity_key = scope_key.to_string();
@@ -262,10 +262,10 @@ register_source_unit_binding! {
         "derived",
     )
     .implementation("sinex-process")
-    .adapter("DerivedNodeAdapter")
+    .adapter("AutomatonRuntime")
     .output_event_type("entity.enriched")
     .privacy_context("inherits_from_parents")
-    .material_policy("synthesis_parents")
+    .material_policy("derived_parents")
     .checkpoint_policy("append_stream")
     .resource_shape("event_stream_consumer")
     .source_unit_id("entity-enricher")

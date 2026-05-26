@@ -1,13 +1,13 @@
-//! Session detector -- [`WindowedNode`] implementation.
+//! Session detector -- [`Windowed`] implementation.
 //!
 //! Model classification: **Windowed** -- accumulates bounded
 //! `activity.window.summary` events into completed activity sessions.
 
 use serde::{Deserialize, Serialize};
 use sinex_node_sdk::derived_node::{
-    DerivedAggregationMeta, DerivedOutput, DerivedTriggerContext, WindowedNodeAdapter,
+    DerivedAggregationMeta, DerivedOutput, AutomatonContext, WindowedNodeAdapter,
 };
-use sinex_node_sdk::{InputProvenanceFilter, NodeLogicError, WindowedNode};
+use sinex_node_sdk::{InputProvenanceFilter, NodeLogicError, Windowed};
 use sinex_primitives::Uuid;
 use sinex_primitives::activity::{ActivitySourceKind, primary_activity_source};
 use sinex_primitives::events::{
@@ -69,7 +69,7 @@ impl SessionState {
 #[derive(Default)]
 pub struct SessionDetector;
 
-impl WindowedNode for SessionDetector {
+impl Windowed for SessionDetector {
     type State = SessionState;
     type Input = ActivityWindowSummaryPayload;
     type Output = ActivitySessionBoundaryPayload;
@@ -102,7 +102,7 @@ impl WindowedNode for SessionDetector {
         &mut self,
         state: &mut Self::State,
         input: Self::Input,
-        context: &DerivedTriggerContext,
+        context: &AutomatonContext,
     ) -> Result<(), NodeLogicError> {
         if state.session_start.is_none() {
             state.session_start = Some(input.window_start);
@@ -128,7 +128,7 @@ impl WindowedNode for SessionDetector {
     async fn emit(
         &mut self,
         state: &mut Self::State,
-        _context: &DerivedTriggerContext,
+        _context: &AutomatonContext,
     ) -> Result<Option<DerivedOutput<Self::Output>>, NodeLogicError> {
         let Some(start_time) = state.session_start else {
             return Ok(None);
@@ -217,10 +217,10 @@ register_source_unit_binding! {
         "derived",
     )
     .implementation("sinex-process")
-    .adapter("DerivedNodeAdapter")
+    .adapter("AutomatonRuntime")
     .output_event_type("activity.session.boundary")
     .privacy_context("inherits_from_parents")
-    .material_policy("synthesis_parents")
+    .material_policy("derived_parents")
     .checkpoint_policy("append_stream")
     .resource_shape("event_stream_consumer")
     .source_unit_id("session-detector")

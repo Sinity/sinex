@@ -1,4 +1,4 @@
-//! Analytics automaton — [`WindowedNode`] implementation.
+//! Analytics automaton — [`Windowed`] implementation.
 //!
 //! Model classification: **Windowed** — accumulates trusted activity signals
 //! into bounded windows and emits `activity.window.summary` rollups when a gap,
@@ -6,9 +6,9 @@
 
 use serde::{Deserialize, Serialize};
 use sinex_node_sdk::derived_node::{
-    DerivedAggregationMeta, DerivedOutput, DerivedTriggerContext, WindowedNodeAdapter,
+    DerivedAggregationMeta, DerivedOutput, AutomatonContext, WindowedNodeAdapter,
 };
-use sinex_node_sdk::{InputProvenanceFilter, NodeLogicError, WindowedNode};
+use sinex_node_sdk::{InputProvenanceFilter, NodeLogicError, Windowed};
 use sinex_primitives::activity::{
     ActivitySourceKind, classify_trusted_activity_signal, primary_activity_source,
 };
@@ -164,7 +164,7 @@ impl Default for AnalyticsAutomaton {
     }
 }
 
-impl WindowedNode for AnalyticsAutomaton {
+impl Windowed for AnalyticsAutomaton {
     type State = AnalyticsState;
     type Input = JsonValue;
     type Output = ActivityWindowSummaryPayload;
@@ -197,7 +197,7 @@ impl WindowedNode for AnalyticsAutomaton {
         &mut self,
         state: &mut Self::State,
         _input: Self::Input,
-        context: &DerivedTriggerContext,
+        context: &AutomatonContext,
     ) -> Result<(), NodeLogicError> {
         let Some(activity_source) =
             classify_trusted_activity_signal(context.source.as_str(), context.event_type.as_str())
@@ -262,7 +262,7 @@ impl WindowedNode for AnalyticsAutomaton {
     async fn emit(
         &mut self,
         state: &mut Self::State,
-        _context: &DerivedTriggerContext,
+        _context: &AutomatonContext,
     ) -> Result<Option<DerivedOutput<Self::Output>>, NodeLogicError> {
         let Some(start_time) = state.window_start else {
             return Ok(None);
@@ -359,10 +359,10 @@ register_source_unit_binding! {
         "derived",
     )
     .implementation("sinex-process")
-    .adapter("DerivedNodeAdapter")
+    .adapter("AutomatonRuntime")
     .output_event_type("activity.window.summary")
     .privacy_context("inherits_from_parents")
-    .material_policy("synthesis_parents")
+    .material_policy("derived_parents")
     .checkpoint_policy("append_stream")
     .resource_shape("event_stream_consumer")
     .source_unit_id("analytics")

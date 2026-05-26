@@ -139,7 +139,7 @@ impl<T> NonEmptyVec<T> {
 **Usage in Provenance:**
 ```rust
 pub enum Provenance {
-    Synthesis {
+    Derived {
         source_event_ids: NonEmptyVec<EventId>,  // MUST have >= 1 parent
         operation_id: Option<Id<Operation>>,
     },

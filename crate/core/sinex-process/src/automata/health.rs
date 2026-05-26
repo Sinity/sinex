@@ -1,4 +1,4 @@
-//! Health aggregator — [`ScopeReconcilerNode`] implementation.
+//! Health aggregator — [`ScopeReconciler`] implementation.
 //!
 //! Model classification: **`ScopeReconciler`** — groups health events by component
 //! (the scope key), maintains per-component state, and emits reports when
@@ -7,9 +7,9 @@
 
 use serde::{Deserialize, Serialize};
 use sinex_node_sdk::derived_node::{
-    DerivedOutput, DerivedTriggerContext, ScopeReconcilerNodeAdapter,
+    DerivedOutput, AutomatonContext, ScopeReconcilerNodeAdapter,
 };
-use sinex_node_sdk::{InputProvenanceFilter, NodeLogicError, ScopeReconcilerNode};
+use sinex_node_sdk::{InputProvenanceFilter, NodeLogicError, ScopeReconciler};
 use sinex_primitives::domain::SyntheticTemporalPolicy;
 use sinex_primitives::events::{
     EventPayload,
@@ -198,7 +198,7 @@ pub struct HealthAggregator {
     pub config: HealthAggregatorConfig,
 }
 
-impl ScopeReconcilerNode for HealthAggregator {
+impl ScopeReconciler for HealthAggregator {
     type State = HealthState;
     type Input = JsonValue;
     type Output = HealthAggregatedReportPayload;
@@ -225,7 +225,7 @@ impl ScopeReconcilerNode for HealthAggregator {
         ProcessingContext::Metadata
     }
 
-    fn scope_keys(&self, input: &Self::Input, context: &DerivedTriggerContext) -> Vec<String> {
+    fn scope_keys(&self, input: &Self::Input, context: &AutomatonContext) -> Vec<String> {
         // Keep malformed payloads isolated on the live path so they do not all collide into a
         // shared "unknown" scope before reconcile rejects them into DLQ.
         let component = input
@@ -244,7 +244,7 @@ impl ScopeReconcilerNode for HealthAggregator {
         state: &mut Self::State,
         scope_key: &str,
         input: Self::Input,
-        context: &DerivedTriggerContext,
+        context: &AutomatonContext,
     ) -> Result<Vec<DerivedOutput<Self::Output>>, NodeLogicError> {
         let now = context.require_ts_orig()?;
         let component = parse_component_name(&input)?.to_string();
@@ -604,10 +604,10 @@ register_source_unit_binding! {
         "derived",
     )
     .implementation("sinex-process")
-    .adapter("DerivedNodeAdapter")
+    .adapter("AutomatonRuntime")
     .output_event_type("health.aggregated_report")
     .privacy_context("inherits_from_parents")
-    .material_policy("synthesis_parents")
+    .material_policy("derived_parents")
     .checkpoint_policy("append_stream")
     .resource_shape("event_stream_consumer")
     .source_unit_id("health")

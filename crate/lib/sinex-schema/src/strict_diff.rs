@@ -572,7 +572,7 @@ const DECLARED_INLINE_CHECKS: &[DeclaredInlineCheck] = &[
         // or source_event_ids set. This is THE load-bearing in-DB check; if
         // it disappears, the provenance contract is gone.
         // Markers span both OR-branches of the constraint so a partial
-        // rewrite that removes the synthesis side is also detected.
+        // rewrite that removes the derived side is also detected.
         expected_markers: &[
             "source_material_id IS NOT NULL",
             "source_event_ids IS NULL",

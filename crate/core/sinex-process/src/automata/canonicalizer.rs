@@ -1,17 +1,17 @@
-//! Terminal command canonicalizer — [`TransducerNode`] implementation.
+//! Terminal command canonicalizer — [`Transducer`] implementation.
 //!
 //! Model classification: **Transducer** — stateless 1:1 transform that inherits
 //! `ts_orig` from the input event. Each input `command.executed` produces exactly
 //! zero or one `command.canonical` output.
 //!
-//! The spec's "expected mapping" suggested `ScopeReconcilerNode`, but the actual
+//! The spec's "expected mapping" suggested `ScopeReconciler`, but the actual
 //! processing logic is a pure per-event transform with no accumulated scope state.
 //! If future work needs late-arrival correction or richer cross-source context,
 //! that should be a downstream scope reconciler keyed by session/activity scope
 //! rather than widening `command.canonical` itself into a reconciled object.
 
-use sinex_node_sdk::derived_node::{DerivedOutput, DerivedTriggerContext, TransducerNodeAdapter};
-use sinex_node_sdk::{InputProvenanceFilter, NodeLogicError, TransducerNode};
+use sinex_node_sdk::derived_node::{DerivedOutput, AutomatonContext, TransducerNodeAdapter};
+use sinex_node_sdk::{InputProvenanceFilter, NodeLogicError, Transducer};
 use sinex_primitives::JsonValue;
 use sinex_primitives::domain::SyntheticTemporalPolicy;
 use sinex_primitives::events::EventPayload;
@@ -32,7 +32,7 @@ impl TerminalCommandCanonicalizer {
     }
 }
 
-impl TransducerNode for TerminalCommandCanonicalizer {
+impl Transducer for TerminalCommandCanonicalizer {
     type State = ();
     type Input = JsonValue;
     type Output = CanonicalCommandPayload;
@@ -65,7 +65,7 @@ impl TransducerNode for TerminalCommandCanonicalizer {
         &mut self,
         _state: &mut Self::State,
         input: Self::Input,
-        context: &DerivedTriggerContext,
+        context: &AutomatonContext,
     ) -> Result<Option<DerivedOutput<Self::Output>>, NodeLogicError> {
         if !is_accepted_source(context.source.as_str()) {
             return Ok(None);
@@ -302,10 +302,10 @@ register_source_unit_binding! {
         "derived",
     )
     .implementation("sinex-process")
-    .adapter("DerivedNodeAdapter")
+    .adapter("AutomatonRuntime")
     .output_event_type("command.canonical")
     .privacy_context("inherits_from_parents")
-    .material_policy("synthesis_parents")
+    .material_policy("derived_parents")
     .checkpoint_policy("append_stream")
     .resource_shape("event_stream_consumer")
     .source_unit_id("terminal-canonicalizer")

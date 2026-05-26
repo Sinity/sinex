@@ -16,7 +16,7 @@ This document summarizes the primary type families exported by `sinex-primitives
 ## Events and Payloads
 
 - `Event<T>` is the canonical event envelope.
-- `Provenance` encodes material vs synthesis lineage.
+- `Provenance` encodes material vs derived lineage.
 - `events::payloads::*` contains typed payload structs.
 - `EventBuilder` and `DynamicPayload` provide an escape hatch for dynamic payload construction.
 

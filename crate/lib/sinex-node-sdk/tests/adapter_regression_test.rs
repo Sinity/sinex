@@ -3,9 +3,9 @@
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sinex_node_sdk::derived_node::{
-    DerivedNodeAdapter, DerivedOutput, DerivedTriggerContext, TransducerWrapper,
+    AutomatonRuntime, DerivedOutput, AutomatonContext, TransducerWrapper,
 };
-use sinex_node_sdk::{NodeLogicError, TransducerNode};
+use sinex_node_sdk::{NodeLogicError, Transducer};
 use sinex_primitives::events::DynamicPayload;
 use sinex_primitives::prelude::*;
 use sinex_primitives::privacy::ProcessingContext;
@@ -21,7 +21,7 @@ struct TestInput {
 
 struct PassthroughDerivedNode;
 
-impl TransducerNode for PassthroughDerivedNode {
+impl Transducer for PassthroughDerivedNode {
     type State = TestState;
     type Input = TestInput;
     type Output = JsonValue;
@@ -46,7 +46,7 @@ impl TransducerNode for PassthroughDerivedNode {
         &mut self,
         _state: &mut Self::State,
         input: Self::Input,
-        context: &DerivedTriggerContext,
+        context: &AutomatonContext,
     ) -> std::result::Result<Option<DerivedOutput<Self::Output>>, NodeLogicError> {
         Ok(Some(DerivedOutput::transduced(
             json!({ "value": input.value }),
@@ -58,7 +58,7 @@ impl TransducerNode for PassthroughDerivedNode {
 
 struct DlqDerivedNode;
 
-impl TransducerNode for DlqDerivedNode {
+impl Transducer for DlqDerivedNode {
     type State = TestState;
     type Input = TestInput;
     type Output = JsonValue;
@@ -83,7 +83,7 @@ impl TransducerNode for DlqDerivedNode {
         &mut self,
         _state: &mut Self::State,
         _input: Self::Input,
-        _context: &DerivedTriggerContext,
+        _context: &AutomatonContext,
     ) -> std::result::Result<Option<DerivedOutput<Self::Output>>, NodeLogicError> {
         Err(NodeLogicError::InputParsing("derived failure".to_string()))
     }
@@ -103,7 +103,7 @@ fn make_event() -> std::result::Result<Event<JsonValue>, SinexError> {
 
 #[sinex_test]
 async fn derived_adapter_rejects_missing_trigger_id() -> TestResult<()> {
-    let mut adapter = DerivedNodeAdapter::new(TransducerWrapper(PassthroughDerivedNode));
+    let mut adapter = AutomatonRuntime::new(TransducerWrapper(PassthroughDerivedNode));
     let mut event = make_event()?;
     event.id = None;
 
@@ -134,7 +134,7 @@ async fn derived_adapter_rejects_missing_trigger_id() -> TestResult<()> {
 
 #[sinex_test]
 async fn derived_adapter_uses_runtime_continuous_loop_bridge() -> TestResult<()> {
-    let adapter = DerivedNodeAdapter::new(TransducerWrapper(PassthroughDerivedNode));
+    let adapter = AutomatonRuntime::new(TransducerWrapper(PassthroughDerivedNode));
     let capabilities = sinex_node_sdk::runtime::stream::Node::capabilities(&adapter);
 
     assert!(capabilities.supports_continuous);
@@ -145,7 +145,7 @@ async fn derived_adapter_uses_runtime_continuous_loop_bridge() -> TestResult<()>
 
 #[sinex_test]
 async fn derived_adapter_errors_when_dlq_transport_is_missing() -> TestResult<()> {
-    let mut adapter = DerivedNodeAdapter::new(TransducerWrapper(DlqDerivedNode));
+    let mut adapter = AutomatonRuntime::new(TransducerWrapper(DlqDerivedNode));
 
     let err = adapter
         .process_one(make_event()?)
@@ -181,7 +181,7 @@ async fn derived_adapter_errors_when_dlq_transport_is_missing() -> TestResult<()
 
 #[sinex_test]
 async fn derived_adapter_redacts_output_payloads() -> TestResult<()> {
-    let mut adapter = DerivedNodeAdapter::new(TransducerWrapper(PassthroughDerivedNode));
+    let mut adapter = AutomatonRuntime::new(TransducerWrapper(PassthroughDerivedNode));
     let output = adapter
         .process_one(make_event_with_value(
             "ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghij",

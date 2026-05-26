@@ -1,7 +1,7 @@
 //! Tests for the analytics automaton's bounded activity windows.
 
-use sinex_node_sdk::derived_node::{DerivedAggregationMeta, DerivedOutput, DerivedTriggerContext};
-use sinex_node_sdk::{NodeLogicError, WindowedNode};
+use sinex_node_sdk::derived_node::{DerivedAggregationMeta, DerivedOutput, AutomatonContext};
+use sinex_node_sdk::{NodeLogicError, Windowed};
 use sinex_primitives::activity::ActivitySourceKind;
 use sinex_primitives::domain::{ProcessingMode, TriggerKind};
 use sinex_primitives::events::Event;
@@ -15,9 +15,9 @@ fn make_context_with_optional_ts(
     source: &str,
     event_type: &str,
     ts_orig: Option<Timestamp>,
-) -> DerivedTriggerContext {
+) -> AutomatonContext {
     let event_id: Id<Event<JsonValue>> = Id::new();
-    DerivedTriggerContext {
+    AutomatonContext {
         trigger_event_id: event_id,
         source: source.into(),
         event_type: event_type.into(),
@@ -29,14 +29,14 @@ fn make_context_with_optional_ts(
     }
 }
 
-fn make_terminal_context(ts_orig: Timestamp) -> DerivedTriggerContext {
+fn make_terminal_context(ts_orig: Timestamp) -> AutomatonContext {
     make_context_with_optional_ts("shell.kitty", "command.executed", Some(ts_orig))
 }
 
 async fn process(
     automaton: &mut AnalyticsAutomaton,
     state: &mut AnalyticsState,
-    ctx: &DerivedTriggerContext,
+    ctx: &AutomatonContext,
 ) -> Result<Option<DerivedOutput<ActivityWindowSummaryPayload>>, NodeLogicError> {
     automaton
         .accumulate(state, serde_json::json!({}), ctx)

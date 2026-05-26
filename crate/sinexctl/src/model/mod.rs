@@ -27,8 +27,8 @@ pub enum OutputFormat {
 pub enum NodeRole {
     /// Capture nodes (filesystem, terminal, system, etc.)
     Capture,
-    /// Synthesis nodes (analytics, search, etc.)
-    Synthesis,
+    /// Derived nodes (analytics, search, etc.)
+    Derived,
     /// Core services (ingestd)
     Core,
     /// Gateway
@@ -39,7 +39,7 @@ impl std::fmt::Display for NodeRole {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Capture => write!(f, "capture"),
-            Self::Synthesis => write!(f, "synthesis"),
+            Self::Derived => write!(f, "derived"),
             Self::Core => write!(f, "core"),
             Self::Gateway => write!(f, "gateway"),
         }

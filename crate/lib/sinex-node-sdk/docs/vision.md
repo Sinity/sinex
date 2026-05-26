@@ -3,8 +3,8 @@
 These features represent the long-term vision for Sinex SDK improvements. They are not blocking production but would significantly improve developer experience.
 
 > Status: this is a vision/history document, not current API reference. The
-> current implemented derived-node APIs are `TransducerNode`, `WindowedNode`,
-> `ScopeReconcilerNode`, and `DerivedNodeAdapter`. Historical references to
+> current implemented derived-node APIs are `Transducer`, `Windowed`,
+> `ScopeReconciler`, and `AutomatonRuntime`. Historical references to
 > `AutomatonNode` below preserve the original prompt-to-node sketch rather than
 > describing an available trait.
 
@@ -224,7 +224,7 @@ impl AutomatonNode for TerminalCanonicalizer {
 - Checkpoint persistence to KV (auto-save every 10s or 1000 events)
 - **State serialization on SIGTERM** (enables hot reload)
 - **State restoration from temp file** (continues after rebuild)
-- Provenance auto-assignment (synthesis from input event)
+- Provenance auto-assignment (derived from input event)
 - DLQ routing on errors
 - Metrics (events processed, errors, latency)
 - Graceful shutdown (drain in-flight work)

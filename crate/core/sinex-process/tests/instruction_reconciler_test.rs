@@ -1,5 +1,5 @@
-use sinex_node_sdk::ScopeReconcilerNode;
-use sinex_node_sdk::derived_node::DerivedTriggerContext;
+use sinex_node_sdk::ScopeReconciler;
+use sinex_node_sdk::derived_node::AutomatonContext;
 use sinex_primitives::domain::{ProcessingMode, TriggerKind};
 use sinex_primitives::events::payloads::{
     DesktopWorkspaceSwitchInstructionPayload, HyprlandWorkspaceSwitchedPayload,
@@ -13,9 +13,9 @@ use sinex_process::automata::instruction_reconciler::{
 };
 use xtask::sandbox::prelude::*;
 
-fn context(source: &str, event_type: &str, ts_orig: Timestamp) -> DerivedTriggerContext {
+fn context(source: &str, event_type: &str, ts_orig: Timestamp) -> AutomatonContext {
     let event_id: Id<Event<JsonValue>> = Id::new();
-    DerivedTriggerContext {
+    AutomatonContext {
         trigger_event_id: event_id,
         source: source.into(),
         event_type: event_type.into(),

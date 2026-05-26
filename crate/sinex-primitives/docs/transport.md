@@ -13,7 +13,7 @@ Closes: #326, #327, #338, #693.
 | Class | Use | Subject pattern | QoS | On local failure | Drain on SIGTERM |
 |---|---|---|---|---|---|
 | `Critical` | Provenance-bearing raw event payloads from ingestors | `{env}.sinex.events.raw.{src}.{type}` | JetStream, idempotency header, semaphore 100 | local recovery spool | wait for in-flight ACKs |
-| `Derived` | Synthesis events from automata | `{env}.sinex.events.raw.{src}.{type}` | JetStream, idempotency header, semaphore 100 | processing-failure stream | wait for ACKs + save checkpoint |
+| `Derived` | Derived events from automata | `{env}.sinex.events.raw.{src}.{type}` | JetStream, idempotency header, semaphore 100 | processing-failure stream | wait for ACKs + save checkpoint |
 | `SourceMaterial` | Ordered material begin/slice/end frames | `{env}.source_material.frames.*` | JetStream, ordered stream, ACK required | material acquisition fails before event publish | wait for ACKs before anchor use |
 | `Confirmation` | Persistence ACK signals from ingestd | `{env}.events.confirmations.{event_id}` | JetStream, best-effort | retry queue → durability-gap warn | best-effort flush |
 | `Invalidation` | Scope fan-out to derived nodes | `{env}.sinex.derived.invalidation` | JetStream, durable consumers | error propagated to caller | no special drain (JetStream holds) |
@@ -138,11 +138,11 @@ The protocol per class:
 4. On ACK timeout: events go to local recovery spool; node exits with a warning.
 5. On clean flush: checkpoint is saved; sd_notify sends `STOPPING=1`.
 
-### `Derived` — automaton synthesis outputs
+### `Derived` — automaton derived outputs
 
 1. NATS consumer stops pulling new messages.
 2. In-flight event processing completes.
-3. Synthesis events are published and ACKed.
+3. Derived events are published and ACKed.
 4. Checkpoint is saved (NATS KV + optional local backup).
 5. Node exits cleanly.
 

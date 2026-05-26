@@ -101,13 +101,13 @@ NATS JetStream
 
 ## Provenance Enforcement
 
-XOR constraint: every event has EITHER material OR synthesis provenance:
+XOR constraint: every event has EITHER material OR derived provenance:
 
 ```rust
 fn validate_provenance(raw_event: &RawEvent) -> Result<PreparedProvenance> {
     match (&raw_event.material_id, &raw_event.source_event_ids) {
         (Some(material_id), None) => Ok(PreparedProvenance::Material { ... }),
-        (None, Some(source_ids)) if !source_ids.is_empty() => Ok(PreparedProvenance::Synthesis { ... }),
+        (None, Some(source_ids)) if !source_ids.is_empty() => Ok(PreparedProvenance::Derived { ... }),
         _ => Err(SinexError::validation("Event must have exactly one of: material_id XOR source_event_ids")),
     }
 }

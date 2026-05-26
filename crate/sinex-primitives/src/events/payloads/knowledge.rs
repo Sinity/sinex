@@ -7,7 +7,7 @@
 //!   vault into sinex. Each `.md` file becomes one `knowledgebase`/`note.observed`
 //!   event.
 //!
-//! - **Graph automata** — synthesis events emitted by currently wired knowledge
+//! - **Graph automata** — derived events emitted by currently wired knowledge
 //!   graph automata. Today that surface is intentionally limited to rule-based
 //!   tag application (`knowledge-graph`/`knowledge.tag_applied`). Entity mention,
 //!   resolution-candidate, merge, and relation-proposal schemas are not declared

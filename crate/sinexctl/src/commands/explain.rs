@@ -89,10 +89,10 @@ impl ExplainCommand {
                     );
                 }
             }
-            Provenance::Synthesis {
+            Provenance::Derived {
                 source_event_ids, ..
             } => {
-                print_field("Type", "Synthesis (derived from other events)");
+                print_field("Type", "Derived (derived from other events)");
                 print_field("Parent Count", &source_event_ids.len().to_string());
                 for pid in source_event_ids {
                     println!("  {:<20} {}", style("  └─").dim(), pid);

@@ -6,7 +6,7 @@
 //! 3. Relation Extraction (Stage 3, issue #934)
 //! 4. Entity Enrichment (Stage 4, issue #934)
 //!
-//! All events in this module are synthesis-provenance events derived from
+//! All events in this module are derived-provenance events derived from
 //! upstream pipeline stages or document parsing -- none carry `source_material_id`.
 
 use std::collections::BTreeMap;

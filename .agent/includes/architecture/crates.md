@@ -8,8 +8,8 @@
 | Event creation | `sinex_primitives::events::payloads::*` | `EventPayload` trait, typed payload structs |
 | Dynamic events | `sinex_primitives::events::{DynamicPayload, builder::EventBuilder}` | For runtime source/type |
 | DB access | `sinex_db::DbPoolExt` | `pool.events()`, `pool.blobs()`, `pool.source_materials()` etc. |
-| Node SDK | `sinex_node_sdk::*` | `IngestorNode`, `NodeConfig`, `node_entrypoint!`, runtime adapters |
-| Derived nodes | `sinex_node_sdk::{TransducerNode, WindowedNode, ScopeReconcilerNode}` | Via `DerivedNodeAdapter<N>` |
+| Node SDK | `sinex_node_sdk::*` | `SourceUnit`, `NodeConfig`, `node_entrypoint!`, runtime adapters |
+| Derived nodes | `sinex_node_sdk::{Transducer, Windowed, ScopeReconciler}` | Via `AutomatonRuntime<N>` |
 | Privacy | `sinex_primitives::privacy::*` | `privacy::engine()`, `ProcessingContext` |
 | Domain enums | `sinex_primitives::domain::*` | `OperationStatus`, `HealthStatus`, `DataTier`, `NodeType` etc. |
 | Event field enums | `sinex_primitives::events::enums::*` | `FileModificationType`, `ShutdownReason`, etc. |

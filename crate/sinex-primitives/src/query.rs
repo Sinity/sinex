@@ -193,9 +193,9 @@ pub struct EventQuery {
     #[serde(default)]
     pub include_total_estimate: bool,
 
-    /// Filter to events with non-null `source_event_ids` (synthesis events).
-    /// When `true`, only synthesis events are returned.
-    /// When `false`, only material (non-synthesis) events are returned.
+    /// Filter to events with non-null `source_event_ids` (derived events).
+    /// When `true`, only derived events are returned.
+    /// When `false`, only material (non-derived) events are returned.
     /// When `None`, no lineage filter is applied.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub has_lineage: Option<bool>,

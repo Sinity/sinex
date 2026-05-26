@@ -267,7 +267,7 @@ async fn curation_finalize_persists_lineage_to_original_proposal_and_judgment(
         .ok_or_else(|| color_eyre::eyre::eyre!("finalization event not persisted"))?;
     let parents = persisted
         .get_source_event_ids()
-        .ok_or_else(|| color_eyre::eyre::eyre!("finalization event missing synthesis parents"))?;
+        .ok_or_else(|| color_eyre::eyre::eyre!("finalization event missing derived parents"))?;
     assert_eq!(parents, &[original_proposal_event_id, judgment_event_id]);
     assert!(!parents.contains(&replayed_proposal_event_id));
     Ok(())

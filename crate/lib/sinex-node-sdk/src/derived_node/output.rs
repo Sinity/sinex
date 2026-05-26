@@ -56,7 +56,7 @@ pub struct DerivedOutput<T> {
 
     /// Scope key for scope-based reconciliation.
     ///
-    /// Required for `ScopeReconcilerNode`; optional for others.
+    /// Required for `ScopeReconciler`; optional for others.
     pub scope_key: Option<String>,
 
     /// Equivalence key for deduplication during replay.
@@ -74,7 +74,7 @@ pub struct DerivedOutput<T> {
     /// Per-output event type override.
     ///
     /// When `Some`, the adapter stamps this event type on the emitted event
-    /// instead of `DerivedNodeImpl::output_event_type()`. Used by
+    /// instead of `Automaton::output_event_type()`. Used by
     /// `MultiOutputTransducerNode` to emit events of different types from
     /// a single processing call.
     pub event_type: Option<&'static str>,
@@ -189,7 +189,7 @@ impl<T> DerivedOutput<T> {
     /// Set the per-output event type for multi-output nodes.
     ///
     /// When set, the adapter stamps this event type on the emitted event instead
-    /// of falling back to `DerivedNodeImpl::output_event_type()`.
+    /// of falling back to `Automaton::output_event_type()`.
     #[must_use]
     pub fn with_event_type(mut self, event_type: &'static str) -> Self {
         self.event_type = Some(event_type);

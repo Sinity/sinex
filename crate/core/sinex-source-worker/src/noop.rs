@@ -1,4 +1,4 @@
-//! Noop source unit — minimal `IngestorNode` serving as a template and test vehicle.
+//! Noop source unit — minimal `SourceUnit` serving as a template and test vehicle.
 //!
 //! This source unit emits no events and idles in continuous mode until shutdown.
 //! It exists to prove the source-worker host dispatch infrastructure works
@@ -8,7 +8,7 @@
 use crate::register_node_factory;
 use serde::{Deserialize, Serialize};
 use sinex_node_sdk::{
-    IngestorNode, NodeResult,
+    SourceUnit, NodeResult,
     runtime::stream::{
         Checkpoint, ContinuousStart, NodeCapabilities, ScanArgs, ScanReport, TimeHorizon,
     },
@@ -45,7 +45,7 @@ register_source_unit_binding! {
         "sinex",
     )
     .implementation("sinex-source-worker")
-    .adapter("IngestorNodeAdapter")
+    .adapter("SourceUnitRuntime")
     .output_event_type("noop")
     .privacy_context("none")
     .material_policy("none")
@@ -70,7 +70,7 @@ pub struct NoopState;
 #[derive(Default)]
 pub struct NoopSourceUnit;
 
-impl IngestorNode for NoopSourceUnit {
+impl SourceUnit for NoopSourceUnit {
     type Config = serde_json::Value;
     type State = NoopState;
 

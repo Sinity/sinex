@@ -3,7 +3,7 @@
 //! These verify specific runtime behaviours and data-flow contracts that are
 //! hard to exercise at the unit-test level:
 //!
-//! - D11.3: provenance chain traversal (raw → synthesis lineage)
+//! - D11.3: provenance chain traversal (raw → derived lineage)
 //! - D11.4: `xtask status --summary --json` reports ingestd health
 //! - D11.6: binaries started with `--log-format json` produce valid JSON logs
 
@@ -22,7 +22,7 @@ use xtask::sandbox::sinex_test;
 // ============================================================================
 
 /// D11.3: Publish a raw (material-provenance) event and a derived
-/// (synthesis-provenance) event, then walk the lineage chain to confirm the
+/// (derived-provenance) event, then walk the lineage chain to confirm the
 /// ancestor link is recorded and traversable.
 #[sinex_test]
 async fn test_provenance_trace_scenario(ctx: TestContext) -> ::xtask::sandbox::TestResult<()> {
@@ -51,7 +51,7 @@ async fn test_provenance_trace_scenario(ctx: TestContext) -> ::xtask::sandbox::T
 
     let raw_id = raw_event.id.unwrap();
 
-    // Derived event: synthesis (from_parents → references the raw event)
+    // Derived event: derived (from_parents → references the raw event)
     let derived_event = ctx
         .pool
         .events()

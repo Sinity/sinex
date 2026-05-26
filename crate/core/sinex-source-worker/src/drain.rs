@@ -273,7 +273,7 @@ impl SourceWorkerDrainController {
     }
 
     /// Transition to `SavingCheckpoint`. The actual save is performed by
-    /// `IngestorNodeAdapter::shutdown` via `save_state(true)`.
+    /// `SourceUnitRuntime::shutdown` via `save_state(true)`.
     pub async fn save_checkpoint(&self, _unit_id: &str) {
         let mut phase = self.phase.lock().await;
         *phase = DrainPhase::SavingCheckpoint;

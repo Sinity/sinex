@@ -14,7 +14,7 @@ Within xtask automation, `error` severity is blocking; `warning` and `hint` rema
 | --- | --- | --- | --- |
 | `cargo-command-outside-process` | `error` | `rust` | Spawn cargo via xtask::process helpers, not ad-hoc Command::new("cargo") |
 | `dbg-macro` | `error` | `rust` | Debug macro dbg!() found - remove before commit |
-| `raw-provenance-literal` | `error` | `rust` | Use Provenance::from_material() / from_synthesis() instead of constructing Provenance::Material/Synthesis directly. Direct struct literals bypass the EventBuilder typestate that enforces XOR provenance. |
+| `raw-provenance-literal` | `error` | `rust` | Use Provenance::from_material() / from_derived() instead of constructing Provenance::Material/Derived directly. Direct struct literals bypass the EventBuilder typestate that enforces XOR provenance. |
 | `todo-macro` | `error` | `rust` | TODO macro found in production code |
 | `unimplemented-macro` | `error` | `rust` | unimplemented! macro found in production code |
 | `anyhow-in-lib` | `warning` | `rust` | Use SinexError instead of anyhow in library code |
@@ -51,7 +51,7 @@ Within xtask automation, `error` severity is blocking; `warning` and `hint` rema
 
 - Severity: `error`
 - Language: `rust`
-- Message: Use Provenance::from_material() / from_synthesis() instead of constructing Provenance::Material/Synthesis directly. Direct struct literals bypass the EventBuilder typestate that enforces XOR provenance.
+- Message: Use Provenance::from_material() / from_derived() instead of constructing Provenance::Material/Derived directly. Direct struct literals bypass the EventBuilder typestate that enforces XOR provenance.
 - Ignore globs:
   - `**/*_test.rs`
   - `**/*_tests.rs`
@@ -83,7 +83,7 @@ Within xtask automation, `error` severity is blocking; `warning` and `hint` rema
   or, for in-place construction of a Provenance value, the helpers in
   `sinex_primitives::events::builder::Provenance`:
     Provenance::from_material(id, anchor_byte, offset_start, offset_end)
-    Provenance::from_synthesis(event_ids)  // returns Option (None on empty)
+    Provenance::from_derived(event_ids)  // returns Option (None on empty)
 
 ## `todo-macro`
 

@@ -3,7 +3,7 @@
 //! ## Architecture
 //!
 //! The Polylogue daemon is an **external producer**: it publishes
-//! [`AdmittedEventIntent`] envelopes directly to NATS `JetStream` without
+//! [`EventIntent`] envelopes directly to NATS `JetStream` without
 //! depending on the sinex Rust SDK. ingestd picks them up on the standard
 //! `{env}.sinex.events.raw.>` stream just like any other source.
 //!

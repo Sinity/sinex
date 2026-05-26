@@ -8,7 +8,7 @@ The system provides two distinct paths for event insertion to balance throughput
 
 ### 1. Single Event Path (`insert()`)
 Used for low-volume API calls and test helpers.
-- **Safety**: Performs full provenance validation and synthesis cycle detection.
+- **Safety**: Performs full provenance validation and derived cycle detection.
 - **Atomicity**: Uses `REPEATABLE READ` transactions to ensure consistent views during cycle checks.
 - **Consistency**: High. Guaranteed DAG (Directed Acyclic Graph) invariants.
 
@@ -16,11 +16,11 @@ Used for low-volume API calls and test helpers.
 Used by `sinex-ingestd` for high-volume JetStream consumption.
 - **Optimization**: Uses `ON CONFLICT DO NOTHING` for idempotent deduplication.
 - **Performance**: High. Bypasses application-level cycle checks for maximum throughput.
-- **Warning**: Batch operations risk introducing circular synthesis dependencies if upstream validation is bypassed.
+- **Warning**: Batch operations risk introducing circular derived dependencies if upstream validation is bypassed.
 
-## Synthesis Cycle Detection
+## Derived Cycle Detection
 
-Circular dependencies in event synthesis (where event A depends on B, which depends on A) would break timeline traversals. The system implements a recursive CTE check:
+Circular dependencies in event derived (where event A depends on B, which depends on A) would break timeline traversals. The system implements a recursive CTE check:
 
 ```sql
 WITH RECURSIVE parents AS (

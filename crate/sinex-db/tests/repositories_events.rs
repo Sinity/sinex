@@ -112,13 +112,13 @@ async fn events_repository_preserves_provenance(ctx: TestContext) -> TestResult<
 
     let inserted = ctx.pool.events().insert(derived_event).await?;
     match inserted.provenance() {
-        Provenance::Synthesis {
+        Provenance::Derived {
             source_event_ids, ..
         } => {
             assert_eq!(source_event_ids.len(), 1);
             assert_eq!(source_event_ids[0], source_id);
         }
-        other => unreachable!("Expected synthesis provenance, got: {other:?}"),
+        other => unreachable!("Expected derived provenance, got: {other:?}"),
     }
     Ok(())
 }
@@ -563,7 +563,7 @@ async fn get_material_root_events_in_range_excludes_synthesis_rows(
     assert_eq!(stored[0].event_type.as_str(), "test.repo.range.material");
     assert!(
         matches!(stored[0].provenance(), Provenance::Material { .. }),
-        "material-root query must not return synthesis rows"
+        "material-root query must not return derived rows"
     );
 
     Ok(())
@@ -578,7 +578,7 @@ async fn stream_batch_insert_rejects_self_referential_synthesis_rows(
     let batch = vec![StreamBatchRow {
         id: event_id,
         source: EventSource::new("test.source")?,
-        event_type: EventType::new("test.batch.synthesis")?,
+        event_type: EventType::new("test.batch.derived")?,
         ts_orig: Timestamp::now(),
         host: HostName::from_static("localhost"),
         payload: json!({ "self_ref": true }),
@@ -605,11 +605,11 @@ async fn stream_batch_insert_rejects_self_referential_synthesis_rows(
         .events()
         .insert_stream_batch(&batch)
         .await
-        .expect_err("self-referential synthesis batch should be rejected");
+        .expect_err("self-referential derived batch should be rejected");
     assert!(
         error
             .to_string()
-            .contains("cycle detected in synthesis provenance"),
+            .contains("cycle detected in derived provenance"),
         "unexpected error: {error}"
     );
     Ok(())
@@ -626,7 +626,7 @@ async fn stream_batch_insert_rejects_intra_batch_synthesis_cycles(
         StreamBatchRow {
             id: first_id,
             source: EventSource::new("test.source")?,
-            event_type: EventType::new("test.batch.synthesis")?,
+            event_type: EventType::new("test.batch.derived")?,
             ts_orig: Timestamp::now(),
             host: HostName::from_static("localhost"),
             payload: json!({ "cycle": "first" }),
@@ -650,7 +650,7 @@ async fn stream_batch_insert_rejects_intra_batch_synthesis_cycles(
         StreamBatchRow {
             id: second_id,
             source: EventSource::new("test.source")?,
-            event_type: EventType::new("test.batch.synthesis")?,
+            event_type: EventType::new("test.batch.derived")?,
             ts_orig: Timestamp::now(),
             host: HostName::from_static("localhost"),
             payload: json!({ "cycle": "second" }),
@@ -678,11 +678,11 @@ async fn stream_batch_insert_rejects_intra_batch_synthesis_cycles(
         .events()
         .insert_stream_batch(&batch)
         .await
-        .expect_err("intra-batch synthesis cycle should be rejected");
+        .expect_err("intra-batch derived cycle should be rejected");
     assert!(
         error
             .to_string()
-            .contains("cycle detected in synthesis provenance within batch"),
+            .contains("cycle detected in derived provenance within batch"),
         "unexpected error: {error}"
     );
     Ok(())
@@ -1237,7 +1237,7 @@ async fn synthetic_metadata_roundtrips_through_insert(ctx: TestContext) -> TestR
         .await?;
     let material_id = Id::<sinex_db::models::SourceMaterial>::from_uuid(material_record.id);
 
-    // Create a source event first (needed as parent for synthesis)
+    // Create a source event first (needed as parent for derived)
     let source_payload = KittyCommandExecutedPayload::test_default("echo roundtrip");
     let source_event = Event::builder(source_payload)
         .with_provenance(Provenance::from_material(material_id, 0, None, None))
@@ -1601,11 +1601,11 @@ async fn batch_insert_rejects_intra_batch_synthesis_cycles(ctx: TestContext) -> 
         .events()
         .insert_batch(vec![first, second])
         .await
-        .expect_err("intra-batch synthesis cycle should be rejected");
+        .expect_err("intra-batch derived cycle should be rejected");
     assert!(
         error
             .to_string()
-            .contains("cycle detected in synthesis provenance within batch"),
+            .contains("cycle detected in derived provenance within batch"),
         "unexpected error: {error}"
     );
     Ok(())
@@ -1662,11 +1662,11 @@ async fn batch_insert_rejects_cross_chunk_intra_batch_synthesis_cycles(
         .events()
         .insert_batch(events)
         .await
-        .expect_err("cross-chunk intra-batch synthesis cycle should be rejected");
+        .expect_err("cross-chunk intra-batch derived cycle should be rejected");
     assert!(
         error
             .to_string()
-            .contains("cycle detected in synthesis provenance within batch"),
+            .contains("cycle detected in derived provenance within batch"),
         "unexpected error: {error}"
     );
 
@@ -1677,7 +1677,7 @@ async fn batch_insert_rejects_cross_chunk_intra_batch_synthesis_cycles(
         .await?;
     assert!(
         stored.is_empty(),
-        "failed cross-chunk synthesis batch must not partially commit"
+        "failed cross-chunk derived batch must not partially commit"
     );
 
     Ok(())
@@ -1811,7 +1811,7 @@ async fn get_by_ids_rejects_more_than_1000_ids(ctx: TestContext) -> TestResult<(
 
 /// Verify that the replacement matching query used by the replay writer
 /// distinguishes material events (matched by physical coordinates) from
-/// derived/synthesis events (matched by equivalence_key elsewhere).
+/// derived/derived events (matched by equivalence_key elsewhere).
 ///
 /// The replay writer filters to events WHERE `source_material_id IS NOT NULL
 /// AND anchor_byte IS NOT NULL`. This matches only material-provenance events;
@@ -1844,7 +1844,7 @@ async fn test_replacement_query_distinguishes_material_from_derived(
     let mat_inserted = pool.events().insert(mat_event).await?;
     let mat_event_id = mat_inserted.id.expect("material event id");
 
-    // Insert a source event first (parent for synthesis)
+    // Insert a source event first (parent for derived)
     let parent_payload = FileCreatedPayload::test_default(
         RecordedPath::from_observed("/tmp/replacement-parent.txt")
             .map_err(|e| color_eyre::eyre::eyre!(e))?,
@@ -1855,7 +1855,7 @@ async fn test_replacement_query_distinguishes_material_from_derived(
     let parent_inserted = pool.events().insert(parent_event).await?;
     let parent_id = parent_inserted.id.expect("parent event id");
 
-    // Insert a synthesis-provenance event (derived from parent, no material)
+    // Insert a derived-provenance event (derived from parent, no material)
     let syn_payload = FileCreatedPayload::test_default(
         RecordedPath::from_observed("/tmp/replacement-derived.txt")
             .map_err(|e| color_eyre::eyre::eyre!(e))?,
@@ -1864,7 +1864,7 @@ async fn test_replacement_query_distinguishes_material_from_derived(
         .from_parents(vec![parent_id])?
         .build()?;
     let syn_inserted = pool.events().insert(syn_event).await?;
-    let syn_event_id = syn_inserted.id.expect("synthesis event id");
+    let syn_event_id = syn_inserted.id.expect("derived event id");
 
     // The replacement matching query from replay_writer.rs —
     // filters to material events only.

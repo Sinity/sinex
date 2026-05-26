@@ -111,7 +111,7 @@ impl ReplayExecutionEngine {
             event_types.insert(event.event_type.as_ref().to_string());
             match &event.provenance {
                 Provenance::Material { .. } => {}
-                Provenance::Synthesis { .. } => {
+                Provenance::Derived { .. } => {
                     return Err(SinexError::invalid_state(format!(
                         "Replay scope included non-material root '{}' / '{}'",
                         event.source, event.event_type

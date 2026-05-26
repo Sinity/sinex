@@ -3,8 +3,8 @@
 //! Validates source filtering, JSON field extraction, exit code parsing,
 //! timestamp fallback, and empty-command handling.
 
-use sinex_node_sdk::derived_node::DerivedTriggerContext;
-use sinex_node_sdk::{NodeLogicError, TransducerNode};
+use sinex_node_sdk::derived_node::AutomatonContext;
+use sinex_node_sdk::{NodeLogicError, Transducer};
 use sinex_primitives::domain::{ProcessingMode, TriggerKind};
 use sinex_primitives::events::Event;
 use sinex_primitives::events::EventPayload;
@@ -18,9 +18,9 @@ fn make_context_with_optional_ts(
     source: &str,
     event_type: &str,
     ts_orig: Option<Timestamp>,
-) -> DerivedTriggerContext {
+) -> AutomatonContext {
     let event_id: Id<Event<JsonValue>> = Id::new();
-    DerivedTriggerContext {
+    AutomatonContext {
         trigger_event_id: event_id,
         source: source.into(),
         event_type: event_type.into(),
@@ -32,7 +32,7 @@ fn make_context_with_optional_ts(
     }
 }
 
-fn make_context(source: &str, event_type: &str) -> DerivedTriggerContext {
+fn make_context(source: &str, event_type: &str) -> AutomatonContext {
     make_context_with_optional_ts(source, event_type, Some(Timestamp::now()))
 }
 

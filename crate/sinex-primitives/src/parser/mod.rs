@@ -481,8 +481,8 @@ pub struct ParsedEventIntent {
     /// A freshly-generated `UUIDv7` identity for this intent.
     ///
     /// The transport layer uses this as the event ID it persists and
-    /// references in confirmations. Synthesis intents reference their
-    /// parent's `id` in `synthesis_parents`.
+    /// references in confirmations. Derived intents reference their
+    /// parent's `id` in `derived_parents`.
     #[builder(default = Id::new())]
     pub id: EventId,
 
@@ -512,9 +512,9 @@ pub struct ParsedEventIntent {
 
     /// Where in the source material this event came from.
     ///
-    /// For synthesis intents produced via [`ParsedEventIntent::derive_synthesis`],
+    /// For derived intents produced via [`ParsedEventIntent::derive_from_parents`],
     /// this carries the parent's anchor verbatim (no independent material
-    /// position). The transport layer uses `synthesis_parents` to detect synthesis
+    /// position). The transport layer uses `derived_parents` to detect derived
     /// provenance and ignores `anchor` for those intents.
     pub anchor: MaterialAnchor,
 
@@ -540,33 +540,33 @@ pub struct ParsedEventIntent {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub field_privacy_log: Option<Vec<crate::privacy::FieldPrivacyDecision>>,
 
-    /// Parent event IDs for synthesis provenance.
+    /// Parent event IDs for derived provenance.
     ///
     /// `None` means this intent carries **material provenance** — it was
     /// derived directly from source bytes.  `Some(ids)` means this intent
-    /// carries **synthesis provenance** — it was derived from one or more
+    /// carries **derived provenance** — it was derived from one or more
     /// already-persisted events.  The transport layer checks this field
     /// before constructing the `Provenance` variant for DB insertion.
     ///
-    /// Populated by [`ParsedEventIntent::derive_synthesis`]; do not set
-    /// manually unless you are constructing a synthesis intent explicitly.
+    /// Populated by [`ParsedEventIntent::derive_from_parents`]; do not set
+    /// manually unless you are constructing a derived intent explicitly.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub synthesis_parents: Option<Vec<EventId>>,
+    pub derived_parents: Option<Vec<EventId>>,
 }
 
 impl ParsedEventIntent {
-    /// Derive a synthesis event from this material-provenance intent.
+    /// Derive a derived event from this material-provenance intent.
     ///
     /// Given `self` (a material-provenance parsed event), builds a new
     /// `ParsedEventIntent` whose provenance is
-    /// `Synthesis { source_event_ids: [self.id] }`.
+    /// `Derived { source_event_ids: [self.id] }`.
     ///
     /// The returned intent:
     /// - Carries the parent's `source_unit_id`, `parser_id`, `parser_version`,
     ///   `acquisition_time` (via `ts_orig`), and `anchor` (transport layer
-    ///   ignores it for synthesis intents).
+    ///   ignores it for derived intents).
     /// - Has its own freshly-generated `id` (`UUIDv7`).
-    /// - Has `synthesis_parents = Some(vec![self.id])` pointing to `self`.
+    /// - Has `derived_parents = Some(vec![self.id])` pointing to `self`.
     /// - Has `event_source` and `event_type` taken from `P::SOURCE` /
     ///   `P::EVENT_TYPE` (the *new* payload, **not** the parent's types).
     /// - Has `occurrence_key = None` and `field_privacy_log = None`.
@@ -574,39 +574,39 @@ impl ParsedEventIntent {
     /// # Errors
     ///
     /// Returns [`ParserError`] if:
-    /// - `self` already has synthesis provenance (`synthesis_parents.is_some()`).
-    ///   Chained synthesis requires explicit construction with the full parent
+    /// - `self` already has derived provenance (`derived_parents.is_some()`).
+    ///   Chained derived requires explicit construction with the full parent
     ///   set — this helper is intentionally limited to single-hop derivation from
     ///   a material-provenance parent.
     /// - `self.id` would appear as both parent and child (self-referential
-    ///   synthesis). This is structurally impossible with a freshly generated
+    ///   derived). This is structurally impossible with a freshly generated
     ///   child ID, but the check is made explicit for correctness.
-    pub fn derive_synthesis<P>(&self, payload: P) -> Result<ParsedEventIntent, ParserError>
+    pub fn derive_from_parents<P>(&self, payload: P) -> Result<ParsedEventIntent, ParserError>
     where
         P: crate::events::EventPayload,
     {
-        // Reject synthesis-from-synthesis: chained synthesis needs explicit
+        // Reject derived-from-derived: chained derived needs explicit
         // construction with the complete parent set.
-        if self.synthesis_parents.is_some() {
+        if self.derived_parents.is_some() {
             return Err(SinexError::validation(
-                "derive_synthesis requires a material-provenance parent; \
-                 chained synthesis must be constructed explicitly with the full parent set",
+                "derive_from_parents requires a material-provenance parent; \
+                 chained derived must be constructed explicitly with the full parent set",
             )
             .with_context("parent_id", self.id.to_uuid().to_string()));
         }
 
         let child_id: EventId = Id::new();
 
-        // Self-referential synthesis is impossible with a fresh ID, but guard
+        // Self-referential derived is impossible with a fresh ID, but guard
         // it explicitly so the invariant is visible and testable.
         if child_id == self.id {
             return Err(SinexError::validation(
-                "derive_synthesis produced a self-referential synthesis (child id == parent id)",
+                "derive_from_parents produced a self-referential derived (child id == parent id)",
             ));
         }
 
         let child_payload = serde_json::to_value(&payload).map_err(|e| {
-            SinexError::serialization("failed to serialize synthesis payload")
+            SinexError::serialization("failed to serialize derived payload")
                 .with_context("event_type", P::EVENT_TYPE.as_str().to_string())
                 .with_std_error(&e)
         })?;
@@ -619,30 +619,30 @@ impl ParsedEventIntent {
             event_type: P::EVENT_TYPE,
             event_source: P::SOURCE,
             payload: child_payload,
-            // Preserve the parent's real-world timestamp so the synthesis
+            // Preserve the parent's real-world timestamp so the derived
             // event sits in the same temporal window as its material parent.
             ts_orig: self.ts_orig,
             timing: self.timing.clone(),
             // Carry the parent anchor verbatim; transport layer uses
-            // synthesis_parents to detect synthesis and ignores anchor.
+            // derived_parents to detect derived and ignores anchor.
             anchor: self.anchor.clone(),
             occurrence_key: None,
             privacy_context: self.privacy_context,
             field_privacy_log: None,
-            synthesis_parents: Some(vec![self.id]),
+            derived_parents: Some(vec![self.id]),
         })
     }
 
     /// Returns `true` if this intent carries material provenance.
     #[must_use]
     pub fn is_material(&self) -> bool {
-        self.synthesis_parents.is_none()
+        self.derived_parents.is_none()
     }
 
-    /// Returns `true` if this intent carries synthesis provenance.
+    /// Returns `true` if this intent carries derived provenance.
     #[must_use]
     pub fn is_synthesis(&self) -> bool {
-        self.synthesis_parents.is_some()
+        self.derived_parents.is_some()
     }
 }
 
@@ -768,19 +768,19 @@ mod tests {
             occurrence_key: None,
             privacy_context: crate::privacy::ProcessingContext::Metadata,
             field_privacy_log: None,
-            synthesis_parents: None,
+            derived_parents: None,
         }
     }
 
-    /// Build a synthesis-provenance `ParsedEventIntent` for tests.
+    /// Build a derived-provenance `ParsedEventIntent` for tests.
     fn synthesis_intent() -> ParsedEventIntent {
         let mut intent = material_intent();
-        intent.synthesis_parents = Some(vec![Id::new()]);
+        intent.derived_parents = Some(vec![Id::new()]);
         intent
     }
 
     // ---------------------------------------------------------------------------
-    // derive_synthesis tests
+    // derive_from_parents tests
     // ---------------------------------------------------------------------------
 
     #[sinex_test]
@@ -790,13 +790,13 @@ mod tests {
         let parent = material_intent();
         let tag_payload = KnowledgeTagAppliedPayload::test_default();
 
-        let child = parent.derive_synthesis(tag_payload)?;
+        let child = parent.derive_from_parents(tag_payload)?;
 
-        // synthesis_parents must be populated with the parent's id
+        // derived_parents must be populated with the parent's id
         let parents = child
-            .synthesis_parents
+            .derived_parents
             .as_ref()
-            .expect("synthesis_parents must be Some");
+            .expect("derived_parents must be Some");
         assert_eq!(parents.len(), 1);
         assert_eq!(parents[0], parent.id);
         assert!(child.is_synthesis());
@@ -813,7 +813,7 @@ mod tests {
         let parent_ts = parent.ts_orig;
         let tag_payload = KnowledgeTagAppliedPayload::test_default();
 
-        let child = parent.derive_synthesis(tag_payload)?;
+        let child = parent.derive_from_parents(tag_payload)?;
 
         assert_eq!(
             child.ts_orig, parent_ts,
@@ -831,7 +831,7 @@ mod tests {
         let parent_id = parent.id;
         let tag_payload = KnowledgeTagAppliedPayload::test_default();
 
-        let child = parent.derive_synthesis(tag_payload)?;
+        let child = parent.derive_from_parents(tag_payload)?;
 
         assert_ne!(child.id, parent_id, "child id must differ from parent id");
 
@@ -845,11 +845,11 @@ mod tests {
         let parent = synthesis_intent();
         let tag_payload = KnowledgeTagAppliedPayload::test_default();
 
-        let result = parent.derive_synthesis(tag_payload);
+        let result = parent.derive_from_parents(tag_payload);
 
         assert!(
             result.is_err(),
-            "derive_synthesis must reject a synthesis-provenance parent"
+            "derive_from_parents must reject a derived-provenance parent"
         );
         let err = result.unwrap_err();
         let msg = err.message();
@@ -871,7 +871,7 @@ mod tests {
         let parent_event_type = parent.event_type.clone();
         let tag_payload = KnowledgeTagAppliedPayload::test_default();
 
-        let child = parent.derive_synthesis(tag_payload)?;
+        let child = parent.derive_from_parents(tag_payload)?;
 
         assert_ne!(
             child.event_type, parent_event_type,

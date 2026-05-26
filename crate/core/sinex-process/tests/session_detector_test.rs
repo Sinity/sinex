@@ -1,5 +1,5 @@
-use sinex_node_sdk::WindowedNode;
-use sinex_node_sdk::derived_node::{DerivedAggregationMeta, DerivedTriggerContext};
+use sinex_node_sdk::Windowed;
+use sinex_node_sdk::derived_node::{DerivedAggregationMeta, AutomatonContext};
 use sinex_primitives::activity::ActivitySourceKind;
 use sinex_primitives::domain::{ProcessingMode, TriggerKind};
 use sinex_primitives::events::payloads::{
@@ -12,9 +12,9 @@ use sinex_process::automata::session::{SessionDetector, SessionState};
 use std::collections::BTreeMap;
 use xtask::sandbox::prelude::*;
 
-fn make_context(ts_orig: Timestamp) -> DerivedTriggerContext {
+fn make_context(ts_orig: Timestamp) -> AutomatonContext {
     let event_id: Id<Event<JsonValue>> = Id::new();
-    DerivedTriggerContext {
+    AutomatonContext {
         trigger_event_id: event_id,
         source: ActivityWindowSummaryPayload::SOURCE,
         event_type: ActivityWindowSummaryPayload::EVENT_TYPE,

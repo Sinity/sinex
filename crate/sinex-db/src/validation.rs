@@ -430,7 +430,7 @@ impl EventValidator {
     fn validate_provenance(&self, provenance: &Provenance) -> ValidationResult {
         match provenance {
             Provenance::Material { .. } => Ok(()),
-            Provenance::Synthesis {
+            Provenance::Derived {
                 source_event_ids, ..
             } => {
                 let mut seen = HashSet::new();

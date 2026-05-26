@@ -1,5 +1,5 @@
-use sinex_node_sdk::derived_node::{DerivedOutput, DerivedTriggerContext};
-use sinex_node_sdk::{NodeLogicError, WindowedNode};
+use sinex_node_sdk::derived_node::{DerivedOutput, AutomatonContext};
+use sinex_node_sdk::{NodeLogicError, Windowed};
 use sinex_primitives::activity::ActivitySourceKind;
 use sinex_primitives::domain::{ProcessingMode, TriggerKind};
 use sinex_primitives::events::payloads::{
@@ -11,9 +11,9 @@ use sinex_primitives::{Id, JsonValue};
 use sinex_process::automata::hourly::{HourlySummarizer, HourlySummaryState};
 use xtask::sandbox::prelude::*;
 
-fn make_context(ts_orig: Timestamp) -> DerivedTriggerContext {
+fn make_context(ts_orig: Timestamp) -> AutomatonContext {
     let event_id: Id<Event<JsonValue>> = Id::new();
-    DerivedTriggerContext {
+    AutomatonContext {
         trigger_event_id: event_id,
         source: ActivityWindowSummaryPayload::SOURCE,
         event_type: ActivityWindowSummaryPayload::EVENT_TYPE,
@@ -56,7 +56,7 @@ async fn process(
     summarizer: &mut HourlySummarizer,
     state: &mut HourlySummaryState,
     payload: ActivityWindowSummaryPayload,
-    context: &DerivedTriggerContext,
+    context: &AutomatonContext,
 ) -> Result<Option<DerivedOutput<ActivityHourlySummaryPayload>>, NodeLogicError> {
     summarizer.accumulate(state, payload, context).await?;
     if summarizer.window_complete(state) {

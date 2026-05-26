@@ -63,7 +63,7 @@ pub trait EventPayload: Serialize + DeserializeOwned + Send + Sync + 'static {
         Event::builder(self).from_material(material_id, anchor_byte)
     }
 
-    /// Start building an event from this payload with synthesis provenance.
+    /// Start building an event from this payload with derived provenance.
     #[allow(clippy::wrong_self_convention)] // Intentional: consumes self to build event
     fn from_parents<I>(self, parents: I) -> Result<EventBuilder<Self, HasProvenance>>
     where
@@ -190,7 +190,7 @@ impl DynamicPayload {
         self.into_builder().from_material(material_id, anchor_byte)
     }
 
-    /// Start building an event with synthesis provenance.
+    /// Start building an event with derived provenance.
     pub fn from_parents<I>(self, parents: I) -> Result<EventBuilder<JsonValue, HasProvenance>>
     where
         I: IntoIterator<Item = EventId>,

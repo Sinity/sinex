@@ -57,7 +57,7 @@ pub struct StreamBatchRow {
     pub offset_end: Option<i64>,
     /// Offset kind (e.g., "byte", "line")
     pub offset_kind: Option<String>,
-    /// Parent event IDs (for synthesis provenance)
+    /// Parent event IDs (for derived provenance)
     pub source_event_ids: Option<Vec<EventId>>,
     /// Schema ID for payload validation
     pub payload_schema_id: Option<Uuid>,
@@ -97,7 +97,7 @@ pub struct StreamBatchInsertResult {
 enum StreamBatchInsertStrategy {
     QueryBuilder,
     Copy,
-    Synthesis,
+    Derived,
 }
 
 /// Event repository for database operations
@@ -105,7 +105,7 @@ pub struct EventRepository<'a> {
     pub(super) pool: &'a PgPool,
 }
 
-/// Validate that a synthesis event does not directly reference itself.
+/// Validate that a derived event does not directly reference itself.
 ///
 /// # Why only the direct self-reference check here?
 ///
@@ -121,12 +121,12 @@ pub struct EventRepository<'a> {
 ///   O(n) scan.
 ///
 /// The previous implementation ran a `WITH RECURSIVE` CTE to walk the full
-/// ancestry graph on every synthesis insert. That check added a full
+/// ancestry graph on every derived insert. That check added a full
 /// recursive DB round-trip per batch row for a condition that `UUIDv7`
 /// monotonicity already makes structurally impossible. It has been removed.
 ///
 /// Batch-local cycles are still possible when a caller inserts multiple new
-/// synthesis events with explicit IDs in the same batch. Those are rejected by
+/// derived events with explicit IDs in the same batch. Those are rejected by
 /// `ensure_no_intra_batch_synthesis_cycles` before insert.
 ///
 /// Array-size limits are retained because large `source_event_ids` arrays have
@@ -150,7 +150,7 @@ where
     if source_event_ids.len() > HARD_LIMIT {
         return Err(SinexError::database(format!(
             "source_event_ids array exceeds hard limit of {} parents (got {}). \
-             This indicates a pathological synthesis pattern that will cause performance issues.",
+             This indicates a pathological derived pattern that will cause performance issues.",
             HARD_LIMIT,
             source_event_ids.len()
         )));
@@ -163,7 +163,7 @@ where
             threshold = WARN_THRESHOLD,
             hard_limit = HARD_LIMIT,
             "Event has unusually large number of parent events. \
-             This may indicate a synthesis anti-pattern and will impact query performance."
+             This may indicate a derived anti-pattern and will impact query performance."
         );
     }
 
@@ -173,7 +173,7 @@ where
         .any(|source_id| source_id == event_id)
     {
         return Err(SinexError::database(
-            "cycle detected in synthesis provenance",
+            "cycle detected in derived provenance",
         ));
     }
 
@@ -226,7 +226,7 @@ fn ensure_no_intra_batch_synthesis_cycles(
                 .collect::<Vec<_>>()
                 .join(" -> ");
             return Err(SinexError::database(format!(
-                "cycle detected in synthesis provenance within batch: {cycle}"
+                "cycle detected in derived provenance within batch: {cycle}"
             )));
         }
     }
@@ -496,7 +496,7 @@ impl<'a> EventRepository<'a> {
         });
 
         if has_synthesis {
-            Some(StreamBatchInsertStrategy::Synthesis)
+            Some(StreamBatchInsertStrategy::Derived)
         } else if batch.len() >= COPY_BATCH_THRESHOLD {
             Some(StreamBatchInsertStrategy::Copy)
         } else {
@@ -1175,7 +1175,7 @@ impl<'a> EventRepository<'a> {
 
         ensure_no_intra_batch_synthesis_cycles(&synthesis_checks)?;
 
-        // Enforce synthesis cycle detection (parity with insert/insert_stream_batch)
+        // Enforce derived cycle detection (parity with insert/insert_stream_batch)
         for (event_id, source_ids) in &synthesis_checks {
             ensure_no_synthesis_cycles(&mut **tx, event_id, source_ids)?;
         }
@@ -1260,16 +1260,16 @@ impl<'a> EventRepository<'a> {
 
         match Self::stream_batch_insert_strategy(batch) {
             None => Ok(StreamBatchInsertResult::default()),
-            // Synthesis batches: wrap in REPEATABLE READ for cycle detection.
+            // Derived batches: wrap in REPEATABLE READ for cycle detection.
             // COPY cannot be mixed with cycle-detection queries in the same
-            // transaction easily, so synthesis batches use the VALUES path.
+            // transaction easily, so derived batches use the VALUES path.
             //
             // PostgreSQL caps bound parameters at 65 535 per query. With 22
             // columns per event, each chunk must stay ≤ ⌊65535 / 22⌋ = 2978
             // events to stay within the wire-protocol limit. Large mixed batches
-            // (material + synthesis) arrive during burst replay and would otherwise
+            // (material + derived) arrive during burst replay and would otherwise
             // exceed the limit and fail.
-            Some(StreamBatchInsertStrategy::Synthesis) => {
+            Some(StreamBatchInsertStrategy::Derived) => {
                 // Intra-batch cycle check runs on the full batch before splitting.
                 let synthesis_checks = batch
                     .iter()
@@ -1339,7 +1339,7 @@ impl<'a> EventRepository<'a> {
 
     /// Build and execute the batch INSERT query against the given executor.
     ///
-    /// Extracted so both the transactional (synthesis) and direct (material)
+    /// Extracted so both the transactional (derived) and direct (material)
     /// paths can share the same query construction logic.
     #[instrument(skip(executor, batch), fields(batch_size = batch.len(), path = "query_builder"))]
     async fn execute_batch_insert<'e, E>(
@@ -1487,10 +1487,10 @@ impl<'a> EventRepository<'a> {
     /// With 22 writable event columns per row that caps VALUES batches at ~2 900 rows. COPY has no
     /// such limit and has lower per-row overhead.
     ///
-    /// # Why not synthesis batches?
-    /// Synthesis batches require a REPEATABLE READ transaction for cycle detection.
+    /// # Why not derived batches?
+    /// Derived batches require a REPEATABLE READ transaction for cycle detection.
     /// Combining that with COPY (which also monopolises the connection while active)
-    /// is possible but adds complexity. The caller already routes synthesis batches
+    /// is possible but adds complexity. The caller already routes derived batches
     /// through `execute_batch_insert`, so this function handles material-only batches.
     #[instrument(skip(pool, batch), fields(batch_size = batch.len(), path = "copy"))]
     async fn execute_batch_insert_copy(
@@ -2666,7 +2666,7 @@ mod tests {
         let event = record.try_to_event()?;
 
         match &event.provenance {
-            crate::models::Provenance::Synthesis {
+            crate::models::Provenance::Derived {
                 source_event_ids,
                 operation_id: provenance_operation_id,
             } => {
@@ -2679,7 +2679,7 @@ mod tests {
                     Some(operation_id)
                 );
             }
-            other => panic!("expected synthesis provenance, got {other:?}"),
+            other => panic!("expected derived provenance, got {other:?}"),
         }
         assert_eq!(event.created_by_operation_id, Some(operation_id));
 
@@ -2700,10 +2700,10 @@ mod tests {
             ts_orig: Some(Timestamp::now()),
             source_run_id: None,
             payload_schema_id: None,
-            provenance: crate::models::Provenance::from_synthesis([
+            provenance: crate::models::Provenance::from_derived([
                 sinex_primitives::events::EventId::from_uuid(parent_id.to_uuid()),
             ])
-            .expect("single parent should produce synthesis provenance")
+            .expect("single parent should produce derived provenance")
             .with_operation(provenance_operation_id),
             associated_blob_ids: None,
             temporal_policy: None,
@@ -2751,7 +2751,7 @@ mod tests {
         let batch = vec![row];
         assert_eq!(
             EventRepository::stream_batch_insert_strategy(&batch),
-            Some(StreamBatchInsertStrategy::Synthesis)
+            Some(StreamBatchInsertStrategy::Derived)
         );
         Ok(())
     }

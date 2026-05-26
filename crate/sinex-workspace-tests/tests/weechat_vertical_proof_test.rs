@@ -2,7 +2,7 @@
 //!
 //! This test replaces the fake-scan-node pattern (direct DB inserts) with the
 //! real parser pipeline: `AppendOnlyFileAdapter` → `WeeChatLogParser` →
-//! `ParsedEventIntent` → Event (material provenance) → `AdmittedEventIntent` →
+//! `ParsedEventIntent` → Event (material provenance) → `EventIntent` →
 //! NATS publish → ingestd admission → DB persistence → query verification.
 //!
 //! # Coverage
@@ -20,7 +20,7 @@ use sinex_node_sdk::parser::{
 };
 use sinex_primitives::domain::HostName;
 use sinex_primitives::events::SourceMaterial;
-use sinex_primitives::events::admission::AdmittedEventIntent;
+use sinex_primitives::events::admission::EventIntent;
 use sinex_primitives::events::builder::{OffsetKind, Provenance};
 use sinex_primitives::parser::{MaterialAnchor, ParsedEventIntent, ParserContext, SourceUnitId};
 use sinex_primitives::{Event, Id, Timestamp, Uuid};
@@ -201,7 +201,7 @@ async fn weechat_full_pipeline_persists_correctly(ctx: TestContext) -> TestResul
     let events = intents_to_events(&intents, material_id);
 
     // ── Build admitted event intent ──────────────────────────────────────
-    let admitted = AdmittedEventIntent::new(
+    let admitted = EventIntent::new(
         "weechat",
         "weechat-log",
         "1.0.0",

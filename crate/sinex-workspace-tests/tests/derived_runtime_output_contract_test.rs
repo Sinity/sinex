@@ -1,7 +1,7 @@
 //! Runtime proof for production derived-node outputs.
 //!
 //! This is intentionally stronger than the per-crate logic tests: each production automaton is
-//! initialized through the node runtime, emits synthesis envelopes through the SDK adapter, and
+//! initialized through the node runtime, emits derived envelopes through the SDK adapter, and
 //! those envelopes are then persisted through the normal NATS -> ingestd -> Postgres path.
 
 use std::collections::HashMap;
@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use camino::Utf8PathBuf;
 use sinex_node_sdk::derived_node::{ScopeReconcilerWrapper, TransducerWrapper, WindowedWrapper};
 use sinex_node_sdk::runtime::stream::{Node, NodeInitContext};
-use sinex_node_sdk::{DerivedNodeConfig, ShutdownConfig, derived_node::DerivedNodeImpl};
+use sinex_node_sdk::{DerivedNodeConfig, ShutdownConfig, derived_node::Automaton};
 use sinex_primitives::domain::{DerivedNodeModel, SyntheticTemporalPolicy};
 use sinex_primitives::events::EventPayload;
 use sinex_primitives::events::payloads::{
@@ -223,7 +223,7 @@ async fn process_derived_batch<N>(
     inputs: Vec<Event<JsonValue>>,
 ) -> TestResult<Vec<Event<JsonValue>>>
 where
-    N: DerivedNodeImpl + Send + Sync + 'static,
+    N: Automaton + Send + Sync + 'static,
 {
     let checkpoint_dir = tempfile::tempdir()?;
     let checkpoint_path = checkpoint_dir.path().join(format!("{service_name}.json"));
@@ -232,7 +232,7 @@ where
         ..Default::default()
     };
     let mut adapter =
-        sinex_node_sdk::DerivedNodeAdapter::with_shutdown_config(node, shutdown_config);
+        sinex_node_sdk::AutomatonRuntime::with_shutdown_config(node, shutdown_config);
     let mut runtime = TestRuntimeBuilder::new(ctx, service_name).build().await?;
     let init = derived_init_context(&runtime, service_name)?;
     adapter.initialize(init).await?;

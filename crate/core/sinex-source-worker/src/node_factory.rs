@@ -6,7 +6,7 @@
 //!
 //! # How to add a new source unit
 //!
-//! 1. Implement `IngestorNode` for your source unit.
+//! 1. Implement `SourceUnit` for your source unit.
 //! 2. Call `register_node_factory!("your.unit.id", YourSourceUnit)` in the
 //!    source unit's module.
 //!
@@ -64,7 +64,7 @@ pub fn registered_node_factory_ids() -> Vec<SourceUnitId> {
     ids
 }
 
-/// Register a source unit's [`IngestorNode`] with the node factory registry.
+/// Register a source unit's [`SourceUnit`] with the node factory registry.
 ///
 /// # Example
 ///
@@ -174,13 +174,13 @@ where
     A::Cursor: Clone + serde::Serialize + serde::de::DeserializeOwned + Send + Sync,
 {
     use clap::Parser;
-    use sinex_node_sdk::IngestorNodeAdapter;
+    use sinex_node_sdk::SourceUnitRuntime;
     use sinex_node_sdk::node_cli::{NodeCli, NodeCliRunner};
     use sinex_node_sdk::parser::AdapterBackedIngestor;
 
     let parsed = NodeCli::parse_from(args);
     let node = AdapterBackedIngestor::<A, P>::new(source_unit_id);
-    let adapter = IngestorNodeAdapter::new(node);
+    let adapter = SourceUnitRuntime::new(node);
     let mut runner = NodeCliRunner::new(adapter);
     runner.run(parsed).await.map_err(std::convert::Into::into)
 }
@@ -196,14 +196,14 @@ pub async fn run_ingestor<I>(
     args: Vec<std::ffi::OsString>,
 ) -> Result<(), Box<dyn std::error::Error>>
 where
-    I: sinex_node_sdk::IngestorNode + Default + 'static,
+    I: sinex_node_sdk::SourceUnit + Default + 'static,
 {
     use clap::Parser;
-    use sinex_node_sdk::IngestorNodeAdapter;
+    use sinex_node_sdk::SourceUnitRuntime;
     use sinex_node_sdk::node_cli::{NodeCli, NodeCliRunner};
 
     let parsed = NodeCli::parse_from(args);
-    let node = IngestorNodeAdapter::new(I::default());
+    let node = SourceUnitRuntime::new(I::default());
     let mut runner = NodeCliRunner::new(node);
     runner.run(parsed).await.map_err(std::convert::Into::into)
 }

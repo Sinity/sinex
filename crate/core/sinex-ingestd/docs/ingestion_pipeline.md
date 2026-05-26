@@ -43,14 +43,14 @@ The complete path of a single event through the system:
 12. JSON parse + UUIDv7/RFC4122 event ID validation (fail → DLQ).
 13. Schema validation against `sinex_schemas` registry (lenient: unknown types pass).
 14. `MaterialReadySet` pre-check for FK constraint (not ready → NAK + retry).
-15. Batch routing: synthesis → REPEATABLE READ TX; material ≥50 → COPY; else → `QueryBuilder`.
+15. Batch routing: derived → REPEATABLE READ TX; material ≥50 → COPY; else → `QueryBuilder`.
 16. COPY path: staging table, tab-delimited SIMD-escaped rows, `INSERT ... SELECT`.
 17. XOR provenance CHECK fires at DB level (redundant with step 6, defense-in-depth).
 18. Confirmation events published to NATS Confirmations stream (per-event).
 19. SSE `SubscriptionBus` delivers to connected browser/CLI clients.
-20. `ConfirmationBuffer` delivers to automata (`DerivedNodeAdapter`).
-21. Automaton processes event → emits synthesis event with `.from_parents()`.
-22. Synthesis event re-enters pipeline at step 10 (back to NATS).
+20. `ConfirmationBuffer` delivers to automata (`AutomatonRuntime`).
+21. Automaton processes event → emits derived event with `.from_parents()`.
+22. Derived event re-enters pipeline at step 10 (back to NATS).
 23. Event queryable via gateway RPC.
 
 ### Batch Insert Routing

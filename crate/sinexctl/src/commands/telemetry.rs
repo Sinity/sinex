@@ -680,7 +680,7 @@ fn format_ingestd_batch_stats_table(buckets: &[IngestdBatchStatsBucket]) -> Stri
             format_opt_f64(bucket.max_latency_ms),
             format_opt_i64(bucket.total_deferred),
             format_opt_i64(bucket.total_failed),
-            bucket.synthesis_batches.to_string(),
+            bucket.derived_batches.to_string(),
             bucket.batch_count.to_string(),
             format_opt_f64(bucket.avg_validation_coverage_pct),
         ]);
@@ -699,8 +699,8 @@ fn format_ingestd_validation_table(snapshot: &IngestdValidationSnapshot) -> Stri
     builder.push_record(["Deferred", &snapshot.events_deferred.to_string()]);
     builder.push_record(["Failed", &snapshot.events_failed.to_string()]);
     builder.push_record([
-        "Had Synthesis",
-        if snapshot.had_synthesis { "yes" } else { "no" },
+        "Had Derived",
+        if snapshot.had_derived { "yes" } else { "no" },
     ]);
     builder.push_record(["Insert Path", snapshot.insert_path.as_str()]);
     builder.push_record(["Valid", &snapshot.validation_valid.to_string()]);

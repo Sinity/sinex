@@ -125,7 +125,7 @@ async fn material_event_projected_through_ledger(ctx: TestContext) -> TestResult
 async fn synthetic_event_projected_inline(ctx: TestContext) -> TestResult<()> {
     let material_id = register_test_material(&ctx, "temporal-facts-synth-parent").await?;
 
-    // Create a source event (needed as parent for synthesis)
+    // Create a source event (needed as parent for derived)
     let source_payload = KittyCommandExecutedPayload::test_default("echo synth-parent");
     let source_event = Event::builder(source_payload)
         .with_provenance(Provenance::from_material(material_id, 0, None, None))

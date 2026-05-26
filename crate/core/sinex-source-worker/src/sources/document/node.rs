@@ -2,7 +2,7 @@
 //! the `AcquisitionManager` (Stage-as-You-Go).
 //!
 //! Moved verbatim from the legacy `sinex-document-ingestor` crate during the
-//! Wave-B fold (#1081). The legacy crate had a single `IngestorNode` impl
+//! Wave-B fold (#1081). The legacy crate had a single `SourceUnit` impl
 //! plus a handful of helpers; carrying them here lets the legacy crate
 //! disappear without requiring an SDK extension. The source-unit descriptor
 //! and binding live in `sources/document/staging.rs`, not in this file.
@@ -17,7 +17,7 @@ use sinex_node_sdk::{
 use sinex_node_sdk::{
     EventTransport, NodeResult, SinexError,
     acquisition_manager::{AcquisitionManager, RotationPolicy},
-    ingestor_node::IngestorNode,
+    ingestor_node::SourceUnit,
     runtime::stream::{
         Checkpoint, ContinuousStart, NodeCapabilities, NodeRuntimeState, ScanArgs, ScanReport,
         TimeHorizon,
@@ -705,7 +705,7 @@ impl DocumentNode {
             .emit_event_with_provenance(json_event, material_id, Some(0), Some(total_bytes))
             .await?;
 
-        // Auto-tag based on detected MIME type — emit synthesis events
+        // Auto-tag based on detected MIME type — emit derived events
         // derived from the document.ingested parent event.
         let auto_tags = tags::auto_tags_for_mime(&document.mime);
         for tag_name in &auto_tags {
@@ -783,7 +783,7 @@ fn redact_metadata(value: &str) -> NodeResult<String> {
         .into_owned())
 }
 
-impl IngestorNode for DocumentNode {
+impl SourceUnit for DocumentNode {
     type Config = DocumentIngestorConfig;
     type State = DocumentCheckpoint;
 

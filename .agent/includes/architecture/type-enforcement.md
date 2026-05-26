@@ -11,7 +11,7 @@ The type system makes the wrong thing unrepresentable.
 | Mixing event IDs with blob IDs | `Id<Event>` vs `Id<Blob>` (phantom type) |
 | Building events without provenance | `EventBuilder<T, NoProvenance>` has no `.build()` method |
 | Confusing source with event type | `EventSource` vs `EventType` (distinct newtypes) |
-| Empty synthesis parent arrays | `NonEmptyVec<EventId>` in `Provenance::Synthesis` |
+| Empty derived parent arrays | `NonEmptyVec<EventId>` in `Provenance::Derived` |
 | Invalid source strings in constants | `EventSource::from_static()` validated at compile time |
 
 ### Level 2: Lint Enforced / AST-Grep Catalog
@@ -32,7 +32,7 @@ PostgreSQL rejects violations at write time.
 |------------|----------------|
 | XOR provenance CHECK | `source_material_id` XOR `source_event_ids` (exactly one set) |
 | Material FK | `source_material_id` references `raw.source_material_registry` |
-| Non-empty synthesis parents | `cardinality(source_event_ids) > 0` |
+| Non-empty derived parents | `cardinality(source_event_ids) > 0` |
 | Anchor byte non-negative | `CHECK (anchor_byte >= 0)` |
 | Audit trigger | DELETE on `core.events` requires `sinex.operation_id` session var |
 

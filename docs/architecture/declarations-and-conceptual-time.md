@@ -23,7 +23,7 @@ a CLI command, UI form submission, voice transcript, edited note span, imported
 file row, or policy-control record is first registered as source material. The
 declaration event anchors to that material.
 
-Synthesis-provenance declarations are only valid when they are derived from
+Derived-provenance declarations are only valid when they are derived from
 existing events. Inferred assertions from notes, OCR, model output, or parser
 workbenches must normally enter as proposals until accepted through the
 proposal/judgment/finalizer boundary.

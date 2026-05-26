@@ -1,11 +1,11 @@
 //! Tests for the entity resolver — the second stage of the entity intelligence pipeline.
 //!
 //! Verifies deterministic `UUIDv5` identity assignment, type-aware canonicalization,
-//! deduplication via the persistent `known_entities` map, and `WindowedNode` semantics
+//! deduplication via the persistent `known_entities` map, and `Windowed` semantics
 //! (accumulate stages a pending payload, `window_complete` flips, emit returns + clears it).
 
-use sinex_node_sdk::WindowedNode;
-use sinex_node_sdk::derived_node::DerivedTriggerContext;
+use sinex_node_sdk::Windowed;
+use sinex_node_sdk::derived_node::AutomatonContext;
 use sinex_primitives::Uuid;
 use sinex_primitives::domain::{EntityTypeName, ProcessingMode, TriggerKind};
 use sinex_primitives::events::payloads::{EntityExtractedPayload, EntityResolvedPayload};
@@ -15,9 +15,9 @@ use sinex_primitives::{Id, JsonValue};
 use sinex_process::automata::entity_resolver::{EntityResolver, ResolverState};
 use xtask::sandbox::prelude::*;
 
-fn make_context() -> DerivedTriggerContext {
+fn make_context() -> AutomatonContext {
     let event_id: Id<Event<JsonValue>> = Id::new();
-    DerivedTriggerContext {
+    AutomatonContext {
         trigger_event_id: event_id,
         source: EntityExtractedPayload::SOURCE,
         event_type: EntityExtractedPayload::EVENT_TYPE,

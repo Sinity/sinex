@@ -673,7 +673,7 @@ impl GatewayClient {
         let req = ListInstancesRequest {
             node_type: role.map(|r| match r {
                 NodeRole::Capture => NodeType::Ingestor,
-                NodeRole::Synthesis => NodeType::Automaton,
+                NodeRole::Derived => NodeType::Automaton,
                 NodeRole::Core => NodeType::Service,
                 NodeRole::Gateway => NodeType::Service,
             }),

@@ -1,8 +1,8 @@
 //! Tests for health aggregator scope-reconciled aggregation logic
 
 use serde_json::json;
-use sinex_node_sdk::derived_node::{DerivedOutput, DerivedTriggerContext};
-use sinex_node_sdk::{NodeLogicError, ScopeReconcilerNode};
+use sinex_node_sdk::derived_node::{DerivedOutput, AutomatonContext};
+use sinex_node_sdk::{NodeLogicError, ScopeReconciler};
 use sinex_primitives::domain::{ProcessingMode, TriggerKind};
 use sinex_primitives::events::Event;
 use sinex_primitives::temporal::Timestamp;
@@ -13,9 +13,9 @@ use sinex_process::automata::health::{
 use time::Duration;
 use xtask::sandbox::prelude::*;
 
-fn make_context_with_optional_ts(ts_orig: Option<Timestamp>) -> DerivedTriggerContext {
+fn make_context_with_optional_ts(ts_orig: Option<Timestamp>) -> AutomatonContext {
     let event_id: Id<Event<JsonValue>> = Id::new();
-    DerivedTriggerContext {
+    AutomatonContext {
         trigger_event_id: event_id,
         source: "test".into(),
         event_type: "health.status".into(),
@@ -27,7 +27,7 @@ fn make_context_with_optional_ts(ts_orig: Option<Timestamp>) -> DerivedTriggerCo
     }
 }
 
-fn make_context(ts: Timestamp) -> DerivedTriggerContext {
+fn make_context(ts: Timestamp) -> AutomatonContext {
     make_context_with_optional_ts(Some(ts))
 }
 
@@ -37,7 +37,7 @@ async fn process(
     aggregator: &mut HealthAggregator,
     state: &mut HealthState,
     input: JsonValue,
-    ctx: &DerivedTriggerContext,
+    ctx: &AutomatonContext,
 ) -> Result<Vec<DerivedOutput<JsonValue>>, NodeLogicError> {
     let scope_keys = aggregator.scope_keys(&input, ctx);
     let mut outputs = Vec::new();

@@ -50,7 +50,7 @@ async fn synthesis_provenance_round_trips_with_operation_id() -> TestResult<()> 
     let parent_id: EventId = Id::new();
     let op_id: Id<OperationMarker> = Id::new();
 
-    let provenance = Provenance::Synthesis {
+    let provenance = Provenance::Derived {
         source_event_ids: NonEmptyVec::single(parent_id),
         operation_id: Some(op_id),
     };
@@ -70,14 +70,14 @@ async fn synthesis_provenance_round_trips_with_operation_id() -> TestResult<()> 
     // Round-trip: deserialize back
     let restored: Provenance = serde_json::from_value(wire_json)?;
     match &restored {
-        Provenance::Synthesis { operation_id, .. } => {
+        Provenance::Derived { operation_id, .. } => {
             assert_eq!(
                 *operation_id,
                 Some(op_id),
                 "operation_id must survive round-trip"
             );
         }
-        _ => panic!("expected Synthesis provenance"),
+        _ => panic!("expected Derived provenance"),
     }
 
     Ok(())
@@ -87,7 +87,7 @@ async fn synthesis_provenance_round_trips_with_operation_id() -> TestResult<()> 
 async fn synthesis_provenance_round_trips_without_operation_id() -> TestResult<()> {
     let parent_id: EventId = Id::new();
 
-    let provenance = Provenance::Synthesis {
+    let provenance = Provenance::Derived {
         source_event_ids: NonEmptyVec::single(parent_id),
         operation_id: None,
     };
@@ -103,13 +103,13 @@ async fn synthesis_provenance_round_trips_without_operation_id() -> TestResult<(
     // Round-trip
     let restored: Provenance = serde_json::from_value(wire_json)?;
     match &restored {
-        Provenance::Synthesis { operation_id, .. } => {
+        Provenance::Derived { operation_id, .. } => {
             assert_eq!(
                 *operation_id, None,
                 "None operation_id must round-trip as None"
             );
         }
-        _ => panic!("expected Synthesis provenance"),
+        _ => panic!("expected Derived provenance"),
     }
 
     Ok(())
@@ -127,16 +127,16 @@ async fn synthesis_provenance_canonicalizes_parent_ids() -> TestResult<()> {
         "018f0000-0000-7000-8000-000000000002",
     )?);
 
-    let provenance = Provenance::from_synthesis([first, second, first, third, second])
-        .expect("non-empty synthesis parent set should construct");
+    let provenance = Provenance::from_derived([first, second, first, third, second])
+        .expect("non-empty derived parent set should construct");
 
     match provenance {
-        Provenance::Synthesis {
+        Provenance::Derived {
             source_event_ids, ..
         } => {
             assert_eq!(source_event_ids.into_vec(), vec![second, third, first]);
         }
-        _ => panic!("expected Synthesis provenance"),
+        _ => panic!("expected Derived provenance"),
     }
 
     Ok(())
@@ -153,7 +153,7 @@ async fn synthesis_provenance_wire_read_canonicalizes_parent_ids() -> TestResult
     }))?;
 
     match restored {
-        Provenance::Synthesis {
+        Provenance::Derived {
             source_event_ids, ..
         } => {
             let ids: Vec<String> = source_event_ids
@@ -163,7 +163,7 @@ async fn synthesis_provenance_wire_read_canonicalizes_parent_ids() -> TestResult
                 .collect();
             assert_eq!(ids, vec![second, third, first]);
         }
-        _ => panic!("expected Synthesis provenance"),
+        _ => panic!("expected Derived provenance"),
     }
 
     Ok(())
@@ -181,7 +181,7 @@ async fn direct_dynamic_event_construction_canonicalizes_and_syncs_operation() -
     )?);
     let op_id: Id<OperationMarker> = Id::new();
 
-    let provenance = Provenance::Synthesis {
+    let provenance = Provenance::Derived {
         source_event_ids: NonEmptyVec::from_head_tail(first, vec![second, first]),
         operation_id: Some(op_id),
     };
@@ -224,7 +224,7 @@ async fn provenance_with_operation_helper_sets_operation_id() -> TestResult<()> 
     let parent_id: EventId = Id::new();
     let op_id: Id<OperationMarker> = Id::new();
 
-    let provenance = Provenance::Synthesis {
+    let provenance = Provenance::Derived {
         source_event_ids: NonEmptyVec::single(parent_id),
         operation_id: None,
     };
@@ -232,10 +232,10 @@ async fn provenance_with_operation_helper_sets_operation_id() -> TestResult<()> 
     let updated = provenance.with_operation(op_id);
 
     match &updated {
-        Provenance::Synthesis { operation_id, .. } => {
+        Provenance::Derived { operation_id, .. } => {
             assert_eq!(*operation_id, Some(op_id));
         }
-        _ => panic!("expected Synthesis provenance"),
+        _ => panic!("expected Derived provenance"),
     }
 
     // with_operation on Material is a no-op

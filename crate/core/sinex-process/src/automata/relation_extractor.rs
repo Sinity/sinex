@@ -1,4 +1,4 @@
-//! Relation extractor — [`ScopeReconcilerNode`] implementation.
+//! Relation extractor — [`ScopeReconciler`] implementation.
 //!
 //! Model classification: **`ScopeReconciler`** — maintains a sliding co-occurrence
 //! window of resolved entities. When the window closes (gap > 300 s or entity
@@ -6,9 +6,9 @@
 //!
 //! # Design note
 //!
-//! The spec originally called for a [`WindowedNode`], but that model can only emit
+//! The spec originally called for a [`Windowed`], but that model can only emit
 //! *one* output event per window completion. A co-occurrence window of N entities
-//! produces O(N²) pairwise relations. Using [`ScopeReconcilerNode`] is the
+//! produces O(N²) pairwise relations. Using [`ScopeReconciler`] is the
 //! correct fit: its `reconcile()` returns `Vec<DerivedOutput>`, supporting
 //! multi-emission per trigger while still checkpointing persistent state.
 //!
@@ -18,9 +18,9 @@
 
 use serde::{Deserialize, Serialize};
 use sinex_node_sdk::derived_node::{
-    DerivedOutput, DerivedTriggerContext, ScopeReconcilerNodeAdapter,
+    DerivedOutput, AutomatonContext, ScopeReconcilerNodeAdapter,
 };
-use sinex_node_sdk::{InputProvenanceFilter, NodeLogicError, ScopeReconcilerNode};
+use sinex_node_sdk::{InputProvenanceFilter, NodeLogicError, ScopeReconciler};
 use sinex_primitives::Uuid;
 use sinex_primitives::domain::{RelationType, SyntheticTemporalPolicy};
 use sinex_primitives::events::EventPayload;
@@ -91,7 +91,7 @@ pub struct RelationExtractor;
 /// Fixed scope key — all entities share one co-occurrence window.
 const CO_OCCURRENCE_SCOPE: &str = "co-occurrence-window";
 
-impl ScopeReconcilerNode for RelationExtractor {
+impl ScopeReconciler for RelationExtractor {
     type State = RelationExtractorState;
     type Input = EntityResolvedPayload;
     type Output = EntityRelatedPayload;
@@ -120,7 +120,7 @@ impl ScopeReconcilerNode for RelationExtractor {
         ProcessingContext::Metadata
     }
 
-    fn scope_keys(&self, _input: &Self::Input, _context: &DerivedTriggerContext) -> Vec<String> {
+    fn scope_keys(&self, _input: &Self::Input, _context: &AutomatonContext) -> Vec<String> {
         vec![CO_OCCURRENCE_SCOPE.to_string()]
     }
 
@@ -129,7 +129,7 @@ impl ScopeReconcilerNode for RelationExtractor {
         state: &mut Self::State,
         scope_key: &str,
         input: Self::Input,
-        context: &DerivedTriggerContext,
+        context: &AutomatonContext,
     ) -> Result<Vec<DerivedOutput<Self::Output>>, NodeLogicError> {
         debug_assert_eq!(
             scope_key, CO_OCCURRENCE_SCOPE,
@@ -259,10 +259,10 @@ register_source_unit_binding! {
         "derived",
     )
     .implementation("sinex-process")
-    .adapter("DerivedNodeAdapter")
+    .adapter("AutomatonRuntime")
     .output_event_type("entity.related")
     .privacy_context("inherits_from_parents")
-    .material_policy("synthesis_parents")
+    .material_policy("derived_parents")
     .checkpoint_policy("append_stream")
     .resource_shape("event_stream_consumer")
     .source_unit_id("relation-extractor")

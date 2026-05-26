@@ -8,7 +8,7 @@ Nodes (Ingestors)          Nodes (Automata)           Clients
   desktop, system,           analytics, health          browser extension
   document                        |                         |
        |                          v                         |
-       v                   Synthesis events                 |
+       v                   Derived events                 |
   [privacy engine]          (back to NATS)                  |
        |                          |                         |
        v                          v                         |
@@ -78,13 +78,13 @@ Three processing models for derived events:
 
 | Model | Trait | State | Emit trigger | Example |
 |-------|-------|-------|-------------|---------|
-| **Transducer** | `TransducerNode` | Stateless | 1:1 per input | Command canonicalizer |
-| **Windowed** | `WindowedNode` | Accumulator | `window_complete(&state) -> bool` | Session detector, analytics |
-| **ScopeReconciler** | `ScopeReconcilerNode` | Per-scope | Scope reconciled | Health aggregator |
+| **Transducer** | `Transducer` | Stateless | 1:1 per input | Command canonicalizer |
+| **Windowed** | `Windowed` | Accumulator | `window_complete(&state) -> bool` | Session detector, analytics |
+| **ScopeReconciler** | `ScopeReconciler` | Per-scope | Scope reconciled | Health aggregator |
 
-All share `DerivedNodeAdapter<N>` for: NATS consumer, checkpoint persistence, health reporting, self-observation, shutdown, scope invalidation.
+All share `AutomatonRuntime<N>` for: NATS consumer, checkpoint persistence, health reporting, self-observation, shutdown, scope invalidation.
 
-Each synthesis event carries `node_model`, `temporal_policy`, and `semantics_version` — self-documenting provenance metadata.
+Each derived event carries `node_model`, `temporal_policy`, and `semantics_version` — self-documenting provenance metadata.
 
 **Current automata** (consolidated into `sinex-process` per #944, deployed as per-automaton systemd services):
 - Command canonicalizer — Transducer, `command.canonical`
@@ -98,14 +98,14 @@ Entity/relation shadow-lane automata are present in `sinex-process`; activation
 as the main consumer substrate is tracked by #1087/#1346. Richer derivations
 remain the open frontier.
 
-### WindowedNode Example: Session Detector
+### Windowed Example: Session Detector
 
 ```rust
 // Groups events by temporal proximity. Gap > 5 minutes = new session boundary.
 // Actual implementation: crate/core/sinex-process/src/automata/session.rs
 struct SessionDetector;
 
-impl WindowedNode for SessionDetector {
+impl Windowed for SessionDetector {
     type State = SessionState;
     type Input = JsonValue;
     type Output = JsonValue;
@@ -116,7 +116,7 @@ impl WindowedNode for SessionDetector {
 
     // Accumulate events into the window state.
     async fn accumulate(&mut self, state: &mut Self::State, input: Self::Input,
-        ctx: &DerivedTriggerContext) -> Result<(), NodeLogicError>
+        ctx: &AutomatonContext) -> Result<(), NodeLogicError>
     {
         let ts = ctx.event_timestamp();
         state.events.push(input);

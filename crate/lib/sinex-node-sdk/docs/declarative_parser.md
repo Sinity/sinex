@@ -302,7 +302,7 @@ The evaluator lives in `crate/lib/sinex-node-sdk/src/parser/declarative.rs`. It 
 
 ## What stays out of scope
 
-- **Document chunking + entity extraction** — these stay in `sinex-process` automata; they consume confirmed `document.ingested` events and emit `document.parsed`/`document.chunked`. Source acquisition is what folds; semantic synthesis is not.
+- **Document chunking + entity extraction** — these stay in `sinex-process` automata; they consume confirmed `document.ingested` events and emit `document.parsed`/`document.chunked`. Source acquisition is what folds; semantic derived is not.
 - **Multi-event-type-per-record parsers** — the DSL emits one event type per record. Imperative escape hatch handles N-output parsers (rare).
 - **Cross-record aggregation** — parsers see one record at a time. Aggregation belongs in automata.
 - **Schema migration of in-flight events** — parser version bumps create new event interpretations; #1058's reverted occurrence-table model is not re-introduced.

@@ -1587,7 +1587,7 @@ in
                     };
                   };
                   default = { };
-                  description = "Document parser automaton. Consumes `document.ingested` and `command.canonical` events, emits `document.parsed` + `document.chunked` synthesis events.";
+                  description = "Document parser automaton. Consumes `document.ingested` and `command.canonical` events, emits `document.parsed` + `document.chunked` derived events.";
                 };
 
                 tagApplier = mkOption {

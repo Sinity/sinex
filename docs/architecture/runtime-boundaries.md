@@ -32,11 +32,11 @@ Status: design record for #1083, #1084. Part of Wave 2 (#1126).
 
 | Boundary | Mechanism | Notes |
 |----------|-----------|-------|
-| NATS → ingestd | Envelope validation (#1064) | AdmittedEventIntent required for durable transport |
+| NATS → ingestd | Envelope validation (#1064) | EventIntent required for durable transport |
 | ingestd → DB | XOR provenance CHECK, material FK | Defense-in-depth |
 | DB → gateway | Role-based access (readonly/write/admin) | Token-suffix RBAC, no revocation |
 | Gateway → CLI | TLS + bearer token | Stateless auth |
-| External producer → NATS | AdmittedEventIntent envelope | JSON over NATS, no Rust SDK required |
+| External producer → NATS | EventIntent envelope | JSON over NATS, no Rust SDK required |
 | Source-worker → NATS | Same envelope path | Runs in same trust domain |
 
 ## Service User Model

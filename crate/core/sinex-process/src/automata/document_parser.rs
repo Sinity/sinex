@@ -1,4 +1,4 @@
-//! Document parser automaton — synthesis-provenance v1 document layer.
+//! Document parser automaton — derived-provenance v1 document layer.
 //!
 //! Implements [`MultiOutputTransducerNode`]: one input event produces
 //! `document.parsed` + N× `document.chunked` events.
@@ -25,7 +25,7 @@
 //! Ref: `docs/architecture/document-layer-v1.md`.
 
 use sinex_node_sdk::derived_node::{
-    DerivedOutput, DerivedTriggerContext, InputProvenanceFilter, MultiOutputTransducerNode,
+    DerivedOutput, AutomatonContext, InputProvenanceFilter, MultiOutputTransducerNode,
 };
 use sinex_node_sdk::processing::NodeLogicError;
 use sinex_primitives::events::payloads::DocumentKind;
@@ -94,7 +94,7 @@ impl MultiOutputTransducerNode for DocumentParserNode {
         &mut self,
         state: &mut Self::State,
         input: JsonValue,
-        context: &DerivedTriggerContext,
+        context: &AutomatonContext,
     ) -> Result<Vec<DerivedOutput<JsonValue>>, NodeLogicError> {
         let event_type = context.event_type.as_str();
 
@@ -114,7 +114,7 @@ impl DocumentParserNode {
         &self,
         _state: &mut DocumentParserState,
         input: JsonValue,
-        context: &DerivedTriggerContext,
+        context: &AutomatonContext,
     ) -> Result<Vec<DerivedOutput<JsonValue>>, NodeLogicError> {
         let file_path = input["file_path"].as_str().unwrap_or("unknown").to_string();
 
@@ -245,7 +245,7 @@ impl DocumentParserNode {
         &self,
         _state: &mut DocumentParserState,
         input: JsonValue,
-        context: &DerivedTriggerContext,
+        context: &AutomatonContext,
     ) -> Result<Vec<DerivedOutput<JsonValue>>, NodeLogicError> {
         let parent_event_id = context.trigger_uuid();
         let parent_id_str = parent_event_id.to_string();
@@ -597,10 +597,10 @@ register_source_unit_binding! {
         "derived",
     )
     .implementation("sinex-process")
-    .adapter("DerivedNodeAdapter")
+    .adapter("AutomatonRuntime")
     .output_event_type("document.parsed")
     .privacy_context("inherits_from_parents")
-    .material_policy("synthesis_parents")
+    .material_policy("derived_parents")
     .checkpoint_policy("append_stream")
     .resource_shape("event_stream_consumer")
     .source_unit_id("document-parser")

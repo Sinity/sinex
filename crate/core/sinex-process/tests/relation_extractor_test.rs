@@ -2,11 +2,11 @@
 //!
 //! Verifies the sliding co-occurrence window (gap > 300s closes the window,
 //! capacity bound at 2000 entities), pairwise relation generation, and
-//! `ScopeReconcilerNode` invariants (single fixed scope, no spurious emissions
+//! `ScopeReconciler` invariants (single fixed scope, no spurious emissions
 //! before the window closes).
 
-use sinex_node_sdk::ScopeReconcilerNode;
-use sinex_node_sdk::derived_node::DerivedTriggerContext;
+use sinex_node_sdk::ScopeReconciler;
+use sinex_node_sdk::derived_node::AutomatonContext;
 use sinex_primitives::Uuid;
 use sinex_primitives::domain::{EntityTypeName, ProcessingMode, TriggerKind};
 use sinex_primitives::events::payloads::EntityResolvedPayload;
@@ -18,9 +18,9 @@ use xtask::sandbox::prelude::*;
 
 const CO_OCCURRENCE_SCOPE: &str = "co-occurrence-window";
 
-fn make_context(ts: Timestamp) -> DerivedTriggerContext {
+fn make_context(ts: Timestamp) -> AutomatonContext {
     let event_id: Id<Event<JsonValue>> = Id::new();
-    DerivedTriggerContext {
+    AutomatonContext {
         trigger_event_id: event_id,
         source: EntityResolvedPayload::SOURCE,
         event_type: EntityResolvedPayload::EVENT_TYPE,

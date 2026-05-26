@@ -4,7 +4,7 @@
 //!
 //! - Event<T> is the generic structure for all events
 //! - Event<JsonValue> (aka `RawEvent`) for heterogeneous processing
-//! - ALL events MUST have provenance (Material or Synthesis)
+//! - ALL events MUST have provenance (Material or Derived)
 
 pub mod admission;
 pub mod builder;
@@ -70,7 +70,7 @@ pub struct Event<T = JsonValue> {
     pub provenance: Provenance,
 
     /// BLAKE3 hash of source-material byte range (material events only).
-    /// NULL for synthesis. 32 bytes. Verified on replay — mismatch → DLQ.
+    /// NULL for derived. 32 bytes. Verified on replay — mismatch → DLQ.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub anchor_payload_hash: Option<Vec<u8>>,
 
@@ -166,7 +166,7 @@ impl<T> Event<T> {
 
     /// Check if this is a synthesized event (derived from other events)
     pub fn is_synthesized_event(&self) -> bool {
-        matches!(self.provenance, Provenance::Synthesis { .. })
+        matches!(self.provenance, Provenance::Derived { .. })
     }
 
     /// Get the anchor byte if this is a Material event
@@ -177,10 +177,10 @@ impl<T> Event<T> {
         }
     }
 
-    /// Get the source event IDs if this is a Synthesis event
+    /// Get the source event IDs if this is a Derived event
     pub fn get_source_event_ids(&self) -> Option<&[EventId]> {
         match &self.provenance {
-            Provenance::Synthesis {
+            Provenance::Derived {
                 source_event_ids, ..
             } => Some(source_event_ids.as_slice()),
             _ => None,

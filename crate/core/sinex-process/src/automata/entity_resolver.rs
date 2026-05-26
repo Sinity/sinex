@@ -1,4 +1,4 @@
-//! Entity resolver — [`WindowedNode`] implementation.
+//! Entity resolver — [`Windowed`] implementation.
 //!
 //! Model classification: **Windowed** — stateful deduplication over extracted
 //! entities. Each `entity.extracted` candidate is canonicalized by type and
@@ -8,14 +8,14 @@
 //! # Design note
 //!
 //! The processing model is 1:1 (one input → zero or one output), but the
-//! stateful deduplication map needs checkpoint persistence. A `WindowedNode`
+//! stateful deduplication map needs checkpoint persistence. A `Windowed`
 //! with instant windows (`window_complete` returns true whenever a pending
 //! resolution exists) gives exactly the 1:1 semantics with full state
 //! persistence without widening to a `ScopeReconciler`.
 
 use serde::{Deserialize, Serialize};
-use sinex_node_sdk::derived_node::{DerivedOutput, DerivedTriggerContext, WindowedNodeAdapter};
-use sinex_node_sdk::{InputProvenanceFilter, NodeLogicError, WindowedNode};
+use sinex_node_sdk::derived_node::{DerivedOutput, AutomatonContext, WindowedNodeAdapter};
+use sinex_node_sdk::{InputProvenanceFilter, NodeLogicError, Windowed};
 use sinex_primitives::Uuid;
 use sinex_primitives::domain::{EntityTypeName, SyntheticTemporalPolicy};
 use sinex_primitives::events::EventPayload;
@@ -43,7 +43,7 @@ pub struct ResolverState {
 #[derive(Default)]
 pub struct EntityResolver;
 
-impl WindowedNode for EntityResolver {
+impl Windowed for EntityResolver {
     type State = ResolverState;
     type Input = EntityExtractedPayload;
     type Output = EntityResolvedPayload;
@@ -76,7 +76,7 @@ impl WindowedNode for EntityResolver {
         &mut self,
         state: &mut Self::State,
         input: Self::Input,
-        _context: &DerivedTriggerContext,
+        _context: &AutomatonContext,
     ) -> Result<(), NodeLogicError> {
         // ── Type-aware canonicalization ──────────────────────────────────
         let canonical_name = canonicalize_name(&input.entity_type, &input.raw_name);
@@ -111,7 +111,7 @@ impl WindowedNode for EntityResolver {
     async fn emit(
         &mut self,
         state: &mut Self::State,
-        _context: &DerivedTriggerContext,
+        _context: &AutomatonContext,
     ) -> Result<Option<DerivedOutput<Self::Output>>, NodeLogicError> {
         let Some(payload) = state.pending.take() else {
             return Ok(None);
@@ -205,10 +205,10 @@ register_source_unit_binding! {
         "derived",
     )
     .implementation("sinex-process")
-    .adapter("DerivedNodeAdapter")
+    .adapter("AutomatonRuntime")
     .output_event_type("entity.resolved")
     .privacy_context("inherits_from_parents")
-    .material_policy("synthesis_parents")
+    .material_policy("derived_parents")
     .checkpoint_policy("append_stream")
     .resource_shape("event_stream_consumer")
     .source_unit_id("entity-resolver")

@@ -5,10 +5,10 @@
 //! - A per-unit [`SourceWorkerDrainController`] for the enhanced drain protocol
 //! - Per-unit checkpoint isolation via the `--source-unit` flag (routed through
 //!   [`ServiceInfo::checkpoint_identity`](sinex_node_sdk::runtime::stream::ServiceInfo))
-//! - Per-unit health reporting (auto-enabled by [`IngestorNodeAdapter`])
+//! - Per-unit health reporting (auto-enabled by [`SourceUnitRuntime`])
 //!
 //! The runner itself is thin — most lifecycle work is handled by the SDK's
-//! [`NodeRunner`] and [`IngestorNodeAdapter`]. The source-worker adds drain
+//! [`NodeRunner`] and [`SourceUnitRuntime`]. The source-worker adds drain
 //! protocol and recovery context on top.
 
 use crate::drain::SourceWorkerDrainController;

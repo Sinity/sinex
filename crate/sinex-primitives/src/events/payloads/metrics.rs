@@ -280,7 +280,7 @@ pub struct NodeProcessingStatsPayload {
 /// Derived-node per-event latency snapshot
 ///
 /// Single-event replacement for the six separate `metric.gauge` emissions that
-/// `DerivedNodeAdapter::observe_processing_latency` previously produced
+/// `AutomatonRuntime::observe_processing_latency` previously produced
 /// (`derived.event_lag_ms`, `derived.tick_runtime_ms`, the two
 /// `event_lag_p{50,99}_ms` reservoir percentiles, `derived.tick_runtime_p99_ms`,
 /// and `derived.throughput_eps`). Reducing six rows-per-snapshot to one row
@@ -372,8 +372,8 @@ pub struct IngestdBatchStatsPayload {
     pub events_deferred: u32,
     /// Events that failed processing
     pub events_failed: u32,
-    /// Whether this batch contained synthesis events
-    pub had_synthesis: bool,
+    /// Whether this batch contained derived events
+    pub had_derived: bool,
     /// Insert path used: "copy" or "`query_builder`"
     pub insert_path: String,
     /// Cumulative count of events that passed schema validation

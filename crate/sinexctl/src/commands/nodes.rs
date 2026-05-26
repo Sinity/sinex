@@ -18,8 +18,8 @@ EXAMPLES:
     # Filter by capture nodes
     sinexctl nodes --role capture
 
-    # Only synthesis (automata) nodes
-    sinexctl nodes --role synthesis
+    # Only derived (automata) nodes
+    sinexctl nodes --role derived
 ")]
 pub struct NodesCommand {
     /// Filter by role

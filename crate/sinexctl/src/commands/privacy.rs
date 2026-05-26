@@ -359,7 +359,7 @@ enum PrivacyExportProvenance {
         anchor_byte: i64,
         offset_kind: &'static str,
     },
-    Synthesis {
+    Derived {
         parent_event_count: usize,
         operation_id: Option<String>,
     },
@@ -490,10 +490,10 @@ fn sanitize_privacy_export_event(event: QueryResultEvent) -> PrivacyExportEvent 
             anchor_byte,
             offset_kind: offset_kind.as_wire_str(),
         },
-        Provenance::Synthesis {
+        Provenance::Derived {
             source_event_ids,
             operation_id,
-        } => PrivacyExportProvenance::Synthesis {
+        } => PrivacyExportProvenance::Derived {
             parent_event_count: source_event_ids.len(),
             operation_id: operation_id.map(|id| id.as_uuid().to_string()),
         },

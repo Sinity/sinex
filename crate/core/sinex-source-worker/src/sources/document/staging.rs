@@ -4,12 +4,12 @@
 //! The ingestor scans configured root directories for documents, fingerprints
 //! them for skip-unchanged logic, stages their bytes via `AcquisitionManager`,
 //! and emits one `document.ingested` material event plus zero or more
-//! `tag.applied` synthesis events (auto-tagged from MIME type) per file.
+//! `tag.applied` derived events (auto-tagged from MIME type) per file.
 //!
 //! # Why imperative `MaterialParser`, not `register_adapter_ingestor!`
 //!
 //! `document.staging` emits both material-provenance (`document.ingested`) and
-//! synthesis-provenance (`tag.applied`) events from a single parse. The
+//! derived-provenance (`tag.applied`) events from a single parse. The
 //! `register_adapter_ingestor!` macro assumes one event type per source unit and
 //! cannot express this multi-event emit pattern. An imperative `MaterialParser`
 //! + `register_node_factory!` is required.
@@ -93,7 +93,7 @@ register_source_unit_binding! {
 // FileDropAdapter or a directory-walk driver would emit for a discovered file).
 // It re-reads MIME type from the path extension, runs path privacy redaction,
 // and constructs the `document.ingested` intent plus any `tag.applied`
-// synthesis children.
+// derived children.
 // ---------------------------------------------------------------------------
 
 /// No per-parse config needed; binding config lives on the `DocumentNode`.
@@ -103,7 +103,7 @@ pub struct DocumentStagingParserConfig {}
 /// Imperative parser for the `document.staging` source unit.
 ///
 /// Used in the dispatch path (replay, testing). The full ingestion path uses
-/// `DocumentNode` (the legacy `IngestorNode` from `sinex-document-ingestor`)
+/// `DocumentNode` (the legacy `SourceUnit` from `sinex-document-ingestor`)
 /// registered via `register_node_factory!`.
 #[derive(Debug, Default)]
 pub struct DocumentStagingParser;
@@ -131,7 +131,7 @@ impl MaterialParser for DocumentStagingParser {
             privacy_contexts: vec![ProcessingContext::Metadata],
             proof_obligations: vec![],
             description:
-                "Stages document files and emits document.ingested + auto-tag synthesis events"
+                "Stages document files and emits document.ingested + auto-tag derived events"
                     .into(),
         }
     }
@@ -195,8 +195,8 @@ impl MaterialParser for DocumentStagingParser {
                 tag_name: tag_name.clone(),
                 tag_source: "auto.mime".into(),
             };
-            if let Ok(synthesis) = material_intent.derive_synthesis(tag_payload) {
-                intents.push(synthesis);
+            if let Ok(derived) = material_intent.derive_from_parents(tag_payload) {
+                intents.push(derived);
             }
         }
 
@@ -212,7 +212,7 @@ crate::register_parser!("document.staging", DocumentStagingParser);
 
 // The full node lifecycle uses DocumentNode (moved verbatim from the legacy
 // `sinex-document-ingestor` crate during the Wave-B fold; see `super::node`).
-// It is an `IngestorNode` implementation that manages its own checkpoint state
+// It is an `SourceUnit` implementation that manages its own checkpoint state
 // (`manages_own_checkpoints: true`) and supports snapshot + historical scans
 // but not continuous mode.
 crate::register_node_factory!("document.staging", super::node::DocumentNode);

@@ -7,9 +7,9 @@
 
 use serde::{Deserialize, Serialize};
 use sinex_node_sdk::derived_node::{
-    DerivedOutput, DerivedTriggerContext, ScopeReconcilerNodeAdapter,
+    DerivedOutput, AutomatonContext, ScopeReconcilerNodeAdapter,
 };
-use sinex_node_sdk::{InputProvenanceFilter, NodeLogicError, ScopeReconcilerNode};
+use sinex_node_sdk::{InputProvenanceFilter, NodeLogicError, ScopeReconciler};
 use sinex_primitives::domain::SyntheticTemporalPolicy;
 use sinex_primitives::events::EventPayload;
 use sinex_primitives::events::payloads::{
@@ -45,7 +45,7 @@ struct PendingWorkspaceInstruction {
 #[derive(Debug, Clone, Default)]
 pub struct InstructionExpectationReconciler;
 
-impl ScopeReconcilerNode for InstructionExpectationReconciler {
+impl ScopeReconciler for InstructionExpectationReconciler {
     type State = InstructionExpectationState;
     type Input = JsonValue;
     type Output = InstructionExpectationStatusPayload;
@@ -74,7 +74,7 @@ impl ScopeReconcilerNode for InstructionExpectationReconciler {
         InputProvenanceFilter::Any
     }
 
-    fn scope_keys(&self, _input: &Self::Input, context: &DerivedTriggerContext) -> Vec<String> {
+    fn scope_keys(&self, _input: &Self::Input, context: &AutomatonContext) -> Vec<String> {
         if is_hyprland_workspace_instruction(context) || is_hyprland_workspace_observation(context)
         {
             vec![HYPRLAND_WORKSPACE_SCOPE.to_string()]
@@ -88,7 +88,7 @@ impl ScopeReconcilerNode for InstructionExpectationReconciler {
         state: &mut Self::State,
         scope_key: &str,
         input: Self::Input,
-        context: &DerivedTriggerContext,
+        context: &AutomatonContext,
     ) -> Result<Vec<DerivedOutput<Self::Output>>, NodeLogicError> {
         if scope_key != HYPRLAND_WORKSPACE_SCOPE {
             return Err(NodeLogicError::InputParsing(format!(
@@ -108,13 +108,13 @@ impl ScopeReconcilerNode for InstructionExpectationReconciler {
     }
 }
 
-fn is_hyprland_workspace_instruction(context: &DerivedTriggerContext) -> bool {
+fn is_hyprland_workspace_instruction(context: &AutomatonContext) -> bool {
     context.source.as_str() == DesktopWorkspaceSwitchInstructionPayload::SOURCE.as_str()
         && context.event_type.as_str()
             == DesktopWorkspaceSwitchInstructionPayload::EVENT_TYPE.as_str()
 }
 
-fn is_hyprland_workspace_observation(context: &DerivedTriggerContext) -> bool {
+fn is_hyprland_workspace_observation(context: &AutomatonContext) -> bool {
     context.source.as_str() == HyprlandWorkspaceSwitchedPayload::SOURCE.as_str()
         && context.event_type.as_str() == HyprlandWorkspaceSwitchedPayload::EVENT_TYPE.as_str()
 }
@@ -122,7 +122,7 @@ fn is_hyprland_workspace_observation(context: &DerivedTriggerContext) -> bool {
 fn record_pending_instruction(
     state: &mut InstructionExpectationState,
     input: JsonValue,
-    context: &DerivedTriggerContext,
+    context: &AutomatonContext,
 ) -> Result<Vec<DerivedOutput<InstructionExpectationStatusPayload>>, NodeLogicError> {
     let instruction: DesktopWorkspaceSwitchInstructionPayload = serde_json::from_value(input)
         .map_err(|error| {
@@ -146,7 +146,7 @@ fn record_pending_instruction(
 fn reconcile_workspace_observation(
     state: &mut InstructionExpectationState,
     input: JsonValue,
-    context: &DerivedTriggerContext,
+    context: &AutomatonContext,
 ) -> Result<Vec<DerivedOutput<InstructionExpectationStatusPayload>>, NodeLogicError> {
     if state.pending_hyprland_workspace.is_empty() {
         return Ok(Vec::new());
@@ -246,10 +246,10 @@ register_source_unit_binding! {
         "derived",
     )
     .implementation("sinex-process")
-    .adapter("DerivedNodeAdapter")
+    .adapter("AutomatonRuntime")
     .output_event_type("expectation.status")
     .privacy_context("metadata")
-    .material_policy("synthesis_parents")
+    .material_policy("derived_parents")
     .checkpoint_policy("append_stream")
     .resource_shape("event_stream_consumer")
     .source_unit_id("instruction-expectation-reconciler")

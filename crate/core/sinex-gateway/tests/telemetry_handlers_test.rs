@@ -441,7 +441,7 @@ async fn operator_telemetry_handlers_follow_read_model_schema(ctx: TestContext) 
             "fetch_to_ack_ms": 48,
             "events_deferred": 2,
             "events_failed": 1,
-            "had_synthesis": false,
+            "had_derived": false,
             "insert_path": "querybuilder",
             "validation_valid": 30,
             "validation_skipped": 1,
@@ -605,7 +605,7 @@ async fn telemetry_ingestd_validation_returns_latest_snapshot(ctx: TestContext) 
             "fetch_to_ack_ms": 42,
             "events_deferred": 1,
             "events_failed": 0,
-            "had_synthesis": true,
+            "had_derived": true,
             "insert_path": "copy",
             "validation_valid": 20,
             "validation_skipped": 0,
@@ -629,7 +629,7 @@ async fn telemetry_ingestd_validation_returns_latest_snapshot(ctx: TestContext) 
     assert_eq!(snapshot.fetch_to_ack_ms, 42);
     assert_eq!(snapshot.events_deferred, 1);
     assert_eq!(snapshot.events_failed, 0);
-    assert!(snapshot.had_synthesis);
+    assert!(snapshot.had_derived);
     assert_eq!(snapshot.insert_path, "copy");
     assert_eq!(snapshot.validation_valid, 20);
     assert_eq!(snapshot.validation_no_schema, 2);

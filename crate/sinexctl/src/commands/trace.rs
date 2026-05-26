@@ -214,14 +214,14 @@ fn format_event_summary(event: &Event<JsonValue>) -> String {
 fn format_provenance_tag(event: &Event<JsonValue>) -> String {
     match &event.provenance {
         Provenance::Material { .. } => style("(material)").blue().to_string(),
-        Provenance::Synthesis { .. } => style("(synthesis)").magenta().to_string(),
+        Provenance::Derived { .. } => style("(derived)").magenta().to_string(),
     }
 }
 
 fn event_material_id(event: &Event<JsonValue>) -> Option<Uuid> {
     match &event.provenance {
         Provenance::Material { id, .. } => Some(id.to_uuid()),
-        Provenance::Synthesis { .. } => None,
+        Provenance::Derived { .. } => None,
     }
 }
 
@@ -232,9 +232,9 @@ fn short_uuid(id: Uuid) -> String {
 
 /// Render the lineage result as a Graphviz DOT graph.
 ///
-/// Material events are rendered with a light-blue fill; synthesis events with a
+/// Material events are rendered with a light-blue fill; derived events with a
 /// light-yellow fill. Edges use provenance directly when both endpoints are in
-/// the lineage result: material edges are dotted blue, synthesis edges are solid
+/// the lineage result: material edges are dotted blue, derived edges are solid
 /// purple, and auxiliary source-material links are dashed gray.
 fn render_dot(result: &LineageResult) -> String {
     let mut out = String::from(
@@ -266,7 +266,7 @@ fn render_dot(result: &LineageResult) -> String {
 
         let (fill_color, extra) = match &event.provenance {
             Provenance::Material { .. } => ("#d9ecff", ""),
-            Provenance::Synthesis { .. } => ("#fff2bf", ""),
+            Provenance::Derived { .. } => ("#fff2bf", ""),
         };
 
         format!(
@@ -320,7 +320,7 @@ fn render_dot(result: &LineageResult) -> String {
     }
 
     out.push_str(
-        "  subgraph cluster_legend {\n    label=\"legend\";\n    color=\"#d0d7de\";\n    \"legend:material\" [label=\"material event\" shape=box style=filled fillcolor=\"#d9ecff\"];\n    \"legend:synthesis\" [label=\"synthesis event\" shape=box style=filled fillcolor=\"#fff2bf\"];\n    \"legend:source\" [label=\"source material\" shape=note style=filled fillcolor=\"#ddf4ff\"];\n    \"legend:source\" -> \"legend:material\" [label=\"material\" style=dotted color=\"#0969da\" fontcolor=\"#0969da\"];\n    \"legend:material\" -> \"legend:synthesis\" [label=\"synthesis\" color=\"#8250df\" fontcolor=\"#8250df\"];\n  }\n",
+        "  subgraph cluster_legend {\n    label=\"legend\";\n    color=\"#d0d7de\";\n    \"legend:material\" [label=\"material event\" shape=box style=filled fillcolor=\"#d9ecff\"];\n    \"legend:derived\" [label=\"derived event\" shape=box style=filled fillcolor=\"#fff2bf\"];\n    \"legend:source\" [label=\"source material\" shape=note style=filled fillcolor=\"#ddf4ff\"];\n    \"legend:source\" -> \"legend:material\" [label=\"material\" style=dotted color=\"#0969da\" fontcolor=\"#0969da\"];\n    \"legend:material\" -> \"legend:derived\" [label=\"derived\" color=\"#8250df\" fontcolor=\"#8250df\"];\n  }\n",
     );
 
     out.push('}');
@@ -336,7 +336,7 @@ fn emit_synthesis_edges(
     let Some(to_id) = event.id else {
         return;
     };
-    let Provenance::Synthesis {
+    let Provenance::Derived {
         source_event_ids, ..
     } = &event.provenance
     else {
@@ -355,7 +355,7 @@ fn emit_synthesis_edges(
         }
 
         out.push_str(&format!(
-            "  \"{}\" -> \"{}\" [label=\"synthesis\" color=\"#8250df\" fontcolor=\"#8250df\"];\n",
+            "  \"{}\" -> \"{}\" [label=\"derived\" color=\"#8250df\" fontcolor=\"#8250df\"];\n",
             escape_dot_id(&from),
             escape_dot_id(&to)
         ));
@@ -416,9 +416,9 @@ mod tests {
     ) -> Event<JsonValue> {
         let mut event = DynamicPayload::new(source, event_type, json!({}))
             .from_parents(parents)
-            .expect("synthesis test event should accept non-empty parents")
+            .expect("derived test event should accept non-empty parents")
             .build()
-            .expect("synthesis test event should build");
+            .expect("derived test event should build");
         event.id = Some(Id::new());
         event
     }
@@ -458,15 +458,15 @@ mod tests {
 
         assert!(
             dot.contains(&format!("\"{ancestor_id}\" -> \"{root_id}\"")),
-            "DOT should render the ancestor event as the root's synthesis parent"
+            "DOT should render the ancestor event as the root's derived parent"
         );
         assert!(
             dot.contains(&format!("\"{root_id}\" -> \"{descendant_id}\"")),
-            "DOT should render the root event as the descendant's synthesis parent"
+            "DOT should render the root event as the descendant's derived parent"
         );
         assert!(
             dot.contains("color=\"#8250df\""),
-            "synthesis edges should be visually distinct"
+            "derived edges should be visually distinct"
         );
         Ok(())
     }

@@ -53,10 +53,10 @@ async fn material_event_builder_stamps_anchor_payload_hash() -> TestResult<()> {
 async fn synthesis_event_builder_drops_anchor_payload_hash() -> TestResult<()> {
     let parent_ids = vec![EventId::new(), EventId::new()];
     let payload = KittyCommandExecutedPayload::test_default("derived");
-    // A caller can supply a hash on a synthesis builder; build() must drop it
-    // because synthesis events derive identity from parent event ids, not from
+    // A caller can supply a hash on a derived builder; build() must drop it
+    // because derived events derive identity from parent event ids, not from
     // a source-material byte range. The XOR CHECK on core.events would also
-    // reject a synthesis row with a hash anyway, but defending in Rust keeps
+    // reject a derived row with a hash anyway, but defending in Rust keeps
     // the on-the-wire shape honest.
     let event = Event::builder(payload)
         .from_parents(parent_ids)?
@@ -64,7 +64,7 @@ async fn synthesis_event_builder_drops_anchor_payload_hash() -> TestResult<()> {
         .build()?;
     assert!(
         event.anchor_payload_hash.is_none(),
-        "synthesis events must never carry anchor_payload_hash",
+        "derived events must never carry anchor_payload_hash",
     );
     Ok(())
 }

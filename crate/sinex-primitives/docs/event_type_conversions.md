@@ -9,7 +9,7 @@ When events are read from the database, the system performs several transformati
 ### Provenance Reconstruction
 The database stores provenance as a set of flat, nullable columns. The conversion logic applies an XOR invariant to reconstruct the `Provenance` enum:
 - **Material**: Requires `source_material_id` and `anchor_byte`.
-- **Synthesis**: Requires a non-empty list of `source_event_ids`.
+- **Derived**: Requires a non-empty list of `source_event_ids`.
 - **Validation**: If a record violates these constraints (e.g., having both or neither), the conversion fails loudly to prevent data corruption.
 
 ### Timestamp Precision Recovery

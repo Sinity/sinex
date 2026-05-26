@@ -425,7 +425,7 @@ async fn replay_end_to_end_seeds_executes_archives(ctx: TestContext) -> TestResu
         "replay should produce replacement records linking old→new events"
     );
 
-    // New events emitted by replay must carry material provenance (not synthesis).
+    // New events emitted by replay must carry material provenance (not derived).
     let new_material_events: i64 = sqlx::query_scalar(
         r"
         SELECT COUNT(*)::bigint FROM core.events

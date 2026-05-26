@@ -49,9 +49,9 @@ pub const SINEX_TRANSPORT_CLASS_HEADER: &str = "Sinex-Transport-Class";
 /// - **Drain on SIGTERM**: wait for all in-flight `JetStream` ack futures before
 ///   shutting down (bounded by `DEFAULT_PUBLISH_ACK_TIMEOUT`).
 ///
-/// ### [`Class::Derived`] — automaton synthesis outputs
+/// ### [`Class::Derived`] — automaton derived outputs
 ///
-/// Synthesis events produced by derived nodes. Same subject plane as critical
+/// Derived events produced by derived nodes. Same subject plane as critical
 /// but semantically distinct: a derived event can be replayed from its parents
 /// if lost; a critical event cannot be replayed without its source material.
 ///
@@ -143,7 +143,7 @@ pub enum Class {
     /// Loss = lost provenance history. Failure routes to local recovery spool.
     Critical,
 
-    /// Synthesis events produced by automata.
+    /// Derived events produced by automata.
     /// Loss is recoverable via replay. Failure routes to processing-failure stream.
     Derived,
 

@@ -1946,7 +1946,7 @@ SELECT
     MAX((payload->>'fetch_to_ack_ms')::float) AS max_latency_ms,
     SUM((payload->>'events_deferred')::int) AS total_deferred,
     SUM((payload->>'events_failed')::int) AS total_failed,
-    COUNT(*) FILTER (WHERE (payload->>'had_synthesis')::boolean) AS synthesis_batches,
+    COUNT(*) FILTER (WHERE (payload->>'had_derived')::boolean) AS derived_batches,
     COUNT(*) AS batch_count,
     MAX((payload->>'validation_valid')::bigint) AS validation_valid,
     MAX((payload->>'validation_skipped')::bigint) AS validation_skipped,

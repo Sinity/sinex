@@ -12,19 +12,19 @@
 //!
 //! # Automaton names
 //!
-//! - `canonicalizer`      — terminal command canonicalizer (`TransducerNode`)
-//! - `analytics`          — activity window analytics (`WindowedNode`)
-//! - `health`             — health aggregator (`ScopeReconcilerNode`)
-//! - `session`            — session detector (`WindowedNode`)
-//! - `hourly`             — hourly activity summarizer (`WindowedNode`)
-//! - `daily`              — daily activity summarizer (`WindowedNode`)
-//! - `entity-resolver`    — entity resolver (`WindowedNode`)
-//! - `relation-extractor` — relation extractor (`ScopeReconcilerNode`)
-//! - `entity-enricher`    — entity enricher (`ScopeReconcilerNode`)
-//! - `entity-extractor`   — entity extractor (`TransducerNode`)
-//! - `tag-applier`       — rule-based tag applier (`TransducerNode`)
+//! - `canonicalizer`      — terminal command canonicalizer (`Transducer`)
+//! - `analytics`          — activity window analytics (`Windowed`)
+//! - `health`             — health aggregator (`ScopeReconciler`)
+//! - `session`            — session detector (`Windowed`)
+//! - `hourly`             — hourly activity summarizer (`Windowed`)
+//! - `daily`              — daily activity summarizer (`Windowed`)
+//! - `entity-resolver`    — entity resolver (`Windowed`)
+//! - `relation-extractor` — relation extractor (`ScopeReconciler`)
+//! - `entity-enricher`    — entity enricher (`ScopeReconciler`)
+//! - `entity-extractor`   — entity extractor (`Transducer`)
+//! - `tag-applier`       — rule-based tag applier (`Transducer`)
 //! - `document-parser`    — document parser (`MultiOutputTransducerNode`)
-//! - `instruction-reconciler` — instruction expectation reconciler (`ScopeReconcilerNode`)
+//! - `instruction-reconciler` — instruction expectation reconciler (`ScopeReconciler`)
 
 #[cfg(not(target_env = "msvc"))]
 use mimalloc::MiMalloc;

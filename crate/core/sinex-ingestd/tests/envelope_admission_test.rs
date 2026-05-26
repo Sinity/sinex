@@ -1,4 +1,4 @@
-//! Transport boundary tests for the `AdmittedEventIntent` envelope (#1131).
+//! Transport boundary tests for the `EventIntent` envelope (#1131).
 //!
 //! Tests prove:
 //! 1. Happy path: admitted intent → NATS → ingestd admission → DB persistence → confirmation
@@ -9,7 +9,7 @@ use sinex_ingestd::IngestEventValidator;
 use sinex_ingestd::admission::{AdmissionDecision, AdmissionRejectionKind, AdmissionService};
 use sinex_primitives::domain::HostName;
 use sinex_primitives::events::Event;
-use sinex_primitives::events::admission::{AdmittedEventIntent, CURRENT_ENVELOPE_VERSION};
+use sinex_primitives::events::admission::{EventIntent, CURRENT_ENVELOPE_VERSION};
 use sinex_primitives::events::payloads::PolylogueConversationIndexedPayload;
 use sinex_primitives::{DynamicPayload, Id, JsonValue, Uuid};
 use std::sync::Arc;
@@ -33,8 +33,8 @@ fn make_event(source: &str, event_type: &str, payload: JsonValue) -> TestResult<
     Ok(event)
 }
 
-fn make_intent(events: Vec<Event<JsonValue>>) -> AdmittedEventIntent {
-    AdmittedEventIntent::new(
+fn make_intent(events: Vec<Event<JsonValue>>) -> EventIntent {
+    EventIntent::new(
         "test-source-unit",
         "test-parser",
         "1.0.0",
@@ -79,7 +79,7 @@ async fn envelope_serializes_and_deserializes(ctx: TestContext) -> TestResult<()
     )?]);
 
     let json_bytes = serde_json::to_vec(&intent)?;
-    let decoded: AdmittedEventIntent = serde_json::from_slice(&json_bytes)?;
+    let decoded: EventIntent = serde_json::from_slice(&json_bytes)?;
 
     assert_eq!(decoded.envelope_version, CURRENT_ENVELOPE_VERSION);
     assert_eq!(decoded.source_unit_id, "test-source-unit");
@@ -138,7 +138,7 @@ async fn envelope_rejects_invalid_version(ctx: TestContext) -> TestResult<()> {
 #[sinex_test]
 async fn envelope_rejects_empty_events(ctx: TestContext) -> TestResult<()> {
     let service = admission_service(&ctx);
-    let intent = AdmittedEventIntent::new(
+    let intent = EventIntent::new(
         "test-source-unit",
         "test-parser",
         "1.0.0",
@@ -167,7 +167,7 @@ async fn envelope_rejects_empty_events(ctx: TestContext) -> TestResult<()> {
 #[sinex_test]
 async fn envelope_rejects_missing_source_unit_id(ctx: TestContext) -> TestResult<()> {
     let service = admission_service(&ctx);
-    let intent = AdmittedEventIntent {
+    let intent = EventIntent {
         envelope_version: CURRENT_ENVELOPE_VERSION.to_string(),
         source_unit_id: String::new(),
         parser_id: "test-parser".into(),
@@ -201,7 +201,7 @@ async fn envelope_rejects_missing_source_unit_id(ctx: TestContext) -> TestResult
 #[sinex_test]
 async fn envelope_rejects_missing_parser_version(ctx: TestContext) -> TestResult<()> {
     let service = admission_service(&ctx);
-    let intent = AdmittedEventIntent {
+    let intent = EventIntent {
         envelope_version: CURRENT_ENVELOPE_VERSION.to_string(),
         source_unit_id: "test-unit".into(),
         parser_id: "test-parser".into(),
@@ -293,7 +293,7 @@ async fn external_producer_json_fixture_parses(ctx: TestContext) -> TestResult<(
     });
 
     let payload = serde_json::to_vec(&fixture)?;
-    let intent: AdmittedEventIntent = serde_json::from_slice(&payload)?;
+    let intent: EventIntent = serde_json::from_slice(&payload)?;
 
     assert_eq!(intent.envelope_version, "1");
     assert_eq!(intent.source_unit_id, "external-producer");
@@ -343,7 +343,7 @@ async fn polylogue_external_producer_metadata_fixture_admits(ctx: TestContext) -
     .to_json_event()?;
     event.id = Some(Id::from_uuid(Uuid::now_v7()));
 
-    let intent = AdmittedEventIntent::new(
+    let intent = EventIntent::new(
         "integration.polylogue",
         "polylogue-bridge",
         "0.1.0",

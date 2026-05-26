@@ -70,7 +70,7 @@ pub enum SourceMaterialRegistry {
 ///
 /// Directional evidence links between source materials. These links are not
 /// event provenance and deliberately do not weaken the `core.events`
-/// material/synthesis XOR invariant. They record auxiliary evidence such as
+/// material/derived XOR invariant. They record auxiliary evidence such as
 /// "this row-stream material is backed by that `SQLite` snapshot material".
 #[derive(Iden, Copy, Clone)]
 pub enum SourceMaterialLinks {

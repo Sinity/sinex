@@ -1086,10 +1086,10 @@ impl JetStreamConsumer {
         }
 
         let batch_size = batch.len() as u32;
-        let had_synthesis = batch.iter().any(|p| {
+        let had_derived = batch.iter().any(|p| {
             matches!(
                 p.event.provenance,
-                sinex_primitives::events::Provenance::Synthesis { .. }
+                sinex_primitives::events::Provenance::Derived { .. }
             )
         });
 
@@ -1108,7 +1108,7 @@ impl JetStreamConsumer {
                 (self.stats.events_deferred.load(Ordering::Relaxed) - deferred_before) as u32;
             let events_failed =
                 (self.stats.events_failed.load(Ordering::Relaxed) - failed_before) as u32;
-            let insert_path = if had_synthesis {
+            let insert_path = if had_derived {
                 "query_builder"
             } else if batch_size as usize >= COPY_BATCH_THRESHOLD {
                 "copy"
@@ -1124,7 +1124,7 @@ impl JetStreamConsumer {
                     fetch_to_ack_ms,
                     events_deferred,
                     events_failed,
-                    had_synthesis,
+                    had_derived,
                     insert_path,
                     val_stats.valid,
                     val_stats.skipped,
@@ -1192,8 +1192,8 @@ impl JetStreamConsumer {
                     Provenance::Material { id, .. } => {
                         ready_set.ensure_ready(&self.pool, *id.as_uuid()).await?
                     }
-                    // Synthesis provenance has no material FK — always ready.
-                    Provenance::Synthesis { .. } => true,
+                    // Derived provenance has no material FK — always ready.
+                    Provenance::Derived { .. } => true,
                 };
 
                 if is_ready {
@@ -1214,7 +1214,7 @@ impl JetStreamConsumer {
                 for prepared in &not_ready {
                     let material_id = match &prepared.event.provenance {
                         Provenance::Material { id, .. } => Some(*id.as_uuid()),
-                        Provenance::Synthesis { .. } => None,
+                        Provenance::Derived { .. } => None,
                     };
                     match self
                         .settle_unready_source_material_event(prepared, material_id, None)
@@ -1529,7 +1529,7 @@ impl JetStreamConsumer {
                         for prepared in &attempted_batch {
                             let material_id = match &prepared.event.provenance {
                                 Provenance::Material { id, .. } => Some(*id.as_uuid()),
-                                Provenance::Synthesis { .. } => None,
+                                Provenance::Derived { .. } => None,
                             };
                             match self
                                 .settle_unready_source_material_event(
@@ -2009,7 +2009,7 @@ impl JetStreamConsumer {
     /// Persist batch through `EventRepository::insert_stream_batch()`.
     ///
     /// The repository owns all routing decisions (`QueryBuilder` for small batches,
-    /// COPY for large material-only batches, REPEATABLE READ for synthesis batches).
+    /// COPY for large material-only batches, REPEATABLE READ for derived batches).
     /// The recent-ID cache acts as a prefilter only.
     #[tracing::instrument(skip(self, batch), fields(batch_size = batch.len()))]
     async fn persist_batch_optimized(

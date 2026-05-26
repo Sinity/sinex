@@ -418,7 +418,7 @@ fn provenance_refs(provenance: &Provenance) -> (Vec<SinexObjectRef>, Vec<SinexOb
             .with_label(anchor_label);
             (vec![material, anchor], Vec::new())
         }
-        Provenance::Synthesis {
+        Provenance::Derived {
             source_event_ids, ..
         } => {
             let trace_refs = source_event_ids
@@ -461,7 +461,7 @@ fn event_actions(event_id: Option<&str>) -> Vec<ActionAvailability> {
 
 fn projection_badges(event: &Event<JsonValue>) -> Vec<String> {
     let mut badges = vec![if event.is_synthesized_event() {
-        "synthesis".to_string()
+        "derived".to_string()
     } else {
         "material".to_string()
     }];
@@ -673,7 +673,7 @@ mod tests {
                 host: HostName::new("test-host")?,
                 source_run_id: None,
                 payload_schema_id: None,
-                provenance: Provenance::Synthesis {
+                provenance: Provenance::Derived {
                     source_event_ids: NonEmptyVec::single(Id::<Event<JsonValue>>::new()),
                     operation_id: None,
                 },

@@ -11,20 +11,20 @@ corresponding `crate/core/sinex-source-worker/src/sources/<domain>/` module tree
 
 ## terminal
 
-- `terminal.atuin-history` — IngestorNodeAdapter; checkpoint: AppendStream (SQLite via atuin)
-- `terminal.bash-history` — IngestorNodeAdapter; checkpoint: AppendStream (append-only text)
-- `terminal.zsh-history` — IngestorNodeAdapter; checkpoint: AppendStream (append-only text)
-- `terminal.fish-history` — IngestorNodeAdapter; checkpoint: MutableSnapshot (sqlite, anchor: fish_history_row_id)
-- `terminal.text-history` — IngestorNodeAdapter; checkpoint: AppendStream (generic text history)
-- `terminal.monitor` — IngestorNodeAdapter; checkpoint: LiveObservation (runtime self-observation)
+- `terminal.atuin-history` — SourceUnitRuntime; checkpoint: AppendStream (SQLite via atuin)
+- `terminal.bash-history` — SourceUnitRuntime; checkpoint: AppendStream (append-only text)
+- `terminal.zsh-history` — SourceUnitRuntime; checkpoint: AppendStream (append-only text)
+- `terminal.fish-history` — SourceUnitRuntime; checkpoint: MutableSnapshot (sqlite, anchor: fish_history_row_id)
+- `terminal.text-history` — SourceUnitRuntime; checkpoint: AppendStream (generic text history)
+- `terminal.monitor` — SourceUnitRuntime; checkpoint: LiveObservation (runtime self-observation)
 
 ## browser
 
-- `browser.history` — IngestorNodeAdapter; checkpoint: MutableSnapshot (sqlite, anchor: visit_id); privacy: Secret
+- `browser.history` — SourceUnitRuntime; checkpoint: MutableSnapshot (sqlite, anchor: visit_id); privacy: Secret
 
 ## document
 
-- `document.staging` — IngestorNodeAdapter; checkpoint: AppendStream (staged file drop)
+- `document.staging` — SourceUnitRuntime; checkpoint: AppendStream (staged file drop)
 
 ## fs
 
@@ -32,17 +32,17 @@ corresponding `crate/core/sinex-source-worker/src/sources/<domain>/` module tree
 
 ## system
 
-- `system.journald` — IngestorNodeAdapter; checkpoint: Journal (systemd journal cursor)
-- `system.systemd` — IngestorNodeAdapter; checkpoint: Journal (systemd unit state)
-- `system.dbus` — IngestorNodeAdapter; checkpoint: LiveObservation (D-Bus signal stream)
-- `system.udev` — IngestorNodeAdapter; checkpoint: LiveObservation (udev event stream)
-- `system.monitor` — IngestorNodeAdapter; checkpoint: LiveObservation (cgroup/PSI monitor)
+- `system.journald` — SourceUnitRuntime; checkpoint: Journal (systemd journal cursor)
+- `system.systemd` — SourceUnitRuntime; checkpoint: Journal (systemd unit state)
+- `system.dbus` — SourceUnitRuntime; checkpoint: LiveObservation (D-Bus signal stream)
+- `system.udev` — SourceUnitRuntime; checkpoint: LiveObservation (udev event stream)
+- `system.monitor` — SourceUnitRuntime; checkpoint: LiveObservation (cgroup/PSI monitor)
 
 ## desktop
 
-- `desktop.window-manager` — IngestorNodeAdapter; checkpoint: LiveObservation (Hyprland socket)
-- `desktop.clipboard` — IngestorNodeAdapter; checkpoint: LiveObservation (Wayland clipboard)
-- `desktop.activitywatch` — IngestorNodeAdapter; checkpoint: MutableSnapshot (sqlite, anchor: bucket_event_timestamp)
+- `desktop.window-manager` — SourceUnitRuntime; checkpoint: LiveObservation (Hyprland socket)
+- `desktop.clipboard` — SourceUnitRuntime; checkpoint: LiveObservation (Wayland clipboard)
+- `desktop.activitywatch` — SourceUnitRuntime; checkpoint: MutableSnapshot (sqlite, anchor: bucket_event_timestamp)
 
 ---
 

@@ -11,7 +11,7 @@ use sinex_db::DbPool;
 use sinex_db::repositories::{DbPoolExt, StreamBatchRow};
 use sinex_primitives::constants::limits::MAX_EVENT_PAYLOAD_BYTES;
 use sinex_primitives::events::Event;
-use sinex_primitives::events::admission::{ACCEPTED_ENVELOPE_VERSIONS, AdmittedEventIntent};
+use sinex_primitives::events::admission::{ACCEPTED_ENVELOPE_VERSIONS, EventIntent};
 use sinex_primitives::events::builder::Provenance;
 use sinex_primitives::{Id, JsonValue, Timestamp, Uuid};
 use std::collections::{HashSet, VecDeque};
@@ -333,10 +333,10 @@ impl AdmissionService {
                         ),
                     )));
                 }
-                Provenance::Synthesis { .. } => {
+                Provenance::Derived { .. } => {
                     return Ok(AdmissionDecision::Rejected(AdmissionRejection::new(
                         AdmissionRejectionKind::CandidateMetadata,
-                        "candidate source_material_id cannot be attached to synthesis provenance",
+                        "candidate source_material_id cannot be attached to derived provenance",
                     )));
                 }
             }
@@ -562,7 +562,7 @@ impl AdmissionService {
         self.admit_event(event).await
     }
 
-    /// Admit bytes that may contain an `AdmittedEventIntent` envelope.
+    /// Admit bytes that may contain an `EventIntent` envelope.
     ///
     /// First attempts to deserialize as an envelope. If successful, validates
     /// the envelope (version, required fields) and admits each event inside.
@@ -607,12 +607,12 @@ impl AdmissionService {
             ))]);
         }
 
-        // Try to deserialize as an AdmittedEventIntent envelope first.
+        // Try to deserialize as an EventIntent envelope first.
         // Detection heuristic: presence of "envelope_version" field.
         let is_envelope = payload_str.contains("\"envelope_version\"");
 
         if is_envelope {
-            let intent: AdmittedEventIntent = match serde_json::from_slice(payload) {
+            let intent: EventIntent = match serde_json::from_slice(payload) {
                 Ok(intent) => intent,
                 Err(error) => {
                     return Ok(vec![AdmissionDecision::Rejected(AdmissionRejection::new(
@@ -694,7 +694,7 @@ impl AdmissionService {
     ///
     /// The repository owns all routing decisions (`QueryBuilder` for small
     /// batches, COPY for large material-only batches, REPEATABLE READ for
-    /// synthesis batches). The recent-ID cache acts as a prefilter only.
+    /// derived batches). The recent-ID cache acts as a prefilter only.
     pub async fn persist_batch_refs(
         &self,
         batch: &[&AdmittedEvent],

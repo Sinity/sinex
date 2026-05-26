@@ -24,7 +24,7 @@ The system automatically manages `_system_metadata` (checksums, sizes, timestamp
 ### Provenance XOR Invariant
 The module enforces the core architectural principle that an event or entity must have exactly one type of provenance:
 - **Material Provenance**: Direct link to raw source material.
-- **Synthesis Provenance**: Derived from other system events.
+- **Derived Provenance**: Derived from other system events.
 
 ## Safety & Integrity
 

@@ -189,7 +189,7 @@ async fn archive_expired_for_event_type(
         return Ok(0);
     }
 
-    // 2. Walk the cascade so dependent synthesis events follow their parents
+    // 2. Walk the cascade so dependent derived events follow their parents
     //    into the archive.
     let session_prefix = format!("ttl_{instance_id}");
     let (cascade_ids, _depth) =

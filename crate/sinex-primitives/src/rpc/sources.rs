@@ -3,13 +3,13 @@
 //! # External Producer Wire Contract
 //!
 //! Non-Rust producers (Python, shell scripts, external tools) can publish
-//! [`AdmittedEventIntent`] envelopes to NATS `JetStream` without depending on the
+//! [`EventIntent`] envelopes to NATS `JetStream` without depending on the
 //! Rust SDK. The contract below is the minimum a producer must satisfy for
 //! ingestd to accept the payload.
 //!
 //! ## Envelope format
 //!
-//! Publish a JSON [`AdmittedEventIntent`] to the `JetStream` subject
+//! Publish a JSON [`EventIntent`] to the `JetStream` subject
 //! `{env}.sinex.events.raw.{source}.{event_type}` (typically
 //! `sinex.events.raw.{source}.{event_type}` in development).
 //!
@@ -64,7 +64,7 @@
 //! | `ts_orig` | ISO 8601 | no | Real-world occurrence timestamp |
 //! | `host` | string | yes | Originating hostname |
 //! | `Material` | object | XOR * | Material provenance (external producers use a virtual material) |
-//! | `Synthesis` | object | XOR * | Synthesis provenance (derived from parent events) |
+//! | `Derived` | object | XOR * | Derived provenance (derived from parent events) |
 //!
 //! For external producers emitting metadata-only events, use `Material`
 //! provenance with a deterministic `UUIDv5` material ID derived from a

@@ -4,7 +4,7 @@
 // Inline because these cover private control-plane encoding helpers.
 use super::*;
 use crate::checkpoint::CheckpointManager;
-use crate::{IngestorNode, IngestorNodeAdapter, NatsPublisher};
+use crate::{SourceUnit, SourceUnitRuntime, NatsPublisher};
 use async_nats::jetstream;
 use serde::Serialize;
 use serde::ser::Error as _;
@@ -81,7 +81,7 @@ impl StartupSequenceTestNode {
 }
 
 #[cfg(feature = "messaging")]
-impl IngestorNode for DrainTestIngestor {
+impl SourceUnit for DrainTestIngestor {
     type Config = ();
     type State = ();
 

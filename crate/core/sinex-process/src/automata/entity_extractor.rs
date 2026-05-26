@@ -1,8 +1,8 @@
 //! Entity extractor automaton — Stage 1 of the entity intelligence pipeline.
 //!
-//! A [`TransducerNode`] that scans incoming events for deterministic entity
+//! A [`Transducer`] that scans incoming events for deterministic entity
 //! patterns (URLs, file paths, commands, emails) and emits `entity.extracted`
-//! synthesis events. Downstream stages (resolver, relation extractor, enricher)
+//! derived events. Downstream stages (resolver, relation extractor, enricher)
 //! canonicalize and enrich these raw extractions.
 //!
 //! ## v1 pattern catalog
@@ -21,15 +21,15 @@
 //!
 //! ## Output
 //!
-//! One `entity.extracted` event per matched pattern, with synthesis provenance
+//! One `entity.extracted` event per matched pattern, with derived provenance
 //! from the source event. The entity resolver (Stage 2) assigns deterministic
 //! `UUIDv5` identities.
 //!
 //! Ref: `.agent/scratch/071-issue-331-entity-extractor-spec.md`.
 
 use regex::Regex;
-use sinex_node_sdk::derived_node::{DerivedOutput, DerivedTriggerContext, TransducerNodeAdapter};
-use sinex_node_sdk::{InputProvenanceFilter, NodeLogicError, TransducerNode};
+use sinex_node_sdk::derived_node::{DerivedOutput, AutomatonContext, TransducerNodeAdapter};
+use sinex_node_sdk::{InputProvenanceFilter, NodeLogicError, Transducer};
 use sinex_primitives::domain::EntityTypeName;
 use sinex_primitives::events::payloads::EntityExtractedPayload;
 use sinex_primitives::privacy::ProcessingContext;
@@ -55,7 +55,7 @@ static EMAIL_PATTERN: LazyLock<Result<Regex, regex::Error>> =
 #[derive(Debug, Clone, Default)]
 pub struct EntityExtractor;
 
-impl TransducerNode for EntityExtractor {
+impl Transducer for EntityExtractor {
     type State = ();
     type Input = serde_json::Value;
     type Output = EntityExtractedPayload;
@@ -84,7 +84,7 @@ impl TransducerNode for EntityExtractor {
         &mut self,
         _state: &mut Self::State,
         input: serde_json::Value,
-        context: &DerivedTriggerContext,
+        context: &AutomatonContext,
     ) -> Result<Option<DerivedOutput<EntityExtractedPayload>>, NodeLogicError> {
         // Extract text fields from the input event.
         let text = extract_text_fields(&input);
@@ -250,10 +250,10 @@ register_source_unit_binding! {
         "derived",
     )
     .implementation("sinex-process")
-    .adapter("DerivedNodeAdapter")
+    .adapter("AutomatonRuntime")
     .output_event_type("entity.extracted")
     .privacy_context("inherits_from_parents")
-    .material_policy("synthesis_parents")
+    .material_policy("derived_parents")
     .checkpoint_policy("append_stream")
     .resource_shape("event_stream_consumer")
     .source_unit_id("entity-extractor")

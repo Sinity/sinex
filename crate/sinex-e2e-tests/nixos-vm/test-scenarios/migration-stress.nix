@@ -26,7 +26,7 @@ let
   inherit (pkgs) lib;
 
   # SQL to bulk-insert 1M synthetic events via generate_series.
-  # Uses UUIDv7 IDs and synthesis provenance so direct inserts exercise the same
+  # Uses UUIDv7 IDs and derived provenance so direct inserts exercise the same
   # persistence invariants as the application pipeline.
   seedSql = ''
     INSERT INTO core.events (id, source, event_type, host, payload, ts_orig, source_event_ids)

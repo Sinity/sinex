@@ -8,19 +8,19 @@
 //!
 //! | Name | Selector | Node type |
 //! |------|----------|-----------|
-//! | `canonicalizer` | `--automaton canonicalizer` | [`TransducerNode`] |
-//! | `analytics` | `--automaton analytics` | [`WindowedNode`] |
-//! | `health` | `--automaton health` | [`ScopeReconcilerNode`] |
-//! | `session` | `--automaton session` | [`WindowedNode`] |
-//! | `hourly` | `--automaton hourly` | [`WindowedNode`] |
-//! | `daily` | `--automaton daily` | [`WindowedNode`] |
-//! | `entity-resolver` | `--automaton entity-resolver` | [`WindowedNode`] |
-//! | `relation-extractor` | `--automaton relation-extractor` | [`ScopeReconcilerNode`] |
-//! | `entity-enricher` | `--automaton entity-enricher` | [`ScopeReconcilerNode`] |
-//! | `entity-extractor` | `--automaton entity-extractor` | [`TransducerNode`] |
-//! | `tag-applier` | `--automaton tag-applier` | [`TransducerNode`] |
+//! | `canonicalizer` | `--automaton canonicalizer` | [`Transducer`] |
+//! | `analytics` | `--automaton analytics` | [`Windowed`] |
+//! | `health` | `--automaton health` | [`ScopeReconciler`] |
+//! | `session` | `--automaton session` | [`Windowed`] |
+//! | `hourly` | `--automaton hourly` | [`Windowed`] |
+//! | `daily` | `--automaton daily` | [`Windowed`] |
+//! | `entity-resolver` | `--automaton entity-resolver` | [`Windowed`] |
+//! | `relation-extractor` | `--automaton relation-extractor` | [`ScopeReconciler`] |
+//! | `entity-enricher` | `--automaton entity-enricher` | [`ScopeReconciler`] |
+//! | `entity-extractor` | `--automaton entity-extractor` | [`Transducer`] |
+//! | `tag-applier` | `--automaton tag-applier` | [`Transducer`] |
 //! | `document-parser` | `--automaton document-parser` | [`MultiOutputTransducerNode`] |
-//! | `instruction-reconciler` | `--automaton instruction-reconciler` | [`ScopeReconcilerNode`] |
+//! | `instruction-reconciler` | `--automaton instruction-reconciler` | [`ScopeReconciler`] |
 //!
 //! All thirteen [`SourceUnitDescriptor`](sinex_primitives::proof::SourceUnitDescriptor)s are
 //! registered at program load via the `register_source_unit!` macro in each submodule.

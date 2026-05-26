@@ -4,7 +4,7 @@
 //! producers emit proposals, authorized actors record judgments, and
 //! deterministic finalizers emit canonical outputs from accepted/modified
 //! judgments. They do not create a third provenance class; finalizer outputs
-//! should use ordinary synthesis provenance pointing at proposal + judgment
+//! should use ordinary derived provenance pointing at proposal + judgment
 //! events.
 
 use schemars::JsonSchema;

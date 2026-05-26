@@ -16,7 +16,7 @@ visible, and tied to the traffic class affected.
 - ingestd NAKs retryable persistence/material-readiness failures, routes
   terminal validation or material failures to DLQ, and leaves fatal confirmation
   durability gaps unacked for redelivery instead of pretending the batch landed.
-- `insert_stream_batch` routes synthesis batches through transactional VALUES,
+- `insert_stream_batch` routes derived batches through transactional VALUES,
   large material-only batches through COPY, and small material-only batches
   through VALUES. That is throughput routing, not a lossy policy.
 - Material assembly has explicit limits for buffered slices and material size;
@@ -31,7 +31,7 @@ visible, and tied to the traffic class affected.
 | Confirmations and durability receipts | ingestd confirmations, retry confirmations | Must persist or make the gap fatal/visible. | Confirmation retry path and fatal confirmation durability-gap classification. | Operator UI should surface confirmation retry backlog and fatal gaps. |
 | Durable source material | staged files, SQLite snapshots, material slices | Lossless; may defer/retry; must DLQ terminal corruption. | WAL-backed material assembler, max size/slice limits, DLQ on terminal failures. | Continuity gap records should summarize failed/deferred material windows. |
 | Admitted event intents | ingestor events, external event-intent bridge records | Lossless after admission; may backpressure producers; no silent drop. | Raw-event publisher lane, JetStream ack timeout, ingestd retry/DLQ. | External producers need clear retry/confirmation guidance. |
-| Synthesis events | automata outputs, summaries, model-derived records | Lossless relative to parent events; may be replayed from parents; failures route to processing DLQ. | Derived processing failure lane and per-event DLQ fallback. | High-fan-in summaries need compact lineage records, not huge parent arrays. |
+| Derived events | automata outputs, summaries, model-derived records | Lossless relative to parent events; may be replayed from parents; failures route to processing DLQ. | Derived processing failure lane and per-event DLQ fallback. | High-fan-in summaries need compact lineage records, not huge parent arrays. |
 | Telemetry/self-observation | node metrics, heartbeat, publisher counters | Best effort but accountable; may sample/coalesce under pressure if a gap record is emitted. | Separate telemetry publisher lane. | No explicit sampling/coalescing policy or telemetry gap event yet. |
 | Bulk parser output | historical backfills, staged export parsers | May defer and throttle; must not starve control/privacy/confirmation. | Source-worker isolation plus raw-event publisher backpressure. | Need per-source worker budget accounting and operator-visible deferred-work status. |
 | Model and embedding effects | embeddings, LLM summaries, recorded model effects | Deferrable; must record model/effect provenance when emitted; may be skipped under privacy policy. | Planned around recorded model effects. | Needs implementation policy once #1063/#1076 land. |

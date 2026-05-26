@@ -1,6 +1,6 @@
 //! Event admission envelope for durable transport.
 //!
-//! This module defines the `AdmittedEventIntent` envelope that producers construct
+//! This module defines the `EventIntent` envelope that producers construct
 //! to declare "I've done my admission checks, here's the payload." The envelope
 //! complements (does not replace) the ingestd-side admission boundary extracted in
 //! #1056 — the producer uses the envelope type (compile-time guard), and ingestd
@@ -111,7 +111,7 @@ impl std::str::FromStr for OccurrenceAnchorKind {
 /// For tests, fixtures, and bootstrap, use `NatsPublisher::publish_raw_event_batch`
 /// — a grep-detectable escape hatch that is absent from production producer code.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AdmittedEventIntent {
+pub struct EventIntent {
     /// Envelope version — currently "1".
     pub envelope_version: String,
 
@@ -137,7 +137,7 @@ pub struct AdmittedEventIntent {
     pub admitted_by: HostName,
 }
 
-impl AdmittedEventIntent {
+impl EventIntent {
     /// Create a new admitted event intent with the current envelope version.
     pub fn new(
         source_unit_id: impl Into<String>,
@@ -219,7 +219,7 @@ mod tests {
 
     #[sinex_test]
     async fn envelope_validation_rejects_empty_version() -> TestResult<()> {
-        let mut intent = AdmittedEventIntent {
+        let mut intent = EventIntent {
             envelope_version: String::new(),
             source_unit_id: "test".into(),
             parser_id: "test-parser".into(),
@@ -237,7 +237,7 @@ mod tests {
 
     #[sinex_test]
     async fn envelope_validation_rejects_empty_events() -> TestResult<()> {
-        let intent = AdmittedEventIntent {
+        let intent = EventIntent {
             envelope_version: "1".into(),
             source_unit_id: "test".into(),
             parser_id: "test-parser".into(),
@@ -252,7 +252,7 @@ mod tests {
 
     #[sinex_test]
     async fn envelope_validation_passes_for_valid_intent() -> TestResult<()> {
-        let intent = AdmittedEventIntent {
+        let intent = EventIntent {
             envelope_version: "1".into(),
             source_unit_id: "test-unit".into(),
             parser_id: "test-parser".into(),
@@ -267,7 +267,7 @@ mod tests {
 
     #[sinex_test]
     async fn is_version_accepted_returns_true_for_v1() -> TestResult<()> {
-        let intent = AdmittedEventIntent {
+        let intent = EventIntent {
             envelope_version: "1".into(),
             source_unit_id: "test".into(),
             parser_id: "test-parser".into(),
@@ -282,7 +282,7 @@ mod tests {
 
     #[sinex_test]
     async fn is_version_accepted_rejects_unknown_version() -> TestResult<()> {
-        let intent = AdmittedEventIntent {
+        let intent = EventIntent {
             envelope_version: "999".into(),
             source_unit_id: "test".into(),
             parser_id: "test-parser".into(),
@@ -304,7 +304,7 @@ mod tests {
         let mut ev2 = minimal_event();
         ev2.id = Some(Id::from_uuid(ev2_id));
 
-        let intent = AdmittedEventIntent {
+        let intent = EventIntent {
             envelope_version: "1".into(),
             source_unit_id: "test".into(),
             parser_id: "test-parser".into(),

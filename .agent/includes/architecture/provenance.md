@@ -11,17 +11,17 @@ Material provenance (source_material_id set, source_event_ids NULL):
   - The source material is the ground truth; the event is interpretation
   - Created by: ingestors (fs, terminal, desktop, system, document)
 
-Synthesis provenance (source_material_id NULL, source_event_ids set):
+Derived provenance (source_material_id NULL, source_event_ids set):
   "I derived this conclusion from these parent events."
   - Can be replayed by re-running the automaton on the parents
-  - The parents are the ground truth; the synthesis is interpretation
+  - The parents are the ground truth; the derived is interpretation
   - Created by: automata (canonicalizer, analytics, health)
 ```
 
 An event MUST have exactly one provenance type. This is enforced at three levels:
 1. **DB CHECK constraint** on `core.events` (XOR on nullable columns)
 2. **EventBuilder typestate** (`NoProvenance` has no `.build()` method)
-3. **NonEmptyVec** in `Provenance::Synthesis` (empty parent arrays impossible in Rust)
+3. **NonEmptyVec** in `Provenance::Derived` (empty parent arrays impossible in Rust)
 
 ### Why This Matters For Every Decision
 
