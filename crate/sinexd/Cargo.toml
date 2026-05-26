@@ -1,0 +1,28 @@
+[package]
+name = "sinexd"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+repository.workspace = true
+license.workspace = true
+
+# Single local daemon hosting the event engine, JSON-RPC/SSE/native-messaging API,
+# source-unit dispatch, and derived-node automata. Replaces the former four-binary
+# arrangement (sinex-ingestd, sinex-gateway, sinex-source-worker, sinex-process).
+# See issue #1054 for the collapse contract.
+[[bin]]
+name = "sinexd"
+path = "src/main.rs"
+
+[lib]
+name = "sinexd"
+path = "src/lib.rs"
+
+[dependencies]
+sinex-primitives = { path = "../sinex-primitives" }
+tokio = { workspace = true }
+tracing = { workspace = true }
+color-eyre = { workspace = true }
+
+[lints]
+workspace = true

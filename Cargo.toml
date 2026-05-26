@@ -1,5 +1,8 @@
 [workspace]
 members = [
+  # The daemon (#1054)
+  "crate/sinexd",
+
   # Shared libraries (surviving — flat layout)
   "crate/sinex-primitives",
   "crate/sinex-macros",
