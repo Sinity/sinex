@@ -339,7 +339,15 @@ pub fn build() -> HashMap<&'static str, FormatCapability> {
         FormatCapability::single_shot(TABLE_JSON_YAML),
     );
     m.insert(
+        "curation duplicates",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
+    m.insert(
         "curation judge",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
+    m.insert(
+        "curation duplicate-judge",
         FormatCapability::single_shot(TABLE_JSON_YAML),
     );
     m.insert(
@@ -752,6 +760,7 @@ fn effect_for_path(path: &str, capability: &FormatCapability) -> CommandEffect {
         "blob migrate",
         "blob store",
         "blob sweep-orphans",
+        "curation duplicate-judge",
         "curation finalize",
         "curation judge",
         "declare",
@@ -788,6 +797,7 @@ fn effect_for_path(path: &str, capability: &FormatCapability) -> CommandEffect {
         "semantics lane create",
         "semantics lane discard",
         "semantics lane seed-canonical-graph",
+        "semantics lane seed-entity-events",
         "semantics lane status",
         "semantics lane write-outputs",
         "shadow create",
@@ -824,6 +834,7 @@ fn mutation_guards_for_path(path: &str) -> &'static [CommandMutationGuard] {
         | "replay run" => &[RpcAuth, DryRun],
         "lifecycle tombstone approve" => &[RpcAuth, Confirmation],
         "annotate"
+        | "curation duplicate-judge"
         | "curation finalize"
         | "curation judge"
         | "declare"
@@ -853,6 +864,7 @@ fn mutation_guards_for_path(path: &str) -> &'static [CommandMutationGuard] {
         | "semantics lane create"
         | "semantics lane discard"
         | "semantics lane seed-canonical-graph"
+        | "semantics lane seed-entity-events"
         | "semantics lane status"
         | "semantics lane write-outputs"
         | "sources annotate"
@@ -961,6 +973,8 @@ fn backing_rpc_methods_for_path(path: &str) -> &'static [&'static str] {
         "tasks state" => &[methods::TASKS_STATE_GET],
         "tasks status" => &[methods::TASKS_STATUS_SET],
         "tasks update" => &[methods::TASKS_UPDATE],
+        "curation duplicates" => &[methods::CURATION_DUPLICATE_CANDIDATES_LIST],
+        "curation duplicate-judge" => &[methods::CURATION_DUPLICATE_JUDGMENTS_RECORD],
         "curation proposals" => &[methods::CURATION_PROPOSALS_LIST],
         "curation judge" => &[methods::CURATION_JUDGMENTS_RECORD],
         "curation finalize" => &[methods::CURATION_FINALIZE],

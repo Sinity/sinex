@@ -17,8 +17,11 @@ use sinex_primitives::rpc::{
         ListInstancesResponse,
     },
     curation::{
+        CURATION_DUPLICATE_CANDIDATES_LIST_METHOD, CURATION_DUPLICATE_JUDGMENTS_RECORD_METHOD,
         CURATION_FINALIZE_METHOD, CURATION_JUDGMENTS_RECORD_METHOD, CURATION_PROPOSALS_LIST_METHOD,
-        CurationFinalizeRequest, CurationFinalizeResponse, CurationListProposalsRequest,
+        CurationFinalizeRequest, CurationFinalizeResponse, CurationListDuplicateCandidatesRequest,
+        CurationListDuplicateCandidatesResponse, CurationListProposalsRequest,
+        CurationRecordDuplicateJudgmentRequest, CurationRecordDuplicateJudgmentResponse,
         CurationRecordJudgmentRequest, CurationRecordJudgmentResponse,
     },
     dlq::{
@@ -1091,12 +1094,30 @@ impl GatewayClient {
             .await
     }
 
+    /// List cross-material duplicate candidate clusters.
+    pub async fn curation_duplicate_candidates_list(
+        &self,
+        request: CurationListDuplicateCandidatesRequest,
+    ) -> Result<CurationListDuplicateCandidatesResponse> {
+        self.call_typed(CURATION_DUPLICATE_CANDIDATES_LIST_METHOD, &request)
+            .await
+    }
+
     /// Record a judgment over a curation proposal event.
     pub async fn curation_judgments_record(
         &self,
         request: CurationRecordJudgmentRequest,
     ) -> Result<CurationRecordJudgmentResponse> {
         self.call_typed(CURATION_JUDGMENTS_RECORD_METHOD, &request)
+            .await
+    }
+
+    /// Record a duplicate-resolution judgment over candidate events.
+    pub async fn curation_duplicate_judgments_record(
+        &self,
+        request: CurationRecordDuplicateJudgmentRequest,
+    ) -> Result<CurationRecordDuplicateJudgmentResponse> {
+        self.call_typed(CURATION_DUPLICATE_JUDGMENTS_RECORD_METHOD, &request)
             .await
     }
 

@@ -63,6 +63,24 @@
     "response_type": "sinex_primitives::rpc::coordination::ListInstancesResponse"
   },
   {
+    "name": "curation.duplicate_candidates.list",
+    "role": "read_only",
+    "domain": "curation",
+    "stability": "experimental",
+    "mutability": "read_only",
+    "request_type": "sinex_primitives::rpc::curation::CurationListDuplicateCandidatesRequest",
+    "response_type": "sinex_primitives::rpc::curation::CurationListDuplicateCandidatesResponse"
+  },
+  {
+    "name": "curation.duplicate_judgments.record",
+    "role": "write",
+    "domain": "curation",
+    "stability": "experimental",
+    "mutability": "mutating",
+    "request_type": "sinex_primitives::rpc::curation::CurationRecordDuplicateJudgmentRequest",
+    "response_type": "sinex_primitives::rpc::curation::CurationRecordDuplicateJudgmentResponse"
+  },
+  {
     "name": "curation.finalize",
     "role": "write",
     "domain": "curation",
