@@ -186,6 +186,8 @@ pub fn method_catalog() -> Vec<RpcMethodInfo> {
         coordination::COORDINATION_GET_LEADER_METHOD.info(),
         coordination::COORDINATION_INSTANCE_HEALTH_METHOD.info(),
         coordination::COORDINATION_LIST_INSTANCES_METHOD.info(),
+        curation::CURATION_DUPLICATE_CANDIDATES_LIST_METHOD.info(),
+        curation::CURATION_DUPLICATE_JUDGMENTS_RECORD_METHOD.info(),
         curation::CURATION_FINALIZE_METHOD.info(),
         curation::CURATION_JUDGMENTS_RECORD_METHOD.info(),
         curation::CURATION_PROPOSALS_LIST_METHOD.info(),

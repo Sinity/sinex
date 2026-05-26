@@ -21,6 +21,7 @@ use sinex_primitives::rpc::{
         COORDINATION_LIST_INSTANCES_METHOD,
     },
     curation::{
+        CURATION_DUPLICATE_CANDIDATES_LIST_METHOD, CURATION_DUPLICATE_JUDGMENTS_RECORD_METHOD,
         CURATION_FINALIZE_METHOD, CURATION_JUDGMENTS_RECORD_METHOD, CURATION_PROPOSALS_LIST_METHOD,
     },
     dlq::{DLQ_LIST_METHOD, DLQ_PEEK_METHOD, DLQ_PURGE_METHOD, DLQ_REQUEUE_METHOD},
@@ -596,23 +597,24 @@ fn build_registry_impl() -> RpcRegistry {
         handle_audit_get, handle_automata_status, handle_coordination_get_leader,
         handle_coordination_instance_health, handle_coordination_list_instances,
         handle_create_entities, handle_create_note, handle_curation_finalize,
-        handle_curation_list_proposals, handle_curation_record_judgment, handle_dlq_list,
-        handle_dlq_peek, handle_dlq_purge, handle_dlq_requeue, handle_documents_get,
-        handle_documents_get_chunks, handle_documents_get_chunks_redacted, handle_documents_search,
-        handle_events_annotate, handle_events_lineage, handle_events_query,
-        handle_health_effect_record, handle_health_intake_record, handle_hyprland_workspace_switch,
-        handle_ingestors_status, handle_lifecycle_archive, handle_lifecycle_restore,
-        handle_lifecycle_status, handle_link_entities, handle_llm_budget_report,
-        handle_llm_prompts_list, handle_llm_route_explain, handle_nodes_drain, handle_nodes_health,
-        handle_nodes_list, handle_nodes_list_active, handle_nodes_resume, handle_nodes_set_horizon,
-        handle_ops_cancel, handle_ops_get, handle_ops_list, handle_ops_start,
-        handle_private_mode_disable_service, handle_private_mode_enable_service,
-        handle_private_mode_status_service, handle_replay_approve_operation,
-        handle_replay_cancel_operation, handle_replay_create_operation,
-        handle_replay_execute_operation, handle_replay_list_operations,
-        handle_replay_operation_status, handle_replay_preview_operation,
-        handle_replay_submit_operation, handle_retrieve_blob, handle_semantic_epoch_create,
-        handle_semantic_epoch_list, handle_semantic_lane_create,
+        handle_curation_list_duplicate_candidates, handle_curation_list_proposals,
+        handle_curation_record_duplicate_judgment, handle_curation_record_judgment,
+        handle_dlq_list, handle_dlq_peek, handle_dlq_purge, handle_dlq_requeue,
+        handle_documents_get, handle_documents_get_chunks, handle_documents_get_chunks_redacted,
+        handle_documents_search, handle_events_annotate, handle_events_lineage,
+        handle_events_query, handle_health_effect_record, handle_health_intake_record,
+        handle_hyprland_workspace_switch, handle_ingestors_status, handle_lifecycle_archive,
+        handle_lifecycle_restore, handle_lifecycle_status, handle_link_entities,
+        handle_llm_budget_report, handle_llm_prompts_list, handle_llm_route_explain,
+        handle_nodes_drain, handle_nodes_health, handle_nodes_list, handle_nodes_list_active,
+        handle_nodes_resume, handle_nodes_set_horizon, handle_ops_cancel, handle_ops_get,
+        handle_ops_list, handle_ops_start, handle_private_mode_disable_service,
+        handle_private_mode_enable_service, handle_private_mode_status_service,
+        handle_replay_approve_operation, handle_replay_cancel_operation,
+        handle_replay_create_operation, handle_replay_execute_operation,
+        handle_replay_list_operations, handle_replay_operation_status,
+        handle_replay_preview_operation, handle_replay_submit_operation, handle_retrieve_blob,
+        handle_semantic_epoch_create, handle_semantic_epoch_list, handle_semantic_lane_create,
         handle_semantic_lane_diff_record_entity_relation, handle_semantic_lane_diffs_list,
         handle_semantic_lane_discard, handle_semantic_lane_outputs_list,
         handle_semantic_lane_outputs_seed_canonical_graph,
@@ -654,6 +656,10 @@ fn build_registry_impl() -> RpcRegistry {
         .pool_typed_rpc(
             CURATION_PROPOSALS_LIST_METHOD,
             boxed!(handle_curation_list_proposals),
+        )
+        .pool_typed_rpc(
+            CURATION_DUPLICATE_CANDIDATES_LIST_METHOD,
+            boxed!(handle_curation_list_duplicate_candidates),
         )
         .pool_typed_rpc(LLM_PROMPTS_LIST_METHOD, boxed!(handle_llm_prompts_list))
         .pool_typed_rpc(LLM_ROUTE_EXPLAIN_METHOD, boxed!(handle_llm_route_explain))
@@ -831,6 +837,10 @@ fn build_registry_impl() -> RpcRegistry {
         .pool_auth_typed_rpc(
             CURATION_JUDGMENTS_RECORD_METHOD,
             boxed!(handle_curation_record_judgment, 3),
+        )
+        .pool_auth_typed_rpc(
+            CURATION_DUPLICATE_JUDGMENTS_RECORD_METHOD,
+            boxed!(handle_curation_record_duplicate_judgment, 3),
         )
         .pool_typed_rpc(CURATION_FINALIZE_METHOD, boxed!(handle_curation_finalize))
         .pool_auth_typed_rpc(TASKS_CREATE_METHOD, boxed!(handle_tasks_create, 3))
