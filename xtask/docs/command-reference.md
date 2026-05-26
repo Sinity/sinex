@@ -57,9 +57,9 @@ Apply automatic fixes across workspace packages
 |---|---|---|---|
 | `-p, --package` | yes | no | Packages to fix (default: affected packages, falling back to workspace) |
 | `-a, --all` | no | no | Fix ALL packages (disables affected mode default) |
-| `--fmt-only` | no | no | Format only: run formatting on resolved packages and stop. Fast path (~1s) — no preflight, no compilation |
-| `--clippy` | no | no | Run clippy lint fix after compiler fix (opt-in). Without this flag, xtask fix runs formatting + compiler fix only |
-| `-t, --thorough` | no | no | Thorough mode: iterate packages individually with per-package clippy lint fix. Implies --clippy. Slower but maximal fix coverage |
+| `--fmt-only` | no | no | Format only: run cargo fmt on resolved packages and stop. Fast path for the common "format my changes" workflow |
+| `--clippy` | no | no | Run clippy --fix after cargo fix (opt-in). Without this flag, xtask fix runs fmt + cargo fix only |
+| `-t, --thorough` | no | no | Thorough mode: iterate packages individually with per-package clippy --fix. Implies --clippy. Slower but maximal fix coverage |
 | `--smart` | no | no | Smart mode: only fix packages that have stored MachineApplicable diagnostics. Falls back to normal fix if no diagnostic data is available |
 
 
