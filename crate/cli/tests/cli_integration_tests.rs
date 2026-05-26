@@ -206,6 +206,19 @@ mod help_tests {
     }
 
     #[sinex_test]
+    async fn test_blob_verify_integrity_help() -> TestResult<()> {
+        sinexctl()
+            .args(["blob", "verify-integrity", "--help"])
+            .assert()
+            .success()
+            .stdout(predicate::str::contains("anchor_payload_hash"))
+            .stdout(predicate::str::contains("--content-store-path"))
+            .stdout(predicate::str::contains("--material-id"))
+            .stdout(predicate::str::contains("--limit"));
+        Ok(())
+    }
+
+    #[sinex_test]
     async fn test_verify_help_exposes_evidence_flags() -> TestResult<()> {
         sinexctl()
             .args(["verify", "--help"])

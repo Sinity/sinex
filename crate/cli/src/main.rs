@@ -497,6 +497,7 @@ fn command_path(cmd: &Commands) -> String {
             BlobCommands::SweepOrphans(_) => "blob sweep-orphans".to_string(),
             BlobCommands::Fsck(_) => "blob fsck".to_string(),
             BlobCommands::Migrate(_) => "blob migrate".to_string(),
+            BlobCommands::VerifyIntegrity(_) => "blob verify-integrity".to_string(),
         },
         Commands::Core { .. } => "core health".to_string(),
         Commands::Node { cmd } => match cmd {
