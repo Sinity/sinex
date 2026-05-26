@@ -4,8 +4,8 @@ name = "sinex-gateway"
 [dependencies]
 subtle         = "2"
 tokio-rustls   = "0.26"
-sinex-primitives = { path = "../../lib/sinex-primitives", features = ["nats"] }
-sinex-db = { path = "../../lib/sinex-db" }
+sinex-primitives = { path = "../../sinex-primitives", features = ["nats"] }
+sinex-db = { path = "../../sinex-db" }
 
 [dev-dependencies]
 tempfile = { workspace = true }
@@ -181,7 +181,7 @@ features = [
 path = "../../../xtask"
 
 [dev-dependencies.sinex-primitives]
-path = "../../lib/sinex-primitives"
+path = "../../sinex-primitives"
 features = [
     "testing",
 ]

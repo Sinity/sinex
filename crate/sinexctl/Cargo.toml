@@ -40,11 +40,11 @@ crossterm           = "0.29"
 walkdir             = { workspace = true }
 
 [dependencies.sinex-primitives]
-path = "../lib/sinex-primitives"
+path = "../sinex-primitives"
 
 
 [dependencies.sinex-db]
-path = "../lib/sinex-db"
+path = "../sinex-db"
 
 [dependencies.sinex-node-sdk]
 path = "../lib/sinex-node-sdk"
@@ -127,7 +127,7 @@ path = "../../xtask"
 path = "../../xtask/macros"
 
 [dev-dependencies.sinex-primitives]
-path = "../lib/sinex-primitives"
+path = "../sinex-primitives"
 features = ["testing"]
 
 [lints]

@@ -71,7 +71,7 @@ workspace = true
 workspace = true
 
 [dependencies.sinex-macros]
-path = "../../lib/sinex-macros"
+path = "../../sinex-macros"
 
 [dependencies.sinex-node-sdk]
 path = "../../lib/sinex-node-sdk"
@@ -89,7 +89,7 @@ workspace = true
 workspace = true
 
 [dependencies.sinex-primitives]
-path = "../../lib/sinex-primitives"
+path = "../../sinex-primitives"
 
 [dev-dependencies.color-eyre]
 workspace = true
@@ -98,7 +98,7 @@ workspace = true
 path = "../../../xtask"
 
 [dev-dependencies.sinex-primitives]
-path = "../../lib/sinex-primitives"
+path = "../../sinex-primitives"
 features = ["testing"]
 
 [dev-dependencies.tempfile]

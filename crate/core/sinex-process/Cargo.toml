@@ -58,13 +58,13 @@ workspace = true
 path = "../../lib/sinex-node-sdk"
 
 [dependencies.sinex-primitives]
-path = "../../lib/sinex-primitives"
+path = "../../sinex-primitives"
 
 [dev-dependencies.xtask]
 path = "../../../xtask"
 
 [dev-dependencies.sinex-primitives]
-path = "../../lib/sinex-primitives"
+path = "../../sinex-primitives"
 features = [
     "testing",
 ]

@@ -9,7 +9,7 @@ path = "src/lib.rs"
 
 [dependencies]
 serde            = { workspace = true, features = ["derive"] }
-sinex-primitives = { path = "../sinex-primitives" }
+sinex-primitives = { path = "../../sinex-primitives" }
 time             = { workspace = true }
 tracing          = { workspace = true }
 
@@ -55,7 +55,7 @@ workspace = true
 path = "../../../xtask"
 
 [dev-dependencies.sinex-primitives]
-path = "../sinex-primitives"
+path = "../../sinex-primitives"
 features = [
     "testing",
 ]

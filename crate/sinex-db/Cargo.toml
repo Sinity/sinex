@@ -7,7 +7,7 @@ description = "Database persistence layer for Sinex"
 [dependencies]
 # Core dependencies
 sinex-primitives = { path = "../sinex-primitives", features = ["sqlx"] }
-sinex-schema = { path = "../sinex-schema" }
+sinex-schema = { path = "../lib/sinex-schema" }
 
 # Third-party dependencies
 sqlx = { workspace = true, features = [
@@ -47,7 +47,7 @@ bon = { workspace = true }
 [dev-dependencies]
 tokio = { workspace = true, features = ["full"] }
 mockall = "0.12"
-xtask = { path = "../../../xtask" }
+xtask = { path = "../../xtask" }
 sinex-primitives = { path = "../sinex-primitives", features = ["testing"] }
 
 [lints]

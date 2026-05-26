@@ -21,9 +21,9 @@ time = { workspace = true }
 tokio = { workspace = true }
 xtask = { path = "../../xtask" }
 
-sinex-db = { path = "../../crate/lib/sinex-db" }
-sinex-gateway = { path = "../../crate/core/sinex-gateway" }
-sinex-node-sdk = { path = "../../crate/lib/sinex-node-sdk" }
-sinex-primitives = { path = "../../crate/lib/sinex-primitives" }
-sinex-process = { path = "../../crate/core/sinex-process" }
-sinex-schema = { path = "../../crate/lib/sinex-schema" }
+sinex-db = { path = "../sinex-db" }
+sinex-gateway = { path = "../core/sinex-gateway" }
+sinex-node-sdk = { path = "../lib/sinex-node-sdk" }
+sinex-primitives = { path = "../sinex-primitives" }
+sinex-process = { path = "../core/sinex-process" }
+sinex-schema = { path = "../lib/sinex-schema" }

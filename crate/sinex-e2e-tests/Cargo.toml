@@ -35,13 +35,13 @@ path = "../../xtask"
 
 
 [dev-dependencies.sinex-ingestd]
-path = "../../crate/core/sinex-ingestd"
+path = "../core/sinex-ingestd"
 
 [dev-dependencies.sinex-node-sdk]
-path = "../../crate/lib/sinex-node-sdk"
+path = "../lib/sinex-node-sdk"
 
 [dev-dependencies.sinex-gateway]
-path = "../../crate/core/sinex-gateway"
+path = "../core/sinex-gateway"
 features = [ "test-support",]
 
 [dev-dependencies.async-nats]
@@ -75,11 +75,11 @@ workspace = true
 workspace = true
 
 [dev-dependencies.sinex-primitives]
-path = "../../crate/lib/sinex-primitives"
+path = "../sinex-primitives"
 features = [ "testing",]
 
 [dev-dependencies.sinex-db]
-path = "../../crate/lib/sinex-db"
+path = "../sinex-db"
 
 [dev-dependencies.toml]
 workspace = true

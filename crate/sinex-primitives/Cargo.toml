@@ -67,7 +67,7 @@ proptest = { workspace = true }
 color-eyre = { workspace = true }
 sinex-db = { path = "../sinex-db" }
 tempfile = { workspace = true }
-xtask = { path = "../../../xtask" }
+xtask = { path = "../../xtask" }
 trybuild = { workspace = true }
 
 [lints]

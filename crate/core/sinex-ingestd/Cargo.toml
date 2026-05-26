@@ -99,7 +99,7 @@ workspace = true
 workspace = true
 
 [dependencies.sinex-primitives]
-path = "../../lib/sinex-primitives"
+path = "../../sinex-primitives"
 
 [dependencies.sinex-node-sdk]
 path = "../../lib/sinex-node-sdk"
@@ -108,7 +108,7 @@ path = "../../lib/sinex-node-sdk"
 path = "../../lib/sinex-schema"
 
 [dependencies.sinex-db]
-path = "../../lib/sinex-db"
+path = "../../sinex-db"
 
 [features]
 tokio-console = ["dep:console-subscriber"]
@@ -134,7 +134,7 @@ path = "../../../xtask"
 path = "../../../xtask/macros"
 
 [dev-dependencies.sinex-primitives]
-path = "../../lib/sinex-primitives"
+path = "../../sinex-primitives"
 features = [
     "testing",
 ]

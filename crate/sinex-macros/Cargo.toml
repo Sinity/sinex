@@ -37,7 +37,7 @@ workspace = true
 workspace = true
 
 [dev-dependencies.xtask]
-path = "../../../xtask"
+path = "../../xtask"
 
 [dev-dependencies.sinex-primitives]
 path = "../sinex-primitives"

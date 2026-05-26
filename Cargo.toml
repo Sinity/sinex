@@ -1,43 +1,30 @@
 [workspace]
 members = [
-  # Library crates
+  # Shared libraries (surviving — flat layout)
+  "crate/sinex-primitives",
+  "crate/sinex-macros",
+  "crate/sinex-db",
 
-  "crate/lib/sinex-primitives",
+  # Dying libraries (will be absorbed/dissolved in PR-2/PR-3, kept at original paths)
   "crate/lib/sinex-schema",
-  "crate/lib/sinex-macros",
   "crate/lib/sinex-node-sdk",
-  "crate/lib/sinex-db",
-  # Re-enabled to ensure tests compile
 
-  # Core runtime crates
+  # Dying service-binary hosts (folded into sinexd in PR-2/PR-3, kept at original paths)
   "crate/core/sinex-ingestd",
   "crate/core/sinex-gateway",
   "crate/core/sinex-source-worker",
-
-  # Ingestor crates folded into sinex-source-worker per #1081 (Wave B).
-  # The legacy per-domain ingestor crates have been deleted; every source
-  # unit now lives under `crate/core/sinex-source-worker/src/sources/`.
-  "tests/e2e",
-
-  # Automaton host (derived nodes consolidated into one binary).
-  # Moved next to sinex-source-worker in crate/core/ because both are
-  # service-binary hosts at the same conceptual level — crate/nodes/ no
-  # longer makes sense as a separate parent directory.
   "crate/core/sinex-process",
+
+  # CLI (surviving — flat)
+  "crate/sinexctl",
+
+  # Test crates (surviving — flat)
+  "crate/sinex-e2e-tests",
+  "crate/sinex-workspace-tests",
+  "crate/sinex-vm-suite",
 
   # Developer tooling
   "xtask",
-
-  # CLI tools
-  "crate/cli",
-
-  # NixOS VM test suite binary (runs inside VMs to assert behavioral invariants)
-  "crate/tests/vm-suite",
-  "tests/workspace",
-
-  # Disabled/folded crates
-  # "crate/sinex-preflight", # Folded into sinex-node-sdk
-  # "crate/sinex-nats", # Folded into sinex-node-sdk
 ]
 resolver = "2"
 
