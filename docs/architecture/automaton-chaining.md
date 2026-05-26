@@ -7,7 +7,8 @@ chains compose, how failures are isolated, and how authority moves through
 them.
 
 It does not redefine model-call policy (that belongs to
-`prompt-router-budget.md`) or promotion authority (that belongs to
+[issue #1116](https://github.com/Sinity/sinex/issues/1116)) or
+promotion authority (that belongs to
 `proposal-judgment-finalizer.md`). It defines the shape *between* automata,
 including the circuit-breaker contract that lets degraded chains keep
 producing useful output without silently corrupting downstream consumers.
@@ -67,7 +68,7 @@ hold.
    proposal/judgment/finalizer spine simply because there are several
    automata involved.
 3. **Routing and privacy carry forward.** When a chain stage runs a model,
-   it uses the prompt router (`prompt-router-budget.md`) and records the
+   it uses the prompt router ([issue #1116](https://github.com/Sinity/sinex/issues/1116)) and records the
    decision. Downstream stages inherit the privacy class of the input; they
    do not silently re-route a redacted input to a remote model.
 4. **Replay preserves authority records.** Re-running an earlier stage may
@@ -133,10 +134,10 @@ Required behavior:
 
 | Record | Relationship |
 | --- | --- |
-| `prompt-router-budget.md` | Owns prompt registry, model selection, and per-call budget; chain stages call into it for every model call. |
+| [issue #1116](https://github.com/Sinity/sinex/issues/1116) (prompt router + budget ledger) | Owns prompt registry, model selection, and per-call budget; chain stages call into it for every model call. |
 | `proposal-judgment-finalizer.md` | Owns promotion authority; chain stages emit proposals rather than mutating canonical state. |
 | `semantic-epochs-shadow-lanes.md` | Owns shadow-lane comparison when a chain stage runs in a new model/config. |
-| `inference-decision-metadata.md` | Owns the inference decision record shape that chain stages link from their outputs. |
+| [issue #1118](https://github.com/Sinity/sinex/issues/1118) (inference decision metadata) | Owns the inference decision record shape that chain stages link from their outputs. |
 | `runtime-qos.md` | Owns per-stage backpressure, rate limits, and lag accounting. |
 | `runtime-private-mode.md` | Owns the privacy classification that chain stages must inherit and not bypass. |
 

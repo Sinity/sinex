@@ -186,6 +186,6 @@ the runtime is already admission-checked.
 - Do not skip the model registry. All inserts go through `ensure_model`.
 
 **Related:** `docs/architecture/document-layer-v1.md`,
-`docs/architecture/inference-decision-metadata.md`,
 `docs/architecture/runtime-qos.md`,
-issues #400, #1021, #1063.
+issues #400, #1021, #1063, #1076, #1118 (inference decision metadata),
+#1116 (prompt router + budget ledger).
