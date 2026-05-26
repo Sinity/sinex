@@ -4085,6 +4085,13 @@
       "type_name": "sinex_primitives::events::payloads::metrics::StreamStatsPayload"
     },
     {
+      "subject": "event_payload:sinex.node/derived.latency_snapshot/1.0.0",
+      "source": "sinex.node",
+      "event_type": "derived.latency_snapshot",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::metrics::DerivedNodeLatencySnapshotPayload"
+    },
+    {
       "subject": "event_payload:sinex.node/processing.stats/1.0.0",
       "source": "sinex.node",
       "event_type": "processing.stats",

@@ -36,10 +36,11 @@ use crate::{BufferedRecordMaterializer, NatsPublisher, deterministic_material_ev
 use async_nats::Client as NatsClient;
 use sinex_primitives::env as shared_env;
 use sinex_primitives::events::payloads::{
-    AssemblyStatsPayload, ConsumerStartupSnapshotPayload, GatewayRequestStatsPayload,
-    GatewayRpcCallPayload, HealthStatusPayload, IngestdBatchStatsPayload, MetricCounterPayload,
-    MetricGaugePayload, MetricHistogramPayload, NodeProcessingStatsPayload, PoolStatsPayload,
-    RateLimitExceededPayload, ReplayStatsPayload, RpcStatus, StreamStatsPayload,
+    AssemblyStatsPayload, ConsumerStartupSnapshotPayload, DerivedNodeLatencySnapshotPayload,
+    GatewayRequestStatsPayload, GatewayRpcCallPayload, HealthStatusPayload,
+    IngestdBatchStatsPayload, MetricCounterPayload, MetricGaugePayload, MetricHistogramPayload,
+    NodeProcessingStatsPayload, PoolStatsPayload, RateLimitExceededPayload, ReplayStatsPayload,
+    RpcStatus, StreamStatsPayload,
 };
 use sinex_primitives::events::{Event, Provenance, SourceMaterial};
 use sinex_primitives::{Id, JsonValue, SinexError, Timestamp};
@@ -702,6 +703,36 @@ impl SelfObserver {
             avg_latency_ms,
             queue_depth,
             error_count,
+        })
+        .await
+    }
+
+    /// Emit a per-event latency snapshot for a derived node.
+    ///
+    /// One event collapses what was previously six separate `metric.gauge`
+    /// emissions (`derived.event_lag_ms`, `derived.tick_runtime_ms`, the two
+    /// `event_lag_p{50,99}_ms` reservoir percentiles, `derived.tick_runtime_p99_ms`,
+    /// and `derived.throughput_eps`). See issue #1556.
+    pub async fn emit_derived_node_latency_snapshot(
+        &self,
+        node_name: &str,
+        event_lag_ms: Option<f64>,
+        tick_runtime_ms: Option<f64>,
+        event_lag_p50_ms: Option<f64>,
+        event_lag_p99_ms: Option<f64>,
+        tick_runtime_p99_ms: Option<f64>,
+        throughput_eps: f64,
+        labels: HashMap<String, String>,
+    ) -> Result<(), SelfObservationError> {
+        self.publish(DerivedNodeLatencySnapshotPayload {
+            node_name: node_name.to_string(),
+            event_lag_ms,
+            tick_runtime_ms,
+            event_lag_p50_ms,
+            event_lag_p99_ms,
+            tick_runtime_p99_ms,
+            throughput_eps,
+            labels,
         })
         .await
     }

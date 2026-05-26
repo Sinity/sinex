@@ -160,21 +160,29 @@ Current semantics:
 - Atomic updates via NATS KV
 - Built-in staleness tracking
 
-## Derived-Node Latency / Throughput Gauges
+## Derived-Node Latency / Throughput Snapshot
 
-`DerivedNodeAdapter` emits the following gauges through `SelfObserver` on
-every dispatch (one per processed event in `process_one`, one per batch
-in `process_event_batch`). Operators see them via `sinexctl automata` and
-the `sinex.metrics.gauge` event stream:
+`DerivedNodeAdapter::observe_processing_latency` emits one
+`derived.latency_snapshot` event (source `sinex.node`) per dispatch through
+`SelfObserver`. Operators see the readings via `sinexctl automata`; the
+event is also queryable directly. Payload fields
+(`DerivedNodeLatencySnapshotPayload`):
 
-| Gauge | Source | Meaning |
+| Field | Source | Meaning |
 |---|---|---|
-| `derived.event_lag_ms` | last sample | wall delta from `event.ts_orig` to dispatch |
-| `derived.event_lag_p50_ms` | reservoir | median over the last `DEFAULT_LATENCY_RESERVOIR` samples (1024) |
-| `derived.event_lag_p99_ms` | reservoir | p99 over the same reservoir |
-| `derived.tick_runtime_ms` | last sample | wall time inside `node.process_derived` |
-| `derived.tick_runtime_p99_ms` | reservoir | p99 of per-tick runtime |
-| `derived.throughput_eps` | sliding 60s | events per second over the live window |
+| `event_lag_ms` | last sample | wall delta from `event.ts_orig` to dispatch |
+| `event_lag_p50_ms` | reservoir | median over the last `DEFAULT_LATENCY_RESERVOIR` samples (1024) |
+| `event_lag_p99_ms` | reservoir | p99 over the same reservoir |
+| `tick_runtime_ms` | last sample | wall time inside `node.process_derived` |
+| `tick_runtime_p99_ms` | reservoir | p99 of per-tick runtime |
+| `throughput_eps` | sliding 60s | events per second over the live window |
+
+Reducing the prior six separate `metric.gauge` rows-per-snapshot to one
+event cut derived-node telemetry volume by ~6× without information loss
+(issue #1556). The batch-path observer
+(`observe_batch_processing_latency`) still emits separate
+`derived.event_lag_ms` and `derived.batch_runtime_ms` gauges — that path
+fires per-batch (not per-event), so its rate is already low.
 
 Implementation lives in
 `crate/lib/sinex-node-sdk/src/derived_node/histograms.rs`. Reservoir size
@@ -188,4 +196,5 @@ xtask test -p sinex-node-sdk \
 
 The first slice (#571) shipped the point-in-time gauges; the second
 slice (#561) added the reservoir-based percentiles, the throughput
-window, and the heavy-lane scenario test.
+window, and the heavy-lane scenario test. The snapshot collapse (#1556)
+replaced six per-event gauges with a single typed payload.

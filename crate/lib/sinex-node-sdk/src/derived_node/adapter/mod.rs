@@ -105,12 +105,14 @@ where
     /// differs from persisted checkpoint totals, which survive restarts.
     run_events_processed: u64,
     /// Per-event lag samples (ms between `event.ts_orig` and dispatch).
-    /// Drives `derived.event_lag_p50_ms` / `derived.event_lag_p99_ms`.
+    /// Drives the `event_lag_p50_ms` / `event_lag_p99_ms` fields of the
+    /// `derived.latency_snapshot` event.
     lag_window: super::histograms::LatencyWindow,
     /// Per-tick wall-time samples (ms inside `node.process_derived`).
-    /// Drives `derived.tick_runtime_p99_ms`.
+    /// Drives the `tick_runtime_p99_ms` field of `derived.latency_snapshot`.
     runtime_window: super::histograms::LatencyWindow,
-    /// Sliding-window event count for `derived.throughput_eps`.
+    /// Sliding-window event count for the `throughput_eps` field of
+    /// `derived.latency_snapshot`.
     throughput_window: super::histograms::ThroughputWindow,
     #[cfg(feature = "messaging")]
     health_reporter: Option<Arc<crate::health_reporter::HealthReporter>>,
