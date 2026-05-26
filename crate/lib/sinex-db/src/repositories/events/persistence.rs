@@ -2701,6 +2701,7 @@ mod tests {
             equivalence_key: None,
             created_by_operation_id: Some(uuid::Uuid::now_v7()),
             node_model: None,
+            anchor_payload_hash: None,
         };
 
         let err = resolved_created_by_operation_id(&event).expect_err("should fail");
