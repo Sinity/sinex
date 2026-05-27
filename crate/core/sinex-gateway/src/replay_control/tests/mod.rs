@@ -34,7 +34,7 @@ fn error_contains(error: &SinexError, needle: &str) -> bool {
 ///
 /// `js.publish` requires the target subject to be covered by an existing
 /// `JetStream` stream, and the production stream bootstrap (in
-/// `sinex_ingestd::jetstream_consumer::bootstrap_streams`) does not run
+/// `sinexd::event_engine::jetstream_consumer::bootstrap_streams`) does not run
 /// in test contexts that use ephemeral NATS. This helper:
 ///
 /// 1. `get_or_create_stream`s the canonical

@@ -1,5 +1,5 @@
 use sinex_db::DbPoolExt;
-use sinex_ingestd::schema_sync::synchronize_schemas;
+use sinexd::event_engine::schema_sync::synchronize_schemas;
 use sinex_primitives::query::{EventQuery, EventQueryResult, SortDirection};
 use xtask::sandbox::prelude::*;
 

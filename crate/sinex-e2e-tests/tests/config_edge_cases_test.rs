@@ -10,7 +10,7 @@
 //! - Path validation edge cases
 //! - Connection test failure handling
 
-use sinex_ingestd::config::IngestdConfig;
+use sinexd::event_engine::config::IngestdConfig;
 use sinex_primitives::Bytes;
 use sinex_primitives::nats::NatsConnectionConfig;
 use std::env;

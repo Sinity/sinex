@@ -1,6 +1,6 @@
 use camino::Utf8PathBuf;
 use serde_json::json;
-use sinex_ingestd::{JetStreamTopology, config::IngestdConfig, service::IngestService};
+use sinexd::event_engine::{JetStreamTopology, config::IngestdConfig, service::IngestService};
 use sinex_primitives::nats::NatsConnectionConfig;
 use sinex_primitives::{
     Event, EventSource, EventType, HostName, Id, OffsetKind, Provenance, SourceMaterial,

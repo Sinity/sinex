@@ -18,11 +18,61 @@ path = "src/main.rs"
 name = "sinexd"
 path = "src/lib.rs"
 
+[features]
+tokio-console = ["dep:console-subscriber"]
+# Enable test-only injection points (fault hooks, processing delays, delivery
+# observers, DLQ-routing override) on the event_engine's JetStreamConsumer.
+# Required by integration tests in this crate's tests/event_engine/ directory.
+testing = []
+
 [dependencies]
+# Sinex internals
 sinex-primitives = { path = "../sinex-primitives" }
-tokio = { workspace = true }
+sinex-db = { path = "../sinex-db" }
+sinex-node-sdk = { path = "../lib/sinex-node-sdk" }
+
+# Async runtime + allocator
+tokio = { workspace = true, features = ["full"] }
+tokio-stream = { workspace = true, features = ["net"] }
+mimalloc = { workspace = true }
+futures = { workspace = true }
+parking_lot = { workspace = true }
+dashmap = { workspace = true }
+
+# Logging
 tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
 color-eyre = { workspace = true }
+console-subscriber = { workspace = true, optional = true }
+
+# Data
+serde = { workspace = true }
+serde_json = { workspace = true }
+uuid = { workspace = true }
+sqlx = { workspace = true }
+time = { workspace = true }
+async-nats = { workspace = true }
+url = { workspace = true }
+blake3 = { workspace = true }
+crc32fast = { workspace = true }
+base64 = { workspace = true }
+
+# CLI + filesystem
+clap = { workspace = true, features = ["derive"] }
+camino = { workspace = true }
+dirs = { workspace = true }
+validator = { workspace = true }
+bon = { workspace = true }
+libc = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+gethostname = { workspace = true }
+xtask = { path = "../../xtask" }
+xtask-macros = { path = "../../xtask/macros" }
+sinex-primitives = { path = "../sinex-primitives", features = ["testing"] }
+# Self-reference to enable the `testing` feature for integration tests in tests/.
+sinexd = { path = ".", features = ["testing"] }
 
 [lints]
 workspace = true
