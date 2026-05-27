@@ -7,6 +7,7 @@
 
 pub mod analytics;
 pub mod canonicalizer;
+pub mod registry;
 pub mod daily;
 pub mod document_parser;
 pub mod entity_enricher;
