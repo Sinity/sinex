@@ -348,12 +348,10 @@ let
       Group = serviceUser;
       Restart = cfg.runtime.restartPolicy.mode;
       RestartSec = cfg.runtime.restartPolicy.backoffSec;
-      # Watchdog disabled post-sinexd-collapse: the supervisor's
-      # spawn_watchdog tokio task can be starved by heavy batch persistence
-      # (8000-event COPY batches) and miss the 30s ping window, leading to
-      # spurious SIGTERMs. Re-enable when supervisor schedules the ping on
-      # a dedicated thread or thread-pool isolated from the workload.
-      WatchdogSec = "0";
+      # 60s watchdog; the spawn_watchdog impl runs the pinger on a
+      # dedicated std::thread (not a tokio task), so heavy COPY batches
+      # on the async runtime can't starve the ping.
+      WatchdogSec = "60s";
       Environment = env;
       ProtectSystem = "strict";
       ProtectHome = true;
@@ -888,12 +886,19 @@ let
               })
               sourceUnitGroups
           );
-      # Post-sinexd-collapse: monitor source-units are fire-once startup
-      # annotations that return immediately. Inside the single sinexd daemon
-      # they trigger the SDK's "Continuous scan returned unexpectedly" path
-      # which cascades shutdown across every binding. Disabled until the
-      # supervisor handles oneshot bindings without cascading.
-      monitorBinding = { };
+      monitorBinding = {
+        "terminal.monitor" = {
+          enable = true;
+          description = "Terminal monitoring lifecycle event (source-worker)";
+          adapterType = null;
+          adapterConfig = { };
+          instances = 1;
+          inherit resources;
+          extraEnv = { RUST_LOG = nodesCfg.defaults.logLevel; } // sat.env;
+          serviceConfigOverrides = { };
+          extraArgs = [ ];
+        };
+      };
       # Post-collapse: all source-worker units fold into sinexd.service. The
       # ACL setup must run before sinexd so the in-process terminal source
       # units can traverse target-user paths.
@@ -1480,11 +1485,8 @@ let
         "system.systemd" = mkSystemBinding "system.systemd" "systemd unit state (source-worker)";
         "system.udev" = mkSystemBinding "system.udev" "udev events (source-worker)";
         "system.dbus" = mkSystemBinding "system.dbus" "D-Bus signal stream (source-worker)";
-        # Disabled post-sinexd-collapse: fire-once startup annotation
-        # cascades shutdown when hosted as a continuous binding. See
-        # terminal.monitor comment above.
-        "system.monitor.disabled-by-collapse" = {
-          enable = false;
+        "system.monitor" = {
+          enable = sat.enable;
           description = "System monitoring lifecycle event (source-worker)";
           adapterType = null;
           adapterConfig = { };
