@@ -9,8 +9,8 @@
 
 #![allow(dead_code)] // ChaosCounterNode infrastructure ready for future chaos-through-node tests
 
-use sinex_node_sdk::derived_node::{DerivedOutput, DerivedTriggerContext};
-use sinex_node_sdk::{NodeLogicError, TransducerNode};
+use sinex_node_sdk::derived_node::{DerivedOutput, AutomatonContext};
+use sinex_node_sdk::{NodeLogicError, Transducer};
 use sinex_primitives::events::Event;
 use sinex_primitives::privacy::ProcessingContext;
 use sinex_primitives::testing::event_fixture;
@@ -42,7 +42,7 @@ struct CounterOutput {
     increment: u64,
 }
 
-impl TransducerNode for ChaosCounterNode {
+impl Transducer for ChaosCounterNode {
     type State = CounterState;
     type Input = CounterInput;
     type Output = CounterOutput;
@@ -67,7 +67,7 @@ impl TransducerNode for ChaosCounterNode {
         &mut self,
         state: &mut Self::State,
         input: Self::Input,
-        context: &DerivedTriggerContext,
+        context: &AutomatonContext,
     ) -> Result<Option<DerivedOutput<Self::Output>>, NodeLogicError> {
         state.total += input.value;
         self.processed.fetch_add(1, Ordering::SeqCst);

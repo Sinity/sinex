@@ -52,17 +52,17 @@ pub fn check_tls_config(options: &TlsCheckOptions) -> Result<TlsCheckResult> {
 
     // Resolve paths from env if not provided
     let cert_path = options.cert_path.clone().or_else(|| {
-        std::env::var("SINEX_GATEWAY_TLS_CERT")
+        std::env::var("SINEX_API_TLS_CERT")
             .ok()
             .map(PathBuf::from)
     });
     let key_path = options.key_path.clone().or_else(|| {
-        std::env::var("SINEX_GATEWAY_TLS_KEY")
+        std::env::var("SINEX_API_TLS_KEY")
             .ok()
             .map(PathBuf::from)
     });
     let ca_path = options.ca_path.clone().or_else(|| {
-        std::env::var("SINEX_GATEWAY_TLS_CLIENT_CA")
+        std::env::var("SINEX_API_TLS_CLIENT_CA")
             .ok()
             .map(PathBuf::from)
     });
@@ -96,7 +96,7 @@ pub fn check_tls_config(options: &TlsCheckOptions) -> Result<TlsCheckResult> {
         }
     } else {
         result.issues.push(
-            "No certificate path provided (set SINEX_GATEWAY_TLS_CERT or use --cert)".to_string(),
+            "No certificate path provided (set SINEX_API_TLS_CERT or use --cert)".to_string(),
         );
         result.valid = false;
     }
@@ -148,7 +148,7 @@ pub fn check_tls_config(options: &TlsCheckOptions) -> Result<TlsCheckResult> {
         }
     } else {
         result.issues.push(
-            "No private key path provided (set SINEX_GATEWAY_TLS_KEY or use --key)".to_string(),
+            "No private key path provided (set SINEX_API_TLS_KEY or use --key)".to_string(),
         );
         result.valid = false;
     }

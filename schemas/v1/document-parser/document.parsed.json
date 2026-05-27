@@ -17,7 +17,7 @@
     }
   },
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "description": "Synthesis event emitted once per parsed document.\n\nProvenance is `from_parents([parent_event_id])`:\n- For Dendron, the parent is the originating `document.ingested` event.\n- For terminal output, the parent is the `command.canonical` event.\n\nThe corresponding chunks are emitted as `document.chunked` events whose\nown provenance threads back to *this* `document.parsed` event ID\n(chunks are derived from the document, not directly from source bytes).",
+  "description": "Derived event emitted once per parsed document.\n\nProvenance is `from_parents([parent_event_id])`:\n- For Dendron, the parent is the originating `document.ingested` event.\n- For terminal output, the parent is the `command.canonical` event.\n\nThe corresponding chunks are emitted as `document.chunked` events whose\nown provenance threads back to *this* `document.parsed` event ID\n(chunks are derived from the document, not directly from source bytes).",
   "properties": {
     "chunk_count": {
       "description": "Number of `document.chunked` events emitted alongside this\n`document.parsed`. Used by the projection writer for completeness\nchecks; not load-bearing for replay.",

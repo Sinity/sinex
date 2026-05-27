@@ -1,12 +1,12 @@
-//! Checkpoint state I/O and bookkeeping for `DerivedNodeAdapter`.
+//! Checkpoint state I/O and bookkeeping for `AutomatonRuntime`.
 //!
 //! Carved out of `adapter/mod.rs` as part of #697. Pure mechanical move; the
 //! methods, control flow, and instrumentation are unchanged.
 
-use super::{DerivedNodeAdapter, restore_resume_position};
+use super::{AutomatonRuntime, restore_resume_position};
 
 use crate::checkpoint::CheckpointState;
-use crate::derived_node::traits::DerivedNodeImpl;
+use crate::derived_node::traits::Automaton;
 use crate::processing::PersistedState;
 use crate::runtime::stream::Checkpoint;
 use crate::{NodeResult, SinexError};
@@ -19,9 +19,9 @@ use std::path::Path;
 use std::time::{Duration, Instant};
 use tracing::{debug, info, warn};
 
-impl<N> DerivedNodeAdapter<N>
+impl<N> AutomatonRuntime<N>
 where
-    N: DerivedNodeImpl,
+    N: Automaton,
 {
     pub(super) async fn cleanup_hot_reload_file_best_effort(
         path: &Path,

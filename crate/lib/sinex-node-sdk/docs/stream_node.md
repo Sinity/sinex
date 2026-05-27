@@ -5,7 +5,7 @@ Runtime model for `sinex-node-sdk` nodes.
 This module documents the current runtime model used by `sinex-node-sdk`:
 
 - Core interface: `Node` trait (`scan`, `initialize`, `shutdown`, capabilities)
-- High-level adapters: `IngestorNodeAdapter` and `DerivedNodeAdapter`
+- High-level adapters: `SourceUnitRuntime` and `AutomatonRuntime`
 - Runtime orchestration: `NodeRunner`
 - CLI integration: `sinex-node-sdk` `node_entrypoint!` macro
 
@@ -20,10 +20,10 @@ High-level traits decide what those modes mean for each node family:
 
 `NodeRunner` owns transport, checkpoint manager, schema listener, and background workers.
 
-Capture ingestors implement `IngestorNode`; they read external material and emit
-material-provenance events. Derived nodes implement `TransducerNode`,
-`WindowedNode`, or `ScopeReconcilerNode`; they consume confirmed events and emit
-synthesis-provenance events.
+Capture ingestors implement `SourceUnit`; they read external material and emit
+material-provenance events. Derived nodes implement `Transducer`,
+`Windowed`, or `ScopeReconciler`; they consume confirmed events and emit
+derived-provenance events.
 
 ## Checkpoint Types
 
@@ -46,10 +46,10 @@ Checkpoint::internal(event_uuid, message_count)
 
 Most nodes should implement one of:
 
-1. `IngestorNode` (capture from external sources)
-2. `TransducerNode` (stateless event transformation)
-3. `WindowedNode` (accumulate events and emit bounded windows)
-4. `ScopeReconcilerNode` (maintain per-scope state and reconcile summaries)
+1. `SourceUnit` (capture from external sources)
+2. `Transducer` (stateless event transformation)
+3. `Windowed` (accumulate events and emit bounded windows)
+4. `ScopeReconciler` (maintain per-scope state and reconcile summaries)
 
 Then expose a binary with `node_entrypoint!(...)`.
 

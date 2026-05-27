@@ -1,0 +1,99 @@
+[package]
+name = "sinexd"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+repository.workspace = true
+license.workspace = true
+
+
+[[bin]]
+name = "sinexd"
+path = "src/main.rs"
+
+[lib]
+name = "sinexd"
+path = "src/lib.rs"
+
+[features]
+default = []
+tokio-console = ["dep:console-subscriber"]
+testing = []
+test-support = []
+dev-errors = []
+
+[dependencies]
+# Sinex internals
+sinex-primitives = { path = "../sinex-primitives" }
+sinex-db = { path = "../sinex-db" }
+sinex-node-sdk = { path = "../lib/sinex-node-sdk" }
+
+# Async runtime + allocator
+tokio = { workspace = true, features = ["full"] }
+tokio-stream = { workspace = true, features = ["net"] }
+mimalloc = { workspace = true }
+futures = { workspace = true }
+parking_lot = { workspace = true }
+dashmap = { workspace = true }
+
+# Logging
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+console-subscriber = { workspace = true, optional = true }
+# color-eyre: in-crate test helpers use eyre::Result.
+color-eyre = { workspace = true }
+
+# Data
+serde = { workspace = true }
+serde_json = { workspace = true }
+uuid = { workspace = true }
+sqlx = { workspace = true }
+time = { workspace = true }
+async-nats = { workspace = true }
+url = { workspace = true }
+blake3 = { workspace = true }
+crc32fast = { workspace = true }
+base64 = { workspace = true }
+
+# CLI + filesystem
+clap = { workspace = true, features = ["derive"] }
+camino = { workspace = true }
+dirs = { workspace = true }
+validator = { workspace = true }
+bon = { workspace = true }
+libc = { workspace = true }
+notify = { workspace = true }
+
+# HTTP / RPC / TLS (api module)
+axum = { workspace = true }
+tower = { version = "0.5", features = ["util", "timeout", "limit", "load-shed"] }
+tower-http = { version = "0.6", features = ["cors", "limit", "request-id", "trace"] }
+hyper-util = "0.1"
+tokio-rustls = "0.26"
+subtle = "2"
+governor = { workspace = true }
+petgraph = { workspace = true }
+reqwest = { workspace = true }
+serde_path_to_error = { workspace = true }
+bytes = { workspace = true }
+
+
+# Source-units adapter substrate
+csv = { workspace = true }
+async-trait = { workspace = true }
+inventory = { workspace = true }
+regex = { workspace = true }
+serde_yml = { workspace = true }
+mime_guess = "2.0"
+sinex-macros = { path = "../sinex-macros" }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+gethostname = { workspace = true }
+xtask = { path = "../../xtask" }
+xtask-macros = { path = "../../xtask/macros" }
+sinex-primitives = { path = "../sinex-primitives", features = ["testing"] }
+sinexd = { path = ".", features = ["testing"] }
+
+[lints]
+workspace = true

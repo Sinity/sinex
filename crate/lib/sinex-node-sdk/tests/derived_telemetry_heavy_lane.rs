@@ -32,9 +32,9 @@
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sinex_node_sdk::derived_node::{
-    DerivedNodeAdapter, DerivedOutput, DerivedTriggerContext, TransducerWrapper,
+    AutomatonRuntime, DerivedOutput, AutomatonContext, TransducerWrapper,
 };
-use sinex_node_sdk::{NodeLogicError, TransducerNode};
+use sinex_node_sdk::{NodeLogicError, Transducer};
 use sinex_primitives::events::DynamicPayload;
 use sinex_primitives::prelude::*;
 use sinex_primitives::privacy::ProcessingContext;
@@ -51,7 +51,7 @@ struct TelemetryInput {
 
 struct TelemetryNode;
 
-impl TransducerNode for TelemetryNode {
+impl Transducer for TelemetryNode {
     type State = TelemetryState;
     type Input = TelemetryInput;
     type Output = JsonValue;
@@ -76,7 +76,7 @@ impl TransducerNode for TelemetryNode {
         &mut self,
         _state: &mut Self::State,
         input: Self::Input,
-        context: &DerivedTriggerContext,
+        context: &AutomatonContext,
     ) -> std::result::Result<Option<DerivedOutput<Self::Output>>, NodeLogicError> {
         Ok(Some(DerivedOutput::transduced(
             json!({ "value": input.value }),
@@ -106,7 +106,7 @@ async fn derived_telemetry_lag_percentile_under_load() -> TestResult<()> {
     const RUNTIME_P99_BOUND_MS: f64 = 5.0;
     const THROUGHPUT_FLOOR_EPS: f64 = 100.0;
 
-    let mut adapter = DerivedNodeAdapter::new(TransducerWrapper(TelemetryNode));
+    let mut adapter = AutomatonRuntime::new(TransducerWrapper(TelemetryNode));
 
     let started = Instant::now();
     for i in 0..EVENT_COUNT {

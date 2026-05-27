@@ -11,7 +11,7 @@ let event = FileCreatedPayload { path: "/file.txt".into(), size: 1024, .. }
     .from_material(source_material_id)
     .build()?;
 
-// Synthesis provenance (automata — derived from other events)
+// Derived provenance (automata — derived from other events)
 let event = AnalyticsSummaryPayload { .. }
     .from_parents(parent_event_ids)?
     .build()?;

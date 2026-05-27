@@ -36,11 +36,11 @@ The runtime provides complete node lifecycle via `NodeRunner` and adapter traits
 - **Three-phase lifecycle**: Snapshot → Historical → Continuous
 - **Associated `Config` type**: Type-safe, deserializable configuration
 - **NodeInitContext / NodeRuntimeState**: DB pool, checkpoint manager, event emitter, NATS transport
-- **Adapter ergonomics**: `IngestorNodeAdapter` and `DerivedNodeAdapter` remove boilerplate
+- **Adapter ergonomics**: `SourceUnitRuntime` and `AutomatonRuntime` remove boilerplate
 
-New capture nodes usually implement `IngestorNode`. New derived nodes implement
-`TransducerNode`, `WindowedNode`, or `ScopeReconcilerNode`, then run through the
-matching `DerivedNodeAdapter` alias. Binaries use `node_entrypoint!`.
+New capture nodes usually implement `SourceUnit`. New derived nodes implement
+`Transducer`, `Windowed`, or `ScopeReconciler`, then run through the
+matching `AutomatonRuntime` alias. Binaries use `node_entrypoint!`.
 
 ### 3. NATS Subject Routing
 

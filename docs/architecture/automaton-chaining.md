@@ -48,7 +48,7 @@ Intermediate stages emit canonical session and correlation events; final
 stages emit proposals (tags, patterns, summaries) per the
 proposal/judgment/finalizer contract.
 
-**Daily synthesis.** A clock-driven automaton queries the day's events and
+**Daily derived.** A clock-driven automaton queries the day's events and
 emits a structured day summary, which then drives semantic annotation and
 embedding indexing.
 

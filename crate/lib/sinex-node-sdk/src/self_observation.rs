@@ -37,8 +37,8 @@ use async_nats::Client as NatsClient;
 use sinex_primitives::env as shared_env;
 use sinex_primitives::events::payloads::{
     AssemblyStatsPayload, ConsumerStartupSnapshotPayload, DerivedNodeLatencySnapshotPayload,
-    GatewayRequestStatsPayload, GatewayRpcCallPayload, HealthStatusPayload,
-    IngestdBatchStatsPayload, MetricCounterPayload, MetricGaugePayload, MetricHistogramPayload,
+    ApiRequestStatsPayload, GatewayRpcCallPayload, HealthStatusPayload,
+    EventEngineBatchStatsPayload, MetricCounterPayload, MetricGaugePayload, MetricHistogramPayload,
     NodeProcessingStatsPayload, PoolStatsPayload, RateLimitExceededPayload, ReplayStatsPayload,
     RpcStatus, StreamStatsPayload,
 };
@@ -592,7 +592,7 @@ impl SelfObserver {
         max_latency_ms: Option<f64>,
         active_connections: u32,
     ) -> Result<(), SelfObservationError> {
-        self.publish(GatewayRequestStatsPayload {
+        self.publish(ApiRequestStatsPayload {
             total_requests: total,
             successful_requests: successful,
             rejected_requests: rejected,
@@ -764,7 +764,7 @@ impl SelfObserver {
         fetch_to_ack_ms: u64,
         events_deferred: u32,
         events_failed: u32,
-        had_synthesis: bool,
+        had_derived: bool,
         insert_path: &str,
         validation_valid: u64,
         validation_skipped: u64,
@@ -776,12 +776,12 @@ impl SelfObserver {
         telemetry_publish_failures: u64,
         confirmation_durability_gaps: u64,
     ) -> Result<(), SelfObservationError> {
-        self.publish(IngestdBatchStatsPayload {
+        self.publish(EventEngineBatchStatsPayload {
             batch_size,
             fetch_to_ack_ms,
             events_deferred,
             events_failed,
-            had_synthesis,
+            had_derived,
             insert_path: insert_path.to_string(),
             validation_valid,
             validation_skipped,

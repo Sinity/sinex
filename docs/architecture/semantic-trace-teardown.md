@@ -107,7 +107,7 @@ walkers.
 
 1. Resolve target to an event, source material, domain object, entity, note,
    context pack, moment candidate, or report.
-2. Walk direct material/synthesis provenance to configured depth.
+2. Walk direct material/derived provenance to configured depth.
 3. Expand high-fan-in derivation scopes lazily. Default output shows the scope
    summary, input count, hash, and representative samples rather than every
    member.

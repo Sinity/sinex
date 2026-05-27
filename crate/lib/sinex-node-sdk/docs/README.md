@@ -14,7 +14,7 @@ main architecture descriptions.
 
 ### Current Runtime Model
 - [**Overview**](overview.md) – Runtime shape, shared lifecycle phases, and how ingestors and derived nodes fit together.
-- [**Stream Processing Runtime**](stream_runtime.md) – Deep dive into the derived-node traits (`TransducerNode`, `WindowedNode`, `ScopeReconcilerNode`), `IngestorNode`, and their adapters.
+- [**Stream Processing Runtime**](stream_runtime.md) – Deep dive into the derived-node traits (`Transducer`, `Windowed`, `ScopeReconciler`), `SourceUnit`, and their adapters.
 - [**Trait Selection**](trait-selection.md) – Decision flowchart for choosing the right node pattern.
 - [**Node Patterns**](patterns.md) – Current capture-node and derived-node runtime patterns.
 - [**Ingestion & Provenance**](provenance.md) – Current sensor/ingestor and Stage-as-You-Go rules.
@@ -47,7 +47,7 @@ main architecture descriptions.
    NATS KV. Files are for fast local restart handoff; NATS is for durable
    recovery.
 2. **Cooperative Shutdown**: Use `CancellationToken` and `WatcherHandle` for coordinated cleanup; avoid abrupt task aborts.
-3. **Confirmed-Event Synthesis**: Derived nodes consume confirmations, checkpoint confirmed progress, and emit synthesis events with parent provenance.
+3. **Confirmed-Event Derived**: Derived nodes consume confirmations, checkpoint confirmed progress, and emit derived events with parent provenance.
 4. **Privacy-by-Design**: Telemetry stays local via the "Self-Observation" pattern (metrics as events).
 
 ## 📚 See Also

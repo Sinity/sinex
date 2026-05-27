@@ -1,0 +1,227 @@
+use base64::Engine;
+use sinex_db::DbPoolExt;
+use sinex_db::pkm::PkmService;
+use sinex_db::repositories::knowledge_graph::CreateEntity;
+use sinexd::api::{
+    auth::Role,
+    handlers::{handle_create_entities, handle_create_note, handle_link_entities},
+    rpc_server::RpcAuthContext,
+};
+use sinex_primitives::domain::{EntityTypeName, RelationType};
+use sinex_primitives::error::ErrorClass;
+use sinex_primitives::rpc::pkm::{
+    CreateEntitiesRequest, CreateNoteRequest, EntityDefinition, LinkEntitiesRequest,
+};
+use sinex_primitives::{Uuid, events::DynamicPayload, temporal};
+use xtask::sandbox::prelude::*;
+
+fn write_auth() -> RpcAuthContext {
+    RpcAuthContext {
+        token_prefix: "pkmtest".to_string(),
+        actor_id: "token:pkmtest".to_string(),
+        authenticated_at: temporal::now(),
+        role: Role::Write,
+    }
+}
+
+#[sinex_test]
+async fn pkm_create_note_rejects_malformed_optional_tags(ctx: TestContext) -> TestResult<()> {
+    let material_id = ctx.create_source_material(Some("pkm-note-test")).await?;
+    let event = DynamicPayload::new(
+        "gateway.test",
+        "gateway.inline",
+        serde_json::json!({ "message": "pkm" }),
+    )
+    .from_material(material_id)
+    .build()?;
+    let event = ctx.pool().events().insert(event).await?;
+
+    let error = serde_path_to_error::deserialize::<_, CreateNoteRequest>(serde_json::json!({
+        "event_id": event.id.expect("published event must have id"),
+        "content": base64::engine::general_purpose::STANDARD.encode("note"),
+        "tags": "not-an-array"
+    }))
+    .expect_err("malformed tags must fail");
+
+    assert_eq!(error.path().to_string(), "tags");
+    Ok(())
+}
+
+#[sinex_test]
+async fn pkm_create_entities_rejects_malformed_entities_param(ctx: TestContext) -> TestResult<()> {
+    let error = serde_path_to_error::deserialize::<_, CreateEntitiesRequest>(serde_json::json!({
+        "source_material_id": Uuid::now_v7(),
+        "entities": "not-an-array"
+    }))
+    .expect_err("malformed entities must fail");
+
+    assert_eq!(error.path().to_string(), "entities");
+    Ok(())
+}
+
+#[sinex_test]
+async fn pkm_link_entities_rejects_malformed_properties(ctx: TestContext) -> TestResult<()> {
+    let service = PkmService::new(ctx.pool().clone());
+    let auth = write_auth();
+
+    let error = handle_link_entities(
+        &service,
+        LinkEntitiesRequest {
+            from_entity_id: Uuid::now_v7().into(),
+            to_entity_id: Uuid::now_v7().into(),
+            relation_type: RelationType::from_static("related_to"),
+            metadata: Some(serde_json::json!(["not-an-object"])),
+            source_material_id: None,
+        },
+        &auth,
+    )
+    .await
+    .expect_err("malformed relation properties must fail");
+
+    assert!(error.to_string().contains("metadata"));
+    assert_eq!(error.error_class(), ErrorClass::DataError);
+    Ok(())
+}
+
+#[sinex_test]
+async fn pkm_create_note_uses_authenticated_actor_over_payload_created_by(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let service = PkmService::new(ctx.pool().clone());
+    let auth = write_auth();
+    let material_id = ctx
+        .create_source_material(Some("pkm-note-auth-created-by"))
+        .await?;
+    let event = DynamicPayload::new(
+        "gateway.test",
+        "gateway.inline",
+        serde_json::json!({ "message": "pkm auth" }),
+    )
+    .from_material(material_id)
+    .build()?;
+    let event = ctx.pool().events().insert(event).await?;
+    let event_id = event.id.expect("published event must have id");
+
+    let response = handle_create_note(
+        &service,
+        CreateNoteRequest {
+            event_id,
+            content: base64::engine::general_purpose::STANDARD.encode("note"),
+            tags: vec![],
+        },
+        &auth,
+    )
+    .await?;
+    let annotation_id = *response.annotation_id.as_uuid();
+
+    let annotations = ctx.pool().events().get_annotations(event_id).await?;
+    let annotation = annotations
+        .into_iter()
+        .find(|annotation| *annotation.id.as_uuid() == annotation_id)
+        .ok_or_else(|| color_eyre::eyre::eyre!("created annotation missing from database"))?;
+
+    assert_eq!(annotation.created_by, auth.actor_id());
+    Ok(())
+}
+
+#[sinex_test]
+async fn pkm_create_entities_uses_authenticated_actor_over_payload_created_by(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let service = PkmService::new(ctx.pool().clone());
+    let auth = write_auth();
+    let material_id = ctx
+        .create_source_material(Some("pkm-entities-auth-created-by"))
+        .await?;
+
+    let response = handle_create_entities(
+        &service,
+        CreateEntitiesRequest {
+            source_material_id: material_id,
+            entities: vec![EntityDefinition {
+                name: "Sinex".to_string(),
+                entity_type: EntityTypeName::from_static("project"),
+            }],
+        },
+        &auth,
+    )
+    .await?;
+    let entity_id = *response.entity_ids[0].as_uuid();
+
+    let entity = ctx
+        .pool()
+        .knowledge_graph()
+        .get_entity(entity_id.into())
+        .await?
+        .ok_or_else(|| color_eyre::eyre::eyre!("created entity missing from database"))?;
+
+    assert_eq!(
+        entity.properties["created_by"].as_str(),
+        Some(auth.actor_id())
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn pkm_link_entities_uses_typed_contract_and_preserves_source_material(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let service = PkmService::new(ctx.pool().clone());
+    let auth = write_auth();
+    let material_id = ctx
+        .create_source_material(Some("pkm-link-source-material"))
+        .await?;
+    let from = ctx
+        .pool()
+        .knowledge_graph()
+        .create_entity(CreateEntity::project("Sinex"))
+        .await?;
+    let to = ctx
+        .pool()
+        .knowledge_graph()
+        .create_entity(CreateEntity::tool("Codex"))
+        .await?;
+
+    let response = handle_link_entities(
+        &service,
+        LinkEntitiesRequest {
+            from_entity_id: from.id,
+            to_entity_id: to.id,
+            relation_type: RelationType::from_static("uses"),
+            metadata: Some(serde_json::json!({ "note": "operator supplied" })),
+            source_material_id: Some(material_id),
+        },
+        &auth,
+    )
+    .await?;
+
+    let relations = ctx
+        .pool()
+        .knowledge_graph()
+        .get_entity_relations(from.id, Some("uses"), true)
+        .await?;
+    let relation = relations
+        .into_iter()
+        .find(|relation| relation.id == response.relation_id)
+        .ok_or_else(|| color_eyre::eyre::eyre!("created relation missing from database"))?;
+
+    assert_eq!(
+        relation.properties["note"].as_str(),
+        Some("operator supplied")
+    );
+    let expected_source_material_id = material_id.to_string();
+    assert_eq!(
+        relation.properties["_system_metadata"]["source_material_id"].as_str(),
+        Some(expected_source_material_id.as_str())
+    );
+
+    let audit: (String,) = sqlx::query_as(
+        "SELECT operator FROM core.operations_log \
+         WHERE operation_type = 'pkm.entity.link' ORDER BY id DESC LIMIT 1",
+    )
+    .fetch_one(ctx.pool())
+    .await?;
+    assert_eq!(audit.0, auth.actor_id());
+
+    Ok(())
+}

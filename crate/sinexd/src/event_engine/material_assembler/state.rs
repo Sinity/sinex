@@ -1,0 +1,537 @@
+//! State management types and utilities for material assembly.
+//!
+//! This module contains the core state structures, message types, and helper
+//! functions used by the material assembler to track in-flight assembly operations.
+
+use blake3::Hasher;
+use serde::{Deserialize, Serialize};
+use serde_json::{Map as JsonMap, Value as JsonValue};
+use sinex_primitives::Timestamp;
+use std::{collections::BTreeMap, path::PathBuf, time::Instant};
+use tokio::fs::File;
+use tracing::{debug, info, warn};
+use uuid::Uuid;
+
+use super::{
+    MaterialAssembler,
+    assembly_state_machine::{
+        AssemblyInput, AssemblyLogicalState, AssemblyStateMachine, AssemblyTransition,
+    },
+};
+use crate::event_engine::{IngestdResult, SinexError};
+
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Clone, Copy, Default)]
+pub enum AssemblyPhase {
+    #[default]
+    PendingBegin,
+    Accumulating,
+    Finalizing,
+}
+
+pub(super) const BUFFER_DIR_NAME: &str = "buffers";
+pub(super) const WAL_FILE_NAME: &str = "state.wal";
+pub(super) const TEMP_FILE_NAME: &str = "material.bin";
+pub(super) const DLQ_CONSUMER: &str = "ingestd";
+
+pub(super) fn parse_material_started_at(
+    material_id: Uuid,
+    started_at: &str,
+    source: &str,
+) -> IngestdResult<Timestamp> {
+    Timestamp::parse_rfc3339(started_at).map_err(|error| {
+        SinexError::invalid_state(format!("Invalid started_at in material assembler {source}"))
+            .with_context("material_id", material_id.to_string())
+            .with_context("started_at", started_at)
+            .with_std_error(&error)
+    })
+}
+
+pub(super) fn parse_material_ended_at(
+    material_id: Uuid,
+    ended_at: &str,
+    source: &str,
+) -> IngestdResult<Timestamp> {
+    Timestamp::parse_rfc3339(ended_at).map_err(|error| {
+        SinexError::invalid_state(format!("Invalid ended_at in material assembler {source}"))
+            .with_context("material_id", material_id.to_string())
+            .with_context("ended_at", ended_at)
+            .with_std_error(&error)
+    })
+}
+
+/// Message from a material begin frame.
+#[derive(Debug, Serialize, Deserialize)]
+pub(super) struct MaterialBeginMessage {
+    pub material_id: String,
+    pub material_kind: String,
+    pub source_identifier: String,
+    pub metadata: JsonValue,
+    pub started_at: String,
+}
+
+/// Message from a material end frame.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(super) struct MaterialEndMessage {
+    pub material_id: String,
+    pub ended_at: String,
+    pub content_hash: String,
+    pub total_slices: usize,
+    pub total_size_bytes: i64,
+    #[serde(default)]
+    pub metadata: JsonValue,
+}
+
+/// Entry in the Write-Ahead Log
+#[derive(Debug, Serialize, Deserialize)]
+pub(super) enum WalEntry {
+    /// Initial or updated metadata (from Begin message)
+    Begin(MaterialBeginMessage),
+    /// A localized update about a slice being received
+    Slice { offset: i64, len: usize },
+    /// Buffered slice (out of order)
+    BufferedSlice { offset: i64, path: PathBuf },
+    /// Buffered slice taken (processed)
+    BufferedSliceTaken { offset: i64 },
+    /// End message received
+    End(MaterialEndMessage),
+    /// Checkpoint (snapshot of full state, usually followed by log truncation)
+    Checkpoint(PersistedState),
+}
+
+/// Envelope wrapping a WAL entry with integrity metadata.
+///
+/// Each WAL line is serialized as a `WalEntryEnvelope` containing:
+/// - `seq`: Monotonic sequence number for gap detection
+/// - `crc`: CRC32 of the serialized `entry` JSON for corruption detection
+/// - `entry`: The actual WAL entry
+///
+/// Recovery verifies the CRC before applying each entry.
+#[derive(Debug, Serialize, Deserialize)]
+pub(super) struct WalEntryEnvelope {
+    pub seq: u64,
+    pub crc: u32,
+    pub entry: WalEntry,
+}
+
+/// Persisted assembler state (stored on disk for restart recovery)
+#[derive(Debug, Serialize, Deserialize)]
+pub(super) struct PersistedState {
+    pub material_id: String,
+    pub expected_offset: i64,
+    pub slice_count: usize,
+    pub started_at: String,
+    #[serde(default)]
+    pub last_slice_received: Option<String>,
+    pub material_kind: String,
+    pub source_identifier: String,
+    pub metadata: JsonValue,
+    #[serde(default)]
+    pub pending_write: Option<PendingWrite>,
+    #[serde(default)]
+    pub pending_end: Option<MaterialEndMessage>,
+    #[serde(default)]
+    pub phase: AssemblyPhase,
+}
+
+/// Assembler state held in memory
+#[derive(Debug)]
+pub(super) struct AssemblerState {
+    pub material_id: Uuid,
+    pub temp_path: PathBuf,
+    pub temp_file: Option<tokio::fs::File>,
+    /// Append-only log file
+    pub wal_file: Option<tokio::fs::File>,
+    /// Next WAL sequence number (monotonically increasing per material)
+    pub wal_seq: u64,
+    pub expected_offset: i64,
+    pub slice_count: usize,
+    pub buffered_slices: BTreeMap<i64, PathBuf>,
+    pub buffered_bytes: i64,
+    pub state_dir: PathBuf,
+    pub started_at: Timestamp,
+    pub material_kind: String,
+    pub source_identifier: String,
+    pub metadata: JsonValue,
+    pub phase: AssemblyPhase,
+    pub hasher: Hasher,
+    pub pending_write: Option<PendingWrite>,
+    pub pending_end: Option<MaterialEndMessage>,
+    pub last_slice_received: Timestamp,
+    pub staged_bytes_since_sync: i64,
+    pub wal_entries_since_sync: u32,
+    pub wal_bytes_since_sync: usize,
+    pub last_staged_sync: Instant,
+    pub last_wal_sync: Instant,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(super) struct PendingWrite {
+    pub offset: i64,
+    pub len: usize,
+    pub slice_count_delta: usize,
+}
+
+#[derive(Clone)]
+pub(super) struct FinalizationState {
+    pub material_id: Uuid,
+    pub temp_path: PathBuf,
+    pub expected_offset: i64,
+    pub slice_count: usize,
+    pub buffered_count: usize,
+    pub metadata: JsonValue,
+    pub material_kind: String,
+    pub source_identifier: String,
+    pub started_at: Timestamp,
+}
+
+impl AssemblerState {
+    pub(super) fn buffers_dir(&self) -> PathBuf {
+        self.state_dir.join(BUFFER_DIR_NAME)
+    }
+
+    pub(super) fn finalization_view(&self) -> FinalizationState {
+        FinalizationState {
+            material_id: self.material_id,
+            temp_path: self.temp_path.clone(),
+            expected_offset: self.expected_offset,
+            slice_count: self.slice_count,
+            buffered_count: self.buffered_slices.len(),
+            metadata: self.metadata.clone(),
+            material_kind: self.material_kind.clone(),
+            source_identifier: self.source_identifier.clone(),
+            started_at: self.started_at,
+        }
+    }
+
+    #[must_use]
+    pub(super) fn total_staged_bytes(&self) -> i64 {
+        self.expected_offset + self.buffered_bytes
+    }
+}
+
+#[cfg(test)]
+pub(super) fn take_buffered_slice(
+    state: &mut AssemblerState,
+    material_id: Uuid,
+    offset: i64,
+) -> IngestdResult<PathBuf> {
+    state.buffered_slices.remove(&offset).ok_or_else(|| {
+        SinexError::service(format!(
+            "Missing buffered slice for {material_id} at offset {offset}"
+        ))
+    })
+}
+
+pub(super) fn normalize_metadata(value: JsonValue) -> JsonValue {
+    match value {
+        JsonValue::Object(_) => value,
+        JsonValue::Null => serde_json::json!({}),
+        other => {
+            let mut map = JsonMap::new();
+            map.insert("value".to_string(), other);
+            JsonValue::Object(map)
+        }
+    }
+}
+
+pub(super) fn merge_metadata(base: &JsonValue, updates: &JsonValue) -> JsonValue {
+    let mut merged = normalize_metadata(base.clone());
+    if let Some(target) = merged.as_object_mut() {
+        match updates {
+            JsonValue::Object(map) => {
+                for (key, value) in map {
+                    target.insert(key.clone(), value.clone());
+                }
+            }
+            JsonValue::Null => {}
+            other => {
+                target.insert("value".to_string(), other.clone());
+            }
+        }
+    }
+    merged
+}
+
+pub(super) fn build_finalize_metadata(
+    state: &FinalizationState,
+    end_metadata: &JsonValue,
+    ended_at: Timestamp,
+    total_bytes: i64,
+    content_hash: &str,
+) -> Result<JsonValue, SinexError> {
+    let mut merged = merge_metadata(&state.metadata, end_metadata);
+    let map = merged.as_object_mut().ok_or_else(|| {
+        sinex_primitives::error::SinexError::service(
+            "Metadata normalization failed: expected object after merge".to_string(),
+        )
+    })?;
+    map.insert(
+        "finalize_reason".to_string(),
+        JsonValue::String("jetstream-material".to_string()),
+    );
+    map.insert(
+        "finalized_at".to_string(),
+        JsonValue::String(sinex_primitives::temporal::format_rfc3339(ended_at)),
+    );
+    map.insert(
+        "content_hash".to_string(),
+        JsonValue::String(content_hash.to_string()),
+    );
+    map.insert(
+        "total_slices".to_string(),
+        JsonValue::Number(state.slice_count.into()),
+    );
+    map.insert(
+        "total_bytes".to_string(),
+        JsonValue::Number(total_bytes.into()),
+    );
+    map.entry("material_kind".to_string())
+        .or_insert_with(|| JsonValue::String(state.material_kind.clone()));
+    map.entry("source_identifier".to_string())
+        .or_insert_with(|| JsonValue::String(state.source_identifier.clone()));
+    Ok(merged)
+}
+
+/// Handle a begin message by initializing or updating assembler state.
+#[tracing::instrument(
+    skip(assembler, begin),
+    fields(material_id, lock_acquire_ms, lock_hold_ms)
+)]
+pub(super) async fn handle_begin(
+    assembler: &MaterialAssembler,
+    material_id: Uuid,
+    begin: MaterialBeginMessage,
+) -> IngestdResult<()> {
+    tracing::Span::current().record("material_id", tracing::field::display(&material_id));
+
+    let started_at = parse_material_started_at(material_id, &begin.started_at, "begin message")?;
+
+    if assembler.pool.is_closed() {
+        return Err(SinexError::database(
+            "database pool closed before begin processing".to_string(),
+        ));
+    }
+
+    let metadata = normalize_metadata(begin.metadata);
+    let material_kind = begin.material_kind;
+    let source_identifier = begin.source_identifier;
+
+    let state_handle = if let Some(existing) = assembler.get_state_handle(&material_id) {
+        existing
+    } else {
+        let transition = if let Some(terminal_state) =
+            assembler.material_terminal_state(material_id).await?
+        {
+            AssemblyStateMachine::transition(terminal_state, AssemblyInput::BeginFrame)
+        } else {
+            AssemblyStateMachine::transition(AssemblyLogicalState::Idle, AssemblyInput::BeginFrame)
+        }
+        .map_err(|error| error.into_sinex_error(material_id))?;
+
+        if matches!(transition, AssemblyTransition::IgnoreTerminalFrame) {
+            info!(
+                material_id = %material_id,
+                transition = ?transition,
+                "Begin message received after terminal material; skipping"
+            );
+            return Ok(());
+        }
+        debug!(
+            material_id = %material_id,
+            transition = ?transition,
+            "Assembly state machine accepted begin for new material state"
+        );
+
+        let mut state = assembler.create_placeholder_state(material_id).await?;
+        state.material_kind.clone_from(&material_kind);
+        state.source_identifier.clone_from(&source_identifier);
+        state.metadata = metadata.clone();
+        state.started_at = started_at;
+        state.phase = AssemblyPhase::Accumulating;
+        assembler.stats_inc_started(); // Track new assembly start
+        assembler.insert_state_handle(material_id, state)
+    };
+
+    let merged_metadata = {
+        let acquire_start = std::time::Instant::now();
+        let mut state = state_handle.lock().await;
+        let acquire_ms = acquire_start.elapsed().as_millis() as u64;
+        tracing::Span::current().record("lock_acquire_ms", acquire_ms);
+        if acquire_ms > 50 {
+            warn!(material_id = %material_id, acquire_ms, "Slow lock acquisition in handle_begin");
+        }
+        let hold_start = std::time::Instant::now();
+
+        let transition =
+            AssemblyStateMachine::transition_for_state(&state, AssemblyInput::BeginFrame)
+                .map_err(|error| error.into_sinex_error(material_id))?;
+
+        if matches!(transition, AssemblyTransition::IgnoreFinalizingFrame) {
+            debug!(
+                material_id = %material_id,
+                transition = ?transition,
+                "Ignoring begin message while material is finalizing"
+            );
+            return Ok(());
+        }
+        debug!(
+            material_id = %material_id,
+            transition = ?transition,
+            "Assembly state machine accepted begin for existing material state"
+        );
+
+        state.material_kind.clone_from(&material_kind);
+        state.source_identifier.clone_from(&source_identifier);
+        state.metadata = merge_metadata(&state.metadata, &metadata);
+        state.started_at = started_at;
+        state.phase = AssemblyPhase::Accumulating;
+
+        if state.temp_file.is_none() {
+            let temp_file = File::options()
+                .create(true)
+                .append(true)
+                .open(&state.temp_path)
+                .await
+                .map_err(|e| SinexError::io("Failed to open temp file").with_source(e))?;
+            state.temp_file = Some(temp_file);
+        }
+
+        let metadata_clone = state.metadata.clone();
+        super::io::append_wal_entry(
+            assembler,
+            &mut state,
+            WalEntry::Begin(MaterialBeginMessage {
+                material_id: material_id.to_string(),
+                material_kind: material_kind.clone(),
+                source_identifier: source_identifier.clone(),
+                metadata: metadata_clone,
+                started_at: sinex_primitives::temporal::format_rfc3339(started_at),
+            }),
+        )
+        .await?;
+        let hold_ms = hold_start.elapsed().as_millis() as u64;
+        tracing::Span::current().record("lock_hold_ms", hold_ms);
+        if hold_ms > 100 {
+            warn!(material_id = %material_id, hold_ms, "Long lock hold in handle_begin");
+        }
+        state.metadata.clone()
+    };
+
+    assembler
+        .register_material_record(
+            material_id,
+            &material_kind,
+            &source_identifier,
+            merged_metadata,
+            started_at,
+        )
+        .await?;
+
+    // Write an early `staged_at` ledger entry so that `LedgerReader::derive_ts_orig()`
+    // always has a persisted fallback timestamp for events derived from this material.
+    // This is the Slice 2 guarantee: no material event gets `ts_orig` from an ephemeral
+    // `Timestamp::now()` — the `staged_at` value is persisted before any events are
+    // assembled.
+    assembler
+        .record_staged_at_ledger_entry(material_id, started_at)
+        .await?;
+
+    // Signal that this material is now registered in the database, unblocking any
+    // events in the JetStreamConsumer batch that reference this material_id via FK.
+    if let Some(ref ready_set) = assembler.ready_set {
+        ready_set.mark_ready(material_id);
+    }
+
+    let has_pending_end = {
+        let state = state_handle.lock().await;
+        state.pending_end.is_some()
+    };
+
+    if has_pending_end {
+        assembler
+            .try_finalize_pending_end(
+                material_id,
+                state_handle,
+                super::finalize::PendingEndBehavior::Ignore,
+            )
+            .await?;
+    }
+
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use blake3::Hasher;
+    use std::collections::BTreeMap;
+    use tempfile::tempdir;
+    use xtask::sandbox::prelude::*;
+
+    fn test_state(material_id: Uuid) -> AssemblerState {
+        let temp_dir = tempdir().expect("temp dir should be creatable");
+        AssemblerState {
+            material_id,
+            temp_path: temp_dir.path().join(TEMP_FILE_NAME),
+            temp_file: None,
+            wal_file: None,
+            wal_seq: 0,
+            expected_offset: 0,
+            slice_count: 0,
+            buffered_slices: BTreeMap::new(),
+            buffered_bytes: 0,
+            state_dir: temp_dir.path().to_path_buf(),
+            started_at: Timestamp::now(),
+            material_kind: "test".to_string(),
+            source_identifier: "test".to_string(),
+            metadata: JsonValue::Null,
+            phase: AssemblyPhase::PendingBegin,
+            hasher: Hasher::new(),
+            pending_write: None,
+            pending_end: None,
+            last_slice_received: Timestamp::now(),
+            staged_bytes_since_sync: 0,
+            wal_entries_since_sync: 0,
+            wal_bytes_since_sync: 0,
+            last_staged_sync: Instant::now(),
+            last_wal_sync: Instant::now(),
+        }
+    }
+
+    #[sinex_test]
+    async fn missing_buffered_slice_returns_error_instead_of_panic() -> TestResult<()> {
+        let material_id = Uuid::now_v7();
+        let mut state = test_state(material_id);
+
+        let result = take_buffered_slice(&mut state, material_id, 42);
+
+        assert!(result.is_err());
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn buffered_slice_is_removed_and_returned() -> TestResult<()> {
+        let material_id = Uuid::now_v7();
+        let mut state = test_state(material_id);
+        let buffer_path = state.state_dir.join("buffers/42.bin");
+        state.buffered_slices.insert(42, buffer_path.clone());
+
+        let result = take_buffered_slice(&mut state, material_id, 42).unwrap();
+
+        assert_eq!(result, buffer_path);
+        assert!(state.buffered_slices.is_empty());
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn parse_material_started_at_rejects_invalid_timestamp() -> TestResult<()> {
+        let material_id = Uuid::now_v7();
+
+        let error = parse_material_started_at(material_id, "not-a-timestamp", "begin message")
+            .expect_err("invalid started_at must fail honestly");
+
+        assert!(error.to_string().contains("Invalid started_at"));
+        assert!(error.to_string().contains("begin message"));
+        Ok(())
+    }
+}

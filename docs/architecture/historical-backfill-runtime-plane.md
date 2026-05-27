@@ -45,7 +45,7 @@ The checked-in runtime proofs cover:
   `History` SQLite, and browser exports in `json`, `jsonl`, `ndjson`, and
   `csv` formats
 
-These sources all flow through `NodeRunner<IngestorNodeAdapter<_>>` in tests and
+These sources all flow through `NodeRunner<SourceUnitRuntime<_>>` in tests and
 assert persisted `core.events` rows with material provenance.
 
 The browser runtime proof intentionally keeps the established

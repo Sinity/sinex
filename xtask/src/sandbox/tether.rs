@@ -48,7 +48,7 @@ pub struct TetherConfig {
 impl TetherConfig {
     /// Create a new tether config from environment
     pub fn from_env(target: &str) -> Result<Self> {
-        let gateway_url = std::env::var("SINEX_GATEWAY_URL")
+        let gateway_url = std::env::var("SINEX_API_URL")
             .or_else(|_| std::env::var(format!("SINEX_{}_GATEWAY_URL", target.to_uppercase())))
             .unwrap_or_else(|_| format!("https://gateway.{target}.sinex.io:9999"));
 

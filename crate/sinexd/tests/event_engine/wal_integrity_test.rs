@@ -1,0 +1,224 @@
+use serde_json::json;
+use sinexd::event_engine::{MaterialAssembler, MaterialReadySet};
+use sinex_node_sdk::content_store::{ContentStoreConfig, MaterialContentStore};
+use std::sync::Arc;
+use xtask::sandbox::prelude::*;
+
+async fn abort_and_join(handle: tokio::task::JoinHandle<sinexd::event_engine::IngestdResult<()>>) {
+    handle.abort();
+    let _ = handle.await;
+}
+
+#[sinex_test(timeout = 30)]
+async fn wal_recovers_state_after_crash(ctx: TestContext) -> TestResult<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let nats_client = ctx.nats_client();
+    let namespace = ctx.pipeline_namespace().prefix().to_string();
+
+    // Setup persistent state dir for the test
+    let state_dir = tempfile::tempdir()?;
+    let state_path = state_dir.path().to_path_buf();
+
+    // Setup content store (shared across restarts)
+    let content_store_dir = tempfile::tempdir()?;
+    let repo_path =
+        camino::Utf8PathBuf::from_path_buf(content_store_dir.path().to_path_buf()).unwrap();
+    MaterialContentStore::init_with_config(&repo_path, Some("wal-test"), true).await?;
+    let content_store = Arc::new(MaterialContentStore::new(ContentStoreConfig {
+        root_path: repo_path,
+        num_copies: None,
+        large_files: None,
+        ..Default::default()
+    })?);
+
+    // Bootstrap streams
+    sinex_node_sdk::AcquisitionManager::bootstrap_streams_with_namespace(
+        &nats_client,
+        Some(&namespace),
+    )
+    .await?;
+
+    let material_id = uuid::Uuid::now_v7();
+    let source_identifier = format!("test://wal-resume/{material_id}");
+    let js = ctx
+        .nats_handle()?
+        .jetstream_with_client(nats_client.clone());
+
+    // --- RUN 1: Partial Ingestion ---
+    {
+        let assembler = MaterialAssembler::new(
+            nats_client.clone(),
+            ctx.pool.clone(),
+            content_store.clone(),
+            state_path.clone(),
+            Some(namespace.clone()),
+            1_000,
+            Some(MaterialReadySet::default()),
+            100,
+            512 * 1024 * 1024,
+            300,
+            3600,
+            90,
+        )?;
+        let shutdown = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();
+        let handle = tokio::spawn({
+            let shutdown = shutdown.clone();
+            async move {
+                assembler
+                    .run_with_shutdown_and_ready(shutdown, Some(ready_tx))
+                    .await
+            }
+        });
+        // Wait until streams are bootstrapped, WAL is restored, and the frame consumer is bound.
+        ready_rx
+            .await
+            .map_err(|_| color_eyre::eyre::eyre!("Assembler ready signal dropped"))?;
+
+        // Publish Begin
+        js.publish(
+            ctx.pipeline_namespace()
+                .subject("source_material.frames.begin"),
+            json!({
+                "material_id": material_id.to_string(),
+                "material_kind": "test-wal",
+                "source_identifier": source_identifier,
+                "metadata": {"run": 1},
+                "started_at": sinex_primitives::temporal::now().format_rfc3339(),
+            })
+            .to_string()
+            .into(),
+        )
+        .await?
+        .await?;
+
+        // Publish Slice 1 (bytes 0-4 "PART")
+        let mut headers = async_nats::HeaderMap::new();
+        headers.insert("Offset", "0");
+        js.publish_with_headers(
+            ctx.pipeline_namespace()
+                .subject(&format!("source_material.frames.slices.{material_id}")),
+            headers,
+            b"PART".to_vec().into(),
+        )
+        .await?
+        .await?;
+
+        // Wait for WAL to contain the Slice entry
+        let wal_file = state_path.join(material_id.to_string()).join("state.wal");
+        xtask::sandbox::timing::WaitHelpers::wait_for_condition(
+            || {
+                let p = wal_file.clone();
+                async move {
+                    if !p.exists() {
+                        return Ok::<bool, sinex_primitives::error::SinexError>(false);
+                    }
+                    let content = tokio::fs::read_to_string(&p)
+                        .await
+                        .map_err(|e| sinex_primitives::error::SinexError::io(e.to_string()))?;
+                    Ok(content.contains("\"Slice\""))
+                }
+            },
+            10,
+        )
+        .await?;
+
+        abort_and_join(handle).await;
+    }
+
+    // --- RUN 2: Resume & Complete ---
+    {
+        let assembler = MaterialAssembler::new(
+            nats_client.clone(),
+            ctx.pool.clone(),
+            content_store.clone(),
+            state_path.clone(),
+            Some(namespace.clone()),
+            1_000,
+            Some(MaterialReadySet::default()),
+            100,
+            512 * 1024 * 1024,
+            300,
+            3600,
+            90,
+        )?;
+        let shutdown = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();
+        let handle = tokio::spawn({
+            let shutdown = shutdown.clone();
+            async move {
+                assembler
+                    .run_with_shutdown_and_ready(shutdown, Some(ready_tx))
+                    .await
+            }
+        });
+        ready_rx
+            .await
+            .map_err(|_| color_eyre::eyre::eyre!("Assembler ready signal dropped"))?;
+
+        // Publish Slice 2 (bytes 4-8 "IAL!")
+        let mut headers = async_nats::HeaderMap::new();
+        headers.insert("Offset", "4");
+        js.publish_with_headers(
+            ctx.pipeline_namespace()
+                .subject(&format!("source_material.frames.slices.{material_id}")),
+            headers,
+            b"IAL!".to_vec().into(),
+        )
+        .await?
+        .await?;
+
+        // Publish End
+        let content = b"PARTIAL!";
+        let hash = blake3::hash(content).to_hex().to_string();
+        js.publish(
+            ctx.pipeline_namespace()
+                .subject("source_material.frames.end"),
+            json!({
+                "material_id": material_id.to_string(),
+                "ended_at": sinex_primitives::temporal::now().format_rfc3339(),
+                "content_hash": hash,
+                "total_slices": 2,
+                "total_size_bytes": 8,
+            })
+            .to_string()
+            .into(),
+        )
+        .await?
+        .await?;
+
+        // Wait for completion (via DB check)
+        let pool = ctx.pool.clone();
+
+        xtask::sandbox::timing::WaitHelpers::wait_for_condition(
+            move || {
+                let pool = pool.clone();
+                async move {
+                    let repo = pool.source_materials();
+                    let id = sinex_primitives::Id::from_uuid(material_id);
+                    let rec = repo.get_by_id(id).await.map_err(|e| {
+                        sinex_primitives::error::SinexError::database(e.to_string())
+                    })?;
+                    if let Some(r) = rec {
+                        if r.status == sinex_db::repositories::material_status::COMPLETED {
+                            return Ok(true);
+                        }
+                        if r.status == sinex_db::repositories::material_status::FAILED {
+                            return Err(sinex_primitives::error::SinexError::validation(format!(
+                                "Material failed: metadata={:?}",
+                                r.metadata
+                            )));
+                        }
+                    }
+                    Ok(false)
+                }
+            },
+            10,
+        )
+        .await?;
+
+        abort_and_join(handle).await;
+    }
+
+    Ok(())
+}

@@ -116,7 +116,7 @@ archive events created by a given source unit/parser version over a material
 scope, then rerun the parser through the normal validation and persistence path.
 The original source material remains the ground truth.
 
-Derived automata remain synthesis-provenance processors. The parser substrate is
+Derived automata remain derived-provenance processors. The parser substrate is
 for translating source material into raw/material events. Later normalization,
 summaries, embeddings, entity extraction, and analytics continue to derive from
 parent events unless they are explicitly reclassified as material parsing.
@@ -124,7 +124,7 @@ parent events unless they are explicitly reclassified as material parsing.
 Document parsing is the important boundary case. If a document file itself is
 the source material, initial text extraction and chunk anchoring belong in this
 substrate. Later semantic summaries, embeddings, entities, and retrieval aids
-are synthesis.
+are derived.
 
 ## Source Classification
 

@@ -838,7 +838,7 @@ fn dev_rpc_token_if_missing() -> Option<String> {
 
     let has_token = env_var_present_and_nonempty("SINEX_RPC_TOKEN")
         || env_var_present_and_nonempty("SINEX_RPC_TOKEN_FILE")
-        || env_var_present_and_nonempty("SINEX_GATEWAY_ADMIN_TOKEN_FILE");
+        || env_var_present_and_nonempty("SINEX_API_ADMIN_TOKEN_FILE");
 
     (!has_token).then(default_dev_rpc_token)
 }
@@ -849,15 +849,15 @@ pub(crate) fn local_runtime_env_overrides() -> Vec<(String, String)> {
     let cert_path = tls_dir.join("server.pem");
     let key_path = tls_dir.join("server-key.pem");
 
-    if !env_var_present_and_nonempty("SINEX_GATEWAY_TLS_CERT") && cert_path.exists() {
+    if !env_var_present_and_nonempty("SINEX_API_TLS_CERT") && cert_path.exists() {
         overrides.push((
-            "SINEX_GATEWAY_TLS_CERT".to_string(),
+            "SINEX_API_TLS_CERT".to_string(),
             cert_path.display().to_string(),
         ));
     }
-    if !env_var_present_and_nonempty("SINEX_GATEWAY_TLS_KEY") && key_path.exists() {
+    if !env_var_present_and_nonempty("SINEX_API_TLS_KEY") && key_path.exists() {
         overrides.push((
-            "SINEX_GATEWAY_TLS_KEY".to_string(),
+            "SINEX_API_TLS_KEY".to_string(),
             key_path.display().to_string(),
         ));
     }
@@ -884,11 +884,11 @@ fn set_tls_env_if_missing(tls_dir: &std::path::Path) {
     let cert_path = tls_dir.join("server.pem");
     let key_path = tls_dir.join("server-key.pem");
     if cert_path.exists() && key_path.exists() {
-        if std::env::var("SINEX_GATEWAY_TLS_CERT").is_err() {
-            unsafe { std::env::set_var("SINEX_GATEWAY_TLS_CERT", &cert_path) };
+        if std::env::var("SINEX_API_TLS_CERT").is_err() {
+            unsafe { std::env::set_var("SINEX_API_TLS_CERT", &cert_path) };
         }
-        if std::env::var("SINEX_GATEWAY_TLS_KEY").is_err() {
-            unsafe { std::env::set_var("SINEX_GATEWAY_TLS_KEY", &key_path) };
+        if std::env::var("SINEX_API_TLS_KEY").is_err() {
+            unsafe { std::env::set_var("SINEX_API_TLS_KEY", &key_path) };
         }
     }
 }
@@ -1922,7 +1922,7 @@ mod tests {
         _guard.set_optional("SINEX_ENVIRONMENT", None);
         _guard.set_optional("SINEX_RPC_TOKEN", None);
         _guard.set_optional("SINEX_RPC_TOKEN_FILE", None);
-        _guard.set_optional("SINEX_GATEWAY_ADMIN_TOKEN_FILE", None);
+        _guard.set_optional("SINEX_API_ADMIN_TOKEN_FILE", None);
 
         set_dev_token_if_missing();
 
@@ -1939,9 +1939,9 @@ mod tests {
         _guard.set_optional("SINEX_ENVIRONMENT", None);
         _guard.set_optional("SINEX_RPC_TOKEN", None);
         _guard.set_optional("SINEX_RPC_TOKEN_FILE", None);
-        _guard.set_optional("SINEX_GATEWAY_ADMIN_TOKEN_FILE", None);
-        _guard.set_optional("SINEX_GATEWAY_TLS_CERT", None);
-        _guard.set_optional("SINEX_GATEWAY_TLS_KEY", None);
+        _guard.set_optional("SINEX_API_ADMIN_TOKEN_FILE", None);
+        _guard.set_optional("SINEX_API_TLS_CERT", None);
+        _guard.set_optional("SINEX_API_TLS_KEY", None);
 
         let overrides = local_runtime_env_overrides();
 
@@ -1949,10 +1949,10 @@ mod tests {
             key == "SINEX_RPC_TOKEN" && value.starts_with("dev-token-") && value.ends_with(":admin")
         }));
         assert!(overrides.iter().any(|(key, value)| {
-            key == "SINEX_GATEWAY_TLS_CERT" && value.ends_with("server.pem")
+            key == "SINEX_API_TLS_CERT" && value.ends_with("server.pem")
         }));
         assert!(overrides.iter().any(|(key, value)| {
-            key == "SINEX_GATEWAY_TLS_KEY" && value.ends_with("server-key.pem")
+            key == "SINEX_API_TLS_KEY" && value.ends_with("server-key.pem")
         }));
         Ok(())
     }

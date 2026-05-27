@@ -15,7 +15,7 @@ The runtime has two authoring families built on shared plumbing:
 
 ### Ingestors
 
-Use `IngestorNode` when a node reads from an external source and emits
+Use `SourceUnit` when a node reads from an external source and emits
 material-provenance events.
 
 - Owns the three-phase capture lifecycle: snapshot, historical catch-up, and
@@ -26,15 +26,15 @@ material-provenance events.
 
 ### Derived Nodes
 
-Use `TransducerNode`, `WindowedNode`, or `ScopeReconcilerNode` when a node
-consumes confirmed events and emits synthesis-provenance events.
+Use `Transducer`, `Windowed`, or `ScopeReconciler` when a node
+consumes confirmed events and emits derived-provenance events.
 
-- `TransducerNode`: stateless 1:1 transformation or filtering
-- `WindowedNode`: accumulate state until the implementation decides the window
+- `Transducer`: stateless 1:1 transformation or filtering
+- `Windowed`: accumulate state until the implementation decides the window
   is complete
-- `ScopeReconcilerNode`: keep per-scope state and reconcile it into outputs
+- `ScopeReconciler`: keep per-scope state and reconcile it into outputs
 
-All three run through `DerivedNodeAdapter`, which handles checkpointing,
+All three run through `AutomatonRuntime`, which handles checkpointing,
 confirmation consumption, invalidation handling, health emission, and orderly
 shutdown/drain behavior.
 

@@ -8,10 +8,10 @@ data originates. Combined with `source_material_id`, it forms a stable
 real-world occurrence identifier. Stored on `core.events`.
 
 ### automaton (pl. automata)
-A derived node that processes existing events and emits synthesis-provenance
+A derived node that processes existing events and emits derived-provenance
 events. Three processing models: **Transducer** (1:1 stateless transform),
 **Windowed** (accumulate-then-emit), **ScopeReconciler** (per-scope state
-reconciliation). All managed by `DerivedNodeAdapter`.
+reconciliation). All managed by `AutomatonRuntime`.
 
 ### archived event
 An event that has been moved from `core.events` to `audit.archived_events`
@@ -34,7 +34,7 @@ rather than by a user-assigned name. Sinex uses a local CAS under
 
 ### cascade (replay)
 The process of finding and archiving all events derived from a set of material
-events during replay. The cascade analyzer walks the synthesis DAG up to 100
+events during replay. The cascade analyzer walks the derived DAG up to 100
 levels deep to find every event that must be archived before the source
 material can be re-processed.
 
@@ -79,7 +79,7 @@ See **automaton**.
 
 ### event
 The fundamental unit of observation in sinex. An event has exactly one
-provenance type (material or synthesis), a UUIDv7 `id`, `ts_orig` (when it
+provenance type (material or derived), a UUIDv7 `id`, `ts_orig` (when it
 happened), and a typed JSON payload. Stored in the TimescaleDB hypertable
 `core.events`.
 
@@ -100,13 +100,13 @@ messaging for browser extensions. Auth via stateless token-suffix RBAC.
 ### ingestd
 The `sinex-ingestd` service that consumes event batches from NATS JetStream,
 validates them, and persists them to PostgreSQL. Routes batches through COPY
-(>= 50 material events) or QueryBuilder (< 50 events). Synthesis events always
+(>= 50 material events) or QueryBuilder (< 50 events). Derived events always
 use QueryBuilder with REPEATABLE READ transactions.
 
 ### ingestor
 A node that captures raw data from an external source (filesystem, terminal,
 desktop, system, browser, documents), registers source materials, and emits
-material-provenance events. Ingestors implement the `IngestorNode` trait with
+material-provenance events. Ingestors implement the `SourceUnit` trait with
 three scan modes: snapshot, historical, and continuous.
 
 ## M
@@ -130,7 +130,7 @@ based on `ProcessingContext` (Command, Clipboard, WindowTitle, Metadata, etc.).
 
 ### provenance
 The origin of an event. Two mutually exclusive types: **material** (from source
-data) and **synthesis** (derived from other events). Enforced by XOR CHECK
+data) and **derived** (derived from other events). Enforced by XOR CHECK
 constraint at the DB level and `EventBuilder` typestate at compile time.
 
 ## R
@@ -178,7 +178,7 @@ template). Post-Wave-B fold (#1081), all source units are hosted by the
 single `sinex-source-worker` binary; the per-domain ingestor crates that
 used to host them have been deleted.
 
-### synthesis provenance
+### derived provenance
 One of the two provenance types: `source_material_id` is NULL, `source_event_ids`
 is set. Means "I derived this conclusion from these parent events." Created by
 automata. Can be replayed by re-running the automaton on the (unchanged) parent
@@ -206,4 +206,4 @@ auditing write latency but not for business-logic queries.
 Time-ordered UUID (RFC 9562) used as the primary key for `core.events`. The
 timestamp component is extracted as `ts_coided`. UUIDv7 monotonicity guarantees
 that new event IDs are always greater than all previously persisted IDs,
-eliminating the need for cycle detection during synthesis insertion.
+eliminating the need for cycle detection during derived insertion.

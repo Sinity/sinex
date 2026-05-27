@@ -162,7 +162,7 @@ Current semantics:
 
 ## Derived-Node Latency / Throughput Snapshot
 
-`DerivedNodeAdapter::observe_processing_latency` emits one
+`AutomatonRuntime::observe_processing_latency` emits one
 `derived.latency_snapshot` event (source `sinex.node`) per dispatch through
 `SelfObserver`. Operators see the readings via `sinexctl automata`; the
 event is also queryable directly. Payload fields

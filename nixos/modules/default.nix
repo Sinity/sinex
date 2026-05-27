@@ -883,7 +883,7 @@ in
                   default = if cfg.core.gateway.autoGenerateTls then cfg.stateRoot + "/tls/server.pem" else null;
                   description = ''
                     Path to the gateway TLS certificate. Required unless autoGenerateTls is enabled.
-                    Exported as <literal>SINEX_GATEWAY_TLS_CERT</literal>.
+                    Exported as <literal>SINEX_API_TLS_CERT</literal>.
                   '';
                 };
                 tlsKeyFile = mkOption {
@@ -891,7 +891,7 @@ in
                   default = if cfg.core.gateway.autoGenerateTls then cfg.stateRoot + "/tls/server-key.pem" else null;
                   description = ''
                     Path to the gateway TLS private key. Required unless autoGenerateTls is enabled.
-                    Exported as <literal>SINEX_GATEWAY_TLS_KEY</literal>.
+                    Exported as <literal>SINEX_API_TLS_KEY</literal>.
                   '';
                 };
                 tlsClientCAFile = mkOption {
@@ -900,7 +900,7 @@ in
                   description = ''
                     Client CA bundle for gateway mTLS. Required for non-loopback binds
                     and whenever requireClientTLS is enabled. Exported as
-                    <literal>SINEX_GATEWAY_TLS_CLIENT_CA</literal>.
+                    <literal>SINEX_API_TLS_CLIENT_CA</literal>.
                   '';
                 };
                 autoGenerateTls = mkOption {
@@ -1587,7 +1587,7 @@ in
                     };
                   };
                   default = { };
-                  description = "Document parser automaton. Consumes `document.ingested` and `command.canonical` events, emits `document.parsed` + `document.chunked` synthesis events.";
+                  description = "Document parser automaton. Consumes `document.ingested` and `command.canonical` events, emits `document.parsed` + `document.chunked` derived events.";
                 };
 
                 tagApplier = mkOption {
@@ -2287,8 +2287,7 @@ in
         else
           null;
       deploymentManagedUnits = lib.unique (
-        (lib.optionals (cfg.enable && cfg.core.enable) [ "sinex-ingestd.service" ])
-        ++ (lib.optionals (cfg.enable && cfg.core.enable && cfg.core.gateway.enable) [ "sinex-gateway.service" ])
+        (lib.optionals (cfg.enable && cfg.core.enable) [ "sinexd.service" ])
         ++ lib.optionals cfg.enable (map (name: "${name}.service") (config.sinex._generatedUnits or [ ]))
       );
       resolveNodeInstances = nodeInstances:
@@ -2489,7 +2488,7 @@ in
           { path = nodesSpool; mode = "0755"; }
           { path = ingestSpool; mode = "0755"; }
           # ingestd writes its working directory under ${stateRoot}/ingestd/work
-          # (see SINEX_INGESTD_WORK_DIR). Pre-create so ingestd does not need
+          # (see SINEX_EVENT_ENGINE_WORK_DIR). Pre-create so ingestd does not need
           # write access to stateRoot itself.
           { path = "${stateRoot}/ingestd"; mode = "0750"; }
           { path = "${stateRoot}/ingestd/work"; mode = "0750"; }
@@ -2509,18 +2508,15 @@ in
 
       # Auxiliary sinex-owned units that should be gated alongside the
       # long-running runtime services. Long-running services
-      # (sinex-ingestd, sinex-gateway, source workers, automata) already wire
-      # their own wantedBy from cfg.runtime.target.attachToMultiUser and
-      # publish their service names via config.sinex._generatedUnits. The
-      # auxiliary list here covers the one-shots, the standalone
-      # sinex-document-scan and its timer, NATS, and the bootstrap helpers
-      # that the long-running services depend on.
+      # (sinexd, source workers, automata) already wire their own wantedBy
+      # from cfg.runtime.target.attachToMultiUser and publish their service
+      # names via config.sinex._generatedUnits. The auxiliary list here
+      # covers the one-shots, the standalone sinex-document-scan and its
+      # timer, NATS, and the bootstrap helpers that the long-running services
+      # depend on.
       coreAuxUnitNames =
         lib.optionals (cfg.enable && cfg.core.enable) [
-          "sinex-ingestd"
-        ]
-        ++ lib.optionals (cfg.enable && cfg.core.enable && cfg.core.gateway.enable) [
-          "sinex-gateway"
+          "sinexd"
         ];
       generatedRuntimeUnitNames =
         lib.optionals cfg.enable (config.sinex._generatedUnits or [ ]);

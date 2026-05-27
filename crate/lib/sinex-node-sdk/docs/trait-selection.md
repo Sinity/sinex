@@ -8,20 +8,20 @@ flowchart and comparison matrix.
 ```
 Does your node capture data from the external world?
   ├── YES → Does it handle large binary content (files, documents)?
-  │           ├── YES → IngestorNode + StageAsYouGoContext
-  │           └── NO  → IngestorNode
+  │           ├── YES → SourceUnit + StageAsYouGoContext
+  │           └── NO  → SourceUnit
   └── NO → Does it transform/filter existing events?
             ├── YES → Is it 1:1 stateless transformation?
-            │           ├── YES → TransducerNode
+            │           ├── YES → Transducer
             │           └── NO  → Does it aggregate over time windows?
-            │                       ├── YES → WindowedNode
-            │                       └── NO  → ScopeReconcilerNode
+            │                       ├── YES → Windowed
+            │                       └── NO  → ScopeReconciler
             └── NO → Node (direct impl, rare)
 ```
 
 ## Trait Comparison Matrix
 
-| Aspect | IngestorNode | TransducerNode | WindowedNode | ScopeReconcilerNode | StageAsYouGoContext | Node (base) |
+| Aspect | SourceUnit | Transducer | Windowed | ScopeReconciler | StageAsYouGoContext | Node (base) |
 |--------|-------------|--------|---------|-----------|-----------|-------------|
 | **Purpose** | External world → events | 1:1 event transformation | Time-windowed aggregation | State reconciliation | Binary content staging | Runtime dispatch |
 | **Input** | External sources | Single event → output | Event stream over window | Scope state updates | Raw bytes + metadata | Checkpoint + TimeHorizon |
@@ -36,7 +36,7 @@ Does your node capture data from the external world?
 
 ## When to Use Each Trait
 
-### IngestorNode — "I capture data from the world"
+### SourceUnit — "I capture data from the world"
 
 Use when your node watches or polls an external source and produces events.
 
@@ -48,10 +48,10 @@ desktop activity tracker, document parser.
 - User controls the live event loop in `run_continuous(ContinuousStart, ...)`
 - Continuous mode receives a live-tail resume cursor, not permission to perform
   historical import; startup snapshot and gap-fill belong to the SDK runner
-- State is checkpointed to file + NATS KV automatically via `IngestorNodeAdapter`
+- State is checkpointed to file + NATS KV automatically via `SourceUnitRuntime`
 - Exploration hooks available (`get_source_state`, `get_ingestion_history`, `export_data`)
 
-### TransducerNode — "I perform 1:1 event transformation"
+### Transducer — "I perform 1:1 event transformation"
 
 Use when your node transforms individual events in a stateless manner.
 
@@ -65,7 +65,7 @@ Use when your node transforms individual events in a stateless manner.
 - Lowest boilerplate for simple transformations
 - Do not use as an implicit waiting or cross-source reconciliation mechanism
 
-### WindowedNode — "I aggregate events over time windows"
+### Windowed — "I aggregate events over time windows"
 
 Use when your node combines multiple events within a time or count window.
 
@@ -79,7 +79,7 @@ Use when your node combines multiple events within a time or count window.
 - Return aggregated `Some(output)` per window boundary
 - Correct choice when bounded waiting is part of the domain truth
 
-### ScopeReconcilerNode — "I track and reconcile scope state"
+### ScopeReconciler — "I track and reconcile scope state"
 
 Use when your node maintains per-scope state and emits reconciliation events.
 
@@ -99,9 +99,9 @@ Use when your node maintains per-scope state and emits reconciliation events.
 When sources for the same logical activity arrive with different latencies:
 
 - keep raw ingestors eager;
-- keep simple 1:1 normalization as `TransducerNode`;
-- use `WindowedNode` only for real bounded windows;
-- use `ScopeReconcilerNode` when the output may need replacement after the
+- keep simple 1:1 normalization as `Transducer`;
+- use `Windowed` only for real bounded windows;
+- use `ScopeReconciler` when the output may need replacement after the
   scope's working set changes.
 
 Do not introduce a general-purpose derived-event provisional/final model just
@@ -109,7 +109,7 @@ because the runtime transport itself is provisional-before-confirmed.
 
 ### StageAsYouGoContext — "I need streaming content capture"
 
-Not a node trait — a **context helper** used within `IngestorNode` implementations.
+Not a node trait — a **context helper** used within `SourceUnit` implementations.
 
 Use when your ingestor handles large binary content that should be staged
 progressively into JetStream rather than buffered in memory.
@@ -123,7 +123,7 @@ progressively into JetStream rather than buffered in memory.
 
 ### Node (direct impl) — "The adapters don't fit my use case"
 
-Almost never needed. Both `IngestorNodeAdapter` and `DerivedNodeAdapter` implement
+Almost never needed. Both `SourceUnitRuntime` and `AutomatonRuntime` implement
 this trait for you. Only implement directly if you need custom scan dispatching or
 a node type that doesn't fit the ingestor/derived-node model.
 
@@ -131,11 +131,11 @@ a node type that doesn't fit the ingestor/derived-node model.
 
 | Node | Trait | Adapter | Crate |
 |------|-------|---------|-------|
-| sinex-fs-ingestor | `IngestorNode` + `StageAsYouGoContext` | `IngestorNodeAdapter` | `crate/nodes/sinex-fs-ingestor` |
-| sinex-terminal-ingestor | `IngestorNode` | `IngestorNodeAdapter` | `crate/nodes/sinex-terminal-ingestor` |
-| sinex-desktop-ingestor | `IngestorNode` | `IngestorNodeAdapter` | `crate/nodes/sinex-desktop-ingestor` |
-| sinex-system-ingestor | `IngestorNode` | `IngestorNodeAdapter` | `crate/nodes/sinex-system-ingestor` |
-| sinex-document-ingestor | `IngestorNode` + `StageAsYouGoContext` | `IngestorNodeAdapter` | `crate/nodes/sinex-document-ingestor` |
-| sinex-analytics-automaton | `WindowedNode` | `WindowedNodeAdapter` | `crate/nodes/sinex-analytics-automaton` |
-| sinex-terminal-command-canonicalizer | `TransducerNode` | `TransducerNodeAdapter` | `crate/nodes/sinex-terminal-command-canonicalizer` |
-| sinex-health-automaton | `ScopeReconcilerNode` | `ScopeReconcilerNodeAdapter` | `crate/nodes/sinex-health-automaton` |
+| sinex-fs-ingestor | `SourceUnit` + `StageAsYouGoContext` | `SourceUnitRuntime` | `crate/nodes/sinex-fs-ingestor` |
+| sinex-terminal-ingestor | `SourceUnit` | `SourceUnitRuntime` | `crate/nodes/sinex-terminal-ingestor` |
+| sinex-desktop-ingestor | `SourceUnit` | `SourceUnitRuntime` | `crate/nodes/sinex-desktop-ingestor` |
+| sinex-system-ingestor | `SourceUnit` | `SourceUnitRuntime` | `crate/nodes/sinex-system-ingestor` |
+| sinex-document-ingestor | `SourceUnit` + `StageAsYouGoContext` | `SourceUnitRuntime` | `crate/nodes/sinex-document-ingestor` |
+| sinex-analytics-automaton | `Windowed` | `WindowedNodeAdapter` | `crate/nodes/sinex-analytics-automaton` |
+| sinex-terminal-command-canonicalizer | `Transducer` | `TransducerNodeAdapter` | `crate/nodes/sinex-terminal-command-canonicalizer` |
+| sinex-health-automaton | `ScopeReconciler` | `ScopeReconcilerNodeAdapter` | `crate/nodes/sinex-health-automaton` |

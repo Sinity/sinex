@@ -1,12 +1,12 @@
 #![cfg(feature = "messaging")]
 
-//! Tests for the derived node model family (`TransducerNode`, `DerivedNodeAdapter`, `DerivedNodeConfig`).
+//! Tests for the derived node model family (`Transducer`, `AutomatonRuntime`, `DerivedNodeConfig`).
 //!
 //! These exercise the derived-node processing surface directly.
 
 use serde::{Deserialize, Serialize};
-use sinex_node_sdk::derived_node::{DerivedOutput, DerivedTriggerContext};
-use sinex_node_sdk::{DerivedNodeConfig, NodeLogicError, TransducerNode};
+use sinex_node_sdk::derived_node::{DerivedOutput, AutomatonContext};
+use sinex_node_sdk::{DerivedNodeConfig, NodeLogicError, Transducer};
 use sinex_primitives::domain::{ProcessingMode, SyntheticTemporalPolicy, TriggerKind};
 use sinex_primitives::events::Event;
 use sinex_primitives::privacy::ProcessingContext;
@@ -31,7 +31,7 @@ struct TestOutput {
 
 struct TestNodeLogic;
 
-impl TransducerNode for TestNodeLogic {
+impl Transducer for TestNodeLogic {
     type State = TestState;
     type Input = TestInput;
     type Output = TestOutput;
@@ -56,7 +56,7 @@ impl TransducerNode for TestNodeLogic {
         &mut self,
         state: &mut Self::State,
         input: Self::Input,
-        context: &DerivedTriggerContext,
+        context: &AutomatonContext,
     ) -> Result<Option<DerivedOutput<Self::Output>>, NodeLogicError> {
         state.count += 1;
         Ok(Some(DerivedOutput::transduced(
@@ -69,9 +69,9 @@ impl TransducerNode for TestNodeLogic {
     }
 }
 
-fn make_context() -> DerivedTriggerContext {
+fn make_context() -> AutomatonContext {
     let event_id: Id<Event<JsonValue>> = Id::new();
-    DerivedTriggerContext {
+    AutomatonContext {
         trigger_event_id: event_id,
         source: "test".into(),
         event_type: "test.input".into(),

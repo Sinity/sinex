@@ -1,0 +1,53 @@
+[package]
+name = "sinex-db"
+version = "0.1.0"
+edition = "2024"
+description = "Database persistence layer for Sinex"
+
+[dependencies]
+# Core dependencies
+sinex-primitives = { path = "../sinex-primitives", features = ["sqlx"] }
+sinex-schema = { path = "../sinex-schema" }
+# Third-party dependencies
+sqlx = { workspace = true, features = [
+    "runtime-tokio-rustls",
+    "postgres",
+    "uuid",
+    "time",
+    "json",
+    "macros",
+    "migrate",
+    "bigdecimal",
+] }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+uuid = { workspace = true, features = ["serde", "v4", "v7"] }
+validator = { workspace = true, features = ["derive"] }
+tracing = { workspace = true }
+color-eyre = { workspace = true }
+gethostname = { workspace = true }
+blake3 = { workspace = true }
+sha2 = { workspace = true }
+num-traits = "0.2"
+ahash = { workspace = true }
+memchr = "2"
+itoa = "1"
+jsonschema = { workspace = true }
+parking_lot = { workspace = true }
+sea-query = { workspace = true }
+futures = { workspace = true }
+tokio = { workspace = true, features = ["full"] }
+time = { workspace = true }
+
+# For repository implementation
+bon = { workspace = true }
+
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["full"] }
+mockall = "0.12"
+xtask = { path = "../../xtask" }
+sinex-primitives = { path = "../sinex-primitives", features = ["testing"] }
+
+[lints]
+workspace = true

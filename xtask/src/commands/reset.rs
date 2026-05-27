@@ -11,7 +11,7 @@
 
 use clap::Args;
 use color_eyre::eyre::{Result, WrapErr, eyre};
-use sinex_schema::apply::SHARED_ACCESS_ROLES;
+use sinex_db::schema::apply::SHARED_ACCESS_ROLES;
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use time::OffsetDateTime;

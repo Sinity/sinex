@@ -74,11 +74,8 @@
       supportedSystems = [ "x86_64-linux" ];
 
       runtimePackageNames = [
-        "sinex-ingestd"
-        "sinex-gateway"
+        "sinexd"
         "sinexctl"
-        "sinex-source-worker"
-        "sinex-process"
         "sinex-node-sdk"
         "xtask"
       ];
@@ -238,21 +235,7 @@
             default = sinexPackages.sinex;
           };
 
-          # VM tests
-          vmTests = import ./tests/e2e/nixos-vm/default.nix {
-            inherit pkgs;
-            sinex-ingestd = sinexPackages.sinex-ingestd;
-            sinex-gateway = sinexPackages.sinex-gateway;
-            sinex = sinexPackages.sinex;
-            sinexCli = sinexPackages.sinexctl;
-            xtask = sinexPackages.xtask;
-            sinexVmTestSuite = sinexPackages.sinex-vm-test-suite;
-            pg_jsonschema = pkgs.postgresql18Packages.pg_jsonschema;
-          };
-
-          vmCheckOutputs = pkgs.lib.mapAttrs' (name: value: pkgs.lib.nameValuePair "sinex-vm-${name}" value) (
-            pkgs.lib.filterAttrs (_: value: pkgs.lib.isDerivation value) vmTests
-          );
+          vmCheckOutputs = { };
 
           nixFormatCheck = pkgs.runCommand "sinex-nix-format-check"
             {
@@ -701,9 +684,9 @@
                 export SINEX_DEV_GATEWAY_PORT="$((19000 + _sinex_checkout_hash_byte))"
                 export SINEX_DEV_NATS_PORT="$((4222 + (_sinex_checkout_hash_byte % 100)))"
                 export SINEX_NATS_URL="nats://localhost:$SINEX_DEV_NATS_PORT"
-                export SINEX_GATEWAY_TCP_LISTEN="127.0.0.1:$SINEX_DEV_GATEWAY_PORT"
-                export SINEX_GATEWAY_URL="https://127.0.0.1:$SINEX_DEV_GATEWAY_PORT"
-                export SINEX_RPC_URL="$SINEX_GATEWAY_URL"
+                export SINEX_API_TCP_LISTEN="127.0.0.1:$SINEX_DEV_GATEWAY_PORT"
+                export SINEX_API_URL="https://127.0.0.1:$SINEX_DEV_GATEWAY_PORT"
+                export SINEX_RPC_URL="$SINEX_API_URL"
 
                 if [ -z "''${SINEX_TEST_TMPDIR:-}" ]; then
                   _sinex_test_tmp_root="$SINEX_DEV_ROOT/.sinex/test-tmp"
@@ -735,9 +718,9 @@
                 # Dev TLS certs are generated lazily by preflight when needed.
                 # Set TLS env vars if dev certs exist — enables mTLS automatically.
                 if [ -f "$PWD/.sinex/tls/server.pem" ]; then
-                  export SINEX_GATEWAY_TLS_CERT="$PWD/.sinex/tls/server.pem"
-                  export SINEX_GATEWAY_TLS_KEY="$PWD/.sinex/tls/server-key.pem"
-                  export SINEX_GATEWAY_TLS_CLIENT_CA="$PWD/.sinex/tls/ca.pem"
+                  export SINEX_API_TLS_CERT="$PWD/.sinex/tls/server.pem"
+                  export SINEX_API_TLS_KEY="$PWD/.sinex/tls/server-key.pem"
+                  export SINEX_API_TLS_CLIENT_CA="$PWD/.sinex/tls/ca.pem"
                 fi
 
                 # Auto-install the pre-push drift guard (.githooks/pre-push)

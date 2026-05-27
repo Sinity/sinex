@@ -1,19 +1,19 @@
-//! Input event filtering helpers for `DerivedNodeAdapter`.
+//! Input event filtering helpers for `AutomatonRuntime`.
 //!
 //! Carved out of `adapter/mod.rs` as part of #697. Pure mechanical move; the
 //! methods, control flow, and instrumentation are unchanged.
 
-use super::DerivedNodeAdapter;
+use super::AutomatonRuntime;
 
 use crate::SinexError;
-use crate::derived_node::traits::{DerivedNodeImpl, InputProvenanceFilter};
+use crate::derived_node::traits::{Automaton, InputProvenanceFilter};
 
 use sinex_primitives::events::Event;
 use sinex_primitives::{EventType, JsonValue};
 
-impl<N> DerivedNodeAdapter<N>
+impl<N> AutomatonRuntime<N>
 where
-    N: DerivedNodeImpl,
+    N: Automaton,
 {
     pub(super) fn input_event_type_matches(&self, event: &Event<JsonValue>) -> bool {
         let input_type = self.node.input_event_type();

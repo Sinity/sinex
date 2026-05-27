@@ -5,7 +5,7 @@
 
 use clap::ValueEnum;
 use serde::{Deserialize, Serialize};
-use sinex_schema::primitives::Timestamp;
+use sinex_primitives::primitives::Timestamp;
 use std::io::{self, IsTerminal, Write};
 
 /// Output format for command results.

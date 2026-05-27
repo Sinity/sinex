@@ -180,7 +180,7 @@
   systemd.services.sinex-sample-data = {
     description = "Inject sample Sinex events";
     wantedBy = [ "multi-user.target" ];
-    after = [ "sinex-ingestd.service" ];
+    after = [ "sinexd.service" ];
     serviceConfig = {
       Type = "simple";
       User = "developer";

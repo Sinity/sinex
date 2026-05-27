@@ -12,8 +12,8 @@ checkpointing against the external source.
 
 - **Primary trigger**: External inputs such as filesystem notifications,
   append-only files, `SQLite` history rows, sockets, journals, or pollers.
-- **Authoring trait**: `IngestorNode`.
-- **Adapter**: `IngestorNodeAdapter`.
+- **Authoring trait**: `SourceUnit`.
+- **Adapter**: `SourceUnitRuntime`.
 - **State**: Ingestor-defined checkpoint state persisted through the SDK.
 - **Database dependency**: Normal deployed nodes use the runtime configuration
   they need for source-material and preflight surfaces; direct event persistence
@@ -34,15 +34,15 @@ graph LR
 
 ## 2. Derived Nodes
 
-Derived nodes consume confirmed events and emit synthesis-provenance events.
+Derived nodes consume confirmed events and emit derived-provenance events.
 They derive conclusions from parent event IDs rather than claiming new external
 source material.
 
 - **Primary trigger**: Confirmed event streams plus node-local window or scope
   state.
-- **Authoring traits**: `TransducerNode`, `WindowedNode`, and
-  `ScopeReconcilerNode`.
-- **Adapter**: `DerivedNodeAdapter` and the trait-specific adapter aliases.
+- **Authoring traits**: `Transducer`, `Windowed`, and
+  `ScopeReconciler`.
+- **Adapter**: `AutomatonRuntime` and the trait-specific adapter aliases.
 - **State**: Derived-node state and checkpoints persisted through NATS KV/local
   state as configured by the SDK.
 - **Database dependency**: Optional and explicit. Some derived nodes are
@@ -60,7 +60,7 @@ source material.
 graph TD
     Confirmed[(Confirmed Event Stream)] --> Derived[Derived Node]
     DB[(Postgres, when explicitly needed)] -.-> Derived
-    Derived --> Synth[Synthesis Event Batches]
+    Derived --> Synth[Derived Event Batches]
     Synth --> NATS[NATS JetStream]
 ```
 
@@ -75,7 +75,7 @@ graph TD
 
 ## 4. Mixed Responsibilities
 
-Avoid combining capture and synthesis in one node unless the source itself
+Avoid combining capture and derived in one node unless the source itself
 requires that shape. If a node observes external bytes and also derives
 cross-event conclusions, split it into an ingestor plus a derived node so the
 provenance boundary remains obvious.

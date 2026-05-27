@@ -36,7 +36,7 @@ pub enum CleanupMethod {
 impl Default for CleanupConfig {
     fn default() -> Self {
         Self {
-            tables: sinex_schema::schema::all_tables()
+            tables: sinex_db::schema::defs::all_tables()
                 .iter()
                 .map(|table| TableCleanupStrategy {
                     table_name: table.qualified_name,

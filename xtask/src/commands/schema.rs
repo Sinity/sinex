@@ -2,7 +2,7 @@
 
 use color_eyre::eyre::{Context, Result, eyre};
 use serde_json::json;
-use sinex_schema::strict_diff::{StrictDrift, check_strict};
+use sinex_db::schema::strict_diff::{StrictDrift, check_strict};
 use sqlx::postgres::PgPoolOptions;
 use std::env;
 

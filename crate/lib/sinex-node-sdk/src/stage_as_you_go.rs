@@ -165,7 +165,7 @@ mod tests {
         let err = context
             .emit_event_with_provenance(event, material_id, Some(12), Some(34))
             .await
-            .expect_err("stage-as-you-go should not rewrite synthesis provenance");
+            .expect_err("stage-as-you-go should not rewrite derived provenance");
 
         assert!(err.to_string().contains("material-provenance events"));
         Ok(())
@@ -659,7 +659,7 @@ impl StageAsYouGoContext {
         Ok(event_id)
     }
 
-    /// Emit a synthesis (derived) event through the stage context.
+    /// Emit a derived (derived) event through the stage context.
     ///
     /// Unlike [`emit_event_with_provenance`], this does not enforce
     /// material-provenance checks or deterministic ID assignment. Use

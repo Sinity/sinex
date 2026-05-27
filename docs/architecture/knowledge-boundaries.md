@@ -14,7 +14,7 @@ This record defines the layer model and decision rules.
 | Source material | Original bytes/files/logs/databases. | Markdown notes, Taskwarrior exports, hledger journals, raw logs, chat archives. | Query-optimized semantic truth. |
 | Material interpretation | Parser outputs anchored to source material. | `document.parsed`, chunks, task events from authoritative declarations, health intake rows. | Hidden schema in plaintext. |
 | Domain projections | Rebuildable current/read models over typed events. | task state, health timelines, finance balances, project state. | Canonical replacement for event stream. |
-| Synthesis graph | Evidence-backed entities, relations, claims. | person/project/entity links, candidate merges, extracted relations. | Owning task/finance/health lifecycle. |
+| Derived graph | Evidence-backed entities, relations, claims. | person/project/entity links, candidate merges, extracted relations. | Owning task/finance/health lifecycle. |
 | Workspace artifacts | Saved work surfaces and projections. | context packs, reports, semantic diff reports, living document snapshots. | Source material unless explicitly exported and re-ingested. |
 
 The default flow is:
@@ -22,7 +22,7 @@ The default flow is:
 ```text
 source material -> material interpretation -> typed events/documents/chunks
 typed events -> domain projection
-typed events/documents/chunks -> synthesis graph
+typed events/documents/chunks -> derived graph
 events/documents/graph/query results -> workspace artifact
 ```
 

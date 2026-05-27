@@ -1,6 +1,6 @@
-//! `DerivedNodeAdapter` — shared runtime adapter for all derived node models.
+//! `AutomatonRuntime` — shared runtime adapter for all derived node models.
 //!
-//! Wraps any [`DerivedNodeImpl`] and implements the stream [`Node`] trait,
+//! Wraps any [`Automaton`] and implements the stream [`Node`] trait,
 //! handling checkpoints, health monitoring, shutdown, and event emission.
 
 mod filter;
@@ -11,7 +11,7 @@ mod process;
 mod run;
 mod state_io;
 
-use super::traits::{DerivedNodeConfig, DerivedNodeImpl};
+use super::traits::{DerivedNodeConfig, Automaton};
 
 use crate::checkpoint::CheckpointManager;
 use crate::processing::PersistedState;
@@ -72,18 +72,18 @@ fn log_self_observation_failure(
 
 /// Shared runtime adapter for all derived node models.
 ///
-/// Generic over `N: DerivedNodeImpl`, which is implemented by the wrapper types
+/// Generic over `N: Automaton`, which is implemented by the wrapper types
 /// `TransducerWrapper`, `WindowedWrapper`, `ScopeReconcilerWrapper`.
 ///
 /// # Type Aliases
 ///
 /// Users typically use one of:
-/// - `TransducerNodeAdapter<T>` = `DerivedNodeAdapter<TransducerWrapper<T>>`
-/// - `WindowedNodeAdapter<T>` = `DerivedNodeAdapter<WindowedWrapper<T>>`
-/// - `ScopeReconcilerNodeAdapter<T>` = `DerivedNodeAdapter<ScopeReconcilerWrapper<T>>`
-pub struct DerivedNodeAdapter<N>
+/// - `TransducerNodeAdapter<T>` = `AutomatonRuntime<TransducerWrapper<T>>`
+/// - `WindowedNodeAdapter<T>` = `AutomatonRuntime<WindowedWrapper<T>>`
+/// - `ScopeReconcilerNodeAdapter<T>` = `AutomatonRuntime<ScopeReconcilerWrapper<T>>`
+pub struct AutomatonRuntime<N>
 where
-    N: DerivedNodeImpl,
+    N: Automaton,
 {
     node: N,
     persisted_state: PersistedState<N::State>,
@@ -120,9 +120,9 @@ where
     self_observer: Option<Arc<crate::self_observation::SelfObserver>>,
 }
 
-impl<N> DerivedNodeAdapter<N>
+impl<N> AutomatonRuntime<N>
 where
-    N: DerivedNodeImpl,
+    N: Automaton,
 {
     /// Create a new adapter wrapping the given node implementation.
     pub fn with_node(node: N) -> Self {
@@ -178,18 +178,18 @@ where
     }
 }
 
-impl<N> Default for DerivedNodeAdapter<N>
+impl<N> Default for AutomatonRuntime<N>
 where
-    N: DerivedNodeImpl + Default,
+    N: Automaton + Default,
 {
     fn default() -> Self {
         Self::with_node(N::default())
     }
 }
 
-impl<N> DerivedNodeAdapter<N>
+impl<N> AutomatonRuntime<N>
 where
-    N: DerivedNodeImpl,
+    N: Automaton,
 {
     // ── Public Accessors ───────────────────────────────────────────────
 
@@ -344,9 +344,9 @@ fn historical_resume_position(
 
 // ── Node trait implementation ──────────────────────────────────────────
 
-impl<N> crate::runtime::stream::Node for DerivedNodeAdapter<N>
+impl<N> crate::runtime::stream::Node for AutomatonRuntime<N>
 where
-    N: DerivedNodeImpl,
+    N: Automaton,
 {
     type Config = DerivedNodeConfig;
 
@@ -591,9 +591,9 @@ where
 
 // ── ExplorationProvider ────────────────────────────────────────────────
 
-impl<N> crate::exploration::ExplorationProvider for DerivedNodeAdapter<N>
+impl<N> crate::exploration::ExplorationProvider for AutomatonRuntime<N>
 where
-    N: DerivedNodeImpl,
+    N: Automaton,
 {
     fn get_source_state(&self) -> NodeResult<crate::exploration::SourceState> {
         let runtime_initialized = self.runtime.is_some();
@@ -673,19 +673,19 @@ where
 
 // ── Type aliases for user-facing API ───────────────────────────────────
 
-/// Adapter for a `TransducerNode` implementation.
-pub type TransducerNodeAdapter<N> = DerivedNodeAdapter<super::traits::TransducerWrapper<N>>;
+/// Adapter for a `Transducer` implementation.
+pub type TransducerNodeAdapter<N> = AutomatonRuntime<super::traits::TransducerWrapper<N>>;
 
-/// Adapter for a `WindowedNode` implementation.
-pub type WindowedNodeAdapter<N> = DerivedNodeAdapter<super::traits::WindowedWrapper<N>>;
+/// Adapter for a `Windowed` implementation.
+pub type WindowedNodeAdapter<N> = AutomatonRuntime<super::traits::WindowedWrapper<N>>;
 
-/// Adapter for a `ScopeReconcilerNode` implementation.
+/// Adapter for a `ScopeReconciler` implementation.
 pub type ScopeReconcilerNodeAdapter<N> =
-    DerivedNodeAdapter<super::traits::ScopeReconcilerWrapper<N>>;
+    AutomatonRuntime<super::traits::ScopeReconcilerWrapper<N>>;
 
 /// Adapter for a `MultiOutputTransducerNode` implementation.
 pub type MultiOutputTransducerNodeAdapter<N> =
-    DerivedNodeAdapter<super::traits::MultiOutputTransducerWrapper<N>>;
+    AutomatonRuntime<super::traits::MultiOutputTransducerWrapper<N>>;
 
 #[cfg(test)]
 mod tests;

@@ -1,0 +1,94 @@
+[package]
+name = "sinex-e2e-tests"
+
+[dependencies]
+
+[package.version]
+workspace = true
+
+[package.edition]
+workspace = true
+
+[package.authors]
+workspace = true
+
+[package.license]
+workspace = true
+
+[dev-dependencies.color-eyre]
+workspace = true
+
+[dev-dependencies.serde_json]
+workspace = true
+
+[dev-dependencies.tokio]
+workspace = true
+
+[dev-dependencies.tokio-stream]
+workspace = true
+
+[dev-dependencies.tempfile]
+workspace = true
+
+[dev-dependencies.xtask]
+path = "../../xtask"
+
+
+[dev-dependencies.sinex-node-sdk]
+path = "../lib/sinex-node-sdk"
+
+
+[dev-dependencies.async-nats]
+workspace = true
+
+[dev-dependencies.uuid]
+workspace = true
+
+[dev-dependencies.futures]
+workspace = true
+
+[dev-dependencies.parking_lot]
+workspace = true
+
+[dev-dependencies.tracing]
+workspace = true
+
+[dev-dependencies.sqlx]
+workspace = true
+
+[dev-dependencies.base64]
+workspace = true
+
+[dev-dependencies.axum]
+workspace = true
+
+[dev-dependencies.validator]
+workspace = true
+
+[dev-dependencies.camino]
+workspace = true
+
+[dev-dependencies.sinex-primitives]
+path = "../sinex-primitives"
+features = [ "testing",]
+
+[dev-dependencies.sinex-db]
+path = "../sinex-db"
+
+[dev-dependencies.toml]
+workspace = true
+
+[dev-dependencies.pretty_assertions]
+version = "1.4"
+
+[dev-dependencies.turmoil]
+workspace = true
+
+[dev-dependencies.proptest]
+workspace = true
+
+[dev-dependencies.sinexd]
+path = "../sinexd"
+
+[lints]
+workspace = true
