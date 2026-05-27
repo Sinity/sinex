@@ -85,11 +85,12 @@ enum Command {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let cli = Cli::parse();
+    let mut cli = Cli::parse();
 
     install_tracing(TracingFormat::Text, &cli.log_level)?;
 
-    match cli.command.unwrap_or(Command::Serve) {
+    let command = cli.command.take().unwrap_or(Command::Serve);
+    match command {
         Command::Serve => serve(&cli).await,
         Command::ScanSourceUnit {
             source_unit,
