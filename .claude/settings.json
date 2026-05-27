@@ -1,6 +1,5 @@
 {
   "env": {
-    "SQLX_OFFLINE": "true",
     "CARGO_HOME": "/workspace/.cargo",
     "CARGO_TARGET_DIR": "/workspace/.target",
     "SINEX_AUTO_INFRA": "0",

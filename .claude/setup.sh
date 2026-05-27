@@ -63,15 +63,33 @@ log "installing cargo-nextest (best-effort)"
 cargo install --locked cargo-nextest || log "cargo-nextest install skipped"
 
 # ---------------------------------------------------------------------------
-# Optional: pre-pull docker sidecars when docker is available
+# Sidecar services (Postgres + NATS) for SQLx live validation
 # ---------------------------------------------------------------------------
-# Uncomment if the cloud sandbox has docker and you intend to run
-# DB-touching focused tests via docker-compose.cloud.yml.
+# sinex builds depend on sqlx::query!() macros that validate against a live
+# database at compile time. The cloud lane provides this via a docker-compose
+# sidecar rather than a committed offline cache. The sidecar lives for the
+# sandbox lifetime; `cargo check`/`cargo test` see a real Postgres.
 #
-# if command -v docker >/dev/null 2>&1 && [[ -f docker-compose.cloud.yml ]]; then
-#   log "pulling docker sidecars"
-#   docker compose -f docker-compose.cloud.yml pull || \
-#     log "docker compose pull failed (ignored)"
-# fi
+# Skip silently if docker is unavailable — agents on docker-less surfaces
+# need to surface that themselves rather than fail boot.
+if command -v docker >/dev/null 2>&1 && [[ -f docker-compose.cloud.yml ]]; then
+  log "pulling docker sidecars"
+  docker compose -f docker-compose.cloud.yml pull || \
+    log "docker compose pull failed (ignored)"
+  log "starting docker sidecars (postgres + nats)"
+  docker compose -f docker-compose.cloud.yml up -d || \
+    log "docker compose up failed (ignored — agent must start sidecars manually)"
+else
+  log "docker unavailable or compose file missing — skipping sidecar boot"
+  log "set DATABASE_URL before cargo check or sqlx macros will fail"
+fi
+
+# DATABASE_URL / NATS_URL for sqlx macros and integration tests. Exported so
+# subsequent `cargo` invocations in this shell pick them up; agents in new
+# shells should source this file or re-export.
+export DATABASE_URL="${DATABASE_URL:-postgres://sinex:dev@localhost:5432/sinex_dev}"
+export NATS_URL="${NATS_URL:-nats://localhost:4222}"
+log "DATABASE_URL=${DATABASE_URL}"
+log "NATS_URL=${NATS_URL}"
 
 log "setup complete"

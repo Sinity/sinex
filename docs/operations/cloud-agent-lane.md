@@ -59,7 +59,6 @@ Environment defaults are set by `.claude/settings.json`:
 
 | Variable             | Value           | Why                                                        |
 | -------------------- | --------------- | ---------------------------------------------------------- |
-| `SQLX_OFFLINE`       | `true`          | SQLx macros use the committed `.sqlx/` cache, no live DB.  |
 | `CARGO_HOME`         | `/workspace/.cargo` | Survives within the sandbox lifetime.                  |
 | `CARGO_TARGET_DIR`   | `/workspace/.target` | Same.                                                  |
 | `SINEX_AUTO_INFRA`   | `0`             | Disables autostart of local infra in cloud.                |
@@ -68,15 +67,21 @@ Environment defaults are set by `.claude/settings.json`:
 
 ## Database / NATS sidecars
 
-For focused tests that need a real Postgres or NATS, see
-[`docker/README.md`](../../docker/README.md) and
-[`docker-compose.cloud.yml`](../../docker-compose.cloud.yml). The sidecars
-are ephemeral (`tmpfs` data dir for Postgres); each sandbox boot starts
-clean.
+Live Postgres and NATS are provided via docker-compose sidecar; no SQLx
+offline prep is needed. `.claude/setup.sh` pulls and starts
+[`docker-compose.cloud.yml`](../../docker-compose.cloud.yml) at sandbox
+boot, then exports `DATABASE_URL` and `NATS_URL` so `cargo check` /
+`cargo test` see a real database for the `sqlx::query!()` macro
+validation. The sidecars are ephemeral (`tmpfs` data dir for Postgres);
+each sandbox boot starts clean.
 
-## SQLx offline cache
+If `cargo check` is run in a fresh shell that did not source
+`.claude/setup.sh`, export `DATABASE_URL` manually:
 
-The cloud lane builds with `SQLX_OFFLINE=true`. That requires the
-operator to run `cargo sqlx prepare --workspace` once on a host with a
-live database and commit the resulting `.sqlx/` directory. See
-[`docs/sqlx-offline.md`](../sqlx-offline.md) for the full workflow.
+```bash
+export DATABASE_URL="postgres://sinex:dev@localhost:5432/sinex_dev"
+export NATS_URL="nats://localhost:4222"
+```
+
+See [`docker/README.md`](../../docker/README.md) for the sidecar image
+build/push workflow.
