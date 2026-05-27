@@ -390,6 +390,14 @@ impl GatewayConfig {
         if let Some(token) = sinex_primitives::env::strict_var("SINEX_RPC_TOKEN")? {
             self.rpc_token = Some(token.trim().to_string());
         }
+        // SinexConfig macro currently doesn't populate Option<String> fields from
+        // env reliably for these tokens — force the env lookup here.
+        if self.admin_token_file.is_none() {
+            self.admin_token_file = sinex_primitives::env::strict_var("SINEX_API_ADMIN_TOKEN_FILE")?;
+        }
+        if self.rpc_token_file.is_none() {
+            self.rpc_token_file = sinex_primitives::env::strict_var("SINEX_RPC_TOKEN_FILE")?;
+        }
         Ok(self)
     }
 
