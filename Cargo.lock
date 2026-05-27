@@ -5130,39 +5130,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "sinex-source-worker"
-version = "0.4.2"
-dependencies = [
- "async-nats",
- "async-trait",
- "blake3",
- "camino",
- "clap",
- "color-eyre",
- "csv",
- "futures",
- "inventory",
- "mimalloc",
- "mime_guess",
- "regex",
- "rusqlite",
- "serde",
- "serde_json",
- "serde_yml",
- "sinex-macros",
- "sinex-node-sdk",
- "sinex-primitives",
- "sqlx",
- "tempfile",
- "time",
- "tokio",
- "tracing",
- "tracing-subscriber",
- "uuid",
- "xtask",
-]
-
-[[package]]
 name = "sinex-vm-test-suite"
 version = "0.4.2"
 dependencies = [
@@ -5245,6 +5212,7 @@ name = "sinexd"
 version = "0.4.2"
 dependencies = [
  "async-nats",
+ "async-trait",
  "axum",
  "base64 0.22.1",
  "blake3",
@@ -5255,22 +5223,28 @@ dependencies = [
  "color-eyre",
  "console-subscriber",
  "crc32fast",
+ "csv",
  "dashmap",
  "dirs",
  "futures",
  "gethostname",
  "governor",
  "hyper-util",
+ "inventory",
  "libc",
  "mimalloc",
+ "mime_guess",
  "notify",
  "parking_lot",
  "petgraph",
+ "regex",
  "reqwest",
  "serde",
  "serde_json",
  "serde_path_to_error",
+ "serde_yml",
  "sinex-db",
+ "sinex-macros",
  "sinex-node-sdk",
  "sinex-primitives",
  "sinexd",
@@ -7480,7 +7454,7 @@ dependencies = [
  "sinex-node-sdk",
  "sinex-primitives",
  "sinex-process",
- "sinex-source-worker",
+ "sinexd",
  "sqlx",
  "syn 2.0.117",
  "sysinfo",

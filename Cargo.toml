@@ -12,7 +12,6 @@ members = [
   "crate/lib/sinex-node-sdk",
 
   # Dying service-binary hosts (folded into sinexd in PR-2/PR-3, kept at original paths)
-  "crate/core/sinex-source-worker",
   "crate/core/sinex-process",
 
   # CLI (surviving — flat)

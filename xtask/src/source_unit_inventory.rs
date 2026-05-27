@@ -6,7 +6,7 @@
 //! that crate is enough to pull every source-unit descriptor into xtask's
 //! inventory view.
 
-extern crate sinex_source_worker as _;
+extern crate sinexd as _;
 
 // `sinex_primitives` carries the infra source-unit descriptors registered
 // by `crate/lib/sinex-primitives/src/events/payloads/{blob,process,metrics}.rs`.
