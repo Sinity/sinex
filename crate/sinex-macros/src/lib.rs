@@ -146,8 +146,8 @@ pub fn derive_source_record(input: TokenStream) -> TokenStream {
 ///
 /// # Field attributes
 ///
-/// - `#[sinex_config(env = "EXPLICIT_KEY")]` — override the env-key suffix
-///   (default: uppercased field name)
+/// - `#[sinex_config(env = "MY_ENV_VAR")]` — override the full env-var name
+///   (default: `{prefix}_{FIELD_NAME_UPPERCASED}`)
 /// - `#[sinex_config(default = LIT)]` — literal default for fields whose
 ///   type doesn't otherwise have one (bool defaults to false, String to "")
 /// - `#[sinex_config(default_expr = "EXPR")]` — non-literal default

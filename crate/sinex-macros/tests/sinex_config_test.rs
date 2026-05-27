@@ -53,13 +53,13 @@ pub struct SkipConfig {
 }
 
 // ---------------------------------------------------------------------------
-// `env = "..."` overrides the suffix
+// `env = "..."` overrides the full env-var name (not a suffix).
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, SinexConfig)]
 #[sinex_config(prefix = "SINEX_TEST_RENAME", context = "rename test")]
 pub struct RenameConfig {
-    #[sinex_config(env = "EXPLICIT_KEY", default = 7_u32)]
+    #[sinex_config(env = "SINEX_TEST_RENAME_EXPLICIT_KEY", default = 7_u32)]
     pub field_with_long_rust_name: u32,
 }
 

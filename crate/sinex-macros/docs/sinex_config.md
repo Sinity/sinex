@@ -23,7 +23,7 @@ pub struct PoolConfig { /* ... */ }
 
 | Attribute | Purpose |
 |---|---|
-| `#[sinex_config(env = "EXPLICIT_KEY")]` | Override the suffix (default: uppercased field name) |
+| `#[sinex_config(env = "MY_ENV_VAR")]` | Override the full env-var name (default: `{prefix}_{FIELD_UPPER}`) |
 | `#[sinex_config(default = LITERAL)]` | Literal default for fields whose type doesn't otherwise have one |
 | `#[sinex_config(default_expr = "EXPR")]` | Non-literal default (e.g. `"Seconds::from_secs(30)"`) |
 | `#[sinex_config(parser = path::to::fn)]` | Custom parser `fn(&str) -> Result<T, _>`; requires a default |
