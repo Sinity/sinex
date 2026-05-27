@@ -33,15 +33,27 @@ pub fn notify_ready(component: &str) {
     if is_hosted() {
         return;
     }
-    if let Err(error) = sd_notify::notify(false, &[NotifyState::Ready]) {
-        warn!(component, error = %error, "Failed to notify systemd ready state");
-    }
+    notify_ready_unhosted(component);
 }
 
 pub fn notify_stopping(component: &str) {
     if is_hosted() {
         return;
     }
+    notify_stopping_unhosted(component);
+}
+
+/// Variant that always sends READY=1, bypassing the hosted-mode latch.
+/// Use only from the top-level supervisor that owns the systemd unit.
+pub fn notify_ready_unhosted(component: &str) {
+    if let Err(error) = sd_notify::notify(false, &[NotifyState::Ready]) {
+        warn!(component, error = %error, "Failed to notify systemd ready state");
+    }
+}
+
+/// Variant that always sends STOPPING=1, bypassing the hosted-mode latch.
+/// Use only from the top-level supervisor that owns the systemd unit.
+pub fn notify_stopping_unhosted(component: &str) {
     if let Err(error) = sd_notify::notify(false, &[NotifyState::Stopping]) {
         warn!(component, error = %error, "Failed to notify systemd stopping state");
     }
@@ -81,6 +93,12 @@ pub fn spawn_watchdog(component: &'static str) -> Option<WatchdogHandle> {
     if is_hosted() {
         return None;
     }
+    spawn_watchdog_unhosted(component)
+}
+
+/// Variant that always spawns the watchdog, bypassing the hosted-mode
+/// latch. Use only from the top-level supervisor.
+pub fn spawn_watchdog_unhosted(component: &'static str) -> Option<WatchdogHandle> {
     let interval = watchdog_interval()?;
     debug!(
         component,

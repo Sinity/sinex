@@ -98,13 +98,16 @@ impl Supervisor {
             "sinexd running"
         );
 
-        systemd_notify::notify_ready("sinexd");
-        let watchdog = systemd_notify::spawn_watchdog("sinexd");
+        // Use the unhosted variant — `enter_hosted_mode` set the latch so
+        // in-process bindings stop calling sd_notify, but the supervisor
+        // itself still needs to talk to systemd.
+        systemd_notify::notify_ready_unhosted("sinexd");
+        let watchdog = systemd_notify::spawn_watchdog_unhosted("sinexd");
 
         let mut shutdown_rx = shutdown_rx;
         let _ = shutdown_rx.changed().await;
         info!("shutdown requested");
-        systemd_notify::notify_stopping("sinexd");
+        systemd_notify::notify_stopping_unhosted("sinexd");
         systemd_notify::stop_watchdog(watchdog, "sinexd").await;
 
         // Unwind in reverse start order: source bindings → automata → api →
