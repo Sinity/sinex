@@ -150,8 +150,8 @@ in
               job_name = "nats";
               static_configs = [{ targets = [ "localhost:${toString natsExporterPort}" ]; }];
             });
-          # Note: sinex-gateway does not expose a Prometheus /metrics endpoint.
-          # Gateway metrics are emitted as Sinex events via NATS self-observation
+          # Note: sinexd does not expose a Prometheus /metrics endpoint.
+          # Metrics are emitted as Sinex events via NATS self-observation
           # and stored in core.events. Query them via sinexctl or the analytics API.
         in
         {

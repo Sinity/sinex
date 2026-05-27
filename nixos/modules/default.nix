@@ -2287,8 +2287,7 @@ in
         else
           null;
       deploymentManagedUnits = lib.unique (
-        (lib.optionals (cfg.enable && cfg.core.enable) [ "sinex-ingestd.service" ])
-        ++ (lib.optionals (cfg.enable && cfg.core.enable && cfg.core.gateway.enable) [ "sinex-gateway.service" ])
+        (lib.optionals (cfg.enable && cfg.core.enable) [ "sinexd.service" ])
         ++ lib.optionals cfg.enable (map (name: "${name}.service") (config.sinex._generatedUnits or [ ]))
       );
       resolveNodeInstances = nodeInstances:
@@ -2509,18 +2508,15 @@ in
 
       # Auxiliary sinex-owned units that should be gated alongside the
       # long-running runtime services. Long-running services
-      # (sinex-ingestd, sinex-gateway, source workers, automata) already wire
-      # their own wantedBy from cfg.runtime.target.attachToMultiUser and
-      # publish their service names via config.sinex._generatedUnits. The
-      # auxiliary list here covers the one-shots, the standalone
-      # sinex-document-scan and its timer, NATS, and the bootstrap helpers
-      # that the long-running services depend on.
+      # (sinexd, source workers, automata) already wire their own wantedBy
+      # from cfg.runtime.target.attachToMultiUser and publish their service
+      # names via config.sinex._generatedUnits. The auxiliary list here
+      # covers the one-shots, the standalone sinex-document-scan and its
+      # timer, NATS, and the bootstrap helpers that the long-running services
+      # depend on.
       coreAuxUnitNames =
         lib.optionals (cfg.enable && cfg.core.enable) [
-          "sinex-ingestd"
-        ]
-        ++ lib.optionals (cfg.enable && cfg.core.enable && cfg.core.gateway.enable) [
-          "sinex-gateway"
+          "sinexd"
         ];
       generatedRuntimeUnitNames =
         lib.optionals cfg.enable (config.sinex._generatedUnits or [ ]);

@@ -261,11 +261,11 @@ let
       execArgs = concatStringsSep " " execArgParts;
       afterUnits =
         schemaApplyUnits
-        ++ optionals coreEnabled [ "sinex-ingestd.service" ]
+        ++ optionals coreEnabled [ "sinexd.service" ]
         ++ binding.afterUnits;
       requireUnits = schemaApplyUnits ++ binding.requiresUnits;
       wantsUnits =
-        optionals coreEnabled [ "sinex-ingestd.service" ]
+        optionals coreEnabled [ "sinexd.service" ]
         ++ binding.wantsUnits;
       isMonitor = (catalogUnit.service_policy or "") == "invoked_on_demand";
       # Base service config; domain glue (ACL scripts etc.) is merged in via

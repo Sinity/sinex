@@ -418,20 +418,10 @@ let
   mkCoreServices =
     let
       batch = coreCfg.ingestd.batch;
-      ingestArgs = concatStringsSep " " ([
+      sinexdArgs = concatStringsSep " " ([
         "--nats-url ${natsUrl}"
-        "--consumer-fetch-max-messages ${toString batch.size}"
-        # CLI arg expects milliseconds; NixOS option stores seconds for human readability.
-        "--consumer-fetch-timeout-ms ${toString (batch.timeoutSec * 1000)}"
         "--log-level ${coreCfg.ingestd.logLevel}"
       ] ++ coreCfg.ingestd.extraArgs);
-      gatewayArgs = concatStringsSep " " ([
-        "rpc-server"
-        # database_url is read from DATABASE_URL env var (set in baseEnv),
-        # so no --database-url CLI arg is needed here.
-        "--tcp-listen ${coreCfg.gateway.listenAddress}"
-        # TLS is mandatory for gateway RPC; cert/key must be provided via env vars.
-      ] ++ coreCfg.gateway.extraArgs);
       gatewayLimits = coreCfg.gateway.limits;
       gatewayAdminTokenRuntimeFile = "${runtimeDir}/gateway-admin-token";
       gatewayTlsCertRuntimeFile = "${runtimeDir}/gateway-server.pem";
@@ -525,36 +515,6 @@ let
             stage_file ${escapeShellArg (if gatewayTlsTrustAnchorSourceFile == null then "" else toString gatewayTlsTrustAnchorSourceFile)} ${escapeShellArg gatewayTlsTrustAnchorRuntimeFile} 0444
             stage_file ${escapeShellArg (if cfg.core.gateway.tlsClientCAFile == null then "" else toString cfg.core.gateway.tlsClientCAFile)} ${escapeShellArg gatewayTlsClientCaRuntimeFile} 0440
           '';
-      gatewayEnv = mkServiceEnv (
-        [
-          "RUST_LOG=${coreCfg.gateway.logLevel}"
-          "SINEX_GATEWAY_MAX_CONCURRENCY=${toString gatewayLimits.maxConcurrency}"
-          "SINEX_GATEWAY_REQUEST_TIMEOUT_SECS=${toString gatewayLimits.requestTimeoutSec}"
-          "SINEX_GATEWAY_MAX_BODY_BYTES=${toString gatewayLimits.maxBodyBytes}"
-          "SINEX_GATEWAY_MAX_BLOB_BYTES=${toString gatewayLimits.maxBlobBytes}"
-          # Pool sized per-service: total max divided by 4 service pools. Set the
-          # base so each pool gets a meaningful slice without exhausting Postgres.
-          "SINEX_GATEWAY_POOL_MAX_CONNECTIONS=${toString cfg.database.connectionPool.maxConnections}"
-          "SINEX_GATEWAY_POOL_MIN_CONNECTIONS=${toString cfg.database.connectionPool.minConnections}"
-          "SINEX_GATEWAY_POOL_ACQUIRE_TIMEOUT_SECS=${toString cfg.database.connectionPool.connectionTimeout}"
-        ]
-        ++ optional (gatewayAdminTokenFile != null) "SINEX_GATEWAY_ADMIN_TOKEN_FILE=${gatewayAdminTokenRuntimeFile}"
-        ++ optional (cfg.core.gateway.tlsCertFile != null) "SINEX_GATEWAY_TLS_CERT=${gatewayTlsCertRuntimeFile}"
-        ++ optional (cfg.core.gateway.tlsKeyFile != null) "SINEX_GATEWAY_TLS_KEY=${gatewayTlsKeyRuntimeFile}"
-        ++ optional (cfg.core.gateway.tlsClientCAFile != null) "SINEX_GATEWAY_TLS_CLIENT_CA=${gatewayTlsClientCaRuntimeFile}"
-        ++ optional (coreCfg.gateway.requireClientTLS) "SINEX_GATEWAY_REQUIRE_CLIENT_TLS=1"
-        # Rate limiting
-        ++ [
-          "SINEX_RPC_RATE_LIMIT_ENABLED=${if coreCfg.gateway.limits.rateLimit.enable then "true" else "false"}"
-          "SINEX_RPC_RATE_LIMIT_REQUESTS_PER_SEC=${toString coreCfg.gateway.limits.rateLimit.requestsPerSec}"
-          "SINEX_RPC_RATE_LIMIT_BURST=${toString coreCfg.gateway.limits.rateLimit.burst}"
-          "SINEX_RPC_RATE_LIMIT_IDLE_TIMEOUT_SECS=${toString coreCfg.gateway.limits.rateLimit.idleTimeoutSec}"
-          "SINEX_RPC_RATE_LIMIT_PER_MINUTE=${toString coreCfg.gateway.limits.rateLimit.distributedPerMinute}"
-          "SINEX_RPC_RATE_LIMIT_WINDOW_SECS=${toString coreCfg.gateway.limits.rateLimit.distributedWindowSec}"
-          "SINEX_NATIVE_MESSAGING_MAX_SIZE_BYTES=${toString coreCfg.gateway.nativeMessagingMaxSizeBytes}"
-        ]
-        ++ optional (coreCfg.gateway.corsOrigins != null) "SINEX_GATEWAY_CORS_ORIGINS=${coreCfg.gateway.corsOrigins}"
-      );
       # Ordering for core services.
       # Base: hard infrastructure that both services depend on.
       coreRequires =
@@ -570,59 +530,8 @@ let
     in
     if !coreEnabled then { } else
     {
-      "sinex-ingestd" = {
-        description = "Sinex ingestion daemon";
-        wantedBy = lib.optional cfg.runtime.target.attachToMultiUser "multi-user.target";
-        restartIfChanged = cfg.runtime.restartOnSwitch;
-        after = coreAfter;
-        requires = coreRequires;
-        wants = coreWants;
-        unitConfig = restartRateLimits // { PartOf = [ "sinex-runtime.target" ]; } // existingPathAssertions (databaseSecretAssertPaths ++ natsSecretAssertPaths);
-        path = optionals (cfg.storage.blob.enable && cfg.storage.blob.legacyAnnexData) [ pkgs.git pkgs.git-annex ];
-        serviceConfig = mkBaseServiceConfig coreCfg.ingestd.resources
-          (
-            mkServiceEnv [
-              "RUST_LOG=${coreCfg.ingestd.logLevel}"
-              # Pool size and timeouts: read by sinex-ingestd via env vars.
-              "SINEX_INGESTD_POOL_SIZE=${toString cfg.database.connectionPool.maxConnections}"
-              "SINEX_INGESTD_POOL_ACQUIRE_TIMEOUT_SECS=${toString cfg.database.connectionPool.connectionTimeout}"
-              "SINEX_INGESTD_POOL_IDLE_TIMEOUT_SECS=${toString cfg.database.connectionPool.idleTimeout}"
-              # Ack-pending limits: read by sinex-ingestd via SINEX_INGESTD_CONSUMER_MAX_ACK_PENDING
-              # and SINEX_INGESTD_MATERIAL_SLICES_MAX_ACK_PENDING (clap env attribute).
-              "SINEX_INGESTD_CONSUMER_MAX_ACK_PENDING=${toString coreCfg.ingestd.consumerMaxAckPending}"
-              "SINEX_INGESTD_MATERIAL_SLICES_MAX_ACK_PENDING=${toString coreCfg.ingestd.materialSlicesMaxAckPending}"
-              # Explicit work and spool dirs prevent fallback to dirs::cache_dir() (~/.cache)
-              # which is blocked by ProtectHome = true in the systemd unit.
-              "SINEX_INGESTD_WORK_DIR=${stateRoot}/ingestd/work"
-              "SINEX_ASSEMBLER_STATE_DIR=${ingestSpool}"
-              # Schema and validation behaviour
-              "SINEX_INGESTD_GITOPS_ENABLED=${if coreCfg.ingestd.gitopsEnabled then "true" else "false"}"
-              "SINEX_SKIP_SCHEMA_SYNC=${if coreCfg.ingestd.skipSchemaSync then "true" else "false"}"
-              "SINEX_INGESTD_STRICT_VALIDATION=${if coreCfg.ingestd.strictValidation then "true" else "false"}"
-              "SINEX_VALIDATE_SCHEMAS=${if coreCfg.ingestd.validateSchemas then "true" else "false"}"
-              # When the NixOS module bootstraps JetStream streams declaratively, tell
-              # ingestd to skip its own stream bootstrap so the two sources of truth
-              # don't conflict on stream shape or subject overlap.
-              "SINEX_NATS_STREAMS_MANAGED_EXTERNALLY=${if natsBootstrapEnabled then "true" else "false"}"
-              # Operational intervals
-              "SINEX_INGESTD_SCHEMA_RELOAD_INTERVAL_SECS=${toString coreCfg.ingestd.schemaReloadIntervalSecs}"
-              "SINEX_INGESTD_STATS_LOG_INTERVAL_SECS=${toString coreCfg.ingestd.statsLogIntervalSecs}"
-            ]
-            ++ lib.optional
-              (
-                coreCfg.ingestd.blobGcIntervalSecs != null
-              ) "SINEX_INGESTD_BLOB_GC_INTERVAL_SECS=${toString coreCfg.ingestd.blobGcIntervalSecs}"
-          )
-          {
-            ExecStart = mkDatabasePasswordExec {
-              name = "ingestd";
-              command = "${sinexPackage}/bin/sinex-ingestd ${ingestArgs}";
-              passwordFile = if cfg.database.enable then effectiveDatabasePasswordFile else null;
-            };
-          };
-      };
-      "sinex-gateway" = {
-        description = "Sinex gateway";
+      "sinexd" = {
+        description = "Sinex daemon (event engine + API)";
         wantedBy = lib.optional cfg.runtime.target.attachToMultiUser "multi-user.target";
         restartIfChanged = cfg.runtime.restartOnSwitch;
         after = gatewayAfter;
@@ -635,27 +544,81 @@ let
             databaseSecretAssertPaths ++ natsSecretAssertPaths ++ gatewaySecretAssertPaths
           );
         path = optionals (cfg.storage.blob.enable && cfg.storage.blob.legacyAnnexData) [ pkgs.git pkgs.git-annex ];
-        serviceConfig = mkBaseServiceConfig coreCfg.gateway.resources gatewayEnv (
-          {
-            Type = lib.mkForce "notify";
-            NotifyAccess = "main";
-            ExecStart = mkDatabasePasswordExec {
-              name = "gateway";
-              command = "${sinexPackage}/bin/sinex-gateway ${gatewayArgs}";
-              passwordFile = if cfg.database.enable then effectiveDatabasePasswordFile else null;
-            };
-          }
-          // optionalAttrs (gatewayRuntimeInputStageScript != null) {
-            ExecStartPre = lib.mkBefore [ "+${gatewayRuntimeInputStageScript}" ];
-          }
-        );
+        serviceConfig = mkBaseServiceConfig coreCfg.gateway.resources
+          (
+            mkServiceEnv (
+              [
+                "RUST_LOG=${coreCfg.ingestd.logLevel}"
+                # Event engine pool size and timeouts.
+                "SINEX_INGESTD_POOL_SIZE=${toString cfg.database.connectionPool.maxConnections}"
+                "SINEX_INGESTD_POOL_ACQUIRE_TIMEOUT_SECS=${toString cfg.database.connectionPool.connectionTimeout}"
+                "SINEX_INGESTD_POOL_IDLE_TIMEOUT_SECS=${toString cfg.database.connectionPool.idleTimeout}"
+                # Ack-pending limits (read via env by IngestdConfig::from_args).
+                "SINEX_INGESTD_CONSUMER_MAX_ACK_PENDING=${toString coreCfg.ingestd.consumerMaxAckPending}"
+                "SINEX_INGESTD_MATERIAL_SLICES_MAX_ACK_PENDING=${toString coreCfg.ingestd.materialSlicesMaxAckPending}"
+                # Explicit work and spool dirs prevent fallback to dirs::cache_dir() (~/.cache)
+                # which is blocked by ProtectHome = true in the systemd unit.
+                "SINEX_INGESTD_WORK_DIR=${stateRoot}/ingestd/work"
+                "SINEX_ASSEMBLER_STATE_DIR=${ingestSpool}"
+                # Schema and validation behaviour.
+                "SINEX_INGESTD_GITOPS_ENABLED=${if coreCfg.ingestd.gitopsEnabled then "true" else "false"}"
+                "SINEX_SKIP_SCHEMA_SYNC=${if coreCfg.ingestd.skipSchemaSync then "true" else "false"}"
+                "SINEX_INGESTD_STRICT_VALIDATION=${if coreCfg.ingestd.strictValidation then "true" else "false"}"
+                "SINEX_VALIDATE_SCHEMAS=${if coreCfg.ingestd.validateSchemas then "true" else "false"}"
+                # Skip internal stream bootstrap when the module manages streams declaratively.
+                "SINEX_NATS_STREAMS_MANAGED_EXTERNALLY=${if natsBootstrapEnabled then "true" else "false"}"
+                # Operational intervals.
+                "SINEX_INGESTD_SCHEMA_RELOAD_INTERVAL_SECS=${toString coreCfg.ingestd.schemaReloadIntervalSecs}"
+                "SINEX_INGESTD_STATS_LOG_INTERVAL_SECS=${toString coreCfg.ingestd.statsLogIntervalSecs}"
+                # API (gateway) config.
+                "SINEX_GATEWAY_MAX_CONCURRENCY=${toString gatewayLimits.maxConcurrency}"
+                "SINEX_GATEWAY_REQUEST_TIMEOUT_SECS=${toString gatewayLimits.requestTimeoutSec}"
+                "SINEX_GATEWAY_MAX_BODY_BYTES=${toString gatewayLimits.maxBodyBytes}"
+                "SINEX_GATEWAY_MAX_BLOB_BYTES=${toString gatewayLimits.maxBlobBytes}"
+                "SINEX_GATEWAY_POOL_MAX_CONNECTIONS=${toString cfg.database.connectionPool.maxConnections}"
+                "SINEX_GATEWAY_POOL_MIN_CONNECTIONS=${toString cfg.database.connectionPool.minConnections}"
+                "SINEX_GATEWAY_POOL_ACQUIRE_TIMEOUT_SECS=${toString cfg.database.connectionPool.connectionTimeout}"
+                "SINEX_RPC_RATE_LIMIT_ENABLED=${if coreCfg.gateway.limits.rateLimit.enable then "true" else "false"}"
+                "SINEX_RPC_RATE_LIMIT_REQUESTS_PER_SEC=${toString coreCfg.gateway.limits.rateLimit.requestsPerSec}"
+                "SINEX_RPC_RATE_LIMIT_BURST=${toString coreCfg.gateway.limits.rateLimit.burst}"
+                "SINEX_RPC_RATE_LIMIT_IDLE_TIMEOUT_SECS=${toString coreCfg.gateway.limits.rateLimit.idleTimeoutSec}"
+                "SINEX_RPC_RATE_LIMIT_PER_MINUTE=${toString coreCfg.gateway.limits.rateLimit.distributedPerMinute}"
+                "SINEX_RPC_RATE_LIMIT_WINDOW_SECS=${toString coreCfg.gateway.limits.rateLimit.distributedWindowSec}"
+                "SINEX_NATIVE_MESSAGING_MAX_SIZE_BYTES=${toString coreCfg.gateway.nativeMessagingMaxSizeBytes}"
+                "SINEX_GATEWAY_TCP_LISTEN=${coreCfg.gateway.listenAddress}"
+              ]
+              ++ lib.optional
+                (coreCfg.ingestd.blobGcIntervalSecs != null)
+                "SINEX_INGESTD_BLOB_GC_INTERVAL_SECS=${toString coreCfg.ingestd.blobGcIntervalSecs}"
+              ++ optional (gatewayAdminTokenFile != null) "SINEX_GATEWAY_ADMIN_TOKEN_FILE=${gatewayAdminTokenRuntimeFile}"
+              ++ optional (cfg.core.gateway.tlsCertFile != null) "SINEX_GATEWAY_TLS_CERT=${gatewayTlsCertRuntimeFile}"
+              ++ optional (cfg.core.gateway.tlsKeyFile != null) "SINEX_GATEWAY_TLS_KEY=${gatewayTlsKeyRuntimeFile}"
+              ++ optional (cfg.core.gateway.tlsClientCAFile != null) "SINEX_GATEWAY_TLS_CLIENT_CA=${gatewayTlsClientCaRuntimeFile}"
+              ++ optional (coreCfg.gateway.requireClientTLS) "SINEX_GATEWAY_REQUIRE_CLIENT_TLS=1"
+              ++ optional (coreCfg.gateway.corsOrigins != null) "SINEX_GATEWAY_CORS_ORIGINS=${coreCfg.gateway.corsOrigins}"
+            )
+          )
+          (
+            {
+              Type = lib.mkForce "notify";
+              NotifyAccess = "main";
+              ExecStart = mkDatabasePasswordExec {
+                name = "sinexd";
+                command = "${sinexPackage}/bin/sinexd ${sinexdArgs}";
+                passwordFile = if cfg.database.enable then effectiveDatabasePasswordFile else null;
+              };
+            }
+            // optionalAttrs (gatewayRuntimeInputStageScript != null) {
+              ExecStartPre = lib.mkBefore [ "+${gatewayRuntimeInputStageScript}" ];
+            }
+          );
       };
     }
     // optionalAttrs tlsAutoGenEnabled {
       "sinex-tls-init" = {
         description = "Generate Sinex gateway TLS credentials";
         wantedBy = [ "multi-user.target" ];
-        before = [ "sinex-gateway.service" ];
+        before = [ "sinexd.service" ];
         serviceConfig = {
           ExecStart = genTlsScript;
           # Runs as root; the script sets 640 on key/cert after generation.
@@ -1608,7 +1571,7 @@ let
         description = "Sinex document snapshot scan";
         after = requiredUnits;
         requires = requiredUnits;
-        wants = optionals coreEnabled [ "sinex-ingestd.service" ];
+        wants = optionals coreEnabled [ "sinexd.service" ];
         unitConfig = existingPathAssertions (databaseSecretAssertPaths ++ natsSecretAssertPaths);
         path = optionals (cfg.storage.blob.enable && cfg.storage.blob.legacyAnnexData) [ pkgs.git pkgs.git-annex ];
         serviceConfig = (mkBaseServiceConfig resources env {
@@ -1670,7 +1633,7 @@ let
       description = params.description;
       wantedBy = lib.optional cfg.runtime.target.attachToMultiUser "multi-user.target";
       restartIfChanged = cfg.runtime.restartOnSwitch;
-      after = schemaApplyUnits ++ postgresServiceUnits ++ optionals coreEnabled [ "sinex-ingestd.service" ];
+      after = schemaApplyUnits ++ postgresServiceUnits ++ optionals coreEnabled [ "sinexd.service" ];
       requires = schemaApplyUnits ++ postgresServiceUnits;
       unitConfig = restartRateLimits // { PartOf = [ "sinex-runtime.target" ]; } // existingPathAssertions (databaseSecretAssertPaths ++ natsSecretAssertPaths);
       serviceConfig = mkBaseServiceConfig resources env {
