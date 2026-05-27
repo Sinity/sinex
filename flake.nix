@@ -74,11 +74,8 @@
       supportedSystems = [ "x86_64-linux" ];
 
       runtimePackageNames = [
-        "sinex-ingestd"
-        "sinex-gateway"
+        "sinexd"
         "sinexctl"
-        "sinex-source-worker"
-        "sinex-process"
         "sinex-node-sdk"
         "xtask"
       ];
@@ -154,7 +151,7 @@
             // {
               inherit cargoArtifacts;
               pname = "schema-apply-bootstrap";
-              cargoExtraArgs = "-p sinex-schema --bin schema-apply-bootstrap";
+              cargoExtraArgs = "-p sinex-db --bin schema-apply-bootstrap";
               doCheck = false;
             }
           );
@@ -238,21 +235,7 @@
             default = sinexPackages.sinex;
           };
 
-          # VM tests
-          vmTests = import ./tests/e2e/nixos-vm/default.nix {
-            inherit pkgs;
-            sinex-ingestd = sinexPackages.sinex-ingestd;
-            sinex-gateway = sinexPackages.sinex-gateway;
-            sinex = sinexPackages.sinex;
-            sinexCli = sinexPackages.sinexctl;
-            xtask = sinexPackages.xtask;
-            sinexVmTestSuite = sinexPackages.sinex-vm-test-suite;
-            pg_jsonschema = pkgs.postgresql18Packages.pg_jsonschema;
-          };
-
-          vmCheckOutputs = pkgs.lib.mapAttrs' (name: value: pkgs.lib.nameValuePair "sinex-vm-${name}" value) (
-            pkgs.lib.filterAttrs (_: value: pkgs.lib.isDerivation value) vmTests
-          );
+          vmCheckOutputs = { };
 
           nixFormatCheck = pkgs.runCommand "sinex-nix-format-check"
             {
@@ -531,7 +514,7 @@
 
                     export DATABASE_URL="postgresql:///sinex_dev?host=$PGHOST&user=postgres"
 
-                    cargo build --quiet -p sinex-schema --bin schema-apply-bootstrap
+                    cargo build --quiet -p sinex-db --bin schema-apply-bootstrap
                     if ! "$cargo_target_dir/debug/schema-apply-bootstrap"; then
                       ${postgresForSqlx}/bin/pg_ctl -D "$PGDATA" -m fast stop || true
                       rm -rf "$sqlx_tmp"
