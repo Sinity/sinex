@@ -415,7 +415,7 @@ let
       };
     };
 
-  mkCoreServices =
+  mkCoreServices = { automataEnabledList, sourceBindingsManifestFile, nodesOverlay }:
     let
       batch = coreCfg.ingestd.batch;
       sinexdArgs = concatStringsSep " " ([
@@ -531,19 +531,18 @@ let
     if !coreEnabled then { } else
     {
       "sinexd" = {
-        description = "Sinex daemon (event engine + API)";
+        description = "Sinex daemon (event engine + API + automata + source workers)";
         wantedBy = lib.optional cfg.runtime.target.attachToMultiUser "multi-user.target";
         restartIfChanged = cfg.runtime.restartOnSwitch;
-        after = gatewayAfter;
+        after = gatewayAfter ++ (nodesOverlay.afterUnits or [ ]);
         requires = coreRequires ++ optionals tlsAutoGenEnabled [ "sinex-tls-init.service" ];
-        wants = coreWants;
+        wants = coreWants ++ (nodesOverlay.wantsUnits or [ ]);
         unitConfig =
           restartRateLimits
           // { PartOf = [ "sinex-runtime.target" ]; }
           // existingPathAssertions (
             databaseSecretAssertPaths ++ natsSecretAssertPaths ++ gatewaySecretAssertPaths
           );
-        path = optionals (cfg.storage.blob.enable && cfg.storage.blob.legacyAnnexData) [ pkgs.git pkgs.git-annex ];
         serviceConfig = mkBaseServiceConfig coreCfg.gateway.resources
           (
             mkServiceEnv (
@@ -586,7 +585,13 @@ let
                 "SINEX_RPC_RATE_LIMIT_WINDOW_SECS=${toString coreCfg.gateway.limits.rateLimit.distributedWindowSec}"
                 "SINEX_NATIVE_MESSAGING_MAX_SIZE_BYTES=${toString coreCfg.gateway.nativeMessagingMaxSizeBytes}"
                 "SINEX_API_TCP_LISTEN=${coreCfg.gateway.listenAddress}"
+                # Collapsed-daemon selectors: tell sinexd which automata to
+                # host internally and where to load the source-binding
+                # manifest. Empty/unset = host none in that subsystem.
+                "SINEX_AUTOMATA_ENABLED=${concatStringsSep "," automataEnabledList}"
               ]
+              ++ lib.optional (sourceBindingsManifestFile != null)
+                "SINEX_SOURCE_BINDINGS_PATH=${toString sourceBindingsManifestFile}"
               ++ lib.optional
                 (coreCfg.ingestd.blobGcIntervalSecs != null)
                 "SINEX_EVENT_ENGINE_BLOB_GC_INTERVAL_SECS=${toString coreCfg.ingestd.blobGcIntervalSecs}"
@@ -596,6 +601,7 @@ let
               ++ optional (cfg.core.gateway.tlsClientCAFile != null) "SINEX_API_TLS_CLIENT_CA=${gatewayTlsClientCaRuntimeFile}"
               ++ optional (coreCfg.gateway.requireClientTLS) "SINEX_API_REQUIRE_CLIENT_TLS=1"
               ++ optional (coreCfg.gateway.corsOrigins != null) "SINEX_API_CORS_ORIGINS=${coreCfg.gateway.corsOrigins}"
+              ++ (nodesOverlay.environment or [ ])
             )
           )
           (
@@ -604,14 +610,31 @@ let
               NotifyAccess = "main";
               ExecStart = mkDatabasePasswordExec {
                 name = "sinexd";
-                command = "${sinexPackage}/bin/sinexd ${sinexdArgs}";
+                command = "${sinexPackage}/bin/sinexd ${sinexdArgs} serve";
                 passwordFile = if cfg.database.enable then effectiveDatabasePasswordFile else null;
               };
             }
-            // optionalAttrs (gatewayRuntimeInputStageScript != null) {
-              ExecStartPre = lib.mkBefore [ "+${gatewayRuntimeInputStageScript}" ];
+            // optionalAttrs (gatewayRuntimeInputStageScript != null || (nodesOverlay.execStartPre or [ ]) != [ ]) {
+              ExecStartPre = lib.mkBefore (
+                lib.optional (gatewayRuntimeInputStageScript != null) "+${gatewayRuntimeInputStageScript}"
+                ++ (nodesOverlay.execStartPre or [ ])
+              );
+            }
+            // optionalAttrs ((nodesOverlay.readWritePaths or [ ]) != [ ]) {
+              ReadWritePaths = lib.mkForce (unique (readWritePaths ++ nodesOverlay.readWritePaths));
+            }
+            // optionalAttrs ((nodesOverlay.protectHome or null) != null) {
+              ProtectHome = lib.mkForce nodesOverlay.protectHome;
+            }
+            // optionalAttrs ((nodesOverlay.environmentFile or [ ]) != [ ]) {
+              EnvironmentFile = nodesOverlay.environmentFile;
+            }
+            // optionalAttrs ((nodesOverlay.supplementaryGroups or [ ]) != [ ]) {
+              SupplementaryGroups = unique nodesOverlay.supplementaryGroups;
             }
           );
+        path = optionals (cfg.storage.blob.enable && cfg.storage.blob.legacyAnnexData) [ pkgs.git pkgs.git-annex ]
+          ++ (nodesOverlay.path or [ ]);
       };
     }
     // optionalAttrs tlsAutoGenEnabled {
@@ -656,17 +679,20 @@ let
       };
     in
     {
-      "fs" = {
-        enable = sat.enable;
-        description = "Filesystem watcher (source-worker)";
-        adapterType = null;
-        adapterConfig = nodeConfig;
-        inherit instances resources;
-        extraArgs = sat.extraArgs;
-        extraEnv = { RUST_LOG = nodesCfg.defaults.logLevel; } // sat.env;
-        serviceConfigOverrides = {
-          ProtectHome = lib.mkForce "read-only";
+      bindings = {
+        "fs" = {
+          enable = sat.enable;
+          description = "Filesystem watcher (source-worker)";
+          adapterType = null;
+          adapterConfig = nodeConfig;
+          inherit instances resources;
+          extraArgs = sat.extraArgs;
+          extraEnv = { RUST_LOG = nodesCfg.defaults.logLevel; } // sat.env;
+          serviceConfigOverrides = { };
         };
+      };
+      overlay = {
+        protectHome = "read-only";
       };
     };
 
@@ -833,15 +859,10 @@ let
             exit 1
           fi
         '';
-      # Per-source-unit generatedBindings entries (service emission delegated).
-      serviceConfigOverrides = {
-        ProtectHome = lib.mkForce "read-only";
-        ReadWritePaths = readWritePaths ++ accessWritePaths;
-      } // optionalAttrs (sat.access.bindReadOnlyPaths != [ ] && accessSetupScript == null) {
-        BindReadOnlyPaths = renderBindReadOnlyPaths sat.access.bindReadOnlyPaths;
-      } // optionalAttrs (accessSetupScript != null) {
-        ExecStartPre = lib.mkBefore [ "+${accessSetupScript}" ];
-      };
+      # Post-collapse: per-binding service overrides become contributions
+      # to the sinexd unit's overlay. We do not emit per-source-worker
+      # systemd units anymore.
+      serviceConfigOverrides = { };
       terminalBindings =
         if instances <= 0 then { }
         else
@@ -871,22 +892,27 @@ let
           extraArgs = [ ];
         };
       };
-      # generatedUnitNames used for beforeUnits in access setup unit.
-      generatedUnitNames =
-        map
-          (group: "sinex-source-worker-${group.sourceUnitId}-1.service")
-          sourceUnitGroups;
+      # Post-collapse: all source-worker units fold into sinexd.service. The
+      # ACL setup must run before sinexd so the in-process terminal source
+      # units can traverse target-user paths.
       supportUnits = mkAccessSetupUnit {
         name = "sinex-terminal-target-access";
         description = "Prepare target-user access for the Sinex terminal node";
         script = accessSetupScript;
         writePaths = accessWritePaths;
-        beforeUnits = [ "sinex-preflight.service" ] ++ generatedUnitNames;
+        beforeUnits = [ "sinex-preflight.service" "sinexd.service" ];
       };
     in
     {
       bindings = terminalBindings // monitorBinding;
       inherit supportUnits;
+      overlay = {
+        protectHome = "read-only";
+        readWritePaths = accessWritePaths;
+        execStartPre = lib.optional (accessSetupScript != null) "+${accessSetupScript}";
+        bindReadOnlyPaths = lib.optionals (sat.access.bindReadOnlyPaths != [ ] && accessSetupScript == null)
+          (renderBindReadOnlyPaths sat.access.bindReadOnlyPaths);
+      };
     };
 
   # ── Desktop support glue ────────────────────────────────────────────────
@@ -1114,15 +1140,7 @@ let
         if targetHome != null
         then "${targetHome}/.local/share/activitywatch/aw-server-rust/sqlite.db"
         else "";
-      desktopServiceConfigOverrides = {
-        ProtectHome = lib.mkForce "read-only";
-        ReadWritePaths = readWritePaths ++ accessWritePaths;
-      } // optionalAttrs (sat.access.bindReadOnlyPaths != [ ] && accessSetupScript == null) {
-        BindReadOnlyPaths = renderBindReadOnlyPaths sat.access.bindReadOnlyPaths;
-      } // optionalAttrs (accessSetupScript != null) {
-        EnvironmentFile = [ "-${bridgeEnvFile}" ];
-        ExecStartPre = lib.mkBefore [ "+${accessSetupScript}" ];
-      };
+      desktopServiceConfigOverrides = { };
       desktopExtraEnv =
         clipboardEnv
         // sessionEnv
@@ -1136,10 +1154,10 @@ let
         afterUnits = runtimeRootUnits;
         wantsUnits = runtimeRootUnits;
         beforeUnits = [
+          # Post-collapse: every desktop source unit lives inside sinexd, so
+          # the runtime bridge setup must run before sinexd itself.
           "sinex-preflight.service"
-          "sinex-source-worker-desktop.activitywatch-1.service"
-          "sinex-source-worker-desktop.window-manager-1.service"
-          "sinex-source-worker-desktop.clipboard-1.service"
+          "sinexd.service"
         ];
       };
       # Hyprland rotates instance signature directories under
@@ -1221,6 +1239,15 @@ let
       bindings = desktopBindings;
       supportUnits = supportUnits // aclRefreshUnits;
       paths = aclRefreshPaths;
+      overlay = {
+        protectHome = "read-only";
+        readWritePaths = accessWritePaths;
+        execStartPre = lib.optional (accessSetupScript != null) "+${accessSetupScript}";
+        environmentFile = lib.optional (accessSetupScript != null) "-${bridgeEnvFile}";
+        bindReadOnlyPaths = lib.optionals (sat.access.bindReadOnlyPaths != [ ] && accessSetupScript == null)
+          (renderBindReadOnlyPaths sat.access.bindReadOnlyPaths);
+        path = [ pkgs.hyprland ];
+      };
     };
 
   # ── Browser support glue ─────────────────────────────────────────────────
@@ -1318,26 +1345,13 @@ let
             exit 1
           fi
         '';
-      browserServiceConfigOverrides = {
-        # qutebrowser's history.sqlite is WAL-mode. SQLite needs write access
-        # to the DB + sidecars even for SELECT queries (#1325) to apply
-        # pending WAL frames during open. `accessWritePaths` already includes
-        # the SQLite directories (assembled from sqliteSources path dirs
-        # above) so the namespace allows write to them; the rest of /home
-        # stays read-only.
-        ProtectHome = lib.mkForce "read-only";
-        ReadWritePaths = readWritePaths ++ accessWritePaths;
-      } // optionalAttrs (sat.access.bindReadOnlyPaths != [ ] && accessSetupScript == null) {
-        BindReadOnlyPaths = renderBindReadOnlyPaths sat.access.bindReadOnlyPaths;
-      } // optionalAttrs (accessSetupScript != null) {
-        ExecStartPre = lib.mkBefore [ "+${accessSetupScript}" ];
-      };
+      browserServiceConfigOverrides = { };
       supportUnits = mkAccessSetupUnit {
         name = "sinex-browser-target-access";
         description = "Prepare target-user access for the Sinex browser node";
         script = accessSetupScript;
         writePaths = accessWritePaths;
-        beforeUnits = [ "sinex-preflight.service" "sinex-source-worker-browser.history-1.service" ];
+        beforeUnits = [ "sinex-preflight.service" "sinexd.service" ];
       };
     in
     {
@@ -1371,6 +1385,13 @@ let
         };
       };
       inherit supportUnits;
+      overlay = {
+        protectHome = "read-only";
+        readWritePaths = accessWritePaths;
+        execStartPre = lib.optional (accessSetupScript != null) "+${accessSetupScript}";
+        bindReadOnlyPaths = lib.optionals (sat.access.bindReadOnlyPaths != [ ] && accessSetupScript == null)
+          (renderBindReadOnlyPaths sat.access.bindReadOnlyPaths);
+      };
     };
 
   # ── System support glue ──────────────────────────────────────────────────
@@ -1445,26 +1466,31 @@ let
         inherit resources;
         extraArgs = sat.extraArgs;
         extraEnv = { RUST_LOG = nodesCfg.defaults.logLevel; } // sat.env;
-        serviceConfigOverrides = systemServiceConfig;
+        serviceConfigOverrides = { };
       };
     in
     # system.dbus emits a source-worker unit since #1235 wired
     # `RealDbusBackend` into `DbusStreamAdapter::open` (zbus 5.x).
     {
-      "system.journald" = mkSystemBinding "system.journald" "systemd journal (source-worker)";
-      "system.systemd" = mkSystemBinding "system.systemd" "systemd unit state (source-worker)";
-      "system.udev" = mkSystemBinding "system.udev" "udev events (source-worker)";
-      "system.dbus" = mkSystemBinding "system.dbus" "D-Bus signal stream (source-worker)";
-      "system.monitor" = {
-        enable = sat.enable;
-        description = "System monitoring lifecycle event (source-worker)";
-        adapterType = null;
-        adapterConfig = { };
-        instances = 1;
-        inherit resources;
-        extraEnv = { RUST_LOG = nodesCfg.defaults.logLevel; } // sat.env;
-        serviceConfigOverrides = { };
-        extraArgs = [ ];
+      bindings = {
+        "system.journald" = mkSystemBinding "system.journald" "systemd journal (source-worker)";
+        "system.systemd" = mkSystemBinding "system.systemd" "systemd unit state (source-worker)";
+        "system.udev" = mkSystemBinding "system.udev" "udev events (source-worker)";
+        "system.dbus" = mkSystemBinding "system.dbus" "D-Bus signal stream (source-worker)";
+        "system.monitor" = {
+          enable = sat.enable;
+          description = "System monitoring lifecycle event (source-worker)";
+          adapterType = null;
+          adapterConfig = { };
+          instances = 1;
+          inherit resources;
+          extraEnv = { RUST_LOG = nodesCfg.defaults.logLevel; } // sat.env;
+          serviceConfigOverrides = { };
+          extraArgs = [ ];
+        };
+      };
+      overlay = {
+        supplementaryGroups = systemServiceConfig.SupplementaryGroups or [ ];
       };
     };
 
@@ -1480,23 +1506,27 @@ let
       };
       scanCommand = concatStringsSep " " (
         [
-          "${sinexPackage}/bin/sinex-source-worker"
-          # --source-unit selects which source-unit factory runs. Without it,
-          # the binary refuses to start with "required argument missing".
-          # document.staging is the source-unit ID that owns the document
-          # parse-and-stage flow (per the parser inventory; verify with
-          # `sinex-source-worker --list-source-units`).
+          # Post-collapse: sinexd hosts the source-unit factory directly via
+          # `scan-source-unit`. Extra args are forwarded into the SDK CLI
+          # subcommand (so `--extra-arg scan --extra-arg --until --extra-arg
+          # snapshot` runs the snapshot scan exactly as the deleted
+          # sinex-source-worker trampoline did).
+          "${sinexPackage}/bin/sinexd"
+          "scan-source-unit"
           "--source-unit"
           "document.staging"
           "--service-name"
           "sinex-document-scan"
           "--node-config"
           (escapeShellArg nodeConfig)
+          "--extra-arg"
           "scan"
+          "--extra-arg"
           "--until"
+          "--extra-arg"
           "snapshot"
         ]
-        ++ sat.extraArgs
+        ++ concatMap (arg: [ "--extra-arg" arg ]) sat.extraArgs
       );
       env = mkServiceEnv ([ "RUST_LOG=${nodesCfg.defaults.logLevel}" ] ++ toEnvList sat.env);
       requiredUnits =
@@ -1609,78 +1639,45 @@ let
       inherit units supportUnits;
     };
 
-  mkAutomataProfile = profileName:
-    let
-      profiles = nodesCfg.automata.profiles;
-      defaultProfile = profiles.standard;
-    in
-    lib.attrByPath [ profileName ] defaultProfile profiles;
-
-  mkAutomataUnit = params:
-    let
-      profile = mkAutomataProfile params.profile;
-      resources = profile.resources;
-      # params.automaton is the --automaton selector (canonicalizer | analytics | health | session | hourly | daily).
-      # params.binary is kept for the --service-name value for backwards-compatible service identification.
-      automaton = params.automaton;
-      extraArgs = params.extraArgs or [ ];
-      execArgs = concatStringsSep " " (
-        [ "--automaton ${automaton}" "--service-name sinex-${params.binary}" ] ++ extraArgs ++ [ "service" ]
-      );
-      env = mkServiceEnv ([ "RUST_LOG=${nodesCfg.defaults.logLevel}" ] ++ toEnvList params.env);
-    in
-    {
-      description = params.description;
-      wantedBy = lib.optional cfg.runtime.target.attachToMultiUser "multi-user.target";
-      restartIfChanged = cfg.runtime.restartOnSwitch;
-      after = schemaApplyUnits ++ postgresServiceUnits ++ optionals coreEnabled [ "sinexd.service" ];
-      requires = schemaApplyUnits ++ postgresServiceUnits;
-      unitConfig = restartRateLimits // { PartOf = [ "sinex-runtime.target" ]; } // existingPathAssertions (databaseSecretAssertPaths ++ natsSecretAssertPaths);
-      serviceConfig = mkBaseServiceConfig resources env {
-        ExecStart = mkDatabasePasswordExec {
-          name = automaton;
-          command = "${sinexPackage}/bin/sinex-process ${execArgs}";
-          passwordFile = if cfg.database.enable then effectiveDatabasePasswordFile else null;
-        };
-        WorkingDirectory = stateRoot;
-      };
-    };
-
-  automataServices =
-    if !(nodesEnabled && nodesCfg.automata.enable) then { } else
-    concatMapAttrs
-      (
-        _: spec:
-          let
-            automatonCfg = nodesCfg.automata.${spec.optionName};
-          in
-          optionalAttrs automatonCfg.enable {
-            "${spec.serviceName}" = mkAutomataUnit {
-              inherit (spec) automaton binary description;
-              profile = automatonCfg.profile;
-              env = automatonCfg.env;
-              extraArgs = [ ];
-            };
-          }
-      )
-      (listToAttrs (map (spec: nameValuePair spec.serviceName spec) automataLib.specs));
+  # Post-collapse: automata are hosted in-process by sinexd via
+  # SINEX_AUTOMATA_ENABLED. The catalog still drives which names are
+  # eligible; selection comes from each automaton's enable flag.
+  automataEnabledNames =
+    if !(nodesEnabled && nodesCfg.automata.enable) then [ ] else
+    map (spec: spec.automaton)
+      (filter (spec: nodesCfg.automata.${spec.optionName}.enable) automataLib.specs);
 
   # ── Support-glue assembly ────────────────────────────────────────────────
-  # Service emission is delegated to source-bindings-generated.nix.
-  # This assembles only the ACL/env bridge support units and paths.
-  terminalGlue = if nodesEnabled && nodesCfg.terminal.enable then mkTerminalGlue else { bindings = { }; supportUnits = { }; };
-  desktopGlue = if nodesEnabled && nodesCfg.desktop.enable then mkDesktopGlue else { bindings = { }; supportUnits = { }; paths = { }; };
-  browserGlue = if nodesEnabled && nodesCfg.browser.enable then mkBrowserGlue else { bindings = { }; supportUnits = { }; };
-  systemGlue = if nodesEnabled && nodesCfg.system.enable then mkSystemGlue else { };
-  filesystemBindings = if nodesEnabled && nodesCfg.filesystem.enable then mkFilesystemBindings else { };
+  # Post-collapse: source-worker unit emission is gone. Each domain glue
+  # contributes: `bindings` (passed to sinexd via the source-binding manifest
+  # JSON), `supportUnits` (ACL/env bridge oneshot units that still need to
+  # run before sinexd), and `overlay` (per-domain serviceConfig contributions
+  # — ProtectHome / ReadWritePaths / ExecStartPre ACL / EnvironmentFile /
+  # SupplementaryGroups / unit path packages — merged into sinexd.service).
+  emptyGlue = { bindings = { }; supportUnits = { }; overlay = { }; };
+  terminalGlue =
+    if nodesEnabled && nodesCfg.terminal.enable then mkTerminalGlue
+    else emptyGlue;
+  desktopGlue =
+    if nodesEnabled && nodesCfg.desktop.enable then mkDesktopGlue
+    else emptyGlue // { paths = { }; };
+  browserGlue =
+    if nodesEnabled && nodesCfg.browser.enable then mkBrowserGlue
+    else emptyGlue;
+  systemGlue =
+    if nodesEnabled && nodesCfg.system.enable then mkSystemGlue
+    else { bindings = { }; overlay = { }; };
+  filesystemGlue =
+    if nodesEnabled && nodesCfg.filesystem.enable then mkFilesystemBindings
+    else { bindings = { }; overlay = { }; };
 
   # All domain-specific generatedBindings attrs merged together.
   allDomainBindings =
-    filesystemBindings
+    filesystemGlue.bindings
     // terminalGlue.bindings
     // browserGlue.bindings
     // desktopGlue.bindings
-    // systemGlue;
+    // systemGlue.bindings;
 
   # Support units (ACL/env bridges) that generate their own systemd services.
   nodesSupportUnits =
@@ -1688,31 +1685,82 @@ let
     // browserGlue.supportUnits
     // desktopGlue.supportUnits;
 
-  documentScanService =
-    if !(nodesEnabled && nodesCfg.document.enable) then { units = { }; supportUnits = { }; } else mkDocumentUnits;
+  # Per-domain serviceConfig contributions for sinexd. Each overlay is an
+  # attribute set with the optional fields documented on `mkCoreServices`.
+  # Union-merge by concatenating list fields and taking the strictest value
+  # for ProtectHome (read-only > true; we never need to relax to "tmpfs" or
+  # false because every source unit either tolerates read-only or pays for
+  # its own ACL bridge into the readonly namespace).
+  glueOverlays = [
+    filesystemGlue.overlay
+    terminalGlue.overlay
+    browserGlue.overlay
+    desktopGlue.overlay
+    systemGlue.overlay
+  ];
+  collectList = field: concatMap (o: o.${field} or [ ]) glueOverlays;
+  nodesOverlay = {
+    protectHome =
+      if any (o: (o.protectHome or null) == "read-only") glueOverlays then "read-only"
+      else null;
+    readWritePaths = unique (collectList "readWritePaths");
+    execStartPre = collectList "execStartPre";
+    environmentFile = collectList "environmentFile";
+    bindReadOnlyPaths = collectList "bindReadOnlyPaths";
+    supplementaryGroups = unique (collectList "supplementaryGroups");
+    path = collectList "path";
+    afterUnits = [ ];
+    wantsUnits = [ ];
+    environment = [ ];
+  };
 
-  coreServices = mkCoreServices;
-
-  # generatedUnits: used by preflight to know what units to expect.
-  # With the generated module taking over, the unit names follow the
-  # sinex-source-worker-<id>-<idx> pattern from source-bindings-generated.nix.
-  generatedSourceWorkerUnitNames =
+  # Source-binding manifest consumed by sinexd via SINEX_SOURCE_BINDINGS_PATH.
+  # Schema mirrors `sinexd::sources::bindings::SourceBindingsManifest`.
+  activeManifestBindings =
     if !nodesEnabled then [ ]
     else
       concatMap
         (id:
           let
-            binding = allDomainBindings.${id} or { enable = false; gated = false; instances = 1; };
+            binding = allDomainBindings.${id} or { };
+            enable = binding.enable or false;
+            gated = binding.gated or false;
+            instances = binding.instances or 1;
+            nodeConfig = binding.adapterConfig or { };
+            extraArgs = binding.extraArgs or [ ];
+            instanceList = range 1 instances;
           in
-          if binding.enable or false && !(binding.gated or false)
-          then
-            map (idx: "sinex-source-worker-${id}-${toString idx}")
-              (range 1 (binding.instances or 1))
+          if enable && !gated then
+            map
+              (idx: {
+                source_unit_id = id;
+                instance_idx = idx;
+                service_name = "sinex-source-worker-${id}-${toString idx}";
+                node_config = nodeConfig;
+                extra_args = extraArgs;
+              })
+              instanceList
           else [ ]
         )
         (attrNames allDomainBindings);
 
-  generatedUnits = generatedSourceWorkerUnitNames ++ attrNames automataServices;
+  sourceBindingsManifestFile =
+    if activeManifestBindings == [ ] then null
+    else pkgs.writeText "sinex-source-bindings.json" (
+      builtins.toJSON { bindings = activeManifestBindings; }
+    );
+
+  documentScanService =
+    if !(nodesEnabled && nodesCfg.document.enable) then { units = { }; supportUnits = { }; } else mkDocumentUnits;
+
+  coreServices = mkCoreServices {
+    automataEnabledList = automataEnabledNames;
+    inherit sourceBindingsManifestFile nodesOverlay;
+  };
+
+  # Preflight only needs to guard the collapsed sinexd unit. Source-worker
+  # and per-automaton unit names no longer exist.
+  generatedUnits = [ ];
 in
 {
   # Internal option declared here to break the evaluation cycle.
@@ -1741,7 +1789,6 @@ in
         nodesSupportUnits
         documentScanService.units
         documentScanService.supportUnits
-        automataServices
       ];
       systemd.paths = desktopGlue.paths or { };
       systemd.timers = mkMerge [
