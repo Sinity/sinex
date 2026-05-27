@@ -464,62 +464,62 @@ fn discover_schema_sources() -> Vec<SchemaSourceFile> {
         schema_source(
             "apply.rs",
             "crate/lib/sinex-schema/src/apply.rs",
-            include_str!("../../../sinex-schema/src/apply.rs"),
+            include_str!("../../../../sinex-db/src/schema/apply.rs"),
         ),
         schema_source(
             "schema_registry.rs",
             "crate/lib/sinex-schema/src/schema_registry.rs",
-            include_str!("../../../sinex-schema/src/schema_registry.rs"),
+            include_str!("../../../../sinex-db/src/schema/registry.rs"),
         ),
         schema_source(
             "schema/annotations.rs",
             "crate/lib/sinex-schema/src/schema/annotations.rs",
-            include_str!("../../../sinex-schema/src/schema/annotations.rs"),
+            include_str!("../../../../sinex-db/src/schema/defs/annotations.rs"),
         ),
         schema_source(
             "schema/blobs.rs",
             "crate/lib/sinex-schema/src/schema/blobs.rs",
-            include_str!("../../../sinex-schema/src/schema/blobs.rs"),
+            include_str!("../../../../sinex-db/src/schema/defs/blobs.rs"),
         ),
         schema_source(
             "schema/embeddings.rs",
             "crate/lib/sinex-schema/src/schema/embeddings.rs",
-            include_str!("../../../sinex-schema/src/schema/embeddings.rs"),
+            include_str!("../../../../sinex-db/src/schema/defs/embeddings.rs"),
         ),
         schema_source(
             "schema/entities.rs",
             "crate/lib/sinex-schema/src/schema/entities.rs",
-            include_str!("../../../sinex-schema/src/schema/entities.rs"),
+            include_str!("../../../../sinex-db/src/schema/defs/entities.rs"),
         ),
         schema_source(
             "schema/events.rs",
             "crate/lib/sinex-schema/src/schema/events.rs",
-            include_str!("../../../sinex-schema/src/schema/events.rs"),
+            include_str!("../../../../sinex-db/src/schema/defs/events.rs"),
         ),
         schema_source(
             "schema/mod.rs",
             "crate/lib/sinex-schema/src/schema/mod.rs",
-            include_str!("../../../sinex-schema/src/schema/mod.rs"),
+            include_str!("../../../../sinex-db/src/schema/defs/mod.rs"),
         ),
         schema_source(
             "schema/operations.rs",
             "crate/lib/sinex-schema/src/schema/operations.rs",
-            include_str!("../../../sinex-schema/src/schema/operations.rs"),
+            include_str!("../../../../sinex-db/src/schema/defs/operations.rs"),
         ),
         schema_source(
             "schema/sinex_schemas.rs",
             "crate/lib/sinex-schema/src/schema/sinex_schemas.rs",
-            include_str!("../../../sinex-schema/src/schema/sinex_schemas.rs"),
+            include_str!("../../../../sinex-db/src/schema/defs/sinex_schemas.rs"),
         ),
         schema_source(
             "schema/source_materials.rs",
             "crate/lib/sinex-schema/src/schema/source_materials.rs",
-            include_str!("../../../sinex-schema/src/schema/source_materials.rs"),
+            include_str!("../../../../sinex-db/src/schema/defs/source_materials.rs"),
         ),
         schema_source(
             "schema/temporal_ledger.rs",
             "crate/lib/sinex-schema/src/schema/temporal_ledger.rs",
-            include_str!("../../../sinex-schema/src/schema/temporal_ledger.rs"),
+            include_str!("../../../../sinex-db/src/schema/defs/temporal_ledger.rs"),
         ),
     ];
 

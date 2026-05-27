@@ -4955,7 +4955,6 @@ dependencies = [
  "serde_json",
  "sha2",
  "sinex-primitives",
- "sinex-schema",
  "sqlx",
  "time",
  "tokio",
@@ -5026,7 +5025,6 @@ dependencies = [
  "sinex-gateway",
  "sinex-node-sdk",
  "sinex-primitives",
- "sinex-schema",
  "sqlx",
  "subtle",
  "tempfile",
@@ -5069,7 +5067,6 @@ dependencies = [
  "sinex-ingestd",
  "sinex-node-sdk",
  "sinex-primitives",
- "sinex-schema",
  "sqlx",
  "tempfile",
  "time",
@@ -5222,23 +5219,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "sinex-schema"
-version = "0.4.2"
-dependencies = [
- "color-eyre",
- "sea-query",
- "serde",
- "serde_json",
- "sinex-primitives",
- "sqlx",
- "time",
- "tokio",
- "tracing",
- "uuid",
- "xtask",
-]
-
-[[package]]
 name = "sinex-source-worker"
 version = "0.4.2"
 dependencies = [
@@ -5298,7 +5278,6 @@ dependencies = [
  "sinex-node-sdk",
  "sinex-primitives",
  "sinex-process",
- "sinex-schema",
  "sqlx",
  "tempfile",
  "time",
@@ -7561,7 +7540,6 @@ dependencies = [
  "sinex-node-sdk",
  "sinex-primitives",
  "sinex-process",
- "sinex-schema",
  "sinex-source-worker",
  "sqlx",
  "syn 2.0.117",

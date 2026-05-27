@@ -7,7 +7,7 @@
 //! replaying those automata over the event history. This is the physical
 //_ implementation of the "Structure is Emergent" principle.
 
-use crate::primitives::{Timestamp, Uuid};
+use crate::schema::primitives::{Timestamp, Uuid};
 use crate::schema::TableDef;
 use sea_query::{
     Alias, ColumnDef, ColumnType, ConditionalStatement, Expr, ForeignKey, ForeignKeyAction, Iden,

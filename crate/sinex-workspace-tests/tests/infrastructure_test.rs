@@ -4,7 +4,7 @@
 //! preventing permission-related failures that could otherwise only be
 //! caught during CI runs.
 
-use sinex_schema::schema_registry;
+use sinex_db::schema::registry;
 use sqlx::Row;
 use xtask::sandbox::db::ensure_default_session_state;
 use xtask::sandbox::fs::{ReplicationRoleGuard, RowSecurityGuard, TriggersGuard};
@@ -26,7 +26,7 @@ async fn ci_setup_grants_all_schemas(
         .await?;
 
     // Verify we have USAGE on all schemas
-    for schema in schema_registry::SINEX_SCHEMAS {
+    for schema in registry::SINEX_SCHEMAS {
         let has_usage: bool =
             sqlx::query("SELECT has_schema_privilege($1, $2, 'USAGE') as has_usage")
                 .bind(&current_user)
@@ -56,7 +56,7 @@ async fn can_create_tables_in_all_schemas(
 ) -> xtask::sandbox::TestResult<()> {
     let pool = ctx.pool();
 
-    for schema in schema_registry::SINEX_SCHEMAS {
+    for schema in registry::SINEX_SCHEMAS {
         // Try to create a temporary table
         let result = sqlx::query(&format!(
             "CREATE TEMP TABLE {}_test_ci_permissions (id INT)",

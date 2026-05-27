@@ -183,7 +183,7 @@ fn execute_next(ctx: &CommandContext) -> Result<CommandResult> {
 
 /// Show event payload schema information (formerly `contracts info describe-schemas`)
 fn execute_schemas(ctx: &CommandContext) -> CommandResult {
-    use sinex_schema::schema_registry::SINEX_SCHEMAS;
+    use sinex_db::schema::registry::SINEX_SCHEMAS;
 
     let schemas: Vec<_> = SINEX_SCHEMAS
         .iter()

@@ -68,7 +68,7 @@ fn telemetry_request<T: DeserializeOwned>(value: Value) -> TestResult<T> {
 
 #[sinex_test]
 async fn telemetry_handlers_follow_current_read_model_schema(ctx: TestContext) -> TestResult<()> {
-    sinex_schema::apply::apply(ctx.pool()).await?;
+    sinex_db::schema::apply::apply(ctx.pool()).await?;
 
     let now = time::OffsetDateTime::now_utc();
     let from = (now - time::Duration::hours(1)).format(&Rfc3339)?;
@@ -218,7 +218,7 @@ async fn telemetry_handlers_follow_current_read_model_schema(ctx: TestContext) -
 
 #[sinex_test]
 async fn telemetry_handlers_bucket_activity_by_event_time(ctx: TestContext) -> TestResult<()> {
-    sinex_schema::apply::apply(ctx.pool()).await?;
+    sinex_db::schema::apply::apply(ctx.pool()).await?;
 
     let imported_at = time::OffsetDateTime::parse("2026-01-02T03:15:00Z", &Rfc3339)?;
 
@@ -325,7 +325,7 @@ async fn telemetry_handlers_bucket_activity_by_event_time(ctx: TestContext) -> T
 
 #[sinex_test]
 async fn operator_telemetry_handlers_follow_read_model_schema(ctx: TestContext) -> TestResult<()> {
-    sinex_schema::apply::apply(ctx.pool()).await?;
+    sinex_db::schema::apply::apply(ctx.pool()).await?;
 
     let now = time::OffsetDateTime::now_utc();
     let from = (now - time::Duration::hours(1)).format(&Rfc3339)?;

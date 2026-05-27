@@ -186,9 +186,5 @@ features = [
     "testing",
 ]
 
-[dev-dependencies.sinex-schema]
-path = "../../lib/sinex-schema"
-
-
 [lints]
 workspace = true

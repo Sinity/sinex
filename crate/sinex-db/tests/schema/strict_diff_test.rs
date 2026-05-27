@@ -6,12 +6,12 @@
 //! catches it. The mutations are reverted at test exit by the per-test
 //! database isolation in `xtask::sandbox`.
 
-use sinex_schema::strict_diff::{DriftCategory, check_strict};
+use sinex_db::schema::strict_diff::{DriftCategory, check_strict};
 use xtask::sandbox::prelude::*;
 
 #[sinex_test]
 async fn check_strict_returns_empty_after_apply(ctx: TestContext) -> TestResult<()> {
-    sinex_schema::apply::apply(&ctx.pool).await?;
+    sinex_db::schema::apply::apply(&ctx.pool).await?;
 
     let drifts = check_strict(&ctx.pool).await?;
     assert!(
@@ -24,7 +24,7 @@ async fn check_strict_returns_empty_after_apply(ctx: TestContext) -> TestResult<
 
 #[sinex_test]
 async fn detects_dropped_default_on_existing_column(ctx: TestContext) -> TestResult<()> {
-    sinex_schema::apply::apply(&ctx.pool).await?;
+    sinex_db::schema::apply::apply(&ctx.pool).await?;
 
     // Drop the DEFAULT on `core.events.ts_persisted` — convergence does not
     // re-add it because `ADD COLUMN IF NOT EXISTS` is a no-op for existing
@@ -58,7 +58,7 @@ async fn detects_dropped_default_on_existing_column(ctx: TestContext) -> TestRes
 
 #[sinex_test]
 async fn detects_replaced_default_on_existing_column(ctx: TestContext) -> TestResult<()> {
-    sinex_schema::apply::apply(&ctx.pool).await?;
+    sinex_db::schema::apply::apply(&ctx.pool).await?;
 
     // Replace the declared `CURRENT_TIMESTAMP` default with a constant;
     // the marker check should fire because the live expression no longer
@@ -102,7 +102,7 @@ async fn detects_replaced_default_on_existing_column(ctx: TestContext) -> TestRe
 
 #[sinex_test]
 async fn detects_manual_edit_to_trigger_function_body(ctx: TestContext) -> TestResult<()> {
-    sinex_schema::apply::apply(&ctx.pool).await?;
+    sinex_db::schema::apply::apply(&ctx.pool).await?;
 
     // Replace `core.expand_cascade` with a stub that drops the
     // RAISE EXCEPTION refusal. This is exactly the silent-edit failure
@@ -145,7 +145,7 @@ async fn detects_manual_edit_to_trigger_function_body(ctx: TestContext) -> TestR
 
 #[sinex_test]
 async fn detects_dropped_inline_check_on_events(ctx: TestContext) -> TestResult<()> {
-    sinex_schema::apply::apply(&ctx.pool).await?;
+    sinex_db::schema::apply::apply(&ctx.pool).await?;
 
     // Find and drop the XOR provenance CHECK. There is no stable name —
     // discover it via pg_constraint, then drop it. This simulates an
@@ -193,7 +193,7 @@ async fn detects_dropped_inline_check_on_events(ctx: TestContext) -> TestResult<
 
 #[sinex_test]
 async fn detects_changed_foreign_key_action(ctx: TestContext) -> TestResult<()> {
-    sinex_schema::apply::apply(&ctx.pool).await?;
+    sinex_db::schema::apply::apply(&ctx.pool).await?;
 
     // The TaggedItems(tag_id) FK declares ON DELETE CASCADE. Drop it and
     // re-add with NO ACTION to simulate manual drift.
@@ -256,7 +256,7 @@ async fn detects_changed_foreign_key_action(ctx: TestContext) -> TestResult<()> 
 
 #[sinex_test]
 async fn detects_changed_tags_parent_foreign_key_action(ctx: TestContext) -> TestResult<()> {
-    sinex_schema::apply::apply(&ctx.pool).await?;
+    sinex_db::schema::apply::apply(&ctx.pool).await?;
 
     // The tags(parent_tag_id) self-FK is installed by a raw schema fixup
     // because the sea-query self-reference path used to emit CASCADE
@@ -304,7 +304,7 @@ async fn detects_changed_tags_parent_foreign_key_action(ctx: TestContext) -> Tes
 
 #[sinex_test]
 async fn detects_changed_hypertable_chunk_interval(ctx: TestContext) -> TestResult<()> {
-    sinex_schema::apply::apply(&ctx.pool).await?;
+    sinex_db::schema::apply::apply(&ctx.pool).await?;
 
     // Change the chunk interval to 1 day. TimescaleDB exposes
     // `set_chunk_time_interval` for exactly this — operator-facing
@@ -335,7 +335,7 @@ async fn detects_changed_hypertable_chunk_interval(ctx: TestContext) -> TestResu
 
 #[sinex_test]
 async fn detects_orphan_column_in_convergible_table(ctx: TestContext) -> TestResult<()> {
-    sinex_schema::apply::apply(&ctx.pool).await?;
+    sinex_db::schema::apply::apply(&ctx.pool).await?;
 
     // Add a column to core.blobs that is not declared in source.
     // This simulates an operator or a rename that left a stale column behind.
@@ -367,7 +367,7 @@ async fn detects_orphan_column_in_convergible_table(ctx: TestContext) -> TestRes
 
 #[sinex_test]
 async fn pending_drop_suppresses_orphan_report(ctx: TestContext) -> TestResult<()> {
-    sinex_schema::apply::apply(&ctx.pool).await?;
+    sinex_db::schema::apply::apply(&ctx.pool).await?;
 
     // The core.events table has legacy columns in its `columns_to_drop` list.
     // If the column still exists in the DB (it may have been dropped already
@@ -409,7 +409,7 @@ async fn pending_drop_suppresses_orphan_report(ctx: TestContext) -> TestResult<(
 
 #[sinex_test]
 async fn nullability_convergence_sets_not_null_on_empty_table(ctx: TestContext) -> TestResult<()> {
-    sinex_schema::apply::apply(&ctx.pool).await?;
+    sinex_db::schema::apply::apply(&ctx.pool).await?;
 
     // Drop NOT NULL on core.blobs.original_filename (a NOT NULL column) to
     // simulate a production drift where an operator dropped the constraint.
@@ -431,7 +431,7 @@ async fn nullability_convergence_sets_not_null_on_empty_table(ctx: TestContext) 
     );
 
     // Re-apply convergence — should restore NOT NULL since table is empty.
-    sinex_schema::apply::apply(&ctx.pool).await?;
+    sinex_db::schema::apply::apply(&ctx.pool).await?;
 
     let is_nullable_after: String = sqlx::query_scalar(
         "SELECT is_nullable FROM information_schema.columns
@@ -452,13 +452,13 @@ async fn nullability_convergence_sets_not_null_on_empty_table(ctx: TestContext) 
 async fn nullability_convergence_preserves_primary_key_nullability(
     ctx: TestContext,
 ) -> TestResult<()> {
-    sinex_schema::apply::apply(&ctx.pool).await?;
+    sinex_db::schema::apply::apply(&ctx.pool).await?;
 
     // A second apply exercises convergence against existing tables. PostgreSQL
     // reports primary-key columns as NOT NULL even when the sea-query column
     // declaration only says PRIMARY KEY, so convergence must not try to drop
     // the primary-key-implied nullability.
-    sinex_schema::apply::apply(&ctx.pool).await?;
+    sinex_db::schema::apply::apply(&ctx.pool).await?;
 
     let is_nullable: String = sqlx::query_scalar(
         "SELECT is_nullable FROM information_schema.columns
@@ -469,7 +469,7 @@ async fn nullability_convergence_preserves_primary_key_nullability(
     .await?;
     assert_eq!(is_nullable, "NO", "primary-key id must remain NOT NULL");
 
-    let drifts = sinex_schema::apply::diff(&ctx.pool).await?;
+    let drifts = sinex_db::schema::apply::diff(&ctx.pool).await?;
     assert!(
         !drifts
             .iter()
@@ -482,7 +482,7 @@ async fn nullability_convergence_preserves_primary_key_nullability(
 
 #[sinex_test]
 async fn nullability_convergence_fails_loudly_on_null_rows(ctx: TestContext) -> TestResult<()> {
-    sinex_schema::apply::apply(&ctx.pool).await?;
+    sinex_db::schema::apply::apply(&ctx.pool).await?;
 
     // To exercise the "SET NOT NULL fails on NULL rows" path we need a column
     // that is declared NOT NULL in source but has a NULL row in the live DB.
@@ -505,7 +505,7 @@ async fn nullability_convergence_fails_loudly_on_null_rows(ctx: TestContext) -> 
     .await?;
 
     // Re-apply — must fail because of the NULL row.
-    let result = sinex_schema::apply::apply(&ctx.pool).await;
+    let result = sinex_db::schema::apply::apply(&ctx.pool).await;
 
     assert!(
         result.is_err(),
@@ -530,7 +530,7 @@ async fn column_rename_is_idempotent(ctx: TestContext) -> TestResult<()> {
     // convergence with a rename spec, then confirming the old column is
     // gone and the new name exists. Running convergence again (idempotent
     // check) must not error.
-    sinex_schema::apply::apply(&ctx.pool).await?;
+    sinex_db::schema::apply::apply(&ctx.pool).await?;
 
     // Add a test column to core.blobs to rename.
     sqlx::query("ALTER TABLE core.blobs ADD COLUMN IF NOT EXISTS rename_test_old TEXT")
@@ -570,7 +570,7 @@ async fn column_rename_is_idempotent(ctx: TestContext) -> TestResult<()> {
     // Running the rename again when old is absent must be a no-op (idempotent).
     // core.converge::converge_column_renames skips if old is absent.
     // We verify this by calling apply() — no error should surface.
-    sinex_schema::apply::apply(&ctx.pool).await?;
+    sinex_db::schema::apply::apply(&ctx.pool).await?;
 
     Ok(())
 }
@@ -579,7 +579,7 @@ async fn column_rename_is_idempotent(ctx: TestContext) -> TestResult<()> {
 
 #[sinex_test]
 async fn detects_manual_edit_to_fn_archive_before_delete(ctx: TestContext) -> TestResult<()> {
-    sinex_schema::apply::apply(&ctx.pool).await?;
+    sinex_db::schema::apply::apply(&ctx.pool).await?;
 
     // Replace the archive trigger function with a stub that drops the
     // cascade-archive logic. This is the #988 scenario — a manual edit
@@ -627,7 +627,7 @@ async fn detects_manual_edit_to_fn_archive_before_delete(ctx: TestContext) -> Te
 async fn detects_manual_edit_to_fn_events_validate_material_bounds(
     ctx: TestContext,
 ) -> TestResult<()> {
-    sinex_schema::apply::apply(&ctx.pool).await?;
+    sinex_db::schema::apply::apply(&ctx.pool).await?;
 
     // Replace the material-bounds validation trigger with a pass-through stub.
     // Removing the anchor_byte boundary check would let events claim offsets
@@ -667,7 +667,7 @@ async fn detects_manual_edit_to_fn_events_validate_material_bounds(
 async fn detects_manual_edit_to_fn_source_material_validate_event_bounds(
     ctx: TestContext,
 ) -> TestResult<()> {
-    sinex_schema::apply::apply(&ctx.pool).await?;
+    sinex_db::schema::apply::apply(&ctx.pool).await?;
 
     // Replace the source-material validation trigger with a pass-through stub.
     // This would let an operator shrink total_bytes below existing event anchors.
@@ -704,7 +704,7 @@ async fn detects_manual_edit_to_fn_source_material_validate_event_bounds(
 
 #[sinex_test]
 async fn detects_missing_payload_validation_trigger(ctx: TestContext) -> TestResult<()> {
-    sinex_schema::apply::apply(&ctx.pool).await?;
+    sinex_db::schema::apply::apply(&ctx.pool).await?;
 
     // Drop the payload validation trigger — this was NOT covered by
     // EVENTS_REQUIRED_TRIGGERS before #1133. apply::diff must detect it.
@@ -712,7 +712,7 @@ async fn detects_missing_payload_validation_trigger(ctx: TestContext) -> TestRes
         .execute(&ctx.pool)
         .await?;
 
-    let drifts = sinex_schema::apply::diff(&ctx.pool).await?;
+    let drifts = sinex_db::schema::apply::diff(&ctx.pool).await?;
     let has_detection = drifts
         .iter()
         .any(|d| d.contains("trg_events_validate_payload"));
@@ -727,7 +727,7 @@ async fn detects_missing_payload_validation_trigger(ctx: TestContext) -> TestRes
 
 #[sinex_test]
 async fn detects_missing_temporal_ledger_trigger(ctx: TestContext) -> TestResult<()> {
-    sinex_schema::apply::apply(&ctx.pool).await?;
+    sinex_db::schema::apply::apply(&ctx.pool).await?;
 
     // Drop the temporal_ledger append-only trigger — before #1133 this table
     // had no trigger existence check in apply::diff.
@@ -735,7 +735,7 @@ async fn detects_missing_temporal_ledger_trigger(ctx: TestContext) -> TestResult
         .execute(&ctx.pool)
         .await?;
 
-    let drifts = sinex_schema::apply::diff(&ctx.pool).await?;
+    let drifts = sinex_db::schema::apply::diff(&ctx.pool).await?;
     let has_detection = drifts.iter().any(|d| d.contains("trg_tl_no_update_delete"));
 
     assert!(
@@ -748,7 +748,7 @@ async fn detects_missing_temporal_ledger_trigger(ctx: TestContext) -> TestResult
 
 #[sinex_test]
 async fn detects_missing_document_projection_trigger(ctx: TestContext) -> TestResult<()> {
-    sinex_schema::apply::apply(&ctx.pool).await?;
+    sinex_db::schema::apply::apply(&ctx.pool).await?;
 
     // Drop the document projection trigger — before #1133 this trigger was
     // not in EVENTS_REQUIRED_TRIGGERS.
@@ -756,7 +756,7 @@ async fn detects_missing_document_projection_trigger(ctx: TestContext) -> TestRe
         .execute(&ctx.pool)
         .await?;
 
-    let drifts = sinex_schema::apply::diff(&ctx.pool).await?;
+    let drifts = sinex_db::schema::apply::diff(&ctx.pool).await?;
     let has_detection = drifts.iter().any(|d| d.contains("trg_document_projection"));
 
     assert!(
@@ -769,7 +769,7 @@ async fn detects_missing_document_projection_trigger(ctx: TestContext) -> TestRe
 
 #[sinex_test]
 async fn detects_manual_edit_to_fn_temporal_ledger_append_only(ctx: TestContext) -> TestResult<()> {
-    sinex_schema::apply::apply(&ctx.pool).await?;
+    sinex_db::schema::apply::apply(&ctx.pool).await?;
 
     // Replace the append-only guard with a pass-through — would allow
     // UPDATE/DELETE on the temporal ledger table.
@@ -806,7 +806,7 @@ async fn detects_manual_edit_to_fn_temporal_ledger_append_only(ctx: TestContext)
 
 #[sinex_test]
 async fn detects_manual_edit_to_fn_events_no_update(ctx: TestContext) -> TestResult<()> {
-    sinex_schema::apply::apply(&ctx.pool).await?;
+    sinex_db::schema::apply::apply(&ctx.pool).await?;
 
     // Replace the no-update guard with a pass-through — would allow UPDATE
     // on core.events, violating the immutability invariant.
@@ -842,7 +842,7 @@ async fn detects_manual_edit_to_fn_events_no_update(ctx: TestContext) -> TestRes
 
 #[sinex_test]
 async fn detects_manual_edit_to_execute_cascade_tombstone(ctx: TestContext) -> TestResult<()> {
-    sinex_schema::apply::apply(&ctx.pool).await?;
+    sinex_db::schema::apply::apply(&ctx.pool).await?;
 
     // Replace execute_cascade_tombstone with a stub — would silently delete
     // archived rows without creating tombstone records.
@@ -878,7 +878,7 @@ async fn detects_manual_edit_to_execute_cascade_tombstone(ctx: TestContext) -> T
 
 #[sinex_test]
 async fn detects_manual_edit_to_execute_cascade_restore(ctx: TestContext) -> TestResult<()> {
-    sinex_schema::apply::apply(&ctx.pool).await?;
+    sinex_db::schema::apply::apply(&ctx.pool).await?;
 
     // Replace execute_cascade_restore with a stub — #1134 tracks atomicity
     // gaps in this function; body drift detection is the first safety net.
@@ -917,7 +917,7 @@ async fn detects_manual_edit_to_execute_cascade_restore(ctx: TestContext) -> Tes
 
 #[sinex_test]
 async fn db_check_constraints_landed_after_apply(ctx: TestContext) -> TestResult<()> {
-    sinex_schema::apply::apply(&ctx.pool).await?;
+    sinex_db::schema::apply::apply(&ctx.pool).await?;
 
     // The `core.manifests.manifest_type_check_v1` constraint should now
     // exist and reflect every `NodeType` Display rendering.
@@ -973,7 +973,7 @@ async fn db_check_constraints_landed_after_apply(ctx: TestContext) -> TestResult
 
 #[sinex_test]
 async fn strict_diff_clean_after_apply_for_db_check(ctx: TestContext) -> TestResult<()> {
-    sinex_schema::apply::apply(&ctx.pool).await?;
+    sinex_db::schema::apply::apply(&ctx.pool).await?;
     let drifts = check_strict(&ctx.pool).await?;
     let dbcheck_drifts: Vec<_> = drifts
         .iter()
@@ -997,7 +997,7 @@ async fn apply_replaces_legacy_unversioned_check_constraint(ctx: TestContext) ->
     // Simulate the Wave-B production state: apply once, then drop the
     // versioned constraint and re-install the legacy unversioned one with
     // a stale variant set ('node' instead of 'ingestor').
-    sinex_schema::apply::apply(&ctx.pool).await?;
+    sinex_db::schema::apply::apply(&ctx.pool).await?;
 
     sqlx::query(
         "ALTER TABLE core.manifests \
@@ -1009,7 +1009,7 @@ async fn apply_replaces_legacy_unversioned_check_constraint(ctx: TestContext) ->
     .await?;
 
     // diff() must surface the stale state.
-    let drifts = sinex_schema::apply::diff(&ctx.pool).await?;
+    let drifts = sinex_db::schema::apply::diff(&ctx.pool).await?;
     assert!(
         drifts
             .iter()
@@ -1018,7 +1018,7 @@ async fn apply_replaces_legacy_unversioned_check_constraint(ctx: TestContext) ->
     );
 
     // Re-apply must drop the legacy constraint and add the versioned one.
-    sinex_schema::apply::apply(&ctx.pool).await?;
+    sinex_db::schema::apply::apply(&ctx.pool).await?;
 
     // Legacy is gone, versioned is back with the correct values.
     let legacy_exists: bool = sqlx::query_scalar(
@@ -1061,7 +1061,7 @@ async fn apply_replaces_legacy_unversioned_check_constraint(ctx: TestContext) ->
 
 #[sinex_test]
 async fn diff_detects_stale_versioned_check_constraint(ctx: TestContext) -> TestResult<()> {
-    sinex_schema::apply::apply(&ctx.pool).await?;
+    sinex_db::schema::apply::apply(&ctx.pool).await?;
 
     // Replace v1 with a constraint of the same name but a stale body
     // (extra value 'misc'). The diff must surface it as stale.
@@ -1074,14 +1074,14 @@ async fn diff_detects_stale_versioned_check_constraint(ctx: TestContext) -> Test
     .execute(&ctx.pool)
     .await?;
 
-    let drifts = sinex_schema::apply::diff(&ctx.pool).await?;
+    let drifts = sinex_db::schema::apply::diff(&ctx.pool).await?;
     assert!(
         drifts.iter().any(|d| d.contains("manifest_type")),
         "diff must surface stale-body drift on manifest_type: {drifts:?}"
     );
 
     // Re-apply heals it.
-    sinex_schema::apply::apply(&ctx.pool).await?;
+    sinex_db::schema::apply::apply(&ctx.pool).await?;
     let def: String = sqlx::query_scalar(
         r"SELECT pg_get_constraintdef(c.oid)
           FROM pg_constraint c

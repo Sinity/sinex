@@ -7,14 +7,14 @@ const ERROR_CLASS_TIMESCALEDB_MISSING_LIBRARY: &str = "timescaledb_missing_libra
 const ERROR_CLASS_MISSING_REQUIRED_EXTENSIONS: &str = "missing_required_extensions";
 const ERROR_CLASS_SCHEMA_APPLY_INTERNAL: &str = "schema_apply_internal";
 
-fn map_apply_error(err: sinex_schema::apply::ApplyError) -> SinexError {
+fn map_apply_error(err: crate::schema::apply::ApplyError) -> SinexError {
     match err {
-        sinex_schema::apply::ApplyError::MissingExtensions(missing) => {
+        crate::schema::apply::ApplyError::MissingExtensions(missing) => {
             SinexError::database("Schema apply failed: required PostgreSQL extensions missing")
                 .with_context("error_class", ERROR_CLASS_MISSING_REQUIRED_EXTENSIONS)
                 .with_context("missing_extensions", missing.join(","))
         }
-        sinex_schema::apply::ApplyError::Sqlx(sqlx_err) => {
+        crate::schema::apply::ApplyError::Sqlx(sqlx_err) => {
             let mut mapped = SinexError::database("Schema apply failed").with_std_error(&sqlx_err);
             if let sqlx::Error::Database(db_err) = &sqlx_err {
                 if let Some(code) = db_err.code() {
@@ -31,7 +31,7 @@ fn map_apply_error(err: sinex_schema::apply::ApplyError) -> SinexError {
             }
             mapped
         }
-        sinex_schema::apply::ApplyError::Internal(message) => {
+        crate::schema::apply::ApplyError::Internal(message) => {
             SinexError::database("Schema apply failed")
                 .with_context("error_class", ERROR_CLASS_SCHEMA_APPLY_INTERNAL)
                 .with_context("cause", message)
@@ -42,7 +42,7 @@ fn map_apply_error(err: sinex_schema::apply::ApplyError) -> SinexError {
 /// Apply declarative schema using the given pool.
 pub async fn apply_schema(pool: &DbPool) -> Result<()> {
     info!("Applying declarative database schema...");
-    sinex_schema::apply::apply(pool)
+    crate::schema::apply::apply(pool)
         .await
         .map_err(map_apply_error)?;
     info!("Database schema apply completed");

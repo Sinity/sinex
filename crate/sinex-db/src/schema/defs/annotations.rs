@@ -11,7 +11,7 @@ use sea_query::{
     TableCreateStatement,
 };
 
-use crate::primitives::{Timestamp, Uuid};
+use crate::schema::primitives::{Timestamp, Uuid};
 use serde_json::Value as JsonValue;
 use sqlx::FromRow;
 

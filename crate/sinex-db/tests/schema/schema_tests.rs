@@ -5,7 +5,7 @@
 
 use sea_query::*;
 use sinex_primitives::DynamicPayload;
-use sinex_schema::schema::*;
+use sinex_db::schema::defs::*;
 use sqlx::{PgPool, Row};
 use std::collections::HashMap;
 use xtask::sandbox::prelude::*;

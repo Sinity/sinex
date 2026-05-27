@@ -71,7 +71,7 @@ pub trait TransactionSupport {
 }
 
 // Re-export TableDef from schema crate
-pub use sinex_schema::schema::TableDef;
+pub use crate::schema::defs::TableDef;
 
 /// Enhanced repository trait with generic operations
 pub trait EnhancedRepository<'a>: Repository<'a> {

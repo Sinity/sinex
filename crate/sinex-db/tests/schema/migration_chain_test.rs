@@ -65,10 +65,10 @@ async fn drop_telemetry_relation(
 
 #[sinex_test]
 async fn declarative_apply_is_idempotent(ctx: TestContext) -> TestResult<()> {
-    sinex_schema::apply::apply(&ctx.pool).await?;
-    sinex_schema::apply::apply(&ctx.pool).await?;
+    sinex_db::schema::apply::apply(&ctx.pool).await?;
+    sinex_db::schema::apply::apply(&ctx.pool).await?;
 
-    let drift = sinex_schema::apply::diff(&ctx.pool).await?;
+    let drift = sinex_db::schema::apply::diff(&ctx.pool).await?;
     assert!(
         drift.is_empty(),
         "schema drift must be empty after repeated apply(): {drift:?}"
@@ -79,9 +79,9 @@ async fn declarative_apply_is_idempotent(ctx: TestContext) -> TestResult<()> {
 
 #[sinex_test]
 async fn shared_access_role_bootstrap_is_idempotent(ctx: TestContext) -> TestResult<()> {
-    sinex_schema::apply::ensure_shared_access_roles(&ctx.pool).await?;
+    sinex_db::schema::apply::ensure_shared_access_roles(&ctx.pool).await?;
 
-    for role in sinex_schema::apply::SHARED_ACCESS_ROLES {
+    for role in sinex_db::schema::apply::SHARED_ACCESS_ROLES {
         let can_login = sqlx::query_scalar::<_, bool>(
             r"
             SELECT rolcanlogin
@@ -114,7 +114,7 @@ async fn declarative_diff_accepts_normalized_source_material_status_constraint(
     .execute(&ctx.pool)
     .await?;
 
-    let drift = sinex_schema::apply::diff(&ctx.pool).await?;
+    let drift = sinex_db::schema::apply::diff(&ctx.pool).await?;
     assert!(
         !drift
             .iter()
@@ -140,7 +140,7 @@ async fn declarative_diff_accepts_normalized_source_material_timing_constraint(
     .execute(&ctx.pool)
     .await?;
 
-    let drift = sinex_schema::apply::diff(&ctx.pool).await?;
+    let drift = sinex_db::schema::apply::diff(&ctx.pool).await?;
     assert!(
         !drift
             .iter()
@@ -166,7 +166,7 @@ async fn declarative_apply_expands_source_material_timing_constraint(
     .execute(&ctx.pool)
     .await?;
 
-    let drift = sinex_schema::apply::diff(&ctx.pool).await?;
+    let drift = sinex_db::schema::apply::diff(&ctx.pool).await?;
     assert!(
         drift
             .iter()
@@ -174,9 +174,9 @@ async fn declarative_apply_expands_source_material_timing_constraint(
         "legacy timing CHECK must be reported as drift before apply(): {drift:?}"
     );
 
-    sinex_schema::apply::apply(&ctx.pool).await?;
+    sinex_db::schema::apply::apply(&ctx.pool).await?;
 
-    let drift = sinex_schema::apply::diff(&ctx.pool).await?;
+    let drift = sinex_db::schema::apply::diff(&ctx.pool).await?;
     assert!(
         !drift
             .iter()
@@ -232,7 +232,7 @@ async fn declarative_apply_rebuilds_telemetry_read_models(ctx: TestContext) -> T
     .execute(pool)
     .await?;
 
-    sinex_schema::apply::apply(pool).await?;
+    sinex_db::schema::apply::apply(pool).await?;
 
     let relation_state = sqlx::query_as::<_, (bool, String, String)>(
         r"
@@ -337,7 +337,7 @@ async fn declarative_diff_detects_polluted_telemetry_view_kind(ctx: TestContext)
     .execute(&ctx.pool)
     .await?;
 
-    let drift = sinex_schema::apply::diff(&ctx.pool).await?;
+    let drift = sinex_db::schema::apply::diff(&ctx.pool).await?;
     assert!(
         drift.iter().any(|entry| {
             entry.contains("command_frequency_hourly")
@@ -351,7 +351,7 @@ async fn declarative_diff_detects_polluted_telemetry_view_kind(ctx: TestContext)
 
 #[sinex_test]
 async fn declarative_table_registry_is_non_empty() -> TestResult<()> {
-    let tables = sinex_schema::schema::all_tables();
+    let tables = sinex_db::schema::defs::all_tables();
     assert!(
         !tables.is_empty(),
         "schema table metadata must not be empty"
@@ -742,7 +742,7 @@ async fn telemetry_relations_expose_expected_contract_columns(ctx: TestContext) 
 async fn operator_telemetry_does_not_register_continuous_aggregates(
     ctx: TestContext,
 ) -> TestResult<()> {
-    sinex_schema::apply::apply(&ctx.pool).await?;
+    sinex_db::schema::apply::apply(&ctx.pool).await?;
 
     let actual = sqlx::query_scalar::<_, String>(
         r"
@@ -782,7 +782,7 @@ async fn operator_telemetry_does_not_register_continuous_aggregates(
 
 #[sinex_test]
 async fn operator_telemetry_views_include_live_rows(ctx: TestContext) -> TestResult<()> {
-    sinex_schema::apply::apply(&ctx.pool).await?;
+    sinex_db::schema::apply::apply(&ctx.pool).await?;
 
     let material_id = ctx.create_source_material(Some("sinex.ingestd")).await?;
     sqlx::query!(

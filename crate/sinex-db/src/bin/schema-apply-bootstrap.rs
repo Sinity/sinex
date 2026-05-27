@@ -19,7 +19,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .connect(&database_url)
         .await?;
 
-    sinex_schema::apply::ensure_shared_access_roles(&pool).await?;
-    sinex_schema::apply::apply(&pool).await?;
+    sinex_db::schema::apply::ensure_shared_access_roles(&pool).await?;
+    sinex_db::schema::apply::apply(&pool).await?;
     Ok(())
 }

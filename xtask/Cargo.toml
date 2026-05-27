@@ -64,8 +64,6 @@ proptest = { workspace = true }
 
 # Core types (Timestamp, etc.)
 sinex-primitives = { path = "../crate/sinex-primitives", default-features = false, features = ["testing"] }
-sinex-schema = { path = "../crate/lib/sinex-schema" }
-
 # Database and node SDK (for test sandbox)
 sinex-db = { path = "../crate/sinex-db" }
 sinex-node-sdk = { path = "../crate/lib/sinex-node-sdk" }

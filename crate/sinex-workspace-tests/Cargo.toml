@@ -26,4 +26,3 @@ sinex-gateway = { path = "../core/sinex-gateway" }
 sinex-node-sdk = { path = "../lib/sinex-node-sdk" }
 sinex-primitives = { path = "../sinex-primitives" }
 sinex-process = { path = "../core/sinex-process" }
-sinex-schema = { path = "../lib/sinex-schema" }

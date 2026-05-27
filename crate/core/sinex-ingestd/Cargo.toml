@@ -104,9 +104,6 @@ path = "../../sinex-primitives"
 [dependencies.sinex-node-sdk]
 path = "../../lib/sinex-node-sdk"
 
-[dependencies.sinex-schema]
-path = "../../lib/sinex-schema"
-
 [dependencies.sinex-db]
 path = "../../sinex-db"
 

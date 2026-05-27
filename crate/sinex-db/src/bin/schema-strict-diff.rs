@@ -1,6 +1,6 @@
 //! Strict drift detector — companion to `schema-apply-bootstrap`.
 //!
-//! Reads `DATABASE_URL`, runs `sinex_schema::strict_diff::check_strict`, and
+//! Reads `DATABASE_URL`, runs `sinex_db::schema::strict_diff::check_strict`, and
 //! writes the result as JSON on stdout (pretty if running on a TTY, compact
 //! otherwise). Exit code is `0` when no drift is detected, `1` when drift is
 //! found, `2` on operator errors (missing env, connection failure).
@@ -38,7 +38,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .connect(&database_url)
         .await?;
 
-    let drifts = sinex_schema::strict_diff::check_strict(&pool).await?;
+    let drifts = sinex_db::schema::strict_diff::check_strict(&pool).await?;
 
     let pretty = atty_like_stdout();
     let serialized = if pretty {

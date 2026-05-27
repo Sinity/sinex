@@ -191,7 +191,7 @@ mod tests {
     // Inline because these conversions depend directly on generated row shapes.
     use super::*;
     use sinex_primitives::temporal;
-    use sinex_schema::schema::events::EventRecord;
+    use crate::schema::defs::events::EventRecord;
     use xtask::sandbox::sinex_test;
 
     fn base_event_record() -> EventRecord {

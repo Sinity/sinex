@@ -19,7 +19,7 @@ use super::common::DbResult;
 use sinex_primitives::SinexError;
 use sinex_primitives::Timestamp;
 use sinex_primitives::Uuid;
-use sinex_schema::schema::documents::{DocumentChunkRecord, DocumentRecord};
+use crate::schema::defs::documents::{DocumentChunkRecord, DocumentRecord};
 use sqlx::PgPool;
 use sqlx::Row;
 

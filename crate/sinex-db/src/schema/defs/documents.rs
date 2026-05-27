@@ -7,7 +7,7 @@
 //! here participate in declarative schema convergence (`apply.rs`) and
 //! the `schema-strict-diff` covered drift surface.
 
-use crate::primitives::{Timestamp, Uuid};
+use crate::schema::primitives::{Timestamp, Uuid};
 use crate::schema::TableDef;
 use sea_query::{
     Alias, ColumnDef, Expr, ForeignKey, ForeignKeyAction, Iden, Index, IndexCreateStatement, Table,

@@ -11,7 +11,7 @@ use sinex_db::{
 };
 use sinex_node_sdk::content_store::ContentStoreKey;
 use sinex_primitives::{Id, JsonValue, Uuid};
-use sinex_schema::schema::records::SourceMaterialRecord;
+use sinex_db::schema::defs::records::SourceMaterialRecord;
 use tracing::{error, info, warn};
 
 use crate::{IngestdResult, SinexError};

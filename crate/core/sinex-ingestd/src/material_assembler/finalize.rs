@@ -10,7 +10,7 @@ use sinex_primitives::Timestamp;
 use sinex_primitives::nats::{NatsTrafficClass, insert_traffic_class_header};
 use sinex_primitives::transport;
 use sinex_primitives::{Id, JsonValue, Uuid};
-use sinex_schema::schema::records::SourceMaterialRecord;
+use sinex_db::schema::defs::records::SourceMaterialRecord;
 use tokio::sync::Mutex;
 use tracing::{debug, error, info, warn};
 

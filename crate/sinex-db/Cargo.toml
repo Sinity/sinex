@@ -7,8 +7,6 @@ description = "Database persistence layer for Sinex"
 [dependencies]
 # Core dependencies
 sinex-primitives = { path = "../sinex-primitives", features = ["sqlx"] }
-sinex-schema = { path = "../lib/sinex-schema" }
-
 # Third-party dependencies
 sqlx = { workspace = true, features = [
     "runtime-tokio-rustls",

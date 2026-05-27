@@ -5,7 +5,7 @@
 //! extension to store and query high-dimensional vector embeddings directly within
 //! `PostgreSQL`, enabling powerful AI-driven features.
 
-use crate::primitives::Uuid;
+use crate::schema::primitives::Uuid;
 use crate::schema::{Events, TableDef};
 use sea_query::{
     Alias, ColumnDef, Expr, ForeignKey, ForeignKeyAction, Iden, Index, IndexCreateStatement, Table,

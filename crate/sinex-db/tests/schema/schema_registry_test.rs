@@ -1,4 +1,4 @@
-use sinex_schema::schema_registry::{SINEX_SCHEMAS, schema_names};
+use sinex_db::schema::registry::{SINEX_SCHEMAS, schema_names};
 use xtask::sandbox::prelude::*;
 
 #[sinex_test]

@@ -18,6 +18,7 @@ pub mod pool;
 pub mod query_helpers;
 pub mod replay;
 pub mod repositories;
+pub mod schema;
 pub mod schema_apply;
 pub mod validation;
 
@@ -35,12 +36,11 @@ pub use repositories::DbPoolExt;
 pub use repositories::EventPayloadRetention;
 pub use repositories::events::{CascadeSource, EventRepository};
 pub use repositories::events::{EventRecordExt, records_to_events};
+pub use schema::defs::records::{BlobRecord, EventRecord, SourceMaterialRecord};
 pub use schema_apply::{apply_schema, apply_schema_for_url};
 pub use sinex_primitives::SinexError;
 pub use sinex_primitives::ids::Id;
 pub use sinex_primitives::primitives::Timestamp;
-pub use sinex_schema::schema;
-pub use sinex_schema::schema::records::{BlobRecord, EventRecord, SourceMaterialRecord};
 pub type JsonValue = serde_json::Value;
 
 /// Database transaction type alias

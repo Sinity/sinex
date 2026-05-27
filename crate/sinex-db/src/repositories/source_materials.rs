@@ -16,8 +16,8 @@ use sinex_primitives::rpc::sources::{
     SourceReadinessCost, SourceReadinessStatus, caveat_codes,
 };
 use sinex_primitives::{Id, SinexError, Timestamp, events::OffsetKind};
-pub use sinex_schema::schema::records::SourceMaterialLinkRecord;
-use sinex_schema::schema::records::SourceMaterialRecord;
+pub use crate::schema::defs::records::SourceMaterialLinkRecord;
+use crate::schema::defs::records::SourceMaterialRecord;
 use sqlx::PgPool;
 use time::format_description;
 use uuid::Uuid;

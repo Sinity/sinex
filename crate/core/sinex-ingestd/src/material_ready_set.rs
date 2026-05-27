@@ -25,7 +25,7 @@
 use dashmap::DashMap;
 use sinex_db::DbPoolExt;
 use sinex_primitives::Id;
-use sinex_schema::schema::records::SourceMaterialRecord;
+use sinex_db::schema::defs::records::SourceMaterialRecord;
 use sqlx::PgPool;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
