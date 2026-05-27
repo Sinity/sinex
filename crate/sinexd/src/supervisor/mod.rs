@@ -9,6 +9,7 @@
 //! in reverse start order.
 
 use sinex_node_sdk::service_runtime;
+use sinex_node_sdk::systemd_notify;
 use sinex_primitives::error::{Result, SinexError};
 use tokio::sync::watch;
 use tokio::task::JoinHandle;
@@ -90,9 +91,14 @@ impl Supervisor {
             "sinexd running"
         );
 
+        systemd_notify::notify_ready("sinexd");
+        let watchdog = systemd_notify::spawn_watchdog("sinexd");
+
         let mut shutdown_rx = shutdown_rx;
         let _ = shutdown_rx.changed().await;
         info!("shutdown requested");
+        systemd_notify::notify_stopping("sinexd");
+        systemd_notify::stop_watchdog(watchdog, "sinexd").await;
 
         // Unwind in reverse start order: source bindings → automata → api →
         // event_engine. Source bindings publish into the event engine, so
