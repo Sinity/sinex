@@ -4,10 +4,10 @@
 
 | You're building... | Use | Key trait |
 |--------------------|-----|-----------|
-| Raw data capture from external source | `IngestorNode` + `IngestorNodeAdapter` | 3 scan modes + continuous |
-| 1:1 event transformation | `TransducerNode` + `DerivedNodeAdapter` | Stateless process() |
-| Accumulate-then-emit (sessions, summaries) | `WindowedNode` + `DerivedNodeAdapter` | accumulate() + emit_window() |
-| Per-scope state reconciliation | `ScopeReconcilerNode` + `DerivedNodeAdapter` | Per-scope state + reconcile() |
+| Raw data capture from external source | `SourceUnit` + `SourceUnitRuntime` | 3 scan modes + continuous |
+| 1:1 event transformation | `Transducer` + `AutomatonRuntime` | Stateless process() |
+| Accumulate-then-emit (sessions, summaries) | `Windowed` + `AutomatonRuntime` | accumulate() + emit_window() |
+| Per-scope state reconciliation | `ScopeReconciler` + `AutomatonRuntime` | Per-scope state + reconcile() |
 
 All nodes use `node_entrypoint!` macro for CLI, lifecycle, sd_notify, heartbeat.
 
@@ -15,7 +15,7 @@ All nodes use `node_entrypoint!` macro for CLI, lifecycle, sd_notify, heartbeat.
 
 ```rust
 use serde::{Deserialize, Serialize};
-use sinex_node_sdk::{IngestorNode, IngestorNodeAdapter};
+use sinex_node_sdk::{SourceUnit, SourceUnitRuntime};
 use sinex_node_sdk::runtime::stream::*;
 use tokio::sync::watch;
 
@@ -25,7 +25,7 @@ struct MyState { /* checkpoint state — persisted automatically */ }
 #[derive(Default)]
 struct MyIngestor;
 
-impl IngestorNode for MyIngestor {
+impl SourceUnit for MyIngestor {
     type Config = serde_json::Value;
     type State = MyState;
 
@@ -48,17 +48,17 @@ impl IngestorNode for MyIngestor {
     }
 }
 
-pub type MyIngestorNode = IngestorNodeAdapter<MyIngestor>;
+pub type MyIngestorNode = SourceUnitRuntime<MyIngestor>;
 ```
 
 ### Derived Node Pattern (Transducer — Stateless)
 
 ```rust
-use sinex_node_sdk::{TransducerNode, DerivedNodeAdapter, NodeEventContext, NodeLogicError};
+use sinex_node_sdk::{Transducer, AutomatonRuntime, NodeEventContext, NodeLogicError};
 
 struct MyTransducer;
 
-impl TransducerNode for MyTransducer {
+impl Transducer for MyTransducer {
     type Input = JsonValue;
     type Output = JsonValue;
 
@@ -78,12 +78,12 @@ impl TransducerNode for MyTransducer {
 ### Derived Node Pattern (Windowed — Accumulate Then Emit)
 
 ```rust
-use sinex_node_sdk::{WindowedNode, DerivedNodeAdapter, DerivedOutput, NodeLogicError};
-use sinex_node_sdk::derived_node::DerivedTriggerContext;
+use sinex_node_sdk::{Windowed, AutomatonRuntime, DerivedOutput, NodeLogicError};
+use sinex_node_sdk::derived_node::AutomatonContext;
 
 struct SessionDetector;
 
-impl WindowedNode for SessionDetector {
+impl Windowed for SessionDetector {
     type State = SessionState;
     type Input = JsonValue;
     type Output = JsonValue;
@@ -94,7 +94,7 @@ impl WindowedNode for SessionDetector {
 
     // Accumulate events into the window state.
     async fn accumulate(&mut self, state: &mut Self::State, input: Self::Input,
-        ctx: &DerivedTriggerContext) -> Result<(), NodeLogicError>
+        ctx: &AutomatonContext) -> Result<(), NodeLogicError>
     {
         state.events.push(input);
         state.last_ts = Some(ctx.event_timestamp());
@@ -126,9 +126,9 @@ impl WindowedNode for SessionDetector {
 ```rust
 use sinex_node_sdk::{
     // Core node types
-    IngestorNode, IngestorNodeAdapter,
-    TransducerNode, WindowedNode, ScopeReconcilerNode,
-    DerivedNodeAdapter,
+    SourceUnit, SourceUnitRuntime,
+    Transducer, Windowed, ScopeReconciler,
+    AutomatonRuntime,
     // Config + CLI
     NodeConfig, NodeArgs, NodeCli, NodeCliRunner, node_entrypoint,
     // Runtime

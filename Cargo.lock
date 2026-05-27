@@ -4307,14 +4307,12 @@ dependencies = [
  "sync_wrapper",
  "tokio",
  "tokio-rustls",
- "tokio-util",
  "tower 0.5.3",
  "tower-http",
  "tower-service",
  "url",
  "wasm-bindgen",
  "wasm-bindgen-futures",
- "wasm-streams",
  "web-sys",
 ]
 
@@ -4980,10 +4978,9 @@ dependencies = [
  "proptest",
  "serde_json",
  "sinex-db",
- "sinex-gateway",
- "sinex-ingestd",
  "sinex-node-sdk",
  "sinex-primitives",
+ "sinexd",
  "sqlx",
  "tempfile",
  "tokio",
@@ -4997,97 +4994,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "sinex-gateway"
-version = "0.4.2"
-dependencies = [
- "async-nats",
- "axum",
- "base64 0.22.1",
- "blake3",
- "bytes",
- "camino",
- "clap",
- "color-eyre",
- "console-subscriber",
- "dashmap",
- "futures",
- "governor",
- "hyper-util",
- "mimalloc",
- "notify",
- "parking_lot",
- "petgraph",
- "rcgen",
- "reqwest",
- "serde",
- "serde_json",
- "serde_path_to_error",
- "sinex-db",
- "sinex-gateway",
- "sinex-node-sdk",
- "sinex-primitives",
- "sinex-schema",
- "sqlx",
- "subtle",
- "tempfile",
- "time",
- "tokio",
- "tokio-rustls",
- "tokio-stream",
- "tower 0.5.3",
- "tower-http",
- "tracing",
- "tracing-subscriber",
- "uuid",
- "which",
- "xtask",
-]
-
-[[package]]
-name = "sinex-ingestd"
-version = "0.4.2"
-dependencies = [
- "async-nats",
- "base64 0.22.1",
- "blake3",
- "bon",
- "camino",
- "clap",
- "color-eyre",
- "console-subscriber",
- "crc32fast",
- "dashmap",
- "dirs",
- "futures",
- "gethostname",
- "libc",
- "mimalloc",
- "parking_lot",
- "serde",
- "serde_json",
- "sinex-db",
- "sinex-ingestd",
- "sinex-node-sdk",
- "sinex-primitives",
- "sinex-schema",
- "sqlx",
- "tempfile",
- "time",
- "tokio",
- "tokio-stream",
- "tracing",
- "tracing-subscriber",
- "url",
- "uuid",
- "validator",
- "xtask",
- "xtask-macros",
-]
-
-[[package]]
 name = "sinex-macros"
 version = "0.1.0"
 dependencies = [
+ "camino",
  "color-eyre",
  "inventory",
  "proc-macro2",
@@ -5204,26 +5114,8 @@ dependencies = [
 ]
 
 [[package]]
-name = "sinex-process"
-version = "0.4.2"
-dependencies = [
- "clap",
- "color-eyre",
- "mimalloc",
- "regex",
- "serde",
- "serde_json",
- "sinex-node-sdk",
- "sinex-primitives",
- "time",
- "tokio",
- "tracing",
- "xtask",
-]
-
-[[package]]
 name = "sinex-schema"
-version = "0.4.2"
+version = "0.1.0"
 dependencies = [
  "color-eyre",
  "sea-query",
@@ -5233,41 +5125,6 @@ dependencies = [
  "sqlx",
  "time",
  "tokio",
- "tracing",
- "uuid",
- "xtask",
-]
-
-[[package]]
-name = "sinex-source-worker"
-version = "0.4.2"
-dependencies = [
- "async-nats",
- "async-trait",
- "blake3",
- "camino",
- "clap",
- "color-eyre",
- "csv",
- "futures",
- "inventory",
- "mimalloc",
- "mime_guess",
- "regex",
- "rusqlite",
- "serde",
- "serde_json",
- "serde_yml",
- "sinex-macros",
- "sinex-node-sdk",
- "sinex-primitives",
- "sqlx",
- "tempfile",
- "time",
- "tokio",
- "tracing",
- "tracing-subscriber",
- "uuid",
  "xtask",
 ]
 
@@ -5294,11 +5151,9 @@ dependencies = [
  "reqwest",
  "serde_json",
  "sinex-db",
- "sinex-gateway",
  "sinex-node-sdk",
  "sinex-primitives",
- "sinex-process",
- "sinex-schema",
+ "sinexd",
  "sqlx",
  "tempfile",
  "time",
@@ -5346,6 +5201,65 @@ dependencies = [
  "tracing-subscriber",
  "walkdir",
  "wiremock",
+ "xtask",
+ "xtask-macros",
+]
+
+[[package]]
+name = "sinexd"
+version = "0.4.2"
+dependencies = [
+ "async-nats",
+ "async-trait",
+ "axum",
+ "base64 0.22.1",
+ "blake3",
+ "bon",
+ "bytes",
+ "camino",
+ "clap",
+ "color-eyre",
+ "console-subscriber",
+ "crc32fast",
+ "csv",
+ "dashmap",
+ "dirs",
+ "futures",
+ "gethostname",
+ "governor",
+ "hyper-util",
+ "inventory",
+ "libc",
+ "mimalloc",
+ "mime_guess",
+ "notify",
+ "parking_lot",
+ "petgraph",
+ "regex",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "serde_path_to_error",
+ "serde_yml",
+ "sinex-db",
+ "sinex-macros",
+ "sinex-node-sdk",
+ "sinex-primitives",
+ "sinexd",
+ "sqlx",
+ "subtle",
+ "tempfile",
+ "time",
+ "tokio",
+ "tokio-rustls",
+ "tokio-stream",
+ "tower 0.5.3",
+ "tower-http",
+ "tracing",
+ "tracing-subscriber",
+ "url",
+ "uuid",
+ "validator",
  "xtask",
  "xtask-macros",
 ]
@@ -6796,19 +6710,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "wasm-streams"
-version = "0.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9d1ec4f6517c9e11ae630e200b2b65d193279042e28edd4a2cda233e46670bbb"
-dependencies = [
- "futures-util",
- "js-sys",
- "wasm-bindgen",
- "wasm-bindgen-futures",
- "web-sys",
-]
-
-[[package]]
 name = "wasmparser"
 version = "0.244.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7550,9 +7451,7 @@ dependencies = [
  "sinex-db",
  "sinex-node-sdk",
  "sinex-primitives",
- "sinex-process",
- "sinex-schema",
- "sinex-source-worker",
+ "sinexd",
  "sqlx",
  "syn 2.0.117",
  "sysinfo",

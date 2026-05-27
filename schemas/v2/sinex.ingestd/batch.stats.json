@@ -32,8 +32,8 @@
       "minimum": 0,
       "type": "integer"
     },
-    "had_synthesis": {
-      "description": "Whether this batch contained synthesis events",
+    "had_derived": {
+      "description": "Whether this batch contained derived events",
       "type": "boolean"
     },
     "insert_path": {
@@ -93,7 +93,7 @@
     "fetch_to_ack_ms",
     "events_deferred",
     "events_failed",
-    "had_synthesis",
+    "had_derived",
     "insert_path",
     "validation_valid",
     "validation_skipped",

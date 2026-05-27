@@ -132,8 +132,8 @@ pub(crate) async fn check_gateway_ready(
     let ready_url = format!("{base_url}/ready");
 
     let mtls_expected = descriptor.is_some_and(|value| value.gateway.require_client_tls)
-        || env_truthy("SINEX_GATEWAY_REQUIRE_CLIENT_TLS")
-        || std::env::var("SINEX_GATEWAY_TLS_CLIENT_CA").is_ok();
+        || env_truthy("SINEX_API_REQUIRE_CLIENT_TLS")
+        || std::env::var("SINEX_API_TLS_CLIENT_CA").is_ok();
     let probe_client = match build_gateway_probe_client(&base_url, descriptor).await {
         Ok(client) => client,
         Err(error) => {

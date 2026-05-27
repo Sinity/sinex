@@ -12,7 +12,7 @@ use crate::SinexError;
 
 /// Rich trigger context passed to every derived-node processing call.
 #[derive(Debug, Clone)]
-pub struct DerivedTriggerContext {
+pub struct AutomatonContext {
     /// The event that triggered this processing call.
     pub trigger_event_id: Id<Event<JsonValue>>,
 
@@ -38,7 +38,7 @@ pub struct DerivedTriggerContext {
     pub created_by_operation_id: Option<Id<OperationMarker>>,
 }
 
-impl DerivedTriggerContext {
+impl AutomatonContext {
     /// Operation lineage, if this processing call belongs to a replay/operation.
     #[must_use]
     pub fn operation_id(&self) -> Option<Id<OperationMarker>> {

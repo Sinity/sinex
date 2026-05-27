@@ -8,9 +8,9 @@ The health monitoring system provides **automatic health tracking for all nodes*
 
 ### Derived Nodes - Auto-Enabled
 
-**All derived-node implementations (`TransducerNode`, `WindowedNode`, `ScopeReconcilerNode`) automatically get health monitoring** with zero configuration required!
+**All derived-node implementations (`Transducer`, `Windowed`, `ScopeReconciler`) automatically get health monitoring** with zero configuration required!
 
-When a `DerivedNodeAdapter` initializes in service mode with NATS available:
+When a `AutomatonRuntime` initializes in service mode with NATS available:
 1. ✅ HealthReporter is automatically created
 2. ✅ Success/error tracking happens on every event
 3. ✅ Status checks occur every 100 events

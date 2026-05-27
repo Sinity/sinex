@@ -37,10 +37,10 @@ lineage.
 ## Remaining Case: Query-Based / Non-Aggregation High Fan-In
 
 Hierarchical aggregation does not cover every conceivable high-fan-in
-synthesis. Two residual shapes can still legitimately need a representation
+derived. Two residual shapes can still legitimately need a representation
 other than an inline UUID array:
 
-1. **Cross-cutting synthesis.** A single event genuinely derived from many
+1. **Cross-cutting derived.** A single event genuinely derived from many
    disparate parents that do not share a natural windowing dimension — for
    example, a context pack that pulls evidence from semantically related but
    temporally scattered events, or a moment-evidence bundle assembled from a
@@ -51,7 +51,7 @@ other than an inline UUID array:
 
 For these residual shapes, the side-table model below remains a reasonable
 representation. It is not required for hierarchical aggregation, and it is
-not a third provenance class: the output is still synthesis, with the parent
+not a third provenance class: the output is still derived, with the parent
 set expressed via a derivation scope instead of an inline array.
 
 ```sql
@@ -89,8 +89,8 @@ create table core.event_derivation_scopes (
 ```
 
 The `core.events` XOR provenance constraint stays conceptually unchanged:
-material events cite source material; synthesis events cite parent events.
-For the residual high-fan-in cases, the synthesis parentage is discovered
+material events cite source material; derived events cite parent events.
+For the residual high-fan-in cases, the derived parentage is discovered
 through `event_derivation_scopes` and `derivation_scope_members` rather than
 inline arrays.
 
@@ -116,10 +116,10 @@ Query-defined lineage without member rows is acceptable only when:
 ## Trace Semantics
 
 `sinexctl trace` for hierarchical aggregation should render the parent stack
-naturally — each layer shows up as a normal synthesis node with its small
+naturally — each layer shows up as a normal derived node with its small
 parent array, and trace traversal walks layer by layer.
 
-For scope-backed synthesis, trace should render:
+For scope-backed derived, trace should render:
 
 ```text
 derived event
@@ -138,7 +138,7 @@ Expansion should be explicit and paginated.
 Hierarchical aggregation replays one layer at a time using the existing
 per-event cascade — no new machinery required.
 
-For scope-backed synthesis:
+For scope-backed derived:
 
 1. Recompute the scope query under the target semantics version.
 2. Compare old and new `input_count`.
@@ -169,7 +169,7 @@ recompute membership before destructive archive.
 - Keep `source_event_ids[]` for ordinary derivations, including each layer of
   a hierarchical aggregation chain.
 - Reach for the side-table scope model only for genuinely cross-cutting or
-  query-defined synthesis where hierarchical decomposition is unnatural.
+  query-defined derived where hierarchical decomposition is unnatural.
 - Do not introduce material provenance for event-derived summaries.
 - Do not mutate aggregate event payloads in place.
 - Do not hide large parent lists inside JSON payloads.

@@ -36,8 +36,9 @@ filter = "package(sinex-e2e-tests)"
 slow-timeout = { period = "120s", terminate-after = 2 }
 
 # Heavy integration tests in core packages also need more time
+# Note: sinex-ingestd was folded into sinexd; event_engine integration tests live there.
 [[profile.default.overrides]]
-filter = "package(sinex-ingestd) & test(/integration|pipeline|stress|chaos/)"
+filter = "package(sinexd) & test(/integration|pipeline|stress|chaos/)"
 slow-timeout = { period = "120s", terminate-after = 2 }
 
 [[profile.default.overrides]]
@@ -57,7 +58,7 @@ slow-timeout = { period = "120s", terminate-after = 2 }
 
 # Schema and DB tests need time for pool provisioning under load
 [[profile.default.overrides]]
-filter = "package(sinex-db) | package(sinex-schema)"
+filter = "package(sinex-db)"
 slow-timeout = { period = "90s", terminate-after = 2 }
 
 # -----------------------------------------------------------------------------

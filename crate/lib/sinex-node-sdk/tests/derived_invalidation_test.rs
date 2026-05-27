@@ -10,15 +10,15 @@
 
 use serde::{Deserialize, Serialize};
 use sinex_node_sdk::derived_node::{
-    DerivedOutput, DerivedScopeInvalidation, DerivedTriggerContext, InputProvenanceFilter,
+    DerivedOutput, DerivedScopeInvalidation, AutomatonContext, InputProvenanceFilter,
     ScopeReconcilerWrapper,
 };
 use sinex_node_sdk::runtime::stream::{
     EventEmitter, Node, NodeHandles, NodeInitContext, ServiceInfo,
 };
 use sinex_node_sdk::{
-    CheckpointManager, EventTransport, NatsPublisher, NodeLogicError, ScopeReconcilerNode,
-    ScopeReconcilerNodeAdapter, TransducerNode, WindowedNode,
+    CheckpointManager, EventTransport, NatsPublisher, NodeLogicError, ScopeReconciler,
+    ScopeReconcilerNodeAdapter, Transducer, Windowed,
 };
 use sinex_primitives::domain::{
     EventSource, EventType, HostName, InvalidationAction, ProcessingMode, TriggerKind,
@@ -36,8 +36,8 @@ use xtask::sandbox::prelude::*;
 
 // ── Test fixtures ────────────────────────────────────────────────────────
 
-fn make_context() -> DerivedTriggerContext {
-    DerivedTriggerContext {
+fn make_context() -> AutomatonContext {
+    AutomatonContext {
         trigger_event_id: Id::new(),
         source: "test".into(),
         event_type: "test.event".into(),
@@ -159,7 +159,7 @@ struct TOutput {
 
 struct TestTransducer;
 
-impl TransducerNode for TestTransducer {
+impl Transducer for TestTransducer {
     type State = TransducerState;
     type Input = TInput;
     type Output = TOutput;
@@ -182,7 +182,7 @@ impl TransducerNode for TestTransducer {
         &mut self,
         _state: &mut Self::State,
         _input: Self::Input,
-        _context: &DerivedTriggerContext,
+        _context: &AutomatonContext,
     ) -> Result<Option<DerivedOutput<Self::Output>>, NodeLogicError> {
         Ok(None)
     }
@@ -190,7 +190,7 @@ impl TransducerNode for TestTransducer {
 
 #[sinex_test]
 async fn transducer_invalidation_returns_empty() -> TestResult<()> {
-    use sinex_node_sdk::derived_node::traits::{DerivedNodeImpl, TransducerWrapper};
+    use sinex_node_sdk::derived_node::traits::{Automaton, TransducerWrapper};
 
     let mut wrapper = TransducerWrapper(TestTransducer);
     let mut state = TransducerState;
@@ -230,7 +230,7 @@ struct ROutput {
 
 struct TestReconciler;
 
-impl ScopeReconcilerNode for TestReconciler {
+impl ScopeReconciler for TestReconciler {
     type State = ReconcilerState;
     type Input = RInput;
     type Output = ROutput;
@@ -249,7 +249,7 @@ impl ScopeReconcilerNode for TestReconciler {
         ProcessingContext::Metadata
     }
 
-    fn scope_keys(&self, _input: &Self::Input, _context: &DerivedTriggerContext) -> Vec<String> {
+    fn scope_keys(&self, _input: &Self::Input, _context: &AutomatonContext) -> Vec<String> {
         vec!["default".into()]
     }
 
@@ -258,7 +258,7 @@ impl ScopeReconcilerNode for TestReconciler {
         _state: &mut Self::State,
         _scope_key: &str,
         input: Self::Input,
-        context: &DerivedTriggerContext,
+        context: &AutomatonContext,
     ) -> Result<Vec<DerivedOutput<Self::Output>>, NodeLogicError> {
         Ok(vec![DerivedOutput::reconciled(
             ROutput {
@@ -277,7 +277,7 @@ impl ScopeReconcilerNode for TestReconciler {
         _state: &mut Self::State,
         scope_key: &str,
         working_set: Vec<Self::Input>,
-        context: &DerivedTriggerContext,
+        context: &AutomatonContext,
     ) -> Result<Vec<DerivedOutput<Self::Output>>, NodeLogicError> {
         if working_set.is_empty() {
             return Ok(Vec::new());
@@ -303,7 +303,7 @@ struct DefaultReconcilerState {
 
 struct DefaultStatefulReconciler;
 
-impl ScopeReconcilerNode for DefaultStatefulReconciler {
+impl ScopeReconciler for DefaultStatefulReconciler {
     type State = DefaultReconcilerState;
     type Input = RInput;
     type Output = ROutput;
@@ -322,7 +322,7 @@ impl ScopeReconcilerNode for DefaultStatefulReconciler {
         ProcessingContext::Metadata
     }
 
-    fn scope_keys(&self, _input: &Self::Input, _context: &DerivedTriggerContext) -> Vec<String> {
+    fn scope_keys(&self, _input: &Self::Input, _context: &AutomatonContext) -> Vec<String> {
         vec!["default".into()]
     }
 
@@ -331,7 +331,7 @@ impl ScopeReconcilerNode for DefaultStatefulReconciler {
         state: &mut Self::State,
         scope_key: &str,
         input: Self::Input,
-        context: &DerivedTriggerContext,
+        context: &AutomatonContext,
     ) -> Result<Vec<DerivedOutput<Self::Output>>, NodeLogicError> {
         state.total += input.value;
         state.count += 1;
@@ -350,7 +350,7 @@ impl ScopeReconcilerNode for DefaultStatefulReconciler {
 
 struct MissingParentsInvalidationReconciler;
 
-impl ScopeReconcilerNode for MissingParentsInvalidationReconciler {
+impl ScopeReconciler for MissingParentsInvalidationReconciler {
     type State = ReconcilerState;
     type Input = RInput;
     type Output = ROutput;
@@ -369,7 +369,7 @@ impl ScopeReconcilerNode for MissingParentsInvalidationReconciler {
         ProcessingContext::Metadata
     }
 
-    fn scope_keys(&self, _input: &Self::Input, _context: &DerivedTriggerContext) -> Vec<String> {
+    fn scope_keys(&self, _input: &Self::Input, _context: &AutomatonContext) -> Vec<String> {
         vec!["default".into()]
     }
 
@@ -378,7 +378,7 @@ impl ScopeReconcilerNode for MissingParentsInvalidationReconciler {
         _state: &mut Self::State,
         scope_key: &str,
         input: Self::Input,
-        context: &DerivedTriggerContext,
+        context: &AutomatonContext,
     ) -> Result<Vec<DerivedOutput<Self::Output>>, NodeLogicError> {
         Ok(vec![DerivedOutput::reconciled(
             ROutput {
@@ -396,7 +396,7 @@ impl ScopeReconcilerNode for MissingParentsInvalidationReconciler {
         _state: &mut Self::State,
         scope_key: &str,
         working_set: Vec<Self::Input>,
-        context: &DerivedTriggerContext,
+        context: &AutomatonContext,
     ) -> Result<Vec<DerivedOutput<Self::Output>>, NodeLogicError> {
         if working_set.is_empty() {
             return Ok(Vec::new());
@@ -416,7 +416,7 @@ impl ScopeReconcilerNode for MissingParentsInvalidationReconciler {
 
 #[sinex_test]
 async fn reconciler_live_processing_uses_single_scope_key() -> TestResult<()> {
-    use sinex_node_sdk::derived_node::traits::{DerivedNodeImpl, ScopeReconcilerWrapper};
+    use sinex_node_sdk::derived_node::traits::{Automaton, ScopeReconcilerWrapper};
 
     let mut wrapper = ScopeReconcilerWrapper(TestReconciler);
     let mut state = ReconcilerState;
@@ -443,7 +443,7 @@ async fn reconciler_live_processing_uses_single_scope_key() -> TestResult<()> {
 
 struct MultiScopeReconciler;
 
-impl ScopeReconcilerNode for MultiScopeReconciler {
+impl ScopeReconciler for MultiScopeReconciler {
     type State = ReconcilerState;
     type Input = RInput;
     type Output = ROutput;
@@ -462,7 +462,7 @@ impl ScopeReconcilerNode for MultiScopeReconciler {
         ProcessingContext::Metadata
     }
 
-    fn scope_keys(&self, _input: &Self::Input, _context: &DerivedTriggerContext) -> Vec<String> {
+    fn scope_keys(&self, _input: &Self::Input, _context: &AutomatonContext) -> Vec<String> {
         vec!["scope-a".into(), "scope-b".into()]
     }
 
@@ -471,7 +471,7 @@ impl ScopeReconcilerNode for MultiScopeReconciler {
         _state: &mut Self::State,
         scope_key: &str,
         input: Self::Input,
-        context: &DerivedTriggerContext,
+        context: &AutomatonContext,
     ) -> Result<Vec<DerivedOutput<Self::Output>>, NodeLogicError> {
         Ok(vec![DerivedOutput::reconciled(
             ROutput {
@@ -487,7 +487,7 @@ impl ScopeReconcilerNode for MultiScopeReconciler {
 
 #[sinex_test]
 async fn reconciler_live_processing_rejects_multiple_scope_keys() -> TestResult<()> {
-    use sinex_node_sdk::derived_node::traits::{DerivedNodeImpl, ScopeReconcilerWrapper};
+    use sinex_node_sdk::derived_node::traits::{Automaton, ScopeReconcilerWrapper};
 
     let mut wrapper = ScopeReconcilerWrapper(MultiScopeReconciler);
     let mut state = ReconcilerState;
@@ -516,7 +516,7 @@ async fn reconciler_live_processing_rejects_multiple_scope_keys() -> TestResult<
 
 #[sinex_test]
 async fn reconciler_recomputes_scope_from_working_set() -> TestResult<()> {
-    use sinex_node_sdk::derived_node::traits::{DerivedNodeImpl, ScopeReconcilerWrapper};
+    use sinex_node_sdk::derived_node::traits::{Automaton, ScopeReconcilerWrapper};
 
     let mut wrapper = ScopeReconcilerWrapper(TestReconciler);
     let mut state = ReconcilerState;
@@ -543,7 +543,7 @@ async fn reconciler_recomputes_scope_from_working_set() -> TestResult<()> {
 
 #[sinex_test]
 async fn default_reconciler_recompute_starts_from_fresh_state() -> TestResult<()> {
-    use sinex_node_sdk::derived_node::traits::{DerivedNodeImpl, ScopeReconcilerWrapper};
+    use sinex_node_sdk::derived_node::traits::{Automaton, ScopeReconcilerWrapper};
 
     let mut wrapper = ScopeReconcilerWrapper(DefaultStatefulReconciler);
     let mut state = DefaultReconcilerState {
@@ -574,7 +574,7 @@ async fn default_reconciler_recompute_starts_from_fresh_state() -> TestResult<()
 
 #[sinex_test]
 async fn reconciler_empty_working_set_produces_no_output() -> TestResult<()> {
-    use sinex_node_sdk::derived_node::traits::{DerivedNodeImpl, ScopeReconcilerWrapper};
+    use sinex_node_sdk::derived_node::traits::{Automaton, ScopeReconcilerWrapper};
 
     let mut wrapper = ScopeReconcilerWrapper(TestReconciler);
     let mut state = ReconcilerState;
@@ -596,7 +596,7 @@ async fn reconciler_empty_working_set_produces_no_output() -> TestResult<()> {
     Ok(())
 }
 
-// ── WindowedNode: recomputes from working set ────────────────────────────
+// ── Windowed: recomputes from working set ────────────────────────────
 
 #[derive(Default, Serialize, Deserialize)]
 struct WindowState {
@@ -616,7 +616,7 @@ struct WOutput {
 
 struct TestWindowed;
 
-impl WindowedNode for TestWindowed {
+impl Windowed for TestWindowed {
     type State = WindowState;
     type Input = WInput;
     type Output = WOutput;
@@ -639,7 +639,7 @@ impl WindowedNode for TestWindowed {
         &mut self,
         state: &mut Self::State,
         input: Self::Input,
-        _context: &DerivedTriggerContext,
+        _context: &AutomatonContext,
     ) -> Result<(), NodeLogicError> {
         state.values.push(input.value);
         Ok(())
@@ -653,7 +653,7 @@ impl WindowedNode for TestWindowed {
     async fn emit(
         &mut self,
         state: &mut Self::State,
-        _context: &DerivedTriggerContext,
+        _context: &AutomatonContext,
     ) -> Result<Option<DerivedOutput<Self::Output>>, NodeLogicError> {
         let sum: i64 = state.values.iter().sum();
         let window_size = state.values.len();
@@ -669,7 +669,7 @@ impl WindowedNode for TestWindowed {
 
 #[sinex_test]
 async fn windowed_recomputes_from_working_set() -> TestResult<()> {
-    use sinex_node_sdk::derived_node::traits::{DerivedNodeImpl, WindowedWrapper};
+    use sinex_node_sdk::derived_node::traits::{Automaton, WindowedWrapper};
 
     let mut wrapper = WindowedWrapper(TestWindowed);
     let mut state = WindowState {
@@ -733,7 +733,7 @@ async fn invalidation_signal_serialization_roundtrip() -> TestResult<()> {
 
 #[sinex_test]
 async fn reconciler_recomputes_independent_scopes_correctly() -> TestResult<()> {
-    use sinex_node_sdk::derived_node::traits::{DerivedNodeImpl, ScopeReconcilerWrapper};
+    use sinex_node_sdk::derived_node::traits::{Automaton, ScopeReconcilerWrapper};
 
     let mut wrapper = ScopeReconcilerWrapper(TestReconciler);
     let mut state = ReconcilerState;
@@ -769,7 +769,7 @@ async fn reconciler_recomputes_independent_scopes_correctly() -> TestResult<()> 
 
 #[sinex_test]
 async fn reconciler_output_carries_scope_key() -> TestResult<()> {
-    use sinex_node_sdk::derived_node::traits::{DerivedNodeImpl, ScopeReconcilerWrapper};
+    use sinex_node_sdk::derived_node::traits::{Automaton, ScopeReconcilerWrapper};
 
     let mut wrapper = ScopeReconcilerWrapper(TestReconciler);
     let mut state = ReconcilerState;
@@ -794,7 +794,7 @@ async fn reconciler_output_carries_scope_key() -> TestResult<()> {
 
 #[sinex_test]
 async fn windowed_output_has_latest_input_temporal_policy() -> TestResult<()> {
-    use sinex_node_sdk::derived_node::traits::{DerivedNodeImpl, WindowedWrapper};
+    use sinex_node_sdk::derived_node::traits::{Automaton, WindowedWrapper};
     use sinex_primitives::domain::SyntheticTemporalPolicy;
 
     let mut wrapper = WindowedWrapper(TestWindowed);
@@ -856,7 +856,7 @@ async fn initialize_scope_reconciler_adapter_with_node<N>(
     node: N,
 ) -> TestResult<ScopeReconcilerNodeAdapter<N>>
 where
-    N: ScopeReconcilerNode,
+    N: ScopeReconciler,
 {
     let nats = ctx.nats_handle()?;
     let nats_client = nats.connect().await?;
@@ -1067,7 +1067,7 @@ async fn scope_invalidation_uses_real_affected_event_as_trigger_identity(
     );
 
     match &outputs[0].provenance {
-        Provenance::Synthesis {
+        Provenance::Derived {
             source_event_ids, ..
         } => {
             assert_eq!(
@@ -1076,7 +1076,7 @@ async fn scope_invalidation_uses_real_affected_event_as_trigger_identity(
                 "invalidation recompute must preserve a real affected event id in fallback provenance"
             );
         }
-        other => panic!("expected synthesis provenance, got {other:?}"),
+        other => panic!("expected derived provenance, got {other:?}"),
     }
 
     Ok(())

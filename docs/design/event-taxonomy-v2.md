@@ -60,7 +60,7 @@ Status: design record for #1082. Implementation deferred to post-Wave-4 per #112
 
 - Do not perform schema migration (design only)
 - Do not rename event types casually
-- Do not blur material vs synthesis provenance
+- Do not blur material vs derived provenance
 
 Refs: #1054, #1081, #1058, #1059, #1064, #1126.
 

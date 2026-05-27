@@ -18,11 +18,11 @@ Sinex should not introduce a general-purpose "provisional derived event" model.
 Instead:
 
 - ingestors emit raw material-provenance events eagerly;
-- `TransducerNode` stays eager and 1:1;
-- `WindowedNode` is the bounded-wait mechanism when window closure is part of
+- `Transducer` stays eager and 1:1;
+- `Windowed` is the bounded-wait mechanism when window closure is part of
   the domain truth;
-- `ScopeReconcilerNode` plus invalidation/replacement is the correction
-  mechanism for late-arriving multi-source synthesis.
+- `ScopeReconciler` plus invalidation/replacement is the correction
+  mechanism for late-arriving multi-source derived.
 
 This keeps provenance honest and query semantics legible:
 
@@ -130,7 +130,7 @@ the system in the wrong place:
 - queries would need to explain tentative vs final semantics;
 - replacement policy would become implicit instead of explicit;
 - more nodes would need lifecycle logic they do not actually need;
-- the common case of simple, trustworthy 1:1 synthesis would become slower and
+- the common case of simple, trustworthy 1:1 derived would become slower and
   more confusing.
 
 Sinex already has a better correction mechanism: archive, invalidate, recompute,
@@ -154,7 +154,7 @@ Late coordination belongs downstream in derived nodes.
 
 ### 2. Bounded Waiting For Real Windows
 
-Use `WindowedNode` when the domain is actually about a bounded interval or
+Use `Windowed` when the domain is actually about a bounded interval or
 closure rule:
 
 - inactivity gap,
@@ -175,7 +175,7 @@ Current examples already fit this model:
 
 ### 3. Scope Recompute For Late Correction
 
-Use `ScopeReconcilerNode` when a higher-level interpretation may need to change
+Use `ScopeReconciler` when a higher-level interpretation may need to change
 after more evidence for the same logical scope arrives later.
 
 The expected pattern is:
@@ -201,7 +201,7 @@ arrives from another.
 
 Decision:
 
-- keep `command.canonical` as an eager `TransducerNode`;
+- keep `command.canonical` as an eager `Transducer`;
 - do not teach it to wait for desktop/browser/session context;
 - do not widen `command.canonical` into a generic late-reconciled object.
 
@@ -257,7 +257,7 @@ gap has occurred.
 
 Decision:
 
-- keep this as a `WindowedNode` problem.
+- keep this as a `Windowed` problem.
 
 Reason:
 
@@ -269,11 +269,11 @@ windowed/session stack is the right shape.
 
 When adding a new derived node:
 
-- choose `TransducerNode` only if the output remains truthful when produced from
+- choose `Transducer` only if the output remains truthful when produced from
   one trigger immediately;
-- choose `WindowedNode` only if a bounded completion rule is part of the output
+- choose `Windowed` only if a bounded completion rule is part of the output
   semantics;
-- choose `ScopeReconcilerNode` when the node maintains a logical object whose
+- choose `ScopeReconciler` when the node maintains a logical object whose
   current best interpretation may need replacement as the scope's working set
   changes.
 

@@ -1,0 +1,66 @@
+use crate::{DbPool, PoolConfig};
+use sinex_primitives::error::{Result, SinexError};
+use tracing::info;
+
+const SQLSTATE_UNDEFINED_FILE: &str = "58P01";
+const ERROR_CLASS_TIMESCALEDB_MISSING_LIBRARY: &str = "timescaledb_missing_library";
+const ERROR_CLASS_MISSING_REQUIRED_EXTENSIONS: &str = "missing_required_extensions";
+const ERROR_CLASS_SCHEMA_APPLY_INTERNAL: &str = "schema_apply_internal";
+
+fn map_apply_error(err: crate::schema::apply::ApplyError) -> SinexError {
+    match err {
+        crate::schema::apply::ApplyError::MissingExtensions(missing) => {
+            SinexError::database("Schema apply failed: required PostgreSQL extensions missing")
+                .with_context("error_class", ERROR_CLASS_MISSING_REQUIRED_EXTENSIONS)
+                .with_context("missing_extensions", missing.join(","))
+        }
+        crate::schema::apply::ApplyError::Sqlx(sqlx_err) => {
+            let mut mapped = SinexError::database("Schema apply failed").with_std_error(&sqlx_err);
+            if let sqlx::Error::Database(db_err) = &sqlx_err {
+                if let Some(code) = db_err.code() {
+                    mapped = mapped.with_context("sqlstate", code.as_ref());
+                }
+                if db_err
+                    .code()
+                    .as_deref()
+                    .is_some_and(|code| code == SQLSTATE_UNDEFINED_FILE)
+                {
+                    mapped =
+                        mapped.with_context("error_class", ERROR_CLASS_TIMESCALEDB_MISSING_LIBRARY);
+                }
+            }
+            mapped
+        }
+        crate::schema::apply::ApplyError::Internal(message) => {
+            SinexError::database("Schema apply failed")
+                .with_context("error_class", ERROR_CLASS_SCHEMA_APPLY_INTERNAL)
+                .with_context("cause", message)
+        }
+    }
+}
+
+/// Apply declarative schema using the given pool.
+pub async fn apply_schema(pool: &DbPool) -> Result<()> {
+    info!("Applying declarative database schema...");
+    crate::schema::apply::apply(pool)
+        .await
+        .map_err(map_apply_error)?;
+    info!("Database schema apply completed");
+    Ok(())
+}
+
+/// Apply declarative schema for a given database URL by creating a temporary connection.
+pub async fn apply_schema_for_url(database_url: &str) -> Result<()> {
+    use crate::pool::create_pool_with_config;
+
+    let config = PoolConfig::from_env();
+    let pool = create_pool_with_config(database_url, &config)
+        .await
+        .map_err(|e| {
+            SinexError::database("Failed to create pool for schema apply").with_std_error(&e)
+        })?;
+
+    apply_schema(&pool).await?;
+    pool.close().await;
+    Ok(())
+}

@@ -134,11 +134,11 @@ pub use confirmation_handler::{
 pub use coordination::{HandoffRequest, InstanceMode, NodeCoordination};
 #[cfg(feature = "messaging")]
 pub use derived_node::{
-    DerivedAggregationMeta, DerivedNodeAdapter, DerivedNodeConfig, DerivedOutput,
-    DerivedScopeInvalidation, DerivedTriggerContext, INVALIDATION_SUBJECT, InputProvenanceFilter,
+    DerivedAggregationMeta, AutomatonRuntime, DerivedNodeConfig, DerivedOutput,
+    DerivedScopeInvalidation, AutomatonContext, INVALIDATION_SUBJECT, InputProvenanceFilter,
     MultiOutputTransducerNode, MultiOutputTransducerNodeAdapter, MultiOutputTransducerWrapper,
-    ScopeReconcilerNode, ScopeReconcilerNodeAdapter, ScopeReconcilerWrapper, TransducerNode,
-    TransducerNodeAdapter, TransducerWrapper, WindowedNode, WindowedNodeAdapter, WindowedWrapper,
+    ScopeReconciler, ScopeReconcilerNodeAdapter, ScopeReconcilerWrapper, Transducer,
+    TransducerNodeAdapter, TransducerWrapper, Windowed, WindowedNodeAdapter, WindowedWrapper,
 };
 #[cfg(feature = "messaging")]
 pub use dlq_retry::{DlqRetryConfig, DlqRetryHandler, DlqRetryResult, DlqStats};
@@ -161,7 +161,7 @@ pub use hyprland::{
 };
 pub use ids::{deterministic_event_id, deterministic_material_event_id};
 #[cfg(feature = "messaging")]
-pub use ingestor_node::{IngestorNode, IngestorNodeAdapter, IngestorState};
+pub use ingestor_node::{SourceUnit, SourceUnitRuntime, IngestorState};
 pub use input_shapes::{
     SqliteSnapshotCheckpointState, SqliteSourceCheckpointState, discover_importable_files_at_root,
 };

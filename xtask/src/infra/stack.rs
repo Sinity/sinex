@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use sinex_db::repositories::schema_management::{SchemaManagementRepository, SchemaSyncResult};
 use sinex_primitives::events::schema_registry::generate_schema_bundle;
-use sinex_schema::apply::SHARED_ACCESS_ROLES;
+use sinex_db::schema::apply::SHARED_ACCESS_ROLES;
 use sqlx::postgres::PgPoolOptions;
 use std::fs;
 use std::future::Future;

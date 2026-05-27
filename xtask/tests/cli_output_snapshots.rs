@@ -186,9 +186,9 @@ async fn snapshot_doctor_json() -> ::xtask::sandbox::TestResult<()> {
         .env("SINEX_STATE_DIR", dir.path())
         .env("NO_COLOR", "1")
         // Remove TLS env vars so the TLS section has stable null state
-        .env_remove("SINEX_GATEWAY_TLS_CERT")
-        .env_remove("SINEX_GATEWAY_TLS_KEY")
-        .env_remove("SINEX_GATEWAY_TLS_CLIENT_CA")
+        .env_remove("SINEX_API_TLS_CERT")
+        .env_remove("SINEX_API_TLS_KEY")
+        .env_remove("SINEX_API_TLS_CLIENT_CA")
         .arg("doctor")
         .arg("--json")
         .output()?;

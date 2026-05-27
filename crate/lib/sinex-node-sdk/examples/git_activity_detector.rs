@@ -1,14 +1,14 @@
-//! Git Activity Detector - Example `TransducerNode` Implementation
+//! Git Activity Detector - Example `Transducer` Implementation
 //!
-//! This example demonstrates how to use `TransducerNode` to create
+//! This example demonstrates how to use `Transducer` to create
 //! a node that detects git commands from terminal events.
 //!
 //! Run with: cargo run --example `git_activity_detector`
 
 use serde::{Deserialize, Serialize};
 use sinex_node_sdk::Timestamp;
-use sinex_node_sdk::derived_node::{DerivedOutput, DerivedTriggerContext};
-use sinex_node_sdk::{NodeLogicError, TransducerNode};
+use sinex_node_sdk::derived_node::{DerivedOutput, AutomatonContext};
+use sinex_node_sdk::{NodeLogicError, Transducer};
 use sinex_primitives::privacy::ProcessingContext;
 use std::collections::HashMap;
 
@@ -71,7 +71,7 @@ pub struct GitActivityState {
 }
 
 // ============================================================================
-// TransducerNode Implementation
+// Transducer Implementation
 // ============================================================================
 
 /// Git Activity Detector - detects git commands from terminal events
@@ -104,7 +104,7 @@ impl Default for GitActivityDetector {
     }
 }
 
-impl TransducerNode for GitActivityDetector {
+impl Transducer for GitActivityDetector {
     type State = GitActivityState;
     type Input = TerminalCommandEvent;
     type Output = GitActivityEvent;
@@ -129,7 +129,7 @@ impl TransducerNode for GitActivityDetector {
         &mut self,
         state: &mut Self::State,
         input: Self::Input,
-        context: &DerivedTriggerContext,
+        context: &AutomatonContext,
     ) -> Result<Option<DerivedOutput<Self::Output>>, NodeLogicError> {
         // Filter: only process git commands
         if !input.command.trim_start().starts_with("git ") {
@@ -171,10 +171,10 @@ impl TransducerNode for GitActivityDetector {
 // ============================================================================
 
 fn main() {
-    println!("Git Activity Detector - TransducerNode Example");
+    println!("Git Activity Detector - Transducer Example");
     println!("================================================");
     println!();
-    println!("This demonstrates TransducerNode with ~100 lines of code:");
+    println!("This demonstrates Transducer with ~100 lines of code:");
     println!("  - Input:  terminal.command.executed");
     println!("  - Output: git.activity.detected");
     println!("  - State:  Command counts by repo and type");
@@ -198,9 +198,9 @@ mod tests {
     use sinex_primitives::{Id, JsonValue};
     use xtask::sandbox::prelude::*;
 
-    fn test_context() -> DerivedTriggerContext {
+    fn test_context() -> AutomatonContext {
         let event_id: Id<Event<JsonValue>> = Id::new();
-        DerivedTriggerContext {
+        AutomatonContext {
             trigger_event_id: event_id,
             source: "test".into(),
             event_type: "terminal.command.executed".into(),

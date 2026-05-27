@@ -1,22 +1,22 @@
-//! Self-observation / telemetry methods for `DerivedNodeAdapter`.
+//! Self-observation / telemetry methods for `AutomatonRuntime`.
 //!
 //! Carved out of `adapter/mod.rs` as part of #697. Pure mechanical move; the
 //! methods, control flow, and instrumentation are unchanged.
 
-use super::DerivedNodeAdapter;
+use super::AutomatonRuntime;
 #[cfg(feature = "messaging")]
 use super::log_self_observation_failure;
 
 use crate::checkpoint::CheckpointState;
-use crate::derived_node::traits::DerivedNodeImpl;
+use crate::derived_node::traits::Automaton;
 use crate::runtime::stream::{Checkpoint, NodeRuntimeState};
 
 use std::collections::HashMap;
 use std::time::Instant;
 
-impl<N> DerivedNodeAdapter<N>
+impl<N> AutomatonRuntime<N>
 where
-    N: DerivedNodeImpl,
+    N: Automaton,
 {
     #[cfg(feature = "messaging")]
     pub(super) fn derived_metric_labels(&self) -> HashMap<String, String> {

@@ -449,17 +449,17 @@ async fn start_test_gateway_inner(
         .env("DATABASE_URL", &config.database_url)
         .env("SINEX_NATS_URL", &config.nats_url)
         .env(
-            "SINEX_GATEWAY_TLS_CERT",
+            "SINEX_API_TLS_CERT",
             config.tls_cert.to_string_lossy().as_ref(),
         )
         .env(
-            "SINEX_GATEWAY_TLS_KEY",
+            "SINEX_API_TLS_KEY",
             config.tls_key.to_string_lossy().as_ref(),
         )
         // Clear mTLS client CA so the subprocess doesn't inherit it from the
         // parent environment (NixOS, other tests) and unexpectedly require
         // client certificates.
-        .env_remove("SINEX_GATEWAY_TLS_CLIENT_CA")
+        .env_remove("SINEX_API_TLS_CLIENT_CA")
         .env("NOTIFY_SOCKET", &notify_socket_path);
     if config.rpc_rate_limit_disabled {
         cmd.env("SINEX_RPC_RATE_LIMIT_ENABLED", "false");
@@ -1089,7 +1089,7 @@ pub async fn start_test_ingestd_with_config(
         // Set assembler state and content-store roots to the per-test work directory.
         // These env vars are part of the canonical env-first runtime contract;
         // the binary reads them directly into its typed config.
-        // Do NOT use SINEX_INGESTD_WORK_DIR here: ingestd's effective config
+        // Do NOT use SINEX_EVENT_ENGINE_WORK_DIR here: ingestd's effective config
         // surface is SINEX_ASSEMBLER_STATE_DIR plus SINEX_CONTENT_STORE_PATH.
         cmd.env("SINEX_ASSEMBLER_STATE_DIR", wd.join("assembler_state"));
         cmd.env("SINEX_CONTENT_STORE_PATH", wd.join("content-store"));
@@ -1099,15 +1099,15 @@ pub async fn start_test_ingestd_with_config(
         );
     }
     cmd.env(
-        "SINEX_INGESTD_CONSUMER_FETCH_MAX_MESSAGES",
+        "SINEX_EVENT_ENGINE_CONSUMER_FETCH_MAX_MESSAGES",
         config.consumer_fetch_max_messages.to_string(),
     );
     cmd.env(
-        "SINEX_INGESTD_CONSUMER_FETCH_TIMEOUT_MS",
+        "SINEX_EVENT_ENGINE_CONSUMER_FETCH_TIMEOUT_MS",
         config.consumer_fetch_timeout_ms.to_string(),
     );
     cmd.env(
-        "SINEX_INGESTD_REJECT_INITIAL_REPLAY",
+        "SINEX_EVENT_ENGINE_REJECT_INITIAL_REPLAY",
         config.reject_initial_replay.to_string(),
     );
     // Disable schema validation and schema sync for test instances.

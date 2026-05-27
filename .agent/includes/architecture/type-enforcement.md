@@ -11,7 +11,7 @@ The type system makes the wrong thing unrepresentable.
 | Mixing event IDs with blob IDs | `Id<Event>` vs `Id<Blob>` (phantom type) |
 | Building events without provenance | `EventBuilder<T, NoProvenance>` has no `.build()` method |
 | Confusing source with event type | `EventSource` vs `EventType` (distinct newtypes) |
-| Empty synthesis parent arrays | `NonEmptyVec<EventId>` in `Provenance::Synthesis` |
+| Empty derived parent arrays | `NonEmptyVec<EventId>` in `Provenance::Derived` |
 | Invalid source strings in constants | `EventSource::from_static()` validated at compile time |
 
 ### Level 2: Lint Enforced / AST-Grep Catalog
@@ -32,7 +32,7 @@ PostgreSQL rejects violations at write time.
 |------------|----------------|
 | XOR provenance CHECK | `source_material_id` XOR `source_event_ids` (exactly one set) |
 | Material FK | `source_material_id` references `raw.source_material_registry` |
-| Non-empty synthesis parents | `cardinality(source_event_ids) > 0` |
+| Non-empty derived parents | `cardinality(source_event_ids) > 0` |
 | Anchor byte non-negative | `CHECK (anchor_byte >= 0)` |
 | Audit trigger | DELETE on `core.events` requires `sinex.operation_id` session var |
 
@@ -42,11 +42,11 @@ Application code checks at boundaries, but violations can reach the check.
 
 | What's validated | Where | Gap |
 |------------------|-------|-----|
-| Privacy engine (secret detection) | Ingestor, before NATS publish | No automata use privacy engine — derived events inherit ingestor leaks |
-| Schema validation | ingestd, before persistence | Lenient: unknown types pass. `payload_schema_id` IS bound and written on every insert path (single, batched VALUES, COPY staging, DLQ replay) — see `crate/lib/sinex-db/src/repositories/events/persistence.rs` |
+| Privacy engine (secret detection) | `sinexd::sources`, before NATS publish | No automata use privacy engine — derived events inherit source-unit leaks |
+| Schema validation | `sinexd::event_engine`, before persistence | Lenient: unknown types pass. `payload_schema_id` IS bound and written on every insert path (single, batched VALUES, COPY staging, DLQ replay) — see `crate/sinex-db/src/repositories/events/persistence.rs` |
 | Path traversal protection | `validate_path()` at API boundary | Only called where explicitly used |
 | JSON depth/size limits | `validate_json()` at API boundary | Only called where explicitly used |
-| `ts_orig` plausibility | ingestd, before persistence | `ts_orig_future_skew_secs` config (`crate/core/sinex-ingestd/src/config.rs:159`) bounds how far in the future ts_orig can be; implausibly-old events route to DLQ |
+| `ts_orig` plausibility | `sinexd::event_engine`, before persistence | `ts_orig_future_skew_secs` config (`crate/sinexd/src/event_engine/config.rs`) bounds how far in the future ts_orig can be; implausibly-old events route to DLQ |
 
 ### Level 5: Convention + Lazy Check
 

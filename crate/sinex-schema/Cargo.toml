@@ -1,0 +1,23 @@
+[package]
+name = "sinex-schema"
+version = "0.1.0"
+edition = "2024"
+description = "Declarative database schema definitions and convergence apply engine for Sinex"
+
+[dependencies]
+sinex-primitives = { path = "../sinex-primitives", features = ["sqlx"] }
+# sqlx: runtime queries only (no query! macros) — compiles without a live DB
+sqlx = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+sea-query = { workspace = true }
+time = { workspace = true }
+tokio = { workspace = true, features = ["full"] }
+
+[dev-dependencies]
+xtask = { path = "../../xtask" }
+sinex-primitives = { path = "../sinex-primitives", features = ["testing"] }
+color-eyre = { workspace = true }
+
+[lints]
+workspace = true

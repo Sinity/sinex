@@ -519,7 +519,7 @@ pub enum RunSubcommand {
     ///
     /// # Environment Variables
     ///
-    /// - `SINEX_GATEWAY_URL` or SINEX_{TARGET}_`GATEWAY_URL`: Gateway RPC URL
+    /// - `SINEX_API_URL` or SINEX_{TARGET}_`GATEWAY_URL`: Gateway RPC URL
     /// - `SINEX_RPC_TOKEN` or SINEX_{TARGET}_`RPC_TOKEN`: RPC auth token (required)
     /// - `SINEX_TETHER_NATS_URL` or SINEX_{TARGET}_`NATS_URL`: Production NATS URL
     /// - `SINEX_TETHER_NATS`_*: NATS TLS config (`CA_CERT`, `CLIENT_CERT`, `CLIENT_KEY`, CREDS)

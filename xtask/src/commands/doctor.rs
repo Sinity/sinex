@@ -249,7 +249,7 @@ fn workspace_tls_dir() -> PathBuf {
 
 fn detect_tls_check() -> Option<TlsCheck> {
     let default_tls_dir = workspace_tls_dir();
-    let env_dir = std::env::var("SINEX_GATEWAY_TLS_CERT")
+    let env_dir = std::env::var("SINEX_API_TLS_CERT")
         .ok()
         .and_then(|p| Path::new(&p).parent().map(Path::to_path_buf));
     let active_dir = if let Some(dir) = env_dir.as_deref() {

@@ -620,7 +620,7 @@ struct ConfiguredHostnameResolutionProbe {
 fn configured_hostname_resolution_probe() -> ConfiguredHostnameResolutionProbe {
     let mut targets = BTreeSet::new();
     let mut invalid_inputs = Vec::new();
-    for env_name in ["DATABASE_URL", "SINEX_NATS_URL", "SINEX_GATEWAY_URL"] {
+    for env_name in ["DATABASE_URL", "SINEX_NATS_URL", "SINEX_API_URL"] {
         match std::env::var_os(env_name) {
             None => {}
             Some(raw) => match raw.into_string() {
@@ -628,7 +628,7 @@ fn configured_hostname_resolution_probe() -> ConfiguredHostnameResolutionProbe {
                     // SINEX_NATS_URL may be a comma-separated list of URLs
                     // (e.g. "nats://host1:4222,nats://host2:4222"). Split on commas
                     // so each segment is probed individually. DATABASE_URL and
-                    // SINEX_GATEWAY_URL are single URLs and will not contain commas
+                    // SINEX_API_URL are single URLs and will not contain commas
                     // in valid usage, but splitting is still safe for them.
                     let segments: Vec<&str> = raw.split(',').collect();
                     for segment in &segments {
@@ -819,7 +819,7 @@ mod tests {
         let mut env = EnvGuard::new();
         env.set("DATABASE_URL", "postgresql://db.example/sinex");
         env.set("SINEX_NATS_URL", "nats://db.example:4222");
-        env.set("SINEX_GATEWAY_URL", "https://gateway.example/rpc");
+        env.set("SINEX_API_URL", "https://gateway.example/rpc");
 
         let targets = configured_hostname_resolution_probe().hosts;
         assert_eq!(
