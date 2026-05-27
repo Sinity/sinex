@@ -199,7 +199,11 @@ emit "errors.critical_failures_15min" "$CRITICAL"
 CASCADE=$(sudo journalctl -u sinexd --since "15 minutes ago" --no-pager 2>&1 \
   | grep -c "Continuous scan returned unexpectedly" || true)
 emit "errors.continuous_scan_returned_15min" "$CASCADE"
-[ "${CASCADE:-0}" -eq 0 ] || fail_critical
+# Expected for monitor source-units (terminal.monitor, system.monitor) — they
+# fire ServiceStart once at boot then return Ok. The hosted-mode sd_notify
+# latch prevents their clean exit from cascading shutdown across siblings.
+# Only warn if the count looks unusually high (something else is exiting).
+if [ "${CASCADE:-0}" -gt 5 ]; then warn; fi
 
 section "Source-worker liveness"
 HB_15MIN=$(sudo journalctl -u sinexd --since "15 minutes ago" --no-pager 2>&1 \
