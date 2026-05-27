@@ -107,7 +107,7 @@ mod tests {
     #[sinex_test]
     async fn known_gateway_pair_accepted() -> TestResult<()> {
         let reg = registry();
-        // GatewayRequestStatsPayload is registered as
+        // ApiRequestStatsPayload is registered as
         // (sinexd.api, request.stats); skip if the workspace surface ever
         // changes underneath us, but keep the assertion strict otherwise.
         assert!(

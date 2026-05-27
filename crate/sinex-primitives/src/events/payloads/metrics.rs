@@ -176,7 +176,7 @@ pub struct AssemblyStatsPayload {
 /// Addresses Issue 133: Load Shedding Metrics
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
 #[event_payload(source = "sinexd.api", event_type = "request.stats")]
-pub struct GatewayRequestStatsPayload {
+pub struct ApiRequestStatsPayload {
     /// Total requests received
     pub total_requests: u64,
     /// Requests successfully processed
@@ -363,7 +363,7 @@ pub struct ReplayStatsPayload {
     event_type = "batch.stats",
     version = "2.2.0"
 )]
-pub struct IngestdBatchStatsPayload {
+pub struct EventEngineBatchStatsPayload {
     /// Number of events in this batch
     pub batch_size: u32,
     /// Time from fetch to ack in milliseconds
