@@ -4,7 +4,7 @@ async fn process_batch_halts_after_three_consecutive_checkpoint_save_failures(
     ctx: TestContext,
 ) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
-    let mut adapter = DerivedNodeAdapter::with_config(
+    let mut adapter = AutomatonRuntime::with_config(
         TransducerWrapper(UnserializableDerivedNode),
         DerivedNodeConfig {
             checkpoint_interval: 1,
@@ -63,7 +63,7 @@ async fn process_batch_halts_after_three_consecutive_checkpoint_save_failures(
 async fn derived_outputs_propagate_runtime_source_run_id(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
     let source_run_id = Uuid::now_v7();
-    let mut adapter = DerivedNodeAdapter::new(TransducerWrapper(EmittingDerivedNode));
+    let mut adapter = AutomatonRuntime::new(TransducerWrapper(EmittingDerivedNode));
     adapter.runtime =
         Some(make_runtime_state(&ctx, "derived-adapter-emitting-test", Some(source_run_id)).await?);
 
@@ -80,8 +80,8 @@ async fn derived_outputs_propagate_runtime_source_run_id(ctx: TestContext) -> Te
 #[sinex_test]
 async fn derived_outputs_use_deterministic_event_ids() -> TestResult<()> {
     let input = make_input_event("deterministic-output")?;
-    let mut first_adapter = DerivedNodeAdapter::new(TransducerWrapper(EmittingDerivedNode));
-    let mut second_adapter = DerivedNodeAdapter::new(TransducerWrapper(EmittingDerivedNode));
+    let mut first_adapter = AutomatonRuntime::new(TransducerWrapper(EmittingDerivedNode));
+    let mut second_adapter = AutomatonRuntime::new(TransducerWrapper(EmittingDerivedNode));
 
     let first_output = first_adapter
         .process_one(input.clone())
@@ -107,7 +107,7 @@ async fn derived_outputs_use_deterministic_event_ids() -> TestResult<()> {
 
 #[sinex_test]
 async fn process_one_tracks_run_local_processed_count() -> TestResult<()> {
-    let mut adapter = DerivedNodeAdapter::new(TransducerWrapper(EmittingDerivedNode));
+    let mut adapter = AutomatonRuntime::new(TransducerWrapper(EmittingDerivedNode));
 
     adapter.process_one(make_input_event("emit")?).await?;
     adapter.process_one(make_input_event("emit")?).await?;
@@ -129,7 +129,7 @@ async fn emitted_derived_outputs_stamp_payload_schema_id_from_runtime_validator(
         Some(Uuid::now_v7()),
     )
     .await?;
-    let mut adapter = DerivedNodeAdapter::new(TransducerWrapper(EmittingDerivedNode));
+    let mut adapter = AutomatonRuntime::new(TransducerWrapper(EmittingDerivedNode));
     adapter.event_emitter = Some(runtime.event_emitter().clone());
     adapter.host = runtime.service_info().host().to_string();
     adapter.runtime = Some(runtime);
@@ -153,7 +153,7 @@ async fn emitted_derived_outputs_stamp_payload_schema_id_from_runtime_validator(
 async fn scope_invalidation_outputs_apply_privacy_filtering() -> TestResult<()> {
     struct PrivacyInvalidationNode;
 
-    impl TransducerNode for PrivacyInvalidationNode {
+    impl Transducer for PrivacyInvalidationNode {
         type State = TestDerivedState;
         type Input = JsonValue;
         type Output = JsonValue;
@@ -178,20 +178,20 @@ async fn scope_invalidation_outputs_apply_privacy_filtering() -> TestResult<()> 
             &mut self,
             _state: &mut Self::State,
             _input: Self::Input,
-            _context: &DerivedTriggerContext,
+            _context: &AutomatonContext,
         ) -> std::result::Result<Option<DerivedOutput<Self::Output>>, NodeLogicError> {
             Ok(None)
         }
     }
 
-    let adapter = DerivedNodeAdapter::new(TransducerWrapper(PrivacyInvalidationNode));
+    let adapter = AutomatonRuntime::new(TransducerWrapper(PrivacyInvalidationNode));
     let output = DerivedOutput::reconciled(
         json!({ "value": "ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghij" }),
         Timestamp::now(),
         vec![Uuid::now_v7()],
         "scope-a".to_string(),
     );
-    let context = DerivedTriggerContext {
+    let context = AutomatonContext {
         trigger_event_id: Id::new(),
         source: EventSource::new("test.source")?,
         event_type: EventType::new("test.invalidation")?,
@@ -210,7 +210,7 @@ async fn scope_invalidation_outputs_apply_privacy_filtering() -> TestResult<()> 
 
 #[sinex_test]
 async fn current_checkpoint_tracks_last_processed_input_event() -> TestResult<()> {
-    let mut adapter = DerivedNodeAdapter::new(TransducerWrapper(TestDerivedNode));
+    let mut adapter = AutomatonRuntime::new(TransducerWrapper(TestDerivedNode));
     let input = make_input_event("checkpoint-me")?;
     let input_id = input.id.expect("test input must have an id");
 
@@ -247,7 +247,7 @@ async fn load_state_restores_resume_position_from_checkpoint_metadata() -> TestR
     .save_to_file(&checkpoint_path)
     .await?;
 
-    let mut adapter = DerivedNodeAdapter::with_shutdown_config(
+    let mut adapter = AutomatonRuntime::with_shutdown_config(
         TransducerWrapper(TestDerivedNode),
         ShutdownConfig {
             checkpoint_path: Some(checkpoint_path.clone()),
@@ -310,7 +310,7 @@ async fn load_state_restores_hot_reload_revision_for_followup_save(
     .save_to_file(&checkpoint_path)
     .await?;
 
-    let mut adapter = DerivedNodeAdapter::with_shutdown_config(
+    let mut adapter = AutomatonRuntime::with_shutdown_config(
         TransducerWrapper(TestDerivedNode),
         ShutdownConfig {
             checkpoint_path: Some(checkpoint_path.clone()),
@@ -379,7 +379,7 @@ async fn load_state_falls_back_to_kv_when_hot_reload_file_is_corrupt(
         .join("derived-hot-reload-fallback.checkpoint.json");
     tokio::fs::write(&checkpoint_path, "{ definitely not valid json").await?;
 
-    let mut adapter = DerivedNodeAdapter::with_shutdown_config(
+    let mut adapter = AutomatonRuntime::with_shutdown_config(
         TransducerWrapper(TestDerivedNode),
         ShutdownConfig {
             checkpoint_path: Some(checkpoint_path.clone()),
@@ -421,7 +421,7 @@ async fn historical_replay_resumes_from_internal_checkpoint(ctx: TestContext) ->
 
     let (runtime, _event_receiver) =
         make_runtime_state_with_db(&ctx, "derived-history-resume-test", None).await?;
-    let mut adapter = DerivedNodeAdapter::new(TransducerWrapper(EmittingDerivedNode));
+    let mut adapter = AutomatonRuntime::new(TransducerWrapper(EmittingDerivedNode));
     adapter.checkpoint_manager = Some(runtime.checkpoint_manager());
     adapter.event_emitter = Some(runtime.event_emitter().clone());
     adapter.host = runtime.service_info().host().to_string();
@@ -447,7 +447,7 @@ async fn historical_replay_resumes_from_internal_checkpoint(ctx: TestContext) ->
 async fn process_event_batch_filters_wildcard_material_only_inputs() -> TestResult<()> {
     let material_event = make_material_input_event("file.created", "material")?;
     let synthesized_event = make_input_event("synthesized")?;
-    let mut adapter = DerivedNodeAdapter::new(TransducerWrapper(WildcardMaterialOnlyNode));
+    let mut adapter = AutomatonRuntime::new(TransducerWrapper(WildcardMaterialOnlyNode));
 
     let stats = adapter
         .process_event_batch(vec![material_event, synthesized_event])
@@ -486,7 +486,7 @@ async fn historical_replay_filters_wildcard_material_only_inputs(
 
     let (runtime, _event_receiver) =
         make_runtime_state_with_db(&ctx, "wildcard-material-only", None).await?;
-    let mut adapter = DerivedNodeAdapter::new(TransducerWrapper(WildcardMaterialOnlyNode));
+    let mut adapter = AutomatonRuntime::new(TransducerWrapper(WildcardMaterialOnlyNode));
     adapter.checkpoint_manager = Some(runtime.checkpoint_manager());
     adapter.event_emitter = Some(runtime.event_emitter().clone());
     adapter.host = runtime.service_info().host().to_string();
@@ -547,7 +547,7 @@ async fn handle_invalidation_message_returns_none_when_output_emit_fails(
         make_runtime_state_with_db(&ctx, "adapter-regression-scope-reconciler", None).await?;
     drop(event_receiver);
 
-    let mut adapter = DerivedNodeAdapter::new(ScopeReconcilerWrapper(TestScopeReconcilerNode));
+    let mut adapter = AutomatonRuntime::new(ScopeReconcilerWrapper(TestScopeReconcilerNode));
     adapter.checkpoint_manager = Some(runtime.checkpoint_manager());
     adapter.event_emitter = Some(runtime.event_emitter().clone());
     adapter.host = runtime.service_info().host().to_string();
@@ -642,7 +642,7 @@ async fn handle_invalidation_message_checkpoints_state_only_mutations(
     let (runtime, _event_receiver) =
         make_runtime_state_with_db(&ctx, "adapter-regression-stateful-invalidation", None).await?;
 
-    let mut adapter = DerivedNodeAdapter::with_config(
+    let mut adapter = AutomatonRuntime::with_config(
         ScopeReconcilerWrapper(StatefulInvalidationNode),
         DerivedNodeConfig {
             checkpoint_interval: 1,
@@ -695,7 +695,7 @@ async fn historical_replay_fails_when_dlq_routing_fails(ctx: TestContext) -> Tes
 
     let (runtime, _event_receiver) =
         make_runtime_state_with_db(&ctx, "derived-adapter-dlq-retry-test", None).await?;
-    let mut adapter = DerivedNodeAdapter::new(TransducerWrapper(DlqRetryDerivedNode));
+    let mut adapter = AutomatonRuntime::new(TransducerWrapper(DlqRetryDerivedNode));
     adapter.checkpoint_manager = Some(runtime.checkpoint_manager());
     adapter.event_emitter = Some(runtime.event_emitter().clone());
     adapter.host = runtime.service_info().host().to_string();

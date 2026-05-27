@@ -79,7 +79,7 @@ exact query body used for replay. Runtime RPC users do not submit arbitrary SQL.
 | --- | --- | --- |
 | Projection table | Read models, coverage/readiness, moment features. | Run metadata plus input contract; no event emitted by default. |
 | Candidate queue | Proposed assertions requiring review. | Proposal path; not canonical until judged/finalized. |
-| Derived event | Durable semantic event with event-stream semantics. | Synthesis provenance; high fan-in uses derivation scopes. |
+| Derived event | Durable semantic event with event-stream semantics. | Derived provenance; high fan-in uses derivation scopes. |
 
 Emit derived events only when downstream consumers need event semantics:
 immutability, event-time querying, trace as event, replay/archive participation,

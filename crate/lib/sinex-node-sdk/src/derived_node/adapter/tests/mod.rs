@@ -3,9 +3,9 @@ mod processing_replay;
 // Inline because these cover a private shutdown-signaling helper.
 #[cfg(feature = "messaging")]
 use super::log_self_observation_failure;
-use super::{DerivedNodeAdapter, stale_output_ids_or_fail_scope};
+use super::{AutomatonRuntime, stale_output_ids_or_fail_scope};
 use crate::derived_node::{
-    DerivedNodeConfig, DerivedOutput, DerivedTriggerContext, InputProvenanceFilter,
+    DerivedNodeConfig, DerivedOutput, AutomatonContext, InputProvenanceFilter,
     ScopeReconcilerWrapper, TransducerWrapper,
 };
 use crate::exploration::{ExplorationProvider, ExportFormat};
@@ -18,7 +18,7 @@ use crate::runtime::stream::{
 use crate::self_observation::{SelfObservationError, SelfObserver, SelfObserverConfig};
 use crate::shutdown::ShutdownConfig;
 use crate::{CheckpointManager, CheckpointState, EventTransport, NatsPublisher, SinexError};
-use crate::{NodeLogicError, ScopeReconcilerNode, TransducerNode};
+use crate::{NodeLogicError, ScopeReconciler, Transducer};
 use camino::Utf8PathBuf;
 use futures::TryStreamExt;
 use serde::{Deserialize, Serialize};
@@ -52,7 +52,7 @@ struct WildcardMaterialOnlyState {
 
 struct TestDerivedNode;
 
-impl TransducerNode for TestDerivedNode {
+impl Transducer for TestDerivedNode {
     type State = TestDerivedState;
     type Input = JsonValue;
     type Output = JsonValue;
@@ -77,7 +77,7 @@ impl TransducerNode for TestDerivedNode {
         &mut self,
         _state: &mut Self::State,
         _input: Self::Input,
-        _context: &DerivedTriggerContext,
+        _context: &AutomatonContext,
     ) -> std::result::Result<Option<DerivedOutput<Self::Output>>, NodeLogicError> {
         Ok(None)
     }
@@ -85,7 +85,7 @@ impl TransducerNode for TestDerivedNode {
 
 struct WildcardMaterialOnlyNode;
 
-impl TransducerNode for WildcardMaterialOnlyNode {
+impl Transducer for WildcardMaterialOnlyNode {
     type State = WildcardMaterialOnlyState;
     type Input = JsonValue;
     type Output = JsonValue;
@@ -114,7 +114,7 @@ impl TransducerNode for WildcardMaterialOnlyNode {
         &mut self,
         state: &mut Self::State,
         _input: Self::Input,
-        _context: &DerivedTriggerContext,
+        _context: &AutomatonContext,
     ) -> std::result::Result<Option<DerivedOutput<Self::Output>>, NodeLogicError> {
         state.processed += 1;
         Ok(None)
@@ -125,7 +125,7 @@ struct RetryDerivedNode {
     seen: Arc<AtomicUsize>,
 }
 
-impl TransducerNode for RetryDerivedNode {
+impl Transducer for RetryDerivedNode {
     type State = TestDerivedState;
     type Input = JsonValue;
     type Output = JsonValue;
@@ -150,7 +150,7 @@ impl TransducerNode for RetryDerivedNode {
         &mut self,
         _state: &mut Self::State,
         _input: Self::Input,
-        _context: &DerivedTriggerContext,
+        _context: &AutomatonContext,
     ) -> std::result::Result<Option<DerivedOutput<Self::Output>>, NodeLogicError> {
         self.seen.fetch_add(1, Ordering::SeqCst);
         Err(NodeLogicError::Processing("retry requested".to_string()))
@@ -159,7 +159,7 @@ impl TransducerNode for RetryDerivedNode {
 
 struct EmittingDerivedNode;
 
-impl TransducerNode for EmittingDerivedNode {
+impl Transducer for EmittingDerivedNode {
     type State = TestDerivedState;
     type Input = JsonValue;
     type Output = JsonValue;
@@ -184,7 +184,7 @@ impl TransducerNode for EmittingDerivedNode {
         &mut self,
         _state: &mut Self::State,
         _input: Self::Input,
-        context: &DerivedTriggerContext,
+        context: &AutomatonContext,
     ) -> std::result::Result<Option<DerivedOutput<Self::Output>>, NodeLogicError> {
         Ok(Some(DerivedOutput::transduced(
             json!({"ok": true}),
@@ -208,7 +208,7 @@ impl Serialize for UnserializableDerivedState {
 
 struct UnserializableDerivedNode;
 
-impl TransducerNode for UnserializableDerivedNode {
+impl Transducer for UnserializableDerivedNode {
     type State = UnserializableDerivedState;
     type Input = JsonValue;
     type Output = JsonValue;
@@ -233,7 +233,7 @@ impl TransducerNode for UnserializableDerivedNode {
         &mut self,
         _state: &mut Self::State,
         _input: Self::Input,
-        _context: &DerivedTriggerContext,
+        _context: &AutomatonContext,
     ) -> std::result::Result<Option<DerivedOutput<Self::Output>>, NodeLogicError> {
         Ok(None)
     }
@@ -255,7 +255,7 @@ struct ScopeReconcilerOutput {
 
 struct TestScopeReconcilerNode;
 
-impl ScopeReconcilerNode for TestScopeReconcilerNode {
+impl ScopeReconciler for TestScopeReconcilerNode {
     type State = TestScopeReconcilerState;
     type Input = ScopeReconcilerInput;
     type Output = ScopeReconcilerOutput;
@@ -276,7 +276,7 @@ impl ScopeReconcilerNode for TestScopeReconcilerNode {
         ProcessingContext::Metadata
     }
 
-    fn scope_keys(&self, _input: &Self::Input, _context: &DerivedTriggerContext) -> Vec<String> {
+    fn scope_keys(&self, _input: &Self::Input, _context: &AutomatonContext) -> Vec<String> {
         vec!["default".into()]
     }
 
@@ -285,7 +285,7 @@ impl ScopeReconcilerNode for TestScopeReconcilerNode {
         _state: &mut Self::State,
         scope_key: &str,
         input: Self::Input,
-        context: &DerivedTriggerContext,
+        context: &AutomatonContext,
     ) -> Result<Vec<DerivedOutput<Self::Output>>, NodeLogicError> {
         Ok(vec![DerivedOutput::reconciled(
             ScopeReconcilerOutput {
@@ -303,7 +303,7 @@ impl ScopeReconcilerNode for TestScopeReconcilerNode {
         _state: &mut Self::State,
         scope_key: &str,
         working_set: Vec<Self::Input>,
-        context: &DerivedTriggerContext,
+        context: &AutomatonContext,
     ) -> Result<Vec<DerivedOutput<Self::Output>>, NodeLogicError> {
         if working_set.is_empty() {
             return Ok(Vec::new());
@@ -328,7 +328,7 @@ struct StatefulInvalidationState {
 
 struct StatefulInvalidationNode;
 
-impl ScopeReconcilerNode for StatefulInvalidationNode {
+impl ScopeReconciler for StatefulInvalidationNode {
     type State = StatefulInvalidationState;
     type Input = ScopeReconcilerInput;
     type Output = ScopeReconcilerOutput;
@@ -349,7 +349,7 @@ impl ScopeReconcilerNode for StatefulInvalidationNode {
         ProcessingContext::Metadata
     }
 
-    fn scope_keys(&self, _input: &Self::Input, _context: &DerivedTriggerContext) -> Vec<String> {
+    fn scope_keys(&self, _input: &Self::Input, _context: &AutomatonContext) -> Vec<String> {
         vec!["default".into()]
     }
 
@@ -358,7 +358,7 @@ impl ScopeReconcilerNode for StatefulInvalidationNode {
         _state: &mut Self::State,
         _scope_key: &str,
         _input: Self::Input,
-        _context: &DerivedTriggerContext,
+        _context: &AutomatonContext,
     ) -> Result<Vec<DerivedOutput<Self::Output>>, NodeLogicError> {
         Ok(Vec::new())
     }
@@ -368,7 +368,7 @@ impl ScopeReconcilerNode for StatefulInvalidationNode {
         state: &mut Self::State,
         _scope_key: &str,
         _working_set: Vec<Self::Input>,
-        _context: &DerivedTriggerContext,
+        _context: &AutomatonContext,
     ) -> Result<Vec<DerivedOutput<Self::Output>>, NodeLogicError> {
         state.invalidations_applied += 1;
         Ok(Vec::new())
@@ -377,7 +377,7 @@ impl ScopeReconcilerNode for StatefulInvalidationNode {
 
 struct DlqRetryDerivedNode;
 
-impl TransducerNode for DlqRetryDerivedNode {
+impl Transducer for DlqRetryDerivedNode {
     type State = TestDerivedState;
     type Input = JsonValue;
     type Output = JsonValue;
@@ -402,7 +402,7 @@ impl TransducerNode for DlqRetryDerivedNode {
         &mut self,
         _state: &mut Self::State,
         _input: Self::Input,
-        _context: &DerivedTriggerContext,
+        _context: &AutomatonContext,
     ) -> std::result::Result<Option<DerivedOutput<Self::Output>>, NodeLogicError> {
         Err(NodeLogicError::InputParsing("route me to dlq".to_string()))
     }
@@ -630,7 +630,7 @@ async fn log_self_observation_failure_accepts_publish_errors() -> TestResult<()>
 
 #[sinex_test]
 async fn derived_source_state_is_unhealthy_before_runtime_initialization() -> TestResult<()> {
-    let adapter = DerivedNodeAdapter::new(TransducerWrapper(TestDerivedNode));
+    let adapter = AutomatonRuntime::new(TransducerWrapper(TestDerivedNode));
 
     let state = ExplorationProvider::get_source_state(&adapter)?;
 
@@ -665,7 +665,7 @@ async fn derived_source_state_is_unhealthy_before_runtime_initialization() -> Te
 
 #[sinex_test]
 async fn derived_source_state_reports_processed_counters() -> TestResult<()> {
-    let mut adapter = DerivedNodeAdapter::new(TransducerWrapper(TestDerivedNode));
+    let mut adapter = AutomatonRuntime::new(TransducerWrapper(TestDerivedNode));
     adapter.persisted_state.events_processed = 7;
     adapter.run_events_processed = 3;
 
@@ -691,7 +691,7 @@ async fn derived_source_state_reports_processed_counters() -> TestResult<()> {
 
 #[sinex_test]
 async fn derived_ingestion_history_is_explicitly_unavailable() -> TestResult<()> {
-    let adapter = DerivedNodeAdapter::new(TransducerWrapper(TestDerivedNode));
+    let adapter = AutomatonRuntime::new(TransducerWrapper(TestDerivedNode));
 
     let error = ExplorationProvider::get_ingestion_history(&adapter, 10)
         .expect_err("derived nodes must not report an empty ingestion history as success");
@@ -702,7 +702,7 @@ async fn derived_ingestion_history_is_explicitly_unavailable() -> TestResult<()>
 
 #[sinex_test]
 async fn derived_export_is_explicitly_unavailable() -> TestResult<()> {
-    let adapter = DerivedNodeAdapter::new(TransducerWrapper(TestDerivedNode));
+    let adapter = AutomatonRuntime::new(TransducerWrapper(TestDerivedNode));
     let path = SanitizedPath::from_static("/tmp/derived-export.json");
 
     let error = ExplorationProvider::export_data(&adapter, &path, ExportFormat::Json)
@@ -716,7 +716,7 @@ async fn derived_export_is_explicitly_unavailable() -> TestResult<()> {
 #[sinex_test]
 async fn derived_source_state_reflects_failed_health_reporter(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
-    let mut adapter = DerivedNodeAdapter::new(TransducerWrapper(TestDerivedNode));
+    let mut adapter = AutomatonRuntime::new(TransducerWrapper(TestDerivedNode));
     adapter.runtime = Some(make_runtime_state(&ctx, "test-derived", None).await?);
 
     let observer = Arc::new(SelfObserver::new(
@@ -760,7 +760,7 @@ async fn derived_source_state_reflects_failed_health_reporter(ctx: TestContext) 
 #[sinex_test]
 async fn derived_health_check_reflects_failed_health_reporter(ctx: TestContext) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
-    let mut adapter = DerivedNodeAdapter::new(TransducerWrapper(TestDerivedNode));
+    let mut adapter = AutomatonRuntime::new(TransducerWrapper(TestDerivedNode));
     adapter.runtime = Some(make_runtime_state(&ctx, "test-derived", None).await?);
 
     let observer = Arc::new(SelfObserver::new(
@@ -807,7 +807,7 @@ async fn try_restore_from_file_rejects_missing_state_payload() -> TestResult<()>
     .save_to_file(&checkpoint_path)
     .await?;
 
-    let mut adapter = DerivedNodeAdapter::with_shutdown_config(
+    let mut adapter = AutomatonRuntime::with_shutdown_config(
         TransducerWrapper(TestDerivedNode),
         ShutdownConfig {
             checkpoint_path: Some(checkpoint_path.clone()),
@@ -839,7 +839,7 @@ async fn load_state_accepts_fresh_kv_checkpoint_without_state_payload(
         "fresh-consumer".to_string(),
     );
 
-    let mut adapter = DerivedNodeAdapter::new(TransducerWrapper(TestDerivedNode));
+    let mut adapter = AutomatonRuntime::new(TransducerWrapper(TestDerivedNode));
     adapter.checkpoint_manager = Some(Arc::new(manager));
     adapter
         .load_state()
@@ -877,7 +877,7 @@ async fn load_state_rejects_kv_checkpoint_without_state_payload(
     })?;
     kv.put(&key, corrupt.into()).await?;
 
-    let mut adapter = DerivedNodeAdapter::new(TransducerWrapper(TestDerivedNode));
+    let mut adapter = AutomatonRuntime::new(TransducerWrapper(TestDerivedNode));
     adapter.checkpoint_manager = Some(Arc::new(manager));
 
     let error = adapter
@@ -896,7 +896,7 @@ async fn process_batch_halts_on_retry_error() -> TestResult<()> {
     let node = RetryDerivedNode {
         seen: Arc::clone(&seen),
     };
-    let mut adapter = DerivedNodeAdapter::new(TransducerWrapper(node));
+    let mut adapter = AutomatonRuntime::new(TransducerWrapper(node));
 
     let error = adapter
         .process_batch(vec![

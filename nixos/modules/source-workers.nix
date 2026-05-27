@@ -292,6 +292,10 @@ let
     IOSchedulingClass = resources.ioSchedulingClass;
     Nice = resources.nice;
     TimeoutStopSec = resources.shutdownTimeoutSec;
+    # Single-daemon sinexd hosts every automaton + source-worker binding;
+    # DB pool warm-up + per-binding init can exceed the 30s default before
+    # the supervisor calls sd_notify(READY=1).
+    TimeoutStartSec = 600;
   } // optionalAttrs (resources.memoryMax != null) {
     MemoryMax = resources.memoryMax;
   } // optionalAttrs (resources.cpuQuota != null) {
@@ -344,6 +348,9 @@ let
       Group = serviceUser;
       Restart = cfg.runtime.restartPolicy.mode;
       RestartSec = cfg.runtime.restartPolicy.backoffSec;
+      # 60s watchdog; the spawn_watchdog impl runs the pinger on a
+      # dedicated std::thread (not a tokio task), so heavy COPY batches
+      # on the async runtime can't starve the ping.
       WatchdogSec = "60s";
       Environment = env;
       ProtectSystem = "strict";
@@ -415,23 +422,13 @@ let
       };
     };
 
-  mkCoreServices =
+  mkCoreServices = { automataEnabledList, sourceBindingsManifestFile, nodesOverlay }:
     let
       batch = coreCfg.ingestd.batch;
-      ingestArgs = concatStringsSep " " ([
+      sinexdArgs = concatStringsSep " " ([
         "--nats-url ${natsUrl}"
-        "--consumer-fetch-max-messages ${toString batch.size}"
-        # CLI arg expects milliseconds; NixOS option stores seconds for human readability.
-        "--consumer-fetch-timeout-ms ${toString (batch.timeoutSec * 1000)}"
         "--log-level ${coreCfg.ingestd.logLevel}"
       ] ++ coreCfg.ingestd.extraArgs);
-      gatewayArgs = concatStringsSep " " ([
-        "rpc-server"
-        # database_url is read from DATABASE_URL env var (set in baseEnv),
-        # so no --database-url CLI arg is needed here.
-        "--tcp-listen ${coreCfg.gateway.listenAddress}"
-        # TLS is mandatory for gateway RPC; cert/key must be provided via env vars.
-      ] ++ coreCfg.gateway.extraArgs);
       gatewayLimits = coreCfg.gateway.limits;
       gatewayAdminTokenRuntimeFile = "${runtimeDir}/gateway-admin-token";
       gatewayTlsCertRuntimeFile = "${runtimeDir}/gateway-server.pem";
@@ -525,36 +522,6 @@ let
             stage_file ${escapeShellArg (if gatewayTlsTrustAnchorSourceFile == null then "" else toString gatewayTlsTrustAnchorSourceFile)} ${escapeShellArg gatewayTlsTrustAnchorRuntimeFile} 0444
             stage_file ${escapeShellArg (if cfg.core.gateway.tlsClientCAFile == null then "" else toString cfg.core.gateway.tlsClientCAFile)} ${escapeShellArg gatewayTlsClientCaRuntimeFile} 0440
           '';
-      gatewayEnv = mkServiceEnv (
-        [
-          "RUST_LOG=${coreCfg.gateway.logLevel}"
-          "SINEX_GATEWAY_MAX_CONCURRENCY=${toString gatewayLimits.maxConcurrency}"
-          "SINEX_GATEWAY_REQUEST_TIMEOUT_SECS=${toString gatewayLimits.requestTimeoutSec}"
-          "SINEX_GATEWAY_MAX_BODY_BYTES=${toString gatewayLimits.maxBodyBytes}"
-          "SINEX_GATEWAY_MAX_BLOB_BYTES=${toString gatewayLimits.maxBlobBytes}"
-          # Pool sized per-service: total max divided by 4 service pools. Set the
-          # base so each pool gets a meaningful slice without exhausting Postgres.
-          "SINEX_GATEWAY_POOL_MAX_CONNECTIONS=${toString cfg.database.connectionPool.maxConnections}"
-          "SINEX_GATEWAY_POOL_MIN_CONNECTIONS=${toString cfg.database.connectionPool.minConnections}"
-          "SINEX_GATEWAY_POOL_ACQUIRE_TIMEOUT_SECS=${toString cfg.database.connectionPool.connectionTimeout}"
-        ]
-        ++ optional (gatewayAdminTokenFile != null) "SINEX_GATEWAY_ADMIN_TOKEN_FILE=${gatewayAdminTokenRuntimeFile}"
-        ++ optional (cfg.core.gateway.tlsCertFile != null) "SINEX_GATEWAY_TLS_CERT=${gatewayTlsCertRuntimeFile}"
-        ++ optional (cfg.core.gateway.tlsKeyFile != null) "SINEX_GATEWAY_TLS_KEY=${gatewayTlsKeyRuntimeFile}"
-        ++ optional (cfg.core.gateway.tlsClientCAFile != null) "SINEX_GATEWAY_TLS_CLIENT_CA=${gatewayTlsClientCaRuntimeFile}"
-        ++ optional (coreCfg.gateway.requireClientTLS) "SINEX_GATEWAY_REQUIRE_CLIENT_TLS=1"
-        # Rate limiting
-        ++ [
-          "SINEX_RPC_RATE_LIMIT_ENABLED=${if coreCfg.gateway.limits.rateLimit.enable then "true" else "false"}"
-          "SINEX_RPC_RATE_LIMIT_REQUESTS_PER_SEC=${toString coreCfg.gateway.limits.rateLimit.requestsPerSec}"
-          "SINEX_RPC_RATE_LIMIT_BURST=${toString coreCfg.gateway.limits.rateLimit.burst}"
-          "SINEX_RPC_RATE_LIMIT_IDLE_TIMEOUT_SECS=${toString coreCfg.gateway.limits.rateLimit.idleTimeoutSec}"
-          "SINEX_RPC_RATE_LIMIT_PER_MINUTE=${toString coreCfg.gateway.limits.rateLimit.distributedPerMinute}"
-          "SINEX_RPC_RATE_LIMIT_WINDOW_SECS=${toString coreCfg.gateway.limits.rateLimit.distributedWindowSec}"
-          "SINEX_NATIVE_MESSAGING_MAX_SIZE_BYTES=${toString coreCfg.gateway.nativeMessagingMaxSizeBytes}"
-        ]
-        ++ optional (coreCfg.gateway.corsOrigins != null) "SINEX_GATEWAY_CORS_ORIGINS=${coreCfg.gateway.corsOrigins}"
-      );
       # Ordering for core services.
       # Base: hard infrastructure that both services depend on.
       coreRequires =
@@ -570,92 +537,118 @@ let
     in
     if !coreEnabled then { } else
     {
-      "sinex-ingestd" = {
-        description = "Sinex ingestion daemon";
+      "sinexd" = {
+        description = "Sinex daemon (event engine + API + automata + source workers)";
         wantedBy = lib.optional cfg.runtime.target.attachToMultiUser "multi-user.target";
         restartIfChanged = cfg.runtime.restartOnSwitch;
-        after = coreAfter;
-        requires = coreRequires;
-        wants = coreWants;
-        unitConfig = restartRateLimits // { PartOf = [ "sinex-runtime.target" ]; } // existingPathAssertions (databaseSecretAssertPaths ++ natsSecretAssertPaths);
-        path = optionals (cfg.storage.blob.enable && cfg.storage.blob.legacyAnnexData) [ pkgs.git pkgs.git-annex ];
-        serviceConfig = mkBaseServiceConfig coreCfg.ingestd.resources
-          (
-            mkServiceEnv [
-              "RUST_LOG=${coreCfg.ingestd.logLevel}"
-              # Pool size and timeouts: read by sinex-ingestd via env vars.
-              "SINEX_INGESTD_POOL_SIZE=${toString cfg.database.connectionPool.maxConnections}"
-              "SINEX_INGESTD_POOL_ACQUIRE_TIMEOUT_SECS=${toString cfg.database.connectionPool.connectionTimeout}"
-              "SINEX_INGESTD_POOL_IDLE_TIMEOUT_SECS=${toString cfg.database.connectionPool.idleTimeout}"
-              # Ack-pending limits: read by sinex-ingestd via SINEX_INGESTD_CONSUMER_MAX_ACK_PENDING
-              # and SINEX_INGESTD_MATERIAL_SLICES_MAX_ACK_PENDING (clap env attribute).
-              "SINEX_INGESTD_CONSUMER_MAX_ACK_PENDING=${toString coreCfg.ingestd.consumerMaxAckPending}"
-              "SINEX_INGESTD_MATERIAL_SLICES_MAX_ACK_PENDING=${toString coreCfg.ingestd.materialSlicesMaxAckPending}"
-              # Explicit work and spool dirs prevent fallback to dirs::cache_dir() (~/.cache)
-              # which is blocked by ProtectHome = true in the systemd unit.
-              "SINEX_INGESTD_WORK_DIR=${stateRoot}/ingestd/work"
-              "SINEX_ASSEMBLER_STATE_DIR=${ingestSpool}"
-              # Schema and validation behaviour
-              "SINEX_INGESTD_GITOPS_ENABLED=${if coreCfg.ingestd.gitopsEnabled then "true" else "false"}"
-              "SINEX_SKIP_SCHEMA_SYNC=${if coreCfg.ingestd.skipSchemaSync then "true" else "false"}"
-              "SINEX_INGESTD_STRICT_VALIDATION=${if coreCfg.ingestd.strictValidation then "true" else "false"}"
-              "SINEX_VALIDATE_SCHEMAS=${if coreCfg.ingestd.validateSchemas then "true" else "false"}"
-              # When the NixOS module bootstraps JetStream streams declaratively, tell
-              # ingestd to skip its own stream bootstrap so the two sources of truth
-              # don't conflict on stream shape or subject overlap.
-              "SINEX_NATS_STREAMS_MANAGED_EXTERNALLY=${if natsBootstrapEnabled then "true" else "false"}"
-              # Operational intervals
-              "SINEX_INGESTD_SCHEMA_RELOAD_INTERVAL_SECS=${toString coreCfg.ingestd.schemaReloadIntervalSecs}"
-              "SINEX_INGESTD_STATS_LOG_INTERVAL_SECS=${toString coreCfg.ingestd.statsLogIntervalSecs}"
-            ]
-            ++ lib.optional
-              (
-                coreCfg.ingestd.blobGcIntervalSecs != null
-              ) "SINEX_INGESTD_BLOB_GC_INTERVAL_SECS=${toString coreCfg.ingestd.blobGcIntervalSecs}"
-          )
-          {
-            ExecStart = mkDatabasePasswordExec {
-              name = "ingestd";
-              command = "${sinexPackage}/bin/sinex-ingestd ${ingestArgs}";
-              passwordFile = if cfg.database.enable then effectiveDatabasePasswordFile else null;
-            };
-          };
-      };
-      "sinex-gateway" = {
-        description = "Sinex gateway";
-        wantedBy = lib.optional cfg.runtime.target.attachToMultiUser "multi-user.target";
-        restartIfChanged = cfg.runtime.restartOnSwitch;
-        after = gatewayAfter;
+        after = gatewayAfter ++ (nodesOverlay.afterUnits or [ ]);
         requires = coreRequires ++ optionals tlsAutoGenEnabled [ "sinex-tls-init.service" ];
-        wants = coreWants;
+        wants = coreWants ++ (nodesOverlay.wantsUnits or [ ]);
         unitConfig =
           restartRateLimits
           // { PartOf = [ "sinex-runtime.target" ]; }
           // existingPathAssertions (
             databaseSecretAssertPaths ++ natsSecretAssertPaths ++ gatewaySecretAssertPaths
           );
-        path = optionals (cfg.storage.blob.enable && cfg.storage.blob.legacyAnnexData) [ pkgs.git pkgs.git-annex ];
-        serviceConfig = mkBaseServiceConfig coreCfg.gateway.resources gatewayEnv (
-          {
-            Type = lib.mkForce "notify";
-            NotifyAccess = "main";
-            ExecStart = mkDatabasePasswordExec {
-              name = "gateway";
-              command = "${sinexPackage}/bin/sinex-gateway ${gatewayArgs}";
-              passwordFile = if cfg.database.enable then effectiveDatabasePasswordFile else null;
-            };
-          }
-          // optionalAttrs (gatewayRuntimeInputStageScript != null) {
-            ExecStartPre = lib.mkBefore [ "+${gatewayRuntimeInputStageScript}" ];
-          }
-        );
+        serviceConfig = mkBaseServiceConfig coreCfg.gateway.resources
+          (
+            mkServiceEnv (
+              [
+                "RUST_LOG=${coreCfg.ingestd.logLevel}"
+                # Event engine pool size and timeouts.
+                "SINEX_EVENT_ENGINE_POOL_SIZE=${toString cfg.database.connectionPool.maxConnections}"
+                "SINEX_EVENT_ENGINE_POOL_ACQUIRE_TIMEOUT_SECS=${toString cfg.database.connectionPool.connectionTimeout}"
+                "SINEX_EVENT_ENGINE_POOL_IDLE_TIMEOUT_SECS=${toString cfg.database.connectionPool.idleTimeout}"
+                # Ack-pending limits (read via env by IngestdConfig::from_args).
+                "SINEX_EVENT_ENGINE_CONSUMER_MAX_ACK_PENDING=${toString coreCfg.ingestd.consumerMaxAckPending}"
+                "SINEX_EVENT_ENGINE_MATERIAL_SLICES_MAX_ACK_PENDING=${toString coreCfg.ingestd.materialSlicesMaxAckPending}"
+                # Explicit work and spool dirs prevent fallback to dirs::cache_dir() (~/.cache)
+                # which is blocked by ProtectHome = true in the systemd unit.
+                "SINEX_EVENT_ENGINE_WORK_DIR=${stateRoot}/ingestd/work"
+                "SINEX_ASSEMBLER_STATE_DIR=${ingestSpool}"
+                # Schema and validation behaviour.
+                "SINEX_EVENT_ENGINE_GITOPS_ENABLED=${if coreCfg.ingestd.gitopsEnabled then "true" else "false"}"
+                "SINEX_SKIP_SCHEMA_SYNC=${if coreCfg.ingestd.skipSchemaSync then "true" else "false"}"
+                "SINEX_EVENT_ENGINE_STRICT_VALIDATION=${if coreCfg.ingestd.strictValidation then "true" else "false"}"
+                "SINEX_VALIDATE_SCHEMAS=${if coreCfg.ingestd.validateSchemas then "true" else "false"}"
+                # Skip internal stream bootstrap when the module manages streams declaratively.
+                "SINEX_NATS_STREAMS_MANAGED_EXTERNALLY=${if natsBootstrapEnabled then "true" else "false"}"
+                # Operational intervals.
+                "SINEX_EVENT_ENGINE_SCHEMA_RELOAD_INTERVAL_SECS=${toString coreCfg.ingestd.schemaReloadIntervalSecs}"
+                "SINEX_EVENT_ENGINE_STATS_LOG_INTERVAL_SECS=${toString coreCfg.ingestd.statsLogIntervalSecs}"
+                # API (gateway) config.
+                "SINEX_API_MAX_CONCURRENCY=${toString gatewayLimits.maxConcurrency}"
+                "SINEX_API_REQUEST_TIMEOUT_SECS=${toString gatewayLimits.requestTimeoutSec}"
+                "SINEX_API_MAX_BODY_BYTES=${toString gatewayLimits.maxBodyBytes}"
+                "SINEX_API_MAX_BLOB_BYTES=${toString gatewayLimits.maxBlobBytes}"
+                "SINEX_API_POOL_MAX_CONNECTIONS=${toString cfg.database.connectionPool.maxConnections}"
+                "SINEX_API_POOL_MIN_CONNECTIONS=${toString cfg.database.connectionPool.minConnections}"
+                "SINEX_API_POOL_ACQUIRE_TIMEOUT_SECS=${toString cfg.database.connectionPool.connectionTimeout}"
+                "SINEX_RPC_RATE_LIMIT_ENABLED=${if coreCfg.gateway.limits.rateLimit.enable then "true" else "false"}"
+                "SINEX_RPC_RATE_LIMIT_REQUESTS_PER_SEC=${toString coreCfg.gateway.limits.rateLimit.requestsPerSec}"
+                "SINEX_RPC_RATE_LIMIT_BURST=${toString coreCfg.gateway.limits.rateLimit.burst}"
+                "SINEX_RPC_RATE_LIMIT_IDLE_TIMEOUT_SECS=${toString coreCfg.gateway.limits.rateLimit.idleTimeoutSec}"
+                "SINEX_RPC_RATE_LIMIT_PER_MINUTE=${toString coreCfg.gateway.limits.rateLimit.distributedPerMinute}"
+                "SINEX_RPC_RATE_LIMIT_WINDOW_SECS=${toString coreCfg.gateway.limits.rateLimit.distributedWindowSec}"
+                "SINEX_NATIVE_MESSAGING_MAX_SIZE_BYTES=${toString coreCfg.gateway.nativeMessagingMaxSizeBytes}"
+                "SINEX_API_TCP_LISTEN=${coreCfg.gateway.listenAddress}"
+                # Collapsed-daemon selectors: tell sinexd which automata to
+                # host internally and where to load the source-binding
+                # manifest. Empty/unset = host none in that subsystem.
+                "SINEX_AUTOMATA_ENABLED=${concatStringsSep "," automataEnabledList}"
+              ]
+              ++ lib.optional (sourceBindingsManifestFile != null)
+                "SINEX_SOURCE_BINDINGS_PATH=${toString sourceBindingsManifestFile}"
+              ++ lib.optional
+                (coreCfg.ingestd.blobGcIntervalSecs != null)
+                "SINEX_EVENT_ENGINE_BLOB_GC_INTERVAL_SECS=${toString coreCfg.ingestd.blobGcIntervalSecs}"
+              ++ optional (gatewayAdminTokenFile != null) "SINEX_API_ADMIN_TOKEN_FILE=${gatewayAdminTokenRuntimeFile}"
+              ++ optional (cfg.core.gateway.tlsCertFile != null) "SINEX_API_TLS_CERT=${gatewayTlsCertRuntimeFile}"
+              ++ optional (cfg.core.gateway.tlsKeyFile != null) "SINEX_API_TLS_KEY=${gatewayTlsKeyRuntimeFile}"
+              ++ optional (cfg.core.gateway.tlsClientCAFile != null) "SINEX_API_TLS_CLIENT_CA=${gatewayTlsClientCaRuntimeFile}"
+              ++ optional (coreCfg.gateway.requireClientTLS) "SINEX_API_REQUIRE_CLIENT_TLS=1"
+              ++ optional (coreCfg.gateway.corsOrigins != null) "SINEX_API_CORS_ORIGINS=${coreCfg.gateway.corsOrigins}"
+              ++ (nodesOverlay.environment or [ ])
+            )
+          )
+          (
+            {
+              Type = lib.mkForce "notify";
+              NotifyAccess = "main";
+              ExecStart = mkDatabasePasswordExec {
+                name = "sinexd";
+                command = "${sinexPackage}/bin/sinexd ${sinexdArgs} serve";
+                passwordFile = if cfg.database.enable then effectiveDatabasePasswordFile else null;
+              };
+            }
+            // optionalAttrs (gatewayRuntimeInputStageScript != null || (nodesOverlay.execStartPre or [ ]) != [ ]) {
+              ExecStartPre = lib.mkBefore (
+                lib.optional (gatewayRuntimeInputStageScript != null) "+${gatewayRuntimeInputStageScript}"
+                ++ (nodesOverlay.execStartPre or [ ])
+              );
+            }
+            // optionalAttrs ((nodesOverlay.readWritePaths or [ ]) != [ ]) {
+              ReadWritePaths = lib.mkForce (unique (readWritePaths ++ nodesOverlay.readWritePaths));
+            }
+            // optionalAttrs ((nodesOverlay.protectHome or null) != null) {
+              ProtectHome = lib.mkForce nodesOverlay.protectHome;
+            }
+            // optionalAttrs ((nodesOverlay.environmentFile or [ ]) != [ ]) {
+              EnvironmentFile = nodesOverlay.environmentFile;
+            }
+            // optionalAttrs ((nodesOverlay.supplementaryGroups or [ ]) != [ ]) {
+              SupplementaryGroups = unique nodesOverlay.supplementaryGroups;
+            }
+          );
+        path = optionals (cfg.storage.blob.enable && cfg.storage.blob.legacyAnnexData) [ pkgs.git pkgs.git-annex ]
+          ++ (nodesOverlay.path or [ ]);
       };
     }
     // optionalAttrs tlsAutoGenEnabled {
       "sinex-tls-init" = {
         description = "Generate Sinex gateway TLS credentials";
         wantedBy = [ "multi-user.target" ];
-        before = [ "sinex-gateway.service" ];
+        before = [ "sinexd.service" ];
         serviceConfig = {
           ExecStart = genTlsScript;
           # Runs as root; the script sets 640 on key/cert after generation.
@@ -693,17 +686,20 @@ let
       };
     in
     {
-      "fs" = {
-        enable = sat.enable;
-        description = "Filesystem watcher (source-worker)";
-        adapterType = null;
-        adapterConfig = nodeConfig;
-        inherit instances resources;
-        extraArgs = sat.extraArgs;
-        extraEnv = { RUST_LOG = nodesCfg.defaults.logLevel; } // sat.env;
-        serviceConfigOverrides = {
-          ProtectHome = lib.mkForce "read-only";
+      bindings = {
+        "fs" = {
+          enable = sat.enable;
+          description = "Filesystem watcher (source-worker)";
+          adapterType = null;
+          adapterConfig = nodeConfig;
+          inherit instances resources;
+          extraArgs = sat.extraArgs;
+          extraEnv = { RUST_LOG = nodesCfg.defaults.logLevel; } // sat.env;
+          serviceConfigOverrides = { };
         };
+      };
+      overlay = {
+        protectHome = "read-only";
       };
     };
 
@@ -870,15 +866,10 @@ let
             exit 1
           fi
         '';
-      # Per-source-unit generatedBindings entries (service emission delegated).
-      serviceConfigOverrides = {
-        ProtectHome = lib.mkForce "read-only";
-        ReadWritePaths = readWritePaths ++ accessWritePaths;
-      } // optionalAttrs (sat.access.bindReadOnlyPaths != [ ] && accessSetupScript == null) {
-        BindReadOnlyPaths = renderBindReadOnlyPaths sat.access.bindReadOnlyPaths;
-      } // optionalAttrs (accessSetupScript != null) {
-        ExecStartPre = lib.mkBefore [ "+${accessSetupScript}" ];
-      };
+      # Post-collapse: per-binding service overrides become contributions
+      # to the sinexd unit's overlay. We do not emit per-source-worker
+      # systemd units anymore.
+      serviceConfigOverrides = { };
       terminalBindings =
         if instances <= 0 then { }
         else
@@ -908,22 +899,27 @@ let
           extraArgs = [ ];
         };
       };
-      # generatedUnitNames used for beforeUnits in access setup unit.
-      generatedUnitNames =
-        map
-          (group: "sinex-source-worker-${group.sourceUnitId}-1.service")
-          sourceUnitGroups;
+      # Post-collapse: all source-worker units fold into sinexd.service. The
+      # ACL setup must run before sinexd so the in-process terminal source
+      # units can traverse target-user paths.
       supportUnits = mkAccessSetupUnit {
         name = "sinex-terminal-target-access";
         description = "Prepare target-user access for the Sinex terminal node";
         script = accessSetupScript;
         writePaths = accessWritePaths;
-        beforeUnits = [ "sinex-preflight.service" ] ++ generatedUnitNames;
+        beforeUnits = [ "sinex-preflight.service" "sinexd.service" ];
       };
     in
     {
       bindings = terminalBindings // monitorBinding;
       inherit supportUnits;
+      overlay = {
+        protectHome = "read-only";
+        readWritePaths = accessWritePaths;
+        execStartPre = lib.optional (accessSetupScript != null) "+${accessSetupScript}";
+        bindReadOnlyPaths = lib.optionals (sat.access.bindReadOnlyPaths != [ ] && accessSetupScript == null)
+          (renderBindReadOnlyPaths sat.access.bindReadOnlyPaths);
+      };
     };
 
   # ── Desktop support glue ────────────────────────────────────────────────
@@ -1151,15 +1147,7 @@ let
         if targetHome != null
         then "${targetHome}/.local/share/activitywatch/aw-server-rust/sqlite.db"
         else "";
-      desktopServiceConfigOverrides = {
-        ProtectHome = lib.mkForce "read-only";
-        ReadWritePaths = readWritePaths ++ accessWritePaths;
-      } // optionalAttrs (sat.access.bindReadOnlyPaths != [ ] && accessSetupScript == null) {
-        BindReadOnlyPaths = renderBindReadOnlyPaths sat.access.bindReadOnlyPaths;
-      } // optionalAttrs (accessSetupScript != null) {
-        EnvironmentFile = [ "-${bridgeEnvFile}" ];
-        ExecStartPre = lib.mkBefore [ "+${accessSetupScript}" ];
-      };
+      desktopServiceConfigOverrides = { };
       desktopExtraEnv =
         clipboardEnv
         // sessionEnv
@@ -1173,10 +1161,10 @@ let
         afterUnits = runtimeRootUnits;
         wantsUnits = runtimeRootUnits;
         beforeUnits = [
+          # Post-collapse: every desktop source unit lives inside sinexd, so
+          # the runtime bridge setup must run before sinexd itself.
           "sinex-preflight.service"
-          "sinex-source-worker-desktop.activitywatch-1.service"
-          "sinex-source-worker-desktop.window-manager-1.service"
-          "sinex-source-worker-desktop.clipboard-1.service"
+          "sinexd.service"
         ];
       };
       # Hyprland rotates instance signature directories under
@@ -1251,6 +1239,7 @@ let
         # 30 s. The rest of the SqliteRow defaults stay (read_only=true, etc.).
         "desktop.activitywatch" = mkDesktopBinding "ActivityWatch SQLite (source-worker)" { path = activitywatchDbPath; immutable = false; } false;
         "desktop.window-manager" = mkDesktopBinding "Desktop window manager (source-worker)" { } false;
+      } // optionalAttrs sat.clipboard.enable {
         "desktop.clipboard" = mkDesktopBinding "Desktop clipboard (source-worker)" { } false;
       };
     in
@@ -1258,6 +1247,15 @@ let
       bindings = desktopBindings;
       supportUnits = supportUnits // aclRefreshUnits;
       paths = aclRefreshPaths;
+      overlay = {
+        protectHome = "read-only";
+        readWritePaths = accessWritePaths;
+        execStartPre = lib.optional (accessSetupScript != null) "+${accessSetupScript}";
+        environmentFile = lib.optional (accessSetupScript != null) "-${bridgeEnvFile}";
+        bindReadOnlyPaths = lib.optionals (sat.access.bindReadOnlyPaths != [ ] && accessSetupScript == null)
+          (renderBindReadOnlyPaths sat.access.bindReadOnlyPaths);
+        path = [ pkgs.hyprland ];
+      };
     };
 
   # ── Browser support glue ─────────────────────────────────────────────────
@@ -1355,26 +1353,13 @@ let
             exit 1
           fi
         '';
-      browserServiceConfigOverrides = {
-        # qutebrowser's history.sqlite is WAL-mode. SQLite needs write access
-        # to the DB + sidecars even for SELECT queries (#1325) to apply
-        # pending WAL frames during open. `accessWritePaths` already includes
-        # the SQLite directories (assembled from sqliteSources path dirs
-        # above) so the namespace allows write to them; the rest of /home
-        # stays read-only.
-        ProtectHome = lib.mkForce "read-only";
-        ReadWritePaths = readWritePaths ++ accessWritePaths;
-      } // optionalAttrs (sat.access.bindReadOnlyPaths != [ ] && accessSetupScript == null) {
-        BindReadOnlyPaths = renderBindReadOnlyPaths sat.access.bindReadOnlyPaths;
-      } // optionalAttrs (accessSetupScript != null) {
-        ExecStartPre = lib.mkBefore [ "+${accessSetupScript}" ];
-      };
+      browserServiceConfigOverrides = { };
       supportUnits = mkAccessSetupUnit {
         name = "sinex-browser-target-access";
         description = "Prepare target-user access for the Sinex browser node";
         script = accessSetupScript;
         writePaths = accessWritePaths;
-        beforeUnits = [ "sinex-preflight.service" "sinex-source-worker-browser.history-1.service" ];
+        beforeUnits = [ "sinex-preflight.service" "sinexd.service" ];
       };
     in
     {
@@ -1408,6 +1393,13 @@ let
         };
       };
       inherit supportUnits;
+      overlay = {
+        protectHome = "read-only";
+        readWritePaths = accessWritePaths;
+        execStartPre = lib.optional (accessSetupScript != null) "+${accessSetupScript}";
+        bindReadOnlyPaths = lib.optionals (sat.access.bindReadOnlyPaths != [ ] && accessSetupScript == null)
+          (renderBindReadOnlyPaths sat.access.bindReadOnlyPaths);
+      };
     };
 
   # ── System support glue ──────────────────────────────────────────────────
@@ -1482,26 +1474,31 @@ let
         inherit resources;
         extraArgs = sat.extraArgs;
         extraEnv = { RUST_LOG = nodesCfg.defaults.logLevel; } // sat.env;
-        serviceConfigOverrides = systemServiceConfig;
+        serviceConfigOverrides = { };
       };
     in
     # system.dbus emits a source-worker unit since #1235 wired
     # `RealDbusBackend` into `DbusStreamAdapter::open` (zbus 5.x).
     {
-      "system.journald" = mkSystemBinding "system.journald" "systemd journal (source-worker)";
-      "system.systemd" = mkSystemBinding "system.systemd" "systemd unit state (source-worker)";
-      "system.udev" = mkSystemBinding "system.udev" "udev events (source-worker)";
-      "system.dbus" = mkSystemBinding "system.dbus" "D-Bus signal stream (source-worker)";
-      "system.monitor" = {
-        enable = sat.enable;
-        description = "System monitoring lifecycle event (source-worker)";
-        adapterType = null;
-        adapterConfig = { };
-        instances = 1;
-        inherit resources;
-        extraEnv = { RUST_LOG = nodesCfg.defaults.logLevel; } // sat.env;
-        serviceConfigOverrides = { };
-        extraArgs = [ ];
+      bindings = {
+        "system.journald" = mkSystemBinding "system.journald" "systemd journal (source-worker)";
+        "system.systemd" = mkSystemBinding "system.systemd" "systemd unit state (source-worker)";
+        "system.udev" = mkSystemBinding "system.udev" "udev events (source-worker)";
+        "system.dbus" = mkSystemBinding "system.dbus" "D-Bus signal stream (source-worker)";
+        "system.monitor" = {
+          enable = sat.enable;
+          description = "System monitoring lifecycle event (source-worker)";
+          adapterType = null;
+          adapterConfig = { };
+          instances = 1;
+          inherit resources;
+          extraEnv = { RUST_LOG = nodesCfg.defaults.logLevel; } // sat.env;
+          serviceConfigOverrides = { };
+          extraArgs = [ ];
+        };
+      };
+      overlay = {
+        supplementaryGroups = systemServiceConfig.SupplementaryGroups or [ ];
       };
     };
 
@@ -1517,23 +1514,27 @@ let
       };
       scanCommand = concatStringsSep " " (
         [
-          "${sinexPackage}/bin/sinex-source-worker"
-          # --source-unit selects which source-unit factory runs. Without it,
-          # the binary refuses to start with "required argument missing".
-          # document.staging is the source-unit ID that owns the document
-          # parse-and-stage flow (per the parser inventory; verify with
-          # `sinex-source-worker --list-source-units`).
+          # Post-collapse: sinexd hosts the source-unit factory directly via
+          # `scan-source-unit`. Extra args are forwarded into the SDK CLI
+          # subcommand (so `--extra-arg scan --extra-arg --until --extra-arg
+          # snapshot` runs the snapshot scan exactly as the deleted
+          # sinex-source-worker trampoline did).
+          "${sinexPackage}/bin/sinexd"
+          "scan-source-unit"
           "--source-unit"
           "document.staging"
           "--service-name"
           "sinex-document-scan"
           "--node-config"
           (escapeShellArg nodeConfig)
+          "--extra-arg"
           "scan"
+          "--extra-arg"
           "--until"
+          "--extra-arg"
           "snapshot"
         ]
-        ++ sat.extraArgs
+        ++ concatMap (arg: [ "--extra-arg" arg ]) sat.extraArgs
       );
       env = mkServiceEnv ([ "RUST_LOG=${nodesCfg.defaults.logLevel}" ] ++ toEnvList sat.env);
       requiredUnits =
@@ -1608,7 +1609,7 @@ let
         description = "Sinex document snapshot scan";
         after = requiredUnits;
         requires = requiredUnits;
-        wants = optionals coreEnabled [ "sinex-ingestd.service" ];
+        wants = optionals coreEnabled [ "sinexd.service" ];
         unitConfig = existingPathAssertions (databaseSecretAssertPaths ++ natsSecretAssertPaths);
         path = optionals (cfg.storage.blob.enable && cfg.storage.blob.legacyAnnexData) [ pkgs.git pkgs.git-annex ];
         serviceConfig = (mkBaseServiceConfig resources env {
@@ -1646,78 +1647,45 @@ let
       inherit units supportUnits;
     };
 
-  mkAutomataProfile = profileName:
-    let
-      profiles = nodesCfg.automata.profiles;
-      defaultProfile = profiles.standard;
-    in
-    lib.attrByPath [ profileName ] defaultProfile profiles;
-
-  mkAutomataUnit = params:
-    let
-      profile = mkAutomataProfile params.profile;
-      resources = profile.resources;
-      # params.automaton is the --automaton selector (canonicalizer | analytics | health | session | hourly | daily).
-      # params.binary is kept for the --service-name value for backwards-compatible service identification.
-      automaton = params.automaton;
-      extraArgs = params.extraArgs or [ ];
-      execArgs = concatStringsSep " " (
-        [ "--automaton ${automaton}" "--service-name sinex-${params.binary}" ] ++ extraArgs ++ [ "service" ]
-      );
-      env = mkServiceEnv ([ "RUST_LOG=${nodesCfg.defaults.logLevel}" ] ++ toEnvList params.env);
-    in
-    {
-      description = params.description;
-      wantedBy = lib.optional cfg.runtime.target.attachToMultiUser "multi-user.target";
-      restartIfChanged = cfg.runtime.restartOnSwitch;
-      after = schemaApplyUnits ++ postgresServiceUnits ++ optionals coreEnabled [ "sinex-ingestd.service" ];
-      requires = schemaApplyUnits ++ postgresServiceUnits;
-      unitConfig = restartRateLimits // { PartOf = [ "sinex-runtime.target" ]; } // existingPathAssertions (databaseSecretAssertPaths ++ natsSecretAssertPaths);
-      serviceConfig = mkBaseServiceConfig resources env {
-        ExecStart = mkDatabasePasswordExec {
-          name = automaton;
-          command = "${sinexPackage}/bin/sinex-process ${execArgs}";
-          passwordFile = if cfg.database.enable then effectiveDatabasePasswordFile else null;
-        };
-        WorkingDirectory = stateRoot;
-      };
-    };
-
-  automataServices =
-    if !(nodesEnabled && nodesCfg.automata.enable) then { } else
-    concatMapAttrs
-      (
-        _: spec:
-          let
-            automatonCfg = nodesCfg.automata.${spec.optionName};
-          in
-          optionalAttrs automatonCfg.enable {
-            "${spec.serviceName}" = mkAutomataUnit {
-              inherit (spec) automaton binary description;
-              profile = automatonCfg.profile;
-              env = automatonCfg.env;
-              extraArgs = [ ];
-            };
-          }
-      )
-      (listToAttrs (map (spec: nameValuePair spec.serviceName spec) automataLib.specs));
+  # Post-collapse: automata are hosted in-process by sinexd via
+  # SINEX_AUTOMATA_ENABLED. The catalog still drives which names are
+  # eligible; selection comes from each automaton's enable flag.
+  automataEnabledNames =
+    if !(nodesEnabled && nodesCfg.automata.enable) then [ ] else
+    map (spec: spec.automaton)
+      (filter (spec: nodesCfg.automata.${spec.optionName}.enable) automataLib.specs);
 
   # ── Support-glue assembly ────────────────────────────────────────────────
-  # Service emission is delegated to source-bindings-generated.nix.
-  # This assembles only the ACL/env bridge support units and paths.
-  terminalGlue = if nodesEnabled && nodesCfg.terminal.enable then mkTerminalGlue else { bindings = { }; supportUnits = { }; };
-  desktopGlue = if nodesEnabled && nodesCfg.desktop.enable then mkDesktopGlue else { bindings = { }; supportUnits = { }; paths = { }; };
-  browserGlue = if nodesEnabled && nodesCfg.browser.enable then mkBrowserGlue else { bindings = { }; supportUnits = { }; };
-  systemGlue = if nodesEnabled && nodesCfg.system.enable then mkSystemGlue else { };
-  filesystemBindings = if nodesEnabled && nodesCfg.filesystem.enable then mkFilesystemBindings else { };
+  # Post-collapse: source-worker unit emission is gone. Each domain glue
+  # contributes: `bindings` (passed to sinexd via the source-binding manifest
+  # JSON), `supportUnits` (ACL/env bridge oneshot units that still need to
+  # run before sinexd), and `overlay` (per-domain serviceConfig contributions
+  # — ProtectHome / ReadWritePaths / ExecStartPre ACL / EnvironmentFile /
+  # SupplementaryGroups / unit path packages — merged into sinexd.service).
+  emptyGlue = { bindings = { }; supportUnits = { }; overlay = { }; };
+  terminalGlue =
+    if nodesEnabled && nodesCfg.terminal.enable then mkTerminalGlue
+    else emptyGlue;
+  desktopGlue =
+    if nodesEnabled && nodesCfg.desktop.enable then mkDesktopGlue
+    else emptyGlue // { paths = { }; };
+  browserGlue =
+    if nodesEnabled && nodesCfg.browser.enable then mkBrowserGlue
+    else emptyGlue;
+  systemGlue =
+    if nodesEnabled && nodesCfg.system.enable then mkSystemGlue
+    else { bindings = { }; overlay = { }; };
+  filesystemGlue =
+    if nodesEnabled && nodesCfg.filesystem.enable then mkFilesystemBindings
+    else { bindings = { }; overlay = { }; };
 
   # All domain-specific generatedBindings attrs merged together.
   allDomainBindings =
-    filesystemBindings
+    filesystemGlue.bindings
     // terminalGlue.bindings
     // browserGlue.bindings
     // desktopGlue.bindings
-    // systemGlue;
+    // systemGlue.bindings;
 
   # Support units (ACL/env bridges) that generate their own systemd services.
   nodesSupportUnits =
@@ -1725,31 +1693,82 @@ let
     // browserGlue.supportUnits
     // desktopGlue.supportUnits;
 
-  documentScanService =
-    if !(nodesEnabled && nodesCfg.document.enable) then { units = { }; supportUnits = { }; } else mkDocumentUnits;
+  # Per-domain serviceConfig contributions for sinexd. Each overlay is an
+  # attribute set with the optional fields documented on `mkCoreServices`.
+  # Union-merge by concatenating list fields and taking the strictest value
+  # for ProtectHome (read-only > true; we never need to relax to "tmpfs" or
+  # false because every source unit either tolerates read-only or pays for
+  # its own ACL bridge into the readonly namespace).
+  glueOverlays = [
+    filesystemGlue.overlay
+    terminalGlue.overlay
+    browserGlue.overlay
+    desktopGlue.overlay
+    systemGlue.overlay
+  ];
+  collectList = field: concatMap (o: o.${field} or [ ]) glueOverlays;
+  nodesOverlay = {
+    protectHome =
+      if any (o: (o.protectHome or null) == "read-only") glueOverlays then "read-only"
+      else null;
+    readWritePaths = unique (collectList "readWritePaths");
+    execStartPre = collectList "execStartPre";
+    environmentFile = collectList "environmentFile";
+    bindReadOnlyPaths = collectList "bindReadOnlyPaths";
+    supplementaryGroups = unique (collectList "supplementaryGroups");
+    path = collectList "path";
+    afterUnits = [ ];
+    wantsUnits = [ ];
+    environment = [ ];
+  };
 
-  coreServices = mkCoreServices;
-
-  # generatedUnits: used by preflight to know what units to expect.
-  # With the generated module taking over, the unit names follow the
-  # sinex-source-worker-<id>-<idx> pattern from source-bindings-generated.nix.
-  generatedSourceWorkerUnitNames =
+  # Source-binding manifest consumed by sinexd via SINEX_SOURCE_BINDINGS_PATH.
+  # Schema mirrors `sinexd::sources::bindings::SourceBindingsManifest`.
+  activeManifestBindings =
     if !nodesEnabled then [ ]
     else
       concatMap
         (id:
           let
-            binding = allDomainBindings.${id} or { enable = false; gated = false; instances = 1; };
+            binding = allDomainBindings.${id} or { };
+            enable = binding.enable or false;
+            gated = binding.gated or false;
+            instances = binding.instances or 1;
+            nodeConfig = binding.adapterConfig or { };
+            extraArgs = binding.extraArgs or [ ];
+            instanceList = range 1 instances;
           in
-          if binding.enable or false && !(binding.gated or false)
-          then
-            map (idx: "sinex-source-worker-${id}-${toString idx}")
-              (range 1 (binding.instances or 1))
+          if enable && !gated then
+            map
+              (idx: {
+                source_unit_id = id;
+                instance_idx = idx;
+                service_name = "sinex-source-worker-${id}-${toString idx}";
+                node_config = nodeConfig;
+                extra_args = extraArgs;
+              })
+              instanceList
           else [ ]
         )
         (attrNames allDomainBindings);
 
-  generatedUnits = generatedSourceWorkerUnitNames ++ attrNames automataServices;
+  sourceBindingsManifestFile =
+    if activeManifestBindings == [ ] then null
+    else pkgs.writeText "sinex-source-bindings.json" (
+      builtins.toJSON { bindings = activeManifestBindings; }
+    );
+
+  documentScanService =
+    if !(nodesEnabled && nodesCfg.document.enable) then { units = { }; supportUnits = { }; } else mkDocumentUnits;
+
+  coreServices = mkCoreServices {
+    automataEnabledList = automataEnabledNames;
+    inherit sourceBindingsManifestFile nodesOverlay;
+  };
+
+  # Preflight only needs to guard the collapsed sinexd unit. Source-worker
+  # and per-automaton unit names no longer exist.
+  generatedUnits = [ ];
 in
 {
   # Internal option declared here to break the evaluation cycle.
@@ -1778,7 +1797,6 @@ in
         nodesSupportUnits
         documentScanService.units
         documentScanService.supportUnits
-        automataServices
       ];
       systemd.paths = desktopGlue.paths or { };
       systemd.timers = mkMerge [

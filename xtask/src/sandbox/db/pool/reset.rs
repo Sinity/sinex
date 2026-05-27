@@ -430,7 +430,7 @@ pub(super) async fn ensure_pool_db_invariants(db_url: &str) -> TestResult<()> {
 /// Previous implementation ran 7 separate queries (~80ms each = ~560ms total).
 /// This batches all checks into one query for a single round-trip (~40ms).
 pub(super) async fn schema_mismatch_reason(pool: &DbPool) -> TestResult<Option<String>> {
-    let drift = sinex_schema::apply::diff(pool).await?;
+    let drift = sinex_db::schema::apply::diff(pool).await?;
     if drift.is_empty() {
         Ok(None)
     } else {

@@ -6,7 +6,7 @@ use sinex_primitives::env as shared_env;
 use sinex_primitives::{
     JsonValue,
     environment::{SinexEnvironment, environment},
-    events::{Event, OffsetKind, Provenance, admission::AdmittedEventIntent},
+    events::{Event, OffsetKind, Provenance, admission::EventIntent},
     nats::{NatsTrafficClass, insert_traffic_class_header},
     transport,
 };
@@ -88,7 +88,7 @@ fn destructure_provenance(provenance: &Provenance) -> ProvenanceFields {
                 source_event_ids: None,
             }
         }
-        Provenance::Synthesis {
+        Provenance::Derived {
             source_event_ids, ..
         } => ProvenanceFields {
             source_material_id: None,
@@ -291,18 +291,18 @@ impl NatsPublisher {
     /// Publish an admitted event intent envelope to durable transport.
     ///
     /// This is the NORMAL path for provenance-bearing events. Producers construct
-    /// an [`AdmittedEventIntent`] to declare "I've done my admission checks" and
+    /// an [`EventIntent`] to declare "I've done my admission checks" and
     /// the envelope is serialized as a single NATS message.
     ///
     /// Both `Class::Critical` (ingestor source-bearing events) and
-    /// `Class::Derived` (automaton synthesis outputs) ride the same raw-events
+    /// `Class::Derived` (automaton derived outputs) ride the same raw-events
     /// lane on the wire.
     ///
     /// Drain semantics: wait for in-flight ACKs (both Critical and Derived).
     /// Failure routing differs — see `transport::Class` docs.
     pub async fn publish_intent(
         &self,
-        intent: &AdmittedEventIntent,
+        intent: &EventIntent,
         class: transport::Class,
     ) -> NodeResult<()> {
         debug_assert!(
@@ -377,7 +377,7 @@ impl NatsPublisher {
     /// Grep for this name (`publish_raw_event_batch`) to audit call sites.
     ///
     /// Each event is serialized individually and published to the appropriate
-    /// NATS subject. This bypasses the `AdmittedEventIntent` envelope that normal
+    /// NATS subject. This bypasses the `EventIntent` envelope that normal
     /// producers must use.
     pub async fn publish_raw_event_batch(
         &self,

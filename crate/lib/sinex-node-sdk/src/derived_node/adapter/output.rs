@@ -1,4 +1,4 @@
-//! Output validation, observation, and event-construction for `DerivedNodeAdapter`.
+//! Output validation, observation, and event-construction for `AutomatonRuntime`.
 //!
 //! Carved out of `adapter/mod.rs` as part of #697. Pure mechanical move; the
 //! methods, control flow, and instrumentation are unchanged.
@@ -6,12 +6,12 @@
 #[cfg(feature = "messaging")]
 use super::log_self_observation_failure;
 use super::{
-    DERIVED_OUTPUT_PARENT_HARD_LIMIT, DERIVED_OUTPUT_PARENT_WARN_THRESHOLD, DerivedNodeAdapter,
+    DERIVED_OUTPUT_PARENT_HARD_LIMIT, DERIVED_OUTPUT_PARENT_WARN_THRESHOLD, AutomatonRuntime,
 };
 
-use crate::derived_node::context::DerivedTriggerContext;
+use crate::derived_node::context::AutomatonContext;
 use crate::derived_node::output::DerivedOutput;
-use crate::derived_node::traits::DerivedNodeImpl;
+use crate::derived_node::traits::Automaton;
 use crate::ids::deterministic_event_id;
 use crate::runtime::stream::NodeRuntimeState;
 use crate::{NodeResult, SinexError};
@@ -24,9 +24,9 @@ use sinex_primitives::{EventSource, EventType, HostName, Id, JsonValue};
 
 use tracing::{debug, warn};
 
-impl<N> DerivedNodeAdapter<N>
+impl<N> AutomatonRuntime<N>
 where
-    N: DerivedNodeImpl,
+    N: Automaton,
 {
     pub(super) fn validate_output_batch(
         &self,
@@ -41,7 +41,7 @@ where
 
             if parent_count > DERIVED_OUTPUT_PARENT_HARD_LIMIT {
                 let mut error = SinexError::validation(
-                    "derived output exceeds synthesis parent hard limit before persistence",
+                    "derived output exceeds derived parent hard limit before persistence",
                 )
                 .with_context("node", self.node.name())
                 .with_context("phase", phase)
@@ -72,7 +72,7 @@ where
                 max_parent_count,
                 threshold = DERIVED_OUTPUT_PARENT_WARN_THRESHOLD,
                 hard_limit = DERIVED_OUTPUT_PARENT_HARD_LIMIT,
-                "Derived output batch is approaching synthesis parent limits"
+                "Derived output batch is approaching derived parent limits"
             );
         }
 
@@ -176,7 +176,7 @@ where
         &self,
         outputs: Vec<DerivedOutput<JsonValue>>,
         fallback_source_id: Option<Id<Event<JsonValue>>>,
-        context: &DerivedTriggerContext,
+        context: &AutomatonContext,
     ) -> NodeResult<Vec<Event<JsonValue>>> {
         outputs
             .into_iter()
@@ -193,7 +193,7 @@ where
         output: DerivedOutput<JsonValue>,
         _output_index: usize,
         fallback_source_id: Option<Id<Event<JsonValue>>>,
-        context: &DerivedTriggerContext,
+        context: &AutomatonContext,
     ) -> NodeResult<Event<JsonValue>> {
         let DerivedOutput {
             payload,
@@ -247,7 +247,7 @@ where
                 }
             }
         };
-        let provenance = Provenance::Synthesis {
+        let provenance = Provenance::Derived {
             source_event_ids,
             operation_id: context.operation_id(),
         };
@@ -260,7 +260,7 @@ where
         id_anchor.extend_from_slice(resolved_event_type.as_bytes());
         id_anchor.push(0);
         id_anchor.extend_from_slice(filtered_payload.to_string().as_bytes());
-        if let Provenance::Synthesis {
+        if let Provenance::Derived {
             source_event_ids, ..
         } = &provenance
         {

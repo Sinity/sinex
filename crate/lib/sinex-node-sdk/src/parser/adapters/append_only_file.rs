@@ -105,7 +105,7 @@ impl InputShapeAdapter for AppendOnlyFileAdapter {
                 (Some(prev), Some(curr)) if prev != curr => {
                     // Rotation observed: reset to start-of-file, surface the
                     // transition on the first emitted record so parsers can react
-                    // (emit a `parser.stream_rotation_detected` synthesis event,
+                    // (emit a `parser.stream_rotation_detected` derived event,
                     // flush dedup window, etc.).
                     let marker = serde_json::json!({
                         "rotation_detected": true,

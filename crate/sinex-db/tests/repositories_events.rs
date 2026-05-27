@@ -1,0 +1,1892 @@
+use serde_json::json;
+use sinex_db::repositories::{
+    COPY_BATCH_THRESHOLD, DbPoolExt, ReplacementKind, ReplacementRecord, StreamBatchRow,
+};
+use sinex_db::{Event, Provenance};
+use sinex_primitives::Id;
+use sinex_primitives::Pagination;
+use sinex_primitives::Timestamp;
+use sinex_primitives::Uuid;
+use sinex_primitives::domain::{
+    DerivedNodeModel, EventSource, EventType, HostName, RecordedPath, SourceMaterialFormat,
+    SourceMaterialTimingInfoType, SyntheticTemporalPolicy,
+};
+use sinex_primitives::events::payloads::{FileCreatedPayload, KittyCommandExecutedPayload};
+use sinex_primitives::events::{DynamicPayload, EventId, SourceMaterial};
+use sinex_primitives::rpc::sources::{
+    SourceAnnotations, SourceMaterialMetadataContract, SourceMaterialStatistics, SourceOrigin,
+};
+use xtask::sandbox::sinex_test;
+
+fn stream_batch_material_row(
+    material_id: Id<SourceMaterial>,
+    anchor_byte: i64,
+) -> color_eyre::Result<StreamBatchRow> {
+    Ok(StreamBatchRow {
+        id: Uuid::now_v7(),
+        source: EventSource::new("test.source")?,
+        event_type: EventType::new("test.batch.material")?,
+        ts_orig: Timestamp::now(),
+        host: HostName::from_static("localhost"),
+        payload: json!({ "anchor": anchor_byte }),
+        source_material_id: Some(material_id),
+        anchor_byte: Some(anchor_byte),
+        offset_start: None,
+        offset_end: None,
+        offset_kind: None,
+        source_event_ids: None,
+        payload_schema_id: None,
+        source_run_id: None,
+        anchor_payload_hash: None,
+        associated_blob_ids: None,
+        temporal_policy: None,
+        semantics_version: None,
+        scope_key: None,
+        equivalence_key: None,
+        created_by_operation_id: None,
+        node_model: None,
+    })
+}
+
+#[sinex_test]
+async fn events_repository_inserts_typed_events(ctx: TestContext) -> TestResult<()> {
+    let material_record = ctx
+        .pool
+        .source_materials()
+        .register_in_flight(
+            sinex_db::repositories::source_materials::material_types::STREAM,
+            Some("test-event-source-material"),
+            json!({ "test": true }),
+        )
+        .await?;
+    let material_id = Id::<sinex_db::models::SourceMaterial>::from_uuid(material_record.id);
+
+    let mut payload = FileCreatedPayload::test_default(
+        RecordedPath::from_observed("/tmp/repo-insert.txt")
+            .map_err(|e| color_eyre::eyre::eyre!(e))?,
+    );
+    payload.size = 512;
+    let event = Event::builder(payload)
+        .with_provenance(Provenance::from_material(material_id, 0, None, None))
+        .build()
+        .expect("valid provenance");
+    let expected_host = event.host.clone();
+    let inserted = ctx.pool.events().insert(event).await?;
+    assert_eq!(inserted.source.as_str(), "fs-watcher");
+    assert_eq!(inserted.event_type.as_str(), "file.created");
+    assert_eq!(inserted.host, expected_host);
+    assert_eq!(inserted.payload["path"], json!("/tmp/repo-insert.txt"));
+    assert_eq!(inserted.payload["size"], json!(512));
+    assert!(inserted.id.is_some());
+    Ok(())
+}
+
+#[sinex_test]
+async fn events_repository_preserves_provenance(ctx: TestContext) -> TestResult<()> {
+    let material_record = ctx
+        .pool
+        .source_materials()
+        .register_in_flight(
+            sinex_db::repositories::source_materials::material_types::STREAM,
+            Some("test-source-material"),
+            json!({ "test": true }),
+        )
+        .await?;
+    let material_id = Id::<sinex_db::models::SourceMaterial>::from_uuid(material_record.id);
+
+    let source_payload = KittyCommandExecutedPayload::test_default("echo provenance");
+    let source_event = Event::builder(source_payload)
+        .with_provenance(Provenance::from_material(material_id, 0, None, None))
+        .build()
+        .expect("valid provenance");
+
+    let source = ctx.pool.events().insert(source_event).await?;
+    let source_id = source.id.unwrap();
+
+    let derived_payload = FileCreatedPayload::test_default(
+        RecordedPath::from_observed("/tmp/derived.txt").map_err(|e| color_eyre::eyre::eyre!(e))?,
+    );
+    let derived_event = Event::builder(derived_payload)
+        .from_parents(vec![source_id])?
+        .build()?;
+
+    let inserted = ctx.pool.events().insert(derived_event).await?;
+    match inserted.provenance() {
+        Provenance::Derived {
+            source_event_ids, ..
+        } => {
+            assert_eq!(source_event_ids.len(), 1);
+            assert_eq!(source_event_ids[0], source_id);
+        }
+        other => unreachable!("Expected derived provenance, got: {other:?}"),
+    }
+    Ok(())
+}
+
+#[sinex_test]
+async fn filter_tombstoned_accepts_typed_event_ids(ctx: TestContext) -> TestResult<()> {
+    let tombstoned_id = Id::<Event<serde_json::Value>>::from_uuid(Uuid::now_v7());
+    let live_id = Id::<Event<serde_json::Value>>::from_uuid(Uuid::now_v7());
+
+    sqlx::query!(
+        r#"
+        INSERT INTO core.event_tombstones (
+            id, source, event_type, ts_orig, ts_purged,
+            purge_reason, purge_operation_id, archived_at
+        )
+        VALUES (
+            $1::uuid, 'test.source', 'test.event', NOW(), NOW(),
+            'typed-id regression', $2::uuid, NOW()
+        )
+        "#,
+        tombstoned_id.as_uuid(),
+        Uuid::now_v7(),
+    )
+    .execute(&ctx.pool)
+    .await?;
+
+    let found = ctx
+        .pool
+        .events()
+        .filter_tombstoned(&[tombstoned_id, live_id])
+        .await?;
+
+    assert!(found.contains(&tombstoned_id));
+    assert!(!found.contains(&live_id));
+    Ok(())
+}
+
+#[sinex_test]
+async fn events_repository_rejects_unknown_source_run_id(ctx: TestContext) -> TestResult<()> {
+    let material_record = ctx
+        .pool
+        .source_materials()
+        .register_in_flight(
+            sinex_db::repositories::source_materials::material_types::STREAM,
+            Some("test-node-run-integrity-material"),
+            json!({ "test": true }),
+        )
+        .await?;
+    let material_id = Id::<sinex_db::models::SourceMaterial>::from_uuid(material_record.id);
+
+    let payload = FileCreatedPayload::test_default(
+        RecordedPath::from_observed("/tmp/node-run-integrity.txt")
+            .map_err(|e| color_eyre::eyre::eyre!(e))?,
+    );
+    let event = Event::builder(payload)
+        .with_provenance(Provenance::from_material(material_id, 0, None, None))
+        .build()
+        .expect("valid provenance")
+        .with_source_run_id(Uuid::now_v7());
+
+    let error = ctx
+        .pool
+        .events()
+        .insert(event)
+        .await
+        .expect_err("unknown source_run_id must be rejected");
+    let message = error.to_string();
+    let normalized_message = message.to_lowercase();
+    assert!(
+        normalized_message.contains("node_run")
+            || normalized_message.contains("foreign key")
+            || normalized_message.contains("constraint violation"),
+        "unexpected error message: {message}"
+    );
+
+    Ok(())
+}
+
+#[sinex_test]
+async fn stream_batch_insert_accepts_large_material_batches(ctx: TestContext) -> TestResult<()> {
+    let material_record = ctx
+        .pool
+        .source_materials()
+        .register_in_flight(
+            sinex_db::repositories::source_materials::material_types::STREAM,
+            Some("stream-batch-large-material"),
+            json!({ "test": true }),
+        )
+        .await?;
+    let material_id = Id::<SourceMaterial>::from_uuid(material_record.id);
+
+    let batch = (0..COPY_BATCH_THRESHOLD)
+        .map(|index| stream_batch_material_row(material_id, index as i64))
+        .collect::<color_eyre::Result<Vec<_>>>()?;
+
+    let result = ctx.pool.events().insert_stream_batch(&batch).await?;
+    assert_eq!(result.inserted_count, COPY_BATCH_THRESHOLD);
+    assert_eq!(
+        result.inserted_ids.as_ref().map(std::vec::Vec::len),
+        Some(COPY_BATCH_THRESHOLD)
+    );
+
+    let stored = ctx
+        .pool
+        .events()
+        .get_by_source(
+            &EventSource::new("test.source")?,
+            sinex_primitives::Pagination::new(None, None),
+        )
+        .await?;
+    assert_eq!(
+        stored
+            .iter()
+            .filter(|event| event.event_type.as_str() == "test.batch.material")
+            .count(),
+        COPY_BATCH_THRESHOLD
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn stream_batch_copy_roundtrip_diverse_payloads(ctx: TestContext) -> TestResult<()> {
+    // This test exercises the COPY-based batch insert path (>= 50 material-only rows).
+    // It creates events with payloads containing tabs, newlines, backslashes, Unicode,
+    // and various NULL optional fields, then reads them back and asserts every field
+    // roundtrips correctly.
+
+    let material_record = ctx
+        .pool
+        .source_materials()
+        .register_in_flight(
+            sinex_db::repositories::source_materials::material_types::STREAM,
+            Some("copy-roundtrip-diverse"),
+            json!({ "test": true }),
+        )
+        .await?;
+    let material_id = Id::<SourceMaterial>::from_uuid(material_record.id);
+
+    let batch_size = COPY_BATCH_THRESHOLD + 1; // 51 — forced COPY path
+
+    // Diverse payloads to exercise COPY escape serialization.
+    let payloads = vec![
+        json!({"text": "hello\tworld"}),            // literal tab
+        json!({"text": "line1\nline2"}),            // literal newline
+        json!({"text": "back\\slash"}),             // literal backslash
+        json!({"text": "tab\n\t and \\backslash"}), // mixed escape chars
+        json!({"text": "unicode: \u{00e9} \u{2603} \u{1f600}"}), // e-acute, snowman, emoji
+        json!({"text": "CJK: \u{4e2d}\u{6587}"}),   // Chinese characters
+        json!({"text": "\t\r\n\\\"\'"}),            // all special COPY chars
+        json!({"key": null}),                       // null JSON value
+        json!({"text": "", "empty": null}),         // empty string + null
+        json!({"text": "a".repeat(500), "count": 42}), // larger payload
+        json!({"nested": {"deep": {"array": [1,2,3]}, "tab": "\t"}}), // nested with tab
+    ];
+
+    let source = EventSource::new("test.copy")?;
+    let event_type = EventType::new("test.copy.roundtrip")?;
+    let host = HostName::from_static("copy-test-host");
+    let ts_orig = Timestamp::parse_rfc3339("2026-04-26T12:00:00.123456789Z")?;
+
+    let mut batch = Vec::with_capacity(batch_size);
+    for i in 0..batch_size {
+        let payload = payloads[i % payloads.len()].clone();
+        // Alternate optional-field patterns: even i has all optional fields set,
+        // odd i has them as None.
+        let (offset_start, offset_end, offset_kind) = if i % 2 == 0 {
+            (Some(0i64), Some(i as i64), Some("byte".to_string()))
+        } else {
+            (None, None, None)
+        };
+
+        batch.push(StreamBatchRow {
+            id: Uuid::now_v7(),
+            source: source.clone(),
+            event_type: event_type.clone(),
+            ts_orig,
+            host: host.clone(),
+            payload,
+            source_material_id: Some(material_id),
+            anchor_byte: Some(i as i64),
+            offset_start,
+            offset_end,
+            offset_kind,
+            source_event_ids: None,
+            payload_schema_id: None,
+            source_run_id: None,
+            anchor_payload_hash: None,
+            associated_blob_ids: None,
+            temporal_policy: None,
+            semantics_version: None,
+            scope_key: None,
+            equivalence_key: None,
+            created_by_operation_id: None,
+            node_model: None,
+        });
+    }
+
+    let result = ctx.pool.events().insert_stream_batch(&batch).await?;
+    assert_eq!(
+        result.inserted_count, batch_size,
+        "all {batch_size} events should be inserted"
+    );
+    assert_eq!(
+        result.inserted_ids.as_ref().map(Vec::len),
+        Some(batch_size),
+        "inserted_ids should contain all {batch_size} ids"
+    );
+
+    // Read back every event by ID and verify roundtrip.
+    for (i, row) in batch.iter().enumerate() {
+        let event_id = EventId::from_uuid(row.id);
+        let event = ctx
+            .pool
+            .events()
+            .get_by_id(event_id)
+            .await?
+            .unwrap_or_else(|| panic!("event {} (id={}) must exist in DB", i, row.id));
+
+        assert_eq!(
+            event.id.unwrap().to_uuid(),
+            row.id,
+            "id mismatch at index {i}"
+        );
+        assert_eq!(event.source, row.source, "source mismatch at index {i}");
+        assert_eq!(
+            event.event_type, row.event_type,
+            "event_type mismatch at index {i}"
+        );
+        assert_eq!(event.host, row.host, "host mismatch at index {i}");
+        assert_eq!(event.payload, row.payload, "payload mismatch at index {i}");
+        assert_eq!(
+            event.ts_orig,
+            Some(row.ts_orig),
+            "ts_orig mismatch at index {i}"
+        );
+
+        // Verify material provenance fields.
+        let prov = event.provenance();
+        match prov {
+            Provenance::Material {
+                id,
+                anchor_byte,
+                offset_start,
+                offset_end,
+                offset_kind,
+            } => {
+                assert_eq!(
+                    *id,
+                    row.source_material_id.unwrap(),
+                    "material id mismatch at index {i}"
+                );
+                assert_eq!(
+                    *anchor_byte,
+                    row.anchor_byte.unwrap(),
+                    "anchor_byte mismatch at index {i}"
+                );
+                assert_eq!(
+                    *offset_start, row.offset_start,
+                    "offset_start mismatch at index {i}"
+                );
+                assert_eq!(
+                    *offset_end, row.offset_end,
+                    "offset_end mismatch at index {i}"
+                );
+                // When the row carries no explicit offset_kind, the readback
+                // defaults to OffsetKind::Byte.
+                if let Some(ref kind) = row.offset_kind {
+                    assert_eq!(
+                        offset_kind.as_wire_str(),
+                        kind.as_str(),
+                        "offset_kind mismatch at index {i}"
+                    );
+                }
+            }
+            other => unreachable!(
+                "event {} should have material provenance, got: {:?}",
+                i, other
+            ),
+        }
+
+        // NULL fields should remain NULL.
+        assert!(
+            matches!(&event.provenance, Provenance::Material { .. }),
+            "provenance should be Material at index {i}"
+        );
+        assert!(
+            event.payload_schema_id.is_none(),
+            "payload_schema_id should be None at index {i}"
+        );
+        assert!(
+            event.source_run_id.is_none(),
+            "source_run_id should be None at index {i}"
+        );
+        assert!(
+            event.associated_blob_ids.is_none(),
+            "associated_blob_ids should be None at index {i}"
+        );
+        assert!(
+            event.temporal_policy.is_none(),
+            "temporal_policy should be None at index {i}"
+        );
+        assert!(
+            event.semantics_version.is_none(),
+            "semantics_version should be None at index {i}"
+        );
+        assert!(
+            event.scope_key.is_none(),
+            "scope_key should be None at index {i}"
+        );
+        assert!(
+            event.equivalence_key.is_none(),
+            "equivalence_key should be None at index {i}"
+        );
+        assert!(
+            event.created_by_operation_id.is_none(),
+            "created_by_operation_id should be None at index {i}"
+        );
+        assert!(
+            event.node_model.is_none(),
+            "node_model should be None at index {i}"
+        );
+    }
+
+    Ok(())
+}
+
+#[sinex_test]
+async fn lifecycle_id_queries_order_same_timestamp_rows_by_id(ctx: TestContext) -> TestResult<()> {
+    let material_record = ctx
+        .pool
+        .source_materials()
+        .register_in_flight(
+            sinex_db::repositories::source_materials::material_types::STREAM,
+            Some("lifecycle-id-ordering-material"),
+            json!({ "test": true }),
+        )
+        .await?;
+    let material_id = Id::<SourceMaterial>::from_uuid(material_record.id);
+    let source = EventSource::new("test.lifecycle.order")?;
+    let ts_orig = Timestamp::parse_rfc3339("2026-01-01T00:00:00Z")?;
+
+    let first_id = Uuid::now_v7();
+    let second_id = Uuid::now_v7();
+    let (lower_id, higher_id) = if first_id.as_u128() <= second_id.as_u128() {
+        (first_id, second_id)
+    } else {
+        (second_id, first_id)
+    };
+
+    let mut higher_row = stream_batch_material_row(material_id, 1)?;
+    higher_row.id = higher_id;
+    higher_row.source = source.clone();
+    higher_row.ts_orig = ts_orig;
+
+    let mut lower_row = stream_batch_material_row(material_id, 0)?;
+    lower_row.id = lower_id;
+    lower_row.source = source.clone();
+    lower_row.ts_orig = ts_orig;
+
+    ctx.pool()
+        .events()
+        .insert_stream_batch(&[higher_row, lower_row])
+        .await?;
+
+    let live_ids = ctx
+        .pool()
+        .events()
+        .get_live_event_ids(Some(&source), None, 10)
+        .await?;
+    assert_eq!(live_ids, vec![lower_id, higher_id]);
+
+    let archive_operation_id = Uuid::now_v7().to_string();
+    ctx.pool()
+        .events()
+        .execute_cascade_archive(
+            &[higher_id, lower_id],
+            "archive lifecycle ordering regression",
+            &archive_operation_id,
+            "test",
+        )
+        .await?;
+
+    let archived_ids = ctx
+        .pool()
+        .events()
+        .get_archived_event_ids(Some(&source), None, 10)
+        .await?;
+    assert_eq!(archived_ids, vec![lower_id, higher_id]);
+    Ok(())
+}
+
+#[sinex_test]
+async fn get_material_root_events_in_range_excludes_synthesis_rows(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let material_record = ctx
+        .pool
+        .source_materials()
+        .register_in_flight(
+            sinex_db::repositories::source_materials::material_types::STREAM,
+            Some("material-root-range-filter"),
+            json!({ "test": true }),
+        )
+        .await?;
+    let material_id = Id::<SourceMaterial>::from_uuid(material_record.id);
+    let source = EventSource::new("test.repo.range.filter")?;
+    let start = Timestamp::now() - time::Duration::seconds(1);
+
+    let material_event = DynamicPayload::new(
+        source.as_str(),
+        "test.repo.range.material",
+        json!({ "kind": "material" }),
+    )
+    .from_material(material_id)
+    .build()?;
+    let inserted_material = ctx.pool.events().insert(material_event).await?;
+    let material_event_id = inserted_material
+        .id
+        .expect("material event must have an id");
+
+    let derived_event = DynamicPayload::new(
+        source.as_str(),
+        "test.repo.range.derived",
+        json!({ "kind": "derived" }),
+    )
+    .from_parents(vec![material_event_id])?
+    .build()?;
+    ctx.pool.events().insert(derived_event).await?;
+
+    let end = Timestamp::now() + time::Duration::seconds(1);
+    let stored = ctx
+        .pool
+        .events()
+        .get_material_root_events_in_range(&source, start, end, Pagination::new(Some(10), None))
+        .await?;
+
+    assert_eq!(
+        stored.len(),
+        1,
+        "only material-provenance rows should be returned"
+    );
+    assert_eq!(stored[0].event_type.as_str(), "test.repo.range.material");
+    assert!(
+        matches!(stored[0].provenance(), Provenance::Material { .. }),
+        "material-root query must not return derived rows"
+    );
+
+    Ok(())
+}
+
+#[sinex_test]
+async fn stream_batch_insert_rejects_self_referential_synthesis_rows(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let _ = ctx;
+    let event_id = Uuid::now_v7();
+    let batch = vec![StreamBatchRow {
+        id: event_id,
+        source: EventSource::new("test.source")?,
+        event_type: EventType::new("test.batch.derived")?,
+        ts_orig: Timestamp::now(),
+        host: HostName::from_static("localhost"),
+        payload: json!({ "self_ref": true }),
+        source_material_id: None,
+        anchor_byte: None,
+        offset_start: None,
+        offset_end: None,
+        offset_kind: None,
+        source_event_ids: Some(vec![EventId::from_uuid(event_id)]),
+        payload_schema_id: None,
+        source_run_id: None,
+        anchor_payload_hash: None,
+        associated_blob_ids: None,
+        temporal_policy: None,
+        semantics_version: None,
+        scope_key: None,
+        equivalence_key: None,
+        created_by_operation_id: None,
+        node_model: None,
+    }];
+
+    let error = ctx
+        .pool
+        .events()
+        .insert_stream_batch(&batch)
+        .await
+        .expect_err("self-referential derived batch should be rejected");
+    assert!(
+        error
+            .to_string()
+            .contains("cycle detected in derived provenance"),
+        "unexpected error: {error}"
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn stream_batch_insert_rejects_intra_batch_synthesis_cycles(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let _ = ctx;
+    let first_id = Uuid::now_v7();
+    let second_id = Uuid::now_v7();
+    let batch = vec![
+        StreamBatchRow {
+            id: first_id,
+            source: EventSource::new("test.source")?,
+            event_type: EventType::new("test.batch.derived")?,
+            ts_orig: Timestamp::now(),
+            host: HostName::from_static("localhost"),
+            payload: json!({ "cycle": "first" }),
+            source_material_id: None,
+            anchor_byte: None,
+            offset_start: None,
+            offset_end: None,
+            offset_kind: None,
+            source_event_ids: Some(vec![EventId::from_uuid(second_id)]),
+            payload_schema_id: None,
+            source_run_id: None,
+            anchor_payload_hash: None,
+            associated_blob_ids: None,
+            temporal_policy: None,
+            semantics_version: None,
+            scope_key: None,
+            equivalence_key: None,
+            created_by_operation_id: None,
+            node_model: None,
+        },
+        StreamBatchRow {
+            id: second_id,
+            source: EventSource::new("test.source")?,
+            event_type: EventType::new("test.batch.derived")?,
+            ts_orig: Timestamp::now(),
+            host: HostName::from_static("localhost"),
+            payload: json!({ "cycle": "second" }),
+            source_material_id: None,
+            anchor_byte: None,
+            offset_start: None,
+            offset_end: None,
+            offset_kind: None,
+            source_event_ids: Some(vec![EventId::from_uuid(first_id)]),
+            payload_schema_id: None,
+            source_run_id: None,
+            anchor_payload_hash: None,
+            associated_blob_ids: None,
+            temporal_policy: None,
+            semantics_version: None,
+            scope_key: None,
+            equivalence_key: None,
+            created_by_operation_id: None,
+            node_model: None,
+        },
+    ];
+
+    let error = ctx
+        .pool
+        .events()
+        .insert_stream_batch(&batch)
+        .await
+        .expect_err("intra-batch derived cycle should be rejected");
+    assert!(
+        error
+            .to_string()
+            .contains("cycle detected in derived provenance within batch"),
+        "unexpected error: {error}"
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn register_external_in_flight_uses_provided_id(ctx: TestContext) -> TestResult<()> {
+    let forced_id = uuid::Uuid::now_v7();
+    let identifier = format!("test-material-{forced_id}");
+    let record = ctx
+        .pool
+        .source_materials()
+        .register_external_in_flight(
+            forced_id,
+            sinex_db::repositories::source_materials::material_types::FILE,
+            Some(&identifier),
+            json!({"note": "external registration"}),
+            Timestamp::now(),
+        )
+        .await?;
+
+    assert_eq!(record.id, forced_id);
+    assert_eq!(record.source_identifier, identifier);
+    Ok(())
+}
+
+#[sinex_test]
+async fn register_material_persists_source_material_metadata_contract(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let identifier = format!("contract-material-{}.sqlite3", uuid::Uuid::now_v7());
+    let mut contract = SourceMaterialMetadataContract::new(
+        SourceMaterialFormat::Sqlite,
+        SourceMaterialTimingInfoType::Declared,
+    );
+    contract.origin = Some(SourceOrigin {
+        source_uri: Some(identifier.clone()),
+        ..SourceOrigin::default()
+    });
+    contract.annotations = Some(SourceAnnotations {
+        reason: Some("operator-staged atuin snapshot".to_string()),
+        tags: vec!["shell".to_string(), "sqlite".to_string()],
+        ..SourceAnnotations::default()
+    });
+    contract.statistics = Some(SourceMaterialStatistics {
+        total_bytes: Some(2048),
+        record_count: Some(17),
+        ..SourceMaterialStatistics::default()
+    });
+
+    let material =
+        sinex_db::repositories::SourceMaterial::file(&identifier).with_metadata_contract(contract);
+    let record = ctx
+        .pool
+        .source_materials()
+        .register_material(material)
+        .await?;
+
+    assert_eq!(record.timing_info_type, "declared");
+    let persisted = SourceMaterialMetadataContract::from_metadata(&record.metadata)
+        .expect("registered material should retain contract metadata");
+    assert_eq!(persisted.version, SourceMaterialMetadataContract::VERSION);
+    assert_eq!(persisted.format, SourceMaterialFormat::Sqlite);
+    assert_eq!(persisted.timing, SourceMaterialTimingInfoType::Declared);
+    assert_eq!(
+        persisted
+            .origin
+            .as_ref()
+            .and_then(|origin| origin.source_uri.as_deref()),
+        Some(identifier.as_str())
+    );
+    assert_eq!(
+        persisted
+            .annotations
+            .as_ref()
+            .and_then(|annotations| annotations.reason.as_deref()),
+        Some("operator-staged atuin snapshot")
+    );
+    assert_eq!(
+        persisted
+            .statistics
+            .as_ref()
+            .and_then(|statistics| statistics.record_count),
+        Some(17)
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn register_in_flight_preserves_explicit_source_material_metadata_contract(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let identifier = format!("in-flight-contract-{}.sqlite3", uuid::Uuid::now_v7());
+    let mut contract = SourceMaterialMetadataContract::new(
+        SourceMaterialFormat::Sqlite,
+        SourceMaterialTimingInfoType::Declared,
+    );
+    contract.origin = Some(SourceOrigin {
+        source_uri: Some(identifier.clone()),
+        ..SourceOrigin::default()
+    });
+    contract.annotations = Some(SourceAnnotations {
+        reason: Some("operator supplied an Atuin sqlite source".to_string()),
+        tags: vec!["atuin".to_string(), "shell".to_string()],
+        ..SourceAnnotations::default()
+    });
+
+    let record = ctx
+        .pool
+        .source_materials()
+        .register_in_flight(
+            sinex_db::repositories::source_materials::material_types::FILE,
+            Some(&identifier),
+            contract.metadata_patch(),
+        )
+        .await?;
+
+    assert_eq!(record.timing_info_type, "declared");
+    let persisted = SourceMaterialMetadataContract::from_metadata(&record.metadata)
+        .expect("explicit contract should survive in-flight registration");
+    assert_eq!(persisted.format, SourceMaterialFormat::Sqlite);
+    assert_eq!(persisted.timing, SourceMaterialTimingInfoType::Declared);
+    assert_eq!(
+        persisted
+            .annotations
+            .as_ref()
+            .and_then(|annotations| annotations.reason.as_deref()),
+        Some("operator supplied an Atuin sqlite source")
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn update_metadata_preserves_source_material_metadata_contract(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let identifier = format!("update-contract-{}.sqlite3", uuid::Uuid::now_v7());
+    let contract = SourceMaterialMetadataContract::new(
+        SourceMaterialFormat::Sqlite,
+        SourceMaterialTimingInfoType::Declared,
+    );
+    let material =
+        sinex_db::repositories::SourceMaterial::file(&identifier).with_metadata_contract(contract);
+    let record = ctx
+        .pool
+        .source_materials()
+        .register_material(material)
+        .await?;
+    let material_id = Id::<sinex_db::SourceMaterialRecord>::from_uuid(record.id);
+
+    let updated = ctx
+        .pool
+        .source_materials()
+        .update_metadata(
+            material_id,
+            json!({
+                "note": "caller metadata is allowed",
+                "source_material_contract": {
+                    "version": 1,
+                    "format": "text",
+                    "timing": "realtime"
+                }
+            }),
+        )
+        .await?
+        .expect("material metadata update should return the updated record");
+
+    assert_eq!(
+        updated.metadata["note"],
+        json!("caller metadata is allowed")
+    );
+    let persisted = SourceMaterialMetadataContract::from_metadata(&updated.metadata)
+        .expect("reserved source-material contract should remain parseable");
+    assert_eq!(persisted.format, SourceMaterialFormat::Sqlite);
+    assert_eq!(persisted.timing, SourceMaterialTimingInfoType::Declared);
+    Ok(())
+}
+
+#[sinex_test]
+async fn register_external_in_flight_resets_terminal_status_to_sensing(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let forced_id = uuid::Uuid::now_v7();
+    let identifier = format!("test-material-restart-{forced_id}");
+    let started_at = Timestamp::now();
+    let record = ctx
+        .pool
+        .source_materials()
+        .register_external_in_flight(
+            forced_id,
+            sinex_db::repositories::source_materials::material_types::FILE,
+            Some(&identifier),
+            json!({"note": "first registration"}),
+            started_at,
+        )
+        .await?;
+    ctx.pool
+        .source_materials()
+        .mark_as_failed(
+            Id::<sinex_db::SourceMaterialRecord>::from_uuid(record.id),
+            "synthetic failure",
+        )
+        .await?;
+
+    let restarted = ctx
+        .pool
+        .source_materials()
+        .register_external_in_flight(
+            forced_id,
+            sinex_db::repositories::source_materials::material_types::FILE,
+            Some(&identifier),
+            json!({"note": "restart"}),
+            Timestamp::now(),
+        )
+        .await?;
+
+    assert_eq!(restarted.status, "sensing");
+    assert!(restarted.end_time.is_none());
+    Ok(())
+}
+
+#[sinex_test]
+async fn register_in_flight_restart_preserves_existing_contract_without_explicit_contract(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let identifier = format!(
+        "test-material-natural-key-contract-restart-{}.sqlite3",
+        uuid::Uuid::now_v7()
+    );
+    let mut contract = SourceMaterialMetadataContract::new(
+        SourceMaterialFormat::Sqlite,
+        SourceMaterialTimingInfoType::Declared,
+    );
+    contract.annotations = Some(SourceAnnotations {
+        reason: Some("first natural-key registration defines parser contract".to_string()),
+        tags: vec!["sqlite".to_string()],
+        ..SourceAnnotations::default()
+    });
+
+    ctx.pool
+        .source_materials()
+        .register_in_flight(
+            sinex_db::repositories::source_materials::material_types::FILE,
+            Some(&identifier),
+            contract.metadata_patch(),
+        )
+        .await?;
+
+    let restarted = ctx
+        .pool
+        .source_materials()
+        .register_in_flight(
+            sinex_db::repositories::source_materials::material_types::FILE,
+            Some(&identifier),
+            json!({"note": "restart without contract"}),
+        )
+        .await?;
+
+    assert_eq!(restarted.timing_info_type, "declared");
+    let persisted = SourceMaterialMetadataContract::from_metadata(&restarted.metadata)
+        .expect("natural-key restart without explicit contract should preserve existing contract");
+    assert_eq!(persisted.format, SourceMaterialFormat::Sqlite);
+    assert_eq!(persisted.timing, SourceMaterialTimingInfoType::Declared);
+    assert_eq!(
+        persisted
+            .annotations
+            .as_ref()
+            .and_then(|annotations| annotations.reason.as_deref()),
+        Some("first natural-key registration defines parser contract")
+    );
+    assert_eq!(
+        restarted.metadata["note"],
+        json!("restart without contract")
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn register_external_in_flight_restart_preserves_existing_contract_without_explicit_contract(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let forced_id = uuid::Uuid::now_v7();
+    let identifier = format!("test-material-contract-restart-{forced_id}.sqlite3");
+    let mut contract = SourceMaterialMetadataContract::new(
+        SourceMaterialFormat::Sqlite,
+        SourceMaterialTimingInfoType::Declared,
+    );
+    contract.origin = Some(SourceOrigin {
+        source_uri: Some(identifier.clone()),
+        ..SourceOrigin::default()
+    });
+    contract.annotations = Some(SourceAnnotations {
+        reason: Some("first registration defines parser contract".to_string()),
+        tags: vec!["sqlite".to_string()],
+        ..SourceAnnotations::default()
+    });
+
+    ctx.pool
+        .source_materials()
+        .register_external_in_flight(
+            forced_id,
+            sinex_db::repositories::source_materials::material_types::FILE,
+            Some(&identifier),
+            contract.metadata_patch(),
+            Timestamp::now(),
+        )
+        .await?;
+
+    let restarted = ctx
+        .pool
+        .source_materials()
+        .register_external_in_flight(
+            forced_id,
+            sinex_db::repositories::source_materials::material_types::FILE,
+            Some(&identifier),
+            json!({"note": "restart without contract"}),
+            Timestamp::now(),
+        )
+        .await?;
+
+    assert_eq!(restarted.timing_info_type, "declared");
+    let persisted = SourceMaterialMetadataContract::from_metadata(&restarted.metadata)
+        .expect("restart without explicit contract should preserve existing contract");
+    assert_eq!(persisted.format, SourceMaterialFormat::Sqlite);
+    assert_eq!(persisted.timing, SourceMaterialTimingInfoType::Declared);
+    assert_eq!(
+        persisted
+            .annotations
+            .as_ref()
+            .and_then(|annotations| annotations.reason.as_deref()),
+        Some("first registration defines parser contract")
+    );
+    assert_eq!(
+        restarted.metadata["note"],
+        json!("restart without contract")
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn register_external_in_flight_rejects_source_identifier_aliasing(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let original_id = uuid::Uuid::now_v7();
+    let conflicting_id = uuid::Uuid::now_v7();
+    let identifier = format!("test-material-conflict-{original_id}");
+
+    ctx.pool
+        .source_materials()
+        .register_external_in_flight(
+            original_id,
+            sinex_db::repositories::source_materials::material_types::FILE,
+            Some(&identifier),
+            json!({"note": "first registration"}),
+            Timestamp::now(),
+        )
+        .await?;
+
+    let error = ctx
+        .pool
+        .source_materials()
+        .register_external_in_flight(
+            conflicting_id,
+            sinex_db::repositories::source_materials::material_types::FILE,
+            Some(&identifier),
+            json!({"note": "conflicting registration"}),
+            Timestamp::now(),
+        )
+        .await
+        .expect_err("different explicit material ids must not alias through source_identifier");
+
+    assert!(error.to_string().contains("source_identifier"));
+
+    let persisted = ctx
+        .pool
+        .source_materials()
+        .get_by_id(Id::<sinex_db::SourceMaterialRecord>::from_uuid(original_id))
+        .await?
+        .expect("original explicit material id must remain intact");
+    assert_eq!(persisted.id, original_id);
+    Ok(())
+}
+
+#[sinex_test]
+async fn finalize_in_flight_persists_total_bytes_column(ctx: TestContext) -> TestResult<()> {
+    let forced_id = uuid::Uuid::now_v7();
+    let identifier = format!("test-material-total-bytes-{forced_id}.sqlite3");
+    let record = ctx
+        .pool
+        .source_materials()
+        .register_external_in_flight(
+            forced_id,
+            sinex_db::repositories::source_materials::material_types::FILE,
+            Some(&identifier),
+            json!({"note": "total byte regression"}),
+            Timestamp::now(),
+        )
+        .await?;
+    let material_id = Id::<sinex_db::SourceMaterialRecord>::from_uuid(record.id);
+
+    ctx.pool
+        .source_materials()
+        .finalize_in_flight(
+            material_id,
+            None,
+            Some("text/plain"),
+            Some("preview".to_string()),
+            Some(123),
+        )
+        .await?;
+
+    let persisted = ctx
+        .pool
+        .source_materials()
+        .get_by_id(material_id)
+        .await?
+        .expect("finalized material should remain readable");
+
+    assert_eq!(persisted.status, "completed");
+    assert_eq!(persisted.total_bytes, Some(123));
+    assert_eq!(persisted.metadata["file_size_bytes"], json!(123));
+    assert_eq!(persisted.metadata["encoding"], json!("text/plain"));
+    assert_eq!(persisted.metadata["content_preview"], json!("preview"));
+    let contract = SourceMaterialMetadataContract::from_metadata(&persisted.metadata)
+        .expect("finalized material should retain contract metadata");
+    assert_eq!(contract.format, SourceMaterialFormat::Sqlite);
+    assert_eq!(
+        contract
+            .statistics
+            .as_ref()
+            .and_then(|statistics| statistics.total_bytes),
+        Some(123)
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn finalize_in_flight_does_not_create_partial_contract_for_legacy_material(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let material_uuid = uuid::Uuid::now_v7();
+    let identifier = format!("legacy-material-{material_uuid}");
+    sqlx::query!(
+        r#"
+        INSERT INTO raw.source_material_registry (
+            id,
+            material_kind,
+            source_identifier,
+            status,
+            timing_info_type,
+            metadata
+        )
+        VALUES ($1::uuid, 'annex', $2, 'sensing', 'realtime', $3)
+        "#,
+        material_uuid,
+        identifier,
+        json!({"note": "legacy row without contract"})
+    )
+    .execute(&ctx.pool)
+    .await?;
+    let material_id = Id::<sinex_db::SourceMaterialRecord>::from_uuid(material_uuid);
+
+    ctx.pool
+        .source_materials()
+        .finalize_in_flight(material_id, None, None, None, Some(321))
+        .await?;
+
+    let persisted = ctx
+        .pool
+        .source_materials()
+        .get_by_id(material_id)
+        .await?
+        .expect("legacy material should remain readable after finalization");
+
+    assert_eq!(persisted.total_bytes, Some(321));
+    assert_eq!(persisted.metadata["file_size_bytes"], json!(321));
+    assert!(
+        SourceMaterialMetadataContract::from_metadata(&persisted.metadata).is_none(),
+        "legacy rows without a full contract must not receive a partial contract object"
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn finalize_in_flight_does_not_enrich_malformed_contract_key(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let material_uuid = uuid::Uuid::now_v7();
+    let identifier = format!("malformed-contract-material-{material_uuid}");
+    sqlx::query!(
+        r#"
+        INSERT INTO raw.source_material_registry (
+            id,
+            material_kind,
+            source_identifier,
+            status,
+            timing_info_type,
+            metadata
+        )
+        VALUES ($1::uuid, 'annex', $2, 'sensing', 'realtime', $3)
+        "#,
+        material_uuid,
+        identifier,
+        json!({"source_material_contract": {"version": 1}})
+    )
+    .execute(&ctx.pool)
+    .await?;
+    let material_id = Id::<sinex_db::SourceMaterialRecord>::from_uuid(material_uuid);
+
+    ctx.pool
+        .source_materials()
+        .finalize_in_flight(material_id, None, None, None, Some(654))
+        .await?;
+
+    let persisted = ctx
+        .pool
+        .source_materials()
+        .get_by_id(material_id)
+        .await?
+        .expect("malformed-contract material should remain readable after finalization");
+
+    assert_eq!(persisted.total_bytes, Some(654));
+    assert_eq!(persisted.metadata["file_size_bytes"], json!(654));
+    assert!(
+        SourceMaterialMetadataContract::from_metadata(&persisted.metadata).is_none(),
+        "malformed contract must not be made to look valid during finalization"
+    );
+    assert!(
+        persisted.metadata["source_material_contract"]
+            .get("statistics")
+            .is_none(),
+        "finalization must not enrich a malformed contract object"
+    );
+    Ok(())
+}
+
+// =============================================================================
+// SYNTHETIC METADATA ROUNDTRIP TESTS (Slice 3)
+// =============================================================================
+
+/// Verifies that all 6 synthetic metadata fields survive insert → load roundtrip.
+#[sinex_test]
+async fn synthetic_metadata_roundtrips_through_insert(ctx: TestContext) -> TestResult<()> {
+    let material_record = ctx
+        .pool
+        .source_materials()
+        .register_in_flight(
+            sinex_db::repositories::source_materials::material_types::STREAM,
+            Some("synth-meta-roundtrip"),
+            json!({ "test": true }),
+        )
+        .await?;
+    let material_id = Id::<sinex_db::models::SourceMaterial>::from_uuid(material_record.id);
+
+    // Create a source event first (needed as parent for derived)
+    let source_payload = KittyCommandExecutedPayload::test_default("echo roundtrip");
+    let source_event = Event::builder(source_payload)
+        .with_provenance(Provenance::from_material(material_id, 0, None, None))
+        .build()
+        .expect("valid provenance");
+    let source = ctx.pool.events().insert(source_event).await?;
+    let source_id = source.id.unwrap();
+
+    // Build derived event with all synthetic metadata populated
+    let operation_id = Uuid::now_v7();
+    let derived_payload = FileCreatedPayload::test_default(
+        RecordedPath::from_observed("/tmp/synth-meta.txt")
+            .map_err(|e| color_eyre::eyre::eyre!(e))?,
+    );
+    let mut derived = Event::builder(derived_payload)
+        .from_parents(vec![source_id])?
+        .build()?;
+
+    derived.temporal_policy = Some(SyntheticTemporalPolicy::LatestInput);
+    derived.semantics_version = Some("v2.3.1".to_string());
+    derived.scope_key = Some("analytics:daily:2026-03-14".to_string());
+    derived.equivalence_key = Some("analytics:daily:2026-03-14:host-a".to_string());
+    derived.created_by_operation_id = Some(operation_id);
+    derived.node_model = Some(DerivedNodeModel::Windowed);
+
+    let inserted = ctx.pool.events().insert(derived).await?;
+    let event_id = inserted.id.unwrap();
+
+    // Verify fields survived insert
+    assert_eq!(
+        inserted.temporal_policy,
+        Some(SyntheticTemporalPolicy::LatestInput)
+    );
+    assert_eq!(inserted.semantics_version.as_deref(), Some("v2.3.1"));
+    assert_eq!(
+        inserted.scope_key.as_deref(),
+        Some("analytics:daily:2026-03-14")
+    );
+    assert_eq!(
+        inserted.equivalence_key.as_deref(),
+        Some("analytics:daily:2026-03-14:host-a")
+    );
+    assert_eq!(inserted.created_by_operation_id, Some(operation_id));
+    assert_eq!(inserted.node_model, Some(DerivedNodeModel::Windowed));
+
+    // Verify fields survive load (get_by_id reads from DB)
+    let loaded = ctx.pool.events().get_by_id(event_id).await?.unwrap();
+    assert_eq!(
+        loaded.temporal_policy,
+        Some(SyntheticTemporalPolicy::LatestInput)
+    );
+    assert_eq!(loaded.semantics_version.as_deref(), Some("v2.3.1"));
+    assert_eq!(
+        loaded.scope_key.as_deref(),
+        Some("analytics:daily:2026-03-14")
+    );
+    assert_eq!(
+        loaded.equivalence_key.as_deref(),
+        Some("analytics:daily:2026-03-14:host-a")
+    );
+    assert_eq!(loaded.created_by_operation_id, Some(operation_id));
+    assert_eq!(loaded.node_model, Some(DerivedNodeModel::Windowed));
+
+    Ok(())
+}
+
+/// Material events leave all synthetic metadata fields as None.
+#[sinex_test]
+async fn material_events_have_null_synthetic_metadata(ctx: TestContext) -> TestResult<()> {
+    let material_record = ctx
+        .pool
+        .source_materials()
+        .register_in_flight(
+            sinex_db::repositories::source_materials::material_types::STREAM,
+            Some("null-synth-meta"),
+            json!({ "test": true }),
+        )
+        .await?;
+    let material_id = Id::<sinex_db::models::SourceMaterial>::from_uuid(material_record.id);
+
+    let payload = FileCreatedPayload::test_default(
+        RecordedPath::from_observed("/tmp/plain-material.txt")
+            .map_err(|e| color_eyre::eyre::eyre!(e))?,
+    );
+    let event = Event::builder(payload)
+        .with_provenance(Provenance::from_material(material_id, 0, None, None))
+        .build()
+        .expect("valid provenance");
+
+    let inserted = ctx.pool.events().insert(event).await?;
+    let event_id = inserted.id.unwrap();
+
+    let loaded = ctx.pool.events().get_by_id(event_id).await?.unwrap();
+    assert!(loaded.temporal_policy.is_none());
+    assert!(loaded.semantics_version.is_none());
+    assert!(loaded.scope_key.is_none());
+    assert!(loaded.equivalence_key.is_none());
+    assert!(loaded.created_by_operation_id.is_none());
+    assert!(loaded.node_model.is_none());
+
+    Ok(())
+}
+
+/// All temporal policy enum variants roundtrip correctly.
+#[sinex_test]
+async fn all_temporal_policy_variants_roundtrip(ctx: TestContext) -> TestResult<()> {
+    let material_record = ctx
+        .pool
+        .source_materials()
+        .register_in_flight(
+            sinex_db::repositories::source_materials::material_types::STREAM,
+            Some("temporal-policy-variants"),
+            json!({ "test": true }),
+        )
+        .await?;
+    let material_id = Id::<sinex_db::models::SourceMaterial>::from_uuid(material_record.id);
+
+    let policies = [
+        SyntheticTemporalPolicy::InheritParent,
+        SyntheticTemporalPolicy::LatestInput,
+        SyntheticTemporalPolicy::WindowBoundary,
+        SyntheticTemporalPolicy::DeclaredEffective,
+    ];
+
+    // Create parent event
+    let source_payload = KittyCommandExecutedPayload::test_default("echo variants");
+    let source_event = Event::builder(source_payload)
+        .with_provenance(Provenance::from_material(material_id, 0, None, None))
+        .build()
+        .expect("valid provenance");
+    let source = ctx.pool.events().insert(source_event).await?;
+    let source_id = source.id.unwrap();
+
+    for policy in policies {
+        let payload = FileCreatedPayload::test_default(
+            RecordedPath::from_observed(format!("/tmp/policy-{policy}.txt"))
+                .map_err(|e| color_eyre::eyre::eyre!(e))?,
+        );
+        let mut event = Event::builder(payload)
+            .from_parents(vec![source_id])?
+            .build()?;
+        event.temporal_policy = Some(policy);
+
+        let inserted = ctx.pool.events().insert(event).await?;
+        let loaded = ctx
+            .pool
+            .events()
+            .get_by_id(inserted.id.unwrap())
+            .await?
+            .unwrap();
+        assert_eq!(
+            loaded.temporal_policy,
+            Some(policy),
+            "policy {policy} should roundtrip"
+        );
+    }
+
+    Ok(())
+}
+
+/// All node model enum variants roundtrip correctly.
+#[sinex_test]
+async fn all_node_model_variants_roundtrip(ctx: TestContext) -> TestResult<()> {
+    let material_record = ctx
+        .pool
+        .source_materials()
+        .register_in_flight(
+            sinex_db::repositories::source_materials::material_types::STREAM,
+            Some("node-model-variants"),
+            json!({ "test": true }),
+        )
+        .await?;
+    let material_id = Id::<sinex_db::models::SourceMaterial>::from_uuid(material_record.id);
+
+    let models = [
+        DerivedNodeModel::Transducer,
+        DerivedNodeModel::Windowed,
+        DerivedNodeModel::ScopeReconciler,
+    ];
+
+    let source_payload = KittyCommandExecutedPayload::test_default("echo models");
+    let source_event = Event::builder(source_payload)
+        .with_provenance(Provenance::from_material(material_id, 0, None, None))
+        .build()
+        .expect("valid provenance");
+    let source = ctx.pool.events().insert(source_event).await?;
+    let source_id = source.id.unwrap();
+
+    for model in models {
+        let payload = FileCreatedPayload::test_default(
+            RecordedPath::from_observed(format!("/tmp/model-{model}.txt"))
+                .map_err(|e| color_eyre::eyre::eyre!(e))?,
+        );
+        let mut event = Event::builder(payload)
+            .from_parents(vec![source_id])?
+            .build()?;
+        event.node_model = Some(model);
+
+        let inserted = ctx.pool.events().insert(event).await?;
+        let loaded = ctx
+            .pool
+            .events()
+            .get_by_id(inserted.id.unwrap())
+            .await?
+            .unwrap();
+        assert_eq!(
+            loaded.node_model,
+            Some(model),
+            "model {model} should roundtrip"
+        );
+    }
+
+    Ok(())
+}
+
+/// Synthetic metadata survives batch insert (the COPY/unnest path).
+#[sinex_test]
+async fn synthetic_metadata_survives_batch_insert(ctx: TestContext) -> TestResult<()> {
+    let material_record = ctx
+        .pool
+        .source_materials()
+        .register_in_flight(
+            sinex_db::repositories::source_materials::material_types::STREAM,
+            Some("batch-synth-meta"),
+            json!({ "test": true }),
+        )
+        .await?;
+    let material_id = Id::<sinex_db::models::SourceMaterial>::from_uuid(material_record.id);
+
+    // Create parent events
+    let source_payload = KittyCommandExecutedPayload::test_default("echo batch");
+    let source_event = Event::builder(source_payload)
+        .with_provenance(Provenance::from_material(material_id, 0, None, None))
+        .build()
+        .expect("valid provenance");
+    let source = ctx.pool.events().insert(source_event).await?;
+    let source_id = source.id.unwrap();
+
+    let operation_id = Uuid::now_v7();
+
+    // Build a batch of events with varying metadata
+    let mut events = Vec::new();
+    for i in 0..5 {
+        let payload = FileCreatedPayload::test_default(
+            RecordedPath::from_observed(format!("/tmp/batch-{i}.txt"))
+                .map_err(|e| color_eyre::eyre::eyre!(e))?,
+        );
+        let mut event = Event::builder(payload)
+            .from_parents(vec![source_id])?
+            .build()?;
+        event.temporal_policy = Some(SyntheticTemporalPolicy::LatestInput);
+        event.semantics_version = Some(format!("v1.{i}"));
+        event.scope_key = Some(format!("batch-scope:{i}"));
+        event.equivalence_key = Some(format!("batch-equiv:{i}"));
+        event.created_by_operation_id = Some(operation_id);
+        event.node_model = Some(DerivedNodeModel::Transducer);
+        events.push(event);
+    }
+
+    let inserted = ctx.pool.events().insert_batch(events).await?;
+    assert_eq!(inserted.len(), 5);
+
+    for (i, ev) in inserted.iter().enumerate() {
+        let loaded = ctx.pool.events().get_by_id(ev.id.unwrap()).await?.unwrap();
+        assert_eq!(
+            loaded.temporal_policy,
+            Some(SyntheticTemporalPolicy::LatestInput)
+        );
+        assert_eq!(
+            loaded.semantics_version.as_deref(),
+            Some(format!("v1.{i}").as_str())
+        );
+        assert_eq!(
+            loaded.scope_key.as_deref(),
+            Some(format!("batch-scope:{i}").as_str())
+        );
+        assert_eq!(
+            loaded.equivalence_key.as_deref(),
+            Some(format!("batch-equiv:{i}").as_str())
+        );
+        assert_eq!(loaded.created_by_operation_id, Some(operation_id));
+        assert_eq!(loaded.node_model, Some(DerivedNodeModel::Transducer));
+    }
+
+    Ok(())
+}
+
+#[sinex_test]
+async fn batch_insert_rolls_back_all_chunks_on_late_failure(ctx: TestContext) -> TestResult<()> {
+    let material_id = ctx
+        .create_source_material(Some("batch-atomicity-material"))
+        .await?;
+    let source = EventSource::new("batch-atomicity-test")?;
+    let event_type = EventType::new("batch.atomicity")?;
+    let duplicate_id = Some(Id::<Event<serde_json::Value>>::new());
+
+    let mut events = Vec::new();
+    for index in 0..=COPY_BATCH_THRESHOLD {
+        let mut event = DynamicPayload::new(
+            source.clone(),
+            event_type.clone(),
+            json!({ "index": index }),
+        )
+        .from_material(material_id)
+        .build()?;
+
+        if index == 0 || index == COPY_BATCH_THRESHOLD {
+            event.id = duplicate_id;
+        }
+
+        events.push(event);
+    }
+
+    let error = ctx
+        .pool
+        .events()
+        .insert_batch(events)
+        .await
+        .expect_err("late invalid row should fail the whole batch");
+    assert!(
+        !format!("{error}").is_empty(),
+        "batch failure should preserve useful error context"
+    );
+
+    let stored = ctx
+        .pool
+        .events()
+        .get_by_source(&source, Pagination::new(Some(200), None))
+        .await?;
+    assert!(
+        stored.is_empty(),
+        "no chunk from the failed batch should remain committed"
+    );
+
+    Ok(())
+}
+
+#[sinex_test]
+async fn batch_insert_rejects_intra_batch_synthesis_cycles(ctx: TestContext) -> TestResult<()> {
+    let first_id = Id::<Event<serde_json::Value>>::new();
+    let second_id = Id::<Event<serde_json::Value>>::new();
+    let source = EventSource::new("batch-cycle-test")?;
+    let event_type = EventType::new("batch.cycle")?;
+
+    let mut first = DynamicPayload::new(
+        source.clone(),
+        event_type.clone(),
+        json!({ "cycle": "first" }),
+    )
+    .from_parents(vec![EventId::from_uuid(*second_id.as_uuid())])?
+    .build()?;
+    first.id = Some(first_id);
+
+    let mut second = DynamicPayload::new(source, event_type, json!({ "cycle": "second" }))
+        .from_parents(vec![EventId::from_uuid(*first_id.as_uuid())])?
+        .build()?;
+    second.id = Some(second_id);
+
+    let error = ctx
+        .pool
+        .events()
+        .insert_batch(vec![first, second])
+        .await
+        .expect_err("intra-batch derived cycle should be rejected");
+    assert!(
+        error
+            .to_string()
+            .contains("cycle detected in derived provenance within batch"),
+        "unexpected error: {error}"
+    );
+    Ok(())
+}
+
+#[sinex_test]
+async fn batch_insert_rejects_cross_chunk_intra_batch_synthesis_cycles(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let material_id = ctx
+        .create_source_material(Some("batch-cross-chunk-cycle-material"))
+        .await?;
+    let source = EventSource::new("batch-cross-chunk-cycle-test")?;
+    let event_type = EventType::new("batch.cross_chunk_cycle")?;
+    let first_id = Id::<Event<serde_json::Value>>::new();
+    let second_id = Id::<Event<serde_json::Value>>::new();
+
+    let mut events = Vec::new();
+    for index in 0..49 {
+        let event = DynamicPayload::new(
+            source.clone(),
+            event_type.clone(),
+            json!({ "filler": index }),
+        )
+        .from_material(material_id)
+        .build()?;
+        events.push(event);
+    }
+
+    let mut first = DynamicPayload::new(
+        source.clone(),
+        event_type.clone(),
+        json!({ "cycle": "first" }),
+    )
+    .from_parents(vec![EventId::from_uuid(*second_id.as_uuid())])?
+    .build()?;
+    first.id = Some(first_id);
+    events.push(first);
+
+    let mut second = DynamicPayload::new(
+        source.clone(),
+        event_type.clone(),
+        json!({ "cycle": "second" }),
+    )
+    .from_parents(vec![EventId::from_uuid(*first_id.as_uuid())])?
+    .build()?;
+    second.id = Some(second_id);
+    events.push(second);
+
+    assert_eq!(events.len(), 51, "test must span the 50-row chunk boundary");
+
+    let error = ctx
+        .pool
+        .events()
+        .insert_batch(events)
+        .await
+        .expect_err("cross-chunk intra-batch derived cycle should be rejected");
+    assert!(
+        error
+            .to_string()
+            .contains("cycle detected in derived provenance within batch"),
+        "unexpected error: {error}"
+    );
+
+    let stored = ctx
+        .pool
+        .events()
+        .get_by_source(&source, Pagination::new(Some(100), None))
+        .await?;
+    assert!(
+        stored.is_empty(),
+        "failed cross-chunk derived batch must not partially commit"
+    );
+
+    Ok(())
+}
+
+#[sinex_test]
+async fn event_replacements_record_and_query(ctx: TestContext) -> TestResult<()> {
+    let operation_id = Uuid::now_v7();
+    let old_event_1 = Uuid::now_v7();
+    let old_event_2 = Uuid::now_v7();
+    let new_event_1 = Uuid::now_v7();
+    let new_event_2 = Uuid::now_v7();
+
+    let replacements = vec![
+        ReplacementRecord {
+            old_event_id: old_event_1,
+            new_event_id: new_event_1,
+            relation_kind: ReplacementKind::Superseded,
+            scope_key: Some("scope:fs".to_string()),
+            equivalence_key: Some("eq:file1".to_string()),
+        },
+        ReplacementRecord {
+            old_event_id: old_event_2,
+            new_event_id: new_event_2,
+            relation_kind: ReplacementKind::Recomputed,
+            scope_key: None,
+            equivalence_key: None,
+        },
+        ReplacementRecord {
+            old_event_id: old_event_1,
+            new_event_id: new_event_2,
+            relation_kind: ReplacementKind::Split,
+            scope_key: Some("scope:fs".to_string()),
+            equivalence_key: None,
+        },
+    ];
+
+    let count = ctx
+        .pool
+        .events()
+        .record_replacements(operation_id, &replacements)
+        .await?;
+    assert_eq!(count, 3, "should insert all 3 replacement records");
+
+    // Query by operation
+    let by_op = ctx
+        .pool
+        .events()
+        .get_replacements_by_operation(operation_id)
+        .await?;
+    assert_eq!(by_op.len(), 3);
+
+    // Verify the first record
+    let superseded = by_op.iter().find(|r| r.2 == "superseded").unwrap();
+    assert_eq!(superseded.0, old_event_1);
+    assert_eq!(superseded.1, new_event_1);
+
+    // Query by old event — returns (new_event_id, relation_kind, operation_id)
+    let for_event = ctx
+        .pool
+        .events()
+        .get_replacements_for_event(old_event_1)
+        .await?;
+    assert_eq!(
+        for_event.len(),
+        2,
+        "old_event_1 has two replacement records"
+    );
+
+    // Query for old_event_2
+    let for_event_2 = ctx
+        .pool
+        .events()
+        .get_replacements_for_event(old_event_2)
+        .await?;
+    assert_eq!(for_event_2.len(), 1);
+    assert_eq!(for_event_2[0].1, "recomputed");
+    assert_eq!(for_event_2[0].2, operation_id);
+
+    Ok(())
+}
+
+/// `get_by_ids` must reject more than 1000 IDs.
+///
+/// Regression test for #916: the previous implementation silently chunked;
+/// callers must now chunk explicitly.
+#[sinex_test]
+async fn get_by_ids_rejects_more_than_1000_ids(ctx: TestContext) -> TestResult<()> {
+    use sinex_db::repositories::source_materials::material_types;
+
+    const TOTAL_EVENTS: usize = 1050; // exceeds the 1000-per-chunk boundary
+
+    let material_record = ctx
+        .pool
+        .source_materials()
+        .register_in_flight(
+            material_types::STREAM,
+            Some("get-by-ids-chunking-test"),
+            json!({ "test": true }),
+        )
+        .await?;
+    let material_id = Id::<sinex_db::models::SourceMaterial>::from_uuid(material_record.id);
+
+    let mut inserted_ids = Vec::with_capacity(TOTAL_EVENTS);
+    for i in 0..TOTAL_EVENTS {
+        let payload =
+            KittyCommandExecutedPayload::test_default(format!("echo get-by-ids-chunk-{i}"));
+        let event = Event::builder(payload)
+            .with_provenance(Provenance::from_material(material_id, i as i64, None, None))
+            .build()
+            .expect("valid provenance");
+        let inserted = ctx.pool.events().insert(event).await?;
+        inserted_ids.push(inserted.id.expect("inserted event must have an id"));
+    }
+
+    let err = ctx
+        .pool
+        .events()
+        .get_by_ids(&inserted_ids)
+        .await
+        .expect_err("get_by_ids must reject more than 1000 IDs");
+
+    let msg = err.to_string();
+    assert!(
+        msg.contains("more than 1000"),
+        "error must mention the 1000-ID limit, got: {msg}"
+    );
+
+    Ok(())
+}
+
+/// Verify that the replacement matching query used by the replay writer
+/// distinguishes material events (matched by physical coordinates) from
+/// derived/derived events (matched by equivalence_key elsewhere).
+///
+/// The replay writer filters to events WHERE `source_material_id IS NOT NULL
+/// AND anchor_byte IS NOT NULL`. This matches only material-provenance events;
+/// derived events are excluded from physical-coordinate replacement.
+#[sinex_test]
+async fn test_replacement_query_distinguishes_material_from_derived(
+    ctx: TestContext,
+) -> TestResult<()> {
+    let pool = &ctx.pool;
+
+    // Register source material
+    let material_record = pool
+        .source_materials()
+        .register_in_flight(
+            sinex_db::repositories::source_materials::material_types::STREAM,
+            Some("test-replacement-material"),
+            json!({}),
+        )
+        .await?;
+    let material_id = Id::<sinex_db::models::SourceMaterial>::from_uuid(material_record.id);
+
+    // Insert a material-provenance event
+    let mat_payload = FileCreatedPayload::test_default(
+        RecordedPath::from_observed("/tmp/replacement-mat.txt")
+            .map_err(|e| color_eyre::eyre::eyre!(e))?,
+    );
+    let mat_event = Event::builder(mat_payload)
+        .with_provenance(Provenance::from_material(material_id, 0, None, None))
+        .build()?;
+    let mat_inserted = pool.events().insert(mat_event).await?;
+    let mat_event_id = mat_inserted.id.expect("material event id");
+
+    // Insert a source event first (parent for derived)
+    let parent_payload = FileCreatedPayload::test_default(
+        RecordedPath::from_observed("/tmp/replacement-parent.txt")
+            .map_err(|e| color_eyre::eyre::eyre!(e))?,
+    );
+    let parent_event = Event::builder(parent_payload)
+        .with_provenance(Provenance::from_material(material_id, 100, None, None))
+        .build()?;
+    let parent_inserted = pool.events().insert(parent_event).await?;
+    let parent_id = parent_inserted.id.expect("parent event id");
+
+    // Insert a derived-provenance event (derived from parent, no material)
+    let syn_payload = FileCreatedPayload::test_default(
+        RecordedPath::from_observed("/tmp/replacement-derived.txt")
+            .map_err(|e| color_eyre::eyre::eyre!(e))?,
+    );
+    let syn_event = Event::builder(syn_payload)
+        .from_parents(vec![parent_id])?
+        .build()?;
+    let syn_inserted = pool.events().insert(syn_event).await?;
+    let syn_event_id = syn_inserted.id.expect("derived event id");
+
+    // The replacement matching query from replay_writer.rs —
+    // filters to material events only.
+    let matched_ids: Vec<Uuid> = sqlx::query_scalar(
+        r"
+        SELECT id FROM core.events
+        WHERE source_material_id IS NOT NULL
+          AND anchor_byte IS NOT NULL
+        ",
+    )
+    .fetch_all(pool)
+    .await?;
+
+    assert!(
+        matched_ids.contains(&mat_event_id.as_uuid()),
+        "material event must match the replacement query"
+    );
+    assert!(
+        !matched_ids.contains(&syn_event_id.as_uuid()),
+        "derived event must NOT match the material replacement query — \
+         derived replacement uses equivalence_key, not physical coordinates"
+    );
+
+    Ok(())
+}

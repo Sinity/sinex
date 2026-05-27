@@ -102,17 +102,17 @@ impl<T: Node + 'static> NodeRunner<T> {
                 }
                 let source_event_ids = NonEmptyVec::from_vec(ids).ok_or_else(|| {
                     SinexError::processing(
-                        "Synthesis provenance missing source_event_ids".to_string(),
+                        "Derived provenance missing source_event_ids".to_string(),
                     )
                 })?;
-                Provenance::Synthesis {
+                Provenance::Derived {
                     source_event_ids,
                     operation_id: None,
                 }
             }
             (Some(_), Some(_)) => {
                 return Err(SinexError::processing(
-                    "Provisional event contains both material and synthesis provenance".to_string(),
+                    "Provisional event contains both material and derived provenance".to_string(),
                 ));
             }
             (None, None) => {

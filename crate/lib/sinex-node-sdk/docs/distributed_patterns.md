@@ -302,7 +302,7 @@ tokio::select! {
 | Service | Prefix | Example |
 |---------|--------|---------|
 | Gateway | `SINEX_` | `SINEX_RPC_PORT` |
-| Ingestd | `SINEX_INGESTD_` | `SINEX_INGESTD_BATCH_SIZE` |
+| Ingestd | `SINEX_EVENT_ENGINE_` | `SINEX_EVENT_ENGINE_BATCH_SIZE` |
 | Nodes | `SINEX_<SERVICE>_` | `SINEX_FS_WATCHER_LOG_LEVEL` |
 
 ---

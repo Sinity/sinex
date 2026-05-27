@@ -1,4 +1,4 @@
-//! Scope-invalidation processing for `DerivedNodeAdapter`.
+//! Scope-invalidation processing for `AutomatonRuntime`.
 //!
 //! Carved out of `adapter/mod.rs` as part of #697. Pure mechanical move; the
 //! methods, control flow, and instrumentation are unchanged.
@@ -6,11 +6,11 @@
 #[cfg(feature = "messaging")]
 use super::log_self_observation_failure;
 use super::stale_output_ids_or_fail_scope;
-use super::{DerivedNodeAdapter, INVALIDATION_QUERY_PAGE_SIZE};
+use super::{AutomatonRuntime, INVALIDATION_QUERY_PAGE_SIZE};
 
-use crate::derived_node::context::DerivedTriggerContext;
+use crate::derived_node::context::AutomatonContext;
 use crate::derived_node::invalidation::DerivedScopeInvalidation;
-use crate::derived_node::traits::DerivedNodeImpl;
+use crate::derived_node::traits::Automaton;
 use crate::{NodeResult, SinexError};
 
 use sinex_primitives::events::Event;
@@ -34,9 +34,9 @@ pub(super) struct PreparedInvalidationScope {
     pub(super) new_event_ids: Vec<(Uuid, Option<String>)>,
 }
 
-impl<N> DerivedNodeAdapter<N>
+impl<N> AutomatonRuntime<N>
 where
-    N: DerivedNodeImpl,
+    N: Automaton,
 {
     #[cfg(feature = "db")]
     pub(super) async fn prepare_invalidation(
@@ -183,7 +183,7 @@ where
                 .collect::<Vec<_>>();
 
             // Build context for invalidation processing
-            let context = DerivedTriggerContext {
+            let context = AutomatonContext {
                 trigger_event_id,
                 source: invalidation.event_source.clone(),
                 event_type: invalidation.event_type.clone(),

@@ -1,14 +1,14 @@
 //! Derived node trait family.
 //!
 //! Three explicit processing models replace the monolithic `AutomatonNode`:
-//! - [`TransducerNode`] — 1:1 event transform
-//! - [`WindowedNode`] — accumulate + emit on window completion
-//! - [`ScopeReconcilerNode`] — scope-keyed reconciliation
+//! - [`Transducer`] — 1:1 event transform
+//! - [`Windowed`] — accumulate + emit on window completion
+//! - [`ScopeReconciler`] — scope-keyed reconciliation
 //!
 //! Each model is bridged to the shared adapter via wrapper types that implement
-//! [`DerivedNodeImpl`].
+//! [`Automaton`].
 
-use super::context::DerivedTriggerContext;
+use super::context::AutomatonContext;
 use super::output::DerivedOutput;
 use crate::processing::NodeLogicError;
 
@@ -111,18 +111,18 @@ impl InputProvenanceFilter {
     }
 }
 
-// ── TransducerNode ─────────────────────────────────────────────────────
+// ── Transducer ─────────────────────────────────────────────────────
 
 /// A 1:1 event transducer: one input event produces zero or one output event.
 ///
 /// Transducers are deterministic transforms with inherited `ts_orig`.
 /// The default `node_model` is `DerivedNodeModel::Transducer`.
 #[diagnostic::on_unimplemented(
-    message = "`{Self}` does not implement `TransducerNode`",
-    label = "missing TransducerNode implementation",
+    message = "`{Self}` does not implement `Transducer`",
+    label = "missing Transducer implementation",
     note = "implement `name()`, `input_event_type()`, `output_event_type()`, and `process()`"
 )]
-pub trait TransducerNode: Send + Sync + 'static {
+pub trait Transducer: Send + Sync + 'static {
     /// Checkpoint state (use `()` if stateless).
     type State: Serialize + DeserializeOwned + Default + Send + Sync;
     /// Parsed input event type.
@@ -149,7 +149,7 @@ pub trait TransducerNode: Send + Sync + 'static {
         &mut self,
         state: &mut Self::State,
         input: Self::Input,
-        context: &DerivedTriggerContext,
+        context: &AutomatonContext,
     ) -> impl std::future::Future<
         Output = Result<Option<DerivedOutput<Self::Output>>, NodeLogicError>,
     > + Send;
@@ -168,18 +168,18 @@ pub trait TransducerNode: Send + Sync + 'static {
     }
 }
 
-// ── WindowedNode ───────────────────────────────────────────────────────
+// ── Windowed ───────────────────────────────────────────────────────
 
 /// A windowed aggregator: accumulates events, emits on window completion.
 ///
 /// The SDK calls `accumulate()` for each event, checks `window_complete()`,
 /// and calls `emit()` when the window is ready.
 #[diagnostic::on_unimplemented(
-    message = "`{Self}` does not implement `WindowedNode`",
-    label = "missing WindowedNode implementation",
+    message = "`{Self}` does not implement `Windowed`",
+    label = "missing Windowed implementation",
     note = "implement `accumulate()`, `window_complete()`, and `emit()`"
 )]
-pub trait WindowedNode: Send + Sync + 'static {
+pub trait Windowed: Send + Sync + 'static {
     /// Window state.
     type State: Serialize + DeserializeOwned + Default + Send + Sync;
     type Input: DeserializeOwned + Send;
@@ -204,7 +204,7 @@ pub trait WindowedNode: Send + Sync + 'static {
         &mut self,
         state: &mut Self::State,
         input: Self::Input,
-        context: &DerivedTriggerContext,
+        context: &AutomatonContext,
     ) -> impl std::future::Future<Output = Result<(), NodeLogicError>> + Send;
 
     /// Check if the window is complete and should emit.
@@ -214,7 +214,7 @@ pub trait WindowedNode: Send + Sync + 'static {
     fn emit(
         &mut self,
         state: &mut Self::State,
-        context: &DerivedTriggerContext,
+        context: &AutomatonContext,
     ) -> impl std::future::Future<
         Output = Result<Option<DerivedOutput<Self::Output>>, NodeLogicError>,
     > + Send;
@@ -230,7 +230,7 @@ pub trait WindowedNode: Send + Sync + 'static {
         &mut self,
         state: &mut Self::State,
         events: Vec<Self::Input>,
-        context: &DerivedTriggerContext,
+        context: &AutomatonContext,
     ) -> impl std::future::Future<
         Output = Result<Option<DerivedOutput<Self::Output>>, NodeLogicError>,
     > + Send {
@@ -263,20 +263,20 @@ pub trait WindowedNode: Send + Sync + 'static {
     }
 }
 
-// ── ScopeReconcilerNode ────────────────────────────────────────────────
+// ── ScopeReconciler ────────────────────────────────────────────────
 
 /// A scope-based reconciler: derives a live scope from each trigger and reconciles per-scope
 /// state.
 ///
 /// Live event processing can emit at most one derived event per trigger, so implementations must
 /// resolve to zero or one scope key on that path. Invalidation fan-out is handled separately by
-/// the adapter, which calls [`ScopeReconcilerNode::recompute_scope`] once per affected scope.
+/// the adapter, which calls [`ScopeReconciler::recompute_scope`] once per affected scope.
 #[diagnostic::on_unimplemented(
-    message = "`{Self}` does not implement `ScopeReconcilerNode`",
-    label = "missing ScopeReconcilerNode implementation",
+    message = "`{Self}` does not implement `ScopeReconciler`",
+    label = "missing ScopeReconciler implementation",
     note = "implement `scope_keys()` and `reconcile()`"
 )]
-pub trait ScopeReconcilerNode: Send + Sync + 'static {
+pub trait ScopeReconciler: Send + Sync + 'static {
     type State: Serialize + DeserializeOwned + Default + Send + Sync;
     type Input: DeserializeOwned + Send;
     type Output: Serialize + Send;
@@ -300,7 +300,7 @@ pub trait ScopeReconcilerNode: Send + Sync + 'static {
     /// Return an empty vector to skip live processing for this trigger. Returning more than one
     /// key is rejected by the adapter because the live path can reconcile at most one scope per
     /// trigger, even though that reconciliation may emit multiple output events.
-    fn scope_keys(&self, input: &Self::Input, context: &DerivedTriggerContext) -> Vec<String>;
+    fn scope_keys(&self, input: &Self::Input, context: &AutomatonContext) -> Vec<String>;
 
     /// Reconcile a scope: given the trigger and current state, produce zero or more outputs.
     fn reconcile(
@@ -308,7 +308,7 @@ pub trait ScopeReconcilerNode: Send + Sync + 'static {
         state: &mut Self::State,
         scope_key: &str,
         input: Self::Input,
-        context: &DerivedTriggerContext,
+        context: &AutomatonContext,
     ) -> impl std::future::Future<Output = Result<Vec<DerivedOutput<Self::Output>>, NodeLogicError>> + Send;
 
     /// Recompute a scope from its full working set after invalidation.
@@ -327,7 +327,7 @@ pub trait ScopeReconcilerNode: Send + Sync + 'static {
         state: &mut Self::State,
         scope_key: &str,
         working_set: Vec<Self::Input>,
-        context: &DerivedTriggerContext,
+        context: &AutomatonContext,
     ) -> impl std::future::Future<Output = Result<Vec<DerivedOutput<Self::Output>>, NodeLogicError>> + Send
     {
         async move {
@@ -363,7 +363,7 @@ pub trait ScopeReconcilerNode: Send + Sync + 'static {
 /// A 1:N event transducer: one input event produces zero or more output events,
 /// each potentially of a different event type.
 ///
-/// Unlike [`TransducerNode`], which emits at most one output per input, this node
+/// Unlike [`Transducer`], which emits at most one output per input, this node
 /// can emit multiple outputs with distinct event types — necessary when a single
 /// logical operation (e.g. document parsing) produces events of multiple kinds
 /// (`document.parsed` + N× `document.chunked`). Each output carries its own
@@ -403,7 +403,7 @@ pub trait MultiOutputTransducerNode: Send + Sync + 'static {
         &mut self,
         state: &mut Self::State,
         input: Self::Input,
-        context: &DerivedTriggerContext,
+        context: &AutomatonContext,
     ) -> impl std::future::Future<Output = Result<Vec<DerivedOutput<Self::Output>>, NodeLogicError>> + Send;
     fn on_initialize(
         &mut self,
@@ -420,13 +420,13 @@ pub trait MultiOutputTransducerNode: Send + Sync + 'static {
     }
 }
 
-// ── DerivedNodeImpl — unified dispatch trait ───────────────────────────
+// ── Automaton — unified dispatch trait ───────────────────────────
 
 /// Internal trait that unifies all three derived node models for the adapter.
 ///
 /// Implemented via wrapper types: `TransducerWrapper<N>`, `WindowedWrapper<N>`,
 /// `ScopeReconcilerWrapper<N>`. Users never implement this directly.
-pub trait DerivedNodeImpl: Send + Sync + 'static {
+pub trait Automaton: Send + Sync + 'static {
     type State: Serialize + DeserializeOwned + Default + Send + Sync;
 
     fn name(&self) -> &'static str;
@@ -442,7 +442,7 @@ pub trait DerivedNodeImpl: Send + Sync + 'static {
         &mut self,
         state: &mut Self::State,
         event: sinex_primitives::events::Event<JsonValue>,
-        context: &DerivedTriggerContext,
+        context: &AutomatonContext,
     ) -> impl std::future::Future<Output = Result<Vec<DerivedOutput<JsonValue>>, NodeLogicError>> + Send;
 
     /// Process a scope invalidation signal.
@@ -458,7 +458,7 @@ pub trait DerivedNodeImpl: Send + Sync + 'static {
         state: &mut Self::State,
         scope_key: &str,
         working_set: Vec<sinex_primitives::events::Event<JsonValue>>,
-        context: &DerivedTriggerContext,
+        context: &AutomatonContext,
     ) -> impl std::future::Future<Output = Result<Vec<DerivedOutput<JsonValue>>, NodeLogicError>> + Send;
 
     fn on_initialize_derived(
@@ -474,16 +474,16 @@ pub trait DerivedNodeImpl: Send + Sync + 'static {
 
 // ── Wrapper types ──────────────────────────────────────────────────────
 
-/// Wrapper that bridges `TransducerNode` to `DerivedNodeImpl`.
-pub struct TransducerWrapper<N: TransducerNode>(pub N);
+/// Wrapper that bridges `Transducer` to `Automaton`.
+pub struct TransducerWrapper<N: Transducer>(pub N);
 
-impl<N: TransducerNode + Default> Default for TransducerWrapper<N> {
+impl<N: Transducer + Default> Default for TransducerWrapper<N> {
     fn default() -> Self {
         Self(N::default())
     }
 }
 
-impl<N: TransducerNode> DerivedNodeImpl for TransducerWrapper<N> {
+impl<N: Transducer> Automaton for TransducerWrapper<N> {
     type State = N::State;
 
     fn name(&self) -> &'static str {
@@ -512,7 +512,7 @@ impl<N: TransducerNode> DerivedNodeImpl for TransducerWrapper<N> {
         &mut self,
         state: &mut Self::State,
         event: sinex_primitives::events::Event<JsonValue>,
-        context: &DerivedTriggerContext,
+        context: &AutomatonContext,
     ) -> Result<Vec<DerivedOutput<JsonValue>>, NodeLogicError> {
         let input: N::Input = serde_json::from_value(event.payload)
             .map_err(|e| NodeLogicError::InputParsing(format!("Failed to parse input: {e}")))?;
@@ -530,7 +530,7 @@ impl<N: TransducerNode> DerivedNodeImpl for TransducerWrapper<N> {
         _state: &mut Self::State,
         _scope_key: &str,
         _working_set: Vec<sinex_primitives::events::Event<JsonValue>>,
-        _context: &DerivedTriggerContext,
+        _context: &AutomatonContext,
     ) -> Result<Vec<DerivedOutput<JsonValue>>, NodeLogicError> {
         Ok(Vec::new())
     }
@@ -543,16 +543,16 @@ impl<N: TransducerNode> DerivedNodeImpl for TransducerWrapper<N> {
     }
 }
 
-/// Wrapper that bridges `WindowedNode` to `DerivedNodeImpl`.
-pub struct WindowedWrapper<N: WindowedNode>(pub N);
+/// Wrapper that bridges `Windowed` to `Automaton`.
+pub struct WindowedWrapper<N: Windowed>(pub N);
 
-impl<N: WindowedNode + Default> Default for WindowedWrapper<N> {
+impl<N: Windowed + Default> Default for WindowedWrapper<N> {
     fn default() -> Self {
         Self(N::default())
     }
 }
 
-impl<N: WindowedNode> DerivedNodeImpl for WindowedWrapper<N> {
+impl<N: Windowed> Automaton for WindowedWrapper<N> {
     type State = N::State;
 
     fn name(&self) -> &'static str {
@@ -581,7 +581,7 @@ impl<N: WindowedNode> DerivedNodeImpl for WindowedWrapper<N> {
         &mut self,
         state: &mut Self::State,
         event: sinex_primitives::events::Event<JsonValue>,
-        context: &DerivedTriggerContext,
+        context: &AutomatonContext,
     ) -> Result<Vec<DerivedOutput<JsonValue>>, NodeLogicError> {
         let input: N::Input = serde_json::from_value(event.payload)
             .map_err(|e| NodeLogicError::InputParsing(format!("Failed to parse input: {e}")))?;
@@ -607,7 +607,7 @@ impl<N: WindowedNode> DerivedNodeImpl for WindowedWrapper<N> {
         state: &mut Self::State,
         _scope_key: &str,
         working_set: Vec<sinex_primitives::events::Event<JsonValue>>,
-        context: &DerivedTriggerContext,
+        context: &AutomatonContext,
     ) -> Result<Vec<DerivedOutput<JsonValue>>, NodeLogicError> {
         let inputs: Vec<N::Input> = working_set
             .into_iter()
@@ -647,18 +647,18 @@ impl<N: WindowedNode> DerivedNodeImpl for WindowedWrapper<N> {
     }
 }
 
-/// Wrapper that bridges `ScopeReconcilerNode` to `DerivedNodeImpl`.
-pub struct ScopeReconcilerWrapper<N: ScopeReconcilerNode>(pub N);
+/// Wrapper that bridges `ScopeReconciler` to `Automaton`.
+pub struct ScopeReconcilerWrapper<N: ScopeReconciler>(pub N);
 
-impl<N: ScopeReconcilerNode + Default> Default for ScopeReconcilerWrapper<N> {
+impl<N: ScopeReconciler + Default> Default for ScopeReconcilerWrapper<N> {
     fn default() -> Self {
         Self(N::default())
     }
 }
 
-impl<N> DerivedNodeImpl for ScopeReconcilerWrapper<N>
+impl<N> Automaton for ScopeReconcilerWrapper<N>
 where
-    N: ScopeReconcilerNode,
+    N: ScopeReconciler,
 {
     type State = N::State;
 
@@ -688,7 +688,7 @@ where
         &mut self,
         state: &mut Self::State,
         event: sinex_primitives::events::Event<JsonValue>,
-        context: &DerivedTriggerContext,
+        context: &AutomatonContext,
     ) -> Result<Vec<DerivedOutput<JsonValue>>, NodeLogicError> {
         let input: N::Input = serde_json::from_value(event.payload)
             .map_err(|e| NodeLogicError::InputParsing(format!("Failed to parse input: {e}")))?;
@@ -701,7 +701,7 @@ where
                 serialize_outputs(self.0.reconcile(state, scope_key, input, context).await?)
             }
             _ => Err(NodeLogicError::Processing(format!(
-                "ScopeReconcilerNode '{}' returned {} live scope keys; derived-node live processing supports at most one scope per trigger",
+                "ScopeReconciler '{}' returned {} live scope keys; derived-node live processing supports at most one scope per trigger",
                 self.0.name(),
                 scope_keys.len()
             ))),
@@ -714,7 +714,7 @@ where
         state: &mut Self::State,
         scope_key: &str,
         working_set: Vec<sinex_primitives::events::Event<JsonValue>>,
-        context: &DerivedTriggerContext,
+        context: &AutomatonContext,
     ) -> Result<Vec<DerivedOutput<JsonValue>>, NodeLogicError> {
         let inputs: Vec<N::Input> = working_set
             .into_iter()
@@ -759,7 +759,7 @@ where
     }
 }
 
-/// Wrapper that bridges `MultiOutputTransducerNode` to `DerivedNodeImpl`.
+/// Wrapper that bridges `MultiOutputTransducerNode` to `Automaton`.
 pub struct MultiOutputTransducerWrapper<N: MultiOutputTransducerNode>(pub N);
 
 impl<N: MultiOutputTransducerNode + Default> Default for MultiOutputTransducerWrapper<N> {
@@ -768,7 +768,7 @@ impl<N: MultiOutputTransducerNode + Default> Default for MultiOutputTransducerWr
     }
 }
 
-impl<N: MultiOutputTransducerNode> DerivedNodeImpl for MultiOutputTransducerWrapper<N> {
+impl<N: MultiOutputTransducerNode> Automaton for MultiOutputTransducerWrapper<N> {
     type State = N::State;
 
     fn name(&self) -> &'static str {
@@ -801,7 +801,7 @@ impl<N: MultiOutputTransducerNode> DerivedNodeImpl for MultiOutputTransducerWrap
         &mut self,
         state: &mut Self::State,
         event: sinex_primitives::events::Event<JsonValue>,
-        context: &DerivedTriggerContext,
+        context: &AutomatonContext,
     ) -> Result<Vec<DerivedOutput<JsonValue>>, NodeLogicError> {
         let input: N::Input = serde_json::from_value(event.payload)
             .map_err(|e| NodeLogicError::InputParsing(format!("Failed to parse input: {e}")))?;
@@ -815,7 +815,7 @@ impl<N: MultiOutputTransducerNode> DerivedNodeImpl for MultiOutputTransducerWrap
         _state: &mut Self::State,
         _scope_key: &str,
         _working_set: Vec<sinex_primitives::events::Event<JsonValue>>,
-        _context: &DerivedTriggerContext,
+        _context: &AutomatonContext,
     ) -> Result<Vec<DerivedOutput<JsonValue>>, NodeLogicError> {
         Ok(Vec::new())
     }

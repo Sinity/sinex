@@ -73,7 +73,7 @@ Finalizers must:
 - make no-op/idempotent repeats explicit;
 - preserve prior user judgments when proposal-generating automata replay.
 
-Final outputs still use the ordinary material or synthesis provenance model.
+Final outputs still use the ordinary material or derived provenance model.
 Proposal/judgment records do not create a third event provenance class.
 
 ## Authority Consumers

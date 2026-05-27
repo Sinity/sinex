@@ -32,7 +32,7 @@ let
   # Always guard both core and node units: nodes emit to NATS, ingestd must pass preflight
   # before either layer accepts production traffic.
   coreEnabled = sinexEnabled && (cfg.core.enable or false);
-  coreUnitsToGuard = lib.optionals coreEnabled [ "sinex-ingestd" "sinex-gateway" ];
+  coreUnitsToGuard = lib.optionals coreEnabled [ "sinexd" ];
   unitsToGuard = coreUnitsToGuard ++ generatedUnits;
   allDatabases = unique ([ cfg.database.name ] ++ cfg.database.extraDatabases);
 

@@ -231,9 +231,14 @@ let
     );
     true;
 
-  # ── Per-unit service generation ─────────────────────────────────────────
-  # Generates sinex-source-worker-<id>-<idx>.service for each instance.
-  # For monitor units (service_policy=invoked_on_demand) we use Type=oneshot.
+  # ── Per-unit service generation (post-collapse: removed) ───────────────
+  # Pre-collapse this module emitted `sinex-source-worker-<id>-<idx>.service`
+  # systemd units. After PR-XXX the supervisor inside sinexd hosts every
+  # binding in-process, so unit emission moved into source-workers.nix as
+  # the SINEX_SOURCE_BINDINGS_PATH manifest builder. The helper below is
+  # retained as a no-op placeholder so future bindings work with the same
+  # option-set even though no unit is generated; it is intentionally never
+  # invoked from this module's `config` block.
   mkGeneratedUnit = unitId: binding: catalogUnit:
     let
       instances = binding.instances;
@@ -261,11 +266,11 @@ let
       execArgs = concatStringsSep " " execArgParts;
       afterUnits =
         schemaApplyUnits
-        ++ optionals coreEnabled [ "sinex-ingestd.service" ]
+        ++ optionals coreEnabled [ "sinexd.service" ]
         ++ binding.afterUnits;
       requireUnits = schemaApplyUnits ++ binding.requiresUnits;
       wantsUnits =
-        optionals coreEnabled [ "sinex-ingestd.service" ]
+        optionals coreEnabled [ "sinexd.service" ]
         ++ binding.wantsUnits;
       isMonitor = (catalogUnit.service_policy or "") == "invoked_on_demand";
       # Base service config; domain glue (ACL scripts etc.) is merged in via
@@ -498,13 +503,17 @@ in
   config = mkIf (sinexEnabled && nodesEnabled) {
     # Fail at evaluation time if any required adapter field is missing.
     # _assertionsCheck is evaluated for its side-effect (builtins.trace + false assertion).
+    #
+    # Post-collapse: this module no longer emits per-binding systemd units.
+    # sinexd hosts every binding in-process and reads the assembled manifest
+    # from `SINEX_SOURCE_BINDINGS_PATH` (written by source-workers.nix). We
+    # keep the schema validation here so a malformed binding still fails at
+    # `nix flake check` time rather than only when sinexd starts.
     assertions = [
       {
         assertion = builtins.all (x: x) _assertionsCheck;
         message = "One or more sinex generatedBindings are missing required adapter config fields. See trace output above for details.";
       }
     ];
-
-    systemd.services = generatedServiceUnits;
   };
 }

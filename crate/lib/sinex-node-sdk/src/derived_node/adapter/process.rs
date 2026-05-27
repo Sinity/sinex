@@ -1,12 +1,12 @@
-//! Per-event and per-batch processing for `DerivedNodeAdapter`.
+//! Per-event and per-batch processing for `AutomatonRuntime`.
 //!
 //! Carved out of `adapter/mod.rs` as part of #697. Pure mechanical move; the
 //! methods, control flow, and instrumentation are unchanged.
 
-use super::{DerivedNodeAdapter, INVALIDATION_QUERY_PAGE_SIZE, event_lag_ms};
+use super::{AutomatonRuntime, INVALIDATION_QUERY_PAGE_SIZE, event_lag_ms};
 
-use crate::derived_node::context::DerivedTriggerContext;
-use crate::derived_node::traits::DerivedNodeImpl;
+use crate::derived_node::context::AutomatonContext;
+use crate::derived_node::traits::Automaton;
 use crate::{NodeResult, SinexError};
 
 use sinex_primitives::JsonValue;
@@ -21,9 +21,9 @@ use sinex_primitives::settlement::{
 use tracing::info;
 use tracing::{error, warn};
 
-impl<N> DerivedNodeAdapter<N>
+impl<N> AutomatonRuntime<N>
 where
-    N: DerivedNodeImpl,
+    N: Automaton,
 {
     #[cfg(feature = "db")]
     pub(super) async fn load_query_events_paginated(
@@ -166,7 +166,7 @@ where
         &mut self,
         event: Event<JsonValue>,
     ) -> NodeResult<Vec<Event<JsonValue>>> {
-        let context = DerivedTriggerContext::live(&event)?;
+        let context = AutomatonContext::live(&event)?;
         let source_event_id = context.trigger_event_id;
 
         // Lag = wall time between the upstream event's `ts_orig` and the

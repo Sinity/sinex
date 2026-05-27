@@ -17,9 +17,9 @@ semver = { workspace = true }
 shadow-rs = { workspace = true }
 
 # Sinex crates
-sinex-primitives = { path = "../sinex-primitives", features = ["sqlx", "nats"] }
+sinex-primitives = { path = "../../sinex-primitives", features = ["sqlx", "nats"] }
 
-sinex-db = { path = "../sinex-db", optional = true }
+sinex-db = { path = "../../sinex-db", optional = true }
 
 [features]
 default = ["db", "messaging", "preflight"]
@@ -107,8 +107,8 @@ workspace = true
 tempfile = { workspace = true }
 proptest = { workspace = true }
 xtask = { path = "../../../xtask" }
-sinex-primitives = { path = "../sinex-primitives", features = ["testing"] }
-sinex-macros = { path = "../sinex-macros" }
+sinex-primitives = { path = "../../sinex-primitives", features = ["testing"] }
+sinex-macros = { path = "../../sinex-macros" }
 [dev-dependencies.color-eyre]
 workspace = true
 

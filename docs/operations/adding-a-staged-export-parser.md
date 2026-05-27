@@ -205,7 +205,7 @@ impl MaterialParser for <Provider>Parser {
 | `occurrence_key` | `Some(OccurrenceKey { ... })` — see "Occurrence identity" |
 | `privacy_context` | `ProcessingContext::Document` for chat-like, `Metadata` for structured records |
 | `field_privacy_log` | `None` (defaults are fine) |
-| `synthesis_parents` | `None` (material provenance) |
+| `derived_parents` | `None` (material provenance) |
 
 ### 4. Anchoring
 

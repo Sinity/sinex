@@ -85,11 +85,11 @@ impl Config {
         Self {
             database_url: env::var("DATABASE_URL").ok(),
             nats_url: env::var("SINEX_NATS_URL").ok(),
-            gateway_url: env::var("SINEX_GATEWAY_URL")
+            gateway_url: env::var("SINEX_API_URL")
                 .ok()
                 .or_else(|| env::var("SINEX_RPC_URL").ok())
                 .or_else(|| {
-                    env::var("SINEX_GATEWAY_TCP_LISTEN")
+                    env::var("SINEX_API_TCP_LISTEN")
                         .ok()
                         .map(|listen| format!("https://{listen}"))
                 }),

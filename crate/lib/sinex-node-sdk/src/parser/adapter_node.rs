@@ -1,5 +1,5 @@
 //! Generic [`AdapterBackedIngestor`] — wires an [`InputShapeAdapter`] to a
-//! [`MaterialParser`] as a full [`IngestorNode`].
+//! [`MaterialParser`] as a full [`SourceUnit`].
 //!
 //! # Purpose
 //!
@@ -13,12 +13,12 @@
 //! );
 //! ```
 //!
-//! `AdapterBackedIngestor<A, P>` is the `IngestorNode` implementation that
+//! `AdapterBackedIngestor<A, P>` is the `SourceUnit` implementation that
 //! backs every such registration. It handles:
 //!
 //! - Snapshot and historical scans (drive adapter stream → parse → emit).
 //! - Continuous mode for append-only adapters (tail loop with shutdown signal).
-//! - Cursor persistence via the standard `IngestorNode` state mechanism.
+//! - Cursor persistence via the standard `SourceUnit` state mechanism.
 //! - Conversion of `ParsedEventIntent` → `Event<JsonValue>` → `emit()`.
 //! - Long-lived source-material lifecycle: records without their own material
 //!   provenance are appended to the same [`AppendStreamAcquirer`], which
@@ -76,7 +76,7 @@
 //! Adapters that do not natively stream (e.g. `SqliteRowAdapter`,
 //! `StaticFileAdapter`) are polled on a configurable interval (default 30 s).
 //! Adapters that natively support streaming should implement their own
-//! `IngestorNode` instead.
+//! `SourceUnit` instead.
 
 use std::collections::{BTreeMap, HashMap};
 use std::marker::PhantomData;
@@ -101,7 +101,7 @@ use sinex_primitives::temporal::Timestamp;
 
 use crate::NodeResult;
 use crate::acquisition_manager::{AcquisitionManager, AppendStreamAcquirer, RotationPolicy};
-use crate::ingestor_node::IngestorNode;
+use crate::ingestor_node::SourceUnit;
 use crate::parser::adapters::SqliteSnapshotLane;
 use crate::parser::{
     BindingConfig, DriftEvent, InputShapeAdapter, MaterialParser, SourceRecord,
@@ -427,7 +427,7 @@ struct MaterializedAdapterRecord {
     offset_end: Option<i64>,
     /// BLAKE3 hash of the record payload bytes (#1447). `None` for adapter
     /// paths where the byte range cannot be cheaply isolated, e.g. directory-
-    /// entry anchors that carry only a path. Synthesis events stay `None`
+    /// entry anchors that carry only a path. Derived events stay `None`
     /// regardless.
     anchor_payload_hash: Option<[u8; 32]>,
 }
@@ -894,17 +894,17 @@ where
     A::Cursor: Clone + Serialize + DeserializeOwned,
 {
     fn default() -> Self {
-        // Default::default() is required by IngestorNodeAdapter<I>.
+        // Default::default() is required by SourceUnitRuntime<I>.
         // The source_unit_id is a sentinel that the macro overrides via `new`.
         Self::new("__unset__")
     }
 }
 
 // =============================================================================
-// IngestorNode impl
+// SourceUnit impl
 // =============================================================================
 
-impl<A, P> IngestorNode for AdapterBackedIngestor<A, P>
+impl<A, P> SourceUnit for AdapterBackedIngestor<A, P>
 where
     A: InputShapeAdapter + Default + Send + Sync + 'static,
     P: MaterialParser + Default + Send + Sync + 'static,

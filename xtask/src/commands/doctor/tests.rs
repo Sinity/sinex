@@ -356,7 +356,7 @@ async fn test_detect_tls_check_prefers_rcgen_cert_names() -> ::xtask::sandbox::T
     std::fs::write(&key, "not-a-real-key")?;
 
     let mut env = EnvGuard::new();
-    env.set("SINEX_GATEWAY_TLS_CERT", cert.display().to_string());
+    env.set("SINEX_API_TLS_CERT", cert.display().to_string());
 
     let check = detect_tls_check().expect("TLS check should resolve active directory");
     assert!(check.server_cert_exists);
@@ -372,7 +372,7 @@ async fn test_detect_tls_check_reports_validation_errors() -> ::xtask::sandbox::
     std::fs::write(&key, "not-a-real-key")?;
 
     let mut env = EnvGuard::new();
-    env.set("SINEX_GATEWAY_TLS_CERT", cert.display().to_string());
+    env.set("SINEX_API_TLS_CERT", cert.display().to_string());
 
     let check = detect_tls_check().expect("TLS check should resolve active directory");
     assert!(check.server_cert_exists);
@@ -1505,11 +1505,11 @@ async fn test_check_secret_materials_requires_gateway_admin_token()
     std::fs::write(&db, "password")?;
 
     let mut env = EnvGuard::new();
-    env.set("SINEX_GATEWAY_TLS_CERT", cert.display().to_string());
-    env.set("SINEX_GATEWAY_TLS_KEY", key.display().to_string());
+    env.set("SINEX_API_TLS_CERT", cert.display().to_string());
+    env.set("SINEX_API_TLS_KEY", key.display().to_string());
     env.set("SINEX_DATABASE_PASSWORD_FILE", db.display().to_string());
     env.set(
-        "SINEX_GATEWAY_ADMIN_TOKEN_FILE",
+        "SINEX_API_ADMIN_TOKEN_FILE",
         missing_admin.display().to_string(),
     );
 
@@ -1528,13 +1528,13 @@ async fn test_check_secret_materials_respects_descriptor_declared_paths_only()
 
     let mut env = EnvGuard::new();
     env.set(
-        "SINEX_GATEWAY_TLS_CLIENT_CA",
+        "SINEX_API_TLS_CLIENT_CA",
         temp.path()
             .join("ambient-client-ca.pem")
             .display()
             .to_string(),
     );
-    env.set("SINEX_GATEWAY_REQUIRE_CLIENT_TLS", "1");
+    env.set("SINEX_API_REQUIRE_CLIENT_TLS", "1");
 
     let descriptor = DeploymentReadinessDescriptor {
         secrets: sinex_primitives::DeploymentSecrets {
@@ -1591,13 +1591,13 @@ async fn test_check_secret_materials_reports_descriptor_declared_nats_secret()
 
     let mut env = EnvGuard::new();
     env.set(
-        "SINEX_GATEWAY_TLS_CLIENT_CA",
+        "SINEX_API_TLS_CLIENT_CA",
         temp.path()
             .join("ambient-client-ca.pem")
             .display()
             .to_string(),
     );
-    env.set("SINEX_GATEWAY_REQUIRE_CLIENT_TLS", "1");
+    env.set("SINEX_API_REQUIRE_CLIENT_TLS", "1");
 
     let descriptor = DeploymentReadinessDescriptor {
         secrets: sinex_primitives::DeploymentSecrets {

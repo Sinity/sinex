@@ -68,21 +68,21 @@ not a document layer. Specifically:
 ### What this design fixes
 
 The minimum honest contract is: **two corpora, one document table, one
-chunk table, two synthesis events, one downstream consumer wired**. That is
+chunk table, two derived events, one downstream consumer wired**. That is
 sufficient to unblock `#399` and to keep the embedding/search work
 (`#477`/`#478`) on a tractable foundation.
 
 ## Decision
 
-Sinex adopts a synthesis-driven document layer. Source bytes remain pinned
+Sinex adopts a derived-driven document layer. Source bytes remain pinned
 to material provenance (the existing `document.ingested` event is kept
 unchanged). A new automaton — the **document parser** — emits
-synthesis-provenance events that materialize `core.documents` and
-`core.document_chunks` rows. Re-extraction is replay: archive the synthesis
+derived-provenance events that materialize `core.documents` and
+`core.document_chunks` rows. Re-extraction is replay: archive the derived
 events, re-run the parser, get the same `document_id`.
 
 There is no `documents` projection populated by application code outside the
-event pipeline. The relational tables are projections of the synthesis
+event pipeline. The relational tables are projections of the derived
 events, in the same way `core.entities` is a projection of entity events
 (`crate/lib/sinex-schema/src/schema/entities.rs:1-9`).
 
@@ -117,12 +117,12 @@ emails, OCR'd images, PDFs, DOCX, and anything else stay out (see
 
 | Event type | Source | Provenance | Purpose |
 |------------|--------|------------|---------|
-| `document.parsed` | `document-parser` | Synthesis (`from_parents([source_event_id])`) | One per document; carries `document_id`, kind, extraction_version, and the structured side data (frontmatter, wikilinks for Dendron; exit code, command for terminal) |
-| `document.chunked` | `document-parser` | Synthesis (`from_parents([document_parsed_event_id])`) | One per chunk; carries `document_id`, chunk index, byte offsets into source material, and chunk text |
+| `document.parsed` | `document-parser` | Derived (`from_parents([source_event_id])`) | One per document; carries `document_id`, kind, extraction_version, and the structured side data (frontmatter, wikilinks for Dendron; exit code, command for terminal) |
+| `document.chunked` | `document-parser` | Derived (`from_parents([document_parsed_event_id])`) | One per chunk; carries `document_id`, chunk index, byte offsets into source material, and chunk text |
 
 Both events are emitted by a single new automaton crate
 (`crate/nodes/sinex-document-parser`) modelled on
-`sinex-terminal-command-canonicalizer`. It is a `TransducerNode`: 1:1 input
+`sinex-terminal-command-canonicalizer`. It is a `Transducer`: 1:1 input
 → document, with chunks emitted in the same dispatch.
 
 ## Non-goals (explicit)
@@ -174,7 +174,7 @@ DocumentParsedPayload {
 }
 ```
 
-Provenance: synthesis. `from_parents([parent_event_id])`.
+Provenance: derived. `from_parents([parent_event_id])`.
 
 - For Dendron: `parent_event_id` is the `document.ingested` event ID;
   `side_data` is `{ "frontmatter": {...}, "wikilinks": ["[[name]]", ...],
@@ -196,7 +196,7 @@ DocumentChunkedPayload {
 }
 ```
 
-Provenance: synthesis. `from_parents([document_parsed_event_id])` — the
+Provenance: derived. `from_parents([document_parsed_event_id])` — the
 chunk is derived from the document, not directly from source bytes.
 
 `source_anchor_*` are populated for Dendron (the parser walks byte offsets
@@ -205,9 +205,9 @@ output (see **Replay & idempotency** for why).
 
 ## Schema impact
 
-Two new tables in the `core` schema. Both are projections of the synthesis
+Two new tables in the `core` schema. Both are projections of the derived
 events above; both can be rebuilt by replaying the parser against archived
-synthesis. No CAs, no materialized views in v1.
+derived. No CAs, no materialized views in v1.
 
 ### `core.documents`
 
@@ -306,14 +306,14 @@ Implications:
    **post-redaction** text, not the raw source material. This matters for
    replay (see below).
 3. Source bytes in `raw.source_material_registry` remain unredacted by
-   construction — the privacy policy applies at the synthesis boundary, not
+   construction — the privacy policy applies at the derived boundary, not
    at the material boundary, consistent with the model in the existing
    document ingestor (`crate/nodes/sinex-document-ingestor/src/lib.rs:592-605`).
 4. The parser does not introduce new privacy strategies. It uses the
    existing engine surface. v1 explicitly inherits source-unit privacy
    tier; the AC item *"inheriting source-unit privacy tier"* maps directly
    to "we run the engine with the source's normal context."
-5. If `privacy::engine()` errors, the parser fails the synthesis emit (no
+5. If `privacy::engine()` errors, the parser fails the derived emit (no
    document or chunks land). A redaction-broken document is not honest
    output. This matches `redact_metadata` in
    `crate/nodes/sinex-document-ingestor/src/lib.rs:665-674`.
@@ -338,8 +338,8 @@ filesystem watch (sinex-source-worker fs source unit)
      • filters: kind detection (Dendron vault root prefix + .md extension)
      • reads source material bytes via SourceMaterialRepository
      • runs frontmatter + wikilink + paragraph extraction
-     • emits document.parsed (synthesis)
-     • emits document.chunked × N (synthesis)
+     • emits document.parsed (derived)
+     • emits document.chunked × N (derived)
    → ingestd projection writer (NEW)
      • on document.parsed: upsert core.documents
      • on document.chunked: insert core.document_chunks
@@ -358,7 +358,7 @@ sinex-terminal-command-canonicalizer → command.canonical (existing,
      • subscribes to command.canonical
      • filters: presence of non-empty captured output
      • runs line-group chunking on the canonicalized output
-     • emits document.parsed + document.chunked (synthesis)
+     • emits document.parsed + document.chunked (derived)
    → ingestd projection writer (same as Dendron)
 ```
 
@@ -369,7 +369,7 @@ crate `sinex-document-parser`, modelled on
 `sinex-terminal-command-canonicalizer`. Adding parsing logic to the
 ingestor would conflate two concerns: bringing bytes into source-material
 registry (material provenance, ingestor) versus interpreting bytes as a
-queryable text unit (synthesis provenance, automaton). The existing crate
+queryable text unit (derived provenance, automaton). The existing crate
 boundary (`crate/nodes/sinex-document-ingestor/src/lib.rs:174-770`) is
 correct; v1 builds alongside, not inside.
 
@@ -378,7 +378,7 @@ The projection writer (the side that turns `document.parsed` /
 lives in `sinex-ingestd`, next to the existing batch insert routing
 described in the architecture event-lifecycle map. It uses the QueryBuilder
 path, not COPY: chunk volume per document is small (typical Dendron note <
-20 chunks; typical command output < 5), and the synthesis provenance forces
+20 chunks; typical command output < 5), and the derived provenance forces
 the REPEATABLE READ + QueryBuilder path anyway per the routing rule.
 
 ## Replay & idempotency
@@ -411,7 +411,7 @@ provenance overview in `crate/lib/sinex-node-sdk/docs/provenance.md`):
    by `parsed_event_id` / `chunked_event_id`. (FK ON DELETE CASCADE
    handles chunks if the document row is removed first.)
 4. The parser's NATS scan command re-runs against the same parents.
-5. New synthesis events arrive with the same `document_id` (UUIDv5 is
+5. New derived events arrive with the same `document_id` (UUIDv5 is
    deterministic) but new event IDs.
 6. The projection writer upserts `core.documents` (PK = `document_id`),
    inserts new `core.document_chunks` rows.

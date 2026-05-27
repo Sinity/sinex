@@ -1,12 +1,12 @@
-//! `run_continuous` / `run_historical` for `DerivedNodeAdapter`.
+//! `run_continuous` / `run_historical` for `AutomatonRuntime`.
 //!
 //! Carved out of `adapter/mod.rs` as part of #697. Pure mechanical move; the
 //! methods, control flow, and instrumentation are unchanged.
 
-use super::{DerivedNodeAdapter, historical_resume_position, recv_invalidation};
+use super::{AutomatonRuntime, historical_resume_position, recv_invalidation};
 
-use crate::derived_node::context::DerivedTriggerContext;
-use crate::derived_node::traits::DerivedNodeImpl;
+use crate::derived_node::context::AutomatonContext;
+use crate::derived_node::traits::Automaton;
 use crate::runtime::stream::{Checkpoint, NodeRuntimeState, ScanArgs, ScanReport};
 use crate::{NodeResult, SinexError};
 use sinex_primitives::env as shared_env;
@@ -21,9 +21,9 @@ use std::collections::HashMap;
 use std::time::{Duration, Instant};
 use tracing::{debug, error, info, warn};
 
-impl<N> DerivedNodeAdapter<N>
+impl<N> AutomatonRuntime<N>
 where
-    N: DerivedNodeImpl,
+    N: Automaton,
 {
     pub(super) async fn run_continuous(&mut self, _from: Checkpoint) -> NodeResult<ScanReport> {
         let start = Instant::now();
@@ -359,7 +359,7 @@ where
             }
 
             for query_event in &matching_events {
-                let ctx = DerivedTriggerContext::historical(&query_event.event, operation_id)?;
+                let ctx = AutomatonContext::historical(&query_event.event, operation_id)?;
                 let trigger_event_id = ctx.trigger_event_id;
 
                 match self

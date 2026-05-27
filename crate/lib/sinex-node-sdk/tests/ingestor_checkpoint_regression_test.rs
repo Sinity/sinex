@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use sinex_node_sdk::runtime::stream::{
     Checkpoint, ContinuousStart, Node, NodeInitContext, ScanArgs, ScanReport, TimeHorizon,
 };
-use sinex_node_sdk::{IngestorNode, IngestorNodeAdapter, NodeResult};
+use sinex_node_sdk::{SourceUnit, SourceUnitRuntime, NodeResult};
 use sinex_primitives::Timestamp;
 use std::collections::HashMap;
 use support::runtime::TestRuntimeBuilder;
@@ -18,7 +18,7 @@ struct TestState;
 #[derive(Default)]
 struct SnapshotCheckpointIngestor;
 
-impl IngestorNode for SnapshotCheckpointIngestor {
+impl SourceUnit for SnapshotCheckpointIngestor {
     type Config = ();
     type State = TestState;
 
@@ -98,7 +98,7 @@ async fn snapshot_scan_preserves_existing_checkpoint(ctx: TestContext) -> TestRe
     let (service_info, handles, raw_config, work_dir) = runtime.runtime.clone().into_parts();
     let init_ctx = NodeInitContext::new((), raw_config, service_info, handles, work_dir);
 
-    let mut node = IngestorNodeAdapter::new(SnapshotCheckpointIngestor);
+    let mut node = SourceUnitRuntime::new(SnapshotCheckpointIngestor);
     node.initialize(init_ctx).await?;
 
     let historical_report = node
@@ -144,7 +144,7 @@ async fn fresh_snapshot_scan_keeps_empty_checkpoint(ctx: TestContext) -> TestRes
     let (service_info, handles, raw_config, work_dir) = runtime.runtime.clone().into_parts();
     let init_ctx = NodeInitContext::new((), raw_config, service_info, handles, work_dir);
 
-    let mut node = IngestorNodeAdapter::new(SnapshotCheckpointIngestor);
+    let mut node = SourceUnitRuntime::new(SnapshotCheckpointIngestor);
     node.initialize(init_ctx).await?;
 
     let snapshot_report = node
