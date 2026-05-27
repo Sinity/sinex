@@ -3,7 +3,7 @@
 Environment variables specific to direct `sinex-gateway` runs.
 
 For deployed systems, prefer typed `services.sinex.*` NixOS module options. The module is the
-canonical deployment surface and exports the matching `SINEX_GATEWAY_*`, `SINEX_RPC_*`, and shared
+canonical deployment surface and exports the matching `SINEX_API_*`, `SINEX_RPC_*`, and shared
 runtime variables automatically.
 
 The loaded runtime path is now:
@@ -17,15 +17,15 @@ The loaded runtime path is now:
 
 ```bash
 # TCP listen address (default: 127.0.0.1:9999)
-SINEX_GATEWAY_TCP_LISTEN="0.0.0.0:8080"
+SINEX_API_TCP_LISTEN="0.0.0.0:8080"
 
 # TLS certificate paths (REQUIRED for production)
-SINEX_GATEWAY_TLS_CERT="/path/to/cert.pem"
-SINEX_GATEWAY_TLS_KEY="/path/to/key.pem"
-SINEX_GATEWAY_TLS_CLIENT_CA="/path/to/ca.pem"  # Optional: for mTLS
+SINEX_API_TLS_CERT="/path/to/cert.pem"
+SINEX_API_TLS_KEY="/path/to/key.pem"
+SINEX_API_TLS_CLIENT_CA="/path/to/ca.pem"  # Optional: for mTLS
 
 # Require client TLS certificates (default: false)
-SINEX_GATEWAY_REQUIRE_CLIENT_TLS=true
+SINEX_API_REQUIRE_CLIENT_TLS=true
 ```
 
 ## Authentication
@@ -39,23 +39,23 @@ SINEX_RPC_TOKEN="your-secret-token:admin"
 SINEX_RPC_TOKEN_FILE="/run/secrets/rpc-token"
 
 # Admin token file (elevated privileges)
-SINEX_GATEWAY_ADMIN_TOKEN_FILE="/run/secrets/admin-token"
+SINEX_API_ADMIN_TOKEN_FILE="/run/secrets/admin-token"
 ```
 
 ## Limits
 
 ```bash
 # Maximum concurrent RPC requests (default: 100)
-SINEX_GATEWAY_MAX_CONCURRENCY=100
+SINEX_API_MAX_CONCURRENCY=100
 
 # RPC request timeout in seconds (default: 30)
-SINEX_GATEWAY_REQUEST_TIMEOUT_SECS=30
+SINEX_API_REQUEST_TIMEOUT_SECS=30
 
 # Maximum RPC body size in bytes (default: 2 MiB)
-SINEX_GATEWAY_MAX_BODY_BYTES=2097152
+SINEX_API_MAX_BODY_BYTES=2097152
 
 # Maximum decoded blob payload size in bytes (default: 5 MiB)
-SINEX_GATEWAY_MAX_BLOB_BYTES=5242880
+SINEX_API_MAX_BLOB_BYTES=5242880
 ```
 
 ## Timeouts
@@ -105,23 +105,23 @@ SINEX_NATIVE_MESSAGING_EXTENSION_ROLES='{"my-extension": "readonly", "admin-ext"
 
 ```bash
 # Pool acquire timeout in seconds (default: 5)
-SINEX_GATEWAY_POOL_ACQUIRE_TIMEOUT_SECS=5
+SINEX_API_POOL_ACQUIRE_TIMEOUT_SECS=5
 ```
 
 ## Quick Reference
 
 | Variable | Required | Default | Purpose |
 |----------|----------|---------|---------|
-| `SINEX_GATEWAY_TCP_LISTEN` | No | `127.0.0.1:9999` | TCP listen address |
-| `SINEX_GATEWAY_TLS_CERT` | Prod | - | TLS certificate path |
-| `SINEX_GATEWAY_TLS_KEY` | Prod | - | TLS private key path |
-| `SINEX_GATEWAY_TLS_CLIENT_CA` | No | - | Client CA for mTLS |
-| `SINEX_GATEWAY_MAX_CONCURRENCY` | No | 100 | Max concurrent RPC requests |
-| `SINEX_GATEWAY_REQUEST_TIMEOUT_SECS` | No | 30s | RPC request timeout |
-| `SINEX_GATEWAY_MAX_BODY_BYTES` | No | 2 MiB | Max RPC body size |
+| `SINEX_API_TCP_LISTEN` | No | `127.0.0.1:9999` | TCP listen address |
+| `SINEX_API_TLS_CERT` | Prod | - | TLS certificate path |
+| `SINEX_API_TLS_KEY` | Prod | - | TLS private key path |
+| `SINEX_API_TLS_CLIENT_CA` | No | - | Client CA for mTLS |
+| `SINEX_API_MAX_CONCURRENCY` | No | 100 | Max concurrent RPC requests |
+| `SINEX_API_REQUEST_TIMEOUT_SECS` | No | 30s | RPC request timeout |
+| `SINEX_API_MAX_BODY_BYTES` | No | 2 MiB | Max RPC body size |
 | `SINEX_RPC_TOKEN` | Yes* | - | Bearer token (direct) |
 | `SINEX_RPC_TOKEN_FILE` | Yes* | - | Bearer token (file) |
-| `SINEX_GATEWAY_MAX_BLOB_BYTES` | No | 5 MiB | Max decoded blob payload |
+| `SINEX_API_MAX_BLOB_BYTES` | No | 5 MiB | Max decoded blob payload |
 | `SINEX_REPLAY_CONTROL_TIMEOUT_SECS` | No | 30s | Replay request timeout |
 | `SINEX_NATS_CONSUMER_CREATE_TIMEOUT_SECS` | No | 10s | Consumer creation timeout |
 | `SINEX_RPC_RATE_LIMIT_ENABLED` | No | `true` | Enable rate limiting |
@@ -132,7 +132,7 @@ SINEX_GATEWAY_POOL_ACQUIRE_TIMEOUT_SECS=5
 | `SINEX_RPC_RATE_LIMIT_PER_MINUTE` | No | 6000 | Max requests/min (distributed) |
 | `SINEX_NATIVE_MESSAGING_MAX_SIZE_BYTES` | No | 1 MiB | Max native message size |
 | `SINEX_NATIVE_MESSAGING_EXTENSION_ROLES` | No | - | Per-extension role map (JSON) |
-| `SINEX_GATEWAY_POOL_ACQUIRE_TIMEOUT_SECS` | No | 5s | DB pool acquire timeout |
+| `SINEX_API_POOL_ACQUIRE_TIMEOUT_SECS` | No | 5s | DB pool acquire timeout |
 
 *One of `SINEX_RPC_TOKEN` or `SINEX_RPC_TOKEN_FILE` required. Tokens must include a role suffix (`:readonly`, `:write`, or `:admin`).
 

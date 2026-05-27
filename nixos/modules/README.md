@@ -197,7 +197,7 @@ disabled (e.g. staging migrations).
 
 ### Environment Rendering
 - the module is the canonical config surface; emitted env vars are an implementation detail of the generated units
-- gateway TLS options render `SINEX_GATEWAY_TLS_CERT`, `SINEX_GATEWAY_TLS_KEY`, `SINEX_GATEWAY_TLS_CLIENT_CA`, and `SINEX_GATEWAY_REQUIRE_CLIENT_TLS`
+- gateway TLS options render `SINEX_API_TLS_CERT`, `SINEX_API_TLS_KEY`, `SINEX_API_TLS_CLIENT_CA`, and `SINEX_API_REQUIRE_CLIENT_TLS`
 - shared NATS options render `SINEX_NATS_URL`, `SINEX_NATS_MONITORING_PORT`, `SINEX_NATS_REQUIRE_TLS`, `SINEX_NATS_CA_CERT`, `SINEX_NATS_CLIENT_CERT`, `SINEX_NATS_CLIENT_KEY`, and one of `SINEX_NATS_{TOKEN,CREDS,NKEY_SEED}_FILE`
 - `services.sinex.nodes.defaults.env` is reserved for genuinely env-only behavior flags, not primary transport or secret wiring
 

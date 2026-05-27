@@ -15,8 +15,8 @@ use std::time::Duration;
 /// Gateway configuration.
 ///
 /// Loaded as: struct defaults → environment variables → CLI args.
-/// Environment variables use the `SINEX_GATEWAY_` prefix for gateway-owned fields
-/// (for example, `SINEX_GATEWAY_POOL_MAX_CONNECTIONS=20`) plus a small number of
+/// Environment variables use the `SINEX_API_` prefix for gateway-owned fields
+/// (for example, `SINEX_API_POOL_MAX_CONNECTIONS=20`) plus a small number of
 /// shared `SINEX_*` variables for cross-cutting transport/auth settings.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GatewayConfig {
@@ -511,41 +511,41 @@ impl GatewayConfig {
     }
 
     fn apply_gateway_env_overrides(&mut self) -> Result<(), SinexError> {
-        self.tcp_listen = env_string_override("SINEX_GATEWAY_TCP_LISTEN", self.tcp_listen.clone())?;
+        self.tcp_listen = env_string_override("SINEX_API_TCP_LISTEN", self.tcp_listen.clone())?;
         self.cors_origins =
-            env_string_override("SINEX_GATEWAY_CORS_ORIGINS", self.cors_origins.clone())?;
+            env_string_override("SINEX_API_CORS_ORIGINS", self.cors_origins.clone())?;
         self.pool_max_connections = env_u32_override(
-            "SINEX_GATEWAY_POOL_MAX_CONNECTIONS",
+            "SINEX_API_POOL_MAX_CONNECTIONS",
             self.pool_max_connections,
         )?;
         self.pool_min_connections = env_u32_override(
-            "SINEX_GATEWAY_POOL_MIN_CONNECTIONS",
+            "SINEX_API_POOL_MIN_CONNECTIONS",
             self.pool_min_connections,
         )?;
         self.pool_acquire_timeout_secs = env_u64_override(
-            "SINEX_GATEWAY_POOL_ACQUIRE_TIMEOUT_SECS",
+            "SINEX_API_POOL_ACQUIRE_TIMEOUT_SECS",
             self.pool_acquire_timeout_secs,
         )?;
         self.content_store_path = env_string_override(
-            "SINEX_GATEWAY_CONTENT_STORE_PATH",
+            "SINEX_API_CONTENT_STORE_PATH",
             self.content_store_path.clone(),
         )?;
-        self.tls_cert = env_option_override("SINEX_GATEWAY_TLS_CERT", self.tls_cert.take())?;
-        self.tls_key = env_option_override("SINEX_GATEWAY_TLS_KEY", self.tls_key.take())?;
+        self.tls_cert = env_option_override("SINEX_API_TLS_CERT", self.tls_cert.take())?;
+        self.tls_key = env_option_override("SINEX_API_TLS_KEY", self.tls_key.take())?;
         self.tls_client_ca =
-            env_option_override("SINEX_GATEWAY_TLS_CLIENT_CA", self.tls_client_ca.take())?;
+            env_option_override("SINEX_API_TLS_CLIENT_CA", self.tls_client_ca.take())?;
         self.require_client_tls =
-            env_bool_override("SINEX_GATEWAY_REQUIRE_CLIENT_TLS", self.require_client_tls)?;
+            env_bool_override("SINEX_API_REQUIRE_CLIENT_TLS", self.require_client_tls)?;
         self.max_concurrency =
-            env_usize_override("SINEX_GATEWAY_MAX_CONCURRENCY", self.max_concurrency)?;
+            env_usize_override("SINEX_API_MAX_CONCURRENCY", self.max_concurrency)?;
         self.request_timeout_secs = env_u64_override(
-            "SINEX_GATEWAY_REQUEST_TIMEOUT_SECS",
+            "SINEX_API_REQUEST_TIMEOUT_SECS",
             self.request_timeout_secs,
         )?;
         self.max_body_bytes =
-            env_u64_override("SINEX_GATEWAY_MAX_BODY_BYTES", self.max_body_bytes)?;
+            env_u64_override("SINEX_API_MAX_BODY_BYTES", self.max_body_bytes)?;
         self.max_blob_bytes =
-            env_usize_override("SINEX_GATEWAY_MAX_BLOB_BYTES", self.max_blob_bytes)?;
+            env_usize_override("SINEX_API_MAX_BLOB_BYTES", self.max_blob_bytes)?;
         Ok(())
     }
 
@@ -559,7 +559,7 @@ impl GatewayConfig {
             .or(self.rpc_token.take());
         self.rpc_token_file =
             shared_env::strict_var("SINEX_RPC_TOKEN_FILE")?.or(self.rpc_token_file.take());
-        self.admin_token_file = shared_env::strict_var("SINEX_GATEWAY_ADMIN_TOKEN_FILE")?
+        self.admin_token_file = shared_env::strict_var("SINEX_API_ADMIN_TOKEN_FILE")?
             .or(self.admin_token_file.take());
         self.nats.url = env_string_override("SINEX_NATS_URL", self.nats.url.clone())?;
         self.nats.name = shared_env::strict_var("SINEX_NATS_NAME")?.or(self.nats.name.take());

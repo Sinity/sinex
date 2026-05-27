@@ -57,14 +57,14 @@ async fn start_test_gateway(ctx: &TestContext) -> color_eyre::Result<TestGateway
 
     unsafe {
         std::env::set_var(
-            "SINEX_GATEWAY_TLS_CERT",
+            "SINEX_API_TLS_CERT",
             cert_file.path().to_string_lossy().to_string(),
         );
         std::env::set_var(
-            "SINEX_GATEWAY_TLS_KEY",
+            "SINEX_API_TLS_KEY",
             key_file.path().to_string_lossy().to_string(),
         );
-        std::env::remove_var("SINEX_GATEWAY_TLS_CLIENT_CA");
+        std::env::remove_var("SINEX_API_TLS_CLIENT_CA");
         std::env::set_var("SINEX_RPC_TOKEN", TEST_TOKEN);
         std::env::set_var("SINEX_NATS_URL", &nats_url);
     }

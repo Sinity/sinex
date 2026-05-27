@@ -81,21 +81,21 @@ async fn start_test_gateway(ctx: &TestContext) -> color_eyre::Result<TestGateway
     tokio::fs::write(key_file.path(), cert.key_pair.serialize_pem()).await?;
 
     let mut env = xtask::sandbox::EnvGuard::with_keys(&[
-        "SINEX_GATEWAY_TLS_CERT",
-        "SINEX_GATEWAY_TLS_KEY",
-        "SINEX_GATEWAY_TLS_CLIENT_CA",
+        "SINEX_API_TLS_CERT",
+        "SINEX_API_TLS_KEY",
+        "SINEX_API_TLS_CLIENT_CA",
         "SINEX_RPC_TOKEN",
         "SINEX_NATS_URL",
     ]);
     env.set(
-        "SINEX_GATEWAY_TLS_CERT",
+        "SINEX_API_TLS_CERT",
         cert_file.path().to_string_lossy().to_string(),
     );
     env.set(
-        "SINEX_GATEWAY_TLS_KEY",
+        "SINEX_API_TLS_KEY",
         key_file.path().to_string_lossy().to_string(),
     );
-    env.clear("SINEX_GATEWAY_TLS_CLIENT_CA");
+    env.clear("SINEX_API_TLS_CLIENT_CA");
     env.set("SINEX_RPC_TOKEN", "test-token:admin");
     env.set("SINEX_NATS_URL", ctx.nats_handle()?.client_url());
 

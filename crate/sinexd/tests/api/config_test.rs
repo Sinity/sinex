@@ -55,12 +55,12 @@ async fn gateway_cli_database_override_uses_effective_database_url() -> TestResu
 #[sinex_serial_test]
 async fn gateway_config_rejects_invalid_numeric_env_overrides() -> TestResult<()> {
     let mut env = EnvGuard::new();
-    env.set("SINEX_GATEWAY_MAX_CONCURRENCY", "many");
+    env.set("SINEX_API_MAX_CONCURRENCY", "many");
 
     let error = GatewayConfig::load().expect_err("invalid env should fail gateway config load");
     let message = error.to_string();
 
-    assert!(message.contains("SINEX_GATEWAY_MAX_CONCURRENCY"));
+    assert!(message.contains("SINEX_API_MAX_CONCURRENCY"));
     assert!(message.contains("many"));
     Ok(())
 }
@@ -70,7 +70,7 @@ async fn gateway_config_load_with_database_url_keeps_manual_env_overrides() -> T
     let mut env = EnvGuard::new();
     env.set("SINEX_NATS_URL", "nats://127.0.0.1:4555");
     env.set(
-        "SINEX_GATEWAY_CONTENT_STORE_PATH",
+        "SINEX_API_CONTENT_STORE_PATH",
         "/tmp/sinex-content-store-test",
     );
 
@@ -91,7 +91,7 @@ async fn gateway_config_prefers_gateway_specific_content_store_override() -> Tes
         "/tmp/sinex-content-store-shared",
     );
     env.set(
-        "SINEX_GATEWAY_CONTENT_STORE_PATH",
+        "SINEX_API_CONTENT_STORE_PATH",
         "/tmp/sinex-content-store-gateway",
     );
 

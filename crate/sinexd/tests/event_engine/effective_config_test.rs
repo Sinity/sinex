@@ -57,7 +57,7 @@ async fn defaults_read_process_environment() -> TestResult<()> {
     env.set("DATABASE_URL", "postgresql://env/example");
     env.set("SINEX_NATS_URL", "tls://env-nats:4222");
     env.set("SINEX_NATS_REQUIRE_TLS", "1");
-    env.set("SINEX_INGESTD_WORK_DIR", "/tmp/sinex-ingestd-env-config");
+    env.set("SINEX_EVENT_ENGINE_WORK_DIR", "/tmp/sinex-ingestd-env-config");
 
     let config = IngestdConfig::default();
 
@@ -77,7 +77,7 @@ async fn cli_arguments_override_env_transport_values() -> TestResult<()> {
     env.set("DATABASE_URL", "postgresql://env/default");
     env.set("SINEX_NATS_URL", "nats://env-default:4222");
     env.set("SINEX_NATS_REQUIRE_TLS", "0");
-    env.set("SINEX_INGESTD_POOL_ACQUIRE_TIMEOUT_SECS", "45");
+    env.set("SINEX_EVENT_ENGINE_POOL_ACQUIRE_TIMEOUT_SECS", "45");
     let config = IngestdConfig::from_args(
         Some("postgresql://cli/override".to_string()),
         "tls://cli-nats:4222".to_string(),
@@ -104,20 +104,20 @@ async fn cli_arguments_override_env_transport_values() -> TestResult<()> {
 #[sinex_test]
 async fn from_args_reads_env_backed_runtime_flags() -> TestResult<()> {
     let mut env = EnvGuard::new();
-    env.set("SINEX_INGESTD_STRICT_VALIDATION", "1");
-    env.set("SINEX_INGESTD_GITOPS_ENABLED", "true");
-    env.set("SINEX_INGESTD_SCHEMA_RELOAD_INTERVAL_SECS", "123");
-    env.set("SINEX_INGESTD_STATS_LOG_INTERVAL_SECS", "17");
-    env.set("SINEX_INGESTD_CONSUMER_FETCH_MAX_MESSAGES", "321");
-    env.set("SINEX_INGESTD_CONSUMER_FETCH_TIMEOUT_MS", "654");
-    env.set("SINEX_INGESTD_CONSUMER_MAX_ACK_PENDING", "987");
-    env.set("SINEX_INGESTD_MATERIAL_SLICES_MAX_ACK_PENDING", "1234");
-    env.set("SINEX_INGESTD_MAX_BUFFERED_SLICES", "2048");
-    env.set("SINEX_INGESTD_MATERIAL_STAGED_SYNC_BYTES", "2048");
-    env.set("SINEX_INGESTD_MATERIAL_STAGED_SYNC_INTERVAL_MS", "250");
-    env.set("SINEX_INGESTD_MATERIAL_WAL_SYNC_BYTES", "4096");
-    env.set("SINEX_INGESTD_MATERIAL_WAL_SYNC_ENTRIES", "7");
-    env.set("SINEX_INGESTD_MATERIAL_WAL_SYNC_INTERVAL_MS", "500");
+    env.set("SINEX_EVENT_ENGINE_STRICT_VALIDATION", "1");
+    env.set("SINEX_EVENT_ENGINE_GITOPS_ENABLED", "true");
+    env.set("SINEX_EVENT_ENGINE_SCHEMA_RELOAD_INTERVAL_SECS", "123");
+    env.set("SINEX_EVENT_ENGINE_STATS_LOG_INTERVAL_SECS", "17");
+    env.set("SINEX_EVENT_ENGINE_CONSUMER_FETCH_MAX_MESSAGES", "321");
+    env.set("SINEX_EVENT_ENGINE_CONSUMER_FETCH_TIMEOUT_MS", "654");
+    env.set("SINEX_EVENT_ENGINE_CONSUMER_MAX_ACK_PENDING", "987");
+    env.set("SINEX_EVENT_ENGINE_MATERIAL_SLICES_MAX_ACK_PENDING", "1234");
+    env.set("SINEX_EVENT_ENGINE_MAX_BUFFERED_SLICES", "2048");
+    env.set("SINEX_EVENT_ENGINE_MATERIAL_STAGED_SYNC_BYTES", "2048");
+    env.set("SINEX_EVENT_ENGINE_MATERIAL_STAGED_SYNC_INTERVAL_MS", "250");
+    env.set("SINEX_EVENT_ENGINE_MATERIAL_WAL_SYNC_BYTES", "4096");
+    env.set("SINEX_EVENT_ENGINE_MATERIAL_WAL_SYNC_ENTRIES", "7");
+    env.set("SINEX_EVENT_ENGINE_MATERIAL_WAL_SYNC_INTERVAL_MS", "500");
     env.set(
         "SINEX_ASSEMBLER_STATE_DIR",
         "/tmp/sinex-ingestd-assembler-state",
@@ -175,7 +175,7 @@ async fn requires_tls_when_enabled() -> TestResult<()> {
 #[sinex_test]
 async fn rejects_invalid_env_overrides() -> TestResult<()> {
     let mut env = EnvGuard::new();
-    env.set("SINEX_INGESTD_POOL_ACQUIRE_TIMEOUT_SECS", "soon");
+    env.set("SINEX_EVENT_ENGINE_POOL_ACQUIRE_TIMEOUT_SECS", "soon");
 
     let error = IngestdConfig::from_args(
         Some("postgresql://cli/override".to_string()),
@@ -194,7 +194,7 @@ async fn rejects_invalid_env_overrides() -> TestResult<()> {
     .expect_err("invalid ingestd env should fail config construction");
 
     let message = error.to_string();
-    assert!(message.contains("SINEX_INGESTD_POOL_ACQUIRE_TIMEOUT_SECS"));
+    assert!(message.contains("SINEX_EVENT_ENGINE_POOL_ACQUIRE_TIMEOUT_SECS"));
     assert!(message.contains("soon"));
     Ok(())
 }
@@ -202,7 +202,7 @@ async fn rejects_invalid_env_overrides() -> TestResult<()> {
 #[sinex_test]
 async fn from_args_rejects_invalid_path_env_overrides() -> TestResult<()> {
     let mut env = EnvGuard::new();
-    env.set("SINEX_INGESTD_WORK_DIR", "../../bad-work-dir");
+    env.set("SINEX_EVENT_ENGINE_WORK_DIR", "../../bad-work-dir");
     env.set("SINEX_ASSEMBLER_STATE_DIR", "../../bad-state-dir");
 
     let error = IngestdConfig::from_args(
@@ -222,7 +222,7 @@ async fn from_args_rejects_invalid_path_env_overrides() -> TestResult<()> {
     .expect_err("invalid ingestd path override must fail config construction");
 
     let message = error.to_string();
-    assert!(message.contains("SINEX_INGESTD_WORK_DIR"));
+    assert!(message.contains("SINEX_EVENT_ENGINE_WORK_DIR"));
     assert!(message.contains("invalid path value"));
     Ok(())
 }

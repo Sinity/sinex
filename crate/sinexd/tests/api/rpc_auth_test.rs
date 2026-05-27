@@ -26,14 +26,14 @@ async fn rpc_server_enforces_auth_token(ctx: TestContext) -> Result<()> {
     unsafe {
         env::set_var("SINEX_RPC_TOKEN", token);
         env::set_var(
-            "SINEX_GATEWAY_TLS_CERT",
+            "SINEX_API_TLS_CERT",
             cert_file.path().to_string_lossy().to_string(),
         );
         env::set_var(
-            "SINEX_GATEWAY_TLS_KEY",
+            "SINEX_API_TLS_KEY",
             key_file.path().to_string_lossy().to_string(),
         );
-        env::remove_var("SINEX_GATEWAY_TLS_CLIENT_CA");
+        env::remove_var("SINEX_API_TLS_CLIENT_CA");
 
         let nats_url = ctx.nats_handle()?.client_url().to_string();
         env::set_var("SINEX_NATS_URL", &nats_url);
@@ -115,8 +115,8 @@ async fn rpc_server_enforces_auth_token(ctx: TestContext) -> Result<()> {
     let _ = handle.await;
     unsafe {
         env::remove_var("SINEX_RPC_TOKEN");
-        env::remove_var("SINEX_GATEWAY_TLS_CERT");
-        env::remove_var("SINEX_GATEWAY_TLS_KEY");
+        env::remove_var("SINEX_API_TLS_CERT");
+        env::remove_var("SINEX_API_TLS_KEY");
         env::remove_var("SINEX_NATS_URL");
         env::remove_var("SINEX_RPC_RATE_LIMIT_ENABLED");
     }

@@ -133,16 +133,16 @@ async fn gateway_tls_accepts_handshake(ctx: TestContext) -> Result<()> {
     env.set("SINEX_NATS_URL", ctx.nats_handle()?.client_url());
     env.set("SINEX_CONTENT_STORE_PATH", &content_store_path);
     // Ensure host environment CA settings don't bleed into the test
-    env.clear("SINEX_GATEWAY_TLS_CLIENT_CA");
+    env.clear("SINEX_API_TLS_CLIENT_CA");
     env.set(
-        "SINEX_GATEWAY_TLS_CERT",
+        "SINEX_API_TLS_CERT",
         bundle
             .server_cert_path
             .to_str()
             .ok_or_else(|| eyre!("TLS cert path is not valid UTF-8"))?,
     );
     env.set(
-        "SINEX_GATEWAY_TLS_KEY",
+        "SINEX_API_TLS_KEY",
         bundle
             .server_key_path
             .to_str()

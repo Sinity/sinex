@@ -236,7 +236,7 @@ async fn test_pool_isolation_separate_pools(ctx: TestContext) -> TestResult<()> 
     configure_gateway_env(&mut env, &ctx, temp_dir.path())?;
     // Set a known pool size so assertions are deterministic regardless of defaults.
     // `per_service_pool_config` divides by 2, so effective per-service max = 40/2 = 20.
-    env.set("SINEX_GATEWAY_POOL_MAX_CONNECTIONS", "40");
+    env.set("SINEX_API_POOL_MAX_CONNECTIONS", "40");
 
     let config =
         GatewayConfig::load()?.with_cli_overrides(Some(ctx.database_url().to_string()), None, None);

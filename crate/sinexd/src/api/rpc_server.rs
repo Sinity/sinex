@@ -267,7 +267,7 @@ impl GatewayAuth {
             }
         } else {
             return Err(SinexError::configuration(
-                "SINEX_RPC_TOKEN is not set. Export a token (or SINEX_GATEWAY_ADMIN_TOKEN_FILE / SINEX_RPC_TOKEN_FILE) so the gateway can authenticate RPC clients.",
+                "SINEX_RPC_TOKEN is not set. Export a token (or SINEX_API_ADMIN_TOKEN_FILE / SINEX_RPC_TOKEN_FILE) so the gateway can authenticate RPC clients.",
             ));
         }
 
@@ -449,10 +449,10 @@ impl GatewayAuth {
 }
 
 fn read_token_and_path_from_env() -> SinexResult<(Option<String>, Option<PathBuf>)> {
-    if let Some(path_str) = shared_env::strict_var("SINEX_GATEWAY_ADMIN_TOKEN_FILE")? {
+    if let Some(path_str) = shared_env::strict_var("SINEX_API_ADMIN_TOKEN_FILE")? {
         let path = PathBuf::from(&path_str);
         let contents = std::fs::read_to_string(&path).map_err(|e| {
-            SinexError::configuration("Failed to read SINEX_GATEWAY_ADMIN_TOKEN_FILE")
+            SinexError::configuration("Failed to read SINEX_API_ADMIN_TOKEN_FILE")
                 .with_context("path", path.display().to_string())
                 .with_std_error(&e)
         })?;
@@ -1424,7 +1424,7 @@ fn parse_tcp_listen(spec: &str) -> SinexResult<(String, u16)> {
 }
 
 /// Read RPC token from environment variables.
-/// Priority: `SINEX_GATEWAY_ADMIN_TOKEN_FILE` > `SINEX_RPC_TOKEN_FILE` > `SINEX_RPC_TOKEN`
+/// Priority: `SINEX_API_ADMIN_TOKEN_FILE` > `SINEX_RPC_TOKEN_FILE` > `SINEX_RPC_TOKEN`
 ///
 /// Used by test support utilities and external consumers that need token access.
 pub fn read_token_from_env() -> SinexResult<Option<String>> {
@@ -1461,14 +1461,14 @@ fn bind_tcp_listener(addr: &str) -> std::io::Result<tokio::net::TcpListener> {
 fn tls_paths_from_config(config: &GatewayConfig) -> SinexResult<(String, String, Option<String>)> {
     let cert = config.tls_cert.clone().ok_or_else(|| {
         SinexError::configuration(
-            "SINEX_GATEWAY_TLS_CERT is required for TCP bindings\n\n\
+            "SINEX_API_TLS_CERT is required for TCP bindings\n\n\
             For local development, run `xtask doctor --fix` to auto-generate certificates.\n\
             For production, provide proper certificates via environment variables.",
         )
     })?;
     let key = config.tls_key.clone().ok_or_else(|| {
         SinexError::configuration(
-            "SINEX_GATEWAY_TLS_KEY is required for TCP bindings\n\n\
+            "SINEX_API_TLS_KEY is required for TCP bindings\n\n\
             For local development, run `xtask doctor --fix` to auto-generate certificates.\n\
             For production, provide proper certificates via environment variables.",
         )
@@ -1576,7 +1576,7 @@ fn is_loopback_host(host: &str) -> bool {
 /// - Bind gateway to 127.0.0.1 (loopback only)
 /// - Configure reverse proxy with TLS certificates
 /// - Set up client certificate verification in the proxy
-/// - Use `SINEX_GATEWAY_REQUIRE_CLIENT_TLS=0` if proxy handles mTLS
+/// - Use `SINEX_API_REQUIRE_CLIENT_TLS=0` if proxy handles mTLS
 ///
 /// For direct TLS support without a proxy, native rustls integration is already
 /// implemented in this file (see `load_rustls_config` and TLS acceptor logic).
@@ -1591,7 +1591,7 @@ fn require_mtls_for_remote(
 
     if (host_requires || require_client_tls) && client_ca.is_none() {
         return Err(SinexError::configuration(
-            "SINEX_GATEWAY_TLS_CLIENT_CA is required when mTLS is enforced (non-loopback or SINEX_GATEWAY_REQUIRE_CLIENT_TLS=1)",
+            "SINEX_API_TLS_CLIENT_CA is required when mTLS is enforced (non-loopback or SINEX_API_REQUIRE_CLIENT_TLS=1)",
         ));
     }
     Ok(())
@@ -2272,7 +2272,7 @@ mod tests {
     static ENV_LOCK: std::sync::LazyLock<Mutex<()>> = std::sync::LazyLock::new(|| Mutex::new(()));
 
     fn clear_tcp_env() {
-        unsafe { std::env::remove_var("SINEX_GATEWAY_TCP_LISTEN") };
+        unsafe { std::env::remove_var("SINEX_API_TCP_LISTEN") };
     }
 
     fn gateway_config_from_env() -> GatewayConfig {
@@ -2283,7 +2283,7 @@ mod tests {
         unsafe {
             std::env::remove_var("SINEX_RPC_TOKEN");
             std::env::remove_var("SINEX_RPC_TOKEN_FILE");
-            std::env::remove_var("SINEX_GATEWAY_ADMIN_TOKEN_FILE");
+            std::env::remove_var("SINEX_API_ADMIN_TOKEN_FILE");
         }
     }
 
@@ -2613,9 +2613,9 @@ mod tests {
         let _guard = ENV_LOCK.lock().await;
 
         unsafe {
-            std::env::set_var("SINEX_GATEWAY_TLS_CERT", "cert.pem");
-            std::env::set_var("SINEX_GATEWAY_TLS_KEY", "key.pem");
-            std::env::set_var("SINEX_GATEWAY_TLS_CLIENT_CA", "ca.pem");
+            std::env::set_var("SINEX_API_TLS_CERT", "cert.pem");
+            std::env::set_var("SINEX_API_TLS_KEY", "key.pem");
+            std::env::set_var("SINEX_API_TLS_CLIENT_CA", "ca.pem");
         }
 
         let (cert, key, ca) = tls_paths_from_config(&gateway_config_from_env())?;
@@ -2623,7 +2623,7 @@ mod tests {
         assert_eq!(key, "key.pem");
         assert_eq!(ca, Some("ca.pem".to_string()));
 
-        unsafe { std::env::remove_var("SINEX_GATEWAY_TLS_CLIENT_CA") };
+        unsafe { std::env::remove_var("SINEX_API_TLS_CLIENT_CA") };
         let (_, _, ca) = tls_paths_from_config(&gateway_config_from_env())?;
         assert!(ca.is_none());
 
@@ -2634,7 +2634,7 @@ mod tests {
     async fn tcp_binding_env_opt_in_respected() -> TestResult<()> {
         let _guard = ENV_LOCK.lock().await;
         clear_tcp_env();
-        unsafe { std::env::set_var("SINEX_GATEWAY_TCP_LISTEN", "127.0.0.1:7777") };
+        unsafe { std::env::set_var("SINEX_API_TCP_LISTEN", "127.0.0.1:7777") };
 
         let addr = BindAddress::from_config(&gateway_config_from_env())?;
 
@@ -2650,7 +2650,7 @@ mod tests {
     async fn tcp_binding_cli_override_wins() -> TestResult<()> {
         let _guard = ENV_LOCK.lock().await;
         clear_tcp_env();
-        unsafe { std::env::set_var("SINEX_GATEWAY_TCP_LISTEN", "127.0.0.1:7777") };
+        unsafe { std::env::set_var("SINEX_API_TCP_LISTEN", "127.0.0.1:7777") };
 
         let addr = BindAddress::from_config(&GatewayConfig {
             tcp_listen: "127.0.0.1:8888".to_string(),
@@ -2712,8 +2712,8 @@ mod tests {
         // Ensure env is clean
         let _guard = ENV_LOCK.lock().await;
         unsafe {
-            std::env::remove_var("SINEX_GATEWAY_TLS_CERT");
-            std::env::remove_var("SINEX_GATEWAY_TLS_KEY");
+            std::env::remove_var("SINEX_API_TLS_CERT");
+            std::env::remove_var("SINEX_API_TLS_KEY");
         }
 
         assert!(

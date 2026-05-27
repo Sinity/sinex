@@ -701,9 +701,9 @@
                 export SINEX_DEV_GATEWAY_PORT="$((19000 + _sinex_checkout_hash_byte))"
                 export SINEX_DEV_NATS_PORT="$((4222 + (_sinex_checkout_hash_byte % 100)))"
                 export SINEX_NATS_URL="nats://localhost:$SINEX_DEV_NATS_PORT"
-                export SINEX_GATEWAY_TCP_LISTEN="127.0.0.1:$SINEX_DEV_GATEWAY_PORT"
-                export SINEX_GATEWAY_URL="https://127.0.0.1:$SINEX_DEV_GATEWAY_PORT"
-                export SINEX_RPC_URL="$SINEX_GATEWAY_URL"
+                export SINEX_API_TCP_LISTEN="127.0.0.1:$SINEX_DEV_GATEWAY_PORT"
+                export SINEX_API_URL="https://127.0.0.1:$SINEX_DEV_GATEWAY_PORT"
+                export SINEX_RPC_URL="$SINEX_API_URL"
 
                 if [ -z "''${SINEX_TEST_TMPDIR:-}" ]; then
                   _sinex_test_tmp_root="$SINEX_DEV_ROOT/.sinex/test-tmp"
@@ -735,9 +735,9 @@
                 # Dev TLS certs are generated lazily by preflight when needed.
                 # Set TLS env vars if dev certs exist — enables mTLS automatically.
                 if [ -f "$PWD/.sinex/tls/server.pem" ]; then
-                  export SINEX_GATEWAY_TLS_CERT="$PWD/.sinex/tls/server.pem"
-                  export SINEX_GATEWAY_TLS_KEY="$PWD/.sinex/tls/server-key.pem"
-                  export SINEX_GATEWAY_TLS_CLIENT_CA="$PWD/.sinex/tls/ca.pem"
+                  export SINEX_API_TLS_CERT="$PWD/.sinex/tls/server.pem"
+                  export SINEX_API_TLS_KEY="$PWD/.sinex/tls/server-key.pem"
+                  export SINEX_API_TLS_CLIENT_CA="$PWD/.sinex/tls/ca.pem"
                 fi
 
                 # Auto-install the pre-push drift guard (.githooks/pre-push)

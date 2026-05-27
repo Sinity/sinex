@@ -57,13 +57,13 @@ The RPC server implements a **defense-in-depth** strategy with 7 layers of prote
 
 ## Configuration
 
-- `SINEX_GATEWAY_TLS_CERT` / `SINEX_GATEWAY_TLS_KEY`: Mandatory TLS certificate paths.
-- `SINEX_GATEWAY_TLS_CLIENT_CA`: Trusted client CA bundle (required for mTLS).
+- `SINEX_API_TLS_CERT` / `SINEX_API_TLS_KEY`: Mandatory TLS certificate paths.
+- `SINEX_API_TLS_CLIENT_CA`: Trusted client CA bundle (required for mTLS).
 - `SINEX_RPC_TOKEN`: Bearer token for authentication (`<token>:<role>` format).
-- `SINEX_GATEWAY_MAX_CONCURRENCY`: Max concurrent requests (default 100).
-- `SINEX_GATEWAY_REQUEST_TIMEOUT_SECS`: Request timeout (default 30s).
-- `SINEX_GATEWAY_MAX_BODY_BYTES`: Request body size limit (default 2MB).
-- `SINEX_GATEWAY_MAX_BLOB_BYTES`: Blob content size limit (default 5MB).
+- `SINEX_API_MAX_CONCURRENCY`: Max concurrent requests (default 100).
+- `SINEX_API_REQUEST_TIMEOUT_SECS`: Request timeout (default 30s).
+- `SINEX_API_MAX_BODY_BYTES`: Request body size limit (default 2MB).
+- `SINEX_API_MAX_BLOB_BYTES`: Blob content size limit (default 5MB).
 
 ## Protocol Specification
 

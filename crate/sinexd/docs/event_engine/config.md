@@ -13,7 +13,7 @@ systems, use typed NixOS options; for direct/manual runs, use env vars and CLI f
 Document any new knobs here and keep the examples in sync with
 `README.md#deployment--operations` and `nixos/modules/README.md`.
 
-Ingestd environment overrides are prefixed with `SINEX_INGESTD_`.
+Ingestd environment overrides are prefixed with `SINEX_EVENT_ENGINE_`.
 
 ## Transport Security Knobs
 
@@ -34,19 +34,19 @@ The module exports the matching `SINEX_NATS_*` variables for ingestd and node se
 ## `JetStream` Consumer Knobs
 
 - `consumer_fetch_max_messages` (default: 100): Max messages per pull batch. Set via
-  `SINEX_INGESTD_CONSUMER_FETCH_MAX_MESSAGES` or `ingestd.consumer_fetch_max_messages`.
+  `SINEX_EVENT_ENGINE_CONSUMER_FETCH_MAX_MESSAGES` or `ingestd.consumer_fetch_max_messages`.
 - `consumer_max_ack_pending` (default: 100): Max in-flight (unacked) messages for the primary
-  ingestd consumer. Set via `SINEX_INGESTD_CONSUMER_MAX_ACK_PENDING` or
+  ingestd consumer. Set via `SINEX_EVENT_ENGINE_CONSUMER_MAX_ACK_PENDING` or
   `ingestd.consumer_max_ack_pending`.
 - `material_slices_max_ack_pending` (default: 1000): Max in-flight messages for the material
-  slices consumer. Set via `SINEX_INGESTD_MATERIAL_SLICES_MAX_ACK_PENDING` or
+  slices consumer. Set via `SINEX_EVENT_ENGINE_MATERIAL_SLICES_MAX_ACK_PENDING` or
   `ingestd.material_slices_max_ack_pending`.
 
 ## Validation Knobs
 
 - `strict_validation` (default: false): Reject events that do not have registered schemas.
   Set via `services.sinex.core.ingestd.strictValidation` on NixOS or
-  `SINEX_INGESTD_STRICT_VALIDATION=true` for direct/manual runs.
+  `SINEX_EVENT_ENGINE_STRICT_VALIDATION=true` for direct/manual runs.
 - `validate_schemas` works independently: strict mode controls whether schema presence is
   mandatory, while schema validation controls whether present schemas are enforced.
 

@@ -37,7 +37,7 @@ pub struct IngestdConfig {
 
     /// Connection acquisition timeout in seconds
     ///
-    /// Set via: `SINEX_INGESTD_POOL_ACQUIRE_TIMEOUT_SECS=30`
+    /// Set via: `SINEX_EVENT_ENGINE_POOL_ACQUIRE_TIMEOUT_SECS=30`
     #[serde(default = "default_pool_acquire_timeout_secs")]
     #[builder(default = default_pool_acquire_timeout_secs())]
     #[validate(range(min = 1, max = 300))]
@@ -45,7 +45,7 @@ pub struct IngestdConfig {
 
     /// Idle connection timeout in seconds
     ///
-    /// Set via: `SINEX_INGESTD_POOL_IDLE_TIMEOUT_SECS=600`
+    /// Set via: `SINEX_EVENT_ENGINE_POOL_IDLE_TIMEOUT_SECS=600`
     #[serde(default = "default_pool_idle_timeout_secs")]
     #[builder(default = default_pool_idle_timeout_secs())]
     #[validate(range(min = 10, max = 3600))]
@@ -147,7 +147,7 @@ pub struct IngestdConfig {
     /// When enabled, ingestd will reject any event that doesn't have a registered schema.
     /// When disabled (default), events without schemas are allowed but won't be validated.
     ///
-    /// Set via: `SINEX_INGESTD_STRICT_VALIDATION=true`
+    /// Set via: `SINEX_EVENT_ENGINE_STRICT_VALIDATION=true`
     #[serde(default)]
     #[builder(default = false)]
     pub strict_validation: bool,
@@ -155,7 +155,7 @@ pub struct IngestdConfig {
     /// Maximum number of seconds `ts_orig` may exceed wall-clock time before the event
     /// is considered implausibly future-dated and routed to the DLQ.
     ///
-    /// Set via: `SINEX_INGESTD_TS_ORIG_FUTURE_SKEW_SECS=3600`
+    /// Set via: `SINEX_EVENT_ENGINE_TS_ORIG_FUTURE_SKEW_SECS=3600`
     #[serde(default = "default_ts_orig_future_skew_secs")]
     #[builder(default = default_ts_orig_future_skew_secs())]
     #[validate(range(min = 1, max = 86400))]
@@ -166,7 +166,7 @@ pub struct IngestdConfig {
     ///
     /// Default: `946684800` (2000-01-01 00:00:00 UTC).
     ///
-    /// Set via: `SINEX_INGESTD_TS_ORIG_LOWER_BOUND_UNIX=946684800`
+    /// Set via: `SINEX_EVENT_ENGINE_TS_ORIG_LOWER_BOUND_UNIX=946684800`
     #[serde(default = "default_ts_orig_lower_bound_unix")]
     #[builder(default = default_ts_orig_lower_bound_unix())]
     #[validate(range(min = 0))]
@@ -178,7 +178,7 @@ pub struct IngestdConfig {
     /// material size and slice timeout limits remain the corruption bounds, so
     /// this default is sized to absorb ordinary `JetStream` reordering bursts.
     ///
-    /// Set via: `SINEX_INGESTD_MAX_BUFFERED_SLICES=4096`
+    /// Set via: `SINEX_EVENT_ENGINE_MAX_BUFFERED_SLICES=4096`
     #[serde(default = "default_max_buffered_slices")]
     #[builder(default = default_max_buffered_slices())]
     #[validate(range(min = 1, max = 10000))]
@@ -186,7 +186,7 @@ pub struct IngestdConfig {
 
     /// Slice arrival timeout in seconds
     ///
-    /// Set via: `SINEX_INGESTD_SLICE_TIMEOUT_SECS=300`
+    /// Set via: `SINEX_EVENT_ENGINE_SLICE_TIMEOUT_SECS=300`
     #[serde(default = "default_slice_timeout_secs")]
     #[builder(default = default_slice_timeout_secs())]
     #[validate(range(min = 10, max = 86400))]
@@ -194,7 +194,7 @@ pub struct IngestdConfig {
 
     /// Orphaned file age threshold in seconds
     ///
-    /// Set via: `SINEX_INGESTD_ORPHAN_THRESHOLD_SECS=3600`
+    /// Set via: `SINEX_EVENT_ENGINE_ORPHAN_THRESHOLD_SECS=3600`
     #[serde(default = "default_orphan_threshold_secs")]
     #[builder(default = default_orphan_threshold_secs())]
     #[validate(range(min = 60, max = 604800))]
@@ -203,7 +203,7 @@ pub struct IngestdConfig {
     /// Disk usage threshold percentage at which the assembler starts refusing new
     /// assemblies to prevent filling the filesystem.
     ///
-    /// Set via: `SINEX_INGESTD_DISK_THRESHOLD_PERCENT=90`
+    /// Set via: `SINEX_EVENT_ENGINE_DISK_THRESHOLD_PERCENT=90`
     #[serde(default = "default_disk_threshold_percent")]
     #[builder(default = default_disk_threshold_percent())]
     #[validate(range(min = 50, max = 99))]
@@ -212,7 +212,7 @@ pub struct IngestdConfig {
     /// Maximum total bytes a single material assembly may accumulate before it is
     /// rejected and routed to the DLQ.
     ///
-    /// Set via: `SINEX_INGESTD_MAX_MATERIAL_SIZE_BYTES=536870912`
+    /// Set via: `SINEX_EVENT_ENGINE_MAX_MATERIAL_SIZE_BYTES=536870912`
     #[serde(default = "default_max_material_size_bytes")]
     #[builder(default = default_max_material_size_bytes())]
     #[validate(custom(function = "validate_material_size_limit"))]
@@ -221,7 +221,7 @@ pub struct IngestdConfig {
     /// Bytes of staged material writes buffered before the assembler forces
     /// `flush + fsync` on the staged file.
     ///
-    /// Set via: `SINEX_INGESTD_MATERIAL_STAGED_SYNC_BYTES=1048576`
+    /// Set via: `SINEX_EVENT_ENGINE_MATERIAL_STAGED_SYNC_BYTES=1048576`
     #[serde(default = "default_material_staged_sync_bytes")]
     #[builder(default = default_material_staged_sync_bytes())]
     #[validate(custom(function = "validate_positive_bytes"))]
@@ -229,7 +229,7 @@ pub struct IngestdConfig {
 
     /// Maximum elapsed time between staged-file `flush + fsync` operations.
     ///
-    /// Set via: `SINEX_INGESTD_MATERIAL_STAGED_SYNC_INTERVAL_MS=1000`
+    /// Set via: `SINEX_EVENT_ENGINE_MATERIAL_STAGED_SYNC_INTERVAL_MS=1000`
     #[serde(default = "default_material_staged_sync_interval_ms")]
     #[builder(default = default_material_staged_sync_interval_ms())]
     #[validate(custom(function = "validate_positive_milliseconds"))]
@@ -237,7 +237,7 @@ pub struct IngestdConfig {
 
     /// Bytes of WAL writes buffered before the assembler forces WAL fsync.
     ///
-    /// Set via: `SINEX_INGESTD_MATERIAL_WAL_SYNC_BYTES=262144`
+    /// Set via: `SINEX_EVENT_ENGINE_MATERIAL_WAL_SYNC_BYTES=262144`
     #[serde(default = "default_material_wal_sync_bytes")]
     #[builder(default = default_material_wal_sync_bytes())]
     #[validate(custom(function = "validate_positive_bytes"))]
@@ -245,7 +245,7 @@ pub struct IngestdConfig {
 
     /// WAL entries buffered before the assembler forces WAL fsync.
     ///
-    /// Set via: `SINEX_INGESTD_MATERIAL_WAL_SYNC_ENTRIES=128`
+    /// Set via: `SINEX_EVENT_ENGINE_MATERIAL_WAL_SYNC_ENTRIES=128`
     #[serde(default = "default_material_wal_sync_entries")]
     #[builder(default = default_material_wal_sync_entries())]
     #[validate(range(min = 1, max = 100000))]
@@ -253,7 +253,7 @@ pub struct IngestdConfig {
 
     /// Maximum elapsed time between WAL fsync operations.
     ///
-    /// Set via: `SINEX_INGESTD_MATERIAL_WAL_SYNC_INTERVAL_MS=1000`
+    /// Set via: `SINEX_EVENT_ENGINE_MATERIAL_WAL_SYNC_INTERVAL_MS=1000`
     #[serde(default = "default_material_wal_sync_interval_ms")]
     #[builder(default = default_material_wal_sync_interval_ms())]
     #[validate(custom(function = "validate_positive_milliseconds"))]
@@ -264,14 +264,14 @@ pub struct IngestdConfig {
     /// When enabled, ingestd periodically fetches configured Git repositories
     /// and discovers JSON schema files to register in the database.
     ///
-    /// Set via: `SINEX_INGESTD_GITOPS_ENABLED=true`
+    /// Set via: `SINEX_EVENT_ENGINE_GITOPS_ENABLED=true`
     #[serde(default)]
     #[builder(default = false)]
     pub gitops_enabled: bool,
 
     /// Working directory for `GitOps` repository clones
     ///
-    /// Set via: `SINEX_INGESTD_GITOPS_WORK_DIR=/path/to/dir`
+    /// Set via: `SINEX_EVENT_ENGINE_GITOPS_WORK_DIR=/path/to/dir`
     #[serde(default = "default_gitops_work_dir")]
     #[builder(default = default_gitops_work_dir())]
     pub gitops_work_dir: Utf8PathBuf,
@@ -281,7 +281,7 @@ pub struct IngestdConfig {
     /// How often ingestd reloads JSON schemas from the database.
     /// Lower values make schema updates take effect faster at the cost of more DB queries.
     ///
-    /// Set via: `SINEX_INGESTD_SCHEMA_RELOAD_INTERVAL_SECS=300`
+    /// Set via: `SINEX_EVENT_ENGINE_SCHEMA_RELOAD_INTERVAL_SECS=300`
     #[serde(default = "default_schema_reload_interval_secs")]
     #[builder(default = default_schema_reload_interval_secs())]
     #[validate(range(min = 10, max = 3600))]
@@ -291,7 +291,7 @@ pub struct IngestdConfig {
     ///
     /// How often ingestd logs processing statistics (events processed, failed, etc.).
     ///
-    /// Set via: `SINEX_INGESTD_STATS_LOG_INTERVAL_SECS=60`
+    /// Set via: `SINEX_EVENT_ENGINE_STATS_LOG_INTERVAL_SECS=60`
     #[serde(default = "default_stats_log_interval_secs")]
     #[builder(default = default_stats_log_interval_secs())]
     #[validate(range(min = 5, max = 3600))]
@@ -300,7 +300,7 @@ pub struct IngestdConfig {
     /// Core retry configuration (max attempts, delays, backoff, jitter).
     ///
     /// Controls retry behavior for transient failures (DLQ, DB, NATS).
-    /// Individual env-var overrides are available via `SINEX_INGESTD_RETRY_MAX_ATTEMPTS` etc.
+    /// Individual env-var overrides are available via `SINEX_EVENT_ENGINE_RETRY_MAX_ATTEMPTS` etc.
     #[serde(skip)]
     #[builder(default = RetryConfig::default())]
     pub retry_config: RetryConfig,
@@ -309,7 +309,7 @@ pub struct IngestdConfig {
     /// Limits I/O pressure while the consumer works through the backlog.
     /// Default: 4. Set to 0 to disable catch-up limiting (full speed).
     ///
-    /// Set via: `SINEX_INGESTD_STARTUP_CATCH_UP_MAX_CONCURRENT=4`
+    /// Set via: `SINEX_EVENT_ENGINE_STARTUP_CATCH_UP_MAX_CONCURRENT=4`
     #[serde(default = "default_startup_catch_up_max_concurrent")]
     #[builder(default = default_startup_catch_up_max_concurrent())]
     #[validate(range(min = 0, max = 256))]
@@ -322,7 +322,7 @@ pub struct IngestdConfig {
     /// explicit operator decision. Test harnesses may disable it when the test
     /// intentionally publishes before ingestd starts and expects catch-up.
     ///
-    /// Set via: `SINEX_INGESTD_REJECT_INITIAL_REPLAY=false`
+    /// Set via: `SINEX_EVENT_ENGINE_REJECT_INITIAL_REPLAY=false`
     #[serde(default = "default_reject_initial_replay")]
     #[builder(default = default_reject_initial_replay())]
     pub reject_initial_replay: bool,
@@ -333,7 +333,7 @@ pub struct IngestdConfig {
     /// in git-annex AND have no matching `core.blobs` row, dropping them from
     /// the large-object backend. The same logic backs `sinexctl blob sweep-orphans`.
     ///
-    /// Set via: `SINEX_INGESTD_BLOB_GC_INTERVAL_SECS`
+    /// Set via: `SINEX_EVENT_ENGINE_BLOB_GC_INTERVAL_SECS`
     #[serde(default = "default_blob_gc_interval_secs")]
     #[validate(custom(function = "validate_blob_gc_interval"))]
     pub blob_gc_interval_secs: Option<u64>,
@@ -356,46 +356,46 @@ impl IngestdConfig {
         namespace: Option<String>,
     ) -> IngestdResult<Self> {
         let work_dir_override =
-            strict_env_validated_path("SINEX_INGESTD_WORK_DIR", "ingestd work dir")?;
+            strict_env_validated_path("SINEX_EVENT_ENGINE_WORK_DIR", "ingestd work dir")?;
         let content_store_env_override =
             strict_env_validated_path("SINEX_CONTENT_STORE_PATH", "content-store path")?;
         let assembler_state_dir_env_override =
             strict_env_validated_path("SINEX_ASSEMBLER_STATE_DIR", "assembler state directory")?;
         let gitops_work_dir_override =
-            strict_env_validated_path("SINEX_INGESTD_GITOPS_WORK_DIR", "gitops work directory")?;
+            strict_env_validated_path("SINEX_EVENT_ENGINE_GITOPS_WORK_DIR", "gitops work directory")?;
         let skip_schema_sync = shared_env::strict_flag("SINEX_SKIP_SCHEMA_SYNC")?.unwrap_or(false);
         let validate_schemas = shared_env::strict_flag("SINEX_VALIDATE_SCHEMAS")?.unwrap_or(true);
         let strict_validation =
-            shared_env::strict_flag("SINEX_INGESTD_STRICT_VALIDATION")?.unwrap_or(false);
+            shared_env::strict_flag("SINEX_EVENT_ENGINE_STRICT_VALIDATION")?.unwrap_or(false);
         let gitops_enabled =
-            shared_env::strict_flag("SINEX_INGESTD_GITOPS_ENABLED")?.unwrap_or(false);
+            shared_env::strict_flag("SINEX_EVENT_ENGINE_GITOPS_ENABLED")?.unwrap_or(false);
         let consumer_fetch_max_messages_env =
-            shared_env::strict_parsed("SINEX_INGESTD_CONSUMER_FETCH_MAX_MESSAGES")?;
+            shared_env::strict_parsed("SINEX_EVENT_ENGINE_CONSUMER_FETCH_MAX_MESSAGES")?;
         let consumer_fetch_timeout_ms_env =
-            shared_env::strict_parsed("SINEX_INGESTD_CONSUMER_FETCH_TIMEOUT_MS")?;
+            shared_env::strict_parsed("SINEX_EVENT_ENGINE_CONSUMER_FETCH_TIMEOUT_MS")?;
         let consumer_max_ack_pending_env =
-            shared_env::strict_parsed("SINEX_INGESTD_CONSUMER_MAX_ACK_PENDING")?;
+            shared_env::strict_parsed("SINEX_EVENT_ENGINE_CONSUMER_MAX_ACK_PENDING")?;
         let material_slices_max_ack_pending_env =
-            shared_env::strict_parsed("SINEX_INGESTD_MATERIAL_SLICES_MAX_ACK_PENDING")?;
+            shared_env::strict_parsed("SINEX_EVENT_ENGINE_MATERIAL_SLICES_MAX_ACK_PENDING")?;
         let schema_reload_interval_secs: u64 =
-            shared_env::strict_parsed("SINEX_INGESTD_SCHEMA_RELOAD_INTERVAL_SECS")?
+            shared_env::strict_parsed("SINEX_EVENT_ENGINE_SCHEMA_RELOAD_INTERVAL_SECS")?
                 .unwrap_or_else(default_schema_reload_interval_secs);
         let stats_log_interval_secs: u64 =
-            shared_env::strict_parsed("SINEX_INGESTD_STATS_LOG_INTERVAL_SECS")?
+            shared_env::strict_parsed("SINEX_EVENT_ENGINE_STATS_LOG_INTERVAL_SECS")?
                 .unwrap_or_else(default_stats_log_interval_secs);
         let blob_gc_interval_secs: Option<u64> =
-            shared_env::strict_parsed("SINEX_INGESTD_BLOB_GC_INTERVAL_SECS")?;
+            shared_env::strict_parsed("SINEX_EVENT_ENGINE_BLOB_GC_INTERVAL_SECS")?;
         let pool_acquire_timeout_secs: u64 =
-            shared_env::strict_parsed("SINEX_INGESTD_POOL_ACQUIRE_TIMEOUT_SECS")?
+            shared_env::strict_parsed("SINEX_EVENT_ENGINE_POOL_ACQUIRE_TIMEOUT_SECS")?
                 .unwrap_or_else(default_pool_acquire_timeout_secs);
         let pool_idle_timeout_secs: u64 =
-            shared_env::strict_parsed("SINEX_INGESTD_POOL_IDLE_TIMEOUT_SECS")?
+            shared_env::strict_parsed("SINEX_EVENT_ENGINE_POOL_IDLE_TIMEOUT_SECS")?
                 .unwrap_or_else(default_pool_idle_timeout_secs);
         let ts_orig_future_skew_secs: u64 =
-            shared_env::strict_parsed("SINEX_INGESTD_TS_ORIG_FUTURE_SKEW_SECS")?
+            shared_env::strict_parsed("SINEX_EVENT_ENGINE_TS_ORIG_FUTURE_SKEW_SECS")?
                 .unwrap_or_else(default_ts_orig_future_skew_secs);
         let ts_orig_lower_bound_unix: i64 =
-            shared_env::strict_parsed("SINEX_INGESTD_TS_ORIG_LOWER_BOUND_UNIX")?
+            shared_env::strict_parsed("SINEX_EVENT_ENGINE_TS_ORIG_LOWER_BOUND_UNIX")?
                 .unwrap_or_else(default_ts_orig_lower_bound_unix);
 
         // Construct NatsConnectionConfig from args/environment.
@@ -466,35 +466,35 @@ impl IngestdConfig {
         }
 
         // Retry config overrides from env vars
-        if let Some(value) = shared_env::strict_parsed("SINEX_INGESTD_RETRY_MAX_ATTEMPTS")? {
+        if let Some(value) = shared_env::strict_parsed("SINEX_EVENT_ENGINE_RETRY_MAX_ATTEMPTS")? {
             config.retry_config.max_attempts = value;
         }
         if let Some(value) =
-            shared_env::strict_parsed::<u64>("SINEX_INGESTD_RETRY_INITIAL_DELAY_MS")?
+            shared_env::strict_parsed::<u64>("SINEX_EVENT_ENGINE_RETRY_INITIAL_DELAY_MS")?
         {
             config.retry_config.initial_delay = Duration::from_millis(value);
         }
-        if let Some(value) = shared_env::strict_parsed::<u64>("SINEX_INGESTD_RETRY_MAX_DELAY_MS")? {
+        if let Some(value) = shared_env::strict_parsed::<u64>("SINEX_EVENT_ENGINE_RETRY_MAX_DELAY_MS")? {
             config.retry_config.max_delay = Duration::from_millis(value);
         }
-        if let Some(value) = shared_env::strict_parsed("SINEX_INGESTD_RETRY_MULTIPLIER")? {
+        if let Some(value) = shared_env::strict_parsed("SINEX_EVENT_ENGINE_RETRY_MULTIPLIER")? {
             config.retry_config.multiplier = value;
         }
-        if let Some(value) = shared_env::strict_flag("SINEX_INGESTD_RETRY_JITTER")? {
+        if let Some(value) = shared_env::strict_flag("SINEX_EVENT_ENGINE_RETRY_JITTER")? {
             config.retry_config.jitter = value;
         }
         if let Some(value) =
-            shared_env::strict_parsed::<u64>("SINEX_INGESTD_RETRY_PUBLISH_ACK_TIMEOUT_MS")?
+            shared_env::strict_parsed::<u64>("SINEX_EVENT_ENGINE_RETRY_PUBLISH_ACK_TIMEOUT_MS")?
         {
             config.retry_config.publish_ack_timeout = Duration::from_millis(value);
         }
         // Startup catch-up concurrency override from env
         if let Some(value) =
-            shared_env::strict_parsed("SINEX_INGESTD_STARTUP_CATCH_UP_MAX_CONCURRENT")?
+            shared_env::strict_parsed("SINEX_EVENT_ENGINE_STARTUP_CATCH_UP_MAX_CONCURRENT")?
         {
             config.startup_catch_up_max_concurrent = value;
         }
-        if let Some(value) = shared_env::strict_flag("SINEX_INGESTD_REJECT_INITIAL_REPLAY")? {
+        if let Some(value) = shared_env::strict_flag("SINEX_EVENT_ENGINE_REJECT_INITIAL_REPLAY")? {
             config.reject_initial_replay = value;
         }
 
@@ -827,7 +827,7 @@ fn default_database_url_fallback() -> String {
 
 /// Default work directory for ingestd with environment namespacing
 fn default_work_dir() -> Utf8PathBuf {
-    if let Some(validated) = env_validated_path("SINEX_INGESTD_WORK_DIR", "ingestd work dir") {
+    if let Some(validated) = env_validated_path("SINEX_EVENT_ENGINE_WORK_DIR", "ingestd work dir") {
         return validated;
     }
 
@@ -862,14 +862,14 @@ fn default_pool_idle_timeout_secs() -> u64 {
 }
 
 fn default_consumer_fetch_max_messages() -> usize {
-    match shared_env::strict_parsed("SINEX_INGESTD_CONSUMER_FETCH_MAX_MESSAGES") {
+    match shared_env::strict_parsed("SINEX_EVENT_ENGINE_CONSUMER_FETCH_MAX_MESSAGES") {
         Ok(Some(value)) => value,
         Ok(None) => 100,
         Err(error) => {
             error!(
                 target: "sinex_metrics",
                 metric = "ingestd.config_env_parse_errors_total",
-                env = "SINEX_INGESTD_CONSUMER_FETCH_MAX_MESSAGES",
+                env = "SINEX_EVENT_ENGINE_CONSUMER_FETCH_MAX_MESSAGES",
                 %error,
                 "Invalid env override for consumer fetch max messages; using default"
             );
@@ -879,14 +879,14 @@ fn default_consumer_fetch_max_messages() -> usize {
 }
 
 fn default_consumer_fetch_timeout_ms() -> Milliseconds {
-    match shared_env::strict_parsed("SINEX_INGESTD_CONSUMER_FETCH_TIMEOUT_MS") {
+    match shared_env::strict_parsed("SINEX_EVENT_ENGINE_CONSUMER_FETCH_TIMEOUT_MS") {
         Ok(Some(value)) => Milliseconds::from_millis(value),
         Ok(None) => Milliseconds::from_millis(100),
         Err(error) => {
             error!(
                 target: "sinex_metrics",
                 metric = "ingestd.config_env_parse_errors_total",
-                env = "SINEX_INGESTD_CONSUMER_FETCH_TIMEOUT_MS",
+                env = "SINEX_EVENT_ENGINE_CONSUMER_FETCH_TIMEOUT_MS",
                 %error,
                 "Invalid env override for consumer fetch timeout; using default"
             );
@@ -896,14 +896,14 @@ fn default_consumer_fetch_timeout_ms() -> Milliseconds {
 }
 
 fn default_consumer_max_ack_pending() -> i64 {
-    match shared_env::strict_parsed("SINEX_INGESTD_CONSUMER_MAX_ACK_PENDING") {
+    match shared_env::strict_parsed("SINEX_EVENT_ENGINE_CONSUMER_MAX_ACK_PENDING") {
         Ok(Some(value)) => value,
         Ok(None) => 100,
         Err(error) => {
             error!(
                 target: "sinex_metrics",
                 metric = "ingestd.config_env_parse_errors_total",
-                env = "SINEX_INGESTD_CONSUMER_MAX_ACK_PENDING",
+                env = "SINEX_EVENT_ENGINE_CONSUMER_MAX_ACK_PENDING",
                 %error,
                 "Invalid env override for consumer max_ack_pending; using default"
             );
@@ -913,14 +913,14 @@ fn default_consumer_max_ack_pending() -> i64 {
 }
 
 fn default_material_slices_max_ack_pending() -> i64 {
-    match shared_env::strict_parsed("SINEX_INGESTD_MATERIAL_SLICES_MAX_ACK_PENDING") {
+    match shared_env::strict_parsed("SINEX_EVENT_ENGINE_MATERIAL_SLICES_MAX_ACK_PENDING") {
         Ok(Some(value)) => value,
         Ok(None) => 1_000,
         Err(error) => {
             error!(
                 target: "sinex_metrics",
                 metric = "ingestd.config_env_parse_errors_total",
-                env = "SINEX_INGESTD_MATERIAL_SLICES_MAX_ACK_PENDING",
+                env = "SINEX_EVENT_ENGINE_MATERIAL_SLICES_MAX_ACK_PENDING",
                 %error,
                 "Invalid env override for material slices max_ack_pending; using default"
             );
@@ -1058,14 +1058,14 @@ fn validate_fetch_timeout(value: &Milliseconds) -> Result<(), ValidationError> {
 }
 
 fn default_max_buffered_slices() -> usize {
-    match shared_env::strict_parsed("SINEX_INGESTD_MAX_BUFFERED_SLICES") {
+    match shared_env::strict_parsed("SINEX_EVENT_ENGINE_MAX_BUFFERED_SLICES") {
         Ok(Some(value)) => value,
         Ok(None) => 4096,
         Err(error) => {
             error!(
                 target: "sinex_metrics",
                 metric = "ingestd.config_env_parse_errors_total",
-                env = "SINEX_INGESTD_MAX_BUFFERED_SLICES",
+                env = "SINEX_EVENT_ENGINE_MAX_BUFFERED_SLICES",
                 %error,
                 "Invalid env override for max buffered slices; using default"
             );
@@ -1082,14 +1082,14 @@ fn default_slice_timeout_secs() -> u64 {
     // these accumulating at ~50/hour even on a healthy stack. The mechanism
     // exists to detect *crashed* workers that never followed up after BEGIN;
     // 1h is still short enough for that purpose without false-positive churn.
-    match shared_env::strict_parsed("SINEX_INGESTD_SLICE_TIMEOUT_SECS") {
+    match shared_env::strict_parsed("SINEX_EVENT_ENGINE_SLICE_TIMEOUT_SECS") {
         Ok(Some(value)) => value,
         Ok(None) => 3_600,
         Err(error) => {
             error!(
                 target: "sinex_metrics",
                 metric = "ingestd.config_env_parse_errors_total",
-                env = "SINEX_INGESTD_SLICE_TIMEOUT_SECS",
+                env = "SINEX_EVENT_ENGINE_SLICE_TIMEOUT_SECS",
                 %error,
                 "Invalid env override for slice timeout; using default"
             );
@@ -1099,14 +1099,14 @@ fn default_slice_timeout_secs() -> u64 {
 }
 
 fn default_orphan_threshold_secs() -> u64 {
-    match shared_env::strict_parsed("SINEX_INGESTD_ORPHAN_THRESHOLD_SECS") {
+    match shared_env::strict_parsed("SINEX_EVENT_ENGINE_ORPHAN_THRESHOLD_SECS") {
         Ok(Some(value)) => value,
         Ok(None) => 3600,
         Err(error) => {
             error!(
                 target: "sinex_metrics",
                 metric = "ingestd.config_env_parse_errors_total",
-                env = "SINEX_INGESTD_ORPHAN_THRESHOLD_SECS",
+                env = "SINEX_EVENT_ENGINE_ORPHAN_THRESHOLD_SECS",
                 %error,
                 "Invalid env override for orphan threshold; using default"
             );
@@ -1116,14 +1116,14 @@ fn default_orphan_threshold_secs() -> u64 {
 }
 
 fn default_disk_threshold_percent() -> u8 {
-    match shared_env::strict_parsed("SINEX_INGESTD_DISK_THRESHOLD_PERCENT") {
+    match shared_env::strict_parsed("SINEX_EVENT_ENGINE_DISK_THRESHOLD_PERCENT") {
         Ok(Some(value)) => value,
         Ok(None) => 90,
         Err(error) => {
             error!(
                 target: "sinex_metrics",
                 metric = "ingestd.config_env_parse_errors_total",
-                env = "SINEX_INGESTD_DISK_THRESHOLD_PERCENT",
+                env = "SINEX_EVENT_ENGINE_DISK_THRESHOLD_PERCENT",
                 %error,
                 "Invalid env override for disk threshold percent; using default"
             );
@@ -1133,14 +1133,14 @@ fn default_disk_threshold_percent() -> u8 {
 }
 
 fn default_max_material_size_bytes() -> Bytes {
-    match shared_env::strict_parsed("SINEX_INGESTD_MAX_MATERIAL_SIZE_BYTES") {
+    match shared_env::strict_parsed("SINEX_EVENT_ENGINE_MAX_MATERIAL_SIZE_BYTES") {
         Ok(Some(value)) => Bytes::from_bytes(value),
         Ok(None) => Bytes::from_mebibytes(512),
         Err(error) => {
             error!(
                 target: "sinex_metrics",
                 metric = "ingestd.config_env_parse_errors_total",
-                env = "SINEX_INGESTD_MAX_MATERIAL_SIZE_BYTES",
+                env = "SINEX_EVENT_ENGINE_MAX_MATERIAL_SIZE_BYTES",
                 %error,
                 "Invalid env override for max material size; using default"
             );
@@ -1150,14 +1150,14 @@ fn default_max_material_size_bytes() -> Bytes {
 }
 
 fn default_material_staged_sync_bytes() -> Bytes {
-    match shared_env::strict_parsed("SINEX_INGESTD_MATERIAL_STAGED_SYNC_BYTES") {
+    match shared_env::strict_parsed("SINEX_EVENT_ENGINE_MATERIAL_STAGED_SYNC_BYTES") {
         Ok(Some(value)) => Bytes::from_bytes(value),
         Ok(None) => Bytes::from_mebibytes(1),
         Err(error) => {
             error!(
                 target: "sinex_metrics",
                 metric = "ingestd.config_env_parse_errors_total",
-                env = "SINEX_INGESTD_MATERIAL_STAGED_SYNC_BYTES",
+                env = "SINEX_EVENT_ENGINE_MATERIAL_STAGED_SYNC_BYTES",
                 %error,
                 "Invalid env override for staged material sync bytes; using default"
             );
@@ -1167,14 +1167,14 @@ fn default_material_staged_sync_bytes() -> Bytes {
 }
 
 fn default_material_staged_sync_interval_ms() -> Milliseconds {
-    match shared_env::strict_parsed("SINEX_INGESTD_MATERIAL_STAGED_SYNC_INTERVAL_MS") {
+    match shared_env::strict_parsed("SINEX_EVENT_ENGINE_MATERIAL_STAGED_SYNC_INTERVAL_MS") {
         Ok(Some(value)) => Milliseconds::from_millis(value),
         Ok(None) => Milliseconds::from_millis(1000),
         Err(error) => {
             error!(
                 target: "sinex_metrics",
                 metric = "ingestd.config_env_parse_errors_total",
-                env = "SINEX_INGESTD_MATERIAL_STAGED_SYNC_INTERVAL_MS",
+                env = "SINEX_EVENT_ENGINE_MATERIAL_STAGED_SYNC_INTERVAL_MS",
                 %error,
                 "Invalid env override for staged material sync interval; using default"
             );
@@ -1184,14 +1184,14 @@ fn default_material_staged_sync_interval_ms() -> Milliseconds {
 }
 
 fn default_material_wal_sync_bytes() -> Bytes {
-    match shared_env::strict_parsed("SINEX_INGESTD_MATERIAL_WAL_SYNC_BYTES") {
+    match shared_env::strict_parsed("SINEX_EVENT_ENGINE_MATERIAL_WAL_SYNC_BYTES") {
         Ok(Some(value)) => Bytes::from_bytes(value),
         Ok(None) => Bytes::from_kibibytes(256),
         Err(error) => {
             error!(
                 target: "sinex_metrics",
                 metric = "ingestd.config_env_parse_errors_total",
-                env = "SINEX_INGESTD_MATERIAL_WAL_SYNC_BYTES",
+                env = "SINEX_EVENT_ENGINE_MATERIAL_WAL_SYNC_BYTES",
                 %error,
                 "Invalid env override for material WAL sync bytes; using default"
             );
@@ -1201,14 +1201,14 @@ fn default_material_wal_sync_bytes() -> Bytes {
 }
 
 fn default_material_wal_sync_entries() -> u32 {
-    match shared_env::strict_parsed("SINEX_INGESTD_MATERIAL_WAL_SYNC_ENTRIES") {
+    match shared_env::strict_parsed("SINEX_EVENT_ENGINE_MATERIAL_WAL_SYNC_ENTRIES") {
         Ok(Some(value)) => value,
         Ok(None) => 128,
         Err(error) => {
             error!(
                 target: "sinex_metrics",
                 metric = "ingestd.config_env_parse_errors_total",
-                env = "SINEX_INGESTD_MATERIAL_WAL_SYNC_ENTRIES",
+                env = "SINEX_EVENT_ENGINE_MATERIAL_WAL_SYNC_ENTRIES",
                 %error,
                 "Invalid env override for material WAL sync entries; using default"
             );
@@ -1218,14 +1218,14 @@ fn default_material_wal_sync_entries() -> u32 {
 }
 
 fn default_material_wal_sync_interval_ms() -> Milliseconds {
-    match shared_env::strict_parsed("SINEX_INGESTD_MATERIAL_WAL_SYNC_INTERVAL_MS") {
+    match shared_env::strict_parsed("SINEX_EVENT_ENGINE_MATERIAL_WAL_SYNC_INTERVAL_MS") {
         Ok(Some(value)) => Milliseconds::from_millis(value),
         Ok(None) => Milliseconds::from_millis(1000),
         Err(error) => {
             error!(
                 target: "sinex_metrics",
                 metric = "ingestd.config_env_parse_errors_total",
-                env = "SINEX_INGESTD_MATERIAL_WAL_SYNC_INTERVAL_MS",
+                env = "SINEX_EVENT_ENGINE_MATERIAL_WAL_SYNC_INTERVAL_MS",
                 %error,
                 "Invalid env override for material WAL sync interval; using default"
             );
@@ -1236,7 +1236,7 @@ fn default_material_wal_sync_interval_ms() -> Milliseconds {
 
 fn default_gitops_work_dir() -> Utf8PathBuf {
     if let Some(validated) =
-        env_validated_path("SINEX_INGESTD_GITOPS_WORK_DIR", "gitops work directory")
+        env_validated_path("SINEX_EVENT_ENGINE_GITOPS_WORK_DIR", "gitops work directory")
     {
         return validated;
     }
@@ -1258,14 +1258,14 @@ fn default_stats_log_interval_secs() -> u64 {
 }
 
 fn default_startup_catch_up_max_concurrent() -> usize {
-    match shared_env::strict_parsed("SINEX_INGESTD_STARTUP_CATCH_UP_MAX_CONCURRENT") {
+    match shared_env::strict_parsed("SINEX_EVENT_ENGINE_STARTUP_CATCH_UP_MAX_CONCURRENT") {
         Ok(Some(value)) => value,
         Ok(None) => 4,
         Err(error) => {
             error!(
                 target: "sinex_metrics",
                 metric = "ingestd.config_env_parse_errors_total",
-                env = "SINEX_INGESTD_STARTUP_CATCH_UP_MAX_CONCURRENT",
+                env = "SINEX_EVENT_ENGINE_STARTUP_CATCH_UP_MAX_CONCURRENT",
                 %error,
                 "Invalid env override for startup catch-up max concurrent; using default"
             );
@@ -1275,14 +1275,14 @@ fn default_startup_catch_up_max_concurrent() -> usize {
 }
 
 fn default_reject_initial_replay() -> bool {
-    match shared_env::strict_flag("SINEX_INGESTD_REJECT_INITIAL_REPLAY") {
+    match shared_env::strict_flag("SINEX_EVENT_ENGINE_REJECT_INITIAL_REPLAY") {
         Ok(Some(value)) => value,
         Ok(None) => true,
         Err(error) => {
             error!(
                 target: "sinex_metrics",
                 metric = "ingestd.config_env_parse_errors_total",
-                env = "SINEX_INGESTD_REJECT_INITIAL_REPLAY",
+                env = "SINEX_EVENT_ENGINE_REJECT_INITIAL_REPLAY",
                 %error,
                 "Invalid env override for initial replay guard; using default"
             );
@@ -1331,11 +1331,11 @@ mod tests {
     async fn material_durability_thresholds_match_policy_defaults() -> xtask::sandbox::TestResult<()>
     {
         let mut env = EnvGuard::new();
-        env.set("SINEX_INGESTD_MATERIAL_STAGED_SYNC_BYTES", "1048576");
-        env.set("SINEX_INGESTD_MATERIAL_STAGED_SYNC_INTERVAL_MS", "1000");
-        env.set("SINEX_INGESTD_MATERIAL_WAL_SYNC_BYTES", "262144");
-        env.set("SINEX_INGESTD_MATERIAL_WAL_SYNC_ENTRIES", "128");
-        env.set("SINEX_INGESTD_MATERIAL_WAL_SYNC_INTERVAL_MS", "1000");
+        env.set("SINEX_EVENT_ENGINE_MATERIAL_STAGED_SYNC_BYTES", "1048576");
+        env.set("SINEX_EVENT_ENGINE_MATERIAL_STAGED_SYNC_INTERVAL_MS", "1000");
+        env.set("SINEX_EVENT_ENGINE_MATERIAL_WAL_SYNC_BYTES", "262144");
+        env.set("SINEX_EVENT_ENGINE_MATERIAL_WAL_SYNC_ENTRIES", "128");
+        env.set("SINEX_EVENT_ENGINE_MATERIAL_WAL_SYNC_INTERVAL_MS", "1000");
 
         let config = IngestdConfig::default();
 
@@ -1374,7 +1374,7 @@ mod tests {
     #[sinex_serial_test]
     async fn default_work_dir_ignores_invalid_override() -> xtask::sandbox::TestResult<()> {
         let mut env = EnvGuard::new();
-        env.set("SINEX_INGESTD_WORK_DIR", "../../etc");
+        env.set("SINEX_EVENT_ENGINE_WORK_DIR", "../../etc");
         env.set("XDG_CACHE_HOME", "/tmp/sinex-ingestd-config-cache");
 
         let expected = Utf8PathBuf::from_path_buf(
@@ -1389,10 +1389,10 @@ mod tests {
     #[sinex_serial_test]
     async fn derived_default_paths_ignore_invalid_overrides() -> xtask::sandbox::TestResult<()> {
         let mut env = EnvGuard::new();
-        env.set("SINEX_INGESTD_WORK_DIR", "/tmp/sinex-ingestd-config-root");
+        env.set("SINEX_EVENT_ENGINE_WORK_DIR", "/tmp/sinex-ingestd-config-root");
         env.set("SINEX_CONTENT_STORE_PATH", "../../bad-content-store");
         env.set("SINEX_ASSEMBLER_STATE_DIR", "../../bad-state-dir");
-        env.set("SINEX_INGESTD_GITOPS_WORK_DIR", "../../bad-gitops");
+        env.set("SINEX_EVENT_ENGINE_GITOPS_WORK_DIR", "../../bad-gitops");
 
         assert_eq!(
             default_content_store_path(),

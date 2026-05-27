@@ -6,7 +6,7 @@ use sinexd::api::rpc_server_test_support::{
 use xtask::sandbox::{EnvGuard, sinex_test};
 
 fn reset_auth_env(env: &mut EnvGuard) {
-    env.clear("SINEX_GATEWAY_ADMIN_TOKEN_FILE");
+    env.clear("SINEX_API_ADMIN_TOKEN_FILE");
     env.clear("SINEX_RPC_TOKEN");
     env.clear("SINEX_RPC_TOKEN_FILE");
 }
@@ -66,7 +66,7 @@ async fn gateway_auth_accepts_admin_token_file() -> TestResult<()> {
 ",
     )?;
     env.set(
-        "SINEX_GATEWAY_ADMIN_TOKEN_FILE",
+        "SINEX_API_ADMIN_TOKEN_FILE",
         temp.path().to_str().expect("temp path utf8"),
     );
 

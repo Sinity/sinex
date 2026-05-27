@@ -155,16 +155,16 @@ mod tests {
         let mut env = EnvGuard::with_keys(&[
             "DATABASE_URL",
             "SINEX_NATS_URL",
-            "SINEX_GATEWAY_URL",
+            "SINEX_API_URL",
             "SINEX_RPC_URL",
-            "SINEX_GATEWAY_TCP_LISTEN",
+            "SINEX_API_TCP_LISTEN",
             "SINEX_RUNTIME_TARGET_CONFIG",
         ]);
         env.clear("DATABASE_URL");
         env.clear("SINEX_NATS_URL");
-        env.clear("SINEX_GATEWAY_URL");
+        env.clear("SINEX_API_URL");
         env.clear("SINEX_RPC_URL");
-        env.clear("SINEX_GATEWAY_TCP_LISTEN");
+        env.clear("SINEX_API_TCP_LISTEN");
         env.set("SINEX_RUNTIME_TARGET_CONFIG", "/definitely/not/loaded.json");
 
         let cfg = Config::from_env();

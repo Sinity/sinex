@@ -168,14 +168,14 @@ impl LiveGateway {
         tokio::fs::write(key_file.path(), cert.key_pair.serialize_pem()).await?;
 
         env_guard.set(
-            "SINEX_GATEWAY_TLS_CERT",
+            "SINEX_API_TLS_CERT",
             cert_file.path().to_string_lossy().to_string(),
         );
         env_guard.set(
-            "SINEX_GATEWAY_TLS_KEY",
+            "SINEX_API_TLS_KEY",
             key_file.path().to_string_lossy().to_string(),
         );
-        env_guard.clear("SINEX_GATEWAY_TLS_CLIENT_CA");
+        env_guard.clear("SINEX_API_TLS_CLIENT_CA");
         env_guard.set("SINEX_RPC_TOKEN", token);
         env_guard.set("DATABASE_URL", database_url);
         if let Some(nats_url) = nats_url {

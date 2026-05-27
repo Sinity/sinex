@@ -883,7 +883,7 @@ in
                   default = if cfg.core.gateway.autoGenerateTls then cfg.stateRoot + "/tls/server.pem" else null;
                   description = ''
                     Path to the gateway TLS certificate. Required unless autoGenerateTls is enabled.
-                    Exported as <literal>SINEX_GATEWAY_TLS_CERT</literal>.
+                    Exported as <literal>SINEX_API_TLS_CERT</literal>.
                   '';
                 };
                 tlsKeyFile = mkOption {
@@ -891,7 +891,7 @@ in
                   default = if cfg.core.gateway.autoGenerateTls then cfg.stateRoot + "/tls/server-key.pem" else null;
                   description = ''
                     Path to the gateway TLS private key. Required unless autoGenerateTls is enabled.
-                    Exported as <literal>SINEX_GATEWAY_TLS_KEY</literal>.
+                    Exported as <literal>SINEX_API_TLS_KEY</literal>.
                   '';
                 };
                 tlsClientCAFile = mkOption {
@@ -900,7 +900,7 @@ in
                   description = ''
                     Client CA bundle for gateway mTLS. Required for non-loopback binds
                     and whenever requireClientTLS is enabled. Exported as
-                    <literal>SINEX_GATEWAY_TLS_CLIENT_CA</literal>.
+                    <literal>SINEX_API_TLS_CLIENT_CA</literal>.
                   '';
                 };
                 autoGenerateTls = mkOption {
@@ -2488,7 +2488,7 @@ in
           { path = nodesSpool; mode = "0755"; }
           { path = ingestSpool; mode = "0755"; }
           # ingestd writes its working directory under ${stateRoot}/ingestd/work
-          # (see SINEX_INGESTD_WORK_DIR). Pre-create so ingestd does not need
+          # (see SINEX_EVENT_ENGINE_WORK_DIR). Pre-create so ingestd does not need
           # write access to stateRoot itself.
           { path = "${stateRoot}/ingestd"; mode = "0750"; }
           { path = "${stateRoot}/ingestd/work"; mode = "0750"; }

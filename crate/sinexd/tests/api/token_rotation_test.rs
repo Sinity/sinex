@@ -85,7 +85,7 @@ async fn test_env_var_token_priority() -> TestResult<()> {
     // Write token to file
     fs::write(&token_file, "file-token").expect("Failed to write token file");
 
-    // Test priority: SINEX_GATEWAY_ADMIN_TOKEN_FILE > SINEX_RPC_TOKEN_FILE > SINEX_RPC_TOKEN
+    // Test priority: SINEX_API_ADMIN_TOKEN_FILE > SINEX_RPC_TOKEN_FILE > SINEX_RPC_TOKEN
 
     // Set direct env var
     unsafe { std::env::set_var("SINEX_RPC_TOKEN", "direct-token") };
@@ -111,7 +111,7 @@ async fn test_env_var_token_priority() -> TestResult<()> {
     fs::write(&admin_token_file, "admin-token").expect("Failed to write admin token file");
     unsafe {
         std::env::set_var(
-            "SINEX_GATEWAY_ADMIN_TOKEN_FILE",
+            "SINEX_API_ADMIN_TOKEN_FILE",
             admin_token_file
                 .to_str()
                 .expect("path should be valid UTF-8"),
@@ -126,7 +126,7 @@ async fn test_env_var_token_priority() -> TestResult<()> {
     unsafe {
         std::env::remove_var("SINEX_RPC_TOKEN");
         std::env::remove_var("SINEX_RPC_TOKEN_FILE");
-        std::env::remove_var("SINEX_GATEWAY_ADMIN_TOKEN_FILE");
+        std::env::remove_var("SINEX_API_ADMIN_TOKEN_FILE");
     }
     Ok(())
 }

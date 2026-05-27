@@ -17,7 +17,7 @@ use tempfile::TempDir;
 use xtask::sandbox::{EnvGuard, sinex_test};
 
 fn reset_token_env(env: &mut EnvGuard) {
-    env.clear("SINEX_GATEWAY_ADMIN_TOKEN_FILE");
+    env.clear("SINEX_API_ADMIN_TOKEN_FILE");
     env.clear("SINEX_RPC_TOKEN_FILE");
     env.clear("SINEX_RPC_TOKEN");
 }
@@ -226,7 +226,7 @@ async fn test_admin_token_file_takes_precedence() -> TestResult<()> {
     fs::write(&rpc_file, "rpc-token").unwrap();
 
     env.set(
-        "SINEX_GATEWAY_ADMIN_TOKEN_FILE",
+        "SINEX_API_ADMIN_TOKEN_FILE",
         admin_file.to_str().unwrap(),
     );
     env.set("SINEX_RPC_TOKEN_FILE", rpc_file.to_str().unwrap());
@@ -302,18 +302,18 @@ async fn test_gateway_limits_matrix() -> TestResult<()> {
 
     let mut env = EnvGuard::new();
     for case in cases {
-        env.clear("SINEX_GATEWAY_MAX_CONCURRENCY");
-        env.clear("SINEX_GATEWAY_REQUEST_TIMEOUT_SECS");
-        env.clear("SINEX_GATEWAY_MAX_BODY_BYTES");
+        env.clear("SINEX_API_MAX_CONCURRENCY");
+        env.clear("SINEX_API_REQUEST_TIMEOUT_SECS");
+        env.clear("SINEX_API_MAX_BODY_BYTES");
 
         if let Some(value) = case.concurrency {
-            env.set("SINEX_GATEWAY_MAX_CONCURRENCY", value);
+            env.set("SINEX_API_MAX_CONCURRENCY", value);
         }
         if let Some(value) = case.timeout_secs {
-            env.set("SINEX_GATEWAY_REQUEST_TIMEOUT_SECS", value);
+            env.set("SINEX_API_REQUEST_TIMEOUT_SECS", value);
         }
         if let Some(value) = case.max_body_bytes {
-            env.set("SINEX_GATEWAY_MAX_BODY_BYTES", value);
+            env.set("SINEX_API_MAX_BODY_BYTES", value);
         }
 
         let limits = rpc_test_support::rpc_server_limits_snapshot()?;
@@ -334,8 +334,8 @@ async fn test_gateway_limits_matrix() -> TestResult<()> {
         );
     }
 
-    env.clear("SINEX_GATEWAY_MAX_CONCURRENCY");
-    env.clear("SINEX_GATEWAY_REQUEST_TIMEOUT_SECS");
-    env.clear("SINEX_GATEWAY_MAX_BODY_BYTES");
+    env.clear("SINEX_API_MAX_CONCURRENCY");
+    env.clear("SINEX_API_REQUEST_TIMEOUT_SECS");
+    env.clear("SINEX_API_MAX_BODY_BYTES");
     Ok(())
 }

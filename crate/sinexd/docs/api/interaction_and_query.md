@@ -16,7 +16,7 @@
 ### 2.1 Execution Modes
 
 - **RPC server (`sinex-gateway rpc-server`)**  
-  * Binds to TLS TCP by default on `127.0.0.1:9999` (override with `--tcp-listen <host:port>` or `SINEX_GATEWAY_TCP_LISTEN`).
+  * Binds to TLS TCP by default on `127.0.0.1:9999` (override with `--tcp-listen <host:port>` or `SINEX_API_TCP_LISTEN`).
   * Accepts JSON-RPC 2.0 POST requests at `/rpc`.
 * **Native messaging (`sinex-gateway native-messaging`)**  
   * Runs a stdin/stdout loop for a browser extension; reuses the same RPC dispatch table.
@@ -33,16 +33,16 @@
 
 ### 2.3 Authentication & Transport Limits
 
-- RPC traffic is guarded by a shared secret exported via `SINEX_RPC_TOKEN` (or `SINEX_GATEWAY_ADMIN_TOKEN_FILE` / `SINEX_RPC_TOKEN_FILE`). Gateway startup fails if no token is present.
+- RPC traffic is guarded by a shared secret exported via `SINEX_RPC_TOKEN` (or `SINEX_API_ADMIN_TOKEN_FILE` / `SINEX_RPC_TOKEN_FILE`). Gateway startup fails if no token is present.
 * Tokens must include a role suffix (`<token>:readonly|write|admin`), and clients present them via `Authorization: Bearer <token-with-role>`. `sinexctl` injects the header when `--token`, `--token-file`, or `SINEX_RPC_TOKEN` are configured.
-* TLS is mandatory; set `SINEX_GATEWAY_TLS_CERT` + `SINEX_GATEWAY_TLS_KEY` (optional `SINEX_GATEWAY_TLS_CLIENT_CA` for mTLS).
-* Non-loopback binds require mTLS; configure `SINEX_GATEWAY_TLS_CLIENT_CA` and pass `SINEX_RPC_CLIENT_CERT` + `SINEX_RPC_CLIENT_KEY` to clients.
-* Set `SINEX_GATEWAY_REQUIRE_CLIENT_TLS=1` to enforce mTLS even on loopback/test hosts.
+* TLS is mandatory; set `SINEX_API_TLS_CERT` + `SINEX_API_TLS_KEY` (optional `SINEX_API_TLS_CLIENT_CA` for mTLS).
+* Non-loopback binds require mTLS; configure `SINEX_API_TLS_CLIENT_CA` and pass `SINEX_RPC_CLIENT_CERT` + `SINEX_RPC_CLIENT_KEY` to clients.
+* Set `SINEX_API_REQUIRE_CLIENT_TLS=1` to enforce mTLS even on loopback/test hosts.
 * Resource guards are configurable via:
-  * `SINEX_GATEWAY_MAX_CONCURRENCY` (default 100).
-  * `SINEX_GATEWAY_REQUEST_TIMEOUT_SECS` (default 30 seconds).
-  * `SINEX_GATEWAY_MAX_BODY_BYTES` (default 2 MiB).
-  * `SINEX_GATEWAY_MAX_BLOB_BYTES` (default 5 MiB) limits decoded blob payloads before writing to the content store.
+  * `SINEX_API_MAX_CONCURRENCY` (default 100).
+  * `SINEX_API_REQUEST_TIMEOUT_SECS` (default 30 seconds).
+  * `SINEX_API_MAX_BODY_BYTES` (default 2 MiB).
+  * `SINEX_API_MAX_BLOB_BYTES` (default 5 MiB) limits decoded blob payloads before writing to the content store.
 * NixOS deployments should set these via `services.sinex.core.gateway.limits` rather than ad-hoc env vars.
 * Requests that exceed these guards receive JSON-RPC errors (`401` for missing token, `429/504/413` for the respective limits).
 

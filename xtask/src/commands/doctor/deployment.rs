@@ -1156,7 +1156,7 @@ pub(super) fn check_secret_materials(
     let admin_token = descriptor_secret_path(
         descriptor,
         |value| value.secrets.gateway_admin_token_file.clone(),
-        "SINEX_GATEWAY_ADMIN_TOKEN_FILE",
+        "SINEX_API_ADMIN_TOKEN_FILE",
         PathBuf::from("/run/agenix/sinex-gateway-admin-token"),
     );
     let db_password = descriptor_secret_path(
@@ -1168,13 +1168,13 @@ pub(super) fn check_secret_materials(
     let gateway_cert = descriptor_secret_path(
         descriptor,
         |value| value.secrets.gateway_tls_cert_file.clone(),
-        "SINEX_GATEWAY_TLS_CERT",
+        "SINEX_API_TLS_CERT",
         default_tls_dir.join("server.pem"),
     );
     let gateway_key = descriptor_secret_path(
         descriptor,
         |value| value.secrets.gateway_tls_key_file.clone(),
-        "SINEX_GATEWAY_TLS_KEY",
+        "SINEX_API_TLS_KEY",
         default_tls_dir.join("server-key.pem"),
     );
     let gateway_trust_anchor = descriptor_secret_path(
@@ -1186,7 +1186,7 @@ pub(super) fn check_secret_materials(
     let gateway_client_ca = descriptor_secret_path(
         descriptor,
         |value| value.secrets.gateway_tls_client_ca_file.clone(),
-        "SINEX_GATEWAY_TLS_CLIENT_CA",
+        "SINEX_API_TLS_CLIENT_CA",
         default_tls_dir.join("ca.pem"),
     );
     let nats_ca = descriptor_secret_path(
@@ -1228,8 +1228,8 @@ pub(super) fn check_secret_materials(
 
     let mtls_expected = descriptor.map_or_else(
         || {
-            env_truthy("SINEX_GATEWAY_REQUIRE_CLIENT_TLS")
-                || std::env::var("SINEX_GATEWAY_TLS_CLIENT_CA").is_ok()
+            env_truthy("SINEX_API_REQUIRE_CLIENT_TLS")
+                || std::env::var("SINEX_API_TLS_CLIENT_CA").is_ok()
         },
         |value| {
             value.gateway.require_client_tls || value.secrets.gateway_tls_client_ca_file.is_some()
@@ -1246,7 +1246,7 @@ pub(super) fn check_secret_materials(
         record_secret_file("gateway-admin-token", &path, &mut present, &mut missing);
     } else if !descriptor_present {
         missing.push(
-            "gateway-admin-token missing (set SINEX_GATEWAY_ADMIN_TOKEN_FILE or provide /run/agenix/sinex-gateway-admin-token)"
+            "gateway-admin-token missing (set SINEX_API_ADMIN_TOKEN_FILE or provide /run/agenix/sinex-gateway-admin-token)"
                 .to_string(),
         );
     }
@@ -1271,7 +1271,7 @@ pub(super) fn check_secret_materials(
     );
     if gateway_cert.is_none() && gateway_key.is_none() && !descriptor_present {
         missing.push(
-            "gateway-tls missing (set SINEX_GATEWAY_TLS_CERT/SINEX_GATEWAY_TLS_KEY or provide .sinex/tls/server.pem + server-key.pem)"
+            "gateway-tls missing (set SINEX_API_TLS_CERT/SINEX_API_TLS_KEY or provide .sinex/tls/server.pem + server-key.pem)"
                 .to_string(),
         );
     }
@@ -1280,7 +1280,7 @@ pub(super) fn check_secret_materials(
         match gateway_client_ca {
             Some(path) => record_secret_file("gateway-client-ca", &path, &mut present, &mut missing),
             None => missing.push(
-                "gateway-client-ca missing (set SINEX_GATEWAY_TLS_CLIENT_CA or provide .sinex/tls/ca.pem)"
+                "gateway-client-ca missing (set SINEX_API_TLS_CLIENT_CA or provide .sinex/tls/ca.pem)"
                     .to_string(),
             ),
         }

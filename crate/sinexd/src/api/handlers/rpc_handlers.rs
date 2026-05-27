@@ -55,16 +55,16 @@ pub(crate) fn validate_entity_link_ids(from: &Id<Entity>, to: &Id<Entity>) -> Re
 /// Base64 encoding expands data by ~1.33x (4 chars per 3 bytes). When handling
 /// blob uploads via RPC, ensure:
 ///
-/// - `SINEX_GATEWAY_MAX_BODY_BYTES` >= `SINEX_GATEWAY_MAX_BLOB_BYTES` * 1.4
+/// - `SINEX_API_MAX_BODY_BYTES` >= `SINEX_API_MAX_BLOB_BYTES` * 1.4
 ///   (1.4 accounts for base64 overhead plus JSON envelope)
 ///
 /// Default configuration:
-/// - Body limit: 2MB (`SINEX_GATEWAY_MAX_BODY_BYTES`)
-/// - Blob limit: 5MB (`SINEX_GATEWAY_MAX_BLOB_BYTES`)
+/// - Body limit: 2MB (`SINEX_API_MAX_BODY_BYTES`)
+/// - Blob limit: 5MB (`SINEX_API_MAX_BLOB_BYTES`)
 ///
 /// This mismatch is intentional: the body limit applies to the raw HTTP request,
 /// while the blob limit applies to decoded content. For large blobs, clients should
-/// increase `SINEX_GATEWAY_MAX_BODY_BYTES` proportionally.
+/// increase `SINEX_API_MAX_BODY_BYTES` proportionally.
 pub(crate) fn decode_blob_content(content_b64: &str, limit: usize) -> Result<Vec<u8>> {
     let max_encoded = max_base64_length(limit);
     if content_b64.len() > max_encoded {

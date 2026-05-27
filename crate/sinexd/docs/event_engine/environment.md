@@ -35,7 +35,7 @@ SINEX_NATS_CLIENT_KEY="/run/secrets/nats-client-key.pem"
 
 ```bash
 # Disk usage threshold percentage that triggers backpressure (default: 90)
-SINEX_INGESTD_DISK_THRESHOLD_PERCENT=90
+SINEX_EVENT_ENGINE_DISK_THRESHOLD_PERCENT=90
 ```
 
 ## Quick Reference
@@ -50,7 +50,7 @@ SINEX_INGESTD_DISK_THRESHOLD_PERCENT=90
 | `SINEX_NATS_CA_CERT` | Optional | - | CA bundle for server verification |
 | `SINEX_NATS_CLIENT_CERT` | Optional | - | Client certificate for mTLS |
 | `SINEX_NATS_CLIENT_KEY` | Optional | - | Client private key for mTLS |
-| `SINEX_INGESTD_DISK_THRESHOLD_PERCENT` | No | 90 | Disk backpressure threshold |
+| `SINEX_EVENT_ENGINE_DISK_THRESHOLD_PERCENT` | No | 90 | Disk backpressure threshold |
 
 ## See Also
 
