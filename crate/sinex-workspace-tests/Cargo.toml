@@ -22,7 +22,7 @@ tokio = { workspace = true }
 xtask = { path = "../../xtask" }
 
 sinex-db = { path = "../sinex-db" }
-sinex-gateway = { path = "../core/sinex-gateway" }
 sinex-node-sdk = { path = "../lib/sinex-node-sdk" }
 sinex-primitives = { path = "../sinex-primitives" }
 sinex-process = { path = "../core/sinex-process" }
+sinexd = { path = "../sinexd" }

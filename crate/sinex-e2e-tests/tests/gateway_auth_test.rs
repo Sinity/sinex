@@ -11,7 +11,7 @@
 //! - Authentication mode enforcement
 
 use axum::http::{HeaderMap, HeaderValue};
-use sinex_gateway::rpc_server_test_support as rpc_test_support;
+use sinexd::api::rpc_server_test_support as rpc_test_support;
 use std::fs;
 use tempfile::TempDir;
 use xtask::sandbox::{EnvGuard, sinex_test};

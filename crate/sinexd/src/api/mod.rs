@@ -1,4 +1,42 @@
-//! `sinexd::api` module.
+//! `sinexd::api` — JSON-RPC / SSE / native-messaging operator surface.
 //!
-//! Body lands in PR-2/PR-3 per #1054. See the master issue for the contract
-//! and the per-PR slice this module belongs to.
+//! Absorbed from the former `sinex-gateway` crate as part of the sinexd
+//! collapse (#1054). Hosts the RPC server, handler dispatch, native-messaging
+//! protocol for browser extensions, server-sent-events fanout, auth, rate
+//! limiting, and replay control. Reads from the database via the
+//! `sinex_db` repository layer; control surfaces invoke
+//! `crate::event_engine::*` for lifecycle and replay coordination.
+
+pub mod auth;
+pub mod cascade_analyzer;
+pub mod client;
+pub mod config;
+pub mod content_service;
+pub mod distributed_rate_limit;
+pub mod gateway_metrics;
+pub mod handlers;
+#[cfg(any(feature = "test-support", test))]
+pub mod handlers_test_support;
+pub mod lifecycle_ttl;
+pub mod native_messaging;
+pub mod prelude;
+pub mod rate_limit;
+pub mod replay_control;
+pub mod rpc_registry;
+pub mod rpc_server;
+#[cfg(any(feature = "test-support", test))]
+pub mod rpc_server_test_support;
+pub mod schema_registry;
+pub mod service_container;
+pub mod sse_bus;
+pub mod sse_handler;
+
+// Re-export commonly used types
+pub use cascade_analyzer::{
+    CascadeAnalysis, CascadeAnalyzerConfig, CircularDependency, IntegrityViolation, Severity,
+    StreamingCascadeAnalyzer, ViolationType,
+};
+pub use service_container::ServiceContainer;
+pub use sinex_db::replay::state_machine::{
+    ReplayCheckpoint, ReplayOperation, ReplayScope, ReplayState, ReplayStateMachine,
+};

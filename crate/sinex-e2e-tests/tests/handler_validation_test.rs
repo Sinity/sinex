@@ -5,8 +5,8 @@
 
 use base64::{Engine, engine::general_purpose::STANDARD};
 use serde_json::json;
-use sinex_gateway::handlers_test_support as handler_test_support;
-use sinex_gateway::rpc_server_test_support as rpc_test_support;
+use sinexd::api::handlers_test_support as handler_test_support;
+use sinexd::api::rpc_server_test_support as rpc_test_support;
 use sinex_primitives::Uuid;
 use xtask::sandbox::sinex_test;
 
@@ -354,15 +354,15 @@ async fn test_blob_size_exceeds_limit() -> TestResult<()> {
 async fn test_replay_status_valid() -> TestResult<()> {
     assert_eq!(
         handler_test_support::parse_replay_state("planning").unwrap(),
-        sinex_gateway::ReplayState::Planning
+        sinexd::api::ReplayState::Planning
     );
     assert_eq!(
         handler_test_support::parse_replay_state("approved").unwrap(),
-        sinex_gateway::ReplayState::Approved
+        sinexd::api::ReplayState::Approved
     );
     assert_eq!(
         handler_test_support::parse_replay_state("completed").unwrap(),
-        sinex_gateway::ReplayState::Completed
+        sinexd::api::ReplayState::Completed
     );
     Ok(())
 }
@@ -371,11 +371,11 @@ async fn test_replay_status_valid() -> TestResult<()> {
 async fn test_replay_status_case_insensitive() -> TestResult<()> {
     assert_eq!(
         handler_test_support::parse_replay_state("PREVIEWED").unwrap(),
-        sinex_gateway::ReplayState::Previewed
+        sinexd::api::ReplayState::Previewed
     );
     assert_eq!(
         handler_test_support::parse_replay_state("Approved").unwrap(),
-        sinex_gateway::ReplayState::Approved
+        sinexd::api::ReplayState::Approved
     );
     Ok(())
 }
@@ -384,7 +384,7 @@ async fn test_replay_status_case_insensitive() -> TestResult<()> {
 async fn test_replay_status_cancelled_variants() -> TestResult<()> {
     assert_eq!(
         handler_test_support::parse_replay_state("cancelled").unwrap(),
-        sinex_gateway::ReplayState::Cancelled
+        sinexd::api::ReplayState::Cancelled
     );
     assert!(handler_test_support::parse_replay_state("canceled").is_err());
     Ok(())

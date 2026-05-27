@@ -37,9 +37,6 @@ path = "../../xtask"
 [dev-dependencies.sinex-node-sdk]
 path = "../lib/sinex-node-sdk"
 
-[dev-dependencies.sinex-gateway]
-path = "../core/sinex-gateway"
-features = [ "test-support",]
 
 [dev-dependencies.async-nats]
 workspace = true

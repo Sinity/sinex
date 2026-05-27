@@ -4307,14 +4307,12 @@ dependencies = [
  "sync_wrapper",
  "tokio",
  "tokio-rustls",
- "tokio-util",
  "tower 0.5.3",
  "tower-http",
  "tower-service",
  "url",
  "wasm-bindgen",
  "wasm-bindgen-futures",
- "wasm-streams",
  "web-sys",
 ]
 
@@ -4979,7 +4977,6 @@ dependencies = [
  "proptest",
  "serde_json",
  "sinex-db",
- "sinex-gateway",
  "sinex-node-sdk",
  "sinex-primitives",
  "sinexd",
@@ -4992,52 +4989,6 @@ dependencies = [
  "turmoil",
  "uuid",
  "validator",
- "xtask",
-]
-
-[[package]]
-name = "sinex-gateway"
-version = "0.4.2"
-dependencies = [
- "async-nats",
- "axum",
- "base64 0.22.1",
- "blake3",
- "bytes",
- "camino",
- "clap",
- "color-eyre",
- "console-subscriber",
- "dashmap",
- "futures",
- "governor",
- "hyper-util",
- "mimalloc",
- "notify",
- "parking_lot",
- "petgraph",
- "rcgen",
- "reqwest",
- "serde",
- "serde_json",
- "serde_path_to_error",
- "sinex-db",
- "sinex-gateway",
- "sinex-node-sdk",
- "sinex-primitives",
- "sqlx",
- "subtle",
- "tempfile",
- "time",
- "tokio",
- "tokio-rustls",
- "tokio-stream",
- "tower 0.5.3",
- "tower-http",
- "tracing",
- "tracing-subscriber",
- "uuid",
- "which",
  "xtask",
 ]
 
@@ -5234,10 +5185,10 @@ dependencies = [
  "reqwest",
  "serde_json",
  "sinex-db",
- "sinex-gateway",
  "sinex-node-sdk",
  "sinex-primitives",
  "sinex-process",
+ "sinexd",
  "sqlx",
  "tempfile",
  "time",
@@ -5294,9 +5245,11 @@ name = "sinexd"
 version = "0.4.2"
 dependencies = [
  "async-nats",
+ "axum",
  "base64 0.22.1",
  "blake3",
  "bon",
+ "bytes",
  "camino",
  "clap",
  "color-eyre",
@@ -5306,20 +5259,30 @@ dependencies = [
  "dirs",
  "futures",
  "gethostname",
+ "governor",
+ "hyper-util",
  "libc",
  "mimalloc",
+ "notify",
  "parking_lot",
+ "petgraph",
+ "reqwest",
  "serde",
  "serde_json",
+ "serde_path_to_error",
  "sinex-db",
  "sinex-node-sdk",
  "sinex-primitives",
  "sinexd",
  "sqlx",
+ "subtle",
  "tempfile",
  "time",
  "tokio",
+ "tokio-rustls",
  "tokio-stream",
+ "tower 0.5.3",
+ "tower-http",
  "tracing",
  "tracing-subscriber",
  "url",
@@ -6772,19 +6735,6 @@ dependencies = [
  "indexmap 2.14.0",
  "wasm-encoder",
  "wasmparser",
-]
-
-[[package]]
-name = "wasm-streams"
-version = "0.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9d1ec4f6517c9e11ae630e200b2b65d193279042e28edd4a2cda233e46670bbb"
-dependencies = [
- "futures-util",
- "js-sys",
- "wasm-bindgen",
- "wasm-bindgen-futures",
- "web-sys",
 ]
 
 [[package]]

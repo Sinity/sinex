@@ -4,7 +4,7 @@
 //! in-process gateway with self-signed TLS, then invokes the sinexctl binary
 //! as a subprocess for each replay command.
 
-use sinex_gateway::{ServiceContainer, config::GatewayConfig, rpc_server};
+use sinexd::api::{ServiceContainer, config::GatewayConfig, rpc_server};
 use sinex_workspace_tests::built_binary;
 use std::net::TcpListener;
 use std::time::Duration;
