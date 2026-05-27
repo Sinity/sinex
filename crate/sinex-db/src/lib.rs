@@ -18,7 +18,7 @@ pub mod pool;
 pub mod query_helpers;
 pub mod replay;
 pub mod repositories;
-pub mod schema;
+pub use sinex_schema as schema;
 pub mod schema_apply;
 pub mod validation;
 

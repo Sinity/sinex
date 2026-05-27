@@ -5,8 +5,8 @@
 //! A record in this table is the "birth certificate" for any piece of information
 //! entering Sinex and is the root of all external provenance chains.
 
-use crate::schema::primitives::{Timestamp, Uuid};
-use crate::schema::{Blobs, TableDef};
+use crate::primitives::{Timestamp, Uuid};
+use crate::{Blobs, TableDef};
 use sea_query::{
     Alias, ColumnDef, ConditionalStatement, Expr, ForeignKey, ForeignKeyAction, Iden, Index,
     IndexCreateStatement, IndexOrder, Table, TableCreateStatement,

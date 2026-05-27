@@ -5,7 +5,7 @@
 //! - Auditing high-level system operations (`operations_log`).
 //! - Coordinating leadership and instance discovery (`node_instances`, etc.).
 
-use crate::schema::TableDef;
+use crate::TableDef;
 use sea_query::{
     Alias, ColumnDef, Expr, Iden, Index, IndexCreateStatement, Table, TableCreateStatement,
 };

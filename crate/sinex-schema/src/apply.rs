@@ -1,4 +1,4 @@
-use super::defs::{
+use crate::defs::{
     ArchivedEventAnnotations, ArchivedEventEmbeddings, ArchivedEvents, ArchivedTaggedItems,
     BinarySchemaVersion, Blobs, DocumentChunks, Documents, EmbeddingCache, EmbeddingModels,
     Entities, EntityRelations, EventAnnotations, EventClusterMembers, EventClusters,
@@ -6,7 +6,7 @@ use super::defs::{
     OperationsLog, Runs, SemanticEpochs, SemanticLaneDiffs, SemanticLaneOutputs, SemanticLanes,
     SourceMaterialLinks, SourceMaterialRegistry, TaggedItems, Tags, TemporalLedger,
 };
-use super::registry;
+use crate::registry;
 use sea_query::{IndexCreateStatement, PostgresQueryBuilder, TableCreateStatement};
 use sinex_primitives::validation::validate_pg_identifier;
 use sqlx::{Executor, PgPool};
@@ -113,12 +113,12 @@ impl From<sqlx::Error> for ApplyError {
 }
 
 pub async fn apply(pool: &PgPool) -> Result<(), ApplyError> {
-    let convergible_tables = super::converge::convergible_tables()?;
+    let convergible_tables = crate::converge::convergible_tables()?;
     ensure_schemas(pool).await?;
     ensure_required_extensions(pool).await?;
     execute_sql(pool, BOOTSTRAP_SQL).await?;
     create_tables(pool).await?;
-    super::converge::converge_tables(pool, &convergible_tables).await?;
+    crate::converge::converge_tables(pool, &convergible_tables).await?;
     converge_operations_log_constraints(pool).await?;
     converge_source_material_registry_constraints(pool).await?;
     converge_db_check_constraints(pool).await?;
@@ -134,18 +134,18 @@ pub async fn ensure_shared_access_roles(pool: &PgPool) -> Result<(), ApplyError>
 }
 
 pub async fn diff(pool: &PgPool) -> Result<Vec<String>, ApplyError> {
-    let convergible_tables = super::converge::convergible_tables()?;
+    let convergible_tables = crate::converge::convergible_tables()?;
     let mut drifts = Vec::new();
 
     // Table existence.
-    for table in super::defs::all_tables() {
+    for table in crate::defs::all_tables() {
         if !relation_exists(pool, table.qualified_name).await? {
             drifts.push(format!("missing table {}", table.qualified_name));
         }
     }
 
     // Column and named constraint gaps — derived from sea-query declarations.
-    let column_gaps = super::converge::report_column_gaps(pool, &convergible_tables).await?;
+    let column_gaps = crate::converge::report_column_gaps(pool, &convergible_tables).await?;
     drifts.extend(column_gaps);
 
     // Trigger existence (triggers are managed by CREATE OR REPLACE, not convergence).

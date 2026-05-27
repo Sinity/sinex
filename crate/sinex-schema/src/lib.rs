@@ -1,7 +1,15 @@
 //! Workspace declarative schema definitions and convergence apply engine.
 //!
-//! Two standalone binaries live in `crate/sinex-db/src/bin/`:
-//! `schema-apply-bootstrap` and `schema-strict-diff`.
+//! This crate is intentionally minimal: it depends only on `sinex-primitives`
+//! and `sqlx` (runtime queries only — no `sqlx::query!` macros), so it can
+//! compile without a populated database. The `schema-apply-bootstrap` and
+//! `schema-strict-diff` binaries therefore build cleanly in a Nix sandbox
+//! before the SQLx compile-time validation database is started.
+//!
+//! `sinex-db` re-exports this crate as its `schema` module:
+//! ```text
+//! pub use sinex_schema as schema;
+//! ```
 
 pub use sinex_primitives::primitives;
 

@@ -39,8 +39,8 @@
 //! }
 //! ```
 
-use super::apply::ApplyError;
-use super::converge::{convergible_tables, declared_columns_for};
+use crate::apply::ApplyError;
+use crate::converge::{convergible_tables, declared_columns_for};
 use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
 use std::collections::HashSet;
@@ -899,7 +899,7 @@ async fn check_orphan_columns(pool: &PgPool) -> Result<Vec<StrictDrift>, ApplyEr
     for ct in &tables {
         let qname = ct.meta.qualified_name;
 
-        if !super::apply::relation_exists(pool, qname).await? {
+        if !crate::apply::relation_exists(pool, qname).await? {
             continue;
         }
 
@@ -948,7 +948,7 @@ async fn check_orphan_columns(pool: &PgPool) -> Result<Vec<StrictDrift>, ApplyEr
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::{DriftCategory, StrictDrift};
     use xtask::sandbox::prelude::sinex_test;
 
     #[sinex_test]

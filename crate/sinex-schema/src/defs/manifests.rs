@@ -8,8 +8,8 @@
 //! and the event types it consumes and emits. This is the runtime counterpart
 //! to the compile-time `register_source_unit!` inventory.
 
-use crate::schema::primitives::Timestamp;
-use crate::schema::TableDef;
+use crate::primitives::Timestamp;
+use crate::TableDef;
 use sea_query::{
     ColumnDef, Expr, ForeignKey, ForeignKeyAction, Iden, Index, IndexCreateStatement, Table,
     TableCreateStatement,

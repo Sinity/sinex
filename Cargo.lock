@@ -4953,6 +4953,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "sinex-primitives",
+ "sinex-schema",
  "sqlx",
  "time",
  "tokio",
@@ -5109,6 +5110,21 @@ dependencies = [
  "url",
  "uuid",
  "validator",
+ "xtask",
+]
+
+[[package]]
+name = "sinex-schema"
+version = "0.1.0"
+dependencies = [
+ "color-eyre",
+ "sea-query",
+ "serde",
+ "serde_json",
+ "sinex-primitives",
+ "sqlx",
+ "time",
+ "tokio",
  "xtask",
 ]
 

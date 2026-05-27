@@ -65,8 +65,8 @@
 
 use std::collections::{HashMap, HashSet};
 
-use super::apply::ApplyError;
-use super::defs::{
+use crate::apply::ApplyError;
+use crate::defs::{
     Blobs, EmbeddingCache, EmbeddingModels, Entities, EntityRelations, EventAnnotations,
     EventEmbeddings, EventPayloadSchemas, Events, OperationsLog, SemanticEpochs, SemanticLaneDiffs,
     SemanticLaneOutputs, SemanticLanes, SourceMaterialRegistry, TableMeta, TaggedItems, Tags,
@@ -632,7 +632,7 @@ fn find_meta_in<'a>(
 }
 
 fn find_meta(qualified_name: &str) -> Result<&'static TableMeta, ApplyError> {
-    find_meta_in(super::defs::all_tables(), qualified_name)
+    find_meta_in(crate::defs::all_tables(), qualified_name)
 }
 
 // ─── Public API ───────────────────────────────────────────────────────────────
@@ -1082,7 +1082,7 @@ pub async fn converge_tables(pool: &PgPool, tables: &[ConvergibleTable]) -> Resu
 
         // Phase 2 (async): apply DDL using only Send-safe String data.
         // One existence check per table — helpers skip the check since we gate here.
-        let primary_exists = super::apply::relation_exists(pool, ct.meta.qualified_name).await?;
+        let primary_exists = crate::apply::relation_exists(pool, ct.meta.qualified_name).await?;
         if primary_exists {
             // Renames must run before add_missing_columns so that a renamed
             // column doesn't get re-added under the old name.
@@ -1101,7 +1101,7 @@ pub async fn converge_tables(pool: &PgPool, tables: &[ConvergibleTable]) -> Resu
 
         if let Some((mirror, mirror_col_sqls)) = mirror_cols {
             let mirror_exists =
-                super::apply::relation_exists(pool, &format!("{}.{}", mirror.schema, mirror.table))
+                crate::apply::relation_exists(pool, &format!("{}.{}", mirror.schema, mirror.table))
                     .await?;
             if mirror_exists {
                 add_missing_columns(pool, mirror.schema, mirror.table, &mirror_col_sqls).await?;
@@ -1141,7 +1141,7 @@ pub async fn report_column_gaps(
     for ct in tables {
         let qname = ct.meta.qualified_name;
 
-        if !super::apply::relation_exists(pool, qname).await? {
+        if !crate::apply::relation_exists(pool, qname).await? {
             continue;
         }
 
@@ -1225,7 +1225,9 @@ pub async fn report_column_gaps(
 mod tests {
     // Exception to per-crate tests/: this exercises private registry lookup helpers
     // without widening the convergence API.
-    use super::*;
+    use crate::apply::ApplyError;
+    use crate::defs::TableMeta;
+    use super::{convergible_tables, find_meta_in};
     use xtask::sandbox::prelude::*;
 
     #[sinex_test]

@@ -151,7 +151,7 @@
             // {
               inherit cargoArtifacts;
               pname = "schema-apply-bootstrap";
-              cargoExtraArgs = "-p sinex-db --bin schema-apply-bootstrap";
+              cargoExtraArgs = "-p sinex-schema --bin schema-apply-bootstrap";
               doCheck = false;
             }
           );
@@ -514,7 +514,7 @@
 
                     export DATABASE_URL="postgresql:///sinex_dev?host=$PGHOST&user=postgres"
 
-                    cargo build --quiet -p sinex-db --bin schema-apply-bootstrap
+                    cargo build --quiet -p sinex-schema --bin schema-apply-bootstrap
                     if ! "$cargo_target_dir/debug/schema-apply-bootstrap"; then
                       ${postgresForSqlx}/bin/pg_ctl -D "$PGDATA" -m fast stop || true
                       rm -rf "$sqlx_tmp"

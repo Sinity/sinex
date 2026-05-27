@@ -5,8 +5,8 @@
 //! It is a high-precision, immutable, append-only log that records *when* each
 //! slice of data was physically acquired.
 
-use crate::schema::primitives::Uuid;
-use crate::schema::{SourceMaterialRegistry, TableDef};
+use crate::primitives::Uuid;
+use crate::{SourceMaterialRegistry, TableDef};
 use sea_query::{
     Alias, ColumnDef, Expr, ForeignKey, ForeignKeyAction, Iden, Index, IndexCreateStatement, Table,
     TableCreateStatement,

@@ -4,8 +4,8 @@
 //! projections. Promotion into canonical state must happen through explicit
 //! operator authority, not by reading lane outputs as ordinary projections.
 
-use crate::schema::primitives::{Timestamp, Uuid};
-use crate::schema::{Events, OperationsLog, SourceMaterialRegistry, TableDef};
+use crate::primitives::{Timestamp, Uuid};
+use crate::{Events, OperationsLog, SourceMaterialRegistry, TableDef};
 use sea_query::{
     Alias, ColumnDef, Expr, ForeignKey, ForeignKeyAction, Iden, Index, IndexCreateStatement, Table,
     TableCreateStatement,

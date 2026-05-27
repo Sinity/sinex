@@ -5,13 +5,13 @@
 //! automata to enrich the raw event stream with notes, tags, and other forms
 //! of metadata.
 
-use crate::schema::TableDef;
+use crate::TableDef;
 use sea_query::{
     Alias, ColumnDef, Expr, ForeignKey, ForeignKeyAction, Iden, Index, IndexCreateStatement, Table,
     TableCreateStatement,
 };
 
-use crate::schema::primitives::{Timestamp, Uuid};
+use crate::primitives::{Timestamp, Uuid};
 use serde_json::Value as JsonValue;
 use sqlx::FromRow;
 

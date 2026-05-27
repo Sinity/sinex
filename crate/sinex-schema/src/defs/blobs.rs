@@ -4,8 +4,8 @@
 //! (blobs) stored by the SDK content store. It acts as a high-performance index
 //! and metadata cache for the content-addressed store.
 
-use crate::schema::primitives::{Timestamp, Uuid};
-use crate::schema::{SourceMaterialRegistry, TableDef};
+use crate::primitives::{Timestamp, Uuid};
+use crate::{SourceMaterialRegistry, TableDef};
 use sea_query::{
     Alias, ColumnDef, ConditionalStatement, Expr, ForeignKey, ForeignKeyAction,
     ForeignKeyCreateStatement, Iden, Index, IndexCreateStatement, Table, TableCreateStatement,

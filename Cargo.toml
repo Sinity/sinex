@@ -6,6 +6,7 @@ members = [
   # Shared libraries (surviving — flat layout)
   "crate/sinex-primitives",
   "crate/sinex-macros",
+  "crate/sinex-schema",
   "crate/sinex-db",
 
   # Dying libraries (will be dissolved in PR-3, kept at original path)

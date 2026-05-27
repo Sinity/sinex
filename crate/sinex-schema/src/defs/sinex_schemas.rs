@@ -7,8 +7,8 @@
 //! - Sources for discovering schemas via `GitOps` (`gitops_schema_sources` - aspirational, see docs).
 //! - Caching for validation results (`validation_cache`).
 
-use crate::schema::primitives::{Timestamp, Uuid};
-use crate::schema::TableDef;
+use crate::primitives::{Timestamp, Uuid};
+use crate::TableDef;
 use sea_query::{
     Alias, ColumnDef, Expr, ForeignKey, ForeignKeyAction, Iden, Index, IndexCreateStatement, Table,
     TableCreateStatement,
@@ -253,7 +253,7 @@ impl Runs {
                 ForeignKey::create()
                     .name("fk_runs_manifest")
                     .from(Self::table_iden(), Runs::ManifestId)
-                    .to(crate::schema::Manifests::table_iden(), Alias::new("id"))
+                    .to(crate::Manifests::table_iden(), Alias::new("id"))
                     .on_delete(ForeignKeyAction::SetNull),
             )
             .to_owned()

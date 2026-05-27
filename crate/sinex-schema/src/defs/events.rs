@@ -5,8 +5,8 @@
 //! indexes, and constraints. It is the physical implementation of the system's
 //! core architectural invariants related to events and their provenance.
 
-use crate::schema::primitives::{Timestamp, Uuid};
-use crate::schema::{EventPayloadSchemas, Runs, SourceMaterialRegistry, TableDef};
+use crate::primitives::{Timestamp, Uuid};
+use crate::{EventPayloadSchemas, Runs, SourceMaterialRegistry, TableDef};
 use sea_query::{
     Alias, ColumnDef, ColumnType, ConditionalStatement, Expr, ForeignKey, ForeignKeyAction,
     ForeignKeyCreateStatement, Iden, Index, IndexCreateStatement, IndexOrder, IntoIden, Table,

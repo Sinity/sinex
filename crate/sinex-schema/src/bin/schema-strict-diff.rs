@@ -1,6 +1,6 @@
 //! Strict drift detector — companion to `schema-apply-bootstrap`.
 //!
-//! Reads `DATABASE_URL`, runs `sinex_db::schema::strict_diff::check_strict`, and
+//! Reads `DATABASE_URL`, runs `sinex_schema::strict_diff::check_strict`, and
 //! writes the result as JSON on stdout (pretty if running on a TTY, compact
 //! otherwise). Exit code is `0` when no drift is detected, `1` when drift is
 //! found, `2` on operator errors (missing env, connection failure).
@@ -17,11 +17,9 @@
 //! See issue #556 for the categories this detects (and the ones still
 //! marked as follow-up).
 
-// PgPoolOptions is used directly here instead of sinex_db::pool::create_pool because
-// sinex-schema cannot depend on sinex-db without reversing the dependency direction
-// (sinex-db depends on sinex-schema for schema definitions). These binaries are
-// standalone tools that only need a minimal pool to apply or diff schema; they have
-// no need for the full sinex-db pool configuration or repository layer.
+// PgPoolOptions is used directly here without sinex_db so this binary can
+// compile before the SQLx compile-time validation database is populated.
+// sinex-schema has no sqlx::query! macros and does not depend on sinex-db.
 use sqlx::postgres::PgPoolOptions;
 
 #[tokio::main]
@@ -38,7 +36,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .connect(&database_url)
         .await?;
 
-    let drifts = sinex_db::schema::strict_diff::check_strict(&pool).await?;
+    let drifts = sinex_schema::strict_diff::check_strict(&pool).await?;
 
     let pretty = atty_like_stdout();
     let serialized = if pretty {

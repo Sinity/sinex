@@ -1,0 +1,23 @@
+// PgPoolOptions is used directly here without sinex_db so this binary can
+// compile before the SQLx compile-time validation database is populated.
+// sinex-schema has no sqlx::query! macros and does not depend on sinex-db.
+use sqlx::postgres::PgPoolOptions;
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let database_url = std::env::var("DATABASE_URL").map_err(|error| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!("DATABASE_URL environment variable is required: {error}"),
+        )
+    })?;
+
+    let pool = PgPoolOptions::new()
+        .max_connections(5)
+        .connect(&database_url)
+        .await?;
+
+    sinex_schema::apply::ensure_shared_access_roles(&pool).await?;
+    sinex_schema::apply::apply(&pool).await?;
+    Ok(())
+}
