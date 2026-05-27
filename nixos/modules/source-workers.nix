@@ -883,19 +883,12 @@ let
               })
               sourceUnitGroups
           );
-      monitorBinding = {
-        "terminal.monitor" = {
-          enable = true;
-          description = "Terminal monitoring lifecycle event (source-worker)";
-          adapterType = null;
-          adapterConfig = { };
-          instances = 1;
-          inherit resources;
-          extraEnv = { RUST_LOG = nodesCfg.defaults.logLevel; } // sat.env;
-          serviceConfigOverrides = { };
-          extraArgs = [ ];
-        };
-      };
+      # Post-sinexd-collapse: monitor source-units are fire-once startup
+      # annotations that return immediately. Inside the single sinexd daemon
+      # they trigger the SDK's "Continuous scan returned unexpectedly" path
+      # which cascades shutdown across every binding. Disabled until the
+      # supervisor handles oneshot bindings without cascading.
+      monitorBinding = { };
       # Post-collapse: all source-worker units fold into sinexd.service. The
       # ACL setup must run before sinexd so the in-process terminal source
       # units can traverse target-user paths.
@@ -1482,8 +1475,11 @@ let
         "system.systemd" = mkSystemBinding "system.systemd" "systemd unit state (source-worker)";
         "system.udev" = mkSystemBinding "system.udev" "udev events (source-worker)";
         "system.dbus" = mkSystemBinding "system.dbus" "D-Bus signal stream (source-worker)";
-        "system.monitor" = {
-          enable = sat.enable;
+        # Disabled post-sinexd-collapse: fire-once startup annotation
+        # cascades shutdown when hosted as a continuous binding. See
+        # terminal.monitor comment above.
+        "system.monitor.disabled-by-collapse" = {
+          enable = false;
           description = "System monitoring lifecycle event (source-worker)";
           adapterType = null;
           adapterConfig = { };
