@@ -1236,6 +1236,7 @@ let
         # 30 s. The rest of the SqliteRow defaults stay (read_only=true, etc.).
         "desktop.activitywatch" = mkDesktopBinding "ActivityWatch SQLite (source-worker)" { path = activitywatchDbPath; immutable = false; } false;
         "desktop.window-manager" = mkDesktopBinding "Desktop window manager (source-worker)" { } false;
+      } // optionalAttrs sat.clipboard.enable {
         "desktop.clipboard" = mkDesktopBinding "Desktop clipboard (source-worker)" { } false;
       };
     in
