@@ -30,6 +30,7 @@ macro_rules! event_select_columns {
          offset_end, \
          offset_kind, \
          source_event_ids::uuid[] as source_event_ids, \
+         anchor_payload_hash, \
          associated_blob_ids::uuid[] as associated_blob_ids, \
          payload_schema_id::uuid as payload_schema_id, \
          source_run_id::uuid as source_run_id, \
@@ -71,7 +72,7 @@ mod tests {
     /// 2. Update the `EventRecord` struct in both schema + sinex-db conversions.rs
     /// 3. Update the `event_select_columns!` macro above
     /// 4. Update this constant
-    const EXPECTED_COLUMN_COUNT: usize = 24;
+    const EXPECTED_COLUMN_COUNT: usize = 25;
 
     /// Load-bearing column names that MUST appear in `event_select_columns!`.
     /// Every column that appears in the SELECT list should appear here so that
@@ -92,6 +93,7 @@ mod tests {
         "offset_end",
         "offset_kind",
         "source_event_ids",
+        "anchor_payload_hash",
         "associated_blob_ids",
         "payload_schema_id",
         "source_run_id",
