@@ -6,10 +6,7 @@ authors.workspace = true
 repository.workspace = true
 license.workspace = true
 
-# Single local daemon hosting the event engine, JSON-RPC/SSE/native-messaging API,
-# source-unit dispatch, and derived-node automata. Replaces the former four-binary
-# arrangement (sinex-ingestd, sinex-gateway, sinex-source-worker, sinex-process).
-# See issue #1054 for the collapse contract.
+
 [[bin]]
 name = "sinexd"
 path = "src/main.rs"
@@ -21,15 +18,8 @@ path = "src/lib.rs"
 [features]
 default = []
 tokio-console = ["dep:console-subscriber"]
-# Enable test-only injection points (fault hooks, processing delays, delivery
-# observers, DLQ-routing override) on the event_engine's JetStreamConsumer.
-# Required by integration tests in this crate's tests/event_engine/ directory.
 testing = []
-# Expose api::handlers_test_support and api::rpc_server_test_support for tests
-# that need richer scaffolding than ServiceContainer offers.
 test-support = []
-# Include full error details in RPC responses (development only — production
-# returns error_id only to prevent information leakage).
 dev-errors = []
 
 [dependencies]
@@ -49,8 +39,9 @@ dashmap = { workspace = true }
 # Logging
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
-color-eyre = { workspace = true }
 console-subscriber = { workspace = true, optional = true }
+# color-eyre: in-crate test helpers use eyre::Result.
+color-eyre = { workspace = true }
 
 # Data
 serde = { workspace = true }
@@ -92,7 +83,6 @@ gethostname = { workspace = true }
 xtask = { path = "../../xtask" }
 xtask-macros = { path = "../../xtask/macros" }
 sinex-primitives = { path = "../sinex-primitives", features = ["testing"] }
-# Self-reference to enable the `testing` feature for integration tests in tests/.
 sinexd = { path = ".", features = ["testing"] }
 
 [lints]

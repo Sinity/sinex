@@ -1,10 +1,9 @@
-//! `sinexd::event_engine` — admission, persistence, confirmation.
+//! Admission, persistence, and confirmation.
 //!
-//! Absorbed from the former `sinex-ingestd` crate as part of the sinexd
-//! collapse (#1054). The event engine is the sole writer to `core.events`.
-//! It consumes admitted event intents from NATS, validates them, persists
-//! them through the `sinex_db` repository layer, and publishes confirmation
-//! events back to NATS so derived automata and SSE subscribers can react.
+//! The event engine is the sole writer to `core.events`. It consumes
+//! admitted event intents from NATS, validates them, persists them through
+//! the `sinex_db` repository layer, and publishes confirmation events back
+//! to NATS so derived automata and SSE subscribers can react.
 
 pub mod admission;
 pub mod config;
@@ -28,8 +27,6 @@ pub use material_ready_set::MaterialReadySet;
 pub use service::IngestService;
 pub use sinex_db::repositories::schema_management::SchemaSyncResult;
 pub use sinex_db::validation::SchemaInfo;
+pub use sinex_primitives::error::{Result, Result as IngestdResult, SinexError};
 pub use sinex_primitives::nats::JetStreamTopology;
 pub use validator::{IngestEventValidator, ValidationResult};
-
-// Re-export SinexError for unified error handling
-pub use sinex_primitives::error::{Result, Result as IngestdResult, SinexError};

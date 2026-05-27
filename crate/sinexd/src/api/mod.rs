@@ -1,11 +1,10 @@
-//! `sinexd::api` — JSON-RPC / SSE / native-messaging operator surface.
+//! JSON-RPC / SSE / native-messaging operator surface.
 //!
-//! Absorbed from the former `sinex-gateway` crate as part of the sinexd
-//! collapse (#1054). Hosts the RPC server, handler dispatch, native-messaging
-//! protocol for browser extensions, server-sent-events fanout, auth, rate
-//! limiting, and replay control. Reads from the database via the
-//! `sinex_db` repository layer; control surfaces invoke
-//! `crate::event_engine::*` for lifecycle and replay coordination.
+//! Hosts the RPC server, handler dispatch, native-messaging protocol for
+//! browser extensions, server-sent-events fanout, auth, rate limiting, and
+//! replay control. Reads from the database via the `sinex_db` repository
+//! layer; control surfaces invoke `crate::event_engine::*` for lifecycle and
+//! replay coordination.
 
 pub mod auth;
 pub mod cascade_analyzer;
@@ -31,7 +30,6 @@ pub mod service_container;
 pub mod sse_bus;
 pub mod sse_handler;
 
-// Re-export commonly used types
 pub use cascade_analyzer::{
     CascadeAnalysis, CascadeAnalyzerConfig, CircularDependency, IntegrityViolation, Severity,
     StreamingCascadeAnalyzer, ViolationType,
