@@ -165,7 +165,27 @@ if [ "$INCLUDE_DLQ" = "1" ] && [ -n "$DLQ_MSGS" ] && [ "$DLQ_MSGS" -gt 0 ]; then
   fi
 fi
 
+section "Watchdog"
+WATCHDOG_USEC=$(sudo systemctl show sinexd -p WatchdogUSec --value 2>&1)
+emit "watchdog.usec" "$WATCHDOG_USEC"
+WATCHDOG_LAST=$(sudo systemctl show sinexd -p WatchdogTimestamp --value 2>&1)
+emit "watchdog.last_ping" "$WATCHDOG_LAST"
+
+# If watchdog is enabled and active, last ping should be within 2× the interval.
+if [ "$WATCHDOG_USEC" != "0" ] && [ "$WATCHDOG_USEC" != "infinity" ] && [ -n "$WATCHDOG_USEC" ]; then
+  if [ -n "$WATCHDOG_LAST" ] && [ "$WATCHDOG_LAST" != "n/a" ]; then
+    PING_AGE=$(($(date +%s) - $(date -d "$WATCHDOG_LAST" +%s)))
+    emit "watchdog.ping_age_seconds" "$PING_AGE"
+    if [ "$PING_AGE" -gt 120 ]; then warn; fi
+  fi
+fi
+
 section "Recent errors (last 15min)"
+PARAM_OVERFLOW=$(sudo journalctl -u sinexd --since "15 minutes ago" --no-pager 2>&1 \
+  | grep -c "too many arguments for query" || true)
+emit "errors.param_overflow_15min" "$PARAM_OVERFLOW"
+[ "${PARAM_OVERFLOW:-0}" -eq 0 ] || fail_critical
+
 BATCH_FAILS=$(sudo journalctl -u sinexd --since "15 minutes ago" --no-pager 2>&1 \
   | grep -c "batch_persistence_failures_total" || true)
 emit "errors.batch_persistence_failures_15min" "$BATCH_FAILS"
