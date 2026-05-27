@@ -348,7 +348,12 @@ let
       Group = serviceUser;
       Restart = cfg.runtime.restartPolicy.mode;
       RestartSec = cfg.runtime.restartPolicy.backoffSec;
-      WatchdogSec = "60s";
+      # Watchdog disabled post-sinexd-collapse: the supervisor's
+      # spawn_watchdog tokio task can be starved by heavy batch persistence
+      # (8000-event COPY batches) and miss the 30s ping window, leading to
+      # spurious SIGTERMs. Re-enable when supervisor schedules the ping on
+      # a dedicated thread or thread-pool isolated from the workload.
+      WatchdogSec = "0";
       Environment = env;
       ProtectSystem = "strict";
       ProtectHome = true;
