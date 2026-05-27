@@ -19,12 +19,20 @@ use crate::api::rpc_server;
 use crate::api::service_container::ServiceContainer;
 use crate::automata::registry::{self as automata_registry, AutomatonSpec};
 use crate::event_engine::{IngestService, IngestdConfig};
+use crate::sources::bindings::{self as source_bindings, SourceBinding};
 
 /// Environment variable selecting which automata `sinexd` hosts.
 ///
 /// Comma-separated list of automaton names, or the literal `all`. Unknown
 /// names fail startup. Unset / empty disables every automaton.
 const ENV_AUTOMATA_ENABLED: &str = "SINEX_AUTOMATA_ENABLED";
+
+/// Environment variable pointing at the source-bindings manifest JSON.
+///
+/// Unset / empty means no source workers are hosted in this `sinexd`
+/// instance (used during single-binary local development against an
+/// out-of-band source unit, for example).
+const ENV_SOURCE_BINDINGS_PATH: &str = "SINEX_SOURCE_BINDINGS_PATH";
 
 #[derive(Debug)]
 pub struct Supervisor {
@@ -72,8 +80,13 @@ impl Supervisor {
         // single automaton crash does not take down siblings or the daemon.
         let automaton_handles = start_automata(shutdown_rx.clone())?;
 
+        // Hosted source-worker bindings. Same isolation property: one
+        // binding crash is logged and contained, sibling captures continue.
+        let source_binding_handles = start_source_bindings(shutdown_rx.clone())?;
+
         info!(
             automata = automaton_handles.len(),
+            source_bindings = source_binding_handles.len(),
             "sinexd running"
         );
 
@@ -81,7 +94,14 @@ impl Supervisor {
         let _ = shutdown_rx.changed().await;
         info!("shutdown requested");
 
-        // Unwind in reverse start order: automata → api → event_engine.
+        // Unwind in reverse start order: source bindings → automata → api →
+        // event_engine. Source bindings publish into the event engine, so
+        // they must finish draining before the engine can stop accepting.
+        for (label, handle) in source_binding_handles.into_iter().rev() {
+            if let Err(error) = handle.await {
+                error!(source_binding = %label, ?error, "source-binding task join error");
+            }
+        }
         for (name, handle) in automaton_handles.into_iter().rev() {
             if let Err(error) = handle.await {
                 error!(automaton = %name, ?error, "automaton task join error");
@@ -182,6 +202,57 @@ fn spawn_automaton(
             warn!(automaton = %spec.name, ?error, "automaton exited with error");
         } else {
             info!(automaton = %spec.name, "automaton exited");
+        }
+    })
+}
+
+/// Load `SINEX_SOURCE_BINDINGS_PATH` and spawn one supervisor task per
+/// enabled binding.
+fn start_source_bindings(
+    shutdown_rx: watch::Receiver<bool>,
+) -> Result<Vec<(String, JoinHandle<()>)>> {
+    let Some(manifest) = source_bindings::load_from_env(ENV_SOURCE_BINDINGS_PATH)? else {
+        info!("no source bindings configured (SINEX_SOURCE_BINDINGS_PATH unset)");
+        return Ok(Vec::new());
+    };
+
+    if manifest.bindings.is_empty() {
+        info!("source-bindings manifest contains zero bindings");
+        return Ok(Vec::new());
+    }
+
+    // Validate every binding up front so a misconfigured deployment fails
+    // immediately rather than after the first partial spawn.
+    source_bindings::validate_bindings(&manifest.bindings)?;
+
+    info!(
+        count = manifest.bindings.len(),
+        "starting hosted source-worker bindings"
+    );
+
+    let mut handles = Vec::with_capacity(manifest.bindings.len());
+    for binding in manifest.bindings {
+        let label = format!("{}-{}", binding.source_unit_id, binding.instance_idx);
+        let handle = spawn_source_binding(binding, shutdown_rx.clone());
+        handles.push((label, handle));
+    }
+    Ok(handles)
+}
+
+fn spawn_source_binding(
+    binding: SourceBinding,
+    shutdown_rx: watch::Receiver<bool>,
+) -> JoinHandle<()> {
+    let label = format!("{}-{}", binding.source_unit_id, binding.instance_idx);
+    tokio::spawn(async move {
+        let _shutdown_rx = shutdown_rx;
+        match source_bindings::run_binding(binding).await {
+            Ok(()) => info!(source_binding = %label, "source-worker exited"),
+            Err(error) => warn!(
+                source_binding = %label,
+                ?error,
+                "source-worker exited with error"
+            ),
         }
     })
 }

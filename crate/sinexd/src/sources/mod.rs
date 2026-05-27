@@ -4,6 +4,7 @@
 //! semantics for graceful shutdown, the registry, the runner, and every
 //! concrete source unit under `source_units/`.
 
+pub mod bindings;
 pub mod dispatch;
 pub mod drain;
 pub mod monitor_node;
