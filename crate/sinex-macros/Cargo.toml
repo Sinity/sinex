@@ -45,6 +45,9 @@ features = [
     "testing",
 ]
 
+[dev-dependencies.camino]
+workspace = true
+
 [dev-dependencies.serde]
 workspace = true
 

@@ -4996,6 +4996,7 @@ dependencies = [
 name = "sinex-macros"
 version = "0.1.0"
 dependencies = [
+ "camino",
  "color-eyre",
  "inventory",
  "proc-macro2",
