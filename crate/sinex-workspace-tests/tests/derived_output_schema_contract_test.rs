@@ -2,7 +2,7 @@
 
 use sinex_node_sdk::{ScopeReconciler, Transducer, Windowed};
 use sinex_primitives::events::schema_registry::get_all_payloads;
-use sinex_process::automata::{
+use sinexd::automata::{
     analytics::AnalyticsAutomaton, canonicalizer::TerminalCommandCanonicalizer,
     health::HealthAggregator, session::SessionDetector,
 };

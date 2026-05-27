@@ -5112,24 +5112,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "sinex-process"
-version = "0.4.2"
-dependencies = [
- "clap",
- "color-eyre",
- "mimalloc",
- "regex",
- "serde",
- "serde_json",
- "sinex-node-sdk",
- "sinex-primitives",
- "time",
- "tokio",
- "tracing",
- "xtask",
-]
-
-[[package]]
 name = "sinex-vm-test-suite"
 version = "0.4.2"
 dependencies = [
@@ -5154,7 +5136,6 @@ dependencies = [
  "sinex-db",
  "sinex-node-sdk",
  "sinex-primitives",
- "sinex-process",
  "sinexd",
  "sqlx",
  "tempfile",
@@ -7453,7 +7434,6 @@ dependencies = [
  "sinex-db",
  "sinex-node-sdk",
  "sinex-primitives",
- "sinex-process",
  "sinexd",
  "sqlx",
  "syn 2.0.117",

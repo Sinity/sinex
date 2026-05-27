@@ -18,10 +18,10 @@ use sinex_primitives::events::payloads::{
 };
 use sinex_primitives::temporal::Duration as TemporalDuration;
 use sinex_primitives::units::ExitCode;
-use sinex_process::automata::analytics::AnalyticsAutomaton;
-use sinex_process::automata::canonicalizer::TerminalCommandCanonicalizer;
-use sinex_process::automata::health::HealthAggregator;
-use sinex_process::automata::session::SessionDetector;
+use sinexd::automata::analytics::AnalyticsAutomaton;
+use sinexd::automata::canonicalizer::TerminalCommandCanonicalizer;
+use sinexd::automata::health::HealthAggregator;
+use sinexd::automata::session::SessionDetector;
 use xtask::sandbox::prelude::*;
 use xtask::sandbox::{TestRuntime, TestRuntimeBuilder};
 

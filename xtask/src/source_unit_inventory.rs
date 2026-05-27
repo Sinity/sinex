@@ -15,6 +15,5 @@ extern crate sinexd as _;
 // statements — Rust's linker GC can still elide statics in `.init_array`-
 // equivalent sections that are not visibly referenced.
 extern crate sinex_primitives as _;
-extern crate sinex_process as _;
 
 pub fn link_source_unit_inventories() {}

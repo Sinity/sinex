@@ -24,5 +24,4 @@ xtask = { path = "../../xtask" }
 sinex-db = { path = "../sinex-db" }
 sinex-node-sdk = { path = "../lib/sinex-node-sdk" }
 sinex-primitives = { path = "../sinex-primitives" }
-sinex-process = { path = "../core/sinex-process" }
 sinexd = { path = "../sinexd" }

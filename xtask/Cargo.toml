@@ -73,7 +73,6 @@ sinex-node-sdk = { path = "../crate/lib/sinex-node-sdk" }
 # descriptors declared by shipped node crates, not only descriptors hardcoded in
 # sinex-primitives. Post-Wave-B fold (#1081), every per-domain source unit is
 # registered from sinex-source-worker, so a single dep covers all of them.
-sinex-process = { path = "../crate/core/sinex-process" }
 url = { workspace = true }
 fastrand = { workspace = true }
 tokio-stream = { workspace = true }
