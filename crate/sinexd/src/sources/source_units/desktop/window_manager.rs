@@ -185,7 +185,10 @@ impl MaterialParser for HyprlandParser {
         }
 
         let (event_type_str, payload) = if let Some((typ, data)) = line.split_once(">>") {
-            dispatch_hyprland_event(typ, data)?
+            match dispatch_hyprland_event(typ, data)? {
+                Some(pair) => pair,
+                None => return Ok(vec![]),
+            }
         } else {
             // Malformed line — capture as unhandled.
             (
@@ -260,7 +263,7 @@ impl MaterialParser for HyprlandParser {
 fn dispatch_hyprland_event(
     typ: &str,
     data: &str,
-) -> ParserResult<(&'static str, serde_json::Value)> {
+) -> ParserResult<Option<(&'static str, serde_json::Value)>> {
     // Redact any window title through the privacy engine before including in payload.
     let redact_title = |title: &str| -> String {
         match privacy::engine() {
@@ -330,11 +333,12 @@ fn dispatch_hyprland_event(
             )
         }
         "windowtitle" => {
-            // windowtitle>>address (title hint, no payload beyond address)
-            (
-                "window.title_changed",
-                serde_json::json!({ "window_id": data.trim() }),
-            )
+            // Hyprland emits both `windowtitle` (v1, address-only hint) and
+            // `windowtitlev2` (v2, address + title). The v1 hint cannot
+            // satisfy the `window.title_changed` schema (which requires
+            // `window_title`), and v2 fires for the same change with the
+            // actual title. Suppress the v1 hint to keep DLQ clean.
+            return Ok(None);
         }
         "workspace" | "workspacev2" => {
             let (id, name) = data.split_once(',').unwrap_or((data, ""));
@@ -368,7 +372,7 @@ fn dispatch_hyprland_event(
         }
     };
 
-    Ok((event_type, payload))
+    Ok(Some((event_type, payload)))
 }
 
 // ---------------------------------------------------------------------------
