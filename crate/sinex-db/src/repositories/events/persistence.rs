@@ -1264,11 +1264,12 @@ impl<'a> EventRepository<'a> {
             // COPY cannot be mixed with cycle-detection queries in the same
             // transaction easily, so derived batches use the VALUES path.
             //
-            // PostgreSQL caps bound parameters at 65 535 per query. With 22
-            // columns per event, each chunk must stay ≤ ⌊65535 / 22⌋ = 2978
-            // events to stay within the wire-protocol limit. Large mixed batches
-            // (material + derived) arrive during burst replay and would otherwise
-            // exceed the limit and fail.
+            // PostgreSQL caps bound parameters at 65 535 per query. With 23
+            // bound parameters per event (see execute_batch_insert's column
+            // list), each chunk must stay ≤ ⌊65535 / 23⌋ = 2849 events to
+            // stay within the wire-protocol limit. Large mixed batches
+            // (material + derived) arrive during burst replay and would
+            // otherwise exceed the limit and fail.
             Some(StreamBatchInsertStrategy::Derived) => {
                 // Intra-batch cycle check runs on the full batch before splitting.
                 let synthesis_checks = batch
@@ -1284,8 +1285,10 @@ impl<'a> EventRepository<'a> {
                     .collect::<Vec<_>>();
                 ensure_no_intra_batch_synthesis_cycles(&synthesis_checks)?;
 
-                // 22 columns × SYNTHESIS_CHUNK_MAX ≤ 65535 PostgreSQL param limit.
-                const SYNTHESIS_CHUNK_MAX: usize = 2978;
+                // 23 binds per row × SYNTHESIS_CHUNK_MAX ≤ 65535 PostgreSQL
+                // param limit. Keep some headroom below the strict cap so that
+                // future column additions don't immediately overflow.
+                const SYNTHESIS_CHUNK_MAX: usize = 2800;
                 let mut total = StreamBatchInsertResult::default();
                 for chunk in batch.chunks(SYNTHESIS_CHUNK_MAX) {
                     let chunk_synthesis_checks = chunk
@@ -1484,7 +1487,7 @@ impl<'a> EventRepository<'a> {
     ///
     /// # Why not query params?
     /// `PostgreSQL`'s protocol limits a single statement to 65 535 bind parameters.
-    /// With 22 writable event columns per row that caps VALUES batches at ~2 900 rows. COPY has no
+    /// With 23 writable event columns per row that caps VALUES batches at ~2 849 rows. COPY has no
     /// such limit and has lower per-row overhead.
     ///
     /// # Why not derived batches?
