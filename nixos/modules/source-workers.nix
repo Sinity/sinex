@@ -292,6 +292,10 @@ let
     IOSchedulingClass = resources.ioSchedulingClass;
     Nice = resources.nice;
     TimeoutStopSec = resources.shutdownTimeoutSec;
+    # Single-daemon sinexd hosts every automaton + source-worker binding;
+    # DB pool warm-up + per-binding init can exceed the 30s default before
+    # the supervisor calls sd_notify(READY=1).
+    TimeoutStartSec = 600;
   } // optionalAttrs (resources.memoryMax != null) {
     MemoryMax = resources.memoryMax;
   } // optionalAttrs (resources.cpuQuota != null) {
