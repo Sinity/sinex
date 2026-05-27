@@ -1841,7 +1841,7 @@ SELECT
     AVG((payload->>'avg_latency_ms')::float) AS avg_latency_ms,
     MAX((payload->>'p99_latency_ms')::float) AS max_p99_latency_ms
 FROM core.events
-WHERE source LIKE 'sinex.gateway%'
+WHERE source LIKE 'sinexd.api%'
   AND event_type IN ('request.stats', 'rate_limit.exceeded', 'replay.stats')
 GROUP BY time_bucket('1 hour', id), source
 WITH NO DATA;
@@ -1862,7 +1862,7 @@ SELECT
     MAX((payload->>'max_messages')::bigint) AS max_messages,
     COUNT(*) AS sample_count
 FROM core.events
-WHERE source = 'sinex.ingestd'
+WHERE source = 'sinexd.event_engine'
   AND event_type = 'stream.stats'
 GROUP BY time_bucket('1 hour', id), payload->>'stream'
 WITH NO DATA;
@@ -1884,7 +1884,7 @@ SELECT
     AVG((payload->>'avg_duration_ms')::float) AS avg_duration_ms,
     COUNT(*) AS sample_count
 FROM core.events
-WHERE source = 'sinex.ingestd'
+WHERE source = 'sinexd.event_engine'
   AND event_type = 'assembly.stats'
 GROUP BY time_bucket('1 hour', id)
 WITH NO DATA;
@@ -1955,7 +1955,7 @@ SELECT
     MAX((payload->>'validation_invalid')::bigint) AS validation_invalid,
     AVG((payload->>'validation_coverage_pct')::float) AS avg_validation_coverage_pct
 FROM core.events
-WHERE source = 'sinex.ingestd'
+WHERE source = 'sinexd.event_engine'
   AND event_type = 'batch.stats'
 GROUP BY time_bucket('1 hour', id)
 WITH NO DATA;

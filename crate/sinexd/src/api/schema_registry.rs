@@ -108,11 +108,11 @@ mod tests {
     async fn known_gateway_pair_accepted() -> TestResult<()> {
         let reg = registry();
         // GatewayRequestStatsPayload is registered as
-        // (sinex.gateway, request.stats); skip if the workspace surface ever
+        // (sinexd.api, request.stats); skip if the workspace surface ever
         // changes underneath us, but keep the assertion strict otherwise.
         assert!(
-            reg.contains("sinex.gateway", "request.stats"),
-            "registry must include sinex.gateway/request.stats"
+            reg.contains("sinexd.api", "request.stats"),
+            "registry must include sinexd.api/request.stats"
         );
         Ok(())
     }

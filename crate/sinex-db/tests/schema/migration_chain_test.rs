@@ -784,7 +784,7 @@ async fn operator_telemetry_does_not_register_continuous_aggregates(
 async fn operator_telemetry_views_include_live_rows(ctx: TestContext) -> TestResult<()> {
     sinex_db::schema::apply::apply(&ctx.pool).await?;
 
-    let material_id = ctx.create_source_material(Some("sinex.ingestd")).await?;
+    let material_id = ctx.create_source_material(Some("sinexd.event_engine")).await?;
     sqlx::query!(
         r#"
         INSERT INTO core.events (
@@ -800,7 +800,7 @@ async fn operator_telemetry_views_include_live_rows(ctx: TestContext) -> TestRes
         VALUES ($1::uuid, $2, $3, $4, $5, $6, $7::uuid, $8)
         "#,
         uuid::Uuid::now_v7(),
-        "sinex.ingestd",
+        "sinexd.event_engine",
         "batch.stats",
         "test-host",
         serde_json::json!({

@@ -120,7 +120,7 @@ pub struct MetricHistogramPayload {
 ///
 /// Addresses Issue 3: Stream Capacity Monitoring
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
-#[event_payload(source = "sinex.ingestd", event_type = "stream.stats")]
+#[event_payload(source = "sinexd.event_engine", event_type = "stream.stats")]
 pub struct StreamStatsPayload {
     /// Stream name
     pub stream: String,
@@ -147,7 +147,7 @@ pub struct StreamStatsPayload {
 ///
 /// Addresses Issue 16: Assembly Metrics
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
-#[event_payload(source = "sinex.ingestd", event_type = "assembly.stats")]
+#[event_payload(source = "sinexd.event_engine", event_type = "assembly.stats")]
 pub struct AssemblyStatsPayload {
     /// Number of assemblies currently in progress
     pub active_assemblies: u32,
@@ -175,7 +175,7 @@ pub struct AssemblyStatsPayload {
 ///
 /// Addresses Issue 133: Load Shedding Metrics
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
-#[event_payload(source = "sinex.gateway", event_type = "request.stats")]
+#[event_payload(source = "sinexd.api", event_type = "request.stats")]
 pub struct GatewayRequestStatsPayload {
     /// Total requests received
     pub total_requests: u64,
@@ -205,7 +205,7 @@ pub struct GatewayRequestStatsPayload {
 ///
 /// Individual rate limit violations (for audit/debugging)
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
-#[event_payload(source = "sinex.gateway", event_type = "rate_limit.exceeded")]
+#[event_payload(source = "sinexd.api", event_type = "rate_limit.exceeded")]
 pub struct RateLimitExceededPayload {
     /// Token prefix (first 8 chars for identification without full exposure)
     pub token_prefix: String,
@@ -240,7 +240,7 @@ pub struct HealthStatusPayload {
 
 /// Database connection pool statistics
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
-#[event_payload(source = "sinex.gateway", event_type = "pool.stats")]
+#[event_payload(source = "sinexd.api", event_type = "pool.stats")]
 pub struct PoolStatsPayload {
     /// Pool name/identifier
     pub pool: String,
@@ -338,7 +338,7 @@ pub struct DerivedNodeLatencySnapshotPayload {
 ///
 /// Addresses Issue 145: Replay Control Metrics
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
-#[event_payload(source = "sinex.gateway", event_type = "replay.stats")]
+#[event_payload(source = "sinexd.api", event_type = "replay.stats")]
 pub struct ReplayStatsPayload {
     /// Total replay requests
     pub total_requests: u64,
@@ -359,7 +359,7 @@ pub struct ReplayStatsPayload {
 /// Captures throughput, latency, and schema validation coverage data for batch processing.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
 #[event_payload(
-    source = "sinex.ingestd",
+    source = "sinexd.event_engine",
     event_type = "batch.stats",
     version = "2.2.0"
 )]
@@ -406,7 +406,7 @@ pub struct IngestdBatchStatsPayload {
 /// Captures stream state and consumer configuration so operators can determine at a glance
 /// whether this startup is a normal resume, a cold-start full replay, or a catch-up run.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
-#[event_payload(source = "sinex.ingestd", event_type = "consumer.startup_snapshot")]
+#[event_payload(source = "sinexd.event_engine", event_type = "consumer.startup_snapshot")]
 pub struct ConsumerStartupSnapshotPayload {
     /// Name of the `JetStream` stream being consumed.
     pub stream_name: String,
@@ -456,7 +456,7 @@ pub struct ConsumerStartupSnapshotPayload {
 /// happening in production; this event is the pre-guard observability counterpart, emitted
 /// even when the guard would have prevented the consumer from starting.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
-#[event_payload(source = "sinex.ingestd", event_type = "consumer.startup_replay_risk")]
+#[event_payload(source = "sinexd.event_engine", event_type = "consumer.startup_replay_risk")]
 pub struct DangerousReplayWarningPayload {
     /// Name of the `JetStream` stream.
     pub stream_name: String,
@@ -511,7 +511,7 @@ impl StreamStatsPayload {
 // Every long-running sinex binary participates in self-observation:
 // counters/gauges/histograms (`sinex.metric.*`), component health
 // (`sinex.health.status`), and per-binary operational rollups
-// (`sinex.ingestd.*`, `sinex.gateway.*`, `sinex.node.*`). These payloads have
+// (`sinexd.event_engine.*`, `sinexd.api.*`, `sinex.node.*`). These payloads have
 // no dedicated systemd unit — they are produced from inside ingestd, gateway,
 // and the node SDK as those processes run. We register infra source-unit
 // descriptors so the (source, event_type) pairs declared by `#[event_payload]`
@@ -551,11 +551,11 @@ register_source_unit! {
         id: "sinex-ingestd-telemetry",
         namespace: "infra",
         event_types: &[
-            ("sinex.ingestd", "batch.stats"),
-            ("sinex.ingestd", "stream.stats"),
-            ("sinex.ingestd", "assembly.stats"),
-            ("sinex.ingestd", "consumer.startup_snapshot"),
-            ("sinex.ingestd", "consumer.startup_replay_risk"),
+            ("sinexd.event_engine", "batch.stats"),
+            ("sinexd.event_engine", "stream.stats"),
+            ("sinexd.event_engine", "assembly.stats"),
+            ("sinexd.event_engine", "consumer.startup_snapshot"),
+            ("sinexd.event_engine", "consumer.startup_replay_risk"),
         ],
         privacy_tier: SuPrivacyTier::Public,
         horizons: &[SuHorizon::Continuous],
@@ -571,11 +571,11 @@ register_source_unit! {
         id: "sinex-gateway-telemetry",
         namespace: "infra",
         event_types: &[
-            ("sinex.gateway", "request.stats"),
-            ("sinex.gateway", "rate_limit.exceeded"),
-            ("sinex.gateway", "pool.stats"),
-            ("sinex.gateway", "replay.stats"),
-            ("sinex.gateway", "gateway.rpc.call"),
+            ("sinexd.api", "request.stats"),
+            ("sinexd.api", "rate_limit.exceeded"),
+            ("sinexd.api", "pool.stats"),
+            ("sinexd.api", "replay.stats"),
+            ("sinexd.api", "gateway.rpc.call"),
         ],
         privacy_tier: SuPrivacyTier::Public,
         horizons: &[SuHorizon::Continuous],

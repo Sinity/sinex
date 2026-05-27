@@ -880,7 +880,7 @@ pub async fn handle_telemetry_ingestd_validation(
             (payload->>'validation_coverage_pct')::float8 AS "validation_coverage_pct!",
             COALESCE((payload->>'suspicious_future_ts_orig')::bigint, 0) AS "suspicious_future_ts_orig!"
         FROM core.events
-        WHERE source = 'sinex.ingestd'
+        WHERE source = 'sinexd.event_engine'
           AND event_type = 'batch.stats'
         ORDER BY id DESC
         LIMIT 1
@@ -965,11 +965,11 @@ pub async fn handle_telemetry_throughput(
 
     // Per-component aggregate. Component buckets here are intentionally
     // coarse: ingestion (everything not on `sinex.*`), gateway
-    // (`sinex.gateway`), derived (`derived.*`), and self-observation
+    // (`sinexd.api`), derived (`derived.*`), and self-observation
     // (`sinex.metric.*` / `sinex.health.*`). Tweaks to the bucket logic are
     // expected over the lifetime of #1172's operator UX work.
     fn classify_component(source: &str) -> &'static str {
-        if source.starts_with("sinex.gateway") {
+        if source.starts_with("sinexd.api") {
             "gateway"
         } else if source.starts_with("derived.") {
             "derived"
@@ -997,7 +997,7 @@ pub async fn handle_telemetry_throughput(
         r"
         SELECT
             CASE
-                WHEN source LIKE 'sinex.gateway%'  THEN 'gateway'
+                WHEN source LIKE 'sinexd.api%'  THEN 'gateway'
                 WHEN source LIKE 'derived.%'       THEN 'derived'
                 WHEN source LIKE 'sinex.%'         THEN 'self_observation'
                 ELSE 'ingestion'

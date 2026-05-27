@@ -358,7 +358,7 @@ async fn operator_telemetry_handlers_follow_read_model_schema(ctx: TestContext) 
     .await?;
     insert_event(
         &ctx,
-        "sinex.gateway.rpc",
+        "sinexd.api.rpc",
         "request.stats",
         json!({
             "total_requests": 120,
@@ -371,7 +371,7 @@ async fn operator_telemetry_handlers_follow_read_model_schema(ctx: TestContext) 
     .await?;
     insert_event(
         &ctx,
-        "sinex.ingestd",
+        "sinexd.event_engine",
         "stream.stats",
         json!({
             "stream": "events.raw",
@@ -389,7 +389,7 @@ async fn operator_telemetry_handlers_follow_read_model_schema(ctx: TestContext) 
     .await?;
     insert_event(
         &ctx,
-        "sinex.ingestd",
+        "sinexd.event_engine",
         "assembly.stats",
         json!({
             "active_assemblies": 3,
@@ -434,7 +434,7 @@ async fn operator_telemetry_handlers_follow_read_model_schema(ctx: TestContext) 
     .await?;
     insert_event(
         &ctx,
-        "sinex.ingestd",
+        "sinexd.event_engine",
         "batch.stats",
         json!({
             "batch_size": 16,
@@ -499,7 +499,7 @@ async fn operator_telemetry_handlers_follow_read_model_schema(ctx: TestContext) 
     );
 
     assert_eq!(gateway_stats.buckets.len(), 1);
-    assert_eq!(gateway_stats.buckets[0].source, "sinex.gateway.rpc");
+    assert_eq!(gateway_stats.buckets[0].source, "sinexd.api.rpc");
     assert_eq!(gateway_stats.buckets[0].stat_events, 1);
     assert_eq!(gateway_stats.buckets[0].avg_total_requests, Some(120.0));
     assert_eq!(gateway_stats.buckets[0].total_rate_limited, Some(7));
@@ -598,7 +598,7 @@ async fn telemetry_ingestd_validation_returns_latest_snapshot(ctx: TestContext) 
     let now = time::OffsetDateTime::parse("2026-03-28T03:45:00Z", &Rfc3339)?;
     insert_event(
         &ctx,
-        "sinex.ingestd",
+        "sinexd.event_engine",
         "batch.stats",
         json!({
             "batch_size": 8,

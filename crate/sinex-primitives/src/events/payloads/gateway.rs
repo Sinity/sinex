@@ -35,7 +35,7 @@ pub enum RpcStatus {
 /// recorded — never the full token. The `Role` is safe to record because it
 /// describes the request's authorization band, not the bearer.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
-#[event_payload(source = "sinex.gateway", event_type = "gateway.rpc.call")]
+#[event_payload(source = "sinexd.api", event_type = "gateway.rpc.call")]
 pub struct GatewayRpcCallPayload {
     /// JSON-RPC method name (e.g. `events.query`, `lifecycle.archive`).
     pub method: String,
