@@ -42,11 +42,11 @@ Application code checks at boundaries, but violations can reach the check.
 
 | What's validated | Where | Gap |
 |------------------|-------|-----|
-| Privacy engine (secret detection) | Ingestor, before NATS publish | No automata use privacy engine — derived events inherit ingestor leaks |
-| Schema validation | ingestd, before persistence | Lenient: unknown types pass. `payload_schema_id` IS bound and written on every insert path (single, batched VALUES, COPY staging, DLQ replay) — see `crate/lib/sinex-db/src/repositories/events/persistence.rs` |
+| Privacy engine (secret detection) | `sinexd::sources`, before NATS publish | No automata use privacy engine — derived events inherit source-unit leaks |
+| Schema validation | `sinexd::event_engine`, before persistence | Lenient: unknown types pass. `payload_schema_id` IS bound and written on every insert path (single, batched VALUES, COPY staging, DLQ replay) — see `crate/sinex-db/src/repositories/events/persistence.rs` |
 | Path traversal protection | `validate_path()` at API boundary | Only called where explicitly used |
 | JSON depth/size limits | `validate_json()` at API boundary | Only called where explicitly used |
-| `ts_orig` plausibility | ingestd, before persistence | `ts_orig_future_skew_secs` config (`crate/core/sinex-ingestd/src/config.rs:159`) bounds how far in the future ts_orig can be; implausibly-old events route to DLQ |
+| `ts_orig` plausibility | `sinexd::event_engine`, before persistence | `ts_orig_future_skew_secs` config (`crate/sinexd/src/event_engine/config.rs`) bounds how far in the future ts_orig can be; implausibly-old events route to DLQ |
 
 ### Level 5: Convention + Lazy Check
 

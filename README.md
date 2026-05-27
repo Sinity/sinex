@@ -31,10 +31,10 @@ WHERE c.command LIKE 'cargo test%'
 
 | Surface | Current Owner |
 |---------|---------------|
-| Capture | source units over staged materials, input-shape adapters, and parsers under `crate/core/sinex-source-worker/src/sources/` |
-| Query / control | `sinex-gateway` + `sinexctl` |
-| Persistence | `sinex-ingestd` + PostgreSQL |
-| Derived state | automata and replay-aware node runtime |
+| Capture | source units over staged materials, input-shape adapters, and parsers under `crate/sinexd/src/sources/` |
+| Query / control | `sinexd::api` + `sinexctl` |
+| Persistence | `sinexd::event_engine` + PostgreSQL |
+| Derived state | `sinexd::automata` and replay-aware node runtime |
 | Deployment | NixOS modules + systemd |
 | Extension | `sinex-node-sdk` |
 
@@ -50,7 +50,7 @@ decision about whether staged local parsers always cross NATS or can run closer
 to persistence.
 
 ```text
-Source worker      Automata             Clients
+sinexd::sources    sinexd::automata      Clients
   fs, terminal,      analytics,           CLI, browser
   desktop, system,   derived nodes        extension
   browser, exports
@@ -62,9 +62,10 @@ Source worker      Automata             Clients
   └──────────────┬─────────────────────────┘  │
                  │                            │
                  ▼                            │
-        ┌────────────────┐                    │
-        │  sinex-ingestd │ validate, persist  │
-        └───────┬────────┘                    │
+        ┌──────────────────┐                  │
+        │ sinexd           │                  │
+        │ ::event_engine   │ validate, persist │
+        └───────┬──────────┘                  │
                 │                             │
                 ▼                             │
         ┌────────────────┐                    │
@@ -73,15 +74,16 @@ Source worker      Automata             Clients
         └───────┬────────┘                    │
                 │                             │
                 ▼                             │
-        ┌────────────────┐                    │
-        │ sinex-gateway  │◄───────────────────┘
-        │   JSON-RPC     │ auth, rate limits
-        └────────────────┘
+        ┌──────────────────┐                  │
+        │ sinexd           │◄─────────────────┘
+        │ ::api            │ auth, rate limits
+        │   JSON-RPC       │
+        └──────────────────┘
 ```
 
 ### Core Invariants
 
-- canonical persistence flows through `sinex-ingestd`
+- canonical persistence flows through `sinexd::event_engine`
 - `core.events` is append-only; corrections become new events with provenance
 - derived events carry source, temporal, and replay metadata
 - `UUIDv7` IDs provide ordering; `ts_orig` and `ts_coided` are distinct and load-bearing
@@ -154,7 +156,7 @@ xtask doctor
 xtask doctor --deployment-readiness
 xtask status --summary
 xtask infra status
-journalctl -u sinex-gateway -u sinex-ingestd -f
+journalctl -u sinexd -f
 ```
 
 ## Documentation
@@ -164,8 +166,8 @@ journalctl -u sinex-gateway -u sinex-ingestd -f
 | Understand the system shape | [README.md#architecture](README.md#architecture) |
 | Deploy and harden the common NixOS path | [README.md#deployment--operations](README.md#deployment--operations) |
 | Deploy on NixOS | [nixos/README.md](nixos/README.md) |
-| Build a node or derived service | [crate/lib/sinex-node-sdk/docs/overview.md](crate/lib/sinex-node-sdk/docs/overview.md) |
-| Understand event schemas | [crate/lib/sinex-schema/docs/event-taxonomy.md](crate/lib/sinex-schema/docs/event-taxonomy.md) |
+| Build a node or derived service | [crate/sinex-node-sdk/docs/overview.md](crate/sinex-node-sdk/docs/overview.md) |
+| Understand event schemas | [crate/sinex-db/docs/schema/event-taxonomy.md](crate/sinex-db/docs/schema/event-taxonomy.md) |
 | Separate notes, typed records, graph, and artifacts | [docs/architecture/knowledge-boundaries.md](docs/architecture/knowledge-boundaries.md) |
 | Define current-state projections for event-native domains | [docs/architecture/domain-reducers.md](docs/architecture/domain-reducers.md) |
 | Model tasks as event-native workflow objects | [issue #1107](https://github.com/Sinity/sinex/issues/1107) |

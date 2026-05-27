@@ -8,23 +8,24 @@
 
 | Topic | Location |
 |-------|----------|
-| Architecture | `README.md#architecture`, `crate/core/*/docs/architecture.md` |
-| Type system | `crate/lib/sinex-primitives/docs/type_system_patterns.md` |
-| Error handling | `crate/lib/sinex-primitives/docs/error.md` |
-| Domain types/enums | `crate/lib/sinex-primitives/docs/newtypes.md`, `src/domain.rs`, `src/events/enums.rs` |
-| Event payloads | `crate/lib/sinex-primitives/src/events/payloads/` |
-| Privacy engine | `crate/lib/sinex-primitives/src/privacy/mod.rs` |
-| DB schema | `crate/lib/sinex-schema/docs/schema_design.md` |
-| DB repositories | `crate/lib/sinex-db/docs/db_repositories.md` |
-| COPY inserts | `crate/lib/sinex-db/src/postgres_copy.rs` |
-| Data lifecycle | `crate/lib/sinex-db/docs/data_lifecycle.md` (live -> archive -> tombstone) |
-| Node SDK | `crate/lib/sinex-node-sdk/docs/overview.md` |
-| Checkpoints/replay | `crate/lib/sinex-node-sdk/docs/stream_node.md` |
-| Provenance | `crate/lib/sinex-node-sdk/docs/provenance.md` |
-| Distributed patterns | `crate/lib/sinex-node-sdk/docs/distributed_patterns.md` |
-| ingestd pipeline | `crate/core/sinex-ingestd/docs/architecture.md` |
-| Gateway API | `crate/core/sinex-gateway/docs/architecture.md` |
-| CLI | `crate/cli/README.md`, `crate/cli/DESIGN.md` |
+| Architecture | `README.md#architecture`, `crate/sinexd/docs/` |
+| Type system | `crate/sinex-primitives/docs/type_system_patterns.md` |
+| Error handling | `crate/sinex-primitives/docs/error.md` |
+| Domain types/enums | `crate/sinex-primitives/docs/newtypes.md`, `src/domain.rs`, `src/events/enums.rs` |
+| Event payloads | `crate/sinex-primitives/src/events/payloads/` |
+| Privacy engine | `crate/sinex-primitives/src/privacy/mod.rs` |
+| DB schema | `crate/sinex-db/docs/schema/` |
+| DB repositories | `crate/sinex-db/docs/db_repositories.md` |
+| COPY inserts | `crate/sinex-db/src/postgres_copy.rs` |
+| Data lifecycle | `crate/sinex-db/docs/data_lifecycle.md` (live -> archive -> tombstone) |
+| Node SDK | `crate/sinex-node-sdk/docs/overview.md` |
+| Checkpoints/replay | `crate/sinex-node-sdk/docs/stream_node.md` |
+| Provenance | `crate/sinex-node-sdk/docs/provenance.md` |
+| Distributed patterns | `crate/sinex-node-sdk/docs/distributed_patterns.md` |
+| Event engine pipeline | `crate/sinexd/docs/event_engine/` |
+| API gateway | `crate/sinexd/docs/api/` |
+| Sources | `crate/sinexd/docs/sources/` |
+| CLI | `crate/sinexctl/README.md`, `crate/sinexctl/DESIGN.md` |
 | Contributing | `CONTRIBUTING.md` |
 | Issue / PR workflow | `CONTRIBUTING.md`, `.github/ISSUE_TEMPLATE/*`, `.github/pull_request_template.md` |
 | Testing | `TESTING.md`, `xtask/docs/sandbox/README.md` |

@@ -14,7 +14,7 @@ to a systemd unit, CLI argument, or generated configuration file.
 | `services.sinex.database` | PostgreSQL provisioning, connection pool sizing, and migrations. |
 | `services.sinex.nats` | NATS/JetStream provisioning and stream bootstrap. |
 | `services.sinex.storage` | Dead-letter queue handling and content-store backed blob storage. |
-| `services.sinex.core` | Ingestion (`sinex-ingestd`) and gateway service configuration. |
+| `services.sinex.core` | `sinexd` daemon configuration (event engine, API, sources, automata, supervisor). |
 | `services.sinex.nodes` | Filesystem/terminal/browser/desktop/system collectors plus automata. |
 | `services.sinex.observability` | Prometheus/Grafana/exporters and structured log retention. |
 | `services.sinex.lifecycle` | Pre-flight verification and coordinated update orchestration. |
@@ -54,8 +54,8 @@ values derived from `stateRoot` and the global `logLevel`.
 }
 ```
 
-`core.gateway` is enabled by default, so the quick-start config needs a real
-gateway admin token file before the generated unit will start. The module
+`core.sinexd` is enabled by default, so the quick-start config needs a real
+API admin token file before the generated unit will start. The module
 auto-resolves either an agenix secret named `sinex-gateway-admin-token` or a
 declarative `environment.etc."sinex/gateway-admin-token"` entry; set
 `services.sinex.secrets.gatewayAdminTokenFile` only when you need a non-standard
@@ -109,9 +109,11 @@ disabled (e.g. staging migrations).
   acknowledges them they should leave JetStream.
 
 ### Core & nodes
-- `core.ingestd` and `core.gateway` expose per-service resources, log levels,
-  batch/limits knobs, extra CLI args, TCP listen address, and optional
-  client-cert enforcement.
+- `core.sinexd` exposes daemon-wide resources, log levels, batch/limits knobs,
+  extra CLI args, TCP listen address for the API module, and optional
+  client-cert enforcement. Module-scoped knobs live under
+  `core.sinexd.event_engine`, `core.sinexd.api`, `core.sinexd.sources`, and
+  `core.sinexd.automata`.
 - node defaults (`nodes.defaults`) cover instances, batching, and
   resource limits. Individual nodes can override by setting their field to
   `null` (inherit) or a concrete value.
@@ -160,7 +162,7 @@ disabled (e.g. staging migrations).
   per-service `MemoryHigh`, `MemoryMax`, and `CPUQuota` settings.
 - Automata use named profiles defined under `nodes.automata.profiles`; set
   `profile = "light"|"standard"|"heavy"` to select batch and resource limits.
-- The module emits deterministic unit names (`sinex-filesystem-1`,
+- The module emits deterministic unit names (`sinexd`, `sinex-filesystem-1`,
   `sinex-health-automaton`, etc.) and publishes them via
   `config.sinex._generatedUnits` for other subsystems (pre-flight,
   tests). `_generatedUnits` is limited to long-running notify/watchdog-backed
@@ -197,7 +199,7 @@ disabled (e.g. staging migrations).
 
 ### Environment Rendering
 - the module is the canonical config surface; emitted env vars are an implementation detail of the generated units
-- gateway TLS options render `SINEX_API_TLS_CERT`, `SINEX_API_TLS_KEY`, `SINEX_API_TLS_CLIENT_CA`, and `SINEX_API_REQUIRE_CLIENT_TLS`
+- API module TLS options render `SINEX_API_TLS_CERT`, `SINEX_API_TLS_KEY`, `SINEX_API_TLS_CLIENT_CA`, and `SINEX_API_REQUIRE_CLIENT_TLS`
 - shared NATS options render `SINEX_NATS_URL`, `SINEX_NATS_MONITORING_PORT`, `SINEX_NATS_REQUIRE_TLS`, `SINEX_NATS_CA_CERT`, `SINEX_NATS_CLIENT_CERT`, `SINEX_NATS_CLIENT_KEY`, and one of `SINEX_NATS_{TOKEN,CREDS,NKEY_SEED}_FILE`
 - `services.sinex.nodes.defaults.env` is reserved for genuinely env-only behavior flags, not primary transport or secret wiring
 
@@ -315,7 +317,7 @@ sops-nix), use `services.sinex.database.setupWaitForPaths` to gate
 - `blob-storage.nix` – content-store backend initialization and maintenance timers.
 - `monitoring.nix` – Prometheus/Grafana/exporter configuration.
 - `preflight-verification.nix` – `sinex-preflight` and `sinex-update` units.
-- `source-workers.nix` – Core ingest/gateway and node/automata units.
+- `source-workers.nix` – `sinexd` service unit, node/automata units.
 - `kitty-shell-integration.nix` – Kitty auto-configuration helper.
 
 ## Testing Tips
