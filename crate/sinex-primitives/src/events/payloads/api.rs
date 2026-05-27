@@ -1,4 +1,4 @@
-//! Gateway-emitted self-observation payloads.
+//! API-emitted self-observation payloads.
 //!
 //! Issue #1172 AC-7: every RPC call (foreground or batch member) becomes a
 //! `gateway.rpc.call` event so operators can replay traffic from the event
