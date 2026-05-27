@@ -77,6 +77,13 @@ impl Supervisor {
             None
         };
 
+        // From this point on, in-process nodes and source-unit bindings
+        // must NOT send sd_notify messages to systemd — only this top-level
+        // supervisor speaks for the unit. Notably, fire-once monitor
+        // bindings emit STOPPING=1 on clean exit; without this latch they
+        // would tell systemd the whole sinexd daemon is shutting down.
+        systemd_notify::enter_hosted_mode();
+
         // Hosted automata. Each runs as an independent supervisor task so a
         // single automaton crash does not take down siblings or the daemon.
         let automaton_handles = start_automata(shutdown_rx.clone())?;

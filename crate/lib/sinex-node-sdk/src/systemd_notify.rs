@@ -14,13 +14,34 @@ fn watchdog_interval() -> Option<Duration> {
     Some(Duration::from_micros((usec / 2).max(1)))
 }
 
+/// When set, this process is being hosted inside another sinex daemon
+/// (typically `sinexd`) and individual nodes / source-units MUST NOT send
+/// READY=1 / STOPPING=1 — only the top-level supervisor's sd_notify is
+/// authoritative for systemd. A fire-once monitor binding emitting
+/// `STOPPING=1` would otherwise tell systemd that the entire host daemon
+/// is shutting down.
+const HOSTED_MODE_ENV: &str = "SINEX_SD_NOTIFY_HOSTED";
+
+fn is_hosted() -> bool {
+    matches!(
+        std::env::var(HOSTED_MODE_ENV).as_deref(),
+        Ok("1") | Ok("true") | Ok("yes")
+    )
+}
+
 pub fn notify_ready(component: &str) {
+    if is_hosted() {
+        return;
+    }
     if let Err(error) = sd_notify::notify(false, &[NotifyState::Ready]) {
         warn!(component, error = %error, "Failed to notify systemd ready state");
     }
 }
 
 pub fn notify_stopping(component: &str) {
+    if is_hosted() {
+        return;
+    }
     if let Err(error) = sd_notify::notify(false, &[NotifyState::Stopping]) {
         warn!(component, error = %error, "Failed to notify systemd stopping state");
     }
@@ -29,6 +50,23 @@ pub fn notify_stopping(component: &str) {
 pub struct WatchdogHandle {
     shutdown_tx: mpsc::Sender<()>,
     join_handle: ThreadJoinHandle<()>,
+}
+
+/// Mark this process as running in hosted mode for sd_notify purposes.
+///
+/// Sets the `SINEX_SD_NOTIFY_HOSTED=1` env var so any subsequent calls to
+/// [`notify_ready`] / [`notify_stopping`] / [`spawn_watchdog`] from
+/// in-process nodes become no-ops. Only the top-level supervisor (the
+/// host with main PID under systemd) should still call sd_notify.
+///
+/// # Safety
+/// `std::env::set_var` is `unsafe` in edition 2024; callers that invoke
+/// this from a single-threaded startup (before tokio runtime starts
+/// spawning) are safe.
+pub fn enter_hosted_mode() {
+    // SAFETY: invoked from the top-level supervisor's startup before any
+    // worker threads / bindings are spawned.
+    unsafe { std::env::set_var(HOSTED_MODE_ENV, "1") };
 }
 
 /// Spawn the systemd watchdog pinger on a dedicated OS thread.
@@ -40,6 +78,9 @@ pub struct WatchdogHandle {
 /// executor with heavy work, so the daemon keeps its WATCHDOG=1 messages
 /// flowing as long as the OS scheduler runs threads at all.
 pub fn spawn_watchdog(component: &'static str) -> Option<WatchdogHandle> {
+    if is_hosted() {
+        return None;
+    }
     let interval = watchdog_interval()?;
     debug!(
         component,
