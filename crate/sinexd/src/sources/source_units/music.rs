@@ -314,6 +314,7 @@ mod tests {
     use sinex_primitives::Uuid;
     use sinex_primitives::ids::Id;
     use sinex_primitives::parser::MaterialAnchor;
+    use sinex_primitives::parser::{OccurrenceFilter, occurrence_key_string};
 
     use xtask::sandbox::prelude::sinex_test;
 
@@ -529,6 +530,134 @@ mod tests {
             payload.get("user_agent_decrypted").is_none(),
             "user_agent_decrypted must not be carried"
         );
+        Ok(())
+    }
+
+    // -----------------------------------------------------------------------
+    // OccurrenceFilter dedup (#1050)
+    // -----------------------------------------------------------------------
+
+    #[sinex_test]
+    async fn occurrence_filter_first_import_all_pass() -> TestResult<()> {
+        let mut parser = SpotifyHistoryParser;
+        let intents = parser
+            .parse_record(record_for(SAMPLE_EXPORT.as_bytes()), &test_ctx())
+            .await
+            .unwrap();
+
+        // First import: empty filter, all events should pass.
+        let mut filter = OccurrenceFilter::empty();
+        let mut admitted = 0;
+        for intent in &intents {
+            let key = occurrence_key_string(
+                intent
+                    .occurrence_key
+                    .as_ref()
+                    .expect("Spotify intents must carry occurrence_key"),
+            );
+            if filter.contains(&key) {
+                continue;
+            }
+            filter.insert(key);
+            admitted += 1;
+        }
+        assert_eq!(admitted, 2, "first import: all events should pass");
+        assert_eq!(
+            filter.len(),
+            2,
+            "filter should track both distinct keys"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn occurrence_filter_second_import_all_filtered() -> TestResult<()> {
+        let mut parser = SpotifyHistoryParser;
+
+        // First pass: build the filter.
+        let first = parser
+            .parse_record(record_for(SAMPLE_EXPORT.as_bytes()), &test_ctx())
+            .await
+            .unwrap();
+        let mut filter = OccurrenceFilter::empty();
+        for intent in &first {
+            if let Some(ref key) = intent.occurrence_key {
+                filter.insert(occurrence_key_string(key));
+            }
+        }
+
+        // Second pass: same data, all should be filtered.
+        let second = parser
+            .parse_record(record_for(SAMPLE_EXPORT.as_bytes()), &test_ctx())
+            .await
+            .unwrap();
+        let mut filtered = 0;
+        for intent in &second {
+            if intent
+                .occurrence_key
+                .as_ref()
+                .is_some_and(|k| filter.contains(&occurrence_key_string(k)))
+            {
+                filtered += 1;
+            }
+        }
+        assert_eq!(
+            filtered, 2,
+            "second import: all events should be detected as duplicates"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn occurrence_filter_new_data_passes_old_filtered() -> TestResult<()> {
+        let mut parser = SpotifyHistoryParser;
+
+        // Seed filter with original export.
+        let first = parser
+            .parse_record(record_for(SAMPLE_EXPORT.as_bytes()), &test_ctx())
+            .await
+            .unwrap();
+        let mut filter = OccurrenceFilter::empty();
+        for intent in &first {
+            if let Some(ref key) = intent.occurrence_key {
+                filter.insert(occurrence_key_string(key));
+            }
+        }
+
+        // Parse a different export: one new track, one overlap.
+        let mixed = r#"[{
+            "ts": "2024-01-15T08:00:00Z",
+            "ms_played": 240000,
+            "spotify_track_uri": "spotify:track:abc123",
+            "shuffle": false, "skipped": false, "offline": false, "incognito_mode": false
+        },
+        {
+            "ts": "2024-01-16T10:30:00Z",
+            "ms_played": 180000,
+            "spotify_track_uri": "spotify:track:new999",
+            "shuffle": false, "skipped": false, "offline": false, "incognito_mode": false
+        }]"#;
+        let second = parser
+            .parse_record(record_for(mixed.as_bytes()), &test_ctx())
+            .await
+            .unwrap();
+
+        let mut dup_count = 0;
+        let mut new_count = 0;
+        for intent in &second {
+            let key_str = occurrence_key_string(
+                intent.occurrence_key.as_ref().unwrap(),
+            );
+            if filter.contains(&key_str) {
+                dup_count += 1;
+            } else {
+                filter.insert(key_str);
+                new_count += 1;
+            }
+        }
+        assert_eq!(dup_count, 1, "abc123 should be a duplicate");
+        assert_eq!(new_count, 1, "new999 should be new");
+        assert_eq!(filter.len(), 3, "filter now has 3 distinct keys");
         Ok(())
     }
 }
