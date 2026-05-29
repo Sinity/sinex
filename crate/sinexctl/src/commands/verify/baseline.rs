@@ -9,7 +9,7 @@ use std::process::Stdio;
 use std::time::Duration;
 
 use clap::Args;
-use color_eyre::Result;
+use color_eyre::{Result, eyre::eyre};
 use console::style;
 use serde::Serialize;
 use tokio::process::Command;
@@ -172,10 +172,15 @@ async fn run_baseline(args: BaselineArgs, format: OutputFormat) -> Result<()> {
     };
 
     match format {
-        OutputFormat::Json | OutputFormat::Dot => println!("{}", format_json(&report)?),
+        OutputFormat::Json => println!("{}", format_json(&report)?),
         OutputFormat::Yaml => println!("{}", format_yaml(&report)?),
         OutputFormat::Table => {
             // Table report already printed above; nothing extra to emit.
+        }
+        OutputFormat::Dot => {
+            return Err(eyre!(
+                "verify baseline does not support --format dot; use --format json|yaml|table"
+            ));
         }
     }
 

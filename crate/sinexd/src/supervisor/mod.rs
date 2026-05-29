@@ -8,6 +8,8 @@
 //! SIGINT/SIGTERM; tasks observe it via a shared `watch` receiver and unwind
 //! in reverse start order.
 
+use std::time::Duration;
+
 use crate::node_sdk::service_runtime;
 use crate::node_sdk::systemd_notify;
 use sinex_primitives::error::{Result, SinexError};
@@ -96,8 +98,43 @@ impl Supervisor {
             None
         };
 
+        // If API setup fails after the event-engine task has already been
+        // spawned, the engine task would otherwise be orphaned: its
+        // JoinHandle would be dropped (detach, not cancel), the supervisor
+        // would return before entering the shutdown select! loop, and the
+        // engine would keep holding its DB pool + NATS consumer until the
+        // process was SIGKILL'd. Signal escalation to drain it, then return.
         let api_handle = if self.api_enabled {
-            Some(start_api(api_config, shutdown_rx.clone(), escalate_tx.clone()).await?)
+            match start_api(api_config, shutdown_rx.clone(), escalate_tx.clone()).await {
+                Ok(handle) => Some(handle),
+                Err(error) => {
+                    error!(
+                        ?error,
+                        phase = "api-setup-failed",
+                        "API setup failed; tearing down already-started modules"
+                    );
+                    let _ = escalate_tx.send(true);
+                    if let Some(handle) = event_engine_handle {
+                        match tokio::time::timeout(Duration::from_secs(5), handle).await {
+                            Ok(Ok(())) => {
+                                info!("event_engine drained after API setup failure");
+                            }
+                            Ok(Err(join_error)) => {
+                                error!(
+                                    ?join_error,
+                                    "event_engine task join error during API-failure teardown"
+                                );
+                            }
+                            Err(_elapsed) => {
+                                warn!(
+                                    "event_engine did not drain within 5s of API setup failure; detaching"
+                                );
+                            }
+                        }
+                    }
+                    return Err(error);
+                }
+            }
         } else {
             None
         };

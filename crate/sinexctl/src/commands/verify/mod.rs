@@ -249,7 +249,7 @@ impl VerifyCommand {
 fn finalize_summary(summary: &VerificationSummary, format: OutputFormat) -> Result<()> {
     match format {
         OutputFormat::Table => print_verification_footer(summary),
-        OutputFormat::Json | OutputFormat::Dot => {
+        OutputFormat::Json => {
             println!("{}", format_json(&summary.as_json())?);
             if summary.fail > 0 {
                 std::process::exit(1);
@@ -260,6 +260,11 @@ fn finalize_summary(summary: &VerificationSummary, format: OutputFormat) -> Resu
             if summary.fail > 0 {
                 std::process::exit(1);
             }
+        }
+        OutputFormat::Dot => {
+            return Err(eyre!(
+                "sinexctl verify does not support --format dot; use --format json|yaml|table"
+            ));
         }
     }
     Ok(())
