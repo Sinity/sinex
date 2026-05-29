@@ -388,10 +388,10 @@ fn read_git_head_for_root(workspace_root: &Path) -> Result<String> {
 /// Returns a hex string. Returns `"empty"` if no files were found.
 fn hash_schema_sources() -> Result<String> {
     let crate_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let schema_dir = crate_dir.join("../crate/lib/sinex-schema/src/schema");
-    let apply_file = crate_dir.join("../crate/lib/sinex-schema/src/apply.rs");
-    let converge_file = crate_dir.join("../crate/lib/sinex-schema/src/converge.rs");
-    let registry_file = crate_dir.join("../crate/lib/sinex-schema/src/schema_registry.rs");
+    let schema_dir = crate_dir.join("../crate/sinex-schema/src/defs");
+    let apply_file = crate_dir.join("../crate/sinex-schema/src/apply.rs");
+    let converge_file = crate_dir.join("../crate/sinex-schema/src/converge.rs");
+    let registry_file = crate_dir.join("../crate/sinex-schema/src/registry.rs");
 
     let mut file_contents = collect_rust_sources_from_dir(&schema_dir, "schema")
         .wrap_err("failed to collect declarative schema sources")?;
