@@ -10,8 +10,6 @@
 #   3. PID reuse safety: cancel reads /proc/{pid}/cmdline before sending signal.
 #   4. History DB consistency: each invocation adds exactly 1 record.
 { pkgs
-, sinex-ingestd
-, sinex-gateway
 , pg_jsonschema
 , xtask
 , sinexVmTestSuite ? null
@@ -31,7 +29,7 @@ pkgs.testers.nixosTest {
   nodes.machine = { config, pkgs, lib, ... }: {
     imports = [
       (import ../common/test-base.nix {
-        inherit config pkgs lib sinex-ingestd sinex-gateway pg_jsonschema sinex sinexCli;
+        inherit config pkgs lib pg_jsonschema sinex sinexCli;
       })
     ];
 

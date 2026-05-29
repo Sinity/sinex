@@ -9,9 +9,9 @@ use sinex_db::DbPool;
 use sinex_db::replay::state_machine::ReplayState;
 use sinex_db::repositories::DbPoolExt;
 use sinex_db::repositories::state::Operation;
-use sinex_node_sdk::derived_node::invalidation::INVALIDATION_SUBJECT;
-use sinex_node_sdk::runtime::stream::ScanReport;
-use sinex_node_sdk::runtime::stream::{
+use crate::node_sdk::derived_node::invalidation::INVALIDATION_SUBJECT;
+use crate::node_sdk::runtime::stream::ScanReport;
+use crate::node_sdk::runtime::stream::{
     Checkpoint, NodeScanAck, NodeScanCommand, NodeScanProgress, ResolvedReplayMaterial,
 };
 use sinex_primitives::environment::{SinexEnvironment, environment};

@@ -1,8 +1,8 @@
-# Hostile-host test: sinex-ingestd under cgroup resource constraints.
+# Hostile-host test: sinexd under cgroup resource constraints.
 #
-# Restricts sinex-ingestd below its normal 1G deployment budget and limits disk
+# Restricts sinexd below its normal 1G deployment budget and limits disk
 # I/O via systemd cgroups, then pumps 10k synthetic events into NATS and verifies:
-#   - sinex-ingestd is NOT OOM-killed (systemctl status remains Active)
+#   - sinexd is NOT OOM-killed (systemctl status remains Active)
 #   - The constrained pipeline continues committing events
 #   - No data corruption: inserted events have non-null IDs and payloads
 #
@@ -10,8 +10,6 @@
 # load gracefully rather than crashing, consuming unbounded memory, or stalling
 # the Postgres write pipeline permanently.
 { pkgs
-, sinex-ingestd
-, sinex-gateway
 , pg_jsonschema
 , sinex ? null
 , sinexCli ? null
@@ -82,7 +80,7 @@ pkgs.testers.nixosTest {
   nodes.machine = { config, pkgs, lib, ... }: {
     imports = [
       (import ../common/test-base.nix {
-        inherit config pkgs lib sinex-ingestd sinex-gateway pg_jsonschema sinex sinexCli;
+        inherit config pkgs lib pg_jsonschema sinex sinexCli;
       })
     ];
 
@@ -95,14 +93,14 @@ pkgs.testers.nixosTest {
       automata.enable = lib.mkForce false;
     };
 
-    # ─── cgroup constraints on sinex-ingestd ─────────────────────────────────
+    # ─── cgroup constraints on sinexd ─────────────────────────────────
     #
     # MemoryMax: hard OOM kill threshold.
     # MemoryHigh: soft limit — kernel begins reclaiming at this point, triggering
     #   backpressure before the hard limit is hit.
     # IOWriteBandwidthMax: limits disk write throughput (PostgreSQL WAL + data).
     # IOReadBandwidthMax: limits disk read throughput.
-    systemd.services.sinex-ingestd.serviceConfig = {
+    systemd.services.sinexd.serviceConfig = {
       MemoryMax     = lib.mkForce "192M";
       MemoryHigh    = lib.mkForce "128M";
       IOWriteBandwidthMax = lib.mkForce "/ 1048576";   # 1MB/s on root device
@@ -119,7 +117,7 @@ pkgs.testers.nixosTest {
     start_all()
     machine.wait_for_unit("multi-user.target")
     machine.wait_for_unit("postgresql.service", timeout=60)
-    machine.wait_for_unit("sinex-ingestd.service", timeout=60)
+    machine.wait_for_unit("sinexd.service", timeout=60)
     machine.wait_for_unit("nats.service", timeout=30)
 
     def get_event_count():
@@ -129,12 +127,12 @@ pkgs.testers.nixosTest {
         return int(result.strip())
 
     def ingestd_is_active():
-        rc, _ = machine.execute("systemctl is-active sinex-ingestd")
+        rc, _ = machine.execute("systemctl is-active sinexd")
         return rc == 0
 
     # ─── Publish 10k synthetic events into NATS ───────────────────────────────
     # Publishes directly to the events.> subject tree, bypassing ingestors.
-    # sinex-ingestd reads from this stream and writes to Postgres.
+    # sinexd reads from this stream and writes to Postgres.
 
     with subtest("pump-10k-events"):
         machine.succeed("sinex-hostile-publish 10000")
@@ -143,18 +141,18 @@ pkgs.testers.nixosTest {
 
     with subtest("no-oom-kill"):
         assert ingestd_is_active(), \
-            "sinex-ingestd was OOM-killed under constrained cgroup limits — backpressure failure"
-        print("✓ sinex-ingestd still active (not OOM-killed)")
+            "sinexd was OOM-killed under constrained cgroup limits — backpressure failure"
+        print("✓ sinexd still active (not OOM-killed)")
 
         # Check systemd OOM kill counter
         rc, oom_out = machine.execute(
-            "systemctl show sinex-ingestd --property=NRestarts --value"
+            "systemctl show sinexd --property=NRestarts --value"
         )
         restarts = int(oom_out.strip()) if oom_out.strip().isdigit() else 0
         print(f"  ingestd restart count: {restarts}")
         # Allow up to 2 restarts (backpressure may cause transient failures)
         assert restarts <= 2, \
-            f"sinex-ingestd restarted {restarts} times under load — instability under constraint"
+            f"sinexd restarted {restarts} times under load — instability under constraint"
 
     # ─── Wait for event drain ──────────────────────────────────────────────────
 
@@ -172,7 +170,7 @@ pkgs.testers.nixosTest {
                 prev_count = current_count
             # Check that ingestd is still alive during drain
             if not ingestd_is_active():
-                raise Exception("sinex-ingestd died during drain phase")
+                raise Exception("sinexd died during drain phase")
 
         final_count = get_event_count()
         print(f"✓ Events committed after drain: {final_count}")

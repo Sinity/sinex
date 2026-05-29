@@ -1,4 +1,4 @@
-use sinex_node_sdk::{SelfObserver, SelfObserverConfig};
+use sinexd::node_sdk::{SelfObserver, SelfObserverConfig};
 use tempfile::tempdir;
 use xtask::sandbox::prelude::*;
 

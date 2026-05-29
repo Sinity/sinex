@@ -16,17 +16,19 @@ name = "sinexd"
 path = "src/lib.rs"
 
 [features]
-default = []
+default = ["db", "messaging", "preflight"]
 tokio-console = ["dep:console-subscriber"]
 testing = []
 test-support = []
 dev-errors = []
+messaging = []
+db = []
+preflight = []
 
 [dependencies]
 # Sinex internals
-sinex-primitives = { path = "../sinex-primitives" }
+sinex-primitives = { path = "../sinex-primitives", features = ["sqlx", "nats", "rusqlite"] }
 sinex-db = { path = "../sinex-db" }
-sinex-node-sdk = { path = "../lib/sinex-node-sdk" }
 
 # Async runtime + allocator
 tokio = { workspace = true, features = ["full"] }
@@ -35,6 +37,7 @@ mimalloc = { workspace = true }
 futures = { workspace = true }
 parking_lot = { workspace = true }
 dashmap = { workspace = true }
+tempfile = { workspace = true }
 
 # Logging
 tracing = { workspace = true }
@@ -86,6 +89,28 @@ regex = { workspace = true }
 serde_yml = { workspace = true }
 mime_guess = "2.0"
 sinex-macros = { path = "../sinex-macros" }
+
+# node-sdk dependencies (formerly from sinex-node-sdk crate)
+sd-notify = { workspace = true }
+sysinfo = { workspace = true }
+which = { workspace = true }
+urlencoding = "2.1"
+semver = { workspace = true }
+schemars = { workspace = true }
+jsonschema = { workspace = true }
+rusqlite = { workspace = true }
+ahash = { workspace = true }
+sha2 = { version = "0.10", default-features = false, features = ["std"] }
+nix = { workspace = true }
+globset = { workspace = true }
+zbus = { workspace = true }
+zvariant = { workspace = true }
+arboard = "3.4"
+async-stream = "0.3"
+gethostname = { workspace = true }
+
+[build-dependencies]
+time = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }

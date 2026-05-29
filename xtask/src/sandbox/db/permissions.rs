@@ -1,7 +1,7 @@
 use crate::sandbox::db::pool::replace_db_name;
 use crate::sandbox::prelude::*;
-use sinex_primitives::validation::validate_pg_identifier;
 use sinex_db::schema::registry;
+use sinex_primitives::validation::validate_pg_identifier;
 
 pub struct PermissionGranter {
     superuser_url: String,
@@ -57,11 +57,7 @@ impl PermissionGranter {
 #[must_use]
 pub fn granted_schema_names() -> Vec<&'static str> {
     let mut schemas = vec!["public"];
-    schemas.extend(
-        registry::SINEX_SCHEMAS
-            .iter()
-            .map(|schema| schema.name),
-    );
+    schemas.extend(registry::SINEX_SCHEMAS.iter().map(|schema| schema.name));
     schemas
 }
 

@@ -69,9 +69,8 @@
           echo "Verifying rollback state..."
           
           # Check service status
-          systemctl is-active sinex-ingestd.service || exit 1
-          systemctl is-active sinex-gateway.service || exit 1
-          
+          systemctl is-active sinexd.service || exit 1
+
           # Check event flow
           EVENT_COUNT=$(sudo -u postgres psql -d sinex -t -c \
             "SELECT COUNT(*) FROM core.events")
@@ -101,9 +100,8 @@
     
     # Initial setup
     sinex.wait_for_unit("postgresql.service")
-    sinex.wait_for_unit("sinex-ingestd.service")
-    sinex.wait_for_unit("sinex-gateway.service")
-    
+    sinex.wait_for_unit("sinexd.service")
+
     # Capture baseline state
     with subtest("Establish baseline"):
         # Generate initial events
@@ -144,7 +142,7 @@
         )
         
         # Services should remain operational
-        sinex.succeed("systemctl is-active sinex-ingestd.service")
+        sinex.succeed("systemctl is-active sinexd.service")
     
     # Test permission failure rollback
     with subtest("Permission failure rollback"):
@@ -155,15 +153,15 @@
         sinex.execute("inject-failure permission")
         
         # Service should fail and attempt recovery
-        sinex.execute("systemctl restart sinex-ingestd.service || true")
+        sinex.execute("systemctl restart sinexd.service || true")
         time.sleep(5)
         
         # Fix permissions
         sinex.succeed(f"chmod 755 {state_dir}/")
         
         # Service should recover
-        sinex.succeed("systemctl start sinex-ingestd.service")
-        sinex.wait_for_unit("sinex-ingestd.service")
+        sinex.succeed("systemctl start sinexd.service")
+        sinex.wait_for_unit("sinexd.service")
         
         # Verify functionality
         sinex.succeed("verify-rollback")
@@ -171,18 +169,18 @@
     # Test partial update rollback
     with subtest("Partial update rollback"):
         # Start a service transition that matches the NixOS-managed runtime contract.
-        sinex.execute("systemctl restart sinex-ingestd.service")
+        sinex.execute("systemctl restart sinexd.service")
         time.sleep(5)
 
         # Simulate failure during the restart window.
-        sinex.execute("pkill -9 sinex-ingestd || true")
+        sinex.execute("pkill -9 sinexd || true")
         
         # System should detect failure and rollback
         time.sleep(5)
         
         # Restart services
-        sinex.succeed("systemctl start sinex-ingestd.service")
-        sinex.wait_for_unit("sinex-ingestd.service")
+        sinex.succeed("systemctl start sinexd.service")
+        sinex.wait_for_unit("sinexd.service")
         
         # Verify event collection continues
         pre_count = int(sinex.succeed(
@@ -203,10 +201,10 @@
     # Test cascading failure prevention
     with subtest("Cascading failure prevention"):
         # Kill promo worker
-        sinex.execute("systemctl stop sinex-gateway.service")
+        sinex.execute("systemctl stop sinexd.service")
         
         # Collector should continue operating
-        sinex.succeed("systemctl is-active sinex-ingestd.service")
+        sinex.succeed("systemctl is-active sinexd.service")
         
         # Events should still be captured
         sinex.execute("touch /tmp/cascade-test-{1..5}")
@@ -221,8 +219,8 @@
         )
         
         # Restart promo worker
-        sinex.succeed("systemctl start sinex-gateway.service")
-        sinex.wait_for_unit("sinex-gateway.service")
+        sinex.succeed("systemctl start sinexd.service")
+        sinex.wait_for_unit("sinexd.service")
         
         # System should recover fully
         sinex.succeed("verify-rollback")
@@ -240,7 +238,7 @@
         time.sleep(3)
         
         # Simulate failed update
-        sinex.execute("systemctl stop sinex-ingestd.service")
+        sinex.execute("systemctl stop sinexd.service")
         time.sleep(2)
         
         # Check Dead Letter Queue captured events
@@ -249,8 +247,8 @@
         ).strip()
         
         # Restart service
-        sinex.succeed("systemctl start sinex-ingestd.service")
-        sinex.wait_for_unit("sinex-ingestd.service")
+        sinex.succeed("systemctl start sinexd.service")
+        sinex.wait_for_unit("sinexd.service")
         
         # Final event count should include preserved events
         final_events = int(sinex.succeed(

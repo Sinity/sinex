@@ -8,7 +8,7 @@
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
-use sinex_node_sdk::parser::{MaterialParser, ParserError, ParserResult, SqliteRowAdapter};
+use crate::node_sdk::parser::{MaterialParser, ParserError, ParserResult, SqliteRowAdapter};
 use sinex_primitives::domain::{EventSource, EventType};
 use sinex_primitives::events::payloads::shell::HistoryCommandImportedPayload;
 use sinex_primitives::parser::{

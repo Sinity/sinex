@@ -14,7 +14,7 @@ use mimalloc::MiMalloc;
 static GLOBAL: MiMalloc = MiMalloc;
 
 use clap::{Parser, Subcommand};
-use sinex_node_sdk::service_runtime::{TracingFormat, install_tracing};
+use sinexd::runtime::service_runtime::{TracingFormat, install_tracing};
 use sinexd::api::config::GatewayConfig;
 use sinexd::event_engine::IngestdConfig;
 use sinexd::sources::bindings::{self as source_bindings, SourceBinding};
@@ -47,6 +47,12 @@ struct Cli {
 
     #[arg(long, env = "RUST_LOG", default_value = "info", global = true)]
     log_level: String,
+
+    #[arg(long, env = "SINEX_LOG_FORMAT", default_value = "text", global = true)]
+    log_format: String,
+
+    #[arg(long, env = "SINEX_NAMESPACE", global = true)]
+    namespace: Option<String>,
 
     #[command(subcommand)]
     command: Option<Command>,
@@ -84,10 +90,21 @@ enum Command {
 }
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+async fn main() -> color_eyre::Result<()> {
+    color_eyre::install()?;
+
     let mut cli = Cli::parse();
 
-    install_tracing(TracingFormat::Text, &cli.log_level)?;
+    let tracing_format = match cli.log_format.as_str() {
+        "text" => TracingFormat::Text,
+        "json" => TracingFormat::Json,
+        other => {
+            color_eyre::eyre::bail!(
+                "invalid --log-format value: '{other}'. Expected 'text' or 'json'"
+            );
+        }
+    };
+    install_tracing(tracing_format, &cli.log_level)?;
 
     let command = cli.command.take().unwrap_or(Command::Serve);
     match command {
@@ -101,7 +118,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 }
 
-async fn serve(cli: &Cli) -> Result<(), Box<dyn std::error::Error>> {
+async fn serve(cli: &Cli) -> color_eyre::Result<()> {
     let event_engine_config = IngestdConfig::from_args(
         cli.database_url.clone(),
         cli.nats_url.clone(),
@@ -114,8 +131,10 @@ async fn serve(cli: &Cli) -> Result<(), Box<dyn std::error::Error>> {
         false,
         None,
         None,
-        None,
+        cli.namespace.clone(),
     )?;
+
+    event_engine_config.validate().await?;
 
     let api_config = match cli.database_url.as_ref() {
         Some(url) => GatewayConfig::load_with_database_url(url.clone()),
@@ -134,7 +153,7 @@ async fn scan_source_unit(
     service_name: Option<String>,
     node_config: Option<String>,
     extra_args: Vec<String>,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> color_eyre::Result<()> {
     let node_config_value = match node_config {
         Some(s) if !s.trim().is_empty() => Some(serde_json::from_str(&s)?),
         _ => None,
@@ -146,6 +165,7 @@ async fn scan_source_unit(
         service_name,
         node_config: node_config_value,
         extra_args,
+        extra_env: Default::default(),
     };
 
     source_bindings::run_binding(binding).await?;

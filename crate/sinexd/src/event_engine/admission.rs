@@ -21,8 +21,20 @@ use tokio::sync::{Mutex, RwLock};
 use tokio::time::{Duration, timeout};
 use tracing::{error, warn};
 
-const DB_WRITE_TIMEOUT: Duration = Duration::from_secs(5);
+const DB_WRITE_TIMEOUT_BASE: Duration = Duration::from_secs(5);
+const DB_WRITE_TIMEOUT_PER_ROW: Duration = Duration::from_millis(1);
 const RECENT_ID_CACHE_SIZE: usize = 50_000;
+
+/// Dynamic write timeout that scales with batch size.
+///
+/// Larger batches get proportionally more time rather than hitting a fixed
+/// 5 s ceiling during backlog catchup (common post-deploy with 35K+
+/// queued NATS messages). The per-row overhead is negligible for small
+/// batches but keeps 6000+-row COPY batches from tripping the timeout.
+fn db_write_timeout(batch_size: usize) -> Duration {
+    let per_row = DB_WRITE_TIMEOUT_PER_ROW * batch_size as u32;
+    std::cmp::max(DB_WRITE_TIMEOUT_BASE, per_row)
+}
 
 /// SQLSTATE classes that indicate a deterministic row-level persistence fault.
 const SQLSTATE_DATA_EXCEPTION_CLASS: &str = "22";
@@ -729,8 +741,9 @@ impl AdmissionService {
 
         let to_persist: Vec<&AdmittedEvent> = plan.events.iter().collect();
         let rows = admitted_to_stream_rows(&to_persist)?;
+        let write_timeout = db_write_timeout(to_persist.len());
         let insert_result = timeout(
-            DB_WRITE_TIMEOUT,
+            write_timeout,
             self.pool.events().insert_stream_batch(&rows),
         )
         .await
@@ -739,11 +752,11 @@ impl AdmissionService {
                 target: "sinex_metrics",
                 metric = "ingestd.batch_insert_timeouts_total",
                 batch_size = to_persist.len(),
-                timeout_seconds = DB_WRITE_TIMEOUT.as_secs(),
+                timeout_seconds = write_timeout.as_secs_f64(),
                 "Timed out waiting for batch insert to complete"
             );
             SinexError::database(format!(
-                "Persisting batch timed out after {DB_WRITE_TIMEOUT:?}"
+                "Persisting batch timed out after {write_timeout:?}"
             ))
         })?;
 
@@ -764,14 +777,15 @@ impl AdmissionService {
                         row.payload_schema_id = None;
                     }
                 }
+                let retry_timeout = db_write_timeout(rows_without_schema.len());
                 timeout(
-                    DB_WRITE_TIMEOUT,
+                    retry_timeout,
                     self.pool.events().insert_stream_batch(&rows_without_schema),
                 )
                 .await
                 .map_err(|_| {
                     SinexError::database(format!(
-                        "Persisting batch (schema-id-stripped retry) timed out after {DB_WRITE_TIMEOUT:?}"
+                        "Persisting batch (schema-id-stripped retry) timed out after {retry_timeout:?}"
                     ))
                 })?
             }

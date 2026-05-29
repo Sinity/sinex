@@ -42,8 +42,7 @@ let
             units = [
                 unit for unit in self.list_active_sinex_units()
                 if unit not in {
-                    "sinex-ingestd.service",
-                    "sinex-gateway.service",
+                    "sinexd.service",
                 }
             ]
             self._last_node_units = units
@@ -62,12 +61,11 @@ let
         def wait_for_sinex_ready(self, timeout: int = 60) -> None:
             """Wait for Sinex services to be fully ready."""
             self.machine.wait_for_unit("postgresql.service", timeout=timeout)
-            self.machine.wait_for_unit("sinex-ingestd.service", timeout=timeout)
-            self.machine.wait_for_unit("sinex-gateway.service", timeout=timeout)
-            
+            self.machine.wait_for_unit("sinexd.service", timeout=timeout)
+
             # Verify services are actually working
             self.machine.wait_until_succeeds(
-                "systemctl is-active sinex-ingestd",
+                "systemctl is-active sinexd",
                 timeout=30
             )
 

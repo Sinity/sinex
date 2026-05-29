@@ -6,11 +6,11 @@
 
 use serde::Serialize;
 use sinex_db::repositories::{DbPoolExt, TemporalLedgerEntry, material_status};
+use sinex_db::schema::defs::records::SourceMaterialRecord;
 use sinex_primitives::Timestamp;
 use sinex_primitives::nats::{NatsTrafficClass, insert_traffic_class_header};
 use sinex_primitives::transport;
 use sinex_primitives::{Id, JsonValue, Uuid};
-use sinex_db::schema::defs::records::SourceMaterialRecord;
 use tokio::sync::Mutex;
 use tracing::{debug, error, info, warn};
 
@@ -906,7 +906,7 @@ mod tests {
         models::blob::Blob,
         repositories::{DbPoolExt, source_materials::status},
     };
-    use sinex_node_sdk::content_store::ContentStoreKey;
+    use crate::node_sdk::content_store::ContentStoreKey;
     use tokio::time::timeout;
     use tokio_stream::StreamExt;
     use xtask::sandbox::prelude::*;

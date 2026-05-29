@@ -12,6 +12,7 @@ pub const PRIVACY_PRIVATE_MODE_DISABLE: &str = "privacy.private_mode.disable";
 
 // Events (composable query engine)
 pub const EVENTS_QUERY: &str = "events.query";
+pub const EVENTS_CARDS: &str = "events.cards";
 pub const EVENTS_LINEAGE: &str = "events.lineage";
 
 // Curation

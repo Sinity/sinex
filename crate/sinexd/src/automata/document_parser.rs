@@ -24,10 +24,10 @@
 //!
 //! Ref: `docs/architecture/document-layer-v1.md`.
 
-use sinex_node_sdk::derived_node::{
-    DerivedOutput, AutomatonContext, InputProvenanceFilter, MultiOutputTransducerNode,
+use crate::node_sdk::derived_node::{
+    AutomatonContext, DerivedOutput, InputProvenanceFilter, MultiOutputTransducerNode,
 };
-use sinex_node_sdk::processing::NodeLogicError;
+use crate::node_sdk::processing::NodeLogicError;
 use sinex_primitives::events::payloads::DocumentKind;
 use sinex_primitives::privacy;
 use sinex_primitives::privacy::ProcessingContext;
@@ -559,7 +559,7 @@ mod tests {
 /// Adapter type alias that wires `DocumentParserNode` through the SDK's
 /// `MultiOutputTransducerNodeAdapter`.
 pub type DocumentParserNodeAdapter =
-    sinex_node_sdk::derived_node::MultiOutputTransducerNodeAdapter<DocumentParserNode>;
+    crate::node_sdk::derived_node::MultiOutputTransducerNodeAdapter<DocumentParserNode>;
 
 // ── Source-unit descriptor ─────────────────────────────────────────────
 

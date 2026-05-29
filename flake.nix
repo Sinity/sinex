@@ -76,7 +76,7 @@
       runtimePackageNames = [
         "sinexd"
         "sinexctl"
-        "sinex-node-sdk"
+        "sinexd"
         "xtask"
       ];
 

@@ -14,8 +14,8 @@
 //! persistence without widening to a `ScopeReconciler`.
 
 use serde::{Deserialize, Serialize};
-use sinex_node_sdk::derived_node::{DerivedOutput, AutomatonContext, WindowedNodeAdapter};
-use sinex_node_sdk::{InputProvenanceFilter, NodeLogicError, Windowed};
+use crate::node_sdk::derived_node::{AutomatonContext, DerivedOutput, WindowedNodeAdapter};
+use crate::node_sdk::{InputProvenanceFilter, NodeLogicError, Windowed};
 use sinex_primitives::Uuid;
 use sinex_primitives::domain::{EntityTypeName, SyntheticTemporalPolicy};
 use sinex_primitives::events::EventPayload;

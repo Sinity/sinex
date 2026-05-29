@@ -4304,8 +4304,8 @@ mod tests {
                     output: None,
                 },
                 StoredTestResult {
-                    test_name: "sinex-node-sdk::settlement_fault_injection$opens_circuit".into(),
-                    package: "sinex-node-sdk".into(),
+                    test_name: "sinexd::settlement_fault_injection$opens_circuit".into(),
+                    package: "sinexd".into(),
                     status: TestStatus::Pass,
                     duration_secs: Some(4.0),
                     attempt: 1,

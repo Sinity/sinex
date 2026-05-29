@@ -162,7 +162,7 @@ impl MaterialAssembler {
         loop {
             tokio::select! {
                 _ = interval.tick() => {}
-                () = sinex_node_sdk::wait_for_shutdown_signal_bool(&shutdown_flag, &shutdown_notify) => break,
+                () = crate::node_sdk::wait_for_shutdown_signal_bool(&shutdown_flag, &shutdown_notify) => break,
             }
 
             let active = self.assembler_state.len() as u32;

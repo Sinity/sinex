@@ -1,5 +1,5 @@
 use clap::Parser;
-use sinex_node_sdk::service_runtime;
+use sinexd::node_sdk::service_runtime;
 use sinexctl::client::{ClientConfig, GatewayClient};
 use sinexctl::{Config, mcp};
 use std::path::PathBuf;

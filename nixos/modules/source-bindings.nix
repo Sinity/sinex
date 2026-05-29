@@ -124,7 +124,7 @@ in
         Derivation that writes a JSON file containing all declared source
         bindings.  Consume from the host config as:
 
-          nix eval --raw .#nixosConfigurations.sinnix-prime.config.services.sinex.sources.exportedJson
+          nix eval --raw .#nixosConfigurations.YOUR_HOSTNAME.config.services.sinex.sources.exportedJson
 
         The resulting path can be passed to `xtask verify source-worker
         --bindings-json <path>` for drift detection against Rust descriptors.

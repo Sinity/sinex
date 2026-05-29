@@ -493,16 +493,16 @@ fn private_mode_unavailable_privacy_warning() -> RuntimeStatusWarning {
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
-struct SourceReadinessSummary {
-    total: usize,
-    available: usize,
-    disabled: usize,
-    partial: usize,
-    stale: usize,
-    error: usize,
-    missing: usize,
-    blocked: usize,
-    unknown: usize,
+pub struct SourceReadinessSummary {
+    pub total: usize,
+    pub available: usize,
+    pub disabled: usize,
+    pub partial: usize,
+    pub stale: usize,
+    pub error: usize,
+    pub missing: usize,
+    pub blocked: usize,
+    pub unknown: usize,
 }
 
 impl SourceReadinessSummary {
@@ -527,7 +527,7 @@ impl SourceReadinessSummary {
     }
 }
 
-fn summarize_source_readiness(sources: &[SourceReadiness]) -> SourceReadinessSummary {
+pub fn summarize_source_readiness(sources: &[SourceReadiness]) -> SourceReadinessSummary {
     let mut summary = SourceReadinessSummary {
         total: sources.len(),
         ..SourceReadinessSummary::default()

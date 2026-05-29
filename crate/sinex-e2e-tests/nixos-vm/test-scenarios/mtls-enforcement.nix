@@ -1,8 +1,6 @@
 # mTLS Enforcement E2E Test
 # Tests gateway mTLS client certificate verification
 { pkgs
-, sinex-ingestd
-, sinex-gateway
 , pg_jsonschema
 , sinex ? null
 , sinexCli ? null
@@ -15,7 +13,7 @@ let
   # TLS fixtures directory
   tlsFixtures = ./tls-fixtures;
 
-  sinexPackage = if sinex != null then sinex else sinex-ingestd;
+  sinexPackage = if sinex != null then sinex else sinexd;
   sinexCliPackage = sinexCli;
 in
 pkgs.testers.nixosTest {
@@ -26,7 +24,7 @@ pkgs.testers.nixosTest {
   nodes.machine = { config, pkgs, lib, ... }: {
     imports = [
       (import ../common/test-base.nix {
-        inherit config pkgs lib sinex-ingestd sinex-gateway pg_jsonschema sinex sinexCli;
+        inherit config pkgs lib pg_jsonschema sinex sinexCli;
       })
     ];
 
@@ -67,8 +65,7 @@ pkgs.testers.nixosTest {
         machine.wait_for_unit("multi-user.target")
         machine.wait_for_unit("postgresql.service", timeout=60)
         machine.wait_for_unit("sinex-schema-apply.service", timeout=60)
-        machine.wait_for_unit("sinex-ingestd.service", timeout=60)
-        machine.wait_for_unit("sinex-gateway.service", timeout=60)
+        machine.wait_for_unit("sinexd.service", timeout=60)
         machine.wait_for_open_port(9999, timeout=30)
         print("✓ All services started")
 
@@ -187,7 +184,7 @@ pkgs.testers.nixosTest {
 
     with subtest("mTLS: Gateway logs show mTLS enforcement"):
         # Check gateway logs for mTLS-related messages
-        logs = machine.succeed("journalctl -u sinex-gateway.service -n 100 --no-pager")
+        logs = machine.succeed("journalctl -u sinexd.service -n 100 --no-pager")
         print("Gateway logs (last 100 lines):")
         print(logs)
 

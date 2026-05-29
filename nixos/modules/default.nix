@@ -2340,8 +2340,8 @@ in
                   if source.sourceUnitId != null then source.sourceUnitId
                   else terminalSourceUnitIdForShell source.shell;
                 runner_pack = "terminal";
-                runner_binary = "sinex-source-worker";
-                service = "sinex-source@${if source.sourceUnitId != null then source.sourceUnitId else terminalSourceUnitIdForShell source.shell}";
+                runner_binary = "sinexd";
+                service = "sinexd.service";
               })
               cfg.nodes.terminal.historySources;
           };

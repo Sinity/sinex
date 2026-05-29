@@ -67,7 +67,6 @@ sinex-primitives = { path = "../crate/sinex-primitives", default-features = fals
 sinexd = { path = "../crate/sinexd" }
 # Database and node SDK (for test sandbox)
 sinex-db = { path = "../crate/sinex-db" }
-sinex-node-sdk = { path = "../crate/lib/sinex-node-sdk" }
 
 # Source-unit inventory links. xtask source-unit/proof tooling must see the
 # descriptors declared by shipped node crates, not only descriptors hardcoded in

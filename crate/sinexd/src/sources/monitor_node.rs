@@ -39,8 +39,8 @@ use std::time::{Duration, Instant};
 use tokio::sync::watch;
 use tracing::{debug, info, warn};
 
-use sinex_node_sdk::{
-    SourceUnit, SourceUnitRuntime, NodeResult,
+use crate::node_sdk::{
+    NodeResult, SourceUnit, SourceUnitRuntime,
     acquisition_manager::RotationPolicy,
     node_cli::{NodeCli, NodeCliRunner},
     runtime::stream::{
@@ -471,11 +471,15 @@ macro_rules! register_monitor_unit {
         emit_at: $phase:expr,
         emit: $emit_fn:expr $(,)?
     ) => {
-        $crate::__submit_registry_entry!($crate::sources::node_factory::NodeFactoryEntry, $id, |args| {
-            Box::pin($crate::sources::monitor_node::run_monitor_unit_delegated(
-                $id, $phase, $emit_fn, args,
-            ))
-        },);
+        $crate::__submit_registry_entry!(
+            $crate::sources::node_factory::NodeFactoryEntry,
+            $id,
+            |args| {
+                Box::pin($crate::sources::monitor_node::run_monitor_unit_delegated(
+                    $id, $phase, $emit_fn, args,
+                ))
+            },
+        );
     };
 }
 
@@ -486,9 +490,9 @@ macro_rules! register_monitor_unit {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sinex_node_sdk::EventTransport;
-    use sinex_node_sdk::runtime::stream::{EventEmitter, NodeHandles, ServiceInfo};
-    use sinex_node_sdk::{CheckpointManager, NatsPublisher};
+    use crate::node_sdk::EventTransport;
+    use crate::node_sdk::runtime::stream::{EventEmitter, NodeHandles, ServiceInfo};
+    use crate::node_sdk::{CheckpointManager, NatsPublisher};
     use sinex_primitives::domain::HostName;
     use sinex_primitives::events::DynamicPayload;
     use std::collections::HashMap;

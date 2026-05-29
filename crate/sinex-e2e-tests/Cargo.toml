@@ -34,9 +34,9 @@ workspace = true
 path = "../../xtask"
 
 
-[dev-dependencies.sinex-node-sdk]
-path = "../lib/sinex-node-sdk"
-
+[dev-dependencies.sinexd]
+path = "../sinexd"
+features = ["test-support"]
 
 [dev-dependencies.async-nats]
 workspace = true
@@ -86,9 +86,6 @@ workspace = true
 
 [dev-dependencies.proptest]
 workspace = true
-
-[dev-dependencies.sinexd]
-path = "../sinexd"
 
 [lints]
 workspace = true

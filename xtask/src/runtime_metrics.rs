@@ -265,7 +265,7 @@ async fn query_inner(db_url: &str) -> Result<RuntimeMetrics, sqlx::Error> {
             EXTRACT(EPOCH FROM (NOW() - nr.last_heartbeat_at))::bigint as "age_secs: i64"
         FROM core.runs nr
         JOIN core.manifests nm ON nm.id = nr.manifest_id
-        WHERE nm.name = 'sinex-ingestd'
+        WHERE nm.name = 'sinexd'
           AND nr.status = 'running'
         ORDER BY nr.last_heartbeat_at DESC NULLS LAST
         LIMIT 1

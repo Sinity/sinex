@@ -172,9 +172,7 @@ where
         .iter()
         .any(|source_id| source_id == event_id)
     {
-        return Err(SinexError::database(
-            "cycle detected in derived provenance",
-        ));
+        return Err(SinexError::database("cycle detected in derived provenance"));
     }
 
     Ok(())

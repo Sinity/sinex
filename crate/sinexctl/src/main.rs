@@ -1,7 +1,7 @@
 use clap::{CommandFactory, FromArgMatches, Parser, Subcommand, parser::ValueSource};
 use color_eyre::eyre::eyre;
 use serde::Serialize;
-use sinex_node_sdk::service_runtime;
+use sinexd::node_sdk::service_runtime;
 use sinex_primitives::RuntimeTargetDescriptor;
 use sinex_primitives::rpc::{RpcMethodInfo, method_catalog};
 use sinexctl::AdminCommands;
@@ -13,7 +13,7 @@ use sinexctl::commands::{
     IngestorsCommand, InstructionsCommand, LifecycleCommands, LlmCommand, NodeCommands,
     NodesCommand, NowCommand, OpsCommands, PrivacyCommand, QueryCommand, RecentCommand,
     ReplayCommands, ReportCommands, SemanticCommand, SourcesCommand, StateCommands, StatusCommand,
-    TasksCommand, TelemetryCommands, ThroughputCommand, TraceCommand, TuiCommand, VerifyCommand,
+    TasksCommand, TelemetryCommands, ThroughputCommand, TimelineCommand, TraceCommand, TuiCommand, VerifyCommand,
     WatchCommand,
 };
 use sinexctl::fmt::format_yaml;
@@ -156,6 +156,9 @@ enum Commands {
 
     /// Launch interactive TUI dashboard
     Tui(TuiCommand),
+
+    /// Interactive event timeline browser
+    Timeline(TimelineCommand),
 
     /// Configuration management
     Config {
@@ -373,6 +376,7 @@ async fn main() -> color_eyre::Result<()> {
                 Commands::Privacy(cmd) => cmd.execute(&client, format).await?,
                 Commands::Audit(cmd) => cmd.execute(&client, format).await?,
                 Commands::Tui(cmd) => cmd.execute(&client).await?,
+                Commands::Timeline(cmd) => cmd.execute(&client).await?,
                 Commands::Config { .. } => unreachable!("Config command handled above"),
                 Commands::Demo(_) => unreachable!("Demo command handled above"),
                 Commands::State { .. } => unreachable!("State command handled above"),
@@ -538,6 +542,7 @@ fn command_path(cmd: &Commands) -> String {
         Commands::Privacy(cmd) => cmd.command_path().to_string(),
         Commands::Audit(_) => "audit".to_string(),
         Commands::Tui(_) => "tui".to_string(),
+        Commands::Timeline(_) => "timeline".to_string(),
         Commands::Config { cmd } => match cmd {
             ConfigCommands::Init { .. } => "config init".to_string(),
             ConfigCommands::Show => "config show".to_string(),
@@ -566,6 +571,7 @@ fn command_path(cmd: &Commands) -> String {
                 SourcesSubcommand::Readiness(_) => "sources readiness".to_string(),
                 SourcesSubcommand::Drift(_) => "sources drift".to_string(),
                 SourcesSubcommand::ExplainGap(_) => "sources explain-gap".to_string(),
+                SourcesSubcommand::Cockpit(_) => "sources cockpit".to_string(),
             }
         }
         Commands::State { cmd } => match cmd {
@@ -603,6 +609,7 @@ fn command_path(cmd: &Commands) -> String {
                 TasksSubcommand::State(_) => "tasks state".to_string(),
                 TasksSubcommand::Status(_) => "tasks status".to_string(),
                 TasksSubcommand::Update(_) => "tasks update".to_string(),
+                TasksSubcommand::Import(_) => "tasks import".to_string(),
             }
         }
         Commands::Curation(cmd) => {

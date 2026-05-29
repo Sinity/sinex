@@ -3,20 +3,16 @@ members = [
   # The daemon (#1054)
   "crate/sinexd",
 
-  # Shared libraries (surviving — flat layout)
+  # Shared libraries
   "crate/sinex-primitives",
   "crate/sinex-macros",
   "crate/sinex-schema",
   "crate/sinex-db",
 
-  # Dying libraries (will be dissolved in PR-3, kept at original path)
-  "crate/lib/sinex-node-sdk",
-
-  # Dying service-binary hosts (folded into sinexd in PR-2/PR-3, kept at original paths)
-  # CLI (surviving — flat)
+  # CLI
   "crate/sinexctl",
 
-  # Test crates (surviving — flat)
+  # Test crates
   "crate/sinex-e2e-tests",
   "crate/sinex-workspace-tests",
   "crate/sinex-vm-suite",

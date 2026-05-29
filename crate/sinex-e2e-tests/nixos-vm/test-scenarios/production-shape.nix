@@ -25,8 +25,6 @@
 #
 # Category: production-shape
 { pkgs
-, sinex-ingestd
-, sinex-gateway
 , pg_jsonschema
 , sinex ? null
 , sinexCli ? null
@@ -42,7 +40,7 @@ pkgs.testers.nixosTest {
   nodes.machine = { config, pkgs, lib, ... }: {
     imports = [
       (import ../common/test-base.nix {
-        inherit config pkgs lib sinex-ingestd sinex-gateway pg_jsonschema sinex sinexCli;
+        inherit config pkgs lib pg_jsonschema sinex sinexCli;
       })
     ];
 
@@ -92,8 +90,7 @@ pkgs.testers.nixosTest {
         machine.wait_for_unit("postgresql.service", timeout=60)
         # Schema must be applied before anything else.
         machine.wait_for_unit("sinex-schema-apply.service", timeout=90)
-        machine.wait_for_unit("sinex-ingestd.service", timeout=60)
-        machine.wait_for_unit("sinex-gateway.service", timeout=60)
+        machine.wait_for_unit("sinexd.service", timeout=60)
         # The fs source-worker is the unit under test.
         machine.wait_for_unit("sinex-source-worker-fs-1.service", timeout=60)
         # Gateway health probe — confirms TLS is up.

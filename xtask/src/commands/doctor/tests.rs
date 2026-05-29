@@ -3,7 +3,7 @@ use crate::command::CommandContext;
 use crate::output::{OutputFormat, OutputWriter};
 use crate::sandbox::sinex_test;
 use ::xtask::sandbox::EnvGuard;
-use sinex_node_sdk::preflight::services::SystemdServiceDetails;
+use sinexd::node_sdk::preflight::services::SystemdServiceDetails;
 use sinex_primitives::{
     DeploymentReadinessMode,
     nats::NatsConnectionConfig,
@@ -2248,14 +2248,14 @@ async fn test_rust_analyzer_cli_stderr_summary_buckets_failures() -> ::xtask::sa
         vec![
             "sinex_gateway->sinex_gateway",
             "sinex_macros->sinex_primitives",
-            "sinex_node_sdk->xtask",
+            "sinexd->xtask",
         ]
     );
     assert_eq!(
         summary.self_cycle_edges,
         vec!["sinex_gateway->sinex_gateway"]
     );
-    assert_eq!(summary.xtask_cycle_edges, vec!["sinex_node_sdk->xtask"]);
+    assert_eq!(summary.xtask_cycle_edges, vec!["sinexd->xtask"]);
     assert_eq!(
         summary.workspace_cycle_edges,
         vec!["sinex_macros->sinex_primitives"]
@@ -2328,7 +2328,7 @@ async fn test_rust_analyzer_remediation_actions_are_bucket_specific()
     assert_eq!(
         rust_analyzer_remediation_actions(
             &[],
-            &["sinex_node_sdk->xtask".to_string()],
+            &["sinexd->xtask".to_string()],
             &[],
             0,
             0,

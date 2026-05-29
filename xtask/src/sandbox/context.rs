@@ -550,7 +550,7 @@ impl Sandbox {
     pub async fn ensure_checkpoint_kv(&self) -> TestResult<jetstream::kv::Store> {
         let js = self.ensure_jetstream().await?;
         let prefix = self.pipeline_namespace().prefix();
-        let bucket = sinex_node_sdk::checkpoint::checkpoint_bucket_name(Some(prefix));
+        let bucket = sinexd::node_sdk::checkpoint::checkpoint_bucket_name(Some(prefix));
         let kv_store = create_or_open_kv_store(
             &js,
             jetstream::kv::Config {
@@ -588,7 +588,7 @@ impl Sandbox {
     pub async fn checkpoint_kv(&self) -> TestResult<jetstream::kv::Store> {
         let js = self.jetstream().await?;
         let prefix = self.pipeline_namespace().prefix();
-        let bucket = sinex_node_sdk::checkpoint::checkpoint_bucket_name(Some(prefix));
+        let bucket = sinexd::node_sdk::checkpoint::checkpoint_bucket_name(Some(prefix));
         let kv_store = create_or_open_kv_store(
             &js,
             jetstream::kv::Config {

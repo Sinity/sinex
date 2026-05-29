@@ -3,8 +3,6 @@
 # Keep the test script minimal: start services, then run the typed Rust
 # `sinex-vm-test-suite` against the VM.
 { pkgs
-, sinex-ingestd
-, sinex-gateway
 , pg_jsonschema
 , sinex ? null
 , sinexCli ? null
@@ -21,7 +19,7 @@ pkgs.testers.nixosTest {
   nodes.machine = { config, pkgs, lib, ... }: {
     imports = [
       (import ../common/test-base.nix {
-        inherit config pkgs lib sinex-ingestd sinex-gateway pg_jsonschema sinex sinexCli;
+        inherit config pkgs lib pg_jsonschema sinex sinexCli;
       })
     ];
 
@@ -49,8 +47,7 @@ pkgs.testers.nixosTest {
     start_all()
     machine.wait_for_unit("multi-user.target")
     machine.wait_for_unit("postgresql.service", timeout=60)
-    machine.wait_for_unit("sinex-gateway.service", timeout=60)
-    machine.wait_for_unit("sinex-ingestd.service", timeout=60)
+    machine.wait_for_unit("sinexd.service", timeout=60)
     machine.wait_for_unit("sinex-filesystem-1.service", timeout=60)
     machine.wait_for_unit("sinex-document-scan.timer", timeout=60)
     machine.wait_for_unit("sinex-canonicalizer.service", timeout=60)

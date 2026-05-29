@@ -7,15 +7,16 @@
 
 pub mod analytics;
 pub mod canonicalizer;
-pub mod registry;
 pub mod daily;
 pub mod document_parser;
+pub mod embedding_producer;
 pub mod entity_enricher;
 pub mod entity_extractor;
 pub mod entity_resolver;
 pub mod health;
 pub mod hourly;
 pub mod instruction_reconciler;
+pub mod registry;
 pub mod relation_extractor;
 pub mod session;
 pub mod tag_applier;
@@ -24,6 +25,7 @@ pub use analytics::AnalyticsAutomatonNode;
 pub use canonicalizer::TerminalCommandCanonicalizerNode;
 pub use daily::DailySummarizerNode;
 pub use document_parser::{DocumentParserNode, DocumentParserNodeAdapter};
+pub use embedding_producer::EmbeddingProducerNode;
 pub use entity_enricher::EntityEnricherNode;
 pub use entity_extractor::EntityExtractorNode;
 pub use entity_resolver::EntityResolverNode;

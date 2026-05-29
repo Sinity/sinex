@@ -13,10 +13,10 @@ use serde::Serialize;
 use sinex_db::DbPoolExt;
 use sinex_db::advisory_lock::AdvisoryLock;
 use sinex_db::repositories::EventPayloadSchema;
-use sinex_node_sdk::content_store::{ContentStoreConfig, MaterialContentStore};
-use sinex_node_sdk::heartbeat::HeartbeatEmitter;
-use sinex_node_sdk::systemd_notify;
-use sinex_node_sdk::{SelfObserver, SelfObserverConfig};
+use crate::node_sdk::content_store::{ContentStoreConfig, MaterialContentStore};
+use crate::node_sdk::heartbeat::HeartbeatEmitter;
+use crate::node_sdk::systemd_notify;
+use crate::node_sdk::{SelfObserver, SelfObserverConfig};
 use sinex_primitives::Id;
 use sinex_primitives::Timestamp;
 use sinex_primitives::domain::{NodeName, NodeType, ServiceName};
@@ -142,7 +142,7 @@ pub struct IngestService {
     shutdown_notify: Arc<tokio::sync::Notify>,
     task_handles: Arc<Mutex<Vec<JoinHandle<()>>>>,
     /// Heartbeat counter handle — set during `start()`, passed to `JetStreamConsumer`
-    heartbeat_counter_handle: Option<sinex_node_sdk::heartbeat::HeartbeatCounterHandle>,
+    heartbeat_counter_handle: Option<crate::node_sdk::heartbeat::HeartbeatCounterHandle>,
 }
 
 type CriticalTaskOutcome = (
@@ -326,7 +326,7 @@ impl IngestService {
     fn init_observer(nats_client: &Option<NatsClient>) -> SelfObserver {
         match nats_client {
             Some(nats) => {
-                let config = SelfObserverConfig::from_env("sinex-ingestd");
+                let config = SelfObserverConfig::from_env("sinexd");
                 SelfObserver::new(nats.clone(), config)
             }
             None => SelfObserver::disabled(),
@@ -402,7 +402,7 @@ impl IngestService {
         // Register a run for ingestd and start periodic heartbeat
         if let Some(ref pool) = self.db_pool {
             let host = std::env::var("HOSTNAME").unwrap_or_else(|_| "unknown".to_string());
-            let node_name = NodeName::new("sinex-ingestd");
+            let node_name = NodeName::new("sinexd");
             let manifest_id = match pool
                 .state()
                 .register_node(
@@ -424,7 +424,7 @@ impl IngestService {
             };
             match pool
                 .state()
-                .start_run(manifest_id, "sinex-ingestd", "default", &host, None, None)
+                .start_run(manifest_id, "sinexd", "default", &host, None, None)
                 .await
             {
                 Ok(run) => {
@@ -438,10 +438,10 @@ impl IngestService {
             // Tracks error window for Healthy/Degraded/Failed status determination.
             // Counter handle is passed to JetStreamConsumer so batch counts feed health status.
             let emitter = HeartbeatEmitter::new(
-                ServiceName::new("sinex-ingestd"),
+                ServiceName::new("sinexd"),
                 sinex_primitives::Seconds::from_secs(60),
             )
-            .with_node_name(NodeName::new("sinex-ingestd"))
+            .with_node_name(NodeName::new("sinexd"))
             .with_db_pool(pool.clone());
             self.heartbeat_counter_handle = Some(emitter.get_counter_handle());
 
@@ -451,8 +451,8 @@ impl IngestService {
             let handle = tokio::spawn(async move {
                 tokio::select! {
                     () = emitter.start_periodic_heartbeat(None) => {}
-                    () = sinex_node_sdk::wait_for_shutdown_signal_bool(&shutdown_flag, &shutdown_notify) => {
-                        let node_name = NodeName::new("sinex-ingestd");
+                    () = crate::node_sdk::wait_for_shutdown_signal_bool(&shutdown_flag, &shutdown_notify) => {
+                        let node_name = NodeName::new("sinexd");
                         if let Err(error) = heartbeat_pool
                             .state()
                             .mark_node_inactive_for_version(&node_name, env!("CARGO_PKG_VERSION"))
@@ -485,15 +485,15 @@ impl IngestService {
                 .await;
         }
 
-        systemd_notify::notify_ready("sinex-ingestd");
-        let watchdog_handle = systemd_notify::spawn_watchdog("sinex-ingestd");
+        systemd_notify::notify_ready("sinexd");
+        let watchdog_handle = systemd_notify::spawn_watchdog("sinexd");
 
         // Monitor critical tasks - exit on first failure or shutdown signal
         let monitor_result = self
             .monitor_runtime(js_handle.take(), ma_handle.take())
             .await;
-        systemd_notify::stop_watchdog(watchdog_handle, "sinex-ingestd").await;
-        systemd_notify::notify_stopping("sinex-ingestd");
+        systemd_notify::stop_watchdog(watchdog_handle, "sinexd").await;
+        systemd_notify::notify_stopping("sinexd");
 
         // Ensure background tasks have a chance to shut down before closing resources.
         let shutdown_result = self.wait_for_tasks(Duration::from_secs(5)).await;
@@ -602,7 +602,7 @@ impl IngestService {
             }
 
             // Normal shutdown signal
-            () = sinex_node_sdk::wait_for_shutdown_signal_bool(&shutdown_flag, &shutdown_notify) => {
+            () = crate::node_sdk::wait_for_shutdown_signal_bool(&shutdown_flag, &shutdown_notify) => {
                 info!("Received shutdown signal");
                 Ok(())
             }
@@ -893,7 +893,7 @@ impl IngestService {
                         }
                     }
                 }
-                () = sinex_node_sdk::wait_for_shutdown_signal_bool(&shutdown_flag, &shutdown_notify) => {
+                () = crate::node_sdk::wait_for_shutdown_signal_bool(&shutdown_flag, &shutdown_notify) => {
                     info!("JetStream consumer shutting down");
                     Ok(())
                 }
@@ -957,32 +957,33 @@ impl IngestService {
 
             let state_dir: PathBuf = assembler_state_dir.into();
 
-            let assembler = match crate::event_engine::MaterialAssembler::new_with_durability_thresholds(
-                nats_client,
-                pool,
-                content_store,
-                state_dir,
-                namespace.clone(),
-                slices_max_ack_pending,
-                ready_set,
-                max_buffered_slices,
-                max_material_size_bytes,
-                slice_timeout_secs,
-                orphan_threshold_secs,
-                disk_threshold_percent,
-                durability_thresholds,
-            ) {
-                Ok(assembler) => assembler.with_observer(observer),
-                Err(e) => {
-                    error!(
-                        target: "sinex_metrics",
-                        metric = "ingestd.material_assembler_failures_total",
-                        error = %e,
-                        "Failed to create MaterialAssembler"
-                    );
-                    return Err(e);
-                }
-            };
+            let assembler =
+                match crate::event_engine::MaterialAssembler::new_with_durability_thresholds(
+                    nats_client,
+                    pool,
+                    content_store,
+                    state_dir,
+                    namespace.clone(),
+                    slices_max_ack_pending,
+                    ready_set,
+                    max_buffered_slices,
+                    max_material_size_bytes,
+                    slice_timeout_secs,
+                    orphan_threshold_secs,
+                    disk_threshold_percent,
+                    durability_thresholds,
+                ) {
+                    Ok(assembler) => assembler.with_observer(observer),
+                    Err(e) => {
+                        error!(
+                            target: "sinex_metrics",
+                            metric = "ingestd.material_assembler_failures_total",
+                            error = %e,
+                            "Failed to create MaterialAssembler"
+                        );
+                        return Err(e);
+                    }
+                };
 
             let result = assembler
                 .run_with_shutdown_signal_and_ready(
@@ -1060,7 +1061,7 @@ impl IngestService {
                             }
                         }
                     }
-                    () = sinex_node_sdk::wait_for_shutdown_signal_bool(&shutdown_flag, &shutdown_notify) => {
+                    () = crate::node_sdk::wait_for_shutdown_signal_bool(&shutdown_flag, &shutdown_notify) => {
                         break;
                     }
                 }
@@ -1092,7 +1093,7 @@ impl IngestService {
                             );
                         }
                     }
-                    () = sinex_node_sdk::wait_for_shutdown_signal_bool(&shutdown_flag, &shutdown_notify) => {
+                    () = crate::node_sdk::wait_for_shutdown_signal_bool(&shutdown_flag, &shutdown_notify) => {
                         break;
                     }
                 }
@@ -1131,7 +1132,7 @@ impl IngestService {
                             }
                         };
 
-                        match sinex_node_sdk::content_store::gc::sweep_orphans(
+                        match crate::node_sdk::content_store::gc::sweep_orphans(
                             &pool,
                             &content_store,
                             true,
@@ -1152,7 +1153,7 @@ impl IngestService {
                             }
                         }
                     }
-                    () = sinex_node_sdk::wait_for_shutdown_signal_bool(&shutdown_flag, &shutdown_notify) => {
+                    () = crate::node_sdk::wait_for_shutdown_signal_bool(&shutdown_flag, &shutdown_notify) => {
                         break;
                     }
                 }
@@ -1609,7 +1610,7 @@ mod tests {
 
         tokio::time::timeout(
             Duration::from_millis(10),
-            sinex_node_sdk::wait_for_shutdown_signal_bool(
+            crate::node_sdk::wait_for_shutdown_signal_bool(
                 &service.shutdown_flag,
                 &service.shutdown_notify,
             ),
@@ -1635,7 +1636,7 @@ mod tests {
 
         tokio::time::timeout(
             Duration::from_millis(10),
-            sinex_node_sdk::wait_for_shutdown_signal_bool(
+            crate::node_sdk::wait_for_shutdown_signal_bool(
                 &service.shutdown_flag,
                 &service.shutdown_notify,
             ),
@@ -1655,7 +1656,7 @@ mod tests {
 
         tokio::time::timeout(
             Duration::from_millis(10),
-            sinex_node_sdk::wait_for_shutdown_signal_bool(
+            crate::node_sdk::wait_for_shutdown_signal_bool(
                 &service.shutdown_flag,
                 &service.shutdown_notify,
             ),
@@ -1740,7 +1741,7 @@ mod tests {
         let shutdown_flag = Arc::clone(&service.shutdown_flag);
         let shutdown_notify = Arc::clone(&service.shutdown_notify);
         let sibling = tokio::spawn(async move {
-            sinex_node_sdk::wait_for_shutdown_signal_bool(&shutdown_flag, &shutdown_notify).await;
+            crate::node_sdk::wait_for_shutdown_signal_bool(&shutdown_flag, &shutdown_notify).await;
             sibling_flag.store(true, Ordering::SeqCst);
             Ok(())
         });
@@ -1769,7 +1770,7 @@ mod tests {
         let shutdown_flag = Arc::clone(&service.shutdown_flag);
         let shutdown_notify = Arc::clone(&service.shutdown_notify);
         let sibling = tokio::spawn(async move {
-            sinex_node_sdk::wait_for_shutdown_signal_bool(&shutdown_flag, &shutdown_notify).await;
+            crate::node_sdk::wait_for_shutdown_signal_bool(&shutdown_flag, &shutdown_notify).await;
             sibling_flag.store(true, Ordering::SeqCst);
             Ok(())
         });
@@ -1944,7 +1945,7 @@ mod tests {
     #[sinex_test]
     async fn log_node_manifest_write_failure_accepts_processing_errors()
     -> xtask::sandbox::TestResult<()> {
-        let node_name = NodeName::new("sinex-ingestd");
+        let node_name = NodeName::new("sinexd");
         let error = SinexError::processing("node manifest update exploded");
         log_node_manifest_write_failure("mark_node_inactive", &node_name, &error);
         Ok(())

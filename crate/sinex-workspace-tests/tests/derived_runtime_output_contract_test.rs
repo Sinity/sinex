@@ -7,9 +7,9 @@
 use std::collections::HashMap;
 
 use camino::Utf8PathBuf;
-use sinex_node_sdk::derived_node::{ScopeReconcilerWrapper, TransducerWrapper, WindowedWrapper};
-use sinex_node_sdk::runtime::stream::{Node, NodeInitContext};
-use sinex_node_sdk::{DerivedNodeConfig, ShutdownConfig, derived_node::Automaton};
+use sinexd::node_sdk::derived_node::{ScopeReconcilerWrapper, TransducerWrapper, WindowedWrapper};
+use sinexd::node_sdk::runtime::stream::{Node, NodeInitContext};
+use sinexd::node_sdk::{DerivedNodeConfig, ShutdownConfig, derived_node::Automaton};
 use sinex_primitives::domain::{DerivedNodeModel, SyntheticTemporalPolicy};
 use sinex_primitives::events::EventPayload;
 use sinex_primitives::events::payloads::{
@@ -231,8 +231,7 @@ where
         checkpoint_path: Some(checkpoint_path),
         ..Default::default()
     };
-    let mut adapter =
-        sinex_node_sdk::AutomatonRuntime::with_shutdown_config(node, shutdown_config);
+    let mut adapter = sinexd::node_sdk::AutomatonRuntime::with_shutdown_config(node, shutdown_config);
     let mut runtime = TestRuntimeBuilder::new(ctx, service_name).build().await?;
     let init = derived_init_context(&runtime, service_name)?;
     adapter.initialize(init).await?;

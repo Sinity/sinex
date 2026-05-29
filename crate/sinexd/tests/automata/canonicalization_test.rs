@@ -3,8 +3,8 @@
 //! Validates source filtering, JSON field extraction, exit code parsing,
 //! timestamp fallback, and empty-command handling.
 
-use sinex_node_sdk::derived_node::AutomatonContext;
-use sinex_node_sdk::{NodeLogicError, Transducer};
+use sinexd::node_sdk::derived_node::AutomatonContext;
+use sinexd::node_sdk::{NodeLogicError, Transducer};
 use sinex_primitives::domain::{ProcessingMode, TriggerKind};
 use sinex_primitives::events::Event;
 use sinex_primitives::events::EventPayload;

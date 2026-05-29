@@ -47,7 +47,7 @@
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
-use sinex_node_sdk::parser::{MaterialParser, ParserError, ParserResult, StaticFileAdapter};
+use crate::node_sdk::parser::{MaterialParser, ParserError, ParserResult, StaticFileAdapter};
 use sinex_primitives::domain::{EventSource, EventType};
 use sinex_primitives::parser::{
     InputShapeKind, MaterialAnchor, OccurrenceKey, ParsedEventIntent, ParserContext, ParserId,

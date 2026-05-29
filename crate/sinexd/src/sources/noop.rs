@@ -7,8 +7,8 @@
 
 use crate::register_node_factory;
 use serde::{Deserialize, Serialize};
-use sinex_node_sdk::{
-    SourceUnit, NodeResult,
+use crate::node_sdk::{
+    NodeResult, SourceUnit,
     runtime::stream::{
         Checkpoint, ContinuousStart, NodeCapabilities, ScanArgs, ScanReport, TimeHorizon,
     },
@@ -94,7 +94,7 @@ impl SourceUnit for NoopSourceUnit {
     async fn initialize(
         &mut self,
         _config: Self::Config,
-        _runtime: &sinex_node_sdk::runtime::stream::NodeRuntimeState,
+        _runtime: &crate::node_sdk::runtime::stream::NodeRuntimeState,
         _state: &mut Self::State,
     ) -> NodeResult<()> {
         tracing::info!("Noop source unit initialized");

@@ -13,11 +13,11 @@ use async_nats::jetstream;
 use camino::Utf8PathBuf;
 use futures::future::join_all;
 use serde_json::json;
-use sinexd::event_engine::{JetStreamTopology, config::IngestdConfig, service::IngestService};
 use sinex_primitives::nats::NatsConnectionConfig;
 use sinex_primitives::{
     Event, EventSource, EventType, HostName, Id, OffsetKind, Provenance, SourceMaterial,
 };
+use sinexd::event_engine::{JetStreamTopology, config::IngestdConfig, service::IngestService};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use tempfile::TempDir;

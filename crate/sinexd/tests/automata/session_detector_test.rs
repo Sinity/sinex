@@ -1,5 +1,5 @@
-use sinex_node_sdk::Windowed;
-use sinex_node_sdk::derived_node::{DerivedAggregationMeta, AutomatonContext};
+use sinexd::node_sdk::Windowed;
+use sinexd::node_sdk::derived_node::{DerivedAggregationMeta, AutomatonContext};
 use sinex_primitives::activity::ActivitySourceKind;
 use sinex_primitives::domain::{ProcessingMode, TriggerKind};
 use sinex_primitives::events::payloads::{

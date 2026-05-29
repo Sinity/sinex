@@ -6,7 +6,7 @@ use super::{
     StreamExt, replay_scope_drift_error, stale_preview_missing_root_ids_error,
 };
 use sinex_db::repositories::DbPoolExt;
-use sinex_node_sdk::runtime::stream::{
+use crate::node_sdk::runtime::stream::{
     Checkpoint, MaterialReplayContext, NodeScanAck, NodeScanCommand, NodeScanProgress,
     ReplayScopeFilters as NodeReplayScopeFilters, ScanArgs, TimeHorizon,
 };

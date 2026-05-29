@@ -1,6 +1,6 @@
 //! Workspace-level contracts for production derived-node output schemas.
 
-use sinex_node_sdk::{ScopeReconciler, Transducer, Windowed};
+use sinexd::node_sdk::{ScopeReconciler, Transducer, Windowed};
 use sinex_primitives::events::schema_registry::get_all_payloads;
 use sinexd::automata::{
     analytics::AnalyticsAutomaton, canonicalizer::TerminalCommandCanonicalizer,

@@ -361,8 +361,10 @@ impl IngestdConfig {
             strict_env_validated_path("SINEX_CONTENT_STORE_PATH", "content-store path")?;
         let assembler_state_dir_env_override =
             strict_env_validated_path("SINEX_ASSEMBLER_STATE_DIR", "assembler state directory")?;
-        let gitops_work_dir_override =
-            strict_env_validated_path("SINEX_EVENT_ENGINE_GITOPS_WORK_DIR", "gitops work directory")?;
+        let gitops_work_dir_override = strict_env_validated_path(
+            "SINEX_EVENT_ENGINE_GITOPS_WORK_DIR",
+            "gitops work directory",
+        )?;
         let skip_schema_sync = shared_env::strict_flag("SINEX_SKIP_SCHEMA_SYNC")?.unwrap_or(false);
         let validate_schemas = shared_env::strict_flag("SINEX_VALIDATE_SCHEMAS")?.unwrap_or(true);
         let strict_validation =
@@ -474,7 +476,9 @@ impl IngestdConfig {
         {
             config.retry_config.initial_delay = Duration::from_millis(value);
         }
-        if let Some(value) = shared_env::strict_parsed::<u64>("SINEX_EVENT_ENGINE_RETRY_MAX_DELAY_MS")? {
+        if let Some(value) =
+            shared_env::strict_parsed::<u64>("SINEX_EVENT_ENGINE_RETRY_MAX_DELAY_MS")?
+        {
             config.retry_config.max_delay = Duration::from_millis(value);
         }
         if let Some(value) = shared_env::strict_parsed("SINEX_EVENT_ENGINE_RETRY_MULTIPLIER")? {
@@ -1235,9 +1239,10 @@ fn default_material_wal_sync_interval_ms() -> Milliseconds {
 }
 
 fn default_gitops_work_dir() -> Utf8PathBuf {
-    if let Some(validated) =
-        env_validated_path("SINEX_EVENT_ENGINE_GITOPS_WORK_DIR", "gitops work directory")
-    {
+    if let Some(validated) = env_validated_path(
+        "SINEX_EVENT_ENGINE_GITOPS_WORK_DIR",
+        "gitops work directory",
+    ) {
         return validated;
     }
 
@@ -1332,7 +1337,10 @@ mod tests {
     {
         let mut env = EnvGuard::new();
         env.set("SINEX_EVENT_ENGINE_MATERIAL_STAGED_SYNC_BYTES", "1048576");
-        env.set("SINEX_EVENT_ENGINE_MATERIAL_STAGED_SYNC_INTERVAL_MS", "1000");
+        env.set(
+            "SINEX_EVENT_ENGINE_MATERIAL_STAGED_SYNC_INTERVAL_MS",
+            "1000",
+        );
         env.set("SINEX_EVENT_ENGINE_MATERIAL_WAL_SYNC_BYTES", "262144");
         env.set("SINEX_EVENT_ENGINE_MATERIAL_WAL_SYNC_ENTRIES", "128");
         env.set("SINEX_EVENT_ENGINE_MATERIAL_WAL_SYNC_INTERVAL_MS", "1000");
@@ -1389,7 +1397,10 @@ mod tests {
     #[sinex_serial_test]
     async fn derived_default_paths_ignore_invalid_overrides() -> xtask::sandbox::TestResult<()> {
         let mut env = EnvGuard::new();
-        env.set("SINEX_EVENT_ENGINE_WORK_DIR", "/tmp/sinex-ingestd-config-root");
+        env.set(
+            "SINEX_EVENT_ENGINE_WORK_DIR",
+            "/tmp/sinex-ingestd-config-root",
+        );
         env.set("SINEX_CONTENT_STORE_PATH", "../../bad-content-store");
         env.set("SINEX_ASSEMBLER_STATE_DIR", "../../bad-state-dir");
         env.set("SINEX_EVENT_ENGINE_GITOPS_WORK_DIR", "../../bad-gitops");

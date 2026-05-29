@@ -1,10 +1,10 @@
 //! Source-unit runner — assembles per-unit runtime handles before the SDK
-//! [`NodeRunner`](sinex_node_sdk::runtime::stream::NodeRunner) takes over.
+//! [`NodeRunner`](crate::node_sdk::runtime::stream::NodeRunner) takes over.
 //!
 //! Each source unit gets:
 //! - A per-unit [`SourceWorkerDrainController`] for the enhanced drain protocol
 //! - Per-unit checkpoint isolation via the `--source-unit` flag (routed through
-//!   [`ServiceInfo::checkpoint_identity`](sinex_node_sdk::runtime::stream::ServiceInfo))
+//!   [`ServiceInfo::checkpoint_identity`](crate::node_sdk::runtime::stream::ServiceInfo))
 //! - Per-unit health reporting (auto-enabled by [`SourceUnitRuntime`])
 //!
 //! The runner itself is thin — most lifecycle work is handled by the SDK's
@@ -18,7 +18,7 @@ use std::sync::Arc;
 ///
 /// Holds the enhanced drain controller for the unit. The SDK's `NodeRunner`
 /// already provides checkpoint, health, NATS, and DB handles through
-/// [`NodeHandles`](sinex_node_sdk::runtime::stream::NodeHandles).
+/// [`NodeHandles`](crate::node_sdk::runtime::stream::NodeHandles).
 #[derive(Debug)]
 pub struct SourceUnitRunner {
     unit_id: String,

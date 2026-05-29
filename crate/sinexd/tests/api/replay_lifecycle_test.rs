@@ -2,7 +2,7 @@ use async_nats::jetstream::consumer::{AckPolicy, DeliverPolicy, pull::Config as 
 use futures::StreamExt;
 use sinex_db::{DbPool, repositories::DbPoolExt};
 use sinexd::api::ServiceContainer;
-use sinex_node_sdk::{Checkpoint, NodeScanAck, NodeScanCommand, NodeScanProgress, ScanReport};
+use sinexd::node_sdk::{Checkpoint, NodeScanAck, NodeScanCommand, NodeScanProgress, ScanReport};
 use sinex_primitives::{DynamicPayload, Id, Uuid, temporal::Timestamp};
 use std::time::Duration;
 use tokio::time::sleep;

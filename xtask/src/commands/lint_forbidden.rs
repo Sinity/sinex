@@ -91,9 +91,9 @@ impl XtaskCommand for LintForbiddenCommand {
             "crate/lib/sinex-db/src/repositories/document_search.rs",
             "crate/lib/sinex-db/src/replay/state_machine.rs",
             // Dynamic session GUC setup over a small fixed option table.
-            "crate/lib/sinex-node-sdk/src/preflight/mod.rs",
-            "crate/lib/sinex-node-sdk/src/preflight/database.rs",
-            "crate/lib/sinex-node-sdk/src/preflight/verification.rs",
+            "node_sdk/src/preflight/mod.rs",
+            "node_sdk/src/preflight/database.rs",
+            "node_sdk/src/preflight/verification.rs",
             "crate/lib/sinex-test-utils/src/database_pool.rs",
             "crate/lib/sinex-test-utils/src/db_common.rs",
             "crate/lib/sinex-test-utils/src/fixture_generator.rs",
@@ -107,7 +107,7 @@ impl XtaskCommand for LintForbiddenCommand {
             "crate/core/sinex-gateway/src/handlers/audit.rs",
             "crate/lib/sinex-db/src/repositories/events/composable_query.rs",
             "crate/lib/sinex-db/src/repositories/events/persistence.rs",
-            "crate/lib/sinex-node-sdk/src/preflight/database.rs",
+            "node_sdk/src/preflight/database.rs",
             // Timescale catalog tables may not exist in compile-time check DBs.
             "crate/lib/sinex-schema/src/strict_diff.rs",
             "xtask/src/main.rs",
@@ -137,10 +137,10 @@ impl XtaskCommand for LintForbiddenCommand {
         let raw_event_subject_allow = [
             "xtask/src/sandbox/events.rs",
             "crate/lib/sinex-primitives/src/domain.rs",
-            "crate/lib/sinex-node-sdk/src/nats_publisher.rs",
+            "node_sdk/src/nats_publisher.rs",
             "crate/lib/sinex-primitives/src/environment.rs",
-            "crate/lib/sinex-node-sdk/src/event_node.rs",
-            "crate/lib/sinex-node-sdk/src/runtime/stream/mod.rs",
+            "node_sdk/src/event_node.rs",
+            "node_sdk/src/runtime/stream/mod.rs",
             "xtask/src/commands/lint_forbidden.rs",
         ];
         violations.extend(check_pattern(
@@ -171,13 +171,13 @@ impl XtaskCommand for LintForbiddenCommand {
 
         // println! in library code (use tracing for structured logging)
         let println_lib_allow = [
-            "crate/lib/sinex-node-sdk/src/node_cli.rs",
+            "node_sdk/src/node_cli.rs",
             // Intentional stdout output for CLI-facing functions
-            "crate/lib/sinex-node-sdk/src/version.rs",
-            "crate/lib/sinex-node-sdk/src/heartbeat.rs",
-            "crate/lib/sinex-node-sdk/src/diagnostics/regression.rs",
+            "node_sdk/src/version.rs",
+            "node_sdk/src/heartbeat.rs",
+            "node_sdk/src/diagnostics/regression.rs",
             // Doc comment code examples (scanner can't distinguish from real code)
-            "crate/lib/sinex-node-sdk/src/watcher_handle.rs",
+            "node_sdk/src/watcher_handle.rs",
             "crate/lib/sinex-schema/src/strict_diff.rs",
         ];
         violations.extend(check_println_in_lib(
@@ -234,8 +234,8 @@ impl XtaskCommand for LintForbiddenCommand {
             "crate/core/sinex-ingestd/src/material_assembler/state.rs",
             // SDK material/anchor surface kept on bare Uuid until the
             // SourceRecordAnchor / SourceMaterialHandle pair is promoted.
-            "crate/lib/sinex-node-sdk/src/acquisition_manager.rs",
-            "crate/lib/sinex-node-sdk/src/ingestion_helpers.rs",
+            "node_sdk/src/acquisition_manager.rs",
+            "node_sdk/src/ingestion_helpers.rs",
             // Process automata analytics row.
             "crate/core/sinex-process/src/automata/analytics.rs",
             // Test fixture publisher.
@@ -327,15 +327,15 @@ fn check_transport_publish_family_inventory() -> Result<Vec<String>> {
         // Test/sandbox producer used by xtask harnesses.
         "xtask/src/sandbox/events.rs",
         // Canonical event, telemetry, raw-ingest DLQ, and processing-failure publisher.
-        "crate/lib/sinex-node-sdk/src/nats_publisher.rs",
+        "node_sdk/src/nats_publisher.rs",
         // Source-material lifecycle frame publisher.
-        "crate/lib/sinex-node-sdk/src/acquisition_manager.rs",
+        "node_sdk/src/acquisition_manager.rs",
         // Raw-ingest DLQ retry re-publishes into the original raw-event subject.
-        "crate/lib/sinex-node-sdk/src/dlq_retry.rs",
+        "node_sdk/src/dlq_retry.rs",
         // Node coordination control messages.
-        "crate/lib/sinex-node-sdk/src/coordination.rs",
+        "node_sdk/src/coordination.rs",
         // Runtime scan/drain control messages.
-        "crate/lib/sinex-node-sdk/src/runtime/stream/runner/control_messages.rs",
+        "node_sdk/src/runtime/stream/runner/control_messages.rs",
         // Ingestd confirmation and raw-ingest DLQ publishers.
         "crate/core/sinex-ingestd/src/jetstream_consumer.rs",
         // Source-material assembler DLQ routing.
@@ -351,7 +351,7 @@ fn check_transport_publish_family_inventory() -> Result<Vec<String>> {
         "crate/core/sinex-gateway/src/replay_control/execution/collect.rs",
         // Inline private-mode listener regression publishes a synthetic
         // control message; the production listener only subscribes.
-        "crate/lib/sinex-node-sdk/src/parser/adapter_node.rs",
+        "node_sdk/src/parser/adapter_node.rs",
         // Source-worker parse command request/reply acknowledgements.
         "crate/core/sinex-source-worker/src/parse_listener.rs",
         // This lint's regex fixtures and inventory strings.
@@ -365,8 +365,8 @@ fn check_transport_publish_family_inventory() -> Result<Vec<String>> {
         |path| {
             is_tests_path(path)
                 || path == "crate/lib/sinex-primitives/src/testing.rs"
-                || path == "crate/lib/sinex-node-sdk/src/event_node.rs"
-                || path == "crate/lib/sinex-node-sdk/src/self_observation.rs"
+                || path == "node_sdk/src/event_node.rs"
+                || path == "node_sdk/src/self_observation.rs"
                 || path.starts_with("crate/lib/sinex-test-utils/")
         },
     )

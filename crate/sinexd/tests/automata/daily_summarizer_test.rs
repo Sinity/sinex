@@ -1,5 +1,5 @@
-use sinex_node_sdk::derived_node::{DerivedOutput, AutomatonContext};
-use sinex_node_sdk::{NodeLogicError, Windowed};
+use sinexd::node_sdk::derived_node::{DerivedOutput, AutomatonContext};
+use sinexd::node_sdk::{NodeLogicError, Windowed};
 use sinex_primitives::activity::ActivitySourceKind;
 use sinex_primitives::domain::{ProcessingMode, TriggerKind};
 use sinex_primitives::events::payloads::{

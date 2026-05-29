@@ -169,3 +169,46 @@ impl From<TaskCancelledPayload> for TaskCancelledInput {
         }
     }
 }
+
+// ── task.split ──────────────────────────────────────────────────────────
+
+/// A task was split into two or more child tasks.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
+#[event_payload(source = "sinexctl", event_type = "task.split")]
+pub struct TaskSplitPayload {
+    pub task_id: Uuid,
+    pub split_at: Timestamp,
+    pub actor: String,
+    pub child_task_ids: Vec<Uuid>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
+// ── task.merged ─────────────────────────────────────────────────────────
+
+/// Two or more tasks were merged into this one.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
+#[event_payload(source = "sinexctl", event_type = "task.merged")]
+pub struct TaskMergedPayload {
+    pub task_id: Uuid,
+    pub merged_at: Timestamp,
+    pub actor: String,
+    pub source_task_ids: Vec<Uuid>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
+// ── task.linked ─────────────────────────────────────────────────────────
+
+/// A directional link was created between two tasks.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
+#[event_payload(source = "sinexctl", event_type = "task.linked")]
+pub struct TaskLinkedPayload {
+    pub task_id: Uuid,
+    pub linked_at: Timestamp,
+    pub actor: String,
+    pub target_task_id: Uuid,
+    pub link_type: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}

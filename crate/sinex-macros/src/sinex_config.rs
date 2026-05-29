@@ -65,10 +65,19 @@ fn try_expand(input: &DeriveInput) -> syn::Result<TokenStream2> {
         // name is `{prefix}_{FIELD_NAME_UPPERCASED}`.
         let env_key = match &attrs.env {
             Some(explicit) => explicit.clone(),
-            None => format!("{}_{}", struct_attrs.prefix, field_name_to_env(&name.to_string())),
+            None => format!(
+                "{}_{}",
+                struct_attrs.prefix,
+                field_name_to_env(&name.to_string())
+            ),
         };
-        let helper_call =
-            infer_helper(&field.ty, &env_key, &struct_attrs.context, &attrs, struct_attrs.fallible)?;
+        let helper_call = infer_helper(
+            &field.ty,
+            &env_key,
+            &struct_attrs.context,
+            &attrs,
+            struct_attrs.fallible,
+        )?;
         field_inits.push(quote! { #name: #helper_call });
     }
 
@@ -386,7 +395,7 @@ fn infer_helper_infallible(
 fn infer_helper_fallible(
     ty: &Type,
     env_key: &str,
-    context: &str,
+    _context: &str,
     attrs: &FieldAttrs,
 ) -> syn::Result<TokenStream2> {
     // Custom parser short-circuits inference.

@@ -10,8 +10,8 @@
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
-use sinex_node_sdk::parser::dedup::ContentHashWindow;
-use sinex_node_sdk::parser::{AppendOnlyFileAdapter, MaterialParser, ParserError, ParserResult};
+use crate::node_sdk::parser::dedup::ContentHashWindow;
+use crate::node_sdk::parser::{AppendOnlyFileAdapter, MaterialParser, ParserError, ParserResult};
 use sinex_primitives::domain::{EventSource, EventType};
 use sinex_primitives::events::payloads::shell::HistoryCommandImportedPayload;
 use sinex_primitives::parser::{

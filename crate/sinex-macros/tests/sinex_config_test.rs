@@ -294,7 +294,11 @@ async fn sinex_config_nested_infallible() -> TestResult<()> {
 
 // nested (infallible inner) inside a fallible parent — no `?`
 #[derive(Debug, Clone, SinexConfig)]
-#[sinex_config(prefix = "SINEX_TEST_FALLIBLE_OUTER", context = "fallible outer", fallible)]
+#[sinex_config(
+    prefix = "SINEX_TEST_FALLIBLE_OUTER",
+    context = "fallible outer",
+    fallible
+)]
 pub struct FallibleOuterConfig {
     #[sinex_config(default = 1_u32)]
     pub count: u32,
@@ -303,8 +307,7 @@ pub struct FallibleOuterConfig {
     pub inner: InnerConfig,
 }
 
-const FALLIBLE_OUTER_KEYS: &[&str] =
-    &["SINEX_TEST_FALLIBLE_OUTER_COUNT", "SINEX_TEST_INNER_VALUE"];
+const FALLIBLE_OUTER_KEYS: &[&str] = &["SINEX_TEST_FALLIBLE_OUTER_COUNT", "SINEX_TEST_INNER_VALUE"];
 
 #[sinex_test]
 async fn sinex_config_nested_inside_fallible() -> TestResult<()> {
@@ -319,7 +322,11 @@ async fn sinex_config_nested_inside_fallible() -> TestResult<()> {
 
 // nested_fallible — inner type is also fallible; propagate its Result with `?`.
 #[derive(Debug, Clone, SinexConfig)]
-#[sinex_config(prefix = "SINEX_TEST_FALLIBLE_INNER", context = "fallible inner", fallible)]
+#[sinex_config(
+    prefix = "SINEX_TEST_FALLIBLE_INNER",
+    context = "fallible inner",
+    fallible
+)]
 pub struct FallibleInnerConfig {
     #[sinex_config(default = 0_u32)]
     pub inner_val: u32,
@@ -367,7 +374,11 @@ async fn sinex_config_nested_fallible_propagates_result() -> TestResult<()> {
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, SinexConfig)]
-#[sinex_config(prefix = "SINEX_TEST_NORM", context = "normalize test", normalize_fn = "normalize")]
+#[sinex_config(
+    prefix = "SINEX_TEST_NORM",
+    context = "normalize test",
+    normalize_fn = "normalize"
+)]
 pub struct NormalizeConfig {
     #[sinex_config(default_expr = "\"raw\".to_string()")]
     pub name: String,
@@ -463,7 +474,10 @@ pub struct Utf8PathConfig {
     pub maybe_dir: Option<Utf8PathBuf>,
 }
 
-const UTF8_KEYS: &[&str] = &["SINEX_TEST_UTF8PATH_WORK_DIR", "SINEX_TEST_UTF8PATH_MAYBE_DIR"];
+const UTF8_KEYS: &[&str] = &[
+    "SINEX_TEST_UTF8PATH_WORK_DIR",
+    "SINEX_TEST_UTF8PATH_MAYBE_DIR",
+];
 
 #[sinex_test]
 async fn sinex_config_utf8pathbuf_infallible() -> TestResult<()> {
@@ -485,7 +499,11 @@ async fn sinex_config_utf8pathbuf_infallible() -> TestResult<()> {
 }
 
 #[derive(Debug, Clone, SinexConfig)]
-#[sinex_config(prefix = "SINEX_TEST_UTF8PATH_F", context = "utf8path fallible", fallible)]
+#[sinex_config(
+    prefix = "SINEX_TEST_UTF8PATH_F",
+    context = "utf8path fallible",
+    fallible
+)]
 pub struct Utf8PathFallibleConfig {
     #[sinex_config(default_expr = "Utf8PathBuf::from(\"/tmp/default\")")]
     pub work_dir: Utf8PathBuf,

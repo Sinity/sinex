@@ -10,7 +10,7 @@
 use std::sync::Arc;
 
 use camino::Utf8PathBuf;
-use sinex_node_sdk::content_store::{ContentStoreConfig, MaterialContentStore};
+use crate::node_sdk::content_store::{ContentStoreConfig, MaterialContentStore};
 use xtask::sandbox::prelude::*;
 
 use super::MaterialAssembler;

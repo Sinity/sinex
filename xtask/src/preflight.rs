@@ -1948,9 +1948,11 @@ mod tests {
         assert!(overrides.iter().any(|(key, value)| {
             key == "SINEX_RPC_TOKEN" && value.starts_with("dev-token-") && value.ends_with(":admin")
         }));
-        assert!(overrides.iter().any(|(key, value)| {
-            key == "SINEX_API_TLS_CERT" && value.ends_with("server.pem")
-        }));
+        assert!(
+            overrides.iter().any(|(key, value)| {
+                key == "SINEX_API_TLS_CERT" && value.ends_with("server.pem")
+            })
+        );
         assert!(overrides.iter().any(|(key, value)| {
             key == "SINEX_API_TLS_KEY" && value.ends_with("server-key.pem")
         }));
