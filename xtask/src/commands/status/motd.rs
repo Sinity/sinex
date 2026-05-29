@@ -42,6 +42,9 @@ impl<'a> MotdRenderer<'a> {
         // Build status (when any history exists)
         self.render_build();
 
+        // Drift guard bypasses (when any recorded) (#1565)
+        self.render_bypasses();
+
         // Velocity trends (when meaningful data exists)
         self.render_loop_velocity();
         self.render_baseline_velocity();
@@ -326,6 +329,34 @@ impl<'a> MotdRenderer<'a> {
         } else if let Some(message) = self.output.history.message.as_deref() {
             let indent = " ".repeat(LABEL_COL);
             println!("{indent}{}", style(message).yellow());
+        }
+    }
+
+    // ─── Drift Guard Bypasses ────────────────────────────────────────────
+
+    fn render_bypasses(&self) {
+        let count = self.output.history.drift_guard_bypass_count;
+        if count == 0 {
+            return;
+        }
+
+        let label = style("  bypass").dim();
+        if let Some(ref latest) = self.output.history.drift_guard_last_bypass {
+            let branch = latest.branch.as_deref().unwrap_or("?");
+            let age = if latest.age_days == 0 {
+                "today".to_string()
+            } else {
+                format!("{}d ago", latest.age_days)
+            };
+            println!(
+                "{label}    {count}x in last 30d (last: {branch}, {age}) {}",
+                style("← SINEX_SKIP_DRIFT_GUARD").yellow().dim()
+            );
+        } else {
+            println!(
+                "{label}    {count}x in last 30d {}",
+                style("← SINEX_SKIP_DRIFT_GUARD").yellow().dim()
+            );
         }
     }
 

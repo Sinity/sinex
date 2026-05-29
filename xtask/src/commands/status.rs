@@ -250,6 +250,21 @@ fn collect_history_snapshot_from_db(
     }
     emit_status_profile("history.get_flaky_test_count", flaky_started_at);
 
+    let bypass_started_at = Instant::now();
+    match db.get_drift_guard_bypass_count(30) {
+        Ok(count) => snapshot.drift_guard_bypass_count = count,
+        Err(error) => snapshot
+            .issues
+            .push(format!("Failed to read drift guard bypass history: {error}")),
+    }
+    match db.get_drift_guard_bypass_latest() {
+        Ok(latest) => snapshot.drift_guard_bypass_latest = latest,
+        Err(error) => snapshot
+            .issues
+            .push(format!("Failed to read latest drift guard bypass: {error}")),
+    }
+    emit_status_profile("history.drift_guard_bypass", bypass_started_at);
+
     if include_analytics {
         let analysis = HistoryAnalysis::new(db);
         let analytics_started_at = Instant::now();
@@ -687,6 +702,8 @@ mod tests {
                 fixable_diagnostics: 0,
                 flaky_tests: 0,
                 message: None,
+                drift_guard_bypass_count: 0,
+                drift_guard_last_bypass: None,
             },
             jobs: JobsStatus {
                 active: 2,
@@ -790,6 +807,8 @@ mod tests {
                 fixable_diagnostics: 1,
                 flaky_tests: 0,
                 message: Some("Failed to compute workspace recommendations".into()),
+                drift_guard_bypass_count: 0,
+                drift_guard_last_bypass: None,
             },
             // Rich fields
             health_score: Some(85),
@@ -938,6 +957,8 @@ mod tests {
                 fixable_diagnostics: 0,
                 flaky_tests: 0,
                 message: None,
+                drift_guard_bypass_count: 0,
+                drift_guard_last_bypass: None,
             },
             health_score: None,
             velocity: None,
@@ -1007,6 +1028,8 @@ mod tests {
                 fixable_diagnostics: 0,
                 flaky_tests: 0,
                 message: None,
+                drift_guard_bypass_count: 0,
+                drift_guard_last_bypass: None,
             },
             health_score: None,
             velocity: None,
@@ -1058,6 +1081,8 @@ mod tests {
                 fixable_diagnostics: 0,
                 flaky_tests: 0,
                 message: None,
+                drift_guard_bypass_count: 0,
+                drift_guard_last_bypass: None,
             },
             jobs: JobsStatus {
                 active: 0,
