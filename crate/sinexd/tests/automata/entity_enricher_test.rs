@@ -13,7 +13,7 @@ use sinex_primitives::events::payloads::{EntityCategory, EntityResolvedPayload};
 use sinex_primitives::events::{Event, EventPayload};
 use sinex_primitives::temporal::{Duration, Timestamp};
 use sinex_primitives::{Id, JsonValue};
-use sinex_process::automata::entity_enricher::{EnricherConfig, EnricherState, EntityEnricher};
+use sinexd::automata::entity_enricher::{EnricherConfig, EnricherState, EntityEnricher};
 use xtask::sandbox::prelude::*;
 
 fn make_context(ts: Timestamp) -> AutomatonContext {
