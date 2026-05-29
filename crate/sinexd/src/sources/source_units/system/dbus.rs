@@ -244,14 +244,14 @@ impl MaterialParser for DbusParser {
                         .process(&raw_summary, ProcessingContext::Notification)
                         .text
                         .into_owned(),
-                    Err(_) => raw_summary.clone(),
+                    Err(e) => return Err(ParserError::Privacy(format!("privacy engine: {e}"))),
                 };
                 let body = match privacy::engine() {
                     Ok(eng) => eng
                         .process(&raw_body, ProcessingContext::Notification)
                         .text
                         .into_owned(),
-                    Err(_) => raw_body.clone(),
+                    Err(e) => return Err(ParserError::Privacy(format!("privacy engine: {e}"))),
                 };
                 let app_name = body_json
                     .get(0)
