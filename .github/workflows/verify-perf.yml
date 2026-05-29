@@ -9,11 +9,10 @@ on:
     branches:
       - master
     paths:
-      - 'crate/lib/sinex-db/**'
+      - 'crate/sinex-db/**'
       - 'crate/lib/sinex-node-sdk/**'
-      - 'crate/core/sinex-ingestd/**'
-      - 'crate/core/sinex-source-worker/**'
-      - 'crate/core/sinex-gateway/**'
+      - 'crate/sinex-primitives/**'
+      - 'crate/sinexd/**'
       - 'xtask/config/perf-contracts.toml'
       - '.github/workflows/verify-perf.yml'
 
