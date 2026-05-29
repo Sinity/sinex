@@ -172,7 +172,7 @@ fn looks_like_date(line: &str) -> bool {
     bytes.len() >= 10
         && bytes[4] == b'-'
         && bytes[7] == b'-'
-        && bytes[..4].iter().all(u8::is_ascii_digit)
+        && bytes.get(..4).ok_or_else(|| ParserError::Parse("journal line too short".into()))?.iter().all(u8::is_ascii_digit)
         && bytes[5..7].iter().all(u8::is_ascii_digit)
         && bytes[8..10].iter().all(u8::is_ascii_digit)
 }
