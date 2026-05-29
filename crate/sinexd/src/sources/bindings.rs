@@ -12,6 +12,11 @@ use serde::{Deserialize, Serialize};
 use sinex_primitives::error::{Result, SinexError};
 use sinex_primitives::parser::SourceUnitId;
 use std::collections::HashMap;
+use std::future::Future;
+use std::pin::Pin;
+use std::sync::{Arc, LazyLock};
+use std::task::{Context, Poll};
+use tokio::sync::{Mutex, OwnedMutexGuard};
 use tracing::{info, warn};
 
 use crate::sources::node_factory;
@@ -27,14 +32,29 @@ use crate::sources::registry::SourceUnitRegistry;
 /// startup window when adapters call `env::var`. After the first poll the
 /// lock is released and the EnvRestore guard restores the prior env.
 ///
-/// Residual hazard: any adapter that reads env::var AFTER its first `.await`
-/// observes a non-deterministic value. Bounded-impact today (only Hyprland
-/// reads env, in `baseline_adapter_config` which is called from
-/// `AdapterBackedIngestor::initialize` after several `.await` points). A
-/// fully sound fix threads per-binding env through the factory as data and
-/// removes `std::env::var` from adapters; tracked as follow-up.
-static BINDING_ENV_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
-
+/// The lock is held only across the **first poll** of the factory future, not
+/// for its entire lifetime. Source-unit factories are continuous and never
+/// resolve under normal operation, so a lock held for the full future would
+/// permanently block every later env-mutating binding (e.g. a second display
+/// scope using `DISPLAY=:1`). Releasing the lock after the first poll lets
+/// concurrent bindings each install their env, snapshot it during their sync
+/// prefix, and proceed without blocking each other.
+///
+/// Bindings with empty `extra_env` (the common case — RUST_LOG-only bindings
+/// and source units that don't read env) take the fast path: no mutation, no
+/// serialization, no lock contention.
+///
+/// Residual hazard: a factory that reads `std::env::var` *after* its first
+/// `.await` observes a non-deterministic value, because the lock and
+/// `EnvGuard` have already been dropped by then. Adapter authors are
+/// responsible for snapshotting env early (in the sync prefix or any
+/// `baseline_adapter_config` invoked before the runtime yields). A fully
+/// sound fix threads per-binding env through the factory as data and removes
+/// `std::env::var` from adapters; that is tracked as a follow-up because it
+/// requires extending `MaterialParser::baseline_adapter_config` on the SDK
+/// trait, which ripples through every source unit.
+static BINDING_ENV_LOCK: LazyLock<Arc<Mutex<()>>> =
+    LazyLock::new(|| Arc::new(Mutex::new(())));
 
 /// One row in the manifest file at `SINEX_SOURCE_BINDINGS_PATH`.
 ///
@@ -219,9 +239,13 @@ pub async fn run_binding(binding: SourceBinding) -> Result<()> {
     // preserved unchanged.
     //
     // The slow path (non-empty `extra_env`) acquires the global
-    // `BINDING_ENV_LOCK` so concurrent env-mutating bindings cannot clobber
-    // each other's DISPLAY/XAUTHORITY values. Refined in a follow-up commit
-    // to release the lock after the factory's first poll.
+    // `BINDING_ENV_LOCK` and installs an `EnvGuard`, then drives the factory
+    // future through `EnvLockedFactory`. The lock + guard are released after
+    // the factory's first poll completes — long enough for the factory's
+    // sync prefix (CLI parsing, runtime construction, the first synchronous
+    // configuration hop) to observe the binding's env, but short enough that
+    // a second env-mutating binding can proceed without deadlocking against
+    // the first one's never-resolving continuous lifecycle.
     if binding.extra_env.is_empty() {
         factory(argv).await.map_err(|error| {
             SinexError::service(format!(
@@ -230,14 +254,51 @@ pub async fn run_binding(binding: SourceBinding) -> Result<()> {
             ))
         })
     } else {
-        let _env_lock = BINDING_ENV_LOCK.lock().await;
-        let _env_guard = EnvGuard::install(&binding.extra_env);
-        factory(argv).await.map_err(|error| {
+        let env_lock = Arc::clone(&BINDING_ENV_LOCK).lock_owned().await;
+        let env_guard = EnvGuard::install(&binding.extra_env);
+        let locked = EnvLockedFactory {
+            inner: factory(argv),
+            lock_state: Some((env_lock, env_guard)),
+        };
+        locked.await.map_err(|error| {
             SinexError::service(format!(
                 "source-worker binding '{}' exited with error: {error}",
                 binding.source_unit_id
             ))
         })
+    }
+}
+
+/// Future wrapper that holds the env lock + `EnvGuard` across exactly the
+/// first poll of the inner factory future, then drops both so concurrent
+/// env-mutating bindings can proceed.
+///
+/// Continuous source-unit factories never resolve under normal operation;
+/// holding the lock for the full future lifetime would deadlock every
+/// subsequent env-mutating binding. Restricting the lock to the first poll
+/// gives each binding's sync prefix a chance to snapshot env values into
+/// owned configuration, which is the contract documented on
+/// [`BINDING_ENV_LOCK`].
+struct EnvLockedFactory<F> {
+    inner: F,
+    lock_state: Option<(OwnedMutexGuard<()>, EnvGuard)>,
+}
+
+impl<F> Future for EnvLockedFactory<F>
+where
+    F: Future + Unpin,
+{
+    type Output = F::Output;
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        let me = &mut *self;
+        let result = Pin::new(&mut me.inner).poll(cx);
+        // Release lock + restore env after the first poll regardless of
+        // outcome. If the factory resolved synchronously the cleanup happens
+        // before we return; if it returned Pending we drop the lock so other
+        // bindings can advance their own sync prefixes.
+        me.lock_state.take();
+        result
     }
 }
 
@@ -359,6 +420,98 @@ mod tests {
             std::env::var(TEST_KEY).is_err(),
             "EnvGuard did not restore unset state after drop"
         );
+    }
+
+    /// Regression for the deadlock introduced by holding `BINDING_ENV_LOCK`
+    /// across the full factory lifetime: continuous factories never resolve,
+    /// so binding A would block binding B forever.
+    ///
+    /// `EnvLockedFactory` drops the lock + `EnvGuard` after the first poll,
+    /// so two never-resolving env-mutating factories must both reach their
+    /// pending state without one starving the other.
+    ///
+    /// This test only asserts the no-deadlock property. It does not assert
+    /// env isolation across the full factory lifetime — that contract is
+    /// limited to the first poll (factory sync prefix) per
+    /// [`BINDING_ENV_LOCK`]'s docs.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn env_locked_factory_releases_lock_after_first_poll() {
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::task::Poll;
+
+        const KEY_A: &str = "SINEX_BINDINGS_TEST_DEADLOCK_A";
+        const KEY_B: &str = "SINEX_BINDINGS_TEST_DEADLOCK_B";
+
+        // Track how many distinct factories observed their env during the
+        // sync prefix (the first poll). Both must hit poll-1 even though
+        // neither inner future ever resolves.
+        let observed = Arc::new(AtomicUsize::new(0));
+
+        fn make_factory(
+            key: &'static str,
+            expected: &'static str,
+            observed: Arc<AtomicUsize>,
+        ) -> Pin<Box<dyn Future<Output = ()> + Send>> {
+            // The factory's sync prefix snapshots env (mirroring
+            // `baseline_adapter_config`), then yields forever.
+            let snapshot = std::env::var(key).ok();
+            if snapshot.as_deref() == Some(expected) {
+                observed.fetch_add(1, Ordering::SeqCst);
+            }
+            Box::pin(std::future::poll_fn(|_cx| Poll::<()>::Pending))
+        }
+
+        let run_one = |key: &'static str, value: &'static str, observed: Arc<AtomicUsize>| {
+            let mut env = HashMap::new();
+            env.insert(key.to_string(), value.to_string());
+            async move {
+                let env_lock = Arc::clone(&BINDING_ENV_LOCK).lock_owned().await;
+                let env_guard = EnvGuard::install(&env);
+                // Construct the factory *after* installing env so the sync
+                // prefix sees it. (run_binding calls factory(argv) after
+                // env install for the same reason.)
+                let inner = make_factory(key, value, Arc::clone(&observed));
+                let locked = EnvLockedFactory {
+                    inner,
+                    lock_state: Some((env_lock, env_guard)),
+                };
+                locked.await;
+            }
+        };
+
+        // Each factory is Pending forever; we must time them out, not await
+        // resolution.
+        let timeout = std::time::Duration::from_secs(2);
+        let a = tokio::spawn(run_one(KEY_A, "alpha", Arc::clone(&observed)));
+        let b = tokio::spawn(run_one(KEY_B, "beta", Arc::clone(&observed)));
+
+        // Give both tasks time to reach their first poll. If the lock were
+        // still held across the full future, only one would observe its env
+        // and `observed` would stick at 1 until the test times out.
+        let _ = tokio::time::timeout(timeout, async {
+            loop {
+                if observed.load(Ordering::SeqCst) == 2 {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("both factories must reach first poll within 2s (deadlock regression)");
+
+        a.abort();
+        b.abort();
+        let _ = a.await;
+        let _ = b.await;
+
+        // Cleanup: keys should have been restored to unset by the
+        // EnvGuards dropped at poll-1.
+        // SAFETY: test is the only thread mutating env at this point.
+        unsafe {
+            std::env::remove_var(KEY_A);
+            std::env::remove_var(KEY_B);
+        }
     }
 
     /// Installing an `EnvGuard` over an empty map is a no-op and does not
