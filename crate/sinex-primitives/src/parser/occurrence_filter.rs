@@ -8,8 +8,8 @@
 //!
 //! # Relationship to other dedup
 //!
-//! - [`ContentHashWindow`](crate::node_sdk_parser_dedup) is a bounded ring
-//!   buffer for append-only-file rotation overlap dedup — ephemeral,
+//! - `ContentHashWindow` (in `sinex-node-sdk::parser::dedup`) is a bounded
+//!   ring buffer for append-only-file rotation overlap dedup — ephemeral,
 //!   byte-hash-based, tied to inode rotations. This is NOT the
 //!   occurrence-filtered model; it only answers "did I emit this record
 //!   recently."
@@ -23,8 +23,11 @@
 //! The canonical string key is derived from [`OccurrenceKey`] via
 //! [`occurrence_key_string`]: each `(field_name, value)` pair is
 //! rendered as `name=value`, joined by `|`, prefixed by the source unit
-//! id. This format is stable, human-readable, and avoids collision
-//! across source units.
+//! id. Backslash, `|`, and `=` characters inside names and values are
+//! escaped (`\\`, `\|`, `\=`) so adversarial track titles like
+//! `Foo|bar=baz` cannot collide with the encoding of a different
+//! `(name, value)` pair. This format is stable, human-readable, and
+//! avoids collision across source units.
 
 use std::collections::HashSet;
 
@@ -86,20 +89,41 @@ impl OccurrenceFilter {
 ///
 /// Format: `source_unit_id|name1=val1|name2=val2|...`
 ///
+/// Backslash (`\\`), pipe (`|`), and equals (`=`) characters inside the
+/// `source_unit_id`, field names, and values are escaped (`\\\\`, `\\|`,
+/// `\\=`) so two distinct keys never collapse to the same string. For
+/// example, `(foo, "bar|baz")` and `(foo|bar, "baz")` produce different
+/// outputs, which they would not under bare concatenation.
+///
 /// This is the key stored in the in-memory filter and also what the DB
 /// builder function ([`build_occurrence_filter`]) extracts from the event
 /// payload.
 #[must_use]
 pub fn occurrence_key_string(key: &OccurrenceKey) -> String {
     let mut s = String::with_capacity(128);
-    s.push_str(key.source_unit_id.as_str());
+    push_escaped(&mut s, key.source_unit_id.as_str());
     for (name, value) in &key.fields {
         s.push('|');
-        s.push_str(name);
+        push_escaped(&mut s, name);
         s.push('=');
-        s.push_str(value);
+        push_escaped(&mut s, value);
     }
     s
+}
+
+/// Escape `\\`, `|`, and `=` in `input`, appending the result to `out`.
+///
+/// The escape character is backslash; the inverse decoding is unambiguous
+/// because the escape character itself is escaped first.
+fn push_escaped(out: &mut String, input: &str) {
+    for ch in input.chars() {
+        match ch {
+            '\\' => out.push_str("\\\\"),
+            '|' => out.push_str("\\|"),
+            '=' => out.push_str("\\="),
+            other => out.push(other),
+        }
+    }
 }
 
 /// Derive a canonical string key from an optional reference.
@@ -183,6 +207,39 @@ mod tests {
             Some("test.unit|x=y".to_string())
         );
         assert_eq!(maybe_occurrence_key_string(None), None);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn escaping_prevents_delimiter_injection_collision()
+        -> xtask::sandbox::TestResult<()> {
+        // Without escaping, `(foo, "bar|baz")` and `(foo|bar, "baz")`
+        // would both encode as `test.unit|foo=bar|baz` and silently
+        // dedup against each other. With escaping they are distinct.
+        let k1 = OccurrenceKey {
+            source_unit_id: SourceUnitId::from_static("test.unit"),
+            fields: vec![("foo".into(), "bar|baz".into())],
+        };
+        let k2 = OccurrenceKey {
+            source_unit_id: SourceUnitId::from_static("test.unit"),
+            fields: vec![("foo|bar".into(), "baz".into())],
+        };
+        let s1 = occurrence_key_string(&k1);
+        let s2 = occurrence_key_string(&k2);
+        assert_ne!(s1, s2, "escaping must keep these two keys distinct");
+        assert_eq!(s1, "test.unit|foo=bar\\|baz");
+        assert_eq!(s2, "test.unit|foo\\|bar=baz");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn escaping_handles_equals_and_backslash() -> xtask::sandbox::TestResult<()> {
+        let k = OccurrenceKey {
+            source_unit_id: SourceUnitId::from_static("test.unit"),
+            fields: vec![("name=raw".into(), "value\\with\\slash".into())],
+        };
+        let s = occurrence_key_string(&k);
+        assert_eq!(s, "test.unit|name\\=raw=value\\\\with\\\\slash");
         Ok(())
     }
 }
