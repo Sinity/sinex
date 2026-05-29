@@ -74,16 +74,30 @@ impl Supervisor {
         // to the environment.
         systemd_notify::enter_hosted_mode();
 
-        let shutdown_rx = service_runtime::spawn_shutdown_task("sinexd");
+        let os_shutdown_rx = service_runtime::spawn_shutdown_task("sinexd");
+
+        // Separate in-process escalation channel for event-engine / API
+        // task failures. The OS shutdown channel is Receiver-only and shared
+        // across all SDK consumers; rather than extending that API (which
+        // would propagate through every callsite), we keep a local `watch`
+        // whose Sender lives here and whose Receiver is selected alongside
+        // the OS receiver in the wait loop. When event-engine or API exits,
+        // the wrapper fires escalate_tx — same teardown path as SIGTERM.
+        let (escalate_tx, escalate_rx) = watch::channel(false);
+        let shutdown_rx = os_shutdown_rx.clone();
 
         let mut event_engine_handle = if self.event_engine_enabled {
-            Some(start_event_engine(event_engine_config, shutdown_rx.clone()))
+            Some(start_event_engine(
+                event_engine_config,
+                shutdown_rx.clone(),
+                escalate_tx.clone(),
+            ))
         } else {
             None
         };
 
         let api_handle = if self.api_enabled {
-            Some(start_api(api_config, shutdown_rx.clone()).await?)
+            Some(start_api(api_config, shutdown_rx.clone(), escalate_tx.clone()).await?)
         } else {
             None
         };
@@ -109,10 +123,12 @@ impl Supervisor {
         let watchdog = systemd_notify::spawn_watchdog_unhosted("sinexd");
 
         // Monitor the event engine for unexpected exits. If the engine
-        // crashes before the supervisor signals shutdown, log the error.
+        // crashes or exits cleanly before the supervisor signals shutdown,
+        // log the error AND fire escalate_tx so the wait loop teardown runs.
         // The monitor takes ownership of the JoinHandle; during the
         // shutdown join below we await the monitor instead.
         let ee_monitor = if let Some(handle) = event_engine_handle.take() {
+            let escalate_tx_ee = escalate_tx.clone();
             Some(tokio::spawn(async move {
                 match handle.await {
                     Ok(()) => {
@@ -125,14 +141,22 @@ impl Supervisor {
                         );
                     }
                 }
+                let _ = escalate_tx_ee.send(true);
             }))
         } else {
             None
         };
 
-        let mut shutdown_rx = shutdown_rx;
-        let _ = shutdown_rx.changed().await;
-        info!("shutdown requested");
+        let mut os_shutdown_rx = os_shutdown_rx;
+        let mut escalate_rx = escalate_rx;
+        tokio::select! {
+            _ = os_shutdown_rx.changed() => {
+                info!("shutdown requested (OS signal)");
+            }
+            _ = escalate_rx.changed() => {
+                error!("shutdown requested (core module crashed — escalated)");
+            }
+        }
         systemd_notify::notify_stopping_unhosted("sinexd");
         systemd_notify::stop_watchdog(watchdog, "sinexd").await;
 
@@ -170,12 +194,14 @@ impl Supervisor {
 fn start_event_engine(
     config: IngestdConfig,
     shutdown_rx: watch::Receiver<bool>,
+    escalate_tx: watch::Sender<bool>,
 ) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         let mut service = match IngestService::new(config).await {
             Ok(s) => s,
             Err(error) => {
-                error!(?error, "IngestService::new failed");
+                error!(?error, "IngestService::new failed — escalating to daemon shutdown");
+                let _ = escalate_tx.send(true);
                 return;
             }
         };
@@ -184,13 +210,31 @@ fn start_event_engine(
         // dispatches a Clone that shares the same Arcs, so calling
         // shutdown() on the clone sets the flag that run() observes.
         let mut service_for_shutdown = service.clone();
+        let mut shutdown_rx_for_signal = shutdown_rx.clone();
         tokio::spawn(async move {
-            let mut shutdown_rx = shutdown_rx;
-            let _ = shutdown_rx.changed().await;
+            let _ = shutdown_rx_for_signal.changed().await;
             let _ = service_for_shutdown.shutdown().await;
         });
-        if let Err(error) = service.run().await {
-            error!(?error, "IngestService::run failed");
+
+        let outcome = service.run().await;
+        // If the supervisor already triggered teardown, an Ok exit is the
+        // intended outcome; don't re-escalate or log noisily. We only fire
+        // the escalation channel when the task exits *without* a shutdown
+        // having been observed first — that's the failure mode this guard
+        // exists to catch.
+        let shutdown_now = *shutdown_rx.borrow() || *escalate_tx.borrow();
+        match outcome {
+            Ok(()) if shutdown_now => {
+                info!("IngestService::run exited after shutdown");
+            }
+            Ok(()) => {
+                warn!("IngestService::run returned unexpectedly — escalating to daemon shutdown");
+                let _ = escalate_tx.send(true);
+            }
+            Err(error) => {
+                error!(?error, "IngestService::run failed — escalating to daemon shutdown");
+                let _ = escalate_tx.send(true);
+            }
         }
     })
 }
@@ -198,13 +242,29 @@ fn start_event_engine(
 async fn start_api(
     config: GatewayConfig,
     shutdown_rx: watch::Receiver<bool>,
+    escalate_tx: watch::Sender<bool>,
 ) -> Result<tokio::task::JoinHandle<()>> {
     let services = ServiceContainer::new(&config).await.map_err(|error| {
         SinexError::service("failed to construct ServiceContainer").with_std_error(&error)
     })?;
     Ok(tokio::spawn(async move {
-        if let Err(error) = rpc_server::run(&config, services, shutdown_rx).await {
-            error!(?error, "rpc_server::run failed");
+        // For rpc_server we have to hand the receiver in (it observes
+        // shutdown internally), so clone for the post-exit check.
+        let post_exit_rx = shutdown_rx.clone();
+        let outcome = rpc_server::run(&config, services, shutdown_rx).await;
+        let shutdown_now = *post_exit_rx.borrow() || *escalate_tx.borrow();
+        match outcome {
+            Ok(()) if shutdown_now => {
+                info!("rpc_server::run exited after shutdown");
+            }
+            Ok(()) => {
+                warn!("rpc_server::run returned unexpectedly — escalating to daemon shutdown");
+                let _ = escalate_tx.send(true);
+            }
+            Err(error) => {
+                error!(?error, "rpc_server::run failed — escalating to daemon shutdown");
+                let _ = escalate_tx.send(true);
+            }
         }
     }))
 }

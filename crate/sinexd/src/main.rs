@@ -86,7 +86,24 @@ enum Command {
         /// (e.g. `scan --until snapshot`).
         #[arg(long = "extra-arg", action = clap::ArgAction::Append)]
         extra_args: Vec<String>,
+
+        /// Extra environment variables to set in the source-worker process
+        /// (repeatable, format `KEY=VAL`). Used to reproduce operator-side
+        /// issues that need session-specific env like `DISPLAY` or
+        /// `XAUTHORITY` for desktop.clipboard.
+        #[arg(long = "extra-env", value_parser = parse_kv, action = clap::ArgAction::Append)]
+        extra_env: Vec<(String, String)>,
     },
+}
+
+fn parse_kv(s: &str) -> Result<(String, String), String> {
+    let (k, v) = s
+        .split_once('=')
+        .ok_or_else(|| format!("expected KEY=VAL, got {s:?}"))?;
+    if k.is_empty() {
+        return Err("KEY must not be empty".into());
+    }
+    Ok((k.into(), v.into()))
 }
 
 #[tokio::main]
@@ -114,7 +131,10 @@ async fn main() -> color_eyre::Result<()> {
             service_name,
             node_config,
             extra_args,
-        } => scan_source_unit(source_unit, service_name, node_config, extra_args).await,
+            extra_env,
+        } => {
+            scan_source_unit(source_unit, service_name, node_config, extra_args, extra_env).await
+        }
     }
 }
 
@@ -153,11 +173,14 @@ async fn scan_source_unit(
     service_name: Option<String>,
     node_config: Option<String>,
     extra_args: Vec<String>,
+    extra_env: Vec<(String, String)>,
 ) -> color_eyre::Result<()> {
     let node_config_value = match node_config {
         Some(s) if !s.trim().is_empty() => Some(serde_json::from_str(&s)?),
         _ => None,
     };
+
+    let extra_env: HashMap<String, String> = extra_env.into_iter().collect();
 
     let binding = SourceBinding {
         source_unit_id: source_unit,
@@ -165,7 +188,7 @@ async fn scan_source_unit(
         service_name,
         node_config: node_config_value,
         extra_args,
-        extra_env: Default::default(),
+        extra_env,
     };
 
     source_bindings::run_binding(binding).await?;
