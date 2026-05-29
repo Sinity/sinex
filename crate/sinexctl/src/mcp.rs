@@ -1406,6 +1406,13 @@ pub fn tools() -> Vec<McpTool> {
         ),
         mcp_tool("sinex.system_ping", empty_object_schema()),
         mcp_tool("sinex.system_version", empty_object_schema()),
+        mcp_tool("sinex.context_pack", json!({
+            "type": "object",
+            "properties": {
+                "project_path": {"type": "string", "description": "Project path to filter events"},
+                "limit": {"type": "integer", "default": 50}
+            }
+        })),
     ]
 }
 
@@ -1642,6 +1649,7 @@ pub async fn call_tool(client: &GatewayClient, name: &str, arguments: Value) -> 
         "sinex.shadow_consumers" => shadow_consumers(client, arguments).await,
         "sinex.system_ping" => system_ping(client, arguments).await,
         "sinex.system_version" => system_version(client, arguments).await,
+        "sinex.context_pack" => context_pack(client, arguments).await,
         other => Err(eyre!("unknown MCP tool: {other}")),
     }
 }
@@ -2619,4 +2627,43 @@ fn write_framed_response<W: Write>(writer: &mut W, response: &Value) -> Result<(
     writer.write_all(&body)?;
     writer.flush()?;
     Ok(())
+}
+
+// ── sinex.context_pack ─────────────────────────────────────────────────
+
+#[derive(Debug, Deserialize, Serialize)]
+struct ContextPackArgs {
+    project_path: Option<String>,
+    #[serde(default = "default_context_limit")]
+    limit: i64,
+}
+
+fn default_context_limit() -> i64 { 50 }
+
+async fn context_pack(client: &GatewayClient, arguments: Value) -> Result<Value> {
+    let args: ContextPackArgs = serde_json::from_value(arguments)?;
+    let mut query = EventQuery::default();
+    query.limit = args.limit;
+    // project_path filtering: full project-scoped query needs the
+    // context-pack DTO from #1095. For now, use it as a source prefix
+    // hint when the path looks like a known project name.
+    if let Some(ref path) = args.project_path {
+        if let Ok(source) = sinex_primitives::domain::EventSource::new(path.clone()) {
+            query.sources = vec![source];
+        }
+    }
+    query.validate()?;
+
+    let events_result = client.query_events(query).await?;
+    let mut result = serde_json::to_value(&events_result)?;
+    redact_raw_samples(&mut result);
+
+    let now = sinex_primitives::Timestamp::now();
+    let pack = json!({
+        "project_path": args.project_path,
+        "events": result,
+        "generated_at": now.to_string(),
+    });
+
+    Ok(envelope("sinex.context_pack", json!(args), json!({ "pack": pack })))
 }

@@ -13,6 +13,7 @@ pub mod knowledge_graph;
 pub mod replay;
 pub mod schema_cache;
 pub mod schema_management;
+pub mod model_effects;
 pub mod semantic;
 pub mod source_materials;
 pub mod state;
@@ -79,6 +80,7 @@ pub trait DbPoolExt {
     fn semantic(&self) -> semantic::SemanticRepository<'_>;
     fn integrity(&self) -> integrity::IntegrityRepository<'_>;
     fn continuity(&self) -> continuity::ContinuityRepository<'_>;
+    fn model_effects(&self) -> model_effects::ModelEffectRepository<'_>;
     fn documents(&self) -> document_search::DocumentSearchRepository<'_>;
     async fn with_transaction<F, T>(&self, f: F) -> crate::DbResult<T>
     where
@@ -134,6 +136,9 @@ impl DbPoolExt for PgPool {
         continuity::ContinuityRepository::new(self)
     }
 
+    fn model_effects(&self) -> model_effects::ModelEffectRepository<'_> {
+        model_effects::ModelEffectRepository::new(self)
+    }
     fn documents(&self) -> document_search::DocumentSearchRepository<'_> {
         document_search::DocumentSearchRepository::new(self)
     }

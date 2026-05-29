@@ -2,7 +2,7 @@
 
 use serde_json::json;
 use sinex_db::DbPoolExt;
-use sinex_node_sdk::{
+use sinexd::node_sdk::{
     ConfirmedEventHandler, JetStreamEventConsumer, JetStreamEventConsumerConfig, NodeResult,
     ProcessingModel, ProvisionalEvent, prelude::async_trait,
 };

@@ -9,7 +9,7 @@
 //! `sinex-runtime.target`.
 
 use futures::future::BoxFuture;
-use sinex_node_sdk::{NodeResult, runtime::stream::NodeRuntimeState};
+use crate::node_sdk::{NodeResult, runtime::stream::NodeRuntimeState};
 use sinex_primitives::proof::{
     CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, RetentionPolicy, RuntimeShape,
     SourceUnitBinding, SourceUnitBuildImpact, SourceUnitDescriptor, SubjectRef,
@@ -23,8 +23,8 @@ use sinex_primitives::{
 };
 use sinex_primitives::{register_source_unit, register_source_unit_binding};
 
-use crate::sources::monitor_node::MonitorPhase;
 use crate::register_monitor_unit;
+use crate::sources::monitor_node::MonitorPhase;
 
 // ---------------------------------------------------------------------------
 // Source-unit descriptor + binding

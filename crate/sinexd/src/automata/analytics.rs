@@ -5,10 +5,10 @@
 //! duration bound, or parent-count budget closes the current window.
 
 use serde::{Deserialize, Serialize};
-use sinex_node_sdk::derived_node::{
-    DerivedAggregationMeta, DerivedOutput, AutomatonContext, WindowedNodeAdapter,
+use crate::node_sdk::derived_node::{
+    AutomatonContext, DerivedAggregationMeta, DerivedOutput, WindowedNodeAdapter,
 };
-use sinex_node_sdk::{InputProvenanceFilter, NodeLogicError, Windowed};
+use crate::node_sdk::{InputProvenanceFilter, NodeLogicError, Windowed};
 use sinex_primitives::activity::{
     ActivitySourceKind, classify_trusted_activity_signal, primary_activity_source,
 };

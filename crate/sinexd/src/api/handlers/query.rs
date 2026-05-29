@@ -4,6 +4,7 @@ use serde_json::json;
 use sinex_db::repositories::DbPoolExt;
 use sinex_primitives::query::{EventQuery, EventQueryResult, LineageQuery, LineageResult};
 use sinex_primitives::rpc::events::{EventsAnnotateRequest, EventsAnnotateResponse};
+use sinex_primitives::views::EventCardListView;
 use sinex_primitives::{Id, Result, SinexError};
 use sqlx::PgPool;
 use std::str::FromStr;
@@ -74,4 +75,22 @@ pub async fn handle_events_annotate(
         created_at: record.created_at.format_rfc3339(),
         updated_at: record.updated_at.format_rfc3339(),
     })
+}
+
+/// `events.cards` — query events and return them as `EventCardView`s
+/// with refs, caveats, privacy state, and action availability preserved.
+pub async fn handle_events_cards(
+    pool: &PgPool,
+    query: EventQuery,
+) -> Result<EventCardListView> {
+    let result = pool.events().query(query).await?;
+    match result {
+        EventQueryResult::Events { events, .. } => {
+            Ok(EventCardListView::from_query_events(&events))
+        }
+        other => Err(SinexError::validation(format!(
+            "events.cards requires an Events query result, got {:?}",
+            std::mem::discriminant(&other)
+        ))),
+    }
 }

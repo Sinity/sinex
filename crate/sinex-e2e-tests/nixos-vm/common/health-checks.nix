@@ -27,11 +27,11 @@
       fi
       
       # Check Sinex collector
-      if ! systemctl is-active --quiet sinex-ingestd; then
-        echo "❌ Sinex collector is not running"
+      if ! systemctl is-active --quiet sinexd; then
+        echo "❌ Sinex daemon is not running"
         FAILED=1
       else
-        echo "✅ Sinex collector is running"
+        echo "✅ Sinex daemon is running"
         
         # Check if collector is processing events
         EVENT_COUNT=$(su - postgres -c "psql -d ''${SINEX_TEST_DB_NAME:-sinex} -t -c 'SELECT COUNT(*) FROM core.events;'" 2>/dev/null | tr -d ' ' || echo "0")
@@ -62,14 +62,14 @@
         fi
       fi
 
-      # Check gateway if enabled
-      if systemctl list-unit-files | grep -q "sinex-gateway.service"; then
-        if systemctl is-enabled --quiet sinex-gateway; then
-          if ! systemctl is-active --quiet sinex-gateway; then
-            echo "❌ Sinex gateway is not running"
+      # Check daemon if enabled
+      if systemctl list-unit-files | grep -q "sinexd.service"; then
+        if systemctl is-enabled --quiet sinexd; then
+          if ! systemctl is-active --quiet sinexd; then
+            echo "❌ Sinex daemon is not running"
             FAILED=1
           else
-            echo "✅ Sinex gateway is running"
+            echo "✅ Sinex daemon is running"
           fi
         fi
       fi
@@ -145,7 +145,7 @@
         
         # Service status
         echo "Services:"
-        for service in postgresql sinex-ingestd sinex-gateway; do
+        for service in postgresql sinexd; do
           if systemctl list-unit-files | grep -q "$service.service"; then
             STATUS=$(systemctl is-active "$service" 2>/dev/null || echo "unknown")
             case $STATUS in
@@ -184,7 +184,7 @@
   # Systemd service for continuous health monitoring
   systemd.services.sinex-health-monitor = {
     description = "Sinex health monitoring service";
-    after = [ "sinex-ingestd.service" ];
+    after = [ "sinexd.service" ];
     wantedBy = [ ];
     
     serviceConfig = {

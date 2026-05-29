@@ -77,6 +77,7 @@ impl SourcesCommand {
             SourcesSubcommand::Readiness(cmd) => cmd.execute(client, format).await,
             SourcesSubcommand::Drift(cmd) => cmd.execute(client, format).await,
             SourcesSubcommand::ExplainGap(cmd) => cmd.execute(client, format).await,
+            SourcesSubcommand::Cockpit(cmd) => cmd.execute(client, format).await,
         }
     }
 }
@@ -104,6 +105,31 @@ pub enum SourcesSubcommand {
     /// Explain a coverage gap at a specific timestamp
     #[command(name = "explain-gap")]
     ExplainGap(ExplainGapCommand),
+    /// Source readiness summary table with status per source unit
+    Cockpit(CockpitCommand),
+}
+
+// ── Cockpit ────────────────────────────────────────────────────────────
+
+/// Source readiness table showing status for each registered source unit.
+#[derive(Debug, Args)]
+pub struct CockpitCommand {
+    /// Filter to sources whose id contains this substring
+    #[arg(long)]
+    filter: Option<String>,
+}
+
+impl CockpitCommand {
+    async fn execute(&self, client: &GatewayClient, format: OutputFormat) -> Result<()> {
+        // Surface the readiness table.
+        let req = SourcesReadinessGetRequest {
+            source_identifier: self.filter.clone().unwrap_or_default(),
+            source_family: None,
+            stale_after_seconds: None,
+        };
+        let body: SourcesReadinessGetResponse = client.sources_readiness_get(req).await?;
+        CommandOutput::single(body, format_readiness_get).display(&format)
+    }
 }
 
 // ── Stage ──────────────────────────────────────────────────────────────

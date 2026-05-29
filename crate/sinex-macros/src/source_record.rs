@@ -219,66 +219,65 @@ fn derive_source_record_inner(input: &DeriveInput) -> syn::Result<TokenStream> {
         quote! {
             async fn parse_record(
                 &mut self,
-                record: _sdk_parser_types::SourceRecord,
-                ctx: &_sdk_parser_types::ParserContext,
-            ) -> ::sinex_node_sdk::parser::ParserResult<Vec<_sdk_parser_types::ParsedEventIntent>> {
+                record: _sdk_parser::SourceRecord,
+                ctx: &_sdk_parser::ParserContext,
+            ) -> _sdk_parser::ParserResult<Vec<_sdk_parser::ParsedEventIntent>> {
                 let binding = _sdk_parser::BindingConfig::default();
                 self.parse_record_with_binding(record, ctx, &binding).await
             }
 
             async fn parse_record_with_binding(
                 &mut self,
-                record: _sdk_parser_types::SourceRecord,
-                ctx: &_sdk_parser_types::ParserContext,
+                record: _sdk_parser::SourceRecord,
+                ctx: &_sdk_parser::ParserContext,
                 binding: &_sdk_parser::BindingConfig,
-            ) -> ::sinex_node_sdk::parser::ParserResult<Vec<_sdk_parser_types::ParsedEventIntent>> {
+            ) -> _sdk_parser::ParserResult<Vec<_sdk_parser::ParsedEventIntent>> {
                 let mut guard = __STATEFUL_PARSER.lock().unwrap_or_else(|e| e.into_inner());
                 guard.evaluate(record, ctx, binding)
-                    .map_err(|e| ::sinex_node_sdk::parser::ParserError::Field(e.to_string()))
+                    .map_err(|e| _sdk_parser::ParserError::Field(e.to_string()))
             }
         }
     } else {
         quote! {
             async fn parse_record(
                 &mut self,
-                record: _sdk_parser_types::SourceRecord,
-                ctx: &_sdk_parser_types::ParserContext,
-            ) -> ::sinex_node_sdk::parser::ParserResult<Vec<_sdk_parser_types::ParsedEventIntent>> {
+                record: _sdk_parser::SourceRecord,
+                ctx: &_sdk_parser::ParserContext,
+            ) -> _sdk_parser::ParserResult<Vec<_sdk_parser::ParsedEventIntent>> {
                 let binding = _sdk_parser::BindingConfig::default();
                 self.parse_record_with_binding(record, ctx, &binding).await
             }
 
             async fn parse_record_with_binding(
                 &mut self,
-                record: _sdk_parser_types::SourceRecord,
-                ctx: &_sdk_parser_types::ParserContext,
+                record: _sdk_parser::SourceRecord,
+                ctx: &_sdk_parser::ParserContext,
                 binding: &_sdk_parser::BindingConfig,
-            ) -> ::sinex_node_sdk::parser::ParserResult<Vec<_sdk_parser_types::ParsedEventIntent>> {
+            ) -> _sdk_parser::ParserResult<Vec<_sdk_parser::ParsedEventIntent>> {
                 _sdk_parser::DeclarativeParser::evaluate(
                     Self::parser_spec(),
                     record,
                     ctx,
                     binding,
-                ).map_err(|e| ::sinex_node_sdk::parser::ParserError::Field(e.to_string()))
+                ).map_err(|e| _sdk_parser::ParserError::Field(e.to_string()))
             }
         }
     };
 
     let generated = quote! {
         const _: () = {
-            use ::sinex_node_sdk::parser as _sdk_parser;
+            use ::sinex_primitives::parser as _sdk_parser;
             use ::sinex_primitives as _sdk_primitives;
             use ::sinex_primitives::domain as _sdk_domain;
-            use ::sinex_primitives::parser as _sdk_parser_types;
             use ::sinex_primitives::privacy as _sdk_privacy;
             use std::sync::LazyLock;
 
             #[allow(non_upper_case_globals)]
             static #spec_const_name: LazyLock<_sdk_parser::DeclarativeParserSpec> =
                 LazyLock::new(|| _sdk_parser::DeclarativeParserSpec {
-                    parser_id: _sdk_parser_types::ParserId::from_static(#parser_id_lit),
+                    parser_id: _sdk_parser::ParserId::from_static(#parser_id_lit),
                     parser_version: #version_lit.into(),
-                    source_unit_id: _sdk_parser_types::SourceUnitId::from_static(#source_unit_id_lit),
+                    source_unit_id: _sdk_parser::SourceUnitId::from_static(#source_unit_id_lit),
                     event_source: _sdk_domain::EventSource::from_static(#event_source_lit),
                     event_type: _sdk_domain::EventType::from_static(#event_type_lit),
                     default_privacy_context: _sdk_privacy::ProcessingContext::#default_privacy_context_token,
@@ -301,12 +300,12 @@ fn derive_source_record_inner(input: &DeriveInput) -> syn::Result<TokenStream> {
             }
 
             #[::async_trait::async_trait]
-            impl ::sinex_node_sdk::parser::MaterialParser for #struct_name {
+            impl _sdk_parser::MaterialParser for #struct_name {
                 type Config = ();
 
-                fn manifest(&self) -> _sdk_parser_types::ParserManifest {
+                fn manifest(&self) -> _sdk_parser::ParserManifest {
                     let spec = Self::parser_spec();
-                    _sdk_parser_types::ParserManifest {
+                    _sdk_parser::ParserManifest {
                         parser_id: spec.parser_id.clone(),
                         parser_version: spec.parser_version.clone(),
                         accepted_input_shapes: vec![input_format_to_kind(spec.input_format)],
@@ -328,9 +327,9 @@ fn derive_source_record_inner(input: &DeriveInput) -> syn::Result<TokenStream> {
             // Helpers internal to the generated module.
             fn input_format_to_kind(
                 fmt: _sdk_parser::InputFormat,
-            ) -> _sdk_parser_types::InputShapeKind {
+            ) -> _sdk_parser::InputShapeKind {
                 use _sdk_parser::InputFormat;
-                use _sdk_parser_types::InputShapeKind;
+                use _sdk_parser::InputShapeKind;
                 match fmt {
                     InputFormat::Json => InputShapeKind::AppendOnlyFile, // JSON-per-line
                     InputFormat::TabSeparated | InputFormat::RawLine => InputShapeKind::AppendOnlyFile,

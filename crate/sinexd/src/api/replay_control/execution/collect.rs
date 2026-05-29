@@ -7,8 +7,8 @@ use super::{
     ReplayExecutionEngine, ScopeInvalidationBucket,
 };
 use sinex_db::repositories::{DbPoolExt, EventRepositoryTx};
-use sinex_node_sdk::derived_node::invalidation::{DerivedScopeInvalidation, INVALIDATION_SUBJECT};
-use sinex_node_sdk::runtime::stream::ResolvedReplayMaterial;
+use crate::node_sdk::derived_node::invalidation::{DerivedScopeInvalidation, INVALIDATION_SUBJECT};
+use crate::node_sdk::runtime::stream::ResolvedReplayMaterial;
 use sinex_primitives::domain::{EventSource, EventType, SourceIdentifier};
 use sinex_primitives::events::{Event as StoredEvent, Provenance};
 use sinex_primitives::{Id, Result, SinexError, Timestamp, Uuid, transport};

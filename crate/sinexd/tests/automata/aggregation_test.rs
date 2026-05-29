@@ -1,8 +1,8 @@
 //! Tests for health aggregator scope-reconciled aggregation logic
 
 use serde_json::json;
-use sinex_node_sdk::derived_node::{DerivedOutput, AutomatonContext};
-use sinex_node_sdk::{NodeLogicError, ScopeReconciler};
+use sinexd::node_sdk::derived_node::{DerivedOutput, AutomatonContext};
+use sinexd::node_sdk::{NodeLogicError, ScopeReconciler};
 use sinex_primitives::domain::{ProcessingMode, TriggerKind};
 use sinex_primitives::events::Event;
 use sinex_primitives::temporal::Timestamp;

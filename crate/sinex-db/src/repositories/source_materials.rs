@@ -4,6 +4,8 @@
 //! (files, streams, etc.) that contain events to be processed.
 use super::common::{DbResult, EnhancedRepository, Repository, db_error};
 use crate::schema::SourceMaterialRegistry;
+pub use crate::schema::defs::records::SourceMaterialLinkRecord;
+use crate::schema::defs::records::SourceMaterialRecord;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map as JsonMap, Value as JsonValue, json};
 use sinex_primitives::domain::{
@@ -16,8 +18,6 @@ use sinex_primitives::rpc::sources::{
     SourceReadinessCost, SourceReadinessStatus, caveat_codes,
 };
 use sinex_primitives::{Id, SinexError, Timestamp, events::OffsetKind};
-pub use crate::schema::defs::records::SourceMaterialLinkRecord;
-use crate::schema::defs::records::SourceMaterialRecord;
 use sqlx::PgPool;
 use time::format_description;
 use uuid::Uuid;

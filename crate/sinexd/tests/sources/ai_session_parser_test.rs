@@ -3,7 +3,7 @@
 //! These tests exercise the parser logic end-to-end using synthetic JSON
 //! payloads that mirror the real GDPR/data-export formats.
 
-use sinex_node_sdk::parser::{MaterialParser, ParserError};
+use sinexd::node_sdk::parser::{MaterialParser, ParserError};
 use sinex_primitives::{
     Uuid,
     ids::Id,

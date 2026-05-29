@@ -2,8 +2,6 @@
 # Verifies: plan → preview → approve → execute → completed
 # Category: smoke
 { pkgs
-, sinex-ingestd
-, sinex-gateway
 , pg_jsonschema
 , sinex ? null
 , sinexCli ? null
@@ -21,7 +19,7 @@ pkgs.testers.nixosTest {
   nodes.machine = { config, pkgs, lib, ... }: {
     imports = [
       (import ../common/test-base.nix {
-        inherit config pkgs lib sinex-ingestd sinex-gateway pg_jsonschema sinex sinexCli;
+        inherit config pkgs lib pg_jsonschema sinex sinexCli;
       })
     ];
 
@@ -56,8 +54,7 @@ pkgs.testers.nixosTest {
     def wait_for_services():
         machine.wait_for_unit("multi-user.target")
         machine.wait_for_unit("postgresql.service", timeout=60)
-        machine.wait_for_unit("sinex-gateway.service", timeout=60)
-        machine.wait_for_unit("sinex-ingestd.service", timeout=60)
+        machine.wait_for_unit("sinexd.service", timeout=60)
         machine.wait_for_unit("sinex-filesystem-1.service", timeout=60)
         machine.wait_for_unit("sinex-canonicalizer.service", timeout=60)
         machine.wait_for_unit("sinex-health-automaton.service", timeout=60)

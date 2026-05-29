@@ -7,7 +7,7 @@
 
 use serde_json::json;
 use sinex_db::repositories::material_status as status;
-use sinex_node_sdk::{
+use sinexd::node_sdk::{
     AcquisitionManager, Checkpoint, CheckpointManager, CheckpointState, RotationPolicy,
 };
 use sinex_primitives::Uuid;

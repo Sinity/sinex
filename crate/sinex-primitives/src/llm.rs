@@ -150,6 +150,116 @@ pub fn hash_prompt_material(material: &str) -> String {
     blake3::hash(material.as_bytes()).to_hex().to_string()
 }
 
+// =============================================================================
+// Model-effect cache — deterministic record-and-replay for LLM calls
+// =============================================================================
+
+/// Replay policy governing whether a recorded model effect is reused.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ReplayPolicy {
+    /// Reuse a previously recorded effect when the input hashes match.
+    ReuseRecorded,
+    /// Require a recorded effect; fail if none exists.
+    FailIfMissing,
+    /// Always re-evaluate, ignoring any recorded effect.
+    ExplicitReevaluate,
+}
+
+/// Identifies a specific model-effect invocation for caching and replay.
+///
+/// Two requests with identical hashes and the same replay policy (or
+/// `ReuseRecorded` in effect) can share a recorded response.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ModelEffectRequest {
+    /// Provider name (e.g. `anthropic`, `openai`, `google`).
+    pub provider: String,
+    /// Model identifier (e.g. `claude-opus-4-7`).
+    pub model: String,
+    /// BLAKE3 hash of the prompt template body.
+    pub prompt_hash: String,
+    /// BLAKE3 hash of the JSON Schema for structured output, if any.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub schema_hash: Option<String>,
+    /// BLAKE3 hash of the serialized input payload.
+    pub input_hash: String,
+}
+
+impl ModelEffectRequest {
+    /// Compute a composite key from all hash inputs for dedup lookups.
+    #[must_use]
+    pub fn composite_key(&self) -> String {
+        let schema = self.schema_hash.as_deref().unwrap_or("");
+        let material = format!(
+            "{}|{}|{}|{}|{}",
+            self.provider, self.model, self.prompt_hash, schema, self.input_hash
+        );
+        blake3::hash(material.as_bytes()).to_hex().to_string()
+    }
+}
+
+/// A recorded model effect — the immutable record of a completed LLM call.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ModelEffectRecord {
+    /// Unique effect ID (UUIDv7).
+    pub effect_id: String,
+    /// The request that produced this effect.
+    pub request: ModelEffectRequest,
+    /// The recorded output (serialized).
+    pub output: String,
+    /// The replay policy that was active when recorded.
+    pub recorded_policy: ReplayPolicy,
+    /// ISO-8601 timestamp of recording.
+    pub recorded_at: String,
+    /// Provenance: which node/automaton recorded this.
+    pub recorded_by: String,
+    /// BLAKE3 hash of the output for integrity verification.
+    pub output_hash: String,
+}
+
+impl ModelEffectRecord {
+    /// Create a new record from a request and raw output.
+    #[must_use]
+    pub fn new(
+        request: ModelEffectRequest,
+        output: impl Into<String>,
+        policy: ReplayPolicy,
+        recorded_by: impl Into<String>,
+    ) -> Self {
+        let output: String = output.into();
+        let output_hash = blake3::hash(output.as_bytes()).to_hex().to_string();
+        Self {
+            effect_id: Uuid::now_v7().to_string(),
+            request,
+            output,
+            output_hash,
+            recorded_policy: policy,
+            recorded_at: time::OffsetDateTime::now_utc()
+                .format(&time::format_description::well_known::Rfc3339)
+                .unwrap_or_default(),
+            recorded_by: recorded_by.into(),
+        }
+    }
+}
+
+/// Hash an arbitrary input payload for use in a `ModelEffectRequest`.
+#[must_use]
+pub fn hash_model_input(payload: &str) -> String {
+    blake3::hash(payload.as_bytes()).to_hex().to_string()
+}
+
+/// Determine whether a recorded effect can satisfy a request,
+/// given the active replay policy.
+#[must_use]
+pub fn can_replay(request: &ModelEffectRequest, record: &ModelEffectRecord, policy: ReplayPolicy) -> bool {
+    match policy {
+        ReplayPolicy::ExplicitReevaluate => false,
+        ReplayPolicy::ReuseRecorded | ReplayPolicy::FailIfMissing => {
+            request.composite_key() == record.request.composite_key()
+        }
+    }
+}
+
 /// Return the deterministic rollout bucket in `[0, 99]`.
 #[must_use]
 pub fn routing_bucket(

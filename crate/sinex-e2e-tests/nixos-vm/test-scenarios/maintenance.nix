@@ -1,7 +1,5 @@
 # Maintenance flow validation for Sinex
 { pkgs
-, sinex-ingestd
-, sinex-gateway
 , pg_jsonschema
 , sinex ? null
 , sinexCli ? null
@@ -17,7 +15,7 @@ pkgs.testers.nixosTest {
   nodes.machine = { config, pkgs, lib, ... }: {
     imports = [
       (import ../common/test-base.nix {
-        inherit config pkgs lib sinex-ingestd sinex-gateway pg_jsonschema sinex sinexCli;
+        inherit config pkgs lib pg_jsonschema sinex sinexCli;
       })
     ];
 
@@ -35,8 +33,7 @@ pkgs.testers.nixosTest {
 
     required_units = [
         "postgresql.service",
-        "sinex-ingestd.service",
-        "sinex-gateway.service",
+        "sinexd.service",
         "sinex-blob-init.service"
     ]
     for unit in required_units:

@@ -4,12 +4,12 @@
 //! persistence + confirmation), the operator API, the enabled derived-node
 //! automata, and the configured source-worker bindings. Each module starts
 //! as a tokio task under the supervisor. The shutdown signal is sourced from
-//! `sinex_node_sdk::service_runtime::spawn_shutdown_task` which handles
+//! `crate::node_sdk::service_runtime::spawn_shutdown_task` which handles
 //! SIGINT/SIGTERM; tasks observe it via a shared `watch` receiver and unwind
 //! in reverse start order.
 
-use sinex_node_sdk::service_runtime;
-use sinex_node_sdk::systemd_notify;
+use crate::node_sdk::service_runtime;
+use crate::node_sdk::systemd_notify;
 use sinex_primitives::error::{Result, SinexError};
 use tokio::sync::watch;
 use tokio::task::JoinHandle;
@@ -63,9 +63,20 @@ impl Supervisor {
     ) -> Result<()> {
         info!("sinexd starting");
 
+        // Set hosted mode BEFORE spawning any subsystem tasks. In-process
+        // nodes and source-unit bindings must NOT send sd_notify messages
+        // to systemd — only this top-level supervisor speaks for the unit.
+        // Notably, fire-once monitor bindings emit STOPPING=1 on clean
+        // exit; without this latch they would tell systemd the whole sinexd
+        // daemon is shutting down.
+        //
+        // SAFETY: called before any tokio::spawn, so no concurrent access
+        // to the environment.
+        systemd_notify::enter_hosted_mode();
+
         let shutdown_rx = service_runtime::spawn_shutdown_task("sinexd");
 
-        let event_engine_handle = if self.event_engine_enabled {
+        let mut event_engine_handle = if self.event_engine_enabled {
             Some(start_event_engine(event_engine_config, shutdown_rx.clone()))
         } else {
             None
@@ -76,13 +87,6 @@ impl Supervisor {
         } else {
             None
         };
-
-        // From this point on, in-process nodes and source-unit bindings
-        // must NOT send sd_notify messages to systemd — only this top-level
-        // supervisor speaks for the unit. Notably, fire-once monitor
-        // bindings emit STOPPING=1 on clean exit; without this latch they
-        // would tell systemd the whole sinexd daemon is shutting down.
-        systemd_notify::enter_hosted_mode();
 
         // Hosted automata. Each runs as an independent supervisor task so a
         // single automaton crash does not take down siblings or the daemon.
@@ -104,6 +108,28 @@ impl Supervisor {
         systemd_notify::notify_ready_unhosted("sinexd");
         let watchdog = systemd_notify::spawn_watchdog_unhosted("sinexd");
 
+        // Monitor the event engine for unexpected exits. If the engine
+        // crashes before the supervisor signals shutdown, log the error.
+        // The monitor takes ownership of the JoinHandle; during the
+        // shutdown join below we await the monitor instead.
+        let ee_monitor = if let Some(handle) = event_engine_handle.take() {
+            Some(tokio::spawn(async move {
+                match handle.await {
+                    Ok(()) => {
+                        error!("event engine exited unexpectedly before shutdown signal");
+                    }
+                    Err(error) => {
+                        error!(
+                            ?error,
+                            "event engine task panicked or was cancelled before shutdown signal"
+                        );
+                    }
+                }
+            }))
+        } else {
+            None
+        };
+
         let mut shutdown_rx = shutdown_rx;
         let _ = shutdown_rx.changed().await;
         info!("shutdown requested");
@@ -113,6 +139,8 @@ impl Supervisor {
         // Unwind in reverse start order: source bindings → automata → api →
         // event_engine. Source bindings publish into the event engine, so
         // they must finish draining before the engine can stop accepting.
+        // The event engine handle was consumed by the crash monitor above;
+        // awaiting the monitor preserves the reverse-start-order join.
         for (label, handle) in source_binding_handles.into_iter().rev() {
             if let Err(error) = handle.await {
                 error!(source_binding = %label, ?error, "source-binding task join error");
@@ -128,9 +156,9 @@ impl Supervisor {
                 error!(?error, "api task join error");
             }
         }
-        if let Some(handle) = event_engine_handle {
-            if let Err(error) = handle.await {
-                error!(?error, "event_engine task join error");
+        if let Some(monitor) = ee_monitor {
+            if let Err(error) = monitor.await {
+                error!(?error, "event engine monitor task join error");
             }
         }
 
@@ -151,7 +179,16 @@ fn start_event_engine(
                 return;
             }
         };
-        let _ = shutdown_rx;
+        // Wire the supervisor shutdown signal into the event engine's
+        // internal (AtomicBool + Notify) shutdown pair. IngestService
+        // dispatches a Clone that shares the same Arcs, so calling
+        // shutdown() on the clone sets the flag that run() observes.
+        let mut service_for_shutdown = service.clone();
+        tokio::spawn(async move {
+            let mut shutdown_rx = shutdown_rx;
+            let _ = shutdown_rx.changed().await;
+            let _ = service_for_shutdown.shutdown().await;
+        });
         if let Err(error) = service.run().await {
             error!(?error, "IngestService::run failed");
         }
@@ -184,10 +221,18 @@ fn start_automata(
     shutdown_rx: watch::Receiver<bool>,
 ) -> Result<Vec<(&'static str, JoinHandle<()>)>> {
     let raw = std::env::var(ENV_AUTOMATA_ENABLED).ok();
-    let selected = automata_registry::parse_enabled(raw.as_deref())?;
+    // Default to all automata when unset — the entity/relation/document
+    // automata are implemented and should activate by default (#1087).
+    // Set SINEX_AUTOMATA_ENABLED= (empty) to explicitly disable.
+    let effective = if raw.as_deref().map(str::trim).filter(|s| !s.is_empty()).is_none() {
+        Some("all")
+    } else {
+        raw.as_deref()
+    };
+    let selected = automata_registry::parse_enabled(effective)?;
 
     if selected.is_empty() {
-        info!("no automata enabled (SINEX_AUTOMATA_ENABLED unset or empty)");
+        info!("no automata enabled (SINEX_AUTOMATA_ENABLED set to empty)");
         return Ok(Vec::new());
     }
 

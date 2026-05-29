@@ -14,7 +14,7 @@
 //! - DB verification of event type, source, timestamp, payload, provenance
 
 use futures::StreamExt;
-use sinex_node_sdk::parser::{
+use sinexd::node_sdk::parser::{
     AppendOnlyFileAdapter, AppendOnlyFileConfig, InputShapeAdapter, MaterialParser,
     WeeChatLogParser,
 };

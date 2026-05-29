@@ -134,7 +134,7 @@ fn enhance_not_found_error(method: &str, err: &Report) -> Report {
 /// Help text for connection errors
 fn connection_error_help() -> &'static str {
     "Troubleshooting:\n\
-     • Verify gateway is running: systemctl status sinex-gateway\n\
+     • Verify gateway is running: systemctl status sinexd\n\
      • Check network connectivity\n\
      • Verify RPC URL: echo $SINEX_RPC_URL\n\
      • Try --insecure if using self-signed certificates (dev only)"

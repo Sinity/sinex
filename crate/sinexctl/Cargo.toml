@@ -46,10 +46,8 @@ path = "../sinex-primitives"
 [dependencies.sinex-db]
 path = "../sinex-db"
 
-[dependencies.sinex-node-sdk]
-path = "../lib/sinex-node-sdk"
-default-features = false
-features = ["db"]
+[dependencies.sinexd]
+path = "../sinexd"
 
 [dependencies.camino]
 workspace = true

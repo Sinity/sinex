@@ -190,8 +190,8 @@ pub fn extract_provenance(event: &Event<JsonValue>) -> DbResult<ExtractedProvena
 mod tests {
     // Inline because these conversions depend directly on generated row shapes.
     use super::*;
-    use sinex_primitives::temporal;
     use crate::schema::defs::events::EventRecord;
+    use sinex_primitives::temporal;
     use xtask::sandbox::sinex_test;
 
     fn base_event_record() -> EventRecord {

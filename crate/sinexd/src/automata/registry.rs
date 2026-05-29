@@ -5,7 +5,7 @@
 //! through [`spawn`] into the supervisor task tree. Each spawn synthesizes a
 //! `NodeCli` argv with `--service-name sinex-<name>` and the `service`
 //! subcommand, then drives it through the standard
-//! [`NodeCliRunner`](sinex_node_sdk::node_cli::NodeCliRunner) lifecycle —
+//! [`NodeCliRunner`](crate::node_sdk::node_cli::NodeCliRunner) lifecycle —
 //! the same lifecycle the deleted `sinex-process` per-automaton binary
 //! used, just in-process.
 //!
@@ -17,10 +17,10 @@ use sinex_primitives::error::{Result, SinexError};
 use tracing::info;
 
 use crate::automata::{
-    AnalyticsAutomatonNode, DailySummarizerNode, DocumentParserNodeAdapter, EntityEnricherNode,
-    EntityExtractorNode, EntityResolverNode, HealthAggregatorNode, HourlySummarizerNode,
-    InstructionExpectationReconcilerNode, RelationExtractorNode, SessionDetectorNode,
-    TagApplierNode, TerminalCommandCanonicalizerNode,
+    AnalyticsAutomatonNode, DailySummarizerNode, DocumentParserNodeAdapter, EmbeddingProducerNode,
+    EntityEnricherNode, EntityExtractorNode, EntityResolverNode, HealthAggregatorNode,
+    HourlySummarizerNode, InstructionExpectationReconcilerNode, RelationExtractorNode,
+    SessionDetectorNode, TagApplierNode, TerminalCommandCanonicalizerNode,
 };
 
 /// Type-erased automaton runner. Returns `Ok(())` when the automaton exits
@@ -39,19 +39,66 @@ pub struct AutomatonSpec {
 
 /// All automata hosted by `sinexd`. Order is preserved in `all` selection.
 pub const AUTOMATA: &[AutomatonSpec] = &[
-    AutomatonSpec { name: "canonicalizer", run: || Box::pin(run_one::<TerminalCommandCanonicalizerNode>("canonicalizer")) },
-    AutomatonSpec { name: "analytics", run: || Box::pin(run_one::<AnalyticsAutomatonNode>("analytics")) },
-    AutomatonSpec { name: "health", run: || Box::pin(run_one::<HealthAggregatorNode>("health")) },
-    AutomatonSpec { name: "session", run: || Box::pin(run_one::<SessionDetectorNode>("session")) },
-    AutomatonSpec { name: "hourly", run: || Box::pin(run_one::<HourlySummarizerNode>("hourly")) },
-    AutomatonSpec { name: "daily", run: || Box::pin(run_one::<DailySummarizerNode>("daily")) },
-    AutomatonSpec { name: "entity-extractor", run: || Box::pin(run_one::<EntityExtractorNode>("entity-extractor")) },
-    AutomatonSpec { name: "entity-resolver", run: || Box::pin(run_one::<EntityResolverNode>("entity-resolver")) },
-    AutomatonSpec { name: "relation-extractor", run: || Box::pin(run_one::<RelationExtractorNode>("relation-extractor")) },
-    AutomatonSpec { name: "entity-enricher", run: || Box::pin(run_one::<EntityEnricherNode>("entity-enricher")) },
-    AutomatonSpec { name: "tag-applier", run: || Box::pin(run_one::<TagApplierNode>("tag-applier")) },
-    AutomatonSpec { name: "document-parser", run: || Box::pin(run_one::<DocumentParserNodeAdapter>("document-parser")) },
-    AutomatonSpec { name: "instruction-reconciler", run: || Box::pin(run_one::<InstructionExpectationReconcilerNode>("instruction-reconciler")) },
+    AutomatonSpec {
+        name: "canonicalizer",
+        run: || Box::pin(run_one::<TerminalCommandCanonicalizerNode>("canonicalizer")),
+    },
+    AutomatonSpec {
+        name: "analytics",
+        run: || Box::pin(run_one::<AnalyticsAutomatonNode>("analytics")),
+    },
+    AutomatonSpec {
+        name: "health",
+        run: || Box::pin(run_one::<HealthAggregatorNode>("health")),
+    },
+    AutomatonSpec {
+        name: "session",
+        run: || Box::pin(run_one::<SessionDetectorNode>("session")),
+    },
+    AutomatonSpec {
+        name: "hourly",
+        run: || Box::pin(run_one::<HourlySummarizerNode>("hourly")),
+    },
+    AutomatonSpec {
+        name: "daily",
+        run: || Box::pin(run_one::<DailySummarizerNode>("daily")),
+    },
+    AutomatonSpec {
+        name: "entity-extractor",
+        run: || Box::pin(run_one::<EntityExtractorNode>("entity-extractor")),
+    },
+    AutomatonSpec {
+        name: "entity-resolver",
+        run: || Box::pin(run_one::<EntityResolverNode>("entity-resolver")),
+    },
+    AutomatonSpec {
+        name: "relation-extractor",
+        run: || Box::pin(run_one::<RelationExtractorNode>("relation-extractor")),
+    },
+    AutomatonSpec {
+        name: "entity-enricher",
+        run: || Box::pin(run_one::<EntityEnricherNode>("entity-enricher")),
+    },
+    AutomatonSpec {
+        name: "tag-applier",
+        run: || Box::pin(run_one::<TagApplierNode>("tag-applier")),
+    },
+    AutomatonSpec {
+        name: "embedding-producer",
+        run: || Box::pin(run_one::<EmbeddingProducerNode>("embedding-producer")),
+    },
+    AutomatonSpec {
+        name: "document-parser",
+        run: || Box::pin(run_one::<DocumentParserNodeAdapter>("document-parser")),
+    },
+    AutomatonSpec {
+        name: "instruction-reconciler",
+        run: || {
+            Box::pin(run_one::<InstructionExpectationReconcilerNode>(
+                "instruction-reconciler",
+            ))
+        },
+    },
 ];
 
 /// Look up an automaton by name.
@@ -115,13 +162,13 @@ pub fn parse_enabled(raw: Option<&str>) -> Result<Vec<&'static AutomatonSpec>> {
 /// environment at parse time.
 async fn run_one<T>(name: &'static str) -> Result<()>
 where
-    T: sinex_node_sdk::runtime::stream::Node
-        + sinex_node_sdk::ExplorationProvider
+    T: crate::node_sdk::runtime::stream::Node
+        + crate::node_sdk::ExplorationProvider
         + Default
         + 'static,
 {
     use clap::Parser;
-    use sinex_node_sdk::node_cli::{NodeCli, NodeCliRunner};
+    use crate::node_sdk::node_cli::{NodeCli, NodeCliRunner};
 
     let service_name = format!("sinex-{name}");
     info!(automaton = name, service_name = %service_name, "starting in-process automaton");
@@ -140,7 +187,6 @@ where
     })?;
     let mut runner = NodeCliRunner::new(T::default());
     runner.run(parsed).await.map_err(|error| {
-        SinexError::service(format!("automaton '{name}' exited with error"))
-            .with_std_error(&error)
+        SinexError::service(format!("automaton '{name}' exited with error")).with_std_error(&error)
     })
 }

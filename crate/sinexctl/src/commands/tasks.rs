@@ -36,6 +36,7 @@ impl TasksCommand {
             TasksSubcommand::State(cmd) => cmd.execute(client, format).await,
             TasksSubcommand::Status(cmd) => cmd.execute(client, format).await,
             TasksSubcommand::Update(cmd) => cmd.execute(client, format).await,
+            TasksSubcommand::Import(cmd) => cmd.execute(client, format).await,
         }
     }
 }
@@ -54,6 +55,69 @@ pub enum TasksSubcommand {
     Status(TaskStatusCommand),
     /// Update task metadata.
     Update(TaskUpdateCommand),
+    /// Import tasks from a Taskwarrior JSON export.
+    Import(TaskImportCommand),
+}
+
+#[derive(Debug, Args)]
+pub struct TaskImportCommand {
+    /// Path to Taskwarrior export JSON file.
+    file: String,
+
+    /// Dry run: parse and validate without creating tasks.
+    #[arg(long)]
+    dry_run: bool,
+}
+
+impl TaskImportCommand {
+    async fn execute(&self, client: &crate::client::gateway::GatewayClient, _format: OutputFormat) -> Result<()> {
+        let data = std::fs::read_to_string(&self.file).map_err(|e| {
+            color_eyre::eyre::eyre!("failed to read {}: {}", self.file, e)
+        })?;
+        let tasks: Vec<serde_json::Value> = serde_json::from_str(&data).map_err(|e| {
+            color_eyre::eyre::eyre!("invalid Taskwarrior JSON in {}: {}", self.file, e)
+        })?;
+
+        let mut imported = 0u64;
+        let mut skipped = 0u64;
+        for task in &tasks {
+            let uuid = task["uuid"].as_str().unwrap_or("");
+            if uuid.is_empty() {
+                skipped += 1;
+                continue;
+            }
+            if self.dry_run {
+                let desc = task["description"].as_str().unwrap_or("");
+                println!("  [dry-run] {} {}", uuid, desc);
+                imported += 1;
+                continue;
+            }
+            // Taskwarrior export → sinex task.created event
+            let title = task["description"].as_str().unwrap_or("").to_string();
+            let project = task["project"].as_str().map(String::from);
+
+            use sinex_primitives::rpc::tasks::TaskCreateRequest;
+            let request = TaskCreateRequest {
+                task_id: None,
+                title,
+                body: None,
+                project_id: project,
+                tags: vec![],
+                due_at: None,
+                priority: task["priority"].as_str().map(String::from),
+                external_refs: vec![],
+            };
+            match client.tasks_create(request).await {
+                Ok(_) => imported += 1,
+                Err(e) => {
+                    eprintln!("  failed to import {}: {}", uuid, e);
+                    skipped += 1;
+                }
+            }
+        }
+        println!("imported: {}, skipped: {}", imported, skipped);
+        Ok(())
+    }
 }
 
 #[derive(Debug, Args)]

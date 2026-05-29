@@ -1,6 +1,6 @@
 use async_nats::jetstream;
-use sinexd::api::{ServiceContainer, rpc_server};
 use sinex_workspace_tests::built_binary;
+use sinexd::api::{ServiceContainer, rpc_server};
 use std::net::TcpListener;
 use std::process::Stdio;
 use std::time::Duration;
@@ -100,9 +100,8 @@ async fn start_test_gateway(ctx: &TestContext) -> color_eyre::Result<TestGateway
     env.set("SINEX_NATS_URL", ctx.nats_handle()?.client_url());
 
     let port = reserve_port()?;
-    let mut config = sinexd::api::config::GatewayConfig::load_with_database_url(
-        ctx.database_url().to_string(),
-    )?;
+    let mut config =
+        sinexd::api::config::GatewayConfig::load_with_database_url(ctx.database_url().to_string())?;
     config.tcp_listen = format!("127.0.0.1:{port}");
     config.rpc_rate_limit_enabled = false;
     let services = ServiceContainer::new(&config).await?;

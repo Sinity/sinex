@@ -51,16 +51,14 @@ pub fn check_tls_config(options: &TlsCheckOptions) -> Result<TlsCheckResult> {
     };
 
     // Resolve paths from env if not provided
-    let cert_path = options.cert_path.clone().or_else(|| {
-        std::env::var("SINEX_API_TLS_CERT")
-            .ok()
-            .map(PathBuf::from)
-    });
-    let key_path = options.key_path.clone().or_else(|| {
-        std::env::var("SINEX_API_TLS_KEY")
-            .ok()
-            .map(PathBuf::from)
-    });
+    let cert_path = options
+        .cert_path
+        .clone()
+        .or_else(|| std::env::var("SINEX_API_TLS_CERT").ok().map(PathBuf::from));
+    let key_path = options
+        .key_path
+        .clone()
+        .or_else(|| std::env::var("SINEX_API_TLS_KEY").ok().map(PathBuf::from));
     let ca_path = options.ca_path.clone().or_else(|| {
         std::env::var("SINEX_API_TLS_CLIENT_CA")
             .ok()
@@ -147,9 +145,9 @@ pub fn check_tls_config(options: &TlsCheckOptions) -> Result<TlsCheckResult> {
             result.valid = false;
         }
     } else {
-        result.issues.push(
-            "No private key path provided (set SINEX_API_TLS_KEY or use --key)".to_string(),
-        );
+        result
+            .issues
+            .push("No private key path provided (set SINEX_API_TLS_KEY or use --key)".to_string());
         result.valid = false;
     }
 

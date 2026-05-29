@@ -2407,7 +2407,7 @@ mod tests {
         let command = TestCommand::default();
 
         let args = command.semantic_invocation_args(
-            &WorkloadScope::Packages(vec!["sinex-node-sdk".to_string()]),
+            &WorkloadScope::Packages(vec!["sinexd".to_string()]),
             None,
             &[],
             true,
@@ -2443,7 +2443,7 @@ mod tests {
         let command = TestCommand::default();
 
         let args = command.semantic_invocation_args(
-            &WorkloadScope::Packages(vec!["sinex-node-sdk".to_string()]),
+            &WorkloadScope::Packages(vec!["sinexd".to_string()]),
             Some("test(one)"),
             &[],
             true,
@@ -2559,16 +2559,16 @@ mod tests {
     #[sinex_test]
     async fn test_postgres_auto_skips_exact_targeted_runs() -> ::xtask::sandbox::TestResult<()> {
         let command = TestCommand {
-            packages: vec!["sinex-node-sdk".to_string()],
+            packages: vec!["sinexd".to_string()],
             filter: Some(
                 "test(sqlite_harness_records_snapshot_success_and_failure_evidence)".to_string(),
             ),
             ..Default::default()
         };
         let plan = NextestExecutionPlan {
-            runner_packages: vec!["sinex-node-sdk".to_string()],
+            runner_packages: vec!["sinexd".to_string()],
             excluded_packages: Vec::new(),
-            workload_scope: WorkloadScope::Packages(vec!["sinex-node-sdk".to_string()]),
+            workload_scope: WorkloadScope::Packages(vec!["sinexd".to_string()]),
         };
 
         assert!(
@@ -2589,16 +2589,16 @@ mod tests {
     -> ::xtask::sandbox::TestResult<()> {
         let command = TestCommand {
             ephemeral_postgres: true,
-            packages: vec!["sinex-node-sdk".to_string()],
+            packages: vec!["sinexd".to_string()],
             filter: Some(
                 "test(sqlite_harness_records_snapshot_success_and_failure_evidence)".to_string(),
             ),
             ..Default::default()
         };
         let plan = NextestExecutionPlan {
-            runner_packages: vec!["sinex-node-sdk".to_string()],
+            runner_packages: vec!["sinexd".to_string()],
             excluded_packages: Vec::new(),
-            workload_scope: WorkloadScope::Packages(vec!["sinex-node-sdk".to_string()]),
+            workload_scope: WorkloadScope::Packages(vec!["sinexd".to_string()]),
         };
 
         assert!(

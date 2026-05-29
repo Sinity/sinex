@@ -1,8 +1,6 @@
 # sinexctl CLI E2E tests
 # Tests the CLI tool against a running gateway with structured JSON output
 { pkgs
-, sinex-ingestd
-, sinex-gateway
 , pg_jsonschema
 , sinex ? null
 , sinexCli ? null
@@ -21,7 +19,7 @@ pkgs.testers.nixosTest {
   nodes.machine = { config, pkgs, lib, ... }: {
     imports = [
       (import ../common/test-base.nix {
-        inherit config pkgs lib sinex-ingestd sinex-gateway pg_jsonschema sinex sinexCli;
+        inherit config pkgs lib pg_jsonschema sinex sinexCli;
       })
     ];
 
@@ -51,8 +49,7 @@ pkgs.testers.nixosTest {
     def wait_for_gateway():
         """Wait for gateway to be ready and accepting connections"""
         machine.wait_for_unit("postgresql.service", timeout=60)
-        machine.wait_for_unit("sinex-gateway.service", timeout=60)
-        machine.wait_for_unit("sinex-ingestd.service", timeout=60)
+        machine.wait_for_unit("sinexd.service", timeout=60)
         # Wait until gateway health endpoint responds
         machine.wait_until_succeeds(
             "curl -k -s https://127.0.0.1:9999/health",

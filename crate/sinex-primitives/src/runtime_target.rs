@@ -375,7 +375,7 @@ mod tests {
             version: 1,
             mode: DeploymentReadinessMode::Enabled,
             source: Some("nixos".to_string()),
-            managed_units: vec!["sinex-gateway.service".to_string()],
+            managed_units: vec!["sinexd.service".to_string()],
             target: Some(DeploymentTarget {
                 user: "sinity".to_string(),
                 uid: Some(1000),
@@ -428,7 +428,7 @@ mod tests {
             target.gateway.token_role,
             Some(RuntimeTargetGatewayTokenRole::Admin)
         );
-        assert_eq!(target.services.managed_units, ["sinex-gateway.service"]);
+        assert_eq!(target.services.managed_units, ["sinexd.service"]);
         Ok(())
     }
 

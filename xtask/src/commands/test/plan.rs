@@ -12,7 +12,7 @@ const INGESTD_RUNTIME_TEST_PACKAGES: &[&str] = &[
     "sinex-e2e-tests",
     "sinex-gateway",
     "sinex-ingestd",
-    "sinex-node-sdk",
+    "sinexd",
     "sinex-terminal-ingestor",
     "sinex-workspace-tests",
 ];
@@ -25,7 +25,7 @@ const DATABASE_TEST_PACKAGES: &[&str] = &[
     "sinex-e2e-tests",
     "sinex-gateway",
     "sinex-ingestd",
-    "sinex-node-sdk",
+    "sinexd",
     "sinex-schema",
     "sinex-terminal-ingestor",
     "sinex-workspace-tests",
@@ -376,9 +376,9 @@ mod tests {
     async fn runtime_binary_requirements_include_ingestd_for_node_sdk_tests()
     -> ::xtask::sandbox::TestResult<()> {
         let plan = NextestExecutionPlan {
-            runner_packages: vec!["sinex-node-sdk".to_string()],
+            runner_packages: vec!["sinexd".to_string()],
             excluded_packages: Vec::new(),
-            workload_scope: WorkloadScope::Packages(vec!["sinex-node-sdk".to_string()]),
+            workload_scope: WorkloadScope::Packages(vec!["sinexd".to_string()]),
         };
 
         let requirements = runtime_binary_requirements_for_plan(&plan);
@@ -499,9 +499,9 @@ mod tests {
     async fn runtime_binary_requirements_skip_lib_only_targets() -> ::xtask::sandbox::TestResult<()>
     {
         let plan = NextestExecutionPlan {
-            runner_packages: vec!["sinex-node-sdk".to_string()],
+            runner_packages: vec!["sinexd".to_string()],
             excluded_packages: Vec::new(),
-            workload_scope: WorkloadScope::Packages(vec!["sinex-node-sdk".to_string()]),
+            workload_scope: WorkloadScope::Packages(vec!["sinexd".to_string()]),
         };
 
         assert!(runtime_binary_requirements_for_target(&plan, true, &[], None).is_empty());

@@ -77,9 +77,15 @@ pub fn registered_node_factory_ids() -> Vec<SourceUnitId> {
 #[macro_export]
 macro_rules! register_node_factory {
     ($id:expr, $node_type:ty) => {
-        $crate::__submit_registry_entry!($crate::sources::node_factory::NodeFactoryEntry, $id, |args| {
-            Box::pin($crate::sources::node_factory::run_ingestor::<$node_type>(args))
-        },);
+        $crate::__submit_registry_entry!(
+            $crate::sources::node_factory::NodeFactoryEntry,
+            $id,
+            |args| {
+                Box::pin($crate::sources::node_factory::run_ingestor::<$node_type>(
+                    args,
+                ))
+            },
+        );
     };
 }
 
@@ -149,12 +155,16 @@ macro_rules! register_adapter_ingestor {
         $crate::register_parser!($id, $parser);
 
         // 2. Register the node factory (continuous ingestion path).
-        $crate::__submit_registry_entry!($crate::sources::node_factory::NodeFactoryEntry, $id, |args| {
-            Box::pin($crate::sources::node_factory::run_adapter_ingestor::<
-                $adapter,
-                $parser,
-            >($id, args))
-        },);
+        $crate::__submit_registry_entry!(
+            $crate::sources::node_factory::NodeFactoryEntry,
+            $id,
+            |args| {
+                Box::pin($crate::sources::node_factory::run_adapter_ingestor::<
+                    $adapter,
+                    $parser,
+                >($id, args))
+            },
+        );
     };
 }
 
@@ -168,15 +178,15 @@ pub async fn run_adapter_ingestor<A, P>(
     args: Vec<std::ffi::OsString>,
 ) -> Result<(), Box<dyn std::error::Error>>
 where
-    A: sinex_node_sdk::parser::InputShapeAdapter + Default + Send + Sync + 'static,
-    P: sinex_node_sdk::parser::MaterialParser + Default + Send + Sync + 'static,
+    A: crate::node_sdk::parser::InputShapeAdapter + Default + Send + Sync + 'static + crate::node_sdk::parser::InputShapeAdapterExt,
+    P: sinex_primitives::parser::MaterialParser + Default + Send + Sync + 'static,
     A::Config: Clone + serde::Serialize + serde::de::DeserializeOwned + Send + Sync,
     A::Cursor: Clone + serde::Serialize + serde::de::DeserializeOwned + Send + Sync,
 {
     use clap::Parser;
-    use sinex_node_sdk::SourceUnitRuntime;
-    use sinex_node_sdk::node_cli::{NodeCli, NodeCliRunner};
-    use sinex_node_sdk::parser::AdapterBackedIngestor;
+    use crate::node_sdk::SourceUnitRuntime;
+    use crate::node_sdk::node_cli::{NodeCli, NodeCliRunner};
+    use crate::node_sdk::parser::AdapterBackedIngestor;
 
     let parsed = NodeCli::parse_from(args);
     let node = AdapterBackedIngestor::<A, P>::new(source_unit_id);
@@ -196,11 +206,11 @@ pub async fn run_ingestor<I>(
     args: Vec<std::ffi::OsString>,
 ) -> Result<(), Box<dyn std::error::Error>>
 where
-    I: sinex_node_sdk::SourceUnit + Default + 'static,
+    I: crate::node_sdk::SourceUnit + Default + 'static,
 {
     use clap::Parser;
-    use sinex_node_sdk::SourceUnitRuntime;
-    use sinex_node_sdk::node_cli::{NodeCli, NodeCliRunner};
+    use crate::node_sdk::SourceUnitRuntime;
+    use crate::node_sdk::node_cli::{NodeCli, NodeCliRunner};
 
     let parsed = NodeCli::parse_from(args);
     let node = SourceUnitRuntime::new(I::default());

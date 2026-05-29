@@ -10,8 +10,8 @@
 //! that should be a downstream scope reconciler keyed by session/activity scope
 //! rather than widening `command.canonical` itself into a reconciled object.
 
-use sinex_node_sdk::derived_node::{DerivedOutput, AutomatonContext, TransducerNodeAdapter};
-use sinex_node_sdk::{InputProvenanceFilter, NodeLogicError, Transducer};
+use crate::node_sdk::derived_node::{AutomatonContext, DerivedOutput, TransducerNodeAdapter};
+use crate::node_sdk::{InputProvenanceFilter, NodeLogicError, Transducer};
 use sinex_primitives::JsonValue;
 use sinex_primitives::domain::SyntheticTemporalPolicy;
 use sinex_primitives::events::EventPayload;

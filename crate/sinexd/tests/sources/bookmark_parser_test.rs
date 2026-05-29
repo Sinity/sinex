@@ -11,7 +11,7 @@
 
 use std::collections::HashSet;
 
-use sinex_node_sdk::parser::MaterialParser;
+use sinex_primitives::parser::MaterialParser;
 use sinex_primitives::{
     Uuid,
     ids::Id,

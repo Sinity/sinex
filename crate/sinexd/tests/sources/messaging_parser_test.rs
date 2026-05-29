@@ -12,7 +12,7 @@
 //! | Idempotent replay at occurrence level | SATISFIED | Same input → same occurrence_key deterministically |
 //! | Live Gmail/IMAP split confirmed out of scope | CONFIRMED | Deferred per issue non-goals |
 
-use sinex_node_sdk::parser::MaterialParser;
+use sinex_primitives::parser::MaterialParser;
 use sinex_primitives::{
     Uuid,
     ids::Id,

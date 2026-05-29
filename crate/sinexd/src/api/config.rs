@@ -47,17 +47,26 @@ pub struct GatewayConfig {
 
     /// Maximum database connections per service pool.
     #[serde(default = "default_pool_max_connections")]
-    #[sinex_config(env = "SINEX_API_POOL_MAX_CONNECTIONS", default_expr = "default_pool_max_connections()")]
+    #[sinex_config(
+        env = "SINEX_API_POOL_MAX_CONNECTIONS",
+        default_expr = "default_pool_max_connections()"
+    )]
     pub pool_max_connections: u32,
 
     /// Minimum database connections per service pool.
     #[serde(default = "default_pool_min_connections")]
-    #[sinex_config(env = "SINEX_API_POOL_MIN_CONNECTIONS", default_expr = "default_pool_min_connections()")]
+    #[sinex_config(
+        env = "SINEX_API_POOL_MIN_CONNECTIONS",
+        default_expr = "default_pool_min_connections()"
+    )]
     pub pool_min_connections: u32,
 
     /// Connection acquisition timeout in seconds.
     #[serde(default = "default_pool_acquire_timeout_secs")]
-    #[sinex_config(env = "SINEX_API_POOL_ACQUIRE_TIMEOUT_SECS", default_expr = "default_pool_acquire_timeout_secs()")]
+    #[sinex_config(
+        env = "SINEX_API_POOL_ACQUIRE_TIMEOUT_SECS",
+        default_expr = "default_pool_acquire_timeout_secs()"
+    )]
     pub pool_acquire_timeout_secs: u64,
 
     /// Content-store root path.
@@ -66,7 +75,10 @@ pub struct GatewayConfig {
     /// to `SINEX_CONTENT_STORE_PATH` (shared). The gateway-specific key takes
     /// priority; set the shared key to override both gateway and event-engine.
     #[serde(default = "default_content_store_path")]
-    #[sinex_config(env = "SINEX_API_CONTENT_STORE_PATH", default_expr = "default_content_store_path()")]
+    #[sinex_config(
+        env = "SINEX_API_CONTENT_STORE_PATH",
+        default_expr = "default_content_store_path()"
+    )]
     pub content_store_path: String,
 
     /// Runtime state root used for gateway-owned local state.
@@ -117,32 +129,50 @@ pub struct GatewayConfig {
 
     /// Maximum concurrent RPC requests.
     #[serde(default = "default_max_concurrency")]
-    #[sinex_config(env = "SINEX_API_MAX_CONCURRENCY", default_expr = "default_max_concurrency()")]
+    #[sinex_config(
+        env = "SINEX_API_MAX_CONCURRENCY",
+        default_expr = "default_max_concurrency()"
+    )]
     pub max_concurrency: usize,
 
     /// RPC request timeout in seconds.
     #[serde(default = "default_request_timeout_secs")]
-    #[sinex_config(env = "SINEX_API_REQUEST_TIMEOUT_SECS", default_expr = "default_request_timeout_secs()")]
+    #[sinex_config(
+        env = "SINEX_API_REQUEST_TIMEOUT_SECS",
+        default_expr = "default_request_timeout_secs()"
+    )]
     pub request_timeout_secs: u64,
 
     /// Maximum JSON-RPC request body size in bytes.
     #[serde(default = "default_max_body_bytes")]
-    #[sinex_config(env = "SINEX_API_MAX_BODY_BYTES", default_expr = "default_max_body_bytes()")]
+    #[sinex_config(
+        env = "SINEX_API_MAX_BODY_BYTES",
+        default_expr = "default_max_body_bytes()"
+    )]
     pub max_body_bytes: u64,
 
     /// Maximum decoded blob payload size in bytes.
     #[serde(default = "default_max_blob_bytes")]
-    #[sinex_config(env = "SINEX_API_MAX_BLOB_BYTES", default_expr = "default_max_blob_bytes()")]
+    #[sinex_config(
+        env = "SINEX_API_MAX_BLOB_BYTES",
+        default_expr = "default_max_blob_bytes()"
+    )]
     pub max_blob_bytes: usize,
 
     /// Replay-control request timeout in seconds.
     #[serde(default = "default_replay_control_timeout_secs")]
-    #[sinex_config(env = "SINEX_REPLAY_CONTROL_TIMEOUT_SECS", default_expr = "default_replay_control_timeout_secs()")]
+    #[sinex_config(
+        env = "SINEX_REPLAY_CONTROL_TIMEOUT_SECS",
+        default_expr = "default_replay_control_timeout_secs()"
+    )]
     pub replay_control_timeout_secs: u64,
 
     /// NATS consumer creation timeout in seconds for RPC handlers.
     #[serde(default = "default_nats_consumer_create_timeout_secs")]
-    #[sinex_config(env = "SINEX_NATS_CONSUMER_CREATE_TIMEOUT_SECS", default_expr = "default_nats_consumer_create_timeout_secs()")]
+    #[sinex_config(
+        env = "SINEX_NATS_CONSUMER_CREATE_TIMEOUT_SECS",
+        default_expr = "default_nats_consumer_create_timeout_secs()"
+    )]
     pub nats_consumer_create_timeout_secs: u64,
 
     /// Trusted extension allow-list for native messaging.
@@ -172,58 +202,91 @@ pub struct GatewayConfig {
 
     /// Native-messaging read timeout in seconds.
     #[serde(default = "default_native_messaging_read_timeout_secs")]
-    #[sinex_config(env = "SINEX_NATIVE_MESSAGING_READ_TIMEOUT_SECS", default_expr = "default_native_messaging_read_timeout_secs()")]
+    #[sinex_config(
+        env = "SINEX_NATIVE_MESSAGING_READ_TIMEOUT_SECS",
+        default_expr = "default_native_messaging_read_timeout_secs()"
+    )]
     pub native_messaging_read_timeout_secs: u64,
 
     /// Maximum native-messaging payload size in bytes.
     #[serde(default = "default_native_messaging_max_size_bytes")]
-    #[sinex_config(env = "SINEX_NATIVE_MESSAGING_MAX_SIZE_BYTES", default_expr = "default_native_messaging_max_size_bytes()")]
+    #[sinex_config(
+        env = "SINEX_NATIVE_MESSAGING_MAX_SIZE_BYTES",
+        default_expr = "default_native_messaging_max_size_bytes()"
+    )]
     pub native_messaging_max_size_bytes: usize,
 
     /// Whether RPC rate limiting is enabled.
     #[serde(default = "default_rate_limit_enabled")]
-    #[sinex_config(env = "SINEX_RPC_RATE_LIMIT_ENABLED", default_expr = "default_rate_limit_enabled()")]
+    #[sinex_config(
+        env = "SINEX_RPC_RATE_LIMIT_ENABLED",
+        default_expr = "default_rate_limit_enabled()"
+    )]
     pub rpc_rate_limit_enabled: bool,
 
     /// In-memory token bucket refill rate.
     #[serde(default = "default_rate_limit_requests_per_second")]
-    #[sinex_config(env = "SINEX_RPC_RATE_LIMIT_REQUESTS_PER_SEC", default_expr = "default_rate_limit_requests_per_second()")]
+    #[sinex_config(
+        env = "SINEX_RPC_RATE_LIMIT_REQUESTS_PER_SEC",
+        default_expr = "default_rate_limit_requests_per_second()"
+    )]
     pub rpc_rate_limit_requests_per_sec: u32,
 
     /// Per-role refill rate for `ReadOnly` tokens (overrides the global rate).
     #[serde(default = "default_rate_limit_readonly_rps")]
-    #[sinex_config(env = "SINEX_RPC_RATE_LIMIT_READONLY_RPS", default_expr = "default_rate_limit_readonly_rps()")]
+    #[sinex_config(
+        env = "SINEX_RPC_RATE_LIMIT_READONLY_RPS",
+        default_expr = "default_rate_limit_readonly_rps()"
+    )]
     pub rpc_rate_limit_readonly_rps: u32,
 
     /// Per-role refill rate for `Write` tokens (overrides the global rate).
     #[serde(default = "default_rate_limit_write_rps")]
-    #[sinex_config(env = "SINEX_RPC_RATE_LIMIT_WRITE_RPS", default_expr = "default_rate_limit_write_rps()")]
+    #[sinex_config(
+        env = "SINEX_RPC_RATE_LIMIT_WRITE_RPS",
+        default_expr = "default_rate_limit_write_rps()"
+    )]
     pub rpc_rate_limit_write_rps: u32,
 
     /// Per-role refill rate for `Admin` tokens (overrides the global rate;
     /// tighter than write because admin operations have higher impact).
     #[serde(default = "default_rate_limit_admin_rps")]
-    #[sinex_config(env = "SINEX_RPC_RATE_LIMIT_ADMIN_RPS", default_expr = "default_rate_limit_admin_rps()")]
+    #[sinex_config(
+        env = "SINEX_RPC_RATE_LIMIT_ADMIN_RPS",
+        default_expr = "default_rate_limit_admin_rps()"
+    )]
     pub rpc_rate_limit_admin_rps: u32,
 
     /// In-memory token bucket burst capacity.
     #[serde(default = "default_rate_limit_burst")]
-    #[sinex_config(env = "SINEX_RPC_RATE_LIMIT_BURST", default_expr = "default_rate_limit_burst()")]
+    #[sinex_config(
+        env = "SINEX_RPC_RATE_LIMIT_BURST",
+        default_expr = "default_rate_limit_burst()"
+    )]
     pub rpc_rate_limit_burst: u32,
 
     /// How long to retain idle in-memory token buckets.
     #[serde(default = "default_rate_limit_idle_timeout_secs")]
-    #[sinex_config(env = "SINEX_RPC_RATE_LIMIT_IDLE_TIMEOUT_SECS", default_expr = "default_rate_limit_idle_timeout_secs()")]
+    #[sinex_config(
+        env = "SINEX_RPC_RATE_LIMIT_IDLE_TIMEOUT_SECS",
+        default_expr = "default_rate_limit_idle_timeout_secs()"
+    )]
     pub rpc_rate_limit_idle_timeout_secs: u64,
 
     /// Distributed rate-limit window in seconds.
     #[serde(default = "default_rate_limit_window_secs")]
-    #[sinex_config(env = "SINEX_RPC_RATE_LIMIT_WINDOW_SECS", default_expr = "default_rate_limit_window_secs()")]
+    #[sinex_config(
+        env = "SINEX_RPC_RATE_LIMIT_WINDOW_SECS",
+        default_expr = "default_rate_limit_window_secs()"
+    )]
     pub rpc_rate_limit_window_secs: u64,
 
     /// Distributed rate-limit allowance per minute.
     #[serde(default = "default_rate_limit_per_minute")]
-    #[sinex_config(env = "SINEX_RPC_RATE_LIMIT_PER_MINUTE", default_expr = "default_rate_limit_per_minute()")]
+    #[sinex_config(
+        env = "SINEX_RPC_RATE_LIMIT_PER_MINUTE",
+        default_expr = "default_rate_limit_per_minute()"
+    )]
     pub rpc_rate_limit_per_minute: u32,
 }
 

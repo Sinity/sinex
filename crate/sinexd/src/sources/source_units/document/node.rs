@@ -11,10 +11,10 @@ use camino::{Utf8Path, Utf8PathBuf};
 use mime_guess::MimeGuess;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use sinex_node_sdk::{
+use crate::node_sdk::{
     ActivityEntry, ExplorationProvider, ExportFormat, IngestionHistoryEntry, SourceState,
 };
-use sinex_node_sdk::{
+use crate::node_sdk::{
     EventTransport, NodeResult, SinexError,
     acquisition_manager::{AcquisitionManager, RotationPolicy},
     ingestor_node::SourceUnit,
@@ -998,8 +998,8 @@ impl Default for DocumentNode {
 mod tests {
     use super::DocumentNode;
     use serde_json::json;
-    use sinex_node_sdk::ExplorationProvider;
-    use sinex_node_sdk::runtime::stream::Checkpoint;
+    use crate::node_sdk::ExplorationProvider;
+    use crate::node_sdk::runtime::stream::Checkpoint;
     use sinex_primitives::temporal::Timestamp;
     use xtask::sandbox::sinex_test;
 

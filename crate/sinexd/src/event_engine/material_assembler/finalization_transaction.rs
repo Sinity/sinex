@@ -5,13 +5,13 @@
 //! and precise temporal-ledger coverage.
 
 use serde_json::json;
+use sinex_db::schema::defs::records::SourceMaterialRecord;
 use sinex_db::{
     models::blob::Blob,
     repositories::{DbPoolExt, TemporalLedgerEntry},
 };
-use sinex_node_sdk::content_store::ContentStoreKey;
+use crate::node_sdk::content_store::ContentStoreKey;
 use sinex_primitives::{Id, JsonValue, Uuid};
-use sinex_db::schema::defs::records::SourceMaterialRecord;
 use tracing::{error, info, warn};
 
 use crate::event_engine::{IngestdResult, SinexError};
@@ -610,7 +610,7 @@ fn rollback_finalization_failure(
 #[cfg(test)]
 mod tests {
     use sinex_db::repositories::source_materials::status;
-    use sinex_node_sdk::content_store::ContentStoreKey;
+    use crate::node_sdk::content_store::ContentStoreKey;
     use sinex_primitives::Uuid;
     use xtask::sandbox::prelude::*;
 

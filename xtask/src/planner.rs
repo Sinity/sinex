@@ -253,14 +253,10 @@ fn affected_packages(dirty: &[&str]) -> Vec<String> {
             "sinex-schema"
         } else if path.starts_with("crate/lib/sinex-macros") {
             "sinex-macros"
-        } else if path.starts_with("crate/lib/sinex-node-sdk") {
-            "sinex-node-sdk"
-        } else if path.starts_with("crate/core/sinex-gateway") {
-            "sinex-gateway"
-        } else if path.starts_with("crate/core/sinex-ingestd") {
-            "sinex-ingestd"
-        } else if path.starts_with("crate/core/sinex-source-worker") {
-            "sinex-source-worker"
+        } else if path.starts_with("crate/sinexd") {
+            "sinexd"
+        } else if path.starts_with("crate/sinexd") {
+            "sinexd"
         } else if path.starts_with("crate/nodes/sinex-fs-ingestor") {
             "sinex-fs-ingestor"
         } else if path.starts_with("crate/nodes/sinex-terminal-ingestor") {
@@ -273,8 +269,6 @@ fn affected_packages(dirty: &[&str]) -> Vec<String> {
             "sinex-document-ingestor"
         } else if path.starts_with("crate/nodes/sinex-browser-ingestor") {
             "sinex-browser-ingestor"
-        } else if path.starts_with("crate/core/sinex-process") {
-            "sinex-process"
         } else if path.starts_with("crate/cli") {
             "sinexctl"
         } else if path.starts_with("xtask/") {

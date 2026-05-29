@@ -21,7 +21,7 @@
 
       # Fall back to core services if nodes are not yet active
       if [[ "''${#SERVICES[@]}" -eq 0 ]]; then
-        SERVICES=("sinex-ingestd.service")
+        SERVICES=("sinexd.service")
       fi
       SERVICES+=("postgresql.service")
       

@@ -138,6 +138,40 @@ pub enum TaskLifecycleInput {
     StatusChanged(TaskStatusChangedInput),
     Completed(TaskCompletedInput),
     Cancelled(TaskCancelledInput),
+    Split(TaskSplitInput),
+    Merged(TaskMergedInput),
+    Linked(TaskLinkedInput),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct TaskSplitInput {
+    pub task_id: Uuid,
+    pub split_at: Timestamp,
+    pub actor: String,
+    pub child_task_ids: Vec<Uuid>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct TaskMergedInput {
+    pub task_id: Uuid,
+    pub merged_at: Timestamp,
+    pub actor: String,
+    pub source_task_ids: Vec<Uuid>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct TaskLinkedInput {
+    pub task_id: Uuid,
+    pub linked_at: Timestamp,
+    pub actor: String,
+    pub target_task_id: Uuid,
+    pub link_type: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
 }
 
 /// Patch operation for task fields that can either be set or cleared.
@@ -249,7 +283,58 @@ pub fn reduce_task_event(
         TaskLifecycleInput::Cancelled(cancelled) => {
             reduce_cancelled(state, event_id, cancelled, observed_at)
         }
+        TaskLifecycleInput::Split(split) => {
+            reduce_split(state, event_id, split, observed_at)
+        }
+        TaskLifecycleInput::Merged(merged) => {
+            reduce_merged(state, event_id, merged, observed_at)
+        }
+        TaskLifecycleInput::Linked(linked) => {
+            reduce_linked(state, event_id, linked, observed_at)
+        }
     }
+}
+
+fn reduce_split(
+    state: Option<TaskState>,
+    event_id: Uuid,
+    _split: TaskSplitInput,
+    observed_at: Timestamp,
+) -> Result<TaskState> {
+    let mut s = state.ok_or_else(|| {
+        SinexError::validation("task.split received for unknown task")
+    })?;
+    s.last_event_id = event_id;
+    s.updated_at = observed_at;
+    Ok(s)
+}
+
+fn reduce_merged(
+    state: Option<TaskState>,
+    event_id: Uuid,
+    _merged: TaskMergedInput,
+    observed_at: Timestamp,
+) -> Result<TaskState> {
+    let mut s = state.ok_or_else(|| {
+        SinexError::validation("task.merged received for unknown task")
+    })?;
+    s.last_event_id = event_id;
+    s.updated_at = observed_at;
+    Ok(s)
+}
+
+fn reduce_linked(
+    state: Option<TaskState>,
+    event_id: Uuid,
+    _linked: TaskLinkedInput,
+    observed_at: Timestamp,
+) -> Result<TaskState> {
+    let mut s = state.ok_or_else(|| {
+        SinexError::validation("task.linked received for unknown task")
+    })?;
+    s.last_event_id = event_id;
+    s.updated_at = observed_at;
+    Ok(s)
 }
 
 fn reduce_created(

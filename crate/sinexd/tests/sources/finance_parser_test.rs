@@ -3,7 +3,7 @@
 //! All tests exercise the public `HledgerJournalParser` via `MaterialParser::parse_record`,
 //! using the same fixture data embedded in the parser's inline smoke test section.
 
-use sinex_node_sdk::parser::MaterialParser;
+use sinex_primitives::parser::MaterialParser;
 use sinex_primitives::{
     Uuid,
     ids::Id,

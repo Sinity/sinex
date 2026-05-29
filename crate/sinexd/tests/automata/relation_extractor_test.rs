@@ -5,8 +5,8 @@
 //! `ScopeReconciler` invariants (single fixed scope, no spurious emissions
 //! before the window closes).
 
-use sinex_node_sdk::ScopeReconciler;
-use sinex_node_sdk::derived_node::AutomatonContext;
+use sinexd::node_sdk::ScopeReconciler;
+use sinexd::node_sdk::derived_node::AutomatonContext;
 use sinex_primitives::Uuid;
 use sinex_primitives::domain::{EntityTypeName, ProcessingMode, TriggerKind};
 use sinex_primitives::events::payloads::EntityResolvedPayload;

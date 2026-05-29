@@ -225,10 +225,7 @@ async fn test_admin_token_file_takes_precedence() -> TestResult<()> {
     fs::write(&admin_file, "admin-token").unwrap();
     fs::write(&rpc_file, "rpc-token").unwrap();
 
-    env.set(
-        "SINEX_API_ADMIN_TOKEN_FILE",
-        admin_file.to_str().unwrap(),
-    );
+    env.set("SINEX_API_ADMIN_TOKEN_FILE", admin_file.to_str().unwrap());
     env.set("SINEX_RPC_TOKEN_FILE", rpc_file.to_str().unwrap());
 
     let token = rpc_test_support::read_token_from_env().unwrap();

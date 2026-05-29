@@ -1,5 +1,5 @@
-use sinex_node_sdk::ScopeReconciler;
-use sinex_node_sdk::derived_node::AutomatonContext;
+use sinexd::node_sdk::ScopeReconciler;
+use sinexd::node_sdk::derived_node::AutomatonContext;
 use sinex_primitives::domain::{ProcessingMode, TriggerKind};
 use sinex_primitives::events::payloads::{
     DesktopWorkspaceSwitchInstructionPayload, HyprlandWorkspaceSwitchedPayload,

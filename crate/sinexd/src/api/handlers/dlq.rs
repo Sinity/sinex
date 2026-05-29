@@ -8,7 +8,7 @@
 //! - Purge raw DLQ messages
 
 use crate::api::service_container::ServiceContainer;
-use sinex_node_sdk::dlq_retry::{DlqRetryConfig, DlqRetryHandler};
+use crate::node_sdk::dlq_retry::{DlqRetryConfig, DlqRetryHandler};
 use sinex_primitives::privacy::{self, ProcessingContext};
 use sinex_primitives::validation::normalize_unicode;
 use sinex_primitives::{Result, SinexError};

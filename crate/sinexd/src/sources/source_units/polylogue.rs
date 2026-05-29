@@ -50,11 +50,39 @@
 //! `(content_hash, conversation_id)` — the content hash detects changed
 //! conversations; the `conversation_id` provides the stable external key.
 
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
+use sinex_macros::EventPayload;
 use sinex_primitives::proof::{
     CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, RetentionPolicy, RuntimeShape,
     SourceUnitBinding, SourceUnitBuildImpact, SourceUnitDescriptor, SubjectRef,
 };
-use sinex_primitives::{register_source_unit, register_source_unit_binding};
+use sinex_primitives::{register_source_unit, register_source_unit_binding, Timestamp};
+
+/// Payload published by the Polylogue daemon when a conversation is indexed.
+///
+/// Metadata-only: no raw chat text is included. Tags and titles may reflect
+/// personal context so the payload is classified as Sensitive.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
+#[event_payload(
+    source = "integration.polylogue",
+    event_type = "integration.polylogue.conversation_indexed"
+)]
+pub struct PolylogueConversationIndexedPayload {
+    pub conversation_id: String,
+    pub provider: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    pub tags: Vec<String>,
+    pub content_hash: String,
+    pub created_at: Timestamp,
+    pub updated_at: Timestamp,
+    pub message_count: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cost_usd: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_slug: Option<String>,
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Source unit descriptor + binding

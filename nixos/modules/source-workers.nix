@@ -255,7 +255,6 @@ let
     "SINEX_STATE_DIR=${stateRoot}"
     "SINEX_RUNTIME_DIR=${runtimeDir}"
     "SINEX_LOG_DIR=${logDir}"
-    "SINEX_SPOOL_INGESTD=${ingestSpool}"
     "SINEX_NATS_URL=${natsUrl}"
     "SINEX_NATS_MONITORING_PORT=${toString nodesCfg.nats.monitoringPort}"
     # Both ingestd and gateway access the same content-store root; set here

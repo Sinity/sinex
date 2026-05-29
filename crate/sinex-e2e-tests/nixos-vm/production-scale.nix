@@ -1,6 +1,4 @@
 { pkgs
-, sinex-ingestd
-, sinex-gateway
 , pg_jsonschema
 , sinex ? null
 , sinexCli ? null
@@ -13,7 +11,7 @@ pkgs.testers.nixosTest {
   nodes.machine = { pkgs, config, lib, ... }: {
     imports = [
       (import ./common/test-base.nix {
-        inherit config pkgs lib sinex-ingestd sinex-gateway pg_jsonschema sinex sinexCli;
+        inherit config pkgs lib pg_jsonschema sinex sinexCli;
       })
       ./common/production-load.nix
     ];
@@ -57,7 +55,7 @@ pkgs.testers.nixosTest {
     };
 
     # Increase system limits
-    systemd.services.sinex-ingestd.serviceConfig = {
+    systemd.services.sinexd.serviceConfig = {
       LimitNOFILE = lib.mkForce "65536:65536";
       LimitNPROC = lib.mkForce 4096;
     };

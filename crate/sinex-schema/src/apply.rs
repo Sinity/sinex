@@ -4,7 +4,7 @@ use crate::defs::{
     Entities, EntityRelations, EventAnnotations, EventClusterMembers, EventClusters,
     EventEmbeddings, EventPayloadSchemas, EventReplacements, EventTombstones, Events, Manifests,
     OperationsLog, Runs, SemanticEpochs, SemanticLaneDiffs, SemanticLaneOutputs, SemanticLanes,
-    SourceMaterialLinks, SourceMaterialRegistry, TaggedItems, Tags, TemporalLedger,
+    ModelEffects, SourceMaterialLinks, SourceMaterialRegistry, TaggedItems, Tags, TemporalLedger,
 };
 use crate::registry;
 use sea_query::{IndexCreateStatement, PostgresQueryBuilder, TableCreateStatement};
@@ -722,6 +722,7 @@ async fn create_tables(pool: &PgPool) -> Result<(), ApplyError> {
         render_table(&Manifests::create_table_statement()),
         render_table(&Runs::create_table_statement()),
         render_table(&Events::create_table_statement()),
+        render_table(&ModelEffects::create_table_statement()),
         render_table(&BinarySchemaVersion::create_table_statement()),
         render_table(&TemporalLedger::create_table_statement()),
         render_table(&Entities::create_table_statement()),

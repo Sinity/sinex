@@ -23,9 +23,9 @@
 //! Entity ID is the source event ID — tags are applied to the event
 //! that triggered them, not to a resolved entity.
 //!
-use sinex_node_sdk::derived_node::{DerivedOutput, AutomatonContext, TransducerNodeAdapter};
-use sinex_node_sdk::tags;
-use sinex_node_sdk::{InputProvenanceFilter, NodeLogicError, Transducer};
+use crate::node_sdk::derived_node::{AutomatonContext, DerivedOutput, TransducerNodeAdapter};
+use crate::node_sdk::tags;
+use crate::node_sdk::{InputProvenanceFilter, NodeLogicError, Transducer};
 use sinex_primitives::events::EventPayload;
 use sinex_primitives::events::payloads::KnowledgeTagAppliedPayload;
 use sinex_primitives::privacy::ProcessingContext;
