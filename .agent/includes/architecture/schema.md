@@ -40,15 +40,16 @@ unions across CAs); `current_device_state` remains a regular materialized view
 
 Source of truth: `TELEMETRY_VIEW_RELATIONS`,
 `TELEMETRY_MATERIALIZED_VIEW_RELATIONS`, and `TELEMETRY_CONTINUOUS_AGGREGATES`
-in `crate/lib/sinex-schema/src/apply.rs`.
+in `crate/sinex-schema/src/apply.rs`.
 
 ### Schema Convergence
 
 Schema evolution uses declarative convergence (`sinex-schema apply`), not migrations. The apply engine diffs desired state against actual DB state and converges: adding columns, indexes, constraints, functions. Named CHECK constraints are converged; inline column CHECKs are not.
 
-- Schema source: `crate/lib/sinex-schema/src/schema/`
-- Apply engine: `crate/lib/sinex-schema/src/apply.rs`
-- Design: `crate/lib/sinex-schema/docs/schema_design.md`
+- Schema source: `crate/sinex-schema/src/defs/`
+- Apply engine: `crate/sinex-schema/src/apply.rs`
+- Strict diff: `crate/sinex-schema/src/strict_diff.rs`
+- Design: `crate/sinex-db/docs/schema/schema_design.md`
 
 **Drift detection**: `apply::diff` reports the categories it converges
 (missing tables, columns, named constraints, indexes, triggers, views,
