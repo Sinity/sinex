@@ -15,7 +15,7 @@
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
-use sinex_node_sdk::parser::{
+use crate::node_sdk::parser::{
     AppendOnlyFileAdapter, ChainedAdapter, MaterialParser, ParserError, ParserResult,
 };
 use sinex_primitives::proof::{
@@ -616,7 +616,7 @@ fn redact(value: String, ctx: ProcessingContext) -> ParserResult<String> {
 
 /// Chained adapter: primary = `SQLite` history DB rows, secondary = dump file lines.
 pub type BrowserHistoryAdapter =
-    ChainedAdapter<sinex_node_sdk::parser::SqliteRowAdapter, AppendOnlyFileAdapter>;
+    ChainedAdapter<crate::node_sdk::parser::SqliteRowAdapter, AppendOnlyFileAdapter>;
 
 crate::register_adapter_ingestor!(
     source_unit_id: "browser.history",

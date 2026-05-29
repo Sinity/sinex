@@ -7,8 +7,8 @@
 //! - Sources for discovering schemas via `GitOps` (`gitops_schema_sources` - aspirational, see docs).
 //! - Caching for validation results (`validation_cache`).
 
-use crate::primitives::{Timestamp, Uuid};
 use crate::TableDef;
+use crate::primitives::{Timestamp, Uuid};
 use sea_query::{
     Alias, ColumnDef, Expr, ForeignKey, ForeignKeyAction, Iden, Index, IndexCreateStatement, Table,
     TableCreateStatement,

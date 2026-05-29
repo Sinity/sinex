@@ -3,7 +3,7 @@
 use serde_json::json;
 use sinex_db::DbPoolExt;
 use sinex_db::repositories::SourceMaterial as DbSourceMaterial;
-use sinex_node_sdk::{
+use crate::node_sdk::{
     dispatch_hyprland_workspace_command, probe_hyprland_command_socket,
     resolve_hyprland_command_socket_path,
 };

@@ -10,7 +10,7 @@ use super::{MaterialAssembler, MaterialEndMessage, Uuid};
 use async_nats::jetstream;
 use futures::StreamExt;
 use serde_json::json;
-use sinex_node_sdk::{
+use crate::node_sdk::{
     SOURCE_MATERIAL_BEGIN_SUBJECT, SOURCE_MATERIAL_END_SUBJECT, SOURCE_MATERIAL_FRAMES_SUBJECT,
     SOURCE_MATERIAL_SLICE_SUBJECT_PREFIX, SOURCE_MATERIAL_STREAM,
     runtime::stream::{PullConsumerSpec, ensure_pull_consumer},

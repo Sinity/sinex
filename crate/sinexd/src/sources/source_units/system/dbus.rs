@@ -4,7 +4,7 @@
 //! Notification body and D-Bus args are passed through the privacy engine.
 
 use crate::register_parser;
-use sinex_node_sdk::parser::{DbusStreamAdapter, MaterialParser, ParserError};
+use crate::node_sdk::parser::{DbusStreamAdapter, MaterialParser, ParserError};
 use sinex_primitives::domain::{EventSource, EventType};
 use sinex_primitives::events::enums::{
     BluetoothEventType, DBusBus, DeviceType, MountEventType, NetworkConnectionType,

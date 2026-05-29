@@ -6,7 +6,7 @@
 use std::{collections::HashMap, sync::Arc};
 
 use camino::Utf8PathBuf;
-use sinex_node_sdk::{
+use sinexd::node_sdk::{
     EventTransport,
     checkpoint::CheckpointManager,
     heartbeat::HeartbeatEmitter,
@@ -146,9 +146,9 @@ impl TestRuntime {
 
     pub fn acquisition_manager(
         &self,
-        rotation_policy: sinex_node_sdk::RotationPolicy,
+        rotation_policy: sinexd::node_sdk::RotationPolicy,
         source_type: impl Into<String>,
-    ) -> sinex_node_sdk::NodeResult<sinex_node_sdk::AcquisitionManager> {
+    ) -> sinexd::node_sdk::NodeResult<sinexd::node_sdk::AcquisitionManager> {
         self.runtime
             .acquisition_manager(rotation_policy, source_type)
     }

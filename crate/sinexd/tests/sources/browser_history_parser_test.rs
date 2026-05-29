@@ -4,7 +4,7 @@
 //! include the required `source_file` field for `SQLite` and JSONL material.
 
 use camino::Utf8PathBuf;
-use sinex_node_sdk::parser::{MaterialParser, SourceRecordFingerprint};
+use sinexd::node_sdk::parser::{MaterialParser, SourceRecordFingerprint};
 use sinex_primitives::{
     Uuid,
     ids::Id,

@@ -1,7 +1,5 @@
 # Multi-source stress test for Sinex
 { pkgs
-, sinex-ingestd
-, sinex-gateway
 , pg_jsonschema
 , sinex ? null
 , sinexCli ? null
@@ -9,7 +7,7 @@
 }:
 
 let
-  sinexPackage = if sinex != null then sinex else sinex-ingestd;
+  sinexPackage = if sinex != null then sinex else sinexd;
   sinexCliPackage = if sinexCli != null then sinexCli else pkgs.python3;
   # Enhanced query tool with metrics support
   sinex-query = pkgs.writeScriptBin "sinex" ''
@@ -237,7 +235,7 @@ pkgs.testers.nixosTest {
     in {
       imports = [
         (import ../common/test-base.nix {
-          inherit config pkgs lib sinex-ingestd sinex-gateway pg_jsonschema sinex sinexCli;
+          inherit config pkgs lib pg_jsonschema sinex sinexCli;
         })
       ];
 
@@ -402,8 +400,6 @@ SQL
       
       # Package overlays
       nixpkgs.overlays = [(final: prev: {
-        sinex-ingestd = sinex-ingestd;
-        sinex-gateway = sinex-gateway;
         sinex = sinexPackage;
         sinexCli = sinexCliPackage;
         postgresql18Packages = prev.postgresql18Packages // {
@@ -492,8 +488,7 @@ SQL
     machine.wait_for_unit("postgresql.service")
 
     # Wait for Sinex services
-    machine.wait_for_unit("sinex-ingestd.service")
-    machine.wait_for_unit("sinex-gateway.service")
+    machine.wait_for_unit("sinexd.service")
 
     # Ensure node instances are online
     terminal_source_units = [
@@ -515,8 +510,7 @@ SQL
         machine.succeed(f"systemctl is-active {unit}")
 
     # Verify core hubs are active
-    machine.succeed("systemctl is-active sinex-ingestd")
-    machine.succeed("systemctl is-active sinex-gateway")
+    machine.succeed("systemctl is-active sinexd")
 
     # Initialize all data sources
     with subtest("Initialize all event sources"):
@@ -584,8 +578,7 @@ SQL
 
     # Test 5: Post-stress stability
     with subtest("System stability after stress test"):
-        machine.succeed("systemctl is-active sinex-ingestd")
-        machine.succeed("systemctl is-active sinex-gateway")
+        machine.succeed("systemctl is-active sinexd")
         machine.succeed("systemctl is-active postgresql")
         machine.succeed("su - test -c 'echo post-stress-test > /var/lib/sinex/watched/post-stress.txt'")
         wait_for_event_pattern("post-stress")

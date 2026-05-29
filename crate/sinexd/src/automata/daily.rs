@@ -4,10 +4,10 @@
 //! `activity.summary.hourly` inputs into completed UTC-day summaries.
 
 use serde::{Deserialize, Serialize};
-use sinex_node_sdk::derived_node::{
-    DerivedAggregationMeta, DerivedOutput, AutomatonContext, WindowedNodeAdapter,
+use crate::node_sdk::derived_node::{
+    AutomatonContext, DerivedAggregationMeta, DerivedOutput, WindowedNodeAdapter,
 };
-use sinex_node_sdk::{InputProvenanceFilter, NodeLogicError, Windowed};
+use crate::node_sdk::{InputProvenanceFilter, NodeLogicError, Windowed};
 use sinex_primitives::Uuid;
 use sinex_primitives::activity::{ActivitySourceKind, primary_activity_source};
 use sinex_primitives::events::{

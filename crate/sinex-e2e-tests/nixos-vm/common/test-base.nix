@@ -2,15 +2,13 @@
 { config
 , pkgs
 , lib
-, sinex-ingestd
-, sinex-gateway
 , pg_jsonschema
 , sinex ? null
 , sinexCli ? null
 , ...
 }:
 let
-  sinexPackage = if sinex != null then sinex else sinex-ingestd;
+  sinexPackage = sinex;
   sinexCliPackage = sinexCli;
   stateDir = config.services.sinex.stateRoot;
   workDir = "${stateDir}/.cache/sinex/ingestd-dev";
@@ -86,10 +84,9 @@ in
   # Use the real NixOS schema-apply unit rather than shadowing it with a second
   # VM-local migration service. Double-applying the declarative schema races on
   # type creation and breaks boot.
-  systemd.services.sinex-gateway.after = [ "sinex-schema-apply.service" "sinex-blob-init.service" ];
-  systemd.services.sinex-gateway.requires = [ "sinex-schema-apply.service" "sinex-blob-init.service" ];
-  systemd.services.sinex-ingestd.path = [ pkgs.git pkgs.git-annex ];
-  systemd.services.sinex-gateway.path = [ pkgs.git pkgs.git-annex ];
+  systemd.services.sinexd.after = [ "sinex-schema-apply.service" "sinex-blob-init.service" ];
+  systemd.services.sinexd.requires = [ "sinex-schema-apply.service" "sinex-blob-init.service" ];
+  systemd.services.sinexd.path = [ pkgs.git pkgs.git-annex ];
   systemd.services.sinex-blob-init.path = [ pkgs.git pkgs.git-annex ];
   systemd.services.sinex-filesystem-1.serviceConfig.Type = lib.mkForce "simple";
   systemd.services.sinex-filesystem-1.serviceConfig.TimeoutStartSec = lib.mkForce "infinity";
@@ -195,10 +192,10 @@ host    all             all             ::1/128                 trust
   ];
 
   # Prepare ingestd annex before service startup so the blob manager is usable.
-  systemd.services.sinex-ingestd-annex-setup = {
-    description = "Prepare Sinex ingestd annex repository";
+  systemd.services.sinexd-annex-setup = {
+    description = "Prepare Sinex daemon annex repository";
     wantedBy = [ "multi-user.target" ];
-    before = [ "sinex-ingestd.service" ];
+    before = [ "sinexd.service" ];
     serviceConfig = {
       Type = "oneshot";
       User = "sinex";
@@ -218,7 +215,7 @@ host    all             all             ::1/128                 trust
   # NB: do NOT self-reference config.systemd.services here — it causes infinite
   # recursion because node-services.nix defines systemd.services based on
   # config.services.sinex.core.  The module system auto-merges definitions.
-  systemd.services.sinex-ingestd.serviceConfig = {
+  systemd.services.sinexd.serviceConfig = {
     PermissionsStartOnly = true;
     ExecStartPre = lib.mkForce [
       "${pkgs.coreutils}/bin/install -d -o sinex -g sinex ${workDir}/annex"
@@ -232,15 +229,15 @@ host    all             all             ::1/128                 trust
     ];
   };
 
-  systemd.services.sinex-ingestd.after = lib.mkAfter [
+  systemd.services.sinexd.after = lib.mkAfter [
     "sinex-schema-apply.service"
     "sinex-blob-init.service"
-    "sinex-ingestd-annex-setup.service"
+    "sinexd-annex-setup.service"
   ];
-  systemd.services.sinex-ingestd.requires = lib.mkAfter [
+  systemd.services.sinexd.requires = lib.mkAfter [
     "sinex-schema-apply.service"
     "sinex-blob-init.service"
-    "sinex-ingestd-annex-setup.service"
+    "sinexd-annex-setup.service"
   ];
 
   # NATS: clear JetStream state on boot to avoid overlap errors and ensure clean bootstrap.
@@ -259,8 +256,6 @@ host    all             all             ::1/128                 trust
   nixpkgs.overlays = [
     (final: prev:
       ({
-        sinex-ingestd = sinex-ingestd;
-        sinex-gateway = sinex-gateway;
         sinex = sinexPackage;
         postgresql18Packages = prev.postgresql18Packages // {
           pg_jsonschema = pg_jsonschema;

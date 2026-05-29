@@ -1,7 +1,5 @@
 # Performance validation test for Sinex - Optimized version
 { pkgs
-, sinex-ingestd
-, sinex-gateway
 , pg_jsonschema
 , sinex ? null
 , sinexCli ? null
@@ -484,7 +482,7 @@ pkgs.testers.nixosTest {
   in {
     imports = [
       (import ../common/test-base.nix {
-        inherit config pkgs lib sinex-ingestd sinex-gateway pg_jsonschema sinex sinexCli;
+        inherit config pkgs lib pg_jsonschema sinex sinexCli;
       })
     ];
 
@@ -712,8 +710,7 @@ pkgs.testers.nixosTest {
                 raise AssertionError(f"Expected source '{source}' missing in stats")
 
     with subtest("Post-load stability check"):
-        machine.succeed("systemctl is-active sinex-ingestd")
-        machine.succeed("systemctl is-active sinex-gateway")
+        machine.succeed("systemctl is-active sinexd")
         pre_final = helpers.get_event_count()
         machine.succeed("su - test -c 'echo post-load > /var/lib/sinex/watched/post-load.txt'")
         ensure_event("post-load", timeout=45)

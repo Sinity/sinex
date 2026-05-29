@@ -21,8 +21,8 @@
 use async_trait::async_trait;
 use mime_guess::MimeGuess;
 use serde::{Deserialize, Serialize};
-use sinex_node_sdk::parser::{MaterialParser, ParserError, ParserResult};
-use sinex_node_sdk::tags;
+use crate::node_sdk::parser::{MaterialParser, ParserError, ParserResult};
+use crate::node_sdk::tags;
 use sinex_primitives::{
     domain::{EventSource, EventType},
     events::{
@@ -131,8 +131,7 @@ impl MaterialParser for DocumentStagingParser {
             privacy_contexts: vec![ProcessingContext::Metadata],
             proof_obligations: vec![],
             description:
-                "Stages document files and emits document.ingested + auto-tag derived events"
-                    .into(),
+                "Stages document files and emits document.ingested + auto-tag derived events".into(),
         }
     }
 

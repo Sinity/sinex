@@ -5,6 +5,7 @@ use serde_json::Value;
 
 use crate::query::{EventQuery, EventQueryResult, LineageQuery, LineageResult};
 use crate::rpc::{RpcDomain, RpcMethod, RpcMutability, RpcRole, RpcStability, methods};
+use crate::views::EventCardListView;
 
 pub const EVENTS_QUERY_METHOD: RpcMethod<EventQuery, EventQueryResult> = RpcMethod::new(
     methods::EVENTS_QUERY,
@@ -19,6 +20,14 @@ pub const EVENTS_LINEAGE_METHOD: RpcMethod<LineageQuery, LineageResult> = RpcMet
     RpcRole::ReadOnly,
     RpcDomain::Events,
     RpcStability::Stable,
+    RpcMutability::ReadOnly,
+);
+
+pub const EVENTS_CARDS_METHOD: RpcMethod<EventQuery, EventCardListView> = RpcMethod::new(
+    methods::EVENTS_CARDS,
+    RpcRole::ReadOnly,
+    RpcDomain::Events,
+    RpcStability::Experimental,
     RpcMutability::ReadOnly,
 );
 

@@ -11,10 +11,25 @@ use camino::Utf8PathBuf;
 use serde::{Deserialize, Serialize};
 use sinex_primitives::error::{Result, SinexError};
 use sinex_primitives::parser::SourceUnitId;
+use std::collections::HashMap;
 use tracing::{info, warn};
 
 use crate::sources::node_factory;
 use crate::sources::registry::SourceUnitRegistry;
+
+/// Restores environment variables to their previous values on drop.
+struct EnvRestore(Vec<(String, Option<String>)>);
+
+impl Drop for EnvRestore {
+    fn drop(&mut self) {
+        for (key, old_value) in self.0.drain(..).rev() {
+            match old_value {
+                Some(v) => unsafe { std::env::set_var(&key, v) },
+                None => unsafe { std::env::remove_var(&key) },
+            }
+        }
+    }
+}
 
 /// One row in the manifest file at `SINEX_SOURCE_BINDINGS_PATH`.
 ///
@@ -46,9 +61,20 @@ pub struct SourceBinding {
     #[serde(default)]
     pub node_config: Option<serde_json::Value>,
 
-    /// Extra CLI arguments inserted before the `service` subcommand.
+    /// Extra CLI arguments. In continuous mode (empty extra_args) the
+    /// `service` subcommand is appended automatically. When non-empty,
+    /// the first element is the subcommand (e.g. `"scan"`) and the rest
+    /// are its flags.
     #[serde(default)]
     pub extra_args: Vec<String>,
+
+    /// Environment variables injected into the binding's process scope.
+    /// Replaces the per-unit `EnvironmentFile` overlays that existed when
+    /// each source-worker was a separate systemd unit. Keys set here
+    /// override the daemon's inherited environment for the duration of
+    /// the binding's lifecycle.
+    #[serde(default)]
+    pub extra_env: HashMap<String, String>,
 }
 
 fn default_instance_idx() -> u32 {
@@ -67,10 +93,8 @@ impl SourceBindingsManifest {
     /// Load and parse a manifest from disk.
     pub fn load(path: &Utf8PathBuf) -> Result<Self> {
         let bytes = std::fs::read(path).map_err(|error| {
-            SinexError::configuration(format!(
-                "failed to read source-bindings manifest at {path}"
-            ))
-            .with_std_error(&error)
+            SinexError::configuration(format!("failed to read source-bindings manifest at {path}"))
+                .with_std_error(&error)
         })?;
         serde_json::from_slice(&bytes).map_err(|error| {
             SinexError::configuration(format!(
@@ -136,6 +160,21 @@ pub async fn run_binding(binding: SourceBinding) -> Result<()> {
         ))
     })?;
 
+    // Per-binding env injection: save current values, set overrides,
+    // restore on scope exit. Replaces per-unit EnvironmentFile overlays
+    // from the pre-collapse multi-systemd-unit architecture.
+    let _env_guard = {
+        let mut saved: Vec<(String, Option<String>)> = Vec::new();
+        for (key, value) in &binding.extra_env {
+            saved.push((key.clone(), std::env::var(key).ok()));
+            // SAFETY: single-process daemon; these writes are scoped to
+            // the binding's lifetime and restored before the next binding
+            // or supervisor tick.
+            unsafe { std::env::set_var(key, value); }
+        }
+        EnvRestore(saved)
+    };
+
     let service_name = binding.service_name.clone().unwrap_or_else(|| {
         format!(
             "sinex-source-worker-{}-{}",
@@ -172,7 +211,9 @@ pub async fn run_binding(binding: SourceBinding) -> Result<()> {
     for arg in &binding.extra_args {
         argv.push(std::ffi::OsString::from(arg));
     }
-    argv.push(std::ffi::OsString::from("service"));
+    if binding.extra_args.is_empty() {
+        argv.push(std::ffi::OsString::from("service"));
+    }
 
     info!(
         source_unit = %binding.source_unit_id,

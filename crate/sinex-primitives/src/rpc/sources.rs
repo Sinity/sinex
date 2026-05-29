@@ -843,17 +843,10 @@ pub struct SourcesContinuityResponse {
 /// for the JSON envelope these producers use.
 #[must_use]
 pub fn external_producer_presets() -> Vec<SourcePresetDescriptor> {
-    vec![
-        // ── Lynchpin analysis artifacts ─────────────────────────
-        SourcePresetDescriptor {
-            name: "lynchpin.generated.default".into(),
-            description: "Default Lynchpin analysis artifact directory".into(),
-            source_family: "analysis".into(),
-            input_shape_kind: "directory".into(),
-            material_format_hint: None,
-            resolver_preset: None,
-        },
-    ]
+    // External producer presets are registered through operator configuration,
+    // not hardcoded here. See the source-bindings NixOS module for the
+    // configuration surface.
+    vec![]
 }
 
 /// Presets for source material paths that bridge external producer systems.

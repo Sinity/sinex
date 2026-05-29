@@ -80,9 +80,8 @@
     
     # Initial setup
     sinex.wait_for_unit("postgresql.service")
-    sinex.wait_for_unit("sinex-ingestd.service")
-    sinex.wait_for_unit("sinex-gateway.service")
-    
+    sinex.wait_for_unit("sinexd.service")
+
     # Capture initial state
     with subtest("Initial deployment state"):
         # Record initial event count
@@ -93,17 +92,17 @@
         
         # Check initial configuration
         sinex.succeed(
-            "systemctl show -p Environment sinex-ingestd.service | "
+            "systemctl show -p Environment sinexd.service | "
             "grep -q 'SINEX_PRESET=lite'"
         )
     
     # Test update path that actually exists: NixOS-managed service restart with env transport
     with subtest("NixOS-managed restart update"):
-        sinex.execute("systemctl restart sinex-ingestd.service")
-        sinex.wait_for_unit("sinex-ingestd.service")
+        sinex.execute("systemctl restart sinexd.service")
+        sinex.wait_for_unit("sinexd.service")
 
         sinex.succeed(
-            "systemctl show -p Environment sinex-ingestd.service | "
+            "systemctl show -p Environment sinexd.service | "
             "grep -q 'DATABASE_URL=postgresql:///sinex?host=/run/postgresql'"
         )
 
@@ -136,9 +135,8 @@
         )
         
         # Verify services remained active
-        sinex.succeed("systemctl is-active sinex-ingestd.service")
-        sinex.succeed("systemctl is-active sinex-gateway.service")
-        
+        sinex.succeed("systemctl is-active sinexd.service")
+
         # Verify migration was applied
         sinex.succeed(
             "sudo -u postgres psql -d sinex -c "
@@ -149,15 +147,15 @@
     with subtest("Dynamic worker scaling"):
         # Check initial worker count
         initial_workers = sinex.succeed(
-            "pgrep -f sinex-gateway | wc -l"
+            "pgrep -f sinexd | wc -l"
         ).strip()
         
         # Scale up workers (would normally be done via config update)
         # For now, just verify the service can handle restarts
-        sinex.execute("systemctl restart sinex-gateway.service")
+        sinex.execute("systemctl restart sinexd.service")
         
         # Wait for service to come back
-        sinex.wait_for_unit("sinex-gateway.service")
+        sinex.wait_for_unit("sinexd.service")
         
         # Verify workers are processing
         time.sleep(5)
@@ -169,16 +167,16 @@
     # Test update failure recovery
     with subtest("Update failure recovery"):
         # Stop collector to simulate failure
-        sinex.execute("systemctl stop sinex-ingestd.service")
+        sinex.execute("systemctl stop sinexd.service")
         
         # Verify Dead Letter Queue is active
         time.sleep(2)
         
         # Restart collector
-        sinex.execute("systemctl start sinex-ingestd.service")
-        sinex.wait_for_unit("sinex-ingestd.service")
+        sinex.execute("systemctl start sinexd.service")
+        sinex.wait_for_unit("sinexd.service")
         
         # Verify recovery
-        sinex.succeed("journalctl -u sinex-ingestd.service | grep -q 'Service started successfully'")
+        sinex.succeed("journalctl -u sinexd.service | grep -q 'Service started successfully'")
   '';
 }

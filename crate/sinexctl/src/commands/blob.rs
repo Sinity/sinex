@@ -3,7 +3,7 @@ use clap::{Parser, Subcommand};
 use color_eyre::eyre::{WrapErr, eyre};
 use serde::Serialize;
 use sinex_db::create_pool;
-use sinex_node_sdk::content_store::{
+use sinexd::node_sdk::content_store::{
     CasFsckReport, ContentStoreConfig, MaterialContentStore, UnusedContentEntry,
     cas_fsck::check_cas,
     gc::{BlobGcReport, sweep_orphans_detailed},

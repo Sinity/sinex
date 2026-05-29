@@ -1,6 +1,7 @@
 //! Domain models that are tightly coupled to database operations
 
 pub mod blob;
+pub mod model_effect;
 
 pub use blob::Blob;
 pub use sinex_primitives::domain::{Entity, EntityRelation};

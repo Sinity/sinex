@@ -1,7 +1,5 @@
 # Failure recovery test for Sinex
 { pkgs
-, sinex-ingestd
-, sinex-gateway
 , pg_jsonschema
 , sinex ? null
 , sinexCli ? null
@@ -9,7 +7,7 @@
 }:
 
 let
-  sinexPackage = if sinex != null then sinex else sinex-ingestd;
+  sinexPackage = if sinex != null then sinex else sinexd;
   sinexCliPackage = if sinexCli != null then sinexCli else pkgs.python3;
   # Enhanced query tool with recovery testing support
   sinex-query = pkgs.writeScriptBin "sinex" ''
@@ -59,7 +57,7 @@ let
             return False
 
     def service_status():
-        services = ['sinex-ingestd', 'sinex-gateway', 'postgresql']
+        services = ['sinexd', 'postgresql']
         statuses = {}
         for service in services:
             result = subprocess.run([
@@ -164,8 +162,7 @@ let
         echo "Restarting PostgreSQL..."
         systemctl start postgresql
         systemctl start \
-          sinex-ingestd \
-          sinex-gateway \
+          sinexd \
           sinex-filesystem-1 \
           'sinex-source@terminal.atuin-history.service' \
           'sinex-source@terminal.bash-history.service' \
@@ -173,18 +170,18 @@ let
           'sinex-source@terminal.zsh-history.service'
         ;;
       collector-crash)
-        echo "Stopping collector for $DURATION seconds..."
-        systemctl stop sinex-ingestd
+        echo "Stopping sinexd for $DURATION seconds..."
+        systemctl stop sinexd
         sleep $DURATION
-        echo "Restarting collector..."
-        systemctl start sinex-ingestd
+        echo "Restarting sinexd..."
+        systemctl start sinexd
         ;;
       worker-crash)
-        echo "Stopping worker for $DURATION seconds..."
-        systemctl stop sinex-gateway
+        echo "Stopping sinexd for $DURATION seconds..."
+        systemctl stop sinexd
         sleep $DURATION
-        echo "Restarting worker..."
-        systemctl start sinex-gateway
+        echo "Restarting sinexd..."
+        systemctl start sinexd
         ;;
       disk-full)
         echo "Simulating disk full condition..."
@@ -246,25 +243,14 @@ let
     done
     
     # Check service status
-    while ! systemctl is-active sinex-ingestd >/dev/null 2>&1; do
+    while ! systemctl is-active sinexd >/dev/null 2>&1; do
         current_time=$(date +%s)
         elapsed=$((current_time - start_time))
         if [ $elapsed -gt $MAX_WAIT ]; then
-            echo "FAIL: Collector not recovered within ''${MAX_WAIT}s"
+            echo "FAIL: sinexd not recovered within ''${MAX_WAIT}s"
             exit 1
         fi
-        echo "Waiting for collector... (''${elapsed}s)"
-        sleep 2
-    done
-    
-    while ! systemctl is-active sinex-gateway >/dev/null 2>&1; do
-        current_time=$(date +%s)
-        elapsed=$((current_time - start_time))
-        if [ $elapsed -gt $MAX_WAIT ]; then
-            echo "FAIL: Worker not recovered within ''${MAX_WAIT}s"
-            exit 1
-        fi
-        echo "Waiting for worker... (''${elapsed}s)"
+        echo "Waiting for sinexd... (''${elapsed}s)"
         sleep 2
     done
 
@@ -395,12 +381,9 @@ host    all             all             127.0.0.1/32            trust
 host    all             all             ::1/128                 trust
 '';
 
-      systemd.services.sinex-ingestd.after = [ "sinex-schema-apply.service" ];
-      systemd.services.sinex-ingestd.requires = [ "sinex-schema-apply.service" ];
-      systemd.services.sinex-gateway.after = [ "sinex-schema-apply.service" ];
-      systemd.services.sinex-gateway.requires = [ "sinex-schema-apply.service" ];
-      systemd.services.sinex-ingestd.path = [ pkgs.git pkgs.git-annex ];
-      systemd.services.sinex-gateway.path = [ pkgs.git pkgs.git-annex ];
+      systemd.services.sinexd.after = [ "sinex-schema-apply.service" ];
+      systemd.services.sinexd.requires = [ "sinex-schema-apply.service" ];
+      systemd.services.sinexd.path = [ pkgs.git pkgs.git-annex ];
       systemd.services.sinex-blob-init.path = [ pkgs.git pkgs.git-annex ];
       systemd.services.sinex-system-1.enable = lib.mkForce false;
       systemd.services.sinex-system-1.wantedBy = lib.mkForce [ ];
@@ -497,8 +480,6 @@ SQL
       
       # Package overlays
       nixpkgs.overlays = [(final: prev: {
-        sinex-ingestd = sinex-ingestd;
-        sinex-gateway = sinex-gateway;
         sinex = sinexPackage;
         sinexCli = sinexCliPackage;
         postgresql18Packages = prev.postgresql18Packages // {
@@ -507,18 +488,7 @@ SQL
       })];
 
       # Enhanced service configuration for failure testing
-      systemd.services.sinex-ingestd = {
-        unitConfig = {
-          StartLimitIntervalSec = lib.mkForce "300";
-          StartLimitBurst = lib.mkForce "10";
-        };
-        serviceConfig = {
-          Restart = lib.mkForce "always";
-          RestartSec = lib.mkForce "5";
-        };
-      };
-
-      systemd.services.sinex-gateway = {
+      systemd.services.sinexd = {
         unitConfig = {
           StartLimitIntervalSec = lib.mkForce "300";
           StartLimitBurst = lib.mkForce "10";
@@ -576,8 +546,7 @@ SQL
     # Wait for system to be ready
     machine.wait_for_unit("multi-user.target")
     machine.wait_for_unit("postgresql.service")
-    machine.wait_for_unit("sinex-ingestd.service")
-    machine.wait_for_unit("sinex-gateway.service")
+    machine.wait_for_unit("sinexd.service")
 
     # Ensure node instances are online
     terminal_source_units = [
@@ -592,8 +561,7 @@ SQL
     wait_for_services(node_units)
 
     # Verify core hubs are active
-    machine.succeed("systemctl is-active sinex-ingestd")
-    machine.succeed("systemctl is-active sinex-gateway")
+    machine.succeed("systemctl is-active sinexd")
 
     # Initialize baseline system state
     with subtest("Initialize baseline system state"):

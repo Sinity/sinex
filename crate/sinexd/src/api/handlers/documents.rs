@@ -45,6 +45,7 @@ pub async fn handle_documents_search(
         updated_before: req.updated_before,
         limit: req.limit.map(i64::from),
         offset: req.offset.map(|v| v as i64),
+        vector_params: None,
     };
 
     let requested_offset = req.offset.unwrap_or(0);
@@ -53,6 +54,8 @@ pub async fn handle_documents_search(
     let search_mode = match results.search_mode {
         SearchMode::Fts => "fts",
         SearchMode::TrigramFallback => "trigram_fallback",
+        SearchMode::Vector => "vector",
+        SearchMode::Hybrid => "hybrid",
     };
 
     let response = DocumentsSearchResponse {

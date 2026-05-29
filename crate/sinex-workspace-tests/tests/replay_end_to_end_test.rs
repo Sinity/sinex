@@ -13,7 +13,7 @@
 
 use futures::StreamExt;
 use serde_json::json;
-use sinex_node_sdk::{Checkpoint, NodeScanAck, NodeScanCommand, NodeScanProgress, ScanReport};
+use sinexd::node_sdk::{Checkpoint, NodeScanAck, NodeScanCommand, NodeScanProgress, ScanReport};
 use sinex_primitives::rpc::methods;
 use sinex_primitives::temporal::Duration as TemporalDuration;
 use sinex_primitives::temporal::Timestamp;

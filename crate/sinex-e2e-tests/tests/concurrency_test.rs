@@ -9,7 +9,7 @@
 // - **Database Concurrency**: Transaction isolation, lock contention, deadlock detection
 // - **Memory Concurrency**: Shared state, atomic operations
 
-use sinex_node_sdk::{Checkpoint, CheckpointManager, CheckpointState};
+use sinexd::node_sdk::{Checkpoint, CheckpointManager, CheckpointState};
 use sinex_primitives::Uuid;
 use sinex_primitives::{DynamicPayload, EventSource, Timestamp};
 use xtask::sandbox::prelude::*;

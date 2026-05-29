@@ -27,7 +27,7 @@ use hyper_util::service::TowerToHyperService;
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use sinex_node_sdk::systemd_notify;
+use crate::node_sdk::systemd_notify;
 use sinex_primitives::Result as SinexResult;
 use sinex_primitives::Timestamp;
 use sinex_primitives::error::SinexError;

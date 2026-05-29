@@ -10,5 +10,6 @@
 pub mod dbus;
 pub mod journald;
 pub mod monitor;
+pub mod notifications;
 pub mod systemd;
 pub mod udev;

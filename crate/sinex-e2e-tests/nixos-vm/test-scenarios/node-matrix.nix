@@ -1,7 +1,5 @@
 # Node constellation coverage test for Sinex
 { pkgs
-, sinex-ingestd
-, sinex-gateway
 , pg_jsonschema
 , sinex ? null
 , sinexCli ? null
@@ -10,7 +8,7 @@
 
 let
   inherit (pkgs) lib;
-  sinexPackage = if sinex != null then sinex else sinex-ingestd;
+  sinexPackage = if sinex != null then sinex else sinexd;
 in
 pkgs.testers.nixosTest {
   name = "sinex-node-matrix";
@@ -18,7 +16,7 @@ pkgs.testers.nixosTest {
   nodes.machine = { config, pkgs, lib, ... }: {
     imports = [
       (import ../common/test-base.nix {
-        inherit config pkgs lib sinex-ingestd sinex-gateway pg_jsonschema sinex sinexCli;
+        inherit config pkgs lib pg_jsonschema sinex sinexCli;
       })
     ];
 
@@ -205,7 +203,7 @@ SQL
     machine.wait_for_unit("multi-user.target")
 
     # Core hubs
-    for unit in ["postgresql.service", "nats.service", "sinex-ingestd.service", "sinex-gateway.service"]:
+    for unit in ["postgresql.service", "nats.service", "sinexd.service"]:
         machine.wait_for_unit(unit, timeout=120)
         machine.succeed(f"systemctl is-active {unit}")
 
@@ -302,8 +300,7 @@ SQL
 
     with subtest("Managed service restart proof"):
         restart_units = [
-            "sinex-ingestd.service",
-            "sinex-gateway.service",
+            "sinexd.service",
             "sinex-browser-1.service",
         ] + terminal_source_units
         for unit in restart_units:

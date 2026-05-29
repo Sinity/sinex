@@ -6,7 +6,7 @@ use crate::api::replay_control::{ReplayControlClient, ReplayControlError, spawn_
 use sinex_db::create_pool_with_config;
 use sinex_db::pkm::PkmService;
 use sinex_db::replay::state_machine::ReplayStateMachine;
-use sinex_node_sdk::content_store::{ContentStoreConfig, ContentStoreManager};
+use crate::node_sdk::content_store::{ContentStoreConfig, ContentStoreManager};
 use sinex_primitives::{
     Result as SinexResult, coordination::CoordinationKvClient, environment as sinex_environment,
     error::SinexError,

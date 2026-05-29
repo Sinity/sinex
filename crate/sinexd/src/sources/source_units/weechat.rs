@@ -4,7 +4,7 @@
 //! Two parsers are registered in the dispatch registry:
 //!
 //! 1. **Imperative (`WeeChatLogParser`)** — the full production parser from
-//!    `sinex_node_sdk::parser::WeeChatLogParser`. Handles all four `WeeChat`
+//!    `crate::node_sdk::parser::WeeChatLogParser`. Handles all four `WeeChat`
 //!    event types (irc.join, irc.part, `irc.server_notice`, irc.message) with
 //!    custom timestamp parsing and prefix classification. Registered under
 //!    "weechat" so parse commands for `WeeChat` logs reach it.
@@ -22,7 +22,7 @@
 
 use crate::register_parser;
 use sinex_macros::SourceRecord;
-use sinex_node_sdk::parser::{AppendOnlyFileAdapter, WeeChatLogParser};
+use crate::node_sdk::parser::{AppendOnlyFileAdapter, WeeChatLogParser};
 use sinex_primitives::proof::{
     CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, RetentionPolicy, RuntimeShape,
     SourceUnitBinding, SourceUnitBuildImpact, SourceUnitDescriptor, SubjectRef,

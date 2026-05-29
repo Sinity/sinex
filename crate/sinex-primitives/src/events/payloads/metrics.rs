@@ -406,7 +406,10 @@ pub struct EventEngineBatchStatsPayload {
 /// Captures stream state and consumer configuration so operators can determine at a glance
 /// whether this startup is a normal resume, a cold-start full replay, or a catch-up run.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
-#[event_payload(source = "sinexd.event_engine", event_type = "consumer.startup_snapshot")]
+#[event_payload(
+    source = "sinexd.event_engine",
+    event_type = "consumer.startup_snapshot"
+)]
 pub struct ConsumerStartupSnapshotPayload {
     /// Name of the `JetStream` stream being consumed.
     pub stream_name: String,
@@ -456,7 +459,10 @@ pub struct ConsumerStartupSnapshotPayload {
 /// happening in production; this event is the pre-guard observability counterpart, emitted
 /// even when the guard would have prevented the consumer from starting.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
-#[event_payload(source = "sinexd.event_engine", event_type = "consumer.startup_replay_risk")]
+#[event_payload(
+    source = "sinexd.event_engine",
+    event_type = "consumer.startup_replay_risk"
+)]
 pub struct DangerousReplayWarningPayload {
     /// Name of the `JetStream` stream.
     pub stream_name: String,

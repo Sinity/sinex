@@ -1225,9 +1225,9 @@ pub async fn report_column_gaps(
 mod tests {
     // Exception to per-crate tests/: this exercises private registry lookup helpers
     // without widening the convergence API.
+    use super::{convergible_tables, find_meta_in};
     use crate::apply::ApplyError;
     use crate::defs::TableMeta;
-    use super::{convergible_tables, find_meta_in};
     use xtask::sandbox::prelude::*;
 
     #[sinex_test]

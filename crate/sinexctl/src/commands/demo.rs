@@ -268,7 +268,7 @@ fn gen_shell_command(rng: &mut DemoRng, _i: usize) -> serde_json::Value {
 }
 
 fn gen_process_started(rng: &mut DemoRng, _i: usize) -> serde_json::Value {
-    let procs = ["sinex-ingestd", "sinex-gateway", "postgres", "nats-server"];
+    let procs = ["sinexd", "postgres", "nats-server"];
     let proc = procs[rng.range_usize(procs.len())];
     json!({
         "name": proc,

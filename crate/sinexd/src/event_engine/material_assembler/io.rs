@@ -23,7 +23,7 @@ use super::{
 use crate::event_engine::{IngestdResult, SinexError};
 use blake3::Hasher;
 use camino::Utf8PathBuf;
-use sinex_node_sdk::content_store::ContentStoreKey;
+use crate::node_sdk::content_store::ContentStoreKey;
 use sinex_primitives::Timestamp;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};

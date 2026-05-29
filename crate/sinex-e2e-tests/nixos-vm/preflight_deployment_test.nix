@@ -1,8 +1,6 @@
 # Simplified preflight deployment check: ensure preflight CLI is packaged and
 # ingest pipeline still works with preflight features enabled.
 { pkgs
-, sinex-ingestd
-, sinex-gateway
 , pg_jsonschema
 , sinex ? null
 , sinexCli ? null
@@ -19,7 +17,7 @@ pkgs.testers.nixosTest {
   nodes.machine = { config, pkgs, lib, ... }: {
     imports = [
       (import ./common/test-base.nix {
-        inherit config pkgs lib sinex-ingestd sinex-gateway pg_jsonschema sinex sinexCli;
+        inherit config pkgs lib pg_jsonschema sinex sinexCli;
       })
     ];
 
@@ -48,8 +46,7 @@ pkgs.testers.nixosTest {
   testScript = ''
     start_all()
     machine.wait_for_unit("multi-user.target")
-    machine.wait_for_unit("sinex-ingestd.service")
-    machine.wait_for_unit("sinex-gateway.service")
+    machine.wait_for_unit("sinexd.service")
     machine.succeed("systemctl start sinex-preflight.service")
     machine.succeed("systemctl show -p Result --value sinex-preflight.service | grep '^success$'")
     machine.succeed("systemctl show -p ExecMainStatus --value sinex-preflight.service | grep '^0$'")

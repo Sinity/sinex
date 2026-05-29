@@ -9,6 +9,7 @@ use async_nats::Client;
 use futures::StreamExt;
 use serde::{Deserialize, Serialize};
 use sinex_primitives::Uuid;
+use sqlx::PgPool;
 use tracing::{error, info, warn};
 
 use crate::sources::dispatch::ParserDispatchFn;
@@ -40,6 +41,7 @@ pub async fn spawn_parse_listener(
     client: Client,
     source_id: &str,
     dispatch: ParserDispatchFn,
+    pool: PgPool,
 ) -> Result<tokio::task::JoinHandle<()>, async_nats::SubscribeError> {
     let subject = format!("sinex.control.sources.{source_id}.parse");
     let mut subscription = client.subscribe(subject.clone()).await?;
@@ -58,9 +60,10 @@ pub async fn spawn_parse_listener(
             let client = client_clone.clone();
             let source_id = source_id.clone();
             let dispatch = dispatch.clone();
+            let pool = pool.clone();
 
             tokio::spawn(async move {
-                match handle_parse_command(&client, &source_id, &message, &dispatch).await {
+                match handle_parse_command(&client, &source_id, &message, &dispatch, &pool).await {
                     Ok(()) => {}
                     Err(e) => {
                         warn!(
@@ -87,6 +90,7 @@ async fn handle_parse_command(
     source_id: &str,
     message: &async_nats::Message,
     dispatch: &ParserDispatchFn,
+    _pool: &PgPool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let reply_subject = message.reply.clone();
 

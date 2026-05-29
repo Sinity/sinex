@@ -20,6 +20,7 @@ macro_rules! define_event_payload {
 }
 
 pub mod ai_session;
+pub mod api;
 pub mod automaton;
 pub mod blob;
 pub mod bookmark;
@@ -30,7 +31,6 @@ pub mod document;
 pub mod entity;
 pub mod filesystem;
 pub mod finance;
-pub mod api;
 pub mod health;
 pub mod instruction;
 pub mod integration;
@@ -56,6 +56,7 @@ pub mod testing;
 
 // Re-export all payloads for convenience
 pub use ai_session::*;
+pub use api::*;
 pub use automaton::*;
 pub use blob::*;
 pub use bookmark::*;
@@ -66,7 +67,6 @@ pub use document::*;
 pub use entity::*;
 pub use filesystem::*;
 pub use finance::*;
-pub use api::*;
 pub use health::*;
 pub use instruction::*;
 pub use integration::*;

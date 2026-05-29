@@ -3,7 +3,7 @@
 //! Exercises `SpotifyHistoryParser` via `MaterialParser::parse_record` with
 //! small synthetic fixtures to close each acceptance criterion from #1092.
 
-use sinex_node_sdk::parser::MaterialParser;
+use sinex_primitives::parser::MaterialParser;
 use sinex_primitives::{
     Uuid,
     ids::Id,

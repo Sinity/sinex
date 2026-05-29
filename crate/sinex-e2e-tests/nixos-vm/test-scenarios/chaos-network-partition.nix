@@ -1,13 +1,11 @@
 # Chaos test: network partition between ingestd and NATS — Rust-driven.
 #
-# Injects a deterministic `tc netem` packet-drop rule between sinex-ingestd and
+# Injects a deterministic `tc netem` packet-drop rule between sinexd and
 # the NATS server, then removes it and verifies:
 #   - ingestd survives the partition without crashing
 #   - after reconnection, the event pipeline drains (no data loss)
 #   - the event count in Postgres grows back to the expected total
 { pkgs
-, sinex-ingestd
-, sinex-gateway
 , pg_jsonschema
 , sinexVmTestSuite ? null
 , sinex ? null
@@ -25,7 +23,7 @@ pkgs.testers.nixosTest {
   nodes.machine = { config, pkgs, lib, ... }: {
     imports = [
       (import ../common/test-base.nix {
-        inherit config pkgs lib sinex-ingestd sinex-gateway pg_jsonschema sinex sinexCli;
+        inherit config pkgs lib pg_jsonschema sinex sinexCli;
       })
       ../common/chaos-toolkit.nix
     ];
@@ -52,7 +50,7 @@ pkgs.testers.nixosTest {
     start_all()
     machine.wait_for_unit("multi-user.target")
     machine.wait_for_unit("postgresql.service", timeout=60)
-    machine.wait_for_unit("sinex-ingestd.service", timeout=60)
+    machine.wait_for_unit("sinexd.service", timeout=60)
 
     with subtest("Rust-driven chaos-network-partition suite"):
       machine.succeed(

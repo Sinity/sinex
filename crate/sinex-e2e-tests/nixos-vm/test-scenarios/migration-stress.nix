@@ -14,8 +14,6 @@
 # 50M rows (years of usage) would take too long in a VM test; the lock-duration
 # invariant is independent of scale — it holds at 1M or 50M.
 { pkgs
-, sinex-ingestd
-, sinex-gateway
 , pg_jsonschema
 , sinex ? null
 , sinexCli ? null
@@ -49,7 +47,7 @@ pkgs.testers.nixosTest {
   nodes.machine = { config, pkgs, lib, ... }: {
     imports = [
       (import ../common/test-base.nix {
-        inherit config pkgs lib sinex-ingestd sinex-gateway pg_jsonschema sinex sinexCli;
+        inherit config pkgs lib pg_jsonschema sinex sinexCli;
       })
     ];
 
@@ -66,7 +64,7 @@ pkgs.testers.nixosTest {
     start_all()
     machine.wait_for_unit("multi-user.target")
     machine.wait_for_unit("postgresql.service", timeout=60)
-    machine.wait_for_unit("sinex-ingestd.service", timeout=60)
+    machine.wait_for_unit("sinexd.service", timeout=60)
 
     def psql(sql, flags="-tAc"):
         psql_command = f"psql -d sinex_dev {flags} " + shlex.quote(sql)
@@ -110,8 +108,8 @@ pkgs.testers.nixosTest {
         machine.succeed(
             "find /var/lib/sinex -name 'schema-apply-hash' -delete 2>/dev/null; true"
         )
-        print("Invalidated schema-apply-hash — restarting sinex-ingestd to trigger migration")
-        machine.systemctl("restart sinex-ingestd")
+        print("Invalidated schema-apply-hash — restarting sinexd to trigger migration")
+        machine.systemctl("restart sinexd")
 
     # ─── Monitor lock duration during migration ────────────────────────────────
 
@@ -136,9 +134,9 @@ pkgs.testers.nixosTest {
     # ─── Wait for ingestd to come back up after migration ─────────────────────
 
     with subtest("post-migration-health"):
-        machine.wait_for_unit("sinex-ingestd.service", timeout=60)
-        machine.wait_until_succeeds("systemctl is-active sinex-ingestd", timeout=30)
-        print("✓ sinex-ingestd active after migration")
+        machine.wait_for_unit("sinexd.service", timeout=60)
+        machine.wait_until_succeeds("systemctl is-active sinexd", timeout=30)
+        print("✓ sinexd active after migration")
 
     # ─── Verify all pre-migration rows survived ────────────────────────────────
 

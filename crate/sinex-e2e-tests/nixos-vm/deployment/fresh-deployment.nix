@@ -57,16 +57,12 @@
     sinex.succeed("sudo -u postgres psql -d sinex -c 'SELECT 1'")
     
     # Wait for services to start
-    sinex.wait_for_unit("sinex-ingestd.service")
-    sinex.wait_for_unit("sinex-gateway.service")
-    
+    sinex.wait_for_unit("sinexd.service")
+
     # Verify health endpoints
     with subtest("Health monitoring active"):
         sinex.wait_until_succeeds(
-            "systemctl is-active sinex-ingestd.service"
-        )
-        sinex.wait_until_succeeds(
-            "systemctl is-active sinex-gateway.service"
+            "systemctl is-active sinexd.service"
         )
     
     # Check for event flow
@@ -103,18 +99,17 @@
     with subtest("SystemD integration"):
         # Verify notify type services
         sinex.succeed(
-            "systemctl show -p Type sinex-ingestd.service | "
+            "systemctl show -p Type sinexd.service | "
             "grep -q 'Type=notify'"
         )
         
         # Check service states
-        sinex.succeed("systemctl status sinex-ingestd.service")
-        sinex.succeed("systemctl status sinex-gateway.service")
+        sinex.succeed("systemctl status sinexd.service")
     
     # Verify resource limits
     with subtest("Resource limits applied"):
         limits = sinex.succeed(
-            "systemctl show -p MemoryMax -p LimitNOFILE sinex-ingestd.service"
+            "systemctl show -p MemoryMax -p LimitNOFILE sinexd.service"
         )
         assert "MemoryMax=" in limits, "Memory limits not set"
         assert "LimitNOFILE=524288" in limits, f"Unexpected ingestd LimitNOFILE: {limits}"
@@ -123,7 +118,7 @@
             "python - <<'PY'\n"
             "import subprocess\n"
             "pid = int(subprocess.check_output([\n"
-            "    'systemctl', 'show', '-p', 'MainPID', '--value', 'sinex-ingestd.service'\n"
+            "    'systemctl', 'show', '-p', 'MainPID', '--value', 'sinexd.service'\n"
             "], text=True).strip())\n"
             "if pid <= 0:\n"
             "    raise SystemExit(f'invalid ingestd pid: {pid}')\n"
@@ -140,16 +135,16 @@
     
     # Test graceful shutdown
     with subtest("Graceful shutdown"):
-        sinex.execute("systemctl stop sinex-ingestd.service")
+        sinex.execute("systemctl stop sinexd.service")
         
         # Service should stop cleanly
         sinex.wait_until_fails(
-            "systemctl is-active sinex-ingestd.service"
+            "systemctl is-active sinexd.service"
         )
         
         # Check for clean shutdown in logs
         sinex.succeed(
-            "journalctl -u sinex-ingestd.service | "
+            "journalctl -u sinexd.service | "
             "grep -q 'Shutting down gracefully'"
         )
   '';

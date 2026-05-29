@@ -1,12 +1,10 @@
-# Chaos test: sinex-ingestd process kill during batch ingestion — Rust-driven.
+# Chaos test: sinexd process kill during batch ingestion — Rust-driven.
 #
 # SIGKILLs ingestd mid-batch and verifies:
 #   - ingestd restarts (via systemd) and resumes from its checkpoint
 #   - no duplicate events in Postgres (idempotent re-processing)
 #   - the total event count is monotonically non-decreasing (no data loss)
 { pkgs
-, sinex-ingestd
-, sinex-gateway
 , pg_jsonschema
 , sinexVmTestSuite ? null
 , sinex ? null
@@ -24,7 +22,7 @@ pkgs.testers.nixosTest {
   nodes.machine = { config, pkgs, lib, ... }: {
     imports = [
       (import ../common/test-base.nix {
-        inherit config pkgs lib sinex-ingestd sinex-gateway pg_jsonschema sinex sinexCli;
+        inherit config pkgs lib pg_jsonschema sinex sinexCli;
       })
     ];
 
@@ -34,8 +32,8 @@ pkgs.testers.nixosTest {
     };
 
     # ingestd must restart automatically after SIGKILL
-    systemd.services.sinex-ingestd.serviceConfig.Restart = lib.mkForce "always";
-    systemd.services.sinex-ingestd.serviceConfig.RestartSec = lib.mkForce "2s";
+    systemd.services.sinexd.serviceConfig.Restart = lib.mkForce "always";
+    systemd.services.sinexd.serviceConfig.RestartSec = lib.mkForce "2s";
 
     environment.systemPackages = with pkgs; [ procps ];
   };
@@ -44,7 +42,7 @@ pkgs.testers.nixosTest {
     start_all()
     machine.wait_for_unit("multi-user.target")
     machine.wait_for_unit("postgresql.service", timeout=60)
-    machine.wait_for_unit("sinex-ingestd.service", timeout=60)
+    machine.wait_for_unit("sinexd.service", timeout=60)
 
     with subtest("Rust-driven chaos-process-restart suite"):
       machine.succeed(

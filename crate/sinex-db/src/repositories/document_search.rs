@@ -16,10 +16,10 @@
 //! integration tests in `crate/lib/sinex-db/tests/document_search_test.rs`.
 
 use super::common::DbResult;
+use crate::schema::defs::documents::{DocumentChunkRecord, DocumentRecord};
 use sinex_primitives::SinexError;
 use sinex_primitives::Timestamp;
 use sinex_primitives::Uuid;
-use crate::schema::defs::documents::{DocumentChunkRecord, DocumentRecord};
 use sqlx::PgPool;
 use sqlx::Row;
 
@@ -63,6 +63,9 @@ pub struct DocumentSearchQuery {
 
     /// Zero-based offset for page-2+ retrieval.
     pub offset: Option<i64>,
+
+    /// Optional vector similarity parameters for hybrid/vector search.
+    pub vector_params: Option<VectorSearchParams>,
 }
 
 /// Which text-search path fired.
@@ -70,6 +73,19 @@ pub struct DocumentSearchQuery {
 pub enum SearchMode {
     Fts,
     TrigramFallback,
+    Vector,
+    Hybrid,
+}
+
+/// Parameters for a vector similarity search.
+#[derive(Debug, Clone)]
+pub struct VectorSearchParams {
+    /// The query embedding vector.
+    pub embedding: Vec<f32>,
+    /// Maximum number of vector results.
+    pub limit: i64,
+    /// Minimum similarity threshold (cosine distance, lower = more similar).
+    pub max_distance: Option<f64>,
 }
 
 impl SearchMode {
@@ -78,6 +94,8 @@ impl SearchMode {
         match self {
             SearchMode::Fts => "fts",
             SearchMode::TrigramFallback => "trigram_fallback",
+            SearchMode::Vector => "vector",
+            SearchMode::Hybrid => "hybrid",
         }
     }
 }

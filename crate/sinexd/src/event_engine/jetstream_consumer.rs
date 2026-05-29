@@ -24,9 +24,9 @@ use futures::future::{BoxFuture, join_all};
 use serde::{Deserialize, Serialize};
 use sinex_db::DbPool;
 use sinex_db::repositories::COPY_BATCH_THRESHOLD;
-use sinex_node_sdk::SelfObserver;
-use sinex_node_sdk::heartbeat::HeartbeatCounterHandle;
-use sinex_node_sdk::runtime::stream::{PullConsumerSpec, ensure_pull_consumer, pull_batch};
+use crate::node_sdk::SelfObserver;
+use crate::node_sdk::heartbeat::HeartbeatCounterHandle;
+use crate::node_sdk::runtime::stream::{PullConsumerSpec, ensure_pull_consumer, pull_batch};
 use sinex_primitives::Timestamp;
 use sinex_primitives::constants::env_vars;
 use sinex_primitives::{
@@ -181,7 +181,7 @@ fn is_source_material_fk_constraint_name(value: &str) -> bool {
 
 /// Hard guard for node-supplied event IDs.
 ///
-/// Ingestors and derived nodes may use `sinex_node_sdk::deterministic_event_id`
+/// Ingestors and derived nodes may use `crate::node_sdk::deterministic_event_id`
 /// for idempotent source occurrences, but ingestd still rejects every ID that is
 /// not an RFC4122 `UUIDv7` before it reaches the hypertable partition key.
 #[cfg(test)]
@@ -413,7 +413,7 @@ impl JetStreamConsumer {
     fn log_observer_error(
         stats: &ConsumerStats,
         metric: &'static str,
-        error: &sinex_node_sdk::SelfObservationError,
+        error: &crate::node_sdk::SelfObservationError,
     ) {
         stats
             .telemetry_publish_failures
@@ -2174,7 +2174,7 @@ impl JetStreamConsumer {
         event_id: Uuid,
         error: impl std::fmt::Display,
     ) -> SinexError {
-        sinex_node_sdk::error_helpers::nats_settlement_error(
+        crate::node_sdk::error_helpers::nats_settlement_error(
             operation,
             "",
             Some(event_id.to_string().as_str()),
@@ -2822,7 +2822,7 @@ mod tests {
         assert!(is_uuid_v7(&Uuid::now_v7()));
         let deterministic_timestamp =
             Timestamp::from_const(time::macros::datetime!(2024-03-09 16:00:00.123 UTC));
-        assert!(is_uuid_v7(&sinex_node_sdk::deterministic_event_id(
+        assert!(is_uuid_v7(&crate::node_sdk::deterministic_event_id(
             "ingestd-guard",
             "source-anchor",
             deterministic_timestamp

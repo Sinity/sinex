@@ -57,10 +57,10 @@ pub trait ErasedParser: Send + Sync {
 
 impl<P> ErasedParser for P
 where
-    P: sinex_node_sdk::parser::MaterialParser + Send + Sync,
+    P: sinex_primitives::parser::MaterialParser + Send + Sync,
 {
     fn manifest(&self) -> ParserManifest {
-        sinex_node_sdk::parser::MaterialParser::manifest(self)
+        sinex_primitives::parser::MaterialParser::manifest(self)
     }
 
     fn parse_record_erased<'a>(
@@ -68,7 +68,7 @@ where
         record: SourceRecord,
         ctx: &'a ParserContext,
     ) -> BoxFuture<'a, Result<Vec<ParsedEventIntent>, String>> {
-        let fut = sinex_node_sdk::parser::MaterialParser::parse_record(self, record, ctx);
+        let fut = sinex_primitives::parser::MaterialParser::parse_record(self, record, ctx);
         Box::pin(async move { fut.await.map_err(|e| e.to_string()) })
     }
 }
@@ -125,7 +125,8 @@ macro_rules! register_parser {
         $crate::__submit_registry_entry!(
             $crate::sources::dispatch::ParserRegistryEntry,
             $source_unit_id,
-            || Box::new(<$parser_type>::default()) as Box<dyn $crate::sources::dispatch::ErasedParser>,
+            || Box::new(<$parser_type>::default())
+                as Box<dyn $crate::sources::dispatch::ErasedParser>,
         );
     };
 }

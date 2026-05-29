@@ -25,8 +25,8 @@ use dashmap::DashMap;
 use durability::DefaultDurabilityPolicy;
 pub(crate) use durability::DurabilityThresholds;
 use sinex_db::{DbPool, DbPoolExt};
-use sinex_node_sdk::content_store::MaterialContentStore;
-use sinex_node_sdk::{SelfObservationError, SelfObserver};
+use crate::node_sdk::content_store::MaterialContentStore;
+use crate::node_sdk::{SelfObservationError, SelfObserver};
 use sinex_primitives::Timestamp;
 use sinex_primitives::{Id, JsonValue, Uuid, environment::SinexEnvironment};
 use std::future::Future;
@@ -666,7 +666,7 @@ impl MaterialAssembler {
     async fn import_into_content_store(
         &self,
         state: &FinalizationState,
-    ) -> IngestdResult<sinex_node_sdk::content_store::ContentStoreKey> {
+    ) -> IngestdResult<crate::node_sdk::content_store::ContentStoreKey> {
         io::import_into_content_store(self, state).await
     }
 
@@ -806,7 +806,7 @@ impl MaterialAssembler {
                     None => Ok(()),
                 }
             }
-            () = sinex_node_sdk::wait_for_shutdown_signal_bool(&shutdown_flag, &shutdown_notify) => {
+            () = crate::node_sdk::wait_for_shutdown_signal_bool(&shutdown_flag, &shutdown_notify) => {
                 info!("Material Assembler received shutdown signal");
                 Ok(())
             }

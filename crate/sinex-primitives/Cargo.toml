@@ -9,7 +9,7 @@ default = []
 testing = []
 proptest = ["dep:proptest"]
 sqlx = ["dep:sqlx"]
-nats = ["dep:async-nats", "dep:nkeys", "dep:futures", "dep:rustls"]
+nats = ["dep:async-nats", "dep:nkeys", "dep:rustls"]
 
 [dependencies]
 # Core dependencies
@@ -18,7 +18,8 @@ nkeys = { workspace = true, optional = true }
 rustls = { version = "0.23", default-features = false, features = ["aws_lc_rs"], optional = true }
 percent-encoding = "2.3"
 bytes = { workspace = true }
-futures = { workspace = true, optional = true }
+futures = { workspace = true }
+async-trait = { workspace = true }
 time = { workspace = true }
 humantime = { workspace = true }
 
@@ -52,6 +53,10 @@ uuid = { workspace = true, features = ["serde", "v4", "v7"] }
 bon = { workspace = true }
 notify = { workspace = true }
 tokio-retry = { workspace = true }
+
+# Parser fingerprinting
+csv = { workspace = true }
+rusqlite = { workspace = true, optional = true }
 
 # Optional DB support
 sqlx = { workspace = true, optional = true }

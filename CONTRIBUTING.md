@@ -37,6 +37,30 @@ SINEX_SKIP_DRIFT_GUARD=1 git push ...
 
 Document each bypass in the PR body.
 
+### I/O pressure during development
+
+The sinex stack generates ~60 MB/min of baseline I/O when running (self-telemetry).
+During heavy compilation (cargo/nextest with 12+ threads), the combined I/O load can
+cause swap thrash and multi-minute stalls (#1556).
+
+Mitigations already applied:
+- `test-threads = 12` in `.config/nextest.toml` (down from 18; cuts rustc fan-out I/O)
+
+During intensive dev sessions, stop the live sinexd daemon to free I/O bandwidth:
+
+```bash
+systemctl --user stop sinexd
+```
+
+Restart when you need it again:
+
+```bash
+systemctl --user start sinexd
+```
+
+The `CARGO_TARGET_DIR` is routed to `/cache/sinex/<checkout>/...` via the devShell
+(NVMe-backed), keeping compilation output off the main filesystem.
+
 ## Workflow Surface
 
 `xtask` is the default automation entrypoint for local development. Use:

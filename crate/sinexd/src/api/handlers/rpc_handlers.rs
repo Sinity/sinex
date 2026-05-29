@@ -93,7 +93,7 @@ fn blob_size_error(limit: usize, actual: usize, unit: &'static str) -> SinexErro
 
 pub(crate) fn blob_response_payload(
     content: &[u8],
-    metadata: &sinex_node_sdk::content_store::BlobMetadata,
+    metadata: &crate::node_sdk::content_store::BlobMetadata,
 ) -> Result<RetrieveBlobResponse> {
     let size = u64::try_from(metadata.size_bytes).map_err(|_| {
         SinexError::validation("blob metadata reported negative size")

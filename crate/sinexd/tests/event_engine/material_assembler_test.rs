@@ -3,7 +3,7 @@
 use async_nats::jetstream;
 use serde_json::json;
 use sinexd::event_engine::{IngestdResult, MaterialAssembler, MaterialReadySet};
-use sinex_node_sdk::content_store::{ContentStoreConfig, MaterialContentStore};
+use sinexd::node_sdk::content_store::{ContentStoreConfig, MaterialContentStore};
 use sinex_primitives::temporal;
 use std::sync::Arc;
 use std::time::Duration;
@@ -79,7 +79,7 @@ async fn assembler_rejects_corrupted_slice_and_records_dlq(ctx: TestContext) -> 
     let dlq_subject = ctx.pipeline_namespace().subject("events.dlq.ingestd");
     let mut dlq_sub = nats_client.subscribe(dlq_subject.clone()).await?;
 
-    sinex_node_sdk::AcquisitionManager::bootstrap_streams_with_namespace(
+    sinexd::node_sdk::AcquisitionManager::bootstrap_streams_with_namespace(
         &nats_client,
         Some(&namespace),
     )
@@ -178,7 +178,7 @@ async fn assembler_handles_early_slices_before_begin(ctx: TestContext) -> TestRe
         start_assembler(&ctx, None).await?;
 
     // Ensure streams are bootstrapped before publishing
-    sinex_node_sdk::AcquisitionManager::bootstrap_streams_with_namespace(
+    sinexd::node_sdk::AcquisitionManager::bootstrap_streams_with_namespace(
         &nats_client,
         Some(&namespace),
     )
@@ -301,7 +301,7 @@ async fn assembler_routes_empty_material_to_dlq(ctx: TestContext) -> TestResult<
     let mut dlq_sub = nats_client.subscribe(dlq_subject.clone()).await?;
 
     // Ensure streams are bootstrapped
-    sinex_node_sdk::AcquisitionManager::bootstrap_streams_with_namespace(
+    sinexd::node_sdk::AcquisitionManager::bootstrap_streams_with_namespace(
         &nats_client,
         Some(&namespace),
     )
@@ -374,7 +374,7 @@ async fn assembler_cleans_up_state_on_corruption(ctx: TestContext) -> TestResult
     let dlq_subject = ctx.pipeline_namespace().subject("events.dlq.ingestd");
     let mut dlq_sub = nats_client.subscribe(dlq_subject.clone()).await?;
 
-    sinex_node_sdk::AcquisitionManager::bootstrap_streams_with_namespace(
+    sinexd::node_sdk::AcquisitionManager::bootstrap_streams_with_namespace(
         &nats_client,
         Some(&namespace),
     )
@@ -473,7 +473,7 @@ async fn assembler_handles_end_before_begin(ctx: TestContext) -> TestResult<()> 
         start_assembler(&ctx, None).await?;
 
     let material_id = uuid::Uuid::now_v7();
-    sinex_node_sdk::AcquisitionManager::bootstrap_streams_with_namespace(
+    sinexd::node_sdk::AcquisitionManager::bootstrap_streams_with_namespace(
         &nats_client,
         Some(&namespace),
     )
@@ -554,7 +554,7 @@ async fn assembler_accepts_duplicate_end_frames(ctx: TestContext) -> TestResult<
     let namespace = ctx.pipeline_namespace().prefix().to_string();
     let (handle, js, _content_store_guard, _state_guard, _) = start_assembler(&ctx, None).await?;
 
-    sinex_node_sdk::AcquisitionManager::bootstrap_streams_with_namespace(
+    sinexd::node_sdk::AcquisitionManager::bootstrap_streams_with_namespace(
         &nats_client,
         Some(&namespace),
     )
@@ -642,7 +642,7 @@ async fn assembler_is_idempotent_for_duplicate_slices(ctx: TestContext) -> TestR
     let namespace = ctx.pipeline_namespace().prefix().to_string();
     let (handle, js, _content_store_guard, _state_guard, _) = start_assembler(&ctx, None).await?;
 
-    sinex_node_sdk::AcquisitionManager::bootstrap_streams_with_namespace(
+    sinexd::node_sdk::AcquisitionManager::bootstrap_streams_with_namespace(
         &nats_client,
         Some(&namespace),
     )

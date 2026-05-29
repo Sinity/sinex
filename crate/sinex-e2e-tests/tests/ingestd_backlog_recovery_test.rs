@@ -1,10 +1,10 @@
 use camino::Utf8PathBuf;
 use serde_json::json;
-use sinexd::event_engine::{JetStreamTopology, config::IngestdConfig, service::IngestService};
 use sinex_primitives::nats::NatsConnectionConfig;
 use sinex_primitives::{
     Event, EventSource, EventType, HostName, Id, OffsetKind, Provenance, SourceMaterial,
 };
+use sinexd::event_engine::{JetStreamTopology, config::IngestdConfig, service::IngestService};
 use tempfile::TempDir;
 use tokio::time::{Duration, timeout};
 use xtask::sandbox::prelude::*;
