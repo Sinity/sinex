@@ -76,7 +76,6 @@
       runtimePackageNames = [
         "sinexd"
         "sinexctl"
-        "sinexd"
         "xtask"
       ];
 
