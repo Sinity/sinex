@@ -13,9 +13,7 @@ use sinexctl::commands::{
     IngestorsCommand, InstructionsCommand, LifecycleCommands, LlmCommand, NodeCommands,
     NodesCommand, NowCommand, OpsCommands, PrivacyCommand, QueryCommand, RecentCommand,
     ReplayCommands, ReportCommands, SemanticCommand, SourcesCommand, StateCommands, StatusCommand,
-    TasksCommand, TelemetryCommands, ThroughputCommand, TimelineCommand, TraceCommand, TuiCommand, VerifyCommand,
-    WatchCommand,
-    TasksCommand, TelemetryCommands, ThroughputCommand, TraceCommand, TuiCommand,
+    TasksCommand, TelemetryCommands, ThroughputCommand, TimelineCommand, TraceCommand, TuiCommand,
     VerifyCommand, WatchCommand,
 };
 use sinexctl::fmt::format_yaml;
