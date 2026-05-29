@@ -187,7 +187,7 @@ impl VerifyCommand {
     /// the overall pass/skip/warn/fail counts at the end.
     pub async fn execute(&self, client: &GatewayClient, format: OutputFormat) -> Result<()> {
         if let Some(VerifySubcommand::Baseline(ref baseline_args)) = self.cmd {
-            return baseline::execute(baseline_args.clone(), format);
+            return baseline::execute(baseline_args.clone(), format).await;
         }
         if self.demo {
             return run_demo_walkthrough(client, format).await;

@@ -24,10 +24,6 @@ use crate::model::OutputFormat;
 
 #[derive(Debug, Clone, Args)]
 pub struct BaselineArgs {
-    /// Emit JSON output (machine-readable, CI-friendly).
-    #[arg(long)]
-    json: bool,
-
     /// Per-check timeout in seconds.
     #[arg(long, default_value_t = 60)]
     timeout: u64,
@@ -79,6 +75,19 @@ impl CheckStatus {
         }
     }
 
+    /// Severity ranking for worst-wins combination of sub-check results.
+    /// Higher = worse. Skipped is treated as a soft warning between Pass
+    /// and Degraded so a sub-check that could not run does not mask a
+    /// downstream Degraded/Fail signal.
+    fn severity(self) -> u8 {
+        match self {
+            Self::Pass => 0,
+            Self::Skipped => 1,
+            Self::Degraded => 2,
+            Self::Fail => 3,
+        }
+    }
+
     fn colored_icon(self) -> String {
         match self {
             Self::Pass => style("PASS").green().bold().to_string(),
@@ -126,16 +135,13 @@ struct BaselineReport {
 // Orchestration
 // ---------------------------------------------------------------------------
 
-pub fn execute(args: BaselineArgs, format: OutputFormat) -> Result<()> {
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_time()
-        .build()?;
-    runtime.block_on(run_baseline(args, format))
+pub async fn execute(args: BaselineArgs, format: OutputFormat) -> Result<()> {
+    run_baseline(args, format).await
 }
 
 async fn run_baseline(args: BaselineArgs, format: OutputFormat) -> Result<()> {
     let check_timeout = Duration::from_secs(args.timeout);
-    let table_mode = !args.json && matches!(format, OutputFormat::Table);
+    let table_mode = matches!(format, OutputFormat::Table);
 
     if table_mode {
         println!();
@@ -165,14 +171,19 @@ async fn run_baseline(args: BaselineArgs, format: OutputFormat) -> Result<()> {
         summary,
     };
 
-    if args.json {
-        println!("{}", format_json(&report)?);
-    } else if matches!(format, OutputFormat::Yaml) {
-        println!("{}", format_yaml(&report)?);
+    match format {
+        OutputFormat::Json | OutputFormat::Dot => println!("{}", format_json(&report)?),
+        OutputFormat::Yaml => println!("{}", format_yaml(&report)?),
+        OutputFormat::Table => {
+            // Table report already printed above; nothing extra to emit.
+        }
     }
 
-    // Exit non-zero on any failure so CI can gate on this.
-    if checks.iter().any(|c| c.status == CheckStatus::Fail) {
+    // Exit non-zero on any Fail or Degraded check so CI can gate on this.
+    if checks
+        .iter()
+        .any(|c| matches!(c.status, CheckStatus::Fail | CheckStatus::Degraded))
+    {
         std::process::exit(1);
     }
 
@@ -184,13 +195,14 @@ async fn run_baseline(args: BaselineArgs, format: OutputFormat) -> Result<()> {
 // ---------------------------------------------------------------------------
 
 async fn run_all_checks(per_check_timeout: Duration, strict: bool) -> Vec<CheckResult> {
+    // drift-guard health: removed because the producer/store does not exist yet.
+    // Re-add when a pre-push hook records bypasses to xtask-history. See CONTRIBUTING.md §"Pre-push drift guard".
     let mut checks = vec![
         check_schema_strict_diff(per_check_timeout).await,
         check_closure_health(per_check_timeout, strict).await,
         check_source_unit_contracts(per_check_timeout).await,
         check_privacy_invariants(per_check_timeout).await,
         check_replay_integrity(per_check_timeout).await,
-        check_drift_guard_health(per_check_timeout).await,
         check_workspace_check(per_check_timeout).await,
     ];
 
@@ -303,7 +315,21 @@ async fn check_closure_health(check_timeout: Duration, _strict: bool) -> CheckRe
 }
 
 async fn discover_and_verify_recent_closures() -> Result<(usize, usize), String> {
-    // Discover issues closed in the last 30 days.
+    // Discover issues closed in the last 30 days. The cutoff is computed at
+    // call time so the window slides with the calendar instead of drifting
+    // past a hardcoded date.
+    let cutoff = {
+        let now = time::OffsetDateTime::now_utc();
+        let then = now - time::Duration::days(30);
+        let date = then.date();
+        format!(
+            "{:04}-{:02}-{:02}",
+            date.year(),
+            u8::from(date.month()),
+            date.day()
+        )
+    };
+    let search = format!("closed:>={cutoff}");
     let output = Command::new("gh")
         .args([
             "issue",
@@ -313,7 +339,7 @@ async fn discover_and_verify_recent_closures() -> Result<(usize, usize), String>
             "--limit",
             "20",
             "--search",
-            "closed:>=2026-04-29",
+            &search,
             "--json",
             "number",
             "-R",
@@ -411,7 +437,8 @@ async fn check_privacy_invariants(check_timeout: Duration) -> CheckResult {
         CheckWeight::High,
     );
 
-    let outcome = timeout(
+    // Sub-check 1: privacy unit tests in sinex-primitives.
+    let (primary_status, primary_msg) = match timeout(
         check_timeout,
         run_xtask(&[
             "test",
@@ -422,48 +449,74 @@ async fn check_privacy_invariants(check_timeout: Duration) -> CheckResult {
             "--impact-mode=off",
         ]),
     )
-    .await;
-
-    match outcome {
+    .await
+    {
         Ok(Ok(xtask_result)) => {
             if xtask_result.success {
-                result.status = CheckStatus::Pass;
-                result.detail = Some("All privacy tests passing".into());
+                (CheckStatus::Pass, "privacy tests passing".to_string())
             } else {
-                result.status = CheckStatus::Fail;
-                result.detail = Some(format!(
-                    "Privacy test failures: {}",
-                    xtask_result.stderr_summary()
-                ));
-                result.recommendation = Some(
-                    "Run `xtask test -p sinex-primitives -E 'test(privacy)'` to inspect failures"
-                        .into(),
-                );
+                (
+                    CheckStatus::Fail,
+                    format!("privacy test failures: {}", xtask_result.stderr_summary()),
+                )
             }
         }
-        Ok(Err(error)) => {
-            result.status = CheckStatus::Degraded;
-            result.detail = Some(format!("Privacy test invocation failed: {error}"));
-        }
-        Err(_elapsed) => {
-            result.status = CheckStatus::Degraded;
-            result.detail = Some("Privacy tests timed out".into());
-        }
-    }
+        Ok(Err(error)) => (
+            CheckStatus::Degraded,
+            format!("privacy test invocation failed: {error}"),
+        ),
+        Err(_elapsed) => (CheckStatus::Degraded, "privacy tests timed out".into()),
+    };
 
-    // Also run the source-worker privacy gate.
-    let sw_outcome = timeout(check_timeout, run_xtask(&["verify", "source-worker"])).await;
-    match sw_outcome {
-        Ok(Ok(xtask_result)) if !xtask_result.success => {
-            if result.status == CheckStatus::Pass {
-                result.status = CheckStatus::Degraded;
-                result.detail = Some(format!(
-                    "Privacy tests pass but source-worker privacy gate warns: {}",
-                    xtask_result.stderr_summary()
-                ));
+    // Sub-check 2: source-worker privacy gate.
+    let (sw_status, sw_msg) = match timeout(
+        check_timeout,
+        run_xtask(&["verify", "source-worker"]),
+    )
+    .await
+    {
+        Ok(Ok(xtask_result)) => {
+            if xtask_result.success {
+                (
+                    CheckStatus::Pass,
+                    "source-worker privacy gate passing".to_string(),
+                )
+            } else {
+                (
+                    CheckStatus::Fail,
+                    format!(
+                        "source-worker privacy gate failing: {}",
+                        xtask_result.stderr_summary()
+                    ),
+                )
             }
         }
-        _ => {}
+        Ok(Err(error)) => (
+            CheckStatus::Degraded,
+            format!("source-worker privacy gate invocation failed: {error}"),
+        ),
+        Err(_elapsed) => (
+            CheckStatus::Degraded,
+            "source-worker privacy gate timed out".into(),
+        ),
+    };
+
+    // Worst-wins combine: the final status is the worse of the two
+    // sub-checks so a source-worker Fail can never be masked by a
+    // primary Pass. Detail concatenates both messages so the operator
+    // sees every signal that fed into the composite.
+    let combined_status = if primary_status.severity() >= sw_status.severity() {
+        primary_status
+    } else {
+        sw_status
+    };
+    result.status = combined_status;
+    result.detail = Some(format!("primary: {primary_msg}; source-worker: {sw_msg}"));
+    if matches!(combined_status, CheckStatus::Fail | CheckStatus::Degraded) {
+        result.recommendation = Some(
+            "Run `xtask test -p sinex-primitives -E 'test(privacy)'` and `xtask verify source-worker` to inspect failures"
+                .into(),
+        );
     }
 
     result
@@ -519,94 +572,7 @@ async fn check_replay_integrity(check_timeout: Duration) -> CheckResult {
 }
 
 // ---------------------------------------------------------------------------
-// 6. Drift guard health (weight: low)
-// ---------------------------------------------------------------------------
-
-async fn check_drift_guard_health(check_timeout: Duration) -> CheckResult {
-    let mut result = CheckResult::new(
-        "drift-guard-health",
-        "Drift guard bypass frequency",
-        CheckWeight::Low,
-    );
-
-    let outcome = timeout(check_timeout, query_drift_guard_bypasses()).await;
-
-    match outcome {
-        Ok(Ok(count)) => {
-            if count == 0 {
-                result.status = CheckStatus::Pass;
-                result.detail = Some("No drift guard bypasses in last 30 days".into());
-            } else if count <= 3 {
-                result.status = CheckStatus::Degraded;
-                result.detail = Some(format!("{count} bypass(es) in last 30 days"));
-                result.recommendation = Some(
-                    "Audit bypasses — each one represents a pushed change that skipped the pre-push drift guard".into(),
-                );
-            } else {
-                result.status = CheckStatus::Fail;
-                result.detail = Some(format!("{count} bypasses in last 30 days"));
-                result.recommendation = Some(
-                    "High bypass frequency indicates the drift guard is being routinely skipped — investigate why".into(),
-                );
-            }
-        }
-        Ok(Err(_error)) => {
-            result.status = CheckStatus::Skipped;
-            result.detail = Some("History DB not available".into());
-            result.recommendation =
-                Some("Run `xtask` in this checkout to initialize the history DB".into());
-        }
-        Err(_elapsed) => {
-            result.status = CheckStatus::Degraded;
-            result.detail = Some("Drift guard bypass query timed out".into());
-        }
-    }
-
-    result
-}
-
-async fn query_drift_guard_bypasses() -> Result<usize, String> {
-    let db_path = resolve_history_db_path()?;
-    let output = tokio::process::Command::new("sqlite3")
-        .args([
-            &db_path,
-            "SELECT COUNT(*) FROM drift_guard_bypasses WHERE recorded_at >= datetime('now', '-30 days');",
-        ])
-        .output()
-        .await
-        .map_err(|e| format!("sqlite3 not available: {e}"))?;
-    if !output.status.success() {
-        return Err(format!(
-            "sqlite3 query failed: {}",
-            String::from_utf8_lossy(&output.stderr).trim()
-        ));
-    }
-    let count_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    count_str
-        .parse::<usize>()
-        .map_err(|e| format!("failed to parse bypass count '{count_str}': {e}"))
-}
-
-fn resolve_history_db_path() -> Result<String, String> {
-    if let Ok(dir) = std::env::var("SINEX_STATE_DIR") {
-        return Ok(format!("{dir}/xtask-history.db"));
-    }
-    // Walk up from cwd to find .sinex/state/xtask-history.db
-    let mut current = std::env::current_dir().map_err(|e| format!("cwd: {e}"))?;
-    loop {
-        let candidate = current.join(".sinex/state/xtask-history.db");
-        if candidate.exists() {
-            return Ok(candidate.to_string_lossy().to_string());
-        }
-        if !current.pop() {
-            break;
-        }
-    }
-    Err("no .sinex/state/xtask-history.db found in any ancestor directory".into())
-}
-
-// ---------------------------------------------------------------------------
-// 7. Workspace check (weight: medium)
+// 6. Workspace check (weight: medium)
 // ---------------------------------------------------------------------------
 
 async fn check_workspace_check(check_timeout: Duration) -> CheckResult {
