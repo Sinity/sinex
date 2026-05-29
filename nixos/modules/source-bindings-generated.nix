@@ -278,7 +278,7 @@ let
         {
           ExecStart = mkDatabasePasswordExec {
             name = "source-worker-${unitId}";
-            command = "${sinexPackage}/bin/sinex-source-worker ${execArgs}";
+            command = "${sinexPackage}/bin/sinexd scan-source-unit ${execArgs}";
             passwordFile = if cfg.database.enable then effectiveDatabasePasswordFile else null;
           };
           WorkingDirectory = stateRoot;
