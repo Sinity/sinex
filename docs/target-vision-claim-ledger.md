@@ -231,6 +231,22 @@ Dissolution batch 1 (`report/` + `reference/`, first pass). Nine fictions/stale 
 - `reference/design-intent.md` §29 (17 superseded ideas) — DELETED (each superseded by named code).
 - `reference/historical-architecture.md` — KEPT (conservative; sensd section still feeds the #1207 evidence-lane design).
 
+### Batch 2–3 (2026-05-30) — `reference/` drain continued
+
+Nine more fictions/stale claims corrected in target-vision prose (each verified against code). Same root cause as TV-013…019: target-vision was a source of the event-identity / Wave-B-topology drift. Prose edits committed to the target-vision repo (`ef82ba0`, `b0a2b6f`, `edd6b06`, `a159c26`); this records the sinex-side status.
+
+| Claim ID | Claim | Status | Evidence |
+|----------|-------|--------|----------|
+| TV-022 | `UNIQUE (source_material_id, anchor_byte)` enforces ingestor idempotency | rejected | TimescaleDB hypertable cannot enforce UNIQUE without the partition key (`id`); `ix_events_material_anchor` is non-unique by design (`defs/events.rs:348`). Idempotency is checkpoint/`ON CONFLICT (id)`-based. #1570. |
+| TV-023 | Generated column is named `ts_ingest` | superseded | Column is `ts_coided` (`defs/events.rs`). |
+| TV-024 | Compute deterministic event IDs via `UUIDv5(material_id, anchor_byte)` in NatsPublisher | rejected | Event IDs are interpretations (random UUIDv7); deterministic IDs collide with archived events on replay. UUIDv5 domain identity is legit only for named domain objects (entities, documents), not event PKs. #1570. |
+| TV-025 | 6 automata in `sinex-process` binary (in-body deployment tables) | superseded | `sinex-process` dissolved into sinexd (Wave-B #1054/#1223/#1225); 13 automata in `nixos/modules/lib/automata.nix`. Mirrors TV-016; was missed in two in-body tables. |
+| TV-026 | Runner-pack table names `sinex-process` / `sinex-{desktop,terminal,system}-ingestor` as live deployment vehicles | superseded | Wave-B dissolved all per-domain binaries into `sinexd`; `flake.nix` lists only `sinexd`/`sinexctl`/`xtask` as runtime packages. |
+| TV-027 | "8 existing ingestors/automatons" baseline count | superseded | Post-Wave-B: 13 automata specs + 20+ source-unit modules in `crate/sinexd/src/sources/source_units/`. |
+| TV-028 | Hourly/daily summarizers live "in sinex-process" | superseded | Dissolved into `sinexd::automata` (`crate/sinexd/src/automata/{hourly,daily}.rs`). |
+| TV-029 | `sinex-fs-ingestor` watches the vault directory | superseded | Binary dissolved; `fs` source unit hosted in sinexd (`crate/sinexd/src/sources/source_units/fs/mod.rs`). |
+| TV-030 | Event-taxonomy files name `**Node:** sinex-*-ingestor` per domain | superseded | All per-domain binaries dissolved by Wave-B; README supersession callout added rather than 13 individual edits (proportionate). |
+
 ## Where New Claims Go
 
 Use this order:
