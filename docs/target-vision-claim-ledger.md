@@ -212,40 +212,53 @@ Dissolution batch 1 (`report/` + `reference/`, first pass). Nine fictions/stale 
 ### Fictions corrected (prose fixed in target-vision)
 | Claim ID | Claim | Status | Evidence |
 |----------|-------|--------|----------|
-| TV-013 | Three Clocks: `ts_coided` diverges only on historical imports / "when first observed" | superseded | `ts_coided = uuid_extract_timestamp(id)`; replay mints a new UUIDv7 → new `ts_coided`. Canon: `provenance.md`, `glossary.md`, #1570. |
-| TV-014 | `(material_id, anchor_byte)` UUIDv5 "accidental idempotency via ON CONFLICT"; replay/occurrence idempotency | rejected | Non-goal. Event ids = interpretation identity (random, new on replay); `ON CONFLICT (id)` is NATS at-least-once redelivery only. #1570. |
-| TV-015 | `_1h` telemetry surfaces are ordinary views, "no continuous aggregates" | superseded | `apply.rs:66-76` `TELEMETRY_CONTINUOUS_AGGREGATES` = 9 CAs + `current_system_state` (5m CA). #952. |
-| TV-016 | 9 automata in `sinex-process`; analytics window 1000-event | superseded | sinex-process dissolved into sinexd (Wave-B #1054/#1223/#1225); 13 specs in `nixos/modules/lib/automata.nix`; `analytics.rs:27` = 250. |
-| TV-017 | Per-domain ingestor binaries (`sinex-fs-ingestor`, …) are ACTIVE services | superseded | `Cargo.toml`: no per-domain ingestor crates; source units hosted by sinexd post-Wave-B. |
-| TV-018 | pgsodium as exploratory encryption option | rejected | Non-goal per #367; supported path is `Strategy::Encrypt` (XChaCha20-Poly1305). |
-| TV-019 | Replay ordering invariant cites "id (ULID) order" | superseded | System uses UUIDv7, not ULID. Semantic invariant (`ts_orig` ordering) is correct. |
+| TV-058 | Three Clocks: `ts_coided` diverges only on historical imports / "when first observed" | superseded | `ts_coided = uuid_extract_timestamp(id)`; replay mints a new UUIDv7 → new `ts_coided`. Canon: `provenance.md`, `glossary.md`, #1570. |
+| TV-059 | `(material_id, anchor_byte)` UUIDv5 "accidental idempotency via ON CONFLICT"; replay/occurrence idempotency | rejected | Non-goal. Event ids = interpretation identity (random, new on replay); `ON CONFLICT (id)` is NATS at-least-once redelivery only. #1570. |
+| TV-060 | `_1h` telemetry surfaces are ordinary views, "no continuous aggregates" | superseded | `apply.rs:66-76` `TELEMETRY_CONTINUOUS_AGGREGATES` = 9 CAs + `current_system_state` (5m CA). #952. |
+| TV-061 | 9 automata in `sinex-process`; analytics window 1000-event | superseded | sinex-process dissolved into sinexd (Wave-B #1054/#1223/#1225); 13 specs in `nixos/modules/lib/automata.nix`; `analytics.rs:27` = 250. |
+| TV-062 | Per-domain ingestor binaries (`sinex-fs-ingestor`, …) are ACTIVE services | superseded | `Cargo.toml`: no per-domain ingestor crates; source units hosted by sinexd post-Wave-B. |
+| TV-063 | pgsodium as exploratory encryption option | rejected | Non-goal per #367; supported path is `Strategy::Encrypt` (XChaCha20-Poly1305). |
+| TV-064 | Replay ordering invariant cites "id (ULID) order" | superseded | System uses UUIDv7, not ULID. Semantic invariant (`ts_orig` ordering) is correct. |
 
 ### Promoted to new issues
 | Claim ID | Claim | Status | Issue |
 |----------|-------|--------|-------|
-| TV-020 | Typed `OccurrenceKey` for `(source_material_id, anchor_byte)` occurrence identity | issue_backed | #1588 |
-| TV-021 | Roll out `#[derive(SinexConfig)]` to remaining ~10 manual `from_env()` impls | issue_backed | #1589 |
+| TV-065 | Typed `OccurrenceKey` for `(source_material_id, anchor_byte)` occurrence identity | issue_backed | #1588 |
+| TV-066 | Roll out `#[derive(SinexConfig)]` to remaining ~10 manual `from_env()` impls | issue_backed | #1589 |
 
 ### Drained files (Phase 1)
 - `reference/embedding-pipeline.md` — DELETED (was a pure authority-pointer; authority: `docs/architecture/embedding-runtime.md`, `document-layer-v1.md`, #1076/#1021/#1063).
 - `reference/design-intent.md` §29 (17 superseded ideas) — DELETED (each superseded by named code).
 - `reference/historical-architecture.md` — KEPT (conservative; sensd section still feeds the #1207 evidence-lane design).
 
+> Note: the 2026-05-30 audit claims were renumbered to TV-058+ on 2026-05-30 to remove collisions with the pre-existing 2026-05-24 audit, which already occupied TV-010..057.
+
 ### Batch 2–3 (2026-05-30) — `reference/` drain continued
 
-Nine more fictions/stale claims corrected in target-vision prose (each verified against code). Same root cause as TV-013…019: target-vision was a source of the event-identity / Wave-B-topology drift. Prose edits committed to the target-vision repo (`ef82ba0`, `b0a2b6f`, `edd6b06`, `a159c26`); this records the sinex-side status.
+Nine more fictions/stale claims corrected in target-vision prose (each verified against code). Same root cause as TV-058…064: target-vision was a source of the event-identity / Wave-B-topology drift. Prose edits committed to the target-vision repo (`ef82ba0`, `b0a2b6f`, `edd6b06`, `a159c26`); this records the sinex-side status.
 
 | Claim ID | Claim | Status | Evidence |
 |----------|-------|--------|----------|
-| TV-022 | `UNIQUE (source_material_id, anchor_byte)` enforces ingestor idempotency | rejected | TimescaleDB hypertable cannot enforce UNIQUE without the partition key (`id`); `ix_events_material_anchor` is non-unique by design (`defs/events.rs:348`). Idempotency is checkpoint/`ON CONFLICT (id)`-based. #1570. |
-| TV-023 | Generated column is named `ts_ingest` | superseded | Column is `ts_coided` (`defs/events.rs`). |
-| TV-024 | Compute deterministic event IDs via `UUIDv5(material_id, anchor_byte)` in NatsPublisher | rejected | Event IDs are interpretations (random UUIDv7); deterministic IDs collide with archived events on replay. UUIDv5 domain identity is legit only for named domain objects (entities, documents), not event PKs. #1570. |
-| TV-025 | 6 automata in `sinex-process` binary (in-body deployment tables) | superseded | `sinex-process` dissolved into sinexd (Wave-B #1054/#1223/#1225); 13 automata in `nixos/modules/lib/automata.nix`. Mirrors TV-016; was missed in two in-body tables. |
-| TV-026 | Runner-pack table names `sinex-process` / `sinex-{desktop,terminal,system}-ingestor` as live deployment vehicles | superseded | Wave-B dissolved all per-domain binaries into `sinexd`; `flake.nix` lists only `sinexd`/`sinexctl`/`xtask` as runtime packages. |
-| TV-027 | "8 existing ingestors/automatons" baseline count | superseded | Post-Wave-B: 13 automata specs + 20+ source-unit modules in `crate/sinexd/src/sources/source_units/`. |
-| TV-028 | Hourly/daily summarizers live "in sinex-process" | superseded | Dissolved into `sinexd::automata` (`crate/sinexd/src/automata/{hourly,daily}.rs`). |
-| TV-029 | `sinex-fs-ingestor` watches the vault directory | superseded | Binary dissolved; `fs` source unit hosted in sinexd (`crate/sinexd/src/sources/source_units/fs/mod.rs`). |
-| TV-030 | Event-taxonomy files name `**Node:** sinex-*-ingestor` per domain | superseded | All per-domain binaries dissolved by Wave-B; README supersession callout added rather than 13 individual edits (proportionate). |
+| TV-067 | `UNIQUE (source_material_id, anchor_byte)` enforces ingestor idempotency | rejected | TimescaleDB hypertable cannot enforce UNIQUE without the partition key (`id`); `ix_events_material_anchor` is non-unique by design (`defs/events.rs:348`). Idempotency is checkpoint/`ON CONFLICT (id)`-based. #1570. |
+| TV-068 | Generated column is named `ts_ingest` | superseded | Column is `ts_coided` (`defs/events.rs`). |
+| TV-069 | Compute deterministic event IDs via `UUIDv5(material_id, anchor_byte)` in NatsPublisher | rejected | Event IDs are interpretations (random UUIDv7); deterministic IDs collide with archived events on replay. UUIDv5 domain identity is legit only for named domain objects (entities, documents), not event PKs. #1570. |
+| TV-070 | 6 automata in `sinex-process` binary (in-body deployment tables) | superseded | `sinex-process` dissolved into sinexd (Wave-B #1054/#1223/#1225); 13 automata in `nixos/modules/lib/automata.nix`. Mirrors TV-061; was missed in two in-body tables. |
+| TV-071 | Runner-pack table names `sinex-process` / `sinex-{desktop,terminal,system}-ingestor` as live deployment vehicles | superseded | Wave-B dissolved all per-domain binaries into `sinexd`; `flake.nix` lists only `sinexd`/`sinexctl`/`xtask` as runtime packages. |
+| TV-072 | "8 existing ingestors/automatons" baseline count | superseded | Post-Wave-B: 13 automata specs + 20+ source-unit modules in `crate/sinexd/src/sources/source_units/`. |
+| TV-073 | Hourly/daily summarizers live "in sinex-process" | superseded | Dissolved into `sinexd::automata` (`crate/sinexd/src/automata/{hourly,daily}.rs`). |
+| TV-074 | `sinex-fs-ingestor` watches the vault directory | superseded | Binary dissolved; `fs` source unit hosted in sinexd (`crate/sinexd/src/sources/source_units/fs/mod.rs`). |
+| TV-075 | Event-taxonomy files name `**Node:** sinex-*-ingestor` per domain | superseded | All per-domain binaries dissolved by Wave-B; README supersession callout added rather than 13 individual edits (proportionate). |
+
+### Batch 4 (2026-05-30) — topology drain (`report/architecture.md`, `reference/design-rationale.md`, `reference/desktop-integration.md`)
+
+Wave-B (#1054/#1223/#1225) dissolved per-domain ingestors, `sinex-ingestd`, `sinex-gateway`, and `sinex-process` into `sinexd`. Prose corrected in target-vision commit `4014afa`.
+
+| Claim ID | Claim | Status | Evidence |
+|----------|-------|--------|----------|
+| TV-076 | `sinex-ingestd` is the single writer/admission service — a distinct binary | superseded | `crate/sinexd/Cargo.toml` (`name = "sinexd"`); event engine is `sinexd::event_engine`. Wave-B #1054/#1223/#1225. |
+| TV-077 | "Merging sinex-ingestd with sinex-gateway" was a rejected design alternative | superseded | Wave-B reversed it — `sinexd` merged both + sinex-process behind internal module boundaries; `nixos/modules/default.nix` `runner_binary = "sinexd"`. |
+| TV-078 | `DerivedNodeAdapter<N>` / `IngestorNodeAdapter<T>` are the adapter type names | superseded | `AutomatonRuntime<N>` (`sinexd/src/node_sdk/derived_node/adapter/mod.rs:84`); `SourceUnitRuntime<I>` (`sinexd/src/node_sdk/ingestor_node.rs:144`). |
+| TV-079 | `sinex-desktop-ingestor` is a deployed binary | superseded | Desktop capture is source units hosted in sinexd; no such crate in `crate/`. |
 
 ## Where New Claims Go
 
