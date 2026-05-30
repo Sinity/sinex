@@ -29,7 +29,7 @@ use sinex_primitives::SinexError;
 use std::sync::Arc;
 use tokio::sync::{mpsc, oneshot};
 use tokio::time::{Duration, Instant, interval};
-use tracing::debug;
+use tracing::{debug, error, warn};
 
 /// Configuration for [`ObservationMaterializer`] behavior.
 #[derive(Debug, Clone)]
@@ -166,11 +166,20 @@ async fn buffer_task<R: Serialize + Send + 'static>(
                             || buffer_bytes >= config.max_bytes;
 
                         if should_flush {
-                            let _ = flush_internal(&mut buffer, &mut buffer_bytes, on_flush.as_ref()).await;
+                            // Propagate the flush result to the caller: if the sink
+                            // fails (disk full, CAS write error, …) the caller learns
+                            // about it rather than silently receiving Ok(()).
+                            let flush_result = flush_internal(
+                                &mut buffer,
+                                &mut buffer_bytes,
+                                on_flush.as_ref(),
+                            )
+                            .await;
                             last_flush = Instant::now();
+                            let _ = req.reply.send(flush_result);
+                        } else {
+                            let _ = req.reply.send(Ok(()));
                         }
-
-                        let _ = req.reply.send(Ok(()));
                     }
                     Err(e) => {
                         let err = SinexError::processing(format!("Failed to serialize observation: {e}"));
@@ -180,7 +189,13 @@ async fn buffer_task<R: Serialize + Send + 'static>(
             }
             _ = timer.tick() => {
                 if last_flush.elapsed() >= coalesce_window && !buffer.is_empty() {
-                    let _ = flush_internal(&mut buffer, &mut buffer_bytes, on_flush.as_ref()).await;
+                    if let Err(e) = flush_internal(&mut buffer, &mut buffer_bytes, on_flush.as_ref()).await {
+                        error!(
+                            error = %e,
+                            "Observation materializer: timer-triggered flush failed; \
+                             records may not have been staged as source material"
+                        );
+                    }
                     last_flush = Instant::now();
                 }
             }
@@ -190,7 +205,13 @@ async fn buffer_task<R: Serialize + Send + 'static>(
 
     // Flush any remaining records on shutdown
     if !buffer.is_empty() {
-        let _ = flush_internal(&mut buffer, &mut buffer_bytes, on_flush.as_ref()).await;
+        if let Err(e) = flush_internal(&mut buffer, &mut buffer_bytes, on_flush.as_ref()).await {
+            error!(
+                error = %e,
+                "Observation materializer: shutdown flush failed; \
+                 records may not have been staged as source material"
+            );
+        }
     }
 }
 
@@ -204,20 +225,44 @@ async fn flush_internal<R: Serialize>(
         return Ok(());
     }
 
+    // Capture before drain: buffer.len() is always 0 after drain(..).
+    let record_count = buffer.len();
     let mut data = Vec::with_capacity(*buffer_bytes);
+    let mut serialize_failures = 0usize;
     for record in buffer.drain(..) {
-        if let Ok(line) = serde_json::to_string(&record) {
-            data.extend_from_slice(line.as_bytes());
-            data.push(b'\n');
+        match serde_json::to_string(&record) {
+            Ok(line) => {
+                data.extend_from_slice(line.as_bytes());
+                data.push(b'\n');
+            }
+            Err(e) => {
+                // A record that cannot be serialized cannot be durably staged.
+                // Log it so the operator can investigate; do not silently drop it,
+                // as that would corrupt the record count and hide data loss.
+                warn!(
+                    error = %e,
+                    "Observation materializer: failed to serialize record; \
+                     dropping from batch (data loss)"
+                );
+                serialize_failures += 1;
+            }
         }
     }
-
-    let record_count = buffer.len();
     *buffer_bytes = 0;
 
-    let batch = SerializedBatch { data, record_count };
+    let staged_count = record_count - serialize_failures;
+    debug!(
+        staged = staged_count,
+        dropped = serialize_failures,
+        "Flushing observation records"
+    );
 
-    debug!("Flushing {} observation records", record_count);
+    if staged_count == 0 {
+        // Nothing serialized successfully; don't call on_flush with empty data.
+        return Ok(());
+    }
+
+    let batch = SerializedBatch { data, record_count: staged_count };
     on_flush(batch).await
 }
 
