@@ -665,6 +665,16 @@ pub struct Invocation {
     pub live_stage: Option<String>,
 }
 
+/// A recorded drift guard bypass event (#1565).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DriftGuardBypass {
+    pub id: i64,
+    pub recorded_at: String,
+    pub git_branch: Option<String>,
+    pub head_sha: Option<String>,
+    pub push_succeeded: Option<bool>,
+}
+
 /// Emitted once per process (via `OnceLock`) when a read command accesses synthetic data.
 static SYNTHETIC_WARNING_EMITTED: std::sync::OnceLock<()> = std::sync::OnceLock::new();
 
@@ -1425,10 +1435,19 @@ impl HistoryDb {
                 step_count INTEGER NOT NULL DEFAULT 0
             );
 
+            CREATE TABLE IF NOT EXISTS drift_guard_bypasses (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                recorded_at TEXT NOT NULL DEFAULT (datetime('now')),
+                git_branch TEXT,
+                head_sha TEXT,
+                push_succeeded INTEGER
+            );
+
             CREATE INDEX IF NOT EXISTS idx_exercise_runs_invocation ON exercise_runs(invocation_id);
             CREATE INDEX IF NOT EXISTS idx_exercise_runs_recorded ON exercise_runs(recorded_at);
             CREATE INDEX IF NOT EXISTS idx_exercise_results_run ON exercise_results(run_id);
             CREATE INDEX IF NOT EXISTS idx_exercise_results_id ON exercise_results(exercise_id);
+            CREATE INDEX IF NOT EXISTS idx_drift_guard_bypasses_recorded ON drift_guard_bypasses(recorded_at);
             ",
         )?;
         Ok(())
@@ -1750,6 +1769,64 @@ impl HistoryDb {
                 path.display()
             );
         });
+    }
+
+    /// Record a drift guard bypass event (#1565).
+    ///
+    /// Called by the pre-push hook when `SINEX_SKIP_DRIFT_GUARD=1` is used.
+    /// `push_succeeded` is set later (unknown at bypass time), so callers
+    /// pass `None` initially and update after the push completes.
+    pub fn record_drift_guard_bypass(
+        &self,
+        git_branch: Option<&str>,
+        head_sha: Option<&str>,
+        push_succeeded: Option<bool>,
+    ) -> Result<i64> {
+        let mut stmt = self.conn.prepare(
+            "INSERT INTO drift_guard_bypasses (git_branch, head_sha, push_succeeded) VALUES (?1, ?2, ?3)",
+        )?;
+        let id = stmt.insert(params![git_branch, head_sha, push_succeeded])?;
+        Ok(id)
+    }
+
+    /// Update an existing bypass row with the push outcome.
+    pub fn update_drift_guard_bypass_outcome(&self, id: i64, push_succeeded: bool) -> Result<()> {
+        self.conn.execute(
+            "UPDATE drift_guard_bypasses SET push_succeeded = ?1 WHERE id = ?2",
+            params![push_succeeded, id],
+        )?;
+        Ok(())
+    }
+
+    /// Return the number of drift guard bypasses recorded in the last `days` days.
+    pub fn get_drift_guard_bypass_count(&self, days: i32) -> Result<usize> {
+        let count: i64 = self.conn.query_row(
+            "SELECT COUNT(*) FROM drift_guard_bypasses WHERE recorded_at >= datetime('now', ?1)",
+            params![format!("-{days} days")],
+            |row| row.get(0),
+        )?;
+        Ok(count as usize)
+    }
+
+    /// Return the most recent drift guard bypass, if any.
+    pub fn get_drift_guard_bypass_latest(&self) -> Result<Option<DriftGuardBypass>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, recorded_at, git_branch, head_sha, push_succeeded
+             FROM drift_guard_bypasses
+             ORDER BY recorded_at DESC LIMIT 1",
+        )?;
+        let row = stmt
+            .query_row([], |row| {
+                Ok(DriftGuardBypass {
+                    id: row.get(0)?,
+                    recorded_at: row.get::<_, String>(1)?,
+                    git_branch: row.get(2)?,
+                    head_sha: row.get(3)?,
+                    push_succeeded: row.get(4)?,
+                })
+            })
+            .optional()?;
+        Ok(row)
     }
 
     /// Start a new invocation record. Returns the invocation ID.

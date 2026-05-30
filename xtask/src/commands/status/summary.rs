@@ -397,6 +397,20 @@ pub(super) async fn execute(ctx: &CommandContext) -> Result<CommandResult> {
     if data.history.is_synthetic {
         warnings.push("History DB is seeded with synthetic data".to_string());
     }
+    if data.history.drift_guard_bypass_count > 0 {
+        if let Some(ref latest) = data.history.drift_guard_bypass_latest {
+            let branch = latest.git_branch.as_deref().unwrap_or("?");
+            warnings.push(format!(
+                "Drift guard bypassed {}x in last 30d (last: {})",
+                data.history.drift_guard_bypass_count, branch
+            ));
+        } else {
+            warnings.push(format!(
+                "Drift guard bypassed {}x in last 30d",
+                data.history.drift_guard_bypass_count
+            ));
+        }
+    }
     warnings.extend(data.history.issues.clone());
     warnings.extend(data.job_issues.clone());
     if data.pg_probe.ready()
@@ -444,8 +458,13 @@ pub(super) async fn execute(ctx: &CommandContext) -> Result<CommandResult> {
         .as_ref()
         .map(|m| format!(" {}", m.summary_fragment()))
         .unwrap_or_default();
+    let bypass_fragment = if data.history.drift_guard_bypass_count > 0 {
+        format!(" bypass:{}", data.history.drift_guard_bypass_count)
+    } else {
+        String::new()
+    };
     let summary = format!(
-        "infra:{} jobs:{} tests:{} warns:{} fixes:{}{} git:{}{}",
+        "infra:{} jobs:{} tests:{} warns:{} fixes:{}{} git:{}{}{}",
         if data.pg_probe.ready() && data.nats_probe.ready() {
             "ok"
         } else {
@@ -468,6 +487,7 @@ pub(super) async fn execute(ctx: &CommandContext) -> Result<CommandResult> {
         } else {
             ""
         },
+        bypass_fragment,
     );
 
     let output = SummaryOutput {

@@ -16,8 +16,8 @@ pub use analysis::{
 };
 pub use db::{
     BackgroundJob, CommandStats, DiagnosticCounts, DiagnosticDelta, DiagnosticLifecycle,
-    DiagnosticTrendPoint, ExerciseResultRow, ExerciseRunRow, FixSession, HistoryDb, Invocation,
-    InvocationFull, InvocationProgress, InvocationStatus, InvocationTimelineEntry,
+    DiagnosticTrendPoint, DriftGuardBypass, ExerciseResultRow, ExerciseRunRow, FixSession, HistoryDb,
+    Invocation, InvocationFull, InvocationProgress, InvocationStatus, InvocationTimelineEntry,
     InvocationWithFingerprint, JobLifecycleStatus, LifecycleStatus, ProofEvidence, ResourceUsage,
     StageStats, StageTiming, StageTrendPoint, StoredDiagnostic, TestProofUnit, WorkingSession,
 };
