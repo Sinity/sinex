@@ -1,6 +1,8 @@
+pub mod baseline;
+
 use std::{collections::BTreeSet, path::PathBuf, time::Duration};
 
-use clap::Args;
+use clap::{Args, Subcommand};
 use color_eyre::{Result, eyre::eyre};
 use console::{StyledObject, style};
 use serde::Serialize;
@@ -17,8 +19,11 @@ use crate::client::GatewayClient;
 use crate::fmt::{format_json, format_yaml};
 use crate::model::OutputFormat;
 
-#[derive(Debug, Args, Default)]
+#[derive(Debug, Args)]
 pub struct VerifyCommand {
+    #[command(subcommand)]
+    cmd: Option<VerifySubcommand>,
+
     /// Actively exercise the local managed document scan surface.
     #[arg(long, default_value_t = false)]
     document_smoke: bool,
@@ -52,6 +57,12 @@ pub struct VerifyCommand {
     /// `.sinex/demo/dataset.json`.
     #[arg(long, default_value_t = false)]
     demo: bool,
+}
+
+#[derive(Debug, Subcommand)]
+enum VerifySubcommand {
+    /// Run comprehensive verification battery with weighted scoring.
+    Baseline(baseline::BaselineArgs),
 }
 
 const DOCUMENT_INGESTOR_SOURCE: &str = "document-ingestor";
@@ -175,6 +186,9 @@ impl VerifyCommand {
     /// emits a structured summary with per-check status/message records and
     /// the overall pass/skip/warn/fail counts at the end.
     pub async fn execute(&self, client: &GatewayClient, format: OutputFormat) -> Result<()> {
+        if let Some(VerifySubcommand::Baseline(ref baseline_args)) = self.cmd {
+            return baseline::execute(baseline_args.clone(), format).await;
+        }
         if self.demo {
             return run_demo_walkthrough(client, format).await;
         }
@@ -205,11 +219,17 @@ impl VerifyCommand {
     /// gateway-dependent checks should be skipped entirely.
     #[must_use]
     pub fn is_source_units_only(&self) -> bool {
-        self.source_units
+        self.cmd.is_none()
+            && self.source_units
             && !self.demo
             && !self.document_smoke
             && !self.source_evidence
             && !self.historical_evidence
+    }
+
+    #[must_use]
+    pub fn command_path(&self) -> &'static str {
+        "verify"
     }
 
     /// Run only the descriptor/payload coverage check, without requiring a
@@ -229,7 +249,7 @@ impl VerifyCommand {
 fn finalize_summary(summary: &VerificationSummary, format: OutputFormat) -> Result<()> {
     match format {
         OutputFormat::Table => print_verification_footer(summary),
-        OutputFormat::Json | OutputFormat::Dot => {
+        OutputFormat::Json => {
             println!("{}", format_json(&summary.as_json())?);
             if summary.fail > 0 {
                 std::process::exit(1);
@@ -240,6 +260,11 @@ fn finalize_summary(summary: &VerificationSummary, format: OutputFormat) -> Resu
             if summary.fail > 0 {
                 std::process::exit(1);
             }
+        }
+        OutputFormat::Dot => {
+            return Err(eyre!(
+                "sinexctl verify does not support --format dot; use --format json|yaml|table"
+            ));
         }
     }
     Ok(())

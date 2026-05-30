@@ -8,7 +8,7 @@ use sinex_primitives::events::payloads::{
 use sinex_primitives::events::{Event, EventPayload};
 use sinex_primitives::temporal::{Duration, Timestamp};
 use sinex_primitives::{Id, JsonValue, Uuid};
-use sinex_process::automata::instruction_reconciler::{
+use sinexd::automata::instruction_reconciler::{
     InstructionExpectationReconciler, InstructionExpectationState,
 };
 use xtask::sandbox::prelude::*;

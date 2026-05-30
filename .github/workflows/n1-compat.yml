@@ -26,6 +26,15 @@ env:
 jobs:
   n1-compat:
     name: N-1 Compatibility Check
+    # TODO: re-enable post-sinexd-collapse. The previous shape built
+    # `sinex-gateway` and `sinex-terminal-ingestor` as standalone binaries,
+    # both of which folded into `sinexd`. A meaningful N-1 compat surface
+    # now requires (a) downloading a prior `sinexd` release, (b) starting
+    # it in `serve` mode against a freshly schema-applied DB (via
+    # `schema-apply-bootstrap` from sinex-schema), and (c) replaying
+    # synthetic events with version-skewed wire formats. Disabled until
+    # that shape is designed.
+    if: false
     runs-on: ubuntu-latest
     timeout-minutes: 60
 

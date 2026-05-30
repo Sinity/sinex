@@ -12,7 +12,7 @@ use sinex_primitives::events::payloads::{EntityExtractedPayload, EntityResolvedP
 use sinex_primitives::events::{Event, EventPayload};
 use sinex_primitives::temporal::Timestamp;
 use sinex_primitives::{Id, JsonValue};
-use sinex_process::automata::entity_resolver::{EntityResolver, ResolverState};
+use sinexd::automata::entity_resolver::{EntityResolver, ResolverState};
 use xtask::sandbox::prelude::*;
 
 fn make_context() -> AutomatonContext {

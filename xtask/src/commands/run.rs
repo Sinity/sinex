@@ -39,15 +39,6 @@ fn unix_timestamp_micros(now: std::time::SystemTime, context: &str) -> Result<u1
         .with_context(|| format!("{context}: system clock is before the unix epoch"))
 }
 
-/// Check if a package/name refers to a node (ingestor, automaton, or canonicalizer).
-/// Nodes expose `--service-name`; core services don't.
-fn is_node_package(name: &str) -> bool {
-    name.contains("ingestor")
-        || name.contains("automaton")
-        || name.contains("canonicalizer")
-        || name == "sinex-process"
-}
-
 /// Build a deterministic instance ID from a binary name and optional prefix.
 fn make_instance_id(name: &str, prefix: Option<&str>) -> String {
     prefix.map_or_else(
@@ -56,25 +47,22 @@ fn make_instance_id(name: &str, prefix: Option<&str>) -> String {
     )
 }
 
-/// Build the runtime CLI arguments for a node or gateway binary.
+/// Build the runtime CLI arguments for the unified `sinexd` binary.
 ///
-/// When `automaton` is `Some`, the `--automaton <name>` flag is prepended before
-/// `--service-name`; this dispatches to the correct automaton inside `sinex-process`.
-fn runtime_cli_args(package: &str, run_identity: &str, automaton: Option<&str>) -> Vec<String> {
-    if is_node_package(package) {
-        let mut args = Vec::new();
-        if let Some(name) = automaton {
-            args.push("--automaton".to_string());
-            args.push(name.to_string());
-        }
-        args.push(format!("--service-name={run_identity}"));
-        args.push("service".to_string());
-        args
-    } else if package.contains("gateway") {
-        vec!["rpc-server".to_string()]
-    } else {
-        Vec::new()
-    }
+/// Post-collapse, every short name (`ingestd`, `gateway`, automatons, source units)
+/// resolves to the same `sinexd` binary. Source-unit short names dispatch through
+/// `sinexd scan-source-unit --source-unit <id>`; everything else falls through to
+/// the default `serve` subcommand which runs the full supervisor.
+fn runtime_cli_args(_package: &str, run_identity: &str, source_unit: Option<&str>) -> Vec<String> {
+    source_unit.map_or_else(Vec::new, |id| {
+        vec![
+            "scan-source-unit".to_string(),
+            "--source-unit".to_string(),
+            id.to_string(),
+            "--service-name".to_string(),
+            run_identity.to_string(),
+        ]
+    })
 }
 
 /// Append node/gateway runtime args after the cargo `--` separator when needed.
@@ -112,7 +100,7 @@ fn local_run_failure_suggestion(dev_journal_path: Option<&Path>) -> String {
 
 /// Developer observability shim — writes pseudo-journald NDJSON to a log file.
 ///
-/// `sinex-system-ingestor` consumes `journalctl --output=json` (one JSON object per
+/// `sinexd system.journald source unit` consumes `journalctl --output=json` (one JSON object per
 /// line, each with `_SYSTEMD_UNIT`, `MESSAGE`, `_PID`, `_BOOT_ID`,
 /// `__REALTIME_TIMESTAMP`, `SYSLOG_IDENTIFIER`). This struct writes equivalent entries
 /// so the ingestor's journald-monitoring loop works end-to-end in dev environments
@@ -354,78 +342,57 @@ async fn stop_bundle_child(name: &str, child: &mut Child) -> Result<()> {
 
 /// Known binary targets and their package names.
 ///
-/// Tuple layout: `(short_name, package, binary_name, automaton_name)`.
-/// `automaton_name` is `Some` only for `sinex-process` dispatch entries —
-/// the `--automaton <name>` flag is forwarded to `sinex-process` at runtime.
+/// Tuple layout: `(short_name, package, binary_name, source_unit_id)`.
+///
+/// Post-sinexd-collapse: every previously-separate binary folded into the
+/// unified `sinexd` daemon. The CLI short names are preserved so existing
+/// scripts and operator habits keep working, but they all build/run sinexd.
+///
+/// - `ingestd` / `gateway`: launch sinexd's supervisor (default `serve`
+///   subcommand). The supervisor brings up the event engine, the API, and
+///   every enabled source-unit/automaton in one process — there is no
+///   meaningful "just the gateway" anymore.
+/// - Source-unit short names (e.g. `fs-ingestor`): dispatch through
+///   `sinexd scan-source-unit --source-unit <id>` for one-off scan-mode
+///   runs against a single source unit.
+/// - Automaton short names: also resolve to the supervisor (`serve`) since
+///   individual automatons are no longer separately runnable.
 static BINARIES: &[(&str, &str, &str, Option<&str>)] = &[
-    // (name, package, binary name, automaton)
-    ("ingestd", "sinex-ingestd", "sinex-ingestd", None),
-    ("gateway", "sinex-gateway", "sinex-gateway", None),
-    // Ingestors
-    (
-        "fs-ingestor",
-        "sinex-fs-ingestor",
-        "sinex-fs-ingestor",
-        None,
-    ),
+    // Core supervisor entry points (serve the whole daemon)
+    ("ingestd", "sinexd", "sinexd", None),
+    ("gateway", "sinexd", "sinexd", None),
+    ("sinexd", "sinexd", "sinexd", None),
+    // Source-unit one-off scans (sinexd scan-source-unit --source-unit <id>)
+    ("fs-ingestor", "sinexd", "sinexd", Some("fs")),
     (
         "terminal-ingestor",
-        "sinex-terminal-ingestor",
-        "sinex-terminal-ingestor",
-        None,
+        "sinexd",
+        "sinexd",
+        Some("terminal.zsh-history"),
     ),
     (
         "desktop-ingestor",
-        "sinex-desktop-ingestor",
-        "sinex-desktop-ingestor",
-        None,
+        "sinexd",
+        "sinexd",
+        Some("desktop.activitywatch"),
     ),
     (
         "system-ingestor",
-        "sinex-system-ingestor",
-        "sinex-system-ingestor",
-        None,
+        "sinexd",
+        "sinexd",
+        Some("system.journald"),
     ),
-    // Automatons — all dispatched through sinex-process via --automaton <name>
-    (
-        "analytics-automaton",
-        "sinex-process",
-        "sinex-process",
-        Some("analytics"),
-    ),
-    (
-        "health-automaton",
-        "sinex-process",
-        "sinex-process",
-        Some("health"),
-    ),
-    (
-        "session-detector",
-        "sinex-process",
-        "sinex-process",
-        Some("session"),
-    ),
-    (
-        "hourly-summarizer",
-        "sinex-process",
-        "sinex-process",
-        Some("hourly"),
-    ),
-    (
-        "daily-summarizer",
-        "sinex-process",
-        "sinex-process",
-        Some("daily"),
-    ),
-    (
-        "terminal-canonicalizer",
-        "sinex-process",
-        "sinex-process",
-        Some("canonicalizer"),
-    ),
+    // Automatons — no per-automaton dispatch in the new layout; running any
+    // of these brings up the full supervisor.
+    ("analytics-automaton", "sinexd", "sinexd", None),
+    ("health-automaton", "sinexd", "sinexd", None),
+    ("session-detector", "sinexd", "sinexd", None),
+    ("hourly-summarizer", "sinexd", "sinexd", None),
+    ("daily-summarizer", "sinexd", "sinexd", None),
+    ("terminal-canonicalizer", "sinexd", "sinexd", None),
 ];
 
-const CORE_TARGETS: &[&str] = &["ingestd", "gateway"];
+const CORE_TARGETS: &[&str] = &["sinexd"];
 const INGESTOR_TARGETS: &[&str] = &[
     "fs-ingestor",
     "terminal-ingestor",
@@ -471,13 +438,13 @@ pub(crate) fn list_run_targets() -> Vec<String> {
 /// Run subcommand variants
 #[derive(Debug, Clone, clap::Subcommand)]
 pub enum RunSubcommand {
-    /// Run sinex-ingestd
+    /// Run sinexd (alias preserved post-collapse; runs the full supervisor)
     Ingestd {
         /// Instance ID for multi-instance coordination
         #[arg(long)]
         instance_id: Option<String>,
     },
-    /// Run sinex-gateway
+    /// Run sinexd (alias preserved post-collapse; runs the full supervisor)
     Gateway {
         /// Instance ID for multi-instance coordination
         #[arg(long)]
@@ -573,7 +540,7 @@ pub struct RunCommand {
     /// Write pseudo-journald NDJSON to .sinex/state/dev-journal.log
     ///
     /// Wraps each log line in a journald JSON envelope (`_SYSTEMD_UNIT`, `MESSAGE`,
-    /// `_PID`, `__REALTIME_TIMESTAMP`) so `sinex-system-ingestor` can monitor locally-
+    /// `_PID`, `__REALTIME_TIMESTAMP`) so `sinexd system.journald source unit` can monitor locally-
     /// running sinex processes without systemd. Implies stdout/stderr capture.
     #[arg(long, global = true)]
     pub dev_journal: bool,
@@ -999,7 +966,7 @@ impl RunCommand {
                 let journal_path = config().state_dir.join("dev-journal.log");
                 if ctx.is_human() {
                     println!(
-                        "Dev journal: {} (sinex-system-ingestor will pick this up)",
+                        "Dev journal: {} (sinexd system.journald source unit will pick this up)",
                         journal_path.display()
                     );
                 }
@@ -1188,7 +1155,7 @@ impl RunCommand {
         let journal = if let Some(journal_path) = journal_path.as_ref() {
             if ctx.is_human() {
                 println!(
-                    "Dev journal: {} (sinex-system-ingestor will pick this up)",
+                    "Dev journal: {} (sinexd system.journald source unit will pick this up)",
                     journal_path.display()
                 );
             }
@@ -1523,78 +1490,66 @@ mod tests {
 
     #[sinex_test]
     async fn test_require_spawned_pid_accepts_present_pid() -> ::xtask::sandbox::TestResult<()> {
-        assert_eq!(require_spawned_pid(Some(42), "sinex-gateway")?, 42);
+        assert_eq!(require_spawned_pid(Some(42), "sinexd")?, 42);
         Ok(())
     }
 
     #[sinex_test]
     async fn test_require_spawned_pid_rejects_missing_pid() -> ::xtask::sandbox::TestResult<()> {
         let error =
-            require_spawned_pid(None, "sinex-gateway").expect_err("missing PID must fail honestly");
+            require_spawned_pid(None, "sinexd").expect_err("missing PID must fail honestly");
         let rendered = error.to_string();
-        assert!(rendered.contains("sinex-gateway"));
+        assert!(rendered.contains("sinexd"));
         assert!(rendered.contains("did not expose a PID"));
         Ok(())
     }
 
     #[sinex_test]
-    async fn test_runtime_cli_args_use_service_name_for_nodes() -> ::xtask::sandbox::TestResult<()>
-    {
+    async fn test_runtime_cli_args_serve_supervisor_without_source_unit()
+    -> ::xtask::sandbox::TestResult<()> {
+        // Post-collapse: no source unit → empty args (sinexd defaults to `serve`).
         assert_eq!(
-            runtime_cli_args("sinex-terminal-ingestor", "terminal-ingestor-123", None),
-            vec![
-                "--service-name=terminal-ingestor-123".to_string(),
-                "service".to_string(),
-            ]
+            runtime_cli_args("sinexd", "gateway-123", None),
+            Vec::<String>::new()
         );
         Ok(())
     }
 
     #[sinex_test]
-    async fn test_runtime_cli_args_use_rpc_server_for_gateway() -> ::xtask::sandbox::TestResult<()>
-    {
-        assert_eq!(
-            runtime_cli_args("sinex-gateway", "gateway-123", None),
-            vec!["rpc-server".to_string()]
-        );
-        Ok(())
-    }
-
-    #[sinex_test]
-    async fn test_runtime_cli_args_prepend_automaton_for_sinex_process()
+    async fn test_runtime_cli_args_dispatch_scan_source_unit()
     -> ::xtask::sandbox::TestResult<()> {
         assert_eq!(
-            runtime_cli_args(
-                "sinex-process",
-                "analytics-automaton-123",
-                Some("analytics")
-            ),
+            runtime_cli_args("sinexd", "terminal-ingestor-123", Some("terminal.zsh-history")),
             vec![
-                "--automaton".to_string(),
-                "analytics".to_string(),
-                "--service-name=analytics-automaton-123".to_string(),
-                "service".to_string(),
+                "scan-source-unit".to_string(),
+                "--source-unit".to_string(),
+                "terminal.zsh-history".to_string(),
+                "--service-name".to_string(),
+                "terminal-ingestor-123".to_string(),
             ]
         );
         Ok(())
     }
 
     #[sinex_test]
-    async fn test_build_cargo_run_args_use_service_name_for_nodes()
+    async fn test_build_cargo_run_args_target_sinexd()
     -> ::xtask::sandbox::TestResult<()> {
         let command = base_command(RunSubcommand::Node {
             name: "terminal-ingestor".to_string(),
             instance_id: None,
         });
         assert_eq!(
-            command.build_cargo_run_args("sinex-terminal-ingestor", "terminal-ingestor-123", None),
+            command.build_cargo_run_args("sinexd", "terminal-ingestor-123", Some("terminal.zsh-history")),
             vec![
                 "run".to_string(),
                 "-p".to_string(),
-                "sinex-terminal-ingestor".to_string(),
+                "sinexd".to_string(),
                 "--".to_string(),
-                "--service-name=terminal-ingestor-123".to_string(),
-                "service".to_string(),
+                "scan-source-unit".to_string(),
+                "--source-unit".to_string(),
+                "terminal.zsh-history".to_string(),
+                "--service-name".to_string(),
+                "terminal-ingestor-123".to_string(),
             ]
         );
         Ok(())
@@ -1605,12 +1560,12 @@ mod tests {
     -> ::xtask::sandbox::TestResult<()> {
         let target_root = crate::orchestrator::get_target_dir(&crate::config::workspace_root());
         assert_eq!(
-            target_binary_path(false, "sinex-terminal-ingestor"),
-            target_root.join("debug/sinex-terminal-ingestor")
+            target_binary_path(false, "sinexd"),
+            target_root.join("debug/sinexd")
         );
         assert_eq!(
-            target_binary_path(true, "sinex-terminal-ingestor"),
-            target_root.join("release/sinex-terminal-ingestor")
+            target_binary_path(true, "sinexd"),
+            target_root.join("release/sinexd")
         );
         Ok(())
     }
@@ -1704,8 +1659,8 @@ mod tests {
 
         {
             let journal = DevJournal::new(&journal_path)?;
-            journal.write_entry("sinex-gateway", 12345, "gateway started");
-            journal.write_entry("sinex-gateway", 12345, "listening on :8080");
+            journal.write_entry("sinexd", 12345, "gateway started");
+            journal.write_entry("sinexd", 12345, "listening on :8080");
         } // Journal dropped → writer task flushed and exited
 
         // Read back and verify entries survived.
@@ -1718,9 +1673,9 @@ mod tests {
 
         assert_eq!(entries.len(), 2, "both entries must be durable");
         for entry in &entries {
-            assert_eq!(entry["_SYSTEMD_UNIT"], "sinex-gateway.service");
+            assert_eq!(entry["_SYSTEMD_UNIT"], "sinexd.service");
             assert_eq!(entry["_PID"], "12345");
-            assert_eq!(entry["SYSLOG_IDENTIFIER"], "sinex-gateway");
+            assert_eq!(entry["SYSLOG_IDENTIFIER"], "sinexd");
             assert!(!entry["__REALTIME_TIMESTAMP"].as_str().unwrap().is_empty());
             assert!(!entry["_BOOT_ID"].as_str().unwrap().is_empty());
         }

@@ -8,7 +8,7 @@ use sinex_primitives::events::payloads::{
 use sinex_primitives::events::{Event, EventPayload};
 use sinex_primitives::temporal::{Duration, Timestamp};
 use sinex_primitives::{Id, JsonValue};
-use sinex_process::automata::session::{SessionDetector, SessionState};
+use sinexd::automata::session::{SessionDetector, SessionState};
 use std::collections::BTreeMap;
 use xtask::sandbox::prelude::*;
 

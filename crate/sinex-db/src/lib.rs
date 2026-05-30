@@ -13,6 +13,7 @@ pub mod advisory_lock;
 pub mod error;
 pub mod integrity;
 pub mod models;
+pub mod occurrence_filter;
 pub mod pkm;
 pub mod pool;
 pub mod query_helpers;
@@ -30,6 +31,9 @@ pub use pool::{
     create_pool, create_pool_strict, create_pool_with_config,
     create_pool_with_config_and_session_policy, create_pool_with_config_strict, create_test_pool,
     get_database_url, resolve_effective_database_url,
+};
+pub use occurrence_filter::{
+    build_occurrence_filter, build_occurrence_filter_with_key_expr,
 };
 pub use query_helpers::{IdempotentTransaction, RetryConfig, with_retry_transaction_idempotent};
 pub use repositories::DbPoolExt;

@@ -8,7 +8,7 @@ use sinex_primitives::events::Event;
 use sinex_primitives::events::payloads::{ActivityWindowCloseReason, ActivityWindowSummaryPayload};
 use sinex_primitives::temporal::{Duration, Timestamp};
 use sinex_primitives::{Id, JsonValue};
-use sinex_process::automata::analytics::{AnalyticsAutomaton, AnalyticsState};
+use sinexd::automata::analytics::{AnalyticsAutomaton, AnalyticsState};
 use xtask::sandbox::prelude::*;
 
 fn make_context_with_optional_ts(

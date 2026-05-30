@@ -7,10 +7,12 @@ on:
   workflow_dispatch:
   pull_request:
     paths:
-      - 'crate/core/sinex-source-worker/**'
+      - 'crate/sinexd/src/sources/**'
+      - 'crate/sinex-primitives/src/parser/**'
       - 'crate/lib/sinex-node-sdk/src/parser/**'
-      - 'crate/lib/sinex-primitives/src/source_unit/**'
+      - 'crate/sinex-primitives/src/source_unit/**'
       - 'nixos/modules/source-workers.nix'
+      - 'nixos/modules/source-bindings.nix'
       - 'docs/source-units.json'
       - '.github/workflows/verify-source-worker.yml'
 
