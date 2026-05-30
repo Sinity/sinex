@@ -21,10 +21,19 @@ use std::sync::LazyLock;
 use std::time::{Duration, Instant};
 use tracing::{debug, warn};
 
-/// Configuration for distributed per-token rate limiting
+/// Configuration for distributed per-token rate limiting.
+///
+/// # Policy difference vs `RateLimitConfig`
+///
+/// `RateLimitConfig` (in-memory path) enforces per-role quotas (readonly/write/admin
+/// have different RPS+burst budgets). This config enforces a **flat per-token
+/// requests/minute** budget — role is not considered. An operator switching from
+/// in-memory to distributed should be aware that role-specific quotas stop applying.
+///
+/// See the `RateLimiter` enum in `rpc_server` for the full divergence record (#1578).
 #[derive(Debug, Clone)]
 pub struct DistributedRateLimitConfig {
-    /// Maximum requests per minute per token
+    /// Maximum requests per minute per token (role-agnostic; all roles share this budget).
     pub requests_per_minute: NonZeroU32,
     /// Window duration in seconds
     pub window_seconds: u64,

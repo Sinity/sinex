@@ -4,6 +4,7 @@ use crate::api::config::GatewayConfig;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sinex_primitives::env as shared_env;
+use sinex_primitives::validation::validate_json;
 use sinex_primitives::{Result, SinexError};
 use std::collections::HashSet;
 use std::io::{self};
@@ -50,6 +51,23 @@ pub struct ExtensionCapabilities {
 /// Simple sliding-window rate limiter for native messaging.
 ///
 /// Tracks request timestamps per extension and enforces a per-minute cap.
+///
+/// # Why not `api::rate_limit::TokenRateLimiter`?
+///
+/// The HTTP RPC path uses `TokenRateLimiter` (governor-based per-token RPS+burst)
+/// keyed on auth token. The native-messaging path has a distinct identity model:
+/// extensions are identified by `extension_id` (not by a bearer token), and the
+/// relevant policy unit is requests/minute per extension, not RPS+burst per token.
+///
+/// Reusing `TokenRateLimiter` here would require shimming `extension_id` as a token
+/// and choosing an artificial role, which would silently apply the wrong quota
+/// semantics. The sliding-window-per-minute model used here is the correct fit.
+///
+/// Known divergence (#1578): a quota tightened in `GatewayConfig` / `RateLimitConfig`
+/// does NOT constrain native-messaging extensions. Extension quotas are configured
+/// separately via `SINEX_NATIVE_MESSAGING_CAPABILITIES` (`rate_limit_per_minute`).
+/// If a unified abstraction is added in the future, this struct should be the one
+/// replaced — the HTTP rate limiter is the more general surface.
 #[derive(Debug)]
 struct RateLimiter {
     /// Map of `extension_id` -> recent request timestamps
@@ -1073,8 +1091,18 @@ async fn read_message_from<R: AsyncRead + Unpin>(
         }
     }
 
-    let message: NativeMessage = serde_json::from_slice(&buffer).map_err(|error| {
-        SinexError::parse("Failed to parse native message").with_std_error(&error)
+    // Route through `validate_json` so the depth guard (32 levels) applies to
+    // untrusted browser-extension bytes before deserialization. The byte-cap check
+    // above only rejects oversized messages; it does not bound nesting depth. (#1578)
+    let body_str = std::str::from_utf8(&buffer).map_err(|error| {
+        SinexError::parse("Native message is not valid UTF-8").with_std_error(&error)
+    })?;
+    let json_value = validate_json(body_str).map_err(|error| {
+        SinexError::parse("Native message failed JSON validation")
+            .with_context("reason", error.to_string())
+    })?;
+    let message: NativeMessage = serde_json::from_value(json_value).map_err(|error| {
+        SinexError::parse("Failed to deserialize native message").with_std_error(&error)
     })?;
 
     Ok(Some(message))
