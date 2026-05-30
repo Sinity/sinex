@@ -1,8 +1,14 @@
 //! Settlement types for receipt-gated runtime contracts.
 //!
 //! These types enable the runtime to mechanically execute failure handling
-//! decisions instead of guessing. Nodes return a `BatchSettlement`; the runtime
+//! decisions instead of guessing. Nodes return a `Settlement`; the runtime
 //! executes it. DLQ is a settlement variant, not a catch-all fallback.
+//!
+//! ASPIRATIONAL (not wired): `BatchSettlement` / `EventSettlement` /
+//! `EffectIntent` and the `*_effect_id` helpers describe a node→runtime
+//! batch-settlement API that has zero production callers. The live contract is
+//! the `Settlement` enum + `FailurePolicy`. Removal is tracked by #1592 — do
+//! not build new infrastructure against the aspirational types.
 
 use crate::error::{ErrorClass, SinexError};
 use serde::{Deserialize, Serialize};

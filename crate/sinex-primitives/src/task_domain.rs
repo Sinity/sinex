@@ -20,6 +20,8 @@ pub const TASK_REDUCER_INPUT_EVENT_TYPES: &[&str] = &[
     "task.completed",
     "task.cancelled",
 ];
+/// Metadata only: no generic runtime consumes this spec. `reduce_task_event()`
+/// is called directly from the task handlers. Spec-driven reduction is #1120.
 pub const TASK_REDUCER_SPEC: DomainProjectionSpec = DomainProjectionSpec {
     domain_id: TASK_REDUCER_DOMAIN_ID,
     semantics_version: TASK_REDUCER_SEMANTICS_VERSION,

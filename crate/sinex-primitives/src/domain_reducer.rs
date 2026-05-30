@@ -1,4 +1,8 @@
 //! Shared vocabulary for event-native current-state reducers.
+//!
+//! NOTE: metadata only. No generic spec-driven reducer runtime consumes
+//! `DomainProjectionSpec` yet; concrete reducers (e.g. `reduce_task_event`) are
+//! invoked directly. A spec-driven reducer engine is tracked by #1120.
 
 use schemars::JsonSchema;
 use serde::Serialize;
