@@ -339,8 +339,9 @@ impl InputShapeAdapter for JournalctlSubscriber {
         _material_id: sinex_primitives::ids::Id<sinex_primitives::events::SourceMaterial>,
         _config: &Self::Config,
         _cursor: Option<Self::Cursor>,
-    ) -> crate::node_sdk::parser::ParserResult<BoxStream<'static, crate::node_sdk::parser::ParserResult<SourceRecord>>>
-    {
+    ) -> crate::node_sdk::parser::ParserResult<
+        BoxStream<'static, crate::node_sdk::parser::ParserResult<SourceRecord>>,
+    > {
         // JournalctlSubscriber cannot be opened multiple times — it wraps a
         // single-use `broadcast::Receiver`. The caller must construct a new
         // `JournalctlSubscriber` via `SharedJournalctlStream::subscribe()` for
@@ -354,7 +355,10 @@ impl InputShapeAdapter for JournalctlSubscriber {
         ))
     }
 
-    fn cursor_after(&self, record: &SourceRecord) -> crate::node_sdk::parser::ParserResult<Self::Cursor> {
+    fn cursor_after(
+        &self,
+        record: &SourceRecord,
+    ) -> crate::node_sdk::parser::ParserResult<Self::Cursor> {
         // Delegate to JournalctlStreamAdapter's cursor extraction.
         JournalctlStreamAdapter.cursor_after(record)
     }

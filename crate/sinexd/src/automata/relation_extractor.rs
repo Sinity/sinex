@@ -16,9 +16,9 @@
 //! all entities share one sliding window. If richer scoping is desired later
 //! (e.g., per-source co-occurrence), the scope key can be partitioned.
 
-use serde::{Deserialize, Serialize};
 use crate::node_sdk::derived_node::{AutomatonContext, DerivedOutput, ScopeReconcilerNodeAdapter};
 use crate::node_sdk::{InputProvenanceFilter, NodeLogicError, ScopeReconciler};
+use serde::{Deserialize, Serialize};
 use sinex_primitives::Uuid;
 use sinex_primitives::domain::{RelationType, SyntheticTemporalPolicy};
 use sinex_primitives::events::EventPayload;

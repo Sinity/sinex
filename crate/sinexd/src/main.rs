@@ -14,12 +14,12 @@ use mimalloc::MiMalloc;
 static GLOBAL: MiMalloc = MiMalloc;
 
 use clap::{Parser, Subcommand};
-use std::collections::HashMap;
-use sinexd::node_sdk::service_runtime::{TracingFormat, install_tracing};
 use sinexd::api::config::GatewayConfig;
 use sinexd::event_engine::IngestdConfig;
+use sinexd::node_sdk::service_runtime::{TracingFormat, install_tracing};
 use sinexd::sources::bindings::{self as source_bindings, SourceBinding};
 use sinexd::supervisor::Supervisor;
+use std::collections::HashMap;
 
 #[derive(Parser, Debug)]
 #[command(name = "sinexd", about = "Sinex local daemon", version)]
@@ -134,7 +134,14 @@ async fn main() -> color_eyre::Result<()> {
             extra_args,
             extra_env,
         } => {
-            scan_source_unit(source_unit, service_name, node_config, extra_args, extra_env).await
+            scan_source_unit(
+                source_unit,
+                service_name,
+                node_config,
+                extra_args,
+                extra_env,
+            )
+            .await
         }
     }
 }

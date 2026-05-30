@@ -121,7 +121,10 @@ pub(crate) async fn handle_sse_stream(
                     Some(&auth_ctx),
                     Some(&detail),
                 );
-                return (StatusCode::BAD_REQUEST, format!("Invalid filter JSON: {detail}"))
+                return (
+                    StatusCode::BAD_REQUEST,
+                    format!("Invalid filter JSON: {detail}"),
+                )
                     .into_response();
             }
         };

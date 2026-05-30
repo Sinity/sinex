@@ -103,9 +103,7 @@ pub async fn build_occurrence_filter(
     // Source-unit-id prefix is supplied as a parameter, not interpolated.
     // We still have to escape it inside SQL via the same REPLACE chain so an
     // adversarial id with `|` or `=` keeps the canonical form.
-    key_expr.push_str(
-        "replace(replace(replace($3::text, '\\', '\\\\'), '|', '\\|'), '=', '\\=')",
-    );
+    key_expr.push_str("replace(replace(replace($3::text, '\\', '\\\\'), '|', '\\|'), '=', '\\=')");
     for field in key_fields {
         key_expr.push_str(" || '|' || ");
         // Field name is a validated pg identifier — safe to emit verbatim.
@@ -174,7 +172,5 @@ pub async fn build_occurrence_filter_with_key_expr(
         .await
         .map_err(|e| db_error(e, "build_occurrence_filter_with_key_expr"))?;
 
-    Ok(OccurrenceFilter::from_keys(
-        rows.into_iter().map(|(k,)| k),
-    ))
+    Ok(OccurrenceFilter::from_keys(rows.into_iter().map(|(k,)| k)))
 }

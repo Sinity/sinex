@@ -20,9 +20,9 @@
 //! Both registrations are performed at link time via `inventory::submit!`.
 //! No match arms.
 
+use crate::node_sdk::parser::{AppendOnlyFileAdapter, WeeChatLogParser};
 use crate::register_parser;
 use sinex_macros::SourceRecord;
-use crate::node_sdk::parser::{AppendOnlyFileAdapter, WeeChatLogParser};
 use sinex_primitives::proof::{
     CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, RetentionPolicy, RuntimeShape,
     SourceUnitBinding, SourceUnitBuildImpact, SourceUnitDescriptor, SubjectRef,

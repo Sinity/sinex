@@ -27,9 +27,9 @@
 //!
 //! Ref: `.agent/scratch/071-issue-331-entity-extractor-spec.md`.
 
-use regex::Regex;
 use crate::node_sdk::derived_node::{AutomatonContext, DerivedOutput, TransducerNodeAdapter};
 use crate::node_sdk::{InputProvenanceFilter, NodeLogicError, Transducer};
+use regex::Regex;
 use sinex_primitives::domain::EntityTypeName;
 use sinex_primitives::events::payloads::EntityExtractedPayload;
 use sinex_primitives::privacy::ProcessingContext;

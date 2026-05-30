@@ -5,8 +5,6 @@
 //! dirty-entity tracking, periodic sweep emission via `reconcile_interval_secs`,
 //! and `entity_type` → `EntityCategory` refinement.
 
-use sinexd::node_sdk::ScopeReconciler;
-use sinexd::node_sdk::derived_node::AutomatonContext;
 use sinex_primitives::Uuid;
 use sinex_primitives::domain::{EntityTypeName, ProcessingMode, TriggerKind};
 use sinex_primitives::events::payloads::{EntityCategory, EntityResolvedPayload};
@@ -14,6 +12,8 @@ use sinex_primitives::events::{Event, EventPayload};
 use sinex_primitives::temporal::{Duration, Timestamp};
 use sinex_primitives::{Id, JsonValue};
 use sinexd::automata::entity_enricher::{EnricherConfig, EnricherState, EntityEnricher};
+use sinexd::node_sdk::ScopeReconciler;
+use sinexd::node_sdk::derived_node::AutomatonContext;
 use xtask::sandbox::prelude::*;
 
 fn make_context(ts: Timestamp) -> AutomatonContext {

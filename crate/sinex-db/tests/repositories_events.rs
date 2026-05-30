@@ -1101,7 +1101,10 @@ async fn finalize_in_flight_persists_total_bytes_column(ctx: TestContext) -> Tes
         .await?
         .expect("finalized material should remain readable");
 
-    assert_eq!(persisted.status, sinex_primitives::MaterialStatus::Completed);
+    assert_eq!(
+        persisted.status,
+        sinex_primitives::MaterialStatus::Completed
+    );
     assert_eq!(persisted.total_bytes, Some(123));
     assert_eq!(persisted.metadata["file_size_bytes"], json!(123));
     assert_eq!(persisted.metadata["encoding"], json!("text/plain"));

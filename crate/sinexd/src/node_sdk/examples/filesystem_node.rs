@@ -489,7 +489,9 @@ impl Node for FilesystemNode {
     }
 }
 
-use crate::node_sdk::exploration::{ExplorationProvider, ExportFormat, IngestionHistoryEntry, SourceState};
+use crate::node_sdk::exploration::{
+    ExplorationProvider, ExportFormat, IngestionHistoryEntry, SourceState,
+};
 
 impl ExplorationProvider for FilesystemNode {
     fn get_source_state(&self) -> NodeResult<SourceState> {

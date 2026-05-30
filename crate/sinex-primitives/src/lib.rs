@@ -90,9 +90,9 @@ pub use deployment_readiness::{
     DocumentDeploymentSurface, TerminalDeploymentSurface, TerminalHistorySource,
 };
 pub use domain::{
-    ControlSubject, EventName, EventSource, EventType, HostName, MaterialStatus, OperationRunStatus,
-    RecordedPath, SanitizedPath, ServiceName, SourceIdentifier, SourceMaterialFormat,
-    SourceMaterialTimingInfoType,
+    ControlSubject, EventName, EventSource, EventType, HostName, MaterialStatus,
+    OperationRunStatus, RecordedPath, SanitizedPath, ServiceName, SourceIdentifier,
+    SourceMaterialFormat, SourceMaterialTimingInfoType,
 };
 pub use domain_reducer::{
     DomainProjectionSpec, ProjectionConflictPolicy, ProjectionOrderingPolicy,

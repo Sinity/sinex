@@ -262,7 +262,10 @@ async fn flush_internal<R: Serialize>(
         return Ok(());
     }
 
-    let batch = SerializedBatch { data, record_count: staged_count };
+    let batch = SerializedBatch {
+        data,
+        record_count: staged_count,
+    };
     on_flush(batch).await
 }
 

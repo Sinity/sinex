@@ -79,10 +79,7 @@ pub async fn handle_events_annotate(
 
 /// `events.cards` — query events and return them as `EventCardView`s
 /// with refs, caveats, privacy state, and action availability preserved.
-pub async fn handle_events_cards(
-    pool: &PgPool,
-    query: EventQuery,
-) -> Result<EventCardListView> {
+pub async fn handle_events_cards(pool: &PgPool, query: EventQuery) -> Result<EventCardListView> {
     let result = pool.events().query(query).await?;
     match result {
         EventQueryResult::Events { events, .. } => {

@@ -100,10 +100,9 @@ impl NodeSchemaValidator {
         let mut compiled = 0;
 
         for entry in entries {
-            let schema_id = entry
-                .schema_id
-                .parse::<Uuid>()
-                .map_err(|e| crate::node_sdk::SinexError::validation(format!("Invalid schema ID: {e}")))?;
+            let schema_id = entry.schema_id.parse::<Uuid>().map_err(|e| {
+                crate::node_sdk::SinexError::validation(format!("Invalid schema ID: {e}"))
+            })?;
 
             let Some(validator) = fetch_and_compile_from_kv(kv, &entry.schema_id).await else {
                 continue;

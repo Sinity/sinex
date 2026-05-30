@@ -933,13 +933,13 @@ fn normalize_sqlite_declared_type(declared_type: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::parser::{FieldSource, FieldSpec, FieldType, InputFormat};
-    use serde_json::json;
     use crate::SinexError;
     use crate::domain::{EventSource, EventType};
+    use crate::parser::{FieldSource, FieldSpec, FieldType, InputFormat};
     use crate::parser::{ParserId, SourceUnitId};
     use crate::privacy::ProcessingContext;
     use crate::rpc::sources::{CaveatSeverity, caveat_codes};
+    use serde_json::json;
     use xtask::sandbox::prelude::sinex_test;
 
     #[sinex_test]

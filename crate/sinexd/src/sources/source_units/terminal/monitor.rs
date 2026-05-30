@@ -8,8 +8,8 @@
 //! Deployment shape: a `Type=oneshot` systemd unit that runs at boot under
 //! `sinex-runtime.target`.
 
-use futures::future::BoxFuture;
 use crate::node_sdk::{NodeResult, runtime::stream::NodeRuntimeState};
+use futures::future::BoxFuture;
 use sinex_primitives::proof::{
     CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, RetentionPolicy, RuntimeShape,
     SourceUnitBinding, SourceUnitBuildImpact, SourceUnitDescriptor, SubjectRef,

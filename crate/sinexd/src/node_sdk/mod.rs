@@ -1,4 +1,3 @@
-
 //! # Sinex Node SDK
 //!
 //! This crate provides the current authoring and runtime surface for Sinex

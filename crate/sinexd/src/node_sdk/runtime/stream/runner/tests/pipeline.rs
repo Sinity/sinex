@@ -308,7 +308,9 @@ async fn ingestor_startup_skips_gap_fill_when_only_snapshot_created_checkpoint(
             "startup-sequence-snapshot-only".to_string(),
             HashMap::new(),
             None,
-            EventTransport::Nats(Arc::new(crate::node_sdk::NatsPublisher::new(ctx.nats_client()))),
+            EventTransport::Nats(Arc::new(crate::node_sdk::NatsPublisher::new(
+                ctx.nats_client(),
+            ))),
             work_dir.path().to_path_buf(),
             false,
         )
@@ -342,7 +344,9 @@ async fn ingestor_startup_gap_fill_uses_preexisting_checkpoint(ctx: TestContext)
             "startup-sequence-gap-fill".to_string(),
             HashMap::new(),
             None,
-            EventTransport::Nats(Arc::new(crate::node_sdk::NatsPublisher::new(ctx.nats_client()))),
+            EventTransport::Nats(Arc::new(crate::node_sdk::NatsPublisher::new(
+                ctx.nats_client(),
+            ))),
             work_dir.path().to_path_buf(),
             false,
         )
@@ -473,7 +477,9 @@ async fn process_batch_with_dlq_fallback_propagates_checkpoint_errors(
     ctx: TestContext,
 ) -> TestResult<()> {
     let ctx = ctx.with_nats().dedicated().await?;
-    let transport = EventTransport::Nats(Arc::new(crate::node_sdk::NatsPublisher::new(ctx.nats_client())));
+    let transport = EventTransport::Nats(Arc::new(crate::node_sdk::NatsPublisher::new(
+        ctx.nats_client(),
+    )));
     let mut node = CheckpointErrorBatchNode;
     let event = Event {
         id: Some(EventId::from(Uuid::now_v7())),
@@ -529,7 +535,9 @@ async fn process_batch_with_dlq_fallback_fails_when_dlq_route_fails(
     ctx: TestContext,
 ) -> TestResult<()> {
     let ctx = ctx.with_nats().dedicated().await?;
-    let transport = EventTransport::Nats(Arc::new(crate::node_sdk::NatsPublisher::new(ctx.nats_client())));
+    let transport = EventTransport::Nats(Arc::new(crate::node_sdk::NatsPublisher::new(
+        ctx.nats_client(),
+    )));
     let mut node = FailingBatchNode;
     let event = Event {
         id: Some(EventId::from(Uuid::now_v7())),

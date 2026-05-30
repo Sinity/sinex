@@ -21,9 +21,9 @@ use super::{
     },
 };
 use crate::event_engine::{IngestdResult, SinexError};
+use crate::node_sdk::content_store::ContentStoreKey;
 use blake3::Hasher;
 use camino::Utf8PathBuf;
-use crate::node_sdk::content_store::ContentStoreKey;
 use sinex_primitives::Timestamp;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -1946,10 +1946,7 @@ mod tests {
             .get_by_id(Id::from_uuid(material_id))
             .await?
             .expect("material should still be tracked");
-        assert_eq!(
-            material.status,
-            sinex_primitives::MaterialStatus::Failed
-        );
+        assert_eq!(material.status, sinex_primitives::MaterialStatus::Failed);
         Ok(())
     }
 

@@ -1,7 +1,7 @@
 //! `system.journald` — stream all journald entries via `JournalctlStreamAdapter`.
 
-use crate::register_parser;
 use crate::node_sdk::parser::{JournalctlStreamAdapter, MaterialParser, ParserError};
+use crate::register_parser;
 use sinex_primitives::domain::{EventSource, EventType};
 use sinex_primitives::events::enums::JournalSyncType;
 use sinex_primitives::events::payloads::system::{

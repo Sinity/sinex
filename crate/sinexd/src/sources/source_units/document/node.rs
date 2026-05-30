@@ -7,10 +7,6 @@
 //! disappear without requiring an SDK extension. The source-unit descriptor
 //! and binding live in `sources/document/staging.rs`, not in this file.
 
-use camino::{Utf8Path, Utf8PathBuf};
-use mime_guess::MimeGuess;
-use serde::{Deserialize, Serialize};
-use serde_json::json;
 use crate::node_sdk::{
     ActivityEntry, ExplorationProvider, ExportFormat, IngestionHistoryEntry, SourceState,
 };
@@ -25,6 +21,10 @@ use crate::node_sdk::{
     stage_as_you_go::StageAsYouGoContext,
     stage_material_from_file, tags,
 };
+use camino::{Utf8Path, Utf8PathBuf};
+use mime_guess::MimeGuess;
+use serde::{Deserialize, Serialize};
+use serde_json::json;
 use sinex_primitives::temporal::Timestamp;
 use sinex_primitives::validation::validate_path_within_root;
 use sinex_primitives::{
@@ -997,9 +997,9 @@ impl Default for DocumentNode {
 #[cfg(test)]
 mod tests {
     use super::DocumentNode;
-    use serde_json::json;
     use crate::node_sdk::ExplorationProvider;
     use crate::node_sdk::runtime::stream::Checkpoint;
+    use serde_json::json;
     use sinex_primitives::temporal::Timestamp;
     use xtask::sandbox::sinex_test;
 

@@ -100,7 +100,9 @@ use sinex_primitives::rpc::sources::SourceCaveat;
 use sinex_primitives::temporal::Timestamp;
 
 use crate::node_sdk::NodeResult;
-use crate::node_sdk::acquisition_manager::{AcquisitionManager, AppendStreamAcquirer, RotationPolicy};
+use crate::node_sdk::acquisition_manager::{
+    AcquisitionManager, AppendStreamAcquirer, RotationPolicy,
+};
 use crate::node_sdk::ingestor_node::SourceUnit;
 use crate::node_sdk::parser::adapters::SqliteSnapshotLane;
 use crate::node_sdk::parser::{
@@ -688,8 +690,10 @@ where
 
         let source_unit_id = sinex_primitives::parser::SourceUnitId::new(self.source_unit_id)
             .map_err(|e| {
-                crate::node_sdk::SinexError::validation("invalid source_unit_id in AdapterBackedIngestor")
-                    .with_std_error(&e)
+                crate::node_sdk::SinexError::validation(
+                    "invalid source_unit_id in AdapterBackedIngestor",
+                )
+                .with_std_error(&e)
             })?;
 
         self.observe_input_fingerprint(config, state, &source_unit_id);
@@ -723,10 +727,12 @@ where
         {
             Ok(s) => s,
             Err(e) => {
-                return Err(crate::node_sdk::SinexError::processing("adapter open failed")
-                    .with_context("source_unit_id", self.source_unit_id)
-                    .with_context("adapter_kind", A::KIND.as_str())
-                    .with_context("error", e.to_string()));
+                return Err(
+                    crate::node_sdk::SinexError::processing("adapter open failed")
+                        .with_context("source_unit_id", self.source_unit_id)
+                        .with_context("adapter_kind", A::KIND.as_str())
+                        .with_context("error", e.to_string()),
+                );
             }
         };
 
