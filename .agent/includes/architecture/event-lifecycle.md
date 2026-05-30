@@ -56,11 +56,11 @@ Implication: automaton-heavy workloads never hit the COPY fast path. COPY only b
 
 | Boundary | Validated | NOT validated |
 |----------|-----------|---------------|
-| Ingestor -> NATS | Privacy engine (per-event, synchronous) | Payload size (10MB in Rust only) |
+| Ingestor -> NATS | Privacy engine (per-event, synchronous) | Payload size (10MB NATS-payload cap, enforced in Rust only at ingestor side — `ingestion_helpers.rs:32`, `file_drop.rs:268`) |
 | NATS -> ingestd | JSON parse, event ID, schema (lenient) | ts_orig plausibility, anchor_byte sign |
 | ingestd -> DB | XOR provenance CHECK, material FK, self-ref cycle | Payload-to-material correspondence |
 | DB -> gateway | Client message sanitization, role authorization | — |
-| gateway -> CLI | Token-suffix RBAC (stateless, no revocation) | — |
+| gateway -> CLI | Token-suffix RBAC (stateless, no revocation) | HTTP request body capped at 2MB (`SINEX_API_MAX_BODY_BYTES`, `api/config.rs`) — separate from the 10MB ingestor NATS-payload limit |
 
 ### Key Thresholds
 
