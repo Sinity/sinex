@@ -13,7 +13,7 @@ use sinex_primitives::events::payloads::EntityResolvedPayload;
 use sinex_primitives::events::{Event, EventPayload};
 use sinex_primitives::temporal::{Duration, Timestamp};
 use sinex_primitives::{Id, JsonValue};
-use sinex_process::automata::relation_extractor::RelationExtractor;
+use sinexd::automata::relation_extractor::RelationExtractor;
 use xtask::sandbox::prelude::*;
 
 const CO_OCCURRENCE_SCOPE: &str = "co-occurrence-window";

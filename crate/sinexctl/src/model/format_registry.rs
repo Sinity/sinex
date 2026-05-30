@@ -592,6 +592,10 @@ pub fn build() -> HashMap<&'static str, FormatCapability> {
     m.insert("explain", FormatCapability::single_shot(TABLE_JSON_YAML));
     m.insert("verify", FormatCapability::single_shot(TABLE_JSON_YAML));
     m.insert(
+        "verify baseline",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
+    m.insert(
         "now",
         FormatCapability::single_shot(TABLE_JSON_YAML)
             .with_note("compact dashboard; json/yaml emit full snapshot"),
@@ -929,6 +933,7 @@ fn backing_rpc_methods_for_path(path: &str) -> &'static [&'static str] {
             methods::TELEMETRY_THROUGHPUT,
             methods::TELEMETRY_RECENT_ACTIVITY,
         ],
+        "verify baseline" => &[],
         "trace" | "explain" => &[methods::EVENTS_LINEAGE],
         "watch" => &[],
         "ops start" => &[methods::OPS_START],

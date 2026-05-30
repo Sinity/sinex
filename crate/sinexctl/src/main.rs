@@ -13,8 +13,8 @@ use sinexctl::commands::{
     IngestorsCommand, InstructionsCommand, LifecycleCommands, LlmCommand, NodeCommands,
     NodesCommand, NowCommand, OpsCommands, PrivacyCommand, QueryCommand, RecentCommand,
     ReplayCommands, ReportCommands, SemanticCommand, SourcesCommand, StateCommands, StatusCommand,
-    TasksCommand, TelemetryCommands, ThroughputCommand, TimelineCommand, TraceCommand, TuiCommand, VerifyCommand,
-    WatchCommand,
+    TasksCommand, TelemetryCommands, ThroughputCommand, TimelineCommand, TraceCommand, TuiCommand,
+    VerifyCommand, WatchCommand,
 };
 use sinexctl::fmt::format_yaml;
 use sinexctl::mcp::{McpCatalogEntry, tool_catalog as mcp_tool_catalog};
@@ -709,7 +709,7 @@ fn command_path(cmd: &Commands) -> String {
         Commands::Watch(_) => "watch".to_string(),
         Commands::Context(_) => "context".to_string(),
         Commands::Explain(_) => "explain".to_string(),
-        Commands::Verify(_) => "verify".to_string(),
+        Commands::Verify(cmd) => cmd.command_path().to_string(),
         Commands::Now(_) => "now".to_string(),
         Commands::Nodes(_) => "nodes".to_string(),
         Commands::Throughput(_) => "throughput".to_string(),

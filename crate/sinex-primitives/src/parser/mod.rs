@@ -17,6 +17,7 @@
 //! - `crate::ids::Id<T>` is the canonical phantom-typed identifier.
 pub mod declarative;
 pub mod fingerprint;
+pub mod occurrence_filter;
 
 use std::borrow::Cow;
 use std::{error::Error, fmt};
@@ -705,6 +706,9 @@ pub trait MaterialParser: Send + Sync {
         serde_json::Value::Object(serde_json::Map::new())
     }
 }
+pub use occurrence_filter::{
+    OccurrenceFilter, maybe_occurrence_key_string, occurrence_key_string,
+};
 
 /// A single event that a parser intends to publish.
 ///

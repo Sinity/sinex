@@ -11,7 +11,7 @@ use sinex_primitives::events::EventPayload;
 use sinex_primitives::events::payloads::CanonicalCommandPayload;
 use sinex_primitives::temporal::Timestamp;
 use sinex_primitives::{Id, JsonValue};
-use sinex_process::automata::canonicalizer::TerminalCommandCanonicalizer;
+use sinexd::automata::canonicalizer::TerminalCommandCanonicalizer;
 use xtask::sandbox::prelude::*;
 
 fn make_context_with_optional_ts(
