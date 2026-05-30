@@ -1,4 +1,5 @@
-//! Repository for model-effect cache (#1063).
+//! Repository for model-effect records (#1063). Not yet wired — no production
+//! callers (#1063).
 
 use crate::repositories::{
     Repository,
