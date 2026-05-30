@@ -174,7 +174,7 @@ impl Drop for TestSourceWorkerHandle {
 }
 
 pub(crate) fn ingestd_debug_log_path_for_test_process() -> PathBuf {
-    PathBuf::from(format!("/tmp/sinex-ingestd-{}.log", std::process::id()))
+    PathBuf::from(format!("/tmp/sinexd-{}.log", std::process::id()))
 }
 
 pub(crate) fn source_worker_debug_log_path_for_test_process(source_unit_id: &str) -> PathBuf {
@@ -1041,8 +1041,7 @@ pub async fn start_test_ingestd_with_config(
     ctx: Option<&crate::sandbox::context::Sandbox>,
 ) -> Result<TestIngestdHandle> {
     let workspace_root = find_workspace_root()?;
-    let freshness =
-        check_runtime_binary_freshness(&workspace_root, "sinex-ingestd", "sinex-ingestd")?;
+    let freshness = check_runtime_binary_freshness(&workspace_root, "sinexd", "sinexd")?;
     if let Some(sandbox) = ctx {
         sandbox.record_evidence_event(
             "runtime_binary.freshness",
@@ -1140,7 +1139,7 @@ pub async fn start_test_ingestd_with_config(
         if let Ok(nats) = sandbox.nats_handle() {
             let _ = nats;
             if let Err(error) = wait_for_ready_notify(
-                "sinex-ingestd",
+                "sinexd",
                 &notify_listener,
                 &mut child,
                 Duration::from_secs(Timeouts::STANDARD),
@@ -1264,11 +1263,11 @@ mod tests {
     #[sinex_test]
     async fn runtime_binary_inputs_exclude_dev_only_xtask_sources() -> TestResult<()> {
         let workspace = find_workspace_root()?;
-        let inputs = collect_runtime_binary_input_paths(&workspace, "sinex-ingestd")?;
-        let ingestd_main = workspace.join("crate/core/sinex-ingestd/src/main.rs");
+        let inputs = collect_runtime_binary_input_paths(&workspace, "sinexd")?;
+        let sinexd_main = workspace.join("crate/sinexd/src/main.rs");
 
         assert!(
-            inputs.iter().any(|path| path == &ingestd_main),
+            inputs.iter().any(|path| path == &sinexd_main),
             "runtime binary inputs should include the target binary source"
         );
         assert!(
@@ -1288,7 +1287,7 @@ mod tests {
     #[sinex_test]
     async fn runtime_binary_inputs_exclude_workspace_manifest_and_lockfile() -> TestResult<()> {
         let workspace = find_workspace_root()?;
-        let inputs = collect_runtime_binary_input_paths(&workspace, "sinex-ingestd")?;
+        let inputs = collect_runtime_binary_input_paths(&workspace, "sinexd")?;
         let workspace_manifest = workspace.join("Cargo.toml");
         let lockfile = workspace.join("Cargo.lock");
 

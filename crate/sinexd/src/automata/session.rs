@@ -3,11 +3,11 @@
 //! Model classification: **Windowed** -- accumulates bounded
 //! `activity.window.summary` events into completed activity sessions.
 
-use serde::{Deserialize, Serialize};
 use crate::node_sdk::derived_node::{
     AutomatonContext, DerivedAggregationMeta, DerivedOutput, WindowedNodeAdapter,
 };
 use crate::node_sdk::{InputProvenanceFilter, NodeLogicError, Windowed};
+use serde::{Deserialize, Serialize};
 use sinex_primitives::Uuid;
 use sinex_primitives::activity::{ActivitySourceKind, primary_activity_source};
 use sinex_primitives::events::{
@@ -19,6 +19,7 @@ use sinex_primitives::events::{
 use sinex_primitives::privacy::ProcessingContext;
 use sinex_primitives::temporal::Timestamp;
 use std::collections::{BTreeMap, BTreeSet};
+use tracing::warn;
 
 /// Persistent window state tracking the current activity session.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -65,6 +66,15 @@ impl SessionState {
         self.session_complete = false;
     }
 }
+
+/// Maximum number of windows accumulated in a single session before a
+/// force-emit. Prevents unbounded memory growth during sustained
+/// `MaxDuration`/`MaxEventCount` activity (no 5-minute gap).
+///
+/// At typical analytics rates (~1 window per minute) this allows ~7 days of
+/// continuous activity before force-closing. The force-close emits a partial
+/// session with a `warn!` log so the truncation is visible.
+pub const MAX_SESSION_WINDOW_COUNT: u64 = 10_000;
 
 #[derive(Default)]
 pub struct SessionDetector;
@@ -116,7 +126,27 @@ impl Windowed for SessionDetector {
             *state.activity_source_counts.entry(source).or_insert(0) += count;
         }
         state.window_event_ids.push(context.trigger_uuid());
-        state.session_complete = matches!(input.close_reason, ActivityWindowCloseReason::Gap);
+
+        // A `Gap`-closed window signals the end of the activity session.
+        let gap_closed = matches!(input.close_reason, ActivityWindowCloseReason::Gap);
+
+        // Force-close when the accumulator exceeds the safety cap, regardless
+        // of close_reason. This bounds memory under sustained activity that
+        // never produces a 5-minute gap (MaxDuration/MaxEventCount windows
+        // without a Gap — the same leak class as the historical relation-extractor
+        // 4.5 GB bug). Silent truncation is forbidden; warn on force-close.
+        if !gap_closed && state.window_count >= MAX_SESSION_WINDOW_COUNT {
+            warn!(
+                node = "session-detector",
+                window_count = state.window_count,
+                max = MAX_SESSION_WINDOW_COUNT,
+                session_start = ?state.session_start,
+                "Session window cap exceeded; force-closing session to bound accumulator memory"
+            );
+            state.session_complete = true;
+        } else {
+            state.session_complete = gap_closed;
+        }
 
         Ok(())
     }

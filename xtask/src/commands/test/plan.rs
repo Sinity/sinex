@@ -5,13 +5,14 @@ use crate::command::{CommandContext, WorkloadScope};
 use crate::process::ProcessBuilder;
 
 pub(super) const HEAVY_TEST_THREAD_CAP: usize = 4;
+// Packages whose integration tests require the sinexd runtime binary
+// (formerly sinex-ingestd — renamed in Wave-B fold, PR #1223).
 const INGESTD_RUNTIME_TEST_PACKAGES: &[&str] = &[
     "sinex-browser-ingestor",
     "sinex-db",
     "sinex-desktop-ingestor",
     "sinex-e2e-tests",
     "sinex-gateway",
-    "sinex-ingestd",
     "sinexd",
     "sinex-terminal-ingestor",
     "sinex-workspace-tests",
@@ -24,7 +25,6 @@ const DATABASE_TEST_PACKAGES: &[&str] = &[
     "sinex-desktop-ingestor",
     "sinex-e2e-tests",
     "sinex-gateway",
-    "sinex-ingestd",
     "sinexd",
     "sinex-schema",
     "sinex-terminal-ingestor",
@@ -110,8 +110,9 @@ pub(super) fn runtime_binary_requirements_for_plan(
         INGESTD_RUNTIME_TEST_PACKAGES,
     ) {
         requirements.push(RuntimeBinaryRequirement {
-            package: "sinex-ingestd",
-            binary: "sinex-ingestd",
+            // Renamed from sinex-ingestd in Wave-B fold (PR #1223)
+            package: "sinexd",
+            binary: "sinexd",
         });
     }
     if workload_scope_includes_any(
@@ -140,7 +141,7 @@ pub(super) fn runtime_binary_requirements_for_target(
     if workload_scope_includes_any(&execution_plan.workload_scope, &["sinex-source-worker"])
         && source_worker_production_path_requires_ingestd(test_binaries, filter)
     {
-        push_runtime_requirement(&mut requirements, "sinex-ingestd", "sinex-ingestd");
+        push_runtime_requirement(&mut requirements, "sinexd", "sinexd");
     }
 
     requirements
@@ -365,8 +366,8 @@ mod tests {
 
         let requirements = runtime_binary_requirements_for_plan(&plan);
         assert_eq!(requirements.len(), 2);
-        assert_eq!(requirements[0].package, "sinex-ingestd");
-        assert_eq!(requirements[0].binary, "sinex-ingestd");
+        assert_eq!(requirements[0].package, "sinexd");
+        assert_eq!(requirements[0].binary, "sinexd");
         assert_eq!(requirements[1].package, "sinex-gateway");
         assert_eq!(requirements[1].binary, "sinex-gateway");
         Ok(())
@@ -383,7 +384,7 @@ mod tests {
 
         let requirements = runtime_binary_requirements_for_plan(&plan);
         assert_eq!(requirements.len(), 1);
-        assert_eq!(requirements[0].package, "sinex-ingestd");
+        assert_eq!(requirements[0].package, "sinexd");
         Ok(())
     }
 
@@ -398,8 +399,8 @@ mod tests {
 
         let requirements = runtime_binary_requirements_for_plan(&plan);
         assert_eq!(requirements.len(), 1);
-        assert_eq!(requirements[0].package, "sinex-ingestd");
-        assert_eq!(requirements[0].binary, "sinex-ingestd");
+        assert_eq!(requirements[0].package, "sinexd");
+        assert_eq!(requirements[0].binary, "sinexd");
         Ok(())
     }
 
@@ -414,8 +415,8 @@ mod tests {
 
         let requirements = runtime_binary_requirements_for_plan(&plan);
         assert_eq!(requirements.len(), 2);
-        assert_eq!(requirements[0].package, "sinex-ingestd");
-        assert_eq!(requirements[0].binary, "sinex-ingestd");
+        assert_eq!(requirements[0].package, "sinexd");
+        assert_eq!(requirements[0].binary, "sinexd");
         assert_eq!(requirements[1].package, "sinex-gateway");
         assert_eq!(requirements[1].binary, "sinex-gateway");
         Ok(())
@@ -432,7 +433,7 @@ mod tests {
 
         let requirements = runtime_binary_requirements_for_plan(&plan);
         assert_eq!(requirements.len(), 2);
-        assert_eq!(requirements[0].package, "sinex-ingestd");
+        assert_eq!(requirements[0].package, "sinexd");
         assert_eq!(requirements[1].package, "sinex-gateway");
         Ok(())
     }
@@ -448,7 +449,7 @@ mod tests {
 
         let requirements = runtime_binary_requirements_for_plan(&plan);
         assert_eq!(requirements.len(), 1);
-        assert_eq!(requirements[0].package, "sinex-ingestd");
+        assert_eq!(requirements[0].package, "sinexd");
         Ok(())
     }
 
@@ -463,7 +464,7 @@ mod tests {
 
         let requirements = runtime_binary_requirements_for_plan(&plan);
         assert_eq!(requirements.len(), 1);
-        assert_eq!(requirements[0].package, "sinex-ingestd");
+        assert_eq!(requirements[0].package, "sinexd");
         Ok(())
     }
 
@@ -478,7 +479,7 @@ mod tests {
 
         let requirements = runtime_binary_requirements_for_plan(&plan);
         assert_eq!(requirements.len(), 1);
-        assert_eq!(requirements[0].package, "sinex-ingestd");
+        assert_eq!(requirements[0].package, "sinexd");
         Ok(())
     }
 
@@ -536,8 +537,8 @@ mod tests {
             None,
         );
         assert_eq!(requirements.len(), 1);
-        assert_eq!(requirements[0].package, "sinex-ingestd");
-        assert_eq!(requirements[0].binary, "sinex-ingestd");
+        assert_eq!(requirements[0].package, "sinexd");
+        assert_eq!(requirements[0].binary, "sinexd");
         Ok(())
     }
 
@@ -581,7 +582,7 @@ mod tests {
         );
 
         assert_eq!(requirements.len(), 1);
-        assert_eq!(requirements[0].package, "sinex-ingestd");
+        assert_eq!(requirements[0].package, "sinexd");
         Ok(())
     }
 

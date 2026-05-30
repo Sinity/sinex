@@ -3,11 +3,11 @@
 //! Model classification: **Windowed** -- accumulates
 //! `activity.window.summary` inputs into completed UTC-hour summaries.
 
-use serde::{Deserialize, Serialize};
 use crate::node_sdk::derived_node::{
     AutomatonContext, DerivedAggregationMeta, DerivedOutput, WindowedNodeAdapter,
 };
 use crate::node_sdk::{InputProvenanceFilter, NodeLogicError, Windowed};
+use serde::{Deserialize, Serialize};
 use sinex_primitives::Uuid;
 use sinex_primitives::activity::{ActivitySourceKind, primary_activity_source};
 use sinex_primitives::events::{
@@ -17,6 +17,7 @@ use sinex_primitives::events::{
 use sinex_primitives::privacy::ProcessingContext;
 use sinex_primitives::temporal::{Duration, Timestamp};
 use std::collections::{BTreeMap, BTreeSet};
+use tracing::debug;
 
 fn floor_to_hour(timestamp: Timestamp) -> Timestamp {
     let Ok(rounded) = timestamp
@@ -168,6 +169,38 @@ impl Windowed for HourlySummarizer {
 
     fn window_complete(&self, state: &Self::State) -> bool {
         state.pending_window.is_some() && state.window_count > 0
+    }
+
+    /// Clock-driven trailing-bucket flush.
+    ///
+    /// Returns `true` when there is an accumulated bucket AND the current wall
+    /// time is past that bucket's end boundary (the hour has elapsed). This
+    /// allows the periodic timer to emit the latest completed hour without
+    /// waiting for the first event of the next hour to arrive.
+    fn flush_due(&self, state: &Self::State, now: Timestamp) -> bool {
+        if state.window_count == 0 {
+            return false;
+        }
+        let Some(hour_start) = state.hour_start else {
+            return false;
+        };
+        // Do not flush if there is already a pending window from a next-bucket
+        // event — the normal window_complete path will handle that.
+        if state.pending_window.is_some() {
+            return false;
+        }
+        let end = hour_end(hour_start);
+        let due = now >= end;
+        if due {
+            debug!(
+                node = "hourly-summarizer",
+                hour_start = %hour_start,
+                hour_end = %end,
+                now = %now,
+                "Flush due: emitting trailing hour bucket via timer"
+            );
+        }
+        due
     }
 
     async fn emit(

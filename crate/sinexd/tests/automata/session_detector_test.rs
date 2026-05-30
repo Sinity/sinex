@@ -1,5 +1,3 @@
-use sinexd::node_sdk::Windowed;
-use sinexd::node_sdk::derived_node::{DerivedAggregationMeta, AutomatonContext};
 use sinex_primitives::activity::ActivitySourceKind;
 use sinex_primitives::domain::{ProcessingMode, TriggerKind};
 use sinex_primitives::events::payloads::{
@@ -8,7 +6,9 @@ use sinex_primitives::events::payloads::{
 use sinex_primitives::events::{Event, EventPayload};
 use sinex_primitives::temporal::{Duration, Timestamp};
 use sinex_primitives::{Id, JsonValue};
-use sinexd::automata::session::{SessionDetector, SessionState};
+use sinexd::automata::session::{MAX_SESSION_WINDOW_COUNT, SessionDetector, SessionState};
+use sinexd::node_sdk::Windowed;
+use sinexd::node_sdk::derived_node::{AutomatonContext, DerivedAggregationMeta};
 use std::collections::BTreeMap;
 use xtask::sandbox::prelude::*;
 
@@ -183,5 +183,101 @@ async fn parse_session_event_shape_roundtrips() -> TestResult<()> {
 
     assert_eq!(decoded.window_count, 2);
     assert_eq!(decoded.primary_source, ActivitySourceKind::Terminal);
+    Ok(())
+}
+
+// ── AC2: accumulator cap — bounded memory under sustained activity ────────
+
+/// AC2 — Feeding more than `MAX_SESSION_WINDOW_COUNT` `MaxDuration` windows
+/// (no 5-min gap) must force-close the session, keeping state bounded.
+///
+/// This tests the fix for the unbounded accumulator bug: sustained activity
+/// with only `MaxDuration`/`MaxEventCount` windows must not grow the session
+/// state without bound.
+#[sinex_test]
+async fn session_detector_force_closes_at_window_cap() -> TestResult<()> {
+    let mut detector = SessionDetector;
+    let mut state = SessionState::default();
+    let start = Timestamp::from_unix_timestamp(1_700_000_000).expect("valid");
+    let mut emitted_count = 0u64;
+
+    // Feed MAX_SESSION_WINDOW_COUNT windows, all MaxDuration (no gap).
+    // The cap triggers at window_count == MAX_SESSION_WINDOW_COUNT.
+    for i in 0..MAX_SESSION_WINDOW_COUNT {
+        let window_start = start + Duration::seconds(i as i64 * 60);
+        let window_end = window_start + Duration::seconds(60);
+        let payload = make_window(
+            i,
+            window_start,
+            window_end,
+            5,
+            ActivityWindowCloseReason::MaxDuration,
+            ActivitySourceKind::Terminal,
+        );
+        let ctx = make_context(payload.window_end);
+
+        detector.accumulate(&mut state, payload, &ctx).await?;
+
+        if detector.window_complete(&state) {
+            let output = detector
+                .emit(&mut state, &ctx)
+                .await?
+                .expect("emit must produce output when window_complete");
+            emitted_count += 1;
+
+            // After each force-close emit, state must be reset (bounded).
+            assert_eq!(
+                state.window_count, 0,
+                "state must reset after force-close at window {i}"
+            );
+            assert!(
+                state.window_event_ids.is_empty(),
+                "window_event_ids must be empty after force-close at window {i}"
+            );
+            assert!(
+                output.payload.window_count > 0,
+                "emitted session must have at least one window"
+            );
+        }
+    }
+
+    // At least one force-close must have happened.
+    assert!(
+        emitted_count > 0,
+        "session detector must have force-closed at least once over {MAX_SESSION_WINDOW_COUNT} MaxDuration windows"
+    );
+
+    Ok(())
+}
+
+/// The accumulator grows normally for sessions well below the cap.
+#[sinex_test]
+async fn session_detector_does_not_prematurely_close_below_cap() -> TestResult<()> {
+    let mut detector = SessionDetector;
+    let mut state = SessionState::default();
+    let start = Timestamp::from_unix_timestamp(1_700_000_000).expect("valid");
+
+    // Feed 10 MaxDuration windows — well below the cap.
+    for i in 0..10u64 {
+        let window_start = start + Duration::seconds(i as i64 * 60);
+        let window_end = window_start + Duration::seconds(60);
+        let payload = make_window(
+            i,
+            window_start,
+            window_end,
+            3,
+            ActivityWindowCloseReason::MaxDuration,
+            ActivitySourceKind::Terminal,
+        );
+        let ctx = make_context(payload.window_end);
+        detector.accumulate(&mut state, payload, &ctx).await?;
+        // Must NOT trigger window_complete for MaxDuration below the cap.
+        assert!(
+            !detector.window_complete(&state),
+            "window {i}: must not complete before gap signal or cap"
+        );
+    }
+
+    assert_eq!(state.window_count, 10);
     Ok(())
 }
