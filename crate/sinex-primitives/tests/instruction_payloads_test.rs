@@ -7,7 +7,9 @@ use sinex_primitives::events::payloads::{
 use sinex_primitives::{Timestamp, Uuid};
 use xtask::sandbox::prelude::*;
 
-fn workspace_instruction(dry_run: bool) -> DesktopWorkspaceSwitchInstructionPayload {
+fn workspace_instruction(
+    dry_run: bool,
+) -> Result<DesktopWorkspaceSwitchInstructionPayload, sinex_primitives::SinexError> {
     DesktopWorkspaceSwitchInstructionPayload::hyprland_operator_direct(
         Uuid::from_u128(1),
         3,
@@ -15,7 +17,6 @@ fn workspace_instruction(dry_run: bool) -> DesktopWorkspaceSwitchInstructionPayl
         Some(Timestamp::UNIX_EPOCH),
         dry_run,
     )
-    .expect("fixture instruction should be valid")
 }
 
 #[sinex_test]
@@ -37,7 +38,7 @@ async fn instruction_payloads_publish_stable_event_names() -> TestResult<()> {
 
 #[sinex_test]
 async fn hyprland_workspace_instruction_uses_canonical_idempotency_key() -> TestResult<()> {
-    let instruction = workspace_instruction(false);
+    let instruction = workspace_instruction(false)?;
 
     assert_eq!(instruction.desired_event_source, "wm.hyprland");
     assert_eq!(instruction.desired_event_type, "workspace.switched");
@@ -47,7 +48,7 @@ async fn hyprland_workspace_instruction_uses_canonical_idempotency_key() -> Test
 
 #[sinex_test]
 async fn hyprland_planner_noops_when_workspace_already_satisfied() -> TestResult<()> {
-    let instruction = workspace_instruction(false);
+    let instruction = workspace_instruction(false)?;
     let attempt =
         plan_hyprland_workspace_switch(&instruction, Some(3), true, Timestamp::UNIX_EPOCH);
 
@@ -59,7 +60,7 @@ async fn hyprland_planner_noops_when_workspace_already_satisfied() -> TestResult
 
 #[sinex_test]
 async fn hyprland_planner_caveats_when_observation_is_unavailable() -> TestResult<()> {
-    let instruction = workspace_instruction(false);
+    let instruction = workspace_instruction(false)?;
     let attempt = plan_hyprland_workspace_switch(&instruction, None, false, Timestamp::UNIX_EPOCH);
 
     assert_eq!(attempt.status, ActuationStatus::Unavailable);
@@ -73,7 +74,7 @@ async fn hyprland_planner_caveats_when_observation_is_unavailable() -> TestResul
 
 #[sinex_test]
 async fn hyprland_planner_emits_typed_command_socket_message() -> TestResult<()> {
-    let instruction = workspace_instruction(false);
+    let instruction = workspace_instruction(false)?;
     let attempt =
         plan_hyprland_workspace_switch(&instruction, Some(2), true, Timestamp::UNIX_EPOCH);
 
@@ -88,7 +89,7 @@ async fn hyprland_planner_emits_typed_command_socket_message() -> TestResult<()>
 
 #[sinex_test]
 async fn hyprland_planner_keeps_dry_run_non_executing() -> TestResult<()> {
-    let instruction = workspace_instruction(true);
+    let instruction = workspace_instruction(true)?;
     let attempt =
         plan_hyprland_workspace_switch(&instruction, Some(2), true, Timestamp::UNIX_EPOCH);
 
@@ -99,7 +100,7 @@ async fn hyprland_planner_keeps_dry_run_non_executing() -> TestResult<()> {
 
 #[sinex_test]
 async fn hyprland_expectation_matches_only_observed_workspace() -> TestResult<()> {
-    let instruction = workspace_instruction(false);
+    let instruction = workspace_instruction(false)?;
     let fulfilled = evaluate_hyprland_workspace_expectation(
         &instruction,
         3,
