@@ -17,6 +17,7 @@ use sinex_primitives::JsonValue;
 use sinex_primitives::domain::DerivedNodeModel;
 use sinex_primitives::events::Event;
 use sinex_primitives::privacy::ProcessingContext;
+use sinex_primitives::temporal::Timestamp;
 use std::collections::HashMap;
 
 const DEFAULT_CHECKPOINT_INTERVAL_EVENTS: u64 = 1000;
@@ -173,7 +174,25 @@ pub trait Transducer: Send + Sync + 'static {
 /// A windowed aggregator: accumulates events, emits on window completion.
 ///
 /// The SDK calls `accumulate()` for each event, checks `window_complete()`,
-/// and calls `emit()` when the window is ready.
+/// and calls `emit()` when the window is ready. A periodic timer calls
+/// `flush_due()` so trailing (latest) buckets are emitted without waiting
+/// for the next bucket's first event.
+///
+/// # Scope invalidation
+///
+/// Windowed nodes do **not** set `scope_key` on their outputs and are
+/// **out of scope** for scope-based invalidation recompute (see #1569).
+/// The input-driven accumulation model is authoritative; `recompute_window`
+/// is provided for ad-hoc replay but is not called by the invalidation path.
+///
+/// # Ordering under historical imports
+///
+/// Live processing orders by arrival (`ts_coided`), so historical imports
+/// whose `ts_orig` predates the current bucket can cross window boundaries
+/// silently. This is a known limitation shared with TimescaleDB continuous
+/// aggregates that refresh on `ts_coided`. Handling historical backfill
+/// with correct `ts_orig`-ordered semantics is not supported; flag any
+/// historical import as an explicit replay and rely on `recompute_window`.
 #[diagnostic::on_unimplemented(
     message = "`{Self}` does not implement `Windowed`",
     label = "missing Windowed implementation",
@@ -209,6 +228,24 @@ pub trait Windowed: Send + Sync + 'static {
 
     /// Check if the window is complete and should emit.
     fn window_complete(&self, state: &Self::State) -> bool;
+
+    /// Clock-driven window-close predicate for the trailing-bucket flush.
+    ///
+    /// The SDK's periodic timer calls this method with the current wall time.
+    /// Return `true` when the open accumulator has data AND the window boundary
+    /// (hour end, day end, etc.) has elapsed, so the trailing bucket can be
+    /// emitted without waiting for the next bucket's first event.
+    ///
+    /// Default: `false` — no clock-driven flush. Implementations that produce
+    /// time-bucketed outputs (hourly, daily) should override this.
+    ///
+    /// If `flush_due` returns `true` the runtime calls `emit()` immediately,
+    /// then resets the accumulator via the normal post-emit path. A bucket
+    /// that was already emitted by this timer will not be re-emitted when the
+    /// next-bucket event arrives (the accumulator reset prevents it).
+    fn flush_due(&self, _state: &Self::State, _now: Timestamp) -> bool {
+        false
+    }
 
     /// Emit the output from the completed window.
     fn emit(
@@ -470,6 +507,22 @@ pub trait Automaton: Send + Sync + 'static {
         &mut self,
         state: &Self::State,
     ) -> impl std::future::Future<Output = Result<(), NodeLogicError>> + Send;
+
+    /// Clock-driven flush for `Windowed` nodes (trailing-bucket emission).
+    ///
+    /// Called by the SDK periodic timer with the current wall time. Returns
+    /// any output events produced by flushing the open accumulator.
+    ///
+    /// Default: returns empty — non-windowed models do not flush on a timer.
+    fn timer_flush_derived(
+        &mut self,
+        _state: &mut Self::State,
+        _now: Timestamp,
+        _context: &AutomatonContext,
+    ) -> impl std::future::Future<Output = Result<Vec<DerivedOutput<JsonValue>>, NodeLogicError>> + Send
+    {
+        async { Ok(Vec::new()) }
+    }
 }
 
 // ── Wrapper types ──────────────────────────────────────────────────────
@@ -644,6 +697,28 @@ impl<N: Windowed> Automaton for WindowedWrapper<N> {
 
     async fn on_shutdown_derived(&mut self, state: &Self::State) -> Result<(), NodeLogicError> {
         self.0.on_shutdown(state).await
+    }
+
+    /// Clock-driven trailing-bucket flush for `Windowed` nodes.
+    ///
+    /// Calls `flush_due(state, now)`. If true, calls `emit()` and returns the
+    /// serialized output. The accumulator is reset inside `emit()` by the
+    /// normal post-emit path, preventing double-emission when the next bucket
+    /// event arrives.
+    async fn timer_flush_derived(
+        &mut self,
+        state: &mut Self::State,
+        now: Timestamp,
+        context: &AutomatonContext,
+    ) -> Result<Vec<DerivedOutput<JsonValue>>, NodeLogicError> {
+        if !self.0.flush_due(state, now) {
+            return Ok(Vec::new());
+        }
+
+        match self.0.emit(state, context).await? {
+            Some(output) => serialize_outputs(vec![output]),
+            None => Ok(Vec::new()),
+        }
     }
 }
 

@@ -1,5 +1,3 @@
-use sinexd::node_sdk::derived_node::{DerivedOutput, AutomatonContext};
-use sinexd::node_sdk::{NodeLogicError, Windowed};
 use sinex_primitives::activity::ActivitySourceKind;
 use sinex_primitives::domain::{ProcessingMode, TriggerKind};
 use sinex_primitives::events::payloads::{
@@ -9,6 +7,8 @@ use sinex_primitives::events::{Event, EventPayload};
 use sinex_primitives::temporal::{Duration, Timestamp};
 use sinex_primitives::{Id, JsonValue};
 use sinexd::automata::hourly::{HourlySummarizer, HourlySummaryState};
+use sinexd::node_sdk::derived_node::{AutomatonContext, DerivedOutput};
+use sinexd::node_sdk::{NodeLogicError, Windowed};
 use xtask::sandbox::prelude::*;
 
 fn make_context(ts_orig: Timestamp) -> AutomatonContext {
@@ -237,5 +237,151 @@ async fn hourly_summary_aggregates_focus_time_and_top_sources() -> TestResult<()
         Some("shell.kitty")
     );
     assert_eq!(output.payload.primary_source, ActivitySourceKind::Terminal);
+    Ok(())
+}
+
+// ── AC1: trailing-bucket flush via timer ─────────────────────────────────
+
+/// AC1 — `flush_due` returns true when wall time is past the bucket end
+/// and emitting via the timer produces output exactly once without needing
+/// a next-bucket event to arrive.
+#[sinex_test]
+async fn timer_flush_emits_trailing_bucket_without_next_bucket_event() -> TestResult<()> {
+    let mut summarizer = HourlySummarizer;
+    let mut state = HourlySummaryState::default();
+
+    // Place an event in the 13:00–14:00 bucket.
+    let hour_start = Timestamp::from_unix_timestamp(1_700_046_000).expect("valid"); // some 13:00 UTC
+    let window_end = hour_start + Duration::minutes(30);
+    let ctx = make_context(window_end);
+
+    summarizer
+        .accumulate(
+            &mut state,
+            window_payload(
+                hour_start,
+                window_end,
+                1800,
+                5,
+                &["shell.kitty"],
+                &[(ActivitySourceKind::Terminal, 5)],
+                ActivitySourceKind::Terminal,
+            ),
+            &ctx,
+        )
+        .await?;
+
+    // Before the hour ends, flush_due must be false.
+    let before_end = hour_start + Duration::minutes(59);
+    assert!(
+        !summarizer.flush_due(&state, before_end),
+        "flush_due should be false before the hour boundary"
+    );
+    assert!(
+        !summarizer.window_complete(&state),
+        "window_complete should be false — no next-bucket event"
+    );
+
+    // After the hour elapses, flush_due returns true.
+    let after_end = hour_start + Duration::hours(1) + Duration::seconds(1);
+    assert!(
+        summarizer.flush_due(&state, after_end),
+        "flush_due must return true once the hour boundary has passed"
+    );
+
+    // Calling emit() produces the expected output.
+    let flush_ctx = make_context(after_end);
+    let output = summarizer
+        .emit(&mut state, &flush_ctx)
+        .await?
+        .expect("emit must produce output when flush_due is true");
+
+    assert_eq!(output.payload.window_count, 1);
+    assert_eq!(output.payload.event_count, 5);
+    assert_eq!(output.payload.duration_secs, 1800);
+
+    // After emit, the state is reset — flush_due is false again (no double-emit).
+    assert!(
+        !summarizer.flush_due(&state, after_end),
+        "flush_due must be false after emit resets the state"
+    );
+    assert_eq!(
+        state.window_count, 0,
+        "state should be reset after flush emit"
+    );
+
+    Ok(())
+}
+
+/// flush_due is false when there is no accumulated data (window_count == 0).
+#[sinex_test]
+async fn flush_due_false_on_empty_state() -> TestResult<()> {
+    let summarizer = HourlySummarizer;
+    let state = HourlySummaryState::default();
+    let now = Timestamp::from_unix_timestamp(1_700_100_000).expect("valid");
+    assert!(
+        !summarizer.flush_due(&state, now),
+        "flush_due must be false for empty state"
+    );
+    Ok(())
+}
+
+/// flush_due is false when a pending_window already exists (the normal
+/// window_complete path handles that case; the timer must not double-emit).
+#[sinex_test]
+async fn flush_due_false_when_pending_window_exists() -> TestResult<()> {
+    let mut summarizer = HourlySummarizer;
+    let mut state = HourlySummaryState::default();
+
+    let hour_start = Timestamp::from_unix_timestamp(1_700_046_000).expect("valid");
+    let window_end = hour_start + Duration::minutes(30);
+    let ctx = make_context(window_end);
+
+    // Accumulate first window
+    summarizer
+        .accumulate(
+            &mut state,
+            window_payload(
+                hour_start,
+                window_end,
+                1800,
+                3,
+                &["shell.kitty"],
+                &[(ActivitySourceKind::Terminal, 3)],
+                ActivitySourceKind::Terminal,
+            ),
+            &ctx,
+        )
+        .await?;
+
+    // Accumulate a second window from the NEXT hour — this sets pending_window
+    let next_hour_start = hour_start + Duration::hours(1);
+    let next_window_end = next_hour_start + Duration::minutes(10);
+    let next_ctx = make_context(next_window_end);
+    summarizer
+        .accumulate(
+            &mut state,
+            window_payload(
+                next_hour_start,
+                next_window_end,
+                600,
+                1,
+                &["wm.hyprland"],
+                &[(ActivitySourceKind::Window, 1)],
+                ActivitySourceKind::Window,
+            ),
+            &next_ctx,
+        )
+        .await?;
+
+    // window_complete is true (pending window from next bucket)
+    assert!(summarizer.window_complete(&state));
+    // flush_due must be false — the normal path will emit, not the timer
+    let now = hour_start + Duration::hours(2);
+    assert!(
+        !summarizer.flush_due(&state, now),
+        "flush_due must be false when pending_window already triggers window_complete"
+    );
+
     Ok(())
 }
