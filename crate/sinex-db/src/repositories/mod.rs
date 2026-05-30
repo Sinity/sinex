@@ -50,7 +50,7 @@ pub use semantic::{CreateSemanticEpoch, CreateSemanticLane, SemanticRepository};
 pub use source_materials::{
     SourceMaterial, SourceMaterialExt, SourceMaterialLink, SourceMaterialLinkRecord,
     SourceMaterialRepository, TemporalLedgerEntry, material_kinds, material_types,
-    relation_types as source_material_relation_types, status as material_status, timing_info_types,
+    relation_types as source_material_relation_types, timing_info_types,
 };
 pub use state::{
     ManifestRow, NodeRun, Operation, OperationRecord, OperationStatistics, StateRepository,

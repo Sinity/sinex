@@ -1947,8 +1947,8 @@ mod tests {
             .await?
             .expect("material should still be tracked");
         assert_eq!(
-            material.status.as_str(),
-            sinex_db::repositories::material_status::FAILED
+            material.status,
+            sinex_primitives::MaterialStatus::Failed
         );
         Ok(())
     }

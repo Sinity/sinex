@@ -1,7 +1,7 @@
 //! Shared bootstrap utilities for service-level binaries (gateway, ingestd).
 //!
 //! These helpers cover the common startup concerns that aren't specific to
-//! the node lifecycle managed by `node_entrypoint!`. Unlike `SourceUnit` or
+//! the node lifecycle managed by `NodeCliRunner`. Unlike `SourceUnit` or
 //! `AutomatonRuntime`, this module is intentionally *not* lifecycle-aware —
 //! it provides pure setup functions that each binary calls once at the start
 //! of `main`.
@@ -22,7 +22,7 @@
 //! # Example
 //!
 //! ```ignore
-//! use crate::runtime::service_runtime::{self, TracingFormat};
+//! use crate::node_sdk::service_runtime::{self, TracingFormat};
 //!
 //! #[tokio::main]
 //! async fn main() -> color_eyre::eyre::Result<()> {

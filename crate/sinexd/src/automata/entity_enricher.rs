@@ -200,7 +200,7 @@ impl ScopeReconciler for EntityEnricher {
     }
 }
 
-/// Node type alias for use with `node_entrypoint!`.
+/// Node type alias registered via `AutomatonSpec` in `automata::registry`.
 pub type EntityEnricherNode = ScopeReconcilerNodeAdapter<EntityEnricher>;
 
 // ── Helper functions ────────────────────────────────────────────────────────

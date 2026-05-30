@@ -52,6 +52,10 @@ fn short_uuid(value: &sinex_primitives::Uuid) -> String {
 }
 
 fn format_health(status: &IngestorStatus) -> String {
+    // TODO(#1576): unify with HealthStatus — `current_health: Option<String>` is a
+    // re-serialized `HealthStatus` that the CLI re-discriminates by literal below.
+    // After the health-enum unification (issue item 2), this should branch on
+    // `Option<HealthStatus>` directly.
     match status.current_health.as_deref() {
         Some("healthy") => style("healthy").green().to_string(),
         Some("degraded") => style("degraded").yellow().to_string(),

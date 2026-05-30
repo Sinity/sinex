@@ -539,7 +539,7 @@ impl MaterialAssembler {
             })?;
 
         Ok(record.and_then(|record| {
-            AssemblyStateMachine::terminal_state_for_status(record.status.as_str())
+            AssemblyStateMachine::terminal_state_for_status(record.status)
         }))
     }
 

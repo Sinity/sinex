@@ -342,7 +342,7 @@ impl<T: Node + 'static> NodeRunner<T> {
 
                                         let _active_scan_guard = ActiveScanGuard(scan_active.clone());
                                         let progress_subject = scan_env
-                                            .nats_subject(&format!("sinex.control.replay.progress.{operation_id}"));
+                                            .nats_subject(&sinex_primitives::ControlSubject::replay_progress(operation_id));
 
                                         let start_progress = NodeScanProgress {
                                             operation_id,

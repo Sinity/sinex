@@ -97,7 +97,7 @@
 //! | `integration.polylogue` | [polylogue](https://github.com/sinity/polylogue) | AI chat archive indexer |
 //! | `analysis.lynchpin` | [lynchpin](https://github.com/sinity/sinity-lynchpin) | Analysis artifact staging |
 
-use crate::domain::{SourceMaterialFormat, SourceMaterialTimingInfoType};
+use crate::domain::{MaterialStatus, SourceMaterialFormat, SourceMaterialTimingInfoType};
 use crate::parser::{ParserId, SourceBindingId, SourceUnitId};
 use crate::rpc::{RpcDomain, RpcMethod, RpcMutability, RpcRole, RpcStability, methods};
 use crate::sources::continuity::{
@@ -467,8 +467,8 @@ pub struct SourceMaterialSummary {
     /// Source identifier (typically the file path)
     pub source_identifier: String,
     /// Lifecycle status
-    pub status: String,
-    pub timing_info_type: String,
+    pub status: MaterialStatus,
+    pub timing_info_type: SourceMaterialTimingInfoType,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub format: Option<SourceMaterialFormat>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -506,8 +506,8 @@ pub struct SourceMaterialDetail {
     pub id: String,
     pub material_kind: String,
     pub source_identifier: String,
-    pub status: String,
-    pub timing_info_type: String,
+    pub status: MaterialStatus,
+    pub timing_info_type: SourceMaterialTimingInfoType,
     pub metadata: serde_json::Value,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub contract: Option<SourceMaterialMetadataContract>,

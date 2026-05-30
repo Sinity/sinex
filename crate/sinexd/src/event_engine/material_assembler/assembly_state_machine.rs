@@ -4,7 +4,7 @@
 //! `Accumulating`, `Finalizing`). This module exposes the richer logical states
 //! that were previously implicit in begin/slice/end handlers.
 
-use sinex_db::repositories::material_status;
+use sinex_primitives::MaterialStatus;
 use sinex_primitives::Uuid;
 
 use super::state::{AssemblerState, AssemblyPhase};
@@ -94,15 +94,15 @@ impl AssemblyStateMachine {
         }
     }
 
-    pub(super) fn terminal_state_for_status(status: &str) -> Option<AssemblyLogicalState> {
+    pub(super) fn terminal_state_for_status(status: MaterialStatus) -> Option<AssemblyLogicalState> {
         match status {
-            material_status::COMPLETED | material_status::RECOVERED_PARTIAL => {
+            MaterialStatus::Completed | MaterialStatus::RecoveredPartial => {
                 Some(AssemblyLogicalState::Finalized)
             }
-            material_status::CANCELLED | material_status::FAILED => {
+            MaterialStatus::Cancelled | MaterialStatus::Failed => {
                 Some(AssemblyLogicalState::Aborted)
             }
-            _ => None,
+            MaterialStatus::Sensing => None,
         }
     }
 
@@ -321,15 +321,15 @@ mod tests {
     #[sinex_test]
     async fn terminal_statuses_map_to_logical_states() -> TestResult<()> {
         assert_eq!(
-            AssemblyStateMachine::terminal_state_for_status(material_status::COMPLETED),
+            AssemblyStateMachine::terminal_state_for_status(MaterialStatus::Completed),
             Some(AssemblyLogicalState::Finalized)
         );
         assert_eq!(
-            AssemblyStateMachine::terminal_state_for_status(material_status::FAILED),
+            AssemblyStateMachine::terminal_state_for_status(MaterialStatus::Failed),
             Some(AssemblyLogicalState::Aborted)
         );
         assert_eq!(
-            AssemblyStateMachine::terminal_state_for_status(material_status::SENSING),
+            AssemblyStateMachine::terminal_state_for_status(MaterialStatus::Sensing),
             None
         );
         Ok(())

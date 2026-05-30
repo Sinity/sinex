@@ -1003,7 +1003,7 @@ impl<T: crate::node_sdk::runtime::stream::Node + ExplorationProvider + Default +
 #[cfg(test)]
 #[allow(
     clippy::items_after_test_module,
-    reason = "The node_entrypoint! macro sits below the tests and cannot be reordered without breaking downstream re-exports"
+    reason = "Additional pub use items sit below the tests and cannot be reordered without breaking downstream re-exports"
 )]
 mod tests {
     use super::{

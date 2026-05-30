@@ -207,7 +207,7 @@ impl Windowed for SessionDetector {
     }
 }
 
-/// Node type alias for use with `node_entrypoint!`.
+/// Node type alias registered via `AutomatonSpec` in `automata::registry`.
 pub type SessionDetectorNode = WindowedNodeAdapter<SessionDetector>;
 
 // --- Source-unit descriptor (issue #690 / #734) ---

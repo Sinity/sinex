@@ -398,15 +398,19 @@ impl Replayability {
     /// about what is asserted vs measured.
     #[must_use]
     pub fn from_material_facts(
-        status: &str,
+        status: crate::domain::MaterialStatus,
         has_blob: bool,
-        timing_info_type: &str,
+        timing_info_type: crate::domain::SourceMaterialTimingInfoType,
         total_bytes: Option<i64>,
     ) -> Self {
-        let timing_quality = matches!(timing_info_type, "realtime" | "intrinsic");
+        use crate::domain::SourceMaterialTimingInfoType as TimingType;
+        let timing_quality = matches!(
+            timing_info_type,
+            TimingType::Realtime | TimingType::Intrinsic
+        );
         let anchor_stability = total_bytes.is_some();
-        let any_failed = status == "failed";
-        let any_recovered = status == "recovered_partial";
+        let any_failed = status == crate::domain::MaterialStatus::Failed;
+        let any_recovered = status == crate::domain::MaterialStatus::RecoveredPartial;
 
         let mut weak_points: Vec<String> = Vec::new();
         if !has_blob {
@@ -470,8 +474,8 @@ pub struct MaterialReplayabilityScorecard {
     pub source_identifier: String,
     /// Material kind (e.g. `annex`, `inline`, `archive`).
     pub material_kind: String,
-    /// Registry status (`completed`, `sensing`, `failed`, etc.).
-    pub status: String,
+    /// Registry status.
+    pub status: crate::domain::MaterialStatus,
     /// Replayability scorecard derived from this material's facts.
     pub replayability: Replayability,
 }

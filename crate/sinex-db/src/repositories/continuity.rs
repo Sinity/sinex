@@ -327,8 +327,8 @@ impl<'a> ContinuityRepository<'a> {
             agg.any_blob,
             agg.good_timing,
             agg.all_finalized,
-            chunks.iter().any(|c| c.status == "failed"),
-            chunks.iter().any(|c| c.status == "recovered_partial"),
+            chunks.iter().any(|c| c.status() == sinex_primitives::MaterialStatus::Failed),
+            chunks.iter().any(|c| c.status() == sinex_primitives::MaterialStatus::RecoveredPartial),
         );
 
         Ok(Some(SourceContinuityReport {
@@ -368,7 +368,7 @@ trait ChunkAccess {
     fn start_time(&self) -> Option<OffsetDateTime>;
     fn end_time(&self) -> Option<OffsetDateTime>;
     fn staged_at(&self) -> OffsetDateTime;
-    fn status(&self) -> &str;
+    fn status(&self) -> sinex_primitives::MaterialStatus;
     fn timing(&self) -> &str;
     /// Operator-declared coverage contract for this chunk's source material.
     /// Defaults to `Unknown` when the registry row carries the legacy
@@ -404,7 +404,9 @@ where
     if secs <= 1 {
         return SeamKind::ExpectedContinuation;
     }
-    if prev.status() == "recovered_partial" || curr.status() == "recovered_partial" {
+    if prev.status() == sinex_primitives::MaterialStatus::RecoveredPartial
+        || curr.status() == sinex_primitives::MaterialStatus::RecoveredPartial
+    {
         return SeamKind::RecoveredPartial;
     }
     // Operator-declared `privacy_class` drives `PrivateModeGap` classification
@@ -425,10 +427,10 @@ fn attribute_gap<R>(prev: &R, _curr: &R, contract: CoverageContract) -> GapKind
 where
     R: ChunkAccess,
 {
-    if prev.status() == "failed" {
+    if prev.status() == sinex_primitives::MaterialStatus::Failed {
         return GapKind::ParserFailure;
     }
-    if prev.status() == "cancelled" {
+    if prev.status() == sinex_primitives::MaterialStatus::Cancelled {
         return GapKind::ServiceCrash;
     }
     if matches!(
@@ -613,8 +615,8 @@ impl ChunkAccess for Chunk {
     fn staged_at(&self) -> OffsetDateTime {
         self.staged_at
     }
-    fn status(&self) -> &str {
-        &self.status
+    fn status(&self) -> sinex_primitives::MaterialStatus {
+        self.status.parse().unwrap_or(sinex_primitives::MaterialStatus::Sensing)
     }
     fn timing(&self) -> &str {
         &self.timing

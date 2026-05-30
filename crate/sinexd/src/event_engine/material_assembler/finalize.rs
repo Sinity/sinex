@@ -5,7 +5,8 @@
 //! source-material/blob/ledger commit boundary lives in `finalization_transaction`.
 
 use serde::Serialize;
-use sinex_db::repositories::{DbPoolExt, TemporalLedgerEntry, material_status};
+use sinex_db::repositories::{DbPoolExt, TemporalLedgerEntry};
+use sinex_primitives::MaterialStatus;
 use sinex_db::schema::defs::records::SourceMaterialRecord;
 use sinex_primitives::Timestamp;
 use sinex_primitives::nats::{NatsTrafficClass, insert_traffic_class_header};
@@ -31,16 +32,16 @@ pub(super) enum PendingEndBehavior {
     Ignore,
 }
 
-fn final_material_status(metadata: &JsonValue) -> &'static str {
+fn final_material_status(metadata: &JsonValue) -> MaterialStatus {
     metadata
         .as_object()
         .and_then(|map| map.get("cancelled"))
         .and_then(JsonValue::as_bool)
-        .map_or(material_status::COMPLETED, |cancelled| {
+        .map_or(MaterialStatus::Completed, |cancelled| {
             if cancelled {
-                material_status::CANCELLED
+                MaterialStatus::Cancelled
             } else {
-                material_status::COMPLETED
+                MaterialStatus::Completed
             }
         })
 }
@@ -757,7 +758,7 @@ impl MaterialAssembler {
         let assembly_duration = Timestamp::now() - final_state.started_at;
         let duration_ms = assembly_duration.whole_milliseconds().max(0) as u64;
 
-        if final_status == material_status::CANCELLED {
+        if final_status == MaterialStatus::Cancelled {
             self.stats_inc_cancelled(duration_ms as f64 / 1000.0, end.total_size_bytes as u64);
 
             tracing::info!(
@@ -904,8 +905,9 @@ mod tests {
     use serde_json::json;
     use sinex_db::{
         models::blob::Blob,
-        repositories::{DbPoolExt, source_materials::status},
+        repositories::DbPoolExt,
     };
+    use sinex_primitives::MaterialStatus;
     use crate::node_sdk::content_store::ContentStoreKey;
     use tokio::time::timeout;
     use tokio_stream::StreamExt;
@@ -950,7 +952,7 @@ mod tests {
             .get_by_id(Id::from_uuid(material_id))
             .await?
             .expect("material should exist");
-        assert_eq!(material.status.as_str(), status::SENSING);
+        assert_eq!(material.status, MaterialStatus::Sensing);
         assert!(assembler.assembler_state.contains_key(&material_id));
         Ok(())
     }
@@ -989,7 +991,7 @@ mod tests {
             .get_by_id(material_id_typed)
             .await?
             .expect("material should exist");
-        assert_eq!(material.status.as_str(), status::COMPLETED);
+        assert_eq!(material.status, MaterialStatus::Completed);
         Ok(())
     }
 
@@ -1092,7 +1094,7 @@ mod tests {
             .get_by_id(material_id_typed)
             .await?
             .expect("material should exist");
-        assert_eq!(material.status.as_str(), status::FAILED);
+        assert_eq!(material.status, MaterialStatus::Failed);
         assert!(
             !assembler.assembler_state.contains_key(&material_id),
             "invalid end timestamp should clean up assembler state instead of retrying forever"
@@ -1163,7 +1165,7 @@ mod tests {
             .get_by_id(material_id_typed)
             .await?
             .expect("material should exist");
-        assert_eq!(material.status.as_str(), status::FAILED);
+        assert_eq!(material.status, MaterialStatus::Failed);
         assert!(
             !assembler.assembler_state.contains_key(&material_id),
             "missing staged material file should clean up assembler state"
@@ -1220,7 +1222,7 @@ mod tests {
             .get_by_id(material_id_typed)
             .await?
             .expect("material should exist");
-        assert_eq!(material.status.as_str(), status::COMPLETED);
+        assert_eq!(material.status, MaterialStatus::Completed);
         assert!(
             !assembler.assembler_state.contains_key(&material_id),
             "completed out-of-order assembly should clean up in-memory state"
@@ -1318,7 +1320,7 @@ mod tests {
                 content_hash: &end.content_hash,
                 total_size_bytes: end.total_size_bytes,
                 metadata: json!({}),
-                final_status: status::COMPLETED,
+                final_status: MaterialStatus::Completed,
             })
             .await?;
         assert_eq!(*handle.blob_id.as_uuid(), *blob.id.as_uuid());
@@ -1333,7 +1335,7 @@ mod tests {
             .get_by_id(material_id_typed)
             .await?
             .expect("material should still exist");
-        assert_eq!(material.status.as_str(), status::COMPLETED);
+        assert_eq!(material.status, MaterialStatus::Completed);
         assert_eq!(material.optional_blob_id, Some(*blob.id.as_uuid()));
 
         let ledger_count_after = sqlx::query_scalar!(
@@ -1436,7 +1438,7 @@ mod tests {
                 content_hash: "rollback-blake3",
                 total_size_bytes: -1,
                 metadata: json!({ "finalized": true }),
-                final_status: status::COMPLETED,
+                final_status: MaterialStatus::Completed,
             })
             .await
             .expect_err("negative total_bytes should fail source-material finalization");
@@ -1453,7 +1455,7 @@ mod tests {
             .get_by_id(material_id_typed)
             .await?
             .expect("material should still exist");
-        assert_eq!(material.status.as_str(), status::SENSING);
+        assert_eq!(material.status, MaterialStatus::Sensing);
         assert_eq!(material.optional_blob_id, None);
         assert_eq!(material.metadata["original"], true);
         assert_eq!(material.metadata.get("finalized"), None);
@@ -1558,7 +1560,7 @@ mod tests {
                 content_hash: &end.content_hash,
                 total_size_bytes: end.total_size_bytes,
                 metadata: json!({}),
-                final_status: status::COMPLETED,
+                final_status: MaterialStatus::Completed,
             })
             .await?;
         assert_eq!(*handle.blob_id.as_uuid(), *existing_blob.id.as_uuid());
@@ -1574,7 +1576,7 @@ mod tests {
             .await?
             .expect("material should exist");
 
-        assert_eq!(material.status.as_str(), status::COMPLETED);
+        assert_eq!(material.status, MaterialStatus::Completed);
         assert_eq!(material.optional_blob_id, Some(*existing_blob.id.as_uuid()));
 
         let ledger_entries = sqlx::query_scalar!(
@@ -1664,7 +1666,7 @@ mod tests {
                 content_hash: &end.content_hash,
                 total_size_bytes: end.total_size_bytes,
                 metadata: json!({}),
-                final_status: status::COMPLETED,
+                final_status: MaterialStatus::Completed,
             })
             .await?;
         assert_eq!(*handle.blob_id.as_uuid(), *existing_blob.id.as_uuid());
@@ -1676,7 +1678,7 @@ mod tests {
             .await?
             .expect("material should exist");
 
-        assert_eq!(material.status.as_str(), status::COMPLETED);
+        assert_eq!(material.status, MaterialStatus::Completed);
         assert_eq!(material.optional_blob_id, Some(*existing_blob.id.as_uuid()));
 
         Ok(())

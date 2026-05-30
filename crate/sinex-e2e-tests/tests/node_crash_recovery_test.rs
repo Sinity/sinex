@@ -6,7 +6,7 @@
 //! and persist registry state.
 
 use serde_json::json;
-use sinex_db::repositories::material_status as status;
+use sinex_primitives::MaterialStatus;
 use sinexd::node_sdk::{
     AcquisitionManager, Checkpoint, CheckpointManager, CheckpointState, RotationPolicy,
 };
@@ -225,7 +225,7 @@ async fn test_crash_during_early_material_acquisition(ctx: TestContext) -> Resul
     let status_val: String = row.try_get("status")?;
     let optional_blob_id: Option<Uuid> = row.try_get("optional_blob_id")?;
 
-    assert_eq!(status_val, status::SENSING);
+    assert_eq!(status_val, MaterialStatus::Sensing.as_str());
     assert!(optional_blob_id.is_none());
 
     wait_for_material_ledger_counts(&ctx, material_id, 1, 0).await?;
@@ -275,7 +275,7 @@ async fn test_crash_during_mid_material_acquisition(ctx: TestContext) -> Result<
     let status_val: String = row.try_get("status")?;
     let optional_blob_id: Option<Uuid> = row.try_get("optional_blob_id")?;
 
-    assert_eq!(status_val, status::SENSING);
+    assert_eq!(status_val, MaterialStatus::Sensing.as_str());
     assert!(optional_blob_id.is_none());
 
     wait_for_material_ledger_counts(&ctx, material_id, 1, 0).await?;
@@ -343,7 +343,7 @@ async fn test_orphaned_material_detection_and_recovery(ctx: TestContext) -> Resu
         AND id IN ($2::uuid, $3::uuid)
         ORDER BY staged_at
         "#,
-        status::SENSING,
+        MaterialStatus::Sensing.as_str(),
         Uuid::from(material_id1),
         Uuid::from(material_id2)
     )
@@ -475,7 +475,7 @@ async fn test_concurrent_material_acquisition_with_random_crashes(ctx: TestConte
                     SELECT COUNT(*) FROM raw.source_material_registry
                     WHERE status = $1 AND source_identifier LIKE 'concurrent-source-%'
                     "#,
-                    status::COMPLETED
+                    MaterialStatus::Completed.as_str()
                 )
                 .fetch_one(&pool)
                 .await?
@@ -485,7 +485,7 @@ async fn test_concurrent_material_acquisition_with_random_crashes(ctx: TestConte
                     SELECT COUNT(*) FROM raw.source_material_registry
                     WHERE status = $1 AND source_identifier LIKE 'concurrent-source-%'
                     "#,
-                    status::SENSING
+                    MaterialStatus::Sensing.as_str()
                 )
                 .fetch_one(&pool)
                 .await?
@@ -503,7 +503,7 @@ async fn test_concurrent_material_acquisition_with_random_crashes(ctx: TestConte
         SELECT COUNT(*) FROM raw.source_material_registry
         WHERE status = $1 AND source_identifier LIKE 'concurrent-source-%'
         "#,
-        status::COMPLETED
+        MaterialStatus::Completed.as_str()
     )
     .fetch_one(&ctx.pool)
     .await?
@@ -513,7 +513,7 @@ async fn test_concurrent_material_acquisition_with_random_crashes(ctx: TestConte
         SELECT COUNT(*) FROM raw.source_material_registry
         WHERE status = $1 AND source_identifier LIKE 'concurrent-source-%'
         "#,
-        status::SENSING
+        MaterialStatus::Sensing.as_str()
     )
     .fetch_one(&ctx.pool)
     .await?
@@ -608,7 +608,7 @@ async fn test_crash_during_finalization(ctx: TestContext) -> Result<()> {
     let status_val: String = row.try_get("status")?;
     let optional_blob_id: Option<Uuid> = row.try_get("optional_blob_id")?;
 
-    assert_eq!(status_val, status::SENSING);
+    assert_eq!(status_val, MaterialStatus::Sensing.as_str());
     assert!(optional_blob_id.is_none());
 
     wait_for_material_ledger_counts(&ctx, material_id, 1, 0).await?;
@@ -664,7 +664,7 @@ async fn test_marking_crashed_materials_as_recovered_partial(ctx: TestContext) -
             ))
         WHERE id = $2::uuid
         "#,
-        status::RECOVERED_PARTIAL,
+        MaterialStatus::RecoveredPartial.as_str(),
         Uuid::from(material_id)
     )
     .execute(&ctx.pool)
@@ -681,7 +681,7 @@ async fn test_marking_crashed_materials_as_recovered_partial(ctx: TestContext) -
     .fetch_one(&ctx.pool)
     .await?;
 
-    assert_eq!(recovered_material.status, status::RECOVERED_PARTIAL);
+    assert_eq!(recovered_material.status, MaterialStatus::RecoveredPartial.as_str());
     assert!(
         recovered_material.metadata["recovery_info"].is_object(),
         "expected recovery metadata"

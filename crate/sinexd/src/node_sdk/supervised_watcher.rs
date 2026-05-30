@@ -14,7 +14,7 @@
 //! # Minimal usage (fire-and-forget with logging only)
 //!
 //! ```rust,ignore
-//! use crate::runtime::supervised_watcher::SupervisedWatcherConfig;
+//! use crate::node_sdk::supervised_watcher::SupervisedWatcherConfig;
 //!
 //! let handle = spawn_supervised_watcher(
 //!     "dbus",

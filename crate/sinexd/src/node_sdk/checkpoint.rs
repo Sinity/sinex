@@ -295,7 +295,7 @@ pub fn parse_checkpoint_key(key: &str) -> Option<(String, String, String)> {
 ///
 /// # Usage Pattern
 /// ```rust
-/// use crate::runtime::CheckpointManager;
+/// use crate::node_sdk::CheckpointManager;
 ///
 /// let manager = CheckpointManager::new(
 ///     pool,
