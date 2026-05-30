@@ -7,7 +7,7 @@ use sinex_primitives::domain::{ProcessingMode, TriggerKind};
 use sinex_primitives::events::Event;
 use sinex_primitives::temporal::Timestamp;
 use sinex_primitives::{Id, JsonValue};
-use sinex_process::automata::health::{
+use sinexd::automata::health::{
     ComponentHealthStatus, HealthAggregator, HealthAggregatorConfig, HealthState,
 };
 use time::Duration;
@@ -668,14 +668,14 @@ async fn health_aggregator_rejects_invalid_event_ids_in_system_reports(
     let base_time = Timestamp::now() - Duration::seconds(1);
     state.component_health.insert(
         "service-a".to_string(),
-        sinex_process::automata::health::ComponentHealth {
+        sinexd::automata::health::ComponentHealth {
             component_name: "service-a".to_string(),
             current_status: ComponentHealthStatus::Healthy,
             status_since: base_time,
             last_seen: base_time,
             last_check_emission: None,
             transition_count: 0,
-            events: vec![sinex_process::automata::health::HealthEvent {
+            events: vec![sinexd::automata::health::HealthEvent {
                 timestamp: base_time,
                 previous_status: ComponentHealthStatus::Healthy,
                 current_status: ComponentHealthStatus::Healthy,
@@ -726,14 +726,14 @@ async fn health_aggregator_rejects_invalid_event_ids_in_component_reports(
     let base_time = Timestamp::now() - Duration::seconds(1);
     state.component_health.insert(
         "service-a".to_string(),
-        sinex_process::automata::health::ComponentHealth {
+        sinexd::automata::health::ComponentHealth {
             component_name: "service-a".to_string(),
             current_status: ComponentHealthStatus::Healthy,
             status_since: base_time,
             last_seen: base_time,
             last_check_emission: None,
             transition_count: 0,
-            events: vec![sinex_process::automata::health::HealthEvent {
+            events: vec![sinexd::automata::health::HealthEvent {
                 timestamp: base_time,
                 previous_status: ComponentHealthStatus::Healthy,
                 current_status: ComponentHealthStatus::Healthy,

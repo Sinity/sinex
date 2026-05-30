@@ -1,4 +1,4 @@
-## Workspace Map (9 Workspace Members)
+## Workspace Map (11 Workspace Members)
 
 ### What to import from where
 
@@ -8,7 +8,7 @@
 | Event creation | `sinex_primitives::events::payloads::*` | `EventPayload` trait, typed payload structs |
 | Dynamic events | `sinex_primitives::events::{DynamicPayload, builder::EventBuilder}` | For runtime source/type |
 | DB access | `sinex_db::DbPoolExt` | `pool.events()`, `pool.blobs()`, `pool.source_materials()` etc. |
-| DB schema | `sinex_db::schema` | Schema definitions + declarative convergence engine |
+| DB schema | `sinex_schema` (or `sinex_db::schema` re-export) | Schema definitions + declarative convergence engine |
 | Node SDK | `sinex_node_sdk::*` | `SourceUnit`, `NodeConfig`, `node_entrypoint!`, runtime adapters |
 | Derived nodes | `sinex_node_sdk::{Transducer, Windowed, ScopeReconciler}` | Via `AutomatonRuntime<N>` |
 | Privacy | `sinex_primitives::privacy::*` | `privacy::engine()`, `ProcessingContext` |
@@ -21,14 +21,16 @@
 ```
 crate/
   sinex-primitives/    Foundation: types, validation, errors, IDs, privacy engine
-  sinex-db/            Database pools, repositories, COPY protocol, query helpers,
-                       schema definitions + declarative convergence (sinex_db::schema)
+  sinex-schema/        Schema definitions (defs/) + declarative convergence (apply/converge/
+                       strict_diff). Re-exported by sinex-db as `sinex_db::schema`.
+  sinex-db/            Database pools, repositories, COPY protocol, query helpers
   sinex-macros/        #[derive(EventPayload)]
-  sinex-node-sdk/      Node runtime: lifecycle, checkpoints, replay, CLI framework
+  lib/sinex-node-sdk/  Dying library — node runtime: lifecycle, checkpoints, replay,
+                       CLI framework. Kept at original path; dissolved into sinexd in PR-3.
   sinexd/              Unified daemon; internal modules:
-    sinexd::event_engine   NATS consumer -> batch writes -> confirmations (was sinex-ingestd)
-    sinexd::api            JSON-RPC, SSE subscriptions, native messaging (was sinex-gateway)
-    sinexd::sources        Source-unit host; parser/input-shape adapters (was sinex-source-worker)
+    sinexd::event_engine   NATS consumer -> batch writes -> confirmations
+    sinexd::api            JSON-RPC, SSE subscriptions, native messaging
+    sinexd::sources        Source-unit host; parser/input-shape adapters
     sinexd::automata       Consolidated automata: canonicalizer, analytics, health,
                            session-detector, hourly/daily summarizers, entity/relation workers
     sinexd::supervisor     Module orchestrator: startup ordering, health gate, shutdown

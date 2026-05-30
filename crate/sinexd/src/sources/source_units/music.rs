@@ -21,9 +21,13 @@
 //! which is stable across replays of the same export.
 //!
 //! Idempotent occurrence is additionally guaranteed by `occurrence_key`:
-//! `(spotify_track_uri, started_at, played_ms)` when the URI is present,
-//! otherwise `(track_name, artist_name, started_at, played_ms)`. Duplicate
-//! export snapshots therefore do not double-publish the same playback.
+//! `(track_uri, track_name, artist_name, started_at, played_ms)` — the
+//! same 5 fields in the same order on every row, regardless of whether
+//! `spotify_track_uri` is populated. Rows without a URI carry an empty
+//! `track_uri` and fall back to `(track_name, artist_name, started_at,
+//! played_ms)` as the de-facto identity. Always emitting the same shape
+//! prevents a track played twice (once URI-null, later URI-populated)
+//! from producing two different keys and silently double-publishing.
 //!
 //! ## Privacy
 //!
@@ -227,6 +231,16 @@ fn parse_iso8601(raw: &str) -> ParserResult<Timestamp> {
     Ok(Timestamp::new(dt))
 }
 
+/// Build a stable occurrence key for one playback row.
+///
+/// Always emits the same 5 fields in the same order, regardless of whether
+/// `spotify_track_uri` is populated. A previous version branched on URI
+/// presence — that yielded different key shapes for "same track played
+/// before and after Spotify started populating URIs" and silently broke
+/// dedup. The empty-string sentinel in `track_uri` is the OR-fallback
+/// marker: when URI is absent, dedup falls back to `(track_name,
+/// artist_name, started_at, played_ms)` because `track_uri = ""` for every
+/// such row.
 fn build_occurrence_key(
     uri: Option<&str>,
     track: Option<&str>,
@@ -234,15 +248,22 @@ fn build_occurrence_key(
     ts: &str,
     played_ms: u64,
 ) -> OccurrenceKey {
-    let mut fields = Vec::with_capacity(4);
-    if let Some(uri) = uri {
-        fields.push(("track_uri".into(), uri.to_string()));
-    } else {
-        fields.push(("track_name".into(), track.unwrap_or("").to_string()));
-        fields.push(("artist_name".into(), artist.unwrap_or("").to_string()));
-    }
-    fields.push(("started_at".into(), ts.to_string()));
-    fields.push(("played_ms".into(), played_ms.to_string()));
+    let fields = vec![
+        (
+            "track_uri".into(),
+            uri.unwrap_or("").to_string(),
+        ),
+        (
+            "track_name".into(),
+            track.unwrap_or("").to_string(),
+        ),
+        (
+            "artist_name".into(),
+            artist.unwrap_or("").to_string(),
+        ),
+        ("started_at".into(), ts.to_string()),
+        ("played_ms".into(), played_ms.to_string()),
+    ];
     OccurrenceKey {
         source_unit_id: SourceUnitId::from_static("spotify-extended-history"),
         fields,
@@ -269,7 +290,7 @@ register_source_unit! {
             "ip_and_user_agent_dropped",
         ],
         occurrence_identity: OccurrenceIdentity::Uuid5From(
-            "(spotify_track_uri | track_name+artist, started_at, played_ms)",
+            "(track_uri, track_name, artist_name, started_at, played_ms)",
         ),
         access_policy: "personal_music_history",
     }
@@ -314,6 +335,7 @@ mod tests {
     use sinex_primitives::Uuid;
     use sinex_primitives::ids::Id;
     use sinex_primitives::parser::MaterialAnchor;
+    use sinex_primitives::parser::{OccurrenceFilter, occurrence_key_string};
 
     use xtask::sandbox::prelude::sinex_test;
 
@@ -430,18 +452,21 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn occurrence_key_uses_uri_when_present() -> TestResult<()> {
+    async fn occurrence_key_always_emits_full_five_field_shape() -> TestResult<()> {
         let mut parser = SpotifyHistoryParser;
         let intents = parser
             .parse_record(record_for(SAMPLE_EXPORT.as_bytes()), &test_ctx())
             .await
             .unwrap();
 
+        // URI present: track_uri populated; name/artist still emitted.
         let key = intents[0].occurrence_key.as_ref().unwrap();
         assert_eq!(
             key.fields,
             vec![
                 ("track_uri".to_string(), "spotify:track:abc123".to_string()),
+                ("track_name".to_string(), "Aqualung".to_string()),
+                ("artist_name".to_string(), "Jethro Tull".to_string()),
                 ("started_at".to_string(), "2024-01-15T08:00:00Z".to_string()),
                 ("played_ms".to_string(), "240000".to_string()),
             ]
@@ -450,7 +475,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn occurrence_key_falls_back_to_name_artist() -> TestResult<()> {
+    async fn occurrence_key_uri_absent_fills_empty_track_uri() -> TestResult<()> {
         let mut parser = SpotifyHistoryParser;
         let no_uri = r#"[{
             "ts": "2024-01-15T08:00:00Z",
@@ -464,14 +489,57 @@ mod tests {
             .await
             .unwrap();
         let key = intents[0].occurrence_key.as_ref().unwrap();
+        // Same shape as URI-present rows: track_uri is empty sentinel.
         assert_eq!(
-            key.fields[0],
-            ("track_name".to_string(), "Track".to_string())
+            key.fields,
+            vec![
+                ("track_uri".to_string(), String::new()),
+                ("track_name".to_string(), "Track".to_string()),
+                ("artist_name".to_string(), "Artist".to_string()),
+                ("started_at".to_string(), "2024-01-15T08:00:00Z".to_string()),
+                ("played_ms".to_string(), "100000".to_string()),
+            ]
         );
-        assert_eq!(
-            key.fields[1],
-            ("artist_name".to_string(), "Artist".to_string())
-        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn occurrence_key_uri_null_and_uri_populated_produce_distinct_keys()
+        -> TestResult<()> {
+        // The wrapper-correctness regression: same logical track played
+        // twice (once before Spotify populated URIs, once after) must
+        // produce distinct keys so dedup doesn't drop either occurrence,
+        // and identical-shape rows so an in-memory match is decidable.
+        let mut parser = SpotifyHistoryParser;
+        let two_plays = r#"[
+            {
+                "ts": "2024-01-15T08:00:00Z", "ms_played": 100000,
+                "master_metadata_track_name": "Track",
+                "master_metadata_album_artist_name": "Artist",
+                "shuffle": false, "skipped": false, "offline": false, "incognito_mode": false
+            },
+            {
+                "ts": "2024-01-15T08:00:00Z", "ms_played": 100000,
+                "master_metadata_track_name": "Track",
+                "master_metadata_album_artist_name": "Artist",
+                "spotify_track_uri": "spotify:track:xyz",
+                "shuffle": false, "skipped": false, "offline": false, "incognito_mode": false
+            }
+        ]"#;
+        let intents = parser
+            .parse_record(record_for(two_plays.as_bytes()), &test_ctx())
+            .await
+            .unwrap();
+        let k0 = intents[0].occurrence_key.as_ref().unwrap();
+        let k1 = intents[1].occurrence_key.as_ref().unwrap();
+        // Both keys carry exactly 5 fields, in the same order.
+        assert_eq!(k0.fields.len(), 5);
+        assert_eq!(k1.fields.len(), 5);
+        for (a, b) in k0.fields.iter().zip(k1.fields.iter()) {
+            assert_eq!(a.0, b.0, "field-name positions must match");
+        }
+        // And they differ only in `track_uri`.
+        assert_ne!(k0.fields[0].1, k1.fields[0].1);
         Ok(())
     }
 
@@ -529,6 +597,142 @@ mod tests {
             payload.get("user_agent_decrypted").is_none(),
             "user_agent_decrypted must not be carried"
         );
+        Ok(())
+    }
+
+    // -----------------------------------------------------------------------
+    // OccurrenceFilter dedup (#1050)
+    // -----------------------------------------------------------------------
+
+    #[sinex_test]
+    async fn occurrence_filter_first_import_all_pass() -> TestResult<()> {
+        let mut parser = SpotifyHistoryParser;
+        let intents = parser
+            .parse_record(record_for(SAMPLE_EXPORT.as_bytes()), &test_ctx())
+            .await
+            .unwrap();
+
+        // First import: empty filter, all events should pass.
+        let mut filter = OccurrenceFilter::empty();
+        let mut admitted = 0;
+        for intent in &intents {
+            let key = occurrence_key_string(
+                intent
+                    .occurrence_key
+                    .as_ref()
+                    .expect("Spotify intents must carry occurrence_key"),
+            );
+            if filter.contains(&key) {
+                continue;
+            }
+            filter.insert(key);
+            admitted += 1;
+        }
+        assert_eq!(admitted, 2, "first import: all events should pass");
+        assert_eq!(
+            filter.len(),
+            2,
+            "filter should track both distinct keys"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn occurrence_filter_second_import_all_filtered() -> TestResult<()> {
+        let mut parser = SpotifyHistoryParser;
+
+        // First pass: build the filter.
+        let first = parser
+            .parse_record(record_for(SAMPLE_EXPORT.as_bytes()), &test_ctx())
+            .await
+            .unwrap();
+        let mut filter = OccurrenceFilter::empty();
+        for intent in &first {
+            if let Some(ref key) = intent.occurrence_key {
+                filter.insert(occurrence_key_string(key));
+            }
+        }
+
+        // Second pass: same data, all should be filtered.
+        let second = parser
+            .parse_record(record_for(SAMPLE_EXPORT.as_bytes()), &test_ctx())
+            .await
+            .unwrap();
+        let mut filtered = 0;
+        for intent in &second {
+            if intent
+                .occurrence_key
+                .as_ref()
+                .is_some_and(|k| filter.contains(&occurrence_key_string(k)))
+            {
+                filtered += 1;
+            }
+        }
+        assert_eq!(
+            filtered, 2,
+            "second import: all events should be detected as duplicates"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn occurrence_filter_new_data_passes_old_filtered() -> TestResult<()> {
+        let mut parser = SpotifyHistoryParser;
+
+        // Seed filter with original export.
+        let first = parser
+            .parse_record(record_for(SAMPLE_EXPORT.as_bytes()), &test_ctx())
+            .await
+            .unwrap();
+        let mut filter = OccurrenceFilter::empty();
+        for intent in &first {
+            if let Some(ref key) = intent.occurrence_key {
+                filter.insert(occurrence_key_string(key));
+            }
+        }
+
+        // Parse a different export: one new track, one overlap.
+        // The duplicate row must match the original SAMPLE_EXPORT's first
+        // entry on all 5 occurrence-key fields (track_uri, track_name,
+        // artist_name, started_at, played_ms) — the always-emit-5-fields
+        // shape makes this explicit rather than implicit on URI presence.
+        let mixed = r#"[{
+            "ts": "2024-01-15T08:00:00Z",
+            "ms_played": 240000,
+            "master_metadata_track_name": "Aqualung",
+            "master_metadata_album_artist_name": "Jethro Tull",
+            "spotify_track_uri": "spotify:track:abc123",
+            "shuffle": false, "skipped": false, "offline": false, "incognito_mode": false
+        },
+        {
+            "ts": "2024-01-16T10:30:00Z",
+            "ms_played": 180000,
+            "master_metadata_track_name": "New Song",
+            "master_metadata_album_artist_name": "New Artist",
+            "spotify_track_uri": "spotify:track:new999",
+            "shuffle": false, "skipped": false, "offline": false, "incognito_mode": false
+        }]"#;
+        let second = parser
+            .parse_record(record_for(mixed.as_bytes()), &test_ctx())
+            .await
+            .unwrap();
+
+        let mut dup_count = 0;
+        let mut new_count = 0;
+        for intent in &second {
+            let key_str = occurrence_key_string(
+                intent.occurrence_key.as_ref().unwrap(),
+            );
+            if filter.contains(&key_str) {
+                dup_count += 1;
+            } else {
+                filter.insert(key_str);
+                new_count += 1;
+            }
+        }
+        assert_eq!(dup_count, 1, "abc123 should be a duplicate");
+        assert_eq!(new_count, 1, "new999 should be new");
+        assert_eq!(filter.len(), 3, "filter now has 3 distinct keys");
         Ok(())
     }
 }

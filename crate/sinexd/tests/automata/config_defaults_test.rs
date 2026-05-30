@@ -1,4 +1,4 @@
-use sinex_process::automata::health::HealthAggregatorConfig;
+use sinexd::automata::health::HealthAggregatorConfig;
 use xtask::sandbox::{EnvGuard, sinex_test};
 
 #[sinex_test]

@@ -62,7 +62,7 @@ features = ["derive", "env"]
 
 [dependencies.tokio]
 workspace = true
-features = ["rt-multi-thread", "macros", "time", "signal"]
+features = ["rt-multi-thread", "macros", "time", "signal", "process"]
 
 [dependencies.reqwest]
 workspace = true

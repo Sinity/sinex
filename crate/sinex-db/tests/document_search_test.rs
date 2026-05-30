@@ -93,6 +93,7 @@ async fn document_search_fts_single_word(ctx: TestContext) -> TestResult<()> {
             updated_before: None,
             limit: None,
             offset: None,
+            vector_params: None,
         })
         .await?;
 
@@ -135,6 +136,7 @@ async fn document_search_fts_multi_word(ctx: TestContext) -> TestResult<()> {
             updated_before: None,
             limit: None,
             offset: None,
+            vector_params: None,
         })
         .await?;
 
@@ -179,6 +181,7 @@ async fn document_search_fts_exclusion_operator(ctx: TestContext) -> TestResult<
             updated_before: None,
             limit: None,
             offset: None,
+            vector_params: None,
         })
         .await?;
 
@@ -219,6 +222,7 @@ async fn document_search_trigram_fallback(ctx: TestContext) -> TestResult<()> {
             updated_before: None,
             limit: None,
             offset: None,
+            vector_params: None,
         })
         .await?;
 
@@ -264,6 +268,7 @@ async fn document_search_kind_filter(ctx: TestContext) -> TestResult<()> {
             updated_before: None,
             limit: None,
             offset: None,
+            vector_params: None,
         })
         .await?;
 
@@ -297,6 +302,7 @@ async fn document_search_natural_key_prefix_filter(ctx: TestContext) -> TestResu
             updated_before: None,
             limit: None,
             offset: None,
+            vector_params: None,
         })
         .await?;
 
@@ -332,6 +338,7 @@ async fn document_search_document_ids_filter(ctx: TestContext) -> TestResult<()>
             updated_before: None,
             limit: None,
             offset: None,
+            vector_params: None,
         })
         .await?;
 
@@ -372,6 +379,7 @@ async fn document_search_pagination_non_overlap(ctx: TestContext) -> TestResult<
             updated_before: None,
             limit: Some(2),
             offset: Some(0),
+            vector_params: None,
         })
         .await?;
 
@@ -385,6 +393,7 @@ async fn document_search_pagination_non_overlap(ctx: TestContext) -> TestResult<
             updated_before: None,
             limit: Some(2),
             offset: Some(2),
+            vector_params: None,
         })
         .await?;
 
@@ -429,6 +438,7 @@ async fn document_search_empty_reason_distinguishes_no_match_from_no_index(
             updated_before: None,
             limit: Some(10),
             offset: Some(0),
+            vector_params: None,
         })
         .await?;
     assert!(no_match.results.is_empty());
@@ -445,6 +455,7 @@ async fn document_search_empty_reason_distinguishes_no_match_from_no_index(
             updated_before: None,
             limit: Some(10),
             offset: Some(0),
+            vector_params: None,
         })
         .await?;
     assert!(no_indexed_text.results.is_empty());
@@ -476,6 +487,7 @@ async fn document_search_pagination_ordering_stable(ctx: TestContext) -> TestRes
             updated_before: None,
             limit: Some(10),
             offset: Some(0),
+            vector_params: None,
         })
         .await?;
 
@@ -580,6 +592,7 @@ async fn document_search_empty_query_error(ctx: TestContext) -> TestResult<()> {
             updated_before: None,
             limit: None,
             offset: None,
+            vector_params: None,
         })
         .await;
 
