@@ -42,6 +42,23 @@ fn secret_rules() -> Vec<PatternRule> {
             contexts: vec![],
             enabled: true,
         },
+        // NOTE: Two URL-credential redactors exist by design:
+        //
+        // 1. This regex rule — operates on free-form text (command lines, log lines,
+        //    window titles) where the surrounding context means the input cannot be
+        //    handed to `url::Url::parse`. It must capture credentials embedded inside
+        //    longer strings (e.g. `git clone https://user:pass@host/repo.git`).
+        //
+        // 2. `sinex_primitives::utils::url_redaction` — uses `url::Url::parse` for
+        //    structured inputs (operator-facing config/diagnostic display). More robust
+        //    for edge cases (IPv6 hosts, multiple `@` in password, non-ASCII schemes).
+        //
+        // Keeping both is legitimate; this rule cannot delegate to the structured path
+        // because the privacy engine processes arbitrary free text, not parsed URLs.
+        //
+        // Sentinel alignment: both use `***` so redacted output is consistent regardless
+        // of which path handled the URL. The structured path produces `user:***@host`;
+        // this regex produces `proto://user:***@` (same `***` sentinel).
         PatternRule {
             name: "url_credentials".into(),
             description: "Credentials embedded in URLs (proto://user:pass@host)".into(),
@@ -50,7 +67,9 @@ fn secret_rules() -> Vec<PatternRule> {
                 pattern: r"([a-z]+://)([^:@\s]+):([^@\s]+)@".into(),
             },
             strategy: Strategy::Redact {
-                label: Some("$1<USER>:<REDACTED>@".into()),
+                // Keep scheme and username; replace password with `***` to match the
+                // sentinel used by `url_redaction::redact_url_password_for_diagnostics`.
+                label: Some("$1$2:***@".into()),
             },
             contexts: vec![],
             enabled: true,

@@ -19,6 +19,7 @@ use sinex_primitives::Timestamp;
 use sinex_primitives::constants::services::HEARTBEAT_INTERVAL;
 use sinex_primitives::events::Event;
 use sinex_primitives::query::SubscriptionFilter;
+use sinex_primitives::validation::validate_json;
 use sinex_primitives::{Id, JsonValue};
 use std::convert::Infallible;
 use std::sync::Arc;
@@ -105,7 +106,26 @@ pub(crate) async fn handle_sse_stream(
 
     // ── Parse filter ──
     let filter = if let Some(filter_json) = params.filter {
-        match serde_json::from_str::<SubscriptionFilter>(&filter_json) {
+        // Route through `validate_json` so the depth guard (32 levels) applies to
+        // client-supplied filter JSON before deserialization. Without this, a deeply
+        // nested filter under the byte cap would reach `serde_json` without a depth
+        // bound. (#1578)
+        let json_value = match validate_json(&filter_json) {
+            Ok(v) => v,
+            Err(e) => {
+                let detail = e.to_string();
+                log_access_audit(
+                    "sse",
+                    "events.stream",
+                    AccessOutcome::InvalidRequest,
+                    Some(&auth_ctx),
+                    Some(&detail),
+                );
+                return (StatusCode::BAD_REQUEST, format!("Invalid filter JSON: {detail}"))
+                    .into_response();
+            }
+        };
+        match serde_json::from_value::<SubscriptionFilter>(json_value) {
             Ok(f) => {
                 if let Err(e) = f.validate() {
                     let detail = e.to_string();
