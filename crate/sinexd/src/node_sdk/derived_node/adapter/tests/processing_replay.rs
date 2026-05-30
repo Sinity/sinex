@@ -78,8 +78,11 @@ async fn derived_outputs_propagate_runtime_source_run_id(ctx: TestContext) -> Te
 }
 
 #[sinex_test]
-async fn derived_outputs_use_deterministic_event_ids() -> TestResult<()> {
-    let input = make_input_event("deterministic-output")?;
+async fn derived_outputs_carry_unique_random_uuidv7_ids() -> TestResult<()> {
+    // Event IDs are interpretation identity: each processing invocation mints a
+    // fresh UUIDv7. Two independent processings of the same input event must
+    // produce DIFFERENT output IDs (replay creates new interpretations).
+    let input = make_input_event("random-id-output")?;
     let mut first_adapter = AutomatonRuntime::new(TransducerWrapper(EmittingDerivedNode));
     let mut second_adapter = AutomatonRuntime::new(TransducerWrapper(EmittingDerivedNode));
 
@@ -96,12 +99,21 @@ async fn derived_outputs_use_deterministic_event_ids() -> TestResult<()> {
         .next()
         .ok_or_else(|| color_eyre::eyre::eyre!("emitting node should produce an output"))?;
 
-    assert_eq!(first_output.id, second_output.id);
-    let id = first_output
+    let first_id = first_output
         .id
-        .ok_or_else(|| color_eyre::eyre::eyre!("derived output should carry deterministic id"))?;
-    assert_eq!(id.as_uuid().get_version_num(), 7);
-    assert_eq!(id.as_uuid().get_variant(), uuid::Variant::RFC4122);
+        .ok_or_else(|| color_eyre::eyre::eyre!("derived output must carry an event id"))?;
+    let second_id = second_output
+        .id
+        .ok_or_else(|| color_eyre::eyre::eyre!("derived output must carry an event id"))?;
+
+    // Each invocation yields a new interpretation identity.
+    assert_ne!(first_id, second_id, "re-processing must produce a distinct event id");
+
+    // Both must be valid RFC4122 UUIDv7 (required by the admission gate).
+    assert_eq!(first_id.as_uuid().get_version_num(), 7);
+    assert_eq!(first_id.as_uuid().get_variant(), uuid::Variant::RFC4122);
+    assert_eq!(second_id.as_uuid().get_version_num(), 7);
+    assert_eq!(second_id.as_uuid().get_variant(), uuid::Variant::RFC4122);
     Ok(())
 }
 

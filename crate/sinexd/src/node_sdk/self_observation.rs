@@ -32,7 +32,7 @@
 
 use crate::node_sdk::acquisition_manager::{AcquisitionManager, RotationPolicy};
 use crate::node_sdk::error_helpers::env_nonempty_string_optional;
-use crate::node_sdk::{BufferedRecordMaterializer, NatsPublisher, deterministic_material_event_id};
+use crate::node_sdk::{BufferedRecordMaterializer, NatsPublisher};
 use async_nats::Client as NatsClient;
 use sinex_primitives::env as shared_env;
 use sinex_primitives::events::payloads::{
@@ -382,16 +382,12 @@ impl SelfObserver {
                 return Err(SelfObservationError::Build(error));
             }
         };
-        let event_id = deterministic_material_event_id(
-            event.source.as_str(),
-            event.event_type.as_str(),
-            anchor.material_id,
-            anchor.offset_start,
-            Some(anchor.offset_start),
-            Some(anchor.offset_end),
-            ts_orig,
-        );
-        event.id = Some(Id::from_uuid(event_id));
+        // Mint a fresh random UUIDv7: event ID is interpretation identity, not occurrence
+        // identity. ON CONFLICT (id) DO NOTHING dedup works because the id is minted once
+        // at publish time and carried unchanged through NATS redelivery.
+        let new_id = Id::new();
+        event.id = Some(new_id);
+        let event_id = new_id.to_uuid();
 
         let event = match event.to_json_event() {
             Ok(event) => event,

@@ -181,9 +181,8 @@ fn is_source_material_fk_constraint_name(value: &str) -> bool {
 
 /// Hard guard for node-supplied event IDs.
 ///
-/// Ingestors and derived nodes may use `crate::node_sdk::deterministic_event_id`
-/// for idempotent source occurrences, but ingestd still rejects every ID that is
-/// not an RFC4122 `UUIDv7` before it reaches the hypertable partition key.
+/// All node-minted event IDs must be RFC4122 UUIDv7. `ingestd` rejects every ID
+/// that does not meet this requirement before it reaches the hypertable partition key.
 #[cfg(test)]
 fn is_uuid_v7(value: &Uuid) -> bool {
     value.get_version_num() == 7 && value.get_variant() == uuid::Variant::RFC4122
@@ -2819,14 +2818,8 @@ mod tests {
 
     #[sinex_test]
     async fn uuid_v7_guard_rejects_other_uuid_versions() -> TestResult<()> {
+        // Random UUIDv7 minted by Id::new() must pass the admission guard.
         assert!(is_uuid_v7(&Uuid::now_v7()));
-        let deterministic_timestamp =
-            Timestamp::from_const(time::macros::datetime!(2024-03-09 16:00:00.123 UTC));
-        assert!(is_uuid_v7(&crate::node_sdk::deterministic_event_id(
-            "ingestd-guard",
-            "source-anchor",
-            deterministic_timestamp
-        )));
         assert!(!is_uuid_v7(&Uuid::new_v4()));
         assert!(!is_uuid_v7(
             &"019da690-06f8-707c-f98d-218250d05d62".parse::<Uuid>()?
