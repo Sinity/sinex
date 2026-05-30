@@ -1314,18 +1314,18 @@ impl JetStreamConsumer {
                             let (source, event_type) = (kind.0.clone(), kind.1.clone());
                             let key = kind;
                             Some(async move {
-                                // Watermark advancement gate.
-                                let advance = {
-                                    let mut wm = watermark.lock().await;
-                                    let existing = wm.get(&key).copied();
-                                    let should_advance =
-                                        existing.is_none_or(|prev| max_event_id > prev);
-                                    if should_advance {
-                                        wm.insert(key, max_event_id);
-                                    }
-                                    should_advance
+                                // Watermark advancement gate: check-only first, do NOT
+                                // insert yet. The watermark must only advance after a
+                                // successful publish; inserting before publish means a
+                                // failed publish + failed retry-enqueue (durability-gap
+                                // path) leaves the watermark advanced so JetStream
+                                // redelivery hits the !should_publish branch and silently
+                                // skips re-publishing the confirmation.
+                                let should_publish = {
+                                    let wm = watermark.lock().await;
+                                    wm.get(&key).copied().is_none_or(|prev| max_event_id > prev)
                                 };
-                                if !advance {
+                                if !should_publish {
                                     // Already at or beyond this watermark; skip
                                     // publish but treat as success so downstream
                                     // ack accounting proceeds.
@@ -1353,6 +1353,17 @@ impl JetStreamConsumer {
                                         &event_type,
                                     )
                                     .await;
+                                // Advance the watermark only on success. Re-check under
+                                // the lock because a concurrent batch may have advanced
+                                // past max_event_id while we were publishing — never move
+                                // it backwards.
+                                if result.is_ok() {
+                                    let mut wm = watermark.lock().await;
+                                    let cur = wm.get(&key).copied();
+                                    if cur.is_none_or(|prev| max_event_id > prev) {
+                                        wm.insert(key, max_event_id);
+                                    }
+                                }
                                 (preps, max_event_id, source, event_type, result)
                             })
                         })
@@ -1831,16 +1842,13 @@ impl JetStreamConsumer {
                 let (source, event_type) = (kind.0.clone(), kind.1.clone());
                 let key = kind;
                 Some(async move {
-                    let advance = {
-                        let mut wm = watermark.lock().await;
-                        let existing = wm.get(&key).copied();
-                        let should_advance = existing.is_none_or(|prev| max_event_id > prev);
-                        if should_advance {
-                            wm.insert(key, max_event_id);
-                        }
-                        should_advance
+                    // Check-only; do not advance the watermark until publish succeeds.
+                    // See the matching comment on the primary batch path above.
+                    let should_publish = {
+                        let wm = watermark.lock().await;
+                        wm.get(&key).copied().is_none_or(|prev| max_event_id > prev)
                     };
-                    if !advance {
+                    if !should_publish {
                         return (preps, max_event_id, source, event_type, Ok(()));
                     }
                     let _permit = match sem.acquire().await {
@@ -1859,6 +1867,14 @@ impl JetStreamConsumer {
                     let result = self
                         .publish_confirmation_with_retry(&max_event_id, &source, &event_type)
                         .await;
+                    // Advance the watermark only on success, with monotonic guard.
+                    if result.is_ok() {
+                        let mut wm = watermark.lock().await;
+                        let cur = wm.get(&key).copied();
+                        if cur.is_none_or(|prev| max_event_id > prev) {
+                            wm.insert(key, max_event_id);
+                        }
+                    }
                     (preps, max_event_id, source, event_type, result)
                 })
             })
