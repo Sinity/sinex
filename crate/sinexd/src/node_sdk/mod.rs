@@ -56,7 +56,6 @@ pub mod health_reporter;
 pub mod heartbeat;
 // cfg gate removed
 pub mod hyprland;
-pub mod ids;
 pub mod ingestion_helpers;
 // cfg gate removed
 pub mod ingestor_node;
@@ -153,7 +152,6 @@ pub use hyprland::{
     HyprlandCommandSocketProbe, HyprlandCommandSocketResponse, dispatch_hyprland_workspace_command,
     probe_hyprland_command_socket, resolve_hyprland_command_socket_path,
 };
-pub use ids::{deterministic_event_id, deterministic_material_event_id};
 // cfg gate removed
 pub use ingestor_node::{IngestorState, SourceUnit, SourceUnitRuntime};
 pub use input_shapes::{

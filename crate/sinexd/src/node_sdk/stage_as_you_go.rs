@@ -1,7 +1,6 @@
 //! Utilities for staging files during processing.
 
 use crate::node_sdk::acquisition_manager::{AcquisitionManager, SourceMaterialHandle};
-use crate::node_sdk::ids::deterministic_material_event_id;
 use crate::node_sdk::runtime::stream::{EventEmitter, NodeHandles, NodeRuntimeState};
 use crate::node_sdk::{NodeResult, SinexError};
 
@@ -66,7 +65,6 @@ mod tests {
     use super::StageAsYouGoContext;
     use crate::node_sdk::SinexError;
     use crate::node_sdk::acquisition_manager::{AcquisitionManager, SOURCE_MATERIAL_END_SUBJECT};
-    use crate::node_sdk::ids::deterministic_material_event_id;
     use crate::node_sdk::runtime::stream::EventEmitter;
     use sinex_primitives::environment::environment;
     use sinex_primitives::{DynamicPayload, Id, events::Provenance};
@@ -110,21 +108,11 @@ mod tests {
         let stored_id = emitted
             .id
             .ok_or_else(|| SinexError::processing("event ID should be assigned"))?;
+        // The returned id and the stored id must agree (single mint, carried through).
         assert_eq!(*stored_id.as_uuid(), emitted_id);
-        assert_eq!(
-            *stored_id.as_uuid(),
-            deterministic_material_event_id(
-                "stage.test",
-                "line.captured",
-                material_id,
-                12,
-                Some(12),
-                Some(34),
-                emitted
-                    .ts_orig
-                    .ok_or_else(|| SinexError::processing("event timestamp should be assigned"))?
-            )
-        );
+        // Event id is a random UUIDv7 (interpretation identity, not occurrence identity).
+        assert_eq!(stored_id.as_uuid().get_version_num(), 7);
+        assert_eq!(stored_id.as_uuid().get_variant(), uuid::Variant::RFC4122);
 
         match emitted.provenance() {
             Provenance::Material { anchor_byte, .. } => {
@@ -592,16 +580,13 @@ impl StageAsYouGoContext {
         offset_end: Option<i64>,
     ) -> NodeResult<Uuid> {
         let anchor_byte = offset_start.or(offset_end).unwrap_or(0);
-        let ts_orig = if let Some(timestamp) = event.ts_orig {
-            timestamp
-        } else {
-            let timestamp = self
-                .material_started_at(source_material_id)
-                .await
-                .unwrap_or_else(Timestamp::now);
-            event.ts_orig = Some(timestamp);
-            timestamp
-        };
+        if event.ts_orig.is_none() {
+            event.ts_orig = Some(
+                self.material_started_at(source_material_id)
+                    .await
+                    .unwrap_or_else(Timestamp::now),
+            );
+        }
 
         validate_stage_material_provenance(
             &event.provenance,
@@ -611,26 +596,12 @@ impl StageAsYouGoContext {
             offset_end,
         )?;
 
-        let expected_event_id = deterministic_material_event_id(
-            event.source.as_str(),
-            event.event_type.as_str(),
-            source_material_id,
-            anchor_byte,
-            offset_start,
-            offset_end,
-            ts_orig,
-        );
-        if let Some(existing_id) = event.id {
-            if existing_id.to_uuid() != expected_event_id {
-                return Err(SinexError::processing(
-                    "Stage-as-You-Go event ID does not match material provenance",
-                )
-                .with_context("event_id", existing_id.to_string())
-                .with_context("expected_event_id", expected_event_id.to_string())
-                .with_context("source_material_id", source_material_id.to_string()));
-            }
-        } else {
-            event.id = Some(Id::from_uuid(expected_event_id));
+        // Mint a fresh random UUIDv7 if none is set. Event IDs are interpretation
+        // identity: unique per creation, new on every replay. ON CONFLICT (id) DO NOTHING
+        // dedup operates on the id carried in the NATS payload, which is minted once at
+        // build time and survives redelivery unchanged.
+        if event.id.is_none() {
+            event.id = Some(Id::new());
         }
 
         // Send event via event channel

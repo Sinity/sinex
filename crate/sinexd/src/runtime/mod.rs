@@ -6,7 +6,6 @@
 
 pub use crate::node_sdk::content_store;
 pub use crate::node_sdk::derived_node;
-pub use crate::node_sdk::deterministic_event_id;
 pub use crate::node_sdk::error_helpers;
 pub use crate::node_sdk::heartbeat;
 pub use crate::node_sdk::ingestor_node;
