@@ -31,7 +31,7 @@ fn instruction(
     desired_workspace_id: i32,
     deadline: Option<Timestamp>,
     dry_run: bool,
-) -> DesktopWorkspaceSwitchInstructionPayload {
+) -> Result<DesktopWorkspaceSwitchInstructionPayload, sinex_primitives::SinexError> {
     DesktopWorkspaceSwitchInstructionPayload::hyprland_operator_direct(
         Uuid::now_v7(),
         desired_workspace_id,
@@ -39,7 +39,6 @@ fn instruction(
         deadline,
         dry_run,
     )
-    .expect("valid instruction")
 }
 
 fn observation(to_workspace_id: i32) -> HyprlandWorkspaceSwitchedPayload {
@@ -67,7 +66,7 @@ async fn fulfilled_workspace_observation_emits_expectation_status() -> TestResul
         .reconcile(
             &mut state,
             "desktop.hyprland.workspace",
-            serde_json::to_value(instruction(4, None, false))?,
+            serde_json::to_value(instruction(4, None, false)?)?,
             &instruction_ctx,
         )
         .await?;
@@ -132,7 +131,7 @@ async fn non_matching_first_workspace_observation_contradicts_instruction() -> T
         .reconcile(
             &mut state,
             "desktop.hyprland.workspace",
-            serde_json::to_value(instruction(4, None, false))?,
+            serde_json::to_value(instruction(4, None, false)?)?,
             &instruction_ctx,
         )
         .await?;
@@ -176,7 +175,7 @@ async fn late_workspace_observation_times_out_instruction() -> TestResult<()> {
         .reconcile(
             &mut state,
             "desktop.hyprland.workspace",
-            serde_json::to_value(instruction(4, Some(deadline), false))?,
+            serde_json::to_value(instruction(4, Some(deadline), false)?)?,
             &instruction_ctx,
         )
         .await?;
@@ -226,7 +225,7 @@ async fn dry_run_instruction_does_not_wait_for_observation() -> TestResult<()> {
         .reconcile(
             &mut state,
             "desktop.hyprland.workspace",
-            serde_json::to_value(instruction(4, None, true))?,
+            serde_json::to_value(instruction(4, None, true)?)?,
             &instruction_ctx,
         )
         .await?;
