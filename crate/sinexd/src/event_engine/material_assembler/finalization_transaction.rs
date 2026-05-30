@@ -11,7 +11,7 @@ use sinex_db::{
     repositories::{DbPoolExt, TemporalLedgerEntry},
 };
 use crate::node_sdk::content_store::ContentStoreKey;
-use sinex_primitives::{Id, JsonValue, Uuid};
+use sinex_primitives::{Id, JsonValue, MaterialStatus, Uuid};
 use tracing::{error, info, warn};
 
 use crate::event_engine::{IngestdResult, SinexError};
@@ -91,7 +91,7 @@ pub(super) struct FinalizationRequest<'a> {
     pub content_hash: &'a str,
     pub total_size_bytes: i64,
     pub metadata: JsonValue,
-    pub final_status: &'a str,
+    pub final_status: MaterialStatus,
 }
 
 #[derive(Debug)]
@@ -349,7 +349,7 @@ impl<'a> FinalizationTransaction<'a> {
         &self,
         tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
         state: &FinalizationState,
-        final_status: &str,
+        final_status: MaterialStatus,
         blob_id: Id<Blob>,
         total_size_bytes: i64,
         metadata: JsonValue,
@@ -451,7 +451,7 @@ impl<'a> FinalizationTransaction<'a> {
         &self,
         final_state: &FinalizationState,
         content_key: &ContentStoreKey,
-        final_status: &str,
+        final_status: MaterialStatus,
     ) -> IngestdResult<Option<FinalizedHandle>> {
         let material = self
             .assembler
@@ -507,7 +507,7 @@ impl<'a> FinalizationTransaction<'a> {
         &self,
         final_state: &FinalizationState,
         content_key: &ContentStoreKey,
-        final_status: &str,
+        final_status: MaterialStatus,
     ) -> FinalizationCommitOutcome {
         match self
             .committed_handle(final_state, content_key, final_status)
@@ -575,7 +575,7 @@ fn finalization_unknown_commit_error(
     reconcile_error: &SinexError,
     material_id: Uuid,
     content_key: &ContentStoreKey,
-    final_status: &str,
+    final_status: MaterialStatus,
 ) -> SinexError {
     commit_error
         .with_context("commit_outcome", "unknown")
@@ -609,7 +609,7 @@ fn rollback_finalization_failure(
 
 #[cfg(test)]
 mod tests {
-    use sinex_db::repositories::source_materials::status;
+    use sinex_primitives::MaterialStatus;
     use crate::node_sdk::content_store::ContentStoreKey;
     use sinex_primitives::Uuid;
     use xtask::sandbox::prelude::*;
@@ -640,7 +640,7 @@ mod tests {
             &SinexError::database("reconcile failed"),
             Uuid::now_v7(),
             &content_key,
-            status::COMPLETED,
+            MaterialStatus::Completed,
         );
 
         assert!(finalization_commit_outcome_unknown(&error));
@@ -654,7 +654,7 @@ mod tests {
         );
         assert_eq!(
             error.context_map().get("final_status"),
-            Some(&status::COMPLETED.to_string())
+            Some(&MaterialStatus::Completed.to_string())
         );
         assert_eq!(
             error.context_map().get("content_key"),

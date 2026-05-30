@@ -14,7 +14,7 @@ use tracing::warn;
 /// # Examples
 ///
 /// ```rust
-/// use crate::runtime::error_helpers::io_error_with_context;
+/// use crate::node_sdk::error_helpers::io_error_with_context;
 ///
 /// let result = std::fs::read("nonexistent.txt")
 ///     .map_err(|e| io_error_with_context(&e, "Failed to read config file"));
@@ -53,10 +53,10 @@ pub fn processing_error_fmt(args: std::fmt::Arguments<'_>) -> SinexError {
 /// # Examples
 ///
 /// ```rust
-/// use crate::runtime::error_helpers::parse_config_value;
+/// use crate::node_sdk::error_helpers::parse_config_value;
 ///
 /// let value: Option<bool> = parse_config_value("enabled", &context)?;
-/// # Ok::<(), sinex_node_sdk::SinexError>(())
+/// # Ok::<(), sinex_primitives::error::SinexError>(())
 /// ```
 pub trait ConfigAccessor {
     fn config_map(&self) -> &HashMap<String, serde_json::Value>;
@@ -100,7 +100,7 @@ pub fn parse_config_value<T: serde::de::DeserializeOwned, S: ConfigAccessor>(
 /// # Examples
 ///
 /// ```rust
-/// use crate::runtime::error_helpers::parse_typed_config;
+/// use crate::node_sdk::error_helpers::parse_typed_config;
 ///
 /// #[derive(serde::Deserialize)]
 /// struct MyConfig {
@@ -108,7 +108,7 @@ pub fn parse_config_value<T: serde::de::DeserializeOwned, S: ConfigAccessor>(
 /// }
 ///
 /// let config: Option<MyConfig> = parse_typed_config("my_service", &context)?;
-/// # Ok::<(), sinex_node_sdk::SinexError>(())
+/// # Ok::<(), sinex_primitives::error::SinexError>(())
 /// ```
 pub fn parse_typed_config<T: serde::de::DeserializeOwned, S: ConfigAccessor>(
     config_key: &str,
@@ -252,7 +252,7 @@ pub mod path_utils {
 /// # Examples
 ///
 /// ```rust
-/// use crate::runtime::error_helpers::general_error;
+/// use crate::node_sdk::error_helpers::general_error;
 ///
 /// let result: Result<(), std::io::Error> = Err(std::io::Error::new(
 ///     std::io::ErrorKind::NotFound,
@@ -283,7 +283,7 @@ pub fn general_error<E: std::fmt::Display>(error: E, context: &str) -> crate::no
 ///
 /// **After:**
 /// ```rust
-/// use crate::runtime::error_helpers::NodeErrorExt;
+/// use crate::node_sdk::error_helpers::NodeErrorExt;
 ///
 /// acquisition
 ///     .begin_material(&identifier)

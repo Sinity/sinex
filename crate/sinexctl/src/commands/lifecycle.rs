@@ -509,14 +509,14 @@ fn format_status_table(
     output.push('\n');
 
     for tier in &response.tiers {
-        let tier_str = tier.tier.to_string();
-        let tier_icon = match tier_str.as_str() {
-            "live" => "[L]",
-            "archive" => "[A]",
-            "tombstone" => "[T]",
-            _ => "  ",
+        use sinex_primitives::domain::DataTier;
+        let tier_icon = match tier.tier {
+            DataTier::Live => "[L]",
+            DataTier::Archive => "[A]",
+            DataTier::Tombstone => "[T]",
         };
-
+        // Capitalize the enum display name for the table header.
+        let tier_str = tier.tier.to_string();
         let tier_name = tier_str
             .chars()
             .next()

@@ -4,11 +4,11 @@
 //! sinex-node-sdk crate, allowing for more ergonomic imports:
 //!
 //! ```rust
-//! use crate::runtime::prelude::*;
+//! use crate::node_sdk::prelude::*;
 //!
 //! // Instead of:
-//! // use crate::runtime::{Node, CheckpointManager, NodeCoordination};
-//! // use crate::runtime::{NodeConfig, TimeHorizon, Checkpoint};
+//! // use crate::node_sdk::{Node, CheckpointManager, NodeCoordination};
+//! // use crate::node_sdk::{NodeConfig, TimeHorizon, Checkpoint};
 //! ```
 
 // Core node traits and types
@@ -40,9 +40,6 @@ pub use crate::node_sdk::{IngestorState, SourceUnit, SourceUnitRuntime};
 #[cfg(feature = "messaging")]
 pub use crate::node_sdk::{EventSender, EventStream};
 
-// CLI and utilities
-#[cfg(feature = "messaging")]
-pub use crate::node_sdk::NodeArgs;
 // Error types
 pub use crate::node_sdk::{NodeResult, SinexError};
 

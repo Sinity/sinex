@@ -15,7 +15,7 @@ static GLOBAL: MiMalloc = MiMalloc;
 
 use clap::{Parser, Subcommand};
 use std::collections::HashMap;
-use sinexd::runtime::service_runtime::{TracingFormat, install_tracing};
+use sinexd::node_sdk::service_runtime::{TracingFormat, install_tracing};
 use sinexd::api::config::GatewayConfig;
 use sinexd::event_engine::IngestdConfig;
 use sinexd::sources::bindings::{self as source_bindings, SourceBinding};

@@ -13,6 +13,7 @@ use sea_query::{
 };
 use serde_json::Value as JsonValue;
 use sqlx::FromRow;
+use sinex_primitives::MaterialStatus;
 
 // =============================================================================
 // The `raw.source_material_registry` Table
@@ -104,7 +105,7 @@ pub struct SourceMaterialRecord {
     /// disambiguation.  Canonical parser/formatter:
     /// `sinex_primitives::domain::SourceIdentifier`.
     pub source_identifier: String,
-    pub status: String,
+    pub status: MaterialStatus,
     pub timing_info_type: String,
     pub metadata: JsonValue,
     pub staged_at: Timestamp,

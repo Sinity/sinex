@@ -220,7 +220,7 @@ impl AcquisitionManager {
     /// # Examples
     ///
     /// ```rust,no_run
-    /// # use crate::runtime::acquisition_manager::AcquisitionManager;
+    /// # use crate::node_sdk::acquisition_manager::AcquisitionManager;
     /// # async fn example() {
     /// let nats_client = async_nats::connect("nats://localhost").await.unwrap();
     /// let manager = AcquisitionManager::with_defaults(nats_client, "terminal");

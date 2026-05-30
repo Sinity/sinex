@@ -525,7 +525,7 @@ impl HealthAggregator {
     }
 }
 
-/// Node type alias for use with `node_entrypoint!`.
+/// Node type alias registered via `AutomatonSpec` in `automata::registry`.
 pub type HealthAggregatorNode = ScopeReconcilerNodeAdapter<HealthAggregator>;
 
 fn parse_component_name(input: &JsonValue) -> Result<&str, NodeLogicError> {

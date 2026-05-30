@@ -35,7 +35,7 @@ pub mod inferred {
 /// Returns `None` when the MIME type has no known suffix mapping.
 ///
 /// ```
-/// use crate::runtime::tags::mime_to_tag_suffix;
+/// use crate::node_sdk::tags::mime_to_tag_suffix;
 /// assert_eq!(mime_to_tag_suffix("text/markdown"), Some("text-markdown"));
 /// assert_eq!(mime_to_tag_suffix("text/plain"), Some("text-plain"));
 /// assert_eq!(mime_to_tag_suffix("application/pdf"), Some("pdf"));
@@ -65,7 +65,7 @@ pub fn mime_to_tag_suffix(mime_type: &str) -> Option<&'static str> {
 /// Returns an empty vector when the MIME type has no known mapping.
 ///
 /// ```
-/// use crate::runtime::tags::auto_tags_for_mime;
+/// use crate::node_sdk::tags::auto_tags_for_mime;
 /// assert_eq!(auto_tags_for_mime("text/markdown"), vec!["sys.mime.text-markdown"]);
 /// assert!(auto_tags_for_mime("image/png").is_empty());
 /// ```
@@ -80,7 +80,7 @@ pub fn auto_tags_for_mime(mime_type: &str) -> Vec<String> {
 /// Construct a tag name from a prefix and suffix.
 ///
 /// ```
-/// use crate::runtime::tags::tag_name;
+/// use crate::node_sdk::tags::tag_name;
 /// assert_eq!(tag_name("sys.mime", "text-markdown"), "sys.mime.text-markdown");
 /// ```
 #[must_use]
@@ -100,7 +100,7 @@ pub fn prefix_pattern(prefix: &str) -> String {
 /// Return the immediate parent prefix of a dot-scoped tag name.
 ///
 /// ```
-/// use crate::runtime::tags::parent_prefix;
+/// use crate::node_sdk::tags::parent_prefix;
 /// assert_eq!(parent_prefix("sys.mime.text-markdown"), Some("sys.mime".to_string()));
 /// assert_eq!(parent_prefix("sys"), None);
 /// ```

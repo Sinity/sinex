@@ -1180,35 +1180,40 @@ impl<'a> EventRepository<'a> {
 
         // QueryBuilder is required here because UNNEST cannot represent ragged arrays
         // (source_event_ids/associated_blob_ids) and `query!` rejects array nulls.
-        let mut builder = QueryBuilder::new(
-            "INSERT INTO core.events (
-                id, source, event_type, host, payload,
-                ts_orig, ts_orig_subnano, source_run_id, payload_schema_id, source_event_ids,
-                source_material_id, offset_start, offset_end, offset_kind,
-                anchor_byte, associated_blob_ids,
-                temporal_policy, semantics_version, scope_key, equivalence_key,
-                created_by_operation_id, node_model, anchor_payload_hash
-            ) ",
-        );
+        //
+        // Column list is derived from EVENT_COPY_COLUMNS (the SSOT) so that adding
+        // a new core.events column only requires updating postgres_copy.rs — not this
+        // site. Bind order MUST match EVENT_COPY_COLUMNS order exactly. (#1575)
+        let mut builder = QueryBuilder::new(format!(
+            "INSERT INTO core.events ({}) ",
+            event_copy_column_list_sql()
+        ));
         builder.push_values(0..ids.len(), |mut b, idx| {
+            // Bind order: id, source, event_type, ts_orig, ts_orig_subnano, host, payload,
+            // source_material_id, anchor_byte, offset_start, offset_end, offset_kind,
+            // source_event_ids, payload_schema_id, source_run_id, anchor_payload_hash,
+            // associated_blob_ids, temporal_policy, semantics_version, scope_key,
+            // equivalence_key, created_by_operation_id, node_model
+            // — matches EVENT_COPY_COLUMNS order.
             b.push_bind(ids[idx]).push_unseparated("::uuid");
             b.push_bind(&sources[idx]);
             b.push_bind(&event_types[idx]);
-            b.push_bind(&hosts[idx]);
-            b.push_bind(&payloads[idx]);
             b.push_bind(ts_orig_values[idx]);
             b.push_bind(ts_orig_subnanos[idx]);
-            b.push_bind(source_run_ids[idx]).push_unseparated("::uuid");
-            b.push_bind(payload_schema_ids[idx])
-                .push_unseparated("::uuid");
-            b.push_bind(&source_event_ids[idx])
-                .push_unseparated("::uuid[]");
+            b.push_bind(&hosts[idx]);
+            b.push_bind(&payloads[idx]);
             b.push_bind(source_material_ids[idx])
                 .push_unseparated("::uuid");
+            b.push_bind(anchor_bytes[idx]);
             b.push_bind(offset_starts[idx]);
             b.push_bind(offset_ends[idx]);
             b.push_bind(&offset_kinds[idx]);
-            b.push_bind(anchor_bytes[idx]);
+            b.push_bind(&source_event_ids[idx])
+                .push_unseparated("::uuid[]");
+            b.push_bind(payload_schema_ids[idx])
+                .push_unseparated("::uuid");
+            b.push_bind(source_run_ids[idx]).push_unseparated("::uuid");
+            b.push_bind(&anchor_payload_hashes[idx]);
             b.push_bind(&associated_blob_ids[idx])
                 .push_unseparated("::uuid[]");
             b.push_bind(&temporal_policies[idx]);
@@ -1218,7 +1223,6 @@ impl<'a> EventRepository<'a> {
             b.push_bind(created_by_operation_ids[idx])
                 .push_unseparated("::uuid");
             b.push_bind(&node_models[idx]);
-            b.push_bind(&anchor_payload_hashes[idx]);
         });
 
         builder.build().execute(&mut **tx).await.map_err(|e| {
@@ -1406,18 +1410,23 @@ impl<'a> EventRepository<'a> {
         let created_by_op_ids: Vec<_> = batch.iter().map(|r| r.created_by_operation_id).collect();
         let node_models: Vec<_> = batch.iter().map(|r| r.node_model.clone()).collect();
 
-        // Build INSERT with VALUES using QueryBuilder (required for ragged arrays)
-        let mut builder = QueryBuilder::new(
-            "INSERT INTO core.events (
-                id, source, event_type, ts_orig, ts_orig_subnano, host, payload,
-                source_material_id, anchor_byte, offset_start, offset_end, offset_kind,
-                source_event_ids, payload_schema_id, source_run_id, associated_blob_ids,
-                temporal_policy, semantics_version, scope_key, equivalence_key,
-                created_by_operation_id, node_model, anchor_payload_hash
-            ) ",
-        );
+        // Build INSERT with VALUES using QueryBuilder (required for ragged arrays).
+        //
+        // Column list is derived from EVENT_COPY_COLUMNS (the SSOT) so that adding
+        // a new core.events column only requires updating postgres_copy.rs — not this
+        // site. Bind order MUST match EVENT_COPY_COLUMNS order exactly. (#1575)
+        let mut builder = QueryBuilder::new(format!(
+            "INSERT INTO core.events ({}) ",
+            event_copy_column_list_sql()
+        ));
 
         builder.push_values(0..batch.len(), |mut b, idx| {
+            // Bind order: id, source, event_type, ts_orig, ts_orig_subnano, host, payload,
+            // source_material_id, anchor_byte, offset_start, offset_end, offset_kind,
+            // source_event_ids, payload_schema_id, source_run_id, anchor_payload_hash,
+            // associated_blob_ids, temporal_policy, semantics_version, scope_key,
+            // equivalence_key, created_by_operation_id, node_model
+            // — matches EVENT_COPY_COLUMNS order.
             b.push_bind(ids[idx]).push_unseparated("::uuid");
             b.push_bind(&sources[idx]);
             b.push_bind(&event_types[idx]);
@@ -1436,6 +1445,7 @@ impl<'a> EventRepository<'a> {
             b.push_bind(payload_schema_ids[idx])
                 .push_unseparated("::uuid");
             b.push_bind(source_run_ids[idx]).push_unseparated("::uuid");
+            b.push_bind(&anchor_payload_hashes[idx]);
             b.push_bind(&associated_blob_ids[idx])
                 .push_unseparated("::uuid[]");
             b.push_bind(&temporal_policies[idx]);
@@ -1445,7 +1455,6 @@ impl<'a> EventRepository<'a> {
             b.push_bind(created_by_op_ids[idx])
                 .push_unseparated("::uuid");
             b.push_bind(&node_models[idx]);
-            b.push_bind(&anchor_payload_hashes[idx]);
         });
 
         builder.push(" ON CONFLICT (id) DO NOTHING RETURNING id::uuid");
@@ -2753,6 +2762,62 @@ mod tests {
         assert_eq!(
             EventRepository::stream_batch_insert_strategy(&batch),
             Some(StreamBatchInsertStrategy::Derived)
+        );
+        Ok(())
+    }
+
+    /// Drift guard: the column set used in the `query_as!` single-insert sites
+    /// must equal the COPY-contract column set (`EVENT_COPY_COLUMNS`). The
+    /// `query_as!` macro verifies individual column types at compile time but
+    /// does NOT verify that every column in the COPY contract appears in the
+    /// VALUES list, so set-drift can go undetected until runtime. This test
+    /// catches that by asserting the same names appear in both. (#1575)
+    #[sinex_test]
+    async fn query_as_insert_columns_match_copy_contract() -> Result<()> {
+        // These are the 23 columns listed in both `insert` and `insert_with_tx`
+        // `query_as!` sites. If those sites ever gain or lose a column, this
+        // constant must be updated — which forces an explicit review of whether
+        // EVENT_COPY_COLUMNS was updated too.
+        let query_as_columns: std::collections::BTreeSet<String> = [
+            "id",
+            "source",
+            "event_type",
+            "host",
+            "payload",
+            "ts_orig",
+            "ts_orig_subnano",
+            "source_run_id",
+            "payload_schema_id",
+            "source_event_ids",
+            "source_material_id",
+            "offset_start",
+            "offset_end",
+            "offset_kind",
+            "anchor_byte",
+            "associated_blob_ids",
+            "temporal_policy",
+            "semantics_version",
+            "scope_key",
+            "equivalence_key",
+            "created_by_operation_id",
+            "node_model",
+            "anchor_payload_hash",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+
+        // Parse the SSOT column list from EVENT_COPY_COLUMNS.
+        let copy_sql = event_copy_column_list_sql();
+        let copy_columns: std::collections::BTreeSet<String> =
+            copy_sql.split(", ").map(|s| s.trim().to_string()).collect();
+
+        // BTreeSet comparison gives a sorted diff in the assertion message.
+        assert_eq!(
+            query_as_columns, copy_columns,
+            "query_as! single-insert column set diverges from EVENT_COPY_COLUMNS (the SSOT). \
+             Add the missing column to both the query_as! INSERT and EVENT_COPY_COLUMNS, \
+             or remove it from both."
         );
         Ok(())
     }

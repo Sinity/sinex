@@ -15,7 +15,7 @@
 //! # Example
 //!
 //! ```rust
-//! use crate::runtime::watcher_handle::{WatcherHandle, WatcherHealth};
+//! use crate::node_sdk::watcher_handle::{WatcherHandle, WatcherHealth};
 //!
 //! // Initialize a watcher
 //! let mut handle = WatcherHandle::<()>::initialized("clipboard");
@@ -170,7 +170,7 @@ impl<M> WatcherHandle<M> {
     /// # Example
     ///
     /// ```rust
-    /// # use crate::runtime::watcher_handle::WatcherHandle;
+    /// # use crate::node_sdk::watcher_handle::WatcherHandle;
     /// let handle = WatcherHandle::<()>::initialized("dbus");
     /// assert!(!handle.is_active());
     /// ```

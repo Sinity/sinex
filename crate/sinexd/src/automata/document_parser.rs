@@ -328,6 +328,7 @@ impl DocumentParserNode {
 // ── Helpers ─────────────────────────────────────────────────────────────
 
 /// Derive a deterministic `UUIDv5` document ID.
+// TODO(#1575): unify with sinex_primitives::ids::derive_document_id (changes ids — needs replay plan)
 fn derive_document_id(corpus: &str, natural_key: &str) -> Uuid {
     let name = format!("{corpus}/{natural_key}");
     Uuid::new_v5(&NS_DOCUMENTS, name.as_bytes())

@@ -9,8 +9,8 @@ use crate::schema::defs::records::SourceMaterialRecord;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map as JsonMap, Value as JsonValue, json};
 use sinex_primitives::domain::{
-    SourceMaterialFormat, SourceMaterialTimingInfoType, TemporalClock, TemporalPrecision,
-    TemporalSourceType,
+    MaterialStatus, SourceMaterialFormat, SourceMaterialTimingInfoType, TemporalClock,
+    TemporalPrecision, TemporalSourceType,
 };
 use sinex_primitives::rpc::sources::{
     CaveatSeverity, SOURCE_MATERIAL_CONTRACT_METADATA_KEY, SourceCaveat,
@@ -27,22 +27,18 @@ pub mod material_kinds {
     pub const GIT: &str = "git";
     pub const LOCAL_CAS: &str = "local_cas";
 }
-/// Canonical timing info types
+/// Canonical timing info types — use `SourceMaterialTimingInfoType` variants directly.
+///
+/// These string constants are kept only for raw SQL queries that cannot use the
+/// typed enum. Prefer `SourceMaterialTimingInfoType::Realtime.as_str()` etc.
 pub mod timing_info_types {
-    pub const REALTIME: &str = "realtime";
-    pub const INTRINSIC: &str = "intrinsic";
-    pub const INFERRED: &str = "inferred";
-    pub const DECLARED: &str = "declared";
-    pub const ATEMPORAL: &str = "atemporal";
-    pub const STAGED_AT: &str = "staged_at";
-}
-/// Canonical statuses for source material lifecycle
-pub mod status {
-    pub const SENSING: &str = "sensing";
-    pub const COMPLETED: &str = "completed";
-    pub const CANCELLED: &str = "cancelled";
-    pub const RECOVERED_PARTIAL: &str = "recovered_partial";
-    pub const FAILED: &str = "failed";
+    use sinex_primitives::domain::SourceMaterialTimingInfoType as T;
+    pub const REALTIME: &str = T::Realtime.as_str();
+    pub const INTRINSIC: &str = T::Intrinsic.as_str();
+    pub const INFERRED: &str = T::Inferred.as_str();
+    pub const DECLARED: &str = T::Declared.as_str();
+    pub const ATEMPORAL: &str = T::Atemporal.as_str();
+    pub const STAGED_AT: &str = T::StagedAt.as_str();
 }
 /// Canonical material type constants stored in metadata.
 pub mod material_types {
@@ -128,7 +124,7 @@ pub struct SourceMaterial {
     material_kind: String,
     source_identifier: String,
     timing_info_type: String,
-    status: String,
+    status: MaterialStatus,
     metadata: JsonValue,
     optional_blob_id: Option<Id<crate::Blob>>,
     pub start_time: Option<Timestamp>,
@@ -142,7 +138,7 @@ impl SourceMaterial {
             material_kind: material_kind.into(),
             source_identifier: source_identifier.into(),
             timing_info_type: timing_info_types::INTRINSIC.to_string(),
-            status: status::COMPLETED.to_string(),
+            status: MaterialStatus::Completed,
             metadata: json!({}),
             optional_blob_id: None,
             start_time: None,
@@ -347,8 +343,8 @@ impl SourceMaterial {
         self
     }
     /// Fluent method to override the status
-    pub fn with_status(mut self, status: impl Into<String>) -> Self {
-        self.status = status.into();
+    pub fn with_status(mut self, status: MaterialStatus) -> Self {
+        self.status = status;
         self
     }
     /// Fluent method to override the timing info type
@@ -735,7 +731,7 @@ impl SourceMaterialRepository<'_> {
         &self,
         executor: E,
         id: Id<SourceMaterialRecord>,
-        status: &str,
+        status: MaterialStatus,
         blob_id: Option<Id<crate::Blob>>,
         metadata_update: JsonValue,
         total_bytes: Option<i64>,
@@ -781,7 +777,7 @@ impl SourceMaterialRepository<'_> {
             id.to_uuid(),
             blob_id.map(|bid| bid.to_uuid()),
             metadata_update,
-            status,
+            status.as_str(),
             total_bytes
         )
         .execute(executor)
@@ -860,7 +856,7 @@ impl SourceMaterialRepository<'_> {
                         id.to_uuid(),
                         material.material_kind,
                         material.source_identifier,
-                        material.status,
+                        material.status.as_str(),
                         material.timing_info_type,
                         material.metadata,
                         start_time_offset.map(|t| *t),
@@ -1235,7 +1231,7 @@ impl SourceMaterialRepository<'_> {
         // Build the material struct for metadata preparation
         let mut material =
             SourceMaterial::new(material_kinds::ANNEX, source_uri.unwrap_or("in-flight"));
-        material.status = status::SENSING.to_string();
+        material.status = MaterialStatus::Sensing;
         material.timing_info_type = timing_info_types::REALTIME.to_string();
         let caller_contract = SourceMaterialMetadataContract::from_metadata(&metadata);
         material.merge_metadata(metadata);
@@ -1345,7 +1341,7 @@ impl SourceMaterialRepository<'_> {
             .bind(id.to_uuid())
             .bind(&material.material_kind)
             .bind(&material.source_identifier)
-            .bind(&material.status)
+            .bind(material.status)
             .bind(&material.timing_info_type)
             .bind(&material.metadata)
             .bind(material.start_time)
@@ -1376,7 +1372,7 @@ impl SourceMaterialRepository<'_> {
     {
         let mut material =
             SourceMaterial::new(material_kinds::ANNEX, source_uri.unwrap_or("in-flight"));
-        material.status = status::SENSING.to_string();
+        material.status = MaterialStatus::Sensing;
         material.timing_info_type = timing_info_types::REALTIME.to_string();
         let caller_contract = SourceMaterialMetadataContract::from_metadata(&metadata);
         material.merge_metadata(metadata);
@@ -1483,7 +1479,7 @@ impl SourceMaterialRepository<'_> {
             .bind(id.to_uuid())
             .bind(&material.material_kind)
             .bind(&material.source_identifier)
-            .bind(&material.status)
+            .bind(material.status)
             .bind(&material.timing_info_type)
             .bind(&material.metadata)
             .bind(material.start_time)
@@ -1578,7 +1574,7 @@ impl SourceMaterialRepository<'_> {
             );
             JsonValue::Object(map)
         };
-        self.update_material_state(self.pool, id, status::FAILED, None, metadata_update, None)
+        self.update_material_state(self.pool, id, MaterialStatus::Failed, None, metadata_update, None)
             .await
     }
 
@@ -1595,7 +1591,7 @@ impl SourceMaterialRepository<'_> {
             json!({
                 "recovered_at": Timestamp::now(),
                 "recovery_reason": recovery_reason,
-                "original_status": status::SENSING,
+                "original_status": MaterialStatus::Sensing.as_str(),
             }),
         );
         match metadata_update {
@@ -1612,7 +1608,7 @@ impl SourceMaterialRepository<'_> {
         self.update_material_state(
             self.pool,
             id,
-            status::RECOVERED_PARTIAL,
+            MaterialStatus::RecoveredPartial,
             None,
             JsonValue::Object(update),
             None,
@@ -1632,7 +1628,7 @@ impl SourceMaterialRepository<'_> {
         self.finalize_in_flight_as(
             self.pool,
             id,
-            status::COMPLETED,
+            MaterialStatus::Completed,
             blob_id,
             encoding,
             content_preview,
@@ -1656,7 +1652,7 @@ impl SourceMaterialRepository<'_> {
         self.finalize_in_flight_as(
             executor,
             id,
-            status::COMPLETED,
+            MaterialStatus::Completed,
             blob_id,
             encoding,
             content_preview,
@@ -1670,7 +1666,7 @@ impl SourceMaterialRepository<'_> {
         &self,
         executor: E,
         id: Id<SourceMaterialRecord>,
-        final_status: &str,
+        final_status: MaterialStatus,
         blob_id: Option<Id<crate::Blob>>,
         encoding: Option<&str>,
         content_preview: Option<String>,
