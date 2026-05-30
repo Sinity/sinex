@@ -5,6 +5,8 @@
 
 use super::{AutomatonRuntime, INVALIDATION_QUERY_PAGE_SIZE, event_lag_ms};
 
+use sinex_primitives::temporal::Timestamp;
+
 use crate::node_sdk::derived_node::context::AutomatonContext;
 use crate::node_sdk::derived_node::traits::Automaton;
 use crate::node_sdk::{NodeResult, SinexError};
@@ -313,6 +315,47 @@ where
                 }
             }
         }
+    }
+
+    /// Clock-driven trailing-bucket flush for `Windowed` nodes.
+    ///
+    /// Calls the node's `timer_flush_derived` with the current wall time.
+    /// If the node's `flush_due` predicate returns true the open accumulator
+    /// is emitted and the output events are published exactly like the live
+    /// per-event path does. Returns the count of output events emitted.
+    ///
+    /// No-op for `Transducer` and `ScopeReconciler` nodes (their
+    /// `timer_flush_derived` default returns empty).
+    pub async fn timer_flush(&mut self, now: Timestamp) -> NodeResult<u64> {
+        // Build a synthetic context for the timer flush. There is no upstream
+        // trigger event, so we use a fresh synthetic ID and the current time.
+        let context = AutomatonContext::timer_flush(now)?;
+
+        let outputs = self
+            .node
+            .timer_flush_derived(&mut self.persisted_state.state, now, &context)
+            .await
+            .map_err(|e| {
+                SinexError::processing("windowed timer flush failed")
+                    .with_context("node", self.node.name())
+                    .with_source(e)
+            })?;
+
+        if outputs.is_empty() {
+            return Ok(0);
+        }
+
+        self.validate_output_batch(&outputs, "timer flush")?;
+        self.observe_output_batch(&outputs, "timer_flush").await;
+        let output_events = self.build_output_events(outputs, None, &context)?;
+        let count = output_events.len() as u64;
+
+        if count > 0 {
+            self.emit_output_events(output_events, "timer flush")
+                .await?;
+        }
+
+        Ok(count)
     }
 
     /// Process a batch of events.

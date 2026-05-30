@@ -2178,7 +2178,7 @@ mod tests {
             "--retries=2",
             "--timeout=30s",
             "--db-pool-size-env=48",
-            "--runtime-binary=sinex-ingestd:sinex-ingestd",
+            "--runtime-binary=sinexd:sinexd",
             "--debug",
             "--impact-mode=aggressive",
             "--impact-planner-version=impact-v2",
@@ -2201,14 +2201,11 @@ mod tests {
             "test",
             &[
                 "--scope=packages:sinex-db".into(),
-                "--runtime-binary=sinex-ingestd:sinex-ingestd".into(),
+                "--runtime-binary=sinexd:sinexd".into(),
             ],
         );
 
-        assert_eq!(
-            packages,
-            vec!["sinex-db".to_string(), "sinex-ingestd".to_string()]
-        );
+        assert_eq!(packages, vec!["sinex-db".to_string(), "sinexd".to_string()]);
         Ok(())
     }
 

@@ -3,11 +3,11 @@
 //! Model classification: **Windowed** -- accumulates
 //! `activity.summary.hourly` inputs into completed UTC-day summaries.
 
-use serde::{Deserialize, Serialize};
 use crate::node_sdk::derived_node::{
     AutomatonContext, DerivedAggregationMeta, DerivedOutput, WindowedNodeAdapter,
 };
 use crate::node_sdk::{InputProvenanceFilter, NodeLogicError, Windowed};
+use serde::{Deserialize, Serialize};
 use sinex_primitives::Uuid;
 use sinex_primitives::activity::{ActivitySourceKind, primary_activity_source};
 use sinex_primitives::events::{
@@ -17,6 +17,7 @@ use sinex_primitives::events::{
 use sinex_primitives::privacy::ProcessingContext;
 use sinex_primitives::temporal::{Duration, Timestamp};
 use std::collections::{BTreeMap, BTreeSet};
+use tracing::debug;
 
 fn floor_to_day(timestamp: Timestamp) -> Timestamp {
     let Ok(rounded) = timestamp
@@ -171,6 +172,38 @@ impl Windowed for DailySummarizer {
 
     fn window_complete(&self, state: &Self::State) -> bool {
         state.pending_hour.is_some() && state.hour_count > 0
+    }
+
+    /// Clock-driven trailing-bucket flush.
+    ///
+    /// Returns `true` when there is an accumulated bucket AND the current wall
+    /// time is past that bucket's end boundary (the day has elapsed). This
+    /// allows the periodic timer to emit the latest completed day without
+    /// waiting for the first event of the next day to arrive.
+    fn flush_due(&self, state: &Self::State, now: Timestamp) -> bool {
+        if state.hour_count == 0 {
+            return false;
+        }
+        let Some(day_start) = state.day_start else {
+            return false;
+        };
+        // Do not flush if there is already a pending hour from a next-bucket
+        // event — the normal window_complete path will handle that.
+        if state.pending_hour.is_some() {
+            return false;
+        }
+        let end = day_end(day_start);
+        let due = now >= end;
+        if due {
+            debug!(
+                node = "daily-summarizer",
+                day_start = %day_start,
+                day_end = %end,
+                now = %now,
+                "Flush due: emitting trailing day bucket via timer"
+            );
+        }
+        due
     }
 
     async fn emit(

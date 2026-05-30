@@ -86,6 +86,25 @@ impl AutomatonContext {
         })
     }
 
+    /// Create a synthetic context for a clock-driven timer flush.
+    ///
+    /// Used by `AutomatonRuntime::timer_flush` when `Windowed::flush_due`
+    /// returns true. There is no upstream trigger event; a fresh synthetic ID
+    /// is generated so the output event can still record provenance.
+    pub fn timer_flush(now: Timestamp) -> NodeResult<Self> {
+        let synthetic_id: Id<Event<JsonValue>> = Id::new();
+        Ok(Self {
+            trigger_event_id: synthetic_id,
+            source: EventSource::from_static("derived.timer"),
+            event_type: EventType::from_static("system.timer_flush"),
+            ts_orig: Some(now),
+            ts_coided: synthetic_id.timestamp(),
+            processing_mode: ProcessingMode::Live,
+            trigger_kind: TriggerKind::NewEvent,
+            created_by_operation_id: None,
+        })
+    }
+
     /// Create a context for historical replay processing.
     pub fn historical(
         event: &Event<JsonValue>,
