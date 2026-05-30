@@ -57,7 +57,7 @@
 //!
 //! | Field | Type | Required | Notes |
 //! |-------|------|----------|-------|
-//! | `id` | `UUIDv7` | yes | Event identifier; use deterministic `UUIDv5` if replayable |
+//! | `id` | `UUIDv7` | yes | Event identifier — a random UUIDv7 minted at creation (interpretation identity; new on replay, not content-derived) |
 //! | `source` | string | yes | Event source, typically matching `source_unit_id` |
 //! | `event_type` | string | yes | Dotted event type, e.g. `"integration.polylogue.conversation_indexed"` |
 //! | `payload` | JSON object | yes | Free-form event payload |
