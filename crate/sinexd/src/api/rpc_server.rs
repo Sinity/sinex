@@ -619,7 +619,7 @@ impl RpcAuthContext {
     #[must_use]
     pub fn extension(extension_id: &str, role: crate::api::auth::Role) -> Self {
         Self {
-            token_prefix: format!("ext:{}", &extension_id[..extension_id.len().min(8)]),
+            token_prefix: format!("ext:{}", extension_id.chars().take(8).collect::<String>()),
             actor_id: format!("extension:{extension_id}"),
             authenticated_at: Timestamp::now(),
             role,

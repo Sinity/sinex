@@ -14,6 +14,7 @@
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
+use tracing::warn;
 
 use crate::node_sdk::parser::{
     AppendOnlyFileAdapter, ChainedAdapter, MaterialParser, ParserError, ParserResult,
@@ -462,11 +463,23 @@ fn parse_dump_record(
     }
     let json: serde_json::Value = match serde_json::from_str(line) {
         Ok(v) => v,
-        Err(_) => return Ok(vec![]),
+        Err(e) => {
+            warn!(
+                error = %e,
+                line = %line,
+                "browser history dump: malformed JSON line; skipping record"
+            );
+            return Ok(vec![]);
+        }
     };
     let obj = match json.as_object() {
         Some(o) => o,
-        None => return Ok(vec![]),
+        None => {
+            warn!(
+                "browser history dump: non-object JSON line; skipping record"
+            );
+            return Ok(vec![]);
+        }
     };
     let Some(visit_time) = extract_timestamp(obj) else {
         return Ok(vec![]);

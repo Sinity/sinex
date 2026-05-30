@@ -1,6 +1,7 @@
 //! `system.udev` — stream udev device events via `FileDropAdapter` over `/sys`.
 
 use crate::register_parser;
+use tracing::warn;
 use crate::node_sdk::parser::{
     FileDropAdapter, FileDropEventKind, FileDropRecordMetadata, MaterialParser, ParserError,
 };
@@ -152,12 +153,20 @@ impl MaterialParser for UdevParser {
             Err(e) => return Err(ParserError::Privacy(format!("privacy engine: {e}"))),
         };
 
-        let metadata = FileDropRecordMetadata::from_value(&record.metadata).ok();
+        let metadata = match FileDropRecordMetadata::from_value(&record.metadata) {
+            Ok(m) => Some(m),
+            Err(e) => {
+                warn!(
+                    error = %e,
+                    path = %device_path,
+                    "udev metadata parse failed; emitting Other action instead of guessing kind"
+                );
+                None
+            }
+        };
         let event_kind = metadata
             .as_ref()
-            .map_or(Some(FileDropEventKind::Created), |metadata| {
-                metadata.event_kind()
-            });
+            .and_then(|m| m.event_kind());
 
         let action = match event_kind {
             Some(FileDropEventKind::Created) => UdevAction::Add,
