@@ -587,6 +587,10 @@ where
     ) -> NodeResult<ScanEstimate> {
         Ok(ScanEstimate::default())
     }
+
+    async fn periodic_flush(&mut self, now: Timestamp) -> NodeResult<u64> {
+        self.timer_flush(now).await
+    }
 }
 
 // ── ExplorationProvider ────────────────────────────────────────────────

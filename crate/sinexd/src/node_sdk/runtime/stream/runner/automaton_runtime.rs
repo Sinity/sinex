@@ -293,75 +293,111 @@ impl<T: Node + 'static> NodeRunner<T> {
         // Block on the first event, then non-blocking drain whatever else is queued.
         const BATCH_SIZE: usize = 100;
 
+        // Periodic flush for Windowed nodes (trailing-bucket emission).
+        // Configurable via SINEX_WINDOWED_FLUSH_INTERVAL_SECS; default 60 s.
+        // Non-windowed nodes return 0 from `periodic_flush` immediately.
+        let flush_interval_secs = sinex_primitives::env::parse_or(
+            "SINEX_WINDOWED_FLUSH_INTERVAL_SECS",
+            60_u64,
+            "windowed node flush interval",
+        );
+        let mut flush_ticker =
+            tokio::time::interval(std::time::Duration::from_secs(flush_interval_secs));
+        // Skip the immediately-firing first tick so we don't flush on startup.
+        flush_ticker.tick().await;
+
         loop {
-            // Normal mode blocks for more work. Once drain is requested, the
-            // runner-owned consumer is aborted and the bridge switches to
-            // draining whatever is already buffered before exiting cleanly.
-            let next_event = if drain_controller.is_requested() {
-                receiver.try_recv().ok()
+            // Normal mode: select! between an incoming event and the flush timer.
+            // Once drain is requested the consumer is aborted; switch to draining
+            // whatever is still buffered before exiting cleanly.
+            enum LoopAction {
+                Event(Option<ProvisionalEvent>),
+                FlushTick,
+            }
+
+            let action = if drain_controller.is_requested() {
+                LoopAction::Event(receiver.try_recv().ok())
             } else {
-                receiver.recv().await
+                tokio::select! {
+                    event = receiver.recv() => LoopAction::Event(event),
+                    _ = flush_ticker.tick() => LoopAction::FlushTick,
+                }
             };
 
-            let Some(first) = next_event else {
-                if let Some(error) = consumer_failure.lock().await.take() {
-                    return Err(error);
+            match action {
+                LoopAction::FlushTick => {
+                    let now = sinex_primitives::temporal::Timestamp::now();
+                    if let Err(e) = self.node.periodic_flush(now).await {
+                        warn!(
+                            error = %e,
+                            node = %self.node.node_name(),
+                            "Windowed periodic flush failed; continuing"
+                        );
+                    }
+                    continue;
                 }
-                break;
-            };
+                LoopAction::Event(next_event) => {
+                    let Some(first) = next_event else {
+                        if let Some(error) = consumer_failure.lock().await.take() {
+                            return Err(error);
+                        }
+                        break;
+                    };
 
-            // Non-blocking drain: grab whatever else is already queued
-            let mut provisionals = vec![first];
-            while provisionals.len() < BATCH_SIZE {
-                match receiver.try_recv() {
-                    Ok(p) => provisionals.push(p),
-                    Err(_) => break,
+                    // Non-blocking drain: grab whatever else is already queued
+                    let mut provisionals = vec![first];
+                    while provisionals.len() < BATCH_SIZE {
+                        match receiver.try_recv() {
+                            Ok(p) => provisionals.push(p),
+                            Err(_) => break,
+                        }
+                    }
+
+                    // Resolve each provisional to a full Event
+                    let resolve_result = Self::resolve_provisionals_to_events(
+                        &provisionals,
+                        #[cfg(feature = "db")]
+                        &db_pool,
+                    )
+                    .await?;
+
+                    if resolve_result.events.is_empty() {
+                        continue;
+                    }
+
+                    let batch_count = Self::process_batch_with_dlq_fallback(
+                        &mut self.node,
+                        &transport,
+                        resolve_result.events,
+                    )
+                    .await?;
+
+                    processed_events += batch_count;
+                    events_since_checkpoint += batch_count;
+                    if let Some(eid) = resolve_result.last_event_id {
+                        last_event_id = Some(eid);
+                    }
+
+                    // Periodic checkpoint save: every N events or M seconds
+                    if bridge_manages_checkpoints
+                        && (events_since_checkpoint >= CHECKPOINT_EVENT_INTERVAL
+                            || last_checkpoint_time.elapsed() >= CHECKPOINT_TIME_INTERVAL)
+                        && let (Some(manager), Some(state)) =
+                            (checkpoint_manager.as_deref(), checkpoint_state.as_mut())
+                        && let Some(revision) = Self::try_save_checkpoint(
+                            manager,
+                            state,
+                            last_event_id,
+                            processed_events,
+                            &mut consecutive_checkpoint_failures,
+                        )
+                        .await?
+                    {
+                        state.revision = revision;
+                        events_since_checkpoint = 0;
+                        last_checkpoint_time = std::time::Instant::now();
+                    }
                 }
-            }
-
-            // Resolve each provisional to a full Event
-            let resolve_result = Self::resolve_provisionals_to_events(
-                &provisionals,
-                #[cfg(feature = "db")]
-                &db_pool,
-            )
-            .await?;
-
-            if resolve_result.events.is_empty() {
-                continue;
-            }
-
-            let batch_count = Self::process_batch_with_dlq_fallback(
-                &mut self.node,
-                &transport,
-                resolve_result.events,
-            )
-            .await?;
-
-            processed_events += batch_count;
-            events_since_checkpoint += batch_count;
-            if let Some(eid) = resolve_result.last_event_id {
-                last_event_id = Some(eid);
-            }
-
-            // Periodic checkpoint save: every N events or M seconds
-            if bridge_manages_checkpoints
-                && (events_since_checkpoint >= CHECKPOINT_EVENT_INTERVAL
-                    || last_checkpoint_time.elapsed() >= CHECKPOINT_TIME_INTERVAL)
-                && let (Some(manager), Some(state)) =
-                    (checkpoint_manager.as_deref(), checkpoint_state.as_mut())
-                && let Some(revision) = Self::try_save_checkpoint(
-                    manager,
-                    state,
-                    last_event_id,
-                    processed_events,
-                    &mut consecutive_checkpoint_failures,
-                )
-                .await?
-            {
-                state.revision = revision;
-                events_since_checkpoint = 0;
-                last_checkpoint_time = std::time::Instant::now();
             }
         }
 
