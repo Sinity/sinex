@@ -34,11 +34,12 @@ pub mod timeouts {
 
 /// Size and count limits for data validation
 pub mod limits {
-    /// Maximum allowed JSON nesting depth to prevent stack overflow
-    pub const MAX_JSON_DEPTH: usize = 100;
-
-    /// Maximum number of JSON elements to prevent memory exhaustion
-    pub const MAX_JSON_ELEMENTS: usize = 50_000;
+    // NOTE: `MAX_JSON_DEPTH` and `MAX_JSON_ELEMENTS` were removed in #1578.
+    // The enforced JSON depth/size limit is `MAX_JSON_DEPTH = 32` in
+    // `sinex_primitives::validation::core` (private constant used by `validate_json`).
+    // If you need to reference the JSON depth limit, call `validate_json` — do NOT add
+    // a new public constant here with a different value, as diverging constants caused
+    // a silent 32-vs-100 discrepancy that could mislead callers.
 
     /// JSON payload size threshold for applying processing delays
     pub const JSON_SIZE_THRESHOLD: usize = 1_000_000;
