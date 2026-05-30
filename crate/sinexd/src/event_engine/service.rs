@@ -8,15 +8,15 @@ use crate::event_engine::{
     material_ready_set::MaterialReadySet, validator::IngestEventValidator,
 };
 // External crates
+use crate::node_sdk::content_store::{ContentStoreConfig, MaterialContentStore};
+use crate::node_sdk::heartbeat::HeartbeatEmitter;
+use crate::node_sdk::systemd_notify;
+use crate::node_sdk::{SelfObserver, SelfObserverConfig};
 use async_nats::{Client as NatsClient, jetstream};
 use serde::Serialize;
 use sinex_db::DbPoolExt;
 use sinex_db::advisory_lock::AdvisoryLock;
 use sinex_db::repositories::EventPayloadSchema;
-use crate::node_sdk::content_store::{ContentStoreConfig, MaterialContentStore};
-use crate::node_sdk::heartbeat::HeartbeatEmitter;
-use crate::node_sdk::systemd_notify;
-use crate::node_sdk::{SelfObserver, SelfObserverConfig};
 use sinex_primitives::Id;
 use sinex_primitives::Timestamp;
 use sinex_primitives::domain::{NodeName, NodeType, ServiceName};

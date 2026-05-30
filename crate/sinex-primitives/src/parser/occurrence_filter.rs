@@ -160,11 +160,7 @@ mod tests {
 
     #[sinex_test]
     async fn from_keys_builds_correctly() -> xtask::sandbox::TestResult<()> {
-        let f = OccurrenceFilter::from_keys([
-            "a".to_string(),
-            "b".to_string(),
-            "c".to_string(),
-        ]);
+        let f = OccurrenceFilter::from_keys(["a".to_string(), "b".to_string(), "c".to_string()]);
         assert_eq!(f.len(), 3);
         assert!(f.contains("a"));
         assert!(f.contains("b"));
@@ -186,10 +182,7 @@ mod tests {
     async fn occurrence_key_string_format() -> xtask::sandbox::TestResult<()> {
         let key = OccurrenceKey {
             source_unit_id: SourceUnitId::from_static("test.unit"),
-            fields: vec![
-                ("a".into(), "1".into()),
-                ("b".into(), "hello".into()),
-            ],
+            fields: vec![("a".into(), "1".into()), ("b".into(), "hello".into())],
         };
         let s = occurrence_key_string(&key);
         assert_eq!(s, "test.unit|a=1|b=hello");
@@ -211,8 +204,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn escaping_prevents_delimiter_injection_collision()
-        -> xtask::sandbox::TestResult<()> {
+    async fn escaping_prevents_delimiter_injection_collision() -> xtask::sandbox::TestResult<()> {
         // Without escaping, `(foo, "bar|baz")` and `(foo|bar, "baz")`
         // would both encode as `test.unit|foo=bar|baz` and silently
         // dedup against each other. With escaping they are distinct.

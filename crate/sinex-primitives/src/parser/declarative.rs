@@ -60,14 +60,14 @@
 //!   record assembler. `carry_across_records` handles only cross-record state
 //!   propagation for records that are individually complete lines.
 
-use serde::{Deserialize, Serialize};
 use crate::Timestamp;
 use crate::domain::{EventSource, EventType};
 use crate::parser::{
-    BindingConfig, OccurrenceKey, ParsedEventIntent, ParserContext, ParserId,
-    SourceRecord, SourceUnitId, TimingConfidence, TimingEvidence,
+    BindingConfig, OccurrenceKey, ParsedEventIntent, ParserContext, ParserId, SourceRecord,
+    SourceUnitId, TimingConfidence, TimingEvidence,
 };
 use crate::privacy::{self, FieldPrivacyDecision, ProcessingContext};
+use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
 use std::collections::BTreeMap;
 

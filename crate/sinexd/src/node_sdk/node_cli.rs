@@ -1,4 +1,3 @@
-
 //! Unified CLI structure for Sinex nodes
 //!
 //! This module provides the standardized CLI interface for all node binaries
@@ -387,8 +386,9 @@ pub fn parse_time_horizon(horizon_str: &str) -> NodeResult<TimeHorizon> {
 ///
 /// This provides a standardized way to run any Node with
 /// the unified CLI interface supporting service/scan/explore subcommands.
-pub struct NodeCliRunner<T: crate::node_sdk::runtime::stream::Node + ExplorationProvider + Default + 'static>
-{
+pub struct NodeCliRunner<
+    T: crate::node_sdk::runtime::stream::Node + ExplorationProvider + Default + 'static,
+> {
     node: Option<T>,
     node_factory: Arc<dyn Fn() -> T + Send + Sync>,
 }
@@ -455,7 +455,9 @@ fn default_service_name(args: &NodeCli) -> ServiceName {
     ServiceName::new(name)
 }
 
-impl<T: crate::node_sdk::runtime::stream::Node + ExplorationProvider + Default + 'static> NodeCliRunner<T> {
+impl<T: crate::node_sdk::runtime::stream::Node + ExplorationProvider + Default + 'static>
+    NodeCliRunner<T>
+{
     /// Create new CLI runner with a node instance
     pub fn new(node: T) -> Self {
         Self::new_with_factory(node, Arc::new(T::default))
@@ -730,48 +732,49 @@ impl<T: crate::node_sdk::runtime::stream::Node + ExplorationProvider + Default +
             replay: None,
         };
 
-        let workflow_result: NodeResult<Option<crate::node_sdk::runtime::stream::ScanReport>> = async {
-            if estimate {
-                let estimate_result = runner
-                    .estimate_scan_scope(&checkpoint, &time_horizon, &scan_args)
-                    .await?;
-                println!("Scan Estimation:");
-                println!("  Estimated events: {}", estimate_result.estimated_events);
-                println!(
-                    "  Estimated duration: {:?}",
-                    estimate_result.estimated_duration
-                );
-                println!(
-                    "  Estimated data size: {} bytes",
-                    estimate_result.estimated_data_size
-                );
-                println!("  Estimated targets: {}", estimate_result.estimated_targets);
-                println!("  Confidence: {:.1}%", estimate_result.confidence * 100.0);
-                if !estimate_result.warnings.is_empty() {
-                    println!("  Warnings:");
-                    for warning in &estimate_result.warnings {
-                        println!("    - {warning}");
+        let workflow_result: NodeResult<Option<crate::node_sdk::runtime::stream::ScanReport>> =
+            async {
+                if estimate {
+                    let estimate_result = runner
+                        .estimate_scan_scope(&checkpoint, &time_horizon, &scan_args)
+                        .await?;
+                    println!("Scan Estimation:");
+                    println!("  Estimated events: {}", estimate_result.estimated_events);
+                    println!(
+                        "  Estimated duration: {:?}",
+                        estimate_result.estimated_duration
+                    );
+                    println!(
+                        "  Estimated data size: {} bytes",
+                        estimate_result.estimated_data_size
+                    );
+                    println!("  Estimated targets: {}", estimate_result.estimated_targets);
+                    println!("  Confidence: {:.1}%", estimate_result.confidence * 100.0);
+                    if !estimate_result.warnings.is_empty() {
+                        println!("  Warnings:");
+                        for warning in &estimate_result.warnings {
+                            println!("    - {warning}");
+                        }
                     }
-                }
-                println!();
+                    println!();
 
-                if interactive {
-                    print!("Proceed with scan? [y/N] ");
-                    use std::io::{self, Write};
-                    io::stdout().flush()?;
-                    let mut input = String::new();
-                    io::stdin().read_line(&mut input)?;
-                    if !input.trim().to_lowercase().starts_with('y') {
-                        println!("Scan cancelled");
-                        return Ok(None);
+                    if interactive {
+                        print!("Proceed with scan? [y/N] ");
+                        use std::io::{self, Write};
+                        io::stdout().flush()?;
+                        let mut input = String::new();
+                        io::stdin().read_line(&mut input)?;
+                        if !input.trim().to_lowercase().starts_with('y') {
+                            println!("Scan cancelled");
+                            return Ok(None);
+                        }
                     }
                 }
+
+                let report = runner.run_scan(checkpoint, time_horizon, scan_args).await?;
+                Ok(Some(report))
             }
-
-            let report = runner.run_scan(checkpoint, time_horizon, scan_args).await?;
-            Ok(Some(report))
-        }
-        .await;
+            .await;
 
         let shutdown_result = runner.shutdown().await;
         let maybe_report = match (workflow_result, shutdown_result) {

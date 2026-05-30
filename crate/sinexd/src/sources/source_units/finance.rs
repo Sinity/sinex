@@ -172,7 +172,9 @@ fn looks_like_date(line: &str) -> bool {
     bytes.len() >= 10
         && bytes[4] == b'-'
         && bytes[7] == b'-'
-        && bytes.get(..4).is_some_and(|s| s.iter().all(u8::is_ascii_digit))
+        && bytes
+            .get(..4)
+            .is_some_and(|s| s.iter().all(u8::is_ascii_digit))
         && bytes[5..7].iter().all(u8::is_ascii_digit)
         && bytes[8..10].iter().all(u8::is_ascii_digit)
 }

@@ -251,18 +251,9 @@ fn build_occurrence_key(
     played_ms: u64,
 ) -> OccurrenceKey {
     let fields = vec![
-        (
-            "track_uri".into(),
-            uri.unwrap_or("").to_string(),
-        ),
-        (
-            "track_name".into(),
-            track.unwrap_or("").to_string(),
-        ),
-        (
-            "artist_name".into(),
-            artist.unwrap_or("").to_string(),
-        ),
+        ("track_uri".into(), uri.unwrap_or("").to_string()),
+        ("track_name".into(), track.unwrap_or("").to_string()),
+        ("artist_name".into(), artist.unwrap_or("").to_string()),
         ("started_at".into(), ts.to_string()),
         ("played_ms".into(), played_ms.to_string()),
     ];
@@ -506,8 +497,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn occurrence_key_uri_null_and_uri_populated_produce_distinct_keys()
-        -> TestResult<()> {
+    async fn occurrence_key_uri_null_and_uri_populated_produce_distinct_keys() -> TestResult<()> {
         // The wrapper-correctness regression: same logical track played
         // twice (once before Spotify populated URIs, once after) must
         // produce distinct keys so dedup doesn't drop either occurrence,
@@ -631,11 +621,7 @@ mod tests {
             admitted += 1;
         }
         assert_eq!(admitted, 2, "first import: all events should pass");
-        assert_eq!(
-            filter.len(),
-            2,
-            "filter should track both distinct keys"
-        );
+        assert_eq!(filter.len(), 2, "filter should track both distinct keys");
         Ok(())
     }
 
@@ -722,9 +708,7 @@ mod tests {
         let mut dup_count = 0;
         let mut new_count = 0;
         for intent in &second {
-            let key_str = occurrence_key_string(
-                intent.occurrence_key.as_ref().unwrap(),
-            );
+            let key_str = occurrence_key_string(intent.occurrence_key.as_ref().unwrap());
             if filter.contains(&key_str) {
                 dup_count += 1;
             } else {

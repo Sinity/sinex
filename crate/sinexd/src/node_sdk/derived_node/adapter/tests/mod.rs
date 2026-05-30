@@ -17,7 +17,9 @@ use crate::node_sdk::runtime::stream::{
 #[cfg(feature = "messaging")]
 use crate::node_sdk::self_observation::{SelfObservationError, SelfObserver, SelfObserverConfig};
 use crate::node_sdk::shutdown::ShutdownConfig;
-use crate::node_sdk::{CheckpointManager, CheckpointState, EventTransport, NatsPublisher, SinexError};
+use crate::node_sdk::{
+    CheckpointManager, CheckpointState, EventTransport, NatsPublisher, SinexError,
+};
 use crate::node_sdk::{NodeLogicError, ScopeReconciler, Transducer};
 use camino::Utf8PathBuf;
 use futures::TryStreamExt;
@@ -584,13 +586,18 @@ async fn make_runtime_state_with_validator(
 
 #[sinex_test]
 async fn request_runtime_drain_delivers_to_receiver() -> TestResult<()> {
-    crate::node_sdk::runtime::stream::test_support::assert_request_drain_delivers_to_receiver("test-derived")
-        .await
+    crate::node_sdk::runtime::stream::test_support::assert_request_drain_delivers_to_receiver(
+        "test-derived",
+    )
+    .await
 }
 
 #[sinex_test]
 async fn request_runtime_drain_is_idempotent() -> TestResult<()> {
-    crate::node_sdk::runtime::stream::test_support::assert_request_drain_is_idempotent("test-derived").await
+    crate::node_sdk::runtime::stream::test_support::assert_request_drain_is_idempotent(
+        "test-derived",
+    )
+    .await
 }
 
 #[sinex_test]

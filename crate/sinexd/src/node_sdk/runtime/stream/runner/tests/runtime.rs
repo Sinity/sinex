@@ -146,7 +146,9 @@ async fn acquire_leader_standby_waits_for_existing_leader_release(
     ctx: TestContext,
 ) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
-    let transport = EventTransport::Nats(Arc::new(crate::node_sdk::NatsPublisher::new(ctx.nats_client())));
+    let transport = EventTransport::Nats(Arc::new(crate::node_sdk::NatsPublisher::new(
+        ctx.nats_client(),
+    )));
     let mut runner = NodeRunner::new(RuntimeTestNode);
     runner
         .initialize_with_transport(

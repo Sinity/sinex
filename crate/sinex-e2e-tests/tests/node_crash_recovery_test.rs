@@ -7,10 +7,10 @@
 
 use serde_json::json;
 use sinex_primitives::MaterialStatus;
+use sinex_primitives::Uuid;
 use sinexd::node_sdk::{
     AcquisitionManager, Checkpoint, CheckpointManager, CheckpointState, RotationPolicy,
 };
-use sinex_primitives::Uuid;
 use sqlx::Row;
 use std::sync::{
     Arc,
@@ -681,7 +681,10 @@ async fn test_marking_crashed_materials_as_recovered_partial(ctx: TestContext) -
     .fetch_one(&ctx.pool)
     .await?;
 
-    assert_eq!(recovered_material.status, MaterialStatus::RecoveredPartial.as_str());
+    assert_eq!(
+        recovered_material.status,
+        MaterialStatus::RecoveredPartial.as_str()
+    );
     assert!(
         recovered_material.metadata["recovery_info"].is_object(),
         "expected recovery metadata"

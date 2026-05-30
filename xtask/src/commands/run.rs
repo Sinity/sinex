@@ -1516,10 +1516,13 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_runtime_cli_args_dispatch_scan_source_unit()
-    -> ::xtask::sandbox::TestResult<()> {
+    async fn test_runtime_cli_args_dispatch_scan_source_unit() -> ::xtask::sandbox::TestResult<()> {
         assert_eq!(
-            runtime_cli_args("sinexd", "terminal-ingestor-123", Some("terminal.zsh-history")),
+            runtime_cli_args(
+                "sinexd",
+                "terminal-ingestor-123",
+                Some("terminal.zsh-history")
+            ),
             vec![
                 "scan-source-unit".to_string(),
                 "--source-unit".to_string(),
@@ -1532,14 +1535,17 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_build_cargo_run_args_target_sinexd()
-    -> ::xtask::sandbox::TestResult<()> {
+    async fn test_build_cargo_run_args_target_sinexd() -> ::xtask::sandbox::TestResult<()> {
         let command = base_command(RunSubcommand::Node {
             name: "terminal-ingestor".to_string(),
             instance_id: None,
         });
         assert_eq!(
-            command.build_cargo_run_args("sinexd", "terminal-ingestor-123", Some("terminal.zsh-history")),
+            command.build_cargo_run_args(
+                "sinexd",
+                "terminal-ingestor-123",
+                Some("terminal.zsh-history")
+            ),
             vec![
                 "run".to_string(),
                 "-p".to_string(),

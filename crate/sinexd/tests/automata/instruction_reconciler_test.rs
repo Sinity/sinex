@@ -1,5 +1,3 @@
-use sinexd::node_sdk::ScopeReconciler;
-use sinexd::node_sdk::derived_node::AutomatonContext;
 use sinex_primitives::domain::{ProcessingMode, TriggerKind};
 use sinex_primitives::events::payloads::{
     DesktopWorkspaceSwitchInstructionPayload, HyprlandWorkspaceSwitchedPayload,
@@ -11,6 +9,8 @@ use sinex_primitives::{Id, JsonValue, Uuid};
 use sinexd::automata::instruction_reconciler::{
     InstructionExpectationReconciler, InstructionExpectationState,
 };
+use sinexd::node_sdk::ScopeReconciler;
+use sinexd::node_sdk::derived_node::AutomatonContext;
 use xtask::sandbox::prelude::*;
 
 fn context(source: &str, event_type: &str, ts_orig: Timestamp) -> AutomatonContext {

@@ -25,15 +25,13 @@ pub mod validation;
 
 pub use error::{DbResult, db_error};
 pub use models::*;
+pub use occurrence_filter::{build_occurrence_filter, build_occurrence_filter_with_key_expr};
 pub use pkm::{MaterialSummary, PkmService};
 pub use pool::{
     DbPool, PoolConfig, PoolSessionPolicy, acquire_with_timeout, create_database_if_not_exists,
     create_pool, create_pool_strict, create_pool_with_config,
     create_pool_with_config_and_session_policy, create_pool_with_config_strict, create_test_pool,
     get_database_url, resolve_effective_database_url,
-};
-pub use occurrence_filter::{
-    build_occurrence_filter, build_occurrence_filter_with_key_expr,
 };
 pub use query_helpers::{IdempotentTransaction, RetryConfig, with_retry_transaction_idempotent};
 pub use repositories::DbPoolExt;

@@ -442,9 +442,7 @@ pub async fn run_cli() -> Result<()> {
         Commands::Ci(cmd) => ("ci", None, None, cmd.metadata()),
         Commands::Completions(cmd) => ("completions", None, None, cmd.metadata()),
         Commands::Reap(cmd) => ("__reap", None, None, cmd.metadata()),
-        Commands::RecordDriftBypass(cmd) => {
-            ("record-drift-bypass", None, None, cmd.metadata())
-        }
+        Commands::RecordDriftBypass(cmd) => ("record-drift-bypass", None, None, cmd.metadata()),
     };
 
     let command_timeout = command_metadata.timeout;

@@ -98,10 +98,10 @@ pub use adapters::{
     survey_file_drop_watch_tree,
 };
 pub use declarative::{
-    CarrySpec, DeclarativeParser, DeclarativeParserSpec, Discriminator,
-    DiscriminatorCase, DiscriminatorFallback, FieldSource, FieldSpec, FieldType, InputFormat,
-    StatefulCarryPolicy, StatefulDeclarativeParser, SuppressPredicate, TimestampFallback,
-    TimestampFormat, TimestampSpec,
+    CarrySpec, DeclarativeParser, DeclarativeParserSpec, Discriminator, DiscriminatorCase,
+    DiscriminatorFallback, FieldSource, FieldSpec, FieldType, InputFormat, StatefulCarryPolicy,
+    StatefulDeclarativeParser, SuppressPredicate, TimestampFallback, TimestampFormat,
+    TimestampSpec,
 };
 pub use fingerprint::{DriftAccumulator, DriftEvent, SourceRecordFingerprint};
 pub use fixture::{
@@ -121,8 +121,8 @@ use sinex_primitives::ids::Id;
 // =============================================================================
 
 pub use sinex_primitives::parser::{
-    BindingConfig, InputShapeAdapter, InputShapeKind, MaterialParser,
-    ParserError, ParserResult, SourceRecord,
+    BindingConfig, InputShapeAdapter, InputShapeKind, MaterialParser, ParserError, ParserResult,
+    SourceRecord,
 };
 
 // =============================================================================
@@ -140,8 +140,12 @@ pub trait InputShapeAdapterExt: InputShapeAdapter {
         material_id: Id<SourceMaterial>,
         config: &Self::Config,
         cursor: Option<Self::Cursor>,
-        _acquisition: Option<std::sync::Arc<crate::node_sdk::acquisition_manager::AcquisitionManager>>,
-    ) -> sinex_primitives::parser::ParserResult<BoxStream<'static, sinex_primitives::parser::ParserResult<SourceRecord>>> {
+        _acquisition: Option<
+            std::sync::Arc<crate::node_sdk::acquisition_manager::AcquisitionManager>,
+        >,
+    ) -> sinex_primitives::parser::ParserResult<
+        BoxStream<'static, sinex_primitives::parser::ParserResult<SourceRecord>>,
+    > {
         InputShapeAdapter::open(self, material_id, config, cursor).await
     }
 

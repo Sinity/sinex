@@ -327,8 +327,12 @@ impl<'a> ContinuityRepository<'a> {
             agg.any_blob,
             agg.good_timing,
             agg.all_finalized,
-            chunks.iter().any(|c| c.status() == sinex_primitives::MaterialStatus::Failed),
-            chunks.iter().any(|c| c.status() == sinex_primitives::MaterialStatus::RecoveredPartial),
+            chunks
+                .iter()
+                .any(|c| c.status() == sinex_primitives::MaterialStatus::Failed),
+            chunks
+                .iter()
+                .any(|c| c.status() == sinex_primitives::MaterialStatus::RecoveredPartial),
         );
 
         Ok(Some(SourceContinuityReport {
@@ -616,7 +620,9 @@ impl ChunkAccess for Chunk {
         self.staged_at
     }
     fn status(&self) -> sinex_primitives::MaterialStatus {
-        self.status.parse().unwrap_or(sinex_primitives::MaterialStatus::Sensing)
+        self.status
+            .parse()
+            .unwrap_or(sinex_primitives::MaterialStatus::Sensing)
     }
     fn timing(&self) -> &str {
         &self.timing

@@ -1574,8 +1574,15 @@ impl SourceMaterialRepository<'_> {
             );
             JsonValue::Object(map)
         };
-        self.update_material_state(self.pool, id, MaterialStatus::Failed, None, metadata_update, None)
-            .await
+        self.update_material_state(
+            self.pool,
+            id,
+            MaterialStatus::Failed,
+            None,
+            metadata_update,
+            None,
+        )
+        .await
     }
 
     /// Mark an in-flight source material as partially recovered.

@@ -3,8 +3,8 @@ use crate::defs::{
     BinarySchemaVersion, Blobs, DocumentChunks, Documents, EmbeddingCache, EmbeddingModels,
     Entities, EntityRelations, EventAnnotations, EventClusterMembers, EventClusters,
     EventEmbeddings, EventPayloadSchemas, EventReplacements, EventTombstones, Events, Manifests,
-    OperationsLog, Runs, SemanticEpochs, SemanticLaneDiffs, SemanticLaneOutputs, SemanticLanes,
-    ModelEffects, SourceMaterialLinks, SourceMaterialRegistry, TaggedItems, Tags, TemporalLedger,
+    ModelEffects, OperationsLog, Runs, SemanticEpochs, SemanticLaneDiffs, SemanticLaneOutputs,
+    SemanticLanes, SourceMaterialLinks, SourceMaterialRegistry, TaggedItems, Tags, TemporalLedger,
 };
 use crate::registry;
 use sea_query::{IndexCreateStatement, PostgresQueryBuilder, TableCreateStatement};

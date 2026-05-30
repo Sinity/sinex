@@ -285,15 +285,9 @@ pub fn reduce_task_event(
         TaskLifecycleInput::Cancelled(cancelled) => {
             reduce_cancelled(state, event_id, cancelled, observed_at)
         }
-        TaskLifecycleInput::Split(split) => {
-            reduce_split(state, event_id, split, observed_at)
-        }
-        TaskLifecycleInput::Merged(merged) => {
-            reduce_merged(state, event_id, merged, observed_at)
-        }
-        TaskLifecycleInput::Linked(linked) => {
-            reduce_linked(state, event_id, linked, observed_at)
-        }
+        TaskLifecycleInput::Split(split) => reduce_split(state, event_id, split, observed_at),
+        TaskLifecycleInput::Merged(merged) => reduce_merged(state, event_id, merged, observed_at),
+        TaskLifecycleInput::Linked(linked) => reduce_linked(state, event_id, linked, observed_at),
     }
 }
 
@@ -303,9 +297,8 @@ fn reduce_split(
     _split: TaskSplitInput,
     observed_at: Timestamp,
 ) -> Result<TaskState> {
-    let mut s = state.ok_or_else(|| {
-        SinexError::validation("task.split received for unknown task")
-    })?;
+    let mut s =
+        state.ok_or_else(|| SinexError::validation("task.split received for unknown task"))?;
     s.last_event_id = event_id;
     s.updated_at = observed_at;
     Ok(s)
@@ -317,9 +310,8 @@ fn reduce_merged(
     _merged: TaskMergedInput,
     observed_at: Timestamp,
 ) -> Result<TaskState> {
-    let mut s = state.ok_or_else(|| {
-        SinexError::validation("task.merged received for unknown task")
-    })?;
+    let mut s =
+        state.ok_or_else(|| SinexError::validation("task.merged received for unknown task"))?;
     s.last_event_id = event_id;
     s.updated_at = observed_at;
     Ok(s)
@@ -331,9 +323,8 @@ fn reduce_linked(
     _linked: TaskLinkedInput,
     observed_at: Timestamp,
 ) -> Result<TaskState> {
-    let mut s = state.ok_or_else(|| {
-        SinexError::validation("task.linked received for unknown task")
-    })?;
+    let mut s =
+        state.ok_or_else(|| SinexError::validation("task.linked received for unknown task"))?;
     s.last_event_id = event_id;
     s.updated_at = observed_at;
     Ok(s)

@@ -4,8 +4,6 @@
 //! deduplication via the persistent `known_entities` map, and `Windowed` semantics
 //! (accumulate stages a pending payload, `window_complete` flips, emit returns + clears it).
 
-use sinexd::node_sdk::Windowed;
-use sinexd::node_sdk::derived_node::AutomatonContext;
 use sinex_primitives::Uuid;
 use sinex_primitives::domain::{EntityTypeName, ProcessingMode, TriggerKind};
 use sinex_primitives::events::payloads::{EntityExtractedPayload, EntityResolvedPayload};
@@ -13,6 +11,8 @@ use sinex_primitives::events::{Event, EventPayload};
 use sinex_primitives::temporal::Timestamp;
 use sinex_primitives::{Id, JsonValue};
 use sinexd::automata::entity_resolver::{EntityResolver, ResolverState};
+use sinexd::node_sdk::Windowed;
+use sinexd::node_sdk::derived_node::AutomatonContext;
 use xtask::sandbox::prelude::*;
 
 fn make_context() -> AutomatonContext {

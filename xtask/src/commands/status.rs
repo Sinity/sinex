@@ -253,9 +253,9 @@ fn collect_history_snapshot_from_db(
     let bypass_started_at = Instant::now();
     match db.get_drift_guard_bypass_count(30) {
         Ok(count) => snapshot.drift_guard_bypass_count = count,
-        Err(error) => snapshot
-            .issues
-            .push(format!("Failed to read drift guard bypass history: {error}")),
+        Err(error) => snapshot.issues.push(format!(
+            "Failed to read drift guard bypass history: {error}"
+        )),
     }
     match db.get_drift_guard_bypass_latest() {
         Ok(latest) => snapshot.drift_guard_bypass_latest = latest,

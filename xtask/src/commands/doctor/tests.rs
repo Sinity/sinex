@@ -3,13 +3,13 @@ use crate::command::CommandContext;
 use crate::output::{OutputFormat, OutputWriter};
 use crate::sandbox::sinex_test;
 use ::xtask::sandbox::EnvGuard;
-use sinexd::node_sdk::preflight::services::SystemdServiceDetails;
 use sinex_primitives::{
     DeploymentReadinessMode,
     nats::NatsConnectionConfig,
     privacy::{RuntimePrivateModeState, private_mode_state_path, save_private_mode_state},
     temporal::Timestamp,
 };
+use sinexd::node_sdk::preflight::services::SystemdServiceDetails;
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::process::ExitStatusExt;
@@ -2326,14 +2326,7 @@ async fn test_rust_analyzer_cli_scan_summarizes_raw_stderr_before_truncation()
 async fn test_rust_analyzer_remediation_actions_are_bucket_specific()
 -> ::xtask::sandbox::TestResult<()> {
     assert_eq!(
-        rust_analyzer_remediation_actions(
-            &[],
-            &["sinexd->xtask".to_string()],
-            &[],
-            0,
-            0,
-            0,
-        ),
+        rust_analyzer_remediation_actions(&[], &["sinexd->xtask".to_string()], &[], 0, 0, 0,),
         vec![RA_ACTION_EXTRACT_XTASK_SANDBOX]
     );
     assert_eq!(

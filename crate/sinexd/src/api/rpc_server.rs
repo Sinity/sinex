@@ -13,6 +13,7 @@ use crate::api::{
 use sinex_primitives::env as shared_env;
 
 // External crates
+use crate::node_sdk::systemd_notify;
 use axum::{
     BoxError, Json, Router,
     error_handling::HandleErrorLayer,
@@ -27,7 +28,6 @@ use hyper_util::service::TowerToHyperService;
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use crate::node_sdk::systemd_notify;
 use sinex_primitives::Result as SinexResult;
 use sinex_primitives::Timestamp;
 use sinex_primitives::error::SinexError;

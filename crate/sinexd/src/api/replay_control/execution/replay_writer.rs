@@ -5,11 +5,11 @@ use super::{
     MaterialOccurrenceKey, OperationOutputEvent, ReplayExecutionEngine, ScopeInvalidationBucket,
     StreamExt, replay_scope_drift_error, stale_preview_missing_root_ids_error,
 };
-use sinex_db::repositories::DbPoolExt;
 use crate::node_sdk::runtime::stream::{
     Checkpoint, MaterialReplayContext, NodeScanAck, NodeScanCommand, NodeScanProgress,
     ReplayScopeFilters as NodeReplayScopeFilters, ScanArgs, TimeHorizon,
 };
+use sinex_db::repositories::DbPoolExt;
 use sinex_primitives::ControlSubject;
 use sinex_primitives::events::Provenance;
 use sinex_primitives::{Result, SinexError, Timestamp, Uuid};
@@ -158,12 +158,8 @@ impl ReplayExecutionEngine {
                     // Verify anchor_payload_hash integrity when both old and new carry one.
                     // Mismatch means source material bytes changed between original
                     // ingestion and replay — corruption, tampering, or rewritten material.
-                    let new_hash = new_hash_by_id
-                        .get(&new_event_id)
-                        .and_then(|h| h.as_deref());
-                    if let (Some(old_bytes), Some(new_bytes)) =
-                        (old_hash.as_deref(), new_hash)
-                    {
+                    let new_hash = new_hash_by_id.get(&new_event_id).and_then(|h| h.as_deref());
+                    if let (Some(old_bytes), Some(new_bytes)) = (old_hash.as_deref(), new_hash) {
                         if old_bytes != new_bytes {
                             integrity_mismatch_count += 1;
                             let to_hex = |bytes: &[u8]| -> String {

@@ -1,5 +1,3 @@
-use sinexd::node_sdk::derived_node::{DerivedOutput, AutomatonContext};
-use sinexd::node_sdk::{NodeLogicError, Windowed};
 use sinex_primitives::activity::ActivitySourceKind;
 use sinex_primitives::domain::{ProcessingMode, TriggerKind};
 use sinex_primitives::events::payloads::{
@@ -9,6 +7,8 @@ use sinex_primitives::events::{Event, EventPayload};
 use sinex_primitives::temporal::{Duration, Timestamp};
 use sinex_primitives::{Id, JsonValue};
 use sinexd::automata::daily::{DailySummarizer, DailySummaryState};
+use sinexd::node_sdk::derived_node::{AutomatonContext, DerivedOutput};
+use sinexd::node_sdk::{NodeLogicError, Windowed};
 use xtask::sandbox::prelude::*;
 
 fn make_context(ts_orig: Timestamp) -> AutomatonContext {

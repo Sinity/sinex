@@ -237,7 +237,10 @@ fn start_event_engine(
         let mut service = match IngestService::new(config).await {
             Ok(s) => s,
             Err(error) => {
-                error!(?error, "IngestService::new failed — escalating to daemon shutdown");
+                error!(
+                    ?error,
+                    "IngestService::new failed — escalating to daemon shutdown"
+                );
                 let _ = escalate_tx.send(true);
                 return;
             }
@@ -269,7 +272,10 @@ fn start_event_engine(
                 let _ = escalate_tx.send(true);
             }
             Err(error) => {
-                error!(?error, "IngestService::run failed — escalating to daemon shutdown");
+                error!(
+                    ?error,
+                    "IngestService::run failed — escalating to daemon shutdown"
+                );
                 let _ = escalate_tx.send(true);
             }
         }
@@ -299,7 +305,10 @@ async fn start_api(
                 let _ = escalate_tx.send(true);
             }
             Err(error) => {
-                error!(?error, "rpc_server::run failed — escalating to daemon shutdown");
+                error!(
+                    ?error,
+                    "rpc_server::run failed — escalating to daemon shutdown"
+                );
                 let _ = escalate_tx.send(true);
             }
         }
@@ -321,7 +330,12 @@ fn start_automata(
     // Default to all automata when unset — the entity/relation/document
     // automata are implemented and should activate by default (#1087).
     // Set SINEX_AUTOMATA_ENABLED= (empty) to explicitly disable.
-    let effective = if raw.as_deref().map(str::trim).filter(|s| !s.is_empty()).is_none() {
+    let effective = if raw
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .is_none()
+    {
         Some("all")
     } else {
         raw.as_deref()

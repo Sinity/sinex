@@ -28,9 +28,9 @@ use sinex_primitives::events::SourceMaterial;
 use sinex_primitives::ids::Id;
 use sinex_primitives::parser::{InputShapeKind, MaterialAnchor, SourceRecord};
 
-use crate::node_sdk::parser::{InputShapeAdapter, ParserError, ParserResult};
 #[cfg(feature = "messaging")]
 use crate::node_sdk::parser::InputShapeAdapterExt;
+use crate::node_sdk::parser::{InputShapeAdapter, ParserError, ParserResult};
 #[cfg(feature = "messaging")]
 use crate::node_sdk::{
     acquisition_manager::AcquisitionManager, source_material::stage_material_from_file_bounded,

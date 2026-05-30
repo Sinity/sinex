@@ -3,9 +3,9 @@
 // Focused stress tests that exercise production checkpoint persistence and
 // event ingestion under concurrent load.
 
-use sinexd::node_sdk::{Checkpoint, CheckpointManager, CheckpointState};
 use sinex_primitives::Uuid;
 use sinex_primitives::{DynamicPayload, Timestamp};
+use sinexd::node_sdk::{Checkpoint, CheckpointManager, CheckpointState};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;

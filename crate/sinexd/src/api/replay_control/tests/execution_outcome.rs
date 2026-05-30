@@ -598,16 +598,12 @@ async fn replay_anchor_payload_hash_mismatch_does_not_block_replacement(
 }
 
 #[sinex_test]
-async fn replay_anchor_payload_hash_null_does_not_false_mismatch(
-    ctx: TestContext,
-) -> Result<()> {
+async fn replay_anchor_payload_hash_null_does_not_false_mismatch(ctx: TestContext) -> Result<()> {
     let ctx = ctx.with_nats().shared().await?;
     let replay = Arc::new(ReplayStateMachine::new(ctx.pool.clone()));
     let engine = ReplayExecutionEngine::new(replay.clone(), ctx.nats_client());
 
-    let source_material = ctx
-        .create_source_material(Some("replay-hash-null"))
-        .await?;
+    let source_material = ctx.create_source_material(Some("replay-hash-null")).await?;
 
     // Old event with NULL hash (legacy or synthesis)
     let old_event = DynamicPayload::new(
@@ -674,9 +670,7 @@ async fn replay_anchor_payload_hash_null_does_not_false_mismatch(
 }
 
 #[sinex_test]
-async fn replay_anchor_payload_hash_match_is_silent(
-    ctx: TestContext,
-) -> Result<()> {
+async fn replay_anchor_payload_hash_match_is_silent(ctx: TestContext) -> Result<()> {
     let ctx = ctx.with_nats().shared().await?;
     let replay = Arc::new(ReplayStateMachine::new(ctx.pool.clone()));
     let engine = ReplayExecutionEngine::new(replay.clone(), ctx.nats_client());

@@ -8,9 +8,7 @@
 //! get a cache *hit*, not a 100% miss.
 
 use sinex_db::build_occurrence_filter;
-use sinex_primitives::parser::{
-    OccurrenceKey, SourceUnitId, occurrence_key_string,
-};
+use sinex_primitives::parser::{OccurrenceKey, SourceUnitId, occurrence_key_string};
 use sqlx::types::Uuid;
 use time::OffsetDateTime;
 use xtask::sandbox::prelude::*;
@@ -70,7 +68,13 @@ async fn db_filter_key_matches_in_memory_key(ctx: TestContext) -> TestResult<()>
         "started_at": "2024-01-15T08:00:00Z",
         "played_ms": "240000",
     });
-    seed_event(ctx.pool(), "spotify-occfilter", "track.played", payload.clone()).await?;
+    seed_event(
+        ctx.pool(),
+        "spotify-occfilter",
+        "track.played",
+        payload.clone(),
+    )
+    .await?;
     seed_event(ctx.pool(), "spotify-occfilter", "track.played", payload).await?;
 
     let filter = build_occurrence_filter(
@@ -92,7 +96,11 @@ async fn db_filter_key_matches_in_memory_key(ctx: TestContext) -> TestResult<()>
     };
     let key_str = occurrence_key_string(&expected);
 
-    assert_eq!(filter.len(), 1, "two identical payloads -> one distinct key");
+    assert_eq!(
+        filter.len(),
+        1,
+        "two identical payloads -> one distinct key"
+    );
     assert!(
         filter.contains(&key_str),
         "DB-built filter must contain the canonical in-memory key. \

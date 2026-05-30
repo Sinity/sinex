@@ -231,8 +231,9 @@ fn elapsed_seconds_with_warning(start_time: SystemTime, context: &str) -> u64 {
 /// # Errors
 /// Returns `SinexError::configuration` if the node version is invalid
 pub fn node_version() -> crate::node_sdk::NodeResult<Version> {
-    Version::from_str(build::PKG_VERSION)
-        .map_err(|e| crate::node_sdk::SinexError::configuration(format!("Invalid node version: {e}")))
+    Version::from_str(build::PKG_VERSION).map_err(|e| {
+        crate::node_sdk::SinexError::configuration(format!("Invalid node version: {e}"))
+    })
 }
 
 /// Get full version string with build metadata
