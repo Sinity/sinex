@@ -1,9 +1,9 @@
 //! Gateway-owned content/blob orchestration.
 
+use crate::node_sdk::content_store::{BlobMetadata, ContentStoreManager};
 use sinex_db::DbPool;
 use sinex_db::repositories::DbPoolExt;
 use sinex_db::repositories::state::Operation;
-use crate::node_sdk::content_store::{BlobMetadata, ContentStoreManager};
 use sinex_primitives::domain::OperationStatus;
 use sinex_primitives::error::{Result, SinexError};
 use std::sync::Arc;

@@ -29,7 +29,9 @@ use sinex_primitives::events::SourceMaterial;
 use sinex_primitives::ids::Id;
 use sinex_primitives::parser::{InputShapeKind, SourceRecord};
 
-use crate::node_sdk::parser::{InputShapeAdapter, ParserError, ParserResult, SourceRecordFingerprint};
+use crate::node_sdk::parser::{
+    InputShapeAdapter, ParserError, ParserResult, SourceRecordFingerprint,
+};
 
 // =============================================================================
 // Logical-path prefixes — the tagging mechanism

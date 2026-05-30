@@ -7,8 +7,8 @@
 //! always re-evaluate. NOTE: not yet wired — `pool.model_effects()` has no
 //! production callers (#1063).
 
-use crate::primitives::Uuid;
 use crate::TableDef;
+use crate::primitives::Uuid;
 use sea_query::{
     Alias, ColumnDef, Expr, Iden, Index, IndexCreateStatement, Table, TableCreateStatement,
 };

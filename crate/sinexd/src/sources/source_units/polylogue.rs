@@ -57,7 +57,7 @@ use sinex_primitives::proof::{
     CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, RetentionPolicy, RuntimeShape,
     SourceUnitBinding, SourceUnitBuildImpact, SourceUnitDescriptor, SubjectRef,
 };
-use sinex_primitives::{register_source_unit, register_source_unit_binding, Timestamp};
+use sinex_primitives::{Timestamp, register_source_unit, register_source_unit_binding};
 
 /// Payload published by the Polylogue daemon when a conversation is indexed.
 ///

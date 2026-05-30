@@ -1,8 +1,8 @@
 //! Event timeline listing (#1025).
 
-use clap::Args;
-use console::{style, Term};
 use crate::Result;
+use clap::Args;
+use console::{Term, style};
 
 /// List recent events as a timeline with source and type columns.
 #[derive(Debug, Args)]
@@ -22,16 +22,18 @@ pub struct TimelineCommand {
 
 impl TimelineCommand {
     pub async fn execute(&self, client: &crate::client::gateway::GatewayClient) -> Result<()> {
-        use sinex_primitives::query::EventQuery;
         use sinex_primitives::domain::{EventSource, EventType};
+        use sinex_primitives::query::EventQuery;
 
         let mut query = EventQuery::default();
         query.limit = self.limit;
         if let Some(ref s) = self.source {
-            query.sources = vec![EventSource::new(s.clone()).map_err(|e| color_eyre::eyre::eyre!("{}", e))?];
+            query.sources =
+                vec![EventSource::new(s.clone()).map_err(|e| color_eyre::eyre::eyre!("{}", e))?];
         }
         if let Some(ref t) = self.event_type {
-            query.event_types = vec![EventType::new(t.clone()).map_err(|e| color_eyre::eyre::eyre!("{}", e))?];
+            query.event_types =
+                vec![EventType::new(t.clone()).map_err(|e| color_eyre::eyre::eyre!("{}", e))?];
         }
         query.validate()?;
 
@@ -52,12 +54,20 @@ impl TimelineCommand {
         ))?;
 
         for event in &events {
-            let ts = event.event.ts_orig
+            let ts = event
+                .event
+                .ts_orig
                 .map(|t| t.to_string())
                 .unwrap_or_else(|| "?".into());
             let source = event.event.source.as_str();
             let etype = event.event.event_type.as_str();
-            let summary = event.snippet.as_deref().unwrap_or("").chars().take(80).collect::<String>();
+            let summary = event
+                .snippet
+                .as_deref()
+                .unwrap_or("")
+                .chars()
+                .take(80)
+                .collect::<String>();
             term.write_line(&format!(
                 "{}  {:<20} {:<30} {}",
                 style(ts.chars().take(19).collect::<String>()).dim(),

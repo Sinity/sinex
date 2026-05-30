@@ -6,8 +6,8 @@
 
 use serde::Serialize;
 use sinex_db::repositories::{DbPoolExt, TemporalLedgerEntry};
-use sinex_primitives::MaterialStatus;
 use sinex_db::schema::defs::records::SourceMaterialRecord;
+use sinex_primitives::MaterialStatus;
 use sinex_primitives::Timestamp;
 use sinex_primitives::nats::{NatsTrafficClass, insert_traffic_class_header};
 use sinex_primitives::transport;
@@ -902,13 +902,10 @@ mod tests {
         FinalizationErrorKind, FinalizationRequest, FinalizationTransaction,
     };
     use crate::event_engine::material_assembler::{io, state};
-    use serde_json::json;
-    use sinex_db::{
-        models::blob::Blob,
-        repositories::DbPoolExt,
-    };
-    use sinex_primitives::MaterialStatus;
     use crate::node_sdk::content_store::ContentStoreKey;
+    use serde_json::json;
+    use sinex_db::{models::blob::Blob, repositories::DbPoolExt};
+    use sinex_primitives::MaterialStatus;
     use tokio::time::timeout;
     use tokio_stream::StreamExt;
     use xtask::sandbox::prelude::*;

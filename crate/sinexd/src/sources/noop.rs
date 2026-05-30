@@ -5,14 +5,14 @@
 //! without depending on external ingestor crates. Real source units follow the
 //! same pattern with actual ingestion logic.
 
-use crate::register_node_factory;
-use serde::{Deserialize, Serialize};
 use crate::node_sdk::{
     NodeResult, SourceUnit,
     runtime::stream::{
         Checkpoint, ContinuousStart, NodeCapabilities, ScanArgs, ScanReport, TimeHorizon,
     },
 };
+use crate::register_node_factory;
+use serde::{Deserialize, Serialize};
 use sinex_primitives::proof::{
     CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, RetentionPolicy, RuntimeShape,
     SourceUnitBinding, SourceUnitBuildImpact, SourceUnitDescriptor, SubjectRef,

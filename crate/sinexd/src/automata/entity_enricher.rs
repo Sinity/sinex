@@ -9,9 +9,9 @@
 //! Category refinement maps `entity_type` to a coarse `EntityCategory`:
 //! `tool` → Tool, `url`/`website` → Website, `file` → Document, etc.
 
-use serde::{Deserialize, Serialize};
 use crate::node_sdk::derived_node::{AutomatonContext, DerivedOutput, ScopeReconcilerNodeAdapter};
 use crate::node_sdk::{InputProvenanceFilter, NodeLogicError, ScopeReconciler};
+use serde::{Deserialize, Serialize};
 use sinex_primitives::Uuid;
 use sinex_primitives::domain::{EntityTypeName, SyntheticTemporalPolicy};
 use sinex_primitives::events::EventPayload;

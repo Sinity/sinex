@@ -3,12 +3,12 @@ use clap::{Parser, Subcommand};
 use color_eyre::eyre::{WrapErr, eyre};
 use serde::Serialize;
 use sinex_db::create_pool;
+use sinex_primitives::Uuid;
 use sinexd::node_sdk::content_store::{
     CasFsckReport, ContentStoreConfig, MaterialContentStore, UnusedContentEntry,
     cas_fsck::check_cas,
     gc::{BlobGcReport, sweep_orphans_detailed},
 };
-use sinex_primitives::Uuid;
 
 use crate::Result;
 use crate::fmt::{CommandOutput, format_bytes};

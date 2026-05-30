@@ -56,25 +56,32 @@ impl MaterialParser for NotificationParser {
         let summary = payload["summary"].as_str().unwrap_or("");
         let body = payload["body"].as_str().unwrap_or("");
 
-        Ok(vec![ParsedEventIntent::builder()
-            .source_unit_id(SourceUnitId::from_static("desktop.notification"))
-            .parser_id(ParserId::from_static("desktop-notification"))
-            .parser_version("1.0.0")
-            .event_source(EventSource::from_static("desktop"))
-            .event_type(EventType::from_static("notification"))
-            .payload(serde_json::json!({"app_name": app_name, "summary": summary, "body": body}))
-            .ts_orig(ts_orig)
-            .timing(TimingEvidence::Intrinsic {
-                field: "timestamp".into(),
-                confidence: TimingConfidence::Intrinsic,
-            })
-            .anchor(MaterialAnchor::ByteRange { start: 0, len: 1 })
-            .occurrence_key(OccurrenceKey {
-                source_unit_id: SourceUnitId::from_static("desktop.notification"),
-                fields: vec![("app".into(), app_name.into()), ("summary".into(), summary.into())],
-            })
-            .privacy_context(ProcessingContext::Notification)
-            .build()])
+        Ok(vec![
+            ParsedEventIntent::builder()
+                .source_unit_id(SourceUnitId::from_static("desktop.notification"))
+                .parser_id(ParserId::from_static("desktop-notification"))
+                .parser_version("1.0.0")
+                .event_source(EventSource::from_static("desktop"))
+                .event_type(EventType::from_static("notification"))
+                .payload(
+                    serde_json::json!({"app_name": app_name, "summary": summary, "body": body}),
+                )
+                .ts_orig(ts_orig)
+                .timing(TimingEvidence::Intrinsic {
+                    field: "timestamp".into(),
+                    confidence: TimingConfidence::Intrinsic,
+                })
+                .anchor(MaterialAnchor::ByteRange { start: 0, len: 1 })
+                .occurrence_key(OccurrenceKey {
+                    source_unit_id: SourceUnitId::from_static("desktop.notification"),
+                    fields: vec![
+                        ("app".into(), app_name.into()),
+                        ("summary".into(), summary.into()),
+                    ],
+                })
+                .privacy_context(ProcessingContext::Notification)
+                .build(),
+        ])
     }
 }
 

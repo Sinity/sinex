@@ -183,7 +183,9 @@ impl<I: SourceUnit> SourceUnitRuntime<I> {
     }
 
     /// Access the health reporter for recording successes/errors.
-    pub fn health_reporter(&self) -> Option<&Arc<crate::node_sdk::health_reporter::HealthReporter>> {
+    pub fn health_reporter(
+        &self,
+    ) -> Option<&Arc<crate::node_sdk::health_reporter::HealthReporter>> {
         self.health_reporter.as_ref()
     }
 
@@ -509,20 +511,24 @@ impl<I: SourceUnit> Node for SourceUnitRuntime<I> {
                     );
                     HealthThresholds::default()
                 });
-                let liveness_probe: crate::node_sdk::health_reporter::LivenessProbe = Arc::new(move || {
-                    let client = nats_for_probe.clone();
-                    Box::pin(async move {
-                        use async_nats::connection::State as NatsState;
-                        // Fast path: avoid the async round-trip when already disconnected.
-                        if !matches!(client.connection_state(), NatsState::Connected) {
-                            return false;
-                        }
-                        // Active probe: flush() issues PING and waits for PONG.
-                        tokio::time::timeout(std::time::Duration::from_millis(500), client.flush())
+                let liveness_probe: crate::node_sdk::health_reporter::LivenessProbe =
+                    Arc::new(move || {
+                        let client = nats_for_probe.clone();
+                        Box::pin(async move {
+                            use async_nats::connection::State as NatsState;
+                            // Fast path: avoid the async round-trip when already disconnected.
+                            if !matches!(client.connection_state(), NatsState::Connected) {
+                                return false;
+                            }
+                            // Active probe: flush() issues PING and waits for PONG.
+                            tokio::time::timeout(
+                                std::time::Duration::from_millis(500),
+                                client.flush(),
+                            )
                             .await
                             .is_ok_and(|r| r.is_ok())
-                    })
-                });
+                        })
+                    });
 
                 let reporter = Arc::new(
                     HealthReporter::new(
@@ -837,8 +843,10 @@ mod tests {
 
     #[sinex_test]
     async fn request_runtime_drain_is_idempotent() -> TestResult<()> {
-        crate::node_sdk::runtime::stream::test_support::assert_request_drain_is_idempotent("test-ingestor")
-            .await
+        crate::node_sdk::runtime::stream::test_support::assert_request_drain_is_idempotent(
+            "test-ingestor",
+        )
+        .await
     }
 
     #[sinex_test]

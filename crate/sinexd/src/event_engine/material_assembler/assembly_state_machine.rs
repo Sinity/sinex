@@ -94,7 +94,9 @@ impl AssemblyStateMachine {
         }
     }
 
-    pub(super) fn terminal_state_for_status(status: MaterialStatus) -> Option<AssemblyLogicalState> {
+    pub(super) fn terminal_state_for_status(
+        status: MaterialStatus,
+    ) -> Option<AssemblyLogicalState> {
         match status {
             MaterialStatus::Completed | MaterialStatus::RecoveredPartial => {
                 Some(AssemblyLogicalState::Finalized)

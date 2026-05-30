@@ -10,12 +10,12 @@ use crate::config::workspace_root;
 use crate::output::StructuredError;
 use color_eyre::eyre::{Context, Result};
 use serde::Serialize;
-use sinexd::node_sdk::parser::all_adapter_schemas;
 use sinex_primitives::events::schema_registry::get_all_payloads;
 use sinex_primitives::proof::{
     self, CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, ProofObligation,
     RetentionPolicy, RuntimeShape, SourceUnitBinding,
 };
+use sinexd::node_sdk::parser::all_adapter_schemas;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::collections::{BTreeMap, BTreeSet};

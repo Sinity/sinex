@@ -161,11 +161,12 @@ where
             .with_context("path", checkpoint_path.display().to_string()));
         };
 
-        let mut persisted: PersistedState<N::State> = crate::node_sdk::checkpoint::decode_checkpoint_data(
-            data,
-            "derived hot reload state",
-            self.node.name(),
-        )?;
+        let mut persisted: PersistedState<N::State> =
+            crate::node_sdk::checkpoint::decode_checkpoint_data(
+                data,
+                "derived hot reload state",
+                self.node.name(),
+            )?;
         restore_resume_position(&mut persisted, &file_state.checkpoint);
         info!(
             node = %self.node.name(),

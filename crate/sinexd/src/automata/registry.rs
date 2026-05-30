@@ -167,8 +167,8 @@ where
         + Default
         + 'static,
 {
-    use clap::Parser;
     use crate::node_sdk::node_cli::{NodeCli, NodeCliRunner};
+    use clap::Parser;
 
     let service_name = format!("sinex-{name}");
     info!(automaton = name, service_name = %service_name, "starting in-process automaton");

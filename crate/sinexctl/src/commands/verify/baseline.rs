@@ -474,37 +474,33 @@ async fn check_privacy_invariants(check_timeout: Duration) -> CheckResult {
     };
 
     // Sub-check 2: source-worker privacy gate.
-    let (sw_status, sw_msg) = match timeout(
-        check_timeout,
-        run_xtask(&["verify", "source-worker"]),
-    )
-    .await
-    {
-        Ok(Ok(xtask_result)) => {
-            if xtask_result.success {
-                (
-                    CheckStatus::Pass,
-                    "source-worker privacy gate passing".to_string(),
-                )
-            } else {
-                (
-                    CheckStatus::Fail,
-                    format!(
-                        "source-worker privacy gate failing: {}",
-                        xtask_result.stderr_summary()
-                    ),
-                )
+    let (sw_status, sw_msg) =
+        match timeout(check_timeout, run_xtask(&["verify", "source-worker"])).await {
+            Ok(Ok(xtask_result)) => {
+                if xtask_result.success {
+                    (
+                        CheckStatus::Pass,
+                        "source-worker privacy gate passing".to_string(),
+                    )
+                } else {
+                    (
+                        CheckStatus::Fail,
+                        format!(
+                            "source-worker privacy gate failing: {}",
+                            xtask_result.stderr_summary()
+                        ),
+                    )
+                }
             }
-        }
-        Ok(Err(error)) => (
-            CheckStatus::Degraded,
-            format!("source-worker privacy gate invocation failed: {error}"),
-        ),
-        Err(_elapsed) => (
-            CheckStatus::Degraded,
-            "source-worker privacy gate timed out".into(),
-        ),
-    };
+            Ok(Err(error)) => (
+                CheckStatus::Degraded,
+                format!("source-worker privacy gate invocation failed: {error}"),
+            ),
+            Err(_elapsed) => (
+                CheckStatus::Degraded,
+                "source-worker privacy gate timed out".into(),
+            ),
+        };
 
     // Worst-wins combine: the final status is the worse of the two
     // sub-checks so a source-worker Fail can never be masked by a

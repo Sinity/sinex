@@ -6,6 +6,7 @@
 use std::{collections::HashMap, sync::Arc};
 
 use camino::Utf8PathBuf;
+use sinex_primitives::{Event, JsonValue, Uuid, constants::buffers::DEFAULT_EVENT_CHANNEL_SIZE};
 use sinexd::node_sdk::{
     EventTransport,
     checkpoint::CheckpointManager,
@@ -13,7 +14,6 @@ use sinexd::node_sdk::{
     nats_publisher::NatsPublisher,
     runtime::stream::{EventEmitter, NodeHandles, NodeRuntimeState, ServiceInfo},
 };
-use sinex_primitives::{Event, JsonValue, Uuid, constants::buffers::DEFAULT_EVENT_CHANNEL_SIZE};
 use tokio::sync::mpsc;
 
 use super::nats::create_or_open_kv_store;

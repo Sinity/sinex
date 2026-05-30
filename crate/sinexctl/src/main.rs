@@ -1,7 +1,6 @@
 use clap::{CommandFactory, FromArgMatches, Parser, Subcommand, parser::ValueSource};
 use color_eyre::eyre::eyre;
 use serde::Serialize;
-use sinexd::node_sdk::service_runtime;
 use sinex_primitives::RuntimeTargetDescriptor;
 use sinex_primitives::rpc::{RpcMethodInfo, method_catalog};
 use sinexctl::AdminCommands;
@@ -23,6 +22,7 @@ use sinexctl::{
     CommandCatalogEntry, Config, command_catalog, default_rpc_url, render_format_matrix_terminal,
     validate_format,
 };
+use sinexd::node_sdk::service_runtime;
 use std::path::PathBuf;
 
 /// Sinex control CLI

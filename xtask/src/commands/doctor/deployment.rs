@@ -3,11 +3,11 @@ use crate::command::CommandContext;
 use color_eyre::eyre::{Result, WrapErr, eyre};
 use console::style;
 use serde::Serialize;
+use sinex_primitives::{DeploymentReadinessDescriptor, DeploymentReadinessMode};
 use sinexd::node_sdk::preflight::configuration::{
     validate_activitywatch_db, validate_terminal_history_source,
 };
 use sinexd::node_sdk::preflight::services::{SystemdServiceDetails, inspect_systemd_service};
-use sinex_primitives::{DeploymentReadinessDescriptor, DeploymentReadinessMode};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 

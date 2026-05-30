@@ -4,13 +4,13 @@
 //! content-store reconciliation, blob registration, source-material finalization,
 //! and precise temporal-ledger coverage.
 
+use crate::node_sdk::content_store::ContentStoreKey;
 use serde_json::json;
 use sinex_db::schema::defs::records::SourceMaterialRecord;
 use sinex_db::{
     models::blob::Blob,
     repositories::{DbPoolExt, TemporalLedgerEntry},
 };
-use crate::node_sdk::content_store::ContentStoreKey;
 use sinex_primitives::{Id, JsonValue, MaterialStatus, Uuid};
 use tracing::{error, info, warn};
 
@@ -609,8 +609,8 @@ fn rollback_finalization_failure(
 
 #[cfg(test)]
 mod tests {
-    use sinex_primitives::MaterialStatus;
     use crate::node_sdk::content_store::ContentStoreKey;
+    use sinex_primitives::MaterialStatus;
     use sinex_primitives::Uuid;
     use xtask::sandbox::prelude::*;
 

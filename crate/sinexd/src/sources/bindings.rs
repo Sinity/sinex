@@ -53,8 +53,7 @@ use crate::sources::registry::SourceUnitRegistry;
 /// `std::env::var` from adapters; that is tracked as a follow-up because it
 /// requires extending `MaterialParser::baseline_adapter_config` on the SDK
 /// trait, which ripples through every source unit.
-static BINDING_ENV_LOCK: LazyLock<Arc<Mutex<()>>> =
-    LazyLock::new(|| Arc::new(Mutex::new(())));
+static BINDING_ENV_LOCK: LazyLock<Arc<Mutex<()>>> = LazyLock::new(|| Arc::new(Mutex::new(())));
 
 /// One row in the manifest file at `SINEX_SOURCE_BINDINGS_PATH`.
 ///
@@ -317,7 +316,9 @@ impl EnvGuard {
         for (k, v) in env {
             // SAFETY: caller holds `BINDING_ENV_LOCK`; no other binding is
             // concurrently mutating env.
-            unsafe { std::env::set_var(k, v); }
+            unsafe {
+                std::env::set_var(k, v);
+            }
         }
         Self {
             saved,
@@ -330,12 +331,16 @@ impl Drop for EnvGuard {
     fn drop(&mut self) {
         for (k, v) in &self.saved {
             // SAFETY: still under `BINDING_ENV_LOCK`.
-            unsafe { std::env::set_var(k, v); }
+            unsafe {
+                std::env::set_var(k, v);
+            }
         }
         let previously_set: Vec<_> = self.saved.iter().map(|(k, _)| k.as_str()).collect();
         for k in &self.keys {
             if !previously_set.contains(&k.as_str()) {
-                unsafe { std::env::remove_var(k); }
+                unsafe {
+                    std::env::remove_var(k);
+                }
             }
         }
     }
@@ -383,7 +388,9 @@ mod tests {
     async fn concurrent_bindings_see_their_own_env_values() {
         // Ensure no stale value leaks in from a prior test run.
         // SAFETY: test is single-threaded at this point; no readers yet.
-        unsafe { std::env::remove_var(TEST_KEY); }
+        unsafe {
+            std::env::remove_var(TEST_KEY);
+        }
 
         let saw_a = Arc::new(AtomicBool::new(false));
         let saw_b = Arc::new(AtomicBool::new(false));
@@ -411,8 +418,14 @@ mod tests {
         task_a.await.unwrap();
         task_b.await.unwrap();
 
-        assert!(saw_a.load(Ordering::SeqCst), "binding A did not see its own value");
-        assert!(saw_b.load(Ordering::SeqCst), "binding B did not see its own value");
+        assert!(
+            saw_a.load(Ordering::SeqCst),
+            "binding A did not see its own value"
+        );
+        assert!(
+            saw_b.load(Ordering::SeqCst),
+            "binding B did not see its own value"
+        );
 
         // Both EnvGuards have dropped and restored; the key should now be
         // unset (it was unset before the test).
@@ -520,7 +533,9 @@ mod tests {
     fn env_guard_empty_is_noop() {
         let key = "SINEX_BINDINGS_TEST_EMPTY_NOOP";
         // SAFETY: scoped to a key no one else uses.
-        unsafe { std::env::remove_var(key); }
+        unsafe {
+            std::env::remove_var(key);
+        }
         let empty: HashMap<String, String> = HashMap::new();
         {
             let _guard = EnvGuard::install(&empty);
@@ -536,7 +551,9 @@ mod tests {
         let key = "SINEX_BINDINGS_TEST_RESTORE";
         // SAFETY: scoped to a unique key; not in scope for the multi-thread
         // race test above.
-        unsafe { std::env::set_var(key, "prior"); }
+        unsafe {
+            std::env::set_var(key, "prior");
+        }
         let mut new_env = HashMap::new();
         new_env.insert(key.to_string(), "overridden".to_string());
         {
@@ -549,6 +566,8 @@ mod tests {
             "EnvGuard drop must restore the prior value"
         );
         // Cleanup.
-        unsafe { std::env::remove_var(key); }
+        unsafe {
+            std::env::remove_var(key);
+        }
     }
 }

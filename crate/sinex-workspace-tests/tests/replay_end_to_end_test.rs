@@ -13,11 +13,11 @@
 
 use futures::StreamExt;
 use serde_json::json;
-use sinexd::node_sdk::{Checkpoint, NodeScanAck, NodeScanCommand, NodeScanProgress, ScanReport};
 use sinex_primitives::rpc::methods;
 use sinex_primitives::temporal::Duration as TemporalDuration;
 use sinex_primitives::temporal::Timestamp;
 use sinex_primitives::{DynamicPayload, Id, Uuid};
+use sinexd::node_sdk::{Checkpoint, NodeScanAck, NodeScanCommand, NodeScanProgress, ScanReport};
 use std::collections::HashMap;
 use std::time::Duration;
 use xtask::sandbox::prelude::*;

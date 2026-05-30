@@ -475,9 +475,7 @@ fn parse_dump_record(
     let obj = match json.as_object() {
         Some(o) => o,
         None => {
-            warn!(
-                "browser history dump: non-object JSON line; skipping record"
-            );
+            warn!("browser history dump: non-object JSON line; skipping record");
             return Ok(vec![]);
         }
     };

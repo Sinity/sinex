@@ -12,8 +12,8 @@ use sea_query::{
     IndexCreateStatement, IndexOrder, Table, TableCreateStatement,
 };
 use serde_json::Value as JsonValue;
-use sqlx::FromRow;
 use sinex_primitives::MaterialStatus;
+use sqlx::FromRow;
 
 // =============================================================================
 // The `raw.source_material_registry` Table

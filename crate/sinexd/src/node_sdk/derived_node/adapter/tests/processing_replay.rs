@@ -107,7 +107,10 @@ async fn derived_outputs_carry_unique_random_uuidv7_ids() -> TestResult<()> {
         .ok_or_else(|| color_eyre::eyre::eyre!("derived output must carry an event id"))?;
 
     // Each invocation yields a new interpretation identity.
-    assert_ne!(first_id, second_id, "re-processing must produce a distinct event id");
+    assert_ne!(
+        first_id, second_id,
+        "re-processing must produce a distinct event id"
+    );
 
     // Both must be valid RFC4122 UUIDv7 (required by the admission gate).
     assert_eq!(first_id.as_uuid().get_version_num(), 7);
