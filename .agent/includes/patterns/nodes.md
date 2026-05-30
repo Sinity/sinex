@@ -9,14 +9,14 @@
 | Accumulate-then-emit (sessions, summaries) | `Windowed` + `AutomatonRuntime` | accumulate() + emit_window() |
 | Per-scope state reconciliation | `ScopeReconciler` + `AutomatonRuntime` | Per-scope state + reconcile() |
 
-All nodes use `node_entrypoint!` macro for CLI, lifecycle, sd_notify, heartbeat.
+Automata are registered via `AutomatonSpec` in `automata::registry` and driven by `NodeCliRunner`. Source units are registered via `register_node_factory!` / `register_adapter_ingestor!` and driven by `NodeCliRunner` through `sources::bindings`.
 
 ### Ingestor Pattern
 
 ```rust
 use serde::{Deserialize, Serialize};
-use sinex_node_sdk::{SourceUnit, SourceUnitRuntime};
-use sinex_node_sdk::runtime::stream::*;
+use crate::node_sdk::{SourceUnit, SourceUnitRuntime};
+use crate::node_sdk::runtime::stream::*;
 use tokio::sync::watch;
 
 #[derive(Default, Serialize, Deserialize)]
@@ -32,18 +32,18 @@ impl SourceUnit for MyIngestor {
     fn name(&self) -> &str { "my-ingestor" }
 
     async fn initialize(&mut self, state: &mut Self::State, _config: Self::Config,
-        _runtime: &NodeRuntimeState) -> sinex_node_sdk::NodeResult<()> { Ok(()) }
+        _runtime: &NodeRuntimeState) -> crate::node_sdk::NodeResult<()> { Ok(()) }
 
     async fn scan_snapshot(&mut self, _state: &mut Self::State,
-        _args: ScanArgs) -> sinex_node_sdk::NodeResult<ScanReport> { Ok(ScanReport::empty()) }
+        _args: ScanArgs) -> crate::node_sdk::NodeResult<ScanReport> { Ok(ScanReport::empty()) }
 
     async fn scan_historical(&mut self, _state: &mut Self::State, _from: Checkpoint,
-        _until: TimeHorizon, _args: ScanArgs) -> sinex_node_sdk::NodeResult<ScanReport> {
+        _until: TimeHorizon, _args: ScanArgs) -> crate::node_sdk::NodeResult<ScanReport> {
         Ok(ScanReport::empty())
     }
 
     async fn run_continuous(&mut self, _state: &mut Self::State, _from: Checkpoint,
-        _shutdown_rx: watch::Receiver<bool>) -> sinex_node_sdk::NodeResult<ScanReport> {
+        _shutdown_rx: watch::Receiver<bool>) -> crate::node_sdk::NodeResult<ScanReport> {
         Ok(ScanReport::empty())
     }
 }
@@ -54,7 +54,8 @@ pub type MyIngestorNode = SourceUnitRuntime<MyIngestor>;
 ### Derived Node Pattern (Transducer — Stateless)
 
 ```rust
-use sinex_node_sdk::{Transducer, AutomatonRuntime, NodeEventContext, NodeLogicError};
+use crate::node_sdk::{Transducer, AutomatonRuntime, NodeLogicError};
+use crate::node_sdk::derived_node::AutomatonContext;
 
 struct MyTransducer;
 
@@ -78,8 +79,8 @@ impl Transducer for MyTransducer {
 ### Derived Node Pattern (Windowed — Accumulate Then Emit)
 
 ```rust
-use sinex_node_sdk::{Windowed, AutomatonRuntime, DerivedOutput, NodeLogicError};
-use sinex_node_sdk::derived_node::AutomatonContext;
+use crate::node_sdk::{Windowed, AutomatonRuntime, DerivedOutput, NodeLogicError};
+use crate::node_sdk::derived_node::AutomatonContext;
 
 struct SessionDetector;
 
@@ -124,24 +125,21 @@ impl Windowed for SessionDetector {
 ### Node SDK Components Reference
 
 ```rust
-use sinex_node_sdk::{
+use crate::node_sdk::{
     // Core node types
     SourceUnit, SourceUnitRuntime,
     Transducer, Windowed, ScopeReconciler,
     AutomatonRuntime,
     // Config + CLI
-    NodeConfig, NodeArgs, NodeCli, NodeCliRunner, node_entrypoint,
+    NodeConfig, NodeCli, NodeCliRunner,
     // Runtime
-    CheckpointManager, LifecycleManager, ServiceStatus,
+    CheckpointManager,
     NatsPublisher, HeartbeatEmitter, DlqRetryHandler,
     NodeCoordination, InstanceMode,
     SelfObserver, SelfObserverConfig,
-    ShutdownHandler, ShutdownSignal,
-    // Storage
-    AnnexConfig, GitAnnex, BlobManager,
     // Health
     HealthReporter, HealthMetrics,
 };
 ```
 
-Reference: `crate/lib/sinex-node-sdk/docs/overview.md`
+Reference: `crate/sinexd/src/node_sdk/` (the node SDK lives inline in sinexd post-collapse)

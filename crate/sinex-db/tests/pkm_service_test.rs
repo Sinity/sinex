@@ -767,7 +767,7 @@ async fn test_in_flight_material_lifecycle(ctx: TestContext) -> TestResult<()> {
         .await?;
     let record = record.expect("in-flight material should be retrievable");
     assert_eq!(
-        record.status, "sensing",
+        record.status, sinex_primitives::MaterialStatus::Sensing,
         "in-flight material should have sensing status"
     );
 
@@ -783,7 +783,7 @@ async fn test_in_flight_material_lifecycle(ctx: TestContext) -> TestResult<()> {
         .await?;
     let record = record.expect("finalized material should be retrievable");
     assert_eq!(
-        record.status, "completed",
+        record.status, sinex_primitives::MaterialStatus::Completed,
         "finalized material should have completed status"
     );
     assert!(

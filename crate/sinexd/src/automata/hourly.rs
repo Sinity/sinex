@@ -264,7 +264,7 @@ impl Windowed for HourlySummarizer {
     }
 }
 
-/// Node type alias for use with `node_entrypoint!`.
+/// Node type alias registered via `AutomatonSpec` in `automata::registry`.
 pub type HourlySummarizerNode = WindowedNodeAdapter<HourlySummarizer>;
 
 // --- Source-unit descriptor (issue #690 / #734) ---

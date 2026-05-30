@@ -20,98 +20,68 @@
 //! - Set conservative confirmation timeouts (>5 seconds)
 //! - For critical ordering, use database sequences instead of client-side `UUIDv7` IDs
 
-// cfg gate removed
 pub mod acquisition_manager;
-// cfg gate removed
 pub mod automaton_base;
 pub mod batch_importer;
-// cfg gate removed
 pub mod checkpoint;
 pub mod config;
 pub mod confirmation_handler;
-// cfg gate removed
 pub mod content_store;
-// cfg gate removed
 pub mod coordination;
 pub mod diagnostics {
     pub mod regression;
 }
-// cfg gate removed
 pub mod dlq_retry;
 
-// cfg gate removed
 pub mod derived_node;
-// cfg gate removed
 pub mod error_helpers;
-// cfg gate removed
 pub mod event_node;
-// cfg gate removed
 pub mod examples;
-// cfg gate removed
 pub mod exploration;
 pub mod file_tailer;
-// cfg gate removed
 pub mod health_reporter;
-// cfg gate removed
 pub mod heartbeat;
-// cfg gate removed
 pub mod hyprland;
 pub mod ingestion_helpers;
-// cfg gate removed
 pub mod ingestor_node;
 pub mod input_shapes;
-// cfg gate removed
 pub mod jetstream_consumer;
 pub mod material;
-// cfg gate removed
 pub mod nats_publisher;
-// cfg gate removed
 pub mod node_cli;
 pub mod parser;
-// cfg gate removed
 pub mod preflight;
 pub mod prelude;
 pub mod processing;
-// cfg gate removed
 pub mod record_source;
 pub mod tags;
-// cfg gate removed
 pub mod runtime {
     pub mod stream;
 }
 pub mod pressure;
-// cfg gate removed
 pub mod schema_validator;
-// cfg gate removed
 pub mod self_observation;
 pub mod service_runtime;
 pub mod shutdown;
 pub mod source_material;
 pub mod sqlite_source;
-// cfg gate removed
 pub mod stage_as_you_go;
-// cfg gate removed
 pub mod supervised_watcher;
-// cfg gate removed
 pub mod systemd_notify;
 pub mod version;
-// cfg gate removed
 pub mod watcher_handle;
 
-// cfg gate removed
 pub use acquisition_manager::{
     AcquisitionManager, AppendStreamAcquirer, RotationPolicy, SOURCE_MATERIAL_BEGIN_SUBJECT,
     SOURCE_MATERIAL_END_SUBJECT, SOURCE_MATERIAL_FRAMES_SUBJECT,
     SOURCE_MATERIAL_SLICE_SUBJECT_PREFIX, SOURCE_MATERIAL_STREAM, SourceMaterialHandle,
     SourceRecordAnchor, source_material_slice_subject,
 };
-// cfg gate removed
 pub use automaton_base::{ActivityEntry, IngestionHistoryEntry};
 pub use batch_importer::{
     BatchImporterState, DiscoveredFile, ImportFileChangeKind, ImportedFileFingerprint,
     ImportedFileState, ScanError, read_file_content, read_file_lines, scan_for_new_files,
 };
-// cfg gate removed
 pub use checkpoint::{
     CheckpointCleanupConfig, CheckpointCleanupResult, CheckpointManager, CheckpointState,
     cleanup_stale_checkpoints, spawn_checkpoint_cleanup_task,
@@ -123,9 +93,7 @@ pub use confirmation_handler::{
     ConfirmationBuffer, ConfirmedEventHandler, EventConfirmation, ProcessingModel,
     ProvisionalEvent, ProvisionalEventHandler,
 };
-// cfg gate removed
 pub use coordination::{HandoffRequest, InstanceMode, NodeCoordination};
-// cfg gate removed
 pub use derived_node::{
     AutomatonContext, AutomatonRuntime, DerivedAggregationMeta, DerivedNodeConfig, DerivedOutput,
     DerivedScopeInvalidation, INVALIDATION_SUBJECT, InputProvenanceFilter,
@@ -133,45 +101,33 @@ pub use derived_node::{
     ScopeReconciler, ScopeReconcilerNodeAdapter, ScopeReconcilerWrapper, Transducer,
     TransducerNodeAdapter, TransducerWrapper, Windowed, WindowedNodeAdapter, WindowedWrapper,
 };
-// cfg gate removed
 pub use dlq_retry::{DlqRetryConfig, DlqRetryHandler, DlqRetryResult, DlqStats};
-// cfg gate removed
 pub use event_node::{EventBatcher, EventBatcherConfig, EventTransport, spawn_event_batcher};
-// cfg gate removed
 pub use exploration::{ExplorationProvider, ExportFormat, SourceState};
 pub use file_tailer::{
     AppendOnlyFileChange, AppendOnlyFileLine, AppendOnlyFilePollResult, AppendOnlyFileState,
     TailError, poll_utf8_lines,
 };
-// cfg gate removed
 pub use health_reporter::{EmitTracker, HealthMetrics, HealthReporter, HealthThresholds};
-// cfg gate removed
 pub use heartbeat::{HeartbeatCounterHandle, HeartbeatEmitter, HeartbeatLogSink, HeartbeatMetrics};
-// cfg gate removed
 pub use hyprland::{
     HyprlandCommandSocketProbe, HyprlandCommandSocketResponse, dispatch_hyprland_workspace_command,
     probe_hyprland_command_socket, resolve_hyprland_command_socket_path,
 };
-// cfg gate removed
 pub use ingestor_node::{IngestorState, SourceUnit, SourceUnitRuntime};
 pub use input_shapes::{
     SqliteSnapshotCheckpointState, SqliteSourceCheckpointState, discover_importable_files_at_root,
 };
-// cfg gate removed
 pub use jetstream_consumer::{JetStreamEventConsumer, JetStreamEventConsumerConfig};
 pub use material::{
     ObservationMaterializer, RetryableMaterialCapture, StreamMaterialContext,
     TransientErrorPredicate,
 };
-// cfg gate removed
 pub use nats_publisher::NatsPublisher;
-// cfg gate removed
 pub use node_cli::{NodeCli, NodeCliRunner, NodeCommand, parse_checkpoint, parse_time_horizon};
 pub use pressure::PressureMonitor;
 pub use processing::NodeLogicError;
-// cfg gate removed
 pub use record_source::SqliteSnapshotLinker;
-// cfg gate removed
 pub use record_source::{
     ApiClient, ApiFetchCheckpoint, ApiFetchError, ApiFetchPage, ApiFetchRecordSource,
     AppendOnlyTextRecord, AppendOnlyUtf8FileSource, BufferedRecordMaterializer, BufferedRecordSink,
@@ -186,23 +142,19 @@ pub use record_source::{
     SqliteRecordSource, SqliteRowCheckpoint, TimestampRecordCheckpoint,
     process_record_batch_lenient, stable_json_line,
 };
-// cfg gate removed
 pub use runtime::stream::{
     Checkpoint, ContinuousStart, EventSender, EventStream, MaterialReplayContext, Node,
     NodeCapabilities, NodeRunner, NodeScanAck, NodeScanCommand, NodeScanProgress, NodeType,
     ReplayScopeFilters, ResolvedReplayMaterial, RunnerLifecycle, ScanArgs, ScanEstimate,
     ScanReport, TimeHorizon,
 };
-// cfg gate removed
 pub use self_observation::{
     SelfObservationError, SelfObservationTask, SelfObserver, SelfObserverConfig,
 };
 pub use shutdown::wait_for_os_shutdown_signal;
-// cfg gate removed
 pub use shutdown::wait_for_shutdown_signal;
 pub use shutdown::wait_for_shutdown_signal_bool;
 pub use shutdown::{ShutdownConfig, default_checkpoint_path};
-// cfg gate removed
 pub use source_material::{
     stage_material, stage_material_from_file, stage_material_from_file_bounded,
 };
@@ -212,115 +164,21 @@ pub use sqlite_source::{
     SqliteTableCheckError, capture_sqlite_snapshot, ensure_sqlite_with_tables,
     max_row_id_for_query, read_rows_after, read_rows_with_params,
 };
-// cfg gate removed
 pub use supervised_watcher::{
     SupervisedWatcherConfig, spawn_supervised_watcher, spawn_watcher_with_panic_catch,
 };
-// cfg gate removed
 pub use systemd_notify::{notify_ready, notify_stopping, spawn_watchdog, stop_watchdog};
 pub use version::{NodeInstance, NodeVersion};
-// cfg gate removed
 pub use watcher_handle::{WatcherHandle, WatcherHealth, WatcherState};
 
 // Re-export preflight utilities
-// cfg gate removed
 pub use content_store::{
     BlobMetadata, ContentBackend, ContentStoreConfig, ContentStoreKey, ContentStoreManager,
     MaterialContentStore,
 };
-// cfg gate removed
 pub use preflight::{VerificationStatus, verify_service_dependencies};
 
-/// Version information for node components
-#[derive(Debug, Clone)]
-pub struct VersionInfo {
-    pub git_revision: String,
-    pub binary_hash: String,
-    pub component_version: String,
-}
-
-impl VersionInfo {
-    /// Create version info for the current component
-    ///
-    /// Uses shadow-rs build constants for git revision and version information.
-    #[must_use]
-    pub fn current(component_name: &str) -> Self {
-        use version::{node_commit_hash, node_version};
-
-        let version = node_version()
-            .map_or_else(|_| env!("CARGO_PKG_VERSION").to_string(), |v| v.to_string());
-        let git_revision = node_commit_hash();
-        // For binary_hash, use commit hash as a proxy (same as git revision)
-        let binary_hash = git_revision.clone();
-
-        Self {
-            git_revision,
-            binary_hash,
-            component_version: format!("{component_name}-v{version}"),
-        }
-    }
-}
-
-/// Common CLI arguments for node services.
-///
-/// This structure provides standardized command-line arguments that all
-/// node services can use. It includes common parameters for NATS
-/// communication, batching, and operational modes.
-///
-/// # Examples
-///
-/// ```rust
-/// use clap::Parser;
-/// use crate::runtime::NodeArgs;
-///
-/// // Parse from command line
-/// let args = NodeArgs::parse();
-///
-/// // Use in service configuration
-/// let config = NodeConfig {
-///     service_name: args.service_name.clone(),
-///     nats_url: args.nats_url.clone(),
-///     dry_run: args.dry_run,
-///     // ... other fields
-/// };
-/// ```
-// cfg gate removed
-#[derive(clap::Parser, Debug, Clone)]
-pub struct NodeArgs {
-    /// NATS server URL for event ingestion
-    #[arg(long, env = "SINEX_NATS_URL", default_value = "nats://localhost:4222")]
-    pub nats_url: String,
-
-    /// Service name for identification
-    #[arg(long, default_value = "node")]
-    pub service_name: ServiceName,
-
-    /// Event batch size.
-    ///
-    /// Number of events to accumulate before submitting a batch to ingestd.
-    /// Higher values improve throughput but increase latency and memory usage.
-    #[arg(long, default_value = "100")]
-    pub batch_size: usize,
-
-    /// Batch timeout in seconds
-    #[arg(long, default_value = "5")]
-    pub batch_timeout: u64,
-
-    /// Working directory for temporary files
-    #[arg(long)]
-    pub work_dir: Option<std::path::PathBuf>,
-
-    /// Enable dry run mode (no actual event ingestion).
-    ///
-    /// When enabled, the service will process events but not submit them
-    /// to ingestd. Useful for testing and debugging processing logic.
-    #[arg(long)]
-    pub dry_run: bool,
-}
-
 // Re-export commonly used types from dependencies
-// cfg gate removed
-use sinex_primitives::domain::ServiceName;
 pub use sinex_primitives::error::{ErrorDetails, SinexError};
 pub use sinex_primitives::temporal::Timestamp;
 pub use uuid::Uuid;

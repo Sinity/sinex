@@ -820,6 +820,58 @@ impl std::str::FromStr for EventName {
     }
 }
 
+/// Typed builder for `sinex.control.*` NATS subjects.
+///
+/// Control-plane subjects were previously built with bare `format!` strings
+/// in both publishers and subscribers, making it easy for the two sides to
+/// silently desync when a segment is renamed. This builder provides a single
+/// construction point so every pair shares one definition. Mirrors
+/// [`EventName::nats_subject`] — see issue #752 for the event-subject
+/// consolidation that preceded this one (#1575).
+///
+/// # Usage
+///
+/// Build the bare subject, then wrap with `env.nats_subject()` when the
+/// environment prefix is needed (publishers do this; subscribers may omit it
+/// when they hold a pre-namespaced `async_nats::Client`):
+///
+/// ```ignore
+/// // publisher
+/// let subj = env.nats_subject(&ControlSubject::replay_progress(op_id));
+/// // subscriber (raw client already scoped to env namespace)
+/// let subj = ControlSubject::source_parse(source_id);
+/// ```
+pub struct ControlSubject;
+
+impl ControlSubject {
+    /// `sinex.control.replay.progress.<operation_id>`
+    ///
+    /// Published by the executing node as it progresses through a scan;
+    /// subscribed by the gateway to track operation completion.
+    #[must_use]
+    pub fn replay_progress(operation_id: impl fmt::Display) -> String {
+        format!("sinex.control.replay.progress.{operation_id}")
+    }
+
+    /// `sinex.control.sources.<source_id>.parse`
+    ///
+    /// Published by the gateway to request a staged-source parse;
+    /// subscribed by the source unit's parse listener.
+    #[must_use]
+    pub fn source_parse(source_id: impl fmt::Display) -> String {
+        format!("sinex.control.sources.{source_id}.parse")
+    }
+
+    /// `sinex.control.nodes.<node_id>.scan`
+    ///
+    /// Request-reply subject used by the gateway to dispatch a scan command
+    /// to a specific node; the node replies with a `NodeScanAck`.
+    #[must_use]
+    pub fn node_scan(node_id: impl fmt::Display) -> String {
+        format!("sinex.control.nodes.{node_id}.scan")
+    }
+}
+
 /// The hostname where an event occurred.
 ///
 /// Always valid by construction. Use [`HostName::new`] to parse runtime input,
@@ -1356,6 +1408,74 @@ impl NatsSubject {
             i += 1;
         }
         Self(Cow::Borrowed(s))
+    }
+}
+
+// ─────────────────────────────────────────────────────────────
+// Source-material lifecycle status
+// ─────────────────────────────────────────────────────────────
+
+/// Lifecycle status of a row in `raw.source_material_registry`.
+///
+/// The values are stored as TEXT in the database. All variant strings are
+/// intentionally lowercase with underscores to match the existing DB data.
+///
+/// `Sensing` is the only non-terminal status; all others are terminal (the
+/// assembly state machine emits no further transitions once a terminal status
+/// is written).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum MaterialStatus {
+    /// Material is still being assembled (in-flight capture).
+    Sensing,
+    /// Assembly completed successfully.
+    Completed,
+    /// Assembly completed with partial recovery (some data may be missing).
+    RecoveredPartial,
+    /// Assembly failed unrecoverably.
+    Failed,
+    /// Assembly was cancelled before completion.
+    Cancelled,
+}
+
+impl MaterialStatus {
+    /// Returns the canonical string representation stored in the database.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Sensing => "sensing",
+            Self::Completed => "completed",
+            Self::RecoveredPartial => "recovered_partial",
+            Self::Failed => "failed",
+            Self::Cancelled => "cancelled",
+        }
+    }
+
+    /// Returns `true` when this is a terminal status (assembly has ended).
+    #[must_use]
+    pub const fn is_terminal(self) -> bool {
+        !matches!(self, Self::Sensing)
+    }
+}
+
+impl fmt::Display for MaterialStatus {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl FromStr for MaterialStatus {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "sensing" => Ok(Self::Sensing),
+            "completed" => Ok(Self::Completed),
+            "recovered_partial" => Ok(Self::RecoveredPartial),
+            "failed" => Ok(Self::Failed),
+            "cancelled" => Ok(Self::Cancelled),
+            _ => Err(format!("unknown material status: {s:?}")),
+        }
     }
 }
 
@@ -2538,11 +2658,12 @@ mod sqlx_impls {
         AcquisitionJobStatus, AcquisitionMode, BlobVerificationStatus, BranchName, CommandText,
         CommitHash, ConsumerGroup, ConsumerName, ContentKey, DataTier, DerivedNodeModel,
         EntityTypeName, EventSource, EventType, GlobPattern, HealthStatus, HostName, InstanceId,
-        InvalidationAction, IpAddress, JobId, NatsSubject, NodeId, NodeName, NodeState, NodeType,
-        OperationRunStatus, OperationStatus, ProcessingMode, RecordedPath, RegexPattern,
-        RelationType, RemoteName, SanitizedPath, SchemaName, SchemaVersion, ServiceName, ShellName,
-        SourceIdentifier, SyntheticTemporalPolicy, TemporalClock, TemporalPrecision,
-        TemporalSourceType, TriggerKind, UserId,
+        InvalidationAction, IpAddress, JobId, MaterialStatus, NatsSubject, NodeId, NodeName,
+        NodeState, NodeType, OperationRunStatus, OperationStatus, ProcessingMode, RecordedPath,
+        RegexPattern, RelationType, RemoteName, SanitizedPath, SchemaName, SchemaVersion,
+        ServiceName, ShellName, SourceIdentifier, SourceMaterialTimingInfoType,
+        SyntheticTemporalPolicy, TemporalClock, TemporalPrecision, TemporalSourceType, TriggerKind,
+        UserId,
     };
 
     // Register validated string types (construction-validated)
@@ -2605,6 +2726,12 @@ mod sqlx_impls {
 
     // Operation run status
     impl_sqlx_for_enum_type!(OperationRunStatus);
+
+    // Source-material lifecycle status
+    impl_sqlx_for_enum_type!(MaterialStatus);
+
+    // Source-material timing info type
+    impl_sqlx_for_enum_type!(SourceMaterialTimingInfoType);
 }
 
 impl ContentKey {

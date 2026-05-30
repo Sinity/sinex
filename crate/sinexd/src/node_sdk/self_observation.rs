@@ -17,7 +17,7 @@
 //! # Usage
 //!
 //! ```rust,no_run
-//! use crate::runtime::self_observation::SelfObserver;
+//! use crate::node_sdk::self_observation::SelfObserver;
 //!
 //! // Create an observer for the gateway component
 //! let observer = SelfObserver::new(

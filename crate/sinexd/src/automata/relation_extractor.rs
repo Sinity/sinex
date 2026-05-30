@@ -219,7 +219,7 @@ fn drain_and_emit_pairs(
     outputs
 }
 
-/// Node type alias for use with `node_entrypoint!`.
+/// Node type alias registered via `AutomatonSpec` in `automata::registry`.
 pub type RelationExtractorNode = ScopeReconcilerNodeAdapter<RelationExtractor>;
 
 // ── Source-unit descriptor (issue #690 / #734) ──────────────────────────────

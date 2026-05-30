@@ -10,11 +10,11 @@
 //! All node services use environment-based configuration only:
 //!
 //! ```rust
-//! use crate::runtime::NodeConfig;
+//! use crate::node_sdk::NodeConfig;
 //!
 //! // Load from environment variables and defaults
 //! let config = NodeConfig::load_from_env("my-service")?;
-//! # Ok::<(), sinex_node_sdk::config::ConfigError>(())
+//! # Ok::<(), crate::node_sdk::config::ConfigError>(())
 //! ```
 //!
 //! # Environment Variables
@@ -267,7 +267,7 @@ impl NodeConfig {
     /// # Examples
     ///
     /// ```rust
-    /// use crate::runtime::NodeConfig;
+    /// use crate::node_sdk::NodeConfig;
     ///
     /// // Load with defaults
     /// let config = NodeConfig::load_from_env("my-service")?;
@@ -280,7 +280,7 @@ impl NodeConfig {
     /// let config = NodeConfig::load_from_env("debug-service")?;
     /// assert_eq!(config.log_level, "debug");
     /// assert!(config.dry_run);
-    /// # Ok::<(), sinex_node_sdk::config::ConfigError>(())
+    /// # Ok::<(), crate::node_sdk::config::ConfigError>(())
     /// ```
     pub fn load_from_env(service_name: &str) -> Result<Self, ConfigError> {
         let defaults = Self::defaults(service_name);

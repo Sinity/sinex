@@ -9,8 +9,8 @@
 | Dynamic events | `sinex_primitives::events::{DynamicPayload, builder::EventBuilder}` | For runtime source/type |
 | DB access | `sinex_db::DbPoolExt` | `pool.events()`, `pool.blobs()`, `pool.source_materials()` etc. |
 | DB schema | `sinex_schema` (or `sinex_db::schema` re-export) | Schema definitions + declarative convergence engine |
-| Node SDK | `sinex_node_sdk::*` | `SourceUnit`, `NodeConfig`, `node_entrypoint!`, runtime adapters |
-| Derived nodes | `sinex_node_sdk::{Transducer, Windowed, ScopeReconciler}` | Via `AutomatonRuntime<N>` |
+| Node SDK | `crate::node_sdk::*` (inside sinexd) | `SourceUnit`, `NodeConfig`, `NodeCliRunner`, runtime adapters |
+| Derived nodes | `crate::node_sdk::{Transducer, Windowed, ScopeReconciler}` | Via `AutomatonRuntime<N>` |
 | Privacy | `sinex_primitives::privacy::*` | `privacy::engine()`, `ProcessingContext` |
 | Domain enums | `sinex_primitives::domain::*` | `OperationStatus`, `HealthStatus`, `DataTier`, `NodeType` etc. |
 | Event field enums | `sinex_primitives::events::enums::*` | `FileModificationType`, `ShutdownReason`, etc. |
