@@ -101,7 +101,7 @@ Each derived event carries `node_model`, `temporal_policy`, and `semantics_versi
 
 **Current automata** (in `sinexd::automata`, deployed as per-automaton systemd services via `sinexd`):
 - Command canonicalizer — Transducer, `command.canonical`
-- Analytics — Windowed (1000-event sliding window), `analytics.insight`
+- Analytics — Windowed (250-event window), `analytics.insight`
 - Health aggregator — ScopeReconciler, `health.aggregated_report`
 - Session detector — Windowed, `activity.session.boundary` (enabled by NixOS module default)
 - Hourly summarizer — Windowed, hourly rollups
