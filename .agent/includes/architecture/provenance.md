@@ -36,35 +36,49 @@ An event MUST have exactly one provenance type. This is enforced at three levels
 
 ### The Three Clocks
 
-| Clock | Column | What it means | When they diverge |
-|-------|--------|---------------|-------------------|
-| `ts_orig` | `timestamptz` | When it happened in the real world | Historical imports: years before ts_coided |
-| `ts_coided` | generated from UUIDv7 `id` | When sinex first observed it | Always "now" at creation time |
-| `ts_persisted` | DB trigger | When the row was written to disk | Batch delay (100 events or 1s) |
+| Clock | Column | What it means | Across replay |
+|-------|--------|---------------|---------------|
+| `ts_orig` | `timestamptz` | When the datapoint happened in the real world | **stable** — re-derived from the same material |
+| `ts_coided` | `GENERATED ALWAYS AS (uuid_extract_timestamp(id))` | When sinex created *this interpretation* | **differs** — each replay is a new interpretation at a new "now" |
+| `ts_persisted` | DB trigger | When the row was written to disk | differs (batch delay) |
 
-**Decision rule:** Query by `ts_orig` for "what happened when?", by `ts_coided` for "what did sinex know when?". Continuous aggregates bucket on `ts_coided` (via UUIDv7 `id`), which means historical imports are invisible to CAs until manual refresh.
+`ts_coided` is **not an independent column** — it is a pure function of the event `id`'s UUIDv7 timestamp prefix. The `id` is a random UUIDv7 minted at creation, so `ts_coided` is the moment sinex produced this interpretation. This is *why* replayed events differ from their predecessors: a replay re-creates the interpretation now, so its `id` — and therefore its `ts_coided` — is new, even though `ts_orig` is unchanged.
 
-### The Stable Real-World Identifier
+`ts_orig` is intended to be a **quality-ranked** real-world timestamp, chosen from the best evidence in `raw.temporal_ledger` (precedence: `RealtimeCapture > IntrinsicContent > InferredMtime > InferredCtime > InferredUser > StagedAt`). **Planned, not yet wired** (#1570 Prong B): today the live paths set `ts_orig` to a caller-supplied or wall-clock value; the `temporal_ledger`-driven `derive_ts_orig` quality derivation exists in code but has no production callers.
 
-`(source_material_id, anchor_byte)` uniquely identifies an occurrence in the real world.
-Event IDs (UUIDv7) identify *interpretations* — replay creates new IDs for the same occurrence.
+**Decision rule:** query by `ts_orig` for "when did it happen?", by `ts_coided` for "when did sinex interpret it?".
 
-**Known gap:** TimescaleDB hypertables cannot enforce UNIQUE on this pair (requires partition key). The design describes uniqueness that the architecture cannot physically enforce. UUIDv5 from `(material_id, anchor_byte)` provides accidental idempotency via `ON CONFLICT DO NOTHING`.
+### Identity: occurrence vs interpretation
 
-### Replay: Where Provenance Proves Itself
+Two different relations over an event row. Conflating them is the single most common modeling error in this codebase — guard against it:
 
-Replay is not a special mode. After archiving old events, the system just runs normally:
+- **Interpretation identity = the event `id`** (random UUIDv7, the primary key). It identifies *this interpretation*, not the real-world thing. **Replay creates new ids** — re-reading or re-deriving the same datapoint yields a brand-new row with a new `id` and new `ts_coided`.
+- **Occurrence identity = the `(source_material_id, anchor_byte)` columns.** These are the real-world coordinates of the datapoint — *lineage data you query*, **never the primary key**. They are stable across replay (replay re-reads the same material at the same offsets), which is exactly how you relate a fresh event to the archived interpretation it supersedes: match the columns, not the key.
+
+**One live interpretation per occurrence.** `core.events` should hold at most one row per `(source_material_id, anchor_byte)`. Ideally a `UNIQUE` constraint — but TimescaleDB hypertables can't enforce uniqueness without the partition key, so it is upheld by code: replay *archives the current live row before inserting the new one*, so only one is ever live. The archive (`audit.archived_events`) is intentionally **multi-valued**: replaying N times yields N archived interpretations + 1 live. This is a *defensive single-live-interpretation* invariant — **not** idempotency.
+
+### Replay: new interpretations, by design
+
+Replay is not a special mode and is **not idempotent** — an idempotent replay would be a noop, which is pointless. It deliberately produces *new records*:
 1. Archive cascade: old events + derived descendants move to `audit.archived_events`
 2. Publish scope invalidation signals to downstream automata
-3. NATS request-reply to ingestor: "re-read this source material"
-4. Fresh events flow through the NORMAL pipeline (NATS -> ingestd -> DB)
+3. NATS request-reply to the source unit: "re-read this source material"
+4. Fresh events flow through the NORMAL pipeline — **new `id`, new `ts_coided`**, same `(material_id, anchor_byte)` and `ts_orig`
 5. Automata process naturally via JetStream subscription
 
-This means: bug fixes retroactively apply, privacy rule changes retroactively apply, schema validation runs normally. Replay is NOT bit-for-bit deterministic (current privacy rules, not original ones) — this is correct by design.
+Bug fixes, privacy-rule changes, and schema validation all apply retroactively because replay re-runs the real pipeline. Replay is NOT bit-for-bit deterministic (current rules, not original) — correct by design.
+
+### Dedup is downstream and object-level — never the PK
+
+Suppressing a duplicate *real-world occurrence* (user re-ingests the same file; ingests a newer version that logically overlaps an old one) is a **downstream, object-level concern**, keyed on `(source_material_id, anchor_byte)` — never on the event `id`. It is not automatic or universal: some source types admit a clean automatic rule, others need heuristics or user involvement. **Planned, stubbed, not wired** (#1570 Prong C): `IdempotenceKey` (keyed on `(material_id, anchor_byte)`) and `OccurrenceFilter` exist in code but have no production callers.
+
+> **Tripwire.** If you reach for a deterministic/content-derived event `id`, an `ON CONFLICT (id)` to suppress "the same datapoint," or a `UNIQUE(material_id, anchor_byte)` *for idempotency* — **stop, you've misread the model.** Event ids are interpretations (new on replay); occurrence identity lives in columns; there is no id-based idempotency. (`ON CONFLICT (id) DO NOTHING` on the insert paths exists only to absorb NATS at-least-once *redelivery* of an already-minted message — a transport concern, not occurrence dedup.)
 
 ### Negative Space (Load-Bearing Absences)
 
 These are design decisions, not missing features:
+- **No id-based idempotency** — replay is not idempotent; it creates new interpretations (new `id`, new `ts_coided`) by design. Re-ingesting identical bytes is a *new material* → new events.
+- **No occurrence dedup via the PK** — occurrence dedup, where it exists, is downstream and object-level (above), keyed on `(material_id, anchor_byte)`, never the event `id`.
 - **No mutation** — events are immutable after persistence (simplifies queries, enables replay)
 - **No federation** — single user, single database (no conflict resolution needed)
 - **No real-time guarantee** — 2-5s pipeline latency is acceptable

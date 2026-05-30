@@ -12,7 +12,6 @@ use super::{
 use crate::node_sdk::derived_node::context::AutomatonContext;
 use crate::node_sdk::derived_node::output::DerivedOutput;
 use crate::node_sdk::derived_node::traits::Automaton;
-use crate::node_sdk::ids::deterministic_event_id;
 use crate::node_sdk::runtime::stream::NodeRuntimeState;
 use crate::node_sdk::{NodeResult, SinexError};
 
@@ -254,29 +253,12 @@ where
         // Extract before moving provenance into the event struct.
         let created_by_operation_id = provenance.operation_uuid();
 
-        let mut id_anchor = Vec::new();
-        id_anchor.extend_from_slice(self.node.name().as_bytes());
-        id_anchor.push(0);
-        id_anchor.extend_from_slice(resolved_event_type.as_bytes());
-        id_anchor.push(0);
-        id_anchor.extend_from_slice(filtered_payload.to_string().as_bytes());
-        if let Provenance::Derived {
-            source_event_ids, ..
-        } = &provenance
-        {
-            for source_event_id in source_event_ids {
-                id_anchor.push(0);
-                id_anchor.extend_from_slice(source_event_id.as_uuid().as_bytes());
-            }
-        }
-        let event_id = deterministic_event_id(
-            format!("derived:{}", self.node.output_event_source()),
-            id_anchor,
-            ts_orig,
-        );
-
         Ok(Event {
-            id: Some(Id::from_uuid(event_id)),
+            // Fresh random UUIDv7: event ID is interpretation identity, not occurrence
+            // identity. Derived events re-processed on replay get new IDs by design.
+            // ON CONFLICT (id) DO NOTHING dedup operates on the id minted here and
+            // carried unchanged through NATS redelivery.
+            id: Some(Id::new()),
             source: EventSource::new(self.node.output_event_source())?,
             event_type: EventType::new(resolved_event_type)?,
             payload: filtered_payload,

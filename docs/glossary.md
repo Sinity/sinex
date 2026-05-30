@@ -187,14 +187,19 @@ events.
 ## T
 
 ### ts_coided
-Timestamp derived from the UUIDv7 `id` field — when sinex first observed
-the event. Always "now" at creation time. Continuous aggregates bucket on
+A pure function of the UUIDv7 `id` (`GENERATED ALWAYS AS uuid_extract_timestamp(id)`,
+not an independent column) — when sinex created *this interpretation*. The `id` is a
+random UUIDv7 minted at creation, so `ts_coided` is "now" at creation and **differs
+across replay**: a replayed event is a new interpretation with a new `id`, hence a new
+`ts_coided`, even though its `ts_orig` is unchanged. Continuous aggregates bucket on
 `ts_coided`.
 
 ### ts_orig
-The real-world timestamp of the observed occurrence. May differ significantly
-from `ts_coided` for historical imports. Query by `ts_orig` for "what happened
-when?", by `ts_coided` for "what did sinex know when?".
+The real-world timestamp of the observed occurrence — intended to be quality-ranked
+from `raw.temporal_ledger` evidence (the live quality derivation is planned, not yet
+wired; see #1570). **Stable across replay** (re-derived from the same material). May
+differ significantly from `ts_coided` for historical imports. Query by `ts_orig` for
+"what happened when?", by `ts_coided` for "what did sinex interpret it?".
 
 ### ts_persisted
 Timestamp set by a DB trigger when the row was written to disk. Used for
