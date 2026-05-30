@@ -205,6 +205,32 @@ as issues without a real design decision first:
   material — refactor through the ux-mk3 program (#1438-#1443) rather than direct issue per
   session.
 
+## Target-Vision Audit (2026-05-30)
+
+Dissolution batch 1 (`report/` + `reference/`, first pass). Nine fictions/stale claims corrected in target-vision prose (each verified against code), three Phase-1 files drained, two claims promoted to issues. Target-vision prose edits are committed to its own repo; this section records the sinex-side status. Root cause: target-vision was a source of the event-identity idempotency fiction — see #1570 and `.agent/includes/architecture/provenance.md`.
+
+### Fictions corrected (prose fixed in target-vision)
+| Claim ID | Claim | Status | Evidence |
+|----------|-------|--------|----------|
+| TV-013 | Three Clocks: `ts_coided` diverges only on historical imports / "when first observed" | superseded | `ts_coided = uuid_extract_timestamp(id)`; replay mints a new UUIDv7 → new `ts_coided`. Canon: `provenance.md`, `glossary.md`, #1570. |
+| TV-014 | `(material_id, anchor_byte)` UUIDv5 "accidental idempotency via ON CONFLICT"; replay/occurrence idempotency | rejected | Non-goal. Event ids = interpretation identity (random, new on replay); `ON CONFLICT (id)` is NATS at-least-once redelivery only. #1570. |
+| TV-015 | `_1h` telemetry surfaces are ordinary views, "no continuous aggregates" | superseded | `apply.rs:66-76` `TELEMETRY_CONTINUOUS_AGGREGATES` = 9 CAs + `current_system_state` (5m CA). #952. |
+| TV-016 | 9 automata in `sinex-process`; analytics window 1000-event | superseded | sinex-process dissolved into sinexd (Wave-B #1054/#1223/#1225); 13 specs in `nixos/modules/lib/automata.nix`; `analytics.rs:27` = 250. |
+| TV-017 | Per-domain ingestor binaries (`sinex-fs-ingestor`, …) are ACTIVE services | superseded | `Cargo.toml`: no per-domain ingestor crates; source units hosted by sinexd post-Wave-B. |
+| TV-018 | pgsodium as exploratory encryption option | rejected | Non-goal per #367; supported path is `Strategy::Encrypt` (XChaCha20-Poly1305). |
+| TV-019 | Replay ordering invariant cites "id (ULID) order" | superseded | System uses UUIDv7, not ULID. Semantic invariant (`ts_orig` ordering) is correct. |
+
+### Promoted to new issues
+| Claim ID | Claim | Status | Issue |
+|----------|-------|--------|-------|
+| TV-020 | Typed `OccurrenceKey` for `(source_material_id, anchor_byte)` occurrence identity | issue_backed | #1588 |
+| TV-021 | Roll out `#[derive(SinexConfig)]` to remaining ~10 manual `from_env()` impls | issue_backed | #1589 |
+
+### Drained files (Phase 1)
+- `reference/embedding-pipeline.md` — DELETED (was a pure authority-pointer; authority: `docs/architecture/embedding-runtime.md`, `document-layer-v1.md`, #1076/#1021/#1063).
+- `reference/design-intent.md` §29 (17 superseded ideas) — DELETED (each superseded by named code).
+- `reference/historical-architecture.md` — KEPT (conservative; sensd section still feeds the #1207 evidence-lane design).
+
 ## Where New Claims Go
 
 Use this order:
