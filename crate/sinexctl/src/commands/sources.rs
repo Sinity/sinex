@@ -248,10 +248,10 @@ fn format_source_materials_table(response: &SourcesListResponse) -> String {
             short_id,
             m.material_kind.clone(),
             m.source_identifier.clone(),
-            m.status.clone(),
+            m.status.to_string(),
             m.format
                 .map_or_else(|| style("-").dim().to_string(), |format| format.to_string()),
-            m.timing_info_type.clone(),
+            m.timing_info_type.to_string(),
             size,
             staged_at.to_string(),
             staged_by.to_string(),

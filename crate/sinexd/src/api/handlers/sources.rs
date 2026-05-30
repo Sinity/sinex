@@ -283,8 +283,8 @@ pub async fn handle_sources_list(
             id: row.id.to_string(),
             material_kind: row.material_kind,
             source_identifier: row.source_identifier,
-            status: row.status,
-            timing_info_type: row.timing_info_type,
+            status: row.status.parse().unwrap_or(sinex_primitives::MaterialStatus::Sensing),
+            timing_info_type: row.timing_info_type.parse().unwrap_or(sinex_primitives::domain::SourceMaterialTimingInfoType::Unknown),
             staged_at: Some(row.staged_at.to_string()),
             staged_by: row.staged_by,
             size_bytes: row.total_bytes,
@@ -334,7 +334,7 @@ pub async fn handle_sources_show(
         material_kind: record.material_kind,
         source_identifier: record.source_identifier,
         status: record.status,
-        timing_info_type: record.timing_info_type,
+        timing_info_type: record.timing_info_type.parse().unwrap_or(sinex_primitives::domain::SourceMaterialTimingInfoType::Unknown),
         metadata: record.metadata,
         contract,
         temporal_evidence: Some(temporal_evidence),
@@ -867,7 +867,7 @@ pub async fn handle_sources_continuity(
     let material_count = material_rows.len() as i64;
     let non_failed_materials = material_rows
         .iter()
-        .filter(|r| r.status != "failed")
+        .filter(|r| r.status != sinex_primitives::MaterialStatus::Failed.as_str())
         .count() as i64;
 
     let replayable = material_count > 0 && non_failed_materials == material_count;

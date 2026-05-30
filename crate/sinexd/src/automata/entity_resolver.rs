@@ -129,7 +129,7 @@ impl Windowed for EntityResolver {
     }
 }
 
-/// Node type alias for use with `node_entrypoint!`.
+/// Node type alias registered via `AutomatonSpec` in `automata::registry`.
 pub type EntityResolverNode = WindowedNodeAdapter<EntityResolver>;
 
 // ── Canonicalization logic ──────────────────────────────────────────────────

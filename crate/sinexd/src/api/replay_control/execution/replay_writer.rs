@@ -10,6 +10,7 @@ use crate::node_sdk::runtime::stream::{
     Checkpoint, MaterialReplayContext, NodeScanAck, NodeScanCommand, NodeScanProgress,
     ReplayScopeFilters as NodeReplayScopeFilters, ScanArgs, TimeHorizon,
 };
+use sinex_primitives::ControlSubject;
 use sinex_primitives::events::Provenance;
 use sinex_primitives::{Result, SinexError, Timestamp, Uuid};
 use std::collections::{HashMap, HashSet};
@@ -420,10 +421,10 @@ impl ReplayExecutionEngine {
         // Step 2: Build and send the scan command to the ingestor node
         let scan_subject = self
             .env
-            .nats_subject(&format!("sinex.control.nodes.{}.scan", scope.node_id));
+            .nats_subject(&ControlSubject::node_scan(&scope.node_id));
         let progress_subject = self
             .env
-            .nats_subject(&format!("sinex.control.replay.progress.{operation_id}"));
+            .nats_subject(&ControlSubject::replay_progress(operation_id));
 
         let mut progress_sub = match self.nats_client.subscribe(progress_subject.clone()).await {
             Ok(subscription) => subscription,
@@ -766,7 +767,7 @@ impl ReplayExecutionEngine {
         let source_id = scope.source_id.as_deref().unwrap_or("unknown");
         let parse_subject = self
             .env
-            .nats_subject(&format!("sinex.control.sources.{source_id}.parse"));
+            .nats_subject(&ControlSubject::source_parse(source_id));
 
         let parse_command = serde_json::json!({
             "operation_id": operation_id,

@@ -200,10 +200,10 @@ async fn wal_recovers_state_after_crash(ctx: TestContext) -> TestResult<()> {
                         sinex_primitives::error::SinexError::database(e.to_string())
                     })?;
                     if let Some(r) = rec {
-                        if r.status == sinex_db::repositories::material_status::COMPLETED {
+                        if r.status == sinex_primitives::MaterialStatus::Completed {
                             return Ok(true);
                         }
-                        if r.status == sinex_db::repositories::material_status::FAILED {
+                        if r.status == sinex_primitives::MaterialStatus::Failed {
                             return Err(sinex_primitives::error::SinexError::validation(format!(
                                 "Material failed: metadata={:?}",
                                 r.metadata

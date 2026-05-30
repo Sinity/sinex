@@ -899,7 +899,7 @@ async fn register_external_in_flight_resets_terminal_status_to_sensing(
         )
         .await?;
 
-    assert_eq!(restarted.status, "sensing");
+    assert_eq!(restarted.status, sinex_primitives::MaterialStatus::Sensing);
     assert!(restarted.end_time.is_none());
     Ok(())
 }
@@ -1101,7 +1101,7 @@ async fn finalize_in_flight_persists_total_bytes_column(ctx: TestContext) -> Tes
         .await?
         .expect("finalized material should remain readable");
 
-    assert_eq!(persisted.status, "completed");
+    assert_eq!(persisted.status, sinex_primitives::MaterialStatus::Completed);
     assert_eq!(persisted.total_bytes, Some(123));
     assert_eq!(persisted.metadata["file_size_bytes"], json!(123));
     assert_eq!(persisted.metadata["encoding"], json!("text/plain"));

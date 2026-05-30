@@ -936,16 +936,16 @@ async fn collect_material_scorecards(
         let m = &show.material;
         let has_blob = m.optional_blob_id.is_some();
         let replayability = Replayability::from_material_facts(
-            &m.status,
+            m.status,
             has_blob,
-            &m.timing_info_type,
+            m.timing_info_type,
             m.total_bytes,
         );
         out.push(MaterialReplayabilityScorecard {
             material_id: m.id.clone(),
             source_identifier: m.source_identifier.clone(),
             material_kind: m.material_kind.clone(),
-            status: m.status.clone(),
+            status: m.status,
             replayability,
         });
     }
@@ -1205,14 +1205,14 @@ mod tests {
     fn make_scorecard(
         material_id: &str,
         source: &str,
-        status: &str,
+        status: sinex_primitives::MaterialStatus,
         replayability: Replayability,
     ) -> MaterialReplayabilityScorecard {
         MaterialReplayabilityScorecard {
             material_id: material_id.to_string(),
             source_identifier: source.to_string(),
             material_kind: "annex".to_string(),
-            status: status.to_string(),
+            status,
             replayability,
         }
     }
@@ -1220,12 +1220,12 @@ mod tests {
     #[sinex_test]
     async fn weakness_dimensions_lists_failed_axes_only() -> TestResult<()> {
         // All-green scorecard reports no weaknesses.
-        let strong = Replayability::from_material_facts("completed", true, "intrinsic", Some(1024));
+        let strong = Replayability::from_material_facts(sinex_primitives::MaterialStatus::Completed, true, sinex_primitives::domain::SourceMaterialTimingInfoType::Intrinsic, Some(1024));
         assert!(weakness_dimensions(&strong).is_empty());
 
         // Sensing material with no blob and inferred timing must surface
         // blob, timing, and anchor as weakness axes.
-        let weak = Replayability::from_material_facts("sensing", false, "inferred", None);
+        let weak = Replayability::from_material_facts(sinex_primitives::MaterialStatus::Sensing, false, sinex_primitives::domain::SourceMaterialTimingInfoType::Inferred, None);
         let dims = weakness_dimensions(&weak);
         assert!(dims.contains(&"blob"));
         assert!(dims.contains(&"timing"));
@@ -1238,11 +1238,11 @@ mod tests {
         // Two materials with distinct replayability shapes — one strong,
         // one weak — should compose into an aggregate row that names the
         // material count and a midpoint score.
-        let strong = Replayability::from_material_facts("completed", true, "intrinsic", Some(2048));
-        let weak = Replayability::from_material_facts("sensing", false, "inferred", None);
+        let strong = Replayability::from_material_facts(sinex_primitives::MaterialStatus::Completed, true, sinex_primitives::domain::SourceMaterialTimingInfoType::Intrinsic, Some(2048));
+        let weak = Replayability::from_material_facts(sinex_primitives::MaterialStatus::Sensing, false, sinex_primitives::domain::SourceMaterialTimingInfoType::Inferred, None);
         let rows = vec![
-            make_scorecard("mat-a-uuid", "/path/strong.csv", "completed", strong),
-            make_scorecard("mat-b-uuid", "/path/weak.csv", "sensing", weak),
+            make_scorecard("mat-a-uuid", "/path/strong.csv", sinex_primitives::MaterialStatus::Completed, strong),
+            make_scorecard("mat-b-uuid", "/path/weak.csv", sinex_primitives::MaterialStatus::Sensing, weak),
         ];
 
         let rendered = format_per_material_scorecard_table(&rows);

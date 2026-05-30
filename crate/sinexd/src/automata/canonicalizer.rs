@@ -262,7 +262,7 @@ fn canonicalize_history(
     }))
 }
 
-/// Node type alias for use with `node_entrypoint!`.
+/// Node type alias registered via `AutomatonSpec` in `automata::registry`.
 pub type TerminalCommandCanonicalizerNode = TransducerNodeAdapter<TerminalCommandCanonicalizer>;
 
 // --- Source-unit descriptor (issue #690 / #734) ---

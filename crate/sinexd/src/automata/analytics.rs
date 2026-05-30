@@ -317,7 +317,7 @@ impl Windowed for AnalyticsAutomaton {
     }
 }
 
-/// Node type alias for use with `node_entrypoint!`.
+/// Node type alias registered via `AutomatonSpec` in `automata::registry`.
 pub type AnalyticsAutomatonNode = WindowedNodeAdapter<AnalyticsAutomaton>;
 
 // --- Source-unit descriptor (issue #690 / #734) ---

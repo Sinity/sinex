@@ -8,7 +8,7 @@
 use async_nats::Client;
 use futures::StreamExt;
 use serde::{Deserialize, Serialize};
-use sinex_primitives::Uuid;
+use sinex_primitives::{ControlSubject, Uuid};
 use sqlx::PgPool;
 use tracing::{error, info, warn};
 
@@ -43,7 +43,7 @@ pub async fn spawn_parse_listener(
     dispatch: ParserDispatchFn,
     pool: PgPool,
 ) -> Result<tokio::task::JoinHandle<()>, async_nats::SubscribeError> {
-    let subject = format!("sinex.control.sources.{source_id}.parse");
+    let subject = ControlSubject::source_parse(source_id);
     let mut subscription = client.subscribe(subject.clone()).await?;
 
     let source_id = source_id.to_string();
