@@ -13,6 +13,7 @@ pub mod email;
 pub mod finance;
 pub mod fs;
 pub mod git;
+pub mod health;
 pub mod knowledgebase;
 pub mod library;
 pub mod media;

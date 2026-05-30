@@ -74,7 +74,8 @@ impl ReplayExecutionEngine {
                 anchor_byte,
                 offset_start,
                 offset_end,
-                offset_kind
+                offset_kind,
+                anchor_payload_hash AS "anchor_payload_hash: Vec<u8>"
              FROM audit.archived_events
              WHERE id = ANY($1::uuid[])
                AND source_material_id IS NOT NULL
@@ -108,8 +109,11 @@ impl ReplayExecutionEngine {
         // Build source occurrence → new_event_ids index, preserving every output
         // at the same occurrence. Multiple outputs at the same physical position
         // are represented as split/collapsed/recomputed relations by count.
+        // Also build id→hash lookup for integrity verification.
         let mut occurrence_to_new: HashMap<MaterialOccurrenceKey, Vec<Uuid>> = HashMap::new();
+        let mut new_hash_by_id: HashMap<Uuid, Option<Vec<u8>>> = HashMap::new();
         for event in &new_events {
+            new_hash_by_id.insert(event.id, event.anchor_payload_hash.clone());
             if let Some(key) = material_occurrence_key(event) {
                 occurrence_to_new.entry(key).or_default().push(event.id);
             }
@@ -135,11 +139,12 @@ impl ReplayExecutionEngine {
                     offset_kind: row.offset_kind,
                 })
                 .or_default()
-                .push((row.id, row.scope_key));
+                .push((row.id, row.scope_key, row.anchor_payload_hash));
         }
 
         let mut replacements = Vec::with_capacity(old_row_count);
         let mut unmatched_count = 0usize;
+        let mut integrity_mismatch_count = 0usize;
         for (key, old_events) in old_by_occurrence {
             let Some(new_event_ids) = occurrence_to_new.get(&key) else {
                 unmatched_count += old_events.len();
@@ -147,10 +152,40 @@ impl ReplayExecutionEngine {
             };
 
             let relation_kind = replacement_relation_kind(old_events.len(), new_event_ids.len());
-            for (old_event_id, scope_key) in old_events {
+            for (old_event_id, scope_key, old_hash) in &old_events {
                 for &new_event_id in new_event_ids {
+                    // Verify anchor_payload_hash integrity when both old and new carry one.
+                    // Mismatch means source material bytes changed between original
+                    // ingestion and replay — corruption, tampering, or rewritten material.
+                    let new_hash = new_hash_by_id
+                        .get(&new_event_id)
+                        .and_then(|h| h.as_deref());
+                    if let (Some(old_bytes), Some(new_bytes)) =
+                        (old_hash.as_deref(), new_hash)
+                    {
+                        if old_bytes != new_bytes {
+                            integrity_mismatch_count += 1;
+                            let to_hex = |bytes: &[u8]| -> String {
+                                bytes
+                                    .iter()
+                                    .map(|b| format!("{b:02x}"))
+                                    .collect::<Vec<_>>()
+                                    .join("")
+                            };
+                            warn!(
+                                operation_id = %operation_id,
+                                source_material_id = %key.source_material_id,
+                                anchor_byte = key.anchor_byte,
+                                old_event_id = %old_event_id,
+                                new_event_id = %new_event_id,
+                                old_hash = %to_hex(old_bytes),
+                                new_hash = %to_hex(new_bytes),
+                                "IntegrityMismatch: anchor_payload_hash changed between original ingestion and replay"
+                            );
+                        }
+                    }
                     replacements.push(ReplacementRecord {
-                        old_event_id,
+                        old_event_id: *old_event_id,
                         new_event_id,
                         relation_kind,
                         scope_key: scope_key.clone(),
@@ -160,14 +195,15 @@ impl ReplayExecutionEngine {
             }
         }
 
-        if unmatched_count > 0 || skipped_old_count > 0 {
+        if unmatched_count > 0 || skipped_old_count > 0 || integrity_mismatch_count > 0 {
             warn!(
                 operation_id = %operation_id,
                 unmatched_count,
                 skipped_old_count,
+                integrity_mismatch_count,
                 old_count = cascade_ids.len(),
                 new_count = new_events.len(),
-                "Skipped replay replacement records without a material-occurrence match"
+                "Skipped or mismatched replay replacement records detected"
             );
         }
 

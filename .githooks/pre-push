@@ -20,6 +20,10 @@ set -euo pipefail
 
 if [[ "${SINEX_SKIP_DRIFT_GUARD:-}" == "1" ]]; then
   echo "[pre-push] SINEX_SKIP_DRIFT_GUARD=1 — drift guard bypassed." >&2
+  # Record the bypass in xtask history (#1565)
+  branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")"
+  sha="$(git rev-parse HEAD 2>/dev/null || echo "")"
+  xtask record-drift-bypass --branch "$branch" --sha "$sha" 2>/dev/null || true
   exit 0
 fi
 

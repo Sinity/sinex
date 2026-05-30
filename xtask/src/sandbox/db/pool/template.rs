@@ -296,7 +296,7 @@ ON CONFLICT (id) DO NOTHING";
 /// - Sandbox: to determine if template database needs rebuilding
 /// - Preflight: to detect pending schema apply work
 fn schema_source_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../crate/lib/sinex-schema/src")
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../crate/sinex-schema/src")
 }
 
 fn schema_fingerprint_sources() -> TestResult<Vec<PathBuf>> {
@@ -305,17 +305,17 @@ fn schema_fingerprint_sources() -> TestResult<Vec<PathBuf>> {
 
 fn schema_fingerprint_sources_in(schema_src_dir: &std::path::Path) -> TestResult<Vec<PathBuf>> {
     let schema_tables_dir = schema_src_dir
-        .join("schema")
+        .join("defs")
         .canonicalize()
         .wrap_err_with(|| {
             format!(
                 "failed to resolve schema source directory '{}'",
-                schema_src_dir.join("schema").display()
+                schema_src_dir.join("defs").display()
             )
         })?;
     let apply_file = schema_src_dir.join("apply.rs");
     let converge_file = schema_src_dir.join("converge.rs");
-    let registry_file = schema_src_dir.join("schema_registry.rs");
+    let registry_file = schema_src_dir.join("registry.rs");
 
     let mut entries = Vec::new();
     for entry in std::fs::read_dir(&schema_tables_dir).wrap_err_with(|| {
