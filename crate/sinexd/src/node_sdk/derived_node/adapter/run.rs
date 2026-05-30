@@ -25,6 +25,10 @@ impl<N> AutomatonRuntime<N>
 where
     N: Automaton,
 {
+    /// DEPLOYMENT-INACTIVE: never entered. The runtime dispatches automata via
+    /// `run_automaton_event_bridge` because `manages_own_continuous_loop` is
+    /// `false`; this scan-driven path (and its `derived.invalidation`
+    /// subscription) is unreachable in deployment. See #1569.
     pub(super) async fn run_continuous(&mut self, _from: Checkpoint) -> NodeResult<ScanReport> {
         let start = Instant::now();
         let node_name = self.node.name().to_string();

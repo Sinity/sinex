@@ -20,7 +20,9 @@
 //! len: 1 }` per intent — `<index>` is the entry's position in the array,
 //! which is stable across replays of the same export.
 //!
-//! Idempotent occurrence is additionally guaranteed by `occurrence_key`:
+//! Occurrence identity is expressed by `occurrence_key` (occurrence-level dedup
+//! is planned, not yet wired — `build_occurrence_filter` has no production
+//! callers; see #1570 Prong C / #1050):
 //! `(track_uri, track_name, artist_name, started_at, played_ms)` — the
 //! same 5 fields in the same order on every row, regardless of whether
 //! `spotify_track_uri` is populated. Rows without a URI carry an empty

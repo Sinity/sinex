@@ -1,8 +1,11 @@
-//! Model-effect cache schema (#1063).
+//! Model-effect record schema (#1063).
 //!
-//! Stores recorded LLM call outputs keyed by composite input hash for
-//! deterministic replay. Replay policy governs whether to reuse a record,
-//! fail if missing, or always re-evaluate.
+//! Records LLM call outputs keyed by composite input hash so non-deterministic
+//! derived events can be replayed against a recorded effect rather than
+//! re-issued. This is an event-spine provenance artifact, not a parallel lookup
+//! cache. Replay policy governs whether to reuse a record, fail if missing, or
+//! always re-evaluate. NOTE: not yet wired — `pool.model_effects()` has no
+//! production callers (#1063).
 
 use crate::primitives::Uuid;
 use crate::TableDef;
