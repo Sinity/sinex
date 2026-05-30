@@ -57,9 +57,10 @@ pub mod watcher;
 use command::{CommandContext, HistoryAccessMode, XtaskCommand};
 use commands::{
     AnalyticsCommand, BuildCommand, CheckCommand, DoctorCommand, FixCommand, FreshnessCommand,
-    GitStackCommand, ImpactCommand, JobsCommand, PrivacyCommand, RaDiagnoseCommand, ResetCommand,
-    SchemaCommand, StatusCommand, TestCommand, ci::CiCommand, completions::CompletionsCommand,
-    source_units::SourceUnitsCommand, verify::VerifyCommand,
+    GitStackCommand, ImpactCommand, JobsCommand, PrivacyCommand, RaDiagnoseCommand,
+    RecordDriftBypassCommand, ResetCommand, SchemaCommand, StatusCommand, TestCommand,
+    ci::CiCommand, completions::CompletionsCommand, source_units::SourceUnitsCommand,
+    verify::VerifyCommand,
 };
 use config::config;
 pub use config::workspace_target_dir_for;
@@ -331,6 +332,9 @@ enum Commands {
     /// Internal detached process watchdog — not for human use.
     #[command(hide = true, name = "__reap")]
     Reap(commands::reap::ReapCommand),
+    /// Internal: record drift guard bypass events from the pre-push hook (#1565).
+    #[command(hide = true, name = "record-drift-bypass")]
+    RecordDriftBypass(RecordDriftBypassCommand),
 }
 
 pub async fn run_cli() -> Result<()> {
@@ -438,6 +442,9 @@ pub async fn run_cli() -> Result<()> {
         Commands::Ci(cmd) => ("ci", None, None, cmd.metadata()),
         Commands::Completions(cmd) => ("completions", None, None, cmd.metadata()),
         Commands::Reap(cmd) => ("__reap", None, None, cmd.metadata()),
+        Commands::RecordDriftBypass(cmd) => {
+            ("record-drift-bypass", None, None, cmd.metadata())
+        }
     };
 
     let command_timeout = command_metadata.timeout;
@@ -561,6 +568,7 @@ pub async fn run_cli() -> Result<()> {
             Commands::Ci(cmd) => cmd.execute(&ctx).await,
             Commands::Completions(cmd) => cmd.execute(&ctx).await,
             Commands::Reap(cmd) => cmd.execute(&ctx).await,
+            Commands::RecordDriftBypass(cmd) => cmd.execute(&ctx).await,
         }
     };
 

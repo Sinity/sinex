@@ -509,3 +509,246 @@ async fn replay_replacement_recording_rejects_cross_material_matches(
 
     Ok(())
 }
+
+#[sinex_test]
+async fn replay_anchor_payload_hash_mismatch_does_not_block_replacement(
+    ctx: TestContext,
+) -> Result<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let replay = Arc::new(ReplayStateMachine::new(ctx.pool.clone()));
+    let engine = ReplayExecutionEngine::new(replay.clone(), ctx.nats_client());
+
+    let source_material = ctx
+        .create_source_material(Some("replay-hash-mismatch"))
+        .await?;
+
+    let hash_a: [u8; 32] = [0xAA; 32];
+    let hash_b: [u8; 32] = [0xBB; 32];
+
+    // Old event with hash A
+    let old_event = DynamicPayload::new(
+        "fs-test",
+        FileCreatedPayload::EVENT_TYPE.as_static_str(),
+        json!({"path": "/tmp/replay-hash-mismatch.txt"}),
+    )
+    .from_material(source_material)
+    .with_anchor_payload_hash(hash_a)
+    .build()?;
+    let old_inserted = ctx.pool.events().insert(old_event).await?;
+    let old_id = old_inserted.id.expect("old replay event must have an id");
+    let execution_window = (
+        old_id.timestamp() - time::Duration::milliseconds(1),
+        old_id.timestamp() + time::Duration::milliseconds(1),
+    );
+
+    let mut scope = sample_scope();
+    scope.time_window = Some(execution_window);
+    let operation = replay
+        .create_operation(scope.clone(), "test:hash-mismatch-recorder".into())
+        .await?;
+    let operation_id = operation.operation_id;
+
+    // Archive the old event
+    ctx.pool
+        .events()
+        .execute_cascade_archive(
+            &[old_id.to_uuid()],
+            "archive old replay target with hash A",
+            &operation_id.to_string(),
+            "test:hash-mismatch-recorder",
+        )
+        .await?;
+
+    // Replacement event with DIFFERENT hash (hash_b) — triggers mismatch
+    let mut replacement_event = DynamicPayload::new(
+        "fs-test",
+        FileCreatedPayload::EVENT_TYPE.as_static_str(),
+        json!({"path": "/tmp/replay-hash-mismatch.txt"}),
+    )
+    .from_material(source_material)
+    .with_anchor_payload_hash(hash_b)
+    .build()?;
+    replacement_event.created_by_operation_id = Some(operation_id);
+    let replacement_inserted = ctx.pool.events().insert(replacement_event).await?;
+    let replacement_id = replacement_inserted
+        .id
+        .expect("replacement replay event must have an id")
+        .to_uuid();
+
+    // Hash mismatch should warn but NOT block replacement recording
+    engine
+        .record_event_replacements(&ctx.pool, operation_id, &[old_id.to_uuid()])
+        .await?;
+
+    let replacements = ctx
+        .pool
+        .events()
+        .get_replacements_by_operation(operation_id)
+        .await?;
+    assert_eq!(
+        replacements.len(),
+        1,
+        "replacement should be recorded even when anchor_payload_hash mismatches"
+    );
+    assert_eq!(replacements[0].0, old_id.to_uuid());
+    assert_eq!(replacements[0].1, replacement_id);
+    assert_eq!(replacements[0].2, "superseded");
+
+    Ok(())
+}
+
+#[sinex_test]
+async fn replay_anchor_payload_hash_null_does_not_false_mismatch(
+    ctx: TestContext,
+) -> Result<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let replay = Arc::new(ReplayStateMachine::new(ctx.pool.clone()));
+    let engine = ReplayExecutionEngine::new(replay.clone(), ctx.nats_client());
+
+    let source_material = ctx
+        .create_source_material(Some("replay-hash-null"))
+        .await?;
+
+    // Old event with NULL hash (legacy or synthesis)
+    let old_event = DynamicPayload::new(
+        "fs-test",
+        FileCreatedPayload::EVENT_TYPE.as_static_str(),
+        json!({"path": "/tmp/replay-hash-null.txt"}),
+    )
+    .from_material(source_material)
+    .build()?;
+    let old_inserted = ctx.pool.events().insert(old_event).await?;
+    let old_id = old_inserted.id.expect("old replay event must have an id");
+    let execution_window = (
+        old_id.timestamp() - time::Duration::milliseconds(1),
+        old_id.timestamp() + time::Duration::milliseconds(1),
+    );
+
+    let mut scope = sample_scope();
+    scope.time_window = Some(execution_window);
+    let operation = replay
+        .create_operation(scope.clone(), "test:hash-null-recorder".into())
+        .await?;
+    let operation_id = operation.operation_id;
+
+    ctx.pool
+        .events()
+        .execute_cascade_archive(
+            &[old_id.to_uuid()],
+            "archive old replay target with null hash",
+            &operation_id.to_string(),
+            "test:hash-null-recorder",
+        )
+        .await?;
+
+    // Replacement event also with NULL hash
+    let mut replacement_event = DynamicPayload::new(
+        "fs-test",
+        FileCreatedPayload::EVENT_TYPE.as_static_str(),
+        json!({"path": "/tmp/replay-hash-null.txt"}),
+    )
+    .from_material(source_material)
+    .build()?;
+    replacement_event.created_by_operation_id = Some(operation_id);
+    let replacement_inserted = ctx.pool.events().insert(replacement_event).await?;
+    let replacement_id = replacement_inserted
+        .id
+        .expect("replacement replay event must have an id")
+        .to_uuid();
+
+    // Both hashes are NULL — no false mismatch
+    engine
+        .record_event_replacements(&ctx.pool, operation_id, &[old_id.to_uuid()])
+        .await?;
+
+    let replacements = ctx
+        .pool
+        .events()
+        .get_replacements_by_operation(operation_id)
+        .await?;
+    assert_eq!(replacements.len(), 1);
+    assert_eq!(replacements[0].0, old_id.to_uuid());
+    assert_eq!(replacements[0].1, replacement_id);
+
+    Ok(())
+}
+
+#[sinex_test]
+async fn replay_anchor_payload_hash_match_is_silent(
+    ctx: TestContext,
+) -> Result<()> {
+    let ctx = ctx.with_nats().shared().await?;
+    let replay = Arc::new(ReplayStateMachine::new(ctx.pool.clone()));
+    let engine = ReplayExecutionEngine::new(replay.clone(), ctx.nats_client());
+
+    let source_material = ctx
+        .create_source_material(Some("replay-hash-match"))
+        .await?;
+
+    let hash: [u8; 32] = [0xCC; 32];
+
+    // Old event with hash
+    let old_event = DynamicPayload::new(
+        "fs-test",
+        FileCreatedPayload::EVENT_TYPE.as_static_str(),
+        json!({"path": "/tmp/replay-hash-match.txt"}),
+    )
+    .from_material(source_material)
+    .with_anchor_payload_hash(hash)
+    .build()?;
+    let old_inserted = ctx.pool.events().insert(old_event).await?;
+    let old_id = old_inserted.id.expect("old replay event must have an id");
+    let execution_window = (
+        old_id.timestamp() - time::Duration::milliseconds(1),
+        old_id.timestamp() + time::Duration::milliseconds(1),
+    );
+
+    let mut scope = sample_scope();
+    scope.time_window = Some(execution_window);
+    let operation = replay
+        .create_operation(scope.clone(), "test:hash-match-recorder".into())
+        .await?;
+    let operation_id = operation.operation_id;
+
+    ctx.pool
+        .events()
+        .execute_cascade_archive(
+            &[old_id.to_uuid()],
+            "archive old replay target with hash",
+            &operation_id.to_string(),
+            "test:hash-match-recorder",
+        )
+        .await?;
+
+    // Replacement event with SAME hash — no mismatch
+    let mut replacement_event = DynamicPayload::new(
+        "fs-test",
+        FileCreatedPayload::EVENT_TYPE.as_static_str(),
+        json!({"path": "/tmp/replay-hash-match.txt"}),
+    )
+    .from_material(source_material)
+    .with_anchor_payload_hash(hash)
+    .build()?;
+    replacement_event.created_by_operation_id = Some(operation_id);
+    let replacement_inserted = ctx.pool.events().insert(replacement_event).await?;
+    let replacement_id = replacement_inserted
+        .id
+        .expect("replacement replay event must have an id")
+        .to_uuid();
+
+    // Matching hashes — replacements recorded normally
+    engine
+        .record_event_replacements(&ctx.pool, operation_id, &[old_id.to_uuid()])
+        .await?;
+
+    let replacements = ctx
+        .pool
+        .events()
+        .get_replacements_by_operation(operation_id)
+        .await?;
+    assert_eq!(replacements.len(), 1);
+    assert_eq!(replacements[0].0, old_id.to_uuid());
+    assert_eq!(replacements[0].1, replacement_id);
+
+    Ok(())
+}

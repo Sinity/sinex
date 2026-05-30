@@ -1,7 +1,7 @@
 use super::git::GitState;
 use crate::history::{
-    DiagnosticCounts, Invocation, InvocationStatus, Recommendation, VelocityTrend,
-    WorkspaceHealthReport,
+    DiagnosticCounts, DriftGuardBypass, Invocation, InvocationStatus, Recommendation,
+    VelocityTrend, WorkspaceHealthReport,
 };
 use crate::infra::probe::{NatsProbe, PostgresProbe};
 use crate::runtime_metrics::{RuntimeAssessment, RuntimeMetrics};
@@ -80,6 +80,18 @@ pub(super) struct HistoryStatusOutput {
     pub(super) flaky_tests: usize,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(super) message: Option<String>,
+    /// Number of SINEX_SKIP_DRIFT_GUARD bypasses in the last 30 days (#1565).
+    pub(super) drift_guard_bypass_count: usize,
+    /// Most recent drift guard bypass, if any (#1565).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) drift_guard_last_bypass: Option<DriftGuardBypassInfo>,
+}
+
+/// Summary of the most recent drift guard bypass (#1565).
+#[derive(Debug, Clone, Serialize)]
+pub(super) struct DriftGuardBypassInfo {
+    pub(super) branch: Option<String>,
+    pub(super) age_days: i64,
 }
 
 #[derive(Debug, Serialize)]
@@ -244,6 +256,10 @@ pub(super) struct HistorySnapshot {
     pub(super) baseline_velocity: Vec<VelocityTrend>,
     pub(super) recommendations: Vec<Recommendation>,
     pub(super) issues: Vec<String>,
+    /// Number of SINEX_SKIP_DRIFT_GUARD bypasses in the last 30 days (#1565).
+    pub(super) drift_guard_bypass_count: usize,
+    /// Most recent drift guard bypass, if any (#1565).
+    pub(super) drift_guard_bypass_latest: Option<DriftGuardBypass>,
 }
 
 impl HistorySnapshot {
@@ -272,6 +288,24 @@ impl HistorySnapshot {
     }
 
     pub(super) fn output(&self) -> HistoryStatusOutput {
+        let last_bypass = self.drift_guard_bypass_latest.as_ref().map(|bp| {
+            let recorded = time::OffsetDateTime::parse(
+                &bp.recorded_at,
+                &time::format_description::well_known::Rfc3339,
+            );
+            let age_days = match recorded {
+                Ok(recorded) => {
+                    let now = time::OffsetDateTime::now_utc();
+                    let delta = now - recorded;
+                    delta.whole_days()
+                }
+                Err(_) => 0,
+            };
+            DriftGuardBypassInfo {
+                branch: bp.git_branch.clone(),
+                age_days,
+            }
+        });
         HistoryStatusOutput {
             status: self.status().to_string(),
             synthetic: self.is_synthetic,
@@ -281,6 +315,8 @@ impl HistorySnapshot {
             fixable_diagnostics: self.diag_counts.fixable,
             flaky_tests: self.flaky_count,
             message: self.message(),
+            drift_guard_bypass_count: self.drift_guard_bypass_count,
+            drift_guard_last_bypass: last_bypass,
         }
     }
 }

@@ -54,6 +54,7 @@ struct OperationOutputEvent {
     offset_start: Option<i64>,
     offset_end: Option<i64>,
     offset_kind: Option<String>,
+    anchor_payload_hash: Option<Vec<u8>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]

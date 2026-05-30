@@ -68,7 +68,8 @@ impl ReplayExecutionEngine {
                 anchor_byte,
                 offset_start,
                 offset_end,
-                offset_kind
+                offset_kind,
+                anchor_payload_hash AS "anchor_payload_hash: Vec<u8>"
             FROM core.events
             WHERE created_by_operation_id = $1::uuid
             ORDER BY id
@@ -90,6 +91,7 @@ impl ReplayExecutionEngine {
                 offset_start: row.offset_start,
                 offset_end: row.offset_end,
                 offset_kind: row.offset_kind,
+                anchor_payload_hash: row.anchor_payload_hash,
             })
             .collect())
     }
