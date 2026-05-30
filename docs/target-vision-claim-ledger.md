@@ -260,6 +260,25 @@ Wave-B (#1054/#1223/#1225) dissolved per-domain ingestors, `sinex-ingestd`, `sin
 | TV-078 | `DerivedNodeAdapter<N>` / `IngestorNodeAdapter<T>` are the adapter type names | superseded | `AutomatonRuntime<N>` (`sinexd/src/node_sdk/derived_node/adapter/mod.rs:84`); `SourceUnitRuntime<I>` (`sinexd/src/node_sdk/ingestor_node.rs:144`). |
 | TV-079 | `sinex-desktop-ingestor` is a deployed binary | superseded | Desktop capture is source units hosted in sinexd; no such crate in `crate/`. |
 
+### Batch 5 (2026-05-30) — binary-name drain (event-taxonomy, cli-tui, intelligence-designs)
+
+Remaining `sinex-process` / per-domain-ingestor / `sinex-gateway` binary-name drift across taxonomy + CLI/intelligence reference files. Prose corrected in target-vision commits `1ea30e4`, `9380fd8`. After this batch `reference/` is ~80% dissolved (binary-name drift resolved across 13 of ~16 files; remainder is claim-verification passes).
+
+| Claim ID | Claim | Status | Evidence |
+|----------|-------|--------|----------|
+| TV-080 | `capture-infrastructure.md` runner-pack table lists `sinex-{desktop,terminal,system}-ingestor` / `sinex-process` as live deployment vehicles | superseded | Post-Wave-B sinexd is the single runtime host (`crate/sinexd/Cargo.toml`); row strikethrough-annotated in file. |
+| TV-081 | `cli-tui-design.md` file-hotspot path `crate/core/sinex-gateway/src/rpc/` | superseded | sinex-gateway dissolved into `crate/sinexd/src/api/`. Fixed in `1ea30e4`. |
+| TV-082 | `cli-tui-design.md` "sinex-terminal-ingestor captures the execution event" | superseded | Terminal source unit hosted in sinexd. Fixed in `1ea30e4`. |
+| TV-083 | `cli-tui-design.md` stack-line `sinexctl → sinex-gateway → Postgres` | superseded | Stack is `sinexctl → sinexd (API) → Postgres`. Fixed in `1ea30e4`. |
+| TV-084 | `event-taxonomy/L-intelligence.md` "Deployed (sinex-process)" automata table | superseded | Automata run as sinexd instances (`crate/sinexd/src/automata/`). Fixed in `1ea30e4`. |
+| TV-085 | `event-taxonomy/M-self-telemetry.md` automata rows labelled "(sinex-process)" | superseded | sinex-process dissolved (Wave-B #944/#1223). Fixed in `1ea30e4`. |
+| TV-086 | `intelligence-designs.md` §9 "session detector (part of sinex-process)" | superseded | `crate/sinexd/src/automata/session.rs`. Fixed in `9380fd8`. |
+| TV-087 | `intelligence-designs.md` §2.1 daily summarizer "deployed in sinex-process" | superseded | `crate/sinexd/src/automata/daily.rs`. Fixed in `9380fd8`. |
+| TV-088 | `intelligence-designs.md` §11 "summarizers shipped in sinex-process" | superseded | All shipped automata are in sinexd. Fixed in `9380fd8`. |
+| TV-089 | `intelligence-designs.md` living-doc "automata within sinex-process" | superseded | Would be `sinexd::automata`. Fixed in `9380fd8`. |
+| TV-090 | `sdk-assessment.md` entity-automata path `sinex-process/src/automata/` | superseded | Authority is `crate/sinexd/src/automata/`; struck through in batch-2 prose. |
+| TV-091 | `communication-social.md` `sinex-comms-ingestor` / `sinex-document-ingestor` as deployment targets | design_candidate | Design-sketch crate names for PLANNED sources under #1070; not deployed binaries. Annotated "design sketch only" — legitimately planned, not fiction. |
+
 ## Where New Claims Go
 
 Use this order:
