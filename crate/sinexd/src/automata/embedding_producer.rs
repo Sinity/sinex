@@ -14,10 +14,18 @@ impl Transducer for EmbeddingProducer {
     type Input = JsonValue;
     type Output = JsonValue;
 
-    fn name(&self) -> &'static str { "embedding-producer" }
-    fn input_event_type(&self) -> &'static str { "document.chunked" }
-    fn output_event_type(&self) -> &'static str { "document.embedded" }
-    fn output_event_source(&self) -> &'static str { "embedding-producer" }
+    fn name(&self) -> &'static str {
+        "embedding-producer"
+    }
+    fn input_event_type(&self) -> &'static str {
+        "document.chunked"
+    }
+    fn output_event_type(&self) -> &'static str {
+        "document.embedded"
+    }
+    fn output_event_source(&self) -> &'static str {
+        "embedding-producer"
+    }
     fn input_provenance_filter(&self) -> InputProvenanceFilter {
         InputProvenanceFilter::Any
     }
@@ -31,9 +39,18 @@ impl Transducer for EmbeddingProducer {
         input: Self::Input,
         ctx: &AutomatonContext,
     ) -> Result<Option<DerivedOutput<Self::Output>>, NodeLogicError> {
-        let chunk_id = input.get("chunk_id").and_then(|v| v.as_str()).unwrap_or("unknown");
-        let chunk_hash = input.get("chunk_hash").and_then(|v| v.as_str()).unwrap_or("");
-        let document_id = input.get("document_id").and_then(|v| v.as_str()).unwrap_or("");
+        let chunk_id = input
+            .get("chunk_id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown");
+        let chunk_hash = input
+            .get("chunk_hash")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        let document_id = input
+            .get("document_id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
 
         let input_hash = hash_model_input(&input.to_string());
         let request = ModelEffectRequest {

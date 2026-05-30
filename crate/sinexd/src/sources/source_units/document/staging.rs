@@ -18,11 +18,11 @@
 //! The full ingestion path uses `DocumentNode` from `sinex-document-ingestor`
 //! directly via `register_node_factory!`.
 
+use crate::node_sdk::parser::{MaterialParser, ParserError, ParserResult};
+use crate::node_sdk::tags;
 use async_trait::async_trait;
 use mime_guess::MimeGuess;
 use serde::{Deserialize, Serialize};
-use crate::node_sdk::parser::{MaterialParser, ParserError, ParserResult};
-use crate::node_sdk::tags;
 use sinex_primitives::{
     domain::{EventSource, EventType},
     events::{

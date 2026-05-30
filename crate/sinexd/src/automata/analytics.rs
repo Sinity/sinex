@@ -4,11 +4,11 @@
 //! into bounded windows and emits `activity.window.summary` rollups when a gap,
 //! duration bound, or parent-count budget closes the current window.
 
-use serde::{Deserialize, Serialize};
 use crate::node_sdk::derived_node::{
     AutomatonContext, DerivedAggregationMeta, DerivedOutput, WindowedNodeAdapter,
 };
 use crate::node_sdk::{InputProvenanceFilter, NodeLogicError, Windowed};
+use serde::{Deserialize, Serialize};
 use sinex_primitives::activity::{
     ActivitySourceKind, classify_trusted_activity_signal, primary_activity_source,
 };

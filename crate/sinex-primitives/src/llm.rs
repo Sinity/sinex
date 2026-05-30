@@ -251,7 +251,11 @@ pub fn hash_model_input(payload: &str) -> String {
 /// Determine whether a recorded effect can satisfy a request,
 /// given the active replay policy.
 #[must_use]
-pub fn can_replay(request: &ModelEffectRequest, record: &ModelEffectRecord, policy: ReplayPolicy) -> bool {
+pub fn can_replay(
+    request: &ModelEffectRequest,
+    record: &ModelEffectRecord,
+    policy: ReplayPolicy,
+) -> bool {
     match policy {
         ReplayPolicy::ExplicitReevaluate => false,
         ReplayPolicy::ReuseRecorded | ReplayPolicy::FailIfMissing => {

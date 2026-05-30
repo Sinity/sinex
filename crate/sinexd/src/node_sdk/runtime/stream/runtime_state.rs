@@ -149,7 +149,10 @@ impl NodeRuntimeState {
     /// successful emission feeds the `HealthReporter`'s emit-stall detector.
     ///
     /// Idempotent: subsequent calls overwrite the tracker.
-    pub fn register_emit_tracker(&self, tracker: Arc<crate::node_sdk::health_reporter::EmitTracker>) {
+    pub fn register_emit_tracker(
+        &self,
+        tracker: Arc<crate::node_sdk::health_reporter::EmitTracker>,
+    ) {
         self.event_emitter().register_emit_tracker(tracker);
     }
 

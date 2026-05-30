@@ -70,10 +70,13 @@ pub struct TaskImportCommand {
 }
 
 impl TaskImportCommand {
-    async fn execute(&self, client: &crate::client::gateway::GatewayClient, _format: OutputFormat) -> Result<()> {
-        let data = std::fs::read_to_string(&self.file).map_err(|e| {
-            color_eyre::eyre::eyre!("failed to read {}: {}", self.file, e)
-        })?;
+    async fn execute(
+        &self,
+        client: &crate::client::gateway::GatewayClient,
+        _format: OutputFormat,
+    ) -> Result<()> {
+        let data = std::fs::read_to_string(&self.file)
+            .map_err(|e| color_eyre::eyre::eyre!("failed to read {}: {}", self.file, e))?;
         let tasks: Vec<serde_json::Value> = serde_json::from_str(&data).map_err(|e| {
             color_eyre::eyre::eyre!("invalid Taskwarrior JSON in {}: {}", self.file, e)
         })?;

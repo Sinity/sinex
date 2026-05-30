@@ -260,7 +260,8 @@ pub struct EventEmitter {
     /// Bumped on every successful `emit()` so the reporter can detect emit-rate stalls.
     /// Slot is `Arc<parking_lot::RwLock<...>>` because `EventEmitter` is constructed by
     /// the runtime before the `SourceUnitRuntime::initialize` hook installs the tracker.
-    emit_tracker: Arc<parking_lot::RwLock<Option<Arc<crate::node_sdk::health_reporter::EmitTracker>>>>,
+    emit_tracker:
+        Arc<parking_lot::RwLock<Option<Arc<crate::node_sdk::health_reporter::EmitTracker>>>>,
 }
 
 impl EventEmitter {
@@ -301,7 +302,10 @@ impl EventEmitter {
     /// slot is shared across `EventEmitter` clones (via `Arc<RwLock<_>>`), so
     /// installation propagates to all downstream sites that already hold the
     /// emitter.
-    pub fn register_emit_tracker(&self, tracker: Arc<crate::node_sdk::health_reporter::EmitTracker>) {
+    pub fn register_emit_tracker(
+        &self,
+        tracker: Arc<crate::node_sdk::health_reporter::EmitTracker>,
+    ) {
         *self.emit_tracker.write() = Some(tracker);
     }
 
@@ -405,7 +409,8 @@ mod tests {
     #[sinex_test]
     async fn emit_stamps_payload_schema_id_from_validator() -> TestResult<()> {
         let (sender, mut receiver) = tokio::sync::mpsc::channel(1);
-        let validator = std::sync::Arc::new(crate::node_sdk::schema_validator::NodeSchemaValidator::new());
+        let validator =
+            std::sync::Arc::new(crate::node_sdk::schema_validator::NodeSchemaValidator::new());
         let schema_id = Uuid::now_v7();
         validator.register_test_schema(
             schema_id,
@@ -461,7 +466,8 @@ mod tests {
     #[sinex_test]
     async fn emit_preserves_existing_payload_schema_id() -> TestResult<()> {
         let (sender, mut receiver) = tokio::sync::mpsc::channel(1);
-        let validator = std::sync::Arc::new(crate::node_sdk::schema_validator::NodeSchemaValidator::new());
+        let validator =
+            std::sync::Arc::new(crate::node_sdk::schema_validator::NodeSchemaValidator::new());
         let cached_schema_id = Uuid::now_v7();
         validator.register_test_schema(
             cached_schema_id,
@@ -693,7 +699,9 @@ impl NodeHandles {
         self.confirmation_buffer.as_ref().map(Arc::clone)
     }
 
-    pub fn schema_cache(&self) -> Option<Arc<crate::node_sdk::runtime::stream::SchemaBroadcastCache>> {
+    pub fn schema_cache(
+        &self,
+    ) -> Option<Arc<crate::node_sdk::runtime::stream::SchemaBroadcastCache>> {
         self.schema_cache.as_ref().map(Arc::clone)
     }
 

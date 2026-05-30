@@ -18,15 +18,15 @@
 //! The `BATCH_ATOMICITY_SCOPE` context field is attached to all related error diagnostics
 //! so operators can correlate partial-commit scenarios in logs.
 
+use crate::node_sdk::SelfObserver;
+use crate::node_sdk::heartbeat::HeartbeatCounterHandle;
+use crate::node_sdk::runtime::stream::{PullConsumerSpec, ensure_pull_consumer, pull_batch};
 use async_nats::jetstream::stream::DiscardPolicy;
 use async_nats::{Client as NatsClient, jetstream};
 use futures::future::{BoxFuture, join_all};
 use serde::{Deserialize, Serialize};
 use sinex_db::DbPool;
 use sinex_db::repositories::COPY_BATCH_THRESHOLD;
-use crate::node_sdk::SelfObserver;
-use crate::node_sdk::heartbeat::HeartbeatCounterHandle;
-use crate::node_sdk::runtime::stream::{PullConsumerSpec, ensure_pull_consumer, pull_batch};
 use sinex_primitives::Timestamp;
 use sinex_primitives::constants::env_vars;
 use sinex_primitives::{

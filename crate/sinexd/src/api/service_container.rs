@@ -3,10 +3,10 @@
 use crate::api::config::GatewayConfig;
 use crate::api::content_service::ContentService;
 use crate::api::replay_control::{ReplayControlClient, ReplayControlError, spawn_replay_control};
+use crate::node_sdk::content_store::{ContentStoreConfig, ContentStoreManager};
 use sinex_db::create_pool_with_config;
 use sinex_db::pkm::PkmService;
 use sinex_db::replay::state_machine::ReplayStateMachine;
-use crate::node_sdk::content_store::{ContentStoreConfig, ContentStoreManager};
 use sinex_primitives::{
     Result as SinexResult, coordination::CoordinationKvClient, environment as sinex_environment,
     error::SinexError,

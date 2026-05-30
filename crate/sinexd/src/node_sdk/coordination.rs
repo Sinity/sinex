@@ -99,7 +99,9 @@ mod tests {
     use crate::node_sdk::EventTransport;
     use crate::node_sdk::checkpoint::CheckpointManager;
     use crate::node_sdk::nats_publisher::NatsPublisher;
-    use crate::node_sdk::runtime::stream::{EventEmitter, NodeHandles, NodeRuntimeState, ServiceInfo};
+    use crate::node_sdk::runtime::stream::{
+        EventEmitter, NodeHandles, NodeRuntimeState, ServiceInfo,
+    };
     use camino::Utf8PathBuf;
     use sinex_db::models::Event;
     use sinex_primitives::JsonValue;

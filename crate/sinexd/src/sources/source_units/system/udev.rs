@@ -1,10 +1,9 @@
 //! `system.udev` — stream udev device events via `FileDropAdapter` over `/sys`.
 
-use crate::register_parser;
-use tracing::warn;
 use crate::node_sdk::parser::{
     FileDropAdapter, FileDropEventKind, FileDropRecordMetadata, MaterialParser, ParserError,
 };
+use crate::register_parser;
 use sinex_primitives::domain::{EventSource, EventType};
 use sinex_primitives::events::enums::{DeviceType, UdevAction};
 use sinex_primitives::events::payloads::system::{
@@ -22,6 +21,7 @@ use sinex_primitives::proof::{
 };
 use sinex_primitives::temporal::Timestamp;
 use sinex_primitives::{register_source_unit, register_source_unit_binding};
+use tracing::warn;
 
 use std::collections::HashMap;
 
@@ -164,9 +164,7 @@ impl MaterialParser for UdevParser {
                 None
             }
         };
-        let event_kind = metadata
-            .as_ref()
-            .and_then(|m| m.event_kind());
+        let event_kind = metadata.as_ref().and_then(|m| m.event_kind());
 
         let action = match event_kind {
             Some(FileDropEventKind::Created) => UdevAction::Add,

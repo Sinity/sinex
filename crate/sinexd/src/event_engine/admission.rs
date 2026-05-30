@@ -742,23 +742,20 @@ impl AdmissionService {
         let to_persist: Vec<&AdmittedEvent> = plan.events.iter().collect();
         let rows = admitted_to_stream_rows(&to_persist)?;
         let write_timeout = db_write_timeout(to_persist.len());
-        let insert_result = timeout(
-            write_timeout,
-            self.pool.events().insert_stream_batch(&rows),
-        )
-        .await
-        .map_err(|_| {
-            error!(
-                target: "sinex_metrics",
-                metric = "ingestd.batch_insert_timeouts_total",
-                batch_size = to_persist.len(),
-                timeout_seconds = write_timeout.as_secs_f64(),
-                "Timed out waiting for batch insert to complete"
-            );
-            SinexError::database(format!(
-                "Persisting batch timed out after {write_timeout:?}"
-            ))
-        })?;
+        let insert_result = timeout(write_timeout, self.pool.events().insert_stream_batch(&rows))
+            .await
+            .map_err(|_| {
+                error!(
+                    target: "sinex_metrics",
+                    metric = "ingestd.batch_insert_timeouts_total",
+                    batch_size = to_persist.len(),
+                    timeout_seconds = write_timeout.as_secs_f64(),
+                    "Timed out waiting for batch insert to complete"
+                );
+                SinexError::database(format!(
+                    "Persisting batch timed out after {write_timeout:?}"
+                ))
+            })?;
 
         let insert_result = match insert_result {
             Err(ref error) if is_payload_schema_fk_violation(error) => {

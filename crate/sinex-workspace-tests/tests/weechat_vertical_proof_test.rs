@@ -14,16 +14,16 @@
 //! - DB verification of event type, source, timestamp, payload, provenance
 
 use futures::StreamExt;
-use sinexd::node_sdk::parser::{
-    AppendOnlyFileAdapter, AppendOnlyFileConfig, InputShapeAdapter, MaterialParser,
-    WeeChatLogParser,
-};
 use sinex_primitives::domain::HostName;
 use sinex_primitives::events::SourceMaterial;
 use sinex_primitives::events::admission::EventIntent;
 use sinex_primitives::events::builder::{OffsetKind, Provenance};
 use sinex_primitives::parser::{MaterialAnchor, ParsedEventIntent, ParserContext, SourceUnitId};
 use sinex_primitives::{Event, Id, Timestamp, Uuid};
+use sinexd::node_sdk::parser::{
+    AppendOnlyFileAdapter, AppendOnlyFileConfig, InputShapeAdapter, MaterialParser,
+    WeeChatLogParser,
+};
 use xtask::sandbox::prelude::*;
 
 // ── Fixture ──────────────────────────────────────────────────────────────────

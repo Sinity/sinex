@@ -10,10 +10,10 @@
 //! - Can be created, listed, and deleted via RPC
 
 use crate::api::service_container::ServiceContainer;
-use async_nats::jetstream;
 use crate::node_sdk::runtime::stream::{
     ShadowConsumerSpec, create_shadow_consumer, delete_consumer, list_consumers,
 };
+use async_nats::jetstream;
 use sinex_primitives::{Result, SinexError};
 use tracing::{info, warn};
 

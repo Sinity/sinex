@@ -1,7 +1,5 @@
 //! Tests for the analytics automaton's bounded activity windows.
 
-use sinexd::node_sdk::derived_node::{DerivedAggregationMeta, DerivedOutput, AutomatonContext};
-use sinexd::node_sdk::{NodeLogicError, Windowed};
 use sinex_primitives::activity::ActivitySourceKind;
 use sinex_primitives::domain::{ProcessingMode, TriggerKind};
 use sinex_primitives::events::Event;
@@ -9,6 +7,8 @@ use sinex_primitives::events::payloads::{ActivityWindowCloseReason, ActivityWind
 use sinex_primitives::temporal::{Duration, Timestamp};
 use sinex_primitives::{Id, JsonValue};
 use sinexd::automata::analytics::{AnalyticsAutomaton, AnalyticsState};
+use sinexd::node_sdk::derived_node::{AutomatonContext, DerivedAggregationMeta, DerivedOutput};
+use sinexd::node_sdk::{NodeLogicError, Windowed};
 use xtask::sandbox::prelude::*;
 
 fn make_context_with_optional_ts(

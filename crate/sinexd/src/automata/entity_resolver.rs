@@ -13,9 +13,9 @@
 //! resolution exists) gives exactly the 1:1 semantics with full state
 //! persistence without widening to a `ScopeReconciler`.
 
-use serde::{Deserialize, Serialize};
 use crate::node_sdk::derived_node::{AutomatonContext, DerivedOutput, WindowedNodeAdapter};
 use crate::node_sdk::{InputProvenanceFilter, NodeLogicError, Windowed};
+use serde::{Deserialize, Serialize};
 use sinex_primitives::Uuid;
 use sinex_primitives::domain::{EntityTypeName, SyntheticTemporalPolicy};
 use sinex_primitives::events::EventPayload;

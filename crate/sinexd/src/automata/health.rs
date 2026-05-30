@@ -5,9 +5,9 @@
 //! conditions are met (status transitions, periodic intervals). During replay,
 //! invalidating a component scope recomputes all health reports for that component.
 
-use serde::{Deserialize, Serialize};
 use crate::node_sdk::derived_node::{AutomatonContext, DerivedOutput, ScopeReconcilerNodeAdapter};
 use crate::node_sdk::{InputProvenanceFilter, NodeLogicError, ScopeReconciler};
+use serde::{Deserialize, Serialize};
 use sinex_primitives::domain::SyntheticTemporalPolicy;
 use sinex_primitives::events::{
     EventPayload,

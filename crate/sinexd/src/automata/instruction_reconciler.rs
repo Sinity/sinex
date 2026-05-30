@@ -5,9 +5,9 @@
 //! Hyprland workspace-switch instructions and `wm.hyprland/workspace.switched`
 //! observations.
 
-use serde::{Deserialize, Serialize};
 use crate::node_sdk::derived_node::{AutomatonContext, DerivedOutput, ScopeReconcilerNodeAdapter};
 use crate::node_sdk::{InputProvenanceFilter, NodeLogicError, ScopeReconciler};
+use serde::{Deserialize, Serialize};
 use sinex_primitives::domain::SyntheticTemporalPolicy;
 use sinex_primitives::events::EventPayload;
 use sinex_primitives::events::payloads::{

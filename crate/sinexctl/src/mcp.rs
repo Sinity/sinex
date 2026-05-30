@@ -1406,13 +1406,16 @@ pub fn tools() -> Vec<McpTool> {
         ),
         mcp_tool("sinex.system_ping", empty_object_schema()),
         mcp_tool("sinex.system_version", empty_object_schema()),
-        mcp_tool("sinex.context_pack", json!({
-            "type": "object",
-            "properties": {
-                "project_path": {"type": "string", "description": "Project path to filter events"},
-                "limit": {"type": "integer", "default": 50}
-            }
-        })),
+        mcp_tool(
+            "sinex.context_pack",
+            json!({
+                "type": "object",
+                "properties": {
+                    "project_path": {"type": "string", "description": "Project path to filter events"},
+                    "limit": {"type": "integer", "default": 50}
+                }
+            }),
+        ),
     ]
 }
 
@@ -2638,7 +2641,9 @@ struct ContextPackArgs {
     limit: i64,
 }
 
-fn default_context_limit() -> i64 { 50 }
+fn default_context_limit() -> i64 {
+    50
+}
 
 async fn context_pack(client: &GatewayClient, arguments: Value) -> Result<Value> {
     let args: ContextPackArgs = serde_json::from_value(arguments)?;
@@ -2665,5 +2670,9 @@ async fn context_pack(client: &GatewayClient, arguments: Value) -> Result<Value>
         "generated_at": now.to_string(),
     });
 
-    Ok(envelope("sinex.context_pack", json!(args), json!({ "pack": pack })))
+    Ok(envelope(
+        "sinex.context_pack",
+        json!(args),
+        json!({ "pack": pack }),
+    ))
 }

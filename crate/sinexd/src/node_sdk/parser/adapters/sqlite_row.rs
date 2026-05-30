@@ -11,10 +11,12 @@ use sinex_primitives::ids::Id;
 use sinex_primitives::parser::{InputShapeKind, MaterialAnchor, SourceRecord};
 
 #[cfg(feature = "messaging")]
-use crate::node_sdk::parser::adapters::{SnapshotLaneSpec, SqliteSnapshotConfig};
-use crate::node_sdk::parser::{InputShapeAdapter, ParserError, ParserResult, SourceRecordFingerprint};
-#[cfg(feature = "messaging")]
 use crate::node_sdk::parser::InputShapeAdapterExt;
+#[cfg(feature = "messaging")]
+use crate::node_sdk::parser::adapters::{SnapshotLaneSpec, SqliteSnapshotConfig};
+use crate::node_sdk::parser::{
+    InputShapeAdapter, ParserError, ParserResult, SourceRecordFingerprint,
+};
 
 // =============================================================================
 // SqliteRowAdapter
@@ -375,7 +377,6 @@ impl InputShapeAdapter for SqliteRowAdapter {
             ))),
         }
     }
-
 }
 
 #[cfg(feature = "messaging")]

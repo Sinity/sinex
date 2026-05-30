@@ -2,10 +2,10 @@
 
 use std::os::unix::fs::PermissionsExt;
 
-use async_trait::async_trait;
 use crate::node_sdk::parser::{
     FileDropEventKind, FileDropMoveRole, FileDropRecordMetadata, MaterialParser, ParserError,
 };
+use async_trait::async_trait;
 use sinex_primitives::{
     domain::{EventSource, EventType, RecordedPath},
     events::{

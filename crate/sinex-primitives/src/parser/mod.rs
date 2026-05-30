@@ -27,8 +27,8 @@ use bon::Builder;
 use camino::Utf8PathBuf;
 use futures::stream::BoxStream;
 use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
 use serde::de::DeserializeOwned;
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 use crate::SinexError;
@@ -706,9 +706,7 @@ pub trait MaterialParser: Send + Sync {
         serde_json::Value::Object(serde_json::Map::new())
     }
 }
-pub use occurrence_filter::{
-    OccurrenceFilter, maybe_occurrence_key_string, occurrence_key_string,
-};
+pub use occurrence_filter::{OccurrenceFilter, maybe_occurrence_key_string, occurrence_key_string};
 
 /// A single event that a parser intends to publish.
 ///
@@ -843,7 +841,8 @@ impl ParsedEventIntent {
         if child_id == self.id {
             return Err(SinexError::validation(
                 "derive_from_parents produced a self-referential derived (child id == parent id)",
-            ).into());
+            )
+            .into());
         }
 
         let child_payload = serde_json::to_value(&payload).map_err(|e| {
@@ -981,10 +980,10 @@ pub struct ParserContext {
 // =============================================================================
 
 pub use declarative::{
-    CarrySpec, DeclarativeParser, DeclarativeParserSpec, Discriminator,
-    DiscriminatorCase, DiscriminatorFallback, FieldSource, FieldSpec, FieldType, InputFormat,
-    StatefulCarryPolicy, StatefulDeclarativeParser, SuppressPredicate, TimestampFallback,
-    TimestampFormat, TimestampSpec,
+    CarrySpec, DeclarativeParser, DeclarativeParserSpec, Discriminator, DiscriminatorCase,
+    DiscriminatorFallback, FieldSource, FieldSpec, FieldType, InputFormat, StatefulCarryPolicy,
+    StatefulDeclarativeParser, SuppressPredicate, TimestampFallback, TimestampFormat,
+    TimestampSpec,
 };
 pub use fingerprint::{DriftAccumulator, DriftEvent, SourceRecordFingerprint};
 

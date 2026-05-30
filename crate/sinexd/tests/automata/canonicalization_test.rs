@@ -3,8 +3,6 @@
 //! Validates source filtering, JSON field extraction, exit code parsing,
 //! timestamp fallback, and empty-command handling.
 
-use sinexd::node_sdk::derived_node::AutomatonContext;
-use sinexd::node_sdk::{NodeLogicError, Transducer};
 use sinex_primitives::domain::{ProcessingMode, TriggerKind};
 use sinex_primitives::events::Event;
 use sinex_primitives::events::EventPayload;
@@ -12,6 +10,8 @@ use sinex_primitives::events::payloads::CanonicalCommandPayload;
 use sinex_primitives::temporal::Timestamp;
 use sinex_primitives::{Id, JsonValue};
 use sinexd::automata::canonicalizer::TerminalCommandCanonicalizer;
+use sinexd::node_sdk::derived_node::AutomatonContext;
+use sinexd::node_sdk::{NodeLogicError, Transducer};
 use xtask::sandbox::prelude::*;
 
 fn make_context_with_optional_ts(

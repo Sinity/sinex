@@ -178,15 +178,20 @@ pub async fn run_adapter_ingestor<A, P>(
     args: Vec<std::ffi::OsString>,
 ) -> Result<(), Box<dyn std::error::Error>>
 where
-    A: crate::node_sdk::parser::InputShapeAdapter + Default + Send + Sync + 'static + crate::node_sdk::parser::InputShapeAdapterExt,
+    A: crate::node_sdk::parser::InputShapeAdapter
+        + Default
+        + Send
+        + Sync
+        + 'static
+        + crate::node_sdk::parser::InputShapeAdapterExt,
     P: sinex_primitives::parser::MaterialParser + Default + Send + Sync + 'static,
     A::Config: Clone + serde::Serialize + serde::de::DeserializeOwned + Send + Sync,
     A::Cursor: Clone + serde::Serialize + serde::de::DeserializeOwned + Send + Sync,
 {
-    use clap::Parser;
     use crate::node_sdk::SourceUnitRuntime;
     use crate::node_sdk::node_cli::{NodeCli, NodeCliRunner};
     use crate::node_sdk::parser::AdapterBackedIngestor;
+    use clap::Parser;
 
     let parsed = NodeCli::parse_from(args);
     let node = AdapterBackedIngestor::<A, P>::new(source_unit_id);
@@ -208,9 +213,9 @@ pub async fn run_ingestor<I>(
 where
     I: crate::node_sdk::SourceUnit + Default + 'static,
 {
-    use clap::Parser;
     use crate::node_sdk::SourceUnitRuntime;
     use crate::node_sdk::node_cli::{NodeCli, NodeCliRunner};
+    use clap::Parser;
 
     let parsed = NodeCli::parse_from(args);
     let node = SourceUnitRuntime::new(I::default());

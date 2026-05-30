@@ -99,7 +99,8 @@ impl<T: Node + 'static> NodeRunner<T> {
         if cleanup_enabled {
             #[cfg(feature = "messaging")]
             {
-                let cleanup_config = crate::node_sdk::checkpoint::CheckpointCleanupConfig::from_env();
+                let cleanup_config =
+                    crate::node_sdk::checkpoint::CheckpointCleanupConfig::from_env();
                 let kv_for_cleanup = kv_store.clone();
                 let (cleanup_shutdown_tx, cleanup_shutdown_rx) = watch::channel(false);
                 let cleanup_handle = crate::node_sdk::checkpoint::spawn_checkpoint_cleanup_task(

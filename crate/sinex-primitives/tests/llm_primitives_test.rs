@@ -42,52 +42,59 @@ fn composite_key_differs_on_input_hash() {
 #[test]
 fn can_replay_reuse_recorded_matching() {
     let req = ModelEffectRequest {
-        provider: "p".into(), model: "m".into(),
-        prompt_hash: "ph".into(), schema_hash: None, input_hash: "ih".into(),
+        provider: "p".into(),
+        model: "m".into(),
+        prompt_hash: "ph".into(),
+        schema_hash: None,
+        input_hash: "ih".into(),
     };
-    let record = ModelEffectRecord::new(
-        req.clone(), "output", ReplayPolicy::ReuseRecorded, "test",
-    );
+    let record = ModelEffectRecord::new(req.clone(), "output", ReplayPolicy::ReuseRecorded, "test");
     assert!(can_replay(&req, &record, ReplayPolicy::ReuseRecorded));
 }
 
 #[test]
 fn can_replay_fail_if_missing_with_matching_record() {
     let req = ModelEffectRequest {
-        provider: "p".into(), model: "m".into(),
-        prompt_hash: "ph".into(), schema_hash: None, input_hash: "ih".into(),
+        provider: "p".into(),
+        model: "m".into(),
+        prompt_hash: "ph".into(),
+        schema_hash: None,
+        input_hash: "ih".into(),
     };
-    let record = ModelEffectRecord::new(
-        req.clone(), "output", ReplayPolicy::FailIfMissing, "test",
-    );
+    let record = ModelEffectRecord::new(req.clone(), "output", ReplayPolicy::FailIfMissing, "test");
     assert!(can_replay(&req, &record, ReplayPolicy::FailIfMissing));
 }
 
 #[test]
 fn can_replay_explicit_reevaluate_always_false() {
     let req = ModelEffectRequest {
-        provider: "p".into(), model: "m".into(),
-        prompt_hash: "ph".into(), schema_hash: None, input_hash: "ih".into(),
+        provider: "p".into(),
+        model: "m".into(),
+        prompt_hash: "ph".into(),
+        schema_hash: None,
+        input_hash: "ih".into(),
     };
-    let record = ModelEffectRecord::new(
-        req.clone(), "output", ReplayPolicy::ReuseRecorded, "test",
-    );
+    let record = ModelEffectRecord::new(req.clone(), "output", ReplayPolicy::ReuseRecorded, "test");
     assert!(!can_replay(&req, &record, ReplayPolicy::ExplicitReevaluate));
 }
 
 #[test]
 fn can_replay_mismatched_inputs_return_false() {
     let req1 = ModelEffectRequest {
-        provider: "p".into(), model: "m".into(),
-        prompt_hash: "ph".into(), schema_hash: None, input_hash: "ih1".into(),
+        provider: "p".into(),
+        model: "m".into(),
+        prompt_hash: "ph".into(),
+        schema_hash: None,
+        input_hash: "ih1".into(),
     };
     let req2 = ModelEffectRequest {
-        provider: "p".into(), model: "m".into(),
-        prompt_hash: "ph".into(), schema_hash: None, input_hash: "ih2".into(),
+        provider: "p".into(),
+        model: "m".into(),
+        prompt_hash: "ph".into(),
+        schema_hash: None,
+        input_hash: "ih2".into(),
     };
-    let record = ModelEffectRecord::new(
-        req2, "output", ReplayPolicy::ReuseRecorded, "test",
-    );
+    let record = ModelEffectRecord::new(req2, "output", ReplayPolicy::ReuseRecorded, "test");
     assert!(!can_replay(&req1, &record, ReplayPolicy::ReuseRecorded));
 }
 
@@ -106,10 +113,14 @@ fn hash_model_input_differs_on_input() {
 #[test]
 fn model_effect_record_output_hash_matches() {
     let req = ModelEffectRequest {
-        provider: "p".into(), model: "m".into(),
-        prompt_hash: "ph".into(), schema_hash: None, input_hash: "ih".into(),
+        provider: "p".into(),
+        model: "m".into(),
+        prompt_hash: "ph".into(),
+        schema_hash: None,
+        input_hash: "ih".into(),
     };
-    let record = ModelEffectRecord::new(req, "test output", ReplayPolicy::ReuseRecorded, "test-node");
+    let record =
+        ModelEffectRecord::new(req, "test output", ReplayPolicy::ReuseRecorded, "test-node");
     assert!(!record.effect_id.is_empty());
     assert!(!record.output_hash.is_empty());
     assert_eq!(record.recorded_by, "test-node");

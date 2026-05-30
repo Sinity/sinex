@@ -19,14 +19,14 @@ mod state;
 #[cfg(test)]
 mod test_support;
 
+use crate::node_sdk::content_store::MaterialContentStore;
+use crate::node_sdk::{SelfObservationError, SelfObserver};
 use async_nats::{Client as NatsClient, jetstream};
 use blake3::Hasher;
 use dashmap::DashMap;
 use durability::DefaultDurabilityPolicy;
 pub(crate) use durability::DurabilityThresholds;
 use sinex_db::{DbPool, DbPoolExt};
-use crate::node_sdk::content_store::MaterialContentStore;
-use crate::node_sdk::{SelfObservationError, SelfObserver};
 use sinex_primitives::Timestamp;
 use sinex_primitives::{Id, JsonValue, Uuid, environment::SinexEnvironment};
 use std::future::Future;
@@ -538,9 +538,10 @@ impl MaterialAssembler {
                     .with_source(e)
             })?;
 
-        Ok(record.and_then(|record| {
-            AssemblyStateMachine::terminal_state_for_status(record.status)
-        }))
+        Ok(
+            record
+                .and_then(|record| AssemblyStateMachine::terminal_state_for_status(record.status)),
+        )
     }
 
     /// Fetch a handle to an existing assembler state for a material.
