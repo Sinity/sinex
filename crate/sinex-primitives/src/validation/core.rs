@@ -2,6 +2,7 @@ use camino::{Utf8Component as Component, Utf8Path as Path, Utf8PathBuf as PathBu
 use percent_encoding::percent_decode_str;
 use serde_json::Value;
 
+use crate::constants::limits::MAX_EVENT_PAYLOAD_BYTES;
 use crate::error::{Result, SinexError};
 
 /// Reject NaN and Infinity when deserializing f64 — `PostgreSQL` JSONB rejects these.
@@ -30,7 +31,17 @@ pub fn reject_non_finite_optional_f64<'de, D: serde::Deserializer<'de>>(
     }
 }
 
-const MAX_JSON_SIZE: usize = 10 * 1024 * 1024; // 10MB
+/// Maximum JSON payload size. Mirrors `constants::limits::MAX_EVENT_PAYLOAD_BYTES`
+/// so there is one source of truth for the 10 MiB cap. (#1578)
+const MAX_JSON_SIZE: usize = MAX_EVENT_PAYLOAD_BYTES;
+
+/// Maximum JSON nesting depth enforced by `validate_json`.
+///
+/// This is the **single canonical depth limit** — 32 levels. The public constant
+/// `constants::limits::MAX_JSON_DEPTH = 100` was removed in #1578 because it was
+/// dead (never referenced) and its value (100) disagreed with this enforced limit
+/// (32), creating a 3× discrepancy that could mislead callers choosing between
+/// the two. If you need the depth limit in application code, call `validate_json`.
 const MAX_JSON_DEPTH: usize = 32;
 const MAX_JSON_KEYS: usize = 1000;
 const MAX_JSON_ARRAY_LEN: usize = 10_000;
