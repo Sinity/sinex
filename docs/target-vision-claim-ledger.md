@@ -309,6 +309,20 @@ Closes the dissolution: `reference/` is now ~100% drained. Prose corrected in ta
 | TV-106 | `sdk-assessment.md` entity/relation automata registration | verified | `entityResolver`/`relationExtractor`/`entityEnricher` in `nixos/modules/lib/automata.nix:22-24`; implementations substantive (222/274/277 LoC); activation tracked by open #1087 + #1346. |
 | TV-107 | `knowledge-graph.md` "#1346 closed" (batch-6 follow-up) | rejected | No false claim found — the file already treats #1346 as active work (lines 150, 343). #1346 is OPEN. Follow-up resolved. |
 
+### `report/` dissolution (2026-05-31) — authority migrated to the sinex repo
+
+`reference/` was drained to ~100% (TV-013..107); this pass dissolves the `report/` *current-state* chapters by redirecting their authority into the repo (dissolving-headers, not deletion — the synthesis is kept as orientation). target-vision CLAUDE.md updated with a dissolution-status section. Target-vision commit `6e814f9`.
+
+| Claim ID | Claim | Status | Evidence |
+|----------|-------|--------|----------|
+| TV-108 | `report/work-ahead.md` is the authoritative work backlog | superseded | Authority = the GitHub issue-set (`gh issue list`); target-vision's own charter says "active work is in GitHub issues." Dissolving-header added (`6e814f9`). |
+| TV-109 | `report/architecture.md` is the authoritative current-state architecture | superseded | Authority = `.agent/includes/architecture/*` + `docs/architecture/*` + code. Derived narrative; dissolving-header added (`6e814f9`). |
+| TV-110 | `report/deployment.md` is the authoritative deployment state | superseded | Authority = `docs/architecture/deployment-topology.md` + `nixos/modules/README.md`. Dissolving-header added (`6e814f9`). |
+| TV-111 | `report/intelligence.md` is the authoritative automata/intelligence state | superseded | Authority = `nixos/modules/lib/automata.nix` + `crate/sinexd/src/automata/*`; frontier #1087/#1346. Dissolving-header added (`6e814f9`). |
+| TV-112 | `report/vision.md` + `report/data-landscape.md` | design_candidate | **Retained, not dissolved** — north-star "why" and cross-project (lynchpin/captures) estate have no in-repo authority surface. Marked retained in `6e814f9`. |
+
+With this, target-vision is dissolved except: `raw/` (source material, stays), `report/vision.md` + `report/data-landscape.md` (deliberately retained), and `reference/` specs kept for design rationale (status-noted, not current-state). Authority for everything current lives in the sinex repo + issue-set.
+
 ## Where New Claims Go
 
 Use this order:
