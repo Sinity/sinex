@@ -197,10 +197,8 @@ async fn each_bookmark_anchor_is_distinct() {
 //
 // The privacy_context must be ProcessingContext::Metadata on every intent.
 // `cover` and `highlights` columns must be absent from the payload.
-// Sensitive text fields (url, note, excerpt, tags) must be present in the
-// payload (they flow through the privacy engine downstream at admission time)
-// rather than being pre-emptively stripped here — the parser's role is to
-// emit structured intent under the declared privacy context.
+// Sensitive text fields (url, note, excerpt, tags) must pass through the
+// parser-side Metadata privacy context before the structured intent is emitted.
 // ---------------------------------------------------------------------------
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -245,7 +243,7 @@ id,title,note,excerpt,url,folder,tags,created,cover,highlights,favorite
         "highlights must be dropped from payload (free text not admitted)"
     );
 
-    // Sensitive fields are present but tagged for privacy-engine admission downstream.
+    // Ordinary sensitive fields remain present after Metadata-context processing.
     assert_eq!(payload["url"], "https://private.example.com");
     assert_eq!(payload["note"], "Secret note here");
     assert_eq!(payload["excerpt"], "Secret excerpt");

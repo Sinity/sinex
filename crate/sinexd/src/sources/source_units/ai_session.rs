@@ -60,6 +60,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
 use crate::node_sdk::parser::{MaterialParser, ParserError, ParserResult, StaticFileAdapter};
+use crate::sources::source_units::redact_payload_strings;
 use sinex_primitives::domain::{EventSource, EventType};
 use sinex_primitives::parser::{
     InputShapeKind, MaterialAnchor, OccurrenceKey, ParsedEventIntent, ParserContext, ParserId,
@@ -241,14 +242,14 @@ fn parse_claude_message(
         Some(conversation_name.to_string())
     };
 
-    let payload = serde_json::json!({
+    let payload = redact_payload_strings(serde_json::json!({
         "session_id": session_id,
         "message_id": msg.uuid,
         "role": msg.sender,
         "text": text,
         "message_ts": message_ts,
         "conversation_name": conversation_name_opt,
-    });
+    }), ProcessingContext::Document)?;
 
     Ok(ParsedEventIntent::builder()
         .source_unit_id(ctx.source_unit_id.clone())
@@ -540,7 +541,7 @@ fn parse_chatgpt_message(
         ],
     };
 
-    let payload = serde_json::json!({
+    let payload = redact_payload_strings(serde_json::json!({
         "session_id": session_id,
         "message_id": msg.id,
         "role": msg.author.role,
@@ -548,7 +549,7 @@ fn parse_chatgpt_message(
         "message_ts": message_ts,
         "conversation_title": title_opt,
         "model": model,
-    });
+    }), ProcessingContext::Document)?;
 
     Ok(Some(
         ParsedEventIntent::builder()
@@ -845,6 +846,33 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(intents[0].payload["text"], "Fallback text only");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn claude_redacts_document_payload_strings() -> TestResult<()> {
+        let token = "ghp_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+        let json = serde_json::json!([{
+            "uuid": "s1",
+            "name": "incident note",
+            "chat_messages": [{
+                "uuid": "m1",
+                "sender": "human",
+                "created_at": "2025-01-01T00:00:00Z",
+                "content": [{"type": "text", "text": format!("token={token}")}]
+            }]
+        }]);
+        let bytes = serde_json::to_vec(&json).unwrap();
+        let ctx = claude_ctx();
+        let intents = ClaudeSessionParser
+            .parse_record(record_for(&bytes), &ctx)
+            .await
+            .unwrap();
+        let text = intents[0].payload["text"].as_str().unwrap();
+        assert!(
+            !text.contains(token),
+            "document-context parser payload must not retain raw secret token"
+        );
         Ok(())
     }
 

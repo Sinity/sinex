@@ -48,6 +48,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
 use crate::node_sdk::parser::{MaterialParser, ParserError, ParserResult, StaticFileAdapter};
+use crate::sources::source_units::redact_payload_strings;
 use sinex_primitives::domain::{EventSource, EventType};
 use sinex_primitives::parser::{
     InputShapeKind, MaterialAnchor, OccurrenceKey, ParsedEventIntent, ParserContext, ParserId,
@@ -176,7 +177,7 @@ fn parse_reddit_comment_row(
         ],
     };
 
-    let payload = serde_json::json!({
+    let payload = redact_payload_strings(serde_json::json!({
         "reddit_id": row.id,
         "subreddit": row.subreddit,
         "body": row.body,
@@ -184,7 +185,7 @@ fn parse_reddit_comment_row(
         "parent_id": non_empty(&row.parent),
         "link_id": non_empty(&row.link),
         "permalink": non_empty(&row.permalink),
-    });
+    }), ProcessingContext::Document)?;
 
     Ok(ParsedEventIntent::builder()
         .source_unit_id(ctx.source_unit_id.clone())
@@ -371,7 +372,7 @@ fn parse_reddit_post_row(
         ],
     };
 
-    let payload = serde_json::json!({
+    let payload = redact_payload_strings(serde_json::json!({
         "reddit_id": row.id,
         "subreddit": row.subreddit,
         "title": row.title,
@@ -379,7 +380,7 @@ fn parse_reddit_post_row(
         "body": non_empty(&row.body),
         "url": non_empty(&row.url),
         "permalink": non_empty(&row.permalink),
-    });
+    }), ProcessingContext::Document)?;
 
     Ok(ParsedEventIntent::builder()
         .source_unit_id(ctx.source_unit_id.clone())
@@ -558,7 +559,7 @@ fn parse_wykop_entry_row(
         fields: vec![("entry_id".into(), row.entry_id.to_string())],
     };
 
-    let payload = serde_json::json!({
+    let payload = redact_payload_strings(serde_json::json!({
         "entry_id": row.entry_id,
         "entry_url": row.entry_url,
         "created_at": created_at,
@@ -566,7 +567,7 @@ fn parse_wykop_entry_row(
         "tags": row.entry_tags,
         "votes_score": row.votes_score,
         "photo_url": row.entry_photo_url,
-    });
+    }), ProcessingContext::Document)?;
 
     Ok(ParsedEventIntent::builder()
         .source_unit_id(ctx.source_unit_id.clone())
@@ -748,7 +749,7 @@ fn parse_wykop_entry_comment_row(
         fields: vec![("comment_id".into(), row.comment_id.to_string())],
     };
 
-    let payload = serde_json::json!({
+    let payload = redact_payload_strings(serde_json::json!({
         "comment_id": row.comment_id,
         "entry_id": row.entry_id,
         "entry_url": row.entry_url,
@@ -756,7 +757,7 @@ fn parse_wykop_entry_comment_row(
         "content": row.comment_content,
         "rating": row.comment_rating,
         "photo_url": row.comment_photo_url,
-    });
+    }), ProcessingContext::Document)?;
 
     Ok(ParsedEventIntent::builder()
         .source_unit_id(ctx.source_unit_id.clone())

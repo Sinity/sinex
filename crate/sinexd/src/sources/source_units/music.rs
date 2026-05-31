@@ -43,6 +43,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
 use crate::node_sdk::parser::{MaterialParser, ParserError, ParserResult, StaticFileAdapter};
+use crate::sources::source_units::redact_payload_strings;
 use sinex_primitives::domain::{EventSource, EventType};
 use sinex_primitives::parser::{
     InputShapeKind, MaterialAnchor, OccurrenceKey, ParsedEventIntent, ParserContext, ParserId,
@@ -181,7 +182,7 @@ fn parse_row(
         played_ms,
     );
 
-    let payload = serde_json::json!({
+    let payload = redact_payload_strings(serde_json::json!({
         "started_at": started_at,
         "played_ms": played_ms,
         "skipped_provider": row.skipped,
@@ -200,7 +201,7 @@ fn parse_row(
         "shuffle": row.shuffle,
         "offline": row.offline,
         "incognito_mode": row.incognito_mode,
-    });
+    }), ProcessingContext::Metadata)?;
 
     Ok(Some(
         ParsedEventIntent::builder()

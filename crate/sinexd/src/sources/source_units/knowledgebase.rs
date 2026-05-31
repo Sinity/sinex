@@ -19,6 +19,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::OnceLock;
 
 use crate::node_sdk::parser::{DirectoryWalkAdapter, MaterialParser, ParserError, ParserResult};
+use crate::sources::source_units::redact_payload_strings;
 use sinex_primitives::domain::{EventSource, EventType};
 use sinex_primitives::parser::{
     InputShapeKind, MaterialAnchor, OccurrenceKey, ParsedEventIntent, ParserContext, ParserId,
@@ -302,7 +303,7 @@ impl MaterialParser for KnowledgebaseVaultParser {
         // `created:`, then fall back to acquisition time.
         let (ts_orig, mtime_str, timing) = pick_timestamp(&fm_value, ctx);
 
-        let payload = serde_json::json!({
+        let payload = redact_payload_strings(serde_json::json!({
             "path": relative_path,
             "title": title,
             "front_matter": fm_value,
@@ -311,7 +312,7 @@ impl MaterialParser for KnowledgebaseVaultParser {
             "body_text_hash": body_hash,
             "body_byte_size": body_byte_size,
             "mtime": mtime_str,
-        });
+        }), ProcessingContext::Document)?;
 
         let occurrence_key = OccurrenceKey {
             source_unit_id: SourceUnitId::from_static(SOURCE_UNIT_ID),
