@@ -6,6 +6,7 @@
 use color_eyre::eyre::{Result, WrapErr, bail};
 use serde::{Deserialize, Serialize};
 use sinex_primitives::temporal::{Timestamp, format_rfc3339};
+use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -69,7 +70,8 @@ impl CheckoutState {
 
     /// Create a `CheckoutState` for a specific checkout path
     pub fn new(checkout_root: PathBuf) -> Result<Self> {
-        let state_dir = checkout_root.join(Self::STATE_DIR_NAME);
+        let state_dir = dev_state_dir_for(&checkout_root)
+            .unwrap_or_else(|| checkout_root.join(Self::STATE_DIR_NAME));
         Ok(Self {
             checkout_root,
             state_dir,
@@ -256,6 +258,23 @@ impl CheckoutState {
     }
 }
 
+fn dev_state_dir_for(checkout_root: &Path) -> Option<PathBuf> {
+    let raw = env::var_os("SINEX_DEV_STATE_DIR")?;
+    let candidate = PathBuf::from(raw);
+    if candidate.as_os_str().is_empty() {
+        return None;
+    }
+
+    if let Some(dev_root) = env::var_os("SINEX_DEV_ROOT") {
+        let dev_root = PathBuf::from(dev_root);
+        if dev_root != checkout_root {
+            return None;
+        }
+    }
+
+    Some(candidate)
+}
+
 /// RAII guard that releases the lock when dropped
 pub struct LockGuard {
     lock_file: PathBuf,
@@ -318,6 +337,43 @@ mod tests {
 
         let error = state.release_lock().unwrap_err();
         assert!(format!("{error:#}").contains("Failed to parse lock file during release"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_checkout_state_uses_matching_dev_state_dir() -> TestResult<()> {
+        let checkout = tempfile::tempdir()?;
+        let dev_state = tempfile::tempdir()?;
+        let mut env = xtask::sandbox::EnvGuard::with_keys(&[
+            "SINEX_DEV_ROOT",
+            "SINEX_DEV_STATE_DIR",
+        ]);
+        env.set("SINEX_DEV_ROOT", checkout.path());
+        env.set("SINEX_DEV_STATE_DIR", dev_state.path());
+
+        let state = CheckoutState::new(checkout.path().to_path_buf())?;
+
+        assert_eq!(state.state_dir(), dev_state.path());
+        assert_eq!(state.run_dir(), dev_state.path().join("run"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_checkout_state_ignores_dev_state_dir_for_other_checkout() -> TestResult<()> {
+        let checkout = tempfile::tempdir()?;
+        let other_checkout = tempfile::tempdir()?;
+        let dev_state = tempfile::tempdir()?;
+        let mut env = xtask::sandbox::EnvGuard::with_keys(&[
+            "SINEX_DEV_ROOT",
+            "SINEX_DEV_STATE_DIR",
+        ]);
+        env.set("SINEX_DEV_ROOT", other_checkout.path());
+        env.set("SINEX_DEV_STATE_DIR", dev_state.path());
+
+        let state = CheckoutState::new(checkout.path().to_path_buf())?;
+
+        assert_eq!(state.state_dir(), checkout.path().join(".sinex"));
+        assert_eq!(state.run_dir(), checkout.path().join(".sinex/run"));
         Ok(())
     }
 }

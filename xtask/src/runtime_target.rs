@@ -1,4 +1,4 @@
-use crate::config::{Config, workspace_state_root};
+use crate::config::Config;
 use crate::infra::stack::StackConfig;
 use color_eyre::eyre::{Result, WrapErr};
 use serde::Serialize;
@@ -63,7 +63,7 @@ pub fn checkout_runtime_target(cfg: &Config) -> Result<RuntimeTargetDescriptor> 
         name: "checkout-local".to_string(),
         kind: RuntimeTargetKind::DevCheckout,
         source: Some("xtask checkout config".to_string()),
-        source_path: Some(workspace_state_root()),
+        source_path: Some(stack_config.state_dir.clone()),
         database: RuntimeTargetDatabase {
             url: Some(database_url),
             host: None,

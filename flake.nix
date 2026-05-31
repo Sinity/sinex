@@ -680,8 +680,9 @@
                 export SINEX_NATS_DIR="$SINEX_STATE_DIR/nats"
                 export SINEX_TEST_POSTGRES="''${SINEX_TEST_POSTGRES:-ephemeral}"
                 export SINEX_DEV_PG_PORT="${toString pgPort}"
-                export DATABASE_URL="postgresql:///sinex_dev?host=$SINEX_DEV_STATE_DIR/run"
-                export PGHOST="$SINEX_DEV_STATE_DIR/run"
+                export SINEX_DEV_RUN_DIR="$SINEX_DEV_STATE_DIR/run"
+                export DATABASE_URL="postgresql:///sinex_dev?host=$SINEX_DEV_RUN_DIR"
+                export PGHOST="$SINEX_DEV_RUN_DIR"
                 export PGPORT="${toString pgPort}"
                 _sinex_checkout_hash="$(printf '%s' "$PWD" | sha256sum | cut -c1-12)"
                 _sinex_checkout_hash_hex="$(printf '%s' "$_sinex_checkout_hash" | cut -c1-2)"
@@ -757,7 +758,7 @@
                     _sinex_infra_start_log="$SINEX_DEV_STATE_DIR/infra-start.log"
                     _sinex_infra_start_current_log="$SINEX_DEV_STATE_DIR/infra-start.current.log"
 
-                    pg_isready -q -h "$SINEX_DEV_STATE_DIR/run" -p "${toString pgPort}" 2>/dev/null && _pg_running=1
+                    pg_isready -q -h "$SINEX_DEV_RUN_DIR" -p "${toString pgPort}" 2>/dev/null && _pg_running=1
                     (timeout 1 bash -c ">/dev/tcp/localhost/$SINEX_DEV_NATS_PORT") 2>/dev/null && _nats_running=1
 
                     if [ "$_pg_running" -eq 1 ] && [ "$_nats_running" -eq 1 ]; then
@@ -795,7 +796,7 @@
                       _deadline=$((SECONDS + 8))
                       while [ $SECONDS -lt $_deadline ]; do
                         _pg_up=0; _nats_up=0
-                        pg_isready -q -h "$SINEX_DEV_STATE_DIR/run" -p "${toString pgPort}" 2>/dev/null && _pg_up=1
+                        pg_isready -q -h "$SINEX_DEV_RUN_DIR" -p "${toString pgPort}" 2>/dev/null && _pg_up=1
                         (timeout 1 bash -c ">/dev/tcp/localhost/$SINEX_DEV_NATS_PORT") 2>/dev/null && _nats_up=1
                         [ "$_pg_up" -eq 1 ] && [ "$_nats_up" -eq 1 ] && break
                         sleep 0.3
