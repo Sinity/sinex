@@ -11,6 +11,7 @@ pub mod events_extensions;
 pub mod integrity;
 pub mod knowledge_graph;
 pub mod model_effects;
+pub mod privacy_policy;
 pub mod replay;
 pub mod schema_cache;
 pub mod schema_management;
@@ -39,6 +40,9 @@ pub use integrity::IntegrityRepository;
 pub use knowledge_graph::{
     CreateEntity, CreateEntityRelation, EntityExt, EntityRecord, EntityRelationExt,
     EntityRelationRecord, EntityType, KnowledgeGraphRepository,
+};
+pub use privacy_policy::{
+    EncryptionKeyRecord, FieldRuleRecord, LoadedRule, PrivacyPolicyRepository, PrivacyRuleRecord,
 };
 pub use replay::ReplayRepository;
 pub use schema_cache::{CachedSchema, SchemaCacheRepository};
@@ -82,6 +86,7 @@ pub trait DbPoolExt {
     fn continuity(&self) -> continuity::ContinuityRepository<'_>;
     fn model_effects(&self) -> model_effects::ModelEffectRepository<'_>;
     fn documents(&self) -> document_search::DocumentSearchRepository<'_>;
+    fn privacy_policy(&self) -> privacy_policy::PrivacyPolicyRepository<'_>;
     async fn with_transaction<F, T>(&self, f: F) -> crate::DbResult<T>
     where
         F: for<'tx> AsyncFnOnce(&'tx mut crate::DbTransaction<'_>) -> crate::DbResult<T>;
@@ -141,6 +146,10 @@ impl DbPoolExt for PgPool {
     }
     fn documents(&self) -> document_search::DocumentSearchRepository<'_> {
         document_search::DocumentSearchRepository::new(self)
+    }
+
+    fn privacy_policy(&self) -> privacy_policy::PrivacyPolicyRepository<'_> {
+        privacy_policy::PrivacyPolicyRepository::new(self)
     }
 
     async fn with_transaction<F, T>(&self, f: F) -> crate::DbResult<T>

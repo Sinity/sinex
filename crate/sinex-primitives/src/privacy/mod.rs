@@ -22,7 +22,7 @@ mod envelope;
 pub mod field;
 pub mod private_mode;
 
-pub use config::{PrivacyConfig, PrivacyConfigError};
+pub use config::{CategorySet, PrivacyConfig, PrivacyConfigError};
 pub use engine::PrivacyEngine;
 pub use field::{FieldPrivacyDecision, parser_field_privacy};
 pub use private_mode::{

@@ -10,6 +10,7 @@ pub mod config;
 pub mod jetstream_consumer;
 pub mod material_assembler;
 pub mod material_ready_set;
+pub mod policy;
 pub mod prelude;
 pub mod schema_sync;
 pub mod service;

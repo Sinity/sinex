@@ -15,6 +15,11 @@ path = "src/main.rs"
 name = "sinexd"
 path = "src/lib.rs"
 
+# DB-backed privacy policy tests (#1042 Slices 3+4).
+[[test]]
+name = "privacy_policy_test"
+path = "tests/event_engine/privacy_policy_test.rs"
+
 [features]
 default = ["db", "messaging", "preflight"]
 tokio-console = ["dep:console-subscriber"]
