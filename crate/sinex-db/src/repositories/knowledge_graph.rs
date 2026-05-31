@@ -617,237 +617,12 @@ impl KnowledgeGraphRepository<'_> {
             ));
         }
 
-        let (merged_aliases, aliases_added) = merge_aliases(&target, &source);
-        let (merged_properties, conflicts) =
-            merge_json_values(target.properties.clone(), &source.properties);
-        let (merged_source_event_ids, source_event_ids_added) =
-            merge_source_event_ids(&target, &source);
-        let merged_confidence = target.confidence_score.max(source.confidence_score);
-        let merged_created_at = if source.created_at < target.created_at {
-            source.created_at
-        } else {
-            target.created_at
-        };
+        let merge_result =
+            apply_entity_merge(&mut tx, &source, &target).await?;
 
-        sqlx::query!(
-            r#"
-            UPDATE core.entities
-            SET
-                aliases = $2,
-                properties = $3,
-                source_event_ids = $4,
-                confidence_score = $5,
-                created_at = $6,
-                updated_at = NOW()
-            WHERE id = $1
-            "#,
-            *target.id.as_uuid() as _,
-            &merged_aliases,
-            merged_properties,
-            merged_source_event_ids
-                .iter()
-                .map(|id| *id.as_uuid())
-                .collect::<Vec<_>>() as _,
-            merged_confidence,
-            *merged_created_at
-        )
-        .execute(&mut *tx)
-        .await
-        .map_err(|e| db_error(e, "update merged target entity"))?;
+        rewire_entity_relations(&mut tx, source.id.as_uuid(), target.id.as_uuid()).await?;
 
-        sqlx::query!(
-            r#"
-            UPDATE core.entities
-            SET is_merged = true,
-                merged_into_id = $2,
-                updated_at = NOW()
-            WHERE id = $1
-            "#,
-            *source.id.as_uuid() as _,
-            *target.id.as_uuid() as _
-        )
-        .execute(&mut *tx)
-        .await
-        .map_err(|e| db_error(e, "update merged source entity"))?;
-
-        // Rewire relations from source to target, deduplicating to avoid
-        // violating the uk_entity_relations_triple unique constraint.
-        //
-        // For each direction (outgoing, incoming), when source and target both
-        // have a relation with the same (other-end, relation_type), the source
-        // row would collide with target's row on rewire. The previous
-        // implementation deleted the colliding source row and silently dropped
-        // its `source_event_ids`. To preserve provenance we instead:
-        //   1. UPDATE the survivor (target's) `source_event_ids` to the
-        //      sorted-unique union of both rows' arrays.
-        //   2. DELETE the duplicate source rows (their provenance is now on
-        //      the survivor).
-        //   3. UPDATE the remaining (non-colliding) source rows to point at
-        //      target.
-        // De-duplication uses `array(SELECT DISTINCT unnest(...))`, which
-        // PostgreSQL guarantees produces a deterministic sorted-by-value
-        // ordering only after explicit ORDER BY; we sort to keep the array
-        // shape stable for assertions and downstream consumers.
-
-        // 1a. Union outgoing duplicate provenance into target's surviving row.
-        sqlx::query!(
-            r#"
-            UPDATE core.entity_relations target
-            SET source_event_ids = (
-                    SELECT COALESCE(array_agg(DISTINCT eid ORDER BY eid), ARRAY[]::uuid[])
-                    FROM unnest(target.source_event_ids || dup.source_event_ids) AS eid
-                ),
-                updated_at = NOW()
-            FROM core.entity_relations dup
-            WHERE target.from_entity_id::uuid = $2
-              AND dup.from_entity_id::uuid = $1
-              AND dup.to_entity_id = target.to_entity_id
-              AND dup.relation_type = target.relation_type
-            "#,
-            *source.id.as_uuid() as _,
-            *target.id.as_uuid() as _
-        )
-        .execute(&mut *tx)
-        .await
-        .map_err(|e| {
-            db_error(
-                e,
-                "merge outgoing relation source_event_ids before deduplication",
-            )
-        })?;
-
-        // 1b. Delete the now-redundant outgoing duplicates from source.
-        sqlx::query!(
-            r#"
-            DELETE FROM core.entity_relations
-            WHERE from_entity_id::uuid = $1
-              AND (to_entity_id, relation_type) IN (
-                SELECT to_entity_id, relation_type
-                FROM core.entity_relations
-                WHERE from_entity_id::uuid = $2
-              )
-            "#,
-            *source.id.as_uuid() as _,
-            *target.id.as_uuid() as _
-        )
-        .execute(&mut *tx)
-        .await
-        .map_err(|e| db_error(e, "deduplicate outgoing relations before merge"))?;
-
-        // 1c. Update remaining (non-colliding) outgoing relations from source
-        //     to target.
-        sqlx::query!(
-            r#"
-            UPDATE core.entity_relations
-            SET from_entity_id = $2
-            WHERE from_entity_id::uuid = $1
-            "#,
-            *source.id.as_uuid() as _,
-            *target.id.as_uuid() as _
-        )
-        .execute(&mut *tx)
-        .await
-        .map_err(|e| db_error(e, "update source relations"))?;
-
-        // 2a. Union incoming duplicate provenance into target's surviving row.
-        sqlx::query!(
-            r#"
-            UPDATE core.entity_relations target
-            SET source_event_ids = (
-                    SELECT COALESCE(array_agg(DISTINCT eid ORDER BY eid), ARRAY[]::uuid[])
-                    FROM unnest(target.source_event_ids || dup.source_event_ids) AS eid
-                ),
-                updated_at = NOW()
-            FROM core.entity_relations dup
-            WHERE target.to_entity_id::uuid = $2
-              AND dup.to_entity_id::uuid = $1
-              AND dup.from_entity_id = target.from_entity_id
-              AND dup.relation_type = target.relation_type
-            "#,
-            *source.id.as_uuid() as _,
-            *target.id.as_uuid() as _
-        )
-        .execute(&mut *tx)
-        .await
-        .map_err(|e| {
-            db_error(
-                e,
-                "merge incoming relation source_event_ids before deduplication",
-            )
-        })?;
-
-        // 2b. Delete the now-redundant incoming duplicates pointing at source.
-        sqlx::query!(
-            r#"
-            DELETE FROM core.entity_relations
-            WHERE to_entity_id::uuid = $1
-              AND (from_entity_id, relation_type) IN (
-                SELECT from_entity_id, relation_type
-                FROM core.entity_relations
-                WHERE to_entity_id::uuid = $2
-              )
-            "#,
-            *source.id.as_uuid() as _,
-            *target.id.as_uuid() as _
-        )
-        .execute(&mut *tx)
-        .await
-        .map_err(|e| db_error(e, "deduplicate incoming relations before merge"))?;
-
-        // 2c. Update remaining (non-colliding) incoming relations from source
-        //     to target.
-        sqlx::query!(
-            r#"
-            UPDATE core.entity_relations
-            SET to_entity_id = $2
-            WHERE to_entity_id::uuid = $1
-            "#,
-            *source.id.as_uuid() as _,
-            *target.id.as_uuid() as _
-        )
-        .execute(&mut *tx)
-        .await
-        .map_err(|e| db_error(e, "update target relations"))?;
-
-        let scope = serde_json::json!({
-            "source_id": source.id.to_string(),
-            "target_id": target.id.to_string(),
-            "source_entity_type": source.entity_type,
-            "target_entity_type": target.entity_type,
-        });
-
-        let summary = serde_json::json!({
-            "merged_at": sinex_primitives::temporal::now(),
-            "aliases_added": aliases_added,
-            "source_event_ids_added": source_event_ids_added
-                .iter()
-                .map(std::string::ToString::to_string)
-                .collect::<Vec<_>>(),
-            "conflicts": conflicts,
-            "resolution": "target_wins",
-        });
-
-        sqlx::query!(
-            r#"
-            INSERT INTO core.operations_log (
-                operation_type,
-                operator,
-                scope,
-                result_status,
-                result_message,
-                preview_summary
-            ) VALUES ($1, $2, $3, $4, $5, $6)
-            "#,
-            "entity_merge",
-            "knowledge_graph",
-            scope,
-            "success",
-            "merge complete",
-            summary
-        )
-        .execute(&mut *tx)
-        .await
-        .map_err(|e| db_error(e, "log entity merge operation"))?;
+        log_entity_merge_operation(&mut tx, &source, &target, &merge_result).await?;
 
         tx.commit()
             .await
@@ -855,6 +630,7 @@ impl KnowledgeGraphRepository<'_> {
 
         Ok(())
     }
+
 
     /// Create a new entity relation
     pub async fn create_relation(
@@ -1201,6 +977,251 @@ impl KnowledgeGraphRepository<'_> {
             None => Ok(serde_json::json!({})),
         }
     }
+}
+
+struct EntityMergeResult {
+    aliases_added: Vec<String>,
+    source_event_ids_added: Vec<Id<Event<JsonValue>>>,
+    conflicts: Vec<serde_json::Value>,
+}
+
+/// Apply the entity-level merge updates within an open transaction:
+/// updates the target's merged fields and marks the source as merged.
+async fn apply_entity_merge(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    source: &EntityRecord,
+    target: &EntityRecord,
+) -> DbResult<EntityMergeResult> {
+    let (merged_aliases, aliases_added) = merge_aliases(target, source);
+    let (merged_properties, conflicts) =
+        merge_json_values(target.properties.clone(), &source.properties);
+    let (merged_source_event_ids, source_event_ids_added) =
+        merge_source_event_ids(target, source);
+    let merged_confidence = target.confidence_score.max(source.confidence_score);
+    let merged_created_at = if source.created_at < target.created_at {
+        source.created_at
+    } else {
+        target.created_at
+    };
+
+    sqlx::query!(
+        r#"
+        UPDATE core.entities
+        SET
+            aliases = $2,
+            properties = $3,
+            source_event_ids = $4,
+            confidence_score = $5,
+            created_at = $6,
+            updated_at = NOW()
+        WHERE id = $1
+        "#,
+        *target.id.as_uuid() as _,
+        &merged_aliases,
+        merged_properties,
+        merged_source_event_ids
+            .iter()
+            .map(|id| *id.as_uuid())
+            .collect::<Vec<_>>() as _,
+        merged_confidence,
+        *merged_created_at
+    )
+    .execute(&mut **tx)
+    .await
+    .map_err(|e| db_error(e, "update merged target entity"))?;
+
+    sqlx::query!(
+        r#"
+        UPDATE core.entities
+        SET is_merged = true,
+            merged_into_id = $2,
+            updated_at = NOW()
+        WHERE id = $1
+        "#,
+        *source.id.as_uuid() as _,
+        *target.id.as_uuid() as _
+    )
+    .execute(&mut **tx)
+    .await
+    .map_err(|e| db_error(e, "update merged source entity"))?;
+
+    Ok(EntityMergeResult {
+        aliases_added,
+        source_event_ids_added,
+        conflicts,
+    })
+}
+
+/// Rewire entity relations from source to target within an open transaction,
+/// deduplicating to avoid violating the uk_entity_relations_triple unique
+/// constraint. For each direction (outgoing, incoming):
+///   1. Union provenance arrays on the surviving target row.
+///   2. Delete the duplicate source rows.
+///   3. Update remaining (non-colliding) source rows to point at target.
+async fn rewire_entity_relations(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    source_uuid: &uuid::Uuid,
+    target_uuid: &uuid::Uuid,
+) -> DbResult<()> {
+    // 1a. Union outgoing duplicate provenance into target's surviving row.
+    sqlx::query!(
+        r#"
+        UPDATE core.entity_relations target
+        SET source_event_ids = (
+                SELECT COALESCE(array_agg(DISTINCT eid ORDER BY eid), ARRAY[]::uuid[])
+                FROM unnest(target.source_event_ids || dup.source_event_ids) AS eid
+            ),
+            updated_at = NOW()
+        FROM core.entity_relations dup
+        WHERE target.from_entity_id::uuid = $2
+          AND dup.from_entity_id::uuid = $1
+          AND dup.to_entity_id = target.to_entity_id
+          AND dup.relation_type = target.relation_type
+        "#,
+        source_uuid as _,
+        target_uuid as _
+    )
+    .execute(&mut **tx)
+    .await
+    .map_err(|e| db_error(e, "merge outgoing relation source_event_ids before deduplication"))?;
+
+    // 1b. Delete the now-redundant outgoing duplicates from source.
+    sqlx::query!(
+        r#"
+        DELETE FROM core.entity_relations
+        WHERE from_entity_id::uuid = $1
+          AND (to_entity_id, relation_type) IN (
+            SELECT to_entity_id, relation_type
+            FROM core.entity_relations
+            WHERE from_entity_id::uuid = $2
+          )
+        "#,
+        source_uuid as _,
+        target_uuid as _
+    )
+    .execute(&mut **tx)
+    .await
+    .map_err(|e| db_error(e, "deduplicate outgoing relations before merge"))?;
+
+    // 1c. Update remaining (non-colliding) outgoing relations from source to target.
+    sqlx::query!(
+        r#"
+        UPDATE core.entity_relations
+        SET from_entity_id = $2
+        WHERE from_entity_id::uuid = $1
+        "#,
+        source_uuid as _,
+        target_uuid as _
+    )
+    .execute(&mut **tx)
+    .await
+    .map_err(|e| db_error(e, "update source relations"))?;
+
+    // 2a. Union incoming duplicate provenance into target's surviving row.
+    sqlx::query!(
+        r#"
+        UPDATE core.entity_relations target
+        SET source_event_ids = (
+                SELECT COALESCE(array_agg(DISTINCT eid ORDER BY eid), ARRAY[]::uuid[])
+                FROM unnest(target.source_event_ids || dup.source_event_ids) AS eid
+            ),
+            updated_at = NOW()
+        FROM core.entity_relations dup
+        WHERE target.to_entity_id::uuid = $2
+          AND dup.to_entity_id::uuid = $1
+          AND dup.from_entity_id = target.from_entity_id
+          AND dup.relation_type = target.relation_type
+        "#,
+        source_uuid as _,
+        target_uuid as _
+    )
+    .execute(&mut **tx)
+    .await
+    .map_err(|e| db_error(e, "merge incoming relation source_event_ids before deduplication"))?;
+
+    // 2b. Delete the now-redundant incoming duplicates pointing at source.
+    sqlx::query!(
+        r#"
+        DELETE FROM core.entity_relations
+        WHERE to_entity_id::uuid = $1
+          AND (from_entity_id, relation_type) IN (
+            SELECT from_entity_id, relation_type
+            FROM core.entity_relations
+            WHERE to_entity_id::uuid = $2
+          )
+        "#,
+        source_uuid as _,
+        target_uuid as _
+    )
+    .execute(&mut **tx)
+    .await
+    .map_err(|e| db_error(e, "deduplicate incoming relations before merge"))?;
+
+    // 2c. Update remaining (non-colliding) incoming relations from source to target.
+    sqlx::query!(
+        r#"
+        UPDATE core.entity_relations
+        SET to_entity_id = $2
+        WHERE to_entity_id::uuid = $1
+        "#,
+        source_uuid as _,
+        target_uuid as _
+    )
+    .execute(&mut **tx)
+    .await
+    .map_err(|e| db_error(e, "update target relations"))?;
+
+    Ok(())
+}
+
+/// Insert an operations_log entry summarising a completed entity merge.
+async fn log_entity_merge_operation(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    source: &EntityRecord,
+    target: &EntityRecord,
+    result: &EntityMergeResult,
+) -> DbResult<()> {
+    let scope = serde_json::json!({
+        "source_id": source.id.to_string(),
+        "target_id": target.id.to_string(),
+        "source_entity_type": source.entity_type,
+        "target_entity_type": target.entity_type,
+    });
+
+    let summary = serde_json::json!({
+        "merged_at": sinex_primitives::temporal::now(),
+        "aliases_added": result.aliases_added,
+        "source_event_ids_added": result.source_event_ids_added
+            .iter()
+            .map(std::string::ToString::to_string)
+            .collect::<Vec<_>>(),
+        "conflicts": result.conflicts,
+        "resolution": "target_wins",
+    });
+
+    sqlx::query!(
+        r#"
+        INSERT INTO core.operations_log (
+            operation_type,
+            operator,
+            scope,
+            result_status,
+            result_message,
+            preview_summary
+        ) VALUES ($1, $2, $3, $4, $5, $6)
+        "#,
+        "entity_merge",
+        "knowledge_graph",
+        scope,
+        "success",
+        "merge complete",
+        summary
+    )
+    .execute(&mut **tx)
+    .await
+    .map_err(|e| db_error(e, "log entity merge operation"))?;
+
+    Ok(())
 }
 
 async fn fetch_entity_for_update(
