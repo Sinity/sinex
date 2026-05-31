@@ -44,7 +44,7 @@ pub(crate) fn system_health_response(report: GatewayHealthReport) -> SystemHealt
     } = report;
 
     SystemHealthResponse {
-        status: map_gateway_health_status(status),
+        status,
         healthy,
         serving,
         degradation_reasons,
@@ -104,14 +104,6 @@ fn system_component_health(
         connected,
         latency_ms,
         detail,
-    }
-}
-
-fn map_gateway_health_status(status: GatewayHealthStatus) -> HealthStatus {
-    match status {
-        GatewayHealthStatus::Healthy => HealthStatus::Healthy,
-        GatewayHealthStatus::Degraded => HealthStatus::Degraded,
-        GatewayHealthStatus::Unhealthy => HealthStatus::Unhealthy,
     }
 }
 

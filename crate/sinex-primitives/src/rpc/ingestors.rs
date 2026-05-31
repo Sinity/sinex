@@ -5,7 +5,7 @@
 //! `health.status` event, and recent event-emission stats. Distinct from
 //! `rpc::nodes` (which carries coordinator-style state — drain/resume/horizon).
 
-use crate::domain::NodeName;
+use crate::domain::{HealthStatus, NodeName};
 use crate::env as shared_env;
 use crate::rpc::{RpcDomain, RpcMethod, RpcMutability, RpcRole, RpcStability, methods};
 use crate::{Result, Timestamp, Uuid};
@@ -83,7 +83,7 @@ pub struct IngestorStatus {
     /// Current health from the latest `health.status` event for this component.
     /// `None` if the ingestor has never emitted a transition.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub current_health: Option<String>,
+    pub current_health: Option<HealthStatus>,
     /// When the current health was last emitted.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub health_changed_at: Option<Timestamp>,

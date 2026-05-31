@@ -7,7 +7,7 @@
 use std::collections::HashMap;
 
 use camino::Utf8PathBuf;
-use sinex_primitives::domain::{DerivedNodeModel, SyntheticTemporalPolicy};
+use sinex_primitives::domain::{DerivedNodeModel, HealthStatus, SyntheticTemporalPolicy};
 use sinex_primitives::events::EventPayload;
 use sinex_primitives::events::payloads::{
     ActivitySessionBoundaryPayload, ActivityWindowSummaryPayload, BashCommandExecutedPayload,
@@ -159,8 +159,8 @@ async fn production_derived_nodes_emit_queryable_synthesis_events(
         ctx.publish_at(
             HealthStatusPayload {
                 component: "workspace-proof-ingestd".to_string(),
-                previous_status: "unknown".to_string(),
-                current_status: "healthy".to_string(),
+                previous_status: HealthStatus::Unknown,
+                current_status: HealthStatus::Healthy,
                 reason: Some("runtime proof baseline".to_string()),
                 context: None,
             },
@@ -170,8 +170,8 @@ async fn production_derived_nodes_emit_queryable_synthesis_events(
         ctx.publish_at(
             HealthStatusPayload {
                 component: "workspace-proof-ingestd".to_string(),
-                previous_status: "healthy".to_string(),
-                current_status: "failed".to_string(),
+                previous_status: HealthStatus::Healthy,
+                current_status: HealthStatus::Unhealthy,
                 reason: Some("runtime proof transition".to_string()),
                 context: None,
             },
