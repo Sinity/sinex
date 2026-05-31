@@ -819,7 +819,7 @@ impl ParsedEventIntent {
     /// - `self.id` would appear as both parent and child (self-referential
     ///   derived). This is structurally impossible with a freshly generated
     ///   child ID, but the check is made explicit for correctness.
-    pub fn derive_from_parents<P>(&self, payload: P) -> Result<ParsedEventIntent, ParserError>
+    pub fn derive_from_parents<P>(&self, payload: &P) -> Result<ParsedEventIntent, ParserError>
     where
         P: crate::events::EventPayload,
     {
@@ -845,7 +845,7 @@ impl ParsedEventIntent {
             .into());
         }
 
-        let child_payload = serde_json::to_value(&payload).map_err(|e| {
+        let child_payload = serde_json::to_value(payload).map_err(|e| {
             SinexError::serialization("failed to serialize derived payload")
                 .with_context("event_type", P::EVENT_TYPE.as_str().to_string())
                 .with_std_error(&e)
@@ -1042,7 +1042,7 @@ mod tests {
         let parent = material_intent();
         let tag_payload = KnowledgeTagAppliedPayload::test_default();
 
-        let child = parent.derive_from_parents(tag_payload)?;
+        let child = parent.derive_from_parents(&tag_payload)?;
 
         // derived_parents must be populated with the parent's id
         let parents = child
@@ -1065,7 +1065,7 @@ mod tests {
         let parent_ts = parent.ts_orig;
         let tag_payload = KnowledgeTagAppliedPayload::test_default();
 
-        let child = parent.derive_from_parents(tag_payload)?;
+        let child = parent.derive_from_parents(&tag_payload)?;
 
         assert_eq!(
             child.ts_orig, parent_ts,
@@ -1083,7 +1083,7 @@ mod tests {
         let parent_id = parent.id;
         let tag_payload = KnowledgeTagAppliedPayload::test_default();
 
-        let child = parent.derive_from_parents(tag_payload)?;
+        let child = parent.derive_from_parents(&tag_payload)?;
 
         assert_ne!(child.id, parent_id, "child id must differ from parent id");
 
@@ -1097,7 +1097,7 @@ mod tests {
         let parent = synthesis_intent();
         let tag_payload = KnowledgeTagAppliedPayload::test_default();
 
-        let result = parent.derive_from_parents(tag_payload);
+        let result = parent.derive_from_parents(&tag_payload);
 
         assert!(
             result.is_err(),
@@ -1123,7 +1123,7 @@ mod tests {
         let parent_event_type = parent.event_type.clone();
         let tag_payload = KnowledgeTagAppliedPayload::test_default();
 
-        let child = parent.derive_from_parents(tag_payload)?;
+        let child = parent.derive_from_parents(&tag_payload)?;
 
         assert_ne!(
             child.event_type, parent_event_type,

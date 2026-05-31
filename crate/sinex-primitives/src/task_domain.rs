@@ -271,19 +271,19 @@ pub fn reduce_task_event(
 ) -> Result<TaskState> {
     match input {
         TaskLifecycleInput::Created(created) => {
-            reduce_created(state, event_id, created, observed_at)
+            reduce_created(state, &event_id, created, observed_at)
         }
         TaskLifecycleInput::Updated(updated) => {
             reduce_updated(state, event_id, updated, observed_at)
         }
         TaskLifecycleInput::StatusChanged(status_changed) => {
-            reduce_status_changed(state, event_id, status_changed, observed_at)
+            reduce_status_changed(state, &event_id, status_changed, observed_at)
         }
         TaskLifecycleInput::Completed(completed) => {
-            reduce_completed(state, event_id, completed, observed_at)
+            reduce_completed(state, &event_id, completed, observed_at)
         }
         TaskLifecycleInput::Cancelled(cancelled) => {
-            reduce_cancelled(state, event_id, cancelled, observed_at)
+            reduce_cancelled(state, &event_id, cancelled, observed_at)
         }
         TaskLifecycleInput::Split(split) => reduce_split(state, event_id, split, observed_at),
         TaskLifecycleInput::Merged(merged) => reduce_merged(state, event_id, merged, observed_at),
@@ -332,7 +332,7 @@ fn reduce_linked(
 
 fn reduce_created(
     state: Option<TaskState>,
-    event_id: Uuid,
+    event_id: &Uuid,
     created: TaskCreatedInput,
     observed_at: Timestamp,
 ) -> Result<TaskState> {
@@ -357,7 +357,7 @@ fn reduce_created(
         due_at: created.due_at,
         priority: created.priority,
         external_refs: created.external_refs,
-        last_event_id: event_id,
+        last_event_id: *event_id,
         state_hash: String::new(),
         updated_at: observed_at,
     };
@@ -425,7 +425,7 @@ fn reduce_updated(
 
 fn reduce_completed(
     state: Option<TaskState>,
-    event_id: Uuid,
+    event_id: &Uuid,
     completed: TaskCompletedInput,
     observed_at: Timestamp,
 ) -> Result<TaskState> {
@@ -449,7 +449,7 @@ fn reduce_completed(
     }
 
     state.status = TaskStatus::Completed;
-    state.last_event_id = event_id;
+    state.last_event_id = *event_id;
     state.updated_at = observed_at;
     state.state_hash = hash_task_state(&state);
     Ok(state)
@@ -457,7 +457,7 @@ fn reduce_completed(
 
 fn reduce_status_changed(
     state: Option<TaskState>,
-    event_id: Uuid,
+    event_id: &Uuid,
     status_changed: TaskStatusChangedInput,
     observed_at: Timestamp,
 ) -> Result<TaskState> {
@@ -491,7 +491,7 @@ fn reduce_status_changed(
     }
 
     state.status = status_changed.status;
-    state.last_event_id = event_id;
+    state.last_event_id = *event_id;
     state.updated_at = observed_at;
     state.state_hash = hash_task_state(&state);
     Ok(state)
@@ -499,7 +499,7 @@ fn reduce_status_changed(
 
 fn reduce_cancelled(
     state: Option<TaskState>,
-    event_id: Uuid,
+    event_id: &Uuid,
     cancelled: TaskCancelledInput,
     observed_at: Timestamp,
 ) -> Result<TaskState> {
@@ -523,7 +523,7 @@ fn reduce_cancelled(
     }
 
     state.status = TaskStatus::Cancelled;
-    state.last_event_id = event_id;
+    state.last_event_id = *event_id;
     state.updated_at = observed_at;
     state.state_hash = hash_task_state(&state);
     Ok(state)

@@ -578,9 +578,8 @@ fn canonicalize_non_empty_source_event_ids(ids: NonEmptyVec<EventId>) -> NonEmpt
     // The input was non-empty, so sorting and deduplication cannot make it
     // empty. Rebuild without unwrap/expect to keep the invariant explicit.
     let mut iter = ids.into_iter();
-    let first = match iter.next() {
-        Some(first) => first,
-        None => unreachable!("deduplicating a non-empty parent set cannot produce an empty set"),
+    let Some(first) = iter.next() else {
+        unreachable!("deduplicating a non-empty parent set cannot produce an empty set")
     };
     NonEmptyVec::from_head_tail(first, iter.collect())
 }
