@@ -6,5 +6,5 @@ async fn main() -> Result<()> {
 
     // Tracing subscriber is initialized inside run_cli() after arg parse,
     // so -v/-vv/-vvv flags can influence the log level.
-    xtask::run_cli().await
+    Box::pin(xtask::run_cli()).await
 }

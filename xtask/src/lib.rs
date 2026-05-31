@@ -370,6 +370,49 @@ fn test_subcommand_name(cmd: &commands::TestCommand) -> Option<&'static str> {
     }
 }
 
+/// Map a parsed command to its `(name, subcommand, profile, metadata)` tuple.
+///
+/// Extracted from `run_cli` so the top-level driver stays under the cognitive
+/// complexity budget; this is a pure per-variant lookup with no side effects.
+fn command_dispatch_metadata(
+    command: &Commands,
+) -> (
+    &'static str,
+    Option<&'static str>,
+    Option<&'static str>,
+    command::CommandMetadata,
+) {
+    match command {
+        Commands::Fix(cmd) => ("fix", None, None, cmd.metadata()),
+        Commands::Check(cmd) => ("check", None, None, cmd.metadata()),
+        Commands::Test(cmd) => ("test", test_subcommand_name(cmd), None, cmd.metadata()),
+        Commands::Build(cmd) => ("build", None, None, cmd.metadata()),
+        Commands::Run(cmd) => ("run", None, None, cmd.metadata()),
+        Commands::Infra { .. } => ("infra", None, None, command::CommandMetadata::default()),
+        Commands::Jobs(cmd) => ("jobs", None, None, cmd.metadata()),
+        Commands::Status(cmd) => ("status", None, None, cmd.metadata()),
+        Commands::Deps(cmd) => ("deps", None, None, cmd.metadata()),
+        Commands::History(cmd) => ("history", None, None, cmd.metadata()),
+        Commands::Analytics(cmd) => ("analytics", None, None, cmd.metadata()),
+        Commands::Freshness(cmd) => ("freshness", None, None, cmd.metadata()),
+        Commands::Impact(cmd) => ("impact", None, None, cmd.metadata()),
+        Commands::GitStack(cmd) => ("git-stack", None, None, cmd.metadata()),
+        Commands::Docs(cmd) => ("docs", None, None, cmd.metadata()),
+        Commands::SourceUnits(cmd) => ("source-units", None, None, cmd.metadata()),
+        Commands::Doctor(cmd) => ("doctor", None, None, cmd.metadata()),
+        Commands::RaDiagnose(cmd) => ("ra-diagnose", None, None, cmd.metadata()),
+        Commands::Privacy(cmd) => ("privacy", None, None, cmd.metadata()),
+        Commands::Schema(cmd) => ("schema", None, None, cmd.metadata()),
+        Commands::Verify(cmd) => ("verify", None, None, cmd.metadata()),
+        Commands::Exercise(cmd) => ("exercise", None, None, cmd.metadata()),
+        Commands::Reset(cmd) => ("reset", None, None, cmd.metadata()),
+        Commands::Ci(cmd) => ("ci", None, None, cmd.metadata()),
+        Commands::Completions(cmd) => ("completions", None, None, cmd.metadata()),
+        Commands::Reap(cmd) => ("__reap", None, None, cmd.metadata()),
+        Commands::RecordDriftBypass(cmd) => ("record-drift-bypass", None, None, cmd.metadata()),
+    }
+}
+
 pub async fn run_cli() -> Result<()> {
     // Use try_get_matches so we can intercept parse errors and route them
     // through the JSON formatter when --json is present, instead of letting
@@ -417,35 +460,7 @@ pub async fn run_cli() -> Result<()> {
     };
 
     // Dispatch — extract metadata (including timeout/history behavior) before consuming the command
-    let (command_name, subcommand, profile, command_metadata) = match &command {
-        Commands::Fix(cmd) => ("fix", None, None, cmd.metadata()),
-        Commands::Check(cmd) => ("check", None, None, cmd.metadata()),
-        Commands::Test(cmd) => ("test", test_subcommand_name(cmd), None, cmd.metadata()),
-        Commands::Build(cmd) => ("build", None, None, cmd.metadata()),
-        Commands::Run(cmd) => ("run", None, None, cmd.metadata()),
-        Commands::Infra { .. } => ("infra", None, None, command::CommandMetadata::default()),
-        Commands::Jobs(cmd) => ("jobs", None, None, cmd.metadata()),
-        Commands::Status(cmd) => ("status", None, None, cmd.metadata()),
-        Commands::Deps(cmd) => ("deps", None, None, cmd.metadata()),
-        Commands::History(cmd) => ("history", None, None, cmd.metadata()),
-        Commands::Analytics(cmd) => ("analytics", None, None, cmd.metadata()),
-        Commands::Freshness(cmd) => ("freshness", None, None, cmd.metadata()),
-        Commands::Impact(cmd) => ("impact", None, None, cmd.metadata()),
-        Commands::GitStack(cmd) => ("git-stack", None, None, cmd.metadata()),
-        Commands::Docs(cmd) => ("docs", None, None, cmd.metadata()),
-        Commands::SourceUnits(cmd) => ("source-units", None, None, cmd.metadata()),
-        Commands::Doctor(cmd) => ("doctor", None, None, cmd.metadata()),
-        Commands::RaDiagnose(cmd) => ("ra-diagnose", None, None, cmd.metadata()),
-        Commands::Privacy(cmd) => ("privacy", None, None, cmd.metadata()),
-        Commands::Schema(cmd) => ("schema", None, None, cmd.metadata()),
-        Commands::Verify(cmd) => ("verify", None, None, cmd.metadata()),
-        Commands::Exercise(cmd) => ("exercise", None, None, cmd.metadata()),
-        Commands::Reset(cmd) => ("reset", None, None, cmd.metadata()),
-        Commands::Ci(cmd) => ("ci", None, None, cmd.metadata()),
-        Commands::Completions(cmd) => ("completions", None, None, cmd.metadata()),
-        Commands::Reap(cmd) => ("__reap", None, None, cmd.metadata()),
-        Commands::RecordDriftBypass(cmd) => ("record-drift-bypass", None, None, cmd.metadata()),
-    };
+    let (command_name, subcommand, profile, command_metadata) = command_dispatch_metadata(&command);
 
     let command_timeout = command_metadata.timeout;
     let tracks_invocation = command_metadata.track_in_history;
@@ -549,7 +564,13 @@ pub async fn run_cli() -> Result<()> {
     let mut process_monitor =
         tracks_invocation.then(process::InvocationResourceMonitor::start_for_current_process);
     let mut timed_out = false;
-    let mut result = execute_with_optional_timeout(execute_fut, command_timeout, command_name, &mut timed_out).await;
+    let mut result = Box::pin(execute_with_optional_timeout(
+        execute_fut,
+        command_timeout,
+        command_name,
+        &mut timed_out,
+    ))
+    .await;
 
     let lingering_process_groups = if timed_out {
         0
@@ -592,38 +613,14 @@ pub async fn run_cli() -> Result<()> {
 
     // Update history
     if let Some(id) = invocation_id {
-        let status = match &result {
-            Ok(res)
-                if res.status == crate::output::Status::Failed
-                    || res.status == crate::output::Status::Partial =>
-            {
-                crate::history::InvocationStatus::Failed
-            }
-            Ok(_) => crate::history::InvocationStatus::Success,
-            Err(_) => crate::history::InvocationStatus::Failed,
-        };
-        let duration = match &result {
-            Ok(res) => res.duration_secs.unwrap_or(ctx.elapsed().as_secs_f64()),
-            Err(_) => ctx.elapsed().as_secs_f64(),
-        };
-        match ctx.try_with_history_db(|db| {
-            if let Some(metrics) = process_metrics.as_ref() {
-                db.record_resource_metrics(id, metrics)?;
-            }
-            db.finish_invocation(id, status, Some(invocation_exit_code), duration)
-        }) {
-            Some(Ok(())) => {}
-            Some(Err(error)) => {
-                eprintln!("⚠️  Failed to record invocation result: {error}");
-            }
-            None => {
-                let error = history_db_open_error
-                    .as_deref()
-                    .unwrap_or("history DB unavailable");
-                eprintln!("⚠️  Failed to open history DB to finish invocation {id}: {error}");
-            }
-        }
-        ctx.mark_finished();
+        finish_invocation_history(
+            &ctx,
+            id,
+            &result,
+            invocation_exit_code,
+            process_metrics.as_ref(),
+            history_db_open_error.as_deref(),
+        );
     }
 
     // Handle coordinator completion: clear state, spawn queued work (FIFO).
@@ -655,6 +652,44 @@ pub async fn run_cli() -> Result<()> {
         }
         Err(err) => Err(err),
     }
+}
+
+/// Record invocation completion in history and mark context as finished.
+fn finish_invocation_history(
+    ctx: &command::CommandContext,
+    id: i64,
+    result: &Result<command::CommandResult>,
+    invocation_exit_code: i32,
+    process_metrics: Option<&process::InvocationResourceMetrics>,
+    history_db_open_error: Option<&str>,
+) {
+    let status = match result {
+        Ok(res) if res.status == crate::output::Status::Failed || res.status == crate::output::Status::Partial => {
+            crate::history::InvocationStatus::Failed
+        }
+        Ok(_) => crate::history::InvocationStatus::Success,
+        Err(_) => crate::history::InvocationStatus::Failed,
+    };
+    let duration = match result {
+        Ok(res) => res.duration_secs.unwrap_or(ctx.elapsed().as_secs_f64()),
+        Err(_) => ctx.elapsed().as_secs_f64(),
+    };
+    match ctx.try_with_history_db(|db| {
+        if let Some(metrics) = process_metrics {
+            db.record_resource_metrics(id, metrics)?;
+        }
+        db.finish_invocation(id, status, Some(invocation_exit_code), duration)
+    }) {
+        Some(Ok(())) => {}
+        Some(Err(error)) => {
+            eprintln!("⚠️  Failed to record invocation result: {error}");
+        }
+        None => {
+            let error = history_db_open_error.unwrap_or("history DB unavailable");
+            eprintln!("⚠️  Failed to open history DB to finish invocation {id}: {error}");
+        }
+    }
+    ctx.mark_finished();
 }
 
 /// Start a new invocation row or claim a pre-reserved background invocation.

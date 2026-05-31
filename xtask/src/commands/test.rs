@@ -475,6 +475,189 @@ pub struct VmArgs {
 }
 
 impl TestCommand {
+    /// Background path: serialize args for the chosen subcommand (or the default
+    /// nextest run) and hand off to the coordinator. Extracted from `execute` to
+    /// keep it within the cognitive-complexity budget.
+    fn execute_background(&self, ctx: &CommandContext) -> Result<CommandResult> {
+        let mut args = Vec::new();
+
+        // Serialize subcommand first (if any)
+        match &self.subcommand {
+            Some(TestSubcommand::Bench(bench)) => {
+                args = bench_background_args(bench);
+            }
+            Some(TestSubcommand::Fuzz(fuzz)) => {
+                args = fuzz_background_args(fuzz);
+            }
+            Some(TestSubcommand::Coverage(cov)) => {
+                args = coverage_background_args(cov);
+            }
+            Some(TestSubcommand::Mutants(m)) => {
+                args = mutants_background_args(m);
+            }
+            Some(TestSubcommand::Vm(vm)) => {
+                args.push("vm".to_string());
+                if let Some(ref c) = vm.category {
+                    args.push(format!("--category={c}"));
+                }
+                if vm.timeout != crate::commands::vm::DEFAULT_TIMEOUT_SECS {
+                    args.push(format!("--timeout={}", vm.timeout));
+                }
+                if vm.keep_failed {
+                    args.push("--keep-failed".to_string());
+                }
+                if vm.list {
+                    args.push("--list".to_string());
+                }
+                if vm.validate {
+                    args.push("--validate".to_string());
+                }
+                if !vm.args.is_empty() {
+                    args.push("--".to_string());
+                    args.extend(vm.args.clone());
+                }
+
+                let coordination_args = crate::commands::vm::vm_test_coordination_args(
+                    vm.category.as_deref(),
+                    vm.timeout,
+                    vm.keep_failed,
+                    vm.validate,
+                    &vm.args,
+                );
+                return crate::coordinator::coordinate_and_spawn_with_scope(
+                    "test",
+                    &args,
+                    &coordination_args,
+                    ctx,
+                );
+            }
+            None => {
+                args = self.nextest_invocation_args(false);
+
+                let execution_plan =
+                    self.resolve_execution_plan(None, self.filter.as_deref(), None)?;
+                let effective_test_binaries =
+                    self.effective_test_binaries(self.filter.as_deref())?;
+                let effective_lib_target =
+                    self.effective_lib_target(self.filter.as_deref(), &effective_test_binaries)?;
+                let coordination_args = self.semantic_invocation_args(
+                    &execution_plan.workload_scope,
+                    self.filter.as_deref(),
+                    &effective_test_binaries,
+                    effective_lib_target,
+                );
+                return crate::coordinator::coordinate_and_spawn_with_scope(
+                    "test",
+                    &args,
+                    &coordination_args,
+                    ctx,
+                );
+            }
+        }
+
+        crate::coordinator::coordinate_and_spawn("test", &args, ctx)
+    }
+
+    /// `--dry-run` path: resolve the execution plan, print/emit it, and return
+    /// without running tests. Extracted from `execute` to keep it within the
+    /// cognitive-complexity budget.
+    fn execute_dry_run(&self, ctx: &CommandContext) -> Result<CommandResult> {
+        let effective_filter = self.filter.clone();
+        let effective_test_binaries = self.effective_test_binaries(effective_filter.as_deref())?;
+        let effective_lib_target =
+            self.effective_lib_target(effective_filter.as_deref(), &effective_test_binaries)?;
+        let execution_plan =
+            self.resolve_execution_plan(Some(ctx), effective_filter.as_deref(), None)?;
+        let workload_scope = execution_plan.workload_scope.clone();
+        let coordination_args = self.semantic_invocation_args(
+            &workload_scope,
+            effective_filter.as_deref(),
+            &effective_test_binaries,
+            effective_lib_target,
+        );
+        ctx.record_invocation_args(&coordination_args);
+        let runtime_binary_requirements = runtime_binary_requirements_for_target(
+            &execution_plan,
+            effective_lib_target,
+            &effective_test_binaries,
+            effective_filter.as_deref(),
+        );
+        let db_pool_size = self.narrow_test_db_pool_size(
+            &execution_plan,
+            effective_filter.as_deref(),
+            &effective_test_binaries,
+            effective_lib_target,
+        );
+        let proof_kind = crate::coordinator::proof_kind("test", &coordination_args);
+        let input_fingerprint =
+            crate::coordinator::current_scoped_tree_fingerprint("test", &coordination_args)?;
+        let scope_key = crate::coordinator::compute_scope_key("test", &coordination_args);
+        let reusable = self.can_consume_exact_test_proof() && proof_kind == "test.nextest.exact";
+        let reusable_proof = if reusable {
+            ctx.try_with_history_db_query(|db| {
+                db.get_successful_reusable_test_proof_unit(
+                    &proof_kind,
+                    &input_fingerprint,
+                    &scope_key,
+                )
+            })
+            .and_then(std::result::Result::ok)
+            .flatten()
+        } else {
+            None
+        };
+
+        if ctx.is_human() {
+            print_dry_run_plan(
+                self,
+                ctx,
+                &workload_scope,
+                &execution_plan,
+                &effective_test_binaries,
+                effective_lib_target,
+                &effective_filter,
+                &runtime_binary_requirements,
+                db_pool_size,
+                reusable,
+                &reusable_proof,
+            );
+        }
+        // Build coverage array for JSON output
+        let proof_coverage: Vec<PackageProofCoverage> =
+            if execution_plan.runner_packages.is_empty() {
+                Vec::new()
+            } else {
+                self.classify_package_proof_coverage(ctx, &execution_plan.runner_packages)
+            };
+        Ok(CommandResult::success()
+            .with_message("test dry-run passed")
+            .with_detail(format!("scope={}", workload_scope.encode_marker()))
+            .with_data(serde_json::json!({
+                "scope": workload_scope.encode_marker(),
+                "runner_packages": execution_plan.runner_packages,
+                "excluded_packages": execution_plan.excluded_packages,
+                "test_binaries": effective_test_binaries,
+                "lib": effective_lib_target,
+                "filter": effective_filter,
+                "runtime_binary_requirements": runtime_binary_requirements,
+                "db_pool_size": db_pool_size,
+                "proof_coverage": proof_coverage,
+                "reuse": {
+                    "eligible": reusable,
+                    "proof_kind": proof_kind,
+                    "input_fingerprint": input_fingerprint,
+                    "scope_key": scope_key,
+                    "hit": reusable_proof,
+                    "reason": if reusable {
+                        "nextest proof can be reused when the exact manifest and input fingerprint match"
+                    } else {
+                        "runtime, ignored, snapshot, or listing test shapes are never reused"
+                    },
+                },
+            }))
+            .with_duration(ctx.elapsed()))
+    }
+
     fn uses_automatic_impact(&self) -> bool {
         self.subcommand.is_none()
             && !self.all
@@ -1500,83 +1683,7 @@ impl XtaskCommand for TestCommand {
     async fn execute(&self, ctx: &CommandContext) -> Result<CommandResult> {
         // Handle background execution (like build/check/fix)
         if ctx.is_background() {
-            let mut args = Vec::new();
-
-            // Serialize subcommand first (if any)
-            match &self.subcommand {
-                Some(TestSubcommand::Bench(bench)) => {
-                    args = bench_background_args(bench);
-                }
-                Some(TestSubcommand::Fuzz(fuzz)) => {
-                    args = fuzz_background_args(fuzz);
-                }
-                Some(TestSubcommand::Coverage(cov)) => {
-                    args = coverage_background_args(cov);
-                }
-                Some(TestSubcommand::Mutants(m)) => {
-                    args = mutants_background_args(m);
-                }
-                Some(TestSubcommand::Vm(vm)) => {
-                    args.push("vm".to_string());
-                    if let Some(ref c) = vm.category {
-                        args.push(format!("--category={c}"));
-                    }
-                    if vm.timeout != crate::commands::vm::DEFAULT_TIMEOUT_SECS {
-                        args.push(format!("--timeout={}", vm.timeout));
-                    }
-                    if vm.keep_failed {
-                        args.push("--keep-failed".to_string());
-                    }
-                    if vm.list {
-                        args.push("--list".to_string());
-                    }
-                    if vm.validate {
-                        args.push("--validate".to_string());
-                    }
-                    if !vm.args.is_empty() {
-                        args.push("--".to_string());
-                        args.extend(vm.args.clone());
-                    }
-
-                    let coordination_args = crate::commands::vm::vm_test_coordination_args(
-                        vm.category.as_deref(),
-                        vm.timeout,
-                        vm.keep_failed,
-                        vm.validate,
-                        &vm.args,
-                    );
-                    return crate::coordinator::coordinate_and_spawn_with_scope(
-                        "test",
-                        &args,
-                        &coordination_args,
-                        ctx,
-                    );
-                }
-                None => {
-                    args = self.nextest_invocation_args(false);
-
-                    let execution_plan =
-                        self.resolve_execution_plan(None, self.filter.as_deref(), None)?;
-                    let effective_test_binaries =
-                        self.effective_test_binaries(self.filter.as_deref())?;
-                    let effective_lib_target = self
-                        .effective_lib_target(self.filter.as_deref(), &effective_test_binaries)?;
-                    let coordination_args = self.semantic_invocation_args(
-                        &execution_plan.workload_scope,
-                        self.filter.as_deref(),
-                        &effective_test_binaries,
-                        effective_lib_target,
-                    );
-                    return crate::coordinator::coordinate_and_spawn_with_scope(
-                        "test",
-                        &args,
-                        &coordination_args,
-                        ctx,
-                    );
-                }
-            }
-
-            return crate::coordinator::coordinate_and_spawn("test", &args, ctx);
+            return self.execute_background(ctx);
         }
 
         // Dispatch to subcommand handler if present
@@ -1595,102 +1702,7 @@ impl XtaskCommand for TestCommand {
         }
 
         if self.dry_run {
-            let effective_filter = self.filter.clone();
-            let effective_test_binaries =
-                self.effective_test_binaries(effective_filter.as_deref())?;
-            let effective_lib_target =
-                self.effective_lib_target(effective_filter.as_deref(), &effective_test_binaries)?;
-            let execution_plan =
-                self.resolve_execution_plan(Some(ctx), effective_filter.as_deref(), None)?;
-            let workload_scope = execution_plan.workload_scope.clone();
-            let coordination_args = self.semantic_invocation_args(
-                &workload_scope,
-                effective_filter.as_deref(),
-                &effective_test_binaries,
-                effective_lib_target,
-            );
-            ctx.record_invocation_args(&coordination_args);
-            let runtime_binary_requirements = runtime_binary_requirements_for_target(
-                &execution_plan,
-                effective_lib_target,
-                &effective_test_binaries,
-                effective_filter.as_deref(),
-            );
-            let db_pool_size = self.narrow_test_db_pool_size(
-                &execution_plan,
-                effective_filter.as_deref(),
-                &effective_test_binaries,
-                effective_lib_target,
-            );
-            let proof_kind = crate::coordinator::proof_kind("test", &coordination_args);
-            let input_fingerprint =
-                crate::coordinator::current_scoped_tree_fingerprint("test", &coordination_args)?;
-            let scope_key = crate::coordinator::compute_scope_key("test", &coordination_args);
-            let reusable =
-                self.can_consume_exact_test_proof() && proof_kind == "test.nextest.exact";
-            let reusable_proof = if reusable {
-                ctx.try_with_history_db_query(|db| {
-                    db.get_successful_reusable_test_proof_unit(
-                        &proof_kind,
-                        &input_fingerprint,
-                        &scope_key,
-                    )
-                })
-                .and_then(std::result::Result::ok)
-                .flatten()
-            } else {
-                None
-            };
-
-            if ctx.is_human() {
-                print_dry_run_plan(
-                    self,
-                    ctx,
-                    &workload_scope,
-                    &execution_plan,
-                    &effective_test_binaries,
-                    effective_lib_target,
-                    &effective_filter,
-                    &runtime_binary_requirements,
-                    db_pool_size,
-                    reusable,
-                    &reusable_proof,
-                );
-            }
-            // Build coverage array for JSON output
-            let proof_coverage: Vec<PackageProofCoverage> =
-                if execution_plan.runner_packages.is_empty() {
-                    Vec::new()
-                } else {
-                    self.classify_package_proof_coverage(ctx, &execution_plan.runner_packages)
-                };
-            return Ok(CommandResult::success()
-                .with_message("test dry-run passed")
-                .with_detail(format!("scope={}", workload_scope.encode_marker()))
-                .with_data(serde_json::json!({
-                    "scope": workload_scope.encode_marker(),
-                    "runner_packages": execution_plan.runner_packages,
-                    "excluded_packages": execution_plan.excluded_packages,
-                    "test_binaries": effective_test_binaries,
-                    "lib": effective_lib_target,
-                    "filter": effective_filter,
-                    "runtime_binary_requirements": runtime_binary_requirements,
-                    "db_pool_size": db_pool_size,
-                    "proof_coverage": proof_coverage,
-                    "reuse": {
-                        "eligible": reusable,
-                        "proof_kind": proof_kind,
-                        "input_fingerprint": input_fingerprint,
-                        "scope_key": scope_key,
-                        "hit": reusable_proof,
-                        "reason": if reusable {
-                            "nextest proof can be reused when the exact manifest and input fingerprint match"
-                        } else {
-                            "runtime, ignored, snapshot, or listing test shapes are never reused"
-                        },
-                    },
-                }))
-                .with_duration(ctx.elapsed()));
+            return self.execute_dry_run(ctx);
         }
 
         let disk_space_status = check_disk_space_gb(2);

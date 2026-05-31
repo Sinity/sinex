@@ -31,11 +31,10 @@ pub async fn assert_request_drain_delivers_to_receiver(node_label: &str) -> Test
 /// Assert that `request_drain_and_warn` is idempotent: the second call still
 /// reports success (drain already requested) and the controller stays in the
 /// requested state.
-pub async fn assert_request_drain_is_idempotent(node_label: &str) -> TestResult<()> {
+pub fn assert_request_drain_is_idempotent(node_label: &str) {
     let drain = RuntimeDrainController::new();
 
     assert!(drain.request_drain_and_warn(node_label));
     assert!(drain.request_drain_and_warn(node_label));
     assert!(drain.is_requested());
-    Ok(())
 }

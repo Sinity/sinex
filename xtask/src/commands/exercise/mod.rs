@@ -141,6 +141,60 @@ pub struct ExerciseCommand {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 impl ExerciseCommand {
+    /// Render the `--list` / `--dry-run` catalog view (JSON or human) and return
+    /// the resulting command result. Extracted from `execute` to keep it within
+    /// the cognitive-complexity budget.
+    fn render_exercise_listing(
+        &self,
+        ctx: &CommandContext,
+        exercises: &[&ExerciseDef],
+    ) -> CommandResult {
+        if ctx.is_json() {
+            let entries: Vec<serde_json::Value> = exercises
+                .iter()
+                .map(|e| {
+                    serde_json::json!({
+                        "id": e.id,
+                        "tier": e.tier.label(),
+                        "description": e.description,
+                        "infra": format!("{:?}", e.infra),
+                        "kind": match &e.kind {
+                            ExerciseKind::Declarative(s) => format!("declarative ({} steps)", s.len()),
+                            ExerciseKind::Custom => "custom".to_string(),
+                        },
+                    })
+                })
+                .collect();
+            return CommandResult::success()
+                .with_message(format!("{} exercises", entries.len()))
+                .with_data(serde_json::json!({
+                    "exercises": entries,
+                    "count": entries.len()
+                }));
+        }
+
+        println!("Exercise catalog ({} exercises):\n", exercises.len());
+        let mut current_tier = None;
+        for e in exercises {
+            if current_tier != Some(e.tier) {
+                current_tier = Some(e.tier);
+                println!("  {} ─────────────────────────────────────", e.tier.label());
+            }
+            let infra_tag = match e.infra {
+                InfraReq::None => "",
+                InfraReq::Postgres => " [pg]",
+                InfraReq::Nats => " [nats]",
+                InfraReq::Both => " [pg+nats]",
+            };
+            println!("    {:<40} {}{}", e.id, e.description, infra_tag);
+        }
+        println!();
+
+        CommandResult::success()
+            .with_message(format!("{} exercises listed", exercises.len()))
+            .with_duration(ctx.elapsed())
+    }
+
     /// Resolve the baseline path: explicit `--baseline`, else workspace default.
     fn baseline_path(&self) -> PathBuf {
         self.baseline
@@ -269,50 +323,7 @@ impl XtaskCommand for ExerciseCommand {
 
         // Handle --list / --dry-run
         if self.list || self.dry_run {
-            if ctx.is_json() {
-                let entries: Vec<serde_json::Value> = exercises
-                    .iter()
-                    .map(|e| {
-                        serde_json::json!({
-                            "id": e.id,
-                            "tier": e.tier.label(),
-                            "description": e.description,
-                            "infra": format!("{:?}", e.infra),
-                            "kind": match &e.kind {
-                                ExerciseKind::Declarative(s) => format!("declarative ({} steps)", s.len()),
-                                ExerciseKind::Custom => "custom".to_string(),
-                            },
-                        })
-                    })
-                    .collect();
-                return Ok(CommandResult::success()
-                    .with_message(format!("{} exercises", entries.len()))
-                    .with_data(serde_json::json!({
-                        "exercises": entries,
-                        "count": entries.len()
-                    })));
-            }
-
-            println!("Exercise catalog ({} exercises):\n", exercises.len());
-            let mut current_tier = None;
-            for e in &exercises {
-                if current_tier != Some(e.tier) {
-                    current_tier = Some(e.tier);
-                    println!("  {} ─────────────────────────────────────", e.tier.label());
-                }
-                let infra_tag = match e.infra {
-                    InfraReq::None => "",
-                    InfraReq::Postgres => " [pg]",
-                    InfraReq::Nats => " [nats]",
-                    InfraReq::Both => " [pg+nats]",
-                };
-                println!("    {:<40} {}{}", e.id, e.description, infra_tag);
-            }
-            println!();
-
-            return Ok(CommandResult::success()
-                .with_message(format!("{} exercises listed", exercises.len()))
-                .with_duration(ctx.elapsed()));
+            return Ok(self.render_exercise_listing(ctx, &exercises));
         }
 
         // Count infra-skipped exercises (for reporting)

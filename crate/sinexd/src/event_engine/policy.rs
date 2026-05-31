@@ -465,10 +465,10 @@ mod tests {
     //! - Rule loading from DB (`PrivacyPolicyRepository::load_enabled_rules`)
     //! - Action application: Redact (regex) / Suppress (literal) matchers
     //! - Field-path scoping: rule scoped to top-level key
-    //! - Source-type scoping: rule applies only to matching event_source
-    //! - Chokepoint: derived events also go through redact_batch
-    //! - DLQ stub: _raw_bytes_base64 absent from stub produced by route_to_dlq
-    //! - Cache reload: fresh PolicyEngine::load picks up newly added DB rule
+    //! - Source-type scoping: rule applies only to matching `event_source`
+    //! - Chokepoint: derived events also go through `redact_batch`
+    //! - DLQ stub: `_raw_bytes_base64` absent from stub produced by `route_to_dlq`
+    //! - Cache reload: fresh `PolicyEngine::load` picks up newly added DB rule
     //!
     //! These tests are inline because the `sinexd` integration test harness
     //! uses a CI Postgres instance that serves the main-checkout xtask binary;
@@ -794,11 +794,13 @@ mod tests {
             "_raw_bytes_base64 must be absent from DLQ stub; got: {stub}"
         );
         assert_eq!(
-            stub.get("_raw_bytes_suppressed").and_then(|v| v.as_bool()),
+            stub.get("_raw_bytes_suppressed")
+                .and_then(sinex_primitives::JsonValue::as_bool),
             Some(true)
         );
         assert_eq!(
-            stub.get("_raw_bytes_len").and_then(|v| v.as_u64()),
+            stub.get("_raw_bytes_len")
+                .and_then(sinex_primitives::JsonValue::as_u64),
             Some(42)
         );
         Ok(())

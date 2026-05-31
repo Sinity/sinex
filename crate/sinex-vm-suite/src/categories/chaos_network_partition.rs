@@ -193,10 +193,9 @@ async fn test_events_reach_db_after_heal(runner: &mut TestRunner, pool: &PgPool)
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 async fn event_count(pool: &PgPool) -> i64 {
-    sqlx::query_scalar!("SELECT COUNT(*) FROM core.events")
+    sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM core.events")
         .fetch_one(pool)
         .await
         .ok()
-        .flatten()
         .unwrap_or(0)
 }

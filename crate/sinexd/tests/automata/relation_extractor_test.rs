@@ -11,7 +11,7 @@ use sinex_primitives::events::payloads::EntityResolvedPayload;
 use sinex_primitives::events::{Event, EventPayload};
 use sinex_primitives::temporal::{Duration, Timestamp};
 use sinex_primitives::{Id, JsonValue};
-use sinexd::automata::relation_extractor::RelationExtractor;
+use sinexd::automata::relation_extractor::{RelationExtractor, RelationExtractorState};
 use sinexd::node_sdk::ScopeReconciler;
 use sinexd::node_sdk::derived_node::AutomatonContext;
 use xtask::sandbox::prelude::*;
@@ -53,7 +53,7 @@ async fn scope_keys_returns_singleton_co_occurrence() -> TestResult<()> {
 #[sinex_test]
 async fn single_entity_emits_no_relations() -> TestResult<()> {
     let mut extractor = RelationExtractor;
-    let mut state = Default::default();
+    let mut state = RelationExtractorState::default();
     let ctx = make_context(Timestamp::now());
 
     let outputs = extractor
@@ -69,7 +69,7 @@ async fn single_entity_emits_no_relations() -> TestResult<()> {
 #[sinex_test]
 async fn within_window_no_emission_yet() -> TestResult<()> {
     let mut extractor = RelationExtractor;
-    let mut state = Default::default();
+    let mut state = RelationExtractorState::default();
     let t0 = Timestamp::from_unix_timestamp(1_800_000_000).expect("valid ts");
 
     for (i, name) in ["git", "nix", "cargo"].iter().enumerate() {
@@ -89,7 +89,7 @@ async fn within_window_no_emission_yet() -> TestResult<()> {
 #[sinex_test]
 async fn gap_closes_window_and_emits_pairwise_relations() -> TestResult<()> {
     let mut extractor = RelationExtractor;
-    let mut state = Default::default();
+    let mut state = RelationExtractorState::default();
     let t0 = Timestamp::from_unix_timestamp(1_800_000_000).expect("valid ts");
 
     // Three entities within the window.
@@ -127,7 +127,7 @@ async fn gap_closes_window_and_emits_pairwise_relations() -> TestResult<()> {
 #[sinex_test]
 async fn two_entities_then_gap_emits_one_relation() -> TestResult<()> {
     let mut extractor = RelationExtractor;
-    let mut state = Default::default();
+    let mut state = RelationExtractorState::default();
     let t0 = Timestamp::from_unix_timestamp(1_800_000_000).expect("valid ts");
 
     let ctx0 = make_context(t0);
@@ -151,7 +151,7 @@ async fn two_entities_then_gap_emits_one_relation() -> TestResult<()> {
 #[sinex_test]
 async fn single_entity_after_gap_emits_nothing() -> TestResult<()> {
     let mut extractor = RelationExtractor;
-    let mut state = Default::default();
+    let mut state = RelationExtractorState::default();
     let t0 = Timestamp::from_unix_timestamp(1_800_000_000).expect("valid ts");
 
     extractor
