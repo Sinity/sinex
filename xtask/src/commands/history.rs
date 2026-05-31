@@ -570,6 +570,7 @@ fn format_history_cutoff_timestamp(
         .wrap_err_with(|| format!("failed to format {context} as RFC3339"))
 }
 
+#[derive(Clone, Copy)]
 struct ListFlags {
     with_diagnostics: bool,
     with_stages: bool,
@@ -1121,16 +1122,16 @@ fn execute_cost(
 fn cost_row_from_json(
     row: &serde_json::Map<String, serde_json::Value>,
 ) -> Result<CostInvocationRow> {
-    let id = json_i64(&row, "id")?;
-    let command = json_string(&row, "command")?;
+    let id = json_i64(row, "id")?;
+    let command = json_string(row, "command")?;
     let args_json = row
         .get("args_json")
         .and_then(serde_json::Value::as_str)
         .map(ToOwned::to_owned);
-    let started_at = parse_history_time(&json_string(&row, "started_at")?, "started_at")?;
-    let finished_at = parse_history_time(&json_string(&row, "finished_at")?, "finished_at")?;
+    let started_at = parse_history_time(&json_string(row, "started_at")?, "started_at")?;
+    let finished_at = parse_history_time(&json_string(row, "finished_at")?, "finished_at")?;
     let duration_secs = row.get("duration_secs").and_then(serde_json::Value::as_f64);
-    let status = json_string(&row, "status")?;
+    let status = json_string(row, "status")?;
     let cancel_reason = row
         .get("cancel_reason")
         .and_then(serde_json::Value::as_str)

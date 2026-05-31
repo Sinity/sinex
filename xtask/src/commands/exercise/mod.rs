@@ -446,7 +446,7 @@ impl XtaskCommand for ExerciseCommand {
         }
 
         // --ci-check: diff against committed baseline, fail on regressions.
-        let (ci_regressions, ci_new_passes) = if self.ci_check {
+        let (ci_regressions, _) = if self.ci_check {
             check_ci_baseline(&manifest, &self.baseline_path(), self.update_baseline, ctx.is_human())?
         } else {
             (vec![], vec![])

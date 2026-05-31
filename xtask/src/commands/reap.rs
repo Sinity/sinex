@@ -74,13 +74,13 @@ impl XtaskCommand for ReapCommand {
         //
         // The parent branch returns Ok(CommandResult::success()) so the launcher
         // xtask can exit promptly.
-        double_fork_reap(self.clone())
+        double_fork_reap(self)
     }
 }
 
 /// Perform the double-fork and, in the grandchild, run the reaper loop.
 /// The parent and intermediate child both return immediately.
-fn double_fork_reap(args: ReapCommand) -> Result<CommandResult> {
+fn double_fork_reap(args: &ReapCommand) -> Result<CommandResult> {
     use nix::unistd::{ForkResult, fork, setsid};
 
     // Safety: we fork immediately after parsing args.  No threads have been

@@ -2298,7 +2298,7 @@ async fn test_rust_analyzer_cli_scan_summarizes_raw_stderr_before_truncation()
         Some(1),
         "",
         &stderr,
-    )?;
+    );
     let summary = scan
         .stderr_summary
         .expect("known internal errors should be summarized");
@@ -2363,7 +2363,7 @@ async fn test_rust_analyzer_scan_failed_status_represents_unavailable()
         None,
         "",
         " WARN ra-sys: failed to discover workspace\n",
-    )?;
+    );
     assert_eq!(scan.status, "failed");
     assert_eq!(scan.exit_code, None);
     assert!(scan.diagnostics.is_empty());
