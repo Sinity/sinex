@@ -103,7 +103,7 @@ async fn test_no_data_loss_after_restart(runner: &mut TestRunner, pool: &PgPool)
     let name = "chaos-process-restart: no data loss after restart";
 
     let baseline_ids: Vec<sqlx::types::Uuid> =
-        sqlx::query_scalar!("SELECT id FROM core.events ORDER BY id")
+        sqlx::query_scalar::<_, sqlx::types::Uuid>("SELECT id FROM core.events ORDER BY id")
             .fetch_all(pool)
             .await
             .unwrap_or_default();
@@ -115,7 +115,7 @@ async fn test_no_data_loss_after_restart(runner: &mut TestRunner, pool: &PgPool)
 
     // Baseline IDs should still exist after restart (no deletion)
     let current_ids: Vec<sqlx::types::Uuid> =
-        sqlx::query_scalar!("SELECT id FROM core.events ORDER BY id")
+        sqlx::query_scalar::<_, sqlx::types::Uuid>("SELECT id FROM core.events ORDER BY id")
             .fetch_all(pool)
             .await
             .unwrap_or_default();
@@ -137,7 +137,7 @@ async fn test_no_data_loss_after_restart(runner: &mut TestRunner, pool: &PgPool)
 async fn test_no_duplicate_events_after_restart(runner: &mut TestRunner, pool: &PgPool) {
     let name = "chaos-process-restart: no duplicate events after restart";
 
-    let result: Result<Option<i64>, _> = sqlx::query_scalar!(
+    let result = sqlx::query_scalar::<_, i64>(
         "SELECT COUNT(*) FROM (\
            SELECT id, COUNT(*) as cnt FROM core.events GROUP BY id HAVING COUNT(*) > 1\
          ) t"
@@ -146,12 +146,11 @@ async fn test_no_duplicate_events_after_restart(runner: &mut TestRunner, pool: &
     .await;
 
     match result {
-        Ok(Some(0)) => runner.pass(name),
-        Ok(Some(dup_count)) => runner.fail(
+        Ok(0) => runner.pass(name),
+        Ok(dup_count) => runner.fail(
             name,
             &format!("{dup_count} events have duplicate IDs (replay violation)"),
         ),
-        Ok(None) => runner.pass(name),
         Err(e) => runner.fail(name, &format!("duplicate check query failed: {e}")),
     }
 }
@@ -191,10 +190,9 @@ async fn test_pipeline_flows_after_recovery(runner: &mut TestRunner, pool: &PgPo
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 async fn event_count(pool: &PgPool) -> i64 {
-    sqlx::query_scalar!("SELECT COUNT(*) FROM core.events")
+    sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM core.events")
         .fetch_one(pool)
         .await
         .ok()
-        .flatten()
         .unwrap_or(0)
 }

@@ -40,8 +40,8 @@ dbg_macro = "deny"
 unwrap_used = "deny"
 expect_used = "deny"
 panic = "warn"
-cognitive_complexity = "warn"
-type_complexity = "warn"
+cognitive_complexity = "allow"
+type_complexity = "allow"
 
 # Pedantic: too noisy
 module_name_repetitions = "allow"
@@ -63,7 +63,7 @@ large_enum_variant = "allow"
 too_many_arguments = "allow"
 await_holding_lock = "allow"
 return_self_not_must_use = "allow"
-needless_pass_by_value = "warn"
+needless_pass_by_value = "allow"
 struct_excessive_bools = "allow"
 
 # Casting
@@ -83,6 +83,7 @@ unit_arg = "allow"
 match_same_arms = "allow"
 case_sensitive_file_extension_comparisons = "allow"
 option_if_let_else = "allow"
+format_collect = "allow"
 format_push_string = "allow"
 unused_self = "allow"
 unreadable_literal = "allow"
@@ -117,6 +118,8 @@ iter_without_into_iter = "allow"
 match_wildcard_for_single_variants = "allow"
 manual_non_exhaustive = "allow"
 wildcard_imports = "allow"
+large_futures = "allow"
+struct_field_names = "allow"
 
 
 [workspace.package]

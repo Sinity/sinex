@@ -268,6 +268,7 @@ mod tests {
     use serde_json::json;
     use xtask::sandbox::prelude::*;
 
+    #[allow(clippy::unnecessary_wraps)]
     fn schema_ok() -> crate::error::Result<serde_json::Value> {
         Ok(json!({"type": "object"}))
     }

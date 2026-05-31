@@ -148,7 +148,22 @@ pub async fn diff(pool: &PgPool) -> Result<Vec<String>, ApplyError> {
     let column_gaps = crate::converge::report_column_gaps(pool, &convergible_tables).await?;
     drifts.extend(column_gaps);
 
-    // Trigger existence (triggers are managed by CREATE OR REPLACE, not convergence).
+    drifts.extend(check_table_object_drifts(pool).await?);
+
+    drifts.extend(check_telemetry_drifts(pool).await?);
+
+    drifts.extend(check_constraint_drifts(pool).await?);
+
+    Ok(drifts)
+}
+
+/// Trigger and index existence drift for trigger/index-bearing tables. Triggers
+/// are installed via CREATE OR REPLACE (not convergence), so a missing one
+/// signals an incomplete apply or a manual DROP. Extracted from `diff` to keep
+/// it within the cognitive-complexity budget.
+async fn check_table_object_drifts(pool: &PgPool) -> Result<Vec<String>, ApplyError> {
+    let mut drifts = Vec::new();
+
     if relation_exists(pool, "core.events").await? {
         for trigger in EVENTS_REQUIRED_TRIGGERS {
             if !trigger_exists(pool, "core.events", trigger).await? {
@@ -172,7 +187,6 @@ pub async fn diff(pool: &PgPool) -> Result<Vec<String>, ApplyError> {
         }
     }
 
-    // Trigger existence checks for all other trigger-bearing tables.
     // Each trigger is installed by create_triggers_and_functions via CREATE OR REPLACE.
     // Missing triggers indicate incomplete apply or manual DROP TRIGGER.
     let extended_trigger_checks: &[(&str, &[&str])] = &[
@@ -224,6 +238,15 @@ pub async fn diff(pool: &PgPool) -> Result<Vec<String>, ApplyError> {
         }
     }
 
+    Ok(drifts)
+}
+
+/// Telemetry relation-kind drift: ordinary views, materialized views, and
+/// continuous-aggregate registrations under `sinex_telemetry`. Extracted from
+/// `diff` to keep it within the cognitive-complexity budget.
+async fn check_telemetry_drifts(pool: &PgPool) -> Result<Vec<String>, ApplyError> {
+    let mut drifts = Vec::new();
+
     for relation in TELEMETRY_VIEW_RELATIONS {
         match relation_kind(pool, &format!("sinex_telemetry.{relation}")).await? {
             Some('v') => {}
@@ -269,6 +292,15 @@ pub async fn diff(pool: &PgPool) -> Result<Vec<String>, ApplyError> {
             }
         }
     }
+
+    Ok(drifts)
+}
+
+/// CHECK-constraint drift: the hand-written operations-log / source-material
+/// constraints plus every enum-derived constraint in the registry. Extracted
+/// from `diff` to keep it within the cognitive-complexity budget.
+async fn check_constraint_drifts(pool: &PgPool) -> Result<Vec<String>, ApplyError> {
+    let mut drifts = Vec::new();
 
     if relation_exists(pool, "core.operations_log").await?
         && !operations_log_operation_type_constraint_is_current(pool).await?

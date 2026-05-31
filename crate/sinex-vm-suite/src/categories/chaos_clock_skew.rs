@@ -42,7 +42,7 @@ async fn test_baseline_monotonic(runner: &mut TestRunner, pool: &PgPool) {
     tokio::time::sleep(Duration::from_secs(5)).await;
 
     // Check ts_coided monotonicity
-    let violations: Option<i64> = sqlx::query_scalar!(
+    let violations = sqlx::query_scalar::<_, i64>(
         "SELECT COUNT(*) FROM (\
            SELECT ts_coided, LAG(ts_coided) OVER (ORDER BY id) AS prev_ts \
            FROM core.events\
@@ -51,8 +51,7 @@ async fn test_baseline_monotonic(runner: &mut TestRunner, pool: &PgPool) {
     )
     .fetch_one(pool)
     .await
-    .ok()
-    .flatten();
+    .ok();
 
     match violations {
         Some(0) => runner.pass(name),
@@ -178,7 +177,7 @@ async fn test_no_catastrophic_timestamp_corruption(runner: &mut TestRunner, pool
     }
 
     // Check ts_coided ordering violations (as proxy for corruption)
-    let violations: Option<i64> = sqlx::query_scalar!(
+    let violations = sqlx::query_scalar::<_, i64>(
         "SELECT COUNT(*) FROM (\
            SELECT ts_coided, LAG(ts_coided) OVER (ORDER BY id) AS prev_ts \
            FROM core.events\
@@ -187,8 +186,7 @@ async fn test_no_catastrophic_timestamp_corruption(runner: &mut TestRunner, pool
     )
     .fetch_one(pool)
     .await
-    .ok()
-    .flatten();
+    .ok();
 
     match violations {
         Some(v) => {
@@ -212,17 +210,16 @@ async fn test_no_catastrophic_timestamp_corruption(runner: &mut TestRunner, pool
 async fn test_hypertable_chunk_structure_intact(runner: &mut TestRunner, pool: &PgPool) {
     let name = "chaos-clock-skew: hypertable chunk structure intact";
 
-    let result: Result<Option<i64>, _> = sqlx::query_scalar!(
+    let result = sqlx::query_scalar::<_, i64>(
         "SELECT COUNT(*) FROM timescaledb_information.chunks WHERE hypertable_name = 'events'"
     )
     .fetch_one(pool)
     .await;
 
     match result {
-        Ok(Some(chunk_count)) if chunk_count >= 1 => runner.pass(name),
-        Ok(Some(0)) => runner.fail(name, "hypertable has no chunks"),
-        Ok(Some(_n)) => runner.pass(name), // Any chunks > 0 is good
-        Ok(None) => runner.fail(name, "hypertable chunk count is NULL"),
+        Ok(chunk_count) if chunk_count >= 1 => runner.pass(name),
+        Ok(0) => runner.fail(name, "hypertable has no chunks"),
+        Ok(_n) => runner.pass(name), // Any chunks > 0 is good
         Err(e) => runner.fail(name, &format!("chunk query failed: {e}")),
     }
 }
@@ -230,10 +227,9 @@ async fn test_hypertable_chunk_structure_intact(runner: &mut TestRunner, pool: &
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 async fn event_count(pool: &PgPool) -> i64 {
-    sqlx::query_scalar!("SELECT COUNT(*) FROM core.events")
+    sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM core.events")
         .fetch_one(pool)
         .await
         .ok()
-        .flatten()
         .unwrap_or(0)
 }

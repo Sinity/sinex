@@ -54,22 +54,19 @@ fn test_core_services_active(runner: &mut TestRunner) {
 async fn test_event_provenance(runner: &mut TestRunner, pool: &PgPool) {
     let name = "provenance: no events with NULL source_material_id AND NULL source_event_ids";
 
-    let result: Result<Option<i64>, _> = sqlx::query_scalar!(
+    let result = sqlx::query_scalar::<_, i64>(
         "SELECT COUNT(*) FROM core.events \
          WHERE source_material_id IS NULL \
-           AND source_event_ids IS NULL",
+           AND source_event_ids IS NULL"
     )
     .fetch_one(pool)
     .await;
 
     match result {
-        Ok(n) if n.unwrap_or(0) == 0 => runner.pass(name),
+        Ok(0) => runner.pass(name),
         Ok(n) => runner.fail(
             name,
-            &format!(
-                "{} event(s) violate XOR provenance (both sides NULL)",
-                n.unwrap_or(0)
-            ),
+            &format!("{n} event(s) violate XOR provenance (both sides NULL)"),
         ),
         Err(e) => runner.fail(name, &format!("query error: {e}")),
     }
@@ -78,23 +75,20 @@ async fn test_event_provenance(runner: &mut TestRunner, pool: &PgPool) {
 async fn test_non_fs_events(runner: &mut TestRunner, pool: &PgPool) {
     let name = "multi-source: non-filesystem event types exist";
 
-    let result: Result<Option<i64>, _> = sqlx::query_scalar!(
+    let result = sqlx::query_scalar::<_, i64>(
         "SELECT COUNT(DISTINCT event_type) \
          FROM core.events \
          WHERE event_type IS NOT NULL \
-           AND event_type NOT LIKE 'file.%'",
+           AND event_type NOT LIKE 'file.%'"
     )
     .fetch_one(pool)
     .await;
 
     match result {
-        Ok(n) if n.unwrap_or(0) > 0 => runner.pass(name),
+        Ok(n) if n > 0 => runner.pass(name),
         Ok(n) => runner.fail(
             name,
-            &format!(
-                "no non-filesystem event types found (count={})",
-                n.unwrap_or(0)
-            ),
+            &format!("no non-filesystem event types found (count={n})"),
         ),
         Err(e) => runner.fail(name, &format!("query error: {e}")),
     }

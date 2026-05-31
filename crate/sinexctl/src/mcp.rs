@@ -1715,8 +1715,8 @@ async fn search_events(client: &GatewayClient, arguments: Value) -> Result<Value
     redact_raw_samples(&mut result);
     Ok(envelope(
         "sinex.search_events",
-        json!(args),
-        json!({ "result": result }),
+        &json!(args),
+        &json!({ "result": result }),
     ))
 }
 
@@ -1733,8 +1733,8 @@ async fn trace_lineage(client: &GatewayClient, arguments: Value) -> Result<Value
     redact_raw_samples(&mut result);
     Ok(envelope(
         "sinex.trace_lineage",
-        json!(args),
-        json!({ "result": result }),
+        &json!(args),
+        &json!({ "result": result }),
     ))
 }
 
@@ -1766,7 +1766,7 @@ async fn source_readiness(client: &GatewayClient, arguments: Value) -> Result<Va
         payload["caveats"] = json!("suppressed_by_request");
     }
 
-    Ok(envelope("sinex.source_readiness", json!(args), payload))
+    Ok(envelope("sinex.source_readiness", &json!(args), &payload))
 }
 
 async fn source_continuity(client: &GatewayClient, arguments: Value) -> Result<Value> {
@@ -1787,8 +1787,8 @@ async fn source_continuity(client: &GatewayClient, arguments: Value) -> Result<V
 
     Ok(envelope(
         "sinex.source_continuity",
-        json!(args),
-        json!({ "result": result }),
+        &json!(args),
+        &json!({ "result": result }),
     ))
 }
 
@@ -1806,8 +1806,8 @@ async fn source_drift(client: &GatewayClient, arguments: Value) -> Result<Value>
 
     Ok(envelope(
         "sinex.source_drift",
-        json!(args),
-        json!({ "result": result }),
+        &json!(args),
+        &json!({ "result": result }),
     ))
 }
 
@@ -1821,8 +1821,8 @@ async fn source_gap_explain(client: &GatewayClient, arguments: Value) -> Result<
         .await?;
     Ok(envelope(
         "sinex.source_gap_explain",
-        json!(args),
-        json!({ "result": response }),
+        &json!(args),
+        &json!({ "result": response }),
     ))
 }
 
@@ -1836,8 +1836,8 @@ async fn source_identifier_continuity(client: &GatewayClient, arguments: Value) 
         .await?;
     Ok(envelope(
         "sinex.source_identifier_continuity",
-        json!(args),
-        json!({ "result": response }),
+        &json!(args),
+        &json!({ "result": response }),
     ))
 }
 
@@ -1846,8 +1846,8 @@ async fn privacy_status(client: &GatewayClient, arguments: Value) -> Result<Valu
     let response: PrivateModeStateResponse = client.private_mode_status().await?;
     Ok(envelope(
         "sinex.privacy_status",
-        json!({}),
-        json!({ "result": response }),
+        &json!({}),
+        &json!({ "result": response }),
     ))
 }
 
@@ -1856,8 +1856,8 @@ async fn system_health(client: &GatewayClient, arguments: Value) -> Result<Value
     let response: SystemHealthResponse = client.health().await?;
     Ok(envelope(
         "sinex.system_health",
-        json!({}),
-        json!({ "result": response }),
+        &json!({}),
+        &json!({ "result": response }),
     ))
 }
 
@@ -1877,8 +1877,8 @@ async fn tasks_list(client: &GatewayClient, arguments: Value) -> Result<Value> {
     let response: TaskListResponse = client.tasks_list(request).await?;
     Ok(envelope(
         "sinex.tasks_list",
-        json!(args),
-        json!({ "result": response }),
+        &json!(args),
+        &json!({ "result": response }),
     ))
 }
 
@@ -1891,8 +1891,8 @@ async fn task_state(client: &GatewayClient, arguments: Value) -> Result<Value> {
         .await?;
     Ok(envelope(
         "sinex.task_state",
-        json!(args),
-        json!({ "result": response }),
+        &json!(args),
+        &json!({ "result": response }),
     ))
 }
 
@@ -1903,8 +1903,8 @@ async fn replay_operations(client: &GatewayClient, arguments: Value) -> Result<V
         .await?;
     Ok(envelope(
         "sinex.replay_operations",
-        json!(args),
-        json!({ "operations": operations }),
+        &json!(args),
+        &json!({ "operations": operations }),
     ))
 }
 
@@ -1913,8 +1913,8 @@ async fn replay_status(client: &GatewayClient, arguments: Value) -> Result<Value
     let operation = client.replay_status(&args.operation_id).await?;
     Ok(envelope(
         "sinex.replay_status",
-        json!(args),
-        json!({ "operation": operation }),
+        &json!(args),
+        &json!({ "operation": operation }),
     ))
 }
 
@@ -1934,8 +1934,8 @@ async fn documents_search(client: &GatewayClient, arguments: Value) -> Result<Va
     redact_document_text(&mut response);
     Ok(envelope(
         "sinex.documents_search",
-        json!(args),
-        json!({ "result": response }),
+        &json!(args),
+        &json!({ "result": response }),
     ))
 }
 
@@ -1948,8 +1948,8 @@ async fn documents_get(client: &GatewayClient, arguments: Value) -> Result<Value
     redact_document_side_data(&mut response);
     Ok(envelope(
         "sinex.documents_get",
-        json!(args),
-        json!({ "result": response }),
+        &json!(args),
+        &json!({ "result": response }),
     ))
 }
 
@@ -1963,8 +1963,8 @@ async fn documents_chunks(client: &GatewayClient, arguments: Value) -> Result<Va
     let response = client.documents_get_chunks_redacted(request).await?;
     Ok(envelope(
         "sinex.documents_chunks",
-        json!(args),
-        json!({ "result": response }),
+        &json!(args),
+        &json!({ "result": response }),
     ))
 }
 
@@ -1977,8 +1977,8 @@ async fn semantic_epochs(client: &GatewayClient, arguments: Value) -> Result<Val
         .await?;
     Ok(envelope(
         "sinex.semantic_epochs",
-        json!(args),
-        json!({ "result": response }),
+        &json!(args),
+        &json!({ "result": response }),
     ))
 }
 
@@ -1992,8 +1992,8 @@ async fn semantic_lanes(client: &GatewayClient, arguments: Value) -> Result<Valu
         .await?;
     Ok(envelope(
         "sinex.semantic_lanes",
-        json!(args),
-        json!({ "result": response }),
+        &json!(args),
+        &json!({ "result": response }),
     ))
 }
 
@@ -2007,8 +2007,8 @@ async fn semantic_lane_outputs(client: &GatewayClient, arguments: Value) -> Resu
         .await?;
     Ok(envelope(
         "sinex.semantic_lane_outputs",
-        json!(args),
-        json!({ "result": response }),
+        &json!(args),
+        &json!({ "result": response }),
     ))
 }
 
@@ -2022,8 +2022,8 @@ async fn semantic_lane_diffs(client: &GatewayClient, arguments: Value) -> Result
         .await?;
     Ok(envelope(
         "sinex.semantic_lane_diffs",
-        json!(args),
-        json!({ "result": response }),
+        &json!(args),
+        &json!({ "result": response }),
     ))
 }
 
@@ -2034,8 +2034,8 @@ async fn automata_status(client: &GatewayClient, arguments: Value) -> Result<Val
         .await?;
     Ok(envelope(
         "sinex.automata_status",
-        json!(args),
-        json!({ "result": response }),
+        &json!(args),
+        &json!({ "result": response }),
     ))
 }
 
@@ -2046,8 +2046,8 @@ async fn ingestors_status(client: &GatewayClient, arguments: Value) -> Result<Va
         .await?;
     Ok(envelope(
         "sinex.ingestors_status",
-        json!(args),
-        json!({ "result": response }),
+        &json!(args),
+        &json!({ "result": response }),
     ))
 }
 
@@ -2056,8 +2056,8 @@ async fn nodes_health(client: &GatewayClient, arguments: Value) -> Result<Value>
     let response: NodesHealthResponse = client.nodes_health(args.stale_after_secs).await?;
     Ok(envelope(
         "sinex.nodes_health",
-        json!(args),
-        json!({ "result": response }),
+        &json!(args),
+        &json!({ "result": response }),
     ))
 }
 
@@ -2066,8 +2066,8 @@ async fn nodes_active(client: &GatewayClient, arguments: Value) -> Result<Value>
     let response: NodesListActiveResponse = client.nodes_list_active(args.stale_after_secs).await?;
     Ok(envelope(
         "sinex.nodes_active",
-        json!(args),
-        json!({ "result": response }),
+        &json!(args),
+        &json!({ "result": response }),
     ))
 }
 
@@ -2076,8 +2076,8 @@ async fn nodes_registry(client: &GatewayClient, arguments: Value) -> Result<Valu
     let response: NodesListResponse = client.nodes_list().await?;
     Ok(envelope(
         "sinex.nodes_registry",
-        json!({}),
-        json!({ "result": response }),
+        &json!({}),
+        &json!({ "result": response }),
     ))
 }
 
@@ -2086,8 +2086,8 @@ async fn ingestd_validation(client: &GatewayClient, arguments: Value) -> Result<
     let snapshot: Option<IngestdValidationSnapshot> = client.telemetry_ingestd_validation().await?;
     Ok(envelope(
         "sinex.ingestd_validation",
-        json!({}),
-        json!({ "snapshot": snapshot }),
+        &json!({}),
+        &json!({ "snapshot": snapshot }),
     ))
 }
 
@@ -2098,8 +2098,8 @@ async fn ingestd_batch_stats(client: &GatewayClient, arguments: Value) -> Result
         .await?;
     Ok(envelope(
         "sinex.ingestd_batch_stats",
-        json!(args),
-        json!({ "buckets": buckets }),
+        &json!(args),
+        &json!({ "buckets": buckets }),
     ))
 }
 
@@ -2108,8 +2108,8 @@ async fn throughput(client: &GatewayClient, arguments: Value) -> Result<Value> {
     let response = client.telemetry_throughput().await?;
     Ok(envelope(
         "sinex.throughput",
-        json!({}),
-        json!({ "result": response }),
+        &json!({}),
+        &json!({ "result": response }),
     ))
 }
 
@@ -2118,8 +2118,8 @@ async fn recent_activity(client: &GatewayClient, arguments: Value) -> Result<Val
     let entries = client.telemetry_recent_activity(args.limit).await?;
     Ok(envelope(
         "sinex.recent_activity",
-        json!(args),
-        json!({ "entries": entries }),
+        &json!(args),
+        &json!({ "entries": entries }),
     ))
 }
 
@@ -2132,8 +2132,8 @@ macro_rules! telemetry_bucket_tool {
                 .await?;
             Ok(envelope(
                 $tool_name,
-                json!(args),
-                json!({ $result_key: result }),
+                &json!(args),
+                &json!({ $result_key: result }),
             ))
         }
     };
@@ -2169,8 +2169,8 @@ async fn current_health(client: &GatewayClient, arguments: Value) -> Result<Valu
     let entries = client.telemetry_current_health(args.limit).await?;
     Ok(envelope(
         "sinex.current_health",
-        json!(args),
-        json!({ "entries": entries }),
+        &json!(args),
+        &json!({ "entries": entries }),
     ))
 }
 
@@ -2179,8 +2179,8 @@ async fn current_device_state(client: &GatewayClient, arguments: Value) -> Resul
     let entries = client.telemetry_current_device_state(args.limit).await?;
     Ok(envelope(
         "sinex.current_device_state",
-        json!(args),
-        json!({ "entries": entries }),
+        &json!(args),
+        &json!({ "entries": entries }),
     ))
 }
 
@@ -2228,8 +2228,8 @@ async fn llm_prompts(client: &GatewayClient, arguments: Value) -> Result<Value> 
     redact_raw_samples(&mut response);
     Ok(envelope(
         "sinex.llm_prompts",
-        json!(args),
-        json!({ "result": response }),
+        &json!(args),
+        &json!({ "result": response }),
     ))
 }
 
@@ -2238,8 +2238,8 @@ async fn llm_route_explain(client: &GatewayClient, arguments: Value) -> Result<V
     let response = client.llm_route_explain(request).await?;
     Ok(envelope(
         "sinex.llm_route_explain",
-        arguments,
-        json!({ "result": response }),
+        &arguments,
+        &json!({ "result": response }),
     ))
 }
 
@@ -2250,8 +2250,8 @@ async fn llm_budget_report(client: &GatewayClient, arguments: Value) -> Result<V
         .await?;
     Ok(envelope(
         "sinex.llm_budget_report",
-        json!(args),
-        json!({ "result": response }),
+        &json!(args),
+        &json!({ "result": response }),
     ))
 }
 
@@ -2268,8 +2268,8 @@ async fn curation_proposals(client: &GatewayClient, arguments: Value) -> Result<
     redact_raw_samples(&mut response);
     Ok(envelope(
         "sinex.curation_proposals",
-        json!(args),
-        json!({ "result": response }),
+        &json!(args),
+        &json!({ "result": response }),
     ))
 }
 
@@ -2278,8 +2278,8 @@ async fn dlq_stats(client: &GatewayClient, arguments: Value) -> Result<Value> {
     let response = client.dlq_list().await?;
     Ok(envelope(
         "sinex.dlq_stats",
-        json!({}),
-        json!({ "result": response }),
+        &json!({}),
+        &json!({ "result": response }),
     ))
 }
 
@@ -2288,8 +2288,8 @@ async fn dlq_peek(client: &GatewayClient, arguments: Value) -> Result<Value> {
     let response = client.dlq_peek(Some(args.limit)).await?;
     Ok(envelope(
         "sinex.dlq_peek",
-        json!(args),
-        json!({ "result": response }),
+        &json!(args),
+        &json!({ "result": response }),
     ))
 }
 
@@ -2303,8 +2303,8 @@ async fn source_materials(client: &GatewayClient, arguments: Value) -> Result<Va
         .await?;
     Ok(envelope(
         "sinex.source_materials",
-        json!(args),
-        json!({ "result": response }),
+        &json!(args),
+        &json!({ "result": response }),
     ))
 }
 
@@ -2320,8 +2320,8 @@ async fn source_material(client: &GatewayClient, arguments: Value) -> Result<Val
     redact_raw_samples(&mut response);
     Ok(envelope(
         "sinex.source_material",
-        json!(args),
-        json!({ "result": response }),
+        &json!(args),
+        &json!({ "result": response }),
     ))
 }
 
@@ -2330,8 +2330,8 @@ async fn source_coverage(client: &GatewayClient, arguments: Value) -> Result<Val
     let response = client.sources_coverage(SourcesCoverageRequest {}).await?;
     Ok(envelope(
         "sinex.source_coverage",
-        json!({}),
-        json!({ "result": response }),
+        &json!({}),
+        &json!({ "result": response }),
     ))
 }
 
@@ -2340,8 +2340,8 @@ async fn source_presets(client: &GatewayClient, arguments: Value) -> Result<Valu
     let response = client.sources_presets_list().await?;
     Ok(envelope(
         "sinex.source_presets",
-        json!({}),
-        json!({ "result": response }),
+        &json!({}),
+        &json!({ "result": response }),
     ))
 }
 
@@ -2352,8 +2352,8 @@ async fn source_bindings(client: &GatewayClient, arguments: Value) -> Result<Val
         .await?;
     Ok(envelope(
         "sinex.source_bindings",
-        json!(args),
-        json!({ "result": response }),
+        &json!(args),
+        &json!({ "result": response }),
     ))
 }
 
@@ -2364,8 +2364,8 @@ async fn ops_list(client: &GatewayClient, arguments: Value) -> Result<Value> {
         .await?;
     Ok(envelope(
         "sinex.ops_list",
-        json!(args),
-        json!({ "result": { "operations": response } }),
+        &json!(args),
+        &json!({ "result": { "operations": response } }),
     ))
 }
 
@@ -2374,8 +2374,8 @@ async fn ops_get(client: &GatewayClient, arguments: Value) -> Result<Value> {
     let response = client.ops_get(&args.operation_id).await?;
     Ok(envelope(
         "sinex.ops_get",
-        json!(args),
-        json!({ "result": { "operation": response } }),
+        &json!(args),
+        &json!({ "result": { "operation": response } }),
     ))
 }
 
@@ -2384,8 +2384,8 @@ async fn lifecycle_status(client: &GatewayClient, arguments: Value) -> Result<Va
     let response = client.lifecycle_status().await?;
     Ok(envelope(
         "sinex.lifecycle_status",
-        json!({}),
-        json!({ "result": response }),
+        &json!({}),
+        &json!({ "result": response }),
     ))
 }
 
@@ -2394,8 +2394,8 @@ async fn gitops_sources(client: &GatewayClient, arguments: Value) -> Result<Valu
     let response = client.gitops_list(args.include_disabled).await?;
     Ok(envelope(
         "sinex.gitops_sources",
-        json!(args),
-        json!({ "result": { "sources": response } }),
+        &json!(args),
+        &json!({ "result": { "sources": response } }),
     ))
 }
 
@@ -2404,8 +2404,8 @@ async fn audit_trail(client: &GatewayClient, arguments: Value) -> Result<Value> 
     let response = client.audit_get(&args.operation_id).await?;
     Ok(envelope(
         "sinex.audit_trail",
-        json!(args),
-        json!({ "result": response }),
+        &json!(args),
+        &json!({ "result": response }),
     ))
 }
 
@@ -2416,8 +2416,8 @@ async fn coordination_instances(client: &GatewayClient, arguments: Value) -> Res
         .await?;
     Ok(envelope(
         "sinex.coordination_instances",
-        json!(args),
-        json!({ "result": response }),
+        &json!(args),
+        &json!({ "result": response }),
     ))
 }
 
@@ -2428,8 +2428,8 @@ async fn coordination_leader(client: &GatewayClient, arguments: Value) -> Result
         .await?;
     Ok(envelope(
         "sinex.coordination_leader",
-        json!(args),
-        json!({ "result": response }),
+        &json!(args),
+        &json!({ "result": response }),
     ))
 }
 
@@ -2440,8 +2440,8 @@ async fn coordination_instance_health(client: &GatewayClient, arguments: Value) 
         .await?;
     Ok(envelope(
         "sinex.coordination_instance_health",
-        json!(args),
-        json!({ "result": response }),
+        &json!(args),
+        &json!({ "result": response }),
     ))
 }
 
@@ -2450,8 +2450,8 @@ async fn shadow_consumers(client: &GatewayClient, arguments: Value) -> Result<Va
     let response = client.shadow_list(args.prefix.clone()).await?;
     Ok(envelope(
         "sinex.shadow_consumers",
-        json!(args),
-        json!({ "result": response }),
+        &json!(args),
+        &json!({ "result": response }),
     ))
 }
 
@@ -2460,8 +2460,8 @@ async fn system_ping(client: &GatewayClient, arguments: Value) -> Result<Value> 
     let response = client.system_ping().await?;
     Ok(envelope(
         "sinex.system_ping",
-        json!({}),
-        json!({ "result": response }),
+        &json!({}),
+        &json!({ "result": response }),
     ))
 }
 
@@ -2470,8 +2470,8 @@ async fn system_version(client: &GatewayClient, arguments: Value) -> Result<Valu
     let response = client.system_version().await?;
     Ok(envelope(
         "sinex.system_version",
-        json!({}),
-        json!({ "result": response }),
+        &json!({}),
+        &json!({ "result": response }),
     ))
 }
 
@@ -2620,18 +2620,18 @@ fn document_side_data_redaction() -> Value {
     })
 }
 
-fn envelope(tool: &str, query: Value, result: Value) -> Value {
+fn envelope(tool: &str, query: &Value, result: &Value) -> Value {
     json!({
         "tool": tool,
         "generated_at": Timestamp::now(),
-        "query": &query,
+        "query": query,
         "provenance_refs": [],
         "caveats": ["mcp.raw_samples_redacted"],
         "redaction": {
             "mode": "gateway_default",
             "raw_samples": false
         },
-        "items": &result
+        "items": result
     })
 }
 
@@ -2707,7 +2707,7 @@ async fn context_pack(client: &GatewayClient, arguments: Value) -> Result<Value>
 
     Ok(envelope(
         "sinex.context_pack",
-        json!(args),
-        json!({ "pack": pack }),
+        &json!(args),
+        &json!({ "pack": pack }),
     ))
 }

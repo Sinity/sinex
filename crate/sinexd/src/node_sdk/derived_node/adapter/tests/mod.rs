@@ -596,8 +596,8 @@ async fn request_runtime_drain_delivers_to_receiver() -> TestResult<()> {
 async fn request_runtime_drain_is_idempotent() -> TestResult<()> {
     crate::node_sdk::runtime::stream::test_support::assert_request_drain_is_idempotent(
         "test-derived",
-    )
-    .await
+    );
+    Ok(())
 }
 
 #[sinex_test]
