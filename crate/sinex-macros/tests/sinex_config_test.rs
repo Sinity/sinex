@@ -3,7 +3,7 @@
 //! See `thoughtspace/crystal/decisions/sinex-config-derive.md` for the design
 //! these tests exercise.
 
-use std::{ffi::OsString, path::PathBuf};
+use std::{ffi::OsString, path::PathBuf, time::Duration};
 
 use camino::Utf8PathBuf;
 use sinex_macros::SinexConfig;
@@ -74,6 +74,13 @@ pub struct DefaultExprConfig {
     pub computed_default: u64,
 }
 
+#[derive(Debug, Clone, SinexConfig)]
+#[sinex_config(prefix = "SINEX_TEST_DURATION", context = "duration test")]
+pub struct DurationConfig {
+    #[sinex_config(duration_secs, default_expr = "Duration::from_secs(30)")]
+    pub timeout: Duration,
+}
+
 const ENV_KEYS: &[&str] = &[
     "SINEX_TEST_DEFAULTS_BATCH_SIZE",
     "SINEX_TEST_DEFAULTS_INTERVAL_SECS",
@@ -82,6 +89,7 @@ const ENV_KEYS: &[&str] = &[
     "SINEX_TEST_OPTIONS_MAYBE_COUNT",
     "SINEX_TEST_OPTIONS_MAYBE_PATH",
     "SINEX_TEST_RENAME_EXPLICIT_KEY",
+    "SINEX_TEST_DURATION_TIMEOUT",
 ];
 
 struct EnvSnapshot {
@@ -175,6 +183,30 @@ async fn sinex_config_derive_loads_env_contracts() -> TestResult<()> {
     let cfg = DefaultExprConfig::from_env();
     assert_eq!(cfg.computed_default, 1024);
 
+    unsafe {
+        std::env::set_var("SINEX_TEST_DURATION_TIMEOUT", "45");
+    }
+    let cfg = DurationConfig::from_env();
+    assert_eq!(cfg.timeout, Duration::from_secs(45));
+
+    Ok(())
+}
+
+#[sinex_test]
+async fn sinex_config_duration_secs_defaults_invalid_or_zero() -> TestResult<()> {
+    let _env_snapshot = EnvSnapshot::capture(ENV_KEYS);
+    clear_env(ENV_KEYS);
+
+    let cfg = DurationConfig::from_env();
+    assert_eq!(cfg.timeout, Duration::from_secs(30));
+
+    unsafe { std::env::set_var("SINEX_TEST_DURATION_TIMEOUT", "0") };
+    let cfg = DurationConfig::from_env();
+    assert_eq!(cfg.timeout, Duration::from_secs(30));
+
+    unsafe { std::env::set_var("SINEX_TEST_DURATION_TIMEOUT", "bogus") };
+    let cfg = DurationConfig::from_env();
+    assert_eq!(cfg.timeout, Duration::from_secs(30));
     Ok(())
 }
 

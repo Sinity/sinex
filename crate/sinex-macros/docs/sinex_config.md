@@ -27,6 +27,7 @@ pub struct PoolConfig { /* ... */ }
 | `#[sinex_config(default = LITERAL)]` | Literal default for fields whose type doesn't otherwise have one |
 | `#[sinex_config(default_expr = "EXPR")]` | Non-literal default (e.g. `"Seconds::from_secs(30)"`) |
 | `#[sinex_config(parser = path::to::fn)]` | Custom parser `fn(&str) -> Result<T, _>`; requires a default |
+| `#[sinex_config(duration_secs)]` | Parse a positive integer env value into `std::time::Duration::from_secs`; requires a default |
 | `#[sinex_config(skip)]` | Leave at `Default::default()`; no env read |
 
 ## Type-driven helper inference
@@ -39,6 +40,7 @@ pub struct PoolConfig { /* ... */ }
 | `Option<PathBuf>` | `env::path_optional(key, context)` |
 | `Option<T>` (other) | `env::parse_optional(key, context)` |
 | `PathBuf` | `env::path_optional(...).unwrap_or_else(|| default)` — requires default |
+| `std::time::Duration` + `duration_secs` | `env::parse_optional::<u64>(...).map(Duration::from_secs).unwrap_or(default)`; zero/invalid values use default |
 | Other `T: FromStr` | `env::parse_or(key, default, context)` — requires default |
 
 ## Examples
@@ -92,15 +94,26 @@ impl PoolConfig {
 - Does not replace CLI parsing (`clap`).
 - Does not handle conditional fields ("if `MODE=advanced` read additional
   vars"). Those structs stay hand-rolled.
+- Does not handle runtime-argument constructors (`from_env(component: &str)`),
+  private-field factories, `Arc` construction, or nested map parsing with
+  bespoke validation. Those configs stay hand-rolled and should document why.
 - Does not log resolved values — env helpers already trace/warn as needed.
 - Does not redact sensitive fields. Prefer `Option<String>` and avoid
   trace-logging the result.
 
 ## Migration
 
-20+ structs in the workspace hand-roll `from_env()`. Conversion sweeps
-are tracked on umbrella issue #1239. Each converted struct deletes ~5-15
-LoC and gains a consistent env-key naming convention.
+Conversion sweeps are tracked on umbrella issue #1589. Each converted
+struct deletes bespoke env parsing and gains a consistent env-key naming
+convention.
+
+Permanent hand-rolled exceptions in `sinexd`:
+
+| Config | Why it is not derived |
+|---|---|
+| `NativeMessagingConfig` | Loads raw strings, then dispatches through `from_raw()` to populate private parsed fields, role maps, trusted-extension maps, and rate-limiter state. |
+| `SelfObserverConfig` | `from_env(component: &str)` takes a runtime component name; the derive intentionally generates only zero-argument `from_env()`. |
+| `HealthAggregatorConfig` | Parses `SINEX_HEALTH_AGGREGATOR_COMPONENT_CHECK_INTERVALS` as a JSON map and validates component interval values as a unit. |
 
 ## Design
 

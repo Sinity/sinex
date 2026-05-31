@@ -154,6 +154,8 @@ pub fn derive_source_record(input: TokenStream) -> TokenStream {
 ///   (e.g. `"Seconds::from_secs(30)"`)
 /// - `#[sinex_config(parser = path::to::fn)]` — custom parser
 ///   `fn(&str) -> Result<T, _>`; requires a default fallback
+/// - `#[sinex_config(duration_secs)]` — parse positive seconds into
+///   `std::time::Duration`; requires a default fallback
 /// - `#[sinex_config(skip)]` — leave the field at `Default::default()`
 ///
 /// See `thoughtspace/crystal/decisions/sinex-config-derive.md` for design.

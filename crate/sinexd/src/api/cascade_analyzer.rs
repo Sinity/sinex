@@ -4,8 +4,8 @@ use petgraph::graphmap::DiGraphMap;
 use serde::{Deserialize, Serialize};
 use sinex_db::query_helpers::db_error;
 use sinex_db::repositories::{DbPoolExt, EventRepositoryTx};
+use sinex_macros::SinexConfig;
 use sinex_primitives::constants::replay::DEFAULT_CASCADE_MAX_DEPTH;
-use sinex_primitives::env as shared_env;
 use sinex_primitives::{Result, SinexError};
 use sqlx::PgPool;
 use std::collections::{HashMap, VecDeque};
@@ -77,17 +77,39 @@ pub struct CircularDependency {
 }
 
 /// Configuration for cascade analysis
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, SinexConfig)]
+#[sinex_config(prefix = "SINEX_CASCADE", context = "cascade analyzer")]
 pub struct CascadeAnalyzerConfig {
     /// Maximum batch size for processing events at each depth
+    #[sinex_config(
+        env = "SINEX_CASCADE_BATCH_SIZE",
+        default = DEFAULT_CASCADE_BATCH_SIZE,
+        parser = parse_positive_usize
+    )]
     pub batch_size: usize,
     /// Maximum cascade depth to analyze
+    #[sinex_config(
+        env = "SINEX_CASCADE_MAX_DEPTH",
+        default = DEFAULT_CASCADE_MAX_DEPTH,
+        parser = parse_positive_usize
+    )]
     pub max_depth: usize,
     /// Whether to include weak dependencies
+    #[sinex_config(env = "SINEX_CASCADE_INCLUDE_WEAK", default = false)]
     pub include_weak_dependencies: bool,
     /// Memory limit for analysis (bytes). Enforced during analysis — returns error if exceeded.
+    #[sinex_config(
+        env = "SINEX_CASCADE_MEMORY_LIMIT_BYTES",
+        default_expr = "Some(DEFAULT_CASCADE_MEMORY_LIMIT)",
+        parser = parse_positive_usize_option
+    )]
     pub memory_limit_bytes: Option<usize>,
     /// Timeout for analysis operations (prevents indefinite transaction hold)
+    #[sinex_config(
+        env = "SINEX_CASCADE_TIMEOUT_SECS",
+        duration_secs,
+        default_expr = "Duration::from_secs(DEFAULT_CASCADE_TIMEOUT_SECS)"
+    )]
     pub timeout: Duration,
 }
 
@@ -103,98 +125,16 @@ impl Default for CascadeAnalyzerConfig {
     }
 }
 
-impl CascadeAnalyzerConfig {
-    /// Create config from environment variables
-    #[must_use]
-    pub fn from_env() -> Self {
-        Self {
-            batch_size: env_var_usize("SINEX_CASCADE_BATCH_SIZE", DEFAULT_CASCADE_BATCH_SIZE),
-            max_depth: env_var_usize("SINEX_CASCADE_MAX_DEPTH", DEFAULT_CASCADE_MAX_DEPTH),
-            include_weak_dependencies: shared_env::bool_or(
-                "SINEX_CASCADE_INCLUDE_WEAK",
-                false,
-                "cascade analyzer",
-            ),
-            memory_limit_bytes: Some(env_var_usize(
-                "SINEX_CASCADE_MEMORY_LIMIT_BYTES",
-                DEFAULT_CASCADE_MEMORY_LIMIT,
-            )),
-            timeout: Duration::from_secs(env_var_u64(
-                "SINEX_CASCADE_TIMEOUT_SECS",
-                DEFAULT_CASCADE_TIMEOUT_SECS,
-            )),
-        }
+fn parse_positive_usize(raw: &str) -> std::result::Result<usize, &'static str> {
+    match raw.parse::<usize>() {
+        Ok(value) if value > 0 => Ok(value),
+        Ok(_) => Err("expected a positive integer"),
+        Err(_) => Err("expected an unsigned integer"),
     }
 }
 
-fn env_var_usize(var: &str, default: usize) -> usize {
-    match std::env::var(var) {
-        Ok(raw) => match raw.parse::<usize>() {
-            Ok(value) if value > 0 => value,
-            Ok(_) => {
-                warn!(
-                    variable = var,
-                    value = %raw,
-                    default,
-                    "Invalid cascade analyzer override; expected a positive integer, using default"
-                );
-                default
-            }
-            Err(error) => {
-                warn!(
-                    variable = var,
-                    value = %raw,
-                    %error,
-                    default,
-                    "Invalid cascade analyzer override; using default"
-                );
-                default
-            }
-        },
-        Err(std::env::VarError::NotPresent) => default,
-        Err(std::env::VarError::NotUnicode(_)) => {
-            warn!(
-                variable = var,
-                default, "Cascade analyzer override is not valid UTF-8; using default"
-            );
-            default
-        }
-    }
-}
-
-fn env_var_u64(var: &str, default: u64) -> u64 {
-    match std::env::var(var) {
-        Ok(raw) => match raw.parse::<u64>() {
-            Ok(value) if value > 0 => value,
-            Ok(_) => {
-                warn!(
-                    variable = var,
-                    value = %raw,
-                    default,
-                    "Invalid cascade analyzer override; expected a positive integer, using default"
-                );
-                default
-            }
-            Err(error) => {
-                warn!(
-                    variable = var,
-                    value = %raw,
-                    %error,
-                    default,
-                    "Invalid cascade analyzer override; using default"
-                );
-                default
-            }
-        },
-        Err(std::env::VarError::NotPresent) => default,
-        Err(std::env::VarError::NotUnicode(_)) => {
-            warn!(
-                variable = var,
-                default, "Cascade analyzer override is not valid UTF-8; using default"
-            );
-            default
-        }
-    }
+fn parse_positive_usize_option(raw: &str) -> std::result::Result<Option<usize>, &'static str> {
+    parse_positive_usize(raw).map(Some)
 }
 
 /// Memory-efficient cascade analyzer using streaming algorithms

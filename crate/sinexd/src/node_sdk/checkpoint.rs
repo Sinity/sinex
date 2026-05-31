@@ -40,6 +40,7 @@
 use crate::node_sdk::{NodeResult, SinexError, runtime::stream::Checkpoint};
 use futures::TryStreamExt;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
+use sinex_macros::SinexConfig;
 use sinex_primitives::env as shared_env;
 use sinex_primitives::temporal::Timestamp;
 use std::convert::TryInto;
@@ -718,13 +719,25 @@ pub struct CheckpointStats {
 }
 
 /// Configuration for checkpoint cleanup.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, SinexConfig)]
+#[sinex_config(prefix = "SINEX_CHECKPOINT_CLEANUP", context = "checkpoint cleanup")]
 pub struct CheckpointCleanupConfig {
     /// Maximum age for checkpoints before cleanup (default: 30 days)
+    #[sinex_config(
+        env = "SINEX_CHECKPOINT_CLEANUP_MAX_AGE_DAYS",
+        default_expr = "std::time::Duration::from_hours(720)",
+        parser = parse_duration_days
+    )]
     pub max_age: std::time::Duration,
     /// How often to run cleanup (default: 24 hours)
+    #[sinex_config(
+        env = "SINEX_CHECKPOINT_CLEANUP_INTERVAL_HOURS",
+        default_expr = "std::time::Duration::from_hours(24)",
+        parser = parse_duration_hours
+    )]
     pub interval: std::time::Duration,
     /// Whether cleanup is enabled (default: true)
+    #[sinex_config(env = "SINEX_CHECKPOINT_CLEANUP_ENABLED", default = false)]
     pub enabled: bool,
 }
 
@@ -738,36 +751,24 @@ impl Default for CheckpointCleanupConfig {
     }
 }
 
-impl CheckpointCleanupConfig {
-    /// Load cleanup configuration from environment variables.
-    ///
-    /// - `SINEX_CHECKPOINT_CLEANUP_ENABLED`: Enable cleanup (default: false)
-    /// - `SINEX_CHECKPOINT_CLEANUP_MAX_AGE_DAYS`: Max age in days (default: 30)
-    /// - `SINEX_CHECKPOINT_CLEANUP_INTERVAL_HOURS`: Run interval in hours (default: 24)
-    #[must_use]
-    pub fn from_env() -> Self {
-        let enabled = shared_env::bool_or(
-            "SINEX_CHECKPOINT_CLEANUP_ENABLED",
-            false,
-            "checkpoint cleanup",
-        );
-        let max_age_days: u64 = shared_env::parse_or(
-            "SINEX_CHECKPOINT_CLEANUP_MAX_AGE_DAYS",
-            30_u64,
-            "checkpoint cleanup",
-        );
-        let interval_hours: u64 = shared_env::parse_or(
-            "SINEX_CHECKPOINT_CLEANUP_INTERVAL_HOURS",
-            24_u64,
-            "checkpoint cleanup",
-        );
+fn parse_duration_days(raw: &str) -> std::result::Result<std::time::Duration, &'static str> {
+    let days = raw
+        .parse::<u64>()
+        .map_err(|_| "expected an unsigned integer day count")?;
+    let secs = days
+        .checked_mul(24 * 60 * 60)
+        .ok_or("day count is too large")?;
+    Ok(std::time::Duration::from_secs(secs))
+}
 
-        Self {
-            max_age: std::time::Duration::from_secs(max_age_days * 24 * 60 * 60),
-            interval: std::time::Duration::from_secs(interval_hours * 60 * 60),
-            enabled,
-        }
-    }
+fn parse_duration_hours(raw: &str) -> std::result::Result<std::time::Duration, &'static str> {
+    let hours = raw
+        .parse::<u64>()
+        .map_err(|_| "expected an unsigned integer hour count")?;
+    let secs = hours
+        .checked_mul(60 * 60)
+        .ok_or("hour count is too large")?;
+    Ok(std::time::Duration::from_secs(secs))
 }
 
 /// Result of a checkpoint cleanup run

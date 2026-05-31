@@ -220,6 +220,7 @@ struct FieldAttrs {
     env: Option<String>,
     default: Option<Expr>,
     parser: Option<syn::Path>,
+    duration_secs: bool,
     skip: bool,
     /// Delegate to the field type's infallible `from_env()`.
     nested: bool,
@@ -270,9 +271,11 @@ fn parse_field_attrs(field: &syn::Field) -> syn::Result<FieldAttrs> {
                 })?);
             } else if meta.path.is_ident("parser") {
                 attrs.parser = Some(meta.value()?.parse::<syn::Path>()?);
+            } else if meta.path.is_ident("duration_secs") {
+                attrs.duration_secs = true;
             } else {
                 return Err(meta.error(
-                    "unknown sinex_config field attribute (expected `env`, `default`, `default_expr`, `default_fn`, `parser`, `skip`, `nested`, `nested_fallible`)",
+                    "unknown sinex_config field attribute (expected `env`, `default`, `default_expr`, `default_fn`, `parser`, `duration_secs`, `skip`, `nested`, `nested_fallible`)",
                 ));
             }
             Ok(())
@@ -301,6 +304,10 @@ fn infer_helper_infallible(
     context: &str,
     attrs: &FieldAttrs,
 ) -> syn::Result<TokenStream2> {
+    if attrs.duration_secs {
+        return infer_duration_secs_infallible(ty, env_key, context, attrs);
+    }
+
     // Custom parser short-circuits inference.
     if let Some(parser) = &attrs.parser {
         let default = attrs.default.as_ref().ok_or_else(|| {
@@ -377,6 +384,10 @@ fn infer_helper_infallible(
                 ::sinex_primitives::env::parse_optional(#env_key, #context).unwrap_or_else(|| #default)
             })
         }
+        TypeKind::Duration => Err(syn::Error::new_spanned(
+            ty,
+            "Duration field requires `duration_secs` plus `default` or `default_expr`",
+        )),
         TypeKind::Other => {
             let default = attrs.default.as_ref().ok_or_else(|| {
                 syn::Error::new_spanned(
@@ -391,6 +402,34 @@ fn infer_helper_infallible(
     }
 }
 
+fn infer_duration_secs_infallible(
+    ty: &Type,
+    env_key: &str,
+    context: &str,
+    attrs: &FieldAttrs,
+) -> syn::Result<TokenStream2> {
+    if !matches!(classify(ty), TypeKind::Duration) {
+        return Err(syn::Error::new_spanned(
+            ty,
+            "`duration_secs` is only valid on std::time::Duration fields",
+        ));
+    }
+    let default = attrs.default.as_ref().ok_or_else(|| {
+        syn::Error::new_spanned(
+            ty,
+            "Duration field with `duration_secs` requires `default` or `default_expr`",
+        )
+    })?;
+    Ok(quote! {
+        match ::sinex_primitives::env::parse_optional::<u64>(#env_key, #context) {
+            Some(__sinex_duration_secs) if __sinex_duration_secs > 0 => {
+                ::std::time::Duration::from_secs(__sinex_duration_secs)
+            }
+            _ => #default,
+        }
+    })
+}
+
 /// Generate strict/fallible helper calls (for `fallible` structs).
 fn infer_helper_fallible(
     ty: &Type,
@@ -398,6 +437,10 @@ fn infer_helper_fallible(
     _context: &str,
     attrs: &FieldAttrs,
 ) -> syn::Result<TokenStream2> {
+    if attrs.duration_secs {
+        return infer_duration_secs_fallible(ty, env_key, attrs);
+    }
+
     // Custom parser short-circuits inference.
     if let Some(parser) = &attrs.parser {
         let default = attrs.default.as_ref().ok_or_else(|| {
@@ -476,6 +519,10 @@ fn infer_helper_fallible(
                 ::sinex_primitives::env::strict_validated_path(#env_key)?.unwrap_or_else(|| #default)
             })
         }
+        TypeKind::Duration => Err(syn::Error::new_spanned(
+            ty,
+            "Duration field requires `duration_secs` plus `default` or `default_expr`",
+        )),
         TypeKind::Other => {
             let default = attrs.default.as_ref().ok_or_else(|| {
                 syn::Error::new_spanned(
@@ -490,6 +537,36 @@ fn infer_helper_fallible(
     }
 }
 
+fn infer_duration_secs_fallible(
+    ty: &Type,
+    env_key: &str,
+    attrs: &FieldAttrs,
+) -> syn::Result<TokenStream2> {
+    if !matches!(classify(ty), TypeKind::Duration) {
+        return Err(syn::Error::new_spanned(
+            ty,
+            "`duration_secs` is only valid on std::time::Duration fields",
+        ));
+    }
+    let default = attrs.default.as_ref().ok_or_else(|| {
+        syn::Error::new_spanned(
+            ty,
+            "Duration field with `duration_secs` requires `default` or `default_expr`",
+        )
+    })?;
+    Ok(quote! {
+        match ::sinex_primitives::env::strict_parsed::<u64>(#env_key)? {
+            Some(0) => {
+                return Err(::sinex_primitives::error::SinexError::configuration(
+                    format!("Environment variable {} must be a positive duration in seconds", #env_key),
+                ));
+            }
+            Some(__sinex_duration_secs) => ::std::time::Duration::from_secs(__sinex_duration_secs),
+            None => #default,
+        }
+    })
+}
+
 enum TypeKind {
     Bool,
     String,
@@ -499,6 +576,7 @@ enum TypeKind {
     OptionOther,
     PathBuf,
     Utf8PathBuf,
+    Duration,
     Other,
 }
 
@@ -515,6 +593,7 @@ fn classify(ty: &Type) -> TypeKind {
         "String" => TypeKind::String,
         "PathBuf" => TypeKind::PathBuf,
         "Utf8PathBuf" => TypeKind::Utf8PathBuf,
+        "Duration" => TypeKind::Duration,
         "Option" => {
             // Drill into the Option<T>'s inner type.
             let syn::PathArguments::AngleBracketed(args) = &last.arguments else {

@@ -190,6 +190,10 @@ fn secrets_match(expected: &str, provided: &str) -> bool {
 
 impl NativeMessagingConfig {
     /// Load configuration from environment variables.
+    ///
+    /// This remains hand-rolled instead of `#[derive(SinexConfig)]` because
+    /// the raw env values feed `from_raw()`, which builds private parsed maps
+    /// and rate-limiter state rather than assigning env fields directly.
     pub fn from_env() -> Result<Self> {
         Ok(Self::from_raw(
             shared_env::strict_var(TRUSTED_EXTENSION_ENV)?.as_ref(),

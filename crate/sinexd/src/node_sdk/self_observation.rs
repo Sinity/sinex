@@ -111,6 +111,10 @@ impl Default for SelfObserverConfig {
 
 impl SelfObserverConfig {
     /// Create configuration from environment variables
+    ///
+    /// This remains hand-rolled instead of `#[derive(SinexConfig)]` because
+    /// the component name is a runtime argument, and the derive intentionally
+    /// generates only zero-argument `from_env()`.
     #[must_use]
     pub fn from_env(component: &str) -> Self {
         let enabled =

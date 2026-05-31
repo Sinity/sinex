@@ -81,6 +81,9 @@ impl Default for HealthAggregatorConfig {
 
 impl HealthAggregatorConfig {
     /// Load configuration from environment variables.
+    ///
+    /// This remains hand-rolled instead of `#[derive(SinexConfig)]` because
+    /// component intervals are parsed from a JSON map and validated as a unit.
     #[must_use]
     pub fn from_env() -> Self {
         let mut config = Self::default();
