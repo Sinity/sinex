@@ -108,7 +108,8 @@ pub async fn handle_sources_stage(
     // Default to allowed_plaintext for now; binding-based policy is a follow-up.
     let capture_class = "allowed_plaintext".to_string();
 
-    let material_class = sinex_primitives::privacy::MaterialCaptureClass::from_str(&capture_class)
+    let material_class =
+        sinex_primitives::privacy::MaterialCaptureClass::from_canonical_str(&capture_class)
         .unwrap_or(sinex_primitives::privacy::MaterialCaptureClass::AllowedPlaintext);
 
     if material_class.is_rejected() {
