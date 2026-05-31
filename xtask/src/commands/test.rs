@@ -1277,6 +1277,37 @@ impl TestCommand {
     }
 }
 
+/// Run `cargo nextest list` with the resolved execution plan scope.
+fn execute_nextest_list(
+    execution_plan: &plan::NextestExecutionPlan,
+    effective_test_binaries: &[String],
+    effective_lib_target: bool,
+    effective_filter: Option<&str>,
+) -> Result<CommandResult> {
+    let mut cmd = crate::process::ProcessBuilder::cargo().args(["nextest", "list"]);
+    if execution_plan.runner_packages.is_empty() {
+        cmd = cmd.arg("--workspace");
+        for package in &execution_plan.excluded_packages {
+            cmd = cmd.args(["--exclude", package]);
+        }
+    } else {
+        for package in &execution_plan.runner_packages {
+            cmd = cmd.args(["-p", package]);
+        }
+    }
+    for test_binary in effective_test_binaries {
+        cmd = cmd.args(["--test", test_binary]);
+    }
+    if effective_lib_target {
+        cmd = cmd.arg("--lib");
+    }
+    if let Some(filter) = effective_filter {
+        cmd = cmd.args(["-E", filter]);
+    }
+    cmd.run_ok()?;
+    Ok(CommandResult::success().with_detail("tests listed"))
+}
+
 /// Print the human-readable dry-run plan summary to stdout.
 #[allow(clippy::too_many_arguments)]
 fn print_dry_run_plan(
@@ -1803,28 +1834,12 @@ impl XtaskCommand for TestCommand {
         // List is an introspection command, not a proof-producing or proof-consuming
         // test run. Keep it before proof fingerprints and reuse gates.
         if self.list {
-            let mut cmd = ProcessBuilder::cargo().args(["nextest", "list"]);
-            if execution_plan.runner_packages.is_empty() {
-                cmd = cmd.arg("--workspace");
-                for package in &execution_plan.excluded_packages {
-                    cmd = cmd.args(["--exclude", package]);
-                }
-            } else {
-                for package in &execution_plan.runner_packages {
-                    cmd = cmd.args(["-p", package]);
-                }
-            }
-            for test_binary in &effective_test_binaries {
-                cmd = cmd.args(["--test", test_binary]);
-            }
-            if effective_lib_target {
-                cmd = cmd.arg("--lib");
-            }
-            if let Some(filter) = &effective_filter {
-                cmd = cmd.args(["-E", filter]);
-            }
-            cmd.run_ok()?;
-            return Ok(CommandResult::success().with_detail("tests listed"));
+            return execute_nextest_list(
+                &execution_plan,
+                &effective_test_binaries,
+                effective_lib_target,
+                effective_filter.as_deref(),
+            );
         }
 
         ctx.record_coordination_fingerprint("test", &coordination_args);

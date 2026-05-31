@@ -337,30 +337,14 @@ enum Commands {
     RecordDriftBypass(RecordDriftBypassCommand),
 }
 
-pub async fn run_cli() -> Result<()> {
-    fn test_subcommand_name(cmd: &commands::TestCommand) -> Option<&'static str> {
-        use commands::test::TestSubcommand;
-
-        match cmd.subcommand.as_ref()? {
-            TestSubcommand::Bench(_) => Some("bench"),
-            TestSubcommand::Fuzz(_) => Some("fuzz"),
-            TestSubcommand::Coverage(_) => Some("coverage"),
-            TestSubcommand::Mutants(_) => Some("mutants"),
-            TestSubcommand::Vm(_) => Some("vm"),
-        }
-    }
-
-    // Use try_get_matches so we can intercept parse errors and route them
-    // through the JSON formatter when --json is present, instead of letting
-    // clap print human text to stderr and exit. This prevents JSON consumers
-    // from receiving clap's error prose on invalid args.
+/// Parse CLI matches, emitting a JSON error if `--json` is present and clap fails.
+fn try_get_matches_or_exit() -> Result<clap::ArgMatches> {
     let clap_cmd = Cli::command_with_help();
-    let matches = match clap_cmd.try_get_matches() {
-        Ok(m) => m,
+    match clap_cmd.try_get_matches() {
+        Ok(m) => Ok(m),
         Err(e) => {
-            // If --json appears anywhere in raw args, emit a structured error.
-            let want_json =
-                std::env::args().any(|a| a == "--json" || a == "--format=json" || a == "-f=json");
+            let want_json = std::env::args()
+                .any(|a| a == "--json" || a == "--format=json" || a == "-f=json");
             if want_json {
                 let json = serde_json::json!({
                     "command": "xtask",
@@ -370,10 +354,28 @@ pub async fn run_cli() -> Result<()> {
                 println!("{}", serde_json::to_string_pretty(&json)?);
                 std::process::exit(2);
             }
-            // Otherwise let clap print its formatted error and exit normally.
             e.exit();
         }
-    };
+    }
+}
+
+fn test_subcommand_name(cmd: &commands::TestCommand) -> Option<&'static str> {
+    use commands::test::TestSubcommand;
+    match cmd.subcommand.as_ref()? {
+        TestSubcommand::Bench(_) => Some("bench"),
+        TestSubcommand::Fuzz(_) => Some("fuzz"),
+        TestSubcommand::Coverage(_) => Some("coverage"),
+        TestSubcommand::Mutants(_) => Some("mutants"),
+        TestSubcommand::Vm(_) => Some("vm"),
+    }
+}
+
+pub async fn run_cli() -> Result<()> {
+    // Use try_get_matches so we can intercept parse errors and route them
+    // through the JSON formatter when --json is present, instead of letting
+    // clap print human text to stderr and exit. This prevents JSON consumers
+    // from receiving clap's error prose on invalid args.
+    let matches = try_get_matches_or_exit()?;
     let cli = Cli::from_arg_matches(&matches).map_err(|e| eyre!(e.to_string()))?;
     let output_format = cli.global.output_format();
 
@@ -475,41 +477,15 @@ pub async fn run_cli() -> Result<()> {
         cli.global.is_background() && claimed_bg_invocation.is_none() && claimed_bg_job.is_none();
     let tracks_invocation = tracks_invocation && !launcher_only_background_request;
 
-    let invocation_id = if tracks_invocation {
-        if let Some(bg_id) = claimed_bg_invocation {
-            if let Some(db) = history_db_write.as_ref() {
-                if let Err(error) =
-                    db.claim_background_invocation(bg_id, command_name, subcommand, profile, None)
-                {
-                    eprintln!("⚠️  Failed to claim background invocation {bg_id}: {error}");
-                }
-            } else {
-                let error = history_db_open_error
-                    .as_deref()
-                    .unwrap_or("unknown history DB open failure");
-                eprintln!(
-                    "⚠️  Failed to open history DB for background invocation {bg_id}: {error}"
-                );
-            }
-            Some(bg_id)
-        } else if let Some(db) = history_db_write.as_ref() {
-            match db.start_invocation(command_name, subcommand, profile, None) {
-                Ok(id) => Some(id),
-                Err(error) => {
-                    eprintln!("⚠️  Failed to start invocation history row: {error}");
-                    None
-                }
-            }
-        } else {
-            let error = history_db_open_error
-                .as_deref()
-                .unwrap_or("unknown history DB open failure");
-            eprintln!("⚠️  Failed to open history DB to start invocation: {error}");
-            None
-        }
-    } else {
-        None
-    };
+    let invocation_id = start_or_claim_invocation(
+        tracks_invocation,
+        claimed_bg_invocation,
+        history_db_write.as_ref(),
+        history_db_open_error.as_deref(),
+        command_name,
+        subcommand,
+        profile,
+    );
 
     // Update the tracing layer's invocation ID so all subsequent events are tagged.
     if let Some(id) = invocation_id {
@@ -679,6 +655,44 @@ pub async fn run_cli() -> Result<()> {
         }
         Err(err) => Err(err),
     }
+}
+
+/// Start a new invocation row or claim a pre-reserved background invocation.
+/// Returns the invocation id, or None if tracking is disabled or the DB is unavailable.
+fn start_or_claim_invocation(
+    tracks: bool,
+    claimed_bg_invocation: Option<i64>,
+    history_db: Option<&HistoryDb>,
+    history_db_open_error: Option<&str>,
+    command_name: &str,
+    subcommand: Option<&str>,
+    profile: Option<&str>,
+) -> Option<i64> {
+    if !tracks {
+        return None;
+    }
+    let db_err = || history_db_open_error.unwrap_or("unknown history DB open failure");
+    if let Some(bg_id) = claimed_bg_invocation {
+        if let Some(db) = history_db {
+            if let Err(error) = db.claim_background_invocation(bg_id, command_name, subcommand, profile, None) {
+                eprintln!("⚠️  Failed to claim background invocation {bg_id}: {error}");
+            }
+        } else {
+            eprintln!("⚠️  Failed to open history DB for background invocation {bg_id}: {}", db_err());
+        }
+        return Some(bg_id);
+    }
+    if let Some(db) = history_db {
+        match db.start_invocation(command_name, subcommand, profile, None) {
+            Ok(id) => return Some(id),
+            Err(error) => {
+                eprintln!("⚠️  Failed to start invocation history row: {error}");
+                return None;
+            }
+        }
+    }
+    eprintln!("⚠️  Failed to open history DB to start invocation: {}", db_err());
+    None
 }
 
 /// Attempt to pop and spawn the next queued work item after a coordinated job completes.
