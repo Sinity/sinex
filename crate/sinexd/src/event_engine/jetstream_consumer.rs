@@ -119,6 +119,10 @@ pub struct JetStreamConsumer {
     validator: Arc<RwLock<IngestEventValidator>>,
     admission: AdmissionService,
     topology: JetStreamTopology,
+    /// DB-backed privacy policy engine (#1042). Applied at the persistence
+    /// chokepoint in `persist_batch_optimized` before any DB write, covering
+    /// both source (material) and derived events.
+    policy_engine: Arc<crate::event_engine::policy::PolicyEngine>,
     ack_wait: Duration,
     max_ack_pending: i64,
     #[cfg(any(test, feature = "testing"))]
@@ -485,12 +489,17 @@ impl JetStreamConsumer {
         let js = jetstream::new(nats_client);
         let admission = AdmissionService::new(pool.clone(), Arc::clone(&validator));
 
+        // Initialize the policy engine with a noop (no DB rules loaded yet).
+        // Call `.with_policy_engine()` after construction to load from DB, or
+        // leave as noop for tests that don't need DB-backed policy.
+        let pool_clone = pool.clone();
         Self {
             js,
             pool,
             validator,
             admission,
             topology,
+            policy_engine: Arc::new(crate::event_engine::policy::PolicyEngine::noop(pool_clone)),
             ack_wait: Duration::from_secs(30),
             max_ack_pending: DEFAULT_MAX_ACK_PENDING,
             #[cfg(any(test, feature = "testing"))]
@@ -518,6 +527,25 @@ impl JetStreamConsumer {
             reject_initial_replay: true,
             confirmation_watermark: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
         }
+    }
+
+    /// Load DB-backed privacy policy and attach it to this consumer.
+    ///
+    /// Called by `IngestService` after construction. If loading fails, the
+    /// consumer falls back to the noop engine (no DB policy applied).
+    pub async fn with_policy_engine(mut self) -> Self {
+        match crate::event_engine::policy::PolicyEngine::load(self.pool.clone()).await {
+            Ok(engine) => {
+                self.policy_engine = Arc::new(engine);
+            }
+            Err(e) => {
+                warn!(
+                    error = %e,
+                    "Failed to load DB privacy policy; continuing without policy enforcement"
+                );
+            }
+        }
+        self
     }
 
     /// Set the maximum duration `ts_orig` may exceed wall-clock time before DLQ routing.
@@ -2047,6 +2075,16 @@ impl JetStreamConsumer {
                 metadata: None,
             })
             .collect();
+
+        // ── Privacy policy chokepoint (#1042 Slice 4) ──────────────────────
+        // Apply DB-backed user-defined privacy rules to every event payload
+        // before persistence. This covers BOTH source (material-provenance) and
+        // derived (parent-provenance) events — they share this code path.
+        // Refresh is best-effort; stale cache is used on DB error (fail-open).
+        self.policy_engine.ensure_fresh().await;
+        let admitted_batch = self.policy_engine.redact_batch(admitted_batch).await;
+        // ── End chokepoint ──────────────────────────────────────────────────
+
         let admitted_refs: Vec<&AdmittedEvent> = admitted_batch.iter().collect();
 
         let plan = self
@@ -2469,12 +2507,28 @@ impl JetStreamConsumer {
                     payload_len = msg.payload.len(),
                     "Failed to parse original payload for DLQ entry; preserving raw bytes as base64"
                 );
+                // ── DLQ raw-bytes scrub (#1042 Slice 4) ─────────────────────────
+                // The `_raw_bytes_base64` field carries the unparsed raw bytes. For
+                // non-Public sources these bytes may contain unredacted sensitive
+                // content. We conservatively suppress the raw field and replace it
+                // with a metadata-only stub so raw payloads never persist in the DLQ.
                 serde_json::json!({
                     "_parse_error": parse_err.to_string(),
-                    "_raw_bytes_base64": base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &msg.payload)
+                    "_raw_bytes_suppressed": true,
+                    "_raw_bytes_len": msg.payload.len(),
+                    "_dlq_note": "raw payload suppressed by privacy chokepoint (#1042)"
                 })
             }
         };
+
+        // ── DLQ payload redaction (#1042 Slice 4) ────────────────────────────
+        // Apply policy redaction to the parsed DLQ payload before storing it.
+        // Uses the global (NULL source/type) scope for conservative coverage.
+        // On error, the already-parsed JSON remains (no raw bytes risk here since
+        // the parse succeeded — structured fields are at least partially safe).
+        let original_payload = self.policy_engine.redact_json_value(original_payload).await;
+        // ── End DLQ redaction ────────────────────────────────────────────────
+
         let dlq_publish_msg_id =
             dlq_publish_msg_id(msg, original_nats_msg_id.as_deref(), &original_payload);
         let original_event_id = original_payload
