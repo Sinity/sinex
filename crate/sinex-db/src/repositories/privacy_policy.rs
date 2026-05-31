@@ -264,9 +264,8 @@ impl<'a> PrivacyPolicyRepository<'a> {
         .fetch_optional(self.pool)
         .await
         .map_err(|e| SinexError::database(format!("failed to bind field scope: {e}")))?;
-        row.map(|r| r.id).ok_or_else(|| {
-            SinexError::not_found(format!("privacy rule not found: {rule_name}"))
-        })
+        row.map(|r| r.id)
+            .ok_or_else(|| SinexError::not_found(format!("privacy rule not found: {rule_name}")))
     }
 
     /// Remove a field scope by its id. Returns rows affected (0 or 1).

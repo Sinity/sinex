@@ -79,7 +79,10 @@ pub fn insert_traffic_class_header(
 pub struct NatsConnectionConfig {
     /// NATS server URL (e.g. `nats://localhost:4222` or `tls://demo.nats.io:4443`)
     #[builder(default = String::from("nats://localhost:4222"))]
-    #[sinex_config(env = "SINEX_NATS_URL", default_expr = "\"nats://localhost:4222\".to_string()")]
+    #[sinex_config(
+        env = "SINEX_NATS_URL",
+        default_expr = "\"nats://localhost:4222\".to_string()"
+    )]
     pub url: String,
 
     /// Logical name for this connection (appears in NATS monitoring)

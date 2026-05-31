@@ -481,8 +481,7 @@ where
         }
 
         Ok(self.health_reporter.as_ref().is_none_or(|reporter| {
-            reporter.current_status()
-                == sinex_primitives::domain::HealthStatus::Healthy
+            reporter.current_status() == sinex_primitives::domain::HealthStatus::Healthy
         }))
     }
 
@@ -610,9 +609,8 @@ where
             .as_ref()
             .map(|reporter| reporter.current_status());
         let healthy = runtime_initialized
-            && health_status.is_none_or(|status| {
-                status == sinex_primitives::domain::HealthStatus::Healthy
-            });
+            && health_status
+                .is_none_or(|status| status == sinex_primitives::domain::HealthStatus::Healthy);
         let description = if !runtime_initialized {
             format!("{node_name} derived node ({node_model}, runtime not initialized)")
         } else if let Some(status) = health_status {

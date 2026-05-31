@@ -158,4 +158,3 @@ pub trait InputShapeAdapterExt: InputShapeAdapter {
         None
     }
 }
-

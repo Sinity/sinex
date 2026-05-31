@@ -163,7 +163,10 @@ fn db_row_to_strategy(action: &str, action_label: Option<&str>) -> Strategy {
         "encrypt" => Strategy::Encrypt,
         "suppress" => Strategy::Suppress,
         other => {
-            warn!(action = other, "DB privacy rule has unknown action — defaulting to redact");
+            warn!(
+                action = other,
+                "DB privacy rule has unknown action — defaulting to redact"
+            );
             Strategy::Redact { label: None }
         }
     }
@@ -185,8 +188,10 @@ fn compile_rules(
     //
     // Key: (event_source, event_type) — both Option<String>.
     use std::collections::HashMap;
-    let mut scope_map: HashMap<(Option<String>, Option<String>), Vec<(PatternRule, Option<String>)>> =
-        HashMap::new();
+    let mut scope_map: HashMap<
+        (Option<String>, Option<String>),
+        Vec<(PatternRule, Option<String>)>,
+    > = HashMap::new();
 
     for loaded_rule in loaded {
         let rule = &loaded_rule.rule;
@@ -388,10 +393,7 @@ fn apply_policy_to_event(event: &mut Event<JsonValue>, rules: &CompiledPolicyRul
 
     for scope in &rules.scopes {
         // Check if this scope matches the event's (source, event_type).
-        let source_match = scope
-            .event_source
-            .as_deref()
-            .map_or(true, |s| s == source);
+        let source_match = scope.event_source.as_deref().map_or(true, |s| s == source);
         let type_match = scope
             .event_type
             .as_deref()
@@ -426,7 +428,9 @@ fn apply_scoped_engine_to_json(value: JsonValue, scope: &ScopedEngine) -> JsonVa
 
     if has_global_field_rule {
         // Apply to the whole payload.
-        return scope.engine.process_json(&value, ProcessingContext::Document);
+        return scope
+            .engine
+            .process_json(&value, ProcessingContext::Document);
     }
 
     // Field-scoped rules: apply only to named top-level keys.
@@ -443,7 +447,9 @@ fn apply_scoped_engine_to_json(value: JsonValue, scope: &ScopedEngine) -> JsonVa
             let key = path.strip_prefix('/').unwrap_or(path.as_str());
             if let Some(field_value) = obj.get_mut(key) {
                 let original = std::mem::replace(field_value, JsonValue::Null);
-                *field_value = scope.engine.process_json(&original, ProcessingContext::Document);
+                *field_value = scope
+                    .engine
+                    .process_json(&original, ProcessingContext::Document);
             }
         }
     }
@@ -495,9 +501,7 @@ mod tests {
             .expect("test event build should not fail")
     }
 
-    fn admit(
-        event: sinex_primitives::events::Event<serde_json::Value>,
-    ) -> AdmittedEvent {
+    fn admit(event: sinex_primitives::events::Event<serde_json::Value>) -> AdmittedEvent {
         AdmittedEvent {
             event_id: Uuid::now_v7(),
             event,
@@ -539,12 +543,31 @@ mod tests {
         let rules = repo.load_enabled_rules().await?;
         assert!(rules.is_empty(), "expected no rules initially");
 
-        repo.add_rule("rule-enabled", "", "regex", r"SECRET_\w+", false, "redact", None, "default")
+        repo.add_rule(
+            "rule-enabled",
+            "",
+            "regex",
+            r"SECRET_\w+",
+            false,
+            "redact",
+            None,
+            "default",
+        )
+        .await?;
+        repo.bind_field_rule("rule-enabled", None, None, None, 0)
             .await?;
-        repo.bind_field_rule("rule-enabled", None, None, None, 0).await?;
 
-        repo.add_rule("rule-disabled", "", "literal", "x", false, "redact", None, "default")
-            .await?;
+        repo.add_rule(
+            "rule-disabled",
+            "",
+            "literal",
+            "x",
+            false,
+            "redact",
+            None,
+            "default",
+        )
+        .await?;
         repo.set_rule_enabled("rule-disabled", false).await?;
 
         let rules = repo.load_enabled_rules().await?;
@@ -552,7 +575,10 @@ mod tests {
         assert_eq!(rules[0].rule.name, "rule-enabled");
         assert_eq!(rules[0].rule.matcher_type, "regex");
         assert_eq!(rules[0].rule.action, "redact");
-        assert!(!rules[0].scopes.is_empty(), "global scope should be present");
+        assert!(
+            !rules[0].scopes.is_empty(),
+            "global scope should be present"
+        );
 
         Ok(())
     }
@@ -562,8 +588,15 @@ mod tests {
     #[sinex_test]
     async fn privacy_action_redact_regex(ctx: TestContext) -> TestResult<()> {
         let pool = ctx.pool();
-        insert_global_rule(pool, "redact-secret", "regex", r"SECRET_\w+", "redact", Some("<REDACTED>"))
-            .await?;
+        insert_global_rule(
+            pool,
+            "redact-secret",
+            "regex",
+            r"SECRET_\w+",
+            "redact",
+            Some("<REDACTED>"),
+        )
+        .await?;
 
         let engine = PolicyEngine::load(pool.clone()).await?;
         let payload = serde_json::json!({ "token": "my SECRET_TOKEN_123 value", "other": "safe" });
@@ -588,8 +621,15 @@ mod tests {
     #[sinex_test]
     async fn privacy_action_suppress_literal(ctx: TestContext) -> TestResult<()> {
         let pool = ctx.pool();
-        insert_global_rule(pool, "suppress-sensitive", "literal", "SENSITIVE_VALUE", "suppress", None)
-            .await?;
+        insert_global_rule(
+            pool,
+            "suppress-sensitive",
+            "literal",
+            "SENSITIVE_VALUE",
+            "suppress",
+            None,
+        )
+        .await?;
 
         let engine = PolicyEngine::load(pool.clone()).await?;
         let payload = serde_json::json!({ "data": "SENSITIVE_VALUE", "safe": "ok" });
@@ -597,7 +637,10 @@ mod tests {
         let result = engine.redact_batch(vec![admit(event)]).await;
 
         let data = &result[0].event.payload["data"];
-        assert!(data.is_null(), "suppressed field should be Null; got: {data}");
+        assert!(
+            data.is_null(),
+            "suppressed field should be Null; got: {data}"
+        );
         assert_eq!(result[0].event.payload["safe"].as_str(), Some("ok"));
         Ok(())
     }
@@ -610,9 +653,19 @@ mod tests {
         let pool = ctx.pool();
         let repo = pool.privacy_policy();
 
-        repo.add_rule("scope-test", "", "regex", r"SENSITIVE", false, "redact", Some("<SCOPED>"), "default")
+        repo.add_rule(
+            "scope-test",
+            "",
+            "regex",
+            r"SENSITIVE",
+            false,
+            "redact",
+            Some("<SCOPED>"),
+            "default",
+        )
+        .await?;
+        repo.bind_field_rule("scope-test", None, None, Some("/secret_field"), 0)
             .await?;
-        repo.bind_field_rule("scope-test", None, None, Some("/secret_field"), 0).await?;
 
         let engine = PolicyEngine::load(pool.clone()).await?;
         let payload = serde_json::json!({
@@ -622,10 +675,20 @@ mod tests {
         let event = make_material_event("test.source", "test.event", payload);
         let result = engine.redact_batch(vec![admit(event)]).await;
 
-        let secret = result[0].event.payload["secret_field"].as_str().unwrap_or("");
-        let public = result[0].event.payload["public_field"].as_str().unwrap_or("");
-        assert!(!secret.contains("SENSITIVE"), "scoped field should be redacted; got: {secret}");
-        assert!(public.contains("SENSITIVE"), "unscoped field must be untouched; got: {public}");
+        let secret = result[0].event.payload["secret_field"]
+            .as_str()
+            .unwrap_or("");
+        let public = result[0].event.payload["public_field"]
+            .as_str()
+            .unwrap_or("");
+        assert!(
+            !secret.contains("SENSITIVE"),
+            "scoped field should be redacted; got: {secret}"
+        );
+        assert!(
+            public.contains("SENSITIVE"),
+            "unscoped field must be untouched; got: {public}"
+        );
         Ok(())
     }
 
@@ -636,9 +699,19 @@ mod tests {
         let pool = ctx.pool();
         let repo = pool.privacy_policy();
 
-        repo.add_rule("source-scope-test", "", "regex", r"PII_\w+", false, "redact", Some("<PII>"), "default")
+        repo.add_rule(
+            "source-scope-test",
+            "",
+            "regex",
+            r"PII_\w+",
+            false,
+            "redact",
+            Some("<PII>"),
+            "default",
+        )
+        .await?;
+        repo.bind_field_rule("source-scope-test", Some("sensitive.source"), None, None, 0)
             .await?;
-        repo.bind_field_rule("source-scope-test", Some("sensitive.source"), None, None, 0).await?;
 
         let engine = PolicyEngine::load(pool.clone()).await?;
 
@@ -646,12 +719,17 @@ mod tests {
         let event_match = make_material_event("sensitive.source", "test.event", payload_match);
         let results = engine.redact_batch(vec![admit(event_match)]).await;
         let val = results[0].event.payload["field"].as_str().unwrap_or("");
-        assert!(!val.contains("PII_DATA"), "scoped-source event should be redacted; got: {val}");
+        assert!(
+            !val.contains("PII_DATA"),
+            "scoped-source event should be redacted; got: {val}"
+        );
 
         let payload_other = serde_json::json!({ "field": "PII_DATA here" });
         let event_other = make_material_event("other.source", "test.event", payload_other);
         let results_other = engine.redact_batch(vec![admit(event_other)]).await;
-        let val_other = results_other[0].event.payload["field"].as_str().unwrap_or("");
+        let val_other = results_other[0].event.payload["field"]
+            .as_str()
+            .unwrap_or("");
         assert!(
             val_other.contains("PII_DATA"),
             "unscoped-source event must be untouched; got: {val_other}"
@@ -665,7 +743,12 @@ mod tests {
     async fn privacy_chokepoint_applies_to_derived_events(ctx: TestContext) -> TestResult<()> {
         let pool = ctx.pool();
         insert_global_rule(
-            pool, "derived-redact", "regex", r"DERIVED_SECRET_\w+", "redact", Some("<DERIVED>"),
+            pool,
+            "derived-redact",
+            "regex",
+            r"DERIVED_SECRET_\w+",
+            "redact",
+            Some("<DERIVED>"),
         )
         .await?;
 
@@ -674,12 +757,11 @@ mod tests {
         let parent_id: Uuid = Uuid::now_v7();
         let parent_event_id: sinex_primitives::events::EventId = Id::from_uuid(parent_id);
         let payload = serde_json::json!({ "summary": "derived contains DERIVED_SECRET_XYZ here" });
-        let derived_event =
-            DynamicPayload::new("sinex.derived", "analytics.insight", payload)
-                .from_parents([parent_event_id])
-                .expect("valid parent")
-                .build()
-                .expect("test derived event build should not fail");
+        let derived_event = DynamicPayload::new("sinex.derived", "analytics.insight", payload)
+            .from_parents([parent_event_id])
+            .expect("valid parent")
+            .build()
+            .expect("test derived event build should not fail");
 
         let result = engine.redact_batch(vec![admit(derived_event)]).await;
         let summary = result[0].event.payload["summary"].as_str().unwrap_or("");
@@ -687,7 +769,10 @@ mod tests {
             !summary.contains("DERIVED_SECRET_XYZ"),
             "derived event secret should be redacted; got: {summary}"
         );
-        assert!(summary.contains("<DERIVED>"), "expected <DERIVED> label; got: {summary}");
+        assert!(
+            summary.contains("<DERIVED>"),
+            "expected <DERIVED> label; got: {summary}"
+        );
         Ok(())
     }
 
@@ -738,7 +823,12 @@ mod tests {
         );
 
         insert_global_rule(
-            pool, "cache-test", "literal", "CACHE_SENTINEL_XYZ", "redact", Some("<CACHED>"),
+            pool,
+            "cache-test",
+            "literal",
+            "CACHE_SENTINEL_XYZ",
+            "redact",
+            Some("<CACHED>"),
         )
         .await?;
 
@@ -746,9 +836,17 @@ mod tests {
         let payload2 = serde_json::json!({ "value": "CACHE_SENTINEL_XYZ" });
         let event2 = make_material_event("s", "t", payload2);
         let result_after = engine_after.redact_batch(vec![admit(event2)]).await;
-        let value = result_after[0].event.payload["value"].as_str().unwrap_or("");
-        assert!(!value.contains("CACHE_SENTINEL_XYZ"), "rule should apply after reload; got: {value}");
-        assert!(value.contains("<CACHED>"), "expected <CACHED> label; got: {value}");
+        let value = result_after[0].event.payload["value"]
+            .as_str()
+            .unwrap_or("");
+        assert!(
+            !value.contains("CACHE_SENTINEL_XYZ"),
+            "rule should apply after reload; got: {value}"
+        );
+        assert!(
+            value.contains("<CACHED>"),
+            "expected <CACHED> label; got: {value}"
+        );
         Ok(())
     }
 }
