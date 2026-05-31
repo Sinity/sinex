@@ -321,7 +321,7 @@ impl SourceMaterial {
     }
     /// Fluent method to set the versioned source-material metadata contract.
     #[must_use]
-    pub fn with_metadata_contract(mut self, contract: SourceMaterialMetadataContract) -> Self {
+    pub fn with_metadata_contract(mut self, contract: &SourceMaterialMetadataContract) -> Self {
         self.timing_info_type = contract.timing.to_string();
         self.merge_metadata(contract.metadata_patch());
         self
@@ -1879,8 +1879,6 @@ impl SourceMaterialRepository<'_> {
                 } else {
                     SourceReadinessStatus::Available
                 }
-            } else if row.material_count == 0 {
-                SourceReadinessStatus::Unknown
             } else {
                 SourceReadinessStatus::Unknown
             };

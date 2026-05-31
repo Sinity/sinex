@@ -734,7 +734,7 @@ async fn register_material_persists_source_material_metadata_contract(
     });
 
     let material =
-        sinex_db::repositories::SourceMaterial::file(&identifier).with_metadata_contract(contract);
+        sinex_db::repositories::SourceMaterial::file(&identifier).with_metadata_contract(&contract);
     let record = ctx
         .pool
         .source_materials()
@@ -825,7 +825,7 @@ async fn update_metadata_preserves_source_material_metadata_contract(
         SourceMaterialTimingInfoType::Declared,
     );
     let material =
-        sinex_db::repositories::SourceMaterial::file(&identifier).with_metadata_contract(contract);
+        sinex_db::repositories::SourceMaterial::file(&identifier).with_metadata_contract(&contract);
     let record = ctx
         .pool
         .source_materials()
