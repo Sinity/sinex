@@ -277,6 +277,53 @@ fn execute_active(
     Ok(result)
 }
 
+/// Stream job stdout until the job terminates.
+async fn follow_job_output(job_query: &JobQueryManager, job: &Job, id: i64) -> Result<()> {
+    let mut last_pos = 0u64;
+    loop {
+        // Read only new content since last position
+        if let Some((buf, new_pos)) = read_stdout_delta_from_file(&job.stdout_path, last_pos)? {
+            if !buf.is_empty() {
+                print!("{buf}");
+                last_pos = new_pos;
+            }
+        } else if job.is_terminal() {
+            // File gone (archived to DB) — read remainder from DB
+            let stdout = job.read_stdout()?;
+            if stdout.len() as u64 > last_pos {
+                print!("{}", &stdout[last_pos as usize..]);
+            }
+            break;
+        }
+
+        // Reload and check status
+        let updated = job_query.get(id)?;
+        match updated {
+            Some(j) if j.is_terminal() => {
+                // One more read to catch final output before file is archived
+                if let Some((buf, _new_pos)) =
+                    read_stdout_delta_from_file(&job.stdout_path, last_pos)?
+                {
+                    if !buf.is_empty() {
+                        print!("{buf}");
+                    }
+                } else {
+                    let stdout = job.read_stdout()?;
+                    if stdout.len() as u64 > last_pos {
+                        print!("{}", &stdout[last_pos as usize..]);
+                    }
+                }
+                break;
+            }
+            None => break,
+            _ => {}
+        }
+
+        tokio::time::sleep(Duration::from_millis(250)).await;
+    }
+    Ok(())
+}
+
 async fn execute_status(
     job_query: &JobQueryManager,
     id: i64,
@@ -288,49 +335,7 @@ async fn execute_status(
         .ok_or_else(|| eyre!("job {id} not found"))?;
 
     if follow {
-        let mut last_pos = 0u64;
-        loop {
-            // Read only new content since last position
-            if let Some((buf, new_pos)) = read_stdout_delta_from_file(&job.stdout_path, last_pos)? {
-                if !buf.is_empty() {
-                    print!("{buf}");
-                    last_pos = new_pos;
-                }
-            } else if job.is_terminal() {
-                // File gone (archived to DB) — read remainder from DB
-                let stdout = job.read_stdout()?;
-                if stdout.len() as u64 > last_pos {
-                    print!("{}", &stdout[last_pos as usize..]);
-                }
-                break;
-            }
-
-            // Reload and check status
-            let updated = job_query.get(id)?;
-            match updated {
-                Some(j) if j.is_terminal() => {
-                    // One more read to catch final output before file is archived
-                    if let Some((buf, _new_pos)) =
-                        read_stdout_delta_from_file(&job.stdout_path, last_pos)?
-                    {
-                        if !buf.is_empty() {
-                            print!("{buf}");
-                        }
-                    } else {
-                        let stdout = job.read_stdout()?;
-                        if stdout.len() as u64 > last_pos {
-                            print!("{}", &stdout[last_pos as usize..]);
-                        }
-                    }
-                    break;
-                }
-                None => break,
-                _ => {}
-            }
-
-            tokio::time::sleep(Duration::from_millis(250)).await;
-        }
-
+        follow_job_output(job_query, &job, id).await?;
         Ok(CommandResult::success()
             .with_message(format!("Job {id} completed"))
             .with_duration(ctx.elapsed()))
