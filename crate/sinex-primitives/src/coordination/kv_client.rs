@@ -293,63 +293,66 @@ impl CoordinationKvClient {
             info!("Acquired leadership for {}", self.service_name);
             return Ok(true);
         }
-        // Failed to create (exists or deleted with history)
-
-        // 2. Check current state via entry()
-        // We use entry() to get revision info and handle Tombstones
+        // Failed to create (exists or deleted with history). Inspect current state
+        // via entry() to get revision info and handle tombstones.
         let entry = bucket
             .entry(key)
             .await
             .map_err(|e| SinexError::kv(format!("Failed to get leadership key entry: {e}")))?;
 
-        if let Some(entry) = entry {
-            use async_nats::jetstream::kv::Operation;
-
-            // If deleted, we can try to claim it by updating against current revision
-            if matches!(entry.operation, Operation::Delete | Operation::Purge) {
-                match bucket
-                    .update(key, candidate_id.to_string().into(), entry.revision)
+        match entry {
+            // Got None but update(0) failed: a weird race or purge. Safely return
+            // false and retry next time.
+            None => Ok(false),
+            Some(entry) => {
+                self.claim_or_refresh_existing_leadership(&bucket, key, candidate_id, entry)
                     .await
-                {
-                    Ok(_) => {
-                        info!(
-                            "Acquired leadership (was deleted) for {}",
-                            self.service_name
-                        );
-                        return Ok(true);
-                    }
-                    Err(_) => {
-                        // Raced?
-                        return Ok(false);
-                    }
-                }
             }
+        }
+    }
 
-            // Check if we are already the leader
-            let current_leader =
-                Self::parse_leader_id(&entry.value, "coordination leadership entry")?;
-            if current_leader == candidate_id {
-                match bucket
-                    .update(key, candidate_id.to_string().into(), entry.revision)
-                    .await
-                {
-                    Ok(_) => return Ok(true),
-                    Err(err) => {
-                        warn!(
-                            error = %err,
-                            "Failed to refresh leadership lease for {}",
-                            self.service_name
-                        );
-                        return Ok(false);
-                    }
-                }
-            }
-            return Ok(false);
+    /// Given the current KV `entry` for the leadership key, either reclaim a
+    /// deleted/purged key or refresh our own lease. Returns `Ok(true)` only when
+    /// this candidate holds leadership afterwards.
+    async fn claim_or_refresh_existing_leadership(
+        &self,
+        bucket: &Store,
+        key: &str,
+        candidate_id: &str,
+        entry: async_nats::jetstream::kv::Entry,
+    ) -> Result<bool, SinexError> {
+        use async_nats::jetstream::kv::Operation;
+
+        // If deleted, try to claim it by updating against the current revision.
+        if matches!(entry.operation, Operation::Delete | Operation::Purge) {
+            return Ok(bucket
+                .update(key, candidate_id.to_string().into(), entry.revision)
+                .await
+                .inspect(|_| {
+                    info!("Acquired leadership (was deleted) for {}", self.service_name);
+                })
+                .is_ok());
         }
 
-        // If we really got None but update(0) failed, it's a weird race or purge.
-        // We can safely return false and retry next time.
-        Ok(false)
+        // Refresh our lease if we are already the leader.
+        let current_leader = Self::parse_leader_id(&entry.value, "coordination leadership entry")?;
+        if current_leader != candidate_id {
+            return Ok(false);
+        }
+        match bucket
+            .update(key, candidate_id.to_string().into(), entry.revision)
+            .await
+        {
+            Ok(_) => Ok(true),
+            Err(err) => {
+                warn!(
+                    error = %err,
+                    "Failed to refresh leadership lease for {}",
+                    self.service_name
+                );
+                Ok(false)
+            }
+        }
     }
 
     /// Step down from leadership.
@@ -437,40 +440,55 @@ impl CoordinationKvClient {
                     continue;
                 }
             };
-            if !key.starts_with(&prefix) {
-                continue;
-            }
-            let Some(entry) = bucket.get(&key).await.map_err(|e| {
-                SinexError::kv(format!("Failed to read instance metadata for {key}: {e}"))
-            })?
-            else {
-                continue;
-            };
-            let metadata = match serde_json::from_slice::<InstanceMetadata>(&entry) {
-                Ok(metadata) => metadata,
-                Err(error) => {
-                    warn!(
-                        service = %self.service_name,
-                        key,
-                        error = %error,
-                        "Ignoring malformed coordination instance metadata"
-                    );
-                    continue;
-                }
-            };
-            if self.instance_is_fresh(&metadata) {
+            if let Some(metadata) = self.read_fresh_instance(&bucket, &key, &prefix).await? {
                 instances.push(metadata);
-            } else {
-                warn!(
-                    service = %self.service_name,
-                    instance = %metadata.instance_id,
-                    last_heartbeat = metadata.last_heartbeat,
-                    "Ignoring stale coordination instance metadata"
-                );
             }
         }
 
         Ok(instances)
+    }
+
+    /// Read one instance key and return its metadata when it belongs to this
+    /// service, deserializes cleanly, and is still fresh; otherwise `None`
+    /// (logging malformed/stale entries). Errors only on KV read failure.
+    async fn read_fresh_instance(
+        &self,
+        bucket: &Store,
+        key: &str,
+        prefix: &str,
+    ) -> Result<Option<InstanceMetadata>, SinexError> {
+        if !key.starts_with(prefix) {
+            return Ok(None);
+        }
+        let Some(entry) = bucket.get(key).await.map_err(|e| {
+            SinexError::kv(format!("Failed to read instance metadata for {key}: {e}"))
+        })?
+        else {
+            return Ok(None);
+        };
+        let metadata = match serde_json::from_slice::<InstanceMetadata>(&entry) {
+            Ok(metadata) => metadata,
+            Err(error) => {
+                warn!(
+                    service = %self.service_name,
+                    key,
+                    error = %error,
+                    "Ignoring malformed coordination instance metadata"
+                );
+                return Ok(None);
+            }
+        };
+        if self.instance_is_fresh(&metadata) {
+            Ok(Some(metadata))
+        } else {
+            warn!(
+                service = %self.service_name,
+                instance = %metadata.instance_id,
+                last_heartbeat = metadata.last_heartbeat,
+                "Ignoring stale coordination instance metadata"
+            );
+            Ok(None)
+        }
     }
 
     /// Get the current leader for this service

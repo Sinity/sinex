@@ -90,7 +90,9 @@ impl ParserId {
     pub fn as_static_str(&self) -> &'static str {
         match &self.0 {
             Cow::Borrowed(s) => s,
-            Cow::Owned(_) => panic!("ParserId::as_static_str called on owned value"),
+            Cow::Owned(_) => {
+                unreachable!("ParserId::as_static_str is only valid on const-constructed (borrowed) ids")
+            }
         }
     }
 
@@ -177,7 +179,9 @@ impl SourceUnitId {
     pub fn as_static_str(&self) -> &'static str {
         match &self.0 {
             Cow::Borrowed(s) => s,
-            Cow::Owned(_) => panic!("SourceUnitId::as_static_str called on owned value"),
+            Cow::Owned(_) => {
+                unreachable!("SourceUnitId::as_static_str is only valid on const-constructed (borrowed) ids")
+            }
         }
     }
 

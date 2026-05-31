@@ -233,7 +233,7 @@ fn derive_source_record_inner(input: &DeriveInput) -> syn::Result<TokenStream> {
                 binding: &_sdk_parser::BindingConfig,
             ) -> _sdk_parser::ParserResult<Vec<_sdk_parser::ParsedEventIntent>> {
                 let mut guard = __STATEFUL_PARSER.lock().unwrap_or_else(|e| e.into_inner());
-                guard.evaluate(record, ctx, binding)
+                guard.evaluate(&record, ctx, binding)
                     .map_err(|e| _sdk_parser::ParserError::Field(e.to_string()))
             }
         }
@@ -256,7 +256,7 @@ fn derive_source_record_inner(input: &DeriveInput) -> syn::Result<TokenStream> {
             ) -> _sdk_parser::ParserResult<Vec<_sdk_parser::ParsedEventIntent>> {
                 _sdk_parser::DeclarativeParser::evaluate(
                     Self::parser_spec(),
-                    record,
+                    &record,
                     ctx,
                     binding,
                 ).map_err(|e| _sdk_parser::ParserError::Field(e.to_string()))

@@ -383,12 +383,12 @@ impl DeclarativeParser {
     /// and hold the map across calls, or use [`StatefulDeclarativeParser`].
     pub fn evaluate(
         spec: &DeclarativeParserSpec,
-        record: SourceRecord,
+        record: &SourceRecord,
         ctx: &ParserContext,
         binding: &BindingConfig,
     ) -> Result<Vec<ParsedEventIntent>, ParserError> {
         let mut carry_state = BTreeMap::new();
-        evaluate_inner(spec, &record, ctx, binding, &mut carry_state)
+        evaluate_inner(spec, record, ctx, binding, &mut carry_state)
     }
 }
 
@@ -435,11 +435,11 @@ impl StatefulDeclarativeParser {
     /// Evaluate one record, threading carry-state.
     pub fn evaluate(
         &mut self,
-        record: SourceRecord,
+        record: &SourceRecord,
         ctx: &ParserContext,
         binding: &BindingConfig,
     ) -> Result<Vec<ParsedEventIntent>, ParserError> {
-        evaluate_inner(&self.spec, &record, ctx, binding, &mut self.carry_state)
+        evaluate_inner(&self.spec, record, ctx, binding, &mut self.carry_state)
     }
 
     /// Reset carry-state (e.g. after a checkpoint restore).

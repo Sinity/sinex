@@ -494,7 +494,7 @@ pub enum MaterialCaptureClass {
 impl MaterialCaptureClass {
     /// Convert from the canonical string representation.
     #[must_use]
-    pub fn from_str(s: &str) -> Option<Self> {
+    pub fn from_canonical_str(s: &str) -> Option<Self> {
         match s {
             "allowed_plaintext" => Some(Self::AllowedPlaintext),
             "metadata_only" => Some(Self::MetadataOnly),
