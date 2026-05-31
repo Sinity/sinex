@@ -43,6 +43,9 @@ pub struct BaselineArgs {
 enum CheckWeight {
     High,
     Medium,
+    // Reserved severity tier: no production check is currently classified Low
+    // (all are High/Medium), but the scoring/display paths and tests handle it.
+    #[allow(dead_code)]
     Low,
 }
 
