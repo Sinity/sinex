@@ -345,10 +345,12 @@ impl XtaskCommand for HistoryCommand {
                             before_invocation.as_deref(),
                             since.as_deref(),
                             sort_by.as_str(),
-                            *with_diagnostics,
-                            *with_stages,
-                            *with_tests,
-                            *include_zombies,
+                            ListFlags {
+                                with_diagnostics: *with_diagnostics,
+                                with_stages: *with_stages,
+                                with_tests: *with_tests,
+                                include_zombies: *include_zombies,
+                            },
                             ctx,
                         )
                     }
@@ -568,6 +570,13 @@ fn format_history_cutoff_timestamp(
         .wrap_err_with(|| format!("failed to format {context} as RFC3339"))
 }
 
+struct ListFlags {
+    with_diagnostics: bool,
+    with_stages: bool,
+    with_tests: bool,
+    include_zombies: bool,
+}
+
 #[allow(clippy::too_many_arguments)]
 fn execute_list(
     db: &HistoryDb,
@@ -578,12 +587,15 @@ fn execute_list(
     before_invocation: Option<&str>,
     since: Option<&str>,
     sort_by: &str,
-    with_diagnostics: bool,
-    with_stages: bool,
-    with_tests: bool,
-    include_zombies: bool,
+    flags: ListFlags,
     ctx: &CommandContext,
 ) -> Result<CommandResult> {
+    let ListFlags {
+        with_diagnostics,
+        with_stages,
+        with_tests,
+        include_zombies,
+    } = flags;
     let mut warnings = Vec::new();
 
     // Parse --since into an RFC3339 cutoff timestamp
@@ -1022,7 +1034,7 @@ fn execute_cost(
     let rows = db
         .run_readonly_query(&rows_sql)?
         .into_iter()
-        .map(cost_row_from_json)
+        .map(|row| cost_row_from_json(&row))
         .collect::<Result<Vec<_>>>()?;
     let stage_secs = db
         .run_readonly_query(&stage_sql)?
@@ -1107,7 +1119,7 @@ fn execute_cost(
 }
 
 fn cost_row_from_json(
-    row: serde_json::Map<String, serde_json::Value>,
+    row: &serde_json::Map<String, serde_json::Value>,
 ) -> Result<CostInvocationRow> {
     let id = json_i64(&row, "id")?;
     let command = json_string(&row, "command")?;

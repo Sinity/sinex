@@ -40,7 +40,7 @@ pub fn plan_next_actions() -> Result<Vec<PlannedAction>> {
     let mut actions = Vec::new();
 
     // ── Signal 1: active jobs ────────────────────────────────────────────
-    if let Some(job_actions) = check_active_jobs()? {
+    if let Some(job_actions) = check_active_jobs() {
         actions.extend(job_actions);
     }
 
@@ -76,10 +76,10 @@ pub fn plan_next_actions() -> Result<Vec<PlannedAction>> {
 
 // ── Signal probes ──────────────────────────────────────────────────────────
 
-fn check_active_jobs() -> Result<Option<Vec<PlannedAction>>> {
+fn check_active_jobs() -> Option<Vec<PlannedAction>> {
     let coordinator_dir = crate::config::config().state_dir.join("coordinator");
     let Ok(entries) = std::fs::read_dir(&coordinator_dir) else {
-        return Ok(None);
+        return None;
     };
 
     let mut actions = Vec::new();
@@ -105,9 +105,9 @@ fn check_active_jobs() -> Result<Option<Vec<PlannedAction>>> {
     }
 
     if actions.is_empty() {
-        Ok(None)
+        None
     } else {
-        Ok(Some(actions))
+        Some(actions)
     }
 }
 
@@ -253,8 +253,6 @@ fn affected_packages(dirty: &[&str]) -> Vec<String> {
             "sinex-schema"
         } else if path.starts_with("crate/lib/sinex-macros") {
             "sinex-macros"
-        } else if path.starts_with("crate/sinexd") {
-            "sinexd"
         } else if path.starts_with("crate/sinexd") {
             "sinexd"
         } else if path.starts_with("crate/nodes/sinex-fs-ingestor") {

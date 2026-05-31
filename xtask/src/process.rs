@@ -387,7 +387,7 @@ pub struct InvocationResourceMetrics {
     pub host_pressure: HostPressureMetrics,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Copy, Default)]
 #[cfg_attr(target_os = "linux", derive(Serialize, Deserialize))]
 pub struct PressureSnapshot {
     pub some_avg10: Option<f64>,

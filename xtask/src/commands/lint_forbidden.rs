@@ -449,9 +449,8 @@ fn check_privacy_invocation_for_sensitive_units() -> Result<Vec<String>> {
 
     for rel_path in rsu_files {
         let abs_path = root.join(&rel_path);
-        let contents = match std::fs::read_to_string(&abs_path) {
-            Ok(c) => c,
-            Err(_) => continue,
+        let Ok(contents) = std::fs::read_to_string(&abs_path) else {
+            continue;
         };
 
         // Skip if no non-Public tier in this file.

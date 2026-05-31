@@ -1100,7 +1100,6 @@ pub(super) fn check_singleton_workstation_topology(
 }
 
 /// Check 7: schema-apply readiness — connect to DB and run a simple query.
-
 fn record_secret_file(
     label: &str,
     path: &Path,

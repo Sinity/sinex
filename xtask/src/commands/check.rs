@@ -362,7 +362,7 @@ impl XtaskCommand for CheckCommand {
         // pipeline and short-circuits it when set.
         if let Some(ref base_opt) = this.changed_strict {
             let base_ref = base_opt.as_deref().unwrap_or("origin/master");
-            return run_changed_strict_command(base_ref, ctx, &this).await;
+            return run_changed_strict_command(base_ref, ctx, &this);
         }
 
         // Resource warning before heavy operation.  Captured regardless of output
@@ -800,7 +800,7 @@ fn extract_packages_from_actions(actions: &[crate::planner::PlannedAction]) -> V
 ///
 /// Returns a [`CommandResult`] containing the [`crate::strict_changed::ChangedStrictReport`]
 /// as structured JSON data. The result is a failure if any per-package check fails.
-async fn run_changed_strict_command(
+fn run_changed_strict_command(
     base_ref: &str,
     ctx: &CommandContext,
     this: &CheckCommand,

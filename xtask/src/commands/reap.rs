@@ -110,7 +110,7 @@ fn double_fork_reap(args: ReapCommand) -> Result<CommandResult> {
                 }
                 Ok(ForkResult::Child) => {
                     // Grandchild: run the reaper synchronously.
-                    run_reaper_grandchild(args);
+                    run_reaper_grandchild(&args);
                     unsafe { libc::_exit(0) };
                 }
                 Err(_) => {
@@ -123,7 +123,7 @@ fn double_fork_reap(args: ReapCommand) -> Result<CommandResult> {
 
 /// The reaper body — runs in the orphaned grandchild process.
 /// Fully synchronous; must not touch the tokio runtime.
-fn run_reaper_grandchild(args: ReapCommand) {
+fn run_reaper_grandchild(args: &ReapCommand) {
     let nix_pid = nix::unistd::Pid::from_raw(args.target_pid as i32);
     if nix::sys::signal::kill(nix_pid, None).is_err() {
         return;
@@ -336,7 +336,7 @@ mod tests {
 
         // Should complete without panic and without writing exit_code
         // (the process is already gone, so the function returns early).
-        run_reaper_grandchild(args);
+        run_reaper_grandchild(&args);
 
         assert!(
             !job_dir.join("exit_code").exists(),

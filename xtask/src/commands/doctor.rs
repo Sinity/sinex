@@ -1014,12 +1014,12 @@ fn run_rust_analyzer_cli_diagnostics(
         .stderr(std::process::Stdio::piped())
         .output()
         .wrap_err("spawn rust-analyzer diagnostics")?;
-    build_rust_analyzer_cli_diagnostic_scan(
+    Ok(build_rust_analyzer_cli_diagnostic_scan(
         command,
         output.status.code(),
         &String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr).trim(),
-    )
+    ))
 }
 
 fn build_rust_analyzer_cli_diagnostic_scan(
@@ -1027,19 +1027,19 @@ fn build_rust_analyzer_cli_diagnostic_scan(
     exit_code: Option<i32>,
     stdout: &str,
     raw_stderr: &str,
-) -> Result<RustAnalyzerCliDiagnosticScan> {
+) -> RustAnalyzerCliDiagnosticScan {
     let diagnostics = parse_rust_analyzer_cli_diagnostics(stdout);
     let status = rust_analyzer_cli_scan_status(exit_code, diagnostics.len());
     let stderr_summary = summarize_rust_analyzer_cli_stderr(raw_stderr);
     let stderr = truncate_report_text(raw_stderr, 4096);
-    Ok(RustAnalyzerCliDiagnosticScan {
+    RustAnalyzerCliDiagnosticScan {
         command,
         exit_code,
         status,
         stderr_summary,
         diagnostics,
         stderr: (!stderr.is_empty()).then_some(stderr),
-    })
+    }
 }
 
 const fn rust_analyzer_cli_scan_status(

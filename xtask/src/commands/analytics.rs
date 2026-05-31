@@ -107,7 +107,7 @@ impl XtaskCommand for AnalyticsCommand {
             limit,
         } = sub
         {
-            return execute_pressure(*observe, *top_io, *sample_ms, since, duration, *limit, ctx);
+            return Ok(execute_pressure(*observe, *top_io, *sample_ms, since, duration, *limit, ctx));
         }
         ctx.try_with_history_db_query(|db| {
             let analysis = HistoryAnalysis::new(db);
@@ -570,7 +570,7 @@ fn execute_pressure(
     duration: &str,
     limit: usize,
     ctx: &CommandContext,
-) -> Result<CommandResult> {
+) -> CommandResult {
     let cpu = crate::process::read_pressure_snapshot("cpu");
     let io = crate::process::read_pressure_snapshot("io");
     let memory = crate::process::read_pressure_snapshot("memory");
@@ -594,7 +594,7 @@ fn execute_pressure(
     };
 
     if ctx.is_json() {
-        return Ok(CommandResult::success()
+        return CommandResult::success()
             .with_message("pressure snapshot")
             .with_data(serde_json::json!({
                 "cpu": cpu,
@@ -616,7 +616,7 @@ fn execute_pressure(
                     "stderr": output.stderr,
                 })),
             }))
-            .with_duration(ctx.elapsed()));
+            .with_duration(ctx.elapsed());
     }
 
     println!("\n{}", style("Current Host Pressure:").bold());
@@ -695,9 +695,9 @@ fn execute_pressure(
     }
     println!();
 
-    Ok(CommandResult::success()
+    CommandResult::success()
         .with_message("pressure snapshot")
-        .with_duration(ctx.elapsed()))
+        .with_duration(ctx.elapsed())
 }
 
 #[derive(Debug, Clone, Serialize)]

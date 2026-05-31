@@ -70,7 +70,7 @@ impl XtaskCommand for FreshnessCommand {
 
     async fn execute(&self, ctx: &CommandContext) -> Result<CommandResult> {
         match &self.subcommand {
-            FreshnessSubcommand::Explain(command) => command.execute(ctx).await,
+            FreshnessSubcommand::Explain(command) => command.execute(ctx),
         }
     }
 
@@ -82,7 +82,7 @@ impl XtaskCommand for FreshnessCommand {
 }
 
 impl FreshnessExplainCommand {
-    async fn execute(&self, ctx: &CommandContext) -> Result<CommandResult> {
+    fn execute(&self, ctx: &CommandContext) -> Result<CommandResult> {
         let explained_args = explain_args_for_command(&self.command, &self.args, ctx)?;
         let key = coordinator::explain_freshness(&self.command, &explained_args)?;
         let reuse = explain_reuse(ctx, &key);

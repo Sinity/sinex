@@ -196,9 +196,9 @@ fn background_watchdog_escape_threshold_secs(command: &str) -> f64 {
 /// Used by the open-time sweep to clean up watchdog escapees. Returns Ok(())
 /// on success or if the PID is already dead; returns Err only on system error
 /// (rare — invalid PID, EPERM despite being alive).
-fn try_reap_zombie_pid(pid: i64) -> Result<()> {
+fn try_reap_zombie_pid(pid: i64) {
     if !(1..=i64::from(i32::MAX)).contains(&pid) {
-        return Ok(());
+        return;
     }
     let nix_pid = nix::unistd::Pid::from_raw(pid as i32);
 
@@ -212,7 +212,6 @@ fn try_reap_zombie_pid(pid: i64) -> Result<()> {
     if nix::sys::signal::kill(nix_pid, None).is_ok() {
         let _ = nix::sys::signal::kill(nix_pid, nix::sys::signal::Signal::SIGKILL);
     }
-    Ok(())
 }
 
 impl HistoryIntegrityStamp {
@@ -2307,9 +2306,8 @@ impl HistoryDb {
                 }
 
                 // Zombie: alive but past the command-specific escape threshold.
-                if let Some(pid) = candidate.pid
-                    && try_reap_zombie_pid(pid).is_ok()
-                {
+                if let Some(pid) = candidate.pid {
+                    try_reap_zombie_pid(pid);
                     reaped_zombies += 1;
                 }
                 zombie_invocation_ids.push(candidate.invocation_id);
@@ -3393,7 +3391,7 @@ impl HistoryDb {
                             format!("failed to parse impact artifact {}", path.display())
                         })?;
                     for edge in edges {
-                        imported += self.insert_test_dependency_edge(invocation_id, edge)?;
+                        imported += self.insert_test_dependency_edge(invocation_id, &edge)?;
                     }
                 }
             }
@@ -3410,7 +3408,7 @@ impl HistoryDb {
             ImpactArtifactEnvelope::DependencyEdges { edges } => {
                 let mut imported = 0;
                 for edge in edges {
-                    imported += self.insert_test_dependency_edge(invocation_id, edge)?;
+                    imported += self.insert_test_dependency_edge(invocation_id, &edge)?;
                 }
                 Ok(imported)
             }
@@ -3491,7 +3489,7 @@ impl HistoryDb {
     fn insert_test_dependency_edge(
         &self,
         invocation_id: i64,
-        edge: TestDependencyEdgeArtifact,
+        edge: &TestDependencyEdgeArtifact,
     ) -> Result<usize> {
         let changed = self.conn.execute(
             r"
