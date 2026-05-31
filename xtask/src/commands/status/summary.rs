@@ -309,44 +309,13 @@ async fn collect_summary_data(ctx: &CommandContext) -> SummaryData {
     }
 }
 
-// ─── Summary / Compact execution ────────────────────────────────────────────
-
-/// Execute --summary (rich multi-section MOTD)
-pub(super) async fn execute(ctx: &CommandContext) -> Result<CommandResult> {
-    let data = collect_summary_data(ctx).await;
-
-    let now = time::OffsetDateTime::now_utc();
-    let get_last_command = |cmd: &str| -> Option<SummaryCommandInfo> {
-        data.history
-            .recent
-            .iter()
-            .find(|i| i.command == cmd && i.status != InvocationStatus::Running)
-            .map(|i| {
-                let age = now - i.started_at;
-                SummaryCommandInfo {
-                    status: i.status,
-                    duration_secs: i.duration_secs,
-                    age_mins: age.whole_minutes(),
-                }
-            })
-    };
-
-    let last_check = get_last_command("check");
-    let last_test = get_last_command("test");
-    let last_build = get_last_command("build");
-    let unavailable_services: Vec<&str> = data
-        .services
-        .iter()
-        .filter(|service| {
-            !matches!(
-                service.status,
-                ServiceRunStatus::Running | ServiceRunStatus::Skipped
-            )
-        })
-        .map(|service| service.name.as_str())
-        .collect();
-
-    // Build warnings
+/// Collect warning strings from summary data for display and JSON output.
+fn build_summary_warnings(
+    data: &SummaryData,
+    last_test: Option<&SummaryCommandInfo>,
+    last_check: Option<&SummaryCommandInfo>,
+    unavailable_services: &[&str],
+) -> Vec<String> {
     let mut warnings = Vec::new();
     if !data.pg_probe.ready() {
         warnings.push(
@@ -364,7 +333,7 @@ pub(super) async fn execute(ctx: &CommandContext) -> Result<CommandResult> {
                 .unwrap_or_else(|| "NATS offline".to_string()),
         );
     }
-    if let Some(ref test) = last_test {
+    if let Some(test) = last_test {
         if matches!(test.status, InvocationStatus::Failed) {
             warnings.push("Tests failing".to_string());
         }
@@ -374,7 +343,7 @@ pub(super) async fn execute(ctx: &CommandContext) -> Result<CommandResult> {
     } else {
         warnings.push("No test runs recorded".to_string());
     }
-    if let Some(ref check) = last_check
+    if let Some(check) = last_check
         && matches!(check.status, InvocationStatus::Failed)
     {
         warnings.push("Check failing".to_string());
@@ -418,6 +387,53 @@ pub(super) async fn execute(ctx: &CommandContext) -> Result<CommandResult> {
     {
         warnings.extend(runtime_metrics.assessment().warnings);
     }
+    warnings
+}
+
+// ─── Summary / Compact execution ────────────────────────────────────────────
+
+/// Execute --summary (rich multi-section MOTD)
+pub(super) async fn execute(ctx: &CommandContext) -> Result<CommandResult> {
+    let data = collect_summary_data(ctx).await;
+
+    let now = time::OffsetDateTime::now_utc();
+    let get_last_command = |cmd: &str| -> Option<SummaryCommandInfo> {
+        data.history
+            .recent
+            .iter()
+            .find(|i| i.command == cmd && i.status != InvocationStatus::Running)
+            .map(|i| {
+                let age = now - i.started_at;
+                SummaryCommandInfo {
+                    status: i.status,
+                    duration_secs: i.duration_secs,
+                    age_mins: age.whole_minutes(),
+                }
+            })
+    };
+
+    let last_check = get_last_command("check");
+    let last_test = get_last_command("test");
+    let last_build = get_last_command("build");
+    let unavailable_services: Vec<&str> = data
+        .services
+        .iter()
+        .filter(|service| {
+            !matches!(
+                service.status,
+                ServiceRunStatus::Running | ServiceRunStatus::Skipped
+            )
+        })
+        .map(|service| service.name.as_str())
+        .collect();
+
+    // Build warnings
+    let warnings = build_summary_warnings(
+        &data,
+        last_test.as_ref(),
+        last_check.as_ref(),
+        &unavailable_services,
+    );
     let runtime_impact = data
         .runtime_metrics
         .as_ref()
