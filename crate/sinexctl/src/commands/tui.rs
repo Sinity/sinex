@@ -289,7 +289,7 @@ impl App {
         self.loading = true;
         self.error = None;
 
-        // Fetch gateway version
+        // Fetch gateway version — abort refresh on connectivity failure.
         match self.client.version().await {
             Ok(v) => self.gateway_version = v,
             Err(e) => {
@@ -299,15 +299,21 @@ impl App {
             }
         }
 
-        // Fetch nodes
+        self.refresh_nodes_and_dlq().await;
+        self.refresh_operations_and_state().await;
+        self.refresh_sources_and_events().await;
+
+        self.loading = false;
+        self.last_refresh = Instant::now();
+    }
+
+    async fn refresh_nodes_and_dlq(&mut self) {
         match self.client.list_nodes(None).await {
             Ok(nodes) => self.nodes = nodes,
             Err(e) => {
                 self.error = Some(format!("Failed to fetch nodes: {e}"));
             }
         }
-
-        // Fetch DLQ info
         match self.client.dlq_list().await {
             Ok(stats) => self.dlq_stats = Some(stats),
             Err(e) => {
@@ -324,8 +330,9 @@ impl App {
                 }
             }
         }
+    }
 
-        // Fetch operation-room read models.
+    async fn refresh_operations_and_state(&mut self) {
         match self.client.ops_list(None, None, Some(10)).await {
             Ok(operations) => self.ops_operations = operations,
             Err(e) => {
@@ -358,8 +365,9 @@ impl App {
                 }
             }
         }
+    }
 
-        // Fetch source readiness/cockpit data
+    async fn refresh_sources_and_events(&mut self) {
         match self
             .client
             .sources_readiness_list(SourcesReadinessListRequest::default())
@@ -388,7 +396,6 @@ impl App {
             }
         }
 
-        // Fetch recent events (last hour, 50 events)
         let query = EventQuery {
             time_range: TimeRange::new(Some(Timestamp::now() - Duration::hours(1)), None).ok(),
             limit: 50,
@@ -409,9 +416,6 @@ impl App {
                 self.recent_event_rows.clear();
             }
         }
-
-        self.loading = false;
-        self.last_refresh = Instant::now();
     }
 }
 
@@ -494,7 +498,7 @@ where
                     app.toggle_payload_mode();
                 }
                 KeyCode::Enter | KeyCode::Char('y') => {
-                    copy_selected_action(app)?;
+                    copy_selected_action(app);
                 }
                 KeyCode::Down | KeyCode::Char('j') => {
                     app.select_next();
@@ -519,14 +523,14 @@ where
     Ok(())
 }
 
-fn copy_selected_action(app: &mut App) -> Result<()> {
+fn copy_selected_action(app: &mut App) {
     if !app.copy_menu_open {
-        return Ok(());
+        return;
     }
     let actions = app.selected_copy_actions();
     let Some(action) = actions.get(app.copy_index) else {
         app.feedback = Some("No copy action selected.".to_string());
-        return Ok(());
+        return;
     };
     if let Some(value) = action.value.as_deref() {
         match copy_to_terminal_clipboard(value) {
@@ -548,7 +552,6 @@ fn copy_selected_action(app: &mut App) -> Result<()> {
             .unwrap_or("copy action is unavailable");
         app.feedback = Some(format!("Cannot copy {}: {reason}", action.label));
     }
-    Ok(())
 }
 
 fn copy_to_terminal_clipboard(text: &str) -> io::Result<()> {

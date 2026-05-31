@@ -343,6 +343,145 @@ struct MigratedKey {
     size_bytes: i64,
 }
 
+/// Outcome of attempting to migrate a single legacy blob.
+enum BlobMigrateOutcome {
+    AlreadyMigrated,
+    Migrated(MigratedKey),
+    Failed,
+}
+
+/// Attempt to migrate one legacy annex blob to the local CAS.
+/// Returns the outcome without mutating counters so the caller stays flat.
+async fn migrate_single_blob(
+    blob_id: sinex_primitives::Uuid,
+    annex_key: &str,
+    size_bytes: i64,
+    content_store: &MaterialContentStore,
+    pool: &sqlx::PgPool,
+    apply: bool,
+) -> Result<BlobMigrateOutcome> {
+    // Check if already has a SINEXBLAKE3 equivalent
+    let already = sqlx::query_scalar!(
+        r"
+        SELECT id
+        FROM core.blobs
+        WHERE checksum_blake3 = (
+            SELECT checksum_blake3
+            FROM core.blobs
+            WHERE id = $1
+        )
+          AND annex_backend = 'SINEXBLAKE3'
+        ",
+        blob_id,
+    )
+    .fetch_optional(pool)
+    .await
+    .wrap_err("check existing SINEXBLAKE3 blob")?;
+
+    if already.is_some() {
+        return Ok(BlobMigrateOutcome::AlreadyMigrated);
+    }
+
+    // Ensure content is available locally (git-annex get)
+    if let Err(e) = content_store.ensure_content_local(annex_key).await {
+        tracing::warn!(
+            error = %e,
+            annex_key = %annex_key,
+            "Failed to ensure legacy content is local, skipping"
+        );
+        return Ok(BlobMigrateOutcome::Failed);
+    }
+
+    // Resolve the annex content path and compute BLAKE3 hash
+    let path = match content_store.resolve_annex_content_path(annex_key).await {
+        Ok(p) => p,
+        Err(e) => {
+            tracing::warn!(
+                error = %e,
+                annex_key = %annex_key,
+                "Failed to resolve annex content path, skipping"
+            );
+            return Ok(BlobMigrateOutcome::Failed);
+        }
+    };
+
+    let blake3_hash = match MaterialContentStore::compute_blake3_hash(&path).await {
+        Ok(h) => h,
+        Err(e) => {
+            tracing::warn!(
+                error = %e,
+                path = %path,
+                "Failed to compute BLAKE3 hash, skipping"
+            );
+            return Ok(BlobMigrateOutcome::Failed);
+        }
+    };
+
+    if !apply {
+        return Ok(BlobMigrateOutcome::Migrated(MigratedKey {
+            annex_key: annex_key.to_string(),
+            cas_key: format!("would-migrate:{blake3_hash}"),
+            size_bytes,
+        }));
+    }
+
+    migrate_blob_to_cas(blob_id, annex_key, size_bytes, &blake3_hash, &path, content_store, pool).await
+}
+
+/// Store the blob in CAS and update the DB row. Called only in apply mode.
+async fn migrate_blob_to_cas(
+    blob_id: sinex_primitives::Uuid,
+    annex_key: &str,
+    size_bytes: i64,
+    blake3_hash: &str,
+    path: &camino::Utf8Path,
+    content_store: &MaterialContentStore,
+    pool: &sqlx::PgPool,
+) -> Result<BlobMigrateOutcome> {
+    let cas_key = match content_store.store_file(path).await {
+        Ok(k) => k,
+        Err(e) => {
+            tracing::warn!(
+                error = %e,
+                annex_key = %annex_key,
+                "Failed to store blob in CAS, skipping"
+            );
+            return Ok(BlobMigrateOutcome::Failed);
+        }
+    };
+
+    let update_result = sqlx::query!(
+        r"
+        UPDATE core.blobs
+        SET annex_backend = 'SINEXBLAKE3',
+            content_hash = $1,
+            checksum_blake3 = $2
+        WHERE id = $3
+        ",
+        blake3_hash,
+        blake3_hash,
+        blob_id,
+    )
+    .execute(pool)
+    .await;
+
+    match update_result {
+        Ok(_) => Ok(BlobMigrateOutcome::Migrated(MigratedKey {
+            annex_key: annex_key.to_string(),
+            cas_key: cas_key.key,
+            size_bytes,
+        })),
+        Err(e) => {
+            tracing::warn!(
+                error = %e,
+                blob_id = %blob_id,
+                "Failed to update blob row during migration"
+            );
+            Ok(BlobMigrateOutcome::Failed)
+        }
+    }
+}
+
 impl BlobMigrateCommand {
     pub async fn execute(&self, format: OutputFormat) -> Result<()> {
         if self.from != "git-annex" || self.to != "local-cas" {
@@ -390,119 +529,13 @@ impl BlobMigrateCommand {
             let size_bytes = legacy_blob.size_bytes;
             let annex_key = format!("{backend}-s{size_bytes}--{content_hash}");
 
-            // Check if already has a SINEXBLAKE3 equivalent
-            let already = sqlx::query_scalar!(
-                r"
-                SELECT id
-                FROM core.blobs
-                WHERE checksum_blake3 = (
-                    SELECT checksum_blake3
-                    FROM core.blobs
-                    WHERE id = $1
-                )
-                  AND annex_backend = 'SINEXBLAKE3'
-                ",
-                blob_id,
-            )
-            .fetch_optional(&pool)
-            .await
-            .wrap_err("check existing SINEXBLAKE3 blob")?;
-
-            if already.is_some() {
-                already_migrated += 1;
-                continue;
-            }
-
-            // Ensure content is available locally (git-annex get)
-            if let Err(e) = content_store.ensure_content_local(&annex_key).await {
-                tracing::warn!(
-                    error = %e,
-                    annex_key = %annex_key,
-                    "Failed to ensure legacy content is local, skipping"
-                );
-                failed += 1;
-                continue;
-            }
-
-            // Resolve the annex content path and compute BLAKE3 hash
-            match content_store.resolve_annex_content_path(&annex_key).await {
-                Err(e) => {
-                    tracing::warn!(
-                        error = %e,
-                        annex_key = %annex_key,
-                        "Failed to resolve annex content path, skipping"
-                    );
-                    failed += 1;
-                    continue;
+            match migrate_single_blob(blob_id, &annex_key, size_bytes, &content_store, &pool, self.apply).await? {
+                BlobMigrateOutcome::AlreadyMigrated => already_migrated += 1,
+                BlobMigrateOutcome::Migrated(key) => {
+                    migrated_count += 1;
+                    migrated_keys.push(key);
                 }
-                Ok(path) => {
-                    let blake3_hash = match MaterialContentStore::compute_blake3_hash(&path).await {
-                        Ok(h) => h,
-                        Err(e) => {
-                            tracing::warn!(
-                                error = %e,
-                                path = %path,
-                                "Failed to compute BLAKE3 hash, skipping"
-                            );
-                            failed += 1;
-                            continue;
-                        }
-                    };
-                    if self.apply {
-                        let cas_target = content_store.store_file(&path).await;
-                        match cas_target {
-                            Ok(cas_key) => {
-                                let update_result = sqlx::query!(
-                                    r"
-                                    UPDATE core.blobs
-                                    SET annex_backend = 'SINEXBLAKE3',
-                                        content_hash = $1,
-                                        checksum_blake3 = $2
-                                    WHERE id = $3
-                                    ",
-                                    blake3_hash,
-                                    blake3_hash,
-                                    blob_id,
-                                )
-                                .execute(&pool)
-                                .await;
-                                match update_result {
-                                    Ok(_) => {
-                                        migrated_count += 1;
-                                        migrated_keys.push(MigratedKey {
-                                            annex_key: annex_key.clone(),
-                                            cas_key: cas_key.key,
-                                            size_bytes,
-                                        });
-                                    }
-                                    Err(e) => {
-                                        tracing::warn!(
-                                            error = %e,
-                                            blob_id = %blob_id,
-                                            "Failed to update blob row during migration"
-                                        );
-                                        failed += 1;
-                                    }
-                                }
-                            }
-                            Err(e) => {
-                                tracing::warn!(
-                                    error = %e,
-                                    annex_key = %annex_key,
-                                    "Failed to store blob in CAS, skipping"
-                                );
-                                failed += 1;
-                            }
-                        }
-                    } else {
-                        migrated_count += 1;
-                        migrated_keys.push(MigratedKey {
-                            annex_key: annex_key.clone(),
-                            cas_key: format!("would-migrate:{blake3_hash}"),
-                            size_bytes,
-                        });
-                    }
-                }
+                BlobMigrateOutcome::Failed => failed += 1,
             }
         }
 
