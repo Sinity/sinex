@@ -446,66 +446,11 @@ impl XtaskCommand for ExerciseCommand {
         }
 
         // --ci-check: diff against committed baseline, fail on regressions.
-        let mut ci_regressions: Vec<String> = vec![];
-        let mut ci_new_passes: Vec<String> = vec![];
-        if self.ci_check {
-            let baseline_path = self.baseline_path();
-            if self.update_baseline {
-                // Write current results as the new baseline.
-                let json = serde_json::to_string_pretty(&manifest)?;
-                if let Some(parent) = baseline_path.parent() {
-                    fs::create_dir_all(parent)?;
-                }
-                fs::write(&baseline_path, &json)?;
-                if ctx.is_human() {
-                    println!("  Baseline updated: {}", baseline_path.display());
-                }
-            } else if baseline_path.exists() {
-                let baseline_raw = fs::read_to_string(&baseline_path)?;
-                let baseline: QaManifest = serde_json::from_str(&baseline_raw).map_err(|e| {
-                    color_eyre::eyre::eyre!(
-                        "Failed to parse baseline {}: {e}",
-                        baseline_path.display()
-                    )
-                })?;
-                ci_regressions = manifest.regressions(&baseline);
-                ci_new_passes = manifest.new_passes(&baseline);
-
-                if ctx.is_human() {
-                    if !ci_regressions.is_empty() {
-                        println!("\n  ⚡ CI regressions ({}):", ci_regressions.len());
-                        for id in &ci_regressions {
-                            println!("       ✗  {id}  (was passing in baseline)");
-                        }
-                    }
-                    if !ci_new_passes.is_empty() {
-                        println!("  🎉 Newly passing ({}):", ci_new_passes.len());
-                        for id in &ci_new_passes {
-                            println!("       ✓  {id}");
-                        }
-                    }
-                    if ci_regressions.is_empty() {
-                        println!(
-                            "  ✓ No regressions vs baseline ({})",
-                            baseline_path.display()
-                        );
-                    }
-                }
-            } else {
-                // No baseline exists yet — treat this as the first run, write it.
-                let json = serde_json::to_string_pretty(&manifest)?;
-                if let Some(parent) = baseline_path.parent() {
-                    fs::create_dir_all(parent)?;
-                }
-                fs::write(&baseline_path, &json)?;
-                if ctx.is_human() {
-                    println!(
-                        "  Baseline created: {} (no prior baseline found)",
-                        baseline_path.display()
-                    );
-                }
-            }
-        }
+        let (ci_regressions, ci_new_passes) = if self.ci_check {
+            check_ci_baseline(&manifest, &self.baseline_path(), self.update_baseline, ctx.is_human())?
+        } else {
+            (vec![], vec![])
+        };
 
         // Print human summary
         if ctx.is_human() {
@@ -584,6 +529,65 @@ impl XtaskCommand for ExerciseCommand {
             history_access: crate::command::HistoryAccessMode::ReadWrite,
         }
     }
+}
+
+/// Diff the current manifest against a committed baseline, returning (regressions, new_passes).
+/// Writes the baseline if `update_baseline` is true or no baseline exists.
+fn check_ci_baseline(
+    manifest: &QaManifest,
+    baseline_path: &std::path::Path,
+    update_baseline: bool,
+    is_human: bool,
+) -> Result<(Vec<String>, Vec<String>)> {
+    if update_baseline {
+        let json = serde_json::to_string_pretty(manifest)?;
+        if let Some(parent) = baseline_path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::write(baseline_path, &json)?;
+        if is_human {
+            println!("  Baseline updated: {}", baseline_path.display());
+        }
+        return Ok((vec![], vec![]));
+    }
+
+    if !baseline_path.exists() {
+        let json = serde_json::to_string_pretty(manifest)?;
+        if let Some(parent) = baseline_path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::write(baseline_path, &json)?;
+        if is_human {
+            println!("  Baseline created: {} (no prior baseline found)", baseline_path.display());
+        }
+        return Ok((vec![], vec![]));
+    }
+
+    let baseline_raw = fs::read_to_string(baseline_path)?;
+    let baseline: QaManifest = serde_json::from_str(&baseline_raw).map_err(|e| {
+        color_eyre::eyre::eyre!("Failed to parse baseline {}: {e}", baseline_path.display())
+    })?;
+    let regressions = manifest.regressions(&baseline);
+    let new_passes = manifest.new_passes(&baseline);
+
+    if is_human {
+        if !regressions.is_empty() {
+            println!("\n  ⚡ CI regressions ({}):", regressions.len());
+            for id in &regressions {
+                println!("       ✗  {id}  (was passing in baseline)");
+            }
+        }
+        if !new_passes.is_empty() {
+            println!("  🎉 Newly passing ({}):", new_passes.len());
+            for id in &new_passes {
+                println!("       ✓  {id}");
+            }
+        }
+        if regressions.is_empty() {
+            println!("  ✓ No regressions vs baseline ({})", baseline_path.display());
+        }
+    }
+    Ok((regressions, new_passes))
 }
 
 fn create_exercise_dir(path: &std::path::Path) -> Result<()> {

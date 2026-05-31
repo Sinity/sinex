@@ -87,6 +87,13 @@ pub struct CheckCommand {
     pub changed_strict: Option<Option<String>>,
 }
 
+/// Push `flag` onto `args` if `cond` is true.
+fn push_flag(args: &mut Vec<String>, cond: bool, flag: &'static str) {
+    if cond {
+        args.push(flag.to_string());
+    }
+}
+
 impl CheckCommand {
     /// Resolve composite flags into individual flags (mutates self).
     fn resolve_flags(&mut self) {
@@ -99,6 +106,34 @@ impl CheckCommand {
             self.forbidden = true;
             self.nix = true;
         }
+    }
+
+    /// Build the serialized CLI args for background re-invocation.
+    fn background_args(&self) -> Vec<String> {
+        let mut args = Vec::new();
+        push_flag(&mut args, self.lint, "--lint");
+        push_flag(&mut args, self.fmt, "--fmt");
+        push_flag(&mut args, self.forbidden, "--forbidden");
+        push_flag(&mut args, self.full, "--full");
+        push_flag(&mut args, self.fix, "--fix");
+        push_flag(&mut args, self.heavy, "--heavy");
+        push_flag(&mut args, self.all, "--all");
+        push_flag(&mut args, self.skip_tests, "--skip-tests");
+        push_flag(&mut args, self.lint_breakdown, "--lint-breakdown");
+        push_flag(&mut args, self.by_file, "--by-file");
+        push_flag(&mut args, self.nix, "--nix");
+        push_flag(&mut args, self.allow_contended_host, "--allow-contended-host");
+        if let Some(base_ref) = &self.changed_strict {
+            args.push("--changed-strict".to_string());
+            if let Some(base_ref) = base_ref {
+                args.push(base_ref.clone());
+            }
+        }
+        for p in &self.packages {
+            args.push("-p".to_string());
+            args.push(p.clone());
+        }
+        args
     }
 
     fn semantic_invocation_args(&self, scope: &WorkloadScope) -> Vec<String> {
@@ -295,54 +330,7 @@ impl XtaskCommand for CheckCommand {
 
         // Handle background execution
         if ctx.is_background() {
-            let mut args = Vec::new();
-            if this.lint {
-                args.push("--lint".to_string());
-            }
-            if this.fmt {
-                args.push("--fmt".to_string());
-            }
-            if this.forbidden {
-                args.push("--forbidden".to_string());
-            }
-            if this.full {
-                args.push("--full".to_string());
-            }
-            if this.fix {
-                args.push("--fix".to_string());
-            }
-            if this.heavy {
-                args.push("--heavy".to_string());
-            }
-            if this.all {
-                args.push("--all".to_string());
-            }
-            if this.skip_tests {
-                args.push("--skip-tests".to_string());
-            }
-            if this.lint_breakdown {
-                args.push("--lint-breakdown".to_string());
-            }
-            if this.by_file {
-                args.push("--by-file".to_string());
-            }
-            if this.nix {
-                args.push("--nix".to_string());
-            }
-            if this.allow_contended_host {
-                args.push("--allow-contended-host".to_string());
-            }
-            if let Some(base_ref) = &this.changed_strict {
-                args.push("--changed-strict".to_string());
-                if let Some(base_ref) = base_ref {
-                    args.push(base_ref.clone());
-                }
-            }
-            for p in &this.packages {
-                args.push("-p".to_string());
-                args.push(p.clone());
-            }
-
+            let args = this.background_args();
             let (_, workload_scope) = this.build_package_args(true, false)?;
             let coordination_args = this.semantic_invocation_args(&workload_scope);
             return crate::coordinator::coordinate_and_spawn_with_scope(
