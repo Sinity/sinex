@@ -356,6 +356,32 @@ const ALL_TABLES: &[TableMeta] = &[
         has_triggers: false,
         cleanup_protected: false,
     },
+    // Privacy policy (#1042): user-controlled DB-backed redaction policy.
+    // cleanup_protected — user-authored policy must survive dev-state resets.
+    TableMeta {
+        schema: "privacy",
+        name: "encryption_keys",
+        qualified_name: "privacy.encryption_keys",
+        is_hypertable: false,
+        has_triggers: false,
+        cleanup_protected: true,
+    },
+    TableMeta {
+        schema: "privacy",
+        name: "rules",
+        qualified_name: "privacy.rules",
+        is_hypertable: false,
+        has_triggers: false,
+        cleanup_protected: true,
+    },
+    TableMeta {
+        schema: "privacy",
+        name: "field_rules",
+        qualified_name: "privacy.field_rules",
+        is_hypertable: false,
+        has_triggers: false,
+        cleanup_protected: true,
+    },
 ];
 
 #[must_use]

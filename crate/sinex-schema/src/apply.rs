@@ -762,6 +762,10 @@ async fn create_tables(pool: &PgPool) -> Result<(), ApplyError> {
     execute_sql(pool, &ArchivedEventEmbeddings::create_table_sql()).await?;
     execute_sql(pool, &ArchivedTaggedItems::create_table_sql()).await?;
 
+    // Privacy policy tables (#1042). Raw DDL with inline named CHECK constraints,
+    // mirroring the dlq_events pattern. CREATE TABLE IF NOT EXISTS is idempotent.
+    execute_sql(pool, PRIVACY_SCHEMA_SQL).await?;
+
     Ok(())
 }
 
@@ -1120,6 +1124,62 @@ CREATE INDEX IF NOT EXISTS idx_dlq_events_category ON sinex_schemas.dlq_events (
 DROP TRIGGER IF EXISTS set_timestamp ON sinex_schemas.dlq_events;
 CREATE TRIGGER set_timestamp
     BEFORE UPDATE ON sinex_schemas.dlq_events
+    FOR EACH ROW
+    EXECUTE FUNCTION public.set_current_timestamp_updated_at();
+";
+
+// Privacy policy schema (#1042). User-controlled, DB-backed redaction policy
+// managed via `sinexctl privacy` (CLI deferred to a follow-up) and enforced at
+// the ingestd persistence chokepoint. Key MATERIAL never lives in the DB — the
+// `encryption_keys` table is a namespace registry only; key bytes resolve from
+// env/files via the existing KeyConfig pattern.
+const PRIVACY_SCHEMA_SQL: &str = r"
+CREATE TABLE IF NOT EXISTS privacy.encryption_keys (
+    id          UUID PRIMARY KEY DEFAULT uuidv7(),
+    name        TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT encryption_keys_name_unique UNIQUE (name),
+    CONSTRAINT encryption_keys_name_nonempty CHECK (char_length(name) > 0)
+);
+
+CREATE TABLE IF NOT EXISTS privacy.rules (
+    id             UUID PRIMARY KEY DEFAULT uuidv7(),
+    name           TEXT NOT NULL,
+    description    TEXT NOT NULL DEFAULT '',
+    matcher_type   TEXT NOT NULL,
+    matcher_value  TEXT NOT NULL,
+    case_sensitive BOOLEAN NOT NULL DEFAULT FALSE,
+    action         TEXT NOT NULL,
+    action_label   TEXT,
+    key_namespace  TEXT NOT NULL DEFAULT 'default',
+    enabled        BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT rules_name_unique UNIQUE (name),
+    CONSTRAINT rules_name_nonempty CHECK (char_length(name) > 0),
+    CONSTRAINT rules_matcher_type_valid CHECK (matcher_type IN ('regex', 'literal')),
+    CONSTRAINT rules_action_valid CHECK (action IN ('redact', 'hash', 'encrypt', 'suppress'))
+);
+
+CREATE TABLE IF NOT EXISTS privacy.field_rules (
+    id           UUID PRIMARY KEY DEFAULT uuidv7(),
+    rule_id      UUID NOT NULL REFERENCES privacy.rules(id) ON DELETE CASCADE,
+    event_source TEXT,
+    event_type   TEXT,
+    field_path   TEXT,
+    priority     INTEGER NOT NULL DEFAULT 0,
+    created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT field_rules_scope_unique
+        UNIQUE NULLS NOT DISTINCT (rule_id, event_source, event_type, field_path)
+);
+
+CREATE INDEX IF NOT EXISTS ix_field_rules_scope
+    ON privacy.field_rules (event_source, event_type);
+
+DROP TRIGGER IF EXISTS trg_privacy_rules_updated_at ON privacy.rules;
+CREATE TRIGGER trg_privacy_rules_updated_at
+    BEFORE UPDATE ON privacy.rules
     FOR EACH ROW
     EXECUTE FUNCTION public.set_current_timestamp_updated_at();
 ";
@@ -2217,6 +2277,12 @@ ORDER BY last_updated DESC;
 // the database owner role.
 const ROLE_GRANTS_SQL: &str = r"
 GRANT USAGE ON SCHEMA core, raw, sinex_schemas, audit TO sinex_ingestd, sinex_gateway, sinex_readonly;
+
+-- Privacy policy (#1042): ingestd loads rules at the chokepoint; gateway manages
+-- them via sinexctl; readonly may inspect.
+GRANT USAGE ON SCHEMA privacy TO sinex_ingestd, sinex_gateway, sinex_readonly;
+GRANT SELECT ON ALL TABLES IN SCHEMA privacy TO sinex_ingestd, sinex_readonly;
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA privacy TO sinex_gateway;
 
 
 GRANT EXECUTE ON FUNCTION core.start_operation TO sinex_gateway;

@@ -47,6 +47,11 @@ pub const SINEX_SCHEMAS: &[SchemaInfo] = &[
         description: "Metrics and monitoring data",
         requires_grants: true,
     },
+    SchemaInfo {
+        name: "privacy",
+        description: "User-controlled privacy policy (rules, field scopes, key namespaces)",
+        requires_grants: true,
+    },
 ];
 
 /// Metadata about a database schema.
