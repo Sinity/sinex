@@ -143,6 +143,68 @@ pub struct JobCoordinator {
     locks_dir: PathBuf,
 }
 
+/// Emit a structured tracing event for each coordination decision.
+fn log_coordination_decision(
+    command: &str,
+    scope_key: &str,
+    tree_fingerprint: &str,
+    result: &CoordinationResult,
+) {
+    let decision = match result {
+        CoordinationResult::Started { .. } => "started",
+        CoordinationResult::Superseded { .. } => "superseded",
+        CoordinationResult::Attached { .. } => "attached",
+        CoordinationResult::Fresh { .. } => "fresh",
+        CoordinationResult::Queued { .. } => "queued",
+    };
+    match result {
+        CoordinationResult::Fresh { invocation_id, .. } => {
+            tracing::info!(
+                target: "xtask::coordinator",
+                command = command,
+                decision = decision,
+                scope_key = %scope_key,
+                tree_fingerprint = %tree_fingerprint,
+                invocation_id = invocation_id,
+                "coordinator decision"
+            );
+        }
+        CoordinationResult::Started { job_id } | CoordinationResult::Attached { job_id } => {
+            tracing::info!(
+                target: "xtask::coordinator",
+                command = command,
+                decision = decision,
+                scope_key = %scope_key,
+                tree_fingerprint = %tree_fingerprint,
+                job_id = job_id,
+                "coordinator decision"
+            );
+        }
+        CoordinationResult::Superseded { new_job_id, .. } => {
+            tracing::info!(
+                target: "xtask::coordinator",
+                command = command,
+                decision = decision,
+                scope_key = %scope_key,
+                tree_fingerprint = %tree_fingerprint,
+                job_id = new_job_id,
+                "coordinator decision"
+            );
+        }
+        CoordinationResult::Queued { current_job_id } => {
+            tracing::info!(
+                target: "xtask::coordinator",
+                command = command,
+                decision = decision,
+                scope_key = %scope_key,
+                tree_fingerprint = %tree_fingerprint,
+                job_id = current_job_id,
+                "coordinator decision"
+            );
+        }
+    }
+}
+
 impl JobCoordinator {
     /// Create a new coordinator, ensuring the locks directory exists.
     pub fn new() -> Result<Self> {
@@ -324,64 +386,8 @@ impl JobCoordinator {
             )?
         };
 
-        // R5: Log every coordination decision with structured fields so all decisions
-        // are observable regardless of whether coordination_to_result() is called.
-        {
-            let decision = match &result {
-                CoordinationResult::Started { .. } => "started",
-                CoordinationResult::Superseded { .. } => "superseded",
-                CoordinationResult::Attached { .. } => "attached",
-                CoordinationResult::Fresh { .. } => "fresh",
-                CoordinationResult::Queued { .. } => "queued",
-            };
-            match &result {
-                CoordinationResult::Fresh { invocation_id, .. } => {
-                    tracing::info!(
-                        target: "xtask::coordinator",
-                        command = command,
-                        decision = decision,
-                        scope_key = %scope_key,
-                        tree_fingerprint = %tree_fingerprint,
-                        invocation_id = invocation_id,
-                        "coordinator decision"
-                    );
-                }
-                CoordinationResult::Started { job_id }
-                | CoordinationResult::Attached { job_id } => {
-                    tracing::info!(
-                        target: "xtask::coordinator",
-                        command = command,
-                        decision = decision,
-                        scope_key = %scope_key,
-                        tree_fingerprint = %tree_fingerprint,
-                        job_id = job_id,
-                        "coordinator decision"
-                    );
-                }
-                CoordinationResult::Superseded { new_job_id, .. } => {
-                    tracing::info!(
-                        target: "xtask::coordinator",
-                        command = command,
-                        decision = decision,
-                        scope_key = %scope_key,
-                        tree_fingerprint = %tree_fingerprint,
-                        job_id = new_job_id,
-                        "coordinator decision"
-                    );
-                }
-                CoordinationResult::Queued { current_job_id } => {
-                    tracing::info!(
-                        target: "xtask::coordinator",
-                        command = command,
-                        decision = decision,
-                        scope_key = %scope_key,
-                        tree_fingerprint = %tree_fingerprint,
-                        job_id = current_job_id,
-                        "coordinator decision"
-                    );
-                }
-            }
-        }
+        // R5: Log every coordination decision with structured fields.
+        log_coordination_decision(command, &scope_key, &tree_fingerprint, &result);
 
         // Lock released on drop of lock_file
         Ok(result)
@@ -1746,97 +1752,98 @@ pub fn update_coordinator_state(command: &str, bg_result: &CommandResult) -> Res
 }
 
 /// Convert a coordination result to a command result for the --bg path.
+fn coordination_attached_result(job_id: i64, ctx: &CommandContext) -> CommandResult {
+    tracing::info!(
+        target: "xtask::coordinator",
+        job_id = job_id,
+        action = "attached",
+        "coordinator: attached — identical coordinated job already running"
+    );
+    if ctx.is_human() {
+        println!("🔗 Attached: identical coordinated job already running (job {job_id})");
+        println!("   Monitor: xtask jobs status {job_id}");
+    }
+    CommandResult::success()
+        .with_message(format!("Attached to running job {job_id}"))
+        .with_data(serde_json::json!({
+            "action": "attached",
+            "job_id": job_id,
+            "hint": format!("Monitor with: xtask jobs status {job_id}"),
+        }))
+}
+
+fn coordination_superseded_result(old_job_id: i64, new_job_id: i64, ctx: &CommandContext) -> CommandResult {
+    tracing::info!(
+        target: "xtask::coordinator",
+        old_job_id = old_job_id,
+        new_job_id = new_job_id,
+        action = "superseded",
+        "coordinator: superseded — cancelled stale job, starting fresh"
+    );
+    if ctx.is_human() {
+        println!("♻ Superseded: cancelled stale job {old_job_id}, starting fresh job {new_job_id}");
+    }
+    CommandResult::success()
+        .with_message(format!("Superseded job {old_job_id} with {new_job_id}"))
+        .with_data(serde_json::json!({
+            "action": "superseded",
+            "old_job_id": old_job_id,
+            "new_job_id": new_job_id,
+        }))
+}
+
+fn coordination_queued_result(current_job_id: i64, ctx: &CommandContext) -> CommandResult {
+    tracing::info!(
+        target: "xtask::coordinator",
+        current_job_id = current_job_id,
+        action = "queued",
+        "coordinator: queued — waiting for running job to complete"
+    );
+    let pending_job_assignment = current_job_id < 0;
+    if ctx.is_human() {
+        if pending_job_assignment {
+            println!("⏳ Queued: waiting for the active coordinated slot to finish assigning its next job id");
+            println!("   Monitor: xtask jobs active");
+        } else {
+            println!("⏳ Queued: waiting for job {current_job_id} to complete");
+            println!("   Monitor: xtask jobs status {current_job_id}");
+        }
+    }
+    CommandResult::success()
+        .with_message(if pending_job_assignment {
+            "Queued behind an active coordinated slot awaiting job assignment".to_string()
+        } else {
+            format!("Queued behind job {current_job_id}")
+        })
+        .with_data(serde_json::json!({
+            "action": "queued",
+            "current_job_id": (!pending_job_assignment).then_some(current_job_id),
+            "current_job_pending_assignment": pending_job_assignment,
+            "hint": if pending_job_assignment {
+                "Monitor with: xtask jobs active".to_string()
+            } else {
+                format!("Monitor with: xtask jobs status {current_job_id}")
+            },
+        }))
+}
+
 pub fn coordination_to_result(result: &CoordinationResult, ctx: &CommandContext) -> CommandResult {
     match result {
-        CoordinationResult::Fresh {
-            invocation_id,
-            status,
-            duration_secs,
-        } => coordination_fresh_result(
-            *invocation_id,
-            status,
-            *duration_secs,
-            ctx,
-            fresh_packages_probe(*invocation_id),
-        ),
-        CoordinationResult::Attached { job_id } => {
-            tracing::info!(
-                target: "xtask::coordinator",
-                job_id = job_id,
-                action = "attached",
-                "coordinator: attached — identical coordinated job already running"
-            );
-            if ctx.is_human() {
-                println!("🔗 Attached: identical coordinated job already running (job {job_id})");
-                println!("   Monitor: xtask jobs status {job_id}");
-            }
-            CommandResult::success()
-                .with_message(format!("Attached to running job {job_id}"))
-                .with_data(serde_json::json!({
-                    "action": "attached",
-                    "job_id": job_id,
-                    "hint": format!("Monitor with: xtask jobs status {job_id}"),
-                }))
+        CoordinationResult::Fresh { invocation_id, status, duration_secs } => {
+            coordination_fresh_result(
+                *invocation_id,
+                status,
+                *duration_secs,
+                ctx,
+                fresh_packages_probe(*invocation_id),
+            )
         }
-        CoordinationResult::Superseded {
-            old_job_id,
-            new_job_id,
-        } => {
-            tracing::info!(
-                target: "xtask::coordinator",
-                old_job_id = old_job_id,
-                new_job_id = new_job_id,
-                action = "superseded",
-                "coordinator: superseded — cancelled stale job, starting fresh"
-            );
-            if ctx.is_human() {
-                println!(
-                    "♻ Superseded: cancelled stale job {old_job_id}, starting fresh job {new_job_id}"
-                );
-            }
-            CommandResult::success()
-                .with_message(format!("Superseded job {old_job_id} with {new_job_id}"))
-                .with_data(serde_json::json!({
-                    "action": "superseded",
-                    "old_job_id": old_job_id,
-                    "new_job_id": new_job_id,
-                }))
+        CoordinationResult::Attached { job_id } => coordination_attached_result(*job_id, ctx),
+        CoordinationResult::Superseded { old_job_id, new_job_id } => {
+            coordination_superseded_result(*old_job_id, *new_job_id, ctx)
         }
         CoordinationResult::Queued { current_job_id } => {
-            tracing::info!(
-                target: "xtask::coordinator",
-                current_job_id = current_job_id,
-                action = "queued",
-                "coordinator: queued — waiting for running job to complete"
-            );
-            let pending_job_assignment = *current_job_id < 0;
-            if ctx.is_human() {
-                if pending_job_assignment {
-                    println!(
-                        "⏳ Queued: waiting for the active coordinated slot to finish assigning its next job id"
-                    );
-                    println!("   Monitor: xtask jobs active");
-                } else {
-                    println!("⏳ Queued: waiting for job {current_job_id} to complete");
-                    println!("   Monitor: xtask jobs status {current_job_id}");
-                }
-            }
-            CommandResult::success()
-                .with_message(if pending_job_assignment {
-                    "Queued behind an active coordinated slot awaiting job assignment".to_string()
-                } else {
-                    format!("Queued behind job {current_job_id}")
-                })
-                .with_data(serde_json::json!({
-                    "action": "queued",
-                    "current_job_id": (!pending_job_assignment).then_some(current_job_id),
-                    "current_job_pending_assignment": pending_job_assignment,
-                    "hint": if pending_job_assignment {
-                        "Monitor with: xtask jobs active".to_string()
-                    } else {
-                        format!("Monitor with: xtask jobs status {current_job_id}")
-                    },
-                }))
+            coordination_queued_result(*current_job_id, ctx)
         }
         CoordinationResult::Started { job_id } => {
             tracing::info!(
