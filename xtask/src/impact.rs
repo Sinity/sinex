@@ -162,8 +162,8 @@ pub fn plan_default_test_impact_with_history_and_mode(
     };
     plan_from_changed_files_with_mode(
         changed_files,
-        hunks,
-        item_index,
+        &hunks,
+        &item_index,
         affected_packages,
         impacted_tests,
         mode,
@@ -177,8 +177,8 @@ pub fn plan_from_changed_files(
 ) -> Result<ImpactPlan> {
     plan_from_changed_files_with_mode(
         changed_files,
-        Vec::new(),
-        RustItemIndex::default(),
+        &[],
+        &RustItemIndex::default(),
         affected_packages,
         impacted_tests,
         ImpactMode::Balanced,
@@ -187,14 +187,14 @@ pub fn plan_from_changed_files(
 
 pub fn plan_from_changed_files_with_mode(
     changed_files: Vec<String>,
-    hunks: Vec<FileChangedHunks>,
-    item_index: RustItemIndex,
+    hunks: &[FileChangedHunks],
+    item_index: &RustItemIndex,
     affected_packages: Vec<String>,
     impacted_tests: Vec<ImpactedTest>,
     mode: ImpactMode,
 ) -> Result<ImpactPlan> {
     if matches!(mode, ImpactMode::Off) {
-        let mut changed = changed_items(changed_files, &hunks, &item_index);
+        let mut changed = changed_items(changed_files, hunks, item_index);
         changed.sort_by(|left, right| left.path.cmp(&right.path));
         let mut decisions = Vec::new();
         let affected_packages = affected_packages.into_iter().collect::<BTreeSet<_>>();
@@ -761,14 +761,14 @@ mod tests {
     async fn impact_plan_falls_back_when_changed_hunk_is_not_covered() -> TestResult<()> {
         let plan = plan_from_changed_files_with_mode(
             vec!["xtask/src/impact.rs".to_string()],
-            vec![FileChangedHunks {
+            &[FileChangedHunks {
                 path: "xtask/src/impact.rs".to_string(),
                 hunks: vec![ChangedHunk {
                     line_start: 90,
                     line_end: 90,
                 }],
             }],
-            RustItemIndex::default(),
+            &RustItemIndex::default(),
             vec!["xtask".to_string()],
             vec![ImpactedTest {
                 package: Some("xtask".to_string()),

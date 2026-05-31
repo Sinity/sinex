@@ -575,12 +575,7 @@ fn execute_pressure(
     let io = crate::process::read_pressure_snapshot("io");
     let memory = crate::process::read_pressure_snapshot("memory");
     let shm = crate::process::shm_usage_mb();
-    let pressure = crate::resources::PressureRecommendation::from_snapshots(
-        cpu.clone(),
-        io.clone(),
-        memory.clone(),
-        shm,
-    );
+    let pressure = crate::resources::PressureRecommendation::from_snapshots(cpu, io, memory, shm);
     let observe_output = if observe {
         run_sinnix_observe(since, duration, limit)
     } else {
