@@ -322,7 +322,11 @@ impl MaterialParser for DocsLibraryParser {
                 }
                 result.text.into_owned()
             }
-            Err(_) => path_buf.to_string(),
+            // Fail closed: if the privacy engine cannot initialize we must not
+            // emit the raw path. Propagate the error rather than leaking it.
+            Err(e) => {
+                return Err(ParserError::Privacy(format!("privacy engine: {e}")));
+            }
         };
 
         let payload = serde_json::json!({

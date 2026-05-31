@@ -192,13 +192,17 @@ impl MaterialParser for JournaldParser {
             Err(e) => return Err(ParserError::Privacy(format!("privacy engine: {e}"))),
         };
 
-        let cmdline =
-            json.get("_CMDLINE")
-                .and_then(|v| v.as_str())
-                .map(|s| match privacy::engine() {
-                    Ok(eng) => eng.process(s, ProcessingContext::Command).text.into_owned(),
-                    Err(_) => s.to_string(),
-                });
+        // Fail closed: the command line can carry secrets (Sensitive tier).
+        // If the privacy engine cannot initialize, propagate the error so the
+        // event is dropped rather than emitting the raw command line.
+        let cmdline = json
+            .get("_CMDLINE")
+            .and_then(|v| v.as_str())
+            .map(|s| match privacy::engine() {
+                Ok(eng) => Ok(eng.process(s, ProcessingContext::Command).text.into_owned()),
+                Err(e) => Err(ParserError::Privacy(format!("privacy engine: {e}"))),
+            })
+            .transpose()?;
 
         let exe = json
             .get("_EXE")
