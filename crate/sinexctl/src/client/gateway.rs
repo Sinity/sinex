@@ -677,7 +677,6 @@ impl GatewayClient {
                 NodeRole::Core => NodeType::Service,
                 NodeRole::Gateway => NodeType::Service,
             }),
-            ..Default::default()
         };
         let response: ListInstancesResponse = self
             .call_typed(COORDINATION_LIST_INSTANCES_METHOD, &req)

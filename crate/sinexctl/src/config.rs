@@ -270,17 +270,17 @@ impl Config {
             self.rpc_url = base_url;
         }
         if let Some(token_file) = target.gateway.token_file.clone() {
-            self.token_file = Some(path_to_string(token_file));
+            self.token_file = Some(path_to_string(&token_file));
         }
         self.token_role = target.gateway.token_role;
         if let Some(ca_cert) = target.gateway.ca_cert_file.clone() {
-            self.ca_cert = Some(path_to_string(ca_cert));
+            self.ca_cert = Some(path_to_string(&ca_cert));
         }
         if let Some(client_cert) = target.gateway.client_cert_file.clone() {
-            self.client_cert = Some(path_to_string(client_cert));
+            self.client_cert = Some(path_to_string(&client_cert));
         }
         if let Some(client_key) = target.gateway.client_key_file.clone() {
-            self.client_key = Some(path_to_string(client_key));
+            self.client_key = Some(path_to_string(&client_key));
         }
         if target.gateway.insecure {
             self.insecure = true;
@@ -336,7 +336,7 @@ impl Default for Config {
     }
 }
 
-fn path_to_string(path: PathBuf) -> String {
+fn path_to_string(path: &std::path::Path) -> String {
     path.to_string_lossy().into_owned()
 }
 

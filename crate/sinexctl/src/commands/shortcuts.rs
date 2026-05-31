@@ -57,289 +57,10 @@ impl StatusCommand {
         let mut signals = Vec::new();
         let mut warnings = Vec::new();
 
-        // Gateway connectivity
-        let gateway_signal = match client.version().await {
-            Ok(version) => RuntimeStatusSignal {
-                name: "gateway".to_string(),
-                status: RuntimeStatusSignalStatus::Healthy,
-                source: "gateway version probe".to_string(),
-                message: Some(format!("v{version}")),
-            },
-            Err(e) => {
-                warnings.push(RuntimeStatusWarning {
-                    source: "gateway".to_string(),
-                    message: format!("unreachable: {e}"),
-                });
-                RuntimeStatusSignal {
-                    name: "gateway".to_string(),
-                    status: RuntimeStatusSignalStatus::Unhealthy,
-                    source: "gateway version probe".to_string(),
-                    message: Some(e.to_string()),
-                }
-            }
-        };
-        signals.push(gateway_signal);
-
-        match private_mode_signal(target.state.state_dir.as_deref()) {
-            Ok(signal) => signals.push(signal),
-            Err(warning) => {
-                warnings.push(warning.clone());
-                warnings.push(private_mode_unavailable_privacy_warning());
-                signals.push(RuntimeStatusSignal {
-                    name: "private-mode".to_string(),
-                    status: RuntimeStatusSignalStatus::Unknown,
-                    source: "runtime private-mode state file".to_string(),
-                    message: Some(warning.message),
-                });
-                signals.push(private_mode_unavailable_privacy_signal());
-            }
-        }
-
-        // DB pool health + NATS connection status (via system.health RPC)
-        match client.health().await {
-            Ok(health) => {
-                let db_status = if health.components.database.connected {
-                    RuntimeStatusSignalStatus::Healthy
-                } else {
-                    RuntimeStatusSignalStatus::Unhealthy
-                };
-                let db_msg = {
-                    let mut parts = Vec::new();
-                    if let Some(latency) = health.components.database.latency_ms {
-                        parts.push(format!("{latency:.0}ms"));
-                    }
-                    if let Some(ref detail) = health.components.database.detail {
-                        parts.push(detail.clone());
-                    }
-                    if parts.is_empty() {
-                        None
-                    } else {
-                        Some(parts.join(", "))
-                    }
-                };
-                signals.push(RuntimeStatusSignal {
-                    name: "db".to_string(),
-                    status: db_status,
-                    source: "system.health database probe".to_string(),
-                    message: db_msg,
-                });
-
-                let nats_status = if health.components.nats.connected {
-                    RuntimeStatusSignalStatus::Healthy
-                } else {
-                    RuntimeStatusSignalStatus::Unhealthy
-                };
-                let nats_msg = {
-                    let mut parts = Vec::new();
-                    if let Some(latency) = health.components.nats.latency_ms {
-                        parts.push(format!("{latency:.0}ms"));
-                    }
-                    if let Some(ref detail) = health.components.nats.detail {
-                        parts.push(detail.clone());
-                    }
-                    if parts.is_empty() {
-                        None
-                    } else {
-                        Some(parts.join(", "))
-                    }
-                };
-                signals.push(RuntimeStatusSignal {
-                    name: "nats".to_string(),
-                    status: nats_status,
-                    source: "system.health NATS active probe".to_string(),
-                    message: nats_msg,
-                });
-
-                let sse = &health.components.sse_confirmation;
-                let sse_status = match sse.status {
-                    HealthStatus::Healthy => RuntimeStatusSignalStatus::Healthy,
-                    HealthStatus::Degraded => RuntimeStatusSignalStatus::Degraded,
-                    HealthStatus::Unhealthy | HealthStatus::Unknown => {
-                        RuntimeStatusSignalStatus::Unhealthy
-                    }
-                };
-                signals.push(RuntimeStatusSignal {
-                    name: "confirmation-path".to_string(),
-                    status: sse_status,
-                    source: "system.health SSE confirmation probe".to_string(),
-                    message: sse.detail.clone(),
-                });
-            }
-            Err(e) => {
-                warnings.push(RuntimeStatusWarning {
-                    source: "system.health".to_string(),
-                    message: format!("unavailable: {e}"),
-                });
-                signals.push(RuntimeStatusSignal {
-                    name: "db".to_string(),
-                    status: RuntimeStatusSignalStatus::Unknown,
-                    source: "system.health database probe".to_string(),
-                    message: Some("health probe failed".to_string()),
-                });
-                signals.push(RuntimeStatusSignal {
-                    name: "nats".to_string(),
-                    status: RuntimeStatusSignalStatus::Unknown,
-                    source: "system.health NATS active probe".to_string(),
-                    message: Some("health probe failed".to_string()),
-                });
-            }
-        }
-
-        // Nodes
-        match client.list_nodes(None).await {
-            Ok(nodes) => {
-                let total = nodes.len();
-                let now = Timestamp::now();
-                let healthy = nodes
-                    .iter()
-                    .filter(|n| {
-                        n.last_heartbeat
-                            .is_some_and(|hb| (now - hb).whole_seconds() < 60)
-                    })
-                    .count();
-                let status = if healthy == total {
-                    RuntimeStatusSignalStatus::Healthy
-                } else if healthy > 0 {
-                    RuntimeStatusSignalStatus::Degraded
-                } else {
-                    RuntimeStatusSignalStatus::Unhealthy
-                };
-                signals.push(RuntimeStatusSignal {
-                    name: "nodes".to_string(),
-                    status,
-                    source: "gateway nodes probe".to_string(),
-                    message: Some(format!("{healthy}/{total} healthy")),
-                });
-            }
-            Err(e) => {
-                warnings.push(RuntimeStatusWarning {
-                    source: "nodes".to_string(),
-                    message: format!("error: {e}"),
-                });
-                signals.push(RuntimeStatusSignal {
-                    name: "nodes".to_string(),
-                    status: RuntimeStatusSignalStatus::Unknown,
-                    source: "gateway nodes probe".to_string(),
-                    message: Some(e.to_string()),
-                });
-            }
-        }
-
-        // DLQ
-        match client.dlq_list().await {
-            Ok(stats) => {
-                let status = if stats.total_messages == 0 {
-                    RuntimeStatusSignalStatus::Healthy
-                } else {
-                    RuntimeStatusSignalStatus::Degraded
-                };
-                signals.push(RuntimeStatusSignal {
-                    name: "dlq".to_string(),
-                    status,
-                    source: "gateway dlq probe".to_string(),
-                    message: Some(format!("{} messages", stats.total_messages)),
-                });
-                if let Some(signal) = privacy_dlq_signal(stats.total_messages) {
-                    signals.push(signal);
-                }
-                if let Some(warning) = privacy_dlq_warning(stats.total_messages) {
-                    warnings.push(warning);
-                }
-            }
-            Err(e) => {
-                warnings.push(RuntimeStatusWarning {
-                    source: "dlq".to_string(),
-                    message: format!("error: {e}"),
-                });
-                warnings.push(RuntimeStatusWarning {
-                    source: "privacy.dlq".to_string(),
-                    message: format!("DLQ privacy posture unknown: {e}"),
-                });
-                signals.push(RuntimeStatusSignal {
-                    name: "dlq".to_string(),
-                    status: RuntimeStatusSignalStatus::Unknown,
-                    source: "gateway dlq probe".to_string(),
-                    message: Some(e.to_string()),
-                });
-                signals.push(RuntimeStatusSignal {
-                    name: "privacy-dlq".to_string(),
-                    status: RuntimeStatusSignalStatus::Unknown,
-                    source: "gateway dlq privacy probe".to_string(),
-                    message: Some("DLQ backlog could not be inspected".to_string()),
-                });
-            }
-        }
-
-        match client
-            .sources_readiness_list(SourcesReadinessListRequest::default())
-            .await
-        {
-            Ok(response) => {
-                let summary = summarize_source_readiness(&response.sources);
-                signals.push(source_readiness_signal(&summary));
-                if let Some(warning) = source_readiness_warning(&summary) {
-                    warnings.push(warning);
-                }
-            }
-            Err(e) => {
-                warnings.push(RuntimeStatusWarning {
-                    source: "sources.readiness".to_string(),
-                    message: format!("capture-gap readiness unavailable: {e}"),
-                });
-                signals.push(RuntimeStatusSignal {
-                    name: "source-readiness".to_string(),
-                    status: RuntimeStatusSignalStatus::Unknown,
-                    source: "sources.readiness capture-gap probe".to_string(),
-                    message: Some("capture-gap readiness could not be inspected".to_string()),
-                });
-            }
-        }
-
-        // Emit-rate stall detection for source units (issue #992).
-        //
-        // Heartbeats prove liveness, not productivity. Surface units that are
-        // alive and past the uptime gate but have not emitted in `quiet_secs`.
-        let thresholds = EmitStallThresholds::from_env_or_default();
-        // Use the recent-event window to size the freshness check so the
-        // classifier inspects the same window as the underlying RPC.
-        let recent_window_secs = thresholds.quiet_secs.max(60);
-        let stale_after_secs = thresholds.quiet_secs.max(60);
-        let stalled_units = match client
-            .ingestors_status(stale_after_secs, recent_window_secs)
-            .await
-        {
-            Ok(resp) => {
-                let now = resp.generated_at;
-                resp.ingestors
-                    .into_iter()
-                    .filter_map(|ing| {
-                        let verdict = ing.classify_emit_stall(thresholds, now);
-                        verdict.is_degraded().then_some((ing, verdict))
-                    })
-                    .collect::<Vec<_>>()
-            }
-            Err(e) => {
-                warnings.push(RuntimeStatusWarning {
-                    source: "ingestors.status".to_string(),
-                    message: format!("emit-rate stall check unavailable: {e}"),
-                });
-                Vec::new()
-            }
-        };
-
-        if !stalled_units.is_empty() {
-            signals.push(RuntimeStatusSignal {
-                name: "emit-rate".to_string(),
-                status: RuntimeStatusSignalStatus::Degraded,
-                source: "ingestors.status emit-stall classifier".to_string(),
-                message: Some(format!(
-                    "{} stalled source unit(s) (quiet ≥ {}s, uptime ≥ {}s)",
-                    stalled_units.len(),
-                    thresholds.quiet_secs,
-                    thresholds.uptime_gate_secs,
-                )),
-            });
-        }
+        collect_gateway_and_health_signals(client, &target, &mut signals, &mut warnings).await;
+        collect_node_and_dlq_signals(client, &mut signals, &mut warnings).await;
+        let stalled_units =
+            collect_source_and_stall_signals(client, &mut signals, &mut warnings).await;
 
         let snapshot = RuntimeStatusSnapshot {
             target,
@@ -355,74 +76,377 @@ impl StatusCommand {
                 println!("{}", serde_yml::to_string(&snapshot)?);
             }
             OutputFormat::Table => {
-                println!("{}", style("System Status").bold().cyan());
-                println!("{}", style("═".repeat(50)).dim());
-
-                println!(
-                    "Target:  {} {}",
-                    style("●").cyan(),
-                    style(format!(
-                        "{} ({})",
-                        snapshot.target.name,
-                        runtime_target_kind_label(&snapshot.target.kind)
-                    ))
-                    .cyan()
-                );
-                if let Some(source) = &snapshot.target.source {
-                    println!("         {}", style(format!("source: {source}")).dim());
-                }
-                if let Some(path) = &snapshot.target.source_path {
-                    println!(
-                        "         {}",
-                        style(format!("descriptor: {}", path.display())).dim()
-                    );
-                }
-
-                for signal in &snapshot.signals {
-                    let color = match signal.status {
-                        RuntimeStatusSignalStatus::Healthy => style("●").green(),
-                        RuntimeStatusSignalStatus::Degraded => style("●").yellow(),
-                        RuntimeStatusSignalStatus::Unhealthy => style("●").red(),
-                        RuntimeStatusSignalStatus::Unknown => style("●").dim(),
-                        RuntimeStatusSignalStatus::Skipped => style("●").dim(),
-                        RuntimeStatusSignalStatus::Stale => style("●").yellow(),
-                    };
-
-                    let name = format!("{:width$}", signal.name, width = 8);
-                    let message = signal.message.as_deref().unwrap_or("");
-                    println!("{name}: {color} {message}");
-                }
-
-                for warning in &snapshot.warnings {
-                    println!("Warning [{}]: {}", warning.source, warning.message);
-                }
-
-                if !stalled_units.is_empty() {
-                    println!();
-                    println!("{}", style("Stalled source units").bold().yellow());
-                    println!("{}", style("─".repeat(50)).dim());
-                    for (ing, verdict) in &stalled_units {
-                        let last = ing
-                            .last_output_at
-                            .map_or_else(|| "never".to_string(), |t| t.to_string());
-                        let uptime = ing.started_at.map_or_else(
-                            || "?".to_string(),
-                            |s| format!("{}s", (Timestamp::now() - s).whole_seconds()),
-                        );
-                        println!(
-                            "  {} {}  ({}, uptime {}, last_output {})",
-                            style("●").yellow(),
-                            ing.node_name,
-                            verdict.label(),
-                            uptime,
-                            last,
-                        );
-                    }
-                }
+                render_status_table(&snapshot, &stalled_units);
             }
         }
 
         Ok(())
+    }
+}
+
+async fn collect_gateway_and_health_signals(
+    client: &GatewayClient,
+    target: &RuntimeTargetDescriptor,
+    signals: &mut Vec<RuntimeStatusSignal>,
+    warnings: &mut Vec<RuntimeStatusWarning>,
+) {
+    let gateway_signal = match client.version().await {
+        Ok(version) => RuntimeStatusSignal {
+            name: "gateway".to_string(),
+            status: RuntimeStatusSignalStatus::Healthy,
+            source: "gateway version probe".to_string(),
+            message: Some(format!("v{version}")),
+        },
+        Err(e) => {
+            warnings.push(RuntimeStatusWarning {
+                source: "gateway".to_string(),
+                message: format!("unreachable: {e}"),
+            });
+            RuntimeStatusSignal {
+                name: "gateway".to_string(),
+                status: RuntimeStatusSignalStatus::Unhealthy,
+                source: "gateway version probe".to_string(),
+                message: Some(e.to_string()),
+            }
+        }
+    };
+    signals.push(gateway_signal);
+
+    match private_mode_signal(target.state.state_dir.as_deref()) {
+        Ok(signal) => signals.push(signal),
+        Err(warning) => {
+            warnings.push(warning.clone());
+            warnings.push(private_mode_unavailable_privacy_warning());
+            signals.push(RuntimeStatusSignal {
+                name: "private-mode".to_string(),
+                status: RuntimeStatusSignalStatus::Unknown,
+                source: "runtime private-mode state file".to_string(),
+                message: Some(warning.message),
+            });
+            signals.push(private_mode_unavailable_privacy_signal());
+        }
+    }
+
+    collect_health_probe_signals(client, signals, warnings).await;
+}
+
+async fn collect_health_probe_signals(
+    client: &GatewayClient,
+    signals: &mut Vec<RuntimeStatusSignal>,
+    warnings: &mut Vec<RuntimeStatusWarning>,
+) {
+    match client.health().await {
+        Ok(health) => {
+            let db_status = if health.components.database.connected {
+                RuntimeStatusSignalStatus::Healthy
+            } else {
+                RuntimeStatusSignalStatus::Unhealthy
+            };
+            let db_msg = component_latency_message(
+                health.components.database.latency_ms,
+                health.components.database.detail.as_deref(),
+            );
+            signals.push(RuntimeStatusSignal {
+                name: "db".to_string(),
+                status: db_status,
+                source: "system.health database probe".to_string(),
+                message: db_msg,
+            });
+
+            let nats_status = if health.components.nats.connected {
+                RuntimeStatusSignalStatus::Healthy
+            } else {
+                RuntimeStatusSignalStatus::Unhealthy
+            };
+            let nats_msg = component_latency_message(
+                health.components.nats.latency_ms,
+                health.components.nats.detail.as_deref(),
+            );
+            signals.push(RuntimeStatusSignal {
+                name: "nats".to_string(),
+                status: nats_status,
+                source: "system.health NATS active probe".to_string(),
+                message: nats_msg,
+            });
+
+            let sse = &health.components.sse_confirmation;
+            let sse_status = match sse.status {
+                HealthStatus::Healthy => RuntimeStatusSignalStatus::Healthy,
+                HealthStatus::Degraded => RuntimeStatusSignalStatus::Degraded,
+                HealthStatus::Unhealthy | HealthStatus::Unknown => {
+                    RuntimeStatusSignalStatus::Unhealthy
+                }
+            };
+            signals.push(RuntimeStatusSignal {
+                name: "confirmation-path".to_string(),
+                status: sse_status,
+                source: "system.health SSE confirmation probe".to_string(),
+                message: sse.detail.clone(),
+            });
+        }
+        Err(e) => {
+            warnings.push(RuntimeStatusWarning {
+                source: "system.health".to_string(),
+                message: format!("unavailable: {e}"),
+            });
+            signals.push(RuntimeStatusSignal {
+                name: "db".to_string(),
+                status: RuntimeStatusSignalStatus::Unknown,
+                source: "system.health database probe".to_string(),
+                message: Some("health probe failed".to_string()),
+            });
+            signals.push(RuntimeStatusSignal {
+                name: "nats".to_string(),
+                status: RuntimeStatusSignalStatus::Unknown,
+                source: "system.health NATS active probe".to_string(),
+                message: Some("health probe failed".to_string()),
+            });
+        }
+    }
+}
+
+fn component_latency_message(latency_ms: Option<f64>, detail: Option<&str>) -> Option<String> {
+    let mut parts = Vec::new();
+    if let Some(latency) = latency_ms {
+        parts.push(format!("{latency:.0}ms"));
+    }
+    if let Some(d) = detail {
+        parts.push(d.to_string());
+    }
+    if parts.is_empty() { None } else { Some(parts.join(", ")) }
+}
+
+async fn collect_node_and_dlq_signals(
+    client: &GatewayClient,
+    signals: &mut Vec<RuntimeStatusSignal>,
+    warnings: &mut Vec<RuntimeStatusWarning>,
+) {
+    match client.list_nodes(None).await {
+        Ok(nodes) => {
+            let total = nodes.len();
+            let now = Timestamp::now();
+            let healthy = nodes
+                .iter()
+                .filter(|n| {
+                    n.last_heartbeat
+                        .is_some_and(|hb| (now - hb).whole_seconds() < 60)
+                })
+                .count();
+            let status = if healthy == total {
+                RuntimeStatusSignalStatus::Healthy
+            } else if healthy > 0 {
+                RuntimeStatusSignalStatus::Degraded
+            } else {
+                RuntimeStatusSignalStatus::Unhealthy
+            };
+            signals.push(RuntimeStatusSignal {
+                name: "nodes".to_string(),
+                status,
+                source: "gateway nodes probe".to_string(),
+                message: Some(format!("{healthy}/{total} healthy")),
+            });
+        }
+        Err(e) => {
+            warnings.push(RuntimeStatusWarning {
+                source: "nodes".to_string(),
+                message: format!("error: {e}"),
+            });
+            signals.push(RuntimeStatusSignal {
+                name: "nodes".to_string(),
+                status: RuntimeStatusSignalStatus::Unknown,
+                source: "gateway nodes probe".to_string(),
+                message: Some(e.to_string()),
+            });
+        }
+    }
+
+    match client.dlq_list().await {
+        Ok(stats) => {
+            let status = if stats.total_messages == 0 {
+                RuntimeStatusSignalStatus::Healthy
+            } else {
+                RuntimeStatusSignalStatus::Degraded
+            };
+            signals.push(RuntimeStatusSignal {
+                name: "dlq".to_string(),
+                status,
+                source: "gateway dlq probe".to_string(),
+                message: Some(format!("{} messages", stats.total_messages)),
+            });
+            if let Some(signal) = privacy_dlq_signal(stats.total_messages) {
+                signals.push(signal);
+            }
+            if let Some(warning) = privacy_dlq_warning(stats.total_messages) {
+                warnings.push(warning);
+            }
+        }
+        Err(e) => {
+            warnings.push(RuntimeStatusWarning {
+                source: "dlq".to_string(),
+                message: format!("error: {e}"),
+            });
+            warnings.push(RuntimeStatusWarning {
+                source: "privacy.dlq".to_string(),
+                message: format!("DLQ privacy posture unknown: {e}"),
+            });
+            signals.push(RuntimeStatusSignal {
+                name: "dlq".to_string(),
+                status: RuntimeStatusSignalStatus::Unknown,
+                source: "gateway dlq probe".to_string(),
+                message: Some(e.to_string()),
+            });
+            signals.push(RuntimeStatusSignal {
+                name: "privacy-dlq".to_string(),
+                status: RuntimeStatusSignalStatus::Unknown,
+                source: "gateway dlq privacy probe".to_string(),
+                message: Some("DLQ backlog could not be inspected".to_string()),
+            });
+        }
+    }
+}
+
+/// Collect source readiness and emit-stall signals.
+/// Returns the list of stalled units for table rendering.
+async fn collect_source_and_stall_signals(
+    client: &GatewayClient,
+    signals: &mut Vec<RuntimeStatusSignal>,
+    warnings: &mut Vec<RuntimeStatusWarning>,
+) -> Vec<(sinex_primitives::rpc::ingestors::IngestorStatus, sinex_primitives::rpc::ingestors::EmitStallVerdict)> {
+    match client
+        .sources_readiness_list(SourcesReadinessListRequest::default())
+        .await
+    {
+        Ok(response) => {
+            let summary = summarize_source_readiness(&response.sources);
+            signals.push(source_readiness_signal(&summary));
+            if let Some(warning) = source_readiness_warning(&summary) {
+                warnings.push(warning);
+            }
+        }
+        Err(e) => {
+            warnings.push(RuntimeStatusWarning {
+                source: "sources.readiness".to_string(),
+                message: format!("capture-gap readiness unavailable: {e}"),
+            });
+            signals.push(RuntimeStatusSignal {
+                name: "source-readiness".to_string(),
+                status: RuntimeStatusSignalStatus::Unknown,
+                source: "sources.readiness capture-gap probe".to_string(),
+                message: Some("capture-gap readiness could not be inspected".to_string()),
+            });
+        }
+    }
+
+    // Emit-rate stall detection for source units (issue #992).
+    //
+    // Heartbeats prove liveness, not productivity. Surface units that are
+    // alive and past the uptime gate but have not emitted in `quiet_secs`.
+    let thresholds = EmitStallThresholds::from_env_or_default();
+    let window_secs = thresholds.quiet_secs.max(60);
+    let stalled_units = match client.ingestors_status(window_secs, window_secs).await {
+        Ok(resp) => {
+            let now = resp.generated_at;
+            resp.ingestors
+                .into_iter()
+                .filter_map(|ing| {
+                    let verdict = ing.classify_emit_stall(thresholds, now);
+                    verdict.is_degraded().then_some((ing, verdict))
+                })
+                .collect::<Vec<_>>()
+        }
+        Err(e) => {
+            warnings.push(RuntimeStatusWarning {
+                source: "ingestors.status".to_string(),
+                message: format!("emit-rate stall check unavailable: {e}"),
+            });
+            Vec::new()
+        }
+    };
+
+    if !stalled_units.is_empty() {
+        signals.push(RuntimeStatusSignal {
+            name: "emit-rate".to_string(),
+            status: RuntimeStatusSignalStatus::Degraded,
+            source: "ingestors.status emit-stall classifier".to_string(),
+            message: Some(format!(
+                "{} stalled source unit(s) (quiet ≥ {}s, uptime ≥ {}s)",
+                stalled_units.len(),
+                thresholds.quiet_secs,
+                thresholds.uptime_gate_secs,
+            )),
+        });
+    }
+
+    stalled_units
+}
+
+fn render_status_table(
+    snapshot: &sinex_primitives::RuntimeStatusSnapshot,
+    stalled_units: &[(sinex_primitives::rpc::ingestors::IngestorStatus, sinex_primitives::rpc::ingestors::EmitStallVerdict)],
+) {
+    println!("{}", style("System Status").bold().cyan());
+    println!("{}", style("═".repeat(50)).dim());
+
+    println!(
+        "Target:  {} {}",
+        style("●").cyan(),
+        style(format!(
+            "{} ({})",
+            snapshot.target.name,
+            runtime_target_kind_label(&snapshot.target.kind)
+        ))
+        .cyan()
+    );
+    if let Some(source) = &snapshot.target.source {
+        println!("         {}", style(format!("source: {source}")).dim());
+    }
+    if let Some(path) = &snapshot.target.source_path {
+        println!(
+            "         {}",
+            style(format!("descriptor: {}", path.display())).dim()
+        );
+    }
+
+    for signal in &snapshot.signals {
+        let color = match signal.status {
+            RuntimeStatusSignalStatus::Healthy => style("●").green(),
+            RuntimeStatusSignalStatus::Degraded => style("●").yellow(),
+            RuntimeStatusSignalStatus::Unhealthy => style("●").red(),
+            RuntimeStatusSignalStatus::Unknown => style("●").dim(),
+            RuntimeStatusSignalStatus::Skipped => style("●").dim(),
+            RuntimeStatusSignalStatus::Stale => style("●").yellow(),
+        };
+
+        let name = format!("{:width$}", signal.name, width = 8);
+        let message = signal.message.as_deref().unwrap_or("");
+        println!("{name}: {color} {message}");
+    }
+
+    for warning in &snapshot.warnings {
+        println!("Warning [{}]: {}", warning.source, warning.message);
+    }
+
+    if !stalled_units.is_empty() {
+        println!();
+        println!("{}", style("Stalled source units").bold().yellow());
+        println!("{}", style("─".repeat(50)).dim());
+        for (ing, verdict) in stalled_units {
+            let last = ing
+                .last_output_at
+                .map_or_else(|| "never".to_string(), |t| t.to_string());
+            let uptime = ing.started_at.map_or_else(
+                || "?".to_string(),
+                |s| format!("{}s", (Timestamp::now() - s).whole_seconds()),
+            );
+            println!(
+                "  {} {}  ({}, uptime {}, last_output {})",
+                style("●").yellow(),
+                ing.node_name,
+                verdict.label(),
+                uptime,
+                last,
+            );
+        }
     }
 }
 

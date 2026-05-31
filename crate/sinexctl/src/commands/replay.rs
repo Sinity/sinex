@@ -217,20 +217,6 @@ pub enum ReplayCommands {
     },
 }
 
-fn replay_gate_overrides(
-    allow_anchor_churn: bool,
-    allow_time_quality_flips: bool,
-    allow_deep_cascade: bool,
-    force_schema_mismatch: bool,
-) -> ReplayGateOverrides {
-    ReplayGateOverrides {
-        allow_anchor_churn,
-        allow_time_quality_flips,
-        allow_deep_cascade,
-        force_schema_mismatch,
-    }
-}
-
 /// CLI filter for replay states (maps to `ReplayState`)
 #[derive(Debug, Clone, Copy, clap::ValueEnum)]
 pub enum ReplayStateFilter {
@@ -328,12 +314,12 @@ impl ReplayCommands {
                 let operation = client
                     .replay_execute_with_overrides(
                         operation_id,
-                        replay_gate_overrides(
-                            *allow_anchor_churn,
-                            *allow_time_quality_flips,
-                            *allow_deep_cascade,
-                            *force_schema_mismatch,
-                        ),
+                        ReplayGateOverrides {
+                            allow_anchor_churn: *allow_anchor_churn,
+                            allow_time_quality_flips: *allow_time_quality_flips,
+                            allow_deep_cascade: *allow_deep_cascade,
+                            force_schema_mismatch: *force_schema_mismatch,
+                        },
                     )
                     .await?;
                 CommandOutput::single(operation, format_replay_execute_table).display(&format)?;
@@ -349,12 +335,12 @@ impl ReplayCommands {
                 let operation = client
                     .replay_submit_with_overrides(
                         operation_id,
-                        replay_gate_overrides(
-                            *allow_anchor_churn,
-                            *allow_time_quality_flips,
-                            *allow_deep_cascade,
-                            *force_schema_mismatch,
-                        ),
+                        ReplayGateOverrides {
+                            allow_anchor_churn: *allow_anchor_churn,
+                            allow_time_quality_flips: *allow_time_quality_flips,
+                            allow_deep_cascade: *allow_deep_cascade,
+                            force_schema_mismatch: *force_schema_mismatch,
+                        },
                     )
                     .await?;
                 CommandOutput::single(operation, format_replay_submit_table).display(&format)?;
@@ -429,12 +415,12 @@ impl ReplayCommands {
                     materials,
                     event_types,
                     *dry_run,
-                    replay_gate_overrides(
-                        *allow_anchor_churn,
-                        *allow_time_quality_flips,
-                        *allow_deep_cascade,
-                        *force_schema_mismatch,
-                    ),
+                    ReplayGateOverrides {
+                        allow_anchor_churn: *allow_anchor_churn,
+                        allow_time_quality_flips: *allow_time_quality_flips,
+                        allow_deep_cascade: *allow_deep_cascade,
+                        force_schema_mismatch: *force_schema_mismatch,
+                    },
                     &format,
                 )
                 .await?;
