@@ -1585,76 +1585,112 @@ async fn handle_request(client: &GatewayClient, request: JsonRpcRequest) -> Resu
 }
 
 pub async fn call_tool(client: &GatewayClient, name: &str, arguments: Value) -> Result<Value> {
-    match name {
-        "sinex.search_events" => search_events(client, arguments).await,
-        "sinex.trace_lineage" => trace_lineage(client, arguments).await,
-        "sinex.source_readiness" => source_readiness(client, arguments).await,
-        "sinex.source_continuity" => source_continuity(client, arguments).await,
-        "sinex.source_drift" => source_drift(client, arguments).await,
-        "sinex.source_gap_explain" => source_gap_explain(client, arguments).await,
-        "sinex.source_identifier_continuity" => {
-            source_identifier_continuity(client, arguments).await
-        }
-        "sinex.privacy_status" => privacy_status(client, arguments).await,
-        "sinex.system_health" => system_health(client, arguments).await,
-        "sinex.tasks_list" => tasks_list(client, arguments).await,
-        "sinex.task_state" => task_state(client, arguments).await,
-        "sinex.replay_operations" => replay_operations(client, arguments).await,
-        "sinex.replay_status" => replay_status(client, arguments).await,
-        "sinex.documents_search" => documents_search(client, arguments).await,
-        "sinex.documents_get" => documents_get(client, arguments).await,
-        "sinex.documents_chunks" => documents_chunks(client, arguments).await,
-        "sinex.semantic_epochs" => semantic_epochs(client, arguments).await,
-        "sinex.semantic_lanes" => semantic_lanes(client, arguments).await,
-        "sinex.semantic_lane_outputs" => semantic_lane_outputs(client, arguments).await,
-        "sinex.semantic_lane_diffs" => semantic_lane_diffs(client, arguments).await,
-        "sinex.automata_status" => automata_status(client, arguments).await,
-        "sinex.ingestors_status" => ingestors_status(client, arguments).await,
-        "sinex.nodes_health" => nodes_health(client, arguments).await,
-        "sinex.nodes_active" => nodes_active(client, arguments).await,
-        "sinex.nodes_registry" => nodes_registry(client, arguments).await,
-        "sinex.ingestd_validation" => ingestd_validation(client, arguments).await,
-        "sinex.ingestd_batch_stats" => ingestd_batch_stats(client, arguments).await,
-        "sinex.throughput" => throughput(client, arguments).await,
-        "sinex.recent_activity" => recent_activity(client, arguments).await,
-        "sinex.command_frequency" => command_frequency(client, arguments).await,
-        "sinex.file_activity" => file_activity(client, arguments).await,
-        "sinex.system_state" => system_state(client, arguments).await,
-        "sinex.window_focus" => window_focus(client, arguments).await,
-        "sinex.current_health" => current_health(client, arguments).await,
-        "sinex.current_device_state" => current_device_state(client, arguments).await,
-        "sinex.gateway_stats" => gateway_stats(client, arguments).await,
-        "sinex.stream_stats" => stream_stats(client, arguments).await,
-        "sinex.assembly_stats" => assembly_stats(client, arguments).await,
-        "sinex.node_stats" => node_stats(client, arguments).await,
-        "sinex.metric_counters" => metric_counters(client, arguments).await,
-        "sinex.llm_prompts" => llm_prompts(client, arguments).await,
-        "sinex.llm_route_explain" => llm_route_explain(client, arguments).await,
-        "sinex.llm_budget_report" => llm_budget_report(client, arguments).await,
-        "sinex.curation_proposals" => curation_proposals(client, arguments).await,
-        "sinex.dlq_stats" => dlq_stats(client, arguments).await,
-        "sinex.dlq_peek" => dlq_peek(client, arguments).await,
-        "sinex.source_materials" => source_materials(client, arguments).await,
-        "sinex.source_material" => source_material(client, arguments).await,
-        "sinex.source_coverage" => source_coverage(client, arguments).await,
-        "sinex.source_presets" => source_presets(client, arguments).await,
-        "sinex.source_bindings" => source_bindings(client, arguments).await,
-        "sinex.ops_list" => ops_list(client, arguments).await,
-        "sinex.ops_get" => ops_get(client, arguments).await,
-        "sinex.lifecycle_status" => lifecycle_status(client, arguments).await,
-        "sinex.gitops_sources" => gitops_sources(client, arguments).await,
-        "sinex.audit_trail" => audit_trail(client, arguments).await,
-        "sinex.coordination_instances" => coordination_instances(client, arguments).await,
-        "sinex.coordination_leader" => coordination_leader(client, arguments).await,
-        "sinex.coordination_instance_health" => {
-            coordination_instance_health(client, arguments).await
-        }
-        "sinex.shadow_consumers" => shadow_consumers(client, arguments).await,
-        "sinex.system_ping" => system_ping(client, arguments).await,
-        "sinex.system_version" => system_version(client, arguments).await,
-        "sinex.context_pack" => context_pack(client, arguments).await,
-        other => Err(eyre!("unknown MCP tool: {other}")),
+    if let Some(result) = call_tool_events_sources(client, name, arguments.clone()).await? {
+        return Ok(result);
     }
+    if let Some(result) = call_tool_nodes_analytics(client, name, arguments.clone()).await? {
+        return Ok(result);
+    }
+    if let Some(result) = call_tool_ops_infra(client, name, arguments.clone()).await? {
+        return Ok(result);
+    }
+    Err(eyre!("unknown MCP tool: {name}"))
+}
+
+async fn call_tool_events_sources(
+    client: &GatewayClient,
+    name: &str,
+    arguments: Value,
+) -> Result<Option<Value>> {
+    let result = match name {
+        "sinex.search_events" => search_events(client, arguments).await?,
+        "sinex.trace_lineage" => trace_lineage(client, arguments).await?,
+        "sinex.source_readiness" => source_readiness(client, arguments).await?,
+        "sinex.source_continuity" => source_continuity(client, arguments).await?,
+        "sinex.source_drift" => source_drift(client, arguments).await?,
+        "sinex.source_gap_explain" => source_gap_explain(client, arguments).await?,
+        "sinex.source_identifier_continuity" => source_identifier_continuity(client, arguments).await?,
+        "sinex.source_materials" => source_materials(client, arguments).await?,
+        "sinex.source_material" => source_material(client, arguments).await?,
+        "sinex.source_coverage" => source_coverage(client, arguments).await?,
+        "sinex.source_presets" => source_presets(client, arguments).await?,
+        "sinex.source_bindings" => source_bindings(client, arguments).await?,
+        "sinex.privacy_status" => privacy_status(client, arguments).await?,
+        "sinex.tasks_list" => tasks_list(client, arguments).await?,
+        "sinex.task_state" => task_state(client, arguments).await?,
+        "sinex.replay_operations" => replay_operations(client, arguments).await?,
+        "sinex.replay_status" => replay_status(client, arguments).await?,
+        "sinex.documents_search" => documents_search(client, arguments).await?,
+        "sinex.documents_get" => documents_get(client, arguments).await?,
+        "sinex.documents_chunks" => documents_chunks(client, arguments).await?,
+        "sinex.semantic_epochs" => semantic_epochs(client, arguments).await?,
+        "sinex.semantic_lanes" => semantic_lanes(client, arguments).await?,
+        "sinex.semantic_lane_outputs" => semantic_lane_outputs(client, arguments).await?,
+        "sinex.semantic_lane_diffs" => semantic_lane_diffs(client, arguments).await?,
+        _ => return Ok(None),
+    };
+    Ok(Some(result))
+}
+
+async fn call_tool_nodes_analytics(
+    client: &GatewayClient,
+    name: &str,
+    arguments: Value,
+) -> Result<Option<Value>> {
+    let result = match name {
+        "sinex.automata_status" => automata_status(client, arguments).await?,
+        "sinex.ingestors_status" => ingestors_status(client, arguments).await?,
+        "sinex.nodes_health" => nodes_health(client, arguments).await?,
+        "sinex.nodes_active" => nodes_active(client, arguments).await?,
+        "sinex.nodes_registry" => nodes_registry(client, arguments).await?,
+        "sinex.ingestd_validation" => ingestd_validation(client, arguments).await?,
+        "sinex.ingestd_batch_stats" => ingestd_batch_stats(client, arguments).await?,
+        "sinex.system_health" => system_health(client, arguments).await?,
+        "sinex.system_ping" => system_ping(client, arguments).await?,
+        "sinex.system_version" => system_version(client, arguments).await?,
+        "sinex.throughput" => throughput(client, arguments).await?,
+        "sinex.recent_activity" => recent_activity(client, arguments).await?,
+        "sinex.command_frequency" => command_frequency(client, arguments).await?,
+        "sinex.file_activity" => file_activity(client, arguments).await?,
+        "sinex.system_state" => system_state(client, arguments).await?,
+        "sinex.window_focus" => window_focus(client, arguments).await?,
+        "sinex.current_health" => current_health(client, arguments).await?,
+        "sinex.current_device_state" => current_device_state(client, arguments).await?,
+        "sinex.gateway_stats" => gateway_stats(client, arguments).await?,
+        "sinex.stream_stats" => stream_stats(client, arguments).await?,
+        "sinex.assembly_stats" => assembly_stats(client, arguments).await?,
+        "sinex.node_stats" => node_stats(client, arguments).await?,
+        "sinex.metric_counters" => metric_counters(client, arguments).await?,
+        _ => return Ok(None),
+    };
+    Ok(Some(result))
+}
+
+async fn call_tool_ops_infra(
+    client: &GatewayClient,
+    name: &str,
+    arguments: Value,
+) -> Result<Option<Value>> {
+    let result = match name {
+        "sinex.llm_prompts" => llm_prompts(client, arguments).await?,
+        "sinex.llm_route_explain" => llm_route_explain(client, arguments).await?,
+        "sinex.llm_budget_report" => llm_budget_report(client, arguments).await?,
+        "sinex.curation_proposals" => curation_proposals(client, arguments).await?,
+        "sinex.dlq_stats" => dlq_stats(client, arguments).await?,
+        "sinex.dlq_peek" => dlq_peek(client, arguments).await?,
+        "sinex.ops_list" => ops_list(client, arguments).await?,
+        "sinex.ops_get" => ops_get(client, arguments).await?,
+        "sinex.lifecycle_status" => lifecycle_status(client, arguments).await?,
+        "sinex.gitops_sources" => gitops_sources(client, arguments).await?,
+        "sinex.audit_trail" => audit_trail(client, arguments).await?,
+        "sinex.coordination_instances" => coordination_instances(client, arguments).await?,
+        "sinex.coordination_leader" => coordination_leader(client, arguments).await?,
+        "sinex.coordination_instance_health" => coordination_instance_health(client, arguments).await?,
+        "sinex.shadow_consumers" => shadow_consumers(client, arguments).await?,
+        "sinex.context_pack" => context_pack(client, arguments).await?,
+        _ => return Ok(None),
+    };
+    Ok(Some(result))
 }
 
 async fn search_events(client: &GatewayClient, arguments: Value) -> Result<Value> {
@@ -2588,14 +2624,14 @@ fn envelope(tool: &str, query: Value, result: Value) -> Value {
     json!({
         "tool": tool,
         "generated_at": Timestamp::now(),
-        "query": query,
+        "query": &query,
         "provenance_refs": [],
         "caveats": ["mcp.raw_samples_redacted"],
         "redaction": {
             "mode": "gateway_default",
             "raw_samples": false
         },
-        "items": result
+        "items": &result
     })
 }
 

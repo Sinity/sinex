@@ -184,7 +184,7 @@ impl PrivacyAuditArgs {
                 stale_after_seconds: self.stale_after_seconds,
             })
             .await?;
-        let report = build_privacy_audit_report(private_mode, dlq, readiness);
+        let report = build_privacy_audit_report(private_mode, &dlq, &readiness);
         CommandOutput::single(report, format_privacy_audit_report).display(&format)?;
         Ok(())
     }
@@ -375,8 +375,8 @@ struct PrivacyExportReceipt {
 
 fn build_privacy_audit_report(
     private_mode: RuntimePrivateModeState,
-    dlq: DlqListResponse,
-    readiness: SourcesReadinessListResponse,
+    dlq: &DlqListResponse,
+    readiness: &SourcesReadinessListResponse,
 ) -> PrivacyAuditReport {
     let sources = summarize_sources(&readiness.sources);
     let mut findings = Vec::new();
@@ -732,13 +732,13 @@ mod tests {
                 vec!["desktop".to_string()],
                 Timestamp::UNIX_EPOCH,
             ),
-            DlqListResponse {
+            &DlqListResponse {
                 total_messages: 2,
                 total_bytes: 128,
                 first_seq: 1,
                 last_seq: 2,
             },
-            SourcesReadinessListResponse {
+            &SourcesReadinessListResponse {
                 sources: vec![SourceReadiness {
                     binding_id: None,
                     source_family: "desktop".to_string(),

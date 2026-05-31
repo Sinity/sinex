@@ -858,7 +858,7 @@ impl AdminSnapshotRestoreCommand {
             &inspect.manifest,
             archive_entries,
             &self.target_dir,
-            postgres_row_counts,
+            postgres_row_counts.as_ref(),
         ))
     }
 
@@ -1224,7 +1224,7 @@ fn observe_restored_target(
     manifest: &SnapshotManifest,
     archive_entries: &[String],
     target_dir: &Path,
-    postgres_row_counts: Option<BTreeMap<String, i64>>,
+    postgres_row_counts: Option<&BTreeMap<String, i64>>,
 ) -> RestoreObservedChecks {
     let source_unit_ids = discover_source_unit_ids(&target_dir.join("state"));
     let expected_postgres_row_counts = expected_postgres_row_counts(manifest);
@@ -1259,7 +1259,6 @@ fn observe_restored_target(
     let source_unit_ids_match = source_unit_ids == manifest.source_unit_ids;
     let postgres_row_counts_match = expected_postgres_row_counts.map(|expected| {
         postgres_row_counts
-            .as_ref()
             .is_some_and(|observed| observed == &expected)
     });
     let nats_member_paths_match = expected_nats_member_paths.map(|expected| {
@@ -1271,7 +1270,7 @@ fn observe_restored_target(
         .map(|expected| cas_blob_count.map_or(expected == 0, |observed| observed == expected));
     let private_mode_state_matches_manifest =
         private_mode_state_present == manifest_private_mode_state_present;
-    let failed_checks = restore_failed_checks(RestoreFailedCheckInput {
+    let failed_checks = restore_failed_checks(&RestoreFailedCheckInput {
         source_unit_ids_match,
         component_blake3_matches: &component_blake3_matches,
         postgres_row_counts_match,
@@ -1288,7 +1287,7 @@ fn observe_restored_target(
         source_unit_ids_match,
         component_blake3,
         component_blake3_matches,
-        postgres_row_counts: postgres_row_counts.clone().unwrap_or_default(),
+        postgres_row_counts: postgres_row_counts.cloned().unwrap_or_default(),
         postgres_row_counts_match,
         nats_state_present,
         nats_member_count,
@@ -1309,7 +1308,7 @@ struct RestoreFailedCheckInput<'a> {
     private_mode_state_matches_manifest: bool,
 }
 
-fn restore_failed_checks(input: RestoreFailedCheckInput<'_>) -> Vec<String> {
+fn restore_failed_checks(input: &RestoreFailedCheckInput<'_>) -> Vec<String> {
     let mut failed = Vec::new();
     if !input.source_unit_ids_match {
         failed.push("source_unit_ids_match".to_string());
@@ -1523,9 +1522,8 @@ fn free_bytes_at(_path: &Path) -> u64 {
     #[cfg(target_os = "linux")]
     {
         use std::ffi::CString;
-        let path_cstr = match CString::new(_path.to_string_lossy().as_bytes()) {
-            Ok(s) => s,
-            Err(_) => return u64::MAX,
+        let Ok(path_cstr) = CString::new(_path.to_string_lossy().as_bytes()) else {
+            return u64::MAX;
         };
         let mut stat: libc::statvfs = unsafe { std::mem::zeroed() };
         let rc = unsafe { libc::statvfs(path_cstr.as_ptr(), &raw mut stat) };

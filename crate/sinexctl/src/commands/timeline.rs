@@ -38,7 +38,7 @@ impl TimelineCommand {
         query.validate()?;
 
         let result = client.query_events(query).await?;
-        let events = if let sinex_primitives::query::EventQueryResult::Events { events, .. } = result { events } else {
+        let sinex_primitives::query::EventQueryResult::Events { events, .. } = result else {
             println!("Query returned non-list result");
             return Ok(());
         };
