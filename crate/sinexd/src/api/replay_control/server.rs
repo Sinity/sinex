@@ -64,9 +64,8 @@ impl ReplayControlServer {
                     // applies backpressure to the subscription instead of
                     // letting unbounded spawn count pile up waiting on the
                     // semaphore inside spawned tasks.
-                    let permit = match semaphore.clone().acquire_owned().await {
-                        Ok(p) => p,
-                        Err(_) => break 'outer, // semaphore closed (shutdown)
+                    let Ok(permit) = semaphore.clone().acquire_owned().await else {
+                        break 'outer; // semaphore closed (shutdown)
                     };
                     let client = client.clone();
                     let replay = replay.clone();

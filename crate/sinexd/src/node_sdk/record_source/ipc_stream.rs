@@ -197,87 +197,83 @@ where
         IpcStreamCheckpoint::default()
     }
 
-    fn read_batch<'a>(
+    async fn read_batch<'a>(
         &'a self,
         checkpoint: &'a Self::Checkpoint,
         _horizon: RecordReadHorizon,
-    ) -> impl Future<Output = Result<RecordReadBatch<Self::Record, Self::Checkpoint>, Self::Error>>
-    + Send
-    + 'a {
-        async move {
-            let mut state = self.state.lock().await;
-            // Recover any divergence between the checkpoint the caller resumes
-            // from and the in-memory reconnect counter (e.g. after a process
-            // restart that rebuilt this struct).
-            if state.reconnects < checkpoint.reconnects {
-                state.reconnects = checkpoint.reconnects;
-            }
-            self.ensure_connected(&mut state).await?;
+    ) -> Result<RecordReadBatch<Self::Record, Self::Checkpoint>, Self::Error> {
+        let mut state = self.state.lock().await;
+        // Recover any divergence between the checkpoint the caller resumes
+        // from and the in-memory reconnect counter (e.g. after a process
+        // restart that rebuilt this struct).
+        if state.reconnects < checkpoint.reconnects {
+            state.reconnects = checkpoint.reconnects;
+        }
+        self.ensure_connected(&mut state).await?;
 
-            let start_checkpoint = IpcStreamCheckpoint {
-                reconnects: state.reconnects,
-                last_message_seq: checkpoint.last_message_seq,
-            };
-            let mut records = Vec::new();
-            // Cache reconnect_index up front: once we hold `&mut state.reader`,
-            // we can't re-read `state.reconnects` inside the loop without a
-            // borrow conflict. The value only changes on EOF (which breaks the
-            // loop) so a snapshot is sufficient for record annotation.
-            let reconnect_index = state.reconnects;
-            #[allow(clippy::expect_used)]
-            let reader = state
-                .reader
-                .as_mut()
-                .expect("ensure_connected populated reader");
-            let mut hit_eof = false;
-            for _ in 0..self.drain_budget {
-                let mut line = String::new();
-                match reader.read_line(&mut line).await {
-                    Ok(0) => {
-                        hit_eof = true;
-                        break;
-                    }
-                    Ok(_) => {
-                        // Strip the trailing newline; preserve any prior \r.
-                        if line.ends_with('\n') {
+        let start_checkpoint = IpcStreamCheckpoint {
+            reconnects: state.reconnects,
+            last_message_seq: checkpoint.last_message_seq,
+        };
+        let mut records = Vec::new();
+        // Cache reconnect_index up front: once we hold `&mut state.reader`,
+        // we can't re-read `state.reconnects` inside the loop without a
+        // borrow conflict. The value only changes on EOF (which breaks the
+        // loop) so a snapshot is sufficient for record annotation.
+        let reconnect_index = state.reconnects;
+        #[allow(clippy::expect_used)]
+        let reader = state
+            .reader
+            .as_mut()
+            .expect("ensure_connected populated reader");
+        let mut hit_eof = false;
+        for _ in 0..self.drain_budget {
+            let mut line = String::new();
+            match reader.read_line(&mut line).await {
+                Ok(0) => {
+                    hit_eof = true;
+                    break;
+                }
+                Ok(_) => {
+                    // Strip the trailing newline; preserve any prior \r.
+                    if line.ends_with('\n') {
+                        line.pop();
+                        if line.ends_with('\r') {
                             line.pop();
-                            if line.ends_with('\r') {
-                                line.pop();
-                            }
                         }
-                        records.push(IpcStreamRecord {
-                            line,
-                            reconnect_index,
-                        });
                     }
-                    Err(error) => {
-                        return Err(IpcStreamError::Read(error));
-                    }
+                    records.push(IpcStreamRecord {
+                        line,
+                        reconnect_index,
+                    });
+                }
+                Err(error) => {
+                    return Err(IpcStreamError::Read(error));
                 }
             }
-
-            // Handle EOF: drop reader and bump reconnect counter so the next
-            // read_batch call re-invokes the connect closure. Done after the
-            // mutable-borrow scope ends so we can mutate state freely.
-            if hit_eof {
-                state.reader = None;
-                state.reconnects = state.reconnects.saturating_add(1);
-            }
-
-            let final_checkpoint = IpcStreamCheckpoint {
-                reconnects: state.reconnects,
-                last_message_seq: checkpoint.last_message_seq,
-            };
-            let items = records
-                .into_iter()
-                .map(|record| RecordReadItem::new(record, final_checkpoint))
-                .collect();
-            Ok(RecordReadBatch {
-                start_checkpoint,
-                records: items,
-                final_checkpoint,
-                observation: RecordSourceObservation::None,
-            })
         }
+
+        // Handle EOF: drop reader and bump reconnect counter so the next
+        // read_batch call re-invokes the connect closure. Done after the
+        // mutable-borrow scope ends so we can mutate state freely.
+        if hit_eof {
+            state.reader = None;
+            state.reconnects = state.reconnects.saturating_add(1);
+        }
+
+        let final_checkpoint = IpcStreamCheckpoint {
+            reconnects: state.reconnects,
+            last_message_seq: checkpoint.last_message_seq,
+        };
+        let items = records
+            .into_iter()
+            .map(|record| RecordReadItem::new(record, final_checkpoint))
+            .collect();
+        Ok(RecordReadBatch {
+            start_checkpoint,
+            records: items,
+            final_checkpoint,
+            observation: RecordSourceObservation::None,
+        })
     }
 }

@@ -155,9 +155,8 @@ impl DirectoryWalkAdapter {
 
         for name in names {
             let std_path = std::path::Path::new(root.as_std_path()).join(&name);
-            let path = match Utf8PathBuf::from_path_buf(std_path.clone()) {
-                Ok(p) => p,
-                Err(_) => continue, // skip non-UTF-8 paths
+            let Ok(path) = Utf8PathBuf::from_path_buf(std_path.clone()) else {
+                continue; // skip non-UTF-8 paths
             };
 
             let metadata = if follow_symlinks {
@@ -166,9 +165,8 @@ impl DirectoryWalkAdapter {
                 std::fs::symlink_metadata(&std_path)
             };
 
-            let metadata = match metadata {
-                Ok(m) => m,
-                Err(_) => continue, // skip unreadable entries
+            let Ok(metadata) = metadata else {
+                continue; // skip unreadable entries
             };
 
             if metadata.is_symlink() && !follow_symlinks {
@@ -296,9 +294,8 @@ impl InputShapeAdapter for DirectoryWalkAdapter {
 
         let mut pending: Vec<PendingEntry> = Vec::new();
         for path in all_paths {
-            let meta = match std::fs::metadata(path.as_std_path()) {
-                Ok(m) => m,
-                Err(_) => continue,
+            let Ok(meta) = std::fs::metadata(path.as_std_path()) else {
+                continue;
             };
             if !meta.is_file() {
                 continue;

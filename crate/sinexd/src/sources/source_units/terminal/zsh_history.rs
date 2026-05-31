@@ -88,16 +88,14 @@ fn strip_zsh_extended_prefix(line: &str) -> (&str, Option<Timestamp>) {
     }
     let rest = &line[2..];
     // Find the semicolon separator between `ts:elapsed` and `command`.
-    let semicolon = match rest.find(';') {
-        Some(i) => i,
-        None => return (line, None),
+    let Some(semicolon) = rest.find(';') else {
+        return (line, None);
     };
     let ts_elapsed = &rest[..semicolon];
     let command = &rest[semicolon + 1..];
     // Split on colon to get `ts` and `elapsed`.
-    let colon = match ts_elapsed.find(':') {
-        Some(i) => i,
-        None => return (line, None),
+    let Some(colon) = ts_elapsed.find(':') else {
+        return (line, None);
     };
     let ts_str = &ts_elapsed[..colon];
     let ts_unix: i64 = match ts_str.trim().parse() {
@@ -214,9 +212,7 @@ impl MaterialParser for ZshHistoryParser {
             let ts = self.pending_ts.take();
             let anchor_emit = self.pending_anchor.take().unwrap_or(anchor);
 
-            return self
-                .emit_command(command, ts, anchor_emit, line_number, ctx)
-                .await;
+            return self.emit_command(command, ts, anchor_emit, line_number, ctx);
         }
 
         // Start of a new (potentially multi-line) entry.
@@ -232,12 +228,11 @@ impl MaterialParser for ZshHistoryParser {
 
         // Single-line entry — emit immediately.
         self.emit_command(cmd_part.to_string(), ts_opt, anchor, line_number, ctx)
-            .await
     }
 }
 
 impl ZshHistoryParser {
-    async fn emit_command(
+    fn emit_command(
         &mut self,
         command: String,
         ts: Option<Timestamp>,

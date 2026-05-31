@@ -13,9 +13,9 @@
 //! ```ignore
 //! let ctx = StreamMaterialContext::new(acquisition_mgr.clone()).await?;
 //! let handle = ctx.begin_stream(json!({"source": "journalctl", "type": "events"})).await?;
-//! handle.append_event(event1).await?;
-//! handle.append_event(event2).await?;
-//! handle.finalize("watcher shutdown").await?;
+//! handle.append_event(event1)?;
+//! handle.append_event(event2)?;
+//! handle.finalize("watcher shutdown")?;
 //! ```
 
 use crate::node_sdk::NodeResult;
@@ -81,7 +81,7 @@ impl StreamHandle {
     ///
     /// Returns an error if the stream has already been finalized.
     /// Increments the internal event counter.
-    pub async fn append_event(&self, _event: JsonValue) -> NodeResult<()> {
+    pub fn append_event(&self, _event: JsonValue) -> NodeResult<()> {
         if self.inner.finalized.load(Ordering::SeqCst) {
             return Err(SinexError::lifecycle(
                 "Cannot append to finalized stream".to_string(),
@@ -106,7 +106,7 @@ impl StreamHandle {
     ///
     /// Idempotent: calling finalize multiple times is safe and returns Ok.
     /// Logs a warning if called after an unfinalized drop was detected.
-    pub async fn finalize(&self, reason: &str) -> NodeResult<()> {
+    pub fn finalize(&self, reason: &str) -> NodeResult<()> {
         // Idempotency check
         if self
             .inner
@@ -245,10 +245,10 @@ mod tests {
 
         assert_eq!(handle.event_count(), 0);
 
-        let _ = handle.append_event(serde_json::json!({"id": 1})).await;
+        let _ = handle.append_event(serde_json::json!({"id": 1}));
         assert_eq!(handle.event_count(), 1);
 
-        let _ = handle.append_event(serde_json::json!({"id": 2})).await;
+        let _ = handle.append_event(serde_json::json!({"id": 2}));
         assert_eq!(handle.event_count(), 2);
         Ok(())
     }
@@ -261,9 +261,9 @@ mod tests {
             .await
             .unwrap();
 
-        let _ = handle.finalize("test").await;
+        let _ = handle.finalize("test");
 
-        let result = handle.append_event(serde_json::json!({"id": 1})).await;
+        let result = handle.append_event(serde_json::json!({"id": 1}));
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("finalized"));
         Ok(())
@@ -277,8 +277,8 @@ mod tests {
             .await
             .unwrap();
 
-        let result1 = handle.finalize("test").await;
-        let result2 = handle.finalize("test again").await;
+        let result1 = handle.finalize("test");
+        let result2 = handle.finalize("test again");
 
         assert!(result1.is_ok());
         assert!(result2.is_ok());
@@ -313,12 +313,10 @@ mod tests {
 
         let handle_clone = handle.clone();
 
-        let _ = handle.append_event(serde_json::json!({"id": 1})).await;
+        let _ = handle.append_event(serde_json::json!({"id": 1}));
         assert_eq!(handle_clone.event_count(), 1);
 
-        let _ = handle_clone
-            .append_event(serde_json::json!({"id": 2}))
-            .await;
+        let _ = handle_clone.append_event(serde_json::json!({"id": 2}));
         assert_eq!(handle.event_count(), 2);
         Ok(())
     }
