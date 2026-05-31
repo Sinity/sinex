@@ -209,7 +209,6 @@ fn temporal_source_precedence(source_type: TemporalSourceType) -> u8 {
     }
 }
 
-
 /// Helper for computing deterministic anchor points
 pub struct AnchorComputer {
     pub material_id: Uuid,

@@ -34,8 +34,8 @@ use crate::node_sdk::acquisition_manager::{AcquisitionManager, RotationPolicy};
 use crate::node_sdk::error_helpers::env_nonempty_string_optional;
 use crate::node_sdk::{BufferedRecordMaterializer, NatsPublisher};
 use async_nats::Client as NatsClient;
-use sinex_primitives::env as shared_env;
 use sinex_primitives::domain::HealthStatus;
+use sinex_primitives::env as shared_env;
 use sinex_primitives::events::payloads::{
     ApiRequestStatsPayload, AssemblyStatsPayload, ConsumerStartupSnapshotPayload,
     DerivedNodeLatencySnapshotPayload, EventEngineBatchStatsPayload, GatewayRpcCallPayload,

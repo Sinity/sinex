@@ -118,7 +118,9 @@ fn system_version_response() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::api::service_container::{GatewayHealthStatus, NatsHealthProbe, ReplayControlStatus};
+    use crate::api::service_container::{
+        GatewayHealthStatus, NatsHealthProbe, ReplayControlStatus,
+    };
     use xtask::sandbox::prelude::*;
 
     #[sinex_test]

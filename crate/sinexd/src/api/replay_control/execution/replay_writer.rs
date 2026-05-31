@@ -112,7 +112,8 @@ impl ReplayExecutionEngine {
         // at the same occurrence. Multiple outputs at the same physical position
         // are represented as split/collapsed/recomputed relations by count.
         // Also build id→hash lookup for integrity verification.
-        let mut occurrence_to_new: HashMap<ExtendedMaterialOccurrenceKey, Vec<Uuid>> = HashMap::new();
+        let mut occurrence_to_new: HashMap<ExtendedMaterialOccurrenceKey, Vec<Uuid>> =
+            HashMap::new();
         let mut new_hash_by_id: HashMap<Uuid, Option<Vec<u8>>> = HashMap::new();
         for event in &new_events {
             new_hash_by_id.insert(event.id, event.anchor_payload_hash.clone());

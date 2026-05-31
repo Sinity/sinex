@@ -50,6 +50,11 @@ impl MaterialOccurrenceKey {
 
 impl std::fmt::Display for MaterialOccurrenceKey {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}@{}", self.source_material_id.as_uuid(), self.anchor_byte)
+        write!(
+            f,
+            "{}@{}",
+            self.source_material_id.as_uuid(),
+            self.anchor_byte
+        )
     }
 }
