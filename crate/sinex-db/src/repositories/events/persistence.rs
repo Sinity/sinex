@@ -2804,7 +2804,7 @@ mod tests {
             "anchor_payload_hash",
         ]
         .iter()
-        .map(|s| s.to_string())
+        .map(std::string::ToString::to_string)
         .collect();
 
         // Parse the SSOT column list from EVENT_COPY_COLUMNS.

@@ -227,9 +227,9 @@ pub struct RateLimitExceededPayload {
 pub struct HealthStatusPayload {
     /// Component name
     pub component: String,
-    /// Previous status (typed; serializes as snake_case string)
+    /// Previous status (typed; serializes as `snake_case` string)
     pub previous_status: HealthStatus,
-    /// Current status (typed; serializes as snake_case string)
+    /// Current status (typed; serializes as `snake_case` string)
     pub current_status: HealthStatus,
     /// Reason for status change
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -330,7 +330,7 @@ pub struct DerivedNodeLatencySnapshotPayload {
     /// Events per second over the live throughput window
     #[serde(deserialize_with = "crate::validation::reject_non_finite_f64")]
     pub throughput_eps: f64,
-    /// Dimensional labels (node_model, source_run_id, etc.)
+    /// Dimensional labels (`node_model`, `source_run_id`, etc.)
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub labels: HashMap<String, String>,
 }

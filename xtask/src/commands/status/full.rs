@@ -39,7 +39,7 @@ async fn collect_status_data(
     let total_started_at = Instant::now();
     let cfg = config();
     let runtime_target =
-        checkout_runtime_target(&cfg).unwrap_or_else(fallback_checkout_runtime_target);
+        checkout_runtime_target(cfg).unwrap_or_else(fallback_checkout_runtime_target);
     let gateway_url = runtime_target.gateway.base_url.clone();
     let runtime_db_url =
         resolve_runtime_metrics_database_url(runtime_target.database.url.as_deref());

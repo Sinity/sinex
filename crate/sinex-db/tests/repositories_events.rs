@@ -1882,11 +1882,11 @@ async fn test_replacement_query_distinguishes_material_from_derived(
     .await?;
 
     assert!(
-        matched_ids.contains(&mat_event_id.as_uuid()),
+        matched_ids.contains(mat_event_id.as_uuid()),
         "material event must match the replacement query"
     );
     assert!(
-        !matched_ids.contains(&syn_event_id.as_uuid()),
+        !matched_ids.contains(syn_event_id.as_uuid()),
         "derived event must NOT match the material replacement query — \
          derived replacement uses equivalence_key, not physical coordinates"
     );

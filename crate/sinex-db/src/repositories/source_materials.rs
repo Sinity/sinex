@@ -343,6 +343,7 @@ impl SourceMaterial {
         self
     }
     /// Fluent method to override the status
+    #[must_use] 
     pub fn with_status(mut self, status: MaterialStatus) -> Self {
         self.status = status;
         self

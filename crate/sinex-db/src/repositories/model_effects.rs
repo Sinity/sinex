@@ -27,7 +27,7 @@ impl<'a> EnhancedRepository<'a> for ModelEffectRepository<'a> {
     type Table = ModelEffects;
 }
 
-impl<'a> ModelEffectRepository<'a> {
+impl ModelEffectRepository<'_> {
     /// Look up a recorded effect by composite key for replay.
     pub async fn find_by_composite_key(
         &self,
