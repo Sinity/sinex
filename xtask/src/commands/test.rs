@@ -60,6 +60,13 @@ struct PackageProofCoverage {
     proof_invocation_id: Option<i64>,
 }
 
+/// Push `flag` onto `args` if `cond` is true.
+fn push_flag(args: &mut Vec<String>, cond: bool, flag: &'static str) {
+    if cond {
+        args.push(flag.to_string());
+    }
+}
+
 fn failing_test_details_issue(ctx: &CommandContext, error: Option<&color_eyre::Report>) -> String {
     match error {
         Some(error) => format!(
@@ -874,48 +881,21 @@ impl TestCommand {
 
     fn nextest_invocation_args(&self, force_skip_preflight: bool) -> Vec<String> {
         let mut args = Vec::new();
-        if self.debug {
-            args.push("--debug".to_string());
-        }
-        if self.fail_fast {
-            args.push("--fail-fast".to_string());
-        }
-        if self.all {
-            args.push("--all".to_string());
-        }
-        if self.heavy {
-            args.push("--heavy".to_string());
-        }
-        if self.include_ignored {
-            args.push("--include-ignored".to_string());
-        }
-        if self.list {
-            args.push("--list".to_string());
-        }
-        if self.skip_preflight || force_skip_preflight {
-            args.push("--skip-preflight".to_string());
-        }
-        if self.ephemeral_postgres {
-            args.push("--ephemeral-postgres".to_string());
-        }
-        if self.no_ephemeral_postgres {
-            args.push("--no-ephemeral-postgres".to_string());
-        }
-        if self.prime {
-            args.push("--prime".to_string());
-        }
-        if self.dry_run {
-            args.push("--dry-run".to_string());
-        }
-        if self.update_snapshots {
-            args.push("--update-snapshots".to_string());
-        }
-        if self.allow_contended_host {
-            args.push("--allow-contended-host".to_string());
-        }
-        if self.no_reuse {
-            args.push("--no-reuse".to_string());
-        }
+        push_flag(&mut args, self.debug, "--debug");
+        push_flag(&mut args, self.fail_fast, "--fail-fast");
+        push_flag(&mut args, self.all, "--all");
+        push_flag(&mut args, self.heavy, "--heavy");
+        push_flag(&mut args, self.include_ignored, "--include-ignored");
+        push_flag(&mut args, self.list, "--list");
+        push_flag(&mut args, self.skip_preflight || force_skip_preflight, "--skip-preflight");
+        push_flag(&mut args, self.ephemeral_postgres, "--ephemeral-postgres");
+        push_flag(&mut args, self.no_ephemeral_postgres, "--no-ephemeral-postgres");
+        push_flag(&mut args, self.prime, "--prime");
+        push_flag(&mut args, self.dry_run, "--dry-run");
+        push_flag(&mut args, self.update_snapshots, "--update-snapshots");
+        push_flag(&mut args, self.allow_contended_host, "--allow-contended-host");
+        push_flag(&mut args, self.no_reuse, "--no-reuse");
+        push_flag(&mut args, self.lib, "--lib");
         if !matches!(self.impact_mode, crate::impact::ImpactMode::Balanced) {
             args.push(format!("--impact-mode={}", self.impact_mode.as_str()));
         }
@@ -934,9 +914,6 @@ impl TestCommand {
         for test_binary in &self.test_binaries {
             args.push("--test".to_string());
             args.push(test_binary.clone());
-        }
-        if self.lib {
-            args.push("--lib".to_string());
         }
         if let Some(threads) = self.threads {
             args.push(format!("--threads={threads}"));
@@ -1214,6 +1191,99 @@ impl TestCommand {
     }
 }
 
+/// Build serialized background CLI args for a bench subcommand.
+fn bench_background_args(bench: &BenchArgs) -> Vec<String> {
+    let mut args = vec![
+        "bench".to_string(),
+        format!("--mode={}", bench.mode),
+        format!("--profile={}", bench.profile),
+        format!("--runs={}", bench.runs),
+        {
+            let threads_str: Vec<String> = bench.threads.iter().map(ToString::to_string).collect();
+            format!("--threads={}", threads_str.join(","))
+        },
+    ];
+    if !bench.db_pool_sizes.is_empty() {
+        let pool_sizes = bench
+            .db_pool_sizes
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join(",");
+        args.push(format!("--db-pool-sizes={pool_sizes}"));
+    }
+    push_flag(&mut args, bench.system_impact, "--system-impact");
+    push_flag(&mut args, bench.system_impact_extended, "--system-impact-extended");
+    args.push(format!("--target={}", bench.target));
+    push_flag(&mut args, bench.contracts, "--contracts");
+    if let Some(ref f) = bench.contracts_file {
+        args.push(format!("--contracts-file={}", f.display()));
+    }
+    if let Some(ref r) = bench.report {
+        args.push(format!("--report={}", r.display()));
+    }
+    if let Some(ref c) = bench.compare {
+        args.push(format!("--compare={}", c[0].display()));
+        args.push(c[1].display().to_string());
+    }
+    if let Some(ref o) = bench.output {
+        args.push(format!("--output={}", o.display()));
+    }
+    if let Some(ref h) = bench.history_db {
+        args.push(format!("--history-db={}", h.display()));
+    }
+    push_flag(&mut args, bench.dry_run, "--dry-run");
+    push_flag(&mut args, bench.continue_on_fail, "--continue-on-fail");
+    push_flag(&mut args, bench.allow_contended_host, "--allow-contended-host");
+    push_flag(&mut args, bench.verbose, "--verbose");
+    args
+}
+
+/// Build serialized background CLI args for a fuzz subcommand.
+fn fuzz_background_args(fuzz: &FuzzArgs) -> Vec<String> {
+    let mut args = vec!["fuzz".to_string()];
+    if let Some(ref t) = fuzz.target {
+        args.push(t.clone());
+    }
+    args.push(format!("--max-time={}", fuzz.max_time));
+    if let Some(j) = fuzz.jobs {
+        args.push(format!("--jobs={j}"));
+    }
+    push_flag(&mut args, fuzz.list, "--list");
+    args
+}
+
+/// Build serialized background CLI args for a coverage subcommand.
+fn coverage_background_args(cov: &CoverageArgs) -> Vec<String> {
+    let mut args = vec![
+        "coverage".to_string(),
+        format!("--output={}", cov.output),
+    ];
+    push_flag(&mut args, cov.open, "--open");
+    if let Some(ref p) = cov.package {
+        args.push(format!("--package={p}"));
+    }
+    push_flag(&mut args, cov.html, "--html");
+    if let Some(e) = cov.enforce {
+        args.push(format!("--enforce={e}"));
+    }
+    args
+}
+
+/// Build serialized background CLI args for a mutants subcommand.
+fn mutants_background_args(m: &MutantsArgs) -> Vec<String> {
+    let mut args = vec!["mutants".to_string()];
+    if let Some(ref p) = m.package {
+        args.push(format!("--package={p}"));
+    }
+    if let Some(ref f) = m.file {
+        args.push(format!("--file={f}"));
+    }
+    args.push(format!("--timeout={}", m.timeout));
+    args.push(format!("--jobs={}", m.jobs));
+    args
+}
+
 impl XtaskCommand for TestCommand {
     fn name(&self) -> &'static str {
         "test"
@@ -1227,100 +1297,16 @@ impl XtaskCommand for TestCommand {
             // Serialize subcommand first (if any)
             match &self.subcommand {
                 Some(TestSubcommand::Bench(bench)) => {
-                    args.push("bench".to_string());
-                    args.push(format!("--mode={}", bench.mode));
-                    args.push(format!("--profile={}", bench.profile));
-                    args.push(format!("--runs={}", bench.runs));
-                    let threads_str: Vec<String> =
-                        bench.threads.iter().map(ToString::to_string).collect();
-                    args.push(format!("--threads={}", threads_str.join(",")));
-                    if !bench.db_pool_sizes.is_empty() {
-                        let pool_sizes = bench
-                            .db_pool_sizes
-                            .iter()
-                            .map(ToString::to_string)
-                            .collect::<Vec<_>>()
-                            .join(",");
-                        args.push(format!("--db-pool-sizes={pool_sizes}"));
-                    }
-                    if bench.system_impact {
-                        args.push("--system-impact".to_string());
-                    }
-                    if bench.system_impact_extended {
-                        args.push("--system-impact-extended".to_string());
-                    }
-                    args.push(format!("--target={}", bench.target));
-                    if bench.contracts {
-                        args.push("--contracts".to_string());
-                    }
-                    if let Some(ref f) = bench.contracts_file {
-                        args.push(format!("--contracts-file={}", f.display()));
-                    }
-                    if let Some(ref r) = bench.report {
-                        args.push(format!("--report={}", r.display()));
-                    }
-                    if let Some(ref c) = bench.compare {
-                        args.push(format!("--compare={}", c[0].display()));
-                        args.push(c[1].display().to_string());
-                    }
-                    if let Some(ref o) = bench.output {
-                        args.push(format!("--output={}", o.display()));
-                    }
-                    if let Some(ref h) = bench.history_db {
-                        args.push(format!("--history-db={}", h.display()));
-                    }
-                    if bench.dry_run {
-                        args.push("--dry-run".to_string());
-                    }
-                    if bench.continue_on_fail {
-                        args.push("--continue-on-fail".to_string());
-                    }
-                    if bench.allow_contended_host {
-                        args.push("--allow-contended-host".to_string());
-                    }
-                    if bench.verbose {
-                        args.push("--verbose".to_string());
-                    }
+                    args = bench_background_args(bench);
                 }
                 Some(TestSubcommand::Fuzz(fuzz)) => {
-                    args.push("fuzz".to_string());
-                    if let Some(ref t) = fuzz.target {
-                        args.push(t.clone());
-                    }
-                    args.push(format!("--max-time={}", fuzz.max_time));
-                    if let Some(j) = fuzz.jobs {
-                        args.push(format!("--jobs={j}"));
-                    }
-                    if fuzz.list {
-                        args.push("--list".to_string());
-                    }
+                    args = fuzz_background_args(fuzz);
                 }
                 Some(TestSubcommand::Coverage(cov)) => {
-                    args.push("coverage".to_string());
-                    args.push(format!("--output={}", cov.output));
-                    if cov.open {
-                        args.push("--open".to_string());
-                    }
-                    if let Some(ref p) = cov.package {
-                        args.push(format!("--package={p}"));
-                    }
-                    if cov.html {
-                        args.push("--html".to_string());
-                    }
-                    if let Some(e) = cov.enforce {
-                        args.push(format!("--enforce={e}"));
-                    }
+                    args = coverage_background_args(cov);
                 }
                 Some(TestSubcommand::Mutants(m)) => {
-                    args.push("mutants".to_string());
-                    if let Some(ref p) = m.package {
-                        args.push(format!("--package={p}"));
-                    }
-                    if let Some(ref f) = m.file {
-                        args.push(format!("--file={f}"));
-                    }
-                    args.push(format!("--timeout={}", m.timeout));
-                    args.push(format!("--jobs={}", m.jobs));
+                    args = mutants_background_args(m);
                 }
                 Some(TestSubcommand::Vm(vm)) => {
                     args.push("vm".to_string());
