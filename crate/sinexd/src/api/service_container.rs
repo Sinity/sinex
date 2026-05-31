@@ -43,13 +43,8 @@ pub struct SseConfirmationStatus {
     pub detail: String,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum GatewayHealthStatus {
-    Healthy,
-    Degraded,
-    Unhealthy,
-}
+/// Type alias — gateway uses the canonical `HealthStatus` domain enum.
+pub type GatewayHealthStatus = sinex_primitives::domain::HealthStatus;
 
 const REPLAY_CONTROL_CONNECT_ATTEMPTS: usize = 3;
 const REPLAY_CONTROL_CONNECT_BACKOFF_BASE: Duration = Duration::from_millis(100);

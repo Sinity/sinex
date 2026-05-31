@@ -1,13 +1,11 @@
 //! Tests for health aggregator scope-reconciled aggregation logic
 
 use serde_json::json;
-use sinex_primitives::domain::{ProcessingMode, TriggerKind};
+use sinex_primitives::domain::{HealthStatus, ProcessingMode, TriggerKind};
 use sinex_primitives::events::Event;
 use sinex_primitives::temporal::Timestamp;
 use sinex_primitives::{Id, JsonValue};
-use sinexd::automata::health::{
-    ComponentHealthStatus, HealthAggregator, HealthAggregatorConfig, HealthState,
-};
+use sinexd::automata::health::{HealthAggregator, HealthAggregatorConfig, HealthState};
 use sinexd::node_sdk::derived_node::{AutomatonContext, DerivedOutput};
 use sinexd::node_sdk::{NodeLogicError, ScopeReconciler};
 use time::Duration;
@@ -86,7 +84,7 @@ async fn health_aggregator_tracks_component_status(ctx: TestContext) -> TestResu
     let component = &state.component_health["test-component"];
     assert_eq!(
         component.current_status,
-        ComponentHealthStatus::Degraded,
+        HealthStatus::Degraded,
         "status should be updated"
     );
 
@@ -670,15 +668,15 @@ async fn health_aggregator_rejects_invalid_event_ids_in_system_reports(
         "service-a".to_string(),
         sinexd::automata::health::ComponentHealth {
             component_name: "service-a".to_string(),
-            current_status: ComponentHealthStatus::Healthy,
+            current_status: HealthStatus::Healthy,
             status_since: base_time,
             last_seen: base_time,
             last_check_emission: None,
             transition_count: 0,
             events: vec![sinexd::automata::health::HealthEvent {
                 timestamp: base_time,
-                previous_status: ComponentHealthStatus::Healthy,
-                current_status: ComponentHealthStatus::Healthy,
+                previous_status: HealthStatus::Healthy,
+                current_status: HealthStatus::Healthy,
                 event_id: "not-a-uuid".to_string(),
             }],
         },
@@ -728,15 +726,15 @@ async fn health_aggregator_rejects_invalid_event_ids_in_component_reports(
         "service-a".to_string(),
         sinexd::automata::health::ComponentHealth {
             component_name: "service-a".to_string(),
-            current_status: ComponentHealthStatus::Healthy,
+            current_status: HealthStatus::Healthy,
             status_since: base_time,
             last_seen: base_time,
             last_check_emission: None,
             transition_count: 0,
             events: vec![sinexd::automata::health::HealthEvent {
                 timestamp: base_time,
-                previous_status: ComponentHealthStatus::Healthy,
-                current_status: ComponentHealthStatus::Healthy,
+                previous_status: HealthStatus::Healthy,
+                current_status: HealthStatus::Healthy,
                 event_id: "not-a-uuid".to_string(),
             }],
         },

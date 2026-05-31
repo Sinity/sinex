@@ -511,7 +511,7 @@ async fn current_health_tracks_latest_status_per_component(ctx: TestContext) -> 
     tokio::time::sleep(Duration::from_millis(5)).await;
     insert_health_status(&ctx, "gateway", "degraded", "warming caches").await?;
     tokio::time::sleep(Duration::from_millis(5)).await;
-    insert_health_status(&ctx, "ingestd", "failed", "lost database").await?;
+    insert_health_status(&ctx, "ingestd", "unhealthy", "lost database").await?;
 
     let rows = sqlx::query!(
         r#"
@@ -532,7 +532,7 @@ async fn current_health_tracks_latest_status_per_component(ctx: TestContext) -> 
     assert_eq!(rows[0].status.as_deref(), Some("degraded"));
     assert_eq!(rows[0].reason.as_deref(), Some("warming caches"));
     assert_eq!(rows[1].component.as_deref(), Some("ingestd"));
-    assert_eq!(rows[1].status.as_deref(), Some("failed"));
+    assert_eq!(rows[1].status.as_deref(), Some("unhealthy"));
     assert_eq!(rows[1].reason.as_deref(), Some("lost database"));
 
     Ok(())

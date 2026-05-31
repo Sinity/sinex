@@ -11,7 +11,7 @@ use crate::{Id, JsonValue};
 use crate::{IdempotentTransaction, RetryConfig, with_retry_transaction_idempotent};
 use num_traits::ToPrimitive;
 use serde::{Deserialize, Serialize};
-use sinex_primitives::domain::{NodeName, NodeState, NodeType, OperationStatus};
+use sinex_primitives::domain::{HealthStatus, NodeName, NodeState, NodeType, OperationStatus};
 use sinex_primitives::error::SinexError;
 use sinex_primitives::rpc::lifecycle::{TombstoneOperation, TombstoneOperationState};
 use sinex_primitives::{Seconds, Timestamp};
@@ -1542,7 +1542,7 @@ impl StateRepository<'_> {
                 nr.status as run_status,
                 nr.started_at as "started_at: sinex_primitives::temporal::Timestamp",
                 nr.last_heartbeat_at as "last_heartbeat_at: sinex_primitives::temporal::Timestamp",
-                health.current_status as "current_health?",
+                health.current_status as "current_health?: sinex_primitives::domain::HealthStatus",
                 health.changed_at
                     as "health_changed_at?: sinex_primitives::temporal::Timestamp",
                 health.reason as "health_reason?",
@@ -1867,7 +1867,7 @@ pub struct IngestorsStatusRow {
     pub run_status: Option<String>,
     pub started_at: Option<Timestamp>,
     pub last_heartbeat_at: Option<Timestamp>,
-    pub current_health: Option<String>,
+    pub current_health: Option<HealthStatus>,
     pub health_changed_at: Option<Timestamp>,
     pub health_reason: Option<String>,
     pub recent_output_count: i64,

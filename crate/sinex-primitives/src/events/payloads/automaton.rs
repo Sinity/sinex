@@ -6,39 +6,11 @@
 
 use crate::Timestamp;
 use crate::activity::ActivitySourceKind;
+use crate::domain::HealthStatus;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use sinex_macros::EventPayload;
 use std::collections::BTreeMap;
-use std::str::FromStr;
-
-// ============================================================================
-// Health Aggregator Payloads
-// ============================================================================
-
-/// Health status vocabulary emitted by the health aggregator.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum HealthAggregatedStatus {
-    Unknown,
-    Healthy,
-    Degraded,
-    Failed,
-}
-
-impl FromStr for HealthAggregatedStatus {
-    type Err = ();
-
-    fn from_str(input: &str) -> Result<Self, Self::Err> {
-        match input.to_ascii_lowercase().as_str() {
-            "unknown" => Ok(Self::Unknown),
-            "healthy" => Ok(Self::Healthy),
-            "degraded" => Ok(Self::Degraded),
-            "failed" => Ok(Self::Failed),
-            _ => Err(()),
-        }
-    }
-}
 
 /// Health alert discriminator.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -67,7 +39,7 @@ pub enum HealthAggregatedReportType {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct HealthComponentSnapshot {
     pub name: String,
-    pub status: HealthAggregatedStatus,
+    pub status: HealthStatus,
     pub status_since: Timestamp,
     pub last_seen: Timestamp,
 }
@@ -77,7 +49,7 @@ pub struct HealthComponentSnapshot {
 pub struct HealthAggregatedAlertPayload {
     pub alert_type: HealthAlertType,
     pub component: String,
-    pub status: HealthAggregatedStatus,
+    pub status: HealthStatus,
     pub timestamp: Timestamp,
     pub reason: String,
     pub severity: HealthAlertSeverity,
@@ -88,7 +60,7 @@ pub struct HealthAggregatedAlertPayload {
 pub struct HealthAggregatedSystemStatusPayload {
     pub report_type: HealthAggregatedReportType,
     pub timestamp: Timestamp,
-    pub overall_status: HealthAggregatedStatus,
+    pub overall_status: HealthStatus,
     pub total_components: usize,
     pub healthy_count: usize,
     pub degraded_count: usize,
@@ -103,7 +75,7 @@ pub struct HealthAggregatedComponentReportPayload {
     pub report_type: HealthAggregatedReportType,
     pub timestamp: Timestamp,
     pub component: String,
-    pub current_status: HealthAggregatedStatus,
+    pub current_status: HealthStatus,
     pub status_since: Timestamp,
     pub last_seen: Timestamp,
     pub total_transitions: u64,
