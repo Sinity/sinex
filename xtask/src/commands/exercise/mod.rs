@@ -376,29 +376,7 @@ impl XtaskCommand for ExerciseCommand {
             };
 
             if ctx.is_human() {
-                let symbol = if outcome.passed {
-                    "\x1b[32m✓\x1b[0m"
-                } else {
-                    "\x1b[31m✗\x1b[0m"
-                };
-                println!(
-                    "\r  [{}/{}] {} {} ({:.1}s)",
-                    i + 1,
-                    exercises.len(),
-                    symbol,
-                    ex.id,
-                    outcome.duration.as_secs_f64()
-                );
-                if !outcome.passed {
-                    for s in &outcome.steps {
-                        for err in &s.validation_errors {
-                            println!("           └─ {}: {err}", s.label);
-                        }
-                    }
-                    if let Some(e) = &outcome.error {
-                        println!("           └─ {e}");
-                    }
-                }
+                print_exercise_outcome(i, exercises.len(), &ex.id, &outcome);
             }
 
             let failed = !outcome.passed;
@@ -533,6 +511,22 @@ impl XtaskCommand for ExerciseCommand {
 
 /// Diff the current manifest against a committed baseline, returning (regressions, new_passes).
 /// Writes the baseline if `update_baseline` is true or no baseline exists.
+/// Print the human-readable outcome line for one exercise.
+fn print_exercise_outcome(idx: usize, total: usize, id: &str, outcome: &ExerciseOutcome) {
+    let symbol = if outcome.passed { "\x1b[32m✓\x1b[0m" } else { "\x1b[31m✗\x1b[0m" };
+    println!("\r  [{}/{}] {} {} ({:.1}s)", idx + 1, total, symbol, id, outcome.duration.as_secs_f64());
+    if !outcome.passed {
+        for s in &outcome.steps {
+            for err in &s.validation_errors {
+                println!("           └─ {}: {err}", s.label);
+            }
+        }
+        if let Some(e) = &outcome.error {
+            println!("           └─ {e}");
+        }
+    }
+}
+
 fn check_ci_baseline(
     manifest: &QaManifest,
     baseline_path: &std::path::Path,
