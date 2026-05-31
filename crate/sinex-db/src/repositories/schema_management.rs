@@ -243,66 +243,83 @@ impl<'a> SchemaManagementRepository<'a> {
             if existing.is_active {
                 return Ok(existing);
             }
-
-            let mut tx = self
-                .pool
-                .begin()
-                .await
-                .map_err(|e| db_error(e, "begin schema reactivation transaction"))?;
-            set_repeatable_read(&mut tx).await?;
-
-            sqlx::query!(
-                r#"
-                UPDATE sinex_schemas.event_payload_schemas
-                SET is_active = false, updated_at = NOW()
-                WHERE source = $1
-                  AND event_type = $2
-                  AND is_active = true
-                "#,
-                existing.source.as_str(),
-                existing.event_type.as_str()
-            )
-            .execute(&mut *tx)
-            .await
-            .map_err(|e| db_error(e, "deactivate conflicting schemas"))?;
-
-            let row = sqlx::query!(
-                r#"
-                UPDATE sinex_schemas.event_payload_schemas
-                SET is_active = true, updated_at = NOW()
-                WHERE id = $1::uuid
-                RETURNING 
-                    id as "id!: Uuid",
-                    source,
-                    event_type,
-                    schema_version,
-                    schema_content,
-                    content_hash,
-                    is_active,
-                    updated_at as "updated_at: Timestamp"
-                "#,
-                existing.id.to_uuid()
-            )
-            .fetch_one(&mut *tx)
-            .await
-            .map_err(|e| db_error(e, "reactivate schema"))?;
-
-            tx.commit()
-                .await
-                .map_err(|e| db_error(e, "commit schema reactivation transaction"))?;
-
-            return Ok(EventPayloadSchema {
-                id: Id::from_uuid(row.id),
-                source: row.source.into(),
-                event_type: row.event_type.into(),
-                schema_version: SchemaVersion::new(row.schema_version),
-                schema_content: row.schema_content,
-                content_hash: row.content_hash,
-                is_active: row.is_active,
-                updated_at: row.updated_at,
-            });
+            return self.reactivate_schema(existing).await;
         }
 
+        self.register_new_schema_version(source, event_type, schema_version, schema_content, content_hash).await
+    }
+
+    async fn reactivate_schema(
+        &self,
+        existing: EventPayloadSchema,
+    ) -> DbResult<EventPayloadSchema> {
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|e| db_error(e, "begin schema reactivation transaction"))?;
+        set_repeatable_read(&mut tx).await?;
+
+        sqlx::query!(
+            r#"
+            UPDATE sinex_schemas.event_payload_schemas
+            SET is_active = false, updated_at = NOW()
+            WHERE source = $1
+              AND event_type = $2
+              AND is_active = true
+            "#,
+            existing.source.as_str(),
+            existing.event_type.as_str()
+        )
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| db_error(e, "deactivate conflicting schemas"))?;
+
+        let row = sqlx::query!(
+            r#"
+            UPDATE sinex_schemas.event_payload_schemas
+            SET is_active = true, updated_at = NOW()
+            WHERE id = $1::uuid
+            RETURNING
+                id as "id!: Uuid",
+                source,
+                event_type,
+                schema_version,
+                schema_content,
+                content_hash,
+                is_active,
+                updated_at as "updated_at: Timestamp"
+            "#,
+            existing.id.to_uuid()
+        )
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(|e| db_error(e, "reactivate schema"))?;
+
+        tx.commit()
+            .await
+            .map_err(|e| db_error(e, "commit schema reactivation transaction"))?;
+
+        Ok(EventPayloadSchema {
+            id: Id::from_uuid(row.id),
+            source: row.source.into(),
+            event_type: row.event_type.into(),
+            schema_version: SchemaVersion::new(row.schema_version),
+            schema_content: row.schema_content,
+            content_hash: row.content_hash,
+            is_active: row.is_active,
+            updated_at: row.updated_at,
+        })
+    }
+
+    async fn register_new_schema_version(
+        &self,
+        source: EventSource,
+        event_type: EventType,
+        schema_version: String,
+        schema_content: JsonValue,
+        content_hash: String,
+    ) -> DbResult<EventPayloadSchema> {
         let id_uuid = uuid::Uuid::now_v7();
 
         let mut tx = self
@@ -361,7 +378,7 @@ impl<'a> SchemaManagementRepository<'a> {
             ) VALUES (
                 $1::uuid, $2, $3, $4, $5, $6, true
             )
-            RETURNING 
+            RETURNING
                 id as "id!: Uuid",
                 source,
                 event_type,
