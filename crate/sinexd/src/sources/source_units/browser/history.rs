@@ -472,12 +472,9 @@ fn parse_dump_record(
             return Ok(vec![]);
         }
     };
-    let obj = match json.as_object() {
-        Some(o) => o,
-        None => {
-            warn!("browser history dump: non-object JSON line; skipping record");
-            return Ok(vec![]);
-        }
+    let Some(obj) = json.as_object() else {
+        warn!("browser history dump: non-object JSON line; skipping record");
+        return Ok(vec![]);
     };
     let Some(visit_time) = extract_timestamp(obj) else {
         return Ok(vec![]);
@@ -548,13 +545,14 @@ fn build_intent(
     record: &SourceRecord,
     ctx: &ParserContext,
 ) -> ParserResult<Vec<ParsedEventIntent>> {
-    let url = redact(visit.url, ProcessingContext::Clipboard)?;
-    let title = redact(visit.title, ProcessingContext::WindowTitle)?;
+    let url = redact(&visit.url, ProcessingContext::Clipboard)?;
+    let title = redact(&visit.title, ProcessingContext::WindowTitle)?;
     let referrer = visit
         .referrer
+        .as_deref()
         .map(|r| redact(r, ProcessingContext::Clipboard))
         .transpose()?;
-    let source_file = redact(visit.source_file, ProcessingContext::Metadata)?;
+    let source_file = redact(&visit.source_file, ProcessingContext::Metadata)?;
 
     let mut payload = serde_json::Map::new();
     payload.insert("browser".into(), serde_json::json!(visit.browser));
@@ -615,8 +613,8 @@ fn build_intent(
 // Privacy helper
 // ---------------------------------------------------------------------------
 
-fn redact(value: String, ctx: ProcessingContext) -> ParserResult<String> {
-    privacy::process(&value, ctx)
+fn redact(value: &str, ctx: ProcessingContext) -> ParserResult<String> {
+    privacy::process(value, ctx)
         .map(|r| r.text.into_owned())
         .map_err(|e| ParserError::Privacy(e.to_string()))
 }

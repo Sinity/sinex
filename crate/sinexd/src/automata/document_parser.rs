@@ -99,8 +99,8 @@ impl MultiOutputTransducerNode for DocumentParserNode {
         let event_type = context.event_type.as_str();
 
         match event_type {
-            "document.ingested" => self.process_dendron(state, input, context).await,
-            "command.canonical" => self.process_terminal(state, input, context).await,
+            "document.ingested" => self.process_dendron(state, input, context),
+            "command.canonical" => self.process_terminal(state, input, context),
             _ => Ok(Vec::new()),
         }
     }
@@ -110,7 +110,7 @@ impl MultiOutputTransducerNode for DocumentParserNode {
 
 impl DocumentParserNode {
     /// Process a `document.ingested` event into parsed + chunked output.
-    async fn process_dendron(
+    fn process_dendron(
         &self,
         _state: &mut DocumentParserState,
         input: JsonValue,
@@ -241,7 +241,7 @@ impl DocumentParserNode {
     }
 
     /// Process a `command.canonical` event into a terminal-output document.
-    async fn process_terminal(
+    fn process_terminal(
         &self,
         _state: &mut DocumentParserState,
         input: JsonValue,

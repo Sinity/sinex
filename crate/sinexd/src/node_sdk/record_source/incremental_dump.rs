@@ -83,12 +83,15 @@ impl Error for IncrementalDumpError {
 /// per-record dedup key. The adapter computes the symmetric difference
 /// against the checkpoint and emits only the new records, advancing the
 /// per-record checkpoint as it goes so partial progress is durable.
+type IncrementalDumpMarker<Record, K, LoadFut, LoadError> =
+    std::marker::PhantomData<fn() -> (Record, K, LoadFut, LoadError)>;
+
 pub struct IncrementalDumpRecordSource<Record, K, Load, LoadFut, LoadError, Key> {
     descriptor: RecordSourceDescriptor,
     load: Load,
     key: Key,
     state: Arc<Mutex<()>>,
-    _marker: std::marker::PhantomData<fn() -> (Record, K, LoadFut, LoadError)>,
+    _marker: IncrementalDumpMarker<Record, K, LoadFut, LoadError>,
 }
 
 impl<Record, K, Load, LoadFut, LoadError, Key>
@@ -135,35 +138,31 @@ where
         IncrementalDumpCheckpoint::default()
     }
 
-    fn read_batch<'a>(
+    async fn read_batch<'a>(
         &'a self,
         checkpoint: &'a Self::Checkpoint,
         _horizon: RecordReadHorizon,
-    ) -> impl Future<Output = Result<RecordReadBatch<Self::Record, Self::Checkpoint>, Self::Error>>
-    + Send
-    + 'a {
-        async move {
-            let _guard = self.state.lock().await;
-            let all = (self.load)()
-                .await
-                .map_err(|error| IncrementalDumpError::Load(Box::new(error)))?;
-            let mut running = checkpoint.clone();
-            let mut items = Vec::new();
-            for record in all {
-                let key = (self.key)(&record);
-                if running.seen.contains(&key) {
-                    continue;
-                }
-                running.seen.insert(key);
-                items.push(RecordReadItem::new(record, running.clone()));
+    ) -> Result<RecordReadBatch<Self::Record, Self::Checkpoint>, Self::Error> {
+        let _guard = self.state.lock().await;
+        let all = (self.load)()
+            .await
+            .map_err(|error| IncrementalDumpError::Load(Box::new(error)))?;
+        let mut running = checkpoint.clone();
+        let mut items = Vec::new();
+        for record in all {
+            let key = (self.key)(&record);
+            if running.seen.contains(&key) {
+                continue;
             }
-            let final_checkpoint = running;
-            Ok(RecordReadBatch {
-                start_checkpoint: checkpoint.clone(),
-                records: items,
-                final_checkpoint,
-                observation: RecordSourceObservation::None,
-            })
+            running.seen.insert(key);
+            items.push(RecordReadItem::new(record, running.clone()));
         }
+        let final_checkpoint = running;
+        Ok(RecordReadBatch {
+            start_checkpoint: checkpoint.clone(),
+            records: items,
+            final_checkpoint,
+            observation: RecordSourceObservation::None,
+        })
     }
 }

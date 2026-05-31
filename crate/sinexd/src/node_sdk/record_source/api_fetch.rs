@@ -236,48 +236,44 @@ where
         ApiFetchCheckpoint::default()
     }
 
-    fn read_batch<'a>(
+    async fn read_batch<'a>(
         &'a self,
         checkpoint: &'a Self::Checkpoint,
         _horizon: RecordReadHorizon,
-    ) -> impl Future<Output = Result<RecordReadBatch<Self::Record, Self::Checkpoint>, Self::Error>>
-    + Send
-    + 'a {
-        async move {
-            let _guard = self.state.lock().await;
-            let page = self
-                .fetch_with_retry(checkpoint.last_cursor.as_deref())
-                .await?;
-            let final_checkpoint = ApiFetchCheckpoint {
-                last_cursor: page.next_cursor.clone(),
-                last_etag: page.etag.clone(),
-                last_fetched: Some(Timestamp::now()),
-            };
-            // Attach per-record checkpoints so a retryable failure mid-page
-            // doesn't advance the stored checkpoint past unprocessed records.
-            // Records before the last carry the START checkpoint (so a retry
-            // re-fetches the same page from the same cursor); only the LAST
-            // record carries the page-advancing `final_checkpoint`.
-            let total = page.records.len();
-            let items: Vec<_> = page
-                .records
-                .into_iter()
-                .enumerate()
-                .map(|(idx, record)| {
-                    let cp = if idx + 1 == total {
-                        final_checkpoint.clone()
-                    } else {
-                        checkpoint.clone()
-                    };
-                    RecordReadItem::new(record, cp)
-                })
-                .collect();
-            Ok(RecordReadBatch {
-                start_checkpoint: checkpoint.clone(),
-                records: items,
-                final_checkpoint,
-                observation: RecordSourceObservation::None,
+    ) -> Result<RecordReadBatch<Self::Record, Self::Checkpoint>, Self::Error> {
+        let _guard = self.state.lock().await;
+        let page = self
+            .fetch_with_retry(checkpoint.last_cursor.as_deref())
+            .await?;
+        let final_checkpoint = ApiFetchCheckpoint {
+            last_cursor: page.next_cursor.clone(),
+            last_etag: page.etag.clone(),
+            last_fetched: Some(Timestamp::now()),
+        };
+        // Attach per-record checkpoints so a retryable failure mid-page
+        // doesn't advance the stored checkpoint past unprocessed records.
+        // Records before the last carry the START checkpoint (so a retry
+        // re-fetches the same page from the same cursor); only the LAST
+        // record carries the page-advancing `final_checkpoint`.
+        let total = page.records.len();
+        let items: Vec<_> = page
+            .records
+            .into_iter()
+            .enumerate()
+            .map(|(idx, record)| {
+                let cp = if idx + 1 == total {
+                    final_checkpoint.clone()
+                } else {
+                    checkpoint.clone()
+                };
+                RecordReadItem::new(record, cp)
             })
-        }
+            .collect();
+        Ok(RecordReadBatch {
+            start_checkpoint: checkpoint.clone(),
+            records: items,
+            final_checkpoint,
+            observation: RecordSourceObservation::None,
+        })
     }
 }

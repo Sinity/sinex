@@ -86,11 +86,14 @@ pub struct OneTimeDumpRecord {
 /// adapter checks `content_hash` against the new hash and surfaces silent
 /// drift via `OneTimeDumpError::Read` when the consumed flag was already
 /// set and the hash disagrees.
+type OneTimeDumpMarker<R, OpenFut, OpenError> =
+    std::marker::PhantomData<fn() -> (R, OpenFut, OpenError)>;
+
 pub struct OneTimeDumpRecordSource<R, Open, OpenFut, OpenError> {
     descriptor: RecordSourceDescriptor,
     open: Open,
     state: Arc<Mutex<()>>,
-    _marker: std::marker::PhantomData<fn() -> (R, OpenFut, OpenError)>,
+    _marker: OneTimeDumpMarker<R, OpenFut, OpenError>,
 }
 
 impl<R, Open, OpenFut, OpenError> OneTimeDumpRecordSource<R, Open, OpenFut, OpenError>
@@ -132,72 +135,68 @@ where
         OneTimeDumpCheckpoint::default()
     }
 
-    fn read_batch<'a>(
+    async fn read_batch<'a>(
         &'a self,
         checkpoint: &'a Self::Checkpoint,
         _horizon: RecordReadHorizon,
-    ) -> impl Future<Output = Result<RecordReadBatch<Self::Record, Self::Checkpoint>, Self::Error>>
-    + Send
-    + 'a {
-        async move {
-            // Serialize concurrent reads so the consumed flag is monotone.
-            let _guard = self.state.lock().await;
-            if checkpoint.consumed {
-                return Ok(RecordReadBatch::empty(*checkpoint, *checkpoint));
-            }
-            let stream = (self.open)()
-                .await
-                .map_err(|error| OneTimeDumpError::Open(Box::new(error)))?;
-            let mut reader = BufReader::new(stream);
-            let mut hasher = blake3::Hasher::new();
-            let mut records = Vec::new();
-            loop {
-                let mut line = String::new();
-                match reader.read_line(&mut line).await {
-                    Ok(0) => break,
-                    Ok(_) => {
-                        hasher.update(line.as_bytes());
-                        if line.ends_with('\n') {
-                            line.pop();
-                            if line.ends_with('\r') {
-                                line.pop();
-                            }
-                        }
-                        let line_index = records.len();
-                        records.push(OneTimeDumpRecord { line, line_index });
-                    }
-                    Err(error) => return Err(OneTimeDumpError::Read(error)),
-                }
-            }
-            let content_hash: [u8; 32] = *hasher.finalize().as_bytes();
-            let final_checkpoint = OneTimeDumpCheckpoint {
-                consumed: true,
-                content_hash: Some(content_hash),
-            };
-            // Per-record checkpoints: only the LAST record carries the
-            // `consumed: true` advancing checkpoint. Earlier records carry the
-            // pre-read checkpoint, so a retryable failure mid-batch leaves
-            // `consumed: false` and the next read re-emits the dump rather
-            // than short-circuiting to empty.
-            let total = records.len();
-            let items = records
-                .into_iter()
-                .enumerate()
-                .map(|(idx, record)| {
-                    let cp = if idx + 1 == total {
-                        final_checkpoint
-                    } else {
-                        *checkpoint
-                    };
-                    RecordReadItem::new(record, cp)
-                })
-                .collect();
-            Ok(RecordReadBatch {
-                start_checkpoint: *checkpoint,
-                records: items,
-                final_checkpoint,
-                observation: RecordSourceObservation::None,
-            })
+    ) -> Result<RecordReadBatch<Self::Record, Self::Checkpoint>, Self::Error> {
+        // Serialize concurrent reads so the consumed flag is monotone.
+        let _guard = self.state.lock().await;
+        if checkpoint.consumed {
+            return Ok(RecordReadBatch::empty(*checkpoint, *checkpoint));
         }
+        let stream = (self.open)()
+            .await
+            .map_err(|error| OneTimeDumpError::Open(Box::new(error)))?;
+        let mut reader = BufReader::new(stream);
+        let mut hasher = blake3::Hasher::new();
+        let mut records = Vec::new();
+        loop {
+            let mut line = String::new();
+            match reader.read_line(&mut line).await {
+                Ok(0) => break,
+                Ok(_) => {
+                    hasher.update(line.as_bytes());
+                    if line.ends_with('\n') {
+                        line.pop();
+                        if line.ends_with('\r') {
+                            line.pop();
+                        }
+                    }
+                    let line_index = records.len();
+                    records.push(OneTimeDumpRecord { line, line_index });
+                }
+                Err(error) => return Err(OneTimeDumpError::Read(error)),
+            }
+        }
+        let content_hash: [u8; 32] = *hasher.finalize().as_bytes();
+        let final_checkpoint = OneTimeDumpCheckpoint {
+            consumed: true,
+            content_hash: Some(content_hash),
+        };
+        // Per-record checkpoints: only the LAST record carries the
+        // `consumed: true` advancing checkpoint. Earlier records carry the
+        // pre-read checkpoint, so a retryable failure mid-batch leaves
+        // `consumed: false` and the next read re-emits the dump rather
+        // than short-circuiting to empty.
+        let total = records.len();
+        let items = records
+            .into_iter()
+            .enumerate()
+            .map(|(idx, record)| {
+                let cp = if idx + 1 == total {
+                    final_checkpoint
+                } else {
+                    *checkpoint
+                };
+                RecordReadItem::new(record, cp)
+            })
+            .collect();
+        Ok(RecordReadBatch {
+            start_checkpoint: *checkpoint,
+            records: items,
+            final_checkpoint,
+            observation: RecordSourceObservation::None,
+        })
     }
 }

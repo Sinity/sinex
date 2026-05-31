@@ -148,9 +148,7 @@ pub fn default_parser_dispatch() -> ParserDispatchFn {
             let source_unit_id = SourceUnitId::new(source_id)
                 .map_err(|e| format!("invalid source_id '{source_id}': {e}"))?;
 
-            let factory_fn = if let Some(f) = find_parser_factory(&source_unit_id) {
-                f
-            } else {
+            let Some(factory_fn) = find_parser_factory(&source_unit_id) else {
                 let mut ids: Vec<&str> = PARSER_REGISTRY.keys().copied().collect();
                 ids.sort_unstable();
                 return Err(if ids.is_empty() {
@@ -227,12 +225,12 @@ fn hostname() -> String {
 // Test-only dispatch (unchanged interface)
 // =============================================================================
 
+/// Shared log of test-dispatch invocations: `(source_id, bytes, material_id)`.
+type TestDispatchCallLog = Arc<Mutex<Vec<(String, Vec<u8>, Option<Uuid>)>>>;
+
 /// A test-only parser dispatch that records invocations and returns no events.
 #[must_use]
-pub fn test_parser_dispatch() -> (
-    ParserDispatchFn,
-    Arc<Mutex<Vec<(String, Vec<u8>, Option<Uuid>)>>>,
-) {
+pub fn test_parser_dispatch() -> (ParserDispatchFn, TestDispatchCallLog) {
     let calls = Arc::new(Mutex::new(Vec::new()));
     let calls_clone = calls.clone();
     let dispatch: ParserDispatchFn = Arc::new(move |source_id, bytes, material_id| {

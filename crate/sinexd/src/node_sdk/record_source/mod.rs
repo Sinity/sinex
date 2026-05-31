@@ -616,45 +616,41 @@ impl RecordSource for AppendOnlyUtf8FileSource {
         AppendOnlyFileState::default()
     }
 
-    fn read_batch<'a>(
+    async fn read_batch<'a>(
         &'a self,
         checkpoint: &'a Self::Checkpoint,
         _horizon: RecordReadHorizon,
-    ) -> impl Future<Output = Result<RecordReadBatch<Self::Record, Self::Checkpoint>, Self::Error>>
-    + Send
-    + 'a {
-        async move {
-            let polled = poll_utf8_lines(&self.path, checkpoint.clone()).await?;
-            let mut checkpoint_after = polled.state.clone();
-            let records = polled
-                .records
-                .into_iter()
-                .enumerate()
-                .map(|(batch_index, line_record)| {
-                    checkpoint_after.offset_bytes = line_record.end_offset_bytes;
-                    RecordReadItem::new(
-                        AppendOnlyTextRecord {
-                            line: line_record.text,
-                            batch_index,
-                            start_offset_bytes: line_record.start_offset_bytes,
-                            end_offset_bytes: line_record.end_offset_bytes,
-                        },
-                        checkpoint_after.clone(),
-                    )
-                })
-                .collect();
-
-            Ok(RecordReadBatch {
-                start_checkpoint: checkpoint.clone(),
-                records,
-                final_checkpoint: polled.state,
-                observation: RecordSourceObservation::AppendOnlyFile {
-                    file_size: polled.file_size,
-                    bytes_consumed: polled.bytes_consumed,
-                    change: polled.change,
-                },
+    ) -> Result<RecordReadBatch<Self::Record, Self::Checkpoint>, Self::Error> {
+        let polled = poll_utf8_lines(&self.path, checkpoint.clone()).await?;
+        let mut checkpoint_after = polled.state.clone();
+        let records = polled
+            .records
+            .into_iter()
+            .enumerate()
+            .map(|(batch_index, line_record)| {
+                checkpoint_after.offset_bytes = line_record.end_offset_bytes;
+                RecordReadItem::new(
+                    AppendOnlyTextRecord {
+                        line: line_record.text,
+                        batch_index,
+                        start_offset_bytes: line_record.start_offset_bytes,
+                        end_offset_bytes: line_record.end_offset_bytes,
+                    },
+                    checkpoint_after.clone(),
+                )
             })
-        }
+            .collect();
+
+        Ok(RecordReadBatch {
+            start_checkpoint: checkpoint.clone(),
+            records,
+            final_checkpoint: polled.state,
+            observation: RecordSourceObservation::AppendOnlyFile {
+                file_size: polled.file_size,
+                bytes_consumed: polled.bytes_consumed,
+                change: polled.change,
+            },
+        })
     }
 }
 
@@ -701,7 +697,7 @@ impl<Record, Read, RowId, ReadError> SqliteRecordSource<Record, Read, RowId, Rea
         &self.snapshot_policy
     }
 
-    async fn read_batch_from_path<'a>(
+    fn read_batch_from_path<'a>(
         &'a self,
         path: &'a Utf8PathBuf,
         checkpoint: &'a SqliteRowCheckpoint,
@@ -756,13 +752,11 @@ where
         SqliteRowCheckpoint::default()
     }
 
-    fn read_batch<'a>(
+    async fn read_batch<'a>(
         &'a self,
         checkpoint: &'a Self::Checkpoint,
         horizon: RecordReadHorizon,
-    ) -> impl Future<Output = Result<RecordReadBatch<Self::Record, Self::Checkpoint>, Self::Error>>
-    + Send
-    + 'a {
+    ) -> Result<RecordReadBatch<Self::Record, Self::Checkpoint>, Self::Error> {
         self.read_batch_from_path(&self.path, checkpoint, horizon)
     }
 }
@@ -814,14 +808,12 @@ where
         self.initial_checkpoint.clone()
     }
 
-    fn read_batch<'a>(
+    async fn read_batch<'a>(
         &'a self,
         checkpoint: &'a Self::Checkpoint,
         horizon: RecordReadHorizon,
-    ) -> impl Future<Output = Result<RecordReadBatch<Self::Record, Self::Checkpoint>, Self::Error>>
-    + Send
-    + 'a {
-        async move { (self.poll)(checkpoint, horizon).await }
+    ) -> Result<RecordReadBatch<Self::Record, Self::Checkpoint>, Self::Error> {
+        (self.poll)(checkpoint, horizon).await
     }
 }
 
@@ -889,19 +881,16 @@ impl BufferedRecordSink {
 }
 
 impl RecordMaterialSink for BufferedRecordSink {
-    fn append_record(
-        &self,
-        bytes: Vec<u8>,
-    ) -> impl Future<Output = NodeResult<SourceRecordAnchor>> + Send + '_ {
-        async move { self.writer.append(bytes).await }
+    async fn append_record(&self, bytes: Vec<u8>) -> NodeResult<SourceRecordAnchor> {
+        self.writer.append(bytes).await
     }
 
-    fn flush<'a>(&'a self, reason: &'a str) -> impl Future<Output = NodeResult<()>> + Send + 'a {
-        async move { self.writer.flush(reason).await }
+    async fn flush<'a>(&'a self, reason: &'a str) -> NodeResult<()> {
+        self.writer.flush(reason).await
     }
 
-    fn finalize<'a>(&'a self, reason: &'a str) -> impl Future<Output = NodeResult<()>> + Send + 'a {
-        async move { self.writer.finalize(reason).await }
+    async fn finalize<'a>(&'a self, reason: &'a str) -> NodeResult<()> {
+        self.writer.finalize(reason).await
     }
 }
 
@@ -1398,20 +1387,16 @@ where
         self.initial_checkpoint.clone()
     }
 
-    fn read_batch<'a>(
+    async fn read_batch<'a>(
         &'a self,
         checkpoint: &'a Self::Checkpoint,
         _horizon: RecordReadHorizon,
-    ) -> impl Future<Output = Result<RecordReadBatch<Self::Record, Self::Checkpoint>, Self::Error>>
-    + Send
-    + 'a {
-        async move {
-            self.batches
-                .iter()
-                .find(|batch| &batch.start_checkpoint == checkpoint)
-                .cloned()
-                .ok_or(MockRecordSourceError)
-        }
+    ) -> Result<RecordReadBatch<Self::Record, Self::Checkpoint>, Self::Error> {
+        self.batches
+            .iter()
+            .find(|batch| &batch.start_checkpoint == checkpoint)
+            .cloned()
+            .ok_or(MockRecordSourceError)
     }
 }
 
