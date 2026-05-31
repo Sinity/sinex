@@ -674,7 +674,7 @@ impl<'a> SchemaManagementRepository<'a> {
 
         let resolved_schema_id = schema_id.unwrap_or_else(|| *schema.id.as_uuid());
         if let Some(event_id) = event.id.as_ref().map(|id| *id.as_uuid())
-            && let Some(cached) = self.fetch_cached_validation(&event_id, &resolved_schema_id)?
+            && let Some(cached) = self.fetch_cached_validation(&event_id, &resolved_schema_id)
         {
             return Ok(cached);
         }
@@ -682,7 +682,7 @@ impl<'a> SchemaManagementRepository<'a> {
         let result = Self::run_json_validation(&schema.schema_content, &event.payload);
 
         if let Some(event_id) = event.id.as_ref().map(|id| *id.as_uuid()) {
-            self.store_validation_cache(&event_id, &resolved_schema_id, &result)?;
+            self.store_validation_cache(&event_id, &resolved_schema_id, &result);
         }
 
         Ok(result)
@@ -720,13 +720,13 @@ impl<'a> SchemaManagementRepository<'a> {
             .payload_schema_id
             .unwrap_or_else(|| *schema.id.as_uuid());
 
-        if let Some(cached) = self.fetch_cached_validation(event_id, &schema_id_for_cache)? {
+        if let Some(cached) = self.fetch_cached_validation(event_id, &schema_id_for_cache) {
             return Ok(cached);
         }
 
         let result = Self::run_json_validation(&schema.schema_content, &event_row.payload);
 
-        self.store_validation_cache(event_id, &schema_id_for_cache, &result)?;
+        self.store_validation_cache(event_id, &schema_id_for_cache, &result);
 
         Ok(result)
     }
@@ -773,10 +773,10 @@ impl<'a> SchemaManagementRepository<'a> {
         &self,
         _event_id: &Uuid,
         _schema_id: &Uuid,
-    ) -> DbResult<Option<ValidationResult>> {
+    ) -> Option<ValidationResult> {
         // validation_cache table was removed in #1160; caching deferred to follow-up
         let _ = (_event_id, _schema_id, self.pool);
-        Ok(None)
+        None
     }
 
     fn store_validation_cache(
@@ -784,10 +784,9 @@ impl<'a> SchemaManagementRepository<'a> {
         _event_id: &Uuid,
         _schema_id: &Uuid,
         _result: &ValidationResult,
-    ) -> DbResult<()> {
+    ) {
         // validation_cache table was removed in #1160; caching deferred to follow-up
         let _ = (_event_id, _schema_id, _result, self.pool);
-        Ok(())
     }
 
     /// Deprecate a schema
