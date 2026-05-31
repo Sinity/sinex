@@ -10,6 +10,7 @@ use serde::Serialize;
 use serde::ser::Error as _;
 use sinex_primitives::domain::{EventSource, EventType};
 use sinex_primitives::events::builder::EventId;
+use sinex_primitives::ControlSubject;
 use tempfile::tempdir;
 use tokio::sync::Notify;
 use xtask::sandbox::prelude::*;
@@ -501,7 +502,7 @@ async fn request_drain_until_applied(
     reason: Option<&str>,
 ) -> TestResult<()> {
     let env = sinex_primitives::environment();
-    let subject = env.nats_subject(&format!("sinex.control.nodes.{control_identity}.drain"));
+    let subject = env.nats_subject(&ControlSubject::node_drain(control_identity));
     let payload = serde_json::to_vec(&sinex_primitives::rpc::nodes::NodeDrainRequest {
         node_id: control_identity.to_string().into(),
         reason: reason.map(ToOwned::to_owned),

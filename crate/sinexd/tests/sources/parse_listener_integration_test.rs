@@ -4,7 +4,7 @@
 //! Replaces the fake-DB-write scan-node tests referenced in #1132.
 
 use color_eyre::eyre::eyre;
-use sinex_primitives::Uuid;
+use sinex_primitives::{ControlSubject, Uuid};
 use sinexd::sources::dispatch::test_parser_dispatch;
 use sinexd::sources::parse_listener::{
     SourceParseAck, SourceParseCommand, spawn_parse_listener,
@@ -40,7 +40,7 @@ async fn parse_listener_handles_command_lifecycle(ctx: TestContext) -> TestResul
 
     let operation_id = Uuid::now_v7();
     let material_id = Uuid::now_v7();
-    let subject = format!("sinex.control.sources.{source_id}.parse");
+    let subject = ControlSubject::source_parse(source_id);
 
     let cmd = SourceParseCommand {
         operation_id,

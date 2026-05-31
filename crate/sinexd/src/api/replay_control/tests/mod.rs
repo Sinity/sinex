@@ -16,7 +16,7 @@ use sinex_db::repositories::DbPoolExt;
 use sinex_db::repositories::state::Operation;
 use sinex_primitives::environment::{SinexEnvironment, environment};
 use sinex_primitives::events::{EventPayload, payloads::filesystem::FileCreatedPayload};
-use sinex_primitives::{DynamicPayload, Id, SinexError, Uuid};
+use sinex_primitives::{ControlSubject, DynamicPayload, Id, SinexError, Uuid};
 use std::collections::HashMap;
 use std::sync::atomic::AtomicUsize;
 use tokio::time::sleep;
@@ -162,7 +162,7 @@ async fn spawn_fake_scan_node(
     tokio::task::JoinHandle<()>,
 )> {
     let node_name = node_name.to_string();
-    let subject = env.nats_subject(&format!("sinex.control.nodes.{node_name}.scan"));
+    let subject = env.nats_subject(&ControlSubject::node_scan(&node_name));
     let mut sub = nats
         .subscribe(subject)
         .await
@@ -174,8 +174,7 @@ async fn spawn_fake_scan_node(
             let command: NodeScanCommand = serde_json::from_slice(&msg.payload)
                 .expect("fake node must receive a valid scan command");
             let operation_id = command.operation_id;
-            let progress_subject =
-                env.nats_subject(&format!("sinex.control.replay.progress.{operation_id}"));
+            let progress_subject = env.nats_subject(&ControlSubject::replay_progress(operation_id));
 
             let _ = command_tx.send(command.clone());
 
@@ -232,7 +231,7 @@ async fn spawn_fake_scan_node_with_progress(
     tokio::task::JoinHandle<()>,
 )> {
     let node_name = node_name.to_string();
-    let subject = env.nats_subject(&format!("sinex.control.nodes.{node_name}.scan"));
+    let subject = env.nats_subject(&ControlSubject::node_scan(&node_name));
     let mut sub = nats
         .subscribe(subject)
         .await
@@ -244,8 +243,7 @@ async fn spawn_fake_scan_node_with_progress(
             let command: NodeScanCommand = serde_json::from_slice(&msg.payload)
                 .expect("fake node must receive a valid scan command");
             let operation_id = command.operation_id;
-            let progress_subject =
-                env.nats_subject(&format!("sinex.control.replay.progress.{operation_id}"));
+            let progress_subject = env.nats_subject(&ControlSubject::replay_progress(operation_id));
 
             let _ = command_tx.send(command.clone());
 
@@ -300,7 +298,7 @@ async fn spawn_fake_scan_node_ack_only(
     tokio::task::JoinHandle<()>,
 )> {
     let node_name = node_name.to_string();
-    let subject = env.nats_subject(&format!("sinex.control.nodes.{node_name}.scan"));
+    let subject = env.nats_subject(&ControlSubject::node_scan(&node_name));
     let mut sub = nats
         .subscribe(subject)
         .await

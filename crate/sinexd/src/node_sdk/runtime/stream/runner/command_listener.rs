@@ -9,6 +9,7 @@ use super::{
     NodeScanAck, NodeScanCommand, NodeScanProgress, NodeType, Ordering, StreamExt, Uuid,
     control_command_kind, debug, error, info, run_resubscribing_listener, warn, watch,
 };
+use sinex_primitives::ControlSubject;
 
 impl<T: Node + 'static> NodeRunner<T> {
     /// Start the NATS command listener for node-dispatch replay.
@@ -59,7 +60,7 @@ impl<T: Node + 'static> NodeRunner<T> {
 
         let (shutdown_tx, shutdown_rx) = watch::channel(false);
         let handle = tokio::spawn(async move {
-            let subject = env.nats_subject(&format!("sinex.control.nodes.{node_name}.*"));
+            let subject = env.nats_subject(&ControlSubject::node_wildcard(&node_name));
             let active_scan = Arc::new(AtomicBool::new(false));
             let subscribe_client = nats_client.clone();
             let subscribe_subject = subject.clone();

@@ -12,6 +12,7 @@ use crate::node_sdk::{NodeResult, SinexError};
 #[cfg(feature = "db")]
 use sinex_db::DbPool as PgPool;
 use sinex_primitives::domain::NodeState;
+use sinex_primitives::ControlSubject;
 use sinex_primitives::transport;
 use tracing::{info, warn};
 
@@ -117,7 +118,7 @@ impl<T: Node + 'static> NodeRunner<T> {
         payload: &NodeDrainComplete,
     ) -> NodeResult<()> {
         let subject = sinex_primitives::environment::environment()
-            .nats_subject(&format!("sinex.control.nodes.{node_name}.drain_complete"));
+            .nats_subject(&ControlSubject::node_drain_complete(node_name));
         let encoded = serde_json::to_vec(payload).map_err(|error| {
             SinexError::serialization(format!(
                 "Failed to serialize drain_complete payload for node '{node_name}': {error}"

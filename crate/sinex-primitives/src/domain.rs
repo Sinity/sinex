@@ -870,6 +870,39 @@ impl ControlSubject {
     pub fn node_scan(node_id: impl fmt::Display) -> String {
         format!("sinex.control.nodes.{node_id}.scan")
     }
+
+    /// `sinex.control.nodes.<node_id>.*`
+    ///
+    /// Subscription subject used by node runtimes for all node-scoped control
+    /// commands.
+    #[must_use]
+    pub fn node_wildcard(node_id: impl fmt::Display) -> String {
+        format!("sinex.control.nodes.{node_id}.*")
+    }
+
+    /// `sinex.control.nodes.<node_id>.drain`
+    #[must_use]
+    pub fn node_drain(node_id: impl fmt::Display) -> String {
+        format!("sinex.control.nodes.{node_id}.drain")
+    }
+
+    /// `sinex.control.nodes.<node_id>.resume`
+    #[must_use]
+    pub fn node_resume(node_id: impl fmt::Display) -> String {
+        format!("sinex.control.nodes.{node_id}.resume")
+    }
+
+    /// `sinex.control.nodes.<node_id>.set-horizon`
+    #[must_use]
+    pub fn node_set_horizon(node_id: impl fmt::Display) -> String {
+        format!("sinex.control.nodes.{node_id}.set-horizon")
+    }
+
+    /// `sinex.control.nodes.<node_id>.drain_complete`
+    #[must_use]
+    pub fn node_drain_complete(node_id: impl fmt::Display) -> String {
+        format!("sinex.control.nodes.{node_id}.drain_complete")
+    }
 }
 
 /// The hostname where an event occurred.

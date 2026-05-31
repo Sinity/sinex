@@ -9,7 +9,7 @@
 use serde_json::{Value, json};
 use sinex_primitives::temporal::Timestamp;
 use sinex_primitives::{
-    SinexError, domain::OperationStatus, environment::SinexEnvironment, transport,
+    ControlSubject, SinexError, domain::OperationStatus, environment::SinexEnvironment, transport,
 };
 use std::error::Error as _;
 
@@ -161,10 +161,7 @@ pub async fn handle_nodes_drain(
     );
 
     // Publish drain command to NATS control subject
-    let subject = env.nats_subject(&format!(
-        "sinex.control.nodes.{}.drain",
-        drain_params.node_id
-    ));
+    let subject = env.nats_subject(&ControlSubject::node_drain(&drain_params.node_id));
 
     let payload = json!({
         "action": "drain",
@@ -202,10 +199,7 @@ pub async fn handle_nodes_resume(
     );
 
     // Publish resume command to NATS control subject
-    let subject = env.nats_subject(&format!(
-        "sinex.control.nodes.{}.resume",
-        resume_params.node_id
-    ));
+    let subject = env.nats_subject(&ControlSubject::node_resume(&resume_params.node_id));
 
     let payload = json!({
         "action": "resume",
@@ -243,10 +237,7 @@ pub async fn handle_nodes_set_horizon(
     );
 
     // Publish set-horizon command to NATS control subject
-    let subject = env.nats_subject(&format!(
-        "sinex.control.nodes.{}.set-horizon",
-        horizon_params.node_id
-    ));
+    let subject = env.nats_subject(&ControlSubject::node_set_horizon(&horizon_params.node_id));
 
     let payload = json!({
         "action": "set_horizon",
