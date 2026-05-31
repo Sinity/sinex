@@ -264,14 +264,16 @@ fn dispatch_hyprland_event(
     typ: &str,
     data: &str,
 ) -> ParserResult<Option<(&'static str, serde_json::Value)>> {
-    // Redact any window title through the privacy engine before including in payload.
-    let redact_title = |title: &str| -> String {
+    // Redact any window title through the privacy engine before including in
+    // payload. Fail closed: if the engine cannot initialize, propagate the
+    // error so the event is dropped rather than emitting the raw title.
+    let redact_title = |title: &str| -> ParserResult<String> {
         match privacy::engine() {
-            Ok(eng) => eng
+            Ok(eng) => Ok(eng
                 .process(title, ProcessingContext::WindowTitle)
                 .text
-                .into_owned(),
-            Err(_) => title.to_string(),
+                .into_owned()),
+            Err(e) => Err(ParserError::Privacy(format!("privacy engine: {e}"))),
         }
     };
 
@@ -286,7 +288,7 @@ fn dispatch_hyprland_event(
                     "workspace_id": parts.get(1).unwrap_or(&""),
                     "workspace_name": parts.get(2).unwrap_or(&""),
                     "window_class": parts.get(3).unwrap_or(&""),
-                    "window_title": redact_title(parts.get(4).unwrap_or(&"")),
+                    "window_title": redact_title(parts.get(4).unwrap_or(&""))?,
                 }),
             )
         }
@@ -301,7 +303,7 @@ fn dispatch_hyprland_event(
                 "window.focused",
                 serde_json::json!({
                     "window_class": class,
-                    "window_title": redact_title(title),
+                    "window_title": redact_title(title)?,
                 }),
             )
         }
@@ -328,7 +330,7 @@ fn dispatch_hyprland_event(
                 "window.title_changed",
                 serde_json::json!({
                     "window_id": addr,
-                    "window_title": redact_title(title),
+                    "window_title": redact_title(title)?,
                 }),
             )
         }
