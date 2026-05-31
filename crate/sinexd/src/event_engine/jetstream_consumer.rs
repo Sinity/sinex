@@ -185,7 +185,7 @@ fn is_source_material_fk_constraint_name(value: &str) -> bool {
 
 /// Hard guard for node-supplied event IDs.
 ///
-/// All node-minted event IDs must be RFC4122 UUIDv7. `ingestd` rejects every ID
+/// All node-minted event IDs must be RFC4122 `UUIDv7`. `ingestd` rejects every ID
 /// that does not meet this requirement before it reaches the hypertable partition key.
 #[cfg(test)]
 fn is_uuid_v7(value: &Uuid) -> bool {

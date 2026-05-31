@@ -950,7 +950,7 @@ mod tests {
     async fn empty_spec_emits_one_event_with_empty_payload() -> xtask::sandbox::TestResult<()> {
         let intents = DeclarativeParser::evaluate(
             &minimal_spec(),
-            json_record("{}"),
+            &json_record("{}"),
             &test_ctx(),
             &BindingConfig::default(),
         )
@@ -981,7 +981,7 @@ mod tests {
         });
         let intents = DeclarativeParser::evaluate(
             &spec,
-            json_record(r#"{"cmd": "ls -la"}"#),
+            &json_record(r#"{"cmd": "ls -la"}"#),
             &test_ctx(),
             &BindingConfig::default(),
         )
@@ -1010,7 +1010,7 @@ mod tests {
         });
         let result = DeclarativeParser::evaluate(
             &spec,
-            json_record(r"{}"),
+            &json_record(r"{}"),
             &test_ctx(),
             &BindingConfig::default(),
         );
@@ -1038,7 +1038,7 @@ mod tests {
         });
         let intents = DeclarativeParser::evaluate(
             &spec,
-            json_record(r"{}"),
+            &json_record(r"{}"),
             &test_ctx(),
             &BindingConfig::default(),
         )
@@ -1067,7 +1067,7 @@ mod tests {
         });
         let intents = DeclarativeParser::evaluate(
             &spec,
-            json_record(r"{}"),
+            &json_record(r"{}"),
             &test_ctx(),
             &BindingConfig::default(),
         )
@@ -1096,7 +1096,7 @@ mod tests {
         });
         let intents = DeclarativeParser::evaluate(
             &spec,
-            json_record(r#"{"internal": 42}"#),
+            &json_record(r#"{"internal": 42}"#),
             &test_ctx(),
             &BindingConfig::default(),
         )
@@ -1141,7 +1141,7 @@ mod tests {
         });
         let intents = DeclarativeParser::evaluate(
             &spec,
-            json_record(r#"{"session": "abc", "id": "evt-1"}"#),
+            &json_record(r#"{"session": "abc", "id": "evt-1"}"#),
             &test_ctx(),
             &BindingConfig::default(),
         )
@@ -1181,7 +1181,7 @@ mod tests {
         let binding = BindingConfig::new().with_flag("private_mode_active", true);
         let intents = DeclarativeParser::evaluate(
             &spec,
-            json_record(r#"{"cmd": "secret"}"#),
+            &json_record(r#"{"cmd": "secret"}"#),
             &test_ctx(),
             &binding,
         )
@@ -1218,7 +1218,7 @@ mod tests {
         let binding = BindingConfig::new().with_flag("private_mode_active", true);
         let intents = DeclarativeParser::evaluate(
             &spec,
-            json_record(r#"{"cmd": "secret"}"#),
+            &json_record(r#"{"cmd": "secret"}"#),
             &test_ctx(),
             &binding,
         )
@@ -1251,7 +1251,7 @@ mod tests {
         let binding = BindingConfig::new().with_flag("private_mode_active", false);
         let intents = DeclarativeParser::evaluate(
             &spec,
-            json_record(r#"{"cmd": "ls"}"#),
+            &json_record(r#"{"cmd": "ls"}"#),
             &test_ctx(),
             &binding,
         )
@@ -1280,7 +1280,7 @@ mod tests {
         });
         let intents = DeclarativeParser::evaluate(
             &spec,
-            json_record(r#"{"exit": "42"}"#),
+            &json_record(r#"{"exit": "42"}"#),
             &test_ctx(),
             &BindingConfig::default(),
         )
@@ -1311,7 +1311,7 @@ mod tests {
             let json = format!(r#"{{"flag": {input:?}}}"#);
             let intents = DeclarativeParser::evaluate(
                 &spec,
-                json_record(&json),
+                &json_record(&json),
                 &test_ctx(),
                 &BindingConfig::default(),
             )
@@ -1344,7 +1344,7 @@ mod tests {
         });
         let intents = DeclarativeParser::evaluate(
             &spec,
-            json_record(r#"{"ts": "2024-01-15T12:34:56Z"}"#),
+            &json_record(r#"{"ts": "2024-01-15T12:34:56Z"}"#),
             &test_ctx(),
             &BindingConfig::default(),
         )
@@ -1379,7 +1379,7 @@ mod tests {
         });
         let intents = DeclarativeParser::evaluate(
             &spec,
-            json_record(r#"{"ts": 1705320896}"#),
+            &json_record(r#"{"ts": 1705320896}"#),
             &test_ctx(),
             &BindingConfig::default(),
         )
@@ -1414,7 +1414,7 @@ mod tests {
         });
         let intents = DeclarativeParser::evaluate(
             &spec,
-            json_record(r#"{"ts": "not a timestamp"}"#),
+            &json_record(r#"{"ts": "not a timestamp"}"#),
             &test_ctx(),
             &BindingConfig::default(),
         )
@@ -1431,7 +1431,7 @@ mod tests {
     -> xtask::sandbox::TestResult<()> {
         let intents = DeclarativeParser::evaluate(
             &minimal_spec(),
-            json_record("{}"),
+            &json_record("{}"),
             &test_ctx(),
             &BindingConfig::default(),
         )
@@ -1482,7 +1482,7 @@ mod tests {
             metadata: serde_json::Value::Null,
         };
         let intents =
-            DeclarativeParser::evaluate(&spec, record, &test_ctx(), &BindingConfig::default())
+            DeclarativeParser::evaluate(&spec, &record, &test_ctx(), &BindingConfig::default())
                 .unwrap();
         assert_eq!(intents[0].payload["first"], "alpha");
         assert_eq!(intents[0].payload["third"], "gamma");
@@ -1519,7 +1519,7 @@ mod tests {
         };
         let intents = DeclarativeParser::evaluate(
             &minimal_spec(),
-            record,
+            &record,
             &test_ctx(),
             &BindingConfig::default(),
         )
@@ -1559,7 +1559,7 @@ mod tests {
         });
         let result = DeclarativeParser::evaluate(
             &spec,
-            json_record(r#"{"ts": "not-a-real-date"}"#),
+            &json_record(r#"{"ts": "not-a-real-date"}"#),
             &test_ctx(),
             &BindingConfig::default(),
         );
@@ -1593,7 +1593,7 @@ mod tests {
         let intents = DeclarativeParser::evaluate(
             &spec,
             // 1_700_000_000_000 ms = 2023-11-14T22:13:20Z
-            json_record(r#"{"ts": 1700000000000}"#),
+            &json_record(r#"{"ts": 1700000000000}"#),
             &test_ctx(),
             &BindingConfig::default(),
         )
@@ -1630,7 +1630,7 @@ mod tests {
         });
         let intents = DeclarativeParser::evaluate(
             &spec,
-            json_record(r#"{"ts": 1700000000000000}"#),
+            &json_record(r#"{"ts": 1700000000000000}"#),
             &test_ctx(),
             &BindingConfig::default(),
         )
@@ -1662,7 +1662,7 @@ mod tests {
         });
         let result = DeclarativeParser::evaluate(
             &spec,
-            json_record(r#"{"count": "not-a-number"}"#),
+            &json_record(r#"{"count": "not-a-number"}"#),
             &test_ctx(),
             &BindingConfig::default(),
         );
@@ -1691,7 +1691,7 @@ mod tests {
         // 3.14 must error for FieldType::Integer.
         let err = DeclarativeParser::evaluate(
             &spec,
-            json_record(r#"{"n": 3.14}"#),
+            &json_record(r#"{"n": 3.14}"#),
             &test_ctx(),
             &BindingConfig::default(),
         );
@@ -1699,7 +1699,7 @@ mod tests {
         // 3.0 must coerce to integer 3.
         let ok = DeclarativeParser::evaluate(
             &spec,
-            json_record(r#"{"n": 3.0}"#),
+            &json_record(r#"{"n": 3.0}"#),
             &test_ctx(),
             &BindingConfig::default(),
         )
@@ -1720,7 +1720,7 @@ mod tests {
             metadata: serde_json::Value::Null,
         };
         let result =
-            DeclarativeParser::evaluate(&spec, record, &test_ctx(), &BindingConfig::default());
+            DeclarativeParser::evaluate(&spec, &record, &test_ctx(), &BindingConfig::default());
         assert!(matches!(result, Err(ParserError::Decode(_))));
         Ok(())
     }
@@ -1752,7 +1752,7 @@ mod tests {
         let binding = BindingConfig::new().with_flag("private_mode", true);
         let intents = DeclarativeParser::evaluate(
             &spec,
-            json_record(r#"{"secret": "x"}"#),
+            &json_record(r#"{"secret": "x"}"#),
             &test_ctx(),
             &binding,
         )
@@ -1797,7 +1797,7 @@ mod tests {
             metadata: serde_json::Value::Null,
         };
         let result =
-            DeclarativeParser::evaluate(&spec, record, &test_ctx(), &BindingConfig::default());
+            DeclarativeParser::evaluate(&spec, &record, &test_ctx(), &BindingConfig::default());
         assert!(matches!(result, Err(ParserError::Field(_))));
         Ok(())
     }
@@ -1823,7 +1823,7 @@ mod tests {
         });
         let intents = DeclarativeParser::evaluate(
             &spec,
-            json_record(r#"{"rowid": 7}"#),
+            &json_record(r#"{"rowid": 7}"#),
             &test_ctx(),
             &BindingConfig::default(),
         )
@@ -1856,7 +1856,7 @@ mod tests {
         });
         let intents = DeclarativeParser::evaluate(
             &spec,
-            json_record(r"{}"), // label missing
+            &json_record(r"{}"), // label missing
             &test_ctx(),
             &BindingConfig::default(),
         )
@@ -1885,7 +1885,7 @@ mod tests {
         });
         let intents = DeclarativeParser::evaluate(
             &spec,
-            json_record(r#"{"col": "val"}"#),
+            &json_record(r#"{"col": "val"}"#),
             &test_ctx(),
             &BindingConfig::default(),
         )

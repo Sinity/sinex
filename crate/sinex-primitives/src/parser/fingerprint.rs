@@ -1012,8 +1012,8 @@ mod tests {
 
     #[sinex_test]
     async fn test_fingerprint_stability() -> xtask::sandbox::TestResult<()> {
-        let value1 = json!({"z": 1, "a": "x", "m": 3.14});
-        let value2 = json!({"a": "x", "m": 3.14, "z": 1});
+        let value1 = json!({"z": 1, "a": "x", "m": 3.15});
+        let value2 = json!({"a": "x", "m": 3.15, "z": 1});
 
         let fp1 = SourceRecordFingerprint::from_json(&value1);
         let fp2 = SourceRecordFingerprint::from_json(&value2);

@@ -91,7 +91,7 @@ async fn test_nak_triggers_redelivery(ctx: TestContext) -> TestResult<()> {
 
                         match fetch_result {
                             Ok(mut messages) => {
-                                while let Some(item) = messages.next().await {
+                                if let Some(item) = messages.next().await {
                                     match item {
                                         Ok(msg) => {
                                             let count =
@@ -108,10 +108,9 @@ async fn test_nak_triggers_redelivery(ctx: TestContext) -> TestResult<()> {
                                         }
                                         Err(e) => {
                                             let msg = e.to_string();
-                                            if is_no_messages_error(&msg) {
-                                                break;
+                                            if !is_no_messages_error(&msg) {
+                                                return Err(eyre!(e));
                                             }
-                                            return Err(eyre!(e));
                                         }
                                     }
                                 }
@@ -247,10 +246,9 @@ async fn test_redelivery_after_consumer_disconnect(ctx: TestContext) -> TestResu
                                         }
                                         Err(e) => {
                                             let msg = e.to_string();
-                                            if is_no_messages_error(&msg) {
-                                                break;
+                                            if !is_no_messages_error(&msg) {
+                                                return Err(eyre!(e));
                                             }
-                                            return Err(eyre!(e));
                                         }
                                     }
                                 }
@@ -346,7 +344,7 @@ async fn test_redelivery_count_tracking(ctx: TestContext) -> TestResult<()> {
 
                         match fetch_result {
                             Ok(mut messages) => {
-                                while let Some(item) = messages.next().await {
+                                if let Some(item) = messages.next().await {
                                     match item {
                                         Ok(msg) => {
                                             let delivery_count =
@@ -370,10 +368,9 @@ async fn test_redelivery_count_tracking(ctx: TestContext) -> TestResult<()> {
                                         }
                                         Err(e) => {
                                             let msg = e.to_string();
-                                            if is_no_messages_error(&msg) {
-                                                break;
+                                            if !is_no_messages_error(&msg) {
+                                                return Err(eyre!(e));
                                             }
-                                            return Err(eyre!(e));
                                         }
                                     }
                                 }
@@ -479,7 +476,7 @@ async fn test_dlq_routing_after_max_retries(ctx: TestContext) -> TestResult<()> 
 
                         match fetch_result {
                             Ok(mut messages) => {
-                                while let Some(item) = messages.next().await {
+                                if let Some(item) = messages.next().await {
                                     match item {
                                         Ok(msg) => {
                                             delivery_attempts.fetch_add(1, Ordering::SeqCst);
@@ -491,10 +488,9 @@ async fn test_dlq_routing_after_max_retries(ctx: TestContext) -> TestResult<()> 
                                         }
                                         Err(e) => {
                                             let msg = e.to_string();
-                                            if is_no_messages_error(&msg) {
-                                                break;
+                                            if !is_no_messages_error(&msg) {
+                                                return Err(eyre!(e));
                                             }
-                                            return Err(eyre!(e));
                                         }
                                     }
                                 }
@@ -543,7 +539,7 @@ async fn test_dlq_routing_after_max_retries(ctx: TestContext) -> TestResult<()> 
 
                         match fetch_result {
                             Ok(Ok(mut messages)) => {
-                                while let Some(item) = messages.next().await {
+                                if let Some(item) = messages.next().await {
                                     match item {
                                         Ok(msg) => {
                                             let info = msg.info().map_err(|e| eyre!(e))?;
@@ -555,10 +551,9 @@ async fn test_dlq_routing_after_max_retries(ctx: TestContext) -> TestResult<()> 
                                         }
                                         Err(e) => {
                                             let msg = e.to_string();
-                                            if is_no_messages_error(&msg) {
-                                                break;
+                                            if !is_no_messages_error(&msg) {
+                                                return Err(eyre!(e));
                                             }
-                                            return Err(eyre!(e));
                                         }
                                     }
                                 }

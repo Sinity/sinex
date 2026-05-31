@@ -451,9 +451,7 @@ async fn converge_column_nullability(
         let result = pool.execute(sql.as_str()).await;
         match result {
             Ok(_) => {}
-            Err(e) if action == "DROP NOT NULL" && is_primary_key_nullability_error(&e) => {
-                continue;
-            }
+            Err(e) if action == "DROP NOT NULL" && is_primary_key_nullability_error(&e) => {}
             Err(e) => {
                 return Err(ApplyError::Internal(format!(
                     "nullability convergence failed on {schema}.{table}.{col_name} \

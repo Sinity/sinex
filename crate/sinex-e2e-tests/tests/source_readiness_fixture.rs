@@ -4,16 +4,15 @@
 //! states for `sinexctl sources readiness` and asserts that the readiness
 //! repository classifies each one correctly:
 //!
-//!   - `missing`         — no row in `raw.source_material_registry`. The
-//!                         readiness API returns `None` for the canonical
-//!                         identifier; it is also absent from the list view.
-//!   - `staged_unparsed` — one material registered with `status='sensing'`
-//!                         (no parsed events). Readiness must report
-//!                         `Partial` with the `material.staged_unparsed`
-//!                         caveat.
-//!   - `available`       — one material registered with `status='completed'`
-//!                         and at least one event referencing it. Readiness
-//!                         must report `Available` with no degraded caveats.
+//! - `missing`         — no row in `raw.source_material_registry`. The
+//!   readiness API returns `None` for the canonical identifier; it is also
+//!   absent from the list view.
+//! - `staged_unparsed` — one material registered with `status='sensing'`
+//!   (no parsed events). Readiness must report `Partial` with the
+//!   `material.staged_unparsed` caveat.
+//! - `available`       — one material registered with `status='completed'`
+//!   and at least one event referencing it. Readiness must report `Available`
+//!   with no degraded caveats.
 //!
 //! Each source uses a unique synthetic identifier so the fixture composes
 //! against any DB state — including a database with prior materials —

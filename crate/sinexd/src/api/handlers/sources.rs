@@ -197,7 +197,7 @@ pub async fn handle_sources_stage(
                 .as_ref()
                 .and_then(|id_str| uuid::Uuid::parse_str(id_str).ok().map(sinex_db::Id::from)),
         )
-        .with_metadata_contract(contract.clone());
+        .with_metadata_contract(&contract);
 
     let mut record = pool
         .source_materials()

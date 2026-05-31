@@ -36,7 +36,7 @@ async fn test_source_material_idempotent_creation(ctx: TestContext) -> TestResul
 
     let event_id = ctx.publish_prebuilt_event(&event).await?;
     let persisted = persisted_event(&ctx, event_id).await?;
-    assert_material_provenance(&persisted, material_id, 0);
+    assert_material_provenance(&persisted, material_id, 0)?;
     assert_eq!(
         persisted.payload["message"],
         serde_json::json!("test event with idempotent material")
@@ -100,7 +100,7 @@ async fn test_multiple_events_same_material(ctx: TestContext) -> TestResult<()> 
             persisted.payload["event"],
             serde_json::json!("shared material")
         );
-        assert_material_provenance(&persisted, material_id, i as i64);
+        assert_material_provenance(&persisted, material_id, i as i64)?;
     }
 
     Ok(())
@@ -136,7 +136,7 @@ fn assert_material_provenance(
     event: &Event<serde_json::Value>,
     expected_material_id: Id<SourceMaterial>,
     expected_anchor_byte: i64,
-) {
+) -> TestResult<()> {
     match event.provenance() {
         Provenance::Material {
             id, anchor_byte, ..
@@ -144,6 +144,11 @@ fn assert_material_provenance(
             assert_eq!(*id, expected_material_id);
             assert_eq!(*anchor_byte, expected_anchor_byte);
         }
-        other => panic!("expected material provenance, got {other:?}"),
+        other => {
+            return Err(color_eyre::eyre::eyre!(
+                "expected material provenance, got {other:?}"
+            ));
+        }
     }
+    Ok(())
 }

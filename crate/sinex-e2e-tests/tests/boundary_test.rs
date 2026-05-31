@@ -532,7 +532,11 @@ async fn assert_persisted_events_match_submitted(
                     "{label} should preserve the sandbox material anchor for {id}"
                 );
             }
-            other => panic!("{label} event {id} should have material provenance, got {other:?}"),
+            other => {
+                return Err(color_eyre::eyre::eyre!(
+                    "{label} event {id} should have material provenance, got {other:?}"
+                ));
+            }
         }
     }
 

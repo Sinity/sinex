@@ -174,7 +174,7 @@ fn build_unix_stream(
 /// Returns `(server_side, client_side)`. The test writes to the server side;
 /// the adapter reads from the client side.
 #[cfg(test)]
-pub async fn make_socket_pair() -> (UnixStream, UnixStream) {
+pub fn make_socket_pair() -> (UnixStream, UnixStream) {
     let (a, b) = UnixStream::pair().unwrap();
     (a, b)
 }
@@ -192,7 +192,7 @@ mod tests {
 
     #[sinex_test]
     async fn test_unix_socket_yields_one_record_per_line() -> xtask::sandbox::TestResult<()> {
-        let (mut server, client) = make_socket_pair().await;
+        let (mut server, client) = make_socket_pair();
         server.write_all(b"line1\nline2\nline3\n").await.unwrap();
         drop(server); // Close server side → EOF
 
@@ -213,7 +213,7 @@ mod tests {
 
     #[sinex_test]
     async fn test_unix_socket_anchor_contains_byte_offset() -> xtask::sandbox::TestResult<()> {
-        let (mut server, client) = make_socket_pair().await;
+        let (mut server, client) = make_socket_pair();
         server.write_all(b"hello\nworld\n").await.unwrap();
         drop(server);
 
@@ -245,7 +245,7 @@ mod tests {
 
     #[sinex_test]
     async fn test_unix_socket_skips_empty_lines() -> xtask::sandbox::TestResult<()> {
-        let (mut server, client) = make_socket_pair().await;
+        let (mut server, client) = make_socket_pair();
         server.write_all(b"msg1\n\nmsg2\n").await.unwrap();
         drop(server);
 
@@ -263,7 +263,7 @@ mod tests {
 
     #[sinex_test]
     async fn test_unix_socket_frame_index_monotonic() -> xtask::sandbox::TestResult<()> {
-        let (mut server, client) = make_socket_pair().await;
+        let (mut server, client) = make_socket_pair();
         server.write_all(b"a\nb\nc\n").await.unwrap();
         drop(server);
 
@@ -275,13 +275,17 @@ mod tests {
         );
         let records: Vec<_> = stream.collect().await;
 
-        let indices: Vec<u64> = records
-            .iter()
-            .map(|r| match &r.as_ref().unwrap().anchor {
-                MaterialAnchor::StreamFrame { frame_index, .. } => *frame_index,
-                _ => panic!("wrong anchor"),
-            })
-            .collect();
+        let mut indices = Vec::new();
+        for record in &records {
+            match &record.as_ref().unwrap().anchor {
+                MaterialAnchor::StreamFrame { frame_index, .. } => indices.push(*frame_index),
+                other => {
+                    return Err(color_eyre::eyre::eyre!(
+                        "expected stream-frame anchor, got {other:?}"
+                    ));
+                }
+            }
+        }
 
         for w in indices.windows(2) {
             assert!(w[0] < w[1]);
