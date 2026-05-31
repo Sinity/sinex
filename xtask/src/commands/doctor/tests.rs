@@ -2210,7 +2210,7 @@ async fn test_rust_analyzer_cli_scan_status_classifies_partial_results()
 #[sinex_test]
 async fn test_rust_analyzer_cli_stderr_summary_buckets_failures() -> ::xtask::sandbox::TestResult<()>
 {
-    let stderr = r#"
+    let stderr = r"
 2026-05-22T06:29:21.645151397+02:00  WARN cyclic deps: sinex_gateway(Idx::<CrateBuilder>(38)) -> sinex_gateway(Idx::<CrateBuilder>(38))
 2026-05-22T06:29:21.645151397+02:00  WARN cyclic deps: sinex_node_sdk(Idx::<CrateBuilder>(176)) -> xtask(Idx::<CrateBuilder>(346)), alternative path: xtask(Idx::<CrateBuilder>(346)) -> sinex_node_sdk(Idx::<CrateBuilder>(176))
 2026-05-22T06:29:21.645151397+02:00  WARN cyclic deps: sinex_macros(Idx::<CrateBuilder>(172)) -> sinex_primitives(Idx::<CrateBuilder>(242)), alternative path: sinex_primitives(Idx::<CrateBuilder>(242)) -> sinex_macros(Idx::<CrateBuilder>(172))
@@ -2218,7 +2218,7 @@ async fn test_rust_analyzer_cli_stderr_summary_buckets_failures() -> ::xtask::sa
 2026-05-22T06:29:49.34967273+02:00 ERROR Overloaded deref on type str is not a projection
 2026-05-22T06:29:50.00000000+02:00  WARN some other warning
 2026-05-22T06:29:51.00000000+02:00 ERROR some other failure
-"#;
+";
 
     let summary = summarize_rust_analyzer_cli_stderr(stderr)
         .expect("stderr summary should classify non-empty RA warnings/errors");

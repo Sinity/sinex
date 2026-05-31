@@ -100,7 +100,7 @@ fn guard_db_benchmark_resources(config: &BenchConfig) -> Result<()> {
         return Ok(());
     }
 
-    let conflicts = active_heavy_processes()?;
+    let conflicts = active_heavy_processes();
     if !config.allow_contended_host && !conflicts.is_empty() {
         let details = conflicts
             .iter()
@@ -131,12 +131,11 @@ struct ActiveProcess {
     command: String,
 }
 
-fn active_heavy_processes() -> Result<Vec<ActiveProcess>> {
+fn active_heavy_processes() -> Vec<ActiveProcess> {
     let self_pid = std::process::id();
     let mut processes = Vec::new();
-    let entries = match std::fs::read_dir("/proc") {
-        Ok(entries) => entries,
-        Err(_) => return Ok(processes),
+    let Ok(entries) = std::fs::read_dir("/proc") else {
+        return processes;
     };
 
     for entry in entries.flatten() {
@@ -166,7 +165,7 @@ fn active_heavy_processes() -> Result<Vec<ActiveProcess>> {
         }
     }
 
-    Ok(processes)
+    processes
 }
 
 fn heavy_development_command(executable: &str, command: &str) -> bool {

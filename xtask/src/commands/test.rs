@@ -1044,7 +1044,7 @@ impl TestCommand {
             .is_some()
     }
 
-    async fn execute_with_ephemeral_postgres(
+    fn execute_with_ephemeral_postgres(
         &self,
         ctx: &CommandContext,
         execution_plan: &NextestExecutionPlan,
@@ -1397,9 +1397,7 @@ impl XtaskCommand for TestCommand {
         }
 
         if let Some(execution_plan) = self.should_use_ephemeral_postgres(ctx)? {
-            return self
-                .execute_with_ephemeral_postgres(ctx, &execution_plan)
-                .await;
+            return self.execute_with_ephemeral_postgres(ctx, &execution_plan);
         }
 
         if self.dry_run {
