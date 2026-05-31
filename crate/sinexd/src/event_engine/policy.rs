@@ -21,7 +21,7 @@
 //! root of the payload JSON object. Nested paths (e.g. `/results/0/text`) are
 //! NOT supported in v1 — the engine applies the rule to all top-level string
 //! values if the key is absent, or skips nested content silently. This limitation
-//! is documented here and in the field_rules table comment. A follow-up (tracked
+//! is documented here and in the `field_rules` table comment. A follow-up (tracked
 //! in #1042) will extend to full JSON-pointer traversal.
 //!
 //! # Cache refresh
@@ -72,7 +72,7 @@ fn refresh_interval() -> std::time::Duration {
 struct ScopedEngine {
     /// source string, or None = all sources.
     event_source: Option<String>,
-    /// event_type string, or None = all event types.
+    /// `event_type` string, or None = all event types.
     event_type: Option<String>,
     /// Field paths covered by at least one rule in this scope (None = all fields).
     field_paths: Vec<Option<String>>,
@@ -188,21 +188,19 @@ fn compile_rules(
     //
     // Key: (event_source, event_type) — both Option<String>.
     use std::collections::HashMap;
-    let mut scope_map: HashMap<
-        (Option<String>, Option<String>),
-        Vec<(PatternRule, Option<String>)>,
-    > = HashMap::new();
+    type ScopeKey = (Option<String>, Option<String>);
+    type ScopeRules = Vec<(PatternRule, Option<String>)>;
+    let mut scope_map: HashMap<ScopeKey, ScopeRules> = HashMap::new();
 
     for loaded_rule in loaded {
         let rule = &loaded_rule.rule;
-        let matcher = match db_row_to_matcher(
+        let Some(matcher) = db_row_to_matcher(
             &rule.name,
             &rule.matcher_type,
             &rule.matcher_value,
             rule.case_sensitive,
-        ) {
-            Some(m) => m,
-            None => continue,
+        ) else {
+            continue;
         };
         let strategy = db_row_to_strategy(&rule.action, rule.action_label.as_deref());
 
@@ -393,11 +391,11 @@ fn apply_policy_to_event(event: &mut Event<JsonValue>, rules: &CompiledPolicyRul
 
     for scope in &rules.scopes {
         // Check if this scope matches the event's (source, event_type).
-        let source_match = scope.event_source.as_deref().map_or(true, |s| s == source);
+        let source_match = scope.event_source.as_deref().is_none_or(|s| s == source);
         let type_match = scope
             .event_type
             .as_deref()
-            .map_or(true, |t| t == event_type);
+            .is_none_or(|t| t == event_type);
 
         if !source_match || !type_match {
             continue;
@@ -424,7 +422,7 @@ fn apply_policy_to_event(event: &mut Event<JsonValue>, rules: &CompiledPolicyRul
 /// the engine walks the entire JSON tree via `process_json`.
 fn apply_scoped_engine_to_json(value: JsonValue, scope: &ScopedEngine) -> JsonValue {
     // Determine if any rules in this scope apply to all fields (no field_path).
-    let has_global_field_rule = scope.field_paths.iter().any(|fp| fp.is_none());
+    let has_global_field_rule = scope.field_paths.iter().any(Option::is_none);
 
     if has_global_field_rule {
         // Apply to the whole payload.

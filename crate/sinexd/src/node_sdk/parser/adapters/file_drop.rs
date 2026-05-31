@@ -226,7 +226,7 @@ pub struct FileDropConfig {
     /// File-name suffix patterns to suppress before records leave the adapter.
     ///
     /// Matched as a case-sensitive suffix on the file's basename. Use this to
-    /// drop transient/volatile files (SQLite `-wal` / `-shm`, pytest's
+    /// drop transient/volatile files (`SQLite` `-wal` / `-shm`, pytest's
     /// `.testmondata-wal`, editor swap files) that would otherwise stage
     /// hundreds of materials per minute and bloat the CAS without producing
     /// meaningful user signal. Surfaced by issue #1543 — the live

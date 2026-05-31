@@ -161,27 +161,23 @@ impl ReplayExecutionEngine {
                     // Mismatch means source material bytes changed between original
                     // ingestion and replay — corruption, tampering, or rewritten material.
                     let new_hash = new_hash_by_id.get(&new_event_id).and_then(|h| h.as_deref());
-                    if let (Some(old_bytes), Some(new_bytes)) = (old_hash.as_deref(), new_hash) {
-                        if old_bytes != new_bytes {
-                            integrity_mismatch_count += 1;
-                            let to_hex = |bytes: &[u8]| -> String {
-                                bytes
-                                    .iter()
-                                    .map(|b| format!("{b:02x}"))
-                                    .collect::<Vec<_>>()
-                                    .join("")
-                            };
-                            warn!(
-                                operation_id = %operation_id,
-                                source_material_id = %key.source_material_id,
-                                anchor_byte = key.anchor_byte,
-                                old_event_id = %old_event_id,
-                                new_event_id = %new_event_id,
-                                old_hash = %to_hex(old_bytes),
-                                new_hash = %to_hex(new_bytes),
-                                "IntegrityMismatch: anchor_payload_hash changed between original ingestion and replay"
-                            );
-                        }
+                    if let (Some(old_bytes), Some(new_bytes)) = (old_hash.as_deref(), new_hash)
+                        && old_bytes != new_bytes
+                    {
+                        integrity_mismatch_count += 1;
+                        let to_hex = |bytes: &[u8]| -> String {
+                            bytes.iter().map(|b| format!("{b:02x}")).collect::<String>()
+                        };
+                        warn!(
+                            operation_id = %operation_id,
+                            source_material_id = %key.source_material_id,
+                            anchor_byte = key.anchor_byte,
+                            old_event_id = %old_event_id,
+                            new_event_id = %new_event_id,
+                            old_hash = %to_hex(old_bytes),
+                            new_hash = %to_hex(new_bytes),
+                            "IntegrityMismatch: anchor_payload_hash changed between original ingestion and replay"
+                        );
                     }
                     replacements.push(ReplacementRecord {
                         old_event_id: *old_event_id,

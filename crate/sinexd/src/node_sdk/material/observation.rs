@@ -204,14 +204,14 @@ async fn buffer_task<R: Serialize + Send + 'static>(
     }
 
     // Flush any remaining records on shutdown
-    if !buffer.is_empty() {
-        if let Err(e) = flush_internal(&mut buffer, &mut buffer_bytes, on_flush.as_ref()).await {
-            error!(
-                error = %e,
-                "Observation materializer: shutdown flush failed; \
-                 records may not have been staged as source material"
-            );
-        }
+    if !buffer.is_empty()
+        && let Err(e) = flush_internal(&mut buffer, &mut buffer_bytes, on_flush.as_ref()).await
+    {
+        error!(
+            error = %e,
+            "Observation materializer: shutdown flush failed; \
+             records may not have been staged as source material"
+        );
     }
 }
 
