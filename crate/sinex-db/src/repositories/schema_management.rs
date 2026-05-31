@@ -657,9 +657,7 @@ impl<'a> SchemaManagementRepository<'a> {
 
         let resolved_schema_id = schema_id.unwrap_or_else(|| *schema.id.as_uuid());
         if let Some(event_id) = event.id.as_ref().map(|id| *id.as_uuid())
-            && let Some(cached) = self
-                .fetch_cached_validation(&event_id, &resolved_schema_id)
-                .await?
+            && let Some(cached) = self.fetch_cached_validation(&event_id, &resolved_schema_id)?
         {
             return Ok(cached);
         }
@@ -667,8 +665,7 @@ impl<'a> SchemaManagementRepository<'a> {
         let result = Self::run_json_validation(&schema.schema_content, &event.payload);
 
         if let Some(event_id) = event.id.as_ref().map(|id| *id.as_uuid()) {
-            self.store_validation_cache(&event_id, &resolved_schema_id, &result)
-                .await?;
+            self.store_validation_cache(&event_id, &resolved_schema_id, &result)?;
         }
 
         Ok(result)
@@ -706,17 +703,13 @@ impl<'a> SchemaManagementRepository<'a> {
             .payload_schema_id
             .unwrap_or_else(|| *schema.id.as_uuid());
 
-        if let Some(cached) = self
-            .fetch_cached_validation(event_id, &schema_id_for_cache)
-            .await?
-        {
+        if let Some(cached) = self.fetch_cached_validation(event_id, &schema_id_for_cache)? {
             return Ok(cached);
         }
 
         let result = Self::run_json_validation(&schema.schema_content, &event_row.payload);
 
-        self.store_validation_cache(event_id, &schema_id_for_cache, &result)
-            .await?;
+        self.store_validation_cache(event_id, &schema_id_for_cache, &result)?;
 
         Ok(result)
     }
@@ -759,7 +752,7 @@ impl<'a> SchemaManagementRepository<'a> {
         }
     }
 
-    async fn fetch_cached_validation(
+    fn fetch_cached_validation(
         &self,
         _event_id: &Uuid,
         _schema_id: &Uuid,
@@ -769,7 +762,7 @@ impl<'a> SchemaManagementRepository<'a> {
         Ok(None)
     }
 
-    async fn store_validation_cache(
+    fn store_validation_cache(
         &self,
         _event_id: &Uuid,
         _schema_id: &Uuid,
