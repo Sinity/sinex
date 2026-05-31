@@ -166,6 +166,196 @@ async fn collect_status_data(
     )
 }
 
+/// Bundled data for the human-readable status display.
+struct StatusDisplay<'a> {
+    runtime_target: &'a RuntimeTargetDescriptor,
+    pg_probe: &'a PostgresProbe,
+    nats_probe: &'a NatsProbe,
+    services: &'a [ServiceStatus],
+    runtime_metrics: Option<&'a RuntimeMetrics>,
+    runtime_configured: bool,
+    history: &'a HistorySnapshot,
+    jobs: &'a JobsSnapshot,
+    recent_failures: usize,
+    recent_activity: &'a [ActivityEntry],
+    warnings: &'a [String],
+}
+
+/// Print the human-readable workspace status to stdout.
+fn print_status_tick(d: &StatusDisplay<'_>) {
+    println!("{}", style("━━━━━━━━━━━━━━━━ WORKSPACE STATUS ━━━━━━━━━━━━━━━━").bold());
+
+    println!("\n{}", style("Runtime Target:").bold());
+    let target_summary = RuntimeTargetSummary::from(d.runtime_target);
+    println!("  {:<12} {}", "Name", target_summary.name);
+    println!("  {:<12} {}", "Kind", runtime_target_kind_label(&target_summary.kind));
+    if let Some(source) = &target_summary.source {
+        println!("  {:<12} {}", "Source", source);
+    }
+    if let Some(source_path) = &target_summary.source_path {
+        println!("  {:<12} {}", "Source path", source_path.display());
+    }
+    if let Some(database_url) = &target_summary.database_url {
+        println!("  {:<12} {}", "Database", redact_runtime_target_url(database_url));
+    }
+    if let Some(gateway_url) = &target_summary.gateway_url {
+        println!("  {:<12} {}", "Gateway", gateway_url);
+    }
+
+    println!("\n{}", style("Infrastructure:").bold());
+    println!(
+        "  {:<12} {} ({}ms)",
+        "Postgres",
+        if d.pg_probe.ready() { style("online").green() } else { style("offline").red() },
+        d.pg_probe.latency_ms
+    );
+    if let Some(message) = &d.pg_probe.message {
+        println!("  {:<12} {}", "", style(message).dim());
+    }
+    println!(
+        "  {:<12} {} ({}ms, port {})",
+        "NATS",
+        if d.nats_probe.ready() { style("online").green() } else { style("offline").red() },
+        d.nats_probe.latency_ms,
+        d.nats_probe.port
+    );
+    if let Some(message) = &d.nats_probe.message {
+        println!("  {:<12} {}", "", style(message).dim());
+    }
+
+    println!("\n{}", style("Services:").bold());
+    for svc in d.services {
+        let status_label = match svc.status {
+            ServiceRunStatus::Running => "running",
+            ServiceRunStatus::Stopped => "stopped",
+            ServiceRunStatus::Skipped => "skipped",
+            ServiceRunStatus::Unknown => "unknown",
+        };
+        let status_display = match svc.status {
+            ServiceRunStatus::Running => style(status_label).green(),
+            ServiceRunStatus::Stopped => style(status_label).dim(),
+            ServiceRunStatus::Skipped => style(status_label).dim(),
+            ServiceRunStatus::Unknown => style(status_label).yellow(),
+        };
+        let pid_str = svc.pid.map(|p| format!(" (pid {p})")).unwrap_or_default();
+        println!("  {:<20} {}{}", svc.name, status_display, pid_str);
+        if let Some(message) = &svc.message {
+            println!("  {:<20} {}", "", style(message).dim());
+        }
+    }
+
+    println!("\n{}", style("Runtime:").bold());
+    print_runtime_section(d.runtime_metrics, d.runtime_configured);
+
+    println!("\n{}", style("History:").bold());
+    let history_status = match d.history.status() {
+        "available" => style("available").green().to_string(),
+        "synthetic" => style("synthetic").yellow().to_string(),
+        "degraded" => style("degraded").yellow().to_string(),
+        _ => style("unavailable").red().to_string(),
+    };
+    println!("  {:<12} {}", "Status", history_status);
+    println!("  {:<12} {}", "Recent", d.history.recent.len());
+    if d.history.diag_counts.total() > 0 || d.history.flaky_count > 0 {
+        println!(
+            "  {:<12} {} errors, {} warnings, {} fixable, {} flaky",
+            "Diagnostics",
+            d.history.diag_counts.errors,
+            d.history.diag_counts.warnings,
+            d.history.diag_counts.fixable,
+            d.history.flaky_count
+        );
+    }
+    if let Some(message) = d.history.message() {
+        println!("  {:<12} {}", "", style(message).dim());
+    }
+
+    println!("\n{}", style("Background Jobs:").bold());
+    println!("  Active:    {}", d.jobs.active.len());
+    println!(
+        "  Failures:  {}",
+        if d.recent_failures > 0 {
+            style(d.recent_failures.to_string()).red()
+        } else {
+            style("0".to_string()).dim()
+        }
+    );
+    for issue in &d.jobs.issues {
+        println!("  {:<12} {}", "", style(issue).dim());
+    }
+
+    println!("\n{}", style("Recent Activity:").bold());
+    if d.recent_activity.is_empty() {
+        println!("  {}", style("No recent xtask invocations recorded.").dim());
+    } else {
+        for entry in d.recent_activity.iter().take(5) {
+            let status_style = match entry.status.as_str() {
+                "success" => style(&entry.status).green(),
+                "failed" => style(&entry.status).red(),
+                "running" => style(&entry.status).yellow(),
+                _ => style(&entry.status).dim(),
+            };
+            println!(
+                "  {:<15} {:<10} ({})",
+                entry.command,
+                status_style,
+                entry.duration_secs.map_or_else(
+                    || "unknown".to_string(),
+                    |duration| format!("{duration:.1}s")
+                )
+            );
+        }
+    }
+
+    println!("\n{}", style("Warnings:").bold());
+    if d.warnings.is_empty() {
+        println!("  {} No issues detected.", style("✓").green());
+    } else {
+        for w in d.warnings {
+            println!("  {} {}", style("⚠").yellow(), w);
+        }
+    }
+}
+
+/// Print the Runtime section of the status display.
+fn print_runtime_section(runtime_metrics: Option<&RuntimeMetrics>, runtime_configured: bool) {
+    if let Some(metrics) = runtime_metrics {
+        let status_icon = match metrics.ingestd_status {
+            IngestdStatus::Healthy => style("✓").green(),
+            IngestdStatus::Stale => style("⚠").yellow(),
+            IngestdStatus::Down => style("✗").red(),
+            IngestdStatus::Unknown => style("?").dim(),
+        };
+        let heartbeat = metrics
+            .last_heartbeat_age_secs
+            .map(|age| format!(" (heartbeat {age}s ago)"))
+            .unwrap_or_default();
+        println!(
+            "  {} {:<20}{}",
+            status_icon,
+            format!("ingestd: {}", metrics.ingestd_status),
+            style(heartbeat).dim()
+        );
+        if let Some(lag) = metrics.fresh_consumer_lag_pending() {
+            println!("  {} Consumer lag:       {:.0} pending", style("-").dim(), lag);
+        } else if let Some(note) = metrics.consumer_lag_stale_note() {
+            println!("  {} Consumer lag:       stale telemetry ({})", style("⚠").yellow(), note);
+        }
+        if let Some(latency) = metrics.fresh_batch_latency_ms() {
+            println!("  {} Batch latency:      {:.0}ms", style("-").dim(), latency);
+        } else if let Some(note) = metrics.batch_latency_stale_note() {
+            println!("  {} Batch latency:      stale telemetry ({})", style("⚠").yellow(), note);
+        }
+        if let Some(message) = runtime_query_error_message(metrics) {
+            println!("  {} {}", style("✗").red(), message);
+        }
+    } else if runtime_configured {
+        println!("  {} Runtime metrics unavailable despite DATABASE_URL being set", style("⚠").yellow());
+    } else {
+        println!("  {} Runtime metrics unavailable (DATABASE_URL not set)", style("·").dim());
+    }
+}
+
 /// Render and optionally return one status snapshot.
 async fn render_status_tick(ctx: &CommandContext, watch: bool) -> Result<Option<CommandResult>> {
     let (
@@ -278,220 +468,19 @@ async fn render_status_tick(ctx: &CommandContext, watch: bool) -> Result<Option<
 
     // Human output
     if ctx.is_human() {
-        println!(
-            "{}",
-            style("━━━━━━━━━━━━━━━━ WORKSPACE STATUS ━━━━━━━━━━━━━━━━").bold()
-        );
-
-        println!("\n{}", style("Runtime Target:").bold());
-        let target_summary = RuntimeTargetSummary::from(&runtime_target);
-        println!("  {:<12} {}", "Name", target_summary.name);
-        println!(
-            "  {:<12} {}",
-            "Kind",
-            runtime_target_kind_label(&target_summary.kind)
-        );
-        if let Some(source) = &target_summary.source {
-            println!("  {:<12} {}", "Source", source);
-        }
-        if let Some(source_path) = &target_summary.source_path {
-            println!("  {:<12} {}", "Source path", source_path.display());
-        }
-        if let Some(database_url) = &target_summary.database_url {
-            println!(
-                "  {:<12} {}",
-                "Database",
-                redact_runtime_target_url(database_url)
-            );
-        }
-        if let Some(gateway_url) = &target_summary.gateway_url {
-            println!("  {:<12} {}", "Gateway", gateway_url);
-        }
-
-        // Infrastructure
-        println!("\n{}", style("Infrastructure:").bold());
-        println!(
-            "  {:<12} {} ({}ms)",
-            "Postgres",
-            if pg_probe.ready() {
-                style("online").green()
-            } else {
-                style("offline").red()
-            },
-            pg_probe.latency_ms
-        );
-        if let Some(message) = &pg_probe.message {
-            println!("  {:<12} {}", "", style(message).dim());
-        }
-        println!(
-            "  {:<12} {} ({}ms, port {})",
-            "NATS",
-            if nats_probe.ready() {
-                style("online").green()
-            } else {
-                style("offline").red()
-            },
-            nats_probe.latency_ms,
-            nats_probe.port
-        );
-        if let Some(message) = &nats_probe.message {
-            println!("  {:<12} {}", "", style(message).dim());
-        }
-
-        // Services
-        println!("\n{}", style("Services:").bold());
-        for svc in &services {
-            let status_label = match svc.status {
-                ServiceRunStatus::Running => "running",
-                ServiceRunStatus::Stopped => "stopped",
-                ServiceRunStatus::Skipped => "skipped",
-                ServiceRunStatus::Unknown => "unknown",
-            };
-            let status_display = match svc.status {
-                ServiceRunStatus::Running => style(status_label).green(),
-                ServiceRunStatus::Stopped => style(status_label).dim(),
-                ServiceRunStatus::Skipped => style(status_label).dim(),
-                ServiceRunStatus::Unknown => style(status_label).yellow(),
-            };
-            let pid_str = svc.pid.map(|p| format!(" (pid {p})")).unwrap_or_default();
-            println!("  {:<20} {}{}", svc.name, status_display, pid_str);
-            if let Some(message) = &svc.message {
-                println!("  {:<20} {}", "", style(message).dim());
-            }
-        }
-
-        println!("\n{}", style("Runtime:").bold());
-        if let Some(metrics) = &runtime_metrics {
-            let status_icon = match metrics.ingestd_status {
-                IngestdStatus::Healthy => style("✓").green(),
-                IngestdStatus::Stale => style("⚠").yellow(),
-                IngestdStatus::Down => style("✗").red(),
-                IngestdStatus::Unknown => style("?").dim(),
-            };
-            let heartbeat = metrics
-                .last_heartbeat_age_secs
-                .map(|age| format!(" (heartbeat {age}s ago)"))
-                .unwrap_or_default();
-            println!(
-                "  {} {:<20}{}",
-                status_icon,
-                format!("ingestd: {}", metrics.ingestd_status),
-                style(heartbeat).dim()
-            );
-
-            if let Some(lag) = metrics.fresh_consumer_lag_pending() {
-                println!(
-                    "  {} Consumer lag:       {:.0} pending",
-                    style("-").dim(),
-                    lag
-                );
-            } else if let Some(note) = metrics.consumer_lag_stale_note() {
-                println!(
-                    "  {} Consumer lag:       stale telemetry ({})",
-                    style("⚠").yellow(),
-                    note
-                );
-            }
-
-            if let Some(latency) = metrics.fresh_batch_latency_ms() {
-                println!(
-                    "  {} Batch latency:      {:.0}ms",
-                    style("-").dim(),
-                    latency
-                );
-            } else if let Some(note) = metrics.batch_latency_stale_note() {
-                println!(
-                    "  {} Batch latency:      stale telemetry ({})",
-                    style("⚠").yellow(),
-                    note
-                );
-            }
-            if let Some(message) = runtime_query_error_message(metrics) {
-                println!("  {} {}", style("✗").red(), message);
-            }
-        } else if runtime_configured {
-            println!(
-                "  {} Runtime metrics unavailable despite DATABASE_URL being set",
-                style("⚠").yellow()
-            );
-        } else {
-            println!(
-                "  {} Runtime metrics unavailable (DATABASE_URL not set)",
-                style("·").dim()
-            );
-        }
-
-        println!("\n{}", style("History:").bold());
-        let history_status = match history.status() {
-            "available" => style("available").green().to_string(),
-            "synthetic" => style("synthetic").yellow().to_string(),
-            "degraded" => style("degraded").yellow().to_string(),
-            _ => style("unavailable").red().to_string(),
-        };
-        println!("  {:<12} {}", "Status", history_status);
-        println!("  {:<12} {}", "Recent", history.recent.len());
-        if history.diag_counts.total() > 0 || history.flaky_count > 0 {
-            println!(
-                "  {:<12} {} errors, {} warnings, {} fixable, {} flaky",
-                "Diagnostics",
-                history.diag_counts.errors,
-                history.diag_counts.warnings,
-                history.diag_counts.fixable,
-                history.flaky_count
-            );
-        }
-        if let Some(message) = history.message() {
-            println!("  {:<12} {}", "", style(message).dim());
-        }
-
-        // Jobs
-        println!("\n{}", style("Background Jobs:").bold());
-        println!("  Active:    {}", jobs.active.len());
-        println!(
-            "  Failures:  {}",
-            if recent_failures > 0 {
-                style(recent_failures.to_string()).red()
-            } else {
-                style("0".to_string()).dim()
-            }
-        );
-        for issue in &jobs.issues {
-            println!("  {:<12} {}", "", style(issue).dim());
-        }
-
-        // Recent activity
-        println!("\n{}", style("Recent Activity:").bold());
-        if recent_activity.is_empty() {
-            println!("  {}", style("No recent xtask invocations recorded.").dim());
-        } else {
-            for entry in recent_activity.iter().take(5) {
-                let status_style = match entry.status.as_str() {
-                    "success" => style(&entry.status).green(),
-                    "failed" => style(&entry.status).red(),
-                    "running" => style(&entry.status).yellow(),
-                    _ => style(&entry.status).dim(),
-                };
-                println!(
-                    "  {:<15} {:<10} ({})",
-                    entry.command,
-                    status_style,
-                    entry.duration_secs.map_or_else(
-                        || "unknown".to_string(),
-                        |duration| format!("{duration:.1}s")
-                    )
-                );
-            }
-        }
-
-        // Warnings
-        println!("\n{}", style("Warnings:").bold());
-        if warnings.is_empty() {
-            println!("  {} No issues detected.", style("✓").green());
-        } else {
-            for w in &warnings {
-                println!("  {} {}", style("⚠").yellow(), w);
-            }
-        }
+        print_status_tick(&StatusDisplay {
+            runtime_target: &runtime_target,
+            pg_probe: &pg_probe,
+            nats_probe: &nats_probe,
+            services: &services,
+            runtime_metrics: runtime_metrics.as_ref(),
+            runtime_configured,
+            history: &history,
+            jobs: &jobs,
+            recent_failures,
+            recent_activity: &recent_activity,
+            warnings: &warnings,
+        });
     }
 
     if !watch {
