@@ -1080,70 +1080,21 @@ impl ReplayStateMachine {
     async fn try_recover_one_operation(&self, operation_id: Uuid) -> Result<bool> {
         let repo = self.repo();
 
-        let mut tx = self.pool.begin().await.map_err(|e| {
+        let tx = self.pool.begin().await.map_err(|e| {
             SinexError::database("Failed to begin recovery transaction")
                 .with_source(e.to_string())
                 .with_id("operation_id", operation_id.to_string())
                 .with_operation("recover_stale_executing")
         })?;
 
-        let Some((meta, staleness)) =
-            self.fetch_and_validate_stale_meta(&repo, &mut tx, operation_id).await?
+        let Some((meta, staleness, tx)) =
+            fetch_and_validate_stale_meta(&repo, tx, operation_id).await?
         else {
             return Ok(false);
         };
 
         self.commit_recovery(&repo, tx, operation_id, meta, staleness)
             .await
-    }
-
-    /// Fetch and validate the operation meta within the open transaction.
-    /// Returns `Ok(None)` if the operation should be skipped (fetch error or
-    /// state already changed); returns `Ok(Some(...))` when recovery should
-    /// proceed; propagates hard errors via `Err`.
-    async fn fetch_and_validate_stale_meta(
-        &self,
-        repo: &ReplayRepository<'_>,
-        tx: &mut Transaction<'_, Postgres>,
-        operation_id: Uuid,
-    ) -> Result<Option<(MetaJson, Option<sinex_primitives::temporal::Duration>)>> {
-        let existing = match repo.fetch_meta_for_update(tx, operation_id).await {
-            Ok(v) => v,
-            Err(e) => {
-                if let Err(rollback_err) = tx.rollback().await {
-                    warn!(
-                        operation_id = %operation_id,
-                        error = %rollback_err,
-                        "Failed to rollback replay recovery transaction after fetch error"
-                    );
-                }
-                warn!(
-                    operation_id = %operation_id,
-                    error = %e,
-                    "Failed to fetch stale operation meta; skipping recovery"
-                );
-                return Ok(None);
-            }
-        };
-
-        let meta = decode_meta_json(Some(existing))?;
-
-        if !matches!(
-            meta.state,
-            ReplayState::Executing | ReplayState::Cancelling | ReplayState::Committing
-        ) {
-            if let Err(error) = tx.rollback().await {
-                warn!(
-                    operation_id = %operation_id,
-                    error = %error,
-                    "Failed to rollback replay recovery transaction after state changed"
-                );
-            }
-            return Ok(None);
-        }
-
-        let staleness = meta.started_at.map(|started| temporal::now() - started);
-        Ok(Some((meta, staleness)))
     }
 
     /// Write the recovery outcome to the database and commit.
@@ -1246,6 +1197,55 @@ pub struct MetaJson {
     pub outcome: Option<ReplayOutcome>,
     pub error_details: Option<String>,
     pub preview: Option<serde_json::Value>,
+}
+
+/// Fetch and validate the operation meta within an owned transaction.
+/// Returns `Ok(None)` (transaction consumed) if the operation should be
+/// skipped; returns `Ok(Some((meta, staleness, tx)))` when recovery should
+/// proceed. Propagates hard errors via `Err`.
+async fn fetch_and_validate_stale_meta<'t>(
+    repo: &ReplayRepository<'_>,
+    mut tx: Transaction<'t, Postgres>,
+    operation_id: Uuid,
+) -> Result<Option<(MetaJson, Option<sinex_primitives::temporal::Duration>, Transaction<'t, Postgres>)>>
+{
+    let existing = match repo.fetch_meta_for_update(&mut tx, operation_id).await {
+        Ok(v) => v,
+        Err(e) => {
+            if let Err(rollback_err) = tx.rollback().await {
+                warn!(
+                    operation_id = %operation_id,
+                    error = %rollback_err,
+                    "Failed to rollback replay recovery transaction after fetch error"
+                );
+            }
+            warn!(
+                operation_id = %operation_id,
+                error = %e,
+                "Failed to fetch stale operation meta; skipping recovery"
+            );
+            return Ok(None);
+        }
+    };
+
+    let meta = decode_meta_json(Some(existing))?;
+
+    if !matches!(
+        meta.state,
+        ReplayState::Executing | ReplayState::Cancelling | ReplayState::Committing
+    ) {
+        if let Err(error) = tx.rollback().await {
+            warn!(
+                operation_id = %operation_id,
+                error = %error,
+                "Failed to rollback replay recovery transaction after state changed"
+            );
+        }
+        return Ok(None);
+    }
+
+    let staleness = meta.started_at.map(|started| temporal::now() - started);
+    Ok(Some((meta, staleness, tx)))
 }
 
 /// Decode a `MetaJson` from an optional JSON value.
