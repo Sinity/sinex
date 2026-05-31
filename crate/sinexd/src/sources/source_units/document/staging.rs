@@ -194,7 +194,7 @@ impl MaterialParser for DocumentStagingParser {
                 tag_name: tag_name.clone(),
                 tag_source: "auto.mime".into(),
             };
-            if let Ok(derived) = material_intent.derive_from_parents(tag_payload) {
+            if let Ok(derived) = material_intent.derive_from_parents(&tag_payload) {
                 intents.push(derived);
             }
         }
