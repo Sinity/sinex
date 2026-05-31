@@ -29,9 +29,10 @@ use crate::node_sdk::derived_node::{
 };
 use crate::node_sdk::processing::NodeLogicError;
 use sinex_primitives::events::payloads::DocumentKind;
+use sinex_primitives::ids::derive_document_id;
 use sinex_primitives::privacy;
 use sinex_primitives::privacy::ProcessingContext;
-use sinex_primitives::{JsonValue, Uuid};
+use sinex_primitives::JsonValue;
 use std::collections::HashMap;
 
 // ── Constants ──────────────────────────────────────────────────────────
@@ -41,11 +42,6 @@ const MAX_DOCUMENT_BYTES: u64 = 4 * 1024 * 1024;
 
 /// Maximum chunk size in bytes (64 KiB).
 const MAX_CHUNK_BYTES: usize = 64 * 1024;
-
-/// `UUIDv5` namespace for document IDs (`NAMESPACE_OID`).
-const NS_DOCUMENTS: Uuid = Uuid::from_bytes([
-    0x6b, 0xa7, 0xb8, 0x10, 0x9d, 0xad, 0x11, 0xd1, 0x80, 0xb4, 0x00, 0xc0, 0x4f, 0xd4, 0x30, 0xc8,
-]);
 
 // ── State ──────────────────────────────────────────────────────────────
 
@@ -326,13 +322,6 @@ impl DocumentParserNode {
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────
-
-/// Derive a deterministic `UUIDv5` document ID.
-// TODO(#1575): unify with sinex_primitives::ids::derive_document_id (changes ids — needs replay plan)
-fn derive_document_id(corpus: &str, natural_key: &str) -> Uuid {
-    let name = format!("{corpus}/{natural_key}");
-    Uuid::new_v5(&NS_DOCUMENTS, name.as_bytes())
-}
 
 /// Extract YAML-like frontmatter between leading `---` delimiters.
 /// Returns `(frontmatter_map, body_without_frontmatter)`.

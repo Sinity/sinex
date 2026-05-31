@@ -77,9 +77,10 @@ impl DocumentKind {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
 #[event_payload(source = "document-parser", event_type = "document.parsed")]
 pub struct DocumentParsedPayload {
-    /// Deterministic document identity. `UUIDv5` over `(NS_DOCUMENTS,
-    /// source_unit || "/" || natural_key)` — replay against the same source
-    /// produces the same id.
+    /// Deterministic document identity from
+    /// `sinex_primitives::ids::derive_document_id`: `UUIDv5(NAMESPACE_OID,
+    /// "sinex.documents.v1/<source_unit>/<natural_key>")`. Replay against the
+    /// same source produces the same id.
     pub document_id: Uuid,
     /// Which corpus this document belongs to (see `DocumentKind`).
     pub kind: DocumentKind,
