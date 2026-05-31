@@ -316,6 +316,135 @@ impl CheckCommand {
                 .push(format!("{}: {} warning(s)", step_name, summary.warnings));
         }
     }
+
+    /// Run clippy or cargo check depending on `self.lint`, updating `result` in place.
+    /// Returns `Some(failure_result)` on compilation/lint failure, `None` on success.
+    fn run_compile_stage(
+        &self,
+        ctx: &CommandContext,
+        package_arg_refs: &[&str],
+        pkg_total: usize,
+        result: &mut CommandResult,
+    ) -> Result<Option<CommandResult>> {
+        if self.lint {
+            self.run_clippy_stage(ctx, package_arg_refs, pkg_total, result)
+        } else {
+            self.run_check_stage(ctx, package_arg_refs, pkg_total, result)
+        }
+    }
+
+    fn run_clippy_stage(
+        &self,
+        ctx: &CommandContext,
+        package_arg_refs: &[&str],
+        pkg_total: usize,
+        result: &mut CommandResult,
+    ) -> Result<Option<CommandResult>> {
+        let stage = ctx.start_stage("clippy");
+        if ctx.is_human() {
+            println!("Running clippy (includes compilation check)...");
+        }
+        if pkg_total > 0 {
+            ctx.report_progress_full("clippy", Some(0.0), Some(0), Some(pkg_total as i64),
+                "determinate", Some("packages"), None, "rough",
+                Some(&format!("0/{pkg_total} packages (0%)")));
+        }
+        let clippy_summary = ctx.cargo_runner().run_clippy_streaming(package_arg_refs, &mut |n| {
+            if pkg_total > 0 {
+                let pct = (n as f64 / pkg_total as f64 * 100.0).min(100.0);
+                ctx.report_progress_full("clippy", Some(pct), Some(n as i64), Some(pkg_total as i64),
+                    "determinate", Some("packages"), None, "rough",
+                    Some(&format!("{n}/{pkg_total} packages ({pct:.0}%)")));
+            }
+        })?;
+        let success = clippy_summary.success;
+        if ctx.is_human() {
+            for diag in &clippy_summary.diagnostics {
+                if let Some(rendered) = &diag.rendered { eprint!("{rendered}"); }
+            }
+        }
+        self.process_diagnostics(ctx, &clippy_summary, result, "clippy");
+        ctx.finish_stage(stage, success);
+        if self.lint_breakdown || clippy_summary.warnings > 50 {
+            let top_lints = clippy_summary.top_lints(10);
+            if !top_lints.is_empty() {
+                if ctx.is_human() {
+                    println!("\n📊 Top clippy warnings by lint:");
+                    for lint in &top_lints { println!("  {:>4}  {}", lint.count, lint.code); }
+                    println!();
+                }
+                result.data = Some(serde_json::json!({"lint_breakdown": top_lints}));
+            }
+        }
+        if self.by_file {
+            let top_files = clippy_summary.top_files(20);
+            if !top_files.is_empty() {
+                if ctx.is_human() {
+                    println!("📁 Top files by warning count:");
+                    for file in &top_files { println!("  {:>4}  {}", file.count, file.path); }
+                    println!();
+                }
+                result.data = Some(serde_json::json!({"file_breakdown": top_files}));
+            }
+        }
+        if !success {
+            let mut failure = CommandResult::failure(crate::output::StructuredError {
+                code: "CLIPPY_FAILED".to_string(),
+                message: "clippy failed".to_string(),
+                location: Some("check".to_string()),
+                suggestion: Some("Run `xtask check --lint` and inspect diagnostics".to_string()),
+            }).with_detail("clippy failed");
+            failure.warnings = result.warnings.drain(..).collect();
+            failure.data = result.data.take();
+            return Ok(Some(failure));
+        }
+        result.details.push("clippy passed".to_string());
+        Ok(None)
+    }
+
+    fn run_check_stage(
+        &self,
+        ctx: &CommandContext,
+        package_arg_refs: &[&str],
+        pkg_total: usize,
+        result: &mut CommandResult,
+    ) -> Result<Option<CommandResult>> {
+        let stage = ctx.start_stage("compile");
+        if ctx.is_human() { println!("Checking compilation..."); }
+        if pkg_total > 0 {
+            ctx.report_progress_full("compile", Some(0.0), Some(0), Some(pkg_total as i64),
+                "determinate", Some("packages"), None, "rough",
+                Some(&format!("0/{pkg_total} packages (0%)")));
+        }
+        let check_summary = ctx.cargo_runner().run_check_streaming(package_arg_refs, &mut |n| {
+            if pkg_total > 0 {
+                let pct = (n as f64 / pkg_total as f64 * 100.0).min(100.0);
+                ctx.report_progress_full("compile", Some(pct), Some(n as i64), Some(pkg_total as i64),
+                    "determinate", Some("packages"), None, "rough",
+                    Some(&format!("{n}/{pkg_total} packages ({pct:.0}%)")));
+            }
+        })?;
+        let success = check_summary.success;
+        if ctx.is_human() {
+            for diag in &check_summary.diagnostics {
+                if let Some(rendered) = &diag.rendered { eprint!("{rendered}"); }
+            }
+        }
+        self.process_diagnostics(ctx, &check_summary, result, "cargo check");
+        ctx.finish_stage(stage, success);
+        if !success {
+            let mut failure = CommandResult::failure(crate::output::StructuredError {
+                code: "CHECK_FAILED".to_string(),
+                message: "cargo check failed".to_string(),
+                location: Some("check".to_string()),
+                suggestion: Some("Run `xtask check` and inspect diagnostics".to_string()),
+            }).with_detail("cargo check failed");
+            failure.warnings = result.warnings.drain(..).collect();
+            return Ok(Some(failure));
+        }
+        result.details.push("cargo check passed".to_string());
+        Ok(None)
+    }
 }
 
 impl XtaskCommand for CheckCommand {
@@ -421,173 +550,9 @@ impl XtaskCommand for CheckCommand {
         // Estimate package count for determinate progress (fast, no rustc invocation).
         let pkg_total = estimate_package_count(&package_arg_refs);
 
-        if this.lint {
-            let stage = ctx.start_stage("clippy");
-            if ctx.is_human() {
-                println!("Running clippy (includes compilation check)...");
-            }
-            if pkg_total > 0 {
-                ctx.report_progress_full(
-                    "clippy",
-                    Some(0.0),
-                    Some(0),
-                    Some(pkg_total as i64),
-                    "determinate",
-                    Some("packages"),
-                    None,
-                    "rough",
-                    Some(&format!("0/{pkg_total} packages (0%)")),
-                );
-            }
-
-            let clippy_summary =
-                ctx.cargo_runner()
-                    .run_clippy_streaming(&package_arg_refs, &mut |n| {
-                        if pkg_total > 0 {
-                            let pct = (n as f64 / pkg_total as f64 * 100.0).min(100.0);
-                            ctx.report_progress_full(
-                                "clippy",
-                                Some(pct),
-                                Some(n as i64),
-                                Some(pkg_total as i64),
-                                "determinate",
-                                Some("packages"),
-                                None,
-                                "rough",
-                                Some(&format!("{n}/{pkg_total} packages ({pct:.0}%)")),
-                            );
-                        }
-                    })?;
-            let success = clippy_summary.success;
-
-            // Show rendered output for humans
-            if ctx.is_human() {
-                for diag in &clippy_summary.diagnostics {
-                    if let Some(rendered) = &diag.rendered {
-                        eprint!("{rendered}");
-                    }
-                }
-            }
-
-            this.process_diagnostics(ctx, &clippy_summary, &mut result, "clippy");
-            ctx.finish_stage(stage, success);
-
-            // Show lint breakdown if requested or if there are many warnings
-            if this.lint_breakdown || clippy_summary.warnings > 50 {
-                let top_lints = clippy_summary.top_lints(10);
-                if !top_lints.is_empty() {
-                    if ctx.is_human() {
-                        println!("\n📊 Top clippy warnings by lint:");
-                        for lint in &top_lints {
-                            println!("  {:>4}  {}", lint.count, lint.code);
-                        }
-                        println!();
-                    }
-                    // Add to JSON data
-                    result = result.with_data(serde_json::json!({
-                        "lint_breakdown": top_lints
-                    }));
-                }
-            }
-
-            // Show file breakdown if requested
-            if this.by_file {
-                let top_files = clippy_summary.top_files(20);
-                if !top_files.is_empty() {
-                    if ctx.is_human() {
-                        println!("📁 Top files by warning count:");
-                        for file in &top_files {
-                            println!("  {:>4}  {}", file.count, file.path);
-                        }
-                        println!();
-                    }
-                    // Add to JSON data
-                    result = result.with_data(serde_json::json!({
-                        "file_breakdown": top_files
-                    }));
-                }
-            }
-
-            if !clippy_summary.success {
-                let mut failure =
-                    crate::command::CommandResult::failure(crate::output::StructuredError {
-                        code: "CLIPPY_FAILED".to_string(),
-                        message: "clippy failed".to_string(),
-                        location: Some("check".to_string()),
-                        suggestion: Some(
-                            "Run `xtask check --lint` and inspect diagnostics".to_string(),
-                        ),
-                    })
-                    .with_detail("clippy failed");
-                failure.warnings = result.warnings;
-                failure.data = result.data;
-                return Ok(failure.with_duration(ctx.elapsed()));
-            }
-            result = result.with_detail("clippy passed");
-        } else {
-            // Default: run standalone cargo check (~3s warm)
-            let stage = ctx.start_stage("compile");
-            if ctx.is_human() {
-                println!("Checking compilation...");
-            }
-            if pkg_total > 0 {
-                ctx.report_progress_full(
-                    "compile",
-                    Some(0.0),
-                    Some(0),
-                    Some(pkg_total as i64),
-                    "determinate",
-                    Some("packages"),
-                    None,
-                    "rough",
-                    Some(&format!("0/{pkg_total} packages (0%)")),
-                );
-            }
-
-            let check_summary =
-                ctx.cargo_runner()
-                    .run_check_streaming(&package_arg_refs, &mut |n| {
-                        if pkg_total > 0 {
-                            let pct = (n as f64 / pkg_total as f64 * 100.0).min(100.0);
-                            ctx.report_progress_full(
-                                "compile",
-                                Some(pct),
-                                Some(n as i64),
-                                Some(pkg_total as i64),
-                                "determinate",
-                                Some("packages"),
-                                None,
-                                "rough",
-                                Some(&format!("{n}/{pkg_total} packages ({pct:.0}%)")),
-                            );
-                        }
-                    })?;
-            let success = check_summary.success;
-
-            if ctx.is_human() {
-                for diag in &check_summary.diagnostics {
-                    if let Some(rendered) = &diag.rendered {
-                        eprint!("{rendered}");
-                    }
-                }
-            }
-
-            this.process_diagnostics(ctx, &check_summary, &mut result, "cargo check");
-            ctx.finish_stage(stage, success);
-
-            if !check_summary.success {
-                let mut failure =
-                    crate::command::CommandResult::failure(crate::output::StructuredError {
-                        code: "CHECK_FAILED".to_string(),
-                        message: "cargo check failed".to_string(),
-                        location: Some("check".to_string()),
-                        suggestion: Some("Run `xtask check` and inspect diagnostics".to_string()),
-                    })
-                    .with_detail("cargo check failed");
-                failure.warnings = result.warnings;
-                return Ok(failure.with_duration(ctx.elapsed()));
-            }
-            result = result.with_detail("cargo check passed");
+        // 2b. Run compile or lint stage; returns early if there are failures.
+        if let Some(failure) = this.run_compile_stage(ctx, &package_arg_refs, pkg_total, &mut result)? {
+            return Ok(failure);
         }
 
         // 3. Forbidden patterns (optional, off by default)
