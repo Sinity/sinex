@@ -133,7 +133,7 @@ pub mod strategies {
             .prop_map(|s| EventType::new(s).expect("filtered regex source is always valid"))
     }
 
-    /// Generate random UUIDv7 IDs.
+    /// Generate random `UUIDv7` IDs.
     pub fn uuid_strategy() -> impl Strategy<Value = Uuid> {
         any::<u128>().prop_map(|bits| Uuid::from_bytes(bits.to_be_bytes()))
     }
@@ -154,11 +154,11 @@ pub mod strategies {
     pub fn timestamp() -> impl Strategy<Value = Timestamp> {
         (0i64..86400).prop_map(|secs_ago| {
             Timestamp::from_unix_timestamp(Timestamp::now().unix_timestamp() - secs_ago)
-                .unwrap_or_else(|| Timestamp::now())
+                .unwrap_or_else(Timestamp::now)
         })
     }
 
-    /// Generate random HostName values.
+    /// Generate random `HostName` values.
     pub fn hostname() -> impl Strategy<Value = HostName> {
         // Pattern: starts with a letter, middle may contain hyphens, ends with alphanumeric.
         // "[a-z][a-z0-9-]{2,15}" allowed trailing hyphens which HostName::new rejects.
@@ -166,17 +166,17 @@ pub mod strategies {
             .prop_map(|s| HostName::new(s).expect("regex-generated hostname is always valid"))
     }
 
-    /// Generate random CommandText values.
+    /// Generate random `CommandText` values.
     pub fn command_text() -> impl Strategy<Value = CommandText> {
-        r"[a-z]{1,8}( [a-z0-9/_.-]{1,20}){0,5}".prop_map(|s| CommandText::new(s))
+        r"[a-z]{1,8}( [a-z0-9/_.-]{1,20}){0,5}".prop_map(CommandText::new)
     }
 
-    /// Generate random ShellName values.
+    /// Generate random `ShellName` values.
     pub fn shell_name() -> impl Strategy<Value = ShellName> {
         r"(bash|zsh|fish|sh)".prop_map(ShellName::new)
     }
 
-    /// Generate random ExitCode values (including success and failure codes).
+    /// Generate random `ExitCode` values (including success and failure codes).
     pub fn exit_code() -> impl Strategy<Value = ExitCode> {
         prop_oneof![
             Just(ExitCode::SUCCESS),
@@ -184,7 +184,7 @@ pub mod strategies {
         ]
     }
 
-    /// Generate random Nanoseconds values (0-1 hour in nanoseconds).
+    /// Generate random `Nanoseconds` values (0-1 hour in nanoseconds).
     pub fn nanoseconds() -> impl Strategy<Value = Nanoseconds> {
         (0i64..3_600_000_000_000i64).prop_map(Nanoseconds::from_nanos)
     }
@@ -193,7 +193,7 @@ pub mod strategies {
     // High-Traffic Payload Strategies
     // ─────────────────────────────────────────────────────────────
 
-    /// Generate random FileCreatedPayload values.
+    /// Generate random `FileCreatedPayload` values.
     pub fn file_created_payload() -> impl Strategy<Value = FileCreatedPayload> {
         (
             sanitized_path(),
@@ -211,7 +211,7 @@ pub mod strategies {
             })
     }
 
-    /// Generate random KittyCommandExecutedPayload values.
+    /// Generate random `KittyCommandExecutedPayload` values.
     pub fn kitty_command_executed_payload() -> impl Strategy<Value = KittyCommandExecutedPayload> {
         (
             command_text(),
@@ -249,7 +249,7 @@ pub mod strategies {
             )
     }
 
-    /// Generate random HyprlandWindowFocusedPayload values.
+    /// Generate random `HyprlandWindowFocusedPayload` values.
     pub fn window_focused_payload() -> impl Strategy<Value = HyprlandWindowFocusedPayload> {
         (
             "[0-9a-f]{8,16}",
@@ -271,7 +271,7 @@ pub mod strategies {
             )
     }
 
-    /// Generate a complete Event<JsonValue> with random FileCreatedPayload for property testing.
+    /// Generate a complete `Event<JsonValue>` with random `FileCreatedPayload` for property testing.
     ///
     /// WARNING: Do NOT insert into database — no valid provenance.
     pub fn file_created_event() -> impl Strategy<Value = crate::Event<crate::JsonValue>> {
@@ -285,7 +285,7 @@ pub mod strategies {
         })
     }
 
-    /// Generate a complete Event<JsonValue> with random KittyCommandExecutedPayload for property testing.
+    /// Generate a complete `Event<JsonValue>` with random `KittyCommandExecutedPayload` for property testing.
     ///
     /// WARNING: Do NOT insert into database — no valid provenance.
     pub fn kitty_command_executed_event() -> impl Strategy<Value = crate::Event<crate::JsonValue>> {
@@ -299,7 +299,7 @@ pub mod strategies {
         })
     }
 
-    /// Generate a complete Event<JsonValue> with random HyprlandWindowFocusedPayload for property testing.
+    /// Generate a complete `Event<JsonValue>` with random `HyprlandWindowFocusedPayload` for property testing.
     ///
     /// WARNING: Do NOT insert into database — no valid provenance.
     pub fn window_focused_event() -> impl Strategy<Value = crate::Event<crate::JsonValue>> {

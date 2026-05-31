@@ -388,7 +388,7 @@ impl DeclarativeParser {
         binding: &BindingConfig,
     ) -> Result<Vec<ParsedEventIntent>, ParserError> {
         let mut carry_state = BTreeMap::new();
-        evaluate_inner(spec, record, ctx, binding, &mut carry_state)
+        evaluate_inner(spec, &record, ctx, binding, &mut carry_state)
     }
 }
 
@@ -439,7 +439,7 @@ impl StatefulDeclarativeParser {
         ctx: &ParserContext,
         binding: &BindingConfig,
     ) -> Result<Vec<ParsedEventIntent>, ParserError> {
-        evaluate_inner(&self.spec, record, ctx, binding, &mut self.carry_state)
+        evaluate_inner(&self.spec, &record, ctx, binding, &mut self.carry_state)
     }
 
     /// Reset carry-state (e.g. after a checkpoint restore).
@@ -454,12 +454,12 @@ impl StatefulDeclarativeParser {
 
 fn evaluate_inner(
     spec: &DeclarativeParserSpec,
-    record: SourceRecord,
+    record: &SourceRecord,
     ctx: &ParserContext,
     binding: &BindingConfig,
     carry_state: &mut BTreeMap<String, serde_json::Value>,
 ) -> Result<Vec<ParsedEventIntent>, ParserError> {
-    let decoded = decode_record(spec.input_format, &record)?;
+    let decoded = decode_record(spec.input_format, record)?;
 
     let mut payload = serde_json::Map::new();
     let mut field_privacy_log = Vec::new();

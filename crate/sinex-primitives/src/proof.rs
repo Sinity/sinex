@@ -585,27 +585,22 @@ inventory::collect!(RunnerBinding);
 inventory::collect!(ProofObligation);
 inventory::collect!(Exemption);
 
-#[must_use]
 pub fn source_unit_bindings() -> impl Iterator<Item = &'static SourceUnitBinding> {
     inventory::iter::<SourceUnitBinding>()
 }
 
-#[must_use]
 pub fn claims() -> impl Iterator<Item = &'static Claim> {
     inventory::iter::<Claim>()
 }
 
-#[must_use]
 pub fn runner_bindings() -> impl Iterator<Item = &'static RunnerBinding> {
     inventory::iter::<RunnerBinding>()
 }
 
-#[must_use]
 pub fn obligations() -> impl Iterator<Item = &'static ProofObligation> {
     inventory::iter::<ProofObligation>()
 }
 
-#[must_use]
 pub fn exemptions() -> impl Iterator<Item = &'static Exemption> {
     inventory::iter::<Exemption>()
 }
