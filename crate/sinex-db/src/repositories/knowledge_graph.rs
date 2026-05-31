@@ -1053,7 +1053,7 @@ async fn apply_entity_merge(
 }
 
 /// Rewire entity relations from source to target within an open transaction,
-/// deduplicating to avoid violating the uk_entity_relations_triple unique
+/// deduplicating to avoid violating the `uk_entity_relations_triple` unique
 /// constraint. For each direction (outgoing, incoming):
 ///   1. Union provenance arrays on the surviving target row.
 ///   2. Delete the duplicate source rows.
@@ -1174,7 +1174,7 @@ async fn rewire_entity_relations(
     Ok(())
 }
 
-/// Insert an operations_log entry summarising a completed entity merge.
+/// Insert an `operations_log` entry summarising a completed entity merge.
 async fn log_entity_merge_operation(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     source: &EntityRecord,

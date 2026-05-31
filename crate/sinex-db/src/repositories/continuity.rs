@@ -527,6 +527,7 @@ where
     CoverageContract::OpportunisticImport
 }
 
+#[derive(Copy, Clone)]
 struct ReplayabilityFlags {
     any_blob: bool,
     good_timing: bool,

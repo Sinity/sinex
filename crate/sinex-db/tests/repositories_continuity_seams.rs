@@ -19,6 +19,7 @@ use sinex_primitives::sources::SourceFamily;
 use sinex_primitives::sources::continuity::SeamKind;
 use sqlx::types::Uuid;
 use time::OffsetDateTime;
+use time::macros::datetime;
 use xtask::sandbox::prelude::*;
 
 /// Stage a registry row at a specific time window so the continuity query
@@ -99,8 +100,8 @@ async fn seam_classification_emits_expected_continuation(ctx: TestContext) -> Te
         &id_a,
         "completed",
         "intrinsic",
-        datetime("2026-04-01T10:00:00Z"),
-        datetime("2026-04-01T11:00:00Z"),
+        datetime!(2026-04-01 10:00 UTC),
+        datetime!(2026-04-01 11:00 UTC),
     )
     .await?;
     let m2 = insert_chunk(
@@ -108,8 +109,8 @@ async fn seam_classification_emits_expected_continuation(ctx: TestContext) -> Te
         &id_b,
         "completed",
         "intrinsic",
-        datetime("2026-04-01T11:00:00Z"),
-        datetime("2026-04-01T12:00:00Z"),
+        datetime!(2026-04-01 11:00 UTC),
+        datetime!(2026-04-01 12:00 UTC),
     )
     .await?;
     seed_event(ctx.pool(), "shellseamcont", "shell.command", m1).await?;
@@ -142,8 +143,8 @@ async fn seam_classification_emits_overlap(ctx: TestContext) -> TestResult<()> {
         &id_a,
         "completed",
         "intrinsic",
-        datetime("2026-04-02T10:00:00Z"),
-        datetime("2026-04-02T11:00:00Z"),
+        datetime!(2026-04-02 10:00 UTC),
+        datetime!(2026-04-02 11:00 UTC),
     )
     .await?;
     // Second chunk starts 30 minutes BEFORE the first ends → overlap.
@@ -152,8 +153,8 @@ async fn seam_classification_emits_overlap(ctx: TestContext) -> TestResult<()> {
         &id_b,
         "completed",
         "intrinsic",
-        datetime("2026-04-02T10:30:00Z"),
-        datetime("2026-04-02T11:30:00Z"),
+        datetime!(2026-04-02 10:30 UTC),
+        datetime!(2026-04-02 11:30 UTC),
     )
     .await?;
     seed_event(ctx.pool(), "shellseamoverlap", "shell.command", m1).await?;
@@ -188,8 +189,8 @@ async fn seam_classification_emits_discontinuity(ctx: TestContext) -> TestResult
         &id_a,
         "completed",
         "intrinsic",
-        datetime("2026-04-03T10:00:00Z"),
-        datetime("2026-04-03T10:30:00Z"),
+        datetime!(2026-04-03 10:00 UTC),
+        datetime!(2026-04-03 10:30 UTC),
     )
     .await?;
     // 3.5 hour gap ⇒ Discontinuity (no privacy markers, no partial state).
@@ -198,8 +199,8 @@ async fn seam_classification_emits_discontinuity(ctx: TestContext) -> TestResult
         &id_b,
         "completed",
         "intrinsic",
-        datetime("2026-04-03T14:00:00Z"),
-        datetime("2026-04-03T15:00:00Z"),
+        datetime!(2026-04-03 14:00 UTC),
+        datetime!(2026-04-03 15:00 UTC),
     )
     .await?;
     seed_event(ctx.pool(), "shellseamdiscont", "shell.command", m1).await?;
@@ -242,8 +243,8 @@ async fn seam_classification_emits_recovered_partial(ctx: TestContext) -> TestRe
         &id_a,
         "recovered_partial",
         "intrinsic",
-        datetime("2026-04-04T10:00:00Z"),
-        datetime("2026-04-04T10:30:00Z"),
+        datetime!(2026-04-04 10:00 UTC),
+        datetime!(2026-04-04 10:30 UTC),
     )
     .await?;
     let m2 = insert_chunk(
@@ -251,8 +252,8 @@ async fn seam_classification_emits_recovered_partial(ctx: TestContext) -> TestRe
         &id_b,
         "completed",
         "intrinsic",
-        datetime("2026-04-04T11:00:00Z"),
-        datetime("2026-04-04T11:30:00Z"),
+        datetime!(2026-04-04 11:00 UTC),
+        datetime!(2026-04-04 11:30 UTC),
     )
     .await?;
     seed_event(ctx.pool(), "shellseamrec", "shell.command", m1).await?;
@@ -277,9 +278,3 @@ async fn seam_classification_emits_recovered_partial(ctx: TestContext) -> TestRe
     Ok(())
 }
 
-fn datetime(rfc3339: &str) -> OffsetDateTime {
-    match OffsetDateTime::parse(rfc3339, &time::format_description::well_known::Rfc3339) {
-        Ok(value) => value,
-        Err(error) => panic!("test datetime literal must be valid RFC3339: {error}"),
-    }
-}
