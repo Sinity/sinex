@@ -2362,10 +2362,7 @@ impl std::str::FromStr for HealthStatus {
             "unknown" => Ok(Self::Unknown),
             "healthy" => Ok(Self::Healthy),
             "degraded" => Ok(Self::Degraded),
-            // "failed" was the terminal state spelling in former HealthAggregatedStatus /
-            // ProcessStatus — accept it on the read path for backward compatibility with
-            // any persisted event payloads written before the unification.
-            "unhealthy" | "failed" => Ok(Self::Unhealthy),
+            "unhealthy" => Ok(Self::Unhealthy),
             _ => Err(format!("unknown health status: {s}")),
         }
     }

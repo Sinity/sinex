@@ -557,7 +557,7 @@ fn parse_health_status_field(
     let status = value.as_str().ok_or_else(|| {
         NodeLogicError::InputParsing(format!("health status field '{field}' must be a string"))
     })?;
-    HealthStatus::from_str(status).map_err(|()| {
+    HealthStatus::from_str(status).map_err(|_| {
         NodeLogicError::InputParsing(format!(
             "health status field '{field}' has invalid value '{status}'"
         ))
