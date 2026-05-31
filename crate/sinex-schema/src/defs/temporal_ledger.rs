@@ -133,7 +133,7 @@ impl TemporalLedger {
     /// `sinex.operation_id` session variable), DELETEs are permitted so the
     /// `ON DELETE CASCADE` FK from `raw.source_material_registry` can fire as
     /// declared. Without this exception, deleting any source material always
-    /// failed with "temporal_ledger is append-only", which silently broke the
+    /// failed with "`temporal_ledger` is append-only", which silently broke the
     /// entire archive/replay cascade for material-provenance events. UPDATE
     /// is still unconditionally forbidden.
     #[must_use]

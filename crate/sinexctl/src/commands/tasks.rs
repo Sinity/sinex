@@ -91,7 +91,7 @@ impl TaskImportCommand {
             }
             if self.dry_run {
                 let desc = task["description"].as_str().unwrap_or("");
-                println!("  [dry-run] {} {}", uuid, desc);
+                println!("  [dry-run] {uuid} {desc}");
                 imported += 1;
                 continue;
             }
@@ -113,12 +113,12 @@ impl TaskImportCommand {
             match client.tasks_create(request).await {
                 Ok(_) => imported += 1,
                 Err(e) => {
-                    eprintln!("  failed to import {}: {}", uuid, e);
+                    eprintln!("  failed to import {uuid}: {e}");
                     skipped += 1;
                 }
             }
         }
-        println!("imported: {}, skipped: {}", imported, skipped);
+        println!("imported: {imported}, skipped: {skipped}");
         Ok(())
     }
 }

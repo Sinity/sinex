@@ -13,11 +13,11 @@ use crate::ids::Id;
 /// Identifies a real-world datapoint by its location within a source material.
 /// This is **occurrence identity** (stable across replay, addresses the same
 /// real-world observation) — distinct from **interpretation identity** (the
-/// event `id`, a random UUIDv7 that is new on each replay).
+/// event `id`, a random `UUIDv7` that is new on each replay).
 ///
 /// # Identity model
 ///
-/// - `id` (event primary key) = interpretation identity — random UUIDv7, changes on replay.
+/// - `id` (event primary key) = interpretation identity — random `UUIDv7`, changes on replay.
 /// - `(source_material_id, anchor_byte)` = occurrence identity — these columns are stable
 ///   across replay. Two events with the same `MaterialOccurrenceKey` are two interpretations
 ///   of the same real-world datapoint.

@@ -38,12 +38,9 @@ impl TimelineCommand {
         query.validate()?;
 
         let result = client.query_events(query).await?;
-        let events = match result {
-            sinex_primitives::query::EventQueryResult::Events { events, .. } => events,
-            _ => {
-                println!("Query returned non-list result");
-                return Ok(());
-            }
+        let events = if let sinex_primitives::query::EventQueryResult::Events { events, .. } = result { events } else {
+            println!("Query returned non-list result");
+            return Ok(());
         };
 
         let term = Term::stdout();
@@ -56,9 +53,7 @@ impl TimelineCommand {
         for event in &events {
             let ts = event
                 .event
-                .ts_orig
-                .map(|t| t.to_string())
-                .unwrap_or_else(|| "?".into());
+                .ts_orig.map_or_else(|| "?".into(), |t| t.to_string());
             let source = event.event.source.as_str();
             let etype = event.event.event_type.as_str();
             let summary = event

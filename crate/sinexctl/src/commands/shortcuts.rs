@@ -529,6 +529,7 @@ impl SourceReadinessSummary {
     }
 }
 
+#[must_use] 
 pub fn summarize_source_readiness(sources: &[SourceReadiness]) -> SourceReadinessSummary {
     let mut summary = SourceReadinessSummary {
         total: sources.len(),
