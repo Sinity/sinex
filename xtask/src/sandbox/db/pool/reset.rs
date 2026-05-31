@@ -43,6 +43,30 @@ async fn recreate_and_reconnect(
 
 // ── Clean database ──────────────────────────────────────────────────────────
 
+/// Record error, quarantine slot, clear schema-verified flag.
+fn quarantine_slot_on_error(
+    slot: &Arc<DatabaseSlot>,
+    err_msg: String,
+    residuals: Option<Vec<(String, i64)>>,
+) {
+    slot.record_clean_result(Err(err_msg), residuals);
+    slot.quarantined.store(true, Ordering::SeqCst);
+    slot.schema_verified.store(false, Ordering::SeqCst);
+}
+
+/// Probe residual rows and return the formatted error suffix.
+async fn residual_probe_suffix(
+    pool: &DbPool,
+    residuals: &mut Option<Vec<(String, i64)>>,
+) -> String {
+    let probe = log_remaining_rows(pool).await;
+    *residuals = probe.as_ref().ok().cloned();
+    probe
+        .err()
+        .map(|e| format!("; residual row probe failed: {e}"))
+        .unwrap_or_default()
+}
+
 /// Clean a database for reuse
 pub(super) async fn clean_database(
     slot: &Arc<DatabaseSlot>,
@@ -71,9 +95,7 @@ pub(super) async fn clean_database(
                     if schema_recreated {
                         let err =
                             eyre!("Database {db_name} schema mismatch after recreation: {reason}");
-                        slot.record_clean_result(Err(err.to_string()), residuals.clone());
-                        slot.quarantined.store(true, Ordering::SeqCst);
-                        slot.schema_verified.store(false, Ordering::SeqCst);
+                        quarantine_slot_on_error(slot, err.to_string(), residuals.clone());
                         return Err(err);
                     }
 
@@ -120,9 +142,7 @@ pub(super) async fn clean_database(
 
                     POOL_METRICS.record_cleanup_failure();
                     let err = eyre!("Database {db_name} schema check failed: {error}");
-                    slot.record_clean_result(Err(err.to_string()), residuals.clone());
-                    slot.quarantined.store(true, Ordering::SeqCst);
-                    slot.schema_verified.store(false, Ordering::SeqCst);
+                    quarantine_slot_on_error(slot, err.to_string(), residuals.clone());
                     return Err(err);
                 }
             }
@@ -143,18 +163,11 @@ pub(super) async fn clean_database(
                 {
                     if attempt >= 2 {
                         POOL_METRICS.record_cleanup_failure();
-                        let residual_probe = log_remaining_rows(&working_pool).await;
-                        residuals = residual_probe.as_ref().ok().cloned();
-                        let residual_probe_suffix = residual_probe
-                            .err()
-                            .map(|error| format!("; residual row probe failed: {error}"))
-                            .unwrap_or_default();
+                        let suffix = residual_probe_suffix(&working_pool, &mut residuals).await;
                         let err = eyre!(
-                            "Database {db_name} cleanup failed: {verify_err}{residual_probe_suffix}"
+                            "Database {db_name} cleanup failed: {verify_err}{suffix}"
                         );
-                        slot.record_clean_result(Err(err.to_string()), residuals.clone());
-                        slot.quarantined.store(true, Ordering::SeqCst);
-                        slot.schema_verified.store(false, Ordering::SeqCst);
+                        quarantine_slot_on_error(slot, err.to_string(), residuals.clone());
                         return Err(err);
                     }
                     slog!(
@@ -229,21 +242,14 @@ pub(super) async fn clean_database(
                     error = e
                 );
                 POOL_METRICS.record_cleanup_failure();
-                let residual_probe = log_remaining_rows(&working_pool).await;
-                residuals = residual_probe.as_ref().ok().cloned();
-                let residual_probe_suffix = residual_probe
-                    .err()
-                    .map(|error| format!("; residual row probe failed: {error}"))
-                    .unwrap_or_default();
+                let suffix = residual_probe_suffix(&working_pool, &mut residuals).await;
 
                 // Attempt one last forced cleanup focusing on stubborn event/material rows.
                 if let Err(force_err) = force_event_material_cleanup(&working_pool).await {
                     let err = eyre!(
-                        "Database {db_name} cleanup failed: {e}{residual_probe_suffix}; forced cleanup also failed: {force_err}"
+                        "Database {db_name} cleanup failed: {e}{suffix}; forced cleanup also failed: {force_err}"
                     );
-                    slot.record_clean_result(Err(err.to_string()), residuals.clone());
-                    slot.quarantined.store(true, Ordering::SeqCst);
-                    slot.schema_verified.store(false, Ordering::SeqCst);
+                    quarantine_slot_on_error(slot, err.to_string(), residuals.clone());
                     return Err(err);
                 }
 
@@ -253,9 +259,7 @@ pub(super) async fn clean_database(
                     let err = eyre!(
                         "Database {db_name} cleanup failed after forced cleanup: {verify_err}"
                     );
-                    slot.record_clean_result(Err(err.to_string()), residuals.clone());
-                    slot.quarantined.store(true, Ordering::SeqCst);
-                    slot.schema_verified.store(false, Ordering::SeqCst);
+                    quarantine_slot_on_error(slot, err.to_string(), residuals.clone());
                     return Err(err);
                 }
 

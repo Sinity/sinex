@@ -24,6 +24,36 @@ pub(super) struct CleanupTask {
     pub(super) lock_conn: Option<PoolConnection<Postgres>>,
 }
 
+/// Release an advisory lock on `lock_id` acquired on `lock_conn`.
+async fn release_advisory_lock(
+    lock_conn: Option<PoolConnection<Postgres>>,
+    slot_name: &str,
+    lock_id: i64,
+) {
+    if let Some(mut lock_conn) = lock_conn {
+        match tokio::time::timeout(
+            Duration::from_secs(5),
+            sqlx::query("SELECT pg_advisory_unlock($1)")
+                .bind(lock_id)
+                .execute(lock_conn.as_mut()),
+        )
+        .await
+        {
+            Ok(Ok(_)) => {
+                slog!(Level::Debug, "lock_released", slot = slot_name, lock_id = lock_id);
+            }
+            Ok(Err(e)) => {
+                slog!(Level::Warn, "lock_release_failed", slot = slot_name, lock_id = lock_id, error = e);
+            }
+            Err(_) => {
+                slog!(Level::Warn, "lock_release_timeout", slot = slot_name, lock_id = lock_id);
+            }
+        }
+    } else {
+        slog!(Level::Warn, "lock_conn_missing", slot = slot_name, lock_id = lock_id);
+    }
+}
+
 /// Background cleanup manager to handle resource cleanup safely
 pub(super) struct CleanupManager {
     sender: tokio::sync::mpsc::UnboundedSender<CleanupTask>,
@@ -156,49 +186,7 @@ impl CleanupManager {
         }
 
         // Advisory locks are per-session; we must unlock on the same connection that acquired it.
-        if let Some(mut lock_conn) = lock_conn {
-            match tokio::time::timeout(
-                Duration::from_secs(5),
-                sqlx::query("SELECT pg_advisory_unlock($1)")
-                    .bind(task.lock_id)
-                    .execute(lock_conn.as_mut()),
-            )
-            .await
-            {
-                Ok(Ok(_)) => {
-                    slog!(
-                        Level::Debug,
-                        "lock_released",
-                        slot = task.slot_name,
-                        lock_id = task.lock_id
-                    );
-                }
-                Ok(Err(e)) => {
-                    slog!(
-                        Level::Warn,
-                        "lock_release_failed",
-                        slot = task.slot_name,
-                        lock_id = task.lock_id,
-                        error = e
-                    );
-                }
-                Err(_) => {
-                    slog!(
-                        Level::Warn,
-                        "lock_release_timeout",
-                        slot = task.slot_name,
-                        lock_id = task.lock_id
-                    );
-                }
-            }
-        } else {
-            slog!(
-                Level::Warn,
-                "lock_conn_missing",
-                slot = task.slot_name,
-                lock_id = task.lock_id
-            );
-        }
+        release_advisory_lock(lock_conn, &task.slot_name, task.lock_id).await;
 
         // Close the pool with a timeout
         let close_future = task.pool.close();
