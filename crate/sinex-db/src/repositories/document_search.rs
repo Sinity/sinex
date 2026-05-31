@@ -372,7 +372,7 @@ impl<'a> DocumentSearchRepository<'a> {
         q = q.bind(offset);
 
         let rows = q.fetch_all(self.pool).await?;
-        rows.into_iter().map(Self::map_search_row).collect()
+        rows.iter().map(Self::map_search_row).collect()
     }
 
     async fn search_trigram(
@@ -454,7 +454,7 @@ impl<'a> DocumentSearchRepository<'a> {
         q = q.bind(offset);
 
         let rows = q.fetch_all(self.pool).await?;
-        rows.into_iter().map(Self::map_search_row).collect()
+        rows.iter().map(Self::map_search_row).collect()
     }
 
     async fn count_indexed_chunks_in_scope(&self, query: &DocumentSearchQuery) -> DbResult<i64> {
@@ -515,7 +515,7 @@ impl<'a> DocumentSearchRepository<'a> {
         q.fetch_one(self.pool).await.map_err(Into::into)
     }
 
-    fn map_search_row(row: sqlx::postgres::PgRow) -> DbResult<DocumentSearchResult> {
+    fn map_search_row(row: &sqlx::postgres::PgRow) -> DbResult<DocumentSearchResult> {
         Ok(DocumentSearchResult {
             document_id: row.try_get::<Uuid, _>("document_id")?,
             chunk_index: row.try_get::<i32, _>("chunk_index")?,
