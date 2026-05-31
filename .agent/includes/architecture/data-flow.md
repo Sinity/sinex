@@ -169,4 +169,4 @@ impl Windowed for SessionDetector {
 | Checkpoints | NATS KV + local file | Yes (at-least-once) |
 | Material readiness | In-memory `MaterialReadySet` | No (rebuilt on startup) |
 | Schema cache | In-memory `Arc<RwLock>` | No (rebuilt from DB) |
-| xtask history | SQLite `.sinex/state/xtask-history.db` | Yes |
+| xtask history | SQLite `$SINEX_STATE_DIR/xtask-history.db` | Yes |

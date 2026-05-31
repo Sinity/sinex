@@ -277,9 +277,15 @@
 
                 cargo_target_dir="''${CARGO_TARGET_DIR:-''${SINEX_DEV_CACHE_ROOT:-$root_dir/.sinex/cache}/target}"
                 bin_path="$cargo_target_dir/debug/xtask"
-                build_lock_dir="$root_dir/.sinex/state/xtask-build.lock"
-                build_failure_stamp="$root_dir/.sinex/state/xtask-build.failed"
-                build_failure_log="$root_dir/.sinex/state/xtask-build.failed.log"
+                # Keep build-coordination markers with the rest of xtask state.
+                # SINEX_STATE_DIR is relocated to NVMe (/var/cache/...) by the
+                # sinnix devshell hook; honoring it here keeps the lock, failure
+                # stamp, history DB, and job records in one place instead of
+                # stranding markers in the checkout's .sinex/state.
+                build_state_dir="''${SINEX_STATE_DIR:-$root_dir/.sinex/state}"
+                build_lock_dir="$build_state_dir/xtask-build.lock"
+                build_failure_stamp="$build_state_dir/xtask-build.failed"
+                build_failure_log="$build_state_dir/xtask-build.failed.log"
                 force_rebuild="''${SINEX_XTASK_FORCE_REBUILD:-0}"
 
                 _sinex_xtask_normalize_global_args() {
@@ -440,7 +446,7 @@
                 }
 
                 _sinex_xtask_build_with_lock() {
-                  mkdir -p "$root_dir/.sinex/state"
+                  mkdir -p "$build_state_dir"
 
                   while ! mkdir "$build_lock_dir" 2>/dev/null; do
                     if _sinex_xtask_wait_for_existing_build; then
