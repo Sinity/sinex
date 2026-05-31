@@ -279,6 +279,23 @@ Remaining `sinex-process` / per-domain-ingestor / `sinex-gateway` binary-name dr
 | TV-090 | `sdk-assessment.md` entity-automata path `sinex-process/src/automata/` | superseded | Authority is `crate/sinexd/src/automata/`; struck through in batch-2 prose. |
 | TV-091 | `communication-social.md` `sinex-comms-ingestor` / `sinex-document-ingestor` as deployment targets | design_candidate | Design-sketch crate names for PLANNED sources under #1070; not deployed binaries. Annotated "design sketch only" — legitimately planned, not fiction. |
 
+### Batch 6 (2026-05-30) — claim-verification pass (work-ahead, media-document, privacy-and-operations, prescriptive)
+
+Lower-risk remainder: stale automata counts, dissolved crate paths, and the TOML privacy-config model. Prose corrected in target-vision commit `a8f105a`. `reference/` is ~92% dissolved after this batch; only `reference/event-taxonomy/` A–M domain files remain (batch 7).
+
+| Claim ID | Claim | Status | Evidence |
+|----------|-------|--------|----------|
+| TV-092 | `work-ahead.md` "9 automata (6 deployed in sinex-process per #944, 3 entity code-complete), ingestd + gateway live" | superseded | Post-Wave-B: 14 automata in `sinexd::automata`; `sinex-process`/ingestd/gateway dissolved into `sinexd` (#944/#1559/#1054). |
+| TV-093 | `work-ahead.md` "source-worker host (#1081) will eventually consolidate the 5 ingestors" | superseded | #1081 landed — `sinexd` is the unified host; per-ingestor crates dissolved (Wave-B). |
+| TV-094 | `media-document-processing.md` `BlobManager` at `sinex-node-sdk/src/annex/blob_manager.rs` | superseded | `sinex-node-sdk` dissolved into `sinexd` (Wave-B); BlobManager under `crate/sinexd/src/sources/`. |
+| TV-095 | `media-document-processing.md` `DocumentIngestorNode (sinex-document-ingestor)` separate crate | superseded | Dissolved; logic at `crate/sinexd/src/sources/source_units/document/node.rs`. |
+| TV-096 | `media-document-processing.md` component paths `crate/nodes/sinex-{image-processor,audio-transcriber}/` | superseded | `crate/nodes/` dissolved (Wave-B Tier-2, #1225); future automata under `crate/sinexd/src/automata/`. |
+| TV-097 | `media-document-processing.md` `crate/lib/sinex-node-sdk/src/tags/` | superseded | Tag logic at `crate/sinexd/src/automata/tag_applier.rs`. |
+| TV-098 | `privacy-and-operations.md` §7.1–7.2 `services.sinex.privacy` TOML/NixOS rendering as authoritative privacy-config model | superseded | #1042 (consolidated 2026-05-30) redesigns policy as DB tables via `sinexctl privacy`, not static TOML. Interim TOML remains in code pending #1042. |
+| TV-099 | `prescriptive-ideas.md` day/hourly summarizer sinex-process parenthetical | verified | `sinexd::automata::{daily,hourly}` confirmed; prose sharpened. |
+
+> Open follow-up for batch 7: `knowledge-graph.md` claims `#1346` closed, but it is still **OPEN** — correct that stale prose with the event-taxonomy A–M pass.
+
 ## Where New Claims Go
 
 Use this order:
