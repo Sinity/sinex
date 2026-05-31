@@ -2092,8 +2092,8 @@ impl XtaskCommand for TestCommand {
                                         reusable,
                                     );
                                     // Store test filter for per-test-name evidence (#1393 Phase 3).
-                                    if r.is_ok() {
-                                        if let Some(ref filter) = filter_for_proof {
+                                    if r.is_ok()
+                                        && let Some(ref filter) = filter_for_proof {
                                             let _ = db.set_test_proof_filter(
                                                 invocation_id,
                                                 &proof_kind,
@@ -2102,7 +2102,6 @@ impl XtaskCommand for TestCommand {
                                                 filter,
                                             );
                                         }
-                                    }
                                     r
                                 }) {
                                     result?;

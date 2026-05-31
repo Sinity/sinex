@@ -42,7 +42,7 @@ async fn material_event_builder_stamps_anchor_payload_hash() -> TestResult<()> {
         "material-provenance events should carry the BLAKE3 of the captured byte range",
     );
     assert_eq!(
-        event.anchor_payload_hash.as_ref().map(|h| h.len()),
+        event.anchor_payload_hash.as_ref().map(std::vec::Vec::len),
         Some(32),
         "anchor_payload_hash must be exactly 32 bytes (matches DB CHECK length=32)",
     );

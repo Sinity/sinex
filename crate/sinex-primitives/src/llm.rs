@@ -201,7 +201,7 @@ impl ModelEffectRequest {
 /// A recorded model effect — the immutable record of a completed LLM call.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct ModelEffectRecord {
-    /// Unique effect ID (UUIDv7).
+    /// Unique effect ID (`UUIDv7`).
     pub effect_id: String,
     /// The request that produced this effect.
     pub request: ModelEffectRequest,

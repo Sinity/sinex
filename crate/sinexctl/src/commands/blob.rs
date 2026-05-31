@@ -575,7 +575,7 @@ pub struct BlobVerifyIntegrityCommand {
     pub limit: u64,
 
     /// On mismatch, archive the offending events with reason
-    /// "anchor_payload_hash mismatch" so a replay can re-emit them from the
+    /// "`anchor_payload_hash` mismatch" so a replay can re-emit them from the
     /// current source-material bytes. The archive cascade is the same
     /// machinery the replay flow uses; events move to
     /// `audit.archived_events` and `core.events` no longer carries them.
@@ -654,11 +654,11 @@ async fn archive_mismatches(
     // operation_type pattern used elsewhere in the codebase: snake_case,
     // namespaced by intent.
     sqlx::query(
-        r#"
+        r"
         INSERT INTO core.operations_log (
             operation_type, operator, scope, result_status, result_message
         ) VALUES ($1, $2, $3, 'running', $4)
-        "#,
+        ",
     )
     .bind("archive.integrity_mismatch")
     .bind("sinexctl:blob-verify-integrity")
@@ -686,7 +686,7 @@ async fn archive_mismatches(
         .wrap_err("execute archive cascade for integrity mismatches")?;
 
     sqlx::query(
-        r#"
+        r"
         UPDATE core.operations_log
         SET result_status = 'success',
             result_message = $1
@@ -700,7 +700,7 @@ async fn archive_mismatches(
               AND scope->>'reason' = 'anchor_payload_hash mismatch'
             ORDER BY id DESC LIMIT 1
           )
-        "#,
+        ",
     )
     .bind(format!(
         "archived {count} of {} mismatched events via cascade",

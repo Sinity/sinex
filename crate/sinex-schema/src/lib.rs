@@ -4,7 +4,7 @@
 //! and `sqlx` (runtime queries only — no `sqlx::query!` macros), so it can
 //! compile without a populated database. The `schema-apply-bootstrap` and
 //! `schema-strict-diff` binaries therefore build cleanly in a Nix sandbox
-//! before the SQLx compile-time validation database is started.
+//! before the `SQLx` compile-time validation database is started.
 //!
 //! `sinex-db` re-exports this crate as its `schema` module:
 //! ```text

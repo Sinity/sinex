@@ -53,7 +53,7 @@ fn admit(event: Event<serde_json::Value>) -> AdmittedEvent {
     }
 }
 
-/// Insert a rule scoped globally (NULL source/type/field_path).
+/// Insert a rule scoped globally (NULL `source/type/field_path`).
 async fn insert_global_rule(
     pool: &sinex_db::DbPool,
     name: &str,
@@ -382,12 +382,12 @@ async fn privacy_dlq_raw_bytes_suppressed(ctx: TestContext) -> TestResult<()> {
         "_raw_bytes_base64 must be absent in DLQ stub; got: {stub}"
     );
     assert_eq!(
-        stub.get("_raw_bytes_suppressed").and_then(|v| v.as_bool()),
+        stub.get("_raw_bytes_suppressed").and_then(serde_json::Value::as_bool),
         Some(true),
         "stub must mark suppression"
     );
     assert_eq!(
-        stub.get("_raw_bytes_len").and_then(|v| v.as_u64()),
+        stub.get("_raw_bytes_len").and_then(serde_json::Value::as_u64),
         Some(42),
         "stub must record original length"
     );

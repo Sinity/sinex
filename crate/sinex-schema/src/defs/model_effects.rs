@@ -17,7 +17,7 @@ use sqlx::FromRow;
 /// **Table: `core.model_effects`**
 ///
 /// Immutable record of a completed LLM call. Keyed by composite hash of
-/// (provider, model, prompt_hash, schema_hash, input_hash) so identical
+/// (provider, model, `prompt_hash`, `schema_hash`, `input_hash`) so identical
 /// requests can replay without re-invoking the model.
 #[derive(Iden, Copy, Clone)]
 pub enum ModelEffects {
@@ -51,6 +51,7 @@ impl TableDef for ModelEffects {
 }
 
 impl ModelEffects {
+    #[must_use] 
     pub fn create_table_statement() -> TableCreateStatement {
         Table::create()
             .table(Self::Table)
@@ -82,6 +83,7 @@ impl ModelEffects {
             .to_owned()
     }
 
+    #[must_use] 
     pub fn composite_key_index() -> IndexCreateStatement {
         Index::create()
             .name("idx_model_effects_composite_key")

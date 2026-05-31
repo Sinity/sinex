@@ -382,7 +382,7 @@ async fn sinex_config_nested_fallible_propagates_result() -> TestResult<()> {
 pub struct NormalizeConfig {
     #[sinex_config(default_expr = "\"raw\".to_string()")]
     pub name: String,
-    /// Set by normalize().
+    /// Set by `normalize()`.
     #[sinex_config(skip)]
     pub normalized_name: String,
 }

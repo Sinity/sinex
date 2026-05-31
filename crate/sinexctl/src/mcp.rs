@@ -2652,11 +2652,10 @@ async fn context_pack(client: &GatewayClient, arguments: Value) -> Result<Value>
     // project_path filtering: full project-scoped query needs the
     // context-pack DTO from #1095. For now, use it as a source prefix
     // hint when the path looks like a known project name.
-    if let Some(ref path) = args.project_path {
-        if let Ok(source) = sinex_primitives::domain::EventSource::new(path.clone()) {
+    if let Some(ref path) = args.project_path
+        && let Ok(source) = sinex_primitives::domain::EventSource::new(path.clone()) {
             query.sources = vec![source];
         }
-    }
     query.validate()?;
 
     let events_result = client.query_events(query).await?;

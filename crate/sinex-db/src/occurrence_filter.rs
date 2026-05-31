@@ -40,7 +40,7 @@ use crate::{DbResult, db_error};
 /// Backslash, `|`, and `=` inside payload values are escaped (`\\`, `\|`,
 /// `\=`) using the same scheme as
 /// [`occurrence_key_string`](sinex_primitives::parser::occurrence_key_string).
-/// Field *names* are required to be valid PostgreSQL identifiers (no `|`, `=`,
+/// Field *names* are required to be valid `PostgreSQL` identifiers (no `|`, `=`,
 /// or `\` possible) and so are emitted verbatim.
 ///
 /// # Errors
@@ -93,9 +93,8 @@ pub async fn build_occurrence_filter(
     //   replace(replace(replace(payload->>'f', '\', '\\'), '|', '\|'), '=', '\=')
     fn escape_expr(field: &str) -> String {
         format!(
-            "replace(replace(replace(coalesce(payload->>'{f}', ''), \
+            "replace(replace(replace(coalesce(payload->>'{field}', ''), \
              '\\', '\\\\'), '|', '\\|'), '=', '\\=')",
-            f = field,
         )
     }
 
@@ -159,10 +158,9 @@ pub async fn build_occurrence_filter_with_key_expr(
     key_sql: &str,
 ) -> DbResult<OccurrenceFilter> {
     let query = format!(
-        "SELECT DISTINCT {key} FROM core.events \
+        "SELECT DISTINCT {key_sql} FROM core.events \
          WHERE source = $1 AND event_type = $2 \
-         AND {key} IS NOT NULL",
-        key = key_sql,
+         AND {key_sql} IS NOT NULL",
     );
 
     let rows: Vec<(String,)> = sqlx::query_as(&query)
