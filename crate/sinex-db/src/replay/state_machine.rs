@@ -1060,108 +1060,114 @@ impl ReplayStateMachine {
         &self,
         stale_threshold: std::time::Duration,
     ) -> Result<usize> {
-        let repo = self.repo();
         let threshold_secs = stale_threshold.as_secs_f64();
-
-        let stale_ids = repo.find_stale_executing(threshold_secs).await?;
+        let stale_ids = self.repo().find_stale_executing(threshold_secs).await?;
 
         let mut recovered = 0usize;
         for operation_id in stale_ids {
-            let mut tx = self.pool.begin().await.map_err(|e| {
-                SinexError::database("Failed to begin recovery transaction")
-                    .with_source(e.to_string())
-                    .with_id("operation_id", operation_id.to_string())
-                    .with_operation("recover_stale_executing")
-            })?;
-
-            let existing = match repo.fetch_meta_for_update(&mut tx, operation_id).await {
-                Ok(v) => v,
-                Err(e) => {
-                    if let Err(rollback_err) = tx.rollback().await {
-                        warn!(
-                            operation_id = %operation_id,
-                            error = %rollback_err,
-                            "Failed to rollback replay recovery transaction after fetch error"
-                        );
-                    }
-                    warn!(
-                        operation_id = %operation_id,
-                        error = %e,
-                        "Failed to fetch stale operation meta; skipping recovery"
-                    );
-                    continue;
-                }
-            };
-
-            let mut meta = decode_meta_json(Some(existing))?;
-
-            if !matches!(
-                meta.state,
-                ReplayState::Executing | ReplayState::Cancelling | ReplayState::Committing
-            ) {
-                if let Err(error) = tx.rollback().await {
-                    warn!(
-                        operation_id = %operation_id,
-                        error = %error,
-                        "Failed to rollback replay recovery transaction after state changed"
-                    );
-                }
-                continue;
+            if self.try_recover_one_operation(operation_id).await? {
+                recovered += 1;
             }
-
-            let recovered_state = meta.state;
-            let staleness = meta.started_at.map(|started| {
-                let now = temporal::now();
-                now - started
-            });
-
-            meta.state = ReplayState::Failed;
-            meta.finished_at = Some(temporal::now());
-            meta.outcome = Some(ReplayOutcome::Failed);
-            meta.executor_node = None;
-            meta.error_details = Some(format!(
-                "recovered from stale {} state (likely process crash)",
-                state_json_label(recovered_state).to_ascii_lowercase()
-            ));
-
-            let (status, msg) = map_state_to_status(&meta.state);
-            let meta_json = serde_json::to_value(&meta).map_err(|e| {
-                SinexError::processing("Failed to serialize recovery meta")
-                    .with_source(e.to_string())
-                    .with_id("operation_id", operation_id.to_string())
-                    .with_operation("recover_stale_executing")
-            })?;
-            let duration_ms = meta_duration_ms(&meta);
-
-            repo.update_operation_meta(&mut tx, operation_id, meta_json, status, msg, duration_ms)
-                .await?;
-
-            tx.commit().await.map_err(|e| {
-                SinexError::database("Failed to commit recovery transaction")
-                    .with_source(e.to_string())
-                    .with_id("operation_id", operation_id.to_string())
-                    .with_operation("recover_stale_executing")
-            })?;
-
-            let staleness_desc = staleness.map_or_else(
-                || "unknown".to_string(),
-                |d| {
-                    let total_secs = d.whole_seconds().unsigned_abs();
-                    format!("{}m{}s", total_secs / 60, total_secs % 60)
-                },
-            );
-
-            warn!(
-                operation_id = %operation_id,
-                recovered_state = state_json_label(recovered_state),
-                stale_for = %staleness_desc,
-                "Recovered stale replay operation (likely process crash)"
-            );
-
-            recovered += 1;
         }
 
         Ok(recovered)
+    }
+
+    /// Attempt to recover a single stale operation.
+    /// Returns `Ok(true)` when the operation was successfully recovered,
+    /// `Ok(false)` when it was skipped (fetch error or state changed).
+    async fn try_recover_one_operation(&self, operation_id: Uuid) -> Result<bool> {
+        let repo = self.repo();
+
+        let mut tx = self.pool.begin().await.map_err(|e| {
+            SinexError::database("Failed to begin recovery transaction")
+                .with_source(e.to_string())
+                .with_id("operation_id", operation_id.to_string())
+                .with_operation("recover_stale_executing")
+        })?;
+
+        let existing = match repo.fetch_meta_for_update(&mut tx, operation_id).await {
+            Ok(v) => v,
+            Err(e) => {
+                if let Err(rollback_err) = tx.rollback().await {
+                    warn!(
+                        operation_id = %operation_id,
+                        error = %rollback_err,
+                        "Failed to rollback replay recovery transaction after fetch error"
+                    );
+                }
+                warn!(
+                    operation_id = %operation_id,
+                    error = %e,
+                    "Failed to fetch stale operation meta; skipping recovery"
+                );
+                return Ok(false);
+            }
+        };
+
+        let mut meta = decode_meta_json(Some(existing))?;
+
+        if !matches!(
+            meta.state,
+            ReplayState::Executing | ReplayState::Cancelling | ReplayState::Committing
+        ) {
+            if let Err(error) = tx.rollback().await {
+                warn!(
+                    operation_id = %operation_id,
+                    error = %error,
+                    "Failed to rollback replay recovery transaction after state changed"
+                );
+            }
+            return Ok(false);
+        }
+
+        let recovered_state = meta.state;
+        let staleness = meta.started_at.map(|started| temporal::now() - started);
+
+        meta.state = ReplayState::Failed;
+        meta.finished_at = Some(temporal::now());
+        meta.outcome = Some(ReplayOutcome::Failed);
+        meta.executor_node = None;
+        meta.error_details = Some(format!(
+            "recovered from stale {} state (likely process crash)",
+            state_json_label(recovered_state).to_ascii_lowercase()
+        ));
+
+        let (status, msg) = map_state_to_status(&meta.state);
+        let meta_json = serde_json::to_value(&meta).map_err(|e| {
+            SinexError::processing("Failed to serialize recovery meta")
+                .with_source(e.to_string())
+                .with_id("operation_id", operation_id.to_string())
+                .with_operation("recover_stale_executing")
+        })?;
+        let duration_ms = meta_duration_ms(&meta);
+
+        repo.update_operation_meta(&mut tx, operation_id, meta_json, status, msg, duration_ms)
+            .await?;
+
+        tx.commit().await.map_err(|e| {
+            SinexError::database("Failed to commit recovery transaction")
+                .with_source(e.to_string())
+                .with_id("operation_id", operation_id.to_string())
+                .with_operation("recover_stale_executing")
+        })?;
+
+        let staleness_desc = staleness.map_or_else(
+            || "unknown".to_string(),
+            |d| {
+                let total_secs = d.whole_seconds().unsigned_abs();
+                format!("{}m{}s", total_secs / 60, total_secs % 60)
+            },
+        );
+
+        warn!(
+            operation_id = %operation_id,
+            recovered_state = state_json_label(recovered_state),
+            stale_for = %staleness_desc,
+            "Recovered stale replay operation (likely process crash)"
+        );
+
+        Ok(true)
     }
 
     /// List operations with optional filters.
