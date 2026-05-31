@@ -211,15 +211,17 @@ impl MaterialParser for ActivityWatchParser {
 
         let data = row.get("data").cloned().unwrap_or(serde_json::Value::Null);
 
-        let redact_title = |title: &str| -> String {
-            privacy::engine().ok().map_or_else(
-                || title.to_string(),
-                |eng| {
-                    eng.process(title, ProcessingContext::WindowTitle)
-                        .text
-                        .into_owned()
-                },
-            )
+        // Fail closed: if the privacy engine cannot initialize we must not emit
+        // the raw (Secret-tier) title/URL. Propagate the error so the event is
+        // dropped rather than leaked as plaintext.
+        let redact_title = |title: &str| -> ParserResult<String> {
+            match privacy::engine() {
+                Ok(eng) => Ok(eng
+                    .process(title, ProcessingContext::WindowTitle)
+                    .text
+                    .into_owned()),
+                Err(e) => Err(ParserError::Privacy(format!("privacy engine: {e}"))),
+            }
         };
 
         // Schema payloads (ActivityWatchWindowActivePayload, AfkChangedPayload,
@@ -241,7 +243,7 @@ impl MaterialParser for ActivityWatchParser {
                     serde_json::json!({
                         "bucket_id": bucket_id,
                         "app": app,
-                        "title": redact_title(title),
+                        "title": redact_title(title)?,
                         "duration_ms": duration_ms,
                     }),
                 )
@@ -261,7 +263,7 @@ impl MaterialParser for ActivityWatchParser {
                 let url = data.get("url").and_then(|v| v.as_str()).unwrap_or("");
                 let title = data.get("title").and_then(|v| v.as_str()).unwrap_or("");
                 // URLs are highly sensitive — redact via WindowTitle context (closest available).
-                let redacted_url = redact_title(url);
+                let redacted_url = redact_title(url)?;
                 // Bucket name pattern: `aw-watcher-web-<browser>` (e.g.
                 // `aw-watcher-web-firefox`, `aw-watcher-web-chrome`).
                 let browser = bucket_id
@@ -274,7 +276,7 @@ impl MaterialParser for ActivityWatchParser {
                         "bucket_id": bucket_id,
                         "browser": browser,
                         "url": redacted_url,
-                        "title": redact_title(title),
+                        "title": redact_title(title)?,
                         "duration_ms": duration_ms,
                     }),
                 )
