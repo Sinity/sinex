@@ -1212,13 +1212,7 @@ async fn fetch_and_validate_stale_meta<'t>(
     let existing = match repo.fetch_meta_for_update(&mut tx, operation_id).await {
         Ok(v) => v,
         Err(e) => {
-            if let Err(rollback_err) = tx.rollback().await {
-                warn!(
-                    operation_id = %operation_id,
-                    error = %rollback_err,
-                    "Failed to rollback replay recovery transaction after fetch error"
-                );
-            }
+            rollback_and_warn(tx, operation_id, "fetch error").await;
             warn!(
                 operation_id = %operation_id,
                 error = %e,
@@ -1234,18 +1228,24 @@ async fn fetch_and_validate_stale_meta<'t>(
         meta.state,
         ReplayState::Executing | ReplayState::Cancelling | ReplayState::Committing
     ) {
-        if let Err(error) = tx.rollback().await {
-            warn!(
-                operation_id = %operation_id,
-                error = %error,
-                "Failed to rollback replay recovery transaction after state changed"
-            );
-        }
+        rollback_and_warn(tx, operation_id, "state changed").await;
         return Ok(None);
     }
 
     let staleness = meta.started_at.map(|started| temporal::now() - started);
     Ok(Some((meta, staleness, tx)))
+}
+
+/// Roll back a transaction and log a warning if rollback itself fails.
+async fn rollback_and_warn(tx: Transaction<'_, Postgres>, operation_id: Uuid, context: &str) {
+    if let Err(error) = tx.rollback().await {
+        warn!(
+            operation_id = %operation_id,
+            error = %error,
+            context = %context,
+            "Failed to rollback replay recovery transaction"
+        );
+    }
 }
 
 /// Decode a `MetaJson` from an optional JSON value.
