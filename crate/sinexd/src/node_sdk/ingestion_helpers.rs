@@ -1,15 +1,16 @@
-//! Ingestion helper utilities as specified in `TARGET_final.md` section 5
+//! Ingestion helper utilities for ingestor source-unit processing.
 //!
 //! This module provides helpers for ingestors to process `MaterialSliceStream`:
 //! - `SliceAssembler` for record reassembly
 //! - `LedgerReader` and `derive_ts_orig` for timestamp computation
-//! - `IdempotenceKey` for first-order event deduplication
 //! - `SnapshotDiff` for snapshot sources (diff to inserts/updates/deletes)
+//!
+//! For typed occurrence identity, see [`sinex_primitives::MaterialOccurrenceKey`].
 
 use crate::node_sdk::NodeResult;
 use serde_json;
 use sinex_primitives::Uuid;
-use sinex_primitives::domain::{EventSource, EventType, TemporalPrecision, TemporalSourceType};
+use sinex_primitives::domain::{EventSource, TemporalPrecision, TemporalSourceType};
 use sinex_primitives::temporal::Timestamp;
 use std::collections::VecDeque;
 use tracing::{debug, warn};
@@ -208,46 +209,6 @@ fn temporal_source_precedence(source_type: TemporalSourceType) -> u8 {
     }
 }
 
-/// `IdempotenceKey` helper for first-order events
-/// `TARGET_final.md` line 122
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct IdempotenceKey {
-    pub material_id: Uuid,
-    pub anchor_byte: i64,
-    pub event_type: EventType,
-}
-
-impl IdempotenceKey {
-    /// Create a new idempotence key
-    #[must_use]
-    pub fn new(material_id: Uuid, anchor_byte: i64, event_type: EventType) -> Self {
-        Self {
-            material_id,
-            anchor_byte,
-            event_type,
-        }
-    }
-
-    /// Check if this key would conflict with existing events
-    #[cfg(feature = "db")]
-    pub async fn exists_in_db(&self, pool: &sqlx::PgPool) -> NodeResult<bool> {
-        let result = sqlx::query!(
-            r#"
-            SELECT EXISTS(
-                SELECT 1 FROM core.events 
-                WHERE source_material_id::uuid = $1
-                AND anchor_byte = $2
-            ) as "exists!"
-            "#,
-            self.material_id as _,
-            self.anchor_byte
-        )
-        .fetch_one(pool)
-        .await?;
-
-        Ok(result.exists)
-    }
-}
 
 /// Helper for computing deterministic anchor points
 pub struct AnchorComputer {

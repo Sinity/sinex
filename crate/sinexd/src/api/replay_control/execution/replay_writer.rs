@@ -2,8 +2,9 @@
 //! `ReplayExecutionEngine`. See `execution/mod.rs` for the engine type.
 
 use super::{
-    MaterialOccurrenceKey, OperationOutputEvent, ReplayExecutionEngine, ScopeInvalidationBucket,
-    StreamExt, replay_scope_drift_error, stale_preview_missing_root_ids_error,
+    ExtendedMaterialOccurrenceKey, OperationOutputEvent, ReplayExecutionEngine,
+    ScopeInvalidationBucket, StreamExt, replay_scope_drift_error,
+    stale_preview_missing_root_ids_error,
 };
 use crate::node_sdk::runtime::stream::{
     Checkpoint, MaterialReplayContext, NodeScanAck, NodeScanCommand, NodeScanProgress,
@@ -19,8 +20,8 @@ use tracing::{debug, error, info, warn};
 
 use sinex_db::replay::state_machine::{ReplayCheckpoint, ReplayScope, ReplayState};
 
-fn material_occurrence_key(event: &OperationOutputEvent) -> Option<MaterialOccurrenceKey> {
-    Some(MaterialOccurrenceKey {
+fn material_occurrence_key(event: &OperationOutputEvent) -> Option<ExtendedMaterialOccurrenceKey> {
+    Some(ExtendedMaterialOccurrenceKey {
         source_material_id: event.source_material_id?,
         anchor_byte: event.anchor_byte?,
         offset_start: event.offset_start,
@@ -111,7 +112,7 @@ impl ReplayExecutionEngine {
         // at the same occurrence. Multiple outputs at the same physical position
         // are represented as split/collapsed/recomputed relations by count.
         // Also build id→hash lookup for integrity verification.
-        let mut occurrence_to_new: HashMap<MaterialOccurrenceKey, Vec<Uuid>> = HashMap::new();
+        let mut occurrence_to_new: HashMap<ExtendedMaterialOccurrenceKey, Vec<Uuid>> = HashMap::new();
         let mut new_hash_by_id: HashMap<Uuid, Option<Vec<u8>>> = HashMap::new();
         for event in &new_events {
             new_hash_by_id.insert(event.id, event.anchor_payload_hash.clone());
@@ -120,7 +121,7 @@ impl ReplayExecutionEngine {
             }
         }
 
-        let mut old_by_occurrence: HashMap<MaterialOccurrenceKey, Vec<_>> = HashMap::new();
+        let mut old_by_occurrence: HashMap<ExtendedMaterialOccurrenceKey, Vec<_>> = HashMap::new();
         let mut skipped_old_count = 0usize;
         for row in old_rows {
             let Some(source_material_id) = row.source_material_id else {
@@ -132,7 +133,7 @@ impl ReplayExecutionEngine {
                 continue;
             };
             old_by_occurrence
-                .entry(MaterialOccurrenceKey {
+                .entry(ExtendedMaterialOccurrenceKey {
                     source_material_id,
                     anchor_byte,
                     offset_start: row.offset_start,

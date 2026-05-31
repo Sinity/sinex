@@ -57,8 +57,18 @@ struct OperationOutputEvent {
     anchor_payload_hash: Option<Vec<u8>>,
 }
 
+/// Extended physical occurrence coordinates used internally by the replay engine
+/// for precise matching of events during replacement recording.
+///
+/// This extends [`sinex_primitives::MaterialOccurrenceKey`] with optional offset
+/// metadata (`offset_start`, `offset_end`, `offset_kind`) that the replay writer
+/// uses to group events at the same logical position but with differing byte-range
+/// segments.
+///
+/// Use [`sinex_primitives::MaterialOccurrenceKey`] for the canonical 2-field
+/// occurrence identity outside of replay replacement matching.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-struct MaterialOccurrenceKey {
+struct ExtendedMaterialOccurrenceKey {
     source_material_id: Uuid,
     anchor_byte: i64,
     offset_start: Option<i64>,
