@@ -905,6 +905,52 @@ impl ControlSubject {
     }
 }
 
+#[cfg(test)]
+mod control_subject_tests {
+    use super::*;
+    use xtask::sandbox::prelude::*;
+
+    #[sinex_test]
+    async fn control_subject_builders_match_nats_contract() -> TestResult<()> {
+        let node_id = "desktop.clipboard";
+        let operation_id = uuid::Uuid::nil();
+
+        assert_eq!(
+            ControlSubject::replay_progress(operation_id),
+            format!("sinex.control.replay.progress.{operation_id}")
+        );
+        assert_eq!(
+            ControlSubject::source_parse("desktop"),
+            "sinex.control.sources.desktop.parse"
+        );
+        assert_eq!(
+            ControlSubject::node_scan(node_id),
+            "sinex.control.nodes.desktop.clipboard.scan"
+        );
+        assert_eq!(
+            ControlSubject::node_wildcard(node_id),
+            "sinex.control.nodes.desktop.clipboard.*"
+        );
+        assert_eq!(
+            ControlSubject::node_drain(node_id),
+            "sinex.control.nodes.desktop.clipboard.drain"
+        );
+        assert_eq!(
+            ControlSubject::node_resume(node_id),
+            "sinex.control.nodes.desktop.clipboard.resume"
+        );
+        assert_eq!(
+            ControlSubject::node_set_horizon(node_id),
+            "sinex.control.nodes.desktop.clipboard.set-horizon"
+        );
+        assert_eq!(
+            ControlSubject::node_drain_complete(node_id),
+            "sinex.control.nodes.desktop.clipboard.drain_complete"
+        );
+        Ok(())
+    }
+}
+
 /// The hostname where an event occurred.
 ///
 /// Always valid by construction. Use [`HostName::new`] to parse runtime input,
