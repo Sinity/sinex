@@ -8,12 +8,12 @@
 use crate::node_sdk::derived_node::{AutomatonContext, DerivedOutput, ScopeReconcilerNodeAdapter};
 use crate::node_sdk::{InputProvenanceFilter, NodeLogicError, ScopeReconciler};
 use serde::{Deserialize, Serialize};
-use sinex_primitives::domain::SyntheticTemporalPolicy;
+use sinex_primitives::domain::{HealthStatus, SyntheticTemporalPolicy};
 use sinex_primitives::events::{
     EventPayload,
     payloads::{
         HealthAggregatedAlertPayload, HealthAggregatedComponentReportPayload,
-        HealthAggregatedReportPayload, HealthAggregatedReportType, HealthAggregatedStatus,
+        HealthAggregatedReportPayload, HealthAggregatedReportType,
         HealthAggregatedSystemStatusPayload, HealthAlertSeverity, HealthAlertType,
         HealthComponentSnapshot,
     },
@@ -173,7 +173,7 @@ pub struct HealthState {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ComponentHealth {
     pub component_name: String,
-    pub current_status: ComponentHealthStatus,
+    pub current_status: HealthStatus,
     pub status_since: Timestamp,
     pub last_seen: Timestamp,
     pub last_check_emission: Option<Timestamp>,
@@ -184,12 +184,12 @@ pub struct ComponentHealth {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HealthEvent {
     pub timestamp: Timestamp,
-    pub previous_status: ComponentHealthStatus,
-    pub current_status: ComponentHealthStatus,
+    pub previous_status: HealthStatus,
+    pub current_status: HealthStatus,
     pub event_id: String,
 }
 
-pub type ComponentHealthStatus = HealthAggregatedStatus;
+// HealthStatus is imported from sinex_primitives::domain; no local alias needed.
 
 #[derive(Default)]
 pub struct HealthAggregator {
@@ -306,7 +306,7 @@ impl ScopeReconciler for HealthAggregator {
                 Self::collect_event_ids(&component_health.events, &component, "component report")?;
 
             // Immediate alert for component failure
-            if status_changed && matches!(current_status, ComponentHealthStatus::Failed) {
+            if status_changed && matches!(current_status, HealthStatus::Unhealthy) {
                 immediate_alert = Some(
                     DerivedOutput::reconciled(
                         self.create_alert(
@@ -417,7 +417,7 @@ impl HealthAggregator {
     fn create_alert(
         &self,
         component: &str,
-        status: ComponentHealthStatus,
+        status: HealthStatus,
         timestamp: Timestamp,
         reason: &str,
     ) -> HealthAggregatedReportPayload {
@@ -427,7 +427,7 @@ impl HealthAggregator {
             status,
             timestamp,
             reason: reason.to_string(),
-            severity: if matches!(status, ComponentHealthStatus::Failed) {
+            severity: if matches!(status, HealthStatus::Unhealthy) {
                 HealthAlertSeverity::Critical
             } else {
                 HealthAlertSeverity::Warning
@@ -444,28 +444,28 @@ impl HealthAggregator {
         let healthy = state
             .component_health
             .values()
-            .filter(|c| matches!(c.current_status, ComponentHealthStatus::Healthy))
+            .filter(|c| matches!(c.current_status, HealthStatus::Healthy))
             .count();
         let degraded = state
             .component_health
             .values()
-            .filter(|c| matches!(c.current_status, ComponentHealthStatus::Degraded))
+            .filter(|c| matches!(c.current_status, HealthStatus::Degraded))
             .count();
         let failed = state
             .component_health
             .values()
-            .filter(|c| matches!(c.current_status, ComponentHealthStatus::Failed))
+            .filter(|c| matches!(c.current_status, HealthStatus::Unhealthy))
             .count();
         let unknown = total_components.saturating_sub(healthy + degraded + failed);
 
         let overall_status = if failed > 0 {
-            ComponentHealthStatus::Failed
+            HealthStatus::Unhealthy
         } else if degraded > 0 {
-            ComponentHealthStatus::Degraded
+            HealthStatus::Degraded
         } else if healthy == total_components && total_components > 0 {
-            ComponentHealthStatus::Healthy
+            HealthStatus::Healthy
         } else {
-            ComponentHealthStatus::Unknown
+            HealthStatus::Unknown
         };
 
         HealthAggregatedReportPayload::SystemStatus(HealthAggregatedSystemStatusPayload {
@@ -548,7 +548,7 @@ fn parse_component_name(input: &JsonValue) -> Result<&str, NodeLogicError> {
 fn parse_health_status_field(
     input: &JsonValue,
     field: &str,
-) -> Result<ComponentHealthStatus, NodeLogicError> {
+) -> Result<HealthStatus, NodeLogicError> {
     let value = input.get(field).ok_or_else(|| {
         NodeLogicError::InputParsing(format!(
             "health status payload is missing required field '{field}'"
@@ -557,7 +557,7 @@ fn parse_health_status_field(
     let status = value.as_str().ok_or_else(|| {
         NodeLogicError::InputParsing(format!("health status field '{field}' must be a string"))
     })?;
-    ComponentHealthStatus::from_str(status).map_err(|()| {
+    HealthStatus::from_str(status).map_err(|_| {
         NodeLogicError::InputParsing(format!(
             "health status field '{field}' has invalid value '{status}'"
         ))

@@ -35,6 +35,7 @@ use crate::node_sdk::error_helpers::env_nonempty_string_optional;
 use crate::node_sdk::{BufferedRecordMaterializer, NatsPublisher};
 use async_nats::Client as NatsClient;
 use sinex_primitives::env as shared_env;
+use sinex_primitives::domain::HealthStatus;
 use sinex_primitives::events::payloads::{
     ApiRequestStatsPayload, AssemblyStatsPayload, ConsumerStartupSnapshotPayload,
     DerivedNodeLatencySnapshotPayload, EventEngineBatchStatsPayload, GatewayRpcCallPayload,
@@ -647,14 +648,14 @@ impl SelfObserver {
     pub async fn emit_health_status(
         &self,
         component: &str,
-        previous: &str,
-        current: &str,
+        previous: HealthStatus,
+        current: HealthStatus,
         reason: Option<&str>,
     ) -> Result<(), SelfObservationError> {
         self.publish(HealthStatusPayload {
             component: component.to_string(),
-            previous_status: previous.to_string(),
-            current_status: current.to_string(),
+            previous_status: previous,
+            current_status: current,
             reason: reason.map(String::from),
             context: None,
         })

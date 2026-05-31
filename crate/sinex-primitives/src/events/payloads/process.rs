@@ -6,28 +6,10 @@ use crate::units::{ExitCode, ProcessId};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use sinex_macros::EventPayload;
-use std::fmt;
-
-/// Strongly typed status for process heartbeat payloads
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum ProcessStatus {
-    Healthy,
-    Degraded,
-    Failed,
-}
-
-impl fmt::Display for ProcessStatus {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let value = match self {
-            ProcessStatus::Healthy => "healthy",
-            ProcessStatus::Degraded => "degraded",
-            ProcessStatus::Failed => "failed",
-        };
-
-        f.write_str(value)
-    }
-}
+// ProcessStatus was a local 3-variant enum (Healthy/Degraded/Failed) used in
+// process heartbeat payloads. It has been collapsed into the canonical
+// HealthStatus domain enum (#1576 item 2). Use HealthStatus::Unhealthy in place
+// of the former ProcessStatus::Failed.
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
 #[event_payload(source = "sinex", event_type = "process.started")]

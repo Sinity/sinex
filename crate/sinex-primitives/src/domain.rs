@@ -2298,9 +2298,16 @@ impl std::str::FromStr for DataTier {
     }
 }
 
-/// Health status of a component or the overall system.
+/// Canonical health status of a component or the overall system.
 ///
-/// Matches the values used in system health RPC responses.
+/// This is the single source of truth for health vocabulary across all sinex
+/// subsystems. Former parallel enums (`HealthAggregatedStatus`, `ProcessStatus`,
+/// `ComponentHealthStatus`, `GatewayHealthStatus`) have been collapsed into this
+/// one type (#1576 item 2).
+///
+/// Variant naming: `Unhealthy` is the terminal failure state (matches the prior
+/// `HealthStatus::Unhealthy` DB spelling). `Unknown` is preserved for the health
+/// aggregator's initial/unobserved-component state.
 ///
 /// The schema-apply engine reconciles a CHECK constraint on the
 /// `status` column of a future `core.health_reports` table. See issue
@@ -2315,6 +2322,7 @@ impl std::str::FromStr for DataTier {
     Hash,
     serde::Serialize,
     serde::Deserialize,
+    schemars::JsonSchema,
     sinex_macros::DbCheck,
 )]
 #[serde(rename_all = "snake_case")]
@@ -2325,6 +2333,8 @@ impl std::str::FromStr for DataTier {
     version = 1
 )]
 pub enum HealthStatus {
+    /// Status not yet observed (aggregator initial state)
+    Unknown,
     /// All subsystems operating normally
     Healthy,
     /// Operational but with degraded performance or partial failures
@@ -2336,6 +2346,7 @@ pub enum HealthStatus {
 impl std::fmt::Display for HealthStatus {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::Unknown => write!(f, "unknown"),
             Self::Healthy => write!(f, "healthy"),
             Self::Degraded => write!(f, "degraded"),
             Self::Unhealthy => write!(f, "unhealthy"),
@@ -2348,6 +2359,7 @@ impl std::str::FromStr for HealthStatus {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_lowercase().as_str() {
+            "unknown" => Ok(Self::Unknown),
             "healthy" => Ok(Self::Healthy),
             "degraded" => Ok(Self::Degraded),
             "unhealthy" => Ok(Self::Unhealthy),
