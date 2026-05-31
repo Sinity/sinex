@@ -9,11 +9,9 @@ use crate::node_sdk::error_helpers::elapsed_seconds_with_warning;
 use crate::node_sdk::runtime::stream::NodeRuntimeState;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use sinex_primitives::domain::{NodeName, ServiceName};
+use sinex_primitives::domain::{HealthStatus, NodeName, ServiceName};
 use sinex_primitives::env as shared_env;
-use sinex_primitives::events::payloads::process::{
-    ProcessDegradedPayload, ProcessFailedPayload, ProcessStatus,
-};
+use sinex_primitives::events::payloads::process::{ProcessDegradedPayload, ProcessFailedPayload};
 use sinex_primitives::utils::CoordinationPrimitive;
 use sinex_primitives::{Id, Seconds, Uuid};
 use std::mem::MaybeUninit;
@@ -52,7 +50,7 @@ pub struct HeartbeatMetrics {
     /// Service name (e.g., "sinex-fs-ingestor")
     pub service_name: ServiceName,
     /// Current status: healthy, degraded, failed
-    pub status: ProcessStatus,
+    pub status: HealthStatus,
     /// Number of events processed since last heartbeat
     pub events_processed: u64,
     /// Service uptime in seconds
@@ -105,7 +103,7 @@ pub struct HeartbeatEmitter {
     cpu_sample: Arc<parking_lot::Mutex<Option<CpuSample>>>,
     cpu_cores: usize,
     log_sink: Arc<dyn HeartbeatLogSink>,
-    last_emitted_status: Arc<parking_lot::Mutex<ProcessStatus>>,
+    last_emitted_status: Arc<parking_lot::Mutex<HealthStatus>>,
     /// Sliding window for error tracking (last 5 minutes).
     error_window: Arc<parking_lot::Mutex<Vec<Instant>>>,
     source_run_id: Option<Uuid>,
@@ -149,7 +147,7 @@ impl HeartbeatEmitter {
             cpu_sample: Arc::new(parking_lot::Mutex::new(initial_cpu_sample)),
             cpu_cores,
             log_sink: Arc::new(StdoutHeartbeatSink),
-            last_emitted_status: Arc::new(parking_lot::Mutex::new(ProcessStatus::Healthy)),
+            last_emitted_status: Arc::new(parking_lot::Mutex::new(HealthStatus::Healthy)),
             error_window: Arc::new(parking_lot::Mutex::new(Vec::new())),
             source_run_id: None,
             persistence_warn_count: Arc::new(AtomicU64::new(0)),
@@ -249,17 +247,17 @@ impl HeartbeatEmitter {
     }
 
     /// Determine status based on the 5-minute sliding window and configured thresholds.
-    fn determine_status(&self) -> ProcessStatus {
+    fn determine_status(&self) -> HealthStatus {
         let recent_errors = self.recent_error_count();
         let failed_threshold = get_failed_threshold();
         let degraded_threshold = get_degraded_threshold();
 
         if recent_errors >= failed_threshold {
-            ProcessStatus::Failed
+            HealthStatus::Unhealthy
         } else if recent_errors >= degraded_threshold {
-            ProcessStatus::Degraded
+            HealthStatus::Degraded
         } else {
-            ProcessStatus::Healthy
+            HealthStatus::Healthy
         }
     }
 
@@ -569,16 +567,16 @@ impl HeartbeatEmitter {
         *last_status = next_status;
 
         match next_status {
-            ProcessStatus::Healthy => {
+            HealthStatus::Healthy | HealthStatus::Unknown => {
                 info!(
                     service = %metrics.service_name,
                     "Node recovered to healthy status"
                 );
             }
-            ProcessStatus::Degraded => {
+            HealthStatus::Degraded => {
                 self.log_process_alert("process.degraded", metrics, recent_errors_in_window);
             }
-            ProcessStatus::Failed => {
+            HealthStatus::Unhealthy => {
                 self.log_process_alert("process.failed", metrics, recent_errors_in_window);
             }
         }

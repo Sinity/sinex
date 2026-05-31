@@ -3,7 +3,8 @@
 //! Tests the initialization and dependency management of services
 //! including the gateway content service and the db-owned PKM service.
 
-use sinexd::api::{ServiceContainer, service_container::GatewayHealthStatus};
+use sinex_primitives::domain::HealthStatus;
+use sinexd::api::ServiceContainer;
 use std::sync::Arc;
 use tempfile::TempDir;
 use xtask::sandbox::prelude::*;
@@ -316,21 +317,21 @@ async fn test_health_report_structure(ctx: TestContext) -> TestResult<()> {
         "Gateway should report serving=true when the DB-backed RPC surface is live"
     );
     match report.status {
-        GatewayHealthStatus::Healthy => {
+        HealthStatus::Healthy => {
             assert!(report.healthy, "Healthy status must imply healthy=true");
             assert!(
                 report.degradation_reasons.is_empty(),
                 "Healthy status should not carry degradation reasons"
             );
         }
-        GatewayHealthStatus::Degraded => {
+        HealthStatus::Degraded => {
             assert!(!report.healthy, "Degraded status must imply healthy=false");
             assert!(
                 !report.degradation_reasons.is_empty(),
                 "Degraded status should explain what is missing"
             );
         }
-        GatewayHealthStatus::Unhealthy => {
+        HealthStatus::Unhealthy | HealthStatus::Unknown => {
             panic!("Database-backed test fixture should not produce unhealthy gateway status");
         }
     }

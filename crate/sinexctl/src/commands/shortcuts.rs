@@ -154,7 +154,9 @@ impl StatusCommand {
                 let sse_status = match sse.status {
                     HealthStatus::Healthy => RuntimeStatusSignalStatus::Healthy,
                     HealthStatus::Degraded => RuntimeStatusSignalStatus::Degraded,
-                    HealthStatus::Unhealthy => RuntimeStatusSignalStatus::Unhealthy,
+                    HealthStatus::Unhealthy | HealthStatus::Unknown => {
+                        RuntimeStatusSignalStatus::Unhealthy
+                    }
                 };
                 signals.push(RuntimeStatusSignal {
                     name: "confirmation-path".to_string(),

@@ -9,8 +9,7 @@ use futures::future::BoxFuture;
 use parking_lot::Mutex;
 use parking_lot::RwLock;
 use sinex_macros::SinexConfig;
-use sinex_primitives::{Result, SinexError};
-use sinex_primitives::events::payloads::process::ProcessStatus;
+use sinex_primitives::{Result, SinexError, domain::HealthStatus};
 use std::collections::VecDeque;
 use std::sync::{
     Arc,
@@ -319,7 +318,7 @@ pub struct HealthReporter {
     component_name: String,
     observer: Arc<SelfObserver>,
     metrics: Arc<HealthMetrics>,
-    last_status: Arc<RwLock<ProcessStatus>>,
+    last_status: Arc<RwLock<HealthStatus>>,
     thresholds: HealthThresholds,
     clock: Arc<dyn HealthClock>,
     /// Optional async probe that verifies node dependencies are reachable.
@@ -369,7 +368,7 @@ impl HealthReporter {
             component_name,
             observer,
             metrics: Arc::new(HealthMetrics::with_clock(Arc::clone(&clock))),
-            last_status: Arc::new(RwLock::new(ProcessStatus::Healthy)),
+            last_status: Arc::new(RwLock::new(HealthStatus::Healthy)),
             thresholds,
             clock,
             liveness_probe: None,
@@ -490,28 +489,28 @@ impl HealthReporter {
     }
 
     /// Calculate current health status based on error rate and emit-stall signal.
-    fn calculate_status(&self) -> ProcessStatus {
+    fn calculate_status(&self) -> HealthStatus {
         let error_rate = self.metrics.error_rate(self.thresholds.window_seconds);
 
         let base = if error_rate >= self.thresholds.error_rate_failed {
-            ProcessStatus::Failed
+            HealthStatus::Unhealthy
         } else if error_rate >= self.thresholds.error_rate_degraded {
-            ProcessStatus::Degraded
+            HealthStatus::Degraded
         } else {
-            ProcessStatus::Healthy
+            HealthStatus::Healthy
         };
 
-        if matches!(base, ProcessStatus::Healthy) && self.emit_stalled() {
-            return ProcessStatus::Degraded;
+        if matches!(base, HealthStatus::Healthy) && self.emit_stalled() {
+            return HealthStatus::Degraded;
         }
 
         // Liveness probe result is cached by check_and_emit(). Demote Healthy →
         // Degraded when connectivity failed on the last probe tick.
-        if matches!(base, ProcessStatus::Healthy)
+        if matches!(base, HealthStatus::Healthy)
             && self.liveness_probe.is_some()
             && !self.liveness_ok.load(Ordering::Relaxed)
         {
-            return ProcessStatus::Degraded;
+            return HealthStatus::Degraded;
         }
 
         base
@@ -519,15 +518,15 @@ impl HealthReporter {
 
     /// Get current health status without emitting
     #[must_use]
-    pub fn current_status(&self) -> ProcessStatus {
+    pub fn current_status(&self) -> HealthStatus {
         self.calculate_status()
     }
 
-    fn read_last_status(&self) -> ProcessStatus {
+    fn read_last_status(&self) -> HealthStatus {
         *self.last_status.read()
     }
 
-    fn write_last_status(&self, status: ProcessStatus) {
+    fn write_last_status(&self, status: HealthStatus) {
         let mut guard = self.last_status.write();
         *guard = status;
     }
@@ -535,7 +534,7 @@ impl HealthReporter {
     /// Check current health and emit status event if changed
     ///
     /// Returns the current status after checking.
-    pub async fn check_and_emit(&self) -> Result<ProcessStatus> {
+    pub async fn check_and_emit(&self) -> Result<HealthStatus> {
         // Run the liveness probe (if configured) and cache the result so
         // calculate_status() — which is sync — can read it atomically.
         if let Some(ref probe) = self.liveness_probe {
@@ -584,8 +583,8 @@ impl HealthReporter {
             self.observer
                 .emit_health_status(
                     &self.component_name,
-                    &old_status.to_string(),
-                    &new_status.to_string(),
+                    old_status,
+                    new_status,
                     Some(&reason),
                 )
                 .await

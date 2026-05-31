@@ -22,6 +22,7 @@
 //! - `sinex.health.status` - Component health state changes
 //! - `sinex.stream.stats` - NATS `JetStream` statistics
 
+use crate::domain::HealthStatus;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use sinex_macros::EventPayload;
@@ -226,10 +227,10 @@ pub struct RateLimitExceededPayload {
 pub struct HealthStatusPayload {
     /// Component name
     pub component: String,
-    /// Previous status
-    pub previous_status: String,
-    /// Current status
-    pub current_status: String,
+    /// Previous status (typed; serializes as snake_case string)
+    pub previous_status: HealthStatus,
+    /// Current status (typed; serializes as snake_case string)
+    pub current_status: HealthStatus,
     /// Reason for status change
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
