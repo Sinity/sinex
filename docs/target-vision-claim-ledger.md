@@ -294,7 +294,20 @@ Lower-risk remainder: stale automata counts, dissolved crate paths, and the TOML
 | TV-098 | `privacy-and-operations.md` §7.1–7.2 `services.sinex.privacy` TOML/NixOS rendering as authoritative privacy-config model | superseded | #1042 (consolidated 2026-05-30) redesigns policy as DB tables via `sinexctl privacy`, not static TOML. Interim TOML remains in code pending #1042. |
 | TV-099 | `prescriptive-ideas.md` day/hourly summarizer sinex-process parenthetical | verified | `sinexd::automata::{daily,hourly}` confirmed; prose sharpened. |
 
-> Open follow-up for batch 7: `knowledge-graph.md` claims `#1346` closed, but it is still **OPEN** — correct that stale prose with the event-taxonomy A–M pass.
+### Batch 7 (2026-05-31) — `event-taxonomy/` A–M + `sdk-assessment.md` final pass
+
+Closes the dissolution: `reference/` is now ~100% drained. Prose corrected in target-vision commit `6ec6d05`. All 13 taxonomy files carry `status_note` frontmatter; surviving `**Node:** sinex-*-ingestor` table labels are covered by the `event-taxonomy/README.md` blanket Wave-B SUPERSEDED notice (historical labels, not live claims). Planned source types (`sinex-audio-transcriber` H3, `sinex-web-archiver` D5) are aspirational `[PLANNED]` names, not dissolved crates.
+
+| Claim ID | Claim | Status | Evidence |
+|----------|-------|--------|----------|
+| TV-100 | `event-taxonomy/C-terminal-shell.md` `**Node:** command canonicalizer (sinex-process)` | superseded | sinex-process dissolved (Wave-B); canonicalizer at `crate/sinexd/src/automata/canonicalizer.rs`. Fixed in `6ec6d05`. |
+| TV-101 | `C-terminal-shell.md` prose "Command canonicalizer (sinex-process) produces `command.canonical`" | superseded | Same; prose updated to the sinexd automaton. Fixed in `6ec6d05`. |
+| TV-102 | `A-system-hardware.md` `**Node:** sinex-fs-ingestor` / `sinex-system-ingestor` | superseded | Per-domain binaries dissolved; source units at `crate/sinexd/src/sources/source_units/`. status_note added (`6ec6d05`). |
+| TV-103 | `B-desktop-interaction.md` `**Node:** sinex-desktop-ingestor` / `sinex-system-ingestor` | superseded | Source units at `…/source_units/desktop/` + `system/`. status_note added (`6ec6d05`). |
+| TV-104 | `D-web-browser.md` `**Node:** sinex-browser-ingestor` | superseded | Browser source unit at `…/source_units/browser/`. status_note added (`6ec6d05`). |
+| TV-105 | `H-media.md` `**Node:** sinex-desktop-ingestor` (H2 MPRIS2) | superseded | Desktop source unit in sinexd. status_note added (`6ec6d05`). |
+| TV-106 | `sdk-assessment.md` entity/relation automata registration | verified | `entityResolver`/`relationExtractor`/`entityEnricher` in `nixos/modules/lib/automata.nix:22-24`; implementations substantive (222/274/277 LoC); activation tracked by open #1087 + #1346. |
+| TV-107 | `knowledge-graph.md` "#1346 closed" (batch-6 follow-up) | rejected | No false claim found — the file already treats #1346 as active work (lines 150, 343). #1346 is OPEN. Follow-up resolved. |
 
 ## Where New Claims Go
 
