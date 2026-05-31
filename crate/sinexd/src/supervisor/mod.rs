@@ -212,15 +212,15 @@ impl Supervisor {
                 error!(automaton = %name, ?error, "automaton task join error");
             }
         }
-        if let Some(handle) = api_handle {
-            if let Err(error) = handle.await {
-                error!(?error, "api task join error");
-            }
+        if let Some(handle) = api_handle
+            && let Err(error) = handle.await
+        {
+            error!(?error, "api task join error");
         }
-        if let Some(monitor) = ee_monitor {
-            if let Err(error) = monitor.await {
-                error!(?error, "event engine monitor task join error");
-            }
+        if let Some(monitor) = ee_monitor
+            && let Err(error) = monitor.await
+        {
+            error!(?error, "event engine monitor task join error");
         }
 
         info!("sinexd stopped");

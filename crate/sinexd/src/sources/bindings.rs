@@ -30,7 +30,7 @@ use crate::sources::registry::SourceUnitRegistry;
 /// reading the environment. The lock serializes the *first-poll window* of
 /// the factory future so each binding observes its own env during the brief
 /// startup window when adapters call `env::var`. After the first poll the
-/// lock is released and the EnvRestore guard restores the prior env.
+/// lock is released and the `EnvRestore` guard restores the prior env.
 ///
 /// The lock is held only across the **first poll** of the factory future, not
 /// for its entire lifetime. Source-unit factories are continuous and never
@@ -85,7 +85,7 @@ pub struct SourceBinding {
     #[serde(default)]
     pub node_config: Option<serde_json::Value>,
 
-    /// Extra CLI arguments. In continuous mode (empty extra_args) the
+    /// Extra CLI arguments. In continuous mode (empty `extra_args`) the
     /// `service` subcommand is appended automatically. When non-empty,
     /// the first element is the subcommand (e.g. `"scan"`) and the rest
     /// are its flags.
@@ -203,8 +203,7 @@ pub async fn run_binding(binding: SourceBinding) -> Result<()> {
         // values and an empty {} is operationally identical to "use defaults".
         let is_empty_object = config
             .as_object()
-            .map(serde_json::Map::is_empty)
-            .unwrap_or(false);
+            .is_some_and(serde_json::Map::is_empty);
         if !config.is_null() && !is_empty_object {
             let encoded = serde_json::to_string(config).map_err(|error| {
                 SinexError::configuration(format!(

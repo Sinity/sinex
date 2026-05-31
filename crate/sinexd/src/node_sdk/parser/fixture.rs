@@ -787,11 +787,11 @@ impl ParserFixtureHarness {
                         }
                         FixtureAssertion::FieldAbsent { path } => {
                             let actual = json_path_get(&intent.payload, path);
-                            if actual.is_some() {
+                            if let Some(value) = actual {
                                 failures.push(FixtureFailure {
                                     intent_index: Some(expectation.index),
                                     expected: format!("payload.{path} absent"),
-                                    found: format!("payload.{path}={}", actual.unwrap()),
+                                    found: format!("payload.{path}={value}"),
                                 });
                             }
                         }

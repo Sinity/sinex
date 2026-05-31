@@ -168,9 +168,7 @@ fn extract_external_id(stem: &str) -> Option<String> {
                 let after_is_hex =
                     after < bytes.len() && matches!(bytes[after], b'0'..=b'9' | b'a'..=b'f');
                 if !after_is_hex {
-                    let Some(start) = run_start else {
-                        return None;
-                    };
+                    let start = run_start?;
                     return Some(stem[start..start + 32].to_string());
                 }
             }

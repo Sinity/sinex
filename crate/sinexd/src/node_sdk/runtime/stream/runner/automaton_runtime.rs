@@ -334,7 +334,6 @@ impl<T: Node + 'static> NodeRunner<T> {
                             "Windowed periodic flush failed; continuing"
                         );
                     }
-                    continue;
                 }
                 LoopAction::Event(next_event) => {
                     let Some(first) = next_event else {

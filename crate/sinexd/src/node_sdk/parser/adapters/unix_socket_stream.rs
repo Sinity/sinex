@@ -1,7 +1,7 @@
 //! Adapter for line-delimited Unix domain socket streams.
 //!
 //! Connects to a Unix socket (e.g., Hyprland IPC at
-//! `/run/user/1000/hypr/<instance>/`.hyprland/socket2.sock`) and reads
+//! `/run/user/1000/hypr/<instance>/.hyprland/socket2.sock`) and reads
 //! newline-terminated messages. Each line is one [`SourceRecord`].
 //!
 //! Cursor is `()` — Hyprland IPC is a live stream with no replay.

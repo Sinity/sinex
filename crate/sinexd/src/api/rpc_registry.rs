@@ -548,7 +548,7 @@ where
     Req: DeserializeOwned,
 {
     let params = match params {
-        JsonValue::Null => JsonValue::Object(Default::default()),
+        JsonValue::Null => JsonValue::Object(serde_json::Map::default()),
         params => params,
     };
     serde_path_to_error::deserialize(params).map_err(|error| {
