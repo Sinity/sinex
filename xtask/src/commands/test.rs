@@ -1189,6 +1189,92 @@ impl TestCommand {
 
         Ok(execution_plan)
     }
+
+    /// Load the impact plan if automatic impact is enabled.
+    fn load_impact_plan(&self, ctx: &CommandContext) -> Result<Option<crate::impact::ImpactPlan>> {
+        if !self.uses_automatic_impact() {
+            return Ok(None);
+        }
+        let plan = match ctx.try_with_history_db_query(|db| {
+            crate::impact::plan_default_test_impact_with_history_and_mode(
+                Some(db),
+                self.impact_mode,
+            )
+        }) {
+            Some(result) => result?,
+            None => crate::impact::plan_default_test_impact_with_history_and_mode(
+                None,
+                self.impact_mode,
+            )?,
+        };
+        if let Some(result) = ctx.try_with_history_db(|db| {
+            db.record_impact_plan(ctx.invocation_id(), self.impact_mode.as_str(), &plan)
+        }) && let Err(error) = result
+        {
+            tracing::warn!(target: "xtask::test", error = %error, "failed to record impact plan");
+        }
+        if ctx.is_human() {
+            println!(
+                "Impact planner: {} changed file(s), {} affected package(s), {} impacted test(s)",
+                plan.changed.len(),
+                plan.affected_packages.len(),
+                plan.impacted_tests.len()
+            );
+            if let Some(filter) = &plan.impact_filter {
+                println!("  impact filter: {filter}");
+            }
+            for risk in &plan.accepted_risks {
+                println!("  accepted risk: {risk}");
+            }
+        }
+        Ok(Some(plan))
+    }
+
+    /// Check if an exact proof can be reused, returning early if so.
+    fn check_exact_impact_proof(
+        &self,
+        ctx: &CommandContext,
+        impact_plan: Option<&crate::impact::ImpactPlan>,
+    ) -> Result<Option<CommandResult>> {
+        let Some(plan) = impact_plan else {
+            return Ok(None);
+        };
+        if !self.can_consume_exact_test_proof() || !plan.can_reuse_exact_proof() {
+            return Ok(None);
+        }
+        let proof_args = crate::impact::exact_proof_args_for_plan(plan);
+        let (proof_kind, input_fingerprint, scope_key) =
+            crate::impact::exact_test_proof_key(&proof_args)?;
+        let reusable_proof = ctx
+            .try_with_history_db_query(|db| {
+                db.get_successful_reusable_test_proof_unit(
+                    &proof_kind,
+                    &input_fingerprint,
+                    &scope_key,
+                )
+            })
+            .and_then(std::result::Result::ok)
+            .flatten();
+        if let Some(proof) = reusable_proof {
+            if ctx.is_human() {
+                println!(
+                    "Skipping tests: exact reusable proof from invocation {}",
+                    proof.invocation_id
+                );
+            }
+            return Ok(Some(
+                CommandResult::success()
+                    .with_message("tests skipped by exact impact proof")
+                    .with_detail(format!("reused_invocation={}", proof.invocation_id))
+                    .with_duration(ctx.elapsed())
+                    .with_data(serde_json::json!({
+                        "impact_plan": plan,
+                        "reused_proof": proof,
+                    })),
+            ));
+        }
+        Ok(None)
+    }
 }
 
 /// Print the human-readable dry-run plan summary to stdout.
@@ -1619,76 +1705,9 @@ impl XtaskCommand for TestCommand {
             ));
         }
 
-        let impact_plan = if self.uses_automatic_impact() {
-            Some(
-                match ctx.try_with_history_db_query(|db| {
-                    crate::impact::plan_default_test_impact_with_history_and_mode(
-                        Some(db),
-                        self.impact_mode,
-                    )
-                }) {
-                    Some(result) => result?,
-                    None => crate::impact::plan_default_test_impact_with_history_and_mode(
-                        None,
-                        self.impact_mode,
-                    )?,
-                },
-            )
-        } else {
-            None
-        };
-        if let Some(plan) = &impact_plan {
-            if let Some(result) = ctx.try_with_history_db(|db| {
-                db.record_impact_plan(ctx.invocation_id(), self.impact_mode.as_str(), plan)
-            }) && let Err(error) = result
-            {
-                tracing::warn!(target: "xtask::test", error = %error, "failed to record impact plan");
-            }
-            if ctx.is_human() {
-                println!(
-                    "Impact planner: {} changed file(s), {} affected package(s), {} impacted test(s)",
-                    plan.changed.len(),
-                    plan.affected_packages.len(),
-                    plan.impacted_tests.len()
-                );
-                if let Some(filter) = &plan.impact_filter {
-                    println!("  impact filter: {filter}");
-                }
-                for risk in &plan.accepted_risks {
-                    println!("  accepted risk: {risk}");
-                }
-            }
-            if self.can_consume_exact_test_proof() && plan.can_reuse_exact_proof() {
-                let proof_args = crate::impact::exact_proof_args_for_plan(plan);
-                let (proof_kind, input_fingerprint, scope_key) =
-                    crate::impact::exact_test_proof_key(&proof_args)?;
-                let reusable_proof = ctx
-                    .try_with_history_db_query(|db| {
-                        db.get_successful_reusable_test_proof_unit(
-                            &proof_kind,
-                            &input_fingerprint,
-                            &scope_key,
-                        )
-                    })
-                    .and_then(std::result::Result::ok)
-                    .flatten();
-                if let Some(proof) = reusable_proof {
-                    if ctx.is_human() {
-                        println!(
-                            "Skipping tests: exact reusable proof from invocation {}",
-                            proof.invocation_id
-                        );
-                    }
-                    return Ok(CommandResult::success()
-                        .with_message("tests skipped by exact impact proof")
-                        .with_detail(format!("reused_invocation={}", proof.invocation_id))
-                        .with_duration(ctx.elapsed())
-                        .with_data(serde_json::json!({
-                            "impact_plan": plan,
-                            "reused_proof": proof,
-                        })));
-                }
-            }
+        let impact_plan = self.load_impact_plan(ctx)?;
+        if let Some(early_return) = self.check_exact_impact_proof(ctx, impact_plan.as_ref())? {
+            return Ok(early_return);
         }
 
         // Preflight is default ON unless explicitly disabled
