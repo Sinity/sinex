@@ -385,6 +385,7 @@ where
     /// - `invalidation.errors` counter (on failure)
     /// - `invalidation.outputs_emitted` counter (on success, with output count)
     /// - `invalidation.processing_duration_ms` gauge (on success)
+    ///
     /// Returns `Ok(Some(count))` on success, `Ok(None)` for a non-fatal skip
     /// (deserialize error, transient processing error), or `Err` for a fatal
     /// failure that should halt the node's invalidation consumer. Fatal

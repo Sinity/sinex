@@ -189,7 +189,7 @@ pub trait Transducer: Send + Sync + 'static {
 ///
 /// Live processing orders by arrival (`ts_coided`), so historical imports
 /// whose `ts_orig` predates the current bucket can cross window boundaries
-/// silently. This is a known limitation shared with TimescaleDB continuous
+/// silently. This is a known limitation shared with `TimescaleDB` continuous
 /// aggregates that refresh on `ts_coided`. Handling historical backfill
 /// with correct `ts_orig`-ordered semantics is not supported; flag any
 /// historical import as an explicit replay and rely on `recompute_window`.

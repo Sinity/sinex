@@ -16,7 +16,7 @@ fn watchdog_interval() -> Option<Duration> {
 
 /// When set, this process is being hosted inside another sinex daemon
 /// (typically `sinexd`) and individual nodes / source-units MUST NOT send
-/// READY=1 / STOPPING=1 — only the top-level supervisor's sd_notify is
+/// `READY=1` / `STOPPING=1` — only the top-level supervisor's `sd_notify` is
 /// authoritative for systemd. A fire-once monitor binding emitting
 /// `STOPPING=1` would otherwise tell systemd that the entire host daemon
 /// is shutting down.
@@ -25,7 +25,7 @@ const HOSTED_MODE_ENV: &str = "SINEX_SD_NOTIFY_HOSTED";
 fn is_hosted() -> bool {
     matches!(
         std::env::var(HOSTED_MODE_ENV).as_deref(),
-        Ok("1") | Ok("true") | Ok("yes")
+        Ok("1" | "true" | "yes")
     )
 }
 
@@ -64,12 +64,12 @@ pub struct WatchdogHandle {
     join_handle: ThreadJoinHandle<()>,
 }
 
-/// Mark this process as running in hosted mode for sd_notify purposes.
+/// Mark this process as running in hosted mode for `sd_notify` purposes.
 ///
 /// Sets the `SINEX_SD_NOTIFY_HOSTED=1` env var so any subsequent calls to
 /// [`notify_ready`] / [`notify_stopping`] / [`spawn_watchdog`] from
 /// in-process nodes become no-ops. Only the top-level supervisor (the
-/// host with main PID under systemd) should still call sd_notify.
+/// host with main PID under systemd) should still call `sd_notify`.
 ///
 /// # Safety
 /// `std::env::set_var` is `unsafe` in edition 2024; callers that invoke
@@ -86,7 +86,7 @@ pub fn enter_hosted_mode() {
 /// A tokio task can be starved by long-running blocking work on the runtime
 /// (e.g. large COPY batches in the event-engine persistence path), which has
 /// caused systemd to SIGTERM sinexd mid-batch. Running the ping loop on a
-/// std::thread with `recv_timeout` guarantees the watchdog never shares an
+/// `std::thread` with `recv_timeout` guarantees the watchdog never shares an
 /// executor with heavy work, so the daemon keeps its WATCHDOG=1 messages
 /// flowing as long as the OS scheduler runs threads at all.
 pub fn spawn_watchdog(component: &'static str) -> Option<WatchdogHandle> {

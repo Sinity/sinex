@@ -412,7 +412,8 @@ impl GatewayAuth {
                 }
                 Err(_) => {
                     return Err(SinexError::timeout(format!(
-                        "Timed out waiting for token file watcher to initialize for {path:?}"
+                        "Timed out waiting for token file watcher to initialize for {}",
+                        path.display()
                     )));
                 }
             }

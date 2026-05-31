@@ -98,8 +98,8 @@ impl MaterialParser for HledgerJournalParser {
 
         let transactions = parse_journal(text)?;
         let mut intents = Vec::with_capacity(transactions.len());
-        for tx in transactions {
-            intents.push(build_intent(tx, ctx)?);
+        for tx in &transactions {
+            intents.push(build_intent(tx, ctx));
         }
         Ok(intents)
     }
@@ -357,7 +357,7 @@ fn parse_date(s: &str) -> ParserResult<Timestamp> {
 // Intent builder
 // ---------------------------------------------------------------------------
 
-fn build_intent(tx: JournalTransaction, ctx: &ParserContext) -> ParserResult<ParsedEventIntent> {
+fn build_intent(tx: &JournalTransaction, ctx: &ParserContext) -> ParsedEventIntent {
     // Compute occurrence key from (date, description, first explicit posting amount).
     // The first posting with an explicit amount is typically the source account.
     let first_amount = tx
@@ -397,7 +397,7 @@ fn build_intent(tx: JournalTransaction, ctx: &ParserContext) -> ParserResult<Par
         "comment": tx.comment,
     });
 
-    Ok(ParsedEventIntent::builder()
+    ParsedEventIntent::builder()
         .source_unit_id(ctx.source_unit_id.clone())
         .parser_id(ParserId::from_static("hledger-journal"))
         .parser_version("1.0.0")
@@ -415,7 +415,7 @@ fn build_intent(tx: JournalTransaction, ctx: &ParserContext) -> ParserResult<Par
         })
         .occurrence_key(occurrence_key)
         .privacy_context(ProcessingContext::Document)
-        .build())
+        .build()
 }
 
 // ---------------------------------------------------------------------------

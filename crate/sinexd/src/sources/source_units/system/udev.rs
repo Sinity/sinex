@@ -164,7 +164,7 @@ impl MaterialParser for UdevParser {
                 None
             }
         };
-        let event_kind = metadata.as_ref().and_then(|m| m.event_kind());
+        let event_kind = metadata.as_ref().and_then(FileDropRecordMetadata::event_kind);
 
         let action = match event_kind {
             Some(FileDropEventKind::Created) => UdevAction::Add,
