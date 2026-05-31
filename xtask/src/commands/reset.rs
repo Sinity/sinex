@@ -507,7 +507,7 @@ fn reset_stale_build_processes(verbose: bool) -> Result<usize> {
         &crate::config::workspace_root(),
     );
     let candidates =
-        stale_build_processes_for_reset(&target_dirs, STALE_BUILD_PROCESS_MIN_AGE_SECS)?;
+        stale_build_processes_for_reset(&target_dirs, STALE_BUILD_PROCESS_MIN_AGE_SECS);
 
     let mut killed = 0_usize;
     for candidate in candidates {
@@ -531,12 +531,12 @@ fn reset_stale_build_processes(verbose: bool) -> Result<usize> {
 fn stale_build_processes_for_reset(
     target_dirs: &[std::path::PathBuf],
     min_age_secs: u64,
-) -> Result<Vec<StaleBuildProcess>> {
+) -> Vec<StaleBuildProcess> {
     let uptime_secs = linux_uptime_secs().unwrap_or(0);
     let clock_ticks = linux_clock_ticks_per_second();
     let mut processes = Vec::new();
     let Ok(entries) = std::fs::read_dir("/proc") else {
-        return Ok(processes);
+        return processes;
     };
     let self_pid = std::process::id();
 
@@ -573,15 +573,15 @@ fn stale_build_processes_for_reset(
         }
     }
 
-    Ok(processes)
+    processes
 }
 
 #[cfg(not(target_os = "linux"))]
 fn stale_build_processes_for_reset(
     _target_dirs: &[std::path::PathBuf],
     _min_age_secs: u64,
-) -> Result<Vec<StaleBuildProcess>> {
-    Ok(Vec::new())
+) -> Vec<StaleBuildProcess> {
+    Vec::new()
 }
 
 fn classify_stale_build_process(

@@ -542,7 +542,7 @@ fn occurrence_identity(identity: OccurrenceIdentity) -> String {
 fn collect_xtask_command_subjects() -> Vec<XtaskCommandSubject> {
     let mut subjects = Vec::new();
     for command in collect_command_catalog() {
-        collect_command_subject(&command, String::new(), &mut subjects);
+        collect_command_subject(&command, "", &mut subjects);
     }
     subjects.sort_by(|left, right| left.subject.cmp(&right.subject));
     subjects
@@ -550,7 +550,7 @@ fn collect_xtask_command_subjects() -> Vec<XtaskCommandSubject> {
 
 fn collect_command_subject(
     command: &CommandInfo,
-    parent_path: String,
+    parent_path: &str,
     subjects: &mut Vec<XtaskCommandSubject>,
 ) {
     let path = if parent_path.is_empty() {
@@ -564,7 +564,7 @@ fn collect_command_subject(
         about: command.about.clone(),
     });
     for subcommand in &command.subcommands {
-        collect_command_subject(subcommand, path.clone(), subjects);
+        collect_command_subject(subcommand, &path, subjects);
     }
 }
 

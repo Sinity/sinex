@@ -194,7 +194,7 @@ pub fn plan_from_changed_files_with_mode(
     mode: ImpactMode,
 ) -> Result<ImpactPlan> {
     if matches!(mode, ImpactMode::Off) {
-        let mut changed = changed_items(changed_files, hunks, item_index)?;
+        let mut changed = changed_items(changed_files, &hunks, &item_index);
         changed.sort_by(|left, right| left.path.cmp(&right.path));
         let mut decisions = Vec::new();
         let affected_packages = affected_packages.into_iter().collect::<BTreeSet<_>>();
@@ -275,7 +275,7 @@ pub fn plan_from_changed_files_with_mode(
             .filter_map(|test| test.package.clone())
             .collect::<BTreeSet<_>>();
         if packages.is_empty() {
-            packages = affected_packages.clone();
+            packages.clone_from(&affected_packages);
         }
         for item in &changed {
             if !changed_item_fully_covered(item, &impacted_tests) {
@@ -453,10 +453,10 @@ impl RustItemIndex {
 
 fn changed_items(
     changed_files: Vec<String>,
-    hunks: Vec<FileChangedHunks>,
-    item_index: RustItemIndex,
-) -> Result<Vec<ChangedItem>> {
-    Ok(changed_files
+    hunks: &[FileChangedHunks],
+    item_index: &RustItemIndex,
+) -> Vec<ChangedItem> {
+    changed_files
         .into_iter()
         .map(|path| {
             let file_hunks = hunks
@@ -471,7 +471,7 @@ fn changed_items(
                 hunks: file_hunks,
             }
         })
-        .collect())
+        .collect()
 }
 
 fn changed_item_fully_covered(item: &ChangedItem, impacted_tests: &[ImpactedTest]) -> bool {

@@ -189,12 +189,13 @@ impl UnusedDetector {
             }
             // Dependency line (indented): "    dep-name"
             else if raw_line.chars().next().is_some_and(char::is_whitespace)
-                && current_package.is_some()
                 && is_machete_dependency_name(line)
             {
-                let package = current_package
-                    .as_ref()
-                    .expect("current package checked above");
+                let Some(ref package) = current_package else {
+                    bail!(
+                        "cargo-machete emitted a dependency line before any package header: {line}"
+                    );
+                };
                 unused_deps.push(UnusedDependency {
                     package: package.clone(),
                     dependency: line.to_string(),

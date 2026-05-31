@@ -209,7 +209,7 @@ fn prune_incremental(incremental_dir: &Path, keep_n: usize) -> Result<(usize, u6
             continue;
         }
         // Sort newest first
-        hashes.sort_by(|a, b| b.0.cmp(&a.0));
+        hashes.sort_by_key(|a| std::cmp::Reverse(a.0));
         // Delete everything past the keep_n boundary
         for (_mtime, dir_path) in hashes.into_iter().skip(keep_n) {
             let dir_bytes = dir_size_bytes(&dir_path).unwrap_or(0);

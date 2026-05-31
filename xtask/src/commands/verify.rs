@@ -326,7 +326,7 @@ impl XtaskCommand for VerifyCommand {
                 issue,
                 json,
                 dry_run,
-            } => execute_closure(*issue, *json, *dry_run, ctx).await,
+            } => execute_closure(*issue, *json, *dry_run, ctx),
             VerifySubcommand::Claims {
                 json,
                 advisory,
@@ -1278,17 +1278,15 @@ fn execute_source_worker(
     ctx: &CommandContext,
 ) -> Result<CommandResult> {
     let root = workspace_root();
-    let mut checks: Vec<SwCheck> = Vec::new();
-
-    // A3.1.1 — SourceUnitDescriptor inventory vs NixOS source-bindings drift
-    checks.push(check_sw_binding_drift(&root, bindings_json));
-
-    // A3.1.2 — Registered parsers smoke
-    checks.push(check_sw_registered_parsers(&root));
-
-    // A3.1.3 — Privacy invocation: every Sensitive/Secret source unit must invoke
-    // the privacy engine or declare an explicit escape hatch.
-    checks.push(check_sw_privacy_invocation(&root));
+    let mut checks: Vec<SwCheck> = vec![
+        // A3.1.1 — SourceUnitDescriptor inventory vs NixOS source-bindings drift
+        check_sw_binding_drift(&root, bindings_json),
+        // A3.1.2 — Registered parsers smoke
+        check_sw_registered_parsers(&root),
+        // A3.1.3 — Privacy invocation: every Sensitive/Secret source unit must invoke
+        // the privacy engine or declare an explicit escape hatch.
+        check_sw_privacy_invocation(&root),
+    ];
 
     let overall = if checks.iter().any(SwCheck::is_fail) {
         SwCheckStatus::Fail
@@ -1747,7 +1745,7 @@ struct ClosureVerificationReport {
     results: Vec<ClosureCommandResult>,
 }
 
-async fn execute_closure(
+fn execute_closure(
     issue: u64,
     json: bool,
     dry_run: bool,

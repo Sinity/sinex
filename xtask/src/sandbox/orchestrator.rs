@@ -645,7 +645,7 @@ pub(crate) fn check_runtime_binary_freshness(
         package,
         binary_name,
         binary_path,
-        input_paths,
+        &input_paths,
         build_command,
     )
 }
@@ -654,13 +654,13 @@ pub(crate) fn runtime_binary_freshness_from_inputs(
     package: &str,
     binary_name: &str,
     binary_path: PathBuf,
-    input_paths: Vec<PathBuf>,
+    input_paths: &[PathBuf],
     build_command: String,
 ) -> Result<RuntimeBinaryFreshnessReport> {
     let binary_modified_at = std::fs::metadata(&binary_path)
         .and_then(|metadata| metadata.modified())
         .ok();
-    let newest_input = newest_modified_input(&input_paths)?;
+    let newest_input = newest_modified_input(input_paths)?;
     let status = match (binary_modified_at, newest_input.as_ref()) {
         (None, _) => RuntimeBinaryFreshnessStatus::Missing,
         (Some(_), None) => RuntimeBinaryFreshnessStatus::Fresh,
@@ -1204,7 +1204,7 @@ mod tests {
             "sinex-ingestd",
             "sinex-ingestd",
             tempdir.path().join("target/debug/sinex-ingestd"),
-            Vec::new(),
+            &[],
             "xtask build -p sinex-ingestd".to_string(),
         )?;
 
@@ -1227,7 +1227,7 @@ mod tests {
             "sinex-ingestd",
             "sinex-ingestd",
             binary,
-            vec![source.clone()],
+            &[source.clone()],
             "xtask build -p sinex-ingestd".to_string(),
         )?;
 
@@ -1251,7 +1251,7 @@ mod tests {
             "sinex-ingestd",
             "sinex-ingestd",
             binary,
-            vec![source],
+            &[source],
             "xtask build -p sinex-ingestd".to_string(),
         )?;
 
