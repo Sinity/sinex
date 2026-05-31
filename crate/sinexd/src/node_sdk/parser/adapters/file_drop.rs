@@ -949,9 +949,8 @@ async fn materialize_file_content_record(
     acquisition: Arc<AcquisitionManager>,
     max_capture_bytes: u64,
 ) -> ParserResult<SourceRecord> {
-    let metadata = match FileDropRecordMetadata::from_value(&record.metadata) {
-        Ok(metadata) => metadata,
-        Err(_) => return Ok(record),
+    let Ok(metadata) = FileDropRecordMetadata::from_value(&record.metadata) else {
+        return Ok(record);
     };
     if !matches!(
         metadata.event_kind(),

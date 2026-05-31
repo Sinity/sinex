@@ -570,7 +570,7 @@ where
     /// Returns a mutable reference to the acquirer, or an error if the ingestor
     /// has not been initialized yet.
     #[allow(clippy::expect_used)]
-    async fn ensure_stream_acquirer(&mut self) -> NodeResult<&mut AppendStreamAcquirer> {
+    fn ensure_stream_acquirer(&mut self) -> NodeResult<&mut AppendStreamAcquirer> {
         if self.stream_acquirer.is_none() {
             let manager = self.acquisition_manager.as_ref().ok_or_else(|| {
                 crate::node_sdk::SinexError::lifecycle(
@@ -620,8 +620,7 @@ where
         let anchor_payload_hash = blake3::hash(record_bytes).as_bytes().to_owned();
         let source_unit_id_for_anchor = self.source_unit_id;
         let anchor = self
-            .ensure_stream_acquirer()
-            .await?
+            .ensure_stream_acquirer()?
             .append_with_anchor(record_bytes, source_unit_id_for_anchor)
             .await
             .map_err(|error| {
