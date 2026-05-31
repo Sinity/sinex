@@ -268,45 +268,42 @@ impl PreflightCache {
     /// - Git HEAD hasn't changed
     fn is_valid(&self, ttl_secs: u64) -> Result<bool> {
         let now = current_unix_timestamp_secs("failed to validate preflight cache age")?;
-
         let age = now.saturating_sub(self.timestamp_secs);
-        if age >= ttl_secs {
-            tracing::debug!("preflight cache: expired (age={age}s, ttl={ttl_secs}s)");
+        if let Some(reason) = self.invalidation_reason(age, ttl_secs)? {
+            tracing::debug!("preflight cache: invalid — {reason}");
             return Ok(false);
         }
-
-        let schema_hash = hash_schema_sources()?;
-        if self.schema_hash != schema_hash {
-            tracing::debug!(
-                "preflight cache: schema hash mismatch (cached={}, current={})",
-                self.schema_hash,
-                schema_hash
-            );
-            return Ok(false);
-        }
-
-        let contracts_hash = hash_contracts_dir()?;
-        if self.contracts_hash != contracts_hash {
-            tracing::debug!(
-                "preflight cache: contracts hash mismatch (cached={}, current={})",
-                self.contracts_hash,
-                contracts_hash
-            );
-            return Ok(false);
-        }
-
-        let git_head = read_git_head()?;
-        if self.git_head != git_head {
-            tracing::debug!(
-                "preflight cache: git HEAD changed (cached={}, current={})",
-                self.git_head,
-                git_head
-            );
-            return Ok(false);
-        }
-
         tracing::debug!("preflight cache: hit (age={age}s)");
         Ok(true)
+    }
+
+    /// Returns the reason the cache is invalid, or `None` if it is still valid.
+    fn invalidation_reason(&self, age: u64, ttl_secs: u64) -> Result<Option<String>> {
+        if age >= ttl_secs {
+            return Ok(Some(format!("expired (age={age}s, ttl={ttl_secs}s)")));
+        }
+        let schema_hash = hash_schema_sources()?;
+        if self.schema_hash != schema_hash {
+            return Ok(Some(format!(
+                "schema hash mismatch (cached={}, current={schema_hash})",
+                self.schema_hash
+            )));
+        }
+        let contracts_hash = hash_contracts_dir()?;
+        if self.contracts_hash != contracts_hash {
+            return Ok(Some(format!(
+                "contracts hash mismatch (cached={}, current={contracts_hash})",
+                self.contracts_hash
+            )));
+        }
+        let git_head = read_git_head()?;
+        if self.git_head != git_head {
+            return Ok(Some(format!(
+                "git HEAD changed (cached={}, current={git_head})",
+                self.git_head
+            )));
+        }
+        Ok(None)
     }
 }
 
@@ -1300,40 +1297,8 @@ pub fn ensure_ready(ctx: &crate::command::CommandContext) -> Result<()> {
     }
 
     // Check the preflight result cache before doing any real work.
-    let ttl_secs = crate::parse_positive_u64_env_or_default(
-        "SINEX_PREFLIGHT_TTL_SECS",
-        PREFLIGHT_CACHE_DEFAULT_TTL_SECS,
-        "preflight cache ttl",
-    );
-
-    match PreflightCache::load() {
-        Ok(Some(cache)) => {
-            if cache.is_valid(ttl_secs).unwrap_or_else(|error| {
-                tracing::warn!(
-                    error = %error,
-                    "failed to validate preflight cache; continuing with full preflight"
-                );
-                false
-            }) {
-                let live_status = InfraStatus::capture();
-                if live_status.all_ready() {
-                    tracing::debug!("preflight cache: skipping preflight (cache valid)");
-                    return Ok(());
-                }
-
-                tracing::debug!(
-                    ?live_status,
-                    "preflight cache valid but live infrastructure is no longer ready; continuing with full preflight"
-                );
-            }
-        }
-        Ok(None) => {}
-        Err(error) => {
-            tracing::warn!(
-                error = %error,
-                "failed to load preflight cache; continuing with full preflight"
-            );
-        }
+    if check_preflight_cache_hit() {
+        return Ok(());
     }
 
     // 0. Check required tools are available
@@ -1388,6 +1353,45 @@ pub fn ensure_ready(ctx: &crate::command::CommandContext) -> Result<()> {
     save_preflight_cache_if_converged(&blockers, is_interactive);
 
     Ok(())
+}
+
+/// Returns true if the preflight cache is valid and infra is ready (skip preflight).
+fn check_preflight_cache_hit() -> bool {
+    let ttl_secs = crate::parse_positive_u64_env_or_default(
+        "SINEX_PREFLIGHT_TTL_SECS",
+        PREFLIGHT_CACHE_DEFAULT_TTL_SECS,
+        "preflight cache ttl",
+    );
+    match PreflightCache::load() {
+        Ok(Some(cache)) => {
+            let valid = cache.is_valid(ttl_secs).unwrap_or_else(|error| {
+                tracing::warn!(
+                    error = %error,
+                    "failed to validate preflight cache; continuing with full preflight"
+                );
+                false
+            });
+            if valid {
+                let live_status = InfraStatus::capture();
+                if live_status.all_ready() {
+                    tracing::debug!("preflight cache: skipping preflight (cache valid)");
+                    return true;
+                }
+                tracing::debug!(
+                    ?live_status,
+                    "preflight cache valid but live infrastructure is no longer ready; continuing with full preflight"
+                );
+            }
+        }
+        Ok(None) => {}
+        Err(error) => {
+            tracing::warn!(
+                error = %error,
+                "failed to load preflight cache; continuing with full preflight"
+            );
+        }
+    }
+    false
 }
 
 /// Enforce disk-pressure policy on `$CARGO_TARGET_DIR`.
