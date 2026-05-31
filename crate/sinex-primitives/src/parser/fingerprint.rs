@@ -269,7 +269,7 @@ impl SourceRecordFingerprint {
         let mut type_map = BTreeMap::new();
 
         for (path, file_kind) in entries.into_iter().take(MAX_DIRECTORY_MANIFEST_FIELDS) {
-            let key = normalize_directory_manifest_path(path.into());
+            let key = normalize_directory_manifest_path(&path.into());
             keys.push(key.clone());
             type_map.insert(key, file_kind.into());
         }
@@ -537,7 +537,7 @@ impl SourceRecordFingerprint {
             source_unit_id,
             previous.hash().to_string(),
             previous.keys.clone(),
-            previous.type_map.clone(),
+            &previous.type_map,
             current,
         ))
     }
@@ -676,7 +676,7 @@ impl DriftAccumulator {
             self.source_unit_id.clone(),
             previous_hash,
             previous_keys,
-            previous_types,
+            &previous_types,
             current,
         )
     }
@@ -686,7 +686,7 @@ fn build_drift_event_from_parts(
     source_unit_id: SourceUnitId,
     previous_hash: String,
     previous_keys: Vec<String>,
-    previous_types: BTreeMap<String, String>,
+    previous_types: &BTreeMap<String, String>,
     current: &SourceRecordFingerprint,
 ) -> DriftEvent {
     let current_key_set: std::collections::HashSet<_> = current.keys.iter().cloned().collect();
@@ -886,7 +886,7 @@ fn normalize_delimited_header(idx: usize, header: &str) -> String {
     }
 }
 
-fn normalize_directory_manifest_path(path: String) -> String {
+fn normalize_directory_manifest_path(path: &str) -> String {
     path.trim_start_matches("./").replace('\\', "/")
 }
 

@@ -1365,7 +1365,7 @@ define_validated_string_type!(
 );
 
 define_validated_string_type!(
-    #[doc = "JetStream stream name (distinct from a subject; addresses a stream, not a publish/filter pattern)"]
+    #[doc = "`JetStream` stream name (distinct from a subject; addresses a stream, not a publish/filter pattern)"]
     StreamName
 );
 
