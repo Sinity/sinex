@@ -75,11 +75,12 @@ if result.suppressed { /* drop the field */ }
 // Strategies: Redact, Encrypt (XChaCha20-Poly1305), Hash (BLAKE3 MAC), Suppress
 ```
 
-**Coverage:** Source-worker units are expected to call `privacy::engine()` on
+**Coverage:** Source units are expected to call `privacy::engine()` on
 sensitive fields. Path-bearing source units use `redact_metadata()` with
 `ProcessingContext::Metadata`; check the concrete implementation under
-`crate/core/sinex-source-worker/src/sources/` before making a coverage claim.
-The old per-domain ingestor crate paths no longer exist after the Wave-B fold.
+`crate/sinexd/src/sources/source_units/` before making a coverage claim.
+The old per-domain ingestor crate paths (and the `sinex-source-worker` crate)
+no longer exist after the Wave-B fold.
 
 **Open privacy question:** The `Metadata` context only fires the home-prefix collapse rule.
 Secret-bearing filenames (e.g. `id_rsa`, `~/.aws/credentials`) receive path-redaction but not
