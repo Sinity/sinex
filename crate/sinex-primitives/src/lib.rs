@@ -63,6 +63,7 @@ pub mod prelude {
     pub use crate::environment::SinexEnvironment;
     pub use crate::error::{Result, SinexError};
     pub use crate::events::builder::{OffsetKind, Provenance};
+    pub use crate::events::occurrence::MaterialOccurrenceKey;
     pub use crate::events::{Event, SourceMaterial, Timestamp};
     pub use crate::ids::Id;
     pub use crate::primitives::Uuid;
@@ -102,6 +103,7 @@ pub use env::strict_env_filter_source;
 pub use environment::{SinexEnvironment, environment};
 pub use error::{Result, SinexError};
 pub use events::builder::{OffsetKind, Provenance};
+pub use events::occurrence::MaterialOccurrenceKey;
 pub use events::payload::DynamicPayload;
 pub use events::{Event, SourceMaterial, Timestamp};
 pub use ids::Id;
