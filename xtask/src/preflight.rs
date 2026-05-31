@@ -1465,7 +1465,7 @@ fn check_disk_pressure(
 }
 
 /// Write the preflight cache when all blockers have cleared, or warn and skip.
-fn save_preflight_cache_if_converged(blockers: &[String], is_interactive: bool) {
+fn save_preflight_cache_if_converged(blockers: &[&str], is_interactive: bool) {
     if blockers.is_empty() {
         match PreflightCache::current() {
             Ok(cache) => cache.save(),

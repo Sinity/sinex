@@ -1153,11 +1153,10 @@ mod tests {
     #[sinex_test]
     async fn jobs_output_rejects_conflicting_stream_selectors() -> ::xtask::sandbox::TestResult<()>
     {
-        let error = match crate::Cli::try_parse_from([
+        let Err(error) = crate::Cli::try_parse_from([
             "xtask", "jobs", "output", "42", "--stdout", "--stderr",
-        ]) {
-            Ok(_) => panic!("stdout and stderr selectors should conflict"),
-            Err(error) => error,
+        ]) else {
+            panic!("stdout and stderr selectors should conflict")
         };
 
         assert_eq!(error.kind(), clap::error::ErrorKind::ArgumentConflict);
@@ -1191,7 +1190,7 @@ mod tests {
         // a buffer (standing in for the DB-archived content).
         std::fs::remove_file(&file_path)?;
         let remainder = &content_bytes[new_pos as usize..];
-        let combined = format!("{}{}{}", first_half, second_half, remainder);
+        let combined = format!("{first_half}{second_half}{remainder}");
 
         // Phase 4: verify exact match — order, no drops, no duplicates.
         let original_lines: Vec<&str> = content.lines().collect();
