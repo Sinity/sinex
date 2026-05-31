@@ -20,7 +20,6 @@ use sinex_primitives::{
     events::{Event, EventId, builder::EventBuilder},
 };
 use xtask::sandbox::prelude::*;
-use xtask::sandbox::timing::{Timeouts, WaitHelpers};
 
 use support::FIXTURE_SOURCE_MATERIAL_ID;
 
