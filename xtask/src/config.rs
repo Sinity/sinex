@@ -251,8 +251,13 @@ pub fn config() -> &'static Config {
 }
 
 #[cfg(test)]
-pub fn config() -> Config {
-    Config::from_env()
+pub fn config() -> &'static Config {
+    // Tests mutate env between cases, so resolve fresh on each call rather than
+    // caching a singleton. Leak to match the non-test `&'static` signature: this
+    // keeps `config()` monomorphic across cfgs (callers never branch on owned-vs-
+    // borrowed), and the leak is bounded — one small `Config` per call in a
+    // short-lived test process.
+    Box::leak(Box::new(Config::from_env()))
 }
 
 /// Load `UserPreferences` from `~/.config/xtask/preferences.toml`.
