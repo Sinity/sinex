@@ -573,44 +573,7 @@ pub async fn run_cli() -> Result<()> {
     let mut process_monitor =
         tracks_invocation.then(process::InvocationResourceMonitor::start_for_current_process);
     let mut timed_out = false;
-    let mut result = if let Some(timeout) = command_timeout {
-        if let Ok(result) = tokio::time::timeout(timeout, execute_fut).await {
-            result
-        } else {
-            timed_out = true;
-            match process::terminate_registered_process_groups("command timeout") {
-                Ok(terminated) if terminated > 0 => {
-                    eprintln!(
-                        "⚠️  Terminated {terminated} lingering child process group(s) after {command_name} timed out"
-                    );
-                }
-                Ok(_) => {}
-                Err(error) => {
-                    eprintln!(
-                        "⚠️  Failed to terminate child process groups after {command_name} timed out: {error:#}"
-                    );
-                }
-            }
-            match process::terminate_current_process_descendants("command timeout") {
-                Ok(terminated) if terminated > 0 => {
-                    eprintln!(
-                        "⚠️  Terminated {terminated} remaining descendant process(es) after {command_name} timed out"
-                    );
-                }
-                Ok(_) => {}
-                Err(error) => {
-                    eprintln!(
-                        "⚠️  Failed to terminate descendant processes after {command_name} timed out: {error:#}"
-                    );
-                }
-            }
-            Err(eyre!(
-                "Command '{command_name}' timed out after {timeout:?}"
-            ))
-        }
-    } else {
-        execute_fut.await
-    };
+    let mut result = execute_with_optional_timeout(execute_fut, command_timeout, command_name, &mut timed_out).await;
 
     let lingering_process_groups = if timed_out {
         0
@@ -739,74 +702,16 @@ pub async fn run_cli() -> Result<()> {
         }
     }
 
-    // Write exit_code file for background job tracking.
-    // XTASK_JOB_DIR is set by the bg job spawner so the zombie reaper can
-    // determine success vs failure after the process exits.
+    // Write exit_code file and record background job completion.
     if let Some(job_dir) = bg_job_dir {
-        let exit_code_path = std::path::Path::new(&job_dir).join("exit_code");
-        if let Err(error) = std::fs::write(&exit_code_path, format!("{invocation_exit_code}\n")) {
-            eprintln!(
-                "⚠️  Failed to write background exit code file {}: {error}",
-                exit_code_path.display()
-            );
-        }
-
-        if let Some(job_id) = claimed_bg_job {
-            let stdout_path = std::path::Path::new(&job_dir).join("stdout.log");
-            let stderr_path = std::path::Path::new(&job_dir).join("stderr.log");
-            let job_status = if invocation_exit_code == 0 {
-                crate::history::JobLifecycleStatus::Completed
-            } else if invocation_exit_code == 124 {
-                crate::history::JobLifecycleStatus::Killed
-            } else {
-                crate::history::JobLifecycleStatus::Failed
-            };
-            match ctx.try_with_history_db(|db| {
-                db.finish_background_job(
-                    job_id,
-                    job_status,
-                    Some(invocation_exit_code),
-                    ctx.elapsed().as_secs_f64(),
-                    stdout_path.exists().then_some(stdout_path.as_path()),
-                    stderr_path.exists().then_some(stderr_path.as_path()),
-                )
-            }) {
-                Some(Ok(())) => {}
-                Some(Err(error)) => {
-                    eprintln!(
-                        "⚠️  Failed to record background job completion for {job_id}: {error}"
-                    );
-                }
-                None => {
-                    let error = history_db_open_error
-                        .as_deref()
-                        .unwrap_or("history DB unavailable");
-                    eprintln!(
-                        "⚠️  Failed to open history DB to record background job completion for {job_id}: {error}"
-                    );
-                }
-            }
-        }
-
-        // W3: Desktop notification when running as a background subprocess.
-        // Only fires when XTASK_JOB_DIR is set (we ARE the bg subprocess) and
-        // the user has notify_on_completion = true in their preferences file.
-        if config().prefs.notify_on_completion {
-            let status_str = if invocation_exit_code == 0 {
-                "success"
-            } else {
-                "failed"
-            };
-            let duration = ctx.elapsed().as_secs_f64();
-            let summary = format!("xtask {command_name}");
-            let body = format!("{command_name}: {status_str} ({duration:.1}s)");
-            // notify-send is fire-and-forget; ignore failures (not installed, no DE, etc.)
-            let _ = std::process::Command::new("notify-send")
-                .arg("--app-name=xtask")
-                .arg(&summary)
-                .arg(&body)
-                .status();
-        }
+        record_bg_job_completion(
+            &job_dir,
+            claimed_bg_job,
+            invocation_exit_code,
+            command_name,
+            &ctx,
+            history_db_open_error.as_deref(),
+        );
     }
 
     match result {
@@ -820,6 +725,106 @@ pub async fn run_cli() -> Result<()> {
             Ok(())
         }
         Err(err) => Err(err),
+    }
+}
+
+/// Write exit_code to the job dir, record completion in history, and optionally
+/// send a desktop notification. Called only when `XTASK_JOB_DIR` is set.
+fn record_bg_job_completion(
+    job_dir: &str,
+    claimed_bg_job: Option<i64>,
+    invocation_exit_code: i32,
+    command_name: &str,
+    ctx: &command::CommandContext,
+    history_db_open_error: Option<&str>,
+) {
+    let exit_code_path = std::path::Path::new(job_dir).join("exit_code");
+    if let Err(error) = std::fs::write(&exit_code_path, format!("{invocation_exit_code}\n")) {
+        eprintln!("⚠️  Failed to write background exit code file {}: {error}", exit_code_path.display());
+    }
+
+    if let Some(job_id) = claimed_bg_job {
+        let stdout_path = std::path::Path::new(job_dir).join("stdout.log");
+        let stderr_path = std::path::Path::new(job_dir).join("stderr.log");
+        let job_status = if invocation_exit_code == 0 {
+            crate::history::JobLifecycleStatus::Completed
+        } else if invocation_exit_code == 124 {
+            crate::history::JobLifecycleStatus::Killed
+        } else {
+            crate::history::JobLifecycleStatus::Failed
+        };
+        match ctx.try_with_history_db(|db| {
+            db.finish_background_job(
+                job_id,
+                job_status,
+                Some(invocation_exit_code),
+                ctx.elapsed().as_secs_f64(),
+                stdout_path.exists().then_some(stdout_path.as_path()),
+                stderr_path.exists().then_some(stderr_path.as_path()),
+            )
+        }) {
+            Some(Ok(())) => {}
+            Some(Err(error)) => {
+                eprintln!("⚠️  Failed to record background job completion for {job_id}: {error}");
+            }
+            None => {
+                let error = history_db_open_error.unwrap_or("history DB unavailable");
+                eprintln!("⚠️  Failed to open history DB to record background job completion for {job_id}: {error}");
+            }
+        }
+    }
+
+    if config().prefs.notify_on_completion {
+        let status_str = if invocation_exit_code == 0 { "success" } else { "failed" };
+        let duration = ctx.elapsed().as_secs_f64();
+        let summary = format!("xtask {command_name}");
+        let body = format!("{command_name}: {status_str} ({duration:.1}s)");
+        let _ = std::process::Command::new("notify-send")
+            .arg("--app-name=xtask")
+            .arg(&summary)
+            .arg(&body)
+            .status();
+    }
+}
+
+/// Run `fut` with an optional deadline. Sets `timed_out` when the deadline fires
+/// and kills lingering child processes before returning the timeout error.
+async fn execute_with_optional_timeout<F>(
+    fut: F,
+    timeout: Option<std::time::Duration>,
+    command_name: &str,
+    timed_out: &mut bool,
+) -> Result<crate::command::CommandResult>
+where
+    F: std::future::Future<Output = Result<crate::command::CommandResult>>,
+{
+    let Some(timeout) = timeout else {
+        return fut.await;
+    };
+    match tokio::time::timeout(timeout, fut).await {
+        Ok(result) => result,
+        Err(_) => {
+            *timed_out = true;
+            match process::terminate_registered_process_groups("command timeout") {
+                Ok(terminated) if terminated > 0 => {
+                    eprintln!("⚠️  Terminated {terminated} lingering child process group(s) after {command_name} timed out");
+                }
+                Ok(_) => {}
+                Err(error) => {
+                    eprintln!("⚠️  Failed to terminate child process groups after {command_name} timed out: {error:#}");
+                }
+            }
+            match process::terminate_current_process_descendants("command timeout") {
+                Ok(terminated) if terminated > 0 => {
+                    eprintln!("⚠️  Terminated {terminated} remaining descendant process(es) after {command_name} timed out");
+                }
+                Ok(_) => {}
+                Err(error) => {
+                    eprintln!("⚠️  Failed to terminate descendant processes after {command_name} timed out: {error:#}");
+                }
+            }
+            Err(eyre!("Command '{command_name}' timed out after {timeout:?}"))
+        }
     }
 }
 
