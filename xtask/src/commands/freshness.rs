@@ -296,7 +296,7 @@ mod tests {
             args: vec!["-p".to_string(), "xtask".to_string()],
         };
 
-        let result = command.execute(&ctx).await?;
+        let result = command.execute(&ctx)?;
         let data = result.data.expect("freshness explain should emit data");
 
         assert_eq!(data["command"], "test");
@@ -349,7 +349,7 @@ mod tests {
             args,
         };
 
-        let result = command.execute(&ctx).await?;
+        let result = command.execute(&ctx)?;
         let data = result.data.expect("freshness explain should emit data");
 
         assert_eq!(data["reuse"]["decision"], "hit");
@@ -424,7 +424,7 @@ mod tests {
             args: raw_args,
         };
 
-        let result = command.execute(&ctx).await?;
+        let result = command.execute(&ctx)?;
         let data = result.data.expect("freshness explain should emit data");
 
         assert_eq!(data["scope_key"], key.scope_key);

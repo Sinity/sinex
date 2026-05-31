@@ -1278,7 +1278,7 @@ fn execute_source_worker(
     ctx: &CommandContext,
 ) -> Result<CommandResult> {
     let root = workspace_root();
-    let mut checks: Vec<SwCheck> = vec![
+    let checks: Vec<SwCheck> = vec![
         // A3.1.1 — SourceUnitDescriptor inventory vs NixOS source-bindings drift
         check_sw_binding_drift(&root, bindings_json),
         // A3.1.2 — Registered parsers smoke
