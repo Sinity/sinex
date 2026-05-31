@@ -1227,7 +1227,7 @@ mod tests {
             "sinex-ingestd",
             "sinex-ingestd",
             binary,
-            &[source.clone()],
+            std::slice::from_ref(&source),
             "xtask build -p sinex-ingestd".to_string(),
         )?;
 

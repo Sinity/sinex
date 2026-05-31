@@ -150,58 +150,26 @@ fn log_coordination_decision(
     tree_fingerprint: &str,
     result: &CoordinationResult,
 ) {
-    let decision = match result {
-        CoordinationResult::Started { .. } => "started",
-        CoordinationResult::Superseded { .. } => "superseded",
-        CoordinationResult::Attached { .. } => "attached",
-        CoordinationResult::Fresh { .. } => "fresh",
-        CoordinationResult::Queued { .. } => "queued",
-    };
+    let (decision, job_id, invocation_id) = coordination_decision_fields(result);
+    tracing::info!(
+        target: "xtask::coordinator",
+        command = command,
+        decision = decision,
+        scope_key = %scope_key,
+        tree_fingerprint = %tree_fingerprint,
+        job_id = job_id,
+        invocation_id = invocation_id,
+        "coordinator decision"
+    );
+}
+
+fn coordination_decision_fields(result: &CoordinationResult) -> (&'static str, Option<i64>, Option<i64>) {
     match result {
-        CoordinationResult::Fresh { invocation_id, .. } => {
-            tracing::info!(
-                target: "xtask::coordinator",
-                command = command,
-                decision = decision,
-                scope_key = %scope_key,
-                tree_fingerprint = %tree_fingerprint,
-                invocation_id = invocation_id,
-                "coordinator decision"
-            );
-        }
-        CoordinationResult::Started { job_id } | CoordinationResult::Attached { job_id } => {
-            tracing::info!(
-                target: "xtask::coordinator",
-                command = command,
-                decision = decision,
-                scope_key = %scope_key,
-                tree_fingerprint = %tree_fingerprint,
-                job_id = job_id,
-                "coordinator decision"
-            );
-        }
-        CoordinationResult::Superseded { new_job_id, .. } => {
-            tracing::info!(
-                target: "xtask::coordinator",
-                command = command,
-                decision = decision,
-                scope_key = %scope_key,
-                tree_fingerprint = %tree_fingerprint,
-                job_id = new_job_id,
-                "coordinator decision"
-            );
-        }
-        CoordinationResult::Queued { current_job_id } => {
-            tracing::info!(
-                target: "xtask::coordinator",
-                command = command,
-                decision = decision,
-                scope_key = %scope_key,
-                tree_fingerprint = %tree_fingerprint,
-                job_id = current_job_id,
-                "coordinator decision"
-            );
-        }
+        CoordinationResult::Fresh { invocation_id, .. } => ("fresh", None, Some(*invocation_id)),
+        CoordinationResult::Started { job_id } => ("started", Some(*job_id), None),
+        CoordinationResult::Attached { job_id } => ("attached", Some(*job_id), None),
+        CoordinationResult::Superseded { new_job_id, .. } => ("superseded", Some(*new_job_id), None),
+        CoordinationResult::Queued { current_job_id } => ("queued", Some(*current_job_id), None),
     }
 }
 
