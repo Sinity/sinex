@@ -1154,7 +1154,6 @@ where
         let batch = self
             .source
             .read_batch_from_path(&read_path, checkpoint, horizon)
-            .await
             .map_err(|error| {
                 SinexError::processing("failed to read SQLite record source batch")
                     .with_context("source_identifier", descriptor.source_identifier.clone())
