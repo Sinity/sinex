@@ -485,23 +485,7 @@ impl XtaskCommand for CheckCommand {
         // Resource warning before heavy operation.  Captured regardless of output
         // mode so that machine-facing callers (agents, CI) can surface the
         // warning through the CommandResult rather than silently ignoring it.
-        let resource_warning = match resources::ResourceStatus::capture() {
-            Ok(status) => {
-                let warning = status.warning(resources::thresholds::CARGO_CHECK_GB);
-                if let Some(ref msg) = warning
-                    && ctx.is_human()
-                {
-                    eprintln!("  ⚠ {msg}");
-                }
-                warning
-            }
-            Err(error) => {
-                if ctx.is_human() {
-                    eprintln!("  ⚠ Failed to inspect local resources: {error:#}");
-                }
-                None
-            }
-        };
+        let resource_warning = capture_resource_warning(ctx);
 
         let mut result = CommandResult::success();
 
@@ -658,6 +642,25 @@ impl XtaskCommand for CheckCommand {
 
     fn metadata(&self) -> CommandMetadata {
         CommandMetadata::check()
+    }
+}
+
+/// Capture and optionally display a resource warning before heavy cargo operations.
+fn capture_resource_warning(ctx: &CommandContext) -> Option<String> {
+    match resources::ResourceStatus::capture() {
+        Ok(status) => {
+            let warning = status.warning(resources::thresholds::CARGO_CHECK_GB);
+            if let Some(ref msg) = warning && ctx.is_human() {
+                eprintln!("  ⚠ {msg}");
+            }
+            warning
+        }
+        Err(error) => {
+            if ctx.is_human() {
+                eprintln!("  ⚠ Failed to inspect local resources: {error:#}");
+            }
+            None
+        }
     }
 }
 

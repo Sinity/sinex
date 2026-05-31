@@ -452,51 +452,7 @@ impl XtaskCommand for DoctorCommand {
         }
 
         if self.reclaim {
-            let target_dir = std::env::var("CARGO_TARGET_DIR").map_or_else(
-                |_| crate::config::workspace_root().join("target"),
-                std::path::PathBuf::from,
-            );
-            if ctx.is_human() {
-                println!(
-                    "Reclaiming stale artifacts from {}...",
-                    target_dir.display()
-                );
-            }
-            match crate::cache_hygiene::reclaim(&target_dir) {
-                Ok(report) => {
-                    let total_reclaimed =
-                        report.cargo_sweep_reclaimed_bytes + report.incremental_bytes_reclaimed;
-                    if ctx.is_human() {
-                        println!(
-                            "Reclaimed {:.2} GB (cargo-sweep: {:.2} GB; incremental keep-3: {} dirs / {:.2} GB).",
-                            total_reclaimed as f64 / 1e9,
-                            report.cargo_sweep_reclaimed_bytes as f64 / 1e9,
-                            report.incremental_dirs_deleted,
-                            report.incremental_bytes_reclaimed as f64 / 1e9,
-                        );
-                        if !report.cargo_sweep_ran {
-                            println!(
-                                "  (cargo-sweep not in PATH — install via flake.nix devshell)"
-                            );
-                        }
-                        if let (Some(before), Some(after)) = (&report.before, &report.after) {
-                            println!(
-                                "  Disk usage on {}: {:.1}% -> {:.1}% ({} GB free)",
-                                before.mount,
-                                before.percent_used,
-                                after.percent_used,
-                                after.free_gb as u64,
-                            );
-                        }
-                    }
-                }
-                Err(error) => {
-                    if ctx.is_human() {
-                        eprintln!("Reclaim failed: {error}");
-                    }
-                    result.warnings.push(format!("--reclaim failed: {error}"));
-                }
-            }
+            execute_reclaim(ctx, &mut result);
         }
 
         if self.fix {
@@ -599,6 +555,46 @@ impl XtaskCommand for RaDiagnoseCommand {
 
     fn metadata(&self) -> CommandMetadata {
         CommandMetadata::diagnostics()
+    }
+}
+
+/// Run cache reclaim and append any warnings to result.
+fn execute_reclaim(ctx: &CommandContext, result: &mut CommandResult) {
+    let target_dir = std::env::var("CARGO_TARGET_DIR").map_or_else(
+        |_| crate::config::workspace_root().join("target"),
+        std::path::PathBuf::from,
+    );
+    if ctx.is_human() {
+        println!("Reclaiming stale artifacts from {}...", target_dir.display());
+    }
+    match crate::cache_hygiene::reclaim(&target_dir) {
+        Ok(report) => {
+            if ctx.is_human() {
+                let total = report.cargo_sweep_reclaimed_bytes + report.incremental_bytes_reclaimed;
+                println!(
+                    "Reclaimed {:.2} GB (cargo-sweep: {:.2} GB; incremental keep-3: {} dirs / {:.2} GB).",
+                    total as f64 / 1e9,
+                    report.cargo_sweep_reclaimed_bytes as f64 / 1e9,
+                    report.incremental_dirs_deleted,
+                    report.incremental_bytes_reclaimed as f64 / 1e9,
+                );
+                if !report.cargo_sweep_ran {
+                    println!("  (cargo-sweep not in PATH — install via flake.nix devshell)");
+                }
+                if let (Some(before), Some(after)) = (&report.before, &report.after) {
+                    println!(
+                        "  Disk usage on {}: {:.1}% -> {:.1}% ({} GB free)",
+                        before.mount, before.percent_used, after.percent_used, after.free_gb as u64,
+                    );
+                }
+            }
+        }
+        Err(error) => {
+            if ctx.is_human() {
+                eprintln!("Reclaim failed: {error}");
+            }
+            result.warnings.push(format!("--reclaim failed: {error}"));
+        }
     }
 }
 
