@@ -13,12 +13,12 @@ mod support;
 
 use serde_json::json;
 use sinex_db::DbPoolExt;
-use sinexd::event_engine::admission::AdmittedEvent;
-use sinexd::event_engine::policy::PolicyEngine;
 use sinex_primitives::{
     Id, Uuid,
     events::{DynamicPayload, Event},
 };
+use sinexd::event_engine::admission::AdmittedEvent;
+use sinexd::event_engine::policy::PolicyEngine;
 use xtask::sandbox::prelude::*;
 
 use support::FIXTURE_SOURCE_MATERIAL_ID;
@@ -28,7 +28,10 @@ use support::FIXTURE_SOURCE_MATERIAL_ID;
 /// Build a material-provenance event for use in policy engine unit tests.
 ///
 /// Uses the shared fixture source material ID so no NATS pipeline is required.
-#[allow(clippy::expect_used, reason = "test fixture: panic-on-failure is intended")]
+#[allow(
+    clippy::expect_used,
+    reason = "test fixture: panic-on-failure is intended"
+)]
 fn make_material_event(
     source: &str,
     event_type: &str,
@@ -90,12 +93,31 @@ async fn privacy_rule_loading_roundtrip(ctx: TestContext) -> TestResult<()> {
     assert!(rules.is_empty(), "expected no rules initially");
 
     // Add one enabled and one disabled rule.
-    repo.add_rule("rule-enabled", "", "regex", r"SECRET_\w+", false, "redact", None, "default")
+    repo.add_rule(
+        "rule-enabled",
+        "",
+        "regex",
+        r"SECRET_\w+",
+        false,
+        "redact",
+        None,
+        "default",
+    )
+    .await?;
+    repo.bind_field_rule("rule-enabled", None, None, None, 0)
         .await?;
-    repo.bind_field_rule("rule-enabled", None, None, None, 0).await?;
 
-    repo.add_rule("rule-disabled", "", "literal", "x", false, "redact", None, "default")
-        .await?;
+    repo.add_rule(
+        "rule-disabled",
+        "",
+        "literal",
+        "x",
+        false,
+        "redact",
+        None,
+        "default",
+    )
+    .await?;
     repo.set_rule_enabled("rule-disabled", false).await?;
 
     let rules = repo.load_enabled_rules().await?;
@@ -217,8 +239,12 @@ async fn privacy_field_scoped_rule(ctx: TestContext) -> TestResult<()> {
     let event = make_material_event("test.source", "test.event", payload);
     let result = engine.redact_batch(vec![admit(event)]).await;
 
-    let secret = result[0].event.payload["secret_field"].as_str().unwrap_or("");
-    let public = result[0].event.payload["public_field"].as_str().unwrap_or("");
+    let secret = result[0].event.payload["secret_field"]
+        .as_str()
+        .unwrap_or("");
+    let public = result[0].event.payload["public_field"]
+        .as_str()
+        .unwrap_or("");
 
     assert!(
         !secret.contains("SENSITIVE"),
@@ -261,8 +287,7 @@ async fn privacy_source_scoped_rule(ctx: TestContext) -> TestResult<()> {
 
     // Event from the scoped source → PII_DATA should be redacted.
     let payload_match = json!({ "field": "PII_DATA here" });
-    let event_match =
-        make_material_event("sensitive.source", "test.event", payload_match);
+    let event_match = make_material_event("sensitive.source", "test.event", payload_match);
     let results = engine.redact_batch(vec![admit(event_match)]).await;
     let val = results[0].event.payload["field"].as_str().unwrap_or("");
     assert!(
@@ -274,7 +299,9 @@ async fn privacy_source_scoped_rule(ctx: TestContext) -> TestResult<()> {
     let payload_other = json!({ "field": "PII_DATA here" });
     let event_other = make_material_event("other.source", "test.event", payload_other);
     let results_other = engine.redact_batch(vec![admit(event_other)]).await;
-    let val_other = results_other[0].event.payload["field"].as_str().unwrap_or("");
+    let val_other = results_other[0].event.payload["field"]
+        .as_str()
+        .unwrap_or("");
     assert!(
         val_other.contains("PII_DATA"),
         "unscoped-source event must be untouched; got: {val_other}"
@@ -306,12 +333,11 @@ async fn privacy_chokepoint_applies_to_derived_events(ctx: TestContext) -> TestR
     let parent_id: Uuid = Uuid::now_v7();
     let parent_event_id: sinex_primitives::events::EventId = Id::from_uuid(parent_id);
     let payload = json!({ "summary": "derived contains DERIVED_SECRET_XYZ here" });
-    let derived_event =
-        DynamicPayload::new("sinex.derived", "analytics.insight", payload)
-            .from_parents([parent_event_id])
-            .expect("valid parent")
-            .build()
-            .expect("test derived event build should not fail");
+    let derived_event = DynamicPayload::new("sinex.derived", "analytics.insight", payload)
+        .from_parents([parent_event_id])
+        .expect("valid parent")
+        .build()
+        .expect("test derived event build should not fail");
 
     let result = engine.redact_batch(vec![admit(derived_event)]).await;
 
@@ -431,7 +457,9 @@ async fn privacy_cache_reload_picks_up_new_rule(ctx: TestContext) -> TestResult<
     let payload2 = json!({ "value": "CACHE_SENTINEL_XYZ" });
     let event2 = make_material_event("s", "t", payload2);
     let result_after = engine_after.redact_batch(vec![admit(event2)]).await;
-    let value = result_after[0].event.payload["value"].as_str().unwrap_or("");
+    let value = result_after[0].event.payload["value"]
+        .as_str()
+        .unwrap_or("");
     assert!(
         !value.contains("CACHE_SENTINEL_XYZ"),
         "rule should apply after cache reload; got: {value}"
