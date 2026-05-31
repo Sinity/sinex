@@ -315,6 +315,7 @@ pub struct ReplayStateMachine {
     pool: PgPool,
 }
 
+
 fn map_state_to_status(state: &ReplayState) -> (&'static str, &'static str) {
     match state {
         ReplayState::Completed => ("success", "completed"),
@@ -1086,7 +1087,27 @@ impl ReplayStateMachine {
                 .with_operation("recover_stale_executing")
         })?;
 
-        let existing = match repo.fetch_meta_for_update(&mut tx, operation_id).await {
+        let Some((meta, staleness)) =
+            self.fetch_and_validate_stale_meta(&repo, &mut tx, operation_id).await?
+        else {
+            return Ok(false);
+        };
+
+        self.commit_recovery(&repo, tx, operation_id, meta, staleness)
+            .await
+    }
+
+    /// Fetch and validate the operation meta within the open transaction.
+    /// Returns `Ok(None)` if the operation should be skipped (fetch error or
+    /// state already changed); returns `Ok(Some(...))` when recovery should
+    /// proceed; propagates hard errors via `Err`.
+    async fn fetch_and_validate_stale_meta(
+        &self,
+        repo: &ReplayRepository<'_>,
+        tx: &mut Transaction<'_, Postgres>,
+        operation_id: Uuid,
+    ) -> Result<Option<(MetaJson, Option<sinex_primitives::temporal::Duration>)>> {
+        let existing = match repo.fetch_meta_for_update(tx, operation_id).await {
             Ok(v) => v,
             Err(e) => {
                 if let Err(rollback_err) = tx.rollback().await {
@@ -1101,11 +1122,11 @@ impl ReplayStateMachine {
                     error = %e,
                     "Failed to fetch stale operation meta; skipping recovery"
                 );
-                return Ok(false);
+                return Ok(None);
             }
         };
 
-        let mut meta = decode_meta_json(Some(existing))?;
+        let meta = decode_meta_json(Some(existing))?;
 
         if !matches!(
             meta.state,
@@ -1118,11 +1139,23 @@ impl ReplayStateMachine {
                     "Failed to rollback replay recovery transaction after state changed"
                 );
             }
-            return Ok(false);
+            return Ok(None);
         }
 
-        let recovered_state = meta.state;
         let staleness = meta.started_at.map(|started| temporal::now() - started);
+        Ok(Some((meta, staleness)))
+    }
+
+    /// Write the recovery outcome to the database and commit.
+    async fn commit_recovery(
+        &self,
+        repo: &ReplayRepository<'_>,
+        tx: Transaction<'_, Postgres>,
+        operation_id: Uuid,
+        mut meta: MetaJson,
+        staleness: Option<sinex_primitives::temporal::Duration>,
+    ) -> Result<bool> {
+        let recovered_state = meta.state;
 
         meta.state = ReplayState::Failed;
         meta.finished_at = Some(temporal::now());
@@ -1142,6 +1175,7 @@ impl ReplayStateMachine {
         })?;
         let duration_ms = meta_duration_ms(&meta);
 
+        let mut tx = tx;
         repo.update_operation_meta(&mut tx, operation_id, meta_json, status, msg, duration_ms)
             .await?;
 
