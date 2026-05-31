@@ -85,9 +85,8 @@ impl<'a> ContinuityRepository<'a> {
         source_family: &SourceFamily,
         at: Timestamp,
     ) -> DbResult<Option<CoverageGap>> {
-        let report = match self.build_report(source_family, None).await? {
-            Some(r) => r,
-            None => return Ok(None),
+        let Some(report) = self.build_report(source_family, None).await? else {
+            return Ok(None);
         };
         Ok(report.gaps.into_iter().find(|gap| {
             let from = OffsetDateTime::from(gap.from_ts);
@@ -315,7 +314,7 @@ impl<'a> ContinuityRepository<'a> {
                             from_ts: end.into(),
                             to_ts: start.into(),
                             kind: gap_kind,
-                            attribution: gap_attribution(gap_kind),
+                            attribution: Some(gap_attribution(gap_kind)),
                         });
                     }
                 }
@@ -323,17 +322,17 @@ impl<'a> ContinuityRepository<'a> {
             prev = Some(chunk);
         }
 
-        let replayability = build_replayability(
-            agg.any_blob,
-            agg.good_timing,
-            agg.all_finalized,
-            chunks
+        let replayability = build_replayability(ReplayabilityFlags {
+            any_blob: agg.any_blob,
+            good_timing: agg.good_timing,
+            all_finalized: agg.all_finalized,
+            any_failed: chunks
                 .iter()
                 .any(|c| c.status() == sinex_primitives::MaterialStatus::Failed),
-            chunks
+            any_recovered: chunks
                 .iter()
                 .any(|c| c.status() == sinex_primitives::MaterialStatus::RecoveredPartial),
-        );
+        });
 
         Ok(Some(SourceContinuityReport {
             source_family: family.clone(),
@@ -448,18 +447,16 @@ where
     GapKind::Unknown
 }
 
-fn gap_attribution(kind: GapKind) -> Option<String> {
-    Some(
-        match kind {
-            GapKind::PrivateMode => "private mode active",
-            GapKind::ServiceCrash => "capturing service interrupted",
-            GapKind::DisabledSource => "source disabled in configuration",
-            GapKind::ParserFailure => "upstream parser failed for this window",
-            GapKind::ExpectedDownTime => "gap matches expected periodic-dump cadence",
-            GapKind::Unknown => "no attribution found",
-        }
-        .to_string(),
-    )
+fn gap_attribution(kind: GapKind) -> String {
+    match kind {
+        GapKind::PrivateMode => "private mode active",
+        GapKind::ServiceCrash => "capturing service interrupted",
+        GapKind::DisabledSource => "source disabled in configuration",
+        GapKind::ParserFailure => "upstream parser failed for this window",
+        GapKind::ExpectedDownTime => "gap matches expected periodic-dump cadence",
+        GapKind::Unknown => "no attribution found",
+    }
+    .to_string()
 }
 
 /// Resolve the coverage contract for a family.
@@ -530,13 +527,22 @@ where
     CoverageContract::OpportunisticImport
 }
 
-fn build_replayability(
+struct ReplayabilityFlags {
     any_blob: bool,
     good_timing: bool,
     all_finalized: bool,
     any_failed: bool,
     any_recovered: bool,
-) -> Replayability {
+}
+
+fn build_replayability(flags: ReplayabilityFlags) -> Replayability {
+    let ReplayabilityFlags {
+        any_blob,
+        good_timing,
+        all_finalized,
+        any_failed,
+        any_recovered,
+    } = flags;
     let mut weak_points: Vec<String> = Vec::new();
     if !any_blob {
         weak_points.push("no source bytes preserved (no blob backing)".into());
@@ -803,7 +809,13 @@ mod tests {
 
     #[sinex_test]
     async fn replayability_lists_every_dimension_weakness() -> xtask::sandbox::TestResult<()> {
-        let r = build_replayability(false, false, false, true, false);
+        let r = build_replayability(ReplayabilityFlags {
+            any_blob: false,
+            good_timing: false,
+            all_finalized: false,
+            any_failed: true,
+            any_recovered: false,
+        });
         assert!(!r.raw_bytes_preserved);
         assert!(!r.timing_quality);
         assert!(!r.anchor_stability);
