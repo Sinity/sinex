@@ -389,25 +389,7 @@ impl XtaskCommand for DoctorCommand {
 
         if self.runtime {
             let runtime = execute_runtime_check(ctx).await?;
-            let runtime_value = serde_json::to_value(&runtime)?;
-            let existing_data = result.data.take();
-            result.data = Some(match existing_data {
-                Some(mut existing) => {
-                    if let Some(map) = existing.as_object_mut() {
-                        map.insert("runtime".to_string(), runtime_value);
-                        existing
-                    } else {
-                        serde_json::json!({
-                            "doctor": existing,
-                            "runtime": runtime_value,
-                        })
-                    }
-                }
-                None => serde_json::json!({
-                    "runtime": runtime_value,
-                }),
-            });
-
+            merge_result_data(&mut result, "runtime", serde_json::to_value(&runtime)?);
             if !runtime.overall && result.status == Status::Success {
                 result.status = Status::Partial;
             }
@@ -416,25 +398,11 @@ impl XtaskCommand for DoctorCommand {
 
         if self.deployment_readiness {
             let readiness = execute_deployment_readiness(ctx).await?;
-            let readiness_value = serde_json::to_value(&readiness)?;
-            let existing_data = result.data.take();
-            result.data = Some(match existing_data {
-                Some(mut existing) => {
-                    if let Some(map) = existing.as_object_mut() {
-                        map.insert("deployment_readiness".to_string(), readiness_value);
-                        existing
-                    } else {
-                        serde_json::json!({
-                            "doctor": existing,
-                            "deployment_readiness": readiness_value,
-                        })
-                    }
-                }
-                None => serde_json::json!({
-                    "deployment_readiness": readiness_value,
-                }),
-            });
-
+            merge_result_data(
+                &mut result,
+                "deployment_readiness",
+                serde_json::to_value(&readiness)?,
+            );
             if !readiness.overall && result.status == Status::Success {
                 result.status = Status::Partial;
                 result
