@@ -110,7 +110,7 @@ fn double_fork_reap(args: &ReapCommand) -> Result<CommandResult> {
                 }
                 Ok(ForkResult::Child) => {
                     // Grandchild: run the reaper synchronously.
-                    run_reaper_grandchild(&args);
+                    run_reaper_grandchild(args);
                     unsafe { libc::_exit(0) };
                 }
                 Err(_) => {

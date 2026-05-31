@@ -54,6 +54,31 @@ fn quarantine_slot_on_error(
     slot.schema_verified.store(false, Ordering::SeqCst);
 }
 
+/// Emit a slow-cleanup warning if the total elapsed exceeds 2 seconds.
+fn log_slow_cleanup(
+    db_name: &str,
+    total: std::time::Duration,
+    phase_times: &[(&str, std::time::Duration)],
+) {
+    if total.as_secs() < 2 {
+        return;
+    }
+    let phases: Vec<String> = phase_times
+        .iter()
+        .filter(|(_, d)| d.as_millis() > 50)
+        .map(|(name, d)| format!("{name}={d:.1?}"))
+        .collect();
+    if !phases.is_empty() {
+        slog!(
+            Level::Warn,
+            "cleanup_slow",
+            slot = db_name,
+            total_ms = total.as_millis(),
+            phases = phases.join(",")
+        );
+    }
+}
+
 /// Probe residual rows and return the formatted error suffix.
 async fn residual_probe_suffix(
     pool: &DbPool,
@@ -188,26 +213,7 @@ pub(super) async fn clean_database(
                 phase_times.push(("seed_fixtures", t.elapsed()));
                 slot.quarantined.store(false, Ordering::SeqCst);
                 slot.record_clean_result(Ok(()), residuals.clone());
-
-                // Log phase breakdown when cleanup is slow (>2s)
-                let total = clean_start.elapsed();
-                if total.as_secs() >= 2 {
-                    let phases: Vec<String> = phase_times
-                        .iter()
-                        .filter(|(_, d)| d.as_millis() > 50)
-                        .map(|(name, d)| format!("{name}={d:.1?}"))
-                        .collect();
-                    if !phases.is_empty() {
-                        slog!(
-                            Level::Warn,
-                            "cleanup_slow",
-                            slot = db_name,
-                            total_ms = total.as_millis(),
-                            phases = phases.join(",")
-                        );
-                    }
-                }
-
+                log_slow_cleanup(db_name, clean_start.elapsed(), &phase_times);
                 return Ok(CleanDatabaseResult {
                     pool: working_pool,
                     recreated,

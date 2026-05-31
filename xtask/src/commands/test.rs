@@ -1191,6 +1191,97 @@ impl TestCommand {
     }
 }
 
+/// Print the human-readable dry-run plan summary to stdout.
+#[allow(clippy::too_many_arguments)]
+fn print_dry_run_plan(
+    this: &TestCommand,
+    ctx: &CommandContext,
+    workload_scope: &WorkloadScope,
+    execution_plan: &NextestExecutionPlan,
+    effective_test_binaries: &[String],
+    effective_lib_target: bool,
+    effective_filter: &Option<String>,
+    runtime_binary_requirements: &[plan::RuntimeBinaryRequirement],
+    db_pool_size: Option<usize>,
+    reusable: bool,
+    reusable_proof: &Option<crate::history::TestProofUnit>,
+) {
+    println!("Dry run: nextest plan resolved");
+    println!("  scope: {}", workload_scope.encode_marker());
+    if !execution_plan.runner_packages.is_empty() {
+        println!("  packages: {}", execution_plan.runner_packages.join(", "));
+    }
+    if !execution_plan.excluded_packages.is_empty() {
+        println!("  excluded: {}", execution_plan.excluded_packages.join(", "));
+    }
+    if !effective_test_binaries.is_empty() {
+        println!("  test binaries: {}", effective_test_binaries.join(", "));
+    }
+    println!("  lib target: {effective_lib_target}");
+    if let Some(filter) = effective_filter {
+        println!("  filter: {filter}");
+    }
+    if runtime_binary_requirements.is_empty() {
+        println!("  runtime binaries: none");
+    } else {
+        println!(
+            "  runtime binaries: {}",
+            runtime_binary_requirements
+                .iter()
+                .map(|r| format!("{}:{}", r.package, r.binary))
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+    }
+    println!(
+        "  db pool size override: {}",
+        db_pool_size.map_or_else(|| "default".to_string(), |v| v.to_string())
+    );
+    let reuse_state = if this.no_reuse {
+        "disabled by --no-reuse".to_string()
+    } else if this.list {
+        "disabled for --list".to_string()
+    } else if let Some(proof) = reusable_proof {
+        format!("hit invocation {}", proof.invocation_id)
+    } else if reusable {
+        "eligible, no exact proof yet".to_string()
+    } else {
+        "disabled for runtime or mutating test shape".to_string()
+    };
+    println!("  reuse eligibility: {reuse_state}");
+
+    if !execution_plan.runner_packages.is_empty() {
+        let coverage = this.classify_package_proof_coverage(ctx, &execution_plan.runner_packages);
+        print_proof_coverage(&coverage);
+    }
+}
+
+/// Print the proof coverage classification summary.
+fn print_proof_coverage(coverage: &[PackageProofCoverage]) {
+    let covered: Vec<_> = coverage.iter().filter(|c| c.state == ProofCoverageState::Covered).collect();
+    let missing: Vec<_> = coverage.iter().filter(|c| c.state == ProofCoverageState::Missing).collect();
+    let ineligible: Vec<_> = coverage.iter().filter(|c| c.state == ProofCoverageState::Ineligible).collect();
+    let stale: Vec<_> = coverage.iter().filter(|c| c.state == ProofCoverageState::Stale).collect();
+    let fmt_with_id = |items: &[&PackageProofCoverage]| {
+        items.iter()
+            .map(|c| format!("{}@{}", c.package, c.proof_invocation_id.unwrap_or(0)))
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    if !covered.is_empty() {
+        println!("  proof covered: {}", fmt_with_id(&covered));
+    }
+    if !stale.is_empty() {
+        println!("  proof stale: {}", fmt_with_id(&stale));
+    }
+    if !missing.is_empty() {
+        println!("  proof missing: {}", missing.iter().map(|c| c.package.as_str()).collect::<Vec<_>>().join(", "));
+    }
+    if !ineligible.is_empty() {
+        println!("  proof ineligible: {}", ineligible.iter().map(|c| c.package.as_str()).collect::<Vec<_>>().join(", "));
+    }
+}
+
 /// Build serialized background CLI args for a bench subcommand.
 fn bench_background_args(bench: &BenchArgs) -> Vec<String> {
     let mut args = vec![
@@ -1435,124 +1526,19 @@ impl XtaskCommand for TestCommand {
             };
 
             if ctx.is_human() {
-                println!("Dry run: nextest plan resolved");
-                println!("  scope: {}", workload_scope.encode_marker());
-                if !execution_plan.runner_packages.is_empty() {
-                    println!("  packages: {}", execution_plan.runner_packages.join(", "));
-                }
-                if !execution_plan.excluded_packages.is_empty() {
-                    println!(
-                        "  excluded: {}",
-                        execution_plan.excluded_packages.join(", ")
-                    );
-                }
-                if !effective_test_binaries.is_empty() {
-                    println!("  test binaries: {}", effective_test_binaries.join(", "));
-                }
-                println!("  lib target: {effective_lib_target}");
-                if let Some(filter) = &effective_filter {
-                    println!("  filter: {filter}");
-                }
-                if runtime_binary_requirements.is_empty() {
-                    println!("  runtime binaries: none");
-                } else {
-                    println!(
-                        "  runtime binaries: {}",
-                        runtime_binary_requirements
-                            .iter()
-                            .map(|requirement| {
-                                format!("{}:{}", requirement.package, requirement.binary)
-                            })
-                            .collect::<Vec<_>>()
-                            .join(", ")
-                    );
-                }
-                println!(
-                    "  db pool size override: {}",
-                    db_pool_size.map_or_else(|| "default".to_string(), |value| value.to_string())
+                print_dry_run_plan(
+                    self,
+                    ctx,
+                    &workload_scope,
+                    &execution_plan,
+                    &effective_test_binaries,
+                    effective_lib_target,
+                    &effective_filter,
+                    &runtime_binary_requirements,
+                    db_pool_size,
+                    reusable,
+                    &reusable_proof,
                 );
-                let reuse_state = if self.no_reuse {
-                    "disabled by --no-reuse".to_string()
-                } else if self.list {
-                    "disabled for --list".to_string()
-                } else if let Some(proof) = &reusable_proof {
-                    format!("hit invocation {}", proof.invocation_id)
-                } else if reusable {
-                    "eligible, no exact proof yet".to_string()
-                } else {
-                    "disabled for runtime or mutating test shape".to_string()
-                };
-                println!("  reuse eligibility: {reuse_state}");
-
-                // Per-package proof coverage classification
-                if !execution_plan.runner_packages.is_empty() {
-                    let coverage =
-                        self.classify_package_proof_coverage(ctx, &execution_plan.runner_packages);
-                    let covered: Vec<_> = coverage
-                        .iter()
-                        .filter(|c| c.state == ProofCoverageState::Covered)
-                        .collect();
-                    let missing: Vec<_> = coverage
-                        .iter()
-                        .filter(|c| c.state == ProofCoverageState::Missing)
-                        .collect();
-                    let ineligible: Vec<_> = coverage
-                        .iter()
-                        .filter(|c| c.state == ProofCoverageState::Ineligible)
-                        .collect();
-                    let stale: Vec<_> = coverage
-                        .iter()
-                        .filter(|c| c.state == ProofCoverageState::Stale)
-                        .collect();
-                    if !covered.is_empty() {
-                        println!(
-                            "  proof covered: {}",
-                            covered
-                                .iter()
-                                .map(|c| format!(
-                                    "{}@{}",
-                                    c.package,
-                                    c.proof_invocation_id.unwrap_or(0)
-                                ))
-                                .collect::<Vec<_>>()
-                                .join(", ")
-                        );
-                    }
-                    if !stale.is_empty() {
-                        println!(
-                            "  proof stale: {}",
-                            stale
-                                .iter()
-                                .map(|c| format!(
-                                    "{}@{}",
-                                    c.package,
-                                    c.proof_invocation_id.unwrap_or(0)
-                                ))
-                                .collect::<Vec<_>>()
-                                .join(", ")
-                        );
-                    }
-                    if !missing.is_empty() {
-                        println!(
-                            "  proof missing: {}",
-                            missing
-                                .iter()
-                                .map(|c| c.package.as_str())
-                                .collect::<Vec<_>>()
-                                .join(", ")
-                        );
-                    }
-                    if !ineligible.is_empty() {
-                        println!(
-                            "  proof ineligible: {}",
-                            ineligible
-                                .iter()
-                                .map(|c| c.package.as_str())
-                                .collect::<Vec<_>>()
-                                .join(", ")
-                        );
-                    }
-                }
             }
             // Build coverage array for JSON output
             let proof_coverage: Vec<PackageProofCoverage> =
@@ -2865,7 +2851,7 @@ mod tests {
         assert_eq!(result.status, crate::output::Status::Success);
         // Explicit -p packages now go through package-level subtraction first,
         // so the skip message reflects that path.
-        assert!(result.message.as_deref().map_or(false, |msg| {
+        assert!(result.message.as_deref().is_some_and(|msg| {
             msg == "tests skipped by exact proof" || msg == "tests skipped by package proofs"
         }));
         // Proof data may be in reused_proof (exact path) or reused_package_proofs (package path).
