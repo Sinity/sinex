@@ -69,7 +69,6 @@ fn refresh_interval() -> std::time::Duration {
 /// apply to that scope plus globally-scoped rules (NULL source/type).
 /// Per-field rules are encoded as extra `PatternRule`s; unscoped rules walk the
 /// full JSON.
-#[derive(Debug)]
 struct ScopedEngine {
     /// source string, or None = all sources.
     event_source: Option<String>,
@@ -79,6 +78,19 @@ struct ScopedEngine {
     field_paths: Vec<Option<String>>,
     /// The compiled engine for this scope.
     engine: PrivacyEngine,
+}
+
+impl std::fmt::Debug for ScopedEngine {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // `PrivacyEngine` deliberately has no `Debug` impl — it holds an
+        // encryption key that must not surface in logs or panic messages.
+        // Show the scope metadata and elide the engine internals.
+        f.debug_struct("ScopedEngine")
+            .field("event_source", &self.event_source)
+            .field("event_type", &self.event_type)
+            .field("field_paths", &self.field_paths)
+            .finish_non_exhaustive()
+    }
 }
 
 /// The compiled rule set derived from the DB state.
@@ -163,7 +175,7 @@ fn db_row_to_strategy(action: &str, action_label: Option<&str>) -> Strategy {
 /// field scope produce a "global" engine entry that walks the whole payload.
 fn compile_rules(
     loaded: &[sinex_db::repositories::privacy_policy::LoadedRule],
-) -> Result<CompiledPolicyRuleSet, SinexError> {
+) -> Result<CompiledPolicyRuleSet> {
     if loaded.is_empty() {
         return Ok(CompiledPolicyRuleSet::empty());
     }
@@ -260,7 +272,7 @@ pub struct PolicyEngine {
 
 impl PolicyEngine {
     /// Build and load the initial rule set from the database.
-    pub async fn load(pool: DbPool) -> Result<Self, SinexError> {
+    pub async fn load(pool: DbPool) -> Result<Self> {
         let loaded = pool
             .privacy_policy()
             .load_enabled_rules()
@@ -461,7 +473,7 @@ mod tests {
     use super::*;
     use crate::event_engine::admission::AdmittedEvent;
     use sinex_db::DbPoolExt;
-    use sinex_primitives::{Id, Uuid, events::builder::EventBuilder};
+    use sinex_primitives::{Id, Uuid, events::DynamicPayload};
     use xtask::sandbox::prelude::*;
 
     // ─── Shared fixture source material UUID ─────────────────────────────────
@@ -477,8 +489,8 @@ mod tests {
     ) -> sinex_primitives::events::Event<serde_json::Value> {
         let material_id: Uuid = FIXTURE_SOURCE_MATERIAL_ID.parse().expect("valid UUID");
         let material_id = Id::from_uuid(material_id);
-        EventBuilder::dynamic(source, event_type, payload)
-            .from_material(material_id, 0)
+        DynamicPayload::new(source, event_type, payload)
+            .from_material(material_id)
             .build()
             .expect("test event build should not fail")
     }
@@ -663,7 +675,7 @@ mod tests {
         let parent_event_id: sinex_primitives::events::EventId = Id::from_uuid(parent_id);
         let payload = serde_json::json!({ "summary": "derived contains DERIVED_SECRET_XYZ here" });
         let derived_event =
-            EventBuilder::dynamic("sinex.derived", "analytics.insight", payload)
+            DynamicPayload::new("sinex.derived", "analytics.insight", payload)
                 .from_parents([parent_event_id])
                 .expect("valid parent")
                 .build()
