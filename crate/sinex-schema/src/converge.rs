@@ -731,7 +731,7 @@ pub fn convergible_tables() -> Result<Vec<ConvergibleTable>, ApplyError> {
             mirror: Some(MirrorSpec {
                 schema: "audit",
                 table: "archived_events",
-                columns_to_drop: &["node_version", "occurrence_id"],
+                columns_to_drop: &["node_version", "occurrence_id", "superseded_by_event_id"],
                 // ts_coided is GENERATED ALWAYS AS in core.events, but must be a plain
                 // TIMESTAMPTZ in audit.archived_events (the expression is dropped by
                 // create_table_sql()). Skip it here — it already exists from LIKE

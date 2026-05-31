@@ -607,7 +607,6 @@ pub enum ArchivedEvents {
     ArchivedAt,
     ArchivedBy,
     ArchiveReason,
-    SupersededByEventId,
 }
 
 impl TableDef for ArchivedEvents {
@@ -632,8 +631,7 @@ impl ArchivedEvents {
                 LIKE core.events INCLUDING ALL,
                 {archived_at} TIMESTAMPTZ NOT NULL DEFAULT now(),
                 {archived_by} TEXT,
-                {archive_reason} TEXT,
-                {superseded_by} UUID NULL
+                {archive_reason} TEXT
             );
             DO $$
             BEGIN
@@ -649,8 +647,7 @@ impl ArchivedEvents {
             ",
             archived_at = ArchivedEvents::ArchivedAt.to_string(),
             archived_by = ArchivedEvents::ArchivedBy.to_string(),
-            archive_reason = ArchivedEvents::ArchiveReason.to_string(),
-            superseded_by = ArchivedEvents::SupersededByEventId.to_string()
+            archive_reason = ArchivedEvents::ArchiveReason.to_string()
         )
     }
 
@@ -673,12 +670,6 @@ impl ArchivedEvents {
             // Index for querying archives by archive time
             format!(
                 "CREATE INDEX IF NOT EXISTS ix_archived_events_archived_at ON {}.{}(archived_at DESC)",
-                Self::schema_name(),
-                Self::table_name()
-            ),
-            // Fast lookup by replay replacement target.
-            format!(
-                "CREATE INDEX IF NOT EXISTS ix_archived_events_superseded_by_event_id ON {}.{}(superseded_by_event_id) WHERE superseded_by_event_id IS NOT NULL",
                 Self::schema_name(),
                 Self::table_name()
             ),
@@ -722,7 +713,6 @@ impl ArchivedEvents {
         RETURNS trigger LANGUAGE plpgsql AS $$
         DECLARE
           op_id TEXT := current_setting('sinex.operation_id', true);
-          sup_id uuid := NULLIF(current_setting('sinex.superseded_by_id', true), '');
           who TEXT := current_setting('sinex.archived_by', true);
           why TEXT := current_setting('sinex.archive_reason', true);
         BEGIN
@@ -733,7 +723,7 @@ impl ArchivedEvents {
           END IF;
 
           -- Atomically copy the deleted row to the archive with additional context.
-          INSERT INTO audit.archived_events SELECT OLD.*, now(), who, why, sup_id;
+          INSERT INTO audit.archived_events SELECT OLD.*, now(), who, why;
 
           -- Cascade annotations: TimescaleDB does not enforce FK ON DELETE CASCADE when
           -- core.events is the referenced (hypertable) side (#579). Archive then delete
@@ -1082,8 +1072,7 @@ impl EventTombstones {
 /// A many-to-many relation tracking which events were replaced by which new events
 /// during replay or scope recomputation operations.
 ///
-/// Unlike `audit.archived_events.superseded_by_event_id` (which is a 1:1 optimization),
-/// this table is the primary design center for replacement lineage. It supports:
+/// This table is the primary design center for replacement lineage. It supports:
 ///
 /// - **1:1 replacement** (`superseded`): one old event directly replaced by one new
 /// - **many:1 collapse** (`collapsed`): multiple old events collapsed into one new
@@ -1201,5 +1190,29 @@ impl EventReplacements {
                 .col(EventReplacements::OperationId)
                 .to_owned(),
         ]
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use xtask::sandbox::prelude::*;
+
+    #[sinex_test]
+    async fn archived_events_schema_omits_direct_supersession_column() -> TestResult<()> {
+        let table_sql = ArchivedEvents::create_table_sql();
+        assert!(!table_sql.contains("superseded_by_event_id"));
+
+        let index_sql = ArchivedEvents::create_indexes_sql().join("\n");
+        assert!(!index_sql.contains("superseded_by_event_id"));
+
+        let trigger_sql = ArchivedEvents::create_archive_trigger_sql();
+        assert!(!trigger_sql.contains("sinex.superseded_by_id"));
+        assert!(!trigger_sql.contains("sup_id"));
+        assert!(
+            trigger_sql.contains("INSERT INTO audit.archived_events SELECT OLD.*, now(), who, why;")
+        );
+
+        Ok(())
     }
 }

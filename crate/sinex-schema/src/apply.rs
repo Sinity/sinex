@@ -48,7 +48,6 @@ const ARCHIVED_EVENTS_REQUIRED_INDEXES: &[&str] = &[
     "ix_archived_events_ts_orig",
     "ix_archived_events_source_ts_orig",
     "ix_archived_events_archived_at",
-    "ix_archived_events_superseded_by_event_id",
     "ix_archived_events_source_event_ids",
 ];
 const TEMPORAL_LEDGER_REQUIRED_INDEXES: &[&str] = &[
