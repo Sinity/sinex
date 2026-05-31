@@ -505,7 +505,6 @@ pub async fn handle_sources_presets_list(
 #[cfg(test)]
 mod preset_tests {
     use super::builtin_presets;
-    use sinex_primitives::SinexError;
     use xtask::sandbox::prelude::*;
 
     #[sinex_test]

@@ -17,7 +17,7 @@ use sinexd::event_engine::admission::AdmittedEvent;
 use sinexd::event_engine::policy::PolicyEngine;
 use sinex_primitives::{
     Id, Uuid,
-    events::{Event, EventId, builder::EventBuilder},
+    events::{DynamicPayload, Event},
 };
 use xtask::sandbox::prelude::*;
 
@@ -28,6 +28,7 @@ use support::FIXTURE_SOURCE_MATERIAL_ID;
 /// Build a material-provenance event for use in policy engine unit tests.
 ///
 /// Uses the shared fixture source material ID so no NATS pipeline is required.
+#[allow(clippy::expect_used, reason = "test fixture: panic-on-failure is intended")]
 fn make_material_event(
     source: &str,
     event_type: &str,
@@ -35,8 +36,8 @@ fn make_material_event(
 ) -> Event<serde_json::Value> {
     let material_id: Uuid = FIXTURE_SOURCE_MATERIAL_ID.parse().expect("valid UUID");
     let material_id = Id::from_uuid(material_id);
-    EventBuilder::dynamic(source, event_type, payload)
-        .from_material(material_id, 0)
+    DynamicPayload::new(source, event_type, payload)
+        .from_material(material_id)
         .build()
         .expect("test event build should not fail")
 }
@@ -306,7 +307,7 @@ async fn privacy_chokepoint_applies_to_derived_events(ctx: TestContext) -> TestR
     let parent_event_id: sinex_primitives::events::EventId = Id::from_uuid(parent_id);
     let payload = json!({ "summary": "derived contains DERIVED_SECRET_XYZ here" });
     let derived_event =
-        EventBuilder::dynamic("sinex.derived", "analytics.insight", payload)
+        DynamicPayload::new("sinex.derived", "analytics.insight", payload)
             .from_parents([parent_event_id])
             .expect("valid parent")
             .build()

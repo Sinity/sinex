@@ -159,24 +159,3 @@ pub trait InputShapeAdapterExt: InputShapeAdapter {
     }
 }
 
-/// Implements [`InputShapeAdapterExt`] for an adapter type that only needs the
-/// default method bodies.
-///
-/// Call this inside the adapter's source file after the `InputShapeAdapter` impl:
-/// ```ignore
-/// impl_default_input_shape_adapter_ext!(crate::node_sdk::path::to::YourAdapterType);
-/// ```
-///
-/// ```ignore
-/// #[cfg(feature = "messaging")]
-/// impl_default_input_shape_adapter_ext!(crate::node_sdk::parser::adapters::YourAdapter);
-/// ```
-#[cfg(feature = "messaging")]
-macro_rules! impl_default_input_shape_adapter_ext {
-    ($ty:ty) => {
-        impl $crate::node_sdk::parser::InputShapeAdapterExt for $ty {}
-    };
-}
-
-#[cfg(feature = "messaging")]
-pub(crate) use impl_default_input_shape_adapter_ext;

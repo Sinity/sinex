@@ -1,6 +1,6 @@
 //! System RPC handlers.
 
-use crate::api::service_container::{GatewayHealthReport, GatewayHealthStatus, ServiceContainer};
+use crate::api::service_container::{GatewayHealthReport, ServiceContainer};
 use sinex_primitives::Result;
 use sinex_primitives::domain::HealthStatus;
 use sinex_primitives::rpc::system::{
@@ -118,7 +118,7 @@ fn system_version_response() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::api::service_container::{NatsHealthProbe, ReplayControlStatus};
+    use crate::api::service_container::{GatewayHealthStatus, NatsHealthProbe, ReplayControlStatus};
     use xtask::sandbox::prelude::*;
 
     #[sinex_test]

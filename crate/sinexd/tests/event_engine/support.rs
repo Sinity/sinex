@@ -11,6 +11,7 @@ use xtask::sandbox::timing::Timeouts;
 
 pub const FIXTURE_SOURCE_MATERIAL_ID: &str = "00000000-0000-7000-8000-000000000000";
 
+#[allow(dead_code)] // Shared across integration-test crates; each crate compiles its own copy.
 pub async fn ensure_fixture_source_material(pool: &DbPool) -> color_eyre::Result<()> {
     sqlx::query!(
         r#"
@@ -30,6 +31,7 @@ pub async fn ensure_fixture_source_material(pool: &DbPool) -> color_eyre::Result
     Ok(())
 }
 
+#[allow(dead_code)] // Shared across integration-test crates; each crate compiles its own copy.
 pub async fn spawn_consumer_and_wait_ready(
     ctx: &TestContext,
     js: &jetstream::Context,
