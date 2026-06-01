@@ -45,6 +45,11 @@ impl BuildCommand {
         ctx: Option<&CommandContext>,
     ) -> Result<(Vec<String>, WorkloadScope)> {
         let mut packages = self.packages.clone();
+        if !packages.is_empty() {
+            packages.sort();
+            packages.dedup();
+            return Ok((packages.clone(), WorkloadScope::Packages(packages)));
+        }
 
         if !self.all {
             let affected_result = if let Some(ctx) = ctx {
@@ -62,31 +67,61 @@ impl BuildCommand {
                 {
                     println!("No changes detected. Building ALL packages.");
                 }
-                if packages.is_empty() {
-                    return Ok((packages, WorkloadScope::Workspace));
-                }
-                packages.sort();
-                packages.dedup();
-                return Ok((packages.clone(), WorkloadScope::Packages(packages)));
+                return Ok((packages, WorkloadScope::Workspace));
             }
 
             affected.sort();
             packages.extend(affected);
             packages.sort();
             packages.dedup();
-            if self.packages.is_empty() {
-                return Ok((packages.clone(), WorkloadScope::Affected(packages)));
-            }
-            return Ok((packages.clone(), WorkloadScope::Packages(packages)));
+            return Ok((packages.clone(), WorkloadScope::Affected(packages)));
         }
 
-        if packages.is_empty() {
-            Ok((packages, WorkloadScope::Workspace))
-        } else {
-            packages.sort();
-            packages.dedup();
-            Ok((packages.clone(), WorkloadScope::Packages(packages)))
-        }
+        Ok((packages, WorkloadScope::Workspace))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::sandbox::sinex_test;
+
+    #[sinex_test]
+    async fn explicit_packages_do_not_expand_to_affected_scope() -> ::xtask::sandbox::TestResult<()>
+    {
+        let cmd = BuildCommand {
+            packages: vec!["xtask".to_string()],
+            release: false,
+            all: false,
+            dry_run: false,
+        };
+
+        let (packages, scope) = cmd.resolve_execution_plan(None)?;
+
+        assert_eq!(packages, vec!["xtask".to_string()]);
+        assert_eq!(scope, WorkloadScope::Packages(vec!["xtask".to_string()]));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn explicit_packages_are_sorted_and_deduplicated() -> ::xtask::sandbox::TestResult<()> {
+        let cmd = BuildCommand {
+            packages: vec![
+                "xtask".to_string(),
+                "sinex-primitives".to_string(),
+                "xtask".to_string(),
+            ],
+            release: false,
+            all: false,
+            dry_run: false,
+        };
+
+        let (packages, scope) = cmd.resolve_execution_plan(None)?;
+
+        let expected = vec!["sinex-primitives".to_string(), "xtask".to_string()];
+        assert_eq!(packages, expected);
+        assert_eq!(scope, WorkloadScope::Packages(expected));
+        Ok(())
     }
 }
 
