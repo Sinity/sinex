@@ -91,6 +91,18 @@ struct TestDependencyEdgeArtifact {
     origin: String,
 }
 
+fn checkpoint_bucket_name(prefix: Option<&str>) -> String {
+    let env = sinex_primitives::environment::environment();
+    let base_bucket = "sinex_checkpoints";
+    let namespaced_base = if let Some(prefix) = prefix.filter(|p| !p.trim().is_empty()) {
+        env.nats_kv_bucket_with_namespace(Some(prefix), base_bucket)
+    } else {
+        env.nats_kv_bucket_name(base_bucket)
+    };
+
+    format!("KV_{namespaced_base}")
+}
+
 #[derive(Debug, serde::Serialize)]
 struct TestExecutionManifestArtifact<'a> {
     test_name: &'a str,
@@ -550,7 +562,7 @@ impl Sandbox {
     pub async fn ensure_checkpoint_kv(&self) -> TestResult<jetstream::kv::Store> {
         let js = self.ensure_jetstream().await?;
         let prefix = self.pipeline_namespace().prefix();
-        let bucket = sinexd::node_sdk::checkpoint::checkpoint_bucket_name(Some(prefix));
+        let bucket = checkpoint_bucket_name(Some(prefix));
         let kv_store = create_or_open_kv_store(
             &js,
             jetstream::kv::Config {
@@ -588,7 +600,7 @@ impl Sandbox {
     pub async fn checkpoint_kv(&self) -> TestResult<jetstream::kv::Store> {
         let js = self.jetstream().await?;
         let prefix = self.pipeline_namespace().prefix();
-        let bucket = sinexd::node_sdk::checkpoint::checkpoint_bucket_name(Some(prefix));
+        let bucket = checkpoint_bucket_name(Some(prefix));
         let kv_store = create_or_open_kv_store(
             &js,
             jetstream::kv::Config {

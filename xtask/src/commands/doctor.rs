@@ -2011,7 +2011,62 @@ where
     warnings
 }
 
+#[cfg(any(feature = "runtime-introspection", test))]
 mod deployment;
+#[cfg(not(any(feature = "runtime-introspection", test)))]
+mod deployment {
+    use crate::command::CommandContext;
+    use color_eyre::eyre::{Result, bail};
+    use serde::Serialize;
+    use sinex_primitives::utils::{InvalidUrlPolicy, redact_url_password_for_diagnostics};
+
+    #[derive(Debug, Serialize)]
+    pub struct DeploymentReadinessItem {
+        pub name: String,
+        pub status: String,
+        pub description: String,
+        pub blocking: bool,
+    }
+
+    #[derive(Debug, Serialize)]
+    pub struct DeploymentReadinessReport {
+        pub items: Vec<DeploymentReadinessItem>,
+        pub overall: bool,
+    }
+
+    pub async fn execute_deployment_readiness(
+        _ctx: &CommandContext,
+    ) -> Result<DeploymentReadinessReport> {
+        bail!(
+            "doctor --deployment-readiness requires xtask built with the runtime-introspection feature"
+        )
+    }
+
+    pub fn redact_database_url_password(raw: &str) -> String {
+        redact_url_password_for_diagnostics(raw, InvalidUrlPolicy::PreserveInput)
+    }
+
+    pub(crate) fn resolve_effective_database_probe_url(
+        database_url: Option<&str>,
+        _descriptor: Option<&sinex_primitives::DeploymentReadinessDescriptor>,
+        _purpose: &str,
+    ) -> Result<Option<(String, String)>> {
+        Ok(database_url.map(|url| (url.to_string(), "environment".to_string())))
+    }
+
+    pub(crate) async fn check_gateway_ready(
+        _gateway_url: Option<&str>,
+        _descriptor: Option<&sinex_primitives::DeploymentReadinessDescriptor>,
+    ) -> DeploymentReadinessItem {
+        DeploymentReadinessItem {
+            name: "gateway-ready".to_string(),
+            status: "skip".to_string(),
+            description: "gateway readiness requires xtask built with runtime-introspection"
+                .to_string(),
+            blocking: true,
+        }
+    }
+}
 
 #[cfg(test)]
 use deployment::*;
