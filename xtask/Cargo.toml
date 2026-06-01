@@ -11,6 +11,10 @@ path = "src/main.rs"
 name = "xtask"
 path = "src/lib.rs"
 
+[features]
+default = []
+runtime-introspection = ["dep:sinexd"]
+
 [dependencies]
 clap = { workspace = true, features = [
     "derive",
@@ -63,8 +67,10 @@ async-nats = { workspace = true }
 proptest = { workspace = true }
 
 # Core types (Timestamp, etc.)
-sinex-primitives = { path = "../crate/sinex-primitives", default-features = false, features = ["testing"] }
-sinexd = { path = "../crate/sinexd" }
+sinex-primitives = { path = "../crate/sinex-primitives", default-features = false, features = [
+    "nats",
+    "testing",
+] }
 # Database and node SDK (for test sandbox)
 sinex-db = { path = "../crate/sinex-db" }
 
@@ -99,12 +105,19 @@ tabled = { workspace = true }
 # Build-time metadata (git hash, build time)
 shadow-rs = { workspace = true }
 
+[dependencies.sinexd]
+path = "../crate/sinexd"
+optional = true
+
 [build-dependencies]
 blake3 = { workspace = true }
 shadow-rs = { workspace = true }
 
 [dev-dependencies]
 vt100 = "0.16"
+
+[dev-dependencies.sinexd]
+path = "../crate/sinexd"
 
 [lints]
 workspace = true
