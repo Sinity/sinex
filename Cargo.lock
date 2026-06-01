@@ -5081,7 +5081,6 @@ dependencies = [
  "syn 2.0.117",
  "tokio",
  "trybuild",
- "xtask",
 ]
 
 [[package]]

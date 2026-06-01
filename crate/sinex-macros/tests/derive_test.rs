@@ -1,10 +1,10 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use sinex_primitives::events::EventPayload;
-use xtask::sandbox::prelude::*;
+use color_eyre::eyre::Result as TestResult;
 
 // Test 1: Basic EventPayload derive
-#[sinex_test]
+#[tokio::test]
 async fn test_event_payload_derives_correctly() -> TestResult<()> {
     #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, sinex_macros::EventPayload)]
     #[event_payload(source = "test-source", event_type = "test.event")]
@@ -21,7 +21,7 @@ async fn test_event_payload_derives_correctly() -> TestResult<()> {
 }
 
 // Test 2: Custom version
-#[sinex_test]
+#[tokio::test]
 async fn test_event_payload_custom_version() -> TestResult<()> {
     #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, sinex_macros::EventPayload)]
     #[event_payload(
@@ -38,7 +38,7 @@ async fn test_event_payload_custom_version() -> TestResult<()> {
 }
 
 // Test 3: With optional fields
-#[sinex_test]
+#[tokio::test]
 async fn test_event_payload_with_optional_fields() -> TestResult<()> {
     #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, sinex_macros::EventPayload)]
     #[event_payload(source = "optional-source", event_type = "optional.event")]
@@ -53,7 +53,7 @@ async fn test_event_payload_with_optional_fields() -> TestResult<()> {
 }
 
 // Test 4: Multiple fields with different types
-#[sinex_test]
+#[tokio::test]
 async fn test_event_payload_multiple_fields() -> TestResult<()> {
     #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, sinex_macros::EventPayload)]
     #[event_payload(source = "multi-source", event_type = "multi.event")]
@@ -72,7 +72,7 @@ async fn test_event_payload_multiple_fields() -> TestResult<()> {
 }
 
 // Test 5: Serialization of derived payload
-#[sinex_test]
+#[tokio::test]
 async fn test_event_payload_serialization() -> TestResult<()> {
     #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, sinex_macros::EventPayload)]
     #[event_payload(source = "serial-source", event_type = "serial.event")]
@@ -94,7 +94,7 @@ async fn test_event_payload_serialization() -> TestResult<()> {
 }
 
 // Test 6: Nested struct in payload
-#[sinex_test]
+#[tokio::test]
 async fn test_event_payload_with_nested_struct() -> TestResult<()> {
     #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
     pub struct NestedData {
@@ -114,7 +114,7 @@ async fn test_event_payload_with_nested_struct() -> TestResult<()> {
 }
 
 // Test 7: Constants are accessible
-#[sinex_test]
+#[tokio::test]
 async fn test_event_payload_constants_accessible() -> TestResult<()> {
     #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, sinex_macros::EventPayload)]
     #[event_payload(source = "const-source", event_type = "const.event")]
@@ -134,7 +134,7 @@ async fn test_event_payload_constants_accessible() -> TestResult<()> {
 }
 
 // Test 8: Multiple payloads with different sources/types
-#[sinex_test]
+#[tokio::test]
 async fn test_multiple_event_payloads() -> TestResult<()> {
     #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, sinex_macros::EventPayload)]
     #[event_payload(source = "source-a", event_type = "event.a")]
@@ -158,7 +158,7 @@ async fn test_multiple_event_payloads() -> TestResult<()> {
 }
 
 // Test 9: Payload with complex generic types
-#[sinex_test]
+#[tokio::test]
 async fn test_event_payload_with_generics() -> TestResult<()> {
     #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, sinex_macros::EventPayload)]
     #[event_payload(source = "generic-source", event_type = "generic.event")]
@@ -173,7 +173,7 @@ async fn test_event_payload_with_generics() -> TestResult<()> {
 }
 
 // Test 10: Minimal payload (single field)
-#[sinex_test]
+#[tokio::test]
 async fn test_event_payload_minimal() -> TestResult<()> {
     #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, sinex_macros::EventPayload)]
     #[event_payload(source = "minimal-source", event_type = "minimal.event")]
@@ -193,7 +193,7 @@ async fn test_event_payload_minimal() -> TestResult<()> {
 }
 
 // Test 11: Generic payloads preserve impl generics
-#[sinex_test]
+#[tokio::test]
 async fn test_event_payload_const_generic() -> TestResult<()> {
     use std::marker::PhantomData;
 
@@ -216,7 +216,7 @@ async fn test_event_payload_const_generic() -> TestResult<()> {
     Ok(())
 }
 
-#[sinex_test]
+#[tokio::test]
 async fn test_event_payload_enum_derives_schema_contract() -> TestResult<()> {
     #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, sinex_macros::EventPayload)]
     #[serde(untagged)]
@@ -239,7 +239,7 @@ async fn test_event_payload_enum_derives_schema_contract() -> TestResult<()> {
     Ok(())
 }
 
-#[sinex_test]
+#[tokio::test]
 async fn test_source_record_derive_uses_primitives_parser_contract() -> TestResult<()> {
     use sinex_primitives::Uuid;
     use sinex_primitives::events::SourceMaterial;

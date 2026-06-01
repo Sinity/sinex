@@ -8,7 +8,7 @@ use std::{ffi::OsString, path::PathBuf, time::Duration};
 use camino::Utf8PathBuf;
 use sinex_macros::SinexConfig;
 use sinex_primitives::error::SinexError;
-use xtask::sandbox::prelude::*;
+use color_eyre::eyre::Result as TestResult;
 
 // ---------------------------------------------------------------------------
 // Type-driven helper selection — `bool` → `bool_or`, `String` → `var_or`,
@@ -126,7 +126,7 @@ fn clear_env(keys: &[&str]) {
     }
 }
 
-#[sinex_test]
+#[tokio::test]
 async fn sinex_config_derive_loads_env_contracts() -> TestResult<()> {
     let _env_snapshot = EnvSnapshot::capture(ENV_KEYS);
     clear_env(ENV_KEYS);
@@ -192,7 +192,7 @@ async fn sinex_config_derive_loads_env_contracts() -> TestResult<()> {
     Ok(())
 }
 
-#[sinex_test]
+#[tokio::test]
 async fn sinex_config_duration_secs_defaults_invalid_or_zero() -> TestResult<()> {
     let _env_snapshot = EnvSnapshot::capture(ENV_KEYS);
     clear_env(ENV_KEYS);
@@ -233,7 +233,7 @@ const FALLIBLE_KEYS: &[&str] = &[
     "SINEX_TEST_FALLIBLE_HOST",
 ];
 
-#[sinex_test]
+#[tokio::test]
 async fn sinex_config_fallible_defaults() -> TestResult<()> {
     let _snap = EnvSnapshot::capture(FALLIBLE_KEYS);
     clear_env(FALLIBLE_KEYS);
@@ -246,7 +246,7 @@ async fn sinex_config_fallible_defaults() -> TestResult<()> {
     Ok(())
 }
 
-#[sinex_test]
+#[tokio::test]
 async fn sinex_config_fallible_reads_env() -> TestResult<()> {
     let _snap = EnvSnapshot::capture(FALLIBLE_KEYS);
     clear_env(FALLIBLE_KEYS);
@@ -265,7 +265,7 @@ async fn sinex_config_fallible_reads_env() -> TestResult<()> {
     Ok(())
 }
 
-#[sinex_test]
+#[tokio::test]
 async fn sinex_config_fallible_propagates_parse_error() -> TestResult<()> {
     let _snap = EnvSnapshot::capture(FALLIBLE_KEYS);
     clear_env(FALLIBLE_KEYS);
@@ -305,7 +305,7 @@ pub struct OuterConfig {
 
 const NESTED_KEYS: &[&str] = &["SINEX_TEST_OUTER_OUTER_VALUE", "SINEX_TEST_INNER_VALUE"];
 
-#[sinex_test]
+#[tokio::test]
 async fn sinex_config_nested_infallible() -> TestResult<()> {
     let _snap = EnvSnapshot::capture(NESTED_KEYS);
     clear_env(NESTED_KEYS);
@@ -341,7 +341,7 @@ pub struct FallibleOuterConfig {
 
 const FALLIBLE_OUTER_KEYS: &[&str] = &["SINEX_TEST_FALLIBLE_OUTER_COUNT", "SINEX_TEST_INNER_VALUE"];
 
-#[sinex_test]
+#[tokio::test]
 async fn sinex_config_nested_inside_fallible() -> TestResult<()> {
     let _snap = EnvSnapshot::capture(FALLIBLE_OUTER_KEYS);
     clear_env(FALLIBLE_OUTER_KEYS);
@@ -383,7 +383,7 @@ const NESTED_FALLIBLE_KEYS: &[&str] = &[
     "SINEX_TEST_FALLIBLE_INNER_INNER_VAL",
 ];
 
-#[sinex_test]
+#[tokio::test]
 async fn sinex_config_nested_fallible_propagates_result() -> TestResult<()> {
     let _snap = EnvSnapshot::capture(NESTED_FALLIBLE_KEYS);
     clear_env(NESTED_FALLIBLE_KEYS);
@@ -428,7 +428,7 @@ impl NormalizeConfig {
 
 const NORM_KEYS: &[&str] = &["SINEX_TEST_NORM_NAME"];
 
-#[sinex_test]
+#[tokio::test]
 async fn sinex_config_normalize_fn_called() -> TestResult<()> {
     let _snap = EnvSnapshot::capture(NORM_KEYS);
     clear_env(NORM_KEYS);
@@ -471,7 +471,7 @@ impl FallibleNormalizeConfig {
 
 const FALLIBLE_NORM_KEYS: &[&str] = &["SINEX_TEST_FALLIBLE_NORM_COUNT"];
 
-#[sinex_test]
+#[tokio::test]
 async fn sinex_config_fallible_normalize_fn_ok() -> TestResult<()> {
     let _snap = EnvSnapshot::capture(FALLIBLE_NORM_KEYS);
     clear_env(FALLIBLE_NORM_KEYS);
@@ -481,7 +481,7 @@ async fn sinex_config_fallible_normalize_fn_ok() -> TestResult<()> {
     Ok(())
 }
 
-#[sinex_test]
+#[tokio::test]
 async fn sinex_config_fallible_normalize_fn_err() -> TestResult<()> {
     let _snap = EnvSnapshot::capture(FALLIBLE_NORM_KEYS);
     clear_env(FALLIBLE_NORM_KEYS);
@@ -511,7 +511,7 @@ const UTF8_KEYS: &[&str] = &[
     "SINEX_TEST_UTF8PATH_MAYBE_DIR",
 ];
 
-#[sinex_test]
+#[tokio::test]
 async fn sinex_config_utf8pathbuf_infallible() -> TestResult<()> {
     let _snap = EnvSnapshot::capture(UTF8_KEYS);
     clear_env(UTF8_KEYS);
@@ -547,7 +547,7 @@ const UTF8_FALLIBLE_KEYS: &[&str] = &[
     "SINEX_TEST_UTF8PATH_F_MAYBE_DIR",
 ];
 
-#[sinex_test]
+#[tokio::test]
 async fn sinex_config_utf8pathbuf_fallible() -> TestResult<()> {
     let _snap = EnvSnapshot::capture(UTF8_FALLIBLE_KEYS);
     clear_env(UTF8_FALLIBLE_KEYS);
@@ -579,7 +579,7 @@ pub struct PrefixTrimConfig {
 
 const PREFIX_TRIM_KEYS: &[&str] = &["SINEX_TEST_TRIM_VALUE"];
 
-#[sinex_test]
+#[tokio::test]
 async fn sinex_config_prefix_trailing_underscore_trimmed() -> TestResult<()> {
     let _snap = EnvSnapshot::capture(PREFIX_TRIM_KEYS);
     clear_env(PREFIX_TRIM_KEYS);
@@ -611,7 +611,7 @@ pub struct DefaultFnConfig {
 
 const DEFAULT_FN_KEYS: &[&str] = &["SINEX_TEST_DEFAULT_FN_COUNT"];
 
-#[sinex_test]
+#[tokio::test]
 async fn sinex_config_default_fn_attr() -> TestResult<()> {
     let _snap = EnvSnapshot::capture(DEFAULT_FN_KEYS);
     clear_env(DEFAULT_FN_KEYS);
