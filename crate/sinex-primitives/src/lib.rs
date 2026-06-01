@@ -37,6 +37,7 @@ pub mod views;
 /// hand-written code.
 #[doc(hidden)]
 pub mod __sinex_macros_reexport {
+    pub use async_trait::async_trait;
     pub use inventory;
 }
 pub mod settlement;

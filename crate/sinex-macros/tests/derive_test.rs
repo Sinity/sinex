@@ -238,3 +238,65 @@ async fn test_event_payload_enum_derives_schema_contract() -> TestResult<()> {
     );
     Ok(())
 }
+
+#[sinex_test]
+async fn test_source_record_derive_uses_primitives_parser_contract() -> TestResult<()> {
+    use sinex_primitives::events::SourceMaterial;
+    use sinex_primitives::ids::Id;
+    use sinex_primitives::parser::{
+        MaterialAnchor, MaterialParser, ParserContext, SourceRecord, SourceUnitId,
+    };
+    use sinex_primitives::temporal::Timestamp;
+    use sinex_primitives::Uuid;
+
+    #[derive(Default, sinex_macros::SourceRecord)]
+    #[source_record(
+        id = "macro-raw-line",
+        source_unit_id = "test.raw-line",
+        input_shape = "raw_line",
+        event_source = "test",
+        event_type = "test.raw"
+    )]
+    struct MacroRawLineRecord {
+        #[source(raw_line)]
+        #[required]
+        #[allow(dead_code)]
+        message: String,
+    }
+
+    let mut parser = MacroRawLineRecord::default();
+    let manifest = parser.manifest();
+    assert_eq!(manifest.parser_id.as_str(), "macro-raw-line");
+    assert_eq!(manifest.source_unit_id.as_str(), "test.raw-line");
+
+    let material_id = Id::<SourceMaterial>::from_uuid(Uuid::nil());
+    let anchor = MaterialAnchor::Line {
+        byte_start: 0,
+        line: 1,
+    };
+    let ctx = ParserContext {
+        source_unit_id: SourceUnitId::from_static("test.raw-line"),
+        source_material_id: material_id,
+        record_anchor: anchor.clone(),
+        operation_id: Uuid::nil(),
+        job_id: Uuid::nil(),
+        host: "test-host".to_string(),
+        acquisition_time: Timestamp::now(),
+    };
+    let record = SourceRecord {
+        material_id,
+        anchor,
+        bytes: b"hello from primitives".to_vec(),
+        logical_path: None,
+        source_ts_hint: None,
+        metadata: serde_json::Value::Null,
+    };
+
+    let intents = parser.parse_record(record, &ctx).await?;
+    assert_eq!(intents.len(), 1);
+    assert_eq!(intents[0].event_source.as_str(), "test");
+    assert_eq!(intents[0].event_type.as_str(), "test.raw");
+    assert_eq!(intents[0].payload["message"], "hello from primitives");
+
+    Ok(())
+}
