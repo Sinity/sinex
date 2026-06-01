@@ -27,7 +27,7 @@ pub struct IngestdConfig {
         function = "validate_postgres_url",
         message = "Must be a PostgreSQL URL"
     ))]
-    #[builder(default = default_database_url())]
+    #[builder(default = default_database_url_fallback())]
     pub database_url: String,
 
     /// Database connection pool size
@@ -760,7 +760,7 @@ impl Default for IngestdConfig {
     fn default() -> Self {
         let env = environment();
         Self {
-            database_url: default_database_url(),
+            database_url: default_database_url_fallback(),
             database_pool_size: 50,
             pool_acquire_timeout_secs: default_pool_acquire_timeout_secs(),
             pool_idle_timeout_secs: default_pool_idle_timeout_secs(),
@@ -806,23 +806,11 @@ impl Default for IngestdConfig {
 
 // Helper functions
 
-/// Default database URL with environment namespacing.
+/// Fallback database URL used only when no explicit database URL is supplied.
 ///
-/// Explicit `DATABASE_URL` values are treated as exact operator input and are
-/// no longer rewritten through the ambient Sinex environment.
-fn default_database_url() -> String {
-    match std::env::var("DATABASE_URL") {
-        Ok(url) => url,
-        Err(std::env::VarError::NotPresent) => default_database_url_fallback(),
-        Err(std::env::VarError::NotUnicode(_)) => {
-            warn!(
-                "DATABASE_URL is not valid UTF-8; falling back to the namespaced local database URL"
-            );
-            default_database_url_fallback()
-        }
-    }
-}
-
+/// Fallible loaders own `DATABASE_URL` resolution through `shared_env`, so an
+/// invalid operator-supplied value fails honestly instead of being hidden by a
+/// default constructor.
 fn default_database_url_fallback() -> String {
     let env = environment();
     let base_name = env.database_name("sinex");
@@ -1319,8 +1307,8 @@ fn default_ts_orig_lower_bound_unix() -> i64 {
 mod tests {
     use super::{
         DurabilityThresholds, IngestdConfig, default_assembler_state_dir,
-        default_content_store_path, default_gitops_work_dir, default_path_base_dir,
-        default_work_dir, env_validated_path,
+        default_content_store_path, default_database_url_fallback, default_gitops_work_dir,
+        default_path_base_dir, default_work_dir, env_validated_path,
     };
     use camino::Utf8PathBuf;
     use sinex_primitives::environment::environment;
@@ -1391,6 +1379,31 @@ mod tests {
         .unwrap_or_else(|_| Utf8PathBuf::from("/tmp/sinex/ingestd"));
 
         assert_eq!(default_work_dir(), expected);
+        Ok(())
+    }
+
+    #[sinex_serial_test]
+    async fn default_config_uses_namespaced_fallback_not_database_url_env()
+    -> xtask::sandbox::TestResult<()> {
+        let mut env = EnvGuard::new();
+        env.set("DATABASE_URL", "postgresql://operator/sinex");
+
+        let config = IngestdConfig::default();
+
+        assert_eq!(config.database_url, default_database_url_fallback());
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[sinex_serial_test]
+    async fn default_config_does_not_hide_non_utf8_database_url_env()
+    -> xtask::sandbox::TestResult<()> {
+        let mut env = EnvGuard::new();
+        env.set("DATABASE_URL", OsString::from_vec(vec![0x70, 0x80]));
+
+        let config = IngestdConfig::default();
+
+        assert_eq!(config.database_url, default_database_url_fallback());
         Ok(())
     }
 
