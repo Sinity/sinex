@@ -264,6 +264,10 @@ impl XtaskCommand for LintForbiddenCommand {
         // Check for test-utils usage in production code (layering violation)
         check_test_utils_layering(&mut violations)?;
 
+        // Provider-shaped secrets in fixtures/comments still trigger external
+        // scanners. Build realistic recognizer inputs at runtime instead.
+        violations.extend(check_provider_shaped_secret_literals()?);
+
         // C1: Secret-tier source units must declare sensitivity annotations.
         violations.extend(check_secret_tier_privacy_coverage()?);
 
@@ -377,6 +381,25 @@ fn check_transport_publish_family_inventory() -> Result<Vec<String>> {
                 || path == "crate/sinexd/src/node_sdk/self_observation.rs"
                 || path.starts_with("crate/sinex-test-utils/")
         },
+    )
+}
+
+fn check_provider_shaped_secret_literals() -> Result<Vec<String>> {
+    check_pattern_with_globs(
+        "provider-shaped secret literal",
+        &provider_shaped_secret_pattern(),
+        &[],
+        &["*.rs", "*.md", "*.toml", "*.yml", "*.yaml"],
+        |_| false,
+    )
+}
+
+fn provider_shaped_secret_pattern() -> String {
+    let github_token_prefix = ["ghp", "_"].concat();
+    let fine_grained_github_prefix = ["github", "_pat", "_"].concat();
+    let aws_access_key_prefix = "AKIA";
+    format!(
+        r"({github_token_prefix}[A-Za-z0-9_]+|{fine_grained_github_prefix}[A-Za-z0-9_]+|{aws_access_key_prefix}[0-9A-Z]{{12,}})"
     )
 }
 
@@ -610,14 +633,30 @@ fn check_pattern<F>(label: &str, pattern: &str, allow: &[&str], skip: F) -> Resu
 where
     F: FnMut(&str) -> bool,
 {
-    run_rg(pattern)
+    run_rg(pattern, &["*.rs"])
+        .and_then(|matches| filter_allowlist(matches, allow, skip))
+        .with_context(|| format!("failed to scan for {label}"))
+}
+
+fn check_pattern_with_globs<F>(
+    label: &str,
+    pattern: &str,
+    allow: &[&str],
+    globs: &[&str],
+    skip: F,
+) -> Result<Vec<String>>
+where
+    F: FnMut(&str) -> bool,
+{
+    run_rg(pattern, globs)
         .and_then(|matches| filter_allowlist(matches, allow, skip))
         .with_context(|| format!("failed to scan for {label}"))
 }
 
 /// Run ripgrep to find pattern matches
-fn run_rg(pattern: &str) -> Result<Vec<String>> {
-    let output = Command::new("rg")
+fn run_rg(pattern: &str, globs: &[&str]) -> Result<Vec<String>> {
+    let mut command = Command::new("rg");
+    command
         .current_dir(workspace_root())
         .args([
             "--color=never",
@@ -625,11 +664,21 @@ fn run_rg(pattern: &str) -> Result<Vec<String>> {
             "--with-filename",
             "--line-number",
             pattern,
-            "--glob",
-            "*.rs",
-            "--glob",
-            "!docs/agent/**",
-        ])
+        ]);
+    for glob in globs {
+        command.args(["--glob", glob]);
+    }
+    command.args([
+        "--glob",
+        "!docs/agent/**",
+        "--glob",
+        "!.sinex/**",
+        "--glob",
+        "!.agent/**",
+        "--glob",
+        "!AGENTS.md",
+    ]);
+    let output = command
         .output()
         .with_context(|| "failed to invoke ripgrep")?;
     ensure_rg_completed(&output, "ripgrep")?;
@@ -698,7 +747,7 @@ fn is_tests_path(path: &str) -> bool {
 
 /// Check for anyhow usage in library code (not xtask, not tests, not binaries)
 fn check_anyhow_in_lib(label: &str, pattern: &str, allow: &[&str]) -> Result<Vec<String>> {
-    run_rg(pattern)
+    run_rg(pattern, &["*.rs"])
         .and_then(|matches| {
             filter_allowlist(matches, allow, |path| {
                 // Allow in xtask, tests, binaries, build scripts, CLI, examples
@@ -718,7 +767,7 @@ fn check_anyhow_in_lib(label: &str, pattern: &str, allow: &[&str]) -> Result<Vec
 /// Check for `color_eyre::` usage in library code (use SinexError error stack).
 /// color_eyre is only permitted in xtask (build tooling) and binaries.
 fn check_color_eyre_in_lib(label: &str, pattern: &str, allow: &[&str]) -> Result<Vec<String>> {
-    run_rg(pattern)
+    run_rg(pattern, &["*.rs"])
         .and_then(|matches| {
             filter_allowlist(matches, allow, |path| {
                 // Allow in xtask, tests, binaries, build scripts, CLI, examples
@@ -737,7 +786,7 @@ fn check_color_eyre_in_lib(label: &str, pattern: &str, allow: &[&str]) -> Result
 
 /// Check for println! in library code (use tracing instead)
 fn check_println_in_lib(label: &str, pattern: &str, allow: &[&str]) -> Result<Vec<String>> {
-    run_rg(pattern)
+    run_rg(pattern, &["*.rs"])
         .and_then(|matches| {
             filter_allowlist(matches, allow, |path| {
                 // Allow in xtask, tests, binaries, CLI, examples, build scripts
@@ -833,7 +882,7 @@ fn check_test_utils_layering(_violations: &mut Vec<String>) -> Result<()> {
         "crate/lib/sinex-test-utils/", // Test utils itself
     ];
 
-    let matches = run_rg(r"use sinex_test_utils")?;
+    let matches = run_rg(r"use sinex_test_utils", &["*.rs"])?;
     let filtered = filter_allowlist(matches, &[], |file| {
         allow_prefixes.iter().any(|a| file.starts_with(a)) || is_tests_path(file)
     })?;
@@ -1159,6 +1208,40 @@ mod tests {
         };
 
         ensure_rg_completed(&output, "ripgrep")?;
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn provider_secret_literal_pattern_catches_known_shapes()
+    -> ::xtask::sandbox::TestResult<()> {
+        let pattern = provider_shaped_secret_pattern();
+        let regex = regex::Regex::new(&pattern)?;
+
+        let classic_github = ["ghp", "_", "ABCDEFghijklmnopqrstuvwxyz1234567890"].concat();
+        let fine_grained_github = [
+            "github",
+            "_pat",
+            "_",
+            "11ABCDEFG0abcdefghijklmnopqrstuvwxyz123456789",
+        ]
+        .concat();
+        let aws_access_key = ["AKIA", "IOSFODNN7EXAMPLE"].concat();
+
+        assert!(regex.is_match(&classic_github));
+        assert!(regex.is_match(&fine_grained_github));
+        assert!(regex.is_match(&aws_access_key));
+        assert!(!regex.is_match("secret_fixture_value"));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn provider_secret_literal_live_workspace_has_no_violations()
+    -> ::xtask::sandbox::TestResult<()> {
+        let violations = check_provider_shaped_secret_literals()?;
+        assert!(
+            violations.is_empty(),
+            "provider-shaped secret literals found in live workspace: {violations:#?}"
+        );
         Ok(())
     }
 

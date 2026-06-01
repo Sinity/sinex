@@ -19,6 +19,8 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use crate::process::cargo_command;
+
 /// Compute the merge-base SHA between `base` and `HEAD`.
 fn merge_base(base: &str) -> Result<String> {
     let output = Command::new("git")
@@ -135,7 +137,7 @@ fn extract_package_name(cargo_toml: &Path) -> Option<String> {
 }
 
 fn workspace_package_names(workspace_root: &Path) -> Result<BTreeSet<String>> {
-    let output = Command::new("cargo")
+    let output = cargo_command()
         .args(["metadata", "--format-version", "1", "--no-deps"])
         .current_dir(workspace_root)
         .output()
