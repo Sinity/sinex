@@ -184,13 +184,7 @@ impl MaterialParser for JournaldParser {
             .unwrap_or("")
             .to_string();
 
-        let message = match privacy::engine() {
-            Ok(eng) => eng
-                .process(&raw_message, ProcessingContext::Journal)
-                .text
-                .into_owned(),
-            Err(e) => return Err(ParserError::Privacy(format!("privacy engine: {e}"))),
-        };
+        let message = redact_journal_field(&raw_message, ProcessingContext::Journal)?;
 
         // Fail closed: the command line can carry secrets (Sensitive tier).
         // If the privacy engine cannot initialize, propagate the error so the
@@ -198,10 +192,7 @@ impl MaterialParser for JournaldParser {
         let cmdline = json
             .get("_CMDLINE")
             .and_then(|v| v.as_str())
-            .map(|s| match privacy::engine() {
-                Ok(eng) => Ok(eng.process(s, ProcessingContext::Command).text.into_owned()),
-                Err(e) => Err(ParserError::Privacy(format!("privacy engine: {e}"))),
-            })
+            .map(|s| redact_journal_field(s, ProcessingContext::Command))
             .transpose()?;
 
         let exe = json
@@ -213,7 +204,12 @@ impl MaterialParser for JournaldParser {
         if let Some(obj) = json.as_object() {
             for (k, v) in obj {
                 if let Some(s) = v.as_str() {
-                    fields.insert(k.clone(), s.to_string());
+                    let value = match k.as_str() {
+                        "MESSAGE" => message.clone(),
+                        "_CMDLINE" => cmdline.clone().unwrap_or_default(),
+                        _ => redact_journal_field(s, ProcessingContext::Journal)?,
+                    };
+                    fields.insert(k.clone(), value);
                 }
             }
         }
@@ -292,6 +288,15 @@ impl MaterialParser for JournaldParser {
     }
 }
 
+fn redact_journal_field(
+    value: &str,
+    context: ProcessingContext,
+) -> Result<String, ParserError> {
+    privacy::process(value, context)
+        .map(|processed| processed.text.into_owned())
+        .map_err(|error| ParserError::Privacy(format!("privacy engine: {error}")))
+}
+
 // Register for dispatch (replay path).
 register_parser!("system.journald", JournaldParser);
 
@@ -345,6 +350,32 @@ mod tests {
         assert_eq!(intents.len(), 1);
         assert_eq!(intents[0].event_type.as_str(), "entry.written");
         assert_eq!(intents[0].event_source.as_str(), "journald");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn journald_parser_redacts_payload_fields() -> TestResult<()> {
+        let mid = Id::<SourceMaterial>::new();
+        let line = r#"{"__CURSOR":"s=abc;i=1","__REALTIME_TIMESTAMP":"1700000000000000","MESSAGE":"failed password=hunter2","_CMDLINE":"/usr/bin/tool --token ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghij","EXTRA_FIELD":"secret=raw-value"}"#;
+        let records = records_from_journal_lines(mid, &[line]);
+        let record = records[0].as_ref().unwrap().clone();
+
+        let mut parser = JournaldParser;
+        let ctx = make_ctx(mid);
+        let intents = parser.parse_record(record, &ctx).await?;
+        let payload: JournalEntryWrittenPayload =
+            serde_json::from_value(intents[0].payload.clone())?;
+
+        assert!(!payload.message.contains("hunter2"));
+        assert!(!payload.fields["MESSAGE"].contains("hunter2"));
+        assert_eq!(payload.fields["MESSAGE"], payload.message);
+
+        let cmdline = payload.cmdline.as_deref().expect("cmdline should exist");
+        assert!(!cmdline.contains("ghp_"));
+        assert!(!payload.fields["_CMDLINE"].contains("ghp_"));
+        assert_eq!(payload.fields["_CMDLINE"], cmdline);
+
+        assert!(!payload.fields["EXTRA_FIELD"].contains("raw-value"));
         Ok(())
     }
 
