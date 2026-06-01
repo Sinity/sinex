@@ -134,13 +134,63 @@ fn extract_package_name(cargo_toml: &Path) -> Option<String> {
     None
 }
 
+fn workspace_package_names(workspace_root: &Path) -> Result<BTreeSet<String>> {
+    let output = Command::new("cargo")
+        .args(["metadata", "--format-version", "1", "--no-deps"])
+        .current_dir(workspace_root)
+        .output()
+        .map_err(|e| eyre!("failed to spawn cargo metadata: {e}"))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(eyre!("cargo metadata failed: {stderr}"));
+    }
+
+    let metadata: serde_json::Value = serde_json::from_slice(&output.stdout)
+        .map_err(|e| eyre!("failed to parse cargo metadata: {e}"))?;
+    workspace_package_names_from_metadata(&metadata)
+}
+
+fn workspace_package_names_from_metadata(metadata: &serde_json::Value) -> Result<BTreeSet<String>> {
+    let workspace_members = metadata
+        .get("workspace_members")
+        .and_then(|members| members.as_array())
+        .ok_or_else(|| eyre!("cargo metadata missing workspace_members"))?
+        .iter()
+        .filter_map(|member| member.as_str())
+        .collect::<BTreeSet<_>>();
+
+    let packages = metadata
+        .get("packages")
+        .and_then(|packages| packages.as_array())
+        .ok_or_else(|| eyre!("cargo metadata missing packages"))?;
+
+    let mut names = BTreeSet::new();
+    for package in packages {
+        let Some(id) = package.get("id").and_then(|id| id.as_str()) else {
+            continue;
+        };
+        if !workspace_members.contains(id) {
+            continue;
+        }
+        if let Some(name) = package.get("name").and_then(|name| name.as_str()) {
+            names.insert(name.to_string());
+        }
+    }
+
+    Ok(names)
+}
+
 /// Return the deduplicated, sorted set of Cargo package names that own at least
 /// one of the Rust files changed between `base_ref` and `HEAD`.
 pub fn affected_packages(base_ref: &str, workspace_root: &Path) -> Result<BTreeSet<String>> {
     let files = changed_rust_files(base_ref)?;
+    let workspace_packages = workspace_package_names(workspace_root)?;
     let mut packages = BTreeSet::new();
     for file in &files {
-        if let Some(pkg) = owning_package(file, workspace_root) {
+        if let Some(pkg) = owning_package(file, workspace_root)
+            && workspace_packages.contains(&pkg)
+        {
             packages.insert(pkg);
         }
     }
@@ -293,4 +343,41 @@ pub fn run_changed_strict(
         package_results,
         success: all_ok,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::sandbox::sinex_test;
+    use serde_json::json;
+
+    #[sinex_test]
+    async fn workspace_package_names_include_only_root_members() -> crate::sandbox::TestResult<()> {
+        let metadata = json!({
+            "workspace_members": [
+                "path+file:///repo#sinex-primitives@0.1.0",
+                "path+file:///repo#xtask@0.1.0"
+            ],
+            "packages": [
+                {
+                    "id": "path+file:///repo#sinex-primitives@0.1.0",
+                    "name": "sinex-primitives"
+                },
+                {
+                    "id": "path+file:///repo#xtask@0.1.0",
+                    "name": "xtask"
+                },
+                {
+                    "id": "path+file:///repo/crate/sinex-primitives/fuzz#sinex-primitives-fuzz@0.0.0",
+                    "name": "sinex-primitives-fuzz"
+                }
+            ]
+        });
+
+        let names = workspace_package_names_from_metadata(&metadata)?;
+        assert!(names.contains("sinex-primitives"));
+        assert!(names.contains("xtask"));
+        assert!(!names.contains("sinex-primitives-fuzz"));
+        Ok(())
+    }
 }
