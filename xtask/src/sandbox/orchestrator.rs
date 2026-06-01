@@ -797,10 +797,19 @@ fn collect_source_files(root: &std::path::Path, paths: &mut Vec<PathBuf>) {
                 .path()
                 .extension()
                 .is_some_and(|extension| extension == "rs")
+            && !is_test_only_source_path(root, entry.path())
         {
             paths.push(entry.path().to_path_buf());
         }
     }
+}
+
+fn is_test_only_source_path(root: &std::path::Path, path: &std::path::Path) -> bool {
+    let relative = path.strip_prefix(root).unwrap_or(path);
+    relative.file_name().is_some_and(|name| name == "tests.rs")
+        || relative
+            .components()
+            .any(|component| component.as_os_str() == "tests")
 }
 
 fn newest_modified_input(paths: &[PathBuf]) -> Result<Option<(PathBuf, SystemTime)>> {
@@ -1302,6 +1311,22 @@ mod tests {
              `cargo build -p <other>` bumps lockfile mtime and falsely marks \
              this binary stale (#1220). cargo's own incremental compile remains \
              the safety net for real dep-graph changes"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn runtime_binary_inputs_exclude_test_only_source_modules() -> TestResult<()> {
+        let workspace = find_workspace_root()?;
+        let inputs = collect_runtime_binary_input_paths(&workspace, "sinexd")?;
+        let test_module = workspace
+            .join("crate/sinexd/src/node_sdk/derived_node/adapter/tests/mod.rs");
+
+        assert!(
+            !inputs.iter().any(|path| path == &test_module),
+            "runtime binary inputs must not include #[cfg(test)] source modules; \
+             editing them does not relink the runtime binary and would falsely \
+             leave tests blocked on a stale-binary guard"
         );
         Ok(())
     }
