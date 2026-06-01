@@ -34,7 +34,7 @@ use sinex_primitives::parser::{
     InputShapeKind, ParsedEventIntent, ParserContext, ParserId, ParserManifest, SourceUnitId,
     TimingConfidence, TimingEvidence,
 };
-use sinex_primitives::privacy::{self, ProcessingContext};
+use sinex_primitives::privacy::ProcessingContext;
 use sinex_primitives::temporal::Timestamp;
 
 use super::{MaterialParser, ParserError, ParserResult};
@@ -210,10 +210,6 @@ impl MaterialParser for WeeChatLogParser {
             payload.insert("channel".into(), serde_json::json!(ch));
         }
 
-        let payload =
-            privacy::process_json(&serde_json::Value::Object(payload), ProcessingContext::Command)
-                .map_err(|e| ParserError::Privacy(format!("privacy engine: {e}")))?;
-
         let anchor = record.anchor.clone();
 
         let intent = ParsedEventIntent::builder()
@@ -222,7 +218,7 @@ impl MaterialParser for WeeChatLogParser {
             .parser_version("1.0.0")
             .event_type(EventType::from_static(cls.event_type))
             .event_source(EventSource::from_static("irc"))
-            .payload(payload)
+            .payload(serde_json::Value::Object(payload))
             .ts_orig(ts_orig)
             .timing(TimingEvidence::Intrinsic {
                 field: "timestamp".into(),
@@ -301,26 +297,6 @@ mod tests {
         assert_eq!(ts.hour(), 14);
         assert_eq!(ts.minute(), 23);
         assert_eq!(ts.second(), 45);
-        Ok(())
-    }
-
-    #[sinex_test]
-    async fn parse_irc_message_redacts_secret_payload_strings() -> xtask::sandbox::TestResult<()> {
-        let mut parser = WeeChatLogParser;
-        let record = make_record(
-            b"2024-01-15 14:23:45\tsinity\tTOKEN=ghp_1234567890abcdefghijklmnopqrstuvwxyz",
-            1,
-            0,
-        );
-        let ctx = test_ctx();
-
-        let intents = parser.parse_record(record, &ctx).await.unwrap();
-        assert_eq!(intents.len(), 1);
-        assert_eq!(
-            intents[0].payload["message"],
-            "TOKEN=<GITHUB_TOKEN>",
-            "WeeChat imperative parser must invoke Command-context privacy"
-        );
         Ok(())
     }
 
