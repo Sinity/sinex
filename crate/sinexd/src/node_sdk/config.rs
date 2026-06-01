@@ -761,12 +761,10 @@ impl Default for MaterialMetadataPolicy {
 mod tests {
     use super::{AutomatonConfig, EventSourceConfig, NodeConfig};
     use camino::Utf8PathBuf;
-    use xtask::sandbox::{EnvGuard, sinex_serial_test};
-
-    type SandboxTestResult<T> = xtask::sandbox::TestResult<T>;
+    use xtask::sandbox::{EnvGuard, TestResult, sinex_serial_test};
 
     #[sinex_serial_test]
-    async fn node_config_prefers_service_over_global_env() -> SandboxTestResult<()> {
+    async fn node_config_prefers_service_over_global_env() -> TestResult<()> {
         let mut env = EnvGuard::new();
         env.set("SINEX_CAPTURE_AGENT_LOG_LEVEL", "debug");
         env.set("SINEX_LOG_LEVEL", "warn");
@@ -796,7 +794,7 @@ mod tests {
     }
 
     #[sinex_serial_test]
-    async fn node_config_uses_global_then_bare_database_url() -> SandboxTestResult<()> {
+    async fn node_config_uses_global_then_bare_database_url() -> TestResult<()> {
         let mut env = EnvGuard::new();
         env.set("SINEX_LOG_LEVEL", "error");
         env.set("SINEX_DATABASE_POOL_SIZE", "23");
@@ -814,7 +812,7 @@ mod tests {
     }
 
     #[sinex_serial_test]
-    async fn source_and_automaton_configs_share_dynamic_service_prefix() -> SandboxTestResult<()> {
+    async fn source_and_automaton_configs_share_dynamic_service_prefix() -> TestResult<()> {
         let mut env = EnvGuard::new();
         env.set("SINEX_CAPTURE_AGENT_BATCH_SIZE", "41");
         env.set("SINEX_CAPTURE_AGENT_BATCH_TIMEOUT_SECS", "9");
