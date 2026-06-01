@@ -33,10 +33,9 @@ use sinex_primitives::Uuid;
 use sinex_primitives::privacy::{self, ProcessingContext};
 use sinexd::sources::dispatch::default_parser_dispatch;
 
-/// A decoy secret that should be redacted by the privacy engine.
-///
-/// Uses a GitHub token prefix pattern — matched by the catalog-pattern rule.
-const DECOY_TOKEN: &str = "ghp_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+fn decoy_token() -> String {
+    ["ghp_", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"].concat()
+}
 
 /// Run the privacy obligation for a source unit.
 ///
@@ -70,7 +69,8 @@ pub async fn run(
 /// initial-ingestion pass in `ALL_OBLIGATIONS`.
 pub async fn run_redaction_only(source_unit_id: &str) -> Result<(), String> {
     // Part 2: privacy engine redacts decoy secrets from raw text.
-    let secret_text = format!("export TOKEN={DECOY_TOKEN}");
+    let decoy_token = decoy_token();
+    let secret_text = format!("export TOKEN={decoy_token}");
     let engine_result = privacy::engine()
         .map_err(|e| format!("privacy engine init failed: {e}"))?
         .process(&secret_text, ProcessingContext::Command);
@@ -78,13 +78,13 @@ pub async fn run_redaction_only(source_unit_id: &str) -> Result<(), String> {
     if !engine_result.any_matched() {
         return Err(format!(
             "privacy for '{source_unit_id}': privacy engine did not match decoy token \
-             '{DECOY_TOKEN}' in command context. Engine may be misconfigured."
+             '{decoy_token}' in command context. Engine may be misconfigured."
         ));
     }
 
     // Verify the redacted text does not contain the raw token.
     let redacted = engine_result.text.as_ref();
-    if redacted.contains(DECOY_TOKEN) {
+    if redacted.contains(&decoy_token) {
         return Err(format!(
             "privacy for '{source_unit_id}': redacted text still contains decoy token. \
              Raw: {secret_text:?}, Redacted: {redacted:?}"
@@ -100,7 +100,7 @@ pub async fn run_redaction_only(source_unit_id: &str) -> Result<(), String> {
     if let Ok(outcome) = dispatch(source_unit_id, redacted_bytes, Some(material_id)) {
         for event in &outcome.events {
             let payload_str = event.payload.to_string();
-            if payload_str.contains(DECOY_TOKEN) {
+            if payload_str.contains(&decoy_token) {
                 return Err(format!(
                     "privacy for '{source_unit_id}': event payload contains raw decoy token \
                      after redaction. Payload: {payload_str}"

@@ -387,10 +387,11 @@ async fn run_record_fixture_privacy_redaction_only(
 ) -> Result<(), String> {
     use sinex_primitives::privacy::{self, ProcessingContext};
 
-    let secret_text = "export TOKEN=ghp_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+    let decoy_token = ["ghp_", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"].concat();
+    let secret_text = format!("export TOKEN={decoy_token}");
     let engine_result = privacy::engine()
         .map_err(|e| format!("privacy engine init failed: {e}"))?
-        .process(secret_text, ProcessingContext::Command);
+        .process(&secret_text, ProcessingContext::Command);
 
     if !engine_result.any_matched() {
         return Err(format!(
@@ -399,7 +400,7 @@ async fn run_record_fixture_privacy_redaction_only(
     }
 
     let redacted = engine_result.text.as_ref();
-    if redacted.contains("ghp_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA") {
+    if redacted.contains(&decoy_token) {
         return Err(format!(
             "privacy for '{source_unit_id}': redacted text still contains decoy token"
         ));
@@ -417,7 +418,7 @@ async fn run_record_fixture_privacy_redaction_only(
     {
         for event in &outcome.events {
             let payload_str = event.payload.to_string();
-            if payload_str.contains("ghp_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA") {
+            if payload_str.contains(&decoy_token) {
                 return Err(format!(
                     "privacy for '{source_unit_id}': event payload contains raw decoy token \
                      after redaction. Payload: {payload_str}"

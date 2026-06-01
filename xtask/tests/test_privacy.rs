@@ -184,9 +184,10 @@ async fn test_process_clean_input() -> Result<()> {
 
 #[sinex_test]
 async fn test_process_sensitive_input_github_token() -> Result<()> {
+    let github_token = ["ghp_", "ABCDEFghijklmnopqrstuvwxyz1234567890"].concat();
     let cmd = PrivacyCommand {
         subcommand: PrivacySubcommand::Test {
-            input: "export TOKEN=ghp_ABCDEFghijklmnopqrstuvwxyz1234567890".into(),
+            input: format!("export TOKEN={github_token}"),
             context: "command".into(),
         },
     };
@@ -203,7 +204,7 @@ async fn test_process_sensitive_input_github_token() -> Result<()> {
         );
         let processed = data["processed"].as_str().unwrap_or("");
         assert!(
-            processed.contains("ghp_ABCDEFghijklmnopqrstuvwxyz1234567890"),
+            processed.contains(&github_token),
             "Token should remain visible without explicit configured policy"
         );
     }

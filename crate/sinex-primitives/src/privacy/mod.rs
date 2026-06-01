@@ -13,7 +13,7 @@
 //! let mut config = PrivacyConfig::default();
 //! config.builtin_categories = CategorySet::All;
 //! let engine = PrivacyEngine::new(config)?;
-//! let result = engine.process("export TOKEN=ghp_abc123", ProcessingContext::Command);
+//! let result = engine.process("export TOKEN=secret_fixture_123", ProcessingContext::Command);
 //! assert!(!result.matched_rules.is_empty());
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```

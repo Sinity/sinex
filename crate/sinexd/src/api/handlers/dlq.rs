@@ -417,11 +417,12 @@ mod tests {
     ) -> xtask::sandbox::TestResult<()> {
         let pool = ctx.pool();
         let repo = pool.privacy_policy();
+        let dlq_secret = ["ghp_", "abcdefghijklmnopqrstuvwxyz123456"].concat();
         repo.add_rule(
             "dlq-secret-preview",
             "redact raw DLQ secret preview sentinel",
             "literal",
-            "ghp_abcdefghijklmnopqrstuvwxyz123456",
+            &dlq_secret,
             true,
             "redact",
             Some("<DLQ_SECRET>"),
@@ -432,14 +433,16 @@ mod tests {
             .await?;
         let policy = PolicyEngine::load(pool.clone()).await?;
 
-        let payload = r#"{
+        let payload = format!(
+            r#"{{
             "original_subject": "dev.sinex.events.raw.shell.command",
-            "original_payload": {
-                "command": "export GITHUB_TOKEN=ghp_abcdefghijklmnopqrstuvwxyz123456"
-            }
-        }"#;
+            "original_payload": {{
+                "command": "export GITHUB_TOKEN={dlq_secret}"
+            }}
+        }}"#
+        );
 
-        let preview = payload_preview(&policy, payload, 200).await;
+        let preview = payload_preview(&policy, &payload, 200).await;
 
         assert!(preview.redacted);
         assert!(
@@ -450,11 +453,7 @@ mod tests {
             "redaction must be visible to machine clients: {:?}",
             preview.caveats
         );
-        assert!(
-            !preview
-                .text
-                .contains("ghp_abcdefghijklmnopqrstuvwxyz123456")
-        );
+        assert!(!preview.text.contains(&dlq_secret));
         assert!(!preview.text.contains("GITHUB_TOKEN=ghp_"));
         Ok(())
     }

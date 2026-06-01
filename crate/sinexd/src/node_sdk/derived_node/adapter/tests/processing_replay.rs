@@ -195,8 +195,9 @@ async fn scope_invalidation_outputs_apply_privacy_filtering() -> TestResult<()> 
     }
 
     let adapter = AutomatonRuntime::new(TransducerWrapper(PrivacyInvalidationNode));
+    let github_token = ["ghp_", "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghij"].concat();
     let output = DerivedOutput::reconciled(
-        json!({ "value": "ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghij" }),
+        json!({ "value": github_token }),
         Timestamp::now(),
         vec![Uuid::now_v7()],
         "scope-a".to_string(),

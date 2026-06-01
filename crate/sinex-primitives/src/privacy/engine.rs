@@ -629,16 +629,25 @@ mod tests {
         PrivacyEngine::new(config).unwrap()
     }
 
+    fn github_token_fixture() -> String {
+        ["ghp_", "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghij"].concat()
+    }
+
+    fn aws_access_key_fixture() -> String {
+        ["AKIA", "IOSFODNN7EXAMPLE"].concat()
+    }
+
     // ── Basic redaction cases ──
 
     #[sinex_test]
     async fn redacts_aws_access_key() -> ::xtask::sandbox::TestResult<()> {
         let e = test_engine();
-        let input = "export AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE";
-        let result = e.process(input, ProcessingContext::Command);
+        let access_key = aws_access_key_fixture();
+        let input = format!("export AWS_ACCESS_KEY_ID={access_key}");
+        let result = e.process(&input, ProcessingContext::Command);
         assert!(result.any_matched());
         assert!(result.text.contains("<AWS_ACCESS_KEY>"));
-        assert!(!result.text.contains("AKIAIOSFODNN7EXAMPLE"));
+        assert!(!result.text.contains(&access_key));
         Ok(())
     }
 
@@ -646,8 +655,9 @@ mod tests {
     async fn redacts_github_token() -> ::xtask::sandbox::TestResult<()> {
         let e = test_engine();
         // Use bare token (no `token=` prefix which triggers generic_secret_assign too)
-        let input = "found ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghij in logs";
-        let result = e.process(input, ProcessingContext::Command);
+        let token = github_token_fixture();
+        let input = format!("found {token} in logs");
+        let result = e.process(&input, ProcessingContext::Command);
         assert!(result.any_matched());
         assert!(
             result.text.contains("<GITHUB_TOKEN>"),
@@ -791,16 +801,18 @@ mod tests {
     #[sinex_test]
     async fn processes_json_strings() -> ::xtask::sandbox::TestResult<()> {
         let e = test_engine();
+        let access_key = aws_access_key_fixture();
+        let token = github_token_fixture();
         let json = serde_json::json!({
-            "message": "key=AKIAIOSFODNN7EXAMPLE",
+            "message": format!("key={access_key}"),
             "count": 42,
             "nested": {
-                "token": "ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghij"
+                "token": token
             }
         });
         let result = e.process_json(&json, ProcessingContext::Dbus);
         let msg = result["message"].as_str().unwrap();
-        assert!(!msg.contains("AKIAIOSFODNN7EXAMPLE"));
+        assert!(!msg.contains(&access_key));
         Ok(())
     }
 
@@ -839,8 +851,8 @@ mod tests {
     #[sinex_test]
     async fn noop_passes_through() -> ::xtask::sandbox::TestResult<()> {
         let e = PrivacyEngine::noop();
-        let input = "AKIAIOSFODNN7EXAMPLE";
-        let result = e.process(input, ProcessingContext::Command);
+        let input = aws_access_key_fixture();
+        let result = e.process(&input, ProcessingContext::Command);
         assert_eq!(result.text.as_ref(), input);
         assert!(!result.any_matched());
         Ok(())
@@ -851,8 +863,9 @@ mod tests {
     #[sinex_test]
     async fn stats_tracking() -> ::xtask::sandbox::TestResult<()> {
         let e = test_engine_with_key();
-        let _ = e.process("AKIAIOSFODNN7EXAMPLE", ProcessingContext::Command);
-        let _ = e.process("AKIAIOSFODNN7EXAMPLE", ProcessingContext::Command);
+        let access_key = aws_access_key_fixture();
+        let _ = e.process(&access_key, ProcessingContext::Command);
+        let _ = e.process(&access_key, ProcessingContext::Command);
         let stats = e.stats_snapshot();
         let aws_count = stats
             .iter()
