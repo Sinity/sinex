@@ -151,12 +151,22 @@ pub fn derive_source_record(input: TokenStream) -> TokenStream {
 /// - `#[sinex_config(default = LIT)]` — literal default for fields whose
 ///   type doesn't otherwise have one (bool defaults to false, String to "")
 /// - `#[sinex_config(default_expr = "EXPR")]` — non-literal default
-///   (e.g. `"Seconds::from_secs(30)"`)
+///   (e.g. `"std::time::Duration::from_secs(30)"`)
+/// - `#[sinex_config(default_fn = "function_name")]` — call a zero-arg
+///   default function
 /// - `#[sinex_config(parser = path::to::fn)]` — custom parser
 ///   `fn(&str) -> Result<T, _>`; requires a default fallback
 /// - `#[sinex_config(duration_secs)]` — parse positive seconds into
 ///   `std::time::Duration`; requires a default fallback
+/// - `#[sinex_config(nested)]` — delegate to the field type's infallible
+///   `from_env()`
+/// - `#[sinex_config(nested_fallible)]` — delegate to the field type's
+///   fallible `from_env()` and propagate errors
 /// - `#[sinex_config(skip)]` — leave the field at `Default::default()`
+///
+/// Structs can also use `fallible` to make `from_env()` return
+/// `Result<Self, SinexError>` and `normalize_fn = "method_name"` to call a
+/// post-construction normalizer.
 ///
 /// See `thoughtspace/crystal/decisions/sinex-config-derive.md` for design.
 #[proc_macro_derive(SinexConfig, attributes(sinex_config))]

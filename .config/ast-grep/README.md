@@ -56,19 +56,19 @@ Within xtask automation, `error` severity is blocking; `warning` and `hint` rema
   - `**/*_test.rs`
   - `**/*_tests.rs`
   - `**/tests/**`
-  - `crate/cli/src/commands/report.rs`
-  - `crate/lib/sinex-db/src/repositories/events/conversions.rs`
-  - `crate/lib/sinex-node-sdk/src/derived_node/adapter.rs`
-  - `crate/lib/sinex-node-sdk/src/derived_node/adapter/output.rs`
-  - `crate/lib/sinex-node-sdk/src/runtime/stream/handles.rs`
-  - `crate/lib/sinex-node-sdk/src/runtime/stream/mod.rs`
-  - `crate/lib/sinex-node-sdk/src/runtime/stream/runner/provisional.rs`
-  - `crate/lib/sinex-primitives/**`
   - `crate/nodes/sinex-system-ingestor/src/dbus_watcher.rs`
   - `crate/nodes/sinex-system-ingestor/src/material_context.rs`
   - `crate/nodes/sinex-system-ingestor/src/udev_watcher.rs`
   - `crate/nodes/sinex-system-ingestor/src/unified_journal_watcher.rs`
   - `crate/nodes/sinex-system-ingestor/src/unified_node.rs`
+  - `crate/sinex-db/src/repositories/events/conversions.rs`
+  - `crate/sinex-primitives/**`
+  - `crate/sinexctl/src/commands/report.rs`
+  - `crate/sinexd/src/node_sdk/derived_node/adapter.rs`
+  - `crate/sinexd/src/node_sdk/derived_node/adapter/output.rs`
+  - `crate/sinexd/src/node_sdk/runtime/stream/handles.rs`
+  - `crate/sinexd/src/node_sdk/runtime/stream/mod.rs`
+  - `crate/sinexd/src/node_sdk/runtime/stream/runner/provisional.rs`
   - `xtask/src/sandbox/**`
 - Intent:
   See issue #559. The XOR-provenance invariant is encoded in:
@@ -216,7 +216,6 @@ Within xtask automation, `error` severity is blocking; `warning` and `hint` rema
 - Ignore globs:
   - `**/*_test.rs`
   - `**/tests/**`
-  - `crate/lib/sinex-node-sdk/src/preflight/**`
   - `crate/sinex-db/src/lib.rs`
   - `crate/sinex-db/src/pool.rs`
   - `crate/sinex-db/src/query_helpers.rs`
@@ -225,8 +224,11 @@ Within xtask automation, `error` severity is blocking; `warning` and `hint` rema
   - `crate/sinex-schema/src/bin/schema-apply-bootstrap.rs`
   - `crate/sinexd/src/api/cascade_analyzer.rs`
   - `crate/sinexd/src/api/handlers/**`
-  - `crate/sinexd/src/api/rpc_server.rs`
   - `crate/sinexd/src/event_engine/config.rs`
+  - `crate/sinexd/src/event_engine/jetstream_consumer.rs`
+  - `crate/sinexd/src/event_engine/material_assembler/**`
+  - `crate/sinexd/src/event_engine/service.rs`
+  - `crate/sinexd/src/node_sdk/preflight/**`
   - `xtask/**`
 - Intent:
   Compile-time checked queries (sqlx::query!()) catch SQL errors at build time.

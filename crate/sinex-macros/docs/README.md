@@ -2,9 +2,10 @@
 
 `sinex-macros` is the proc-macro crate for Sinex.
 
-It currently exposes one production macro:
+It currently exposes these production macros:
 
 - `#[derive(EventPayload)]`
+- `#[derive(SinexConfig)]`
 
 `EventPayload` derive:
 - implements `sinex_primitives::events::EventPayload` constants (`SOURCE`, `EVENT_TYPE`, `VERSION`)
@@ -20,4 +21,11 @@ pub struct FileCreatedPayload {
 }
 ```
 
-See `docs/overview.md` for behavior details and limitations.
+`SinexConfig` derive generates env-driven `from_env()` constructors for
+configuration structs whose fields map declaratively to environment variables.
+It supports infallible and fallible loading, explicit env key overrides,
+custom parsers, nested config delegation, defaults, and duration-from-seconds
+fields.
+
+See `docs/overview.md` for behavior details and limitations, and
+`docs/sinex_config.md` for the configuration derive grammar.
