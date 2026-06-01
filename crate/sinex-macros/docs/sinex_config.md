@@ -27,6 +27,8 @@ pub struct PoolConfig { /* ... */ }
 | `#[sinex_config(default = LITERAL)]` | Literal default for fields whose type doesn't otherwise have one |
 | `#[sinex_config(default_expr = "EXPR")]` | Non-literal default (e.g. `"Seconds::from_secs(30)"`) |
 | `#[sinex_config(parser = path::to::fn)]` | Custom parser `fn(&str) -> Result<T, _>`; requires a default |
+| `#[sinex_config(duration = "secs")]` | Parse an integer env var into `std::time::Duration`; units: `millis`, `secs`, `minutes`, `hours`, `days`; requires a default |
+| `#[sinex_config(nonzero)]` | With `duration`, treat `0` as invalid and fall back to the default |
 | `#[sinex_config(skip)]` | Leave at `Default::default()`; no env read |
 
 ## Type-driven helper inference
@@ -39,6 +41,7 @@ pub struct PoolConfig { /* ... */ }
 | `Option<PathBuf>` | `env::path_optional(key, context)` |
 | `Option<T>` (other) | `env::parse_optional(key, context)` |
 | `PathBuf` | `env::path_optional(...).unwrap_or_else(|| default)` — requires default |
+| `Duration` + `duration = "..."` | integer env var converted through the declared unit — requires default |
 | Other `T: FromStr` | `env::parse_or(key, default, context)` — requires default |
 
 ## Examples
@@ -55,6 +58,9 @@ pub struct PoolConfig {
 
     #[sinex_config(default_expr = "Seconds::from_secs(30)")]
     pub acquire_timeout_secs: Seconds,
+
+    #[sinex_config(default_expr = "Duration::from_secs(30)", duration = "secs", nonzero)]
+    pub connect_timeout: Duration,
 
     pub alt_cert: Option<PathBuf>,
 
@@ -78,6 +84,13 @@ impl PoolConfig {
                 "SINEX_DB_ACQUIRE_TIMEOUT_SECS",
                 Seconds::from_secs(30),
                 "database pool"),
+            connect_timeout: match sinex_primitives::env::parse_optional::<u64>(
+                "SINEX_DB_CONNECT_TIMEOUT",
+                "database pool",
+            ) {
+                Some(units) if units > 0 => Duration::from_secs(units),
+                _ => Duration::from_secs(30),
+            },
             alt_cert: sinex_primitives::env::path_optional(
                 "SINEX_DB_ALT_CERT", "database pool"),
             computed_runtime_field: ::std::default::Default::default(),
@@ -92,6 +105,11 @@ impl PoolConfig {
 - Does not replace CLI parsing (`clap`).
 - Does not handle conditional fields ("if `MODE=advanced` read additional
   vars"). Those structs stay hand-rolled.
+- Does not replace loaders whose shape is not a zero-argument declarative
+  struct construction, such as runtime-argument loaders, private constructor
+  funnels, `Arc` construction, or nested map parsing. In sinexd, that keeps
+  `SelfObserverConfig`, `NativeMessagingConfig`, and `HealthAggregatorConfig`
+  as intentional manual exceptions.
 - Does not log resolved values — env helpers already trace/warn as needed.
 - Does not redact sensitive fields. Prefer `Option<String>` and avoid
   trace-logging the result.

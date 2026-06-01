@@ -220,6 +220,8 @@ struct FieldAttrs {
     env: Option<String>,
     default: Option<Expr>,
     parser: Option<syn::Path>,
+    duration: Option<DurationUnit>,
+    nonzero: bool,
     skip: bool,
     /// Delegate to the field type's infallible `from_env()`.
     nested: bool,
@@ -270,9 +272,16 @@ fn parse_field_attrs(field: &syn::Field) -> syn::Result<FieldAttrs> {
                 })?);
             } else if meta.path.is_ident("parser") {
                 attrs.parser = Some(meta.value()?.parse::<syn::Path>()?);
+            } else if meta.path.is_ident("duration") {
+                let unit = lit_string(&meta.value()?.parse::<Expr>()?)?;
+                attrs.duration = Some(DurationUnit::parse(&unit).map_err(|message| {
+                    meta.error(message)
+                })?);
+            } else if meta.path.is_ident("nonzero") {
+                attrs.nonzero = true;
             } else {
                 return Err(meta.error(
-                    "unknown sinex_config field attribute (expected `env`, `default`, `default_expr`, `default_fn`, `parser`, `skip`, `nested`, `nested_fallible`)",
+                    "unknown sinex_config field attribute (expected `env`, `default`, `default_expr`, `default_fn`, `parser`, `duration`, `nonzero`, `skip`, `nested`, `nested_fallible`)",
                 ));
             }
             Ok(())
@@ -301,6 +310,11 @@ fn infer_helper_infallible(
     context: &str,
     attrs: &FieldAttrs,
 ) -> syn::Result<TokenStream2> {
+    // Duration conversion short-circuits ordinary type inference.
+    if attrs.duration.is_some() {
+        return infer_duration_infallible(ty, env_key, context, attrs);
+    }
+
     // Custom parser short-circuits inference.
     if let Some(parser) = &attrs.parser {
         let default = attrs.default.as_ref().ok_or_else(|| {
@@ -391,6 +405,37 @@ fn infer_helper_infallible(
     }
 }
 
+fn infer_duration_infallible(
+    ty: &Type,
+    env_key: &str,
+    context: &str,
+    attrs: &FieldAttrs,
+) -> syn::Result<TokenStream2> {
+    require_duration_type(ty)?;
+    let unit = attrs.duration.expect("duration attribute checked by caller");
+    let default = attrs.default.as_ref().ok_or_else(|| {
+        syn::Error::new_spanned(
+            ty,
+            "Duration field with `duration` requires `default` or `default_expr`",
+        )
+    })?;
+    let build_duration = unit.build_duration(quote! { __units });
+    let valid_units = if attrs.nonzero {
+        quote! { __units > 0 }
+    } else {
+        quote! { true }
+    };
+
+    Ok(quote! {{
+        let __default: ::std::time::Duration = #default;
+        match ::sinex_primitives::env::parse_optional::<u64>(#env_key, #context) {
+            Some(__units) if #valid_units => #build_duration.unwrap_or(__default),
+            Some(_) => __default,
+            None => __default,
+        }
+    }})
+}
+
 /// Generate strict/fallible helper calls (for `fallible` structs).
 fn infer_helper_fallible(
     ty: &Type,
@@ -398,6 +443,11 @@ fn infer_helper_fallible(
     _context: &str,
     attrs: &FieldAttrs,
 ) -> syn::Result<TokenStream2> {
+    // Duration conversion short-circuits ordinary type inference.
+    if attrs.duration.is_some() {
+        return infer_duration_fallible(ty, env_key, attrs);
+    }
+
     // Custom parser short-circuits inference.
     if let Some(parser) = &attrs.parser {
         let default = attrs.default.as_ref().ok_or_else(|| {
@@ -490,6 +540,47 @@ fn infer_helper_fallible(
     }
 }
 
+fn infer_duration_fallible(
+    ty: &Type,
+    env_key: &str,
+    attrs: &FieldAttrs,
+) -> syn::Result<TokenStream2> {
+    require_duration_type(ty)?;
+    let unit = attrs.duration.expect("duration attribute checked by caller");
+    let default = attrs.default.as_ref().ok_or_else(|| {
+        syn::Error::new_spanned(
+            ty,
+            "Duration field with `duration` requires `default` or `default_expr`",
+        )
+    })?;
+    let build_duration = unit.build_duration(quote! { __units });
+    let nonzero_check = if attrs.nonzero {
+        quote! {
+            if __units == 0 {
+                return Err(::sinex_primitives::error::SinexError::configuration(
+                    format!("Environment variable {} must be greater than zero", #env_key)
+                ));
+            }
+        }
+    } else {
+        quote! {}
+    };
+
+    Ok(quote! {{
+        match ::sinex_primitives::env::strict_parsed::<u64>(#env_key)? {
+            Some(__units) => {
+                #nonzero_check
+                #build_duration.ok_or_else(|| {
+                    ::sinex_primitives::error::SinexError::configuration(
+                        format!("Environment variable {} is too large for a Duration", #env_key)
+                    )
+                })?
+            }
+            None => #default,
+        }
+    }})
+}
+
 enum TypeKind {
     Bool,
     String,
@@ -500,6 +591,75 @@ enum TypeKind {
     PathBuf,
     Utf8PathBuf,
     Other,
+}
+
+#[derive(Clone, Copy)]
+enum DurationUnit {
+    Millis,
+    Secs,
+    Minutes,
+    Hours,
+    Days,
+}
+
+impl DurationUnit {
+    fn parse(raw: &str) -> Result<Self, String> {
+        match raw {
+            "millis" | "milliseconds" | "ms" => Ok(Self::Millis),
+            "secs" | "seconds" | "s" => Ok(Self::Secs),
+            "mins" | "minutes" | "m" => Ok(Self::Minutes),
+            "hours" | "hrs" | "h" => Ok(Self::Hours),
+            "days" | "d" => Ok(Self::Days),
+            _ => Err(format!(
+                "unknown duration unit `{raw}` (expected millis, secs, minutes, hours, or days)"
+            )),
+        }
+    }
+
+    fn build_duration(self, units: TokenStream2) -> TokenStream2 {
+        match self {
+            Self::Millis => quote! { Some(::std::time::Duration::from_millis(#units)) },
+            Self::Secs => quote! { Some(::std::time::Duration::from_secs(#units)) },
+            Self::Minutes => quote! {
+                #units
+                    .checked_mul(60)
+                    .map(::std::time::Duration::from_secs)
+            },
+            Self::Hours => quote! {
+                #units
+                    .checked_mul(60 * 60)
+                    .map(::std::time::Duration::from_secs)
+            },
+            Self::Days => quote! {
+                #units
+                    .checked_mul(24 * 60 * 60)
+                    .map(::std::time::Duration::from_secs)
+            },
+        }
+    }
+}
+
+fn require_duration_type(ty: &Type) -> syn::Result<()> {
+    let Type::Path(tp) = ty else {
+        return Err(syn::Error::new_spanned(
+            ty,
+            "`duration` can only be used on std::time::Duration fields",
+        ));
+    };
+    let Some(last) = tp.path.segments.last() else {
+        return Err(syn::Error::new_spanned(
+            ty,
+            "`duration` can only be used on std::time::Duration fields",
+        ));
+    };
+    if last.ident == "Duration" {
+        Ok(())
+    } else {
+        Err(syn::Error::new_spanned(
+            ty,
+            "`duration` can only be used on std::time::Duration fields",
+        ))
+    }
 }
 
 fn classify(ty: &Type) -> TypeKind {

@@ -3,7 +3,7 @@
 //! See `thoughtspace/crystal/decisions/sinex-config-derive.md` for the design
 //! these tests exercise.
 
-use std::{ffi::OsString, path::PathBuf};
+use std::{ffi::OsString, path::PathBuf, time::Duration};
 
 use camino::Utf8PathBuf;
 use sinex_macros::SinexConfig;
@@ -74,6 +74,15 @@ pub struct DefaultExprConfig {
     pub computed_default: u64,
 }
 
+#[derive(Debug, Clone, SinexConfig)]
+#[sinex_config(prefix = "SINEX_TEST_DURATION", context = "duration test")]
+pub struct DurationConfig {
+    #[sinex_config(default_expr = "Duration::from_secs(5)", duration = "secs", nonzero)]
+    pub timeout: Duration,
+    #[sinex_config(default_expr = "Duration::from_secs(2 * 60 * 60)", duration = "hours")]
+    pub interval: Duration,
+}
+
 const ENV_KEYS: &[&str] = &[
     "SINEX_TEST_DEFAULTS_BATCH_SIZE",
     "SINEX_TEST_DEFAULTS_INTERVAL_SECS",
@@ -82,6 +91,8 @@ const ENV_KEYS: &[&str] = &[
     "SINEX_TEST_OPTIONS_MAYBE_COUNT",
     "SINEX_TEST_OPTIONS_MAYBE_PATH",
     "SINEX_TEST_RENAME_EXPLICIT_KEY",
+    "SINEX_TEST_DURATION_TIMEOUT",
+    "SINEX_TEST_DURATION_INTERVAL",
 ];
 
 struct EnvSnapshot {
@@ -174,6 +185,27 @@ async fn sinex_config_derive_loads_env_contracts() -> TestResult<()> {
     clear_env(ENV_KEYS);
     let cfg = DefaultExprConfig::from_env();
     assert_eq!(cfg.computed_default, 1024);
+
+    clear_env(ENV_KEYS);
+    let cfg = DurationConfig::from_env();
+    assert_eq!(cfg.timeout, Duration::from_secs(5));
+    assert_eq!(cfg.interval, Duration::from_secs(2 * 60 * 60));
+
+    unsafe {
+        std::env::set_var("SINEX_TEST_DURATION_TIMEOUT", "15");
+        std::env::set_var("SINEX_TEST_DURATION_INTERVAL", "3");
+    }
+    let cfg = DurationConfig::from_env();
+    assert_eq!(cfg.timeout, Duration::from_secs(15));
+    assert_eq!(cfg.interval, Duration::from_secs(3 * 60 * 60));
+
+    unsafe {
+        std::env::set_var("SINEX_TEST_DURATION_TIMEOUT", "0");
+        std::env::set_var("SINEX_TEST_DURATION_INTERVAL", "bogus");
+    }
+    let cfg = DurationConfig::from_env();
+    assert_eq!(cfg.timeout, Duration::from_secs(5));
+    assert_eq!(cfg.interval, Duration::from_secs(2 * 60 * 60));
 
     Ok(())
 }
