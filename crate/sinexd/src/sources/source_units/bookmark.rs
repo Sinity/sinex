@@ -33,7 +33,6 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
 use crate::node_sdk::parser::{MaterialParser, ParserError, ParserResult, StaticFileAdapter};
-use crate::sources::source_units::redact_payload_strings;
 use sinex_primitives::domain::{EventSource, EventType};
 use sinex_primitives::parser::{
     InputShapeKind, MaterialAnchor, OccurrenceKey, ParsedEventIntent, ParserContext, ParserId,
@@ -158,7 +157,7 @@ fn parse_row(
         ],
     };
 
-    let payload = redact_payload_strings(serde_json::json!({
+    let payload = serde_json::json!({
         "raindrop_id": row.id,
         "url": row.url,
         "created_at": created_at,
@@ -168,7 +167,7 @@ fn parse_row(
         "excerpt": non_empty(&row.excerpt),
         "tags": non_empty(&row.tags),
         "favorite": favorite,
-    }), ProcessingContext::Metadata)?;
+    });
 
     Ok(ParsedEventIntent::builder()
         .source_unit_id(ctx.source_unit_id.clone())

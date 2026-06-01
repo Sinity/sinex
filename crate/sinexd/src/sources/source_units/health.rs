@@ -12,7 +12,6 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
 use crate::node_sdk::parser::{MaterialParser, ParserError, ParserResult, StaticFileAdapter};
-use crate::sources::source_units::redact_payload_strings;
 use sinex_primitives::domain::{EventSource, EventType};
 use sinex_primitives::parser::{
     InputShapeKind, MaterialAnchor, OccurrenceKey, ParsedEventIntent, ParserContext, ParserId,
@@ -137,7 +136,7 @@ fn parse_row(row: SleepCsvRow, line: u64, ctx: &ParserContext) -> ParserResult<P
         fields: vec![("sh_datauuid".into(), row.sh_datauuid.clone())],
     };
 
-    let payload = redact_payload_strings(serde_json::json!({
+    let payload = serde_json::json!({
         "sh_data_uuid": row.sh_datauuid,
         "start_at": start_at,
         "end_at": end_at,
@@ -152,7 +151,7 @@ fn parse_row(row: SleepCsvRow, line: u64, ctx: &ParserContext) -> ParserResult<P
         "hr_max": row.hr_max,
         "sa_comment": non_empty(&row.sa_comment),
         "sa_vs_sh_duration_minutes": row.sa_vs_sh_duration_minutes,
-    }), ProcessingContext::Metadata)?;
+    });
 
     Ok(ParsedEventIntent::builder()
         .source_unit_id(ctx.source_unit_id.clone())

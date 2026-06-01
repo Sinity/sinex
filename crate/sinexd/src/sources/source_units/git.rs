@@ -26,7 +26,6 @@ use serde::{Deserialize, Serialize};
 use tokio::process::Command;
 
 use crate::node_sdk::parser::{MaterialParser, ParserError, ParserResult, StaticFileAdapter};
-use crate::sources::source_units::redact_payload_strings;
 use sinex_primitives::domain::{EventSource, EventType};
 use sinex_primitives::parser::{
     InputShapeKind, MaterialAnchor, OccurrenceKey, ParsedEventIntent, ParserContext, ParserId,
@@ -390,7 +389,7 @@ fn build_intent(
         ],
     };
 
-    let payload = redact_payload_strings(serde_json::json!({
+    let payload = serde_json::json!({
         "commit_sha": commit.sha,
         "repo_path": repo_path,
         "author_name": commit.author_name,
@@ -404,7 +403,7 @@ fn build_intent(
         "deletions": stats.deletions,
         "parent_count": commit.parent_count(),
         "author_timestamp": ts_orig,
-    }), ProcessingContext::Document)?;
+    });
 
     Ok(ParsedEventIntent::builder()
         .source_unit_id(ctx.source_unit_id.clone())
