@@ -254,6 +254,13 @@ impl NodeConfig {
 
     /// Load configuration from environment and defaults.
     ///
+    /// This loader intentionally stays hand-written instead of using
+    /// `SinexConfig`: node runtime config has a dynamic service prefix
+    /// (`SINEX_<SERVICE>_*`) that falls back to global `SINEX_*` keys, plus
+    /// the deployment-standard bare `DATABASE_URL` fallback. The derive macro
+    /// handles fixed-prefix structs; this path is the shared per-binding
+    /// override contract for source units and automata.
+    ///
     /// Creates a configuration using environment variables with fallback to
     /// default values. This is the preferred method for production deployments.
     ///
@@ -362,6 +369,9 @@ impl EventSourceConfig {
     }
 
     /// Load configuration for an event source ingestor from environment and defaults.
+    ///
+    /// See `NodeConfig::load_from_env` for why node runtime config preserves a
+    /// hand-written dynamic-prefix loader instead of deriving `SinexConfig`.
     pub fn load_from_env(service_name: &str) -> Result<Self, ConfigError> {
         let defaults = Self::defaults(service_name);
         let env_prefix = NodeConfig::env_prefix(service_name);
@@ -409,6 +419,9 @@ impl AutomatonConfig {
     }
 
     /// Load configuration for an automaton from environment and defaults.
+    ///
+    /// See `NodeConfig::load_from_env` for why node runtime config preserves a
+    /// hand-written dynamic-prefix loader instead of deriving `SinexConfig`.
     pub fn load_from_env(service_name: &str) -> Result<Self, ConfigError> {
         let defaults = Self::defaults(service_name);
         let env_prefix = NodeConfig::env_prefix(service_name);
@@ -741,5 +754,87 @@ impl Default for MaterialMetadataPolicy {
             redact_home_prefix: true,
             path_class_rules: Vec::new(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{AutomatonConfig, EventSourceConfig, NodeConfig};
+    use camino::Utf8PathBuf;
+    use xtask::sandbox::{EnvGuard, TestResult, sinex_serial_test};
+
+    #[sinex_serial_test]
+    async fn node_config_prefers_service_over_global_env() -> TestResult<()> {
+        let mut env = EnvGuard::new();
+        env.set("SINEX_CAPTURE_AGENT_LOG_LEVEL", "debug");
+        env.set("SINEX_LOG_LEVEL", "warn");
+        env.set("SINEX_CAPTURE_AGENT_DB_POOL_SIZE", "17");
+        env.set("SINEX_DB_POOL_SIZE", "11");
+        env.set("SINEX_CAPTURE_AGENT_WORK_DIR", "/tmp/sinex-capture-agent");
+        env.set("SINEX_WORK_DIR", "/tmp/sinex-global");
+        env.set("SINEX_CAPTURE_AGENT_DRY_RUN", "true");
+        env.set("SINEX_DRY_RUN", "false");
+        env.set(
+            "SINEX_CAPTURE_AGENT_DATABASE_URL",
+            "postgresql://service/database",
+        );
+        env.set("DATABASE_URL", "postgresql://bare/database");
+
+        let config = NodeConfig::load_from_env("capture-agent")?;
+
+        assert_eq!(config.log_level, "debug");
+        assert_eq!(config.database_pool_size, 17);
+        assert_eq!(config.work_dir, Utf8PathBuf::from("/tmp/sinex-capture-agent"));
+        assert!(config.dry_run);
+        assert_eq!(
+            config.database_url.as_deref(),
+            Some("postgresql://service/database")
+        );
+        Ok(())
+    }
+
+    #[sinex_serial_test]
+    async fn node_config_uses_global_then_bare_database_url() -> TestResult<()> {
+        let mut env = EnvGuard::new();
+        env.set("SINEX_LOG_LEVEL", "error");
+        env.set("SINEX_DATABASE_POOL_SIZE", "23");
+        env.set("DATABASE_URL", "postgresql://bare/database");
+
+        let config = NodeConfig::load_from_env("capture-agent")?;
+
+        assert_eq!(config.log_level, "error");
+        assert_eq!(config.database_pool_size, 23);
+        assert_eq!(
+            config.database_url.as_deref(),
+            Some("postgresql://bare/database")
+        );
+        Ok(())
+    }
+
+    #[sinex_serial_test]
+    async fn source_and_automaton_configs_share_dynamic_service_prefix() -> TestResult<()> {
+        let mut env = EnvGuard::new();
+        env.set("SINEX_CAPTURE_AGENT_BATCH_SIZE", "41");
+        env.set("SINEX_CAPTURE_AGENT_BATCH_TIMEOUT_SECS", "9");
+        env.set("SINEX_CANONICALIZER_CONSUMER_GROUP", "semantic-workers");
+        env.set("SINEX_CANONICALIZER_CONSUMER_NAME", "canonicalizer-1");
+        env.set("SINEX_CANONICALIZER_TOPICS", "command.executed,file.created");
+        env.set("SINEX_CANONICALIZER_PROCESSING_BATCH_SIZE", "13");
+        env.set("SINEX_CANONICALIZER_CHECKPOINT_INTERVAL_SECS", "27");
+
+        let source = EventSourceConfig::load_from_env("capture-agent")?;
+        let automaton = AutomatonConfig::load_from_env("canonicalizer")?;
+
+        assert_eq!(source.batch_size, 41);
+        assert_eq!(source.batch_timeout_secs.as_secs(), 9);
+        assert_eq!(automaton.consumer_group, "semantic-workers");
+        assert_eq!(automaton.consumer_name, "canonicalizer-1");
+        assert_eq!(
+            automaton.topics,
+            vec!["command.executed".to_string(), "file.created".to_string()]
+        );
+        assert_eq!(automaton.processing_batch_size, 13);
+        assert_eq!(automaton.checkpoint_interval_secs.as_secs(), 27);
+        Ok(())
     }
 }
