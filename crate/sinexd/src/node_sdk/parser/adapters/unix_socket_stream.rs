@@ -277,14 +277,14 @@ mod tests {
 
         let mut indices = Vec::new();
         for record in &records {
-            match &record.as_ref().unwrap().anchor {
-                MaterialAnchor::StreamFrame { frame_index, .. } => indices.push(*frame_index),
-                other => {
-                    return Err(color_eyre::eyre::eyre!(
-                        "expected stream-frame anchor, got {other:?}"
-                    ));
-                }
-            }
+            let MaterialAnchor::StreamFrame { frame_index, .. } = &record.as_ref().unwrap().anchor
+            else {
+                panic!(
+                    "expected stream-frame anchor, got {:?}",
+                    record.as_ref().unwrap().anchor
+                );
+            };
+            indices.push(*frame_index);
         }
 
         for w in indices.windows(2) {

@@ -361,16 +361,16 @@ mod tests {
     use crate::event_engine::policy::PolicyEngine;
     use sinex_db::DbPoolExt;
     use sinex_primitives::error::ErrorClass;
-    use xtask::sandbox::prelude::{TestResult, sinex_test};
+    use xtask::sandbox::prelude::sinex_test;
 
     #[sinex_test]
-    async fn parse_retry_count_header_defaults_when_missing() -> TestResult<()> {
+    async fn parse_retry_count_header_defaults_when_missing() -> xtask::sandbox::TestResult<()> {
         assert_eq!(parse_retry_count_header(None)?, 0);
         Ok(())
     }
 
     #[sinex_test]
-    async fn parse_retry_count_header_rejects_invalid_value() -> TestResult<()> {
+    async fn parse_retry_count_header_rejects_invalid_value() -> xtask::sandbox::TestResult<()> {
         let mut headers = async_nats::HeaderMap::new();
         headers.insert("Retry-Count", "not-a-number");
 
@@ -384,7 +384,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn require_stream_sequence_rejects_missing_metadata() -> TestResult<()> {
+    async fn require_stream_sequence_rejects_missing_metadata() -> xtask::sandbox::TestResult<()> {
         let error = require_stream_sequence(Err("missing reply metadata".to_string()))
             .expect_err("missing message metadata must fail honestly");
         assert_eq!(error.error_class(), ErrorClass::TransientInfra);
@@ -400,7 +400,7 @@ mod tests {
     #[sinex_test]
     async fn payload_preview_truncates_without_breaking_unicode(
         ctx: xtask::sandbox::TestContext,
-    ) -> TestResult<()> {
+    ) -> xtask::sandbox::TestResult<()> {
         let policy = PolicyEngine::load(ctx.pool().clone()).await?;
         let payload = "żółw".repeat(80);
         let preview = payload_preview(&policy, &payload, 200).await;
@@ -414,7 +414,7 @@ mod tests {
     #[sinex_test]
     async fn payload_preview_applies_db_policy_to_raw_dlq_bytes(
         ctx: xtask::sandbox::TestContext,
-    ) -> TestResult<()> {
+    ) -> xtask::sandbox::TestResult<()> {
         let pool = ctx.pool();
         let repo = pool.privacy_policy();
         repo.add_rule(

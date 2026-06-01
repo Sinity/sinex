@@ -371,6 +371,7 @@ mod tests {
     use super::*;
     use std::sync::Arc;
     use std::sync::atomic::{AtomicBool, Ordering};
+    use xtask::sandbox::prelude::sinex_test;
 
     /// Marker env var used by the concurrent-binding regression test. Picked
     /// to be specific enough that no other code in the process sets it.
@@ -381,8 +382,8 @@ mod tests {
     /// Pre-fix, the second binding's `set_var` would clobber the first's
     /// value; the global `BINDING_ENV_LOCK` plus `EnvGuard` save/restore
     /// guarantees serialized, isolated env mutation.
-    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-    async fn concurrent_bindings_see_their_own_env_values() {
+    #[sinex_test]
+    async fn concurrent_bindings_see_their_own_env_values() -> xtask::sandbox::TestResult<()> {
         // Ensure no stale value leaks in from a prior test run.
         // SAFETY: test is single-threaded at this point; no readers yet.
         unsafe {
@@ -430,6 +431,7 @@ mod tests {
             std::env::var(TEST_KEY).is_err(),
             "EnvGuard did not restore unset state after drop"
         );
+        Ok(())
     }
 
     /// Regression for the deadlock introduced by holding `BINDING_ENV_LOCK`
@@ -444,8 +446,8 @@ mod tests {
     /// env isolation across the full factory lifetime — that contract is
     /// limited to the first poll (factory sync prefix) per
     /// [`BINDING_ENV_LOCK`]'s docs.
-    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-    async fn env_locked_factory_releases_lock_after_first_poll() {
+    #[sinex_test]
+    async fn env_locked_factory_releases_lock_after_first_poll() -> xtask::sandbox::TestResult<()> {
         use std::sync::Arc;
         use std::sync::atomic::{AtomicUsize, Ordering};
         use std::task::Poll;
@@ -522,12 +524,13 @@ mod tests {
             std::env::remove_var(KEY_A);
             std::env::remove_var(KEY_B);
         }
+        Ok(())
     }
 
     /// Installing an `EnvGuard` over an empty map is a no-op and does not
     /// touch the environment.
-    #[test]
-    fn env_guard_empty_is_noop() {
+    #[sinex_test]
+    async fn env_guard_empty_is_noop() -> xtask::sandbox::TestResult<()> {
         let key = "SINEX_BINDINGS_TEST_EMPTY_NOOP";
         // SAFETY: scoped to a key no one else uses.
         unsafe {
@@ -539,12 +542,13 @@ mod tests {
             assert!(std::env::var(key).is_err());
         }
         assert!(std::env::var(key).is_err());
+        Ok(())
     }
 
     /// Installing an `EnvGuard` over a key that had a prior value restores
     /// the prior value on drop, not unsets it.
-    #[test]
-    fn env_guard_restores_prior_value() {
+    #[sinex_test]
+    async fn env_guard_restores_prior_value() -> xtask::sandbox::TestResult<()> {
         let key = "SINEX_BINDINGS_TEST_RESTORE";
         // SAFETY: scoped to a unique key; not in scope for the multi-thread
         // race test above.
@@ -566,5 +570,6 @@ mod tests {
         unsafe {
             std::env::remove_var(key);
         }
+        Ok(())
     }
 }

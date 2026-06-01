@@ -7,8 +7,11 @@ rule:
 ignores:
   # Dynamic queries are sometimes unavoidable
   - "crate/sinexd/src/api/cascade_analyzer.rs"
-  - "crate/sinexd/src/api/rpc_server.rs"
   - "crate/sinexd/src/api/handlers/**"
+  - "crate/sinexd/src/node_sdk/preflight/**"
+  - "crate/sinexd/src/event_engine/material_assembler/**"
+  - "crate/sinexd/src/event_engine/service.rs"
+  - "crate/sinexd/src/event_engine/jetstream_consumer.rs"
   # Database infrastructure (advisory locks, session control)
   - "crate/sinex-db/src/pool.rs"
   - "crate/sinex-db/src/lib.rs"
@@ -16,7 +19,6 @@ ignores:
   - "crate/sinex-db/src/repositories/**"
   - "crate/sinex-db/src/replay/**"
   # Preflight/migration infrastructure
-  - "crate/lib/sinex-node-sdk/src/preflight/**"
   # Test infrastructure
   - "xtask/**"
   - "**/tests/**"
