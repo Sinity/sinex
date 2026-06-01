@@ -721,7 +721,9 @@ async fn derived_export_is_explicitly_unavailable() -> TestResult<()> {
 
 #[cfg(feature = "messaging")]
 #[sinex_test]
-async fn derived_source_state_reflects_failed_health_reporter(ctx: TestContext) -> TestResult<()> {
+async fn derived_source_state_reflects_unhealthy_health_reporter(
+    ctx: TestContext,
+) -> TestResult<()> {
     let ctx = ctx.with_nats().shared().await?;
     let mut adapter = AutomatonRuntime::new(TransducerWrapper(TestDerivedNode));
     adapter.runtime = Some(make_runtime_state(&ctx, "test-derived", None).await?);
@@ -752,13 +754,13 @@ async fn derived_source_state_reflects_failed_health_reporter(ctx: TestContext) 
 
     assert!(state.is_connected);
     assert!(!state.healthy);
-    assert!(state.description.contains("status=failed"));
+    assert!(state.description.contains("status=unhealthy"));
     assert_eq!(
         state
             .metadata
             .get("health_status")
             .and_then(serde_json::Value::as_str),
-        Some("failed")
+        Some("unhealthy")
     );
     Ok(())
 }

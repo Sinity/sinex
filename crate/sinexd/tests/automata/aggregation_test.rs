@@ -119,7 +119,7 @@ async fn health_aggregator_rejects_missing_ts_orig(ctx: TestContext) -> TestResu
 }
 
 #[sinex_test]
-async fn health_aggregator_emits_alert_on_failed_transition(ctx: TestContext) -> TestResult<()> {
+async fn health_aggregator_emits_alert_on_unhealthy_transition(ctx: TestContext) -> TestResult<()> {
     let mut aggregator = HealthAggregator::default();
     let mut state = HealthState::default();
 
@@ -132,11 +132,11 @@ async fn health_aggregator_emits_alert_on_failed_transition(ctx: TestContext) ->
     let context_baseline = make_context(Timestamp::now() - Duration::seconds(10));
     process(&mut aggregator, &mut state, baseline, &context_baseline).await?;
 
-    // Transition to failed status
+    // Transition to unhealthy status
     let input = json!({
         "component": "critical-service",
         "previous_status": "healthy",
-        "current_status": "failed",
+        "current_status": "unhealthy",
     });
 
     let context = make_context(Timestamp::now());
@@ -151,7 +151,7 @@ async fn health_aggregator_emits_alert_on_failed_transition(ctx: TestContext) ->
             output.payload.get("alert_type").and_then(|v| v.as_str())
                 == Some("component_status_change")
         })
-        .expect("failed transition should emit an alert");
+        .expect("unhealthy transition should emit an alert");
     assert_eq!(
         alert.payload.get("alert_type").and_then(|v| v.as_str()),
         Some("component_status_change"),
@@ -885,7 +885,7 @@ async fn test_reconcile_output_has_declared_effective_policy() -> TestResult<()>
     let input = json!({
         "component": "service-a",
         "previous_status": "healthy",
-        "current_status": "failed",
+        "current_status": "unhealthy",
     });
 
     let ctx = make_context(Timestamp::now());
@@ -899,7 +899,7 @@ async fn test_reconcile_output_has_declared_effective_policy() -> TestResult<()>
                 .and_then(serde_json::Value::as_str)
                 == Some("component_status_change")
         })
-        .expect("failed transition should emit alert");
+        .expect("unhealthy transition should emit alert");
 
     assert_eq!(
         output.temporal_policy,
