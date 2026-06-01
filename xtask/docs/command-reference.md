@@ -46,6 +46,7 @@ Regenerate with `xtask docs sync` or `xtask docs command-reference`; verify drif
 | `exercise` | Full surface area validation for xtask commands |
 | `reset` | Reset developer state for a fresh start |
 | `__reap` | Internal detached process watchdog — not for human use |
+| `record-drift-bypass` | Internal: record drift guard bypass events from the pre-push hook (#1565) |
 
 ## `xtask fix`
 
@@ -240,8 +241,8 @@ Run command for binary lifecycle management
 
 | Command | Purpose |
 |---|---|
-| `ingestd` | Run sinex-ingestd |
-| `gateway` | Run sinex-gateway |
+| `ingestd` | Run sinexd (alias preserved post-collapse; runs the full supervisor) |
+| `gateway` | Run sinexd (alias preserved post-collapse; runs the full supervisor) |
 | `node` | Run a specific node by name |
 | `core` | Run core services bundle (ingestd + gateway) |
 | `all-ingestors` | Run all ingestors |
@@ -251,7 +252,7 @@ Run command for binary lifecycle management
 
 ### `xtask run ingestd`
 
-Run sinex-ingestd
+Run sinexd (alias preserved post-collapse; runs the full supervisor)
 
 **Arguments**
 
@@ -262,7 +263,7 @@ Run sinex-ingestd
 
 ### `xtask run gateway`
 
-Run sinex-gateway
+Run sinexd (alias preserved post-collapse; runs the full supervisor)
 
 **Arguments**
 
@@ -1461,15 +1462,15 @@ Run privacy-engine catalog, test, key, and config utilities
 
 | Command | Purpose |
 |---|---|
-| `catalog` | List all privacy rules in the built-in catalog |
-| `test` | Test input text against the privacy engine |
+| `catalog` | List privacy rule seed catalog entries |
+| `test` | Test input text against the configured local privacy engine |
 | `decrypt` | Decrypt an encrypted privacy token |
 | `key` | Show privacy key information |
 | `config` | Show or generate privacy configuration |
 
 ### `xtask privacy catalog`
 
-List all privacy rules in the built-in catalog
+List privacy rule seed catalog entries
 
 **Arguments**
 
@@ -1481,14 +1482,14 @@ List all privacy rules in the built-in catalog
 
 ### `xtask privacy test`
 
-Test input text against the privacy engine
+Test input text against the configured local privacy engine
 
 **Arguments**
 
 | Flag | Value | Required | Description |
 |---|---|---|---|
 | `input` | yes | yes | Input text to process |
-| `-c, --context` | yes | no | Processing context (command, clipboard, window_title, journal, dbus, notification, document, metadata) |
+| `-c, --context` | yes | no | Processing context (command, clipboard, journal, dbus, notification, document, metadata, source_capture) |
 
 
 ### `xtask privacy decrypt`
@@ -1558,7 +1559,7 @@ Verify phase plans and performance contracts
 | `report` | Print summary from a perf report JSON |
 | `compare` | Compare two perf reports |
 | `all` | Run perf only |
-| `source-worker` | Source-worker evidence gate: NixOS binding drift, parser registration, and privacy invocation |
+| `source-worker` | Source-worker evidence gate: NixOS binding drift, parser registration, and sensitivity annotation |
 | `closure` | Operationalize the 2026-05-11 closure-verification policy: fetch an issue body via `gh`, extract AC checkboxes and shell code blocks marked `verify`, and run each command, reporting pass/fail per command |
 | `claims` | Summarize executable verification claims, runner commands, and deferrals |
 
@@ -1635,7 +1636,7 @@ Run perf only
 
 ### `xtask verify source-worker`
 
-Source-worker evidence gate: NixOS binding drift, parser registration, and privacy invocation
+Source-worker evidence gate: NixOS binding drift, parser registration, and sensitivity annotation
 
 **Arguments**
 
@@ -1936,4 +1937,16 @@ Internal detached process watchdog — not for human use
 | `--job-id` | yes | yes | Background job ID to mark as killed on timeout |
 | `--db-path` | yes | yes | Path to the history DB file |
 | `--job-dir` | yes | yes | Directory containing the job's exit_code file (written on timeout) |
+
+
+## `xtask record-drift-bypass`
+
+Internal: record drift guard bypass events from the pre-push hook (#1565)
+
+**Arguments**
+
+| Flag | Value | Required | Description |
+|---|---|---|---|
+| `--branch` | yes | no | The git branch being pushed |
+| `--sha` | yes | no | The HEAD commit SHA at the time of bypass |
 

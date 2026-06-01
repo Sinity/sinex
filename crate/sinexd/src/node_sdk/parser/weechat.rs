@@ -34,7 +34,6 @@ use sinex_primitives::parser::{
     InputShapeKind, ParsedEventIntent, ParserContext, ParserId, ParserManifest, SourceUnitId,
     TimingConfidence, TimingEvidence,
 };
-use sinex_primitives::privacy::ProcessingContext;
 use sinex_primitives::temporal::Timestamp;
 
 use super::{MaterialParser, ParserError, ParserResult};
@@ -164,7 +163,10 @@ impl MaterialParser for WeeChatLogParser {
                     EventType::from_static("irc.message"),
                 ),
             ],
-            privacy_contexts: vec![ProcessingContext::Command],
+            field_hints: vec![
+                sinex_primitives::parser::FieldSensitivityHint::FreeText,
+                sinex_primitives::parser::FieldSensitivityHint::CredentialBearing,
+            ],
             proof_obligations: vec![
                 "timestamp_intrinsic".into(),
                 "event_type_from_prefix".into(),
@@ -225,7 +227,10 @@ impl MaterialParser for WeeChatLogParser {
                 confidence: TimingConfidence::Intrinsic,
             })
             .anchor(anchor)
-            .privacy_context(ProcessingContext::Command)
+            .privacy_hints(vec![
+                sinex_primitives::parser::FieldSensitivityHint::FreeText,
+                sinex_primitives::parser::FieldSensitivityHint::CredentialBearing,
+            ])
             .build();
 
         Ok(vec![intent])

@@ -19,7 +19,6 @@ use sinex_primitives::{
         InputShapeKind, ParsedEventIntent, ParserContext, ParserId, ParserManifest, SourceRecord,
         SourceUnitId, TimingEvidence,
     },
-    privacy::{self, ProcessingContext},
     temporal::Timestamp,
 };
 
@@ -45,10 +44,10 @@ impl MaterialParser for FilesystemParser {
                 (FileDeletedPayload::SOURCE, FileDeletedPayload::EVENT_TYPE),
                 (FileMovedPayload::SOURCE, FileMovedPayload::EVENT_TYPE),
             ],
-            privacy_contexts: vec![ProcessingContext::Metadata],
+            field_hints: vec![sinex_primitives::parser::FieldSensitivityHint::SystemMetadata],
             proof_obligations: vec![
                 "filesystem_event_kind_dispatch".into(),
-                "privacy_path_redaction".into(),
+                "path_sensitive_hint".into(),
             ],
             description: "Maps FileDropAdapter records to filesystem event payloads.".into(),
         }
@@ -191,17 +190,14 @@ fn intent<T: serde::Serialize>(
         .ts_orig(ts)
         .timing(timing)
         .anchor(record.anchor.clone())
-        .privacy_context(ProcessingContext::Metadata)
+        .privacy_hints(vec![
+            sinex_primitives::parser::FieldSensitivityHint::SystemMetadata,
+        ])
         .build())
 }
 
 fn recorded_path(path: &str) -> Result<RecordedPath, ParserError> {
-    let redacted = privacy::engine()
-        .map_err(|error| ParserError::Privacy(error.to_string()))?
-        .process(path, ProcessingContext::Metadata)
-        .text
-        .into_owned();
-    RecordedPath::from_observed(redacted).map_err(ParserError::Field)
+    RecordedPath::from_observed(path.to_string()).map_err(ParserError::Field)
 }
 
 async fn file_size_hint(record: &SourceRecord, metadata: &FileDropRecordMetadata) -> u64 {

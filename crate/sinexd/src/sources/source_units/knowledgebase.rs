@@ -10,7 +10,7 @@
 //! - Inline `#tag` tokens from the body
 //! - A BLAKE3 hex digest of the body for content-change detection
 //!
-//! Privacy tier: `Sensitive` + `ProcessingContext::Document` — personal notes.
+//! Sensitivity tier: `Sensitive` — personal notes carry document/body field hints.
 
 use async_trait::async_trait;
 use camino::Utf8PathBuf;
@@ -24,7 +24,6 @@ use sinex_primitives::parser::{
     InputShapeKind, MaterialAnchor, OccurrenceKey, ParsedEventIntent, ParserContext, ParserId,
     ParserManifest, SourceRecord, SourceUnitId, TimingConfidence, TimingEvidence,
 };
-use sinex_primitives::privacy::ProcessingContext;
 use sinex_primitives::proof::{
     CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, RetentionPolicy, RuntimeShape,
     SourceUnitBinding, SourceUnitBuildImpact, SourceUnitDescriptor, SubjectRef,
@@ -234,7 +233,11 @@ impl MaterialParser for KnowledgebaseVaultParser {
                 EventSource::from_static(EVENT_SOURCE),
                 EventType::from_static(EVENT_TYPE),
             )],
-            privacy_contexts: vec![ProcessingContext::Document],
+            field_hints: vec![
+                sinex_primitives::parser::FieldSensitivityHint::FreeText,
+                sinex_primitives::parser::FieldSensitivityHint::MessageBody,
+                sinex_primitives::parser::FieldSensitivityHint::PotentiallySensitive,
+            ],
             proof_obligations: vec![
                 "timestamp_from_mtime_or_now".into(),
                 "anchor_directory_entry_content_hash".into(),
@@ -337,7 +340,11 @@ impl MaterialParser for KnowledgebaseVaultParser {
             .timing(timing)
             .anchor(anchor)
             .occurrence_key(occurrence_key)
-            .privacy_context(ProcessingContext::Document)
+            .privacy_hints(vec![
+                sinex_primitives::parser::FieldSensitivityHint::FreeText,
+                sinex_primitives::parser::FieldSensitivityHint::MessageBody,
+                sinex_primitives::parser::FieldSensitivityHint::PotentiallySensitive,
+            ])
             .build();
 
         Ok(vec![intent])
@@ -446,7 +453,7 @@ register_source_unit_binding! {
     .implementation("sinex-source-worker")
     .adapter("DirectoryWalkAdapter")
     .output_event_type("note.observed")
-    .privacy_context("Document")
+    .sensitivity_profile("Document")
     .material_policy("directory_walk")
     .checkpoint_policy("directory_walk_cursor")
     .resource_shape("file_reader")

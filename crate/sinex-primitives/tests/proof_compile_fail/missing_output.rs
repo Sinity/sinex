@@ -10,7 +10,7 @@ fn main() {
         "test",
     )
     .adapter("sqlite_row_stream")
-    .privacy_context("command")
+    .sensitivity_profile("command")
     .material_policy("canonical_json_lines")
     .checkpoint_policy("row_id")
     .checkpoint_family(CheckpointFamily::AppendStream)

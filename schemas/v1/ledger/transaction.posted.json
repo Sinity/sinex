@@ -34,7 +34,7 @@
     }
   },
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "description": "One hledger/ledger-format transaction from a personal journal file\n(#1074).\n\nEmitted once per transaction block. A block starts with a\n`YYYY-MM-DD <payee>|<description>` header line (the pipe separator\nis a personal convention used in this journal to split payee from\nnarration) followed by two or more posting lines.\n\nPrivacy tier is Sensitive: the journal contains merchant names,\nincome amounts, and account hierarchy that reveals purchasing and\nsalary patterns.",
+  "description": "One hledger/ledger-format transaction from a personal journal file\n(#1074).\n\nEmitted once per transaction block. A block starts with a\n`YYYY-MM-DD <payee>|<description>` header line (the pipe separator\nis a personal convention used in this journal to split payee from\nnarration) followed by two or more posting lines.\n\nSensitivity tier is Sensitive: the journal contains merchant names,\nincome amounts, and account hierarchy that reveals purchasing and\nsalary patterns.",
   "properties": {
     "comment": {
       "description": "Inline comment on the transaction header line (`;` prefix),\nstripped of the leading semicolon. `None` when absent.",

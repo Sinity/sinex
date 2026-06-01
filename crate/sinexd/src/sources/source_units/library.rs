@@ -44,7 +44,6 @@ use sinex_primitives::{
         InputShapeKind, MaterialAnchor, OccurrenceKey, ParsedEventIntent, ParserContext, ParserId,
         ParserManifest, SourceRecord, SourceUnitId, TimingEvidence,
     },
-    privacy::{self, ProcessingContext},
     proof::{
         CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, RetentionPolicy, RuntimeShape,
         SourceUnitBinding, SourceUnitBuildImpact, SourceUnitDescriptor, SubjectRef,
@@ -94,7 +93,7 @@ register_source_unit_binding! {
     .implementation("sinex-source-worker")
     .adapter("DirectoryWalkAdapter")
     .output_event_type("document.indexed")
-    .privacy_context("Metadata")
+    .sensitivity_profile("Metadata")
     .material_policy("directory_walk_fingerprint")
     .checkpoint_policy("directory_walk_cursor")
     .resource_shape("file_reader")
@@ -242,7 +241,7 @@ fn extract_author_title(stem: &str) -> (Option<String>, Option<String>) {
 /// 2. Uses `bytes.len()` for `byte_size`.
 /// 3. Reads mtime from the live filesystem (path from anchor).
 /// 4. Applies filename heuristics to derive optional fields.
-/// 5. Runs `ProcessingContext::Metadata` privacy on the path string.
+/// 5. Emits path metadata with sensitivity hints for admission policy.
 #[derive(Debug, Clone, Default)]
 pub struct DocsLibraryParser;
 
@@ -260,7 +259,7 @@ impl MaterialParser for DocsLibraryParser {
                 EventSource::from_static("docs-library"),
                 EventType::from_static("document.indexed"),
             )],
-            privacy_contexts: vec![ProcessingContext::Metadata],
+            field_hints: vec![sinex_primitives::parser::FieldSensitivityHint::SystemMetadata],
             proof_obligations: vec![
                 "anchor_directory_entry".into(),
                 "timestamp_inferred_mtime".into(),
@@ -309,26 +308,10 @@ impl MaterialParser for DocsLibraryParser {
         let external_id = extract_external_id(&stem.to_lowercase());
         let (author_hint, title_hint) = extract_author_title(stem);
 
-        // Privacy: apply Metadata context to the path.  This collapses home
-        // directory prefixes and redacts other sensitive path segments.
-        let redacted_path = match privacy::engine() {
-            Ok(engine) => {
-                let result = engine.process(path_buf.as_str(), ProcessingContext::Metadata);
-                if result.suppressed {
-                    // Suppressed path — skip the event.
-                    return Ok(vec![]);
-                }
-                result.text.into_owned()
-            }
-            // Fail closed: if the privacy engine cannot initialize we must not
-            // emit the raw path. Propagate the error rather than leaking it.
-            Err(e) => {
-                return Err(ParserError::Privacy(format!("privacy engine: {e}")));
-            }
-        };
+        let observed_path = path_buf.as_str().to_string();
 
         let payload = serde_json::json!({
-            "path": redacted_path,
+            "path": observed_path,
             "filename": filename,
             "extension": extension,
             "byte_size": byte_size,
@@ -345,7 +328,7 @@ impl MaterialParser for DocsLibraryParser {
             OccurrenceKey {
                 source_unit_id: SourceUnitId::from_static("docs-library-index"),
                 fields: vec![
-                    ("path".into(), redacted_path.clone()),
+                    ("path".into(), observed_path.clone()),
                     ("content_hash".into(), hash_field),
                 ],
             }
@@ -362,7 +345,9 @@ impl MaterialParser for DocsLibraryParser {
             .timing(mtime_confidence)
             .anchor(record.anchor.clone())
             .occurrence_key(occurrence_key)
-            .privacy_context(ProcessingContext::Metadata)
+            .privacy_hints(vec![
+                sinex_primitives::parser::FieldSensitivityHint::SystemMetadata,
+            ])
             .build();
 
         Ok(vec![intent])

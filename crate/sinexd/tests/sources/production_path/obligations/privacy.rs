@@ -19,8 +19,8 @@
 //! This obligation therefore tests that the engine redacts secret-bearing bytes
 //! before they would be embedded in event payloads, using the engine directly.
 //!
-//! For a full end-to-end privacy proof (ingestor → engine → NATS → ingestd →
-//! DB, verifying `field_privacy_log` entries), the binary launcher is required.
+//! For a full end-to-end privacy proof (ingestor → admission policy → NATS →
+//! ingestd → DB, verifying policy decisions), the binary launcher is required.
 //! That path is gated on the substrate gap noted in
 //! `initial_ingestion::substrate_gaps()`.
 //!

@@ -1390,7 +1390,6 @@ mod tests {
     use sinex_primitives::domain::{EventSource, EventType};
     use sinex_primitives::events::Event;
     use sinex_primitives::parser::{MaterialAnchor, ParserId, ParserManifest, SourceUnitId};
-    use sinex_primitives::privacy::ProcessingContext;
     use sinex_primitives::privacy::{
         RuntimePrivateModeState, load_private_mode_state, private_mode_state_path,
         save_private_mode_state,
@@ -1479,7 +1478,7 @@ mod tests {
                     EventSource::from_static("test"),
                     EventType::from_static("test.event"),
                 )],
-                privacy_contexts: vec![ProcessingContext::Metadata],
+                field_hints: vec![sinex_primitives::parser::FieldSensitivityHint::SystemMetadata],
                 proof_obligations: Vec::new(),
                 description: String::new(),
             }
@@ -1605,7 +1604,7 @@ mod tests {
                     EventSource::from_static("test"),
                     EventType::from_static("test.event"),
                 )],
-                privacy_contexts: vec![ProcessingContext::Metadata],
+                field_hints: vec![sinex_primitives::parser::FieldSensitivityHint::SystemMetadata],
                 proof_obligations: Vec::new(),
                 description: String::new(),
             }
@@ -1627,7 +1626,9 @@ mod tests {
                     .ts_orig(ctx.acquisition_time)
                     .timing(sinex_primitives::parser::TimingEvidence::StagedAtFallback)
                     .anchor(record.anchor)
-                    .privacy_context(ProcessingContext::Metadata)
+                    .privacy_hints(vec![
+                        sinex_primitives::parser::FieldSensitivityHint::SystemMetadata,
+                    ])
                     .build(),
             ])
         }

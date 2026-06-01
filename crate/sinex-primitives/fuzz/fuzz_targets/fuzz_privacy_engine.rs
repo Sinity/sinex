@@ -9,7 +9,6 @@ fuzz_target!(|data: &[u8]| {
         for ctx in [
             ProcessingContext::Command,
             ProcessingContext::Clipboard,
-            ProcessingContext::WindowTitle,
             ProcessingContext::Journal,
             ProcessingContext::Dbus,
             ProcessingContext::Notification,

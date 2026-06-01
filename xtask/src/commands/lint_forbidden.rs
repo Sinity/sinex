@@ -256,7 +256,7 @@ impl XtaskCommand for LintForbiddenCommand {
         // Check for test-utils usage in production code (layering violation)
         check_test_utils_layering(&mut violations)?;
 
-        // C1: Secret-tier source units must invoke the privacy engine
+        // C1: Secret-tier source units must declare sensitivity annotations.
         violations.extend(check_secret_tier_privacy_coverage()?);
 
         let ast_grep = run_ast_grep_scan()?;
@@ -373,26 +373,24 @@ fn check_transport_publish_family_inventory() -> Result<Vec<String>> {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Privacy invocation gate
+// Sensitivity annotation gate
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Indicators that a file properly invokes the privacy engine.
+/// Indicators that a file properly invokes the sensitivity annotations.
 ///
 /// Any one of these present in a file satisfies the gate:
 ///
-/// - `privacy::engine(` — direct engine access
-/// - `privacy::process(` — per-field process call
-/// - `privacy::process_json(` — JSON payload process call
-/// - `ProcessingContext::` — uses a context variant (imperative parsers, e.g. WeeChat)
-/// - `default_privacy_context =` — declarative `#[source_record]` DSL attribute
-/// - `#[allow(missing_privacy_invocation` — explicit escape hatch with required `reason =`
-const PRIVACY_INVOCATION_INDICATORS: &[&str] = &[
-    "privacy::engine(",
-    "privacy::process(",
-    "privacy::process_json(",
-    "ProcessingContext::",
-    "default_privacy_context =",
-    "#[allow(missing_privacy_invocation",
+/// - `field_hints:` — parser manifest declares field sensitivity hints
+/// - `.privacy_hints(` — parser intent declares field sensitivity hints
+/// - `default_privacy_hints =` — declarative `#[source_record]` DSL attribute
+/// - `sensitivity_profile(` — source-unit binding metadata
+/// - `#[allow(missing_sensitivity_annotation` — explicit escape hatch with required `reason =`
+const SENSITIVITY_ANNOTATION_INDICATORS: &[&str] = &[
+    "field_hints:",
+    ".privacy_hints(",
+    "default_privacy_hints =",
+    "sensitivity_profile(",
+    "#[allow(missing_sensitivity_annotation",
 ];
 
 /// Patterns that indicate a non-Public privacy tier in a `register_source_unit!` block.
@@ -419,21 +417,21 @@ const PRIVACY_GATE_ALLOWLIST: &[&str] = &[
     "crate/lib/sinex-primitives/src/events/payloads/blob.rs",
 ];
 
-/// Gate: every source-unit parser with a non-Public privacy tier must invoke the
-/// privacy engine on at least one field.
+/// Gate: every source-unit parser with a non-Public privacy tier must declare
+/// sensitivity annotations on at least one field or binding.
 ///
 /// For each `.rs` file containing `register_source_unit!` AND a non-Public
 /// `privacy_tier`:
 /// - If the file (or any `.rs` sibling in its immediate containing directory)
-///   contains any [`PRIVACY_INVOCATION_INDICATORS`] → pass.
+///   contains any [`SENSITIVITY_ANNOTATION_INDICATORS`] → pass.
 /// - If the file is in [`PRIVACY_GATE_ALLOWLIST`] → pass (descriptor-only units).
 /// - Otherwise → violation with source-unit id, privacy tier, and file path.
 ///
 /// The sibling-directory scan handles the common pattern where `lib.rs` holds
 /// the descriptor registration while `unified_node.rs` or other files in the
-/// same directory contain the actual privacy invocations.
+/// same directory contain the actual sensitivity annotations.
 ///
-/// Escape hatch: add `#[allow(missing_privacy_invocation, reason = "...")]` in
+/// Escape hatch: add `#[allow(missing_sensitivity_annotation, reason = "...")]` in
 /// the registration file or any sibling. The `reason` is mandatory for
 /// documentation but not syntactically enforced.
 ///
@@ -487,9 +485,9 @@ fn check_privacy_invocation_for_sensitive_units() -> Result<Vec<String>> {
         let tiers = extract_non_public_tiers(&contents);
         violations.push(format!(
             "{rel_path}: source unit(s) [{units}] with privacy tier [{tiers}] \
-             must invoke the privacy engine (privacy::engine(, privacy::process(, \
-             ProcessingContext::, default_privacy_context =) or declare \
-             #[allow(missing_privacy_invocation, reason = \"...\")]",
+             must declare sensitivity hints (field_hints:, .privacy_hints(, \
+             default_privacy_hints =, sensitivity_profile() or declare \
+             #[allow(missing_sensitivity_annotation, reason = \"...\")]",
             units = unit_ids.join(", "),
             tiers = tiers.join(", "),
         ));
@@ -499,7 +497,7 @@ fn check_privacy_invocation_for_sensitive_units() -> Result<Vec<String>> {
 }
 
 /// Return true if any `.rs` file directly inside `dir` (non-recursive) contains
-/// at least one [`PRIVACY_INVOCATION_INDICATORS`] string.
+/// at least one [`SENSITIVITY_ANNOTATION_INDICATORS`] string.
 fn directory_contains_privacy_indicator(dir: &std::path::Path) -> bool {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return false;
@@ -510,7 +508,7 @@ fn directory_contains_privacy_indicator(dir: &std::path::Path) -> bool {
             let Ok(text) = std::fs::read_to_string(&path) else {
                 continue;
             };
-            if PRIVACY_INVOCATION_INDICATORS
+            if SENSITIVITY_ANNOTATION_INDICATORS
                 .iter()
                 .any(|ind| text.contains(ind))
             {
@@ -747,9 +745,10 @@ fn check_println_in_lib(label: &str, pattern: &str, allow: &[&str]) -> Result<Ve
 
 /// Check for `sinex_test_utils` usage outside expected locations.
 /// Reports usage for awareness but doesn't block (inline #[cfg(test)] modules are OK).
-/// C1 (issue #1337): Every source unit module declaring `PrivacyTier::Secret` must invoke
-/// the privacy engine (`privacy::engine` or `privacy::process`) somewhere in its module directory.
-/// The descriptor and the engine call may live in different files within the same module.
+/// C1 (issue #1337): Every source unit module declaring `PrivacyTier::Secret`
+/// must declare sensitivity annotations somewhere in its module directory.
+/// The descriptor and field hints may live in different files within the same
+/// module.
 ///
 /// xtask and schema/test infrastructure that reference `PrivacyTier::Secret` for inspection
 /// or validation purposes are excluded; only `crate/` source worker paths are checked.
@@ -765,8 +764,8 @@ fn check_secret_tier_privacy_coverage() -> Result<Vec<String>> {
             "*.rs",
             "--glob",
             "!**/tests/**",
-            // Only check source worker source units, not xtask/schema inspection code.
-            "crate/core/sinex-source-worker/src/sources/",
+            // Only check source units, not xtask/schema inspection code.
+            "crate/sinexd/src/sources/source_units/",
         ])
         .output()
         .with_context(|| "failed to scan for PrivacyTier::Secret files")?;
@@ -780,36 +779,36 @@ fn check_secret_tier_privacy_coverage() -> Result<Vec<String>> {
         if file.is_empty() {
             continue;
         }
-        // The descriptor may be in mod.rs while the engine call is in a sibling file.
-        // Check the entire directory so the constraint is "module must invoke privacy engine",
-        // not "this exact file must invoke privacy engine".
+        // The descriptor may be in mod.rs while hints are in a sibling file.
+        // Check the entire directory so the constraint is "module must declare
+        // sensitivity annotations", not "this exact file must do it".
         let dir = std::path::Path::new(file)
             .parent()
             .and_then(|p| p.to_str())
             .unwrap_or(file);
-        let engine_check = Command::new("rg")
+        let hint_check = Command::new("rg")
             .current_dir(workspace_root())
             .args([
                 "--color=never",
                 "--quiet",
-                r"privacy::(engine|process)",
+                r"field_hints:|\.privacy_hints\(|default_privacy_hints\s*=|sensitivity_profile\(",
                 "--glob",
                 "*.rs",
                 dir,
             ])
             .output()
-            .with_context(|| format!("failed to check privacy engine usage in {dir}"))?;
+            .with_context(|| format!("failed to check sensitivity annotations in {dir}"))?;
         // rg exits 0 if found, 1 if not found.
-        if !engine_check.status.success() {
+        if !hint_check.status.success() {
             violations.push(format!(
-                "{file}:0:0 [secret-tier-no-privacy-engine] Source unit declares PrivacyTier::Secret but no file in its module directory invokes privacy::engine() or privacy::process() — secrets may emit unredacted"
+                "{file}:0:0 [secret-tier-no-sensitivity-hints] Source unit declares PrivacyTier::Secret but no file in its module directory declares field hints"
             ));
         }
     }
 
     if !violations.is_empty() {
         eprintln!(
-            "🔒 {} Secret-tier module(s) missing privacy engine invocation",
+            "🔒 {} Secret-tier module(s) missing sensitivity annotations",
             violations.len()
         );
     }
@@ -1179,7 +1178,7 @@ mod tests {
     }
 
     // ─────────────────────────────────────────────────────────────────────────
-    // Privacy invocation gate self-tests
+    // Sensitivity annotation gate self-tests
     //
     // These tests exercise the gate logic directly on fixture strings without
     // invoking ripgrep or the filesystem. They pin the gate's catch/pass
@@ -1198,7 +1197,7 @@ mod tests {
             return violations;
         }
 
-        let has_privacy_invocation = PRIVACY_INVOCATION_INDICATORS
+        let has_privacy_invocation = SENSITIVITY_ANNOTATION_INDICATORS
             .iter()
             .any(|ind| contents.contains(ind));
         if has_privacy_invocation {
@@ -1208,7 +1207,7 @@ mod tests {
         let unit_ids = extract_source_unit_ids(contents);
         let tiers = extract_non_public_tiers(contents);
         violations.push(format!(
-            "fixture: source unit(s) [{units}] with privacy tier [{tiers}] missing privacy invocation",
+            "fixture: source unit(s) [{units}] with privacy tier [{tiers}] missing sensitivity annotation",
             units = unit_ids.join(", "),
             tiers = tiers.join(", "),
         ));
@@ -1237,7 +1236,7 @@ mod tests {
         let violations = run_privacy_gate_on_fixture(fixture);
         assert!(
             !violations.is_empty(),
-            "gate must fire on Sensitive tier without privacy invocation"
+            "gate must fire on Sensitive tier without sensitivity annotation"
         );
         assert!(
             violations[0].contains("stub.planted"),
@@ -1284,13 +1283,13 @@ mod tests {
         let violations = run_privacy_gate_on_fixture(fixture);
         assert!(
             violations.is_empty(),
-            "Public tier must not require privacy invocation"
+            "Public tier must not require sensitivity annotation"
         );
         Ok(())
     }
 
     #[sinex_test]
-    async fn privacy_gate_passes_with_privacy_engine_call() -> ::xtask::sandbox::TestResult<()> {
+    async fn privacy_gate_passes_with_field_hints() -> ::xtask::sandbox::TestResult<()> {
         let fixture = r#"
             register_source_unit! {
                 SourceUnitDescriptor {
@@ -1300,21 +1299,20 @@ mod tests {
             }
 
             fn parse_record(&self, record: SourceRecord) -> Vec<ParsedEventIntent> {
-                let result = privacy::engine().process(&text, ctx);
+                ParsedEventIntent::builder()
+                    .privacy_hints(vec![FieldSensitivityHint::FreeText]);
                 vec![]
             }
         "#;
 
         let violations = run_privacy_gate_on_fixture(fixture);
-        assert!(violations.is_empty(), "privacy::engine( satisfies the gate");
+        assert!(violations.is_empty(), ".privacy_hints( satisfies the gate");
         Ok(())
     }
 
     #[sinex_test]
-    async fn privacy_gate_passes_with_processing_context_import() -> ::xtask::sandbox::TestResult<()>
+    async fn privacy_gate_passes_with_manifest_field_hints() -> ::xtask::sandbox::TestResult<()>
     {
-        // Imperative parsers (like WeeChat) use ProcessingContext:: without calling
-        // privacy::engine() directly by name — the gate must accept this.
         let fixture = r#"
             register_source_unit! {
                 SourceUnitDescriptor {
@@ -1323,21 +1321,23 @@ mod tests {
                 }
             }
 
-            fn build_contexts() -> Vec<ProcessingContext::Command> {
-                vec![]
+            fn manifest(&self) -> ParserManifest {
+                ParserManifest {
+                    field_hints: vec![FieldSensitivityHint::MessageBody],
+                }
             }
         "#;
 
         let violations = run_privacy_gate_on_fixture(fixture);
         assert!(
             violations.is_empty(),
-            "ProcessingContext:: satisfies the gate"
+            "field_hints: satisfies the gate"
         );
         Ok(())
     }
 
     #[sinex_test]
-    async fn privacy_gate_passes_with_declarative_default_privacy_context()
+    async fn privacy_gate_passes_with_declarative_default_privacy_hints()
     -> ::xtask::sandbox::TestResult<()> {
         let fixture = r#"
             register_source_unit! {
@@ -1350,7 +1350,7 @@ mod tests {
             #[derive(SourceRecord)]
             #[source_record(
                 id = "stub-declarative",
-                default_privacy_context = "Command"
+                default_privacy_hints = "free_text,credential_bearing"
             )]
             pub struct StubRecord { pub field: String }
         "#;
@@ -1358,14 +1358,14 @@ mod tests {
         let violations = run_privacy_gate_on_fixture(fixture);
         assert!(
             violations.is_empty(),
-            "default_privacy_context = satisfies the gate"
+            "default_privacy_hints = satisfies the gate"
         );
         Ok(())
     }
 
     #[sinex_test]
     async fn privacy_gate_passes_with_explicit_allow() -> ::xtask::sandbox::TestResult<()> {
-        // Escape hatch: `#[allow(missing_privacy_invocation, reason = "...")]`
+        // Escape hatch: `#[allow(missing_sensitivity_annotation, reason = "...")]`
         let fixture = r#"
             register_source_unit! {
                 SourceUnitDescriptor {
@@ -1376,14 +1376,14 @@ mod tests {
 
             // Privacy is handled upstream by the runtime; this source emits only
             // pre-sanitised summary records.
-            #[allow(missing_privacy_invocation, reason = "runtime sanitises before reaching this parser")]
+            #[allow(missing_sensitivity_annotation, reason = "runtime sanitises before reaching this parser")]
             fn parse_record(&self) {}
         "#;
 
         let violations = run_privacy_gate_on_fixture(fixture);
         assert!(
             violations.is_empty(),
-            "#[allow(missing_privacy_invocation satisfies the gate"
+            "#[allow(missing_sensitivity_annotation satisfies the gate"
         );
         Ok(())
     }
@@ -1395,7 +1395,7 @@ mod tests {
         let violations = check_privacy_invocation_for_sensitive_units()?;
         assert!(
             violations.is_empty(),
-            "privacy invocation gate found violations in live workspace: {violations:#?}"
+            "sensitivity annotation gate found violations in live workspace: {violations:#?}"
         );
         Ok(())
     }

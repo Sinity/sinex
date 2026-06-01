@@ -246,7 +246,7 @@ pub struct SourceUnitBinding {
     pub implementation: &'static str,
     pub adapter: &'static str,
     pub output_event_type: &'static str,
-    pub privacy_context: &'static str,
+    pub sensitivity_profile: &'static str,
     pub material_policy: &'static str,
     pub checkpoint_policy: &'static str,
     pub resource_shape: &'static str,
@@ -288,9 +288,9 @@ pub struct MissingOutput;
 #[derive(Debug, Clone, Copy)]
 pub struct HasOutput;
 #[derive(Debug, Clone, Copy)]
-pub struct MissingPrivacy;
+pub struct MissingSensitivity;
 #[derive(Debug, Clone, Copy)]
-pub struct HasPrivacy;
+pub struct HasSensitivity;
 #[derive(Debug, Clone, Copy)]
 pub struct MissingMaterial;
 #[derive(Debug, Clone, Copy)]
@@ -321,7 +321,7 @@ pub struct HasBuildImpact;
 #[derive(Debug, Clone, Copy)]
 pub struct SourceUnitBindingBuilder<
     Output,
-    Privacy,
+    Sensitivity,
     Material,
     Checkpoint,
     CheckpointFam,
@@ -331,7 +331,7 @@ pub struct SourceUnitBindingBuilder<
     descriptor: SourceUnitBinding,
     _state: PhantomData<(
         Output,
-        Privacy,
+        Sensitivity,
         Material,
         Checkpoint,
         CheckpointFam,
@@ -348,7 +348,7 @@ impl SourceUnitBinding {
         domain: &'static str,
     ) -> SourceUnitBindingBuilder<
         MissingOutput,
-        MissingPrivacy,
+        MissingSensitivity,
         MissingMaterial,
         MissingCheckpoint,
         MissingCheckpointFamily,
@@ -363,7 +363,7 @@ impl SourceUnitBinding {
                 implementation: "",
                 adapter: "",
                 output_event_type: "",
-                privacy_context: "",
+                sensitivity_profile: "",
                 material_policy: "",
                 checkpoint_policy: "",
                 resource_shape: "",
@@ -468,13 +468,13 @@ impl<P, M, C, CF, RS, BI> SourceUnitBindingBuilder<MissingOutput, P, M, C, CF, R
     }
 }
 
-impl<O, M, C, CF, RS, BI> SourceUnitBindingBuilder<O, MissingPrivacy, M, C, CF, RS, BI> {
+impl<O, M, C, CF, RS, BI> SourceUnitBindingBuilder<O, MissingSensitivity, M, C, CF, RS, BI> {
     #[must_use]
-    pub const fn privacy_context(
+    pub const fn sensitivity_profile(
         mut self,
-        privacy_context: &'static str,
-    ) -> SourceUnitBindingBuilder<O, HasPrivacy, M, C, CF, RS, BI> {
-        self.descriptor.privacy_context = privacy_context;
+        sensitivity_profile: &'static str,
+    ) -> SourceUnitBindingBuilder<O, HasSensitivity, M, C, CF, RS, BI> {
+        self.descriptor.sensitivity_profile = sensitivity_profile;
         SourceUnitBindingBuilder {
             descriptor: self.descriptor,
             _state: PhantomData,
@@ -565,7 +565,7 @@ impl<O, P, M, C, CF, RS> SourceUnitBindingBuilder<O, P, M, C, CF, RS, MissingBui
 impl
     SourceUnitBindingBuilder<
         HasOutput,
-        HasPrivacy,
+        HasSensitivity,
         HasMaterial,
         CheckpointPresent,
         HasCheckpointFamily,
@@ -618,7 +618,7 @@ inventory::submit! {
     .implementation("sinex-terminal-ingestor::atuin")
     .adapter("sqlite_row_stream")
     .output_event_type("command.executed")
-    .privacy_context("command")
+    .sensitivity_profile("command")
     .material_policy("canonical_json_lines")
     .checkpoint_policy("sqlite_row_id")
     .resource_shape("linear_rows_bounded_memory")
@@ -824,7 +824,7 @@ pub enum CheckpointFamily {
     LiveObservation,
 }
 
-/// Privacy classification of the source's payloads.
+/// Sensitivity classification of the source's payloads.
 ///
 /// The schema-apply engine reconciles a CHECK constraint on the
 /// `privacy_tier` column of `raw.source_material_registry` when that
@@ -909,10 +909,6 @@ impl SourceUnitBuildImpact {
 /// `runtime_shape`, `package_impact`, `implementation_mode`, `build_impact`)
 /// live on the matching [`SourceUnitBinding`] and are the source of truth for
 /// `xtask source-units render`. See issue #1175.
-///
-/// Per-source-unit privacy rules (optional) live on a companion
-/// [`SourceUnitPrivacyRules`] entry registered alongside the descriptor via
-/// the `extra_privacy_rules:` arm of [`register_source_unit!`].
 #[derive(Debug, Clone, Copy, Serialize)]
 pub struct SourceUnitDescriptor {
     pub id: &'static str,
@@ -926,26 +922,7 @@ pub struct SourceUnitDescriptor {
     pub access_policy: &'static str,
 }
 
-/// Per-source-unit extra privacy rules registered alongside a [`SourceUnitDescriptor`].
-///
-/// When the privacy engine is invoked for a specific source unit (via
-/// [`crate::privacy::engine_for_source_unit`]), these rules are merged with the
-/// global catalog so that source-unit-specific patterns (e.g. Atuin login URLs)
-/// are applied only where relevant.
-///
-/// Registered via the `extra_privacy_rules:` arm of [`register_source_unit!`].
-/// The `rules_fn` field is a plain function pointer (not a closure) so it is
-/// `'static`-safe.
-#[derive(Clone, Copy)]
-pub struct SourceUnitPrivacyRules {
-    /// Must match the `id` field of the companion [`SourceUnitDescriptor`].
-    pub source_unit_id: &'static str,
-    /// Called once at engine-init time to produce the extra rules.
-    pub rules_fn: fn() -> Vec<crate::privacy::PatternRule>,
-}
-
 inventory::collect!(SourceUnitDescriptor);
-inventory::collect!(SourceUnitPrivacyRules);
 
 /// Iterate over every registered source-unit descriptor in the binary.
 pub fn all_source_units() -> impl Iterator<Item = &'static SourceUnitDescriptor> {
@@ -959,20 +936,6 @@ pub fn find_source_unit(id: &crate::parser::SourceUnitId) -> Option<&'static Sou
     all_source_units().find(|descriptor| descriptor.id == id_str)
 }
 
-/// Iterate over every registered per-source-unit privacy rule set in the binary.
-pub fn all_source_unit_privacy_rules() -> impl Iterator<Item = &'static SourceUnitPrivacyRules> {
-    inventory::iter::<SourceUnitPrivacyRules>()
-}
-
-/// Find per-source-unit extra privacy rules by `source_unit_id`.
-#[must_use]
-pub fn find_source_unit_privacy_rules(
-    source_unit_id: &crate::parser::SourceUnitId,
-) -> Option<&'static SourceUnitPrivacyRules> {
-    let id_str = source_unit_id.as_str();
-    all_source_unit_privacy_rules().find(|r| r.source_unit_id == id_str)
-}
-
 /// Re-exported `inventory` for consumers of [`register_source_unit!`].
 #[doc(hidden)]
 pub mod __register {
@@ -981,21 +944,9 @@ pub mod __register {
 
 /// Register a source-unit descriptor with the binary's inventory.
 ///
-/// Optionally registers a companion [`SourceUnitPrivacyRules`] entry via the
-/// `extra_privacy_rules:` arm.  The function-pointer value is called once at
-/// engine-init time (see [`crate::privacy::engine_for_source_unit`]).
-///
 /// ```rust,ignore
 /// register_source_unit!(
 ///     descriptor: MY_DESCRIPTOR,
-/// );
-///
-/// // With per-unit privacy rules:
-/// register_source_unit!(
-///     descriptor: MY_DESCRIPTOR,
-///     extra_privacy_rules: || vec![
-///         PatternRule { name: "my_rule".into(), .. }
-///     ],
 /// );
 /// ```
 #[macro_export]
@@ -1004,18 +955,9 @@ macro_rules! register_source_unit {
     ($descriptor:expr $(,)?) => {
         $crate::proof::__register::inventory::submit! { $descriptor }
     };
-    // Named form with optional extra_privacy_rules.
+    // Named descriptor form.
     (descriptor: $descriptor:expr $(,)?) => {
         $crate::proof::__register::inventory::submit! { $descriptor }
-    };
-    (descriptor: $descriptor:expr, extra_privacy_rules: $rules_fn:expr $(,)?) => {
-        $crate::proof::__register::inventory::submit! { $descriptor }
-        $crate::proof::__register::inventory::submit! {
-            $crate::proof::SourceUnitPrivacyRules {
-                source_unit_id: $descriptor.id,
-                rules_fn: $rules_fn,
-            }
-        }
     };
 }
 
@@ -1047,12 +989,11 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn source_unit_privacy_rules_registered_and_found() -> TestResult<()> {
+    async fn privacy_engine_accepts_extra_rules_as_data() -> TestResult<()> {
         use crate::privacy::{
             Matcher, PatternRule, PrivacyConfig, PrivacyEngine, ProcessingContext, RuleCategory,
             Strategy,
         };
-        use crate::proof::find_source_unit_privacy_rules;
 
         // Build an engine augmented with a scoped rule for a hypothetical
         // source unit.  We cannot register into the binary-wide inventory from
@@ -1090,16 +1031,6 @@ mod tests {
             result.text
         );
         assert!(!result.text.contains("supersecret123"));
-
-        // Verify that find_source_unit_privacy_rules returns None for unknown IDs
-        // (no such unit registered in the test binary).
-        assert!(
-            find_source_unit_privacy_rules(&crate::parser::SourceUnitId::from_static(
-                "nonexistent.source-unit"
-            ))
-            .is_none(),
-            "unknown source unit should return None"
-        );
 
         Ok(())
     }
@@ -1143,7 +1074,7 @@ mod tests {
         .adapter("sqlite_row_stream")
         .implementation("demo::Unit")
         .output_event_type("test.output")
-        .privacy_context("command")
+        .sensitivity_profile("command")
         .material_policy("canonical_json_lines")
         .checkpoint_policy("row_id")
         .resource_shape("linear_rows_bounded_memory")
@@ -1153,7 +1084,7 @@ mod tests {
         .build();
 
         assert_eq!(descriptor.output_event_type, "test.output");
-        assert_eq!(descriptor.privacy_context, "command");
+        assert_eq!(descriptor.sensitivity_profile, "command");
         assert_eq!(descriptor.material_policy, "canonical_json_lines");
         assert_eq!(descriptor.checkpoint_policy, "row_id");
         Ok(())

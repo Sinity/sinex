@@ -8,11 +8,12 @@
 //! - Purge raw DLQ messages
 
 use crate::api::service_container::ServiceContainer;
+use crate::event_engine::policy::PolicyEngine;
 use crate::node_sdk::dlq_retry::{DlqRetryConfig, DlqRetryHandler};
-use sinex_primitives::privacy::{self, ProcessingContext};
+use sinex_primitives::JsonValue;
 use sinex_primitives::validation::normalize_unicode;
 use sinex_primitives::{Result, SinexError};
-use tracing::warn;
+use tracing::{debug, warn};
 
 // Re-export RPC types for consistency
 pub use sinex_primitives::rpc::dlq::{
@@ -54,56 +55,46 @@ fn truncate_preview(payload: &str, max_chars: usize) -> String {
     }
 }
 
-fn payload_preview(payload: &str, max_chars: usize) -> SanitizedPreview {
-    const SUPPRESSED_PREVIEW: &str = "[payload preview suppressed by privacy policy]";
-    const ENGINE_UNAVAILABLE_PREVIEW: &str = "[payload preview unavailable: privacy engine failed]";
-
-    let mut current = payload.to_string();
-    let mut redacted = false;
-    let mut caveats = Vec::new();
-
-    // DLQ messages may contain raw command, journal, or document-shaped payloads.
-    // Run the same privacy engine across those operator-relevant contexts before
-    // any bytes leave the gateway boundary.
-    for context in [
-        ProcessingContext::Command,
-        ProcessingContext::Journal,
-        ProcessingContext::Document,
-    ] {
-        let processed = match privacy::process(&current, context) {
-            Ok(processed) => processed,
-            Err(error) => {
-                warn!(
-                    error = %error,
-                    "DLQ payload preview privacy processing failed; suppressing preview"
-                );
-                return SanitizedPreview {
-                    text: ENGINE_UNAVAILABLE_PREVIEW.to_string(),
-                    redacted: true,
-                    caveats: vec!["privacy_engine_unavailable".to_string()],
-                };
-            }
-        };
-
-        if processed.suppressed {
-            return SanitizedPreview {
-                text: SUPPRESSED_PREVIEW.to_string(),
-                redacted: true,
-                caveats: vec!["payload_preview_suppressed".to_string()],
-            };
+async fn payload_preview(
+    policy: &PolicyEngine,
+    payload: &str,
+    max_chars: usize,
+) -> SanitizedPreview {
+    let redacted_value = policy
+        .redact_json_value(JsonValue::String(payload.to_string()))
+        .await;
+    let current = match redacted_value {
+        JsonValue::String(text) => text,
+        other => {
+            debug!(
+                value_type = %json_value_type(&other),
+                "DLQ payload preview policy returned non-string value; serializing preview"
+            );
+            other.to_string()
         }
-
-        if processed.any_matched() {
-            redacted = true;
-            caveats.push(format!("redacted:{context:?}"));
-            current = processed.text.into_owned();
-        }
-    }
+    };
+    let redacted = current != payload;
+    let caveats = if redacted {
+        vec!["db_privacy_policy_applied".to_string()]
+    } else {
+        Vec::new()
+    };
 
     SanitizedPreview {
         text: truncate_preview(&current, max_chars),
         redacted,
         caveats,
+    }
+}
+
+fn json_value_type(value: &JsonValue) -> &'static str {
+    match value {
+        JsonValue::Null => "null",
+        JsonValue::Bool(_) => "bool",
+        JsonValue::Number(_) => "number",
+        JsonValue::String(_) => "string",
+        JsonValue::Array(_) => "array",
+        JsonValue::Object(_) => "object",
     }
 }
 
@@ -181,6 +172,7 @@ pub async fn handle_dlq_peek(
         .messages()
         .await
         .map_err(|error| SinexError::service("Failed to get messages").with_source(error))?;
+    let policy = PolicyEngine::load(services.pool().clone()).await?;
 
     let mut previews = Vec::new();
     let mut count = 0;
@@ -212,7 +204,7 @@ pub async fn handle_dlq_peek(
                         "[payload contains dangerous Unicode characters]".to_string()
                     }
                 };
-                let payload_preview = payload_preview(&normalized_payload, 200);
+                let payload_preview = payload_preview(&policy, &normalized_payload, 200).await;
                 let sequence = require_stream_sequence(
                     msg.info()
                         .map(|info| info.stream_sequence)
@@ -366,8 +358,10 @@ pub async fn handle_dlq_purge(
 #[cfg(test)]
 mod tests {
     use super::{parse_retry_count_header, payload_preview, require_stream_sequence};
+    use crate::event_engine::policy::PolicyEngine;
+    use sinex_db::DbPoolExt;
     use sinex_primitives::error::ErrorClass;
-    use xtask::sandbox::sinex_test;
+    use xtask::sandbox::prelude::{TestResult, sinex_test};
 
     #[sinex_test]
     async fn parse_retry_count_header_defaults_when_missing() -> TestResult<()> {
@@ -404,9 +398,12 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn payload_preview_truncates_without_breaking_unicode() -> TestResult<()> {
+    async fn payload_preview_truncates_without_breaking_unicode(
+        ctx: xtask::sandbox::TestContext,
+    ) -> TestResult<()> {
+        let policy = PolicyEngine::load(ctx.pool().clone()).await?;
         let payload = "żółw".repeat(80);
-        let preview = payload_preview(&payload, 200);
+        let preview = payload_preview(&policy, &payload, 200).await;
         assert!(preview.text.ends_with("..."));
         assert_eq!(preview.text.chars().count(), 203);
         assert!(!preview.redacted);
@@ -415,7 +412,26 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn payload_preview_redacts_raw_dlq_secret_bytes() -> TestResult<()> {
+    async fn payload_preview_applies_db_policy_to_raw_dlq_bytes(
+        ctx: xtask::sandbox::TestContext,
+    ) -> TestResult<()> {
+        let pool = ctx.pool();
+        let repo = pool.privacy_policy();
+        repo.add_rule(
+            "dlq-secret-preview",
+            "redact raw DLQ secret preview sentinel",
+            "literal",
+            "ghp_abcdefghijklmnopqrstuvwxyz123456",
+            true,
+            "redact",
+            Some("<DLQ_SECRET>"),
+            "default",
+        )
+        .await?;
+        repo.bind_field_rule("dlq-secret-preview", None, None, None, 0)
+            .await?;
+        let policy = PolicyEngine::load(pool.clone()).await?;
+
         let payload = r#"{
             "original_subject": "dev.sinex.events.raw.shell.command",
             "original_payload": {
@@ -423,14 +439,14 @@ mod tests {
             }
         }"#;
 
-        let preview = payload_preview(payload, 200);
+        let preview = payload_preview(&policy, payload, 200).await;
 
         assert!(preview.redacted);
         assert!(
             preview
                 .caveats
                 .iter()
-                .any(|caveat| caveat.starts_with("redacted:")),
+                .any(|caveat| caveat == "db_privacy_policy_applied"),
             "redaction must be visible to machine clients: {:?}",
             preview.caveats
         );

@@ -33,7 +33,6 @@ use sinex_primitives::{
         InputShapeKind, ParsedEventIntent, ParserContext, ParserId, ParserManifest, SourceRecord,
         SourceUnitId, TimingEvidence,
     },
-    privacy::{self, ProcessingContext},
     proof::{
         CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, RetentionPolicy, RuntimeShape,
         SourceUnitBinding, SourceUnitBuildImpact, SourceUnitDescriptor, SubjectRef,
@@ -71,7 +70,7 @@ register_source_unit_binding! {
     .implementation("sinex-source-worker")
     .adapter("DocumentStagingParser")
     .output_event_type("document.ingested")
-    .privacy_context("document_body")
+    .sensitivity_profile("document_body")
     .material_policy("document_anchor")
     .checkpoint_policy("fingerprint_dedup")
     .resource_shape("on_demand_batch")
@@ -91,9 +90,8 @@ register_source_unit_binding! {
 // In the dispatch path (testing / replay), the parser receives a SourceRecord
 // whose `bytes` are the UTF-8 encoded file path (the same bytes the
 // FileDropAdapter or a directory-walk driver would emit for a discovered file).
-// It re-reads MIME type from the path extension, runs path privacy redaction,
-// and constructs the `document.ingested` intent plus any `tag.applied`
-// derived children.
+// It re-reads MIME type from the path extension and constructs the
+// `document.ingested` intent plus any `tag.applied` derived children.
 // ---------------------------------------------------------------------------
 
 /// No per-parse config needed; binding config lives on the `DocumentNode`.
@@ -128,7 +126,7 @@ impl MaterialParser for DocumentStagingParser {
                     EventType::from_static("tag.applied"),
                 ),
             ],
-            privacy_contexts: vec![ProcessingContext::Metadata],
+            field_hints: vec![sinex_primitives::parser::FieldSensitivityHint::SystemMetadata],
             proof_obligations: vec![],
             description:
                 "Stages document files and emits document.ingested + auto-tag derived events".into(),
@@ -158,13 +156,10 @@ impl MaterialParser for DocumentStagingParser {
 
         let file_size = std::fs::metadata(&path).map_or(0, |m| m.len());
 
-        let redacted_path = privacy::process(&path, ProcessingContext::Metadata)
-            .map_or_else(|_| path.clone(), |r| r.text.into_owned());
-
         let source_material_id = record.material_id.to_uuid().to_string();
 
         let payload = DocumentIngestedPayload {
-            file_path: redacted_path,
+            file_path: path,
             source_material_id,
             size_bytes: file_size,
             mime_type: Some(mime.clone()),
@@ -183,7 +178,9 @@ impl MaterialParser for DocumentStagingParser {
             .ts_orig(Timestamp::now())
             .timing(TimingEvidence::StagedAtFallback)
             .anchor(record.anchor.clone())
-            .privacy_context(ProcessingContext::Metadata)
+            .privacy_hints(vec![
+                sinex_primitives::parser::FieldSensitivityHint::SystemMetadata,
+            ])
             .build();
 
         let mut intents = vec![material_intent.clone()];

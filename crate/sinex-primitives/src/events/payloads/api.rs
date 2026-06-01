@@ -31,7 +31,7 @@ pub enum RpcStatus {
 
 /// Audit payload for a single completed RPC dispatch (#1172 AC-7).
 ///
-/// Privacy: only the `token_prefix` (first 8 chars of the bearer token) is
+/// Sensitivity: only the `token_prefix` (first 8 chars of the bearer token) is
 /// recorded — never the full token. The `Role` is safe to record because it
 /// describes the request's authorization band, not the bearer.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]

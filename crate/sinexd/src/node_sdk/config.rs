@@ -761,10 +761,10 @@ impl Default for MaterialMetadataPolicy {
 mod tests {
     use super::{AutomatonConfig, EventSourceConfig, NodeConfig};
     use camino::Utf8PathBuf;
-    use xtask::sandbox::{EnvGuard, TestResult, sinex_serial_test};
+    use xtask::sandbox::{EnvGuard, sinex_serial_test};
 
     #[sinex_serial_test]
-    async fn node_config_prefers_service_over_global_env() -> TestResult<()> {
+    async fn node_config_prefers_service_over_global_env() -> xtask::sandbox::TestResult<()> {
         let mut env = EnvGuard::new();
         env.set("SINEX_CAPTURE_AGENT_LOG_LEVEL", "debug");
         env.set("SINEX_LOG_LEVEL", "warn");
@@ -784,7 +784,10 @@ mod tests {
 
         assert_eq!(config.log_level, "debug");
         assert_eq!(config.database_pool_size, 17);
-        assert_eq!(config.work_dir, Utf8PathBuf::from("/tmp/sinex-capture-agent"));
+        assert_eq!(
+            config.work_dir,
+            Utf8PathBuf::from("/tmp/sinex-capture-agent")
+        );
         assert!(config.dry_run);
         assert_eq!(
             config.database_url.as_deref(),
@@ -818,7 +821,10 @@ mod tests {
         env.set("SINEX_CAPTURE_AGENT_BATCH_TIMEOUT_SECS", "9");
         env.set("SINEX_CANONICALIZER_CONSUMER_GROUP", "semantic-workers");
         env.set("SINEX_CANONICALIZER_CONSUMER_NAME", "canonicalizer-1");
-        env.set("SINEX_CANONICALIZER_TOPICS", "command.executed,file.created");
+        env.set(
+            "SINEX_CANONICALIZER_TOPICS",
+            "command.executed,file.created",
+        );
         env.set("SINEX_CANONICALIZER_PROCESSING_BATCH_SIZE", "13");
         env.set("SINEX_CANONICALIZER_CHECKPOINT_INTERVAL_SECS", "27");
 

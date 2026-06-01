@@ -66,7 +66,7 @@ register_source_unit_binding! {
     .implementation("sinex-source-worker")
     .adapter("AppendOnlyFileAdapter")
     .output_event_type("irc.message")
-    .privacy_context("Command")
+    .sensitivity_profile("Command")
     .material_policy("append_only_log")
     .checkpoint_policy("append_only_cursor")
     .resource_shape("file_watcher")
@@ -102,7 +102,7 @@ register_source_unit_binding! {
     source_unit_id = "weechat.message",
     input_shape = "tab_separated",
     event_type = "irc.message",
-    default_privacy_context = "Command"
+    default_privacy_hints = "free_text,message_body,potentially_sensitive"
 )]
 pub struct WeeChatMessageRecord {
     /// Raw timestamp string from the log line (column 0).
@@ -150,7 +150,7 @@ register_source_unit_binding! {
     .implementation("sinex-source-worker")
     .adapter("AppendOnlyFileAdapter")
     .output_event_type("irc.message")
-    .privacy_context("Command")
+    .sensitivity_profile("Command")
     .material_policy("append_only_log")
     .checkpoint_policy("append_only_cursor")
     .resource_shape("file_watcher")

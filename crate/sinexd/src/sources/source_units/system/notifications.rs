@@ -9,7 +9,6 @@ use sinex_primitives::parser::{
     MaterialAnchor, OccurrenceKey, ParsedEventIntent, ParserContext, ParserId, ParserManifest,
     SourceRecord, SourceUnitId, TimingConfidence, TimingEvidence,
 };
-use sinex_primitives::privacy::ProcessingContext;
 use sinex_primitives::proof::{
     CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, RetentionPolicy, RuntimeShape,
     SourceUnitBinding, SourceUnitBuildImpact, SourceUnitDescriptor, SubjectRef,
@@ -37,7 +36,10 @@ impl MaterialParser for NotificationParser {
                 EventSource::from_static("desktop"),
                 EventType::from_static("notification"),
             )],
-            privacy_contexts: vec![ProcessingContext::Notification],
+            field_hints: vec![
+                sinex_primitives::parser::FieldSensitivityHint::FreeText,
+                sinex_primitives::parser::FieldSensitivityHint::PotentiallySensitive,
+            ],
             proof_obligations: vec!["timestamp_material_time".into()],
             description: "Captures desktop notifications via D-Bus".into(),
         }
@@ -79,7 +81,10 @@ impl MaterialParser for NotificationParser {
                         ("summary".into(), summary.into()),
                     ],
                 })
-                .privacy_context(ProcessingContext::Notification)
+                .privacy_hints(vec![
+                    sinex_primitives::parser::FieldSensitivityHint::FreeText,
+                    sinex_primitives::parser::FieldSensitivityHint::PotentiallySensitive,
+                ])
                 .build(),
         ])
     }
@@ -108,7 +113,7 @@ register_source_unit_binding! {
     .implementation("live-capture")
     .adapter("DbusStreamAdapter")
     .output_event_type("notification")
-    .privacy_context("Sensitive")
+    .sensitivity_profile("Sensitive")
     .material_policy("notification_stream_frame")
     .checkpoint_policy("dbus_stream_cursor")
     .resource_shape("dbus_signal_stream")

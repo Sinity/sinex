@@ -7,17 +7,16 @@
 //! | Messenger: sent/received/unsent/reaction/thread-index events | SATISFIED | See `messenger_*` tests |
 //! | Messenger: `message_uid (mid.$...)` anchors | DEFERRED → #1090 follow-up | GDPR export has no per-message id; occurrence key uses (thread,sender,ts,hint) |
 //! | Email: Message-ID anchors + IMAP fallback | DEFERRED → #1090 follow-up | Email parser not yet implemented |
-//! | Bus-First admission path | SATISFIED | `privacy_context = Document` set on every intent |
+//! | Bus-First admission path | SATISFIED | free-text/message sensitivity hints set on every intent |
 //! | Privacy: body/media/participant not in raw NATS payload | PARTIALLY SATISFIED | `text` preserved for admission gating (intentional per design); media/reactions summarised |
 //! | Idempotent replay at occurrence level | SATISFIED | Same input → same occurrence_key deterministically |
 //! | Live Gmail/IMAP split confirmed out of scope | CONFIRMED | Deferred per issue non-goals |
 
-use sinex_primitives::parser::MaterialParser;
+use sinex_primitives::parser::{FieldSensitivityHint, MaterialParser};
 use sinex_primitives::{
     Uuid,
     ids::Id,
     parser::{MaterialAnchor, ParserContext, SourceRecord, SourceUnitId},
-    privacy::ProcessingContext,
     temporal::Timestamp,
 };
 use sinexd::sources::sources::messaging::MessengerThreadParser;
@@ -295,19 +294,19 @@ async fn messenger_text_hint_disambiguates_same_ts_messages() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn messenger_privacy_context_is_document() {
-    // Every intent must carry ProcessingContext::Document so the admission
-    // layer can gate body content before it reaches durable NATS/DLQ storage.
+async fn messenger_privacy_hints_include_message_body() {
+    // Every intent must carry message/free-text hints so the admission layer can
+    // bind DB/user policy before durable persistence and query surfaces.
     let mut parser = MessengerThreadParser;
     let intents = parser
         .parse_record(record_for(FIXTURE_MIXED_THREAD.as_bytes()), &test_ctx())
         .await
         .unwrap();
     for intent in &intents {
-        assert_eq!(
-            intent.privacy_context,
-            ProcessingContext::Document,
-            "every messenger intent must carry ProcessingContext::Document"
+        assert!(
+            intent.privacy_hints.contains(&FieldSensitivityHint::MessageBody)
+                && intent.privacy_hints.contains(&FieldSensitivityHint::FreeText),
+            "every messenger intent must carry message/free-text hints"
         );
     }
 }

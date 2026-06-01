@@ -51,7 +51,7 @@ pub fn derive_event_payload(input: TokenStream) -> TokenStream {
 ///
 /// Required keys: `id`, `source_unit_id`, `input_shape`, `event_type`.
 /// Optional keys: `event_source` (defaults to first segment of `source_unit_id`),
-/// `default_privacy_context` (defaults to `Metadata`), `version` (defaults to `"1.0.0"`).
+/// `default_privacy_hints`, `version` (defaults to `"1.0.0"`).
 ///
 /// `input_shape` ∈ `json | tab_separated | csv_row | sqlite_row | raw_line`.
 ///
@@ -66,7 +66,7 @@ pub fn derive_event_payload(input: TokenStream) -> TokenStream {
 /// `#[default = "..."]` — default value (parsed as JSON, falls back to string)
 /// `#[skip]` — exclude this field from the emitted payload
 /// `#[occurrence_key]` — include in composite `OccurrenceKey`
-/// `#[privacy(context = "Command")]` — run through `privacy::process` at parse time
+/// `#[privacy(hint = "credential_bearing")]` — declare a sensitivity hint for admission policy
 /// `#[timestamp(format = "rfc3339", fallback = "material_timing")]` — derive `ts_orig`
 /// `#[suppress_if(binding_field = "private_mode_active", whole_event = false)]`
 ///
@@ -83,7 +83,7 @@ pub fn derive_event_payload(input: TokenStream) -> TokenStream {
 ///     source_unit_id = "terminal.atuin-history",
 ///     input_shape = "sqlite_row",
 ///     event_type = "command.executed",
-///     default_privacy_context = "Command",
+///     default_privacy_hints = "free_text,credential_bearing",
 /// )]
 /// pub struct AtuinHistoryRecord {
 ///     #[source(column_name = "rowid")]
@@ -96,7 +96,7 @@ pub fn derive_event_payload(input: TokenStream) -> TokenStream {
 ///     pub timestamp: i64,
 ///
 ///     #[source(column_name = "command")]
-///     #[privacy(context = "Command")]
+///     #[privacy(hint = "credential_bearing")]
 ///     pub command: String,
 ///
 ///     #[source(column_name = "exit")]

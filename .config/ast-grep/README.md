@@ -125,10 +125,10 @@ Within xtask automation, `error` severity is blocking; `warning` and `hint` rema
 - Language: `rust`
 - Message: Use Timestamp wrapper instead of bare OffsetDateTime
 - Ignore globs:
-  - `crate/cli/**`
-  - `crate/core/sinex-gateway/src/handlers/telemetry.rs`
-  - `crate/lib/sinex-primitives/src/primitives/timestamp.rs`
-  - `crate/lib/sinex-primitives/src/temporal.rs`
+  - `crate/sinex-primitives/src/primitives/timestamp.rs`
+  - `crate/sinex-primitives/src/temporal.rs`
+  - `crate/sinexctl/**`
+  - `crate/sinexd/src/api/handlers/telemetry.rs`
   - `xtask/**`
 - Intent:
   The codebase uses Timestamp as the canonical time wrapper.
@@ -216,17 +216,17 @@ Within xtask automation, `error` severity is blocking; `warning` and `hint` rema
 - Ignore globs:
   - `**/*_test.rs`
   - `**/tests/**`
-  - `crate/core/sinex-gateway/src/cascade_analyzer.rs`
-  - `crate/core/sinex-gateway/src/handlers/**`
-  - `crate/core/sinex-gateway/src/rpc_server.rs`
-  - `crate/core/sinex-ingestd/src/config.rs`
-  - `crate/lib/sinex-db/src/lib.rs`
-  - `crate/lib/sinex-db/src/pool.rs`
-  - `crate/lib/sinex-db/src/query_helpers.rs`
-  - `crate/lib/sinex-db/src/replay/**`
-  - `crate/lib/sinex-db/src/repositories/**`
   - `crate/lib/sinex-node-sdk/src/preflight/**`
-  - `crate/lib/sinex-schema/src/main.rs`
+  - `crate/sinex-db/src/lib.rs`
+  - `crate/sinex-db/src/pool.rs`
+  - `crate/sinex-db/src/query_helpers.rs`
+  - `crate/sinex-db/src/replay/**`
+  - `crate/sinex-db/src/repositories/**`
+  - `crate/sinex-schema/src/bin/schema-apply-bootstrap.rs`
+  - `crate/sinexd/src/api/cascade_analyzer.rs`
+  - `crate/sinexd/src/api/handlers/**`
+  - `crate/sinexd/src/api/rpc_server.rs`
+  - `crate/sinexd/src/event_engine/config.rs`
   - `xtask/**`
 - Intent:
   Compile-time checked queries (sqlx::query!()) catch SQL errors at build time.

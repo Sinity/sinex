@@ -67,8 +67,7 @@ pub struct CandidateEventMetadata {
     pub parser_source_unit_id: Option<String>,
     pub parser_semantics_version: Option<String>,
     pub timestamp_derivation_evidence: Option<String>,
-    pub privacy_context: Option<String>,
-    pub privacy_profile: Option<String>,
+    pub sensitivity_profile: Option<String>,
     pub operation_id: Option<Uuid>,
 }
 

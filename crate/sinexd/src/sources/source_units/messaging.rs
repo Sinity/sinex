@@ -7,12 +7,12 @@
 //! Each export is per-thread, so the [`StaticFileAdapter`] stages one file
 //! at a time. The parser unpacks the messages array and emits N intents.
 //!
-//! ## Privacy
+//! ## Sensitivity
 //!
 //! GDPR exports include real chat content with named participants. We
-//! mark the source unit `PrivacyTier::Sensitive` and emit events with
-//! `ProcessingContext::Document` so admission policy can strip the
-//! `text` field when needed. `participants` and `sender_name` are
+//! mark the source unit `PrivacyTier::Sensitive` and emit message-body field
+//! hints so admission policy can strip the `text` field when needed.
+//! `participants` and `sender_name` are
 //! intentionally preserved — they're the social-graph signal, not the
 //! conversation content.
 //!
@@ -39,7 +39,6 @@ use sinex_primitives::parser::{
     InputShapeKind, MaterialAnchor, OccurrenceKey, ParsedEventIntent, ParserContext, ParserId,
     ParserManifest, SourceRecord, SourceUnitId, TimingConfidence, TimingEvidence,
 };
-use sinex_primitives::privacy::ProcessingContext;
 use sinex_primitives::proof::{
     CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, RetentionPolicy, RuntimeShape,
     SourceUnitBinding, SourceUnitBuildImpact, SourceUnitDescriptor, SubjectRef,
@@ -103,7 +102,11 @@ impl MaterialParser for MessengerThreadParser {
                 EventSource::from_static("messenger"),
                 EventType::from_static("message.sent"),
             )],
-            privacy_contexts: vec![ProcessingContext::Document],
+            field_hints: vec![
+                sinex_primitives::parser::FieldSensitivityHint::FreeText,
+                sinex_primitives::parser::FieldSensitivityHint::MessageBody,
+                sinex_primitives::parser::FieldSensitivityHint::PotentiallySensitive,
+            ],
             proof_obligations: vec![
                 "timestamp_intrinsic".into(),
                 "media_and_reactions_summarized_to_count".into(),
@@ -204,7 +207,11 @@ fn parse_message(
             len: 1,
         })
         .occurrence_key(occurrence_key)
-        .privacy_context(ProcessingContext::Document)
+        .privacy_hints(vec![
+            sinex_primitives::parser::FieldSensitivityHint::FreeText,
+            sinex_primitives::parser::FieldSensitivityHint::MessageBody,
+            sinex_primitives::parser::FieldSensitivityHint::PotentiallySensitive,
+        ])
         .build())
 }
 
@@ -242,7 +249,7 @@ register_source_unit_binding! {
     .implementation("sinex-source-worker")
     .adapter("StaticFileAdapter")
     .output_event_type("message.sent")
-    .privacy_context("Document")
+    .sensitivity_profile("Document")
     .material_policy("static_export_file")
     .checkpoint_policy("static_file_cursor")
     .resource_shape("file_reader")

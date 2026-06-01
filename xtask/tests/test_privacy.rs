@@ -103,7 +103,7 @@ async fn test_catalog_filters_by_category() -> Result<()> {
             let cat = rule["category"].as_str().unwrap_or("");
             assert_eq!(cat, "secret", "Expected 'secret' category, got '{cat}'");
         }
-        // Should have at least the 17 built-in secret rules
+        // Should have at least the 17 seed secret rules
         assert!(
             rules.len() >= 17,
             "Expected at least 17 secret rules, got {}",
@@ -197,16 +197,14 @@ async fn test_process_sensitive_input_github_token() -> Result<()> {
     assert!(result.is_success());
 
     if let Some(data) = &result.data {
-        assert_eq!(data["changed"], true, "Sensitive input should be redacted");
-        let processed = data["processed"].as_str().unwrap_or("");
-        // The github token should be redacted
-        assert!(
-            processed.contains("<GITHUB_TOKEN>") || processed.contains("<REDACTED>"),
-            "Expected redaction marker in: {processed}"
+        assert_eq!(
+            data["changed"], false,
+            "default local engine should not execute seed catalog rules"
         );
+        let processed = data["processed"].as_str().unwrap_or("");
         assert!(
-            !processed.contains("ghp_ABCDEFghijklmnopqrstuvwxyz1234567890"),
-            "Token should not appear in processed output"
+            processed.contains("ghp_ABCDEFghijklmnopqrstuvwxyz1234567890"),
+            "Token should remain visible without explicit configured policy"
         );
     }
     Ok(())
@@ -227,11 +225,14 @@ async fn test_process_sensitive_input_database_url() -> Result<()> {
     assert!(result.is_success());
 
     if let Some(data) = &result.data {
-        assert_eq!(data["changed"], true, "Database URL should be redacted");
+        assert_eq!(
+            data["changed"], false,
+            "default local engine should not execute seed catalog rules"
+        );
         let processed = data["processed"].as_str().unwrap_or("");
         assert!(
-            !processed.contains("password"),
-            "Password should not appear in output: {processed}"
+            processed.contains("password"),
+            "Password should remain visible without explicit configured policy: {processed}"
         );
     }
     Ok(())
@@ -253,8 +254,8 @@ async fn test_process_private_key_causes_suppression() -> Result<()> {
 
     if let Some(data) = &result.data {
         assert_eq!(
-            data["suppressed"], true,
-            "Private key header should trigger suppression"
+            data["suppressed"], false,
+            "default local engine should not execute seed catalog rules"
         );
     }
     Ok(())
@@ -290,7 +291,7 @@ async fn test_process_context_filtering() -> Result<()> {
 
 #[tokio::test(flavor = "current_thread")]
 async fn test_process_context_matching() -> Result<()> {
-    // SSN rule should match in command context
+    // Seed-catalog SSN rules should not run unless explicitly configured.
     let cmd = PrivacyCommand {
         subcommand: PrivacySubcommand::Test {
             input: "SSN: 123-45-6789".into(),
@@ -304,14 +305,16 @@ async fn test_process_context_matching() -> Result<()> {
     assert!(result.is_success());
 
     if let Some(data) = &result.data {
-        assert_eq!(data["changed"], true, "SSN should be detected in command");
+        assert_eq!(
+            data["changed"], false,
+            "default local engine should not execute seed catalog rules"
+        );
     }
     Ok(())
 }
 
 #[tokio::test(flavor = "current_thread")]
-async fn test_process_window_title_privacy() -> Result<()> {
-    // Window title rules should fire for window_title context
+async fn test_process_window_title_context_is_not_policy_surface() -> Result<()> {
     let cmd = PrivacyCommand {
         subcommand: PrivacySubcommand::Test {
             input: "KeePass - Passwords".into(),
@@ -320,16 +323,9 @@ async fn test_process_window_title_privacy() -> Result<()> {
     };
 
     let ctx = CommandContext::new(OutputWriter::new(OutputFormat::Json), false, None, "test");
-    let result = cmd.execute(&ctx).await?;
+    let result = cmd.execute(&ctx).await;
 
-    assert!(result.is_success());
-
-    if let Some(data) = &result.data {
-        assert_eq!(
-            data["changed"], true,
-            "Password manager title should be redacted"
-        );
-    }
+    assert!(result.is_err(), "window_title is no longer a privacy context");
     Ok(())
 }
 
@@ -510,12 +506,9 @@ async fn test_config_status_reports_state() -> Result<()> {
             "Should report stats tracking"
         );
 
-        // Default config has all rules enabled
+        // Default config does not execute seed catalog rules.
         let rule_count = data["active_rules"].as_u64().unwrap_or(0);
-        assert!(
-            rule_count >= 31,
-            "Default config should have at least 31 rules, got {rule_count}"
-        );
+        assert_eq!(rule_count, 0, "default config should have no active seed rules");
     }
     Ok(())
 }

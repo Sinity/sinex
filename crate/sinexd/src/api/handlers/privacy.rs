@@ -7,15 +7,24 @@ use sinex_primitives::domain::OperationStatus;
 use sinex_primitives::environment::SinexEnvironment;
 use sinex_primitives::prelude::*;
 use sinex_primitives::privacy::{
-    RuntimePrivateModeState, load_private_mode_state, save_private_mode_state,
+    Matcher, RuntimePrivateModeState, Strategy, StructuralDetector, builtin_rules,
+    load_private_mode_state, save_private_mode_state,
 };
 use sinex_primitives::rpc::privacy::{
+    PrivacyDictionary, PrivacyDictionaryTerm, PrivacyFieldRule, PrivacyKeyNamespace,
+    PrivacyPolicyAddDictionaryTermRequest, PrivacyPolicyBindRuleRequest,
+    PrivacyPolicyCreateBackendRequest,
+    PrivacyPolicyCreateDictionaryRequest, PrivacyPolicyCreateKeyRequest,
+    PrivacyPolicyCreateRuleRequest, PrivacyPolicyIdResponse, PrivacyPolicyListRequest,
+    PrivacyPolicyListResponse, PrivacyPolicySeedCatalogRequest, PrivacyPolicySeedCatalogResponse,
+    PrivacyRecognizerBackend, PrivacyRule,
     PrivateModeDisableRequest, PrivateModeEnableRequest, PrivateModeStateResponse,
     PrivateModeStatusRequest,
 };
 use sinex_primitives::temporal::Timestamp;
 use sinex_primitives::transport;
 use sqlx::PgPool;
+use std::collections::HashSet;
 use std::path::Path;
 
 const PRIVATE_MODE_OPERATION_TYPE: &str = "privacy.private_mode";
@@ -35,6 +44,250 @@ pub async fn handle_private_mode_status_service(
     request: PrivateModeStatusRequest,
 ) -> Result<PrivateModeStateResponse> {
     handle_private_mode_status(services.state_dir(), request).await
+}
+
+pub async fn handle_privacy_policy_list(
+    pool: &PgPool,
+    request: PrivacyPolicyListRequest,
+) -> Result<PrivacyPolicyListResponse> {
+    let repo = pool.privacy_policy();
+    let rules = repo.list_rules().await?;
+    let field_rules = repo.list_field_rules(None).await?;
+    let recognizer_backends = repo.list_recognizer_backends().await?;
+    let dictionaries = repo.list_dictionaries().await?;
+    let key_namespaces = repo.list_keys().await?;
+
+    let mut dictionary_terms = Vec::new();
+    for dictionary in &dictionaries {
+        dictionary_terms.extend(repo.list_dictionary_terms(dictionary.id).await?);
+    }
+    let enabled_rule_ids = rules
+        .iter()
+        .filter(|rule| rule.enabled)
+        .map(|rule| rule.id)
+        .collect::<HashSet<_>>();
+    let enabled_dictionary_ids = dictionaries
+        .iter()
+        .filter(|dictionary| dictionary.enabled)
+        .map(|dictionary| dictionary.id)
+        .collect::<HashSet<_>>();
+
+    Ok(PrivacyPolicyListResponse {
+        rules: rules
+            .into_iter()
+            .filter(|rule| request.include_disabled || rule.enabled)
+            .map(|rule| PrivacyRule {
+                id: rule.id,
+                name: rule.name,
+                description: rule.description,
+                recognizer_backend_id: rule.recognizer_backend_id,
+                recognizer_kind: rule.recognizer_kind,
+                matcher_type: rule.matcher_type,
+                matcher_value: rule.matcher_value,
+                matcher_config: rule.matcher_config,
+                case_sensitive: rule.case_sensitive,
+                action: rule.action,
+                action_label: rule.action_label,
+                key_namespace: rule.key_namespace,
+                enabled: rule.enabled,
+            })
+            .collect(),
+        field_rules: field_rules
+            .into_iter()
+            .filter(|field_rule| {
+                request.include_disabled || enabled_rule_ids.contains(&field_rule.rule_id)
+            })
+            .map(|field_rule| PrivacyFieldRule {
+                id: field_rule.id,
+                rule_id: field_rule.rule_id,
+                event_source: field_rule.event_source,
+                event_type: field_rule.event_type,
+                field_path: field_rule.field_path,
+                priority: field_rule.priority,
+            })
+            .collect(),
+        recognizer_backends: recognizer_backends
+            .into_iter()
+            .filter(|backend| request.include_disabled || backend.enabled)
+            .map(|backend| PrivacyRecognizerBackend {
+                id: backend.id,
+                name: backend.name,
+                kind: backend.kind,
+                endpoint_url: backend.endpoint_url,
+                config: backend.config,
+                enabled: backend.enabled,
+            })
+            .collect(),
+        dictionaries: dictionaries
+            .into_iter()
+            .filter(|dictionary| request.include_disabled || dictionary.enabled)
+            .map(|dictionary| PrivacyDictionary {
+                id: dictionary.id,
+                name: dictionary.name,
+                description: dictionary.description,
+                language: dictionary.language,
+                source_kind: dictionary.source_kind,
+                tags: dictionary.tags,
+                enabled: dictionary.enabled,
+            })
+            .collect(),
+        dictionary_terms: dictionary_terms
+            .into_iter()
+            .filter(|term| {
+                request.include_disabled
+                    || (term.enabled && enabled_dictionary_ids.contains(&term.dictionary_id))
+            })
+            .map(|term| PrivacyDictionaryTerm {
+                id: term.id,
+                dictionary_id: term.dictionary_id,
+                term: term.term,
+                metadata: term.metadata,
+                enabled: term.enabled,
+            })
+            .collect(),
+        key_namespaces: key_namespaces
+            .into_iter()
+            .map(|key| PrivacyKeyNamespace {
+                id: key.id,
+                name: key.name,
+                description: key.description,
+            })
+            .collect(),
+    })
+}
+
+pub async fn handle_privacy_policy_create_dictionary(
+    pool: &PgPool,
+    request: PrivacyPolicyCreateDictionaryRequest,
+) -> Result<PrivacyPolicyIdResponse> {
+    let id = pool
+        .privacy_policy()
+        .add_dictionary(
+            request.name.as_str(),
+            request.description.as_str(),
+            request.language.as_deref(),
+            request.source_kind.as_str(),
+            &request.tags,
+        )
+        .await?;
+    Ok(PrivacyPolicyIdResponse { id })
+}
+
+pub async fn handle_privacy_policy_create_backend(
+    pool: &PgPool,
+    request: PrivacyPolicyCreateBackendRequest,
+) -> Result<PrivacyPolicyIdResponse> {
+    let id = pool
+        .privacy_policy()
+        .add_recognizer_backend(
+            request.name.as_str(),
+            request.kind.as_str(),
+            request.endpoint_url.as_deref(),
+            request.config,
+        )
+        .await?;
+    Ok(PrivacyPolicyIdResponse { id })
+}
+
+pub async fn handle_privacy_policy_create_key(
+    pool: &PgPool,
+    request: PrivacyPolicyCreateKeyRequest,
+) -> Result<PrivacyPolicyIdResponse> {
+    let id = pool
+        .privacy_policy()
+        .add_key(request.name.as_str(), request.description.as_str())
+        .await?;
+    Ok(PrivacyPolicyIdResponse { id })
+}
+
+pub async fn handle_privacy_policy_add_dictionary_term(
+    pool: &PgPool,
+    request: PrivacyPolicyAddDictionaryTermRequest,
+) -> Result<PrivacyPolicyIdResponse> {
+    let id = pool
+        .privacy_policy()
+        .add_dictionary_term(
+            request.dictionary_id,
+            request.term.as_str(),
+            request.metadata,
+        )
+        .await?;
+    Ok(PrivacyPolicyIdResponse { id })
+}
+
+pub async fn handle_privacy_policy_create_rule(
+    pool: &PgPool,
+    request: PrivacyPolicyCreateRuleRequest,
+) -> Result<PrivacyPolicyIdResponse> {
+    let id = pool
+        .privacy_policy()
+        .add_recognizer_rule(
+            request.name.as_str(),
+            request.description.as_str(),
+            request.recognizer_backend_id,
+            request.recognizer_kind.as_str(),
+            request.matcher_type.as_str(),
+            request.matcher_value.as_str(),
+            request.matcher_config,
+            request.case_sensitive,
+            request.action.as_str(),
+            request.action_label.as_deref(),
+            request.key_namespace.as_str(),
+        )
+        .await?;
+    Ok(PrivacyPolicyIdResponse { id })
+}
+
+pub async fn handle_privacy_policy_bind_rule(
+    pool: &PgPool,
+    request: PrivacyPolicyBindRuleRequest,
+) -> Result<PrivacyPolicyIdResponse> {
+    let id = pool
+        .privacy_policy()
+        .bind_field_rule(
+            request.rule_name.as_str(),
+            request.event_source.as_deref(),
+            request.event_type.as_deref(),
+            request.field_path.as_deref(),
+            request.priority,
+        )
+        .await?;
+    Ok(PrivacyPolicyIdResponse { id })
+}
+
+pub async fn handle_privacy_policy_seed_catalog(
+    pool: &PgPool,
+    _request: PrivacyPolicySeedCatalogRequest,
+) -> Result<PrivacyPolicySeedCatalogResponse> {
+    let repo = pool.privacy_policy();
+    let mut seeded_rules = 0usize;
+
+    for rule in builtin_rules() {
+        let Some((matcher_type, matcher_value, matcher_config, case_sensitive)) =
+            catalog_matcher_to_db(&rule.matcher)
+        else {
+            continue;
+        };
+        let (action, action_label) = catalog_strategy_to_db(&rule.strategy);
+        repo.upsert_recognizer_rule(
+            rule.name.as_str(),
+            rule.description.as_str(),
+            None,
+            "local_pattern",
+            matcher_type,
+            matcher_value.as_str(),
+            matcher_config,
+            case_sensitive,
+            action,
+            action_label.as_deref(),
+            "default",
+            rule.enabled,
+        )
+        .await?;
+        seeded_rules += 1;
+    }
+
+    Ok(PrivacyPolicySeedCatalogResponse { seeded_rules })
 }
 
 pub async fn handle_private_mode_enable(
@@ -229,6 +482,61 @@ fn private_mode_response(state: RuntimePrivateModeState) -> PrivateModeStateResp
     PrivateModeStateResponse { state }
 }
 
+fn catalog_matcher_to_db(matcher: &Matcher) -> Option<(&'static str, String, Value, bool)> {
+    match matcher {
+        Matcher::Regex { pattern } => Some((
+            "regex",
+            pattern.clone(),
+            Value::Object(serde_json::Map::new()),
+            false,
+        )),
+        Matcher::Literal {
+            text,
+            case_sensitive,
+        } => Some((
+            "literal",
+            text.clone(),
+            Value::Object(serde_json::Map::new()),
+            *case_sensitive,
+        )),
+        Matcher::Structural { detector } => Some((
+            "structural",
+            structural_detector_name(*detector).to_string(),
+            Value::Object(serde_json::Map::new()),
+            false,
+        )),
+        Matcher::All(_) | Matcher::Any(_) => None,
+    }
+}
+
+fn structural_detector_name(detector: StructuralDetector) -> &'static str {
+    match detector {
+        StructuralDetector::CreditCard => "credit_card",
+        StructuralDetector::Email => "email",
+        StructuralDetector::PhoneNumber => "phone_number",
+        StructuralDetector::Iban => "iban",
+        StructuralDetector::Ipv4 => "ipv4",
+        StructuralDetector::Ipv6 => "ipv6",
+        StructuralDetector::MacAddress => "mac_address",
+        StructuralDetector::UserHomePath => "user_home_path",
+        StructuralDetector::LocalHostname => "local_hostname",
+        StructuralDetector::Ssn => "ssn",
+        StructuralDetector::Pesel => "pesel",
+        StructuralDetector::Nip => "nip",
+        StructuralDetector::Regon => "regon",
+    }
+}
+
+fn catalog_strategy_to_db(strategy: &Strategy) -> (&'static str, Option<String>) {
+    match strategy {
+        Strategy::Redact { label } => ("redact", label.clone()),
+        Strategy::Encrypt => ("encrypt", None),
+        Strategy::Hash => ("hash", None),
+        Strategy::Suppress => ("suppress", None),
+        Strategy::Mask { .. } => ("mask", None),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -270,7 +578,7 @@ mod tests {
 
     #[sinex_test]
     async fn private_mode_enable_and_disable_round_trip(
-        ctx: TestContext,
+        ctx: xtask::sandbox::TestContext,
     ) -> xtask::sandbox::TestResult<()> {
         let dir = tempfile::tempdir()?;
         let auth = RpcAuthContext::system();
@@ -316,7 +624,7 @@ mod tests {
 
     #[sinex_test]
     async fn private_mode_enable_null_params_uses_operator_defaults(
-        ctx: TestContext,
+        ctx: xtask::sandbox::TestContext,
     ) -> xtask::sandbox::TestResult<()> {
         let dir = tempfile::tempdir()?;
         let auth = RpcAuthContext::system();
@@ -343,7 +651,7 @@ mod tests {
 
     #[sinex_test]
     async fn private_mode_toggle_writes_operation_audit(
-        ctx: TestContext,
+        ctx: xtask::sandbox::TestContext,
     ) -> xtask::sandbox::TestResult<()> {
         let dir = tempfile::tempdir()?;
         let auth = RpcAuthContext::system();
@@ -382,6 +690,137 @@ mod tests {
             operation.scope.as_ref().unwrap()["affected_source_classes"],
             json!(["desktop"])
         );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn privacy_policy_list_returns_db_managed_policy(
+        ctx: xtask::sandbox::TestContext,
+    ) -> xtask::sandbox::TestResult<()> {
+        let repo = ctx.pool().privacy_policy();
+        let tags = vec!["seed".to_string(), "nsfw".to_string()];
+        let dictionary_name = format!("seed_nsfw_terms_{}", Uuid::now_v7().simple());
+        let dictionary_id = repo
+            .add_dictionary(
+                &dictionary_name,
+                "Seeded NSFW vocabulary",
+                Some("en"),
+                "seed",
+                &tags,
+            )
+            .await?;
+        repo.add_dictionary_term(dictionary_id, "explicit-term", json!({"source": "seed"}))
+            .await?;
+        repo.add_recognizer_rule(
+            "seed_nsfw_dictionary",
+            "Seed dictionary rule",
+            None,
+            "dictionary",
+            "dictionary",
+            &dictionary_name,
+            json!({"dictionary": dictionary_name.clone()}),
+            false,
+            "redact",
+            Some("[NSFW]"),
+            "default",
+        )
+        .await?;
+        repo.bind_field_rule("seed_nsfw_dictionary", None, None, Some("title"), 10)
+            .await?;
+        handle_privacy_policy_create_backend(
+            ctx.pool(),
+            PrivacyPolicyCreateBackendRequest {
+                name: "presidio-local".to_string(),
+                kind: "presidio".to_string(),
+                endpoint_url: Some("http://127.0.0.1:5001/analyze".to_string()),
+                config: json!({"language": "en"}),
+            },
+        )
+        .await?;
+        handle_privacy_policy_create_key(
+            ctx.pool(),
+            PrivacyPolicyCreateKeyRequest {
+                name: "local-pii".to_string(),
+                description: "Local PII hash namespace".to_string(),
+            },
+        )
+        .await?;
+
+        let response = handle_privacy_policy_list(
+            ctx.pool(),
+            PrivacyPolicyListRequest {
+                include_disabled: false,
+            },
+        )
+        .await?;
+
+        assert!(response.rules.iter().any(
+            |rule| rule.name == "seed_nsfw_dictionary" && rule.recognizer_kind == "dictionary"
+        ));
+        assert!(
+            response
+                .dictionaries
+                .iter()
+                .any(|dictionary| dictionary.name == dictionary_name)
+        );
+        assert!(
+            response
+                .dictionary_terms
+                .iter()
+                .any(|term| term.term == "explicit-term")
+        );
+        assert!(
+            response
+                .field_rules
+                .iter()
+                .any(|field_rule| field_rule.field_path.as_deref() == Some("/title"))
+        );
+        assert!(
+            response
+                .recognizer_backends
+                .iter()
+                .any(|backend| backend.name == "presidio-local" && backend.kind == "presidio")
+        );
+        assert!(
+            response
+                .key_namespaces
+                .iter()
+                .any(|namespace| namespace.name == "local-pii")
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn privacy_policy_seed_catalog_is_idempotent_db_seed(
+        ctx: xtask::sandbox::TestContext,
+    ) -> xtask::sandbox::TestResult<()> {
+        let first = handle_privacy_policy_seed_catalog(
+            ctx.pool(),
+            PrivacyPolicySeedCatalogRequest::default(),
+        )
+        .await?;
+        let second = handle_privacy_policy_seed_catalog(
+            ctx.pool(),
+            PrivacyPolicySeedCatalogRequest::default(),
+        )
+        .await?;
+        let response = handle_privacy_policy_list(
+            ctx.pool(),
+            PrivacyPolicyListRequest {
+                include_disabled: true,
+            },
+        )
+        .await?;
+        let seeded_count = response
+            .rules
+            .iter()
+            .filter(|rule| rule.recognizer_kind == "local_pattern")
+            .count();
+
+        assert!(first.seeded_rules > 0);
+        assert_eq!(first.seeded_rules, second.seeded_rules);
+        assert_eq!(seeded_count, first.seeded_rules);
+        assert!(response.rules.iter().any(|rule| rule.name == "github_token"));
         Ok(())
     }
 

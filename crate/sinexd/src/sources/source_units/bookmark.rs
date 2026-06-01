@@ -38,7 +38,6 @@ use sinex_primitives::parser::{
     InputShapeKind, MaterialAnchor, OccurrenceKey, ParsedEventIntent, ParserContext, ParserId,
     ParserManifest, SourceRecord, SourceUnitId, TimingConfidence, TimingEvidence,
 };
-use sinex_primitives::privacy::ProcessingContext;
 use sinex_primitives::proof::{
     CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, RetentionPolicy, RuntimeShape,
     SourceUnitBinding, SourceUnitBuildImpact, SourceUnitDescriptor, SubjectRef,
@@ -96,7 +95,7 @@ impl MaterialParser for RaindropBookmarkParser {
                 EventSource::from_static("raindrop"),
                 EventType::from_static("bookmark.created"),
             )],
-            privacy_contexts: vec![ProcessingContext::Metadata],
+            field_hints: vec![sinex_primitives::parser::FieldSensitivityHint::SystemMetadata],
             proof_obligations: vec![
                 "timestamp_intrinsic".into(),
                 "anchor_csv_row".into(),
@@ -186,7 +185,9 @@ fn parse_row(
             line,
         })
         .occurrence_key(occurrence_key)
-        .privacy_context(ProcessingContext::Metadata)
+        .privacy_hints(vec![
+            sinex_primitives::parser::FieldSensitivityHint::SystemMetadata,
+        ])
         .build())
 }
 
@@ -244,7 +245,7 @@ register_source_unit_binding! {
     .implementation("sinex-source-worker")
     .adapter("StaticFileAdapter")
     .output_event_type("bookmark.created")
-    .privacy_context("Metadata")
+    .sensitivity_profile("Metadata")
     .material_policy("static_export_file")
     .checkpoint_policy("static_file_cursor")
     .resource_shape("file_reader")

@@ -175,8 +175,7 @@ async fn admission_candidate_metadata_stamps_existing_event_columns(
         parser_source_unit_id: Some("test.parser".to_string()),
         parser_semantics_version: Some("parser-v2".to_string()),
         timestamp_derivation_evidence: Some("payload.started_at".to_string()),
-        privacy_context: Some("metadata".to_string()),
-        privacy_profile: Some("default".to_string()),
+        sensitivity_profile: Some("metadata".to_string()),
         operation_id: Some(operation_id),
     };
 

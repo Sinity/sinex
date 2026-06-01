@@ -148,7 +148,6 @@ use sinex_primitives::parser::{
     ParserContext, ParserId, ParserManifest, SourceRecord, SourceUnitId,
     TimingConfidence, TimingEvidence,
 };
-use sinex_primitives::privacy::ProcessingContext;
 use sinex_primitives::proof::{
     CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, RetentionPolicy,
     RuntimeShape, SourceUnitBinding, SourceUnitBuildImpact, SourceUnitDescriptor,
@@ -203,8 +202,8 @@ impl MaterialParser for <Provider>Parser {
 | `timing` | `TimingEvidence::Intrinsic { field: "<source-field-name>".into(), confidence: TimingConfidence::Intrinsic }` |
 | `anchor` | See "Anchoring" below |
 | `occurrence_key` | `Some(OccurrenceKey { ... })` — see "Occurrence identity" |
-| `privacy_context` | `ProcessingContext::Document` for chat-like, `Metadata` for structured records |
-| `field_privacy_log` | `None` (defaults are fine) |
+| `privacy_hints` | `FieldSensitivityHint` values for fields that may contain sensitive data |
+| `privacy_hints` | Declared by the source-record field specs |
 | `derived_parents` | `None` (material provenance) |
 
 ### 4. Anchoring
@@ -258,15 +257,18 @@ Pick `PrivacyTier` carefully:
 - `PrivacyTier::Sensitive` — anything with user content, names, URLs,
   free text — **default for personal-data exports**
 
-Pick `ProcessingContext` for `privacy_context`:
+Pick field hints for the source-record fields:
 
-- `ProcessingContext::Metadata` — for structured records (track names,
-  bookmark URLs)
-- `ProcessingContext::Document` — for free text the admission layer
-  may want to strip (messages, notes, document bodies)
+- `FieldSensitivityHint::SystemMetadata` — structured metadata such as paths,
+  track names, and bookmark URLs.
+- `FieldSensitivityHint::MessageBody` and `FreeText` — user-authored text such
+  as messages, notes, and document bodies.
+- `FieldSensitivityHint::CredentialBearing` — command lines, URLs, headers, or
+  other fields where tokens may appear.
 
-When in doubt, choose `Sensitive` + `Document` and let the admission
-policy widen the surface later if needed. Narrowing later is harder.
+When in doubt, choose `Sensitive` plus explicit field hints and let DB/user
+admission policy decide the action. Parser code should not run local privacy
+redaction.
 
 ### 7. Source-unit descriptor + binding
 
@@ -303,7 +305,7 @@ register_source_unit_binding! {
     .implementation("sinex-source-worker")
     .adapter("StaticFileAdapter")
     .output_event_type("<event_type>")
-    .privacy_context("Metadata")  // or "Document"
+    .sensitivity_profile("Metadata")  // or "Document"
     .material_policy("static_export_file")
     .checkpoint_policy("static_file_cursor")
     .resource_shape("file_reader")
@@ -375,7 +377,9 @@ FixtureSpec {
             FixtureAssertion::OccurrenceKey {
                 expected_fields: vec![("<field>".to_string(), "<value>".to_string())],
             },
-            FixtureAssertion::PrivacyContext { expected: ProcessingContext::Document },
+            FixtureAssertion::PrivacyHints {
+                expected: vec![FieldSensitivityHint::MessageBody],
+            },
             FixtureAssertion::FieldPrivacyLogPresent,
             FixtureAssertion::ParserMetadata {
                 parser_id: "<parser-id>".to_string(),
@@ -394,7 +398,7 @@ FixtureSpec {
         require_timing: true,
         require_anchor: true,
         require_occurrence_identity: true,
-        require_privacy_context: true,
+        require_sensitivity_profile: true,
         require_parser_metadata: true,
         require_privacy_log_for_non_public: true,
     }),

@@ -347,7 +347,15 @@
 
                   while IFS= read -r dep_path; do
                     [ -z "$dep_path" ] && continue
-                    if [ ! -e "$dep_path" ] || [ "$dep_path" -nt "$ref_path" ]; then
+                    case "$dep_path" in
+                      "$cargo_target_dir"/*)
+                        continue
+                        ;;
+                    esac
+                    if [ ! -e "$dep_path" ]; then
+                      continue
+                    fi
+                    if [ "$dep_path" -nt "$ref_path" ]; then
                       return 0
                     fi
                   done < <(

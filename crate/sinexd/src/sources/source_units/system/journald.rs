@@ -11,7 +11,6 @@ use sinex_primitives::parser::{
     InputShapeKind, ParsedEventIntent, ParserContext, ParserId, ParserManifest, SourceRecord,
     SourceUnitId, TimingConfidence, TimingEvidence,
 };
-use sinex_primitives::privacy::{self, ProcessingContext};
 use sinex_primitives::proof::{
     CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, RetentionPolicy, RuntimeShape,
     SourceUnitBinding, SourceUnitBuildImpact, SourceUnitDescriptor, SubjectRef,
@@ -56,7 +55,7 @@ register_source_unit_binding! {
     .implementation("sinex-source-worker")
     .adapter("JournalctlStreamAdapter")
     .output_event_type("entry.written")
-    .privacy_context("Journal")
+    .sensitivity_profile("Journal")
     .material_policy("journal_cursor")
     .checkpoint_policy("journal")
     .resource_shape("journal_tail")
@@ -100,7 +99,12 @@ impl MaterialParser for JournaldParser {
                     EventType::from_static("sync.completed"),
                 ),
             ],
-            privacy_contexts: vec![ProcessingContext::Journal, ProcessingContext::Command],
+            field_hints: vec![
+                sinex_primitives::parser::FieldSensitivityHint::SystemMetadata,
+                sinex_primitives::parser::FieldSensitivityHint::FreeText,
+                sinex_primitives::parser::FieldSensitivityHint::CredentialBearing,
+                sinex_primitives::parser::FieldSensitivityHint::PotentiallySensitive,
+            ],
             proof_obligations: vec![
                 "timestamp_intrinsic".into(),
                 "cursor_anchor".into(),
@@ -160,7 +164,11 @@ impl MaterialParser for JournaldParser {
                 .ts_orig(Timestamp::now())
                 .timing(TimingEvidence::Atemporal)
                 .anchor(record.anchor.clone())
-                .privacy_context(ProcessingContext::Journal)
+                .privacy_hints(vec![
+                    sinex_primitives::parser::FieldSensitivityHint::SystemMetadata,
+                    sinex_primitives::parser::FieldSensitivityHint::FreeText,
+                    sinex_primitives::parser::FieldSensitivityHint::PotentiallySensitive,
+                ])
                 .build();
             return Ok(vec![intent]);
         }
@@ -184,25 +192,12 @@ impl MaterialParser for JournaldParser {
             .unwrap_or("")
             .to_string();
 
-        let message = match privacy::engine() {
-            Ok(eng) => eng
-                .process(&raw_message, ProcessingContext::Journal)
-                .text
-                .into_owned(),
-            Err(e) => return Err(ParserError::Privacy(format!("privacy engine: {e}"))),
-        };
+        let message = raw_message;
 
-        // Fail closed: the command line can carry secrets (Sensitive tier).
-        // If the privacy engine cannot initialize, propagate the error so the
-        // event is dropped rather than emitting the raw command line.
         let cmdline = json
             .get("_CMDLINE")
             .and_then(|v| v.as_str())
-            .map(|s| match privacy::engine() {
-                Ok(eng) => Ok(eng.process(s, ProcessingContext::Command).text.into_owned()),
-                Err(e) => Err(ParserError::Privacy(format!("privacy engine: {e}"))),
-            })
-            .transpose()?;
+            .map(std::string::ToString::to_string);
 
         let exe = json
             .get("_EXE")
@@ -278,7 +273,11 @@ impl MaterialParser for JournaldParser {
                 confidence: TimingConfidence::Intrinsic,
             })
             .anchor(record.anchor.clone())
-            .privacy_context(ProcessingContext::Journal)
+            .privacy_hints(vec![
+                sinex_primitives::parser::FieldSensitivityHint::SystemMetadata,
+                sinex_primitives::parser::FieldSensitivityHint::FreeText,
+                sinex_primitives::parser::FieldSensitivityHint::PotentiallySensitive,
+            ])
             .build();
 
         Ok(vec![intent])

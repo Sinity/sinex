@@ -616,11 +616,14 @@ mod tests {
     use xtask::sandbox::sinex_test;
 
     fn test_engine() -> PrivacyEngine {
-        PrivacyEngine::new(PrivacyConfig::default()).unwrap()
+        let mut config = PrivacyConfig::default();
+        config.builtin_categories = CategorySet::All;
+        PrivacyEngine::new(config).unwrap()
     }
 
     fn test_engine_with_key() -> PrivacyEngine {
         let mut config = PrivacyConfig::default();
+        config.builtin_categories = CategorySet::All;
         config.key.key_hex = Some("42".repeat(32));
         config.track_stats = true;
         PrivacyEngine::new(config).unwrap()
@@ -731,20 +734,6 @@ mod tests {
         let journal_result2 = e.process(input2, ProcessingContext::Journal);
         // Should not match cli_secret_flag in Journal context
         assert!(!journal_result2.text.contains("--$1"));
-        Ok(())
-    }
-
-    #[sinex_test]
-    async fn title_rules_only_fire_in_title_context() -> ::xtask::sandbox::TestResult<()> {
-        let e = test_engine();
-        let input = "KeePass - Database.kdbx";
-        let title_result = e.process(input, ProcessingContext::WindowTitle);
-        assert!(title_result.any_matched());
-        assert!(title_result.text.contains("<PASSWORD_MANAGER>"));
-
-        let cmd_result = e.process(input, ProcessingContext::Command);
-        // Title rules should NOT fire in Command context
-        assert!(!cmd_result.text.contains("<PASSWORD_MANAGER>"));
         Ok(())
     }
 

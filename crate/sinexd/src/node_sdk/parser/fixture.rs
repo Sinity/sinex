@@ -31,10 +31,9 @@ use sinex_primitives::Uuid;
 use sinex_primitives::events::SourceMaterial;
 use sinex_primitives::ids::Id;
 use sinex_primitives::parser::{
-    InputShapeKind, MaterialAnchor, ParsedEventIntent, ParserContext, ParserManifest,
-    TimingEvidence,
+    FieldSensitivityHint, InputShapeKind, MaterialAnchor, ParsedEventIntent, ParserContext,
+    ParserManifest, TimingEvidence,
 };
-use sinex_primitives::privacy::ProcessingContext;
 use sinex_primitives::proof::{PrivacyTier, SourceUnitDescriptor};
 use sinex_primitives::temporal::Timestamp;
 
@@ -194,17 +193,17 @@ pub struct FixtureAcceptanceContract {
     #[serde(default = "default_true")]
     pub require_occurrence_identity: bool,
 
-    /// Require every positive expectation to assert privacy context.
+    /// Require every positive expectation to assert field sensitivity hints.
     #[serde(default = "default_true")]
-    pub require_privacy_context: bool,
+    pub require_privacy_hints: bool,
 
     /// Require every positive expectation to assert parser id/version.
     #[serde(default = "default_true")]
     pub require_parser_metadata: bool,
 
-    /// Require non-public source units to assert field-level privacy logging.
+    /// Require non-public source units to assert sensitivity hints.
     #[serde(default = "default_true")]
-    pub require_privacy_log_for_non_public: bool,
+    pub require_privacy_hints_for_non_public: bool,
 }
 
 fn default_true() -> bool {
@@ -269,14 +268,11 @@ pub enum FixtureAssertion {
     /// Assert that the timing evidence matches.
     Timing { expected: TimingEvidence },
 
-    /// Assert that the intent privacy context matches.
-    PrivacyContext { expected: ProcessingContext },
+    /// Assert that the intent sensitivity hints include all expected hints.
+    PrivacyHints { expected: Vec<FieldSensitivityHint> },
 
-    /// Assert that field-level privacy decisions were recorded.
-    FieldPrivacyLogPresent,
-
-    /// Assert that field-level privacy decisions were not recorded.
-    FieldPrivacyLogAbsent,
+    /// Assert that the intent carries no sensitivity hints.
+    PrivacyHintsAbsent,
 
     /// Assert that an occurrence key is present with specific fields.
     OccurrenceKey {
@@ -667,34 +663,29 @@ impl ParserFixtureHarness {
                                 });
                             }
                         }
-                        FixtureAssertion::PrivacyContext { expected } => {
-                            if intent.privacy_context != *expected {
+                        FixtureAssertion::PrivacyHints { expected } => {
+                            let missing = expected
+                                .iter()
+                                .filter(|hint| !intent.privacy_hints.contains(hint))
+                                .cloned()
+                                .collect::<Vec<_>>();
+                            if !missing.is_empty() {
                                 failures.push(FixtureFailure {
                                     intent_index: Some(expectation.index),
-                                    expected: format!("privacy_context={expected:?}"),
-                                    found: format!("privacy_context={:?}", intent.privacy_context),
+                                    expected: format!("privacy_hints include {expected:?}"),
+                                    found: format!(
+                                        "privacy_hints={:?}, missing={missing:?}",
+                                        intent.privacy_hints
+                                    ),
                                 });
                             }
                         }
-                        FixtureAssertion::FieldPrivacyLogPresent => {
-                            if intent.field_privacy_log.as_ref().is_none_or(Vec::is_empty) {
+                        FixtureAssertion::PrivacyHintsAbsent => {
+                            if !intent.privacy_hints.is_empty() {
                                 failures.push(FixtureFailure {
                                     intent_index: Some(expectation.index),
-                                    expected: "field_privacy_log present".into(),
-                                    found: "field_privacy_log absent or empty".into(),
-                                });
-                            }
-                        }
-                        FixtureAssertion::FieldPrivacyLogAbsent => {
-                            if intent
-                                .field_privacy_log
-                                .as_ref()
-                                .is_some_and(|log| !log.is_empty())
-                            {
-                                failures.push(FixtureFailure {
-                                    intent_index: Some(expectation.index),
-                                    expected: "field_privacy_log absent".into(),
-                                    found: "field_privacy_log present".into(),
+                                    expected: "privacy_hints absent".into(),
+                                    found: format!("privacy_hints={:?}", intent.privacy_hints),
                                 });
                             }
                         }
@@ -993,11 +984,11 @@ impl FixtureSpec {
             require_assertion(
                 &mut failures,
                 expectation.index,
-                contract.require_privacy_context,
+                contract.require_privacy_hints,
                 assertions
                     .iter()
-                    .any(|a| matches!(a, FixtureAssertion::PrivacyContext { .. })),
-                "privacy context",
+                    .any(|a| matches!(a, FixtureAssertion::PrivacyHints { .. })),
+                "privacy hints",
             );
             require_assertion(
                 &mut failures,
@@ -1009,7 +1000,7 @@ impl FixtureSpec {
                 "parser metadata",
             );
 
-            if contract.require_privacy_log_for_non_public
+            if contract.require_privacy_hints_for_non_public
                 && matches!(
                     descriptor_privacy_tier,
                     Some(PrivacyTier::Sensitive | PrivacyTier::Secret)
@@ -1021,8 +1012,8 @@ impl FixtureSpec {
                     true,
                     assertions
                         .iter()
-                        .any(|a| matches!(a, FixtureAssertion::FieldPrivacyLogPresent)),
-                    "field privacy log",
+                        .any(|a| matches!(a, FixtureAssertion::PrivacyHints { .. })),
+                    "privacy hints",
                 );
             }
 
@@ -1077,14 +1068,22 @@ impl FixtureSpec {
             }
 
             for assertion in assertions {
-                if let FixtureAssertion::PrivacyContext { expected } = assertion
-                    && !manifest.privacy_contexts.contains(expected)
-                {
-                    failures.push(FixtureFailure {
-                        intent_index: Some(expectation.index),
-                        expected: format!("manifest privacy context {expected:?}"),
-                        found: format!("privacy_contexts={:?}", manifest.privacy_contexts),
-                    });
+                if let FixtureAssertion::PrivacyHints { expected } = assertion {
+                    let missing = expected
+                        .iter()
+                        .filter(|hint| !manifest.field_hints.contains(hint))
+                        .cloned()
+                        .collect::<Vec<_>>();
+                    if !missing.is_empty() {
+                        failures.push(FixtureFailure {
+                            intent_index: Some(expectation.index),
+                            expected: format!("manifest field_hints include {expected:?}"),
+                            found: format!(
+                                "field_hints={:?}, missing={missing:?}",
+                                manifest.field_hints
+                            ),
+                        });
+                    }
                 }
             }
         }
@@ -1153,7 +1152,10 @@ mod tests {
                 EventSource::from_static("terminal"),
                 EventType::from_static("shell.command"),
             )],
-            privacy_contexts: vec![ProcessingContext::Command],
+            field_hints: vec![
+                sinex_primitives::parser::FieldSensitivityHint::FreeText,
+                sinex_primitives::parser::FieldSensitivityHint::CredentialBearing,
+            ],
             proof_obligations: PROOF_OBLIGATIONS
                 .iter()
                 .map(std::string::ToString::to_string)
@@ -1202,9 +1204,9 @@ mod tests {
                 require_timing: true,
                 require_anchor: true,
                 require_occurrence_identity: true,
-                require_privacy_context: true,
+                require_privacy_hints: true,
                 require_parser_metadata: true,
-                require_privacy_log_for_non_public: true,
+                require_privacy_hints_for_non_public: true,
             }),
         }
     }
@@ -1232,10 +1234,12 @@ mod tests {
             FixtureAssertion::OccurrenceKey {
                 expected_fields: vec![("row".to_string(), "1".to_string())],
             },
-            FixtureAssertion::PrivacyContext {
-                expected: ProcessingContext::Command,
+            FixtureAssertion::PrivacyHints {
+                expected: vec![
+                    FieldSensitivityHint::FreeText,
+                    FieldSensitivityHint::CredentialBearing,
+                ],
             },
-            FixtureAssertion::FieldPrivacyLogPresent,
             FixtureAssertion::ParserMetadata {
                 parser_id: "fixture-parser".to_string(),
                 parser_version: "1.0.0".to_string(),
@@ -1253,15 +1257,13 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn acceptance_contract_reports_missing_privacy_and_occurrence()
+    async fn acceptance_contract_reports_missing_privacy_hints_and_occurrence()
     -> xtask::sandbox::TestResult<()> {
         let mut assertions = complete_assertions();
         assertions.retain(|assertion| {
             !matches!(
                 assertion,
-                FixtureAssertion::PrivacyContext { .. }
-                    | FixtureAssertion::FieldPrivacyLogPresent
-                    | FixtureAssertion::OccurrenceKey { .. }
+                FixtureAssertion::PrivacyHints { .. } | FixtureAssertion::OccurrenceKey { .. }
             )
         });
         let spec = acceptance_spec(assertions);

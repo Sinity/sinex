@@ -32,7 +32,6 @@ use crate::node_sdk::{InputProvenanceFilter, NodeLogicError, Transducer};
 use regex::Regex;
 use sinex_primitives::domain::EntityTypeName;
 use sinex_primitives::events::payloads::EntityExtractedPayload;
-use sinex_primitives::privacy::ProcessingContext;
 use std::sync::LazyLock;
 
 // ── Pattern catalog ────────────────────────────────────────────────────
@@ -71,11 +70,6 @@ impl Transducer for EntityExtractor {
     fn output_event_type(&self) -> &'static str {
         "entity.extracted"
     }
-
-    fn output_privacy_context(&self) -> ProcessingContext {
-        ProcessingContext::Document
-    }
-
     fn input_provenance_filter(&self) -> InputProvenanceFilter {
         InputProvenanceFilter::Any
     }
@@ -252,7 +246,7 @@ register_source_unit_binding! {
     .implementation("sinex-process")
     .adapter("AutomatonRuntime")
     .output_event_type("entity.extracted")
-    .privacy_context("inherits_from_parents")
+    .sensitivity_profile("inherits_from_parents")
     .material_policy("derived_parents")
     .checkpoint_policy("append_stream")
     .resource_shape("event_stream_consumer")

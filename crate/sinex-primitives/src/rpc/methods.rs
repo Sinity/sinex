@@ -9,6 +9,14 @@ pub const SYSTEM_HEALTH: &str = "system.health";
 pub const PRIVACY_PRIVATE_MODE_STATUS: &str = "privacy.private_mode.status";
 pub const PRIVACY_PRIVATE_MODE_ENABLE: &str = "privacy.private_mode.enable";
 pub const PRIVACY_PRIVATE_MODE_DISABLE: &str = "privacy.private_mode.disable";
+pub const PRIVACY_POLICY_LIST: &str = "privacy.policy.list";
+pub const PRIVACY_POLICY_CREATE_BACKEND: &str = "privacy.policy.create_backend";
+pub const PRIVACY_POLICY_CREATE_KEY: &str = "privacy.policy.create_key";
+pub const PRIVACY_POLICY_CREATE_DICTIONARY: &str = "privacy.policy.create_dictionary";
+pub const PRIVACY_POLICY_ADD_DICTIONARY_TERM: &str = "privacy.policy.add_dictionary_term";
+pub const PRIVACY_POLICY_CREATE_RULE: &str = "privacy.policy.create_rule";
+pub const PRIVACY_POLICY_BIND_RULE: &str = "privacy.policy.bind_rule";
+pub const PRIVACY_POLICY_SEED_CATALOG: &str = "privacy.policy.seed_catalog";
 
 // Events (composable query engine)
 pub const EVENTS_QUERY: &str = "events.query";

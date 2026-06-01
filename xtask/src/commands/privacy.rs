@@ -1,7 +1,7 @@
 //! Privacy engine command - CLI access to sensitive data detection and handling
 //!
 //! Provides utilities for:
-//! - Listing and filtering privacy rules from the built-in catalog
+//! - Listing and filtering privacy rules from the seed catalog
 //! - Testing input text against the privacy engine
 //! - Decrypting encrypted privacy tokens
 //! - Viewing privacy key configuration
@@ -13,7 +13,7 @@ use color_eyre::eyre::{Result, eyre};
 use console::style;
 use serde_json::json;
 use sinex_primitives::privacy::{
-    Matcher, PrivacyConfig, PrivacyEngine, ProcessingContext, RuleCategory, Strategy,
+    CategorySet, Matcher, PrivacyConfig, PrivacyEngine, ProcessingContext, RuleCategory, Strategy,
 };
 
 use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskCommand};
@@ -21,7 +21,7 @@ use crate::command::{CommandContext, CommandMetadata, CommandResult, XtaskComman
 /// Privacy subcommand variants
 #[derive(Debug, Clone, Subcommand)]
 pub enum PrivacySubcommand {
-    /// List all privacy rules in the built-in catalog
+    /// List privacy rule seed catalog entries
     Catalog {
         /// Filter by category (secret, pii, privacy, custom)
         #[arg(short, long)]
@@ -32,12 +32,12 @@ pub enum PrivacySubcommand {
         include_disabled: bool,
     },
 
-    /// Test input text against the privacy engine
+    /// Test input text against the configured local privacy engine
     Test {
         /// Input text to process
         input: String,
 
-        /// Processing context (command, clipboard, window_title, journal, dbus, notification, document, metadata)
+        /// Processing context (command, clipboard, journal, dbus, notification, document, metadata, source_capture)
         #[arg(short, long, default_value = "command")]
         context: String,
     },
@@ -93,13 +93,15 @@ impl XtaskCommand for PrivacyCommand {
     }
 }
 
-/// Execute catalog subcommand: list privacy rules
+/// Execute catalog subcommand: list seed catalog privacy rules
 fn execute_catalog(
     category: Option<&str>,
     include_disabled: bool,
     ctx: &CommandContext,
 ) -> Result<CommandResult> {
-    let engine = PrivacyEngine::new(PrivacyConfig::from_env()?)?;
+    let mut config = PrivacyConfig::from_env()?;
+    config.builtin_categories = CategorySet::All;
+    let engine = PrivacyEngine::new(config)?;
     let rules = engine.catalog();
 
     // Parse category filter
@@ -388,11 +390,11 @@ fn execute_config(init: bool, ctx: &CommandContext) -> Result<CommandResult> {
 # Master switch (default: true)
 enabled = true
 
-# Built-in rule categories to activate:
-#   "all"  — all categories (default)
-#   "none" — no built-in rules
+# Catalog seed categories to activate in this local engine:
+#   "none" — no seed rules (default)
+#   "all"  — all seed categories
 #   ["secret", "pii", "privacy"] — only listed categories
-builtin_categories = "all"
+builtin_categories = "none"
 
 # Default strategy for rules that don't specify one.
 # Options: { action = "redact" }, { action = "encrypt" },
@@ -415,7 +417,7 @@ track_stats = false
 # Hex-encoded key (development only — prefer file in production)
 # hex = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 
-# Override built-in rules by name.
+# Override explicitly enabled catalog seed rules by name.
 # Supported fields: enabled, strategy, contexts
 #
 # [overrides.email_address]
@@ -427,7 +429,7 @@ track_stats = false
 # [overrides.ssn]
 # contexts = ["document", "clipboard"]
 
-# Add custom rules (merged with built-in rules, not replacing them).
+# Add custom local rules (merged with explicitly enabled seed rules).
 #
 # [[extra_rules]]
 # name = "internal_project_code"
@@ -534,7 +536,6 @@ fn format_context(ctx: &ProcessingContext) -> String {
     match ctx {
         ProcessingContext::Command => "command",
         ProcessingContext::Clipboard => "clipboard",
-        ProcessingContext::WindowTitle => "window_title",
         ProcessingContext::Journal => "journal",
         ProcessingContext::Dbus => "dbus",
         ProcessingContext::Notification => "notification",
@@ -584,7 +585,6 @@ fn parse_context(s: &str) -> Result<ProcessingContext> {
     match s.to_lowercase().as_str() {
         "command" => Ok(ProcessingContext::Command),
         "clipboard" => Ok(ProcessingContext::Clipboard),
-        "window_title" | "window" => Ok(ProcessingContext::WindowTitle),
         "journal" => Ok(ProcessingContext::Journal),
         "dbus" => Ok(ProcessingContext::Dbus),
         "notification" => Ok(ProcessingContext::Notification),
@@ -592,7 +592,7 @@ fn parse_context(s: &str) -> Result<ProcessingContext> {
         "metadata" => Ok(ProcessingContext::Metadata),
         "source_capture" => Ok(ProcessingContext::SourceCapture),
         _ => Err(eyre!(
-            "Unknown context '{}'. Valid values: command, clipboard, window_title, journal, dbus, notification, document, metadata, source_capture",
+            "Unknown context '{}'. Valid values: command, clipboard, journal, dbus, notification, document, metadata, source_capture",
             s
         )),
     }

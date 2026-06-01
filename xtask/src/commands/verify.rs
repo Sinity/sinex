@@ -92,7 +92,7 @@ pub enum VerifySubcommand {
         history_db: Option<PathBuf>,
     },
     /// Source-worker evidence gate: NixOS binding drift, parser registration,
-    /// and privacy invocation.
+    /// and sensitivity annotation.
     SourceWorker {
         /// Path to the JSON file exported by
         /// `config.services.sinex.sources.exportedJson` (from the NixOS module).
@@ -1283,8 +1283,8 @@ fn execute_source_worker(
         check_sw_binding_drift(&root, bindings_json),
         // A3.1.2 — Registered parsers smoke
         check_sw_registered_parsers(&root),
-        // A3.1.3 — Privacy invocation: every Sensitive/Secret source unit must invoke
-        // the privacy engine or declare an explicit escape hatch.
+        // A3.1.3 — Sensitivity annotation: every Sensitive/Secret source unit must invoke
+        // the sensitivity annotations or declare an explicit escape hatch.
         check_sw_privacy_invocation(&root),
     ];
 
@@ -1321,7 +1321,7 @@ fn execute_source_worker(
     // source units without NixOS bindings) that the PR being verified did not introduce.
     // Returning Partial here would make every PR fail CI as soon as any drift accumulates
     // anywhere in the source-unit catalog, defeating the gate's purpose. Only true Fail
-    // states (registered parser or privacy invocation regressions, plus live binding drift
+    // states (registered parser or sensitivity annotation regressions, plus live binding drift
     // when --bindings-json is supplied) block the PR.
     let mut result = match &overall {
         SwCheckStatus::Pass => {
@@ -1550,19 +1550,18 @@ fn scan_rs_files_for_pattern(dir: &Path, pattern: &regex::Regex, out: &mut Vec<S
     }
 }
 
-/// A3.1.3 — Privacy invocation: every `register_source_unit!` block that declares
-/// a non-Public privacy tier must invoke the privacy engine in the same file.
+/// A3.1.3 — Sensitivity annotation: every `register_source_unit!` block that declares
+/// a non-Public privacy tier must declare sensitivity annotations in the same
+/// file or parser module.
 ///
-/// Scanning targets: the entire `crate/core/sinex-source-worker/src/` tree and
-/// `crate/lib/sinex-node-sdk/src/parser/` (where parsers may live after the fold).
+/// Scanning targets: source-unit parsers and parser SDK code.
 ///
 /// Indicators (any one satisfies the gate):
-/// - `privacy::engine(`
-/// - `privacy::process(`
-/// - `privacy::process_json(`
-/// - `ProcessingContext::` (imperative parsers that use a context variant)
-/// - `default_privacy_context =` (declarative `#[source_record]` DSL attribute)
-/// - `#[allow(missing_privacy_invocation` (explicit escape hatch)
+/// - `field_hints:`
+/// - `.privacy_hints(`
+/// - `default_privacy_hints =` (declarative `#[source_record]` DSL attribute)
+/// - `sensitivity_profile(` (binding metadata)
+/// - `#[allow(missing_sensitivity_annotation` (explicit escape hatch)
 fn check_sw_privacy_invocation(root: &Path) -> SwCheck {
     const NON_PUBLIC_TIERS: &[&str] = &[
         "PrivacyTier::Sensitive",
@@ -1570,18 +1569,17 @@ fn check_sw_privacy_invocation(root: &Path) -> SwCheck {
         "SuPrivacyTier::Sensitive",
         "SuPrivacyTier::Secret",
     ];
-    const PRIVACY_INDICATORS: &[&str] = &[
-        "privacy::engine(",
-        "privacy::process(",
-        "privacy::process_json(",
-        "ProcessingContext::",
-        "default_privacy_context =",
-        "#[allow(missing_privacy_invocation",
+    const SENSITIVITY_INDICATORS: &[&str] = &[
+        "field_hints:",
+        ".privacy_hints(",
+        "default_privacy_hints =",
+        "sensitivity_profile(",
+        "#[allow(missing_sensitivity_annotation",
     ];
 
     let search_roots = [
-        root.join("crate/core/sinex-source-worker/src"),
-        root.join("crate/lib/sinex-node-sdk/src/parser"),
+        root.join("crate/sinexd/src/sources/source_units"),
+        root.join("crate/sinexd/src/node_sdk/parser"),
     ];
 
     let mut violations: Vec<String> = Vec::new();
@@ -1590,21 +1588,21 @@ fn check_sw_privacy_invocation(root: &Path) -> SwCheck {
         collect_privacy_violations(
             search_root,
             NON_PUBLIC_TIERS,
-            PRIVACY_INDICATORS,
+            SENSITIVITY_INDICATORS,
             &mut violations,
         );
     }
 
     if violations.is_empty() {
         SwCheck::pass(
-            "privacy_invocation",
-            "all non-Public source units invoke the privacy engine",
+            "sensitivity_annotation",
+            "all non-Public source units declare sensitivity annotations",
         )
     } else {
         SwCheck::fail(
             "privacy_invocation",
             format!(
-                "{} file(s) have non-Public source units without a privacy invocation",
+                "{} file(s) have non-Public source units without a sensitivity annotation",
                 violations.len()
             ),
             violations,
@@ -1671,9 +1669,10 @@ fn collect_privacy_violations(
             // Extract id for the error message.
             let id = extract_unit_id_from_contents(&contents);
             out.push(format!(
-                "{}: source unit '{}' has non-Public privacy tier but no privacy invocation \
-                 (add privacy::engine(, ProcessingContext::, default_privacy_context =, or \
-                 #[allow(missing_privacy_invocation, reason = \"...\")])",
+                "{}: source unit '{}' has non-Public privacy tier but no sensitivity annotation \
+                 (add field_hints:, .privacy_hints(, default_privacy_hints =, \
+                 sensitivity_profile(, or \
+                 #[allow(missing_sensitivity_annotation, reason = \"...\")])",
                 path.display(),
                 id,
             ));

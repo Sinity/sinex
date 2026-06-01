@@ -3,8 +3,12 @@
 //! CRUD over the user-controlled, DB-backed privacy policy tables in the
 //! `privacy` schema:
 //!
-//! - `privacy.rules` — content matchers (`regex` / `literal`) with an action
-//!   (`redact` / `hash` / `encrypt` / `suppress`).
+//! - `privacy.recognizer_backends` — external/local recognizer providers such
+//!   as Presidio, Gitleaks-compatible importers, or local pattern execution.
+//! - `privacy.dictionaries` / `privacy.dictionary_terms` — user/seeded
+//!   deny-list dictionaries for policy rules.
+//! - `privacy.rules` — recognizer-backed matchers with an action
+//!   (`redact` / `hash` / `encrypt` / `suppress` / `mask`).
 //! - `privacy.field_rules` — scopes a rule to a `(event_source, event_type,
 //!   field_path)` triple; `NULL` means "all".
 //! - `privacy.encryption_keys` — key-namespace registry. Key MATERIAL never
@@ -12,11 +16,46 @@
 //!
 //! The policy engine in `sinexd` loads all enabled rules + their field scopes
 //! at the persistence chokepoint and applies them before write. Management
-//! (`sinexctl privacy ...`) is deferred to a #1042 follow-up.
+//! is exposed through the `privacy.policy.*` RPC methods and
+//! `sinexctl privacy policy ...`.
 
 use crate::DbResult;
+use serde_json::Value as JsonValue;
 use sinex_primitives::prelude::*;
 use sqlx::PgPool;
+
+/// A recognizer backend as stored in `privacy.recognizer_backends`.
+#[derive(Debug, Clone, sqlx::FromRow, serde::Serialize, serde::Deserialize)]
+pub struct RecognizerBackendRecord {
+    pub id: Uuid,
+    pub name: String,
+    pub kind: String,
+    pub endpoint_url: Option<String>,
+    pub config: JsonValue,
+    pub enabled: bool,
+}
+
+/// A privacy dictionary as stored in `privacy.dictionaries`.
+#[derive(Debug, Clone, sqlx::FromRow, serde::Serialize, serde::Deserialize)]
+pub struct DictionaryRecord {
+    pub id: Uuid,
+    pub name: String,
+    pub description: String,
+    pub language: Option<String>,
+    pub source_kind: String,
+    pub tags: Vec<String>,
+    pub enabled: bool,
+}
+
+/// A dictionary term as stored in `privacy.dictionary_terms`.
+#[derive(Debug, Clone, sqlx::FromRow, serde::Serialize, serde::Deserialize)]
+pub struct DictionaryTermRecord {
+    pub id: Uuid,
+    pub dictionary_id: Uuid,
+    pub term: String,
+    pub metadata: JsonValue,
+    pub enabled: bool,
+}
 
 /// A privacy rule as stored in `privacy.rules`.
 #[derive(Debug, Clone, sqlx::FromRow, serde::Serialize, serde::Deserialize)]
@@ -24,8 +63,11 @@ pub struct PrivacyRuleRecord {
     pub id: Uuid,
     pub name: String,
     pub description: String,
+    pub recognizer_backend_id: Option<Uuid>,
+    pub recognizer_kind: String,
     pub matcher_type: String,
     pub matcher_value: String,
+    pub matcher_config: JsonValue,
     pub case_sensitive: bool,
     pub action: String,
     pub action_label: Option<String>,
@@ -58,6 +100,8 @@ pub struct EncryptionKeyRecord {
 pub struct LoadedRule {
     pub rule: PrivacyRuleRecord,
     pub scopes: Vec<FieldRuleRecord>,
+    pub dictionary_terms: Vec<String>,
+    pub backend: Option<RecognizerBackendRecord>,
 }
 
 /// Repository for the privacy policy tables.
@@ -84,8 +128,11 @@ impl<'a> PrivacyPolicyRepository<'a> {
                 id,
                 name,
                 description,
+                recognizer_backend_id,
+                recognizer_kind,
                 matcher_type,
                 matcher_value,
+                matcher_config as "matcher_config!: JsonValue",
                 case_sensitive,
                 action,
                 action_label,
@@ -120,6 +167,54 @@ impl<'a> PrivacyPolicyRepository<'a> {
         .await
         .map_err(|e| SinexError::database(format!("failed to load privacy field scopes: {e}")))?;
 
+        let dictionary_terms = sqlx::query!(
+            r#"
+            SELECT
+                r.id AS rule_id,
+                dt.term
+            FROM privacy.rules r
+            JOIN privacy.dictionaries d
+              ON r.matcher_type = 'dictionary'
+             AND d.enabled = true
+             AND (
+                    d.name = r.matcher_value
+                 OR d.id::text = r.matcher_value
+                 OR d.name = r.matcher_config ->> 'dictionary'
+                 OR d.id::text = r.matcher_config ->> 'dictionary_id'
+             )
+            JOIN privacy.dictionary_terms dt
+              ON dt.dictionary_id = d.id
+             AND dt.enabled = true
+            WHERE r.enabled = true
+            ORDER BY r.name, dt.term
+            "#,
+        )
+        .fetch_all(self.pool)
+        .await
+        .map_err(|e| {
+            SinexError::database(format!("failed to load privacy dictionary terms: {e}"))
+        })?;
+
+        let backends = sqlx::query_as!(
+            RecognizerBackendRecord,
+            r#"
+            SELECT
+                id,
+                name,
+                kind,
+                endpoint_url,
+                config as "config!: JsonValue",
+                enabled
+            FROM privacy.recognizer_backends
+            WHERE enabled = true
+            "#,
+        )
+        .fetch_all(self.pool)
+        .await
+        .map_err(|e| {
+            SinexError::database(format!("failed to load privacy recognizer backends: {e}"))
+        })?;
+
         let loaded = rules
             .into_iter()
             .map(|rule| {
@@ -128,9 +223,19 @@ impl<'a> PrivacyPolicyRepository<'a> {
                     .filter(|s| s.rule_id == rule.id)
                     .cloned()
                     .collect();
+                let dictionary_terms = dictionary_terms
+                    .iter()
+                    .filter(|term| term.rule_id == rule.id)
+                    .map(|term| term.term.clone())
+                    .collect();
+                let backend = rule
+                    .recognizer_backend_id
+                    .and_then(|id| backends.iter().find(|backend| backend.id == id).cloned());
                 LoadedRule {
                     rule,
                     scopes: rule_scopes,
+                    dictionary_terms,
+                    backend,
                 }
             })
             .collect();
@@ -143,7 +248,8 @@ impl<'a> PrivacyPolicyRepository<'a> {
             PrivacyRuleRecord,
             r#"
             SELECT
-                id, name, description, matcher_type, matcher_value,
+                id, name, description, recognizer_backend_id, recognizer_kind,
+                matcher_type, matcher_value, matcher_config as "matcher_config!: JsonValue",
                 case_sensitive, action, action_label, key_namespace, enabled
             FROM privacy.rules
             ORDER BY name
@@ -167,18 +273,54 @@ impl<'a> PrivacyPolicyRepository<'a> {
         action_label: Option<&str>,
         key_namespace: &str,
     ) -> DbResult<Uuid> {
+        self.add_recognizer_rule(
+            name,
+            description,
+            None,
+            "local_pattern",
+            matcher_type,
+            matcher_value,
+            JsonValue::Object(serde_json::Map::new()),
+            case_sensitive,
+            action,
+            action_label,
+            key_namespace,
+        )
+        .await
+    }
+
+    /// Insert a recognizer-backed rule and return its generated id.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn add_recognizer_rule(
+        &self,
+        name: &str,
+        description: &str,
+        recognizer_backend_id: Option<Uuid>,
+        recognizer_kind: &str,
+        matcher_type: &str,
+        matcher_value: &str,
+        matcher_config: JsonValue,
+        case_sensitive: bool,
+        action: &str,
+        action_label: Option<&str>,
+        key_namespace: &str,
+    ) -> DbResult<Uuid> {
         let row = sqlx::query!(
             r#"
             INSERT INTO privacy.rules
-                (name, description, matcher_type, matcher_value,
-                 case_sensitive, action, action_label, key_namespace)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                (name, description, recognizer_backend_id, recognizer_kind,
+                 matcher_type, matcher_value, matcher_config, case_sensitive,
+                 action, action_label, key_namespace)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
             RETURNING id
             "#,
             name,
             description,
+            recognizer_backend_id,
+            recognizer_kind,
             matcher_type,
             matcher_value,
+            matcher_config,
             case_sensitive,
             action,
             action_label,
@@ -188,6 +330,200 @@ impl<'a> PrivacyPolicyRepository<'a> {
         .await
         .map_err(|e| SinexError::database(format!("failed to add privacy rule: {e}")))?;
         Ok(row.id)
+    }
+
+    /// Insert or update a recognizer-backed rule by name.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn upsert_recognizer_rule(
+        &self,
+        name: &str,
+        description: &str,
+        recognizer_backend_id: Option<Uuid>,
+        recognizer_kind: &str,
+        matcher_type: &str,
+        matcher_value: &str,
+        matcher_config: JsonValue,
+        case_sensitive: bool,
+        action: &str,
+        action_label: Option<&str>,
+        key_namespace: &str,
+        enabled: bool,
+    ) -> DbResult<Uuid> {
+        let row = sqlx::query!(
+            r#"
+            INSERT INTO privacy.rules
+                (name, description, recognizer_backend_id, recognizer_kind,
+                 matcher_type, matcher_value, matcher_config, case_sensitive,
+                 action, action_label, key_namespace, enabled)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+            ON CONFLICT (name) DO UPDATE SET
+                description = EXCLUDED.description,
+                recognizer_backend_id = EXCLUDED.recognizer_backend_id,
+                recognizer_kind = EXCLUDED.recognizer_kind,
+                matcher_type = EXCLUDED.matcher_type,
+                matcher_value = EXCLUDED.matcher_value,
+                matcher_config = EXCLUDED.matcher_config,
+                case_sensitive = EXCLUDED.case_sensitive,
+                action = EXCLUDED.action,
+                action_label = EXCLUDED.action_label,
+                key_namespace = EXCLUDED.key_namespace,
+                enabled = EXCLUDED.enabled
+            RETURNING id
+            "#,
+            name,
+            description,
+            recognizer_backend_id,
+            recognizer_kind,
+            matcher_type,
+            matcher_value,
+            matcher_config,
+            case_sensitive,
+            action,
+            action_label,
+            key_namespace,
+            enabled,
+        )
+        .fetch_one(self.pool)
+        .await
+        .map_err(|e| SinexError::database(format!("failed to upsert privacy rule: {e}")))?;
+        Ok(row.id)
+    }
+
+    /// List configured recognizer backends.
+    pub async fn list_recognizer_backends(&self) -> DbResult<Vec<RecognizerBackendRecord>> {
+        sqlx::query_as!(
+            RecognizerBackendRecord,
+            r#"
+            SELECT
+                id,
+                name,
+                kind,
+                endpoint_url,
+                config as "config!: JsonValue",
+                enabled
+            FROM privacy.recognizer_backends
+            ORDER BY name
+            "#,
+        )
+        .fetch_all(self.pool)
+        .await
+        .map_err(|e| SinexError::database(format!("failed to list recognizer backends: {e}")))
+    }
+
+    /// Register a recognizer backend and return its generated id.
+    pub async fn add_recognizer_backend(
+        &self,
+        name: &str,
+        kind: &str,
+        endpoint_url: Option<&str>,
+        config: JsonValue,
+    ) -> DbResult<Uuid> {
+        let row = sqlx::query!(
+            r#"
+            INSERT INTO privacy.recognizer_backends (name, kind, endpoint_url, config)
+            VALUES ($1, $2, $3, $4)
+            RETURNING id
+            "#,
+            name,
+            kind,
+            endpoint_url,
+            config,
+        )
+        .fetch_one(self.pool)
+        .await
+        .map_err(|e| SinexError::database(format!("failed to add recognizer backend: {e}")))?;
+        Ok(row.id)
+    }
+
+    /// List privacy dictionaries.
+    pub async fn list_dictionaries(&self) -> DbResult<Vec<DictionaryRecord>> {
+        sqlx::query_as!(
+            DictionaryRecord,
+            r#"
+            SELECT id, name, description, language, source_kind, tags, enabled
+            FROM privacy.dictionaries
+            ORDER BY name
+            "#,
+        )
+        .fetch_all(self.pool)
+        .await
+        .map_err(|e| SinexError::database(format!("failed to list privacy dictionaries: {e}")))
+    }
+
+    /// Register a privacy dictionary and return its generated id.
+    pub async fn add_dictionary(
+        &self,
+        name: &str,
+        description: &str,
+        language: Option<&str>,
+        source_kind: &str,
+        tags: &[String],
+    ) -> DbResult<Uuid> {
+        let row = sqlx::query!(
+            r#"
+            INSERT INTO privacy.dictionaries
+                (name, description, language, source_kind, tags)
+            VALUES ($1, $2, $3, $4, $5)
+            RETURNING id
+            "#,
+            name,
+            description,
+            language,
+            source_kind,
+            tags,
+        )
+        .fetch_one(self.pool)
+        .await
+        .map_err(|e| SinexError::database(format!("failed to add privacy dictionary: {e}")))?;
+        Ok(row.id)
+    }
+
+    /// Add a term to a dictionary.
+    pub async fn add_dictionary_term(
+        &self,
+        dictionary_id: Uuid,
+        term: &str,
+        metadata: JsonValue,
+    ) -> DbResult<Uuid> {
+        let row = sqlx::query!(
+            r#"
+            INSERT INTO privacy.dictionary_terms (dictionary_id, term, metadata)
+            VALUES ($1, $2, $3)
+            RETURNING id
+            "#,
+            dictionary_id,
+            term,
+            metadata,
+        )
+        .fetch_one(self.pool)
+        .await
+        .map_err(|e| SinexError::database(format!("failed to add dictionary term: {e}")))?;
+        Ok(row.id)
+    }
+
+    /// List terms for a dictionary.
+    pub async fn list_dictionary_terms(
+        &self,
+        dictionary_id: Uuid,
+    ) -> DbResult<Vec<DictionaryTermRecord>> {
+        sqlx::query_as!(
+            DictionaryTermRecord,
+            r#"
+            SELECT
+                id,
+                dictionary_id,
+                term,
+                metadata as "metadata!: JsonValue",
+                enabled
+            FROM privacy.dictionary_terms
+            WHERE dictionary_id = $1
+            ORDER BY term
+            "#,
+            dictionary_id,
+        )
+        .fetch_all(self.pool)
+        .await
+        .map_err(|e| SinexError::database(format!("failed to list dictionary terms: {e}")))
     }
 
     /// Remove a rule by name. Cascades to its field scopes via the FK.
@@ -246,6 +582,7 @@ impl<'a> PrivacyPolicyRepository<'a> {
         field_path: Option<&str>,
         priority: i32,
     ) -> DbResult<Uuid> {
+        let normalized_field_path = normalize_field_path(field_path);
         let row = sqlx::query!(
             r#"
             INSERT INTO privacy.field_rules
@@ -258,7 +595,7 @@ impl<'a> PrivacyPolicyRepository<'a> {
             rule_name,
             event_source,
             event_type,
-            field_path,
+            normalized_field_path.as_deref(),
             priority,
         )
         .fetch_optional(self.pool)
@@ -317,4 +654,15 @@ impl<'a> PrivacyPolicyRepository<'a> {
             .map_err(|e| SinexError::database(format!("failed to remove key namespace: {e}")))?;
         Ok(result.rows_affected())
     }
+}
+
+fn normalize_field_path(path: Option<&str>) -> Option<String> {
+    let path = path?.trim();
+    if path.is_empty() {
+        return None;
+    }
+    if path.starts_with('/') {
+        return Some(path.to_string());
+    }
+    Some(format!("/{}", path.replace('~', "~0").replace('/', "~1")))
 }

@@ -7,10 +7,9 @@
 //! - **Secondary (`AppendOnlyFile`)**: reads JSONL/NDJSON dump export lines appended
 //!   to by polylogue or manual browser history exports.
 //!
-//! Privacy tier: `Secret` — URLs carry auth tokens.
-//! `url` / `normalized_url` / `referrer` → `ProcessingContext::Clipboard`.
-//! `title` → `ProcessingContext::WindowTitle`.
-//! `source_file` → `ProcessingContext::Metadata`.
+//! Sensitivity tier: `Secret` — URLs can carry auth tokens. The parser declares
+//! URL/title/path sensitivity hints and admission policy decides recognition
+//! and action.
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -29,7 +28,6 @@ use sinex_primitives::{
         InputShapeKind, OccurrenceKey, ParsedEventIntent, ParserContext, ParserId, ParserManifest,
         SourceRecord, SourceUnitId, TimingConfidence, TimingEvidence,
     },
-    privacy::{self, ProcessingContext},
     temporal::Timestamp,
 };
 use sinex_primitives::{register_source_unit, register_source_unit_binding};
@@ -49,7 +47,7 @@ register_source_unit! {
         horizons: &[Horizon::Continuous, Horizon::Historical],
         retention: RetentionPolicy::Forever,
         proof_obligations: &[
-            "url_privacy_redaction",
+            "url_sensitive_hint",
             "sqlite_row_anchor",
             "dump_line_anchor",
         ],
@@ -69,7 +67,7 @@ register_source_unit_binding! {
     .implementation("sinex-source-worker")
     .adapter("ChainedAdapter<SqliteRowAdapter, AppendOnlyFileAdapter>")
     .output_event_type("page.visited")
-    .privacy_context("url")
+    .sensitivity_profile("url")
     .material_policy("browser_visit_id")
     .checkpoint_policy("mutable_snapshot")
     .resource_shape("linear_rows_bounded_memory")
@@ -227,13 +225,15 @@ impl MaterialParser for BrowserHistoryParser {
                 EventSource::from_static("webhistory"),
                 EventType::from_static("page.visited"),
             )],
-            privacy_contexts: vec![
-                ProcessingContext::Clipboard,
-                ProcessingContext::WindowTitle,
-                ProcessingContext::Metadata,
+            field_hints: vec![
+                sinex_primitives::parser::FieldSensitivityHint::Url,
+                sinex_primitives::parser::FieldSensitivityHint::Title,
+                sinex_primitives::parser::FieldSensitivityHint::FreeText,
+                sinex_primitives::parser::FieldSensitivityHint::PotentiallySensitive,
+                sinex_primitives::parser::FieldSensitivityHint::SystemMetadata,
             ],
             proof_obligations: vec![
-                "url_privacy_redaction".into(),
+                "url_sensitive_hint".into(),
                 "sqlite_row_anchor".into(),
                 "dump_line_anchor".into(),
             ],
@@ -545,14 +545,10 @@ fn build_intent(
     record: &SourceRecord,
     ctx: &ParserContext,
 ) -> ParserResult<Vec<ParsedEventIntent>> {
-    let url = redact(&visit.url, ProcessingContext::Clipboard)?;
-    let title = redact(&visit.title, ProcessingContext::WindowTitle)?;
-    let referrer = visit
-        .referrer
-        .as_deref()
-        .map(|r| redact(r, ProcessingContext::Clipboard))
-        .transpose()?;
-    let source_file = redact(&visit.source_file, ProcessingContext::Metadata)?;
+    let url = visit.url;
+    let title = visit.title;
+    let referrer = visit.referrer;
+    let source_file = visit.source_file;
 
     let mut payload = serde_json::Map::new();
     payload.insert("browser".into(), serde_json::json!(visit.browser));
@@ -604,19 +600,13 @@ fn build_intent(
             })
             .anchor(record.anchor.clone())
             .maybe_occurrence_key(occurrence_key)
-            .privacy_context(ProcessingContext::Clipboard)
+            .privacy_hints(vec![
+                sinex_primitives::parser::FieldSensitivityHint::FreeText,
+                sinex_primitives::parser::FieldSensitivityHint::PotentiallySensitive,
+                sinex_primitives::parser::FieldSensitivityHint::CredentialBearing,
+            ])
             .build(),
     ])
-}
-
-// ---------------------------------------------------------------------------
-// Privacy helper
-// ---------------------------------------------------------------------------
-
-fn redact(value: &str, ctx: ProcessingContext) -> ParserResult<String> {
-    privacy::process(value, ctx)
-        .map(|r| r.text.into_owned())
-        .map_err(|e| ParserError::Privacy(e.to_string()))
 }
 
 // ---------------------------------------------------------------------------

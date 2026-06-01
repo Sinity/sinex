@@ -19,7 +19,6 @@ use sinex_primitives::parser::{
     InputShapeKind, ParsedEventIntent, ParserContext, ParserId, ParserManifest, SourceUnitId,
     TimingConfidence, TimingEvidence,
 };
-use sinex_primitives::privacy::ProcessingContext;
 use sinex_primitives::proof::{
     CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, RetentionPolicy, RuntimeShape,
     SourceUnitBinding, SourceUnitBuildImpact, SourceUnitDescriptor, SubjectRef,
@@ -59,7 +58,7 @@ register_source_unit_binding! {
     .implementation("sinex-source-worker")
     .adapter("AppendOnlyFileAdapter")
     .output_event_type("command.imported")
-    .privacy_context("Command")
+    .sensitivity_profile("Command")
     .material_policy("text_history_anchor")
     .checkpoint_policy("append_stream")
     .resource_shape("linear_rows_bounded_memory")
@@ -143,7 +142,7 @@ impl MaterialParser for ZshHistoryParser {
                 EventSource::from_static("shell.history"),
                 EventType::from_static("command.imported"),
             )],
-            privacy_contexts: vec![ProcessingContext::Command],
+            field_hints: vec![sinex_primitives::parser::FieldSensitivityHint::FreeText, sinex_primitives::parser::FieldSensitivityHint::CredentialBearing],
             proof_obligations: vec![
                 "obligation:source_unit.material_provenance".into(),
                 "obligation:source_unit.package_impact_rationale".into(),
@@ -251,17 +250,6 @@ impl ZshHistoryParser {
         }
         self.dedup.observe(command.as_bytes());
 
-        // Privacy processing.
-        let processed = {
-            let result = sinex_primitives::privacy::engine()
-                .map_err(|e| ParserError::Parse(format!("privacy engine unavailable: {e}")))?
-                .process(&command, ProcessingContext::Command);
-            if result.suppressed {
-                return Ok(vec![]);
-            }
-            result.text.into_owned()
-        };
-
         let (ts_orig, timing) = match ts {
             Some(t) => (
                 t,
@@ -274,7 +262,7 @@ impl ZshHistoryParser {
         };
 
         let payload = HistoryCommandImportedPayload {
-            command: processed,
+            command,
             timestamp: ts,
             shell_type: "zsh".into(),
             source_file: self.source_file.clone(),
@@ -295,7 +283,10 @@ impl ZshHistoryParser {
                 .ts_orig(ts_orig)
                 .timing(timing)
                 .anchor(anchor)
-                .privacy_context(ProcessingContext::Command)
+                .privacy_hints(vec![
+                    sinex_primitives::parser::FieldSensitivityHint::FreeText,
+                    sinex_primitives::parser::FieldSensitivityHint::CredentialBearing,
+                ])
                 .build(),
         ])
     }

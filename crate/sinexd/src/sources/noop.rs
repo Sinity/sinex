@@ -47,7 +47,7 @@ register_source_unit_binding! {
     .implementation("sinex-source-worker")
     .adapter("SourceUnitRuntime")
     .output_event_type("noop")
-    .privacy_context("none")
+    .sensitivity_profile("none")
     .material_policy("none")
     .checkpoint_policy("live_observation")
     .resource_shape("event_emitter")

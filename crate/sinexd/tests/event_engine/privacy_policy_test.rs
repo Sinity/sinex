@@ -208,8 +208,6 @@ async fn privacy_action_suppress_literal(ctx: TestContext) -> TestResult<()> {
 
 /// A rule scoped to `/secret_field` applies only to that top-level key and
 /// leaves other fields (even matching ones) untouched.
-///
-/// v1 limitation: only top-level JSON keys are supported.
 #[sinex_test]
 async fn privacy_field_scoped_rule(ctx: TestContext) -> TestResult<()> {
     let pool = ctx.pool();
@@ -382,12 +380,14 @@ async fn privacy_dlq_raw_bytes_suppressed(ctx: TestContext) -> TestResult<()> {
         "_raw_bytes_base64 must be absent in DLQ stub; got: {stub}"
     );
     assert_eq!(
-        stub.get("_raw_bytes_suppressed").and_then(serde_json::Value::as_bool),
+        stub.get("_raw_bytes_suppressed")
+            .and_then(serde_json::Value::as_bool),
         Some(true),
         "stub must mark suppression"
     );
     assert_eq!(
-        stub.get("_raw_bytes_len").and_then(serde_json::Value::as_u64),
+        stub.get("_raw_bytes_len")
+            .and_then(serde_json::Value::as_u64),
         Some(42),
         "stub must record original length"
     );

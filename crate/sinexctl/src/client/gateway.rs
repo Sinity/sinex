@@ -85,8 +85,19 @@ use sinex_primitives::rpc::{
     },
     ops::{Operation as OpsOperation, OpsGetResponse, OpsListResponse, OpsStartResponse},
     privacy::{
+        PRIVACY_POLICY_ADD_DICTIONARY_TERM_METHOD, PRIVACY_POLICY_BIND_RULE_METHOD,
+        PRIVACY_POLICY_CREATE_BACKEND_METHOD, PRIVACY_POLICY_CREATE_DICTIONARY_METHOD,
+        PRIVACY_POLICY_CREATE_KEY_METHOD, PRIVACY_POLICY_CREATE_RULE_METHOD,
+        PRIVACY_POLICY_LIST_METHOD,
+        PRIVACY_POLICY_SEED_CATALOG_METHOD,
         PRIVACY_PRIVATE_MODE_DISABLE_METHOD, PRIVACY_PRIVATE_MODE_ENABLE_METHOD,
-        PRIVACY_PRIVATE_MODE_STATUS_METHOD, PrivateModeDisableRequest, PrivateModeEnableRequest,
+        PRIVACY_PRIVATE_MODE_STATUS_METHOD, PrivacyPolicyAddDictionaryTermRequest,
+        PrivacyPolicyBindRuleRequest, PrivacyPolicyCreateBackendRequest,
+        PrivacyPolicyCreateDictionaryRequest, PrivacyPolicyCreateKeyRequest,
+        PrivacyPolicyCreateRuleRequest,
+        PrivacyPolicyIdResponse, PrivacyPolicyListRequest, PrivacyPolicyListResponse,
+        PrivacyPolicySeedCatalogRequest,
+        PrivacyPolicySeedCatalogResponse, PrivateModeDisableRequest, PrivateModeEnableRequest,
         PrivateModeStateResponse, PrivateModeStatusRequest,
     },
     replay::{
@@ -1539,6 +1550,67 @@ impl GatewayClient {
     pub async fn private_mode_disable(&self) -> Result<PrivateModeStateResponse> {
         let req = PrivateModeDisableRequest {};
         self.call_typed(PRIVACY_PRIVATE_MODE_DISABLE_METHOD, &req)
+            .await
+    }
+
+    pub async fn privacy_policy_list(
+        &self,
+        include_disabled: bool,
+    ) -> Result<PrivacyPolicyListResponse> {
+        let req = PrivacyPolicyListRequest { include_disabled };
+        self.call_typed(PRIVACY_POLICY_LIST_METHOD, &req).await
+    }
+
+    pub async fn privacy_policy_create_dictionary(
+        &self,
+        req: PrivacyPolicyCreateDictionaryRequest,
+    ) -> Result<PrivacyPolicyIdResponse> {
+        self.call_typed(PRIVACY_POLICY_CREATE_DICTIONARY_METHOD, &req)
+            .await
+    }
+
+    pub async fn privacy_policy_create_backend(
+        &self,
+        req: PrivacyPolicyCreateBackendRequest,
+    ) -> Result<PrivacyPolicyIdResponse> {
+        self.call_typed(PRIVACY_POLICY_CREATE_BACKEND_METHOD, &req)
+            .await
+    }
+
+    pub async fn privacy_policy_create_key(
+        &self,
+        req: PrivacyPolicyCreateKeyRequest,
+    ) -> Result<PrivacyPolicyIdResponse> {
+        self.call_typed(PRIVACY_POLICY_CREATE_KEY_METHOD, &req)
+            .await
+    }
+
+    pub async fn privacy_policy_add_dictionary_term(
+        &self,
+        req: PrivacyPolicyAddDictionaryTermRequest,
+    ) -> Result<PrivacyPolicyIdResponse> {
+        self.call_typed(PRIVACY_POLICY_ADD_DICTIONARY_TERM_METHOD, &req)
+            .await
+    }
+
+    pub async fn privacy_policy_create_rule(
+        &self,
+        req: PrivacyPolicyCreateRuleRequest,
+    ) -> Result<PrivacyPolicyIdResponse> {
+        self.call_typed(PRIVACY_POLICY_CREATE_RULE_METHOD, &req)
+            .await
+    }
+
+    pub async fn privacy_policy_bind_rule(
+        &self,
+        req: PrivacyPolicyBindRuleRequest,
+    ) -> Result<PrivacyPolicyIdResponse> {
+        self.call_typed(PRIVACY_POLICY_BIND_RULE_METHOD, &req).await
+    }
+
+    pub async fn privacy_policy_seed_catalog(&self) -> Result<PrivacyPolicySeedCatalogResponse> {
+        let req = PrivacyPolicySeedCatalogRequest {};
+        self.call_typed(PRIVACY_POLICY_SEED_CATALOG_METHOD, &req)
             .await
     }
 

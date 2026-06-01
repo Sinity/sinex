@@ -14,7 +14,6 @@ use sinex_primitives::parser::{
     InputShapeKind, ParsedEventIntent, ParserContext, ParserId, ParserManifest, SourceUnitId,
     TimingEvidence,
 };
-use sinex_primitives::privacy::ProcessingContext;
 use sinex_primitives::proof::{
     CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, RetentionPolicy, RuntimeShape,
     SourceUnitBinding, SourceUnitBuildImpact, SourceUnitDescriptor, SubjectRef,
@@ -53,7 +52,7 @@ register_source_unit_binding! {
     .implementation("sinex-source-worker")
     .adapter("AppendOnlyFileAdapter")
     .output_event_type("command.imported")
-    .privacy_context("Command")
+    .sensitivity_profile("Command")
     .material_policy("text_history_anchor")
     .checkpoint_policy("append_stream")
     .resource_shape("linear_rows_bounded_memory")
@@ -94,7 +93,10 @@ impl MaterialParser for TextHistoryParser {
                 EventSource::from_static("shell.history"),
                 EventType::from_static("command.imported"),
             )],
-            privacy_contexts: vec![ProcessingContext::Command],
+            field_hints: vec![
+                sinex_primitives::parser::FieldSensitivityHint::FreeText,
+                sinex_primitives::parser::FieldSensitivityHint::CredentialBearing,
+            ],
             proof_obligations: vec![
                 "obligation:source_unit.material_provenance".into(),
                 "obligation:source_unit.package_impact_rationale".into(),
@@ -132,16 +134,6 @@ impl MaterialParser for TextHistoryParser {
         }
         self.dedup.observe(line.as_bytes());
 
-        let processed = {
-            let result = sinex_primitives::privacy::engine()
-                .map_err(|e| ParserError::Parse(format!("privacy engine unavailable: {e}")))?
-                .process(line, ProcessingContext::Command);
-            if result.suppressed {
-                return Ok(vec![]);
-            }
-            result.text.into_owned()
-        };
-
         let line_number = match &record.anchor {
             sinex_primitives::parser::MaterialAnchor::Line { line: ln, .. } => Some(*ln as u32),
             _ => None,
@@ -154,7 +146,7 @@ impl MaterialParser for TextHistoryParser {
             .unwrap_or_default();
 
         let payload = HistoryCommandImportedPayload {
-            command: processed,
+            command: line.to_string(),
             timestamp: None,
             shell_type: "unknown".into(),
             source_file,
@@ -175,7 +167,10 @@ impl MaterialParser for TextHistoryParser {
                 .ts_orig(sinex_primitives::temporal::Timestamp::now())
                 .timing(TimingEvidence::StagedAtFallback)
                 .anchor(record.anchor)
-                .privacy_context(ProcessingContext::Command)
+                .privacy_hints(vec![
+                    sinex_primitives::parser::FieldSensitivityHint::FreeText,
+                    sinex_primitives::parser::FieldSensitivityHint::CredentialBearing,
+                ])
                 .build(),
         ])
     }

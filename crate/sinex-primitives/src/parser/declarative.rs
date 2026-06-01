@@ -15,7 +15,7 @@
 //! - JSON / tab-separated / SQLite-row / CSV-row / raw-line input formats
 //! - Field extraction via JSON Pointer, column index, column name, raw line
 //! - Type coercion for string, integer, number, boolean, JSON
-//! - Per-field privacy via `privacy::process()` (records `FieldPrivacyDecision`)
+//! - Per-field sensitivity hints for DB/user policy binding
 //! - `#[suppress_if]` predicate (per-field or whole-event)
 //! - `#[required]` / `#[default]` / `#[skip]` semantics
 //! - `#[occurrence_key]` composite key construction
@@ -63,12 +63,10 @@
 use crate::Timestamp;
 use crate::domain::{EventSource, EventType};
 use crate::parser::{
-    BindingConfig, OccurrenceKey, ParsedEventIntent, ParserContext, ParserId, SourceRecord,
-    SourceUnitId, TimingConfidence, TimingEvidence,
+    BindingConfig, FieldSensitivityHint, OccurrenceKey, ParsedEventIntent, ParserContext,
+    ParserId, SourceRecord, SourceUnitId, TimingConfidence, TimingEvidence,
 };
-use crate::privacy::{self, FieldPrivacyDecision, ProcessingContext};
 use serde::{Deserialize, Serialize};
-use std::borrow::Cow;
 use std::collections::BTreeMap;
 
 use crate::parser::ParserError;
@@ -89,7 +87,8 @@ pub struct DeclarativeParserSpec {
     pub event_source: EventSource,
     /// Default event type — used when no discriminator matches (or no discriminator is present).
     pub event_type: EventType,
-    pub default_privacy_context: ProcessingContext,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub default_privacy_hints: Vec<FieldSensitivityHint>,
     pub input_format: InputFormat,
     pub fields: Vec<FieldSpec>,
 
@@ -214,10 +213,11 @@ pub struct FieldSpec {
     #[serde(default)]
     pub skip_payload: bool,
 
-    /// Privacy processing context. If set, the field's value runs through
-    /// `privacy::process()` before being placed in the payload.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub privacy_context: Option<ProcessingContext>,
+    /// Sensitivity hints declared for this source-record field. These are
+    /// metadata only; parser evaluation never redacts, hashes, encrypts, or
+    /// suppresses based on hints.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub privacy_hints: Vec<FieldSensitivityHint>,
 
     /// Include this field as part of the parser's `OccurrenceKey`.
     #[serde(default)]
@@ -462,7 +462,7 @@ fn evaluate_inner(
     let decoded = decode_record(spec.input_format, record)?;
 
     let mut payload = serde_json::Map::new();
-    let mut field_privacy_log = Vec::new();
+    let mut privacy_hints = spec.default_privacy_hints.clone();
     let mut occurrence_fields: Vec<(String, String)> = Vec::new();
     let mut ts_override: Option<(Timestamp, String)> = None;
     let mut whole_event_suppressed = false;
@@ -526,36 +526,13 @@ fn evaluate_inner(
             None => false,
         };
 
-        // Privacy processing for fields with a declared context.
-        let final_value = if let Some(ctx_priv) = field.privacy_context {
-            if suppressed_by_predicate {
-                let mut decision =
-                    FieldPrivacyDecision::suppressed_by_predicate(&field.name, ctx_priv);
-                if let Some(pred) = &field.suppress_if
-                    && pred.whole_event
-                {
-                    decision = decision.into_whole_event_suppressor();
-                    whole_event_suppressed = true;
-                }
-                field_privacy_log.push(decision);
-                None
-            } else {
-                let value_str = value_as_string(&coerced);
-                let processed = privacy::process(&value_str, ctx_priv)
-                    .map_err(|e| ParserError::Privacy(e.to_string()))?;
-                let decision =
-                    FieldPrivacyDecision::from_processed(&field.name, ctx_priv, &processed);
-                field_privacy_log.push(decision);
-                if processed.suppressed {
-                    None
-                } else {
-                    Some(serde_json::Value::String(match processed.text {
-                        Cow::Borrowed(s) => s.to_string(),
-                        Cow::Owned(s) => s,
-                    }))
-                }
+        for hint in &field.privacy_hints {
+            if !privacy_hints.contains(hint) {
+                privacy_hints.push(hint.clone());
             }
-        } else if suppressed_by_predicate {
+        }
+
+        let final_value = if suppressed_by_predicate {
             if let Some(pred) = &field.suppress_if
                 && pred.whole_event
             {
@@ -665,8 +642,7 @@ fn evaluate_inner(
             .timing(timing)
             .anchor(record.anchor.clone())
             .maybe_occurrence_key(occurrence_key)
-            .privacy_context(spec.default_privacy_context)
-            .field_privacy_log(field_privacy_log)
+            .privacy_hints(privacy_hints)
             .build(),
     ])
 }
@@ -863,7 +839,7 @@ mod tests {
             source_unit_id: SourceUnitId::from_static("test.unit"),
             event_source: EventSource::from_static("test"),
             event_type: EventType::from_static("test.event"),
-            default_privacy_context: ProcessingContext::Metadata,
+            default_privacy_hints: Vec::new(),
             input_format: InputFormat::Json,
             fields: vec![],
             discriminator: None,
@@ -883,7 +859,7 @@ mod tests {
                 required: true,
                 default: None,
                 skip_payload: false,
-                privacy_context: None,
+                privacy_hints: Vec::new(),
                 occurrence_key: false,
                 timestamp: None,
                 suppress_if: None,
@@ -898,7 +874,7 @@ mod tests {
                 required: false,
                 default: None,
                 skip_payload: false,
-                privacy_context: None,
+                privacy_hints: Vec::new(),
                 occurrence_key: false,
                 timestamp: None,
                 suppress_if: None,
@@ -911,7 +887,7 @@ mod tests {
                 required: true,
                 default: None,
                 skip_payload: false,
-                privacy_context: None,
+                privacy_hints: Vec::new(),
                 occurrence_key: false,
                 timestamp: None,
                 suppress_if: None,
@@ -935,7 +911,7 @@ mod tests {
             required: true,
             default: None,
             skip_payload: false,
-            privacy_context: None,
+            privacy_hints: Vec::new(),
             occurrence_key: false,
             timestamp: None,
             suppress_if: None,
@@ -957,7 +933,7 @@ mod tests {
         .unwrap();
         assert_eq!(intents.len(), 1);
         assert_eq!(intents[0].payload, serde_json::json!({}));
-        assert_eq!(intents[0].field_privacy_log, Some(vec![]));
+        assert!(intents[0].privacy_hints.is_empty());
         Ok(())
     }
 
@@ -973,7 +949,7 @@ mod tests {
             required: true,
             default: None,
             skip_payload: false,
-            privacy_context: None,
+            privacy_hints: Vec::new(),
             occurrence_key: false,
             timestamp: None,
             suppress_if: None,
@@ -1002,7 +978,7 @@ mod tests {
             required: true,
             default: None,
             skip_payload: false,
-            privacy_context: None,
+            privacy_hints: Vec::new(),
             occurrence_key: false,
             timestamp: None,
             suppress_if: None,
@@ -1030,7 +1006,7 @@ mod tests {
             required: false,
             default: Some(serde_json::json!(0)),
             skip_payload: false,
-            privacy_context: None,
+            privacy_hints: Vec::new(),
             occurrence_key: false,
             timestamp: None,
             suppress_if: None,
@@ -1059,7 +1035,7 @@ mod tests {
             required: false,
             default: None,
             skip_payload: false,
-            privacy_context: None,
+            privacy_hints: Vec::new(),
             occurrence_key: false,
             timestamp: None,
             suppress_if: None,
@@ -1088,7 +1064,7 @@ mod tests {
             required: true,
             default: None,
             skip_payload: true,
-            privacy_context: None,
+            privacy_hints: Vec::new(),
             occurrence_key: false,
             timestamp: None,
             suppress_if: None,
@@ -1118,7 +1094,7 @@ mod tests {
             required: true,
             default: None,
             skip_payload: false,
-            privacy_context: None,
+            privacy_hints: Vec::new(),
             occurrence_key: true,
             timestamp: None,
             suppress_if: None,
@@ -1133,7 +1109,7 @@ mod tests {
             required: true,
             default: None,
             skip_payload: false,
-            privacy_context: None,
+            privacy_hints: Vec::new(),
             occurrence_key: true,
             timestamp: None,
             suppress_if: None,
@@ -1169,7 +1145,7 @@ mod tests {
             required: true,
             default: None,
             skip_payload: false,
-            privacy_context: Some(ProcessingContext::Command),
+            privacy_hints: vec![FieldSensitivityHint::FreeText, FieldSensitivityHint::CredentialBearing],
             occurrence_key: false,
             timestamp: None,
             suppress_if: Some(SuppressPredicate {
@@ -1187,10 +1163,13 @@ mod tests {
         )
         .unwrap();
         assert!(intents[0].payload.get("command").is_none());
-        let log = intents[0].field_privacy_log.as_ref().unwrap();
-        assert_eq!(log.len(), 1);
-        assert!(log[0].suppressed);
-        assert!(!log[0].whole_event_suppressed);
+        assert_eq!(
+            intents[0].privacy_hints,
+            vec![
+                FieldSensitivityHint::FreeText,
+                FieldSensitivityHint::CredentialBearing
+            ]
+        );
         Ok(())
     }
 
@@ -1206,7 +1185,7 @@ mod tests {
             required: true,
             default: None,
             skip_payload: false,
-            privacy_context: Some(ProcessingContext::Command),
+            privacy_hints: vec![FieldSensitivityHint::FreeText, FieldSensitivityHint::CredentialBearing],
             occurrence_key: false,
             timestamp: None,
             suppress_if: Some(SuppressPredicate {
@@ -1239,7 +1218,7 @@ mod tests {
             required: true,
             default: None,
             skip_payload: false,
-            privacy_context: Some(ProcessingContext::Command),
+            privacy_hints: vec![FieldSensitivityHint::FreeText, FieldSensitivityHint::CredentialBearing],
             occurrence_key: false,
             timestamp: None,
             suppress_if: Some(SuppressPredicate {
@@ -1272,7 +1251,7 @@ mod tests {
             required: true,
             default: None,
             skip_payload: false,
-            privacy_context: None,
+            privacy_hints: Vec::new(),
             occurrence_key: false,
             timestamp: None,
             suppress_if: None,
@@ -1302,7 +1281,7 @@ mod tests {
                 required: true,
                 default: None,
                 skip_payload: false,
-                privacy_context: None,
+                privacy_hints: Vec::new(),
                 occurrence_key: false,
                 timestamp: None,
                 suppress_if: None,
@@ -1333,7 +1312,7 @@ mod tests {
             required: true,
             default: None,
             skip_payload: false,
-            privacy_context: None,
+            privacy_hints: Vec::new(),
             occurrence_key: false,
             timestamp: Some(TimestampSpec {
                 format: TimestampFormat::Rfc3339,
@@ -1368,7 +1347,7 @@ mod tests {
             required: true,
             default: None,
             skip_payload: false,
-            privacy_context: None,
+            privacy_hints: Vec::new(),
             occurrence_key: false,
             timestamp: Some(TimestampSpec {
                 format: TimestampFormat::UnixSeconds,
@@ -1403,7 +1382,7 @@ mod tests {
             required: true,
             default: None,
             skip_payload: false,
-            privacy_context: None,
+            privacy_hints: Vec::new(),
             occurrence_key: false,
             timestamp: Some(TimestampSpec {
                 format: TimestampFormat::Rfc3339,
@@ -1454,7 +1433,7 @@ mod tests {
             required: true,
             default: None,
             skip_payload: false,
-            privacy_context: None,
+            privacy_hints: Vec::new(),
             occurrence_key: false,
             timestamp: None,
             suppress_if: None,
@@ -1467,7 +1446,7 @@ mod tests {
             required: true,
             default: None,
             skip_payload: false,
-            privacy_context: None,
+            privacy_hints: Vec::new(),
             occurrence_key: false,
             timestamp: None,
             suppress_if: None,
@@ -1548,7 +1527,7 @@ mod tests {
             required: true,
             default: None,
             skip_payload: false,
-            privacy_context: None,
+            privacy_hints: Vec::new(),
             occurrence_key: false,
             timestamp: Some(TimestampSpec {
                 format: TimestampFormat::Rfc3339,
@@ -1581,7 +1560,7 @@ mod tests {
             required: true,
             default: None,
             skip_payload: false,
-            privacy_context: None,
+            privacy_hints: Vec::new(),
             occurrence_key: false,
             timestamp: Some(TimestampSpec {
                 format: TimestampFormat::UnixMillis,
@@ -1619,7 +1598,7 @@ mod tests {
             required: true,
             default: None,
             skip_payload: false,
-            privacy_context: None,
+            privacy_hints: Vec::new(),
             occurrence_key: false,
             timestamp: Some(TimestampSpec {
                 format: TimestampFormat::UnixMicros,
@@ -1654,7 +1633,7 @@ mod tests {
             required: true,
             default: None,
             skip_payload: false,
-            privacy_context: None,
+            privacy_hints: Vec::new(),
             occurrence_key: false,
             timestamp: None,
             suppress_if: None,
@@ -1682,7 +1661,7 @@ mod tests {
             required: true,
             default: None,
             skip_payload: false,
-            privacy_context: None,
+            privacy_hints: Vec::new(),
             occurrence_key: false,
             timestamp: None,
             suppress_if: None,
@@ -1726,9 +1705,9 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn suppress_if_whole_event_without_privacy_context_drops_event()
+    async fn suppress_if_whole_event_without_field_hints_drops_event()
     -> xtask::sandbox::TestResult<()> {
-        // Cover the `else if suppressed_by_predicate` branch: no privacy_context
+        // Cover the `else if suppressed_by_predicate` branch: no field hints
         // but whole_event = true. Must produce zero intents.
         let mut spec = minimal_spec();
         spec.fields.push(FieldSpec {
@@ -1740,7 +1719,7 @@ mod tests {
             required: true,
             default: None,
             skip_payload: false,
-            privacy_context: None,
+            privacy_hints: Vec::new(),
             occurrence_key: false,
             timestamp: None,
             suppress_if: Some(SuppressPredicate {
@@ -1779,7 +1758,7 @@ mod tests {
             required: true,
             default: None,
             skip_payload: false,
-            privacy_context: None,
+            privacy_hints: Vec::new(),
             occurrence_key: false,
             timestamp: None,
             suppress_if: None,
@@ -1815,7 +1794,7 @@ mod tests {
             required: true,
             default: None,
             skip_payload: true,
-            privacy_context: None,
+            privacy_hints: Vec::new(),
             occurrence_key: true,
             timestamp: None,
             suppress_if: None,
@@ -1848,7 +1827,7 @@ mod tests {
             required: false,
             default: Some(serde_json::json!(42)),
             skip_payload: false,
-            privacy_context: None,
+            privacy_hints: Vec::new(),
             occurrence_key: false,
             timestamp: None,
             suppress_if: None,
@@ -1877,7 +1856,7 @@ mod tests {
             required: true,
             default: None,
             skip_payload: false,
-            privacy_context: None,
+            privacy_hints: Vec::new(),
             occurrence_key: false,
             timestamp: None,
             suppress_if: None,

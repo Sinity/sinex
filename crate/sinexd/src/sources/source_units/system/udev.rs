@@ -14,7 +14,6 @@ use sinex_primitives::parser::{
     InputShapeKind, ParsedEventIntent, ParserContext, ParserId, ParserManifest, SourceRecord,
     SourceUnitId, TimingEvidence,
 };
-use sinex_primitives::privacy::{self, ProcessingContext};
 use sinex_primitives::proof::{
     CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, RetentionPolicy, RuntimeShape,
     SourceUnitBinding, SourceUnitBuildImpact, SourceUnitDescriptor, SubjectRef,
@@ -61,7 +60,7 @@ register_source_unit_binding! {
     .implementation("sinex-source-worker")
     .adapter("FileDropAdapter")
     .output_event_type("device.connected")
-    .privacy_context("Metadata")
+    .sensitivity_profile("Metadata")
     .material_policy("udev_anchor")
     .checkpoint_policy("live_observation")
     .resource_shape("event_emitter")
@@ -130,7 +129,7 @@ impl MaterialParser for UdevParser {
                     EventType::from_static("device.other"),
                 ),
             ],
-            privacy_contexts: vec![ProcessingContext::Metadata],
+            field_hints: vec![sinex_primitives::parser::FieldSensitivityHint::SystemMetadata],
             proof_obligations: vec!["udev_action_dispatch".into(), "privacy_device_path".into()],
             description: "Maps FileDropAdapter inotify records to udev device events.".into(),
         }
@@ -145,13 +144,7 @@ impl MaterialParser for UdevParser {
             .map_err(|e| ParserError::Parse(format!("udev record path not UTF-8: {e}")))?
             .to_string();
 
-        let device_path = match privacy::engine() {
-            Ok(eng) => eng
-                .process(&raw_path, ProcessingContext::Metadata)
-                .text
-                .into_owned(),
-            Err(e) => return Err(ParserError::Privacy(format!("privacy engine: {e}"))),
-        };
+        let device_path = raw_path;
 
         let metadata = match FileDropRecordMetadata::from_value(&record.metadata) {
             Ok(m) => Some(m),
@@ -164,7 +157,9 @@ impl MaterialParser for UdevParser {
                 None
             }
         };
-        let event_kind = metadata.as_ref().and_then(FileDropRecordMetadata::event_kind);
+        let event_kind = metadata
+            .as_ref()
+            .and_then(FileDropRecordMetadata::event_kind);
 
         let action = match event_kind {
             Some(FileDropEventKind::Created) => UdevAction::Add,
@@ -285,7 +280,9 @@ impl MaterialParser for UdevParser {
             .ts_orig(timestamp)
             .timing(TimingEvidence::Atemporal)
             .anchor(record.anchor.clone())
-            .privacy_context(ProcessingContext::Metadata)
+            .privacy_hints(vec![
+                sinex_primitives::parser::FieldSensitivityHint::SystemMetadata,
+            ])
             .build();
 
         Ok(vec![intent])

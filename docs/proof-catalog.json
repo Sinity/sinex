@@ -8,7 +8,7 @@
       "implementation": "sinex-source-worker",
       "adapter": "StaticFileAdapter",
       "output_event_type": "ai.message",
-      "privacy_context": "Document",
+      "sensitivity_profile": "Document",
       "material_policy": "static_export_file",
       "checkpoint_policy": "static_file_cursor",
       "resource_shape": "file_reader",
@@ -38,7 +38,7 @@
       "implementation": "sinex-source-worker",
       "adapter": "StaticFileAdapter",
       "output_event_type": "ai.message",
-      "privacy_context": "Document",
+      "sensitivity_profile": "Document",
       "material_policy": "static_export_file",
       "checkpoint_policy": "static_file_cursor",
       "resource_shape": "file_reader",
@@ -68,7 +68,7 @@
       "implementation": "sinex-process",
       "adapter": "AutomatonRuntime",
       "output_event_type": "activity.window.summary",
-      "privacy_context": "inherits_from_parents",
+      "sensitivity_profile": "inherits_from_parents",
       "material_policy": "derived_parents",
       "checkpoint_policy": "append_stream",
       "resource_shape": "event_stream_consumer",
@@ -98,7 +98,7 @@
       "implementation": "sinex-primitives::blob",
       "adapter": "EmbeddedEmitter",
       "output_event_type": "blob.retrieved",
-      "privacy_context": "blob_metadata",
+      "sensitivity_profile": "blob_metadata",
       "material_policy": "none",
       "checkpoint_policy": "live_observation",
       "resource_shape": "embedded_emitter",
@@ -128,7 +128,7 @@
       "implementation": "sinex-source-worker",
       "adapter": "ChainedAdapter<SqliteRowAdapter, AppendOnlyFileAdapter>",
       "output_event_type": "page.visited",
-      "privacy_context": "url",
+      "sensitivity_profile": "url",
       "material_policy": "browser_visit_id",
       "checkpoint_policy": "mutable_snapshot",
       "resource_shape": "linear_rows_bounded_memory",
@@ -160,7 +160,7 @@
       "implementation": "sinex-process",
       "adapter": "AutomatonRuntime",
       "output_event_type": "activity.summary.daily",
-      "privacy_context": "inherits_from_parents",
+      "sensitivity_profile": "inherits_from_parents",
       "material_policy": "derived_parents",
       "checkpoint_policy": "append_stream",
       "resource_shape": "event_stream_consumer",
@@ -190,7 +190,7 @@
       "implementation": "sinex-source-worker",
       "adapter": "SqliteRowAdapter",
       "output_event_type": "window.active",
-      "privacy_context": "window_title",
+      "sensitivity_profile": "secret",
       "material_policy": "activitywatch_bucket_event",
       "checkpoint_policy": "mutable_snapshot",
       "resource_shape": "linear_rows_bounded_memory",
@@ -222,7 +222,7 @@
       "implementation": "sinex-source-worker",
       "adapter": "ClipboardPollingAdapter",
       "output_event_type": "clipboard.copied",
-      "privacy_context": "clipboard",
+      "sensitivity_profile": "clipboard",
       "material_policy": "clipboard_stream",
       "checkpoint_policy": "live_stream",
       "resource_shape": "polling_watcher",
@@ -246,13 +246,43 @@
       }
     },
     {
+      "subject": "source_unit:desktop.notification",
+      "id": "desktop.notification",
+      "domain": "desktop",
+      "implementation": "live-capture",
+      "adapter": "DbusStreamAdapter",
+      "output_event_type": "notification",
+      "sensitivity_profile": "Sensitive",
+      "material_policy": "notification_stream_frame",
+      "checkpoint_policy": "dbus_stream_cursor",
+      "resource_shape": "dbus_signal_stream",
+      "capabilities": [],
+      "source_unit_id": "desktop.notification",
+      "proposed": false,
+      "runner_pack": "live",
+      "checkpoint_family": {
+        "kind": "live_observation"
+      },
+      "runtime_shape": "continuous",
+      "package_impact": "desktop_notification_source_unit",
+      "implementation_mode": "live:dbus-notification",
+      "build_impact": {
+        "crate_impact": "0",
+        "binary_impact": "0",
+        "nix_output_impact": "0",
+        "derivation_impact": "0",
+        "sqlx_validation_impact": "0",
+        "dedicated_build_rationale": null
+      }
+    },
+    {
       "subject": "source_unit:desktop.window-manager",
       "id": "desktop.window-manager",
       "domain": "desktop",
       "implementation": "sinex-source-worker",
       "adapter": "UnixSocketStreamAdapter",
       "output_event_type": "window.opened",
-      "privacy_context": "window_title",
+      "sensitivity_profile": "sensitive",
       "material_policy": "wm_socket_stream",
       "checkpoint_policy": "live_stream",
       "resource_shape": "unix_socket_watcher",
@@ -282,7 +312,7 @@
       "implementation": "sinex-source-worker",
       "adapter": "DirectoryWalkAdapter",
       "output_event_type": "document.indexed",
-      "privacy_context": "Metadata",
+      "sensitivity_profile": "Metadata",
       "material_policy": "directory_walk_fingerprint",
       "checkpoint_policy": "directory_walk_cursor",
       "resource_shape": "file_reader",
@@ -312,7 +342,7 @@
       "implementation": "sinex-process",
       "adapter": "AutomatonRuntime",
       "output_event_type": "document.parsed",
-      "privacy_context": "inherits_from_parents",
+      "sensitivity_profile": "inherits_from_parents",
       "material_policy": "derived_parents",
       "checkpoint_policy": "append_stream",
       "resource_shape": "event_stream_consumer",
@@ -342,7 +372,7 @@
       "implementation": "sinex-source-worker",
       "adapter": "DocumentStagingParser",
       "output_event_type": "document.ingested",
-      "privacy_context": "document_body",
+      "sensitivity_profile": "document_body",
       "material_policy": "document_anchor",
       "checkpoint_policy": "fingerprint_dedup",
       "resource_shape": "on_demand_batch",
@@ -366,13 +396,73 @@
       }
     },
     {
+      "subject": "source_unit:email.mailbox",
+      "id": "email.mailbox",
+      "domain": "email",
+      "implementation": "staged-parser",
+      "adapter": "AppendOnlyFileAdapter",
+      "output_event_type": "email.message.received",
+      "sensitivity_profile": "Sensitive",
+      "material_policy": "per_message_source_material",
+      "checkpoint_policy": "cursor_per_folder",
+      "resource_shape": "file_scanner",
+      "capabilities": [],
+      "source_unit_id": "email.mailbox",
+      "proposed": true,
+      "runner_pack": "staged",
+      "checkpoint_family": {
+        "kind": "append_stream"
+      },
+      "runtime_shape": "scheduled",
+      "package_impact": "email_mailbox_source_unit",
+      "implementation_mode": "parser:staged",
+      "build_impact": {
+        "crate_impact": "0",
+        "binary_impact": "0",
+        "nix_output_impact": "0",
+        "derivation_impact": "0",
+        "sqlx_validation_impact": "0",
+        "dedicated_build_rationale": null
+      }
+    },
+    {
+      "subject": "source_unit:email.mailbox.sent",
+      "id": "email.mailbox",
+      "domain": "email",
+      "implementation": "staged-parser",
+      "adapter": "AppendOnlyFileAdapter",
+      "output_event_type": "email.message.sent",
+      "sensitivity_profile": "Sensitive",
+      "material_policy": "per_message_source_material",
+      "checkpoint_policy": "cursor_per_folder",
+      "resource_shape": "file_scanner",
+      "capabilities": [],
+      "source_unit_id": "email.mailbox",
+      "proposed": true,
+      "runner_pack": "staged",
+      "checkpoint_family": {
+        "kind": "append_stream"
+      },
+      "runtime_shape": "scheduled",
+      "package_impact": "email_mailbox_source_unit",
+      "implementation_mode": "parser:staged",
+      "build_impact": {
+        "crate_impact": "0",
+        "binary_impact": "0",
+        "nix_output_impact": "0",
+        "derivation_impact": "0",
+        "sqlx_validation_impact": "0",
+        "dedicated_build_rationale": null
+      }
+    },
+    {
       "subject": "source_unit:entity-enricher",
       "id": "entity-enricher",
       "domain": "derived",
       "implementation": "sinex-process",
       "adapter": "AutomatonRuntime",
       "output_event_type": "entity.enriched",
-      "privacy_context": "inherits_from_parents",
+      "sensitivity_profile": "inherits_from_parents",
       "material_policy": "derived_parents",
       "checkpoint_policy": "append_stream",
       "resource_shape": "event_stream_consumer",
@@ -402,7 +492,7 @@
       "implementation": "sinex-process",
       "adapter": "AutomatonRuntime",
       "output_event_type": "entity.extracted",
-      "privacy_context": "inherits_from_parents",
+      "sensitivity_profile": "inherits_from_parents",
       "material_policy": "derived_parents",
       "checkpoint_policy": "append_stream",
       "resource_shape": "event_stream_consumer",
@@ -432,7 +522,7 @@
       "implementation": "sinex-process",
       "adapter": "AutomatonRuntime",
       "output_event_type": "entity.resolved",
-      "privacy_context": "inherits_from_parents",
+      "sensitivity_profile": "inherits_from_parents",
       "material_policy": "derived_parents",
       "checkpoint_policy": "append_stream",
       "resource_shape": "event_stream_consumer",
@@ -462,7 +552,7 @@
       "implementation": "sinex-source-worker",
       "adapter": "StaticFileAdapter",
       "output_event_type": "message.sent",
-      "privacy_context": "Document",
+      "sensitivity_profile": "Document",
       "material_policy": "static_export_file",
       "checkpoint_policy": "static_file_cursor",
       "resource_shape": "file_reader",
@@ -492,7 +582,7 @@
       "implementation": "sinex-source-worker",
       "adapter": "FileContentDropAdapter",
       "output_event_type": "file.created",
-      "privacy_context": "fs_path",
+      "sensitivity_profile": "fs_path",
       "material_policy": "inotify_anchor",
       "checkpoint_policy": "append_stream",
       "resource_shape": "continuous_inotify",
@@ -522,7 +612,7 @@
       "implementation": "sinex-source-worker",
       "adapter": "StaticFileAdapter",
       "output_event_type": "commit.created",
-      "privacy_context": "Document",
+      "sensitivity_profile": "Document",
       "material_policy": "static_export_file",
       "checkpoint_policy": "static_file_cursor",
       "resource_shape": "file_reader",
@@ -552,7 +642,7 @@
       "implementation": "sinex-process",
       "adapter": "AutomatonRuntime",
       "output_event_type": "health.aggregated_report",
-      "privacy_context": "inherits_from_parents",
+      "sensitivity_profile": "inherits_from_parents",
       "material_policy": "derived_parents",
       "checkpoint_policy": "append_stream",
       "resource_shape": "event_stream_consumer",
@@ -582,7 +672,7 @@
       "implementation": "sinex-source-worker",
       "adapter": "StaticFileAdapter",
       "output_event_type": "transaction.posted",
-      "privacy_context": "Document",
+      "sensitivity_profile": "Document",
       "material_policy": "static_export_file",
       "checkpoint_policy": "static_file_cursor",
       "resource_shape": "file_reader",
@@ -612,7 +702,7 @@
       "implementation": "sinex-process",
       "adapter": "AutomatonRuntime",
       "output_event_type": "activity.summary.hourly",
-      "privacy_context": "inherits_from_parents",
+      "sensitivity_profile": "inherits_from_parents",
       "material_policy": "derived_parents",
       "checkpoint_policy": "append_stream",
       "resource_shape": "event_stream_consumer",
@@ -642,7 +732,7 @@
       "implementation": "sinex-process",
       "adapter": "AutomatonRuntime",
       "output_event_type": "expectation.status",
-      "privacy_context": "metadata",
+      "sensitivity_profile": "metadata",
       "material_policy": "derived_parents",
       "checkpoint_policy": "append_stream",
       "resource_shape": "event_stream_consumer",
@@ -672,7 +762,7 @@
       "implementation": "polylogue-daemon",
       "adapter": "ExternalProducer",
       "output_event_type": "integration.polylogue.conversation_indexed",
-      "privacy_context": "Sensitive",
+      "sensitivity_profile": "Sensitive",
       "material_policy": "external_producer_virtual_material",
       "checkpoint_policy": "external_producer",
       "resource_shape": "nats_publisher",
@@ -702,7 +792,7 @@
       "implementation": "sinex-source-worker",
       "adapter": "DirectoryWalkAdapter",
       "output_event_type": "note.observed",
-      "privacy_context": "Document",
+      "sensitivity_profile": "Document",
       "material_policy": "directory_walk",
       "checkpoint_policy": "directory_walk_cursor",
       "resource_shape": "file_reader",
@@ -726,13 +816,73 @@
       }
     },
     {
+      "subject": "source_unit:media.audio",
+      "id": "media.audio",
+      "domain": "media",
+      "implementation": "proposed",
+      "adapter": "AppendOnlyFileAdapter",
+      "output_event_type": "media.audio.transcription",
+      "sensitivity_profile": "Sensitive",
+      "material_policy": "audio_chunk_material",
+      "checkpoint_policy": "continuous_audio_stream",
+      "resource_shape": "audio_capture",
+      "capabilities": [],
+      "source_unit_id": "media.audio",
+      "proposed": true,
+      "runner_pack": "staged",
+      "checkpoint_family": {
+        "kind": "append_stream"
+      },
+      "runtime_shape": "continuous",
+      "package_impact": "media_audio_source_unit",
+      "implementation_mode": "parser:staged",
+      "build_impact": {
+        "crate_impact": "0",
+        "binary_impact": "0",
+        "nix_output_impact": "0",
+        "derivation_impact": "0",
+        "sqlx_validation_impact": "0",
+        "dedicated_build_rationale": null
+      }
+    },
+    {
+      "subject": "source_unit:media.screen",
+      "id": "media.screen",
+      "domain": "media",
+      "implementation": "proposed",
+      "adapter": "AppendOnlyFileAdapter",
+      "output_event_type": "media.screen.ocr",
+      "sensitivity_profile": "Sensitive",
+      "material_policy": "screenshot_chunk_material",
+      "checkpoint_policy": "periodic_screen_capture",
+      "resource_shape": "screen_capture",
+      "capabilities": [],
+      "source_unit_id": "media.screen",
+      "proposed": true,
+      "runner_pack": "staged",
+      "checkpoint_family": {
+        "kind": "append_stream"
+      },
+      "runtime_shape": "continuous",
+      "package_impact": "media_screen_source_unit",
+      "implementation_mode": "parser:staged",
+      "build_impact": {
+        "crate_impact": "0",
+        "binary_impact": "0",
+        "nix_output_impact": "0",
+        "derivation_impact": "0",
+        "sqlx_validation_impact": "0",
+        "dedicated_build_rationale": null
+      }
+    },
+    {
       "subject": "source_unit:noop",
       "id": "noop",
       "domain": "sinex",
       "implementation": "sinex-source-worker",
       "adapter": "SourceUnitRuntime",
       "output_event_type": "noop",
-      "privacy_context": "none",
+      "sensitivity_profile": "none",
       "material_policy": "none",
       "checkpoint_policy": "live_observation",
       "resource_shape": "event_emitter",
@@ -762,7 +912,7 @@
       "implementation": "sinex-source-worker",
       "adapter": "StaticFileAdapter",
       "output_event_type": "bookmark.created",
-      "privacy_context": "Metadata",
+      "sensitivity_profile": "Metadata",
       "material_policy": "static_export_file",
       "checkpoint_policy": "static_file_cursor",
       "resource_shape": "file_reader",
@@ -792,7 +942,7 @@
       "implementation": "sinex-source-worker",
       "adapter": "StaticFileAdapter",
       "output_event_type": "social.comment.posted",
-      "privacy_context": "Document",
+      "sensitivity_profile": "Document",
       "material_policy": "static_export_file",
       "checkpoint_policy": "static_file_cursor",
       "resource_shape": "file_reader",
@@ -822,7 +972,7 @@
       "implementation": "sinex-source-worker",
       "adapter": "StaticFileAdapter",
       "output_event_type": "social.post.created",
-      "privacy_context": "Document",
+      "sensitivity_profile": "Document",
       "material_policy": "static_export_file",
       "checkpoint_policy": "static_file_cursor",
       "resource_shape": "file_reader",
@@ -852,7 +1002,7 @@
       "implementation": "sinex-process",
       "adapter": "AutomatonRuntime",
       "output_event_type": "entity.related",
-      "privacy_context": "inherits_from_parents",
+      "sensitivity_profile": "inherits_from_parents",
       "material_policy": "derived_parents",
       "checkpoint_policy": "append_stream",
       "resource_shape": "event_stream_consumer",
@@ -882,7 +1032,7 @@
       "implementation": "sinex-process",
       "adapter": "AutomatonRuntime",
       "output_event_type": "activity.session.boundary",
-      "privacy_context": "inherits_from_parents",
+      "sensitivity_profile": "inherits_from_parents",
       "material_policy": "derived_parents",
       "checkpoint_policy": "append_stream",
       "resource_shape": "event_stream_consumer",
@@ -912,7 +1062,7 @@
       "implementation": "sinex-process",
       "adapter": "EmbeddedEmitter",
       "output_event_type": "automaton.error",
-      "privacy_context": "none",
+      "sensitivity_profile": "none",
       "material_policy": "none",
       "checkpoint_policy": "live_observation",
       "resource_shape": "embedded_emitter",
@@ -942,7 +1092,7 @@
       "implementation": "sinex-gateway",
       "adapter": "EmbeddedEmitter",
       "output_event_type": "request.stats",
-      "privacy_context": "none",
+      "sensitivity_profile": "none",
       "material_policy": "none",
       "checkpoint_policy": "live_observation",
       "resource_shape": "embedded_emitter",
@@ -972,7 +1122,7 @@
       "implementation": "sinex-ingestd",
       "adapter": "EmbeddedEmitter",
       "output_event_type": "stream.stats",
-      "privacy_context": "none",
+      "sensitivity_profile": "none",
       "material_policy": "none",
       "checkpoint_policy": "live_observation",
       "resource_shape": "embedded_emitter",
@@ -1002,7 +1152,7 @@
       "implementation": "sinex-primitives::metrics",
       "adapter": "EmbeddedEmitter",
       "output_event_type": "metric.counter",
-      "privacy_context": "none",
+      "sensitivity_profile": "none",
       "material_policy": "none",
       "checkpoint_policy": "live_observation",
       "resource_shape": "embedded_emitter",
@@ -1032,7 +1182,7 @@
       "implementation": "sinex-node-sdk",
       "adapter": "EmbeddedEmitter",
       "output_event_type": "processing.stats",
-      "privacy_context": "none",
+      "sensitivity_profile": "none",
       "material_policy": "none",
       "checkpoint_policy": "live_observation",
       "resource_shape": "embedded_emitter",
@@ -1062,7 +1212,7 @@
       "implementation": "sinex-primitives::process",
       "adapter": "EmbeddedEmitter",
       "output_event_type": "process.started",
-      "privacy_context": "none",
+      "sensitivity_profile": "none",
       "material_policy": "none",
       "checkpoint_policy": "live_observation",
       "resource_shape": "embedded_emitter",
@@ -1092,7 +1242,7 @@
       "implementation": "sinex-source-worker",
       "adapter": "StaticFileAdapter",
       "output_event_type": "sleep.session",
-      "privacy_context": "Metadata",
+      "sensitivity_profile": "Metadata",
       "material_policy": "static_export_file",
       "checkpoint_policy": "static_file_cursor",
       "resource_shape": "file_reader",
@@ -1122,7 +1272,7 @@
       "implementation": "sinex-source-worker",
       "adapter": "StaticFileAdapter",
       "output_event_type": "track.played",
-      "privacy_context": "Metadata",
+      "sensitivity_profile": "Metadata",
       "material_policy": "static_export_file",
       "checkpoint_policy": "static_file_cursor",
       "resource_shape": "file_reader",
@@ -1152,7 +1302,7 @@
       "implementation": "sinex-source-worker",
       "adapter": "DbusStreamAdapter",
       "output_event_type": "signal.received",
-      "privacy_context": "Dbus",
+      "sensitivity_profile": "Dbus",
       "material_policy": "bus_anchor",
       "checkpoint_policy": "live_observation",
       "resource_shape": "event_emitter",
@@ -1182,7 +1332,7 @@
       "implementation": "sinex-source-worker",
       "adapter": "JournalctlStreamAdapter",
       "output_event_type": "entry.written",
-      "privacy_context": "Journal",
+      "sensitivity_profile": "Journal",
       "material_policy": "journal_cursor",
       "checkpoint_policy": "journal",
       "resource_shape": "journal_tail",
@@ -1212,7 +1362,7 @@
       "implementation": "sinex-source-worker",
       "adapter": "MonitorDriverNode",
       "output_event_type": "monitoring.started",
-      "privacy_context": "Metadata",
+      "sensitivity_profile": "Metadata",
       "material_policy": "synthetic_oneshot",
       "checkpoint_policy": "stateless",
       "resource_shape": "oneshot_bounded_memory",
@@ -1242,7 +1392,7 @@
       "implementation": "sinex-source-worker",
       "adapter": "JournalctlStreamAdapter",
       "output_event_type": "unit.started",
-      "privacy_context": "Journal",
+      "sensitivity_profile": "Journal",
       "material_policy": "journal_cursor",
       "checkpoint_policy": "journal",
       "resource_shape": "journal_tail",
@@ -1272,7 +1422,7 @@
       "implementation": "sinex-source-worker",
       "adapter": "FileDropAdapter",
       "output_event_type": "device.connected",
-      "privacy_context": "Metadata",
+      "sensitivity_profile": "Metadata",
       "material_policy": "udev_anchor",
       "checkpoint_policy": "live_observation",
       "resource_shape": "event_emitter",
@@ -1302,7 +1452,7 @@
       "implementation": "sinex-process",
       "adapter": "AutomatonRuntime",
       "output_event_type": "knowledge.tag_applied",
-      "privacy_context": "inherits_from_parents",
+      "sensitivity_profile": "inherits_from_parents",
       "material_policy": "derived_parents",
       "checkpoint_policy": "append_stream",
       "resource_shape": "event_stream_consumer",
@@ -1332,7 +1482,7 @@
       "implementation": "sinex-process",
       "adapter": "AutomatonRuntime",
       "output_event_type": "command.canonical",
-      "privacy_context": "inherits_from_parents",
+      "sensitivity_profile": "inherits_from_parents",
       "material_policy": "derived_parents",
       "checkpoint_policy": "append_stream",
       "resource_shape": "event_stream_consumer",
@@ -1362,7 +1512,7 @@
       "implementation": "sinex-source-worker",
       "adapter": "SqliteRowAdapter",
       "output_event_type": "command.executed",
-      "privacy_context": "Command",
+      "sensitivity_profile": "Command",
       "material_policy": "sqlite_row_id",
       "checkpoint_policy": "mutable_snapshot",
       "resource_shape": "linear_rows_bounded_memory",
@@ -1394,7 +1544,7 @@
       "implementation": "sinex-source-worker",
       "adapter": "AppendOnlyFileAdapter",
       "output_event_type": "command.imported",
-      "privacy_context": "Command",
+      "sensitivity_profile": "Command",
       "material_policy": "text_history_anchor",
       "checkpoint_policy": "append_stream",
       "resource_shape": "linear_rows_bounded_memory",
@@ -1424,7 +1574,7 @@
       "implementation": "sinex-source-worker",
       "adapter": "SqliteRowAdapter",
       "output_event_type": "command.imported",
-      "privacy_context": "Command",
+      "sensitivity_profile": "Command",
       "material_policy": "sqlite_row_id",
       "checkpoint_policy": "mutable_snapshot",
       "resource_shape": "linear_rows_bounded_memory",
@@ -1456,7 +1606,7 @@
       "implementation": "sinex-source-worker",
       "adapter": "MonitorDriverNode",
       "output_event_type": "shell.terminal_monitoring_started",
-      "privacy_context": "Metadata",
+      "sensitivity_profile": "Metadata",
       "material_policy": "synthetic_oneshot",
       "checkpoint_policy": "stateless",
       "resource_shape": "oneshot_bounded_memory",
@@ -1486,7 +1636,7 @@
       "implementation": "sinex-source-worker",
       "adapter": "AppendOnlyFileAdapter",
       "output_event_type": "command.imported",
-      "privacy_context": "Command",
+      "sensitivity_profile": "Command",
       "material_policy": "text_history_anchor",
       "checkpoint_policy": "append_stream",
       "resource_shape": "linear_rows_bounded_memory",
@@ -1516,7 +1666,7 @@
       "implementation": "sinex-source-worker",
       "adapter": "AppendOnlyFileAdapter",
       "output_event_type": "command.imported",
-      "privacy_context": "Command",
+      "sensitivity_profile": "Command",
       "material_policy": "text_history_anchor",
       "checkpoint_policy": "append_stream",
       "resource_shape": "linear_rows_bounded_memory",
@@ -1546,7 +1696,7 @@
       "implementation": "sinex-source-worker",
       "adapter": "AppendOnlyFileAdapter",
       "output_event_type": "irc.message",
-      "privacy_context": "Command",
+      "sensitivity_profile": "Command",
       "material_policy": "append_only_log",
       "checkpoint_policy": "append_only_cursor",
       "resource_shape": "file_watcher",
@@ -1576,7 +1726,7 @@
       "implementation": "sinex-source-worker",
       "adapter": "AppendOnlyFileAdapter",
       "output_event_type": "irc.message",
-      "privacy_context": "Command",
+      "sensitivity_profile": "Command",
       "material_policy": "append_only_log",
       "checkpoint_policy": "append_only_cursor",
       "resource_shape": "file_watcher",
@@ -1606,7 +1756,7 @@
       "implementation": "sinex-source-worker",
       "adapter": "StaticFileAdapter",
       "output_event_type": "social.entry.created",
-      "privacy_context": "Document",
+      "sensitivity_profile": "Document",
       "material_policy": "static_export_file",
       "checkpoint_policy": "static_file_cursor",
       "resource_shape": "file_reader",
@@ -1636,7 +1786,7 @@
       "implementation": "sinex-source-worker",
       "adapter": "StaticFileAdapter",
       "output_event_type": "social.entry_comment.posted",
-      "privacy_context": "Document",
+      "sensitivity_profile": "Document",
       "material_policy": "static_export_file",
       "checkpoint_policy": "static_file_cursor",
       "resource_shape": "file_reader",
@@ -1687,7 +1837,7 @@
         "timestamp_intrinsic",
         "anchor_conv_msg_index",
         "occurrence_key_session_id_message_id",
-        "text_privacy_context_document",
+        "text_sensitivity_profile_document",
         "mapping_walk_current_node_to_root"
       ]
     },
@@ -1717,7 +1867,7 @@
         "timestamp_intrinsic",
         "anchor_conv_msg_index",
         "occurrence_key_session_id_message_id",
-        "text_privacy_context_document"
+        "text_sensitivity_profile_document"
       ]
     },
     {
@@ -1804,7 +1954,7 @@
       "package_impact": "browser_history_source_unit",
       "implementation_mode": "rust_in_pack:source-worker",
       "proof_obligations": [
-        "url_privacy_redaction",
+        "url_sensitive_hint",
         "sqlite_row_anchor",
         "dump_line_anchor"
       ]
@@ -1866,7 +2016,7 @@
       "proof_obligations": [
         "anchor_sqlite_row",
         "timestamp_intrinsic",
-        "window_title_redacted"
+        "field_sensitivity_hints"
       ]
     },
     {
@@ -1897,7 +2047,33 @@
       "implementation_mode": "rust_in_pack:source-worker",
       "proof_obligations": [
         "anchor_stream_frame",
-        "clipboard_content_redacted"
+        "clipboard_content_sensitive_hint"
+      ]
+    },
+    {
+      "subject": "source_unit:desktop.notification",
+      "id": "desktop.notification",
+      "namespace": "desktop",
+      "runner_pack": "live",
+      "modes": [
+        "continuous"
+      ],
+      "output_event_types": [
+        {
+          "source": "desktop",
+          "event_type": "notification"
+        }
+      ],
+      "privacy_tier": "sensitive",
+      "runtime_shape": "continuous",
+      "retention_policy": "forever",
+      "checkpoint_family": "live_observation",
+      "occurrence_identity": "uuid5:(app_name, summary, body, ts)",
+      "access_policy": "desktop_notifications",
+      "package_impact": "desktop_notification_source_unit",
+      "implementation_mode": "live:dbus-notification",
+      "proof_obligations": [
+        "dbus_notification_monitor"
       ]
     },
     {
@@ -1956,7 +2132,7 @@
       "implementation_mode": "rust_in_pack:source-worker",
       "proof_obligations": [
         "anchor_stream_frame",
-        "window_title_redacted"
+        "field_sensitivity_hints"
       ]
     },
     {
@@ -2041,6 +2217,39 @@
       "package_impact": "no_new_output",
       "implementation_mode": "rust_in_pack:source-worker",
       "proof_obligations": []
+    },
+    {
+      "subject": "source_unit:email.mailbox",
+      "id": "email.mailbox",
+      "namespace": "email",
+      "runner_pack": "staged",
+      "modes": [
+        "historical",
+        "continuous"
+      ],
+      "output_event_types": [
+        {
+          "source": "email",
+          "event_type": "email.message.received"
+        },
+        {
+          "source": "email",
+          "event_type": "email.message.sent"
+        }
+      ],
+      "privacy_tier": "sensitive",
+      "runtime_shape": "scheduled",
+      "retention_policy": "forever",
+      "checkpoint_family": "append_stream",
+      "occurrence_identity": "uuid5:(message_id, folder)",
+      "access_policy": "personal_email",
+      "package_impact": "email_mailbox_source_unit",
+      "implementation_mode": "parser:staged",
+      "proof_obligations": [
+        "staged_mbox_eml_parser",
+        "body_encryption_at_rest",
+        "attachment_document_dispatch"
+      ]
     },
     {
       "subject": "source_unit:entity-enricher",
@@ -2371,6 +2580,60 @@
       ]
     },
     {
+      "subject": "source_unit:media.audio",
+      "id": "media.audio",
+      "namespace": "media",
+      "runner_pack": "staged",
+      "modes": [
+        "continuous"
+      ],
+      "output_event_types": [
+        {
+          "source": "media.audio",
+          "event_type": "media.audio.transcription"
+        }
+      ],
+      "privacy_tier": "sensitive",
+      "runtime_shape": "continuous",
+      "retention_policy": "forever",
+      "checkpoint_family": "append_stream",
+      "occurrence_identity": "uuid5:(device_id, audio_chunk_hash)",
+      "access_policy": "personal_audio",
+      "package_impact": "media_audio_source_unit",
+      "implementation_mode": "parser:staged",
+      "proof_obligations": [
+        "local_whisper_only",
+        "continuous_capture"
+      ]
+    },
+    {
+      "subject": "source_unit:media.screen",
+      "id": "media.screen",
+      "namespace": "media",
+      "runner_pack": "staged",
+      "modes": [
+        "continuous"
+      ],
+      "output_event_types": [
+        {
+          "source": "media.screen",
+          "event_type": "media.screen.ocr"
+        }
+      ],
+      "privacy_tier": "sensitive",
+      "runtime_shape": "continuous",
+      "retention_policy": "forever",
+      "checkpoint_family": "append_stream",
+      "occurrence_identity": "uuid5:(display_id, capture_hash)",
+      "access_policy": "personal_screen",
+      "package_impact": "media_screen_source_unit",
+      "implementation_mode": "parser:staged",
+      "proof_obligations": [
+        "periodic_full_screen_capture",
+        "local_ocr_processing"
+      ]
+    },
+    {
       "subject": "source_unit:noop",
       "id": "noop",
       "namespace": "sinex",
@@ -2558,23 +2821,23 @@
       ],
       "output_event_types": [
         {
-          "source": "sinex.gateway",
+          "source": "sinexd.api",
           "event_type": "request.stats"
         },
         {
-          "source": "sinex.gateway",
+          "source": "sinexd.api",
           "event_type": "rate_limit.exceeded"
         },
         {
-          "source": "sinex.gateway",
+          "source": "sinexd.api",
           "event_type": "pool.stats"
         },
         {
-          "source": "sinex.gateway",
+          "source": "sinexd.api",
           "event_type": "replay.stats"
         },
         {
-          "source": "sinex.gateway",
+          "source": "sinexd.api",
           "event_type": "gateway.rpc.call"
         }
       ],
@@ -2598,23 +2861,23 @@
       ],
       "output_event_types": [
         {
-          "source": "sinex.ingestd",
+          "source": "sinexd.event_engine",
           "event_type": "batch.stats"
         },
         {
-          "source": "sinex.ingestd",
+          "source": "sinexd.event_engine",
           "event_type": "stream.stats"
         },
         {
-          "source": "sinex.ingestd",
+          "source": "sinexd.event_engine",
           "event_type": "assembly.stats"
         },
         {
-          "source": "sinex.ingestd",
+          "source": "sinexd.event_engine",
           "event_type": "consumer.startup_snapshot"
         },
         {
-          "source": "sinex.ingestd",
+          "source": "sinexd.event_engine",
           "event_type": "consumer.startup_replay_risk"
         }
       ],
@@ -2771,7 +3034,7 @@
       "runtime_shape": "on_demand",
       "retention_policy": "forever",
       "checkpoint_family": "append_stream",
-      "occurrence_identity": "uuid5:(spotify_track_uri | track_name+artist, started_at, played_ms)",
+      "occurrence_identity": "uuid5:(track_uri, track_name, artist_name, started_at, played_ms)",
       "access_policy": "personal_music_history",
       "package_impact": "spotify_extended_history_source_unit",
       "implementation_mode": "rust_in_pack:source-worker",
@@ -4015,76 +4278,6 @@
       "type_name": "sinex_primitives::events::payloads::shell::KittyCommandExecutedPayload"
     },
     {
-      "subject": "event_payload:sinex.gateway/gateway.rpc.call/1.0.0",
-      "source": "sinex.gateway",
-      "event_type": "gateway.rpc.call",
-      "version": "1.0.0",
-      "type_name": "sinex_primitives::events::payloads::gateway::GatewayRpcCallPayload"
-    },
-    {
-      "subject": "event_payload:sinex.gateway/pool.stats/1.0.0",
-      "source": "sinex.gateway",
-      "event_type": "pool.stats",
-      "version": "1.0.0",
-      "type_name": "sinex_primitives::events::payloads::metrics::PoolStatsPayload"
-    },
-    {
-      "subject": "event_payload:sinex.gateway/rate_limit.exceeded/1.0.0",
-      "source": "sinex.gateway",
-      "event_type": "rate_limit.exceeded",
-      "version": "1.0.0",
-      "type_name": "sinex_primitives::events::payloads::metrics::RateLimitExceededPayload"
-    },
-    {
-      "subject": "event_payload:sinex.gateway/replay.stats/1.0.0",
-      "source": "sinex.gateway",
-      "event_type": "replay.stats",
-      "version": "1.0.0",
-      "type_name": "sinex_primitives::events::payloads::metrics::ReplayStatsPayload"
-    },
-    {
-      "subject": "event_payload:sinex.gateway/request.stats/1.0.0",
-      "source": "sinex.gateway",
-      "event_type": "request.stats",
-      "version": "1.0.0",
-      "type_name": "sinex_primitives::events::payloads::metrics::GatewayRequestStatsPayload"
-    },
-    {
-      "subject": "event_payload:sinex.ingestd/assembly.stats/1.0.0",
-      "source": "sinex.ingestd",
-      "event_type": "assembly.stats",
-      "version": "1.0.0",
-      "type_name": "sinex_primitives::events::payloads::metrics::AssemblyStatsPayload"
-    },
-    {
-      "subject": "event_payload:sinex.ingestd/batch.stats/2.2.0",
-      "source": "sinex.ingestd",
-      "event_type": "batch.stats",
-      "version": "2.2.0",
-      "type_name": "sinex_primitives::events::payloads::metrics::IngestdBatchStatsPayload"
-    },
-    {
-      "subject": "event_payload:sinex.ingestd/consumer.startup_replay_risk/1.0.0",
-      "source": "sinex.ingestd",
-      "event_type": "consumer.startup_replay_risk",
-      "version": "1.0.0",
-      "type_name": "sinex_primitives::events::payloads::metrics::DangerousReplayWarningPayload"
-    },
-    {
-      "subject": "event_payload:sinex.ingestd/consumer.startup_snapshot/1.0.0",
-      "source": "sinex.ingestd",
-      "event_type": "consumer.startup_snapshot",
-      "version": "1.0.0",
-      "type_name": "sinex_primitives::events::payloads::metrics::ConsumerStartupSnapshotPayload"
-    },
-    {
-      "subject": "event_payload:sinex.ingestd/stream.stats/1.0.0",
-      "source": "sinex.ingestd",
-      "event_type": "stream.stats",
-      "version": "1.0.0",
-      "type_name": "sinex_primitives::events::payloads::metrics::StreamStatsPayload"
-    },
-    {
       "subject": "event_payload:sinex.node/derived.latency_snapshot/1.0.0",
       "source": "sinex.node",
       "event_type": "derived.latency_snapshot",
@@ -4160,6 +4353,97 @@
       "event_type": "process.started",
       "version": "1.0.0",
       "type_name": "sinex_primitives::events::payloads::process::ProcessStartedPayload"
+    },
+    {
+      "subject": "event_payload:sinexctl/task.linked/1.0.0",
+      "source": "sinexctl",
+      "event_type": "task.linked",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::task_domain::TaskLinkedPayload"
+    },
+    {
+      "subject": "event_payload:sinexctl/task.merged/1.0.0",
+      "source": "sinexctl",
+      "event_type": "task.merged",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::task_domain::TaskMergedPayload"
+    },
+    {
+      "subject": "event_payload:sinexctl/task.split/1.0.0",
+      "source": "sinexctl",
+      "event_type": "task.split",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::task_domain::TaskSplitPayload"
+    },
+    {
+      "subject": "event_payload:sinexd.api/gateway.rpc.call/1.0.0",
+      "source": "sinexd.api",
+      "event_type": "gateway.rpc.call",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::api::GatewayRpcCallPayload"
+    },
+    {
+      "subject": "event_payload:sinexd.api/pool.stats/1.0.0",
+      "source": "sinexd.api",
+      "event_type": "pool.stats",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::metrics::PoolStatsPayload"
+    },
+    {
+      "subject": "event_payload:sinexd.api/rate_limit.exceeded/1.0.0",
+      "source": "sinexd.api",
+      "event_type": "rate_limit.exceeded",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::metrics::RateLimitExceededPayload"
+    },
+    {
+      "subject": "event_payload:sinexd.api/replay.stats/1.0.0",
+      "source": "sinexd.api",
+      "event_type": "replay.stats",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::metrics::ReplayStatsPayload"
+    },
+    {
+      "subject": "event_payload:sinexd.api/request.stats/1.0.0",
+      "source": "sinexd.api",
+      "event_type": "request.stats",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::metrics::ApiRequestStatsPayload"
+    },
+    {
+      "subject": "event_payload:sinexd.event_engine/assembly.stats/1.0.0",
+      "source": "sinexd.event_engine",
+      "event_type": "assembly.stats",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::metrics::AssemblyStatsPayload"
+    },
+    {
+      "subject": "event_payload:sinexd.event_engine/batch.stats/2.2.0",
+      "source": "sinexd.event_engine",
+      "event_type": "batch.stats",
+      "version": "2.2.0",
+      "type_name": "sinex_primitives::events::payloads::metrics::EventEngineBatchStatsPayload"
+    },
+    {
+      "subject": "event_payload:sinexd.event_engine/consumer.startup_replay_risk/1.0.0",
+      "source": "sinexd.event_engine",
+      "event_type": "consumer.startup_replay_risk",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::metrics::DangerousReplayWarningPayload"
+    },
+    {
+      "subject": "event_payload:sinexd.event_engine/consumer.startup_snapshot/1.0.0",
+      "source": "sinexd.event_engine",
+      "event_type": "consumer.startup_snapshot",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::metrics::ConsumerStartupSnapshotPayload"
+    },
+    {
+      "subject": "event_payload:sinexd.event_engine/stream.stats/1.0.0",
+      "source": "sinexd.event_engine",
+      "event_type": "stream.stats",
+      "version": "1.0.0",
+      "type_name": "sinex_primitives::events::payloads::metrics::StreamStatsPayload"
     },
     {
       "subject": "event_payload:spotify/track.played/1.0.0",
@@ -4967,7 +5251,7 @@
     {
       "subject": "xtask_command:privacy.catalog",
       "path": "privacy.catalog",
-      "about": "List all privacy rules in the built-in catalog"
+      "about": "List privacy rule seed catalog entries"
     },
     {
       "subject": "xtask_command:privacy.config",
@@ -4987,12 +5271,17 @@
     {
       "subject": "xtask_command:privacy.test",
       "path": "privacy.test",
-      "about": "Test input text against the privacy engine"
+      "about": "Test input text against the configured local privacy engine"
     },
     {
       "subject": "xtask_command:ra-diagnose",
       "path": "ra-diagnose",
       "about": "Diagnose rust-analyzer process footprint and local workspace contract"
+    },
+    {
+      "subject": "xtask_command:record-drift-bypass",
+      "path": "record-drift-bypass",
+      "about": "Internal: record drift guard bypass events from the pre-push hook (#1565)"
     },
     {
       "subject": "xtask_command:reset",
@@ -5022,12 +5311,12 @@
     {
       "subject": "xtask_command:run.gateway",
       "path": "run.gateway",
-      "about": "Run sinex-gateway"
+      "about": "Run sinexd (alias preserved post-collapse; runs the full supervisor)"
     },
     {
       "subject": "xtask_command:run.ingestd",
       "path": "run.ingestd",
-      "about": "Run sinex-ingestd"
+      "about": "Run sinexd (alias preserved post-collapse; runs the full supervisor)"
     },
     {
       "subject": "xtask_command:run.list",
@@ -5147,7 +5436,7 @@
     {
       "subject": "xtask_command:verify.source-worker",
       "path": "verify.source-worker",
-      "about": "Source-worker evidence gate: NixOS binding drift, parser registration, and privacy invocation"
+      "about": "Source-worker evidence gate: NixOS binding drift, parser registration, and sensitivity annotation"
     }
   ]
 }

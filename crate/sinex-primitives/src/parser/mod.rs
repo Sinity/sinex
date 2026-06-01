@@ -712,6 +712,28 @@ pub trait MaterialParser: Send + Sync {
 }
 pub use occurrence_filter::{OccurrenceFilter, maybe_occurrence_key_string, occurrence_key_string};
 
+/// Declarative sensitivity hint attached to a source-record field.
+///
+/// Hints describe the kind of material a field may contain. They do not select
+/// an action and do not run recognizers. DB/user policy binds these hints,
+/// source/type/field scopes, and recognizer backends to concrete admission
+/// actions.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum FieldSensitivityHint {
+    PotentiallySensitive,
+    FreeText,
+    CredentialBearing,
+    PersonNameCandidate,
+    SourcePath,
+    Url,
+    Title,
+    MessageBody,
+    SystemMetadata,
+    Financial,
+    Health,
+}
+
 /// A single event that a parser intends to publish.
 ///
 /// This is the parser's output contract. The source-worker or transport
@@ -764,23 +786,10 @@ pub struct ParsedEventIntent {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub occurrence_key: Option<OccurrenceKey>,
 
-    /// Privacy processing context for this event.
-    pub privacy_context: crate::privacy::ProcessingContext,
-
-    /// Per-field privacy decisions made during parsing.
-    ///
-    /// `None` for imperative parsers that don't populate it (the engine ran
-    /// at call sites the same way it always has). `Some(vec)` for parsers
-    /// authored via `#[derive(SourceRecord)]` or the YAML loader — the macro
-    /// emits one entry per privacy-relevant field. Consumed by #1072 audit
-    /// /export/redact CLI.
-    ///
-    /// Backward-compat: existing imperative parsers compile and behave
-    /// identically; the field is `Option`, default `None`,
-    /// `serde(skip_serializing_if = "Option::is_none")` so wire format is
-    /// unchanged when absent.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub field_privacy_log: Option<Vec<crate::privacy::FieldPrivacyDecision>>,
+    /// Sensitivity hints declared by the parser fields that contributed to
+    /// this intent.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub privacy_hints: Vec<FieldSensitivityHint>,
 
     /// Parent event IDs for derived provenance.
     ///
@@ -811,7 +820,7 @@ impl ParsedEventIntent {
     /// - Has `derived_parents = Some(vec![self.id])` pointing to `self`.
     /// - Has `event_source` and `event_type` taken from `P::SOURCE` /
     ///   `P::EVENT_TYPE` (the *new* payload, **not** the parent's types).
-    /// - Has `occurrence_key = None` and `field_privacy_log = None`.
+    /// - Has `occurrence_key = None` and no field-level sensitivity hints.
     ///
     /// # Errors
     ///
@@ -871,8 +880,7 @@ impl ParsedEventIntent {
             // derived_parents to detect derived and ignores anchor.
             anchor: self.anchor.clone(),
             occurrence_key: None,
-            privacy_context: self.privacy_context,
-            field_privacy_log: None,
+            privacy_hints: Vec::new(),
             derived_parents: Some(vec![self.id]),
         })
     }
@@ -930,9 +938,9 @@ pub struct ParserManifest {
     /// Event types the parser can emit.
     pub declared_event_types: Vec<(EventSource, EventType)>,
 
-    /// Privacy processing contexts this parser uses.
-    #[schemars(skip)]
-    pub privacy_contexts: Vec<crate::privacy::ProcessingContext>,
+    /// Sensitivity hints this parser may attach to emitted intents.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub field_hints: Vec<FieldSensitivityHint>,
 
     /// Catalog obligation IDs or descriptor-local verification tags.
     ///
@@ -1022,8 +1030,7 @@ mod tests {
             timing: TimingEvidence::Atemporal,
             anchor: MaterialAnchor::ByteRange { start: 0, len: 0 },
             occurrence_key: None,
-            privacy_context: crate::privacy::ProcessingContext::Metadata,
-            field_privacy_log: None,
+            privacy_hints: Vec::new(),
             derived_parents: None,
         }
     }

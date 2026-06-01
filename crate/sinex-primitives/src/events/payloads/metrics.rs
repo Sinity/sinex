@@ -11,7 +11,7 @@
 //!
 //! - **Unified query interface**: One query language for all data
 //! - **Local-first**: No external dependencies for observability
-//! - **Privacy-preserving**: Telemetry stays on the user's machine
+//! - **Sensitivity-preserving**: Telemetry stays on the user's machine
 //! - **Time-series native**: `TimescaleDB` + continuous aggregates
 //!
 //! # Event Types
@@ -621,7 +621,7 @@ register_source_unit_binding! {
     .implementation("sinex-primitives::metrics")
     .adapter("EmbeddedEmitter")
     .output_event_type("metric.counter")
-    .privacy_context("none")
+    .sensitivity_profile("none")
     .material_policy("none")
     .checkpoint_policy("live_observation")
     .resource_shape("embedded_emitter")
@@ -645,7 +645,7 @@ register_source_unit_binding! {
     .implementation("sinex-ingestd")
     .adapter("EmbeddedEmitter")
     .output_event_type("stream.stats")
-    .privacy_context("none")
+    .sensitivity_profile("none")
     .material_policy("none")
     .checkpoint_policy("live_observation")
     .resource_shape("embedded_emitter")
@@ -669,7 +669,7 @@ register_source_unit_binding! {
     .implementation("sinex-gateway")
     .adapter("EmbeddedEmitter")
     .output_event_type("request.stats")
-    .privacy_context("none")
+    .sensitivity_profile("none")
     .material_policy("none")
     .checkpoint_policy("live_observation")
     .resource_shape("embedded_emitter")
@@ -693,7 +693,7 @@ register_source_unit_binding! {
     .implementation("sinex-node-sdk")
     .adapter("EmbeddedEmitter")
     .output_event_type("processing.stats")
-    .privacy_context("none")
+    .sensitivity_profile("none")
     .material_policy("none")
     .checkpoint_policy("live_observation")
     .resource_shape("embedded_emitter")

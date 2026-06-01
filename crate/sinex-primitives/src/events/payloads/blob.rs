@@ -100,7 +100,7 @@ register_source_unit_binding! {
     .implementation("sinex-primitives::blob")
     .adapter("EmbeddedEmitter")
     .output_event_type("blob.retrieved")
-    .privacy_context("blob_metadata")
+    .sensitivity_profile("blob_metadata")
     .material_policy("none")
     .checkpoint_policy("live_observation")
     .resource_shape("embedded_emitter")

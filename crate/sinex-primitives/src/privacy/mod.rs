@@ -1,15 +1,19 @@
 //! Unified privacy engine for Sinex.
 //!
 //! All sensitive-data handling — secret redaction, PII detection, encryption,
-//! hashing — flows through a single [`PrivacyEngine`] instance obtained via
-//! [`engine()`].
+//! hashing — is represented through [`PrivacyEngine`]. Runtime admission policy
+//! is DB/user driven; this module provides the local rule executor and catalog
+//! seed vocabulary, not parser-owned policy.
 //!
 //! # Quick start
 //!
 //! ```
-//! use sinex_primitives::privacy::{self, ProcessingContext};
+//! use sinex_primitives::privacy::{PrivacyConfig, PrivacyEngine, ProcessingContext, CategorySet};
 //!
-//! let result = privacy::process("export TOKEN=ghp_abc123", ProcessingContext::Command)?;
+//! let mut config = PrivacyConfig::default();
+//! config.builtin_categories = CategorySet::All;
+//! let engine = PrivacyEngine::new(config)?;
+//! let result = engine.process("export TOKEN=ghp_abc123", ProcessingContext::Command);
 //! assert!(!result.matched_rules.is_empty());
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
@@ -19,12 +23,12 @@ mod config;
 mod detector;
 mod engine;
 mod envelope;
-pub mod field;
 pub mod private_mode;
 
-pub use config::{CategorySet, PrivacyConfig, PrivacyConfigError};
+pub use catalog::builtin_rules;
+pub use config::{CategorySet, KeyConfig, PrivacyConfig, PrivacyConfigError};
 pub use engine::PrivacyEngine;
-pub use field::{FieldPrivacyDecision, parser_field_privacy};
+pub use envelope::{decrypt_all, decrypt_token, encrypt_token, hash_token};
 pub use private_mode::{
     DEFAULT_PRIVATE_MODE_STATE_DIR, PRIVATE_MODE_STATE_RELATIVE_PATH, PrivateModeReasonClass,
     RuntimePrivateModeState, load_private_mode_state, private_mode_state_path,
@@ -56,30 +60,6 @@ pub fn engine() -> Result<&'static PrivacyEngine, &'static PrivacyError> {
     ENGINE.get_or_init(build_engine_from_env).as_ref()
 }
 
-/// Build a privacy engine augmented with per-source-unit rules.
-///
-/// Loads the global config (identical to [`engine()`]) and merges the extra
-/// rules declared by the matching [`crate::proof::SourceUnitPrivacyRules`]
-/// entry (registered via `extra_privacy_rules:` in `register_source_unit!`).
-///
-/// Returns a freshly-constructed `PrivacyEngine` — **not** a cached singleton.
-/// Callers that need performance should build once at node startup and reuse.
-/// If no per-unit rules are registered the engine is identical to the global
-/// one (same config, same compiled rule set).
-///
-/// # Errors
-/// Returns `PrivacyError` if the config or any rule pattern fails to compile.
-pub fn engine_for_source_unit(
-    source_unit_id: &crate::parser::SourceUnitId,
-) -> Result<PrivacyEngine, PrivacyError> {
-    let mut config = config::PrivacyConfig::from_env().map_err(PrivacyError::Config)?;
-    if let Some(scoped) = crate::proof::find_source_unit_privacy_rules(source_unit_id) {
-        let extra = (scoped.rules_fn)();
-        config.extra_rules.extend(extra);
-    }
-    PrivacyEngine::new(config)
-}
-
 /// Process text with the global privacy engine.
 pub fn process(
     text: &str,
@@ -109,8 +89,6 @@ pub enum ProcessingContext {
     Command,
     /// Clipboard text content.
     Clipboard,
-    /// Window and tab titles.
-    WindowTitle,
     /// Systemd journal messages and fields.
     Journal,
     /// D-Bus method arguments, signal payloads.
@@ -231,7 +209,7 @@ pub enum RuleCategory {
     Secret,
     /// Personally identifiable information: emails, phones, card numbers.
     Pii,
-    /// Privacy-relevant metadata: window titles revealing activity.
+    /// Privacy-relevant metadata identified by policy bindings.
     Privacy,
     /// User-defined rules.
     Custom,
@@ -262,10 +240,10 @@ fn default_true() -> bool {
     true
 }
 
-/// Override for a built-in rule.
+/// Override for an explicitly enabled catalog seed rule.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct RuleOverride {
-    /// Set to false to disable a built-in rule.
+    /// Set to false to disable a seed rule.
     pub enabled: Option<bool>,
     /// Override the strategy.
     pub strategy: Option<Strategy>,
@@ -671,79 +649,21 @@ mod tests {
     -> ::xtask::sandbox::TestResult<()> {
         let _guard = ENV_LOCK.lock().await;
         let old_extra_rules = std::env::var_os("SINEX_PRIVACY_EXTRA_RULES");
-        unsafe { std::env::remove_var("SINEX_PRIVACY_EXTRA_RULES") };
+        let old_builtin = std::env::var_os("SINEX_PRIVACY_BUILTIN");
+        unsafe {
+            std::env::remove_var("SINEX_PRIVACY_EXTRA_RULES");
+            std::env::remove_var("SINEX_PRIVACY_BUILTIN");
+        }
 
         let engine = build_engine_from_env()?;
         let processed = engine.process("token=abc", ProcessingContext::Command);
 
         restore_var("SINEX_PRIVACY_EXTRA_RULES", old_extra_rules);
+        restore_var("SINEX_PRIVACY_BUILTIN", old_builtin);
 
-        assert!(processed.any_matched());
-        Ok(())
-    }
-
-    // ── engine_for_source_unit ──
-
-    #[sinex_test]
-    async fn engine_for_source_unit_returns_engine_without_scoped_rules()
-    -> ::xtask::sandbox::TestResult<()> {
-        // A source unit with no registered `SourceUnitPrivacyRules` should
-        // produce an engine that behaves identically to the global one.
-        let engine = engine_for_source_unit(&crate::parser::SourceUnitId::from_static(
-            "nonexistent.source-unit",
-        ))?;
-        let result = engine.process(
-            "export TOKEN=ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghij",
-            ProcessingContext::Command,
-        );
-        assert!(result.any_matched(), "global rules should still fire");
-        Ok(())
-    }
-
-    #[sinex_test]
-    async fn engine_for_source_unit_with_extra_rules_merges_correctly()
-    -> ::xtask::sandbox::TestResult<()> {
-        // We cannot register inventory at test time (link-time only), so we
-        // verify the merge path directly by constructing a PrivacyConfig with
-        // extra rules and confirming both global and scoped rules fire.
-        let scoped_rule = PatternRule {
-            name: "test_scoped_sentinel".into(),
-            description: "fires only in scoped engine".into(),
-            category: RuleCategory::Custom,
-            matcher: Matcher::Regex {
-                pattern: r"SCOPED_SENTINEL_XYZ".into(),
-            },
-            strategy: Strategy::Redact {
-                label: Some("<SCOPED_RULE>".into()),
-            },
-            contexts: vec![ProcessingContext::Command],
-            enabled: true,
-        };
-
-        let mut config = PrivacyConfig::default();
-        config.extra_rules.push(scoped_rule);
-        let engine = PrivacyEngine::new(config)?;
-
-        // Global rule fires.
-        let result = engine.process(
-            "export TOKEN=ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghij",
-            ProcessingContext::Command,
-        );
         assert!(
-            result.any_matched(),
-            "global rule should fire in merged engine"
-        );
-
-        // Scoped rule fires.
-        let result2 = engine.process("SCOPED_SENTINEL_XYZ", ProcessingContext::Command);
-        assert!(
-            result2.any_matched(),
-            "scoped rule should fire in merged engine"
-        );
-        assert!(
-            result2.text.contains("<SCOPED_RULE>"),
-            "got: {}",
-            result2.text
+            !processed.any_matched(),
+            "default local engine must not execute catalog seed rules"
         );
         Ok(())
     }

@@ -1,7 +1,7 @@
 //! `system.dbus` — stream D-Bus signals via `DbusStreamAdapter`.
 //!
 //! Dispatches 9 payload types based on interface + signal name patterns.
-//! Notification body and D-Bus args are passed through the privacy engine.
+//! Notification body and D-Bus args carry sensitivity hints for admission policy.
 
 use crate::node_sdk::parser::{DbusStreamAdapter, MaterialParser, ParserError};
 use crate::register_parser;
@@ -19,7 +19,6 @@ use sinex_primitives::parser::{
     InputShapeKind, ParsedEventIntent, ParserContext, ParserId, ParserManifest, SourceRecord,
     SourceUnitId, TimingEvidence,
 };
-use sinex_primitives::privacy::{self, ProcessingContext};
 use sinex_primitives::proof::{
     CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, RetentionPolicy, RuntimeShape,
     SourceUnitBinding, SourceUnitBuildImpact, SourceUnitDescriptor, SubjectRef,
@@ -69,7 +68,7 @@ register_source_unit_binding! {
     .implementation("sinex-source-worker")
     .adapter("DbusStreamAdapter")
     .output_event_type("signal.received")
-    .privacy_context("Dbus")
+    .sensitivity_profile("Dbus")
     .material_policy("bus_anchor")
     .checkpoint_policy("live_observation")
     .resource_shape("event_emitter")
@@ -164,7 +163,11 @@ impl MaterialParser for DbusParser {
                     EventType::from_static("notification.sent"),
                 ),
             ],
-            privacy_contexts: vec![ProcessingContext::Dbus, ProcessingContext::Notification],
+            field_hints: vec![
+                sinex_primitives::parser::FieldSensitivityHint::SystemMetadata,
+                sinex_primitives::parser::FieldSensitivityHint::FreeText,
+                sinex_primitives::parser::FieldSensitivityHint::PotentiallySensitive,
+            ],
             proof_obligations: vec![
                 "dbus_interface_dispatch".into(),
                 "privacy_notification_body".into(),
@@ -215,17 +218,7 @@ impl MaterialParser for DbusParser {
         let timestamp = Timestamp::now();
         let event_type_str = classify_dbus_event(&interface, &member);
 
-        // Apply privacy to args for generic signals.
-        let args_raw = body_json.to_string();
-        let args_redacted = match privacy::engine() {
-            Ok(eng) => eng
-                .process(&args_raw, ProcessingContext::Dbus)
-                .text
-                .into_owned(),
-            Err(e) => return Err(ParserError::Privacy(format!("privacy engine: {e}"))),
-        };
-        let args_value: serde_json::Value =
-            serde_json::from_str(&args_redacted).unwrap_or(body_json.clone());
+        let args_value = body_json.clone();
 
         let payload_value = match event_type_str {
             "notification.sent" => {
@@ -239,20 +232,8 @@ impl MaterialParser for DbusParser {
                     .and_then(|v| v.as_str())
                     .unwrap_or("")
                     .to_string();
-                let summary = match privacy::engine() {
-                    Ok(eng) => eng
-                        .process(&raw_summary, ProcessingContext::Notification)
-                        .text
-                        .into_owned(),
-                    Err(e) => return Err(ParserError::Privacy(format!("privacy engine: {e}"))),
-                };
-                let body = match privacy::engine() {
-                    Ok(eng) => eng
-                        .process(&raw_body, ProcessingContext::Notification)
-                        .text
-                        .into_owned(),
-                    Err(e) => return Err(ParserError::Privacy(format!("privacy engine: {e}"))),
-                };
+                let summary = raw_summary;
+                let body = raw_body;
                 let app_name = body_json
                     .get(0)
                     .and_then(|v| v.as_str())
@@ -408,7 +389,10 @@ impl MaterialParser for DbusParser {
             .ts_orig(timestamp)
             .timing(TimingEvidence::Atemporal)
             .anchor(record.anchor.clone())
-            .privacy_context(ProcessingContext::Dbus)
+            .privacy_hints(vec![
+                sinex_primitives::parser::FieldSensitivityHint::SystemMetadata,
+                sinex_primitives::parser::FieldSensitivityHint::PotentiallySensitive,
+            ])
             .build();
 
         Ok(vec![intent])

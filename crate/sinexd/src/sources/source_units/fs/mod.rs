@@ -38,8 +38,7 @@ register_source_unit! {
             ("fs-watcher", "file.moved"),
         ],
         // Paths can leak home-directory layout and filenames may carry secrets.
-        // FilesystemParser applies metadata-context path redaction. Treat as
-        // Secret during ingestion.
+        // FilesystemParser emits path hints consumed by admission policy.
         privacy_tier: PrivacyTier::Secret,
         horizons: &[Horizon::Continuous, Horizon::Historical],
         retention: RetentionPolicy::Forever,
@@ -58,7 +57,7 @@ register_source_unit_binding! {
     .implementation("sinex-source-worker")
     .adapter("FileContentDropAdapter")
     .output_event_type("file.created")
-    .privacy_context("fs_path")
+    .sensitivity_profile("fs_path")
     .material_policy("inotify_anchor")
     .checkpoint_policy("append_stream")
     .resource_shape("continuous_inotify")

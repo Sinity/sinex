@@ -4,11 +4,10 @@ use super::{Matcher, PatternRule, ProcessingContext, RuleCategory, Strategy, Str
 
 /// All built-in privacy rules.
 pub fn builtin_rules() -> Vec<PatternRule> {
-    let mut rules = Vec::with_capacity(40);
+    let mut rules = Vec::with_capacity(36);
     rules.extend(secret_rules());
     rules.extend(pii_rules());
     rules.extend(infrastructure_rules());
-    rules.extend(privacy_title_rules());
     rules
 }
 
@@ -44,8 +43,8 @@ fn secret_rules() -> Vec<PatternRule> {
         },
         // NOTE: Two URL-credential redactors exist by design:
         //
-        // 1. This regex rule — operates on free-form text (command lines, log lines,
-        //    window titles) where the surrounding context means the input cannot be
+        // 1. This regex rule — operates on free-form text where the surrounding
+        //    context means the input cannot be
         //    handed to `url::Url::parse`. It must capture credentials embedded inside
         //    longer strings (e.g. `git clone https://user:pass@host/repo.git`).
         //
@@ -526,66 +525,6 @@ fn infrastructure_rules() -> Vec<PatternRule> {
     ]
 }
 
-// ─── Privacy / Window titles ─────────────────────────────────
-
-fn privacy_title_rules() -> Vec<PatternRule> {
-    vec![
-        PatternRule {
-            name: "password_entry_title".into(),
-            description: "Window titles related to password entry".into(),
-            category: RuleCategory::Privacy,
-            matcher: Matcher::Regex {
-                pattern: r"(?i)(password|passwort|mot de passe|contraseña|密码|パスワード)".into(),
-            },
-            strategy: Strategy::Redact {
-                label: Some("<PASSWORD_ENTRY>".into()),
-            },
-            contexts: vec![ProcessingContext::WindowTitle],
-            enabled: true,
-        },
-        PatternRule {
-            name: "login_window_title".into(),
-            description: "Login / sign-in window titles".into(),
-            category: RuleCategory::Privacy,
-            matcher: Matcher::Regex {
-                pattern: r"(?i)(sign.?in|log.?in|auth(?:entication)?|verify your identity)".into(),
-            },
-            strategy: Strategy::Redact {
-                label: Some("<LOGIN_WINDOW>".into()),
-            },
-            contexts: vec![ProcessingContext::WindowTitle],
-            enabled: true,
-        },
-        PatternRule {
-            name: "password_manager_title".into(),
-            description: "Password manager window titles".into(),
-            category: RuleCategory::Privacy,
-            matcher: Matcher::Regex {
-                pattern: r"(?i)(keepass|1password|bitwarden|lastpass|dashlane|password.?safe)"
-                    .into(),
-            },
-            strategy: Strategy::Redact {
-                label: Some("<PASSWORD_MANAGER>".into()),
-            },
-            contexts: vec![ProcessingContext::WindowTitle],
-            enabled: true,
-        },
-        PatternRule {
-            name: "sensitive_file_title".into(),
-            description: "Window titles showing sensitive file types".into(),
-            category: RuleCategory::Privacy,
-            matcher: Matcher::Regex {
-                pattern: r"(?i)\.(env|pem|key|crt|pfx|p12|jks|keystore)\b".into(),
-            },
-            strategy: Strategy::Redact {
-                label: Some("<SENSITIVE_FILE>".into()),
-            },
-            contexts: vec![ProcessingContext::WindowTitle],
-            enabled: true,
-        },
-    ]
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -651,7 +590,9 @@ mod tests {
         // Document the operator-facing pattern: turning on the aggressive
         // variant and turning off the soft variant produces hashed output
         // for $HOME paths instead of `<HOME>/...` collapse.
-        use crate::privacy::{PrivacyConfig, PrivacyEngine, ProcessingContext, RuleOverride};
+        use crate::privacy::{
+            CategorySet, PrivacyConfig, PrivacyEngine, ProcessingContext, RuleOverride,
+        };
         use std::collections::HashMap;
 
         unsafe {
@@ -675,6 +616,7 @@ mod tests {
         );
 
         let config = PrivacyConfig {
+            builtin_categories: CategorySet::All,
             overrides,
             ..PrivacyConfig::default()
         };

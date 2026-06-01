@@ -16,11 +16,10 @@
 //! stripped before chunking for Dendron (content between leading `---`
 //! delimiters). Wikilinks are extracted via `[[...]]` patterns.
 //!
-//! ## Privacy
+//! ## Sensitivity
 //!
-//! Chunk text is run through `privacy::engine()` with `ProcessingContext::Document`
-//! before emission. Frontmatter values are redacted with
-//! `ProcessingContext::Metadata`.
+//! Chunk text remains source-derived material. Admission policy owns recognizer
+//! execution and actions; this automaton does not perform local redaction.
 //!
 //! Ref: `docs/architecture/document-layer-v1.md`.
 
@@ -28,11 +27,9 @@ use crate::node_sdk::derived_node::{
     AutomatonContext, DerivedOutput, InputProvenanceFilter, MultiOutputTransducerNode,
 };
 use crate::node_sdk::processing::NodeLogicError;
+use sinex_primitives::JsonValue;
 use sinex_primitives::events::payloads::DocumentKind;
 use sinex_primitives::ids::derive_document_id;
-use sinex_primitives::privacy;
-use sinex_primitives::privacy::ProcessingContext;
-use sinex_primitives::JsonValue;
 use std::collections::HashMap;
 
 // ── Constants ──────────────────────────────────────────────────────────
@@ -77,11 +74,6 @@ impl MultiOutputTransducerNode for DocumentParserNode {
     fn output_event_types(&self) -> &[&'static str] {
         &["document.parsed", "document.chunked"]
     }
-
-    fn output_privacy_context(&self) -> ProcessingContext {
-        ProcessingContext::Document
-    }
-
     fn input_provenance_filter(&self) -> InputProvenanceFilter {
         InputProvenanceFilter::MaterialOnly
     }
@@ -212,13 +204,10 @@ impl DocumentParserNode {
         for (i, chunk_text) in raw_chunks.into_iter().enumerate() {
             let chunk_len = chunk_text.len() as u64;
 
-            // Apply privacy redaction to chunk text.
-            let redacted = redact_chunk_text(&chunk_text);
-
             let chunk_payload = serde_json::to_value(serde_json::json!({
                 "document_id": document_id,
                 "chunk_index": i as u32,
-                "text": redacted,
+                "text": chunk_text,
                 "byte_offset_start": byte_offset,
                 "byte_offset_end": byte_offset + chunk_len,
                 "source_anchor_start": byte_offset,
@@ -297,12 +286,11 @@ impl DocumentParserNode {
         let mut byte_offset: u64 = 0;
         for (i, chunk_text) in raw_chunks.into_iter().enumerate() {
             let chunk_len = chunk_text.len() as u64;
-            let redacted = redact_chunk_text(&chunk_text);
 
             let chunk_payload = serde_json::to_value(serde_json::json!({
                 "document_id": document_id,
                 "chunk_index": i as u32,
-                "text": redacted,
+                "text": chunk_text,
                 "byte_offset_start": byte_offset,
                 "byte_offset_end": byte_offset + chunk_len,
                 "source_anchor_start": null,
@@ -450,14 +438,6 @@ fn line_group_split(text: &str) -> Vec<String> {
     paragraph_split(text)
 }
 
-/// Redact a chunk of text through the privacy engine.
-fn redact_chunk_text(text: &str) -> String {
-    match privacy::process(text, ProcessingContext::Document) {
-        Ok(result) => result.text.into_owned(),
-        Err(_) => text.to_string(),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -589,7 +569,7 @@ register_source_unit_binding! {
     .implementation("sinex-process")
     .adapter("AutomatonRuntime")
     .output_event_type("document.parsed")
-    .privacy_context("inherits_from_parents")
+    .sensitivity_profile("inherits_from_parents")
     .material_policy("derived_parents")
     .checkpoint_policy("append_stream")
     .resource_shape("event_stream_consumer")

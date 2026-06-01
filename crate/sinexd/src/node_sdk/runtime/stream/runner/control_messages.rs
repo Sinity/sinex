@@ -11,8 +11,8 @@ use super::{Node, NodeRunner, NodeScanAck, NodeScanProgress, RuntimeDrainControl
 use crate::node_sdk::{NodeResult, SinexError};
 #[cfg(feature = "db")]
 use sinex_db::DbPool as PgPool;
-use sinex_primitives::domain::NodeState;
 use sinex_primitives::ControlSubject;
+use sinex_primitives::domain::NodeState;
 use sinex_primitives::transport;
 use tracing::{info, warn};
 

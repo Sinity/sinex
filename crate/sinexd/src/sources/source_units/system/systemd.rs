@@ -15,7 +15,6 @@ use sinex_primitives::parser::{
     InputShapeKind, ParsedEventIntent, ParserContext, ParserId, ParserManifest, SourceRecord,
     SourceUnitId, TimingConfidence, TimingEvidence,
 };
-use sinex_primitives::privacy::{self, ProcessingContext};
 use sinex_primitives::proof::{
     CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, RetentionPolicy, RuntimeShape,
     SourceUnitBinding, SourceUnitBuildImpact, SourceUnitDescriptor, SubjectRef,
@@ -59,7 +58,7 @@ register_source_unit_binding! {
     .implementation("sinex-source-worker")
     .adapter("JournalctlStreamAdapter")
     .output_event_type("unit.started")
-    .privacy_context("Journal")
+    .sensitivity_profile("Journal")
     .material_policy("journal_cursor")
     .checkpoint_policy("journal")
     .resource_shape("journal_tail")
@@ -134,7 +133,11 @@ impl MaterialParser for SystemdParser {
                     EventType::from_static("timer.triggered"),
                 ),
             ],
-            privacy_contexts: vec![ProcessingContext::Journal],
+            field_hints: vec![
+                sinex_primitives::parser::FieldSensitivityHint::SystemMetadata,
+                sinex_primitives::parser::FieldSensitivityHint::FreeText,
+                sinex_primitives::parser::FieldSensitivityHint::PotentiallySensitive,
+            ],
             proof_obligations: vec![
                 "unit_name_present".into(),
                 "event_type_from_unit_result".into(),
@@ -181,13 +184,7 @@ impl MaterialParser for SystemdParser {
             .unwrap_or("")
             .to_string();
 
-        let message = match privacy::engine() {
-            Ok(eng) => eng
-                .process(&raw_message, ProcessingContext::Journal)
-                .text
-                .into_owned(),
-            Err(e) => return Err(ParserError::Privacy(format!("privacy engine: {e}"))),
-        };
+        let message = raw_message;
 
         let pid_str = json
             .get("_PID")
@@ -311,7 +308,11 @@ impl MaterialParser for SystemdParser {
                 confidence: TimingConfidence::Intrinsic,
             })
             .anchor(record.anchor.clone())
-            .privacy_context(ProcessingContext::Journal)
+            .privacy_hints(vec![
+                sinex_primitives::parser::FieldSensitivityHint::SystemMetadata,
+                sinex_primitives::parser::FieldSensitivityHint::FreeText,
+                sinex_primitives::parser::FieldSensitivityHint::PotentiallySensitive,
+            ])
             .build();
 
         Ok(vec![intent])

@@ -16,7 +16,7 @@
 //! **Occurrence key:** `(commit_sha, repo_path)` — the SHA alone is not
 //! globally unique because forks and mirrors share object SHAs.
 //!
-//! **Privacy tier:** Sensitive — commit messages, author names, and e-mail
+//! **Sensitivity tier:** Sensitive — commit messages, author names, and e-mail
 //! addresses are personal data.
 
 use std::process::Stdio;
@@ -31,7 +31,6 @@ use sinex_primitives::parser::{
     InputShapeKind, MaterialAnchor, OccurrenceKey, ParsedEventIntent, ParserContext, ParserId,
     ParserManifest, SourceRecord, SourceUnitId, TimingConfidence, TimingEvidence,
 };
-use sinex_primitives::privacy::ProcessingContext;
 use sinex_primitives::proof::{
     CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, RetentionPolicy, RuntimeShape,
     SourceUnitBinding, SourceUnitBuildImpact, SourceUnitDescriptor, SubjectRef,
@@ -144,7 +143,11 @@ impl MaterialParser for GitCommitHistoryParser {
                 EventSource::from_static("git"),
                 EventType::from_static("commit.created"),
             )],
-            privacy_contexts: vec![ProcessingContext::Document],
+            field_hints: vec![
+                sinex_primitives::parser::FieldSensitivityHint::FreeText,
+                sinex_primitives::parser::FieldSensitivityHint::MessageBody,
+                sinex_primitives::parser::FieldSensitivityHint::PotentiallySensitive,
+            ],
             proof_obligations: vec![
                 "timestamp_intrinsic".into(),
                 "anchor_commit_index".into(),
@@ -422,7 +425,11 @@ fn build_intent(
             len: 1,
         })
         .occurrence_key(occurrence_key)
-        .privacy_context(ProcessingContext::Document)
+        .privacy_hints(vec![
+            sinex_primitives::parser::FieldSensitivityHint::FreeText,
+            sinex_primitives::parser::FieldSensitivityHint::MessageBody,
+            sinex_primitives::parser::FieldSensitivityHint::PotentiallySensitive,
+        ])
         .build())
 }
 
@@ -458,7 +465,7 @@ register_source_unit_binding! {
     .implementation("sinex-source-worker")
     .adapter("StaticFileAdapter")
     .output_event_type("commit.created")
-    .privacy_context("Document")
+    .sensitivity_profile("Document")
     .material_policy("static_export_file")
     .checkpoint_policy("static_file_cursor")
     .resource_shape("file_reader")

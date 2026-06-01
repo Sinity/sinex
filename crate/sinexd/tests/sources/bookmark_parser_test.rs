@@ -4,19 +4,18 @@
 //! - Two overlapping CSV snapshots produce no duplicate logical bookmarks
 //!   (occurrence key = `(raindrop_id, url, created)`).
 //! - Row/byte anchors identify each bookmark in its source material.
-//! - Sensitive URL/note/excerpt/tag content is gated via privacy context;
+//! - Sensitive URL/note/excerpt/tag content is marked with sensitivity hints;
 //!   `cover` and `highlights` are dropped entirely.
 //! - Parser satisfies source-worker registration and manifest obligations
-//!   (Bus-First admission path verified via `declared_event_types` + `privacy_contexts`).
+//!   (Bus-First admission path verified via `declared_event_types` + `field_hints`).
 
 use std::collections::HashSet;
 
-use sinex_primitives::parser::MaterialParser;
+use sinex_primitives::parser::{FieldSensitivityHint, MaterialParser};
 use sinex_primitives::{
     Uuid,
     ids::Id,
     parser::{MaterialAnchor, ParserContext, SourceRecord, SourceUnitId},
-    privacy::ProcessingContext,
     temporal::Timestamp,
 };
 use sinexd::sources::sources::bookmark::RaindropBookmarkParser;
@@ -195,7 +194,7 @@ async fn each_bookmark_anchor_is_distinct() {
 // ---------------------------------------------------------------------------
 // AC: Sensitive fields follow privacy policy
 //
-// The privacy_context must be ProcessingContext::Metadata on every intent.
+// Every intent must expose metadata sensitivity hints.
 // `cover` and `highlights` columns must be absent from the payload.
 // Sensitive text fields (url, note, excerpt, tags) must be present in the
 // payload (they flow through the privacy engine downstream at admission time)
@@ -204,7 +203,7 @@ async fn each_bookmark_anchor_is_distinct() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn privacy_context_is_metadata_on_all_intents() {
+async fn privacy_hints_include_metadata_on_all_intents() {
     let mut parser = RaindropBookmarkParser;
     let intents = parser
         .parse_record(record_for(SNAPSHOT_A.as_bytes()), &test_ctx())
@@ -212,10 +211,11 @@ async fn privacy_context_is_metadata_on_all_intents() {
         .unwrap();
 
     for intent in &intents {
-        assert_eq!(
-            intent.privacy_context,
-            ProcessingContext::Metadata,
-            "all bookmark intents must carry Metadata privacy context"
+        assert!(
+            intent
+                .privacy_hints
+                .contains(&FieldSensitivityHint::SystemMetadata),
+            "all bookmark intents must carry SystemMetadata privacy hint"
         );
     }
 }
@@ -253,17 +253,17 @@ id,title,note,excerpt,url,folder,tags,created,cover,highlights,favorite
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn privacy_tier_is_sensitive_in_manifest() {
+async fn sensitivity_hint_is_metadata_in_manifest() {
     let parser = RaindropBookmarkParser;
     let manifest = parser.manifest();
 
-    // Parser declares Metadata context — the source unit is Sensitive tier.
-    // Verify the manifest names the Metadata processing context.
+    // Parser declares metadata sensitivity hints; policy action is decided at
+    // admission.
     assert!(
         manifest
-            .privacy_contexts
-            .contains(&ProcessingContext::Metadata),
-        "manifest must declare Metadata privacy context"
+            .field_hints
+            .contains(&FieldSensitivityHint::SystemMetadata),
+        "manifest must declare metadata sensitivity hint"
     );
 }
 

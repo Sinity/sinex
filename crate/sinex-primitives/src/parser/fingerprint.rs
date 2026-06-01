@@ -937,7 +937,6 @@ mod tests {
     use crate::domain::{EventSource, EventType};
     use crate::parser::{FieldSource, FieldSpec, FieldType, InputFormat};
     use crate::parser::{ParserId, SourceUnitId};
-    use crate::privacy::ProcessingContext;
     use crate::rpc::sources::{CaveatSeverity, caveat_codes};
     use serde_json::json;
     use xtask::sandbox::prelude::sinex_test;
@@ -1436,7 +1435,7 @@ mod tests {
             source_unit_id: SourceUnitId::from_static("test.unit"),
             event_source: EventSource::from_static("test"),
             event_type: EventType::from_static("test.event"),
-            default_privacy_context: ProcessingContext::Metadata,
+            default_privacy_hints: Vec::new(),
             input_format: InputFormat::Json,
             fields: vec![FieldSpec {
                 name: "name".to_string(),
@@ -1447,7 +1446,7 @@ mod tests {
                 required: true,
                 default: None,
                 skip_payload: false,
-                privacy_context: None,
+                privacy_hints: Vec::new(),
                 occurrence_key: false,
                 timestamp: None,
                 suppress_if: None,

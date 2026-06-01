@@ -42,7 +42,7 @@ pub struct LedgerPosting {
 /// is a personal convention used in this journal to split payee from
 /// narration) followed by two or more posting lines.
 ///
-/// Privacy tier is Sensitive: the journal contains merchant names,
+/// Sensitivity tier is Sensitive: the journal contains merchant names,
 /// income amounts, and account hierarchy that reveals purchasing and
 /// salary patterns.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]

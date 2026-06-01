@@ -37,7 +37,7 @@
     }
   },
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "description": "Audit payload for a single completed RPC dispatch (#1172 AC-7).\n\nPrivacy: only the `token_prefix` (first 8 chars of the bearer token) is\nrecorded — never the full token. The `Role` is safe to record because it\ndescribes the request's authorization band, not the bearer.",
+  "description": "Audit payload for a single completed RPC dispatch (#1172 AC-7).\n\nSensitivity: only the `token_prefix` (first 8 chars of the bearer token) is\nrecorded — never the full token. The `Role` is safe to record because it\ndescribes the request's authorization band, not the bearer.",
   "properties": {
     "latency_ms": {
       "description": "Wall-clock dispatch latency in milliseconds.",
@@ -72,6 +72,6 @@
   "title": "GatewayRpcCallPayload",
   "type": "object",
   "x-sinex-event-type": "gateway.rpc.call",
-  "x-sinex-source": "sinex.gateway",
+  "x-sinex-source": "sinexd.api",
   "x-sinex-version": "1.0.0"
 }

@@ -22,7 +22,6 @@ use sinex_primitives::parser::{
     InputShapeKind, ParsedEventIntent, ParserContext, ParserId, ParserManifest, SourceUnitId,
     TimingConfidence, TimingEvidence,
 };
-use sinex_primitives::privacy::ProcessingContext;
 use sinex_primitives::proof::{
     CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, RetentionPolicy, RuntimeShape,
     SourceUnitBinding, SourceUnitBuildImpact, SourceUnitDescriptor, SubjectRef,
@@ -61,7 +60,7 @@ register_source_unit_binding! {
     .implementation("sinex-source-worker")
     .adapter("SqliteRowAdapter")
     .output_event_type("command.executed")
-    .privacy_context("Command")
+    .sensitivity_profile("Command")
     .material_policy("sqlite_row_id")
     .checkpoint_policy("mutable_snapshot")
     .resource_shape("linear_rows_bounded_memory")
@@ -107,7 +106,11 @@ impl MaterialParser for AtuinHistoryParser {
                 EventSource::from_static("shell.atuin"),
                 EventType::from_static("command.executed"),
             )],
-            privacy_contexts: vec![ProcessingContext::Command, ProcessingContext::Metadata],
+            field_hints: vec![
+                sinex_primitives::parser::FieldSensitivityHint::FreeText,
+                sinex_primitives::parser::FieldSensitivityHint::CredentialBearing,
+                sinex_primitives::parser::FieldSensitivityHint::SystemMetadata,
+            ],
             proof_obligations: vec![
                 "obligation:source_unit.material_provenance".into(),
                 "obligation:source_unit.package_impact_rationale".into(),
@@ -168,26 +171,9 @@ impl MaterialParser for AtuinHistoryParser {
             .and_then(sinex_primitives::JsonValue::as_i64)
             .unwrap_or(0);
 
-        // Apply privacy processing.
-        let command_processed = {
-            let result = sinex_primitives::privacy::engine()
-                .map_err(|e| ParserError::Parse(format!("privacy engine unavailable: {e}")))?
-                .process(&command_string, ProcessingContext::Command);
-            if result.suppressed {
-                return Ok(vec![]);
-            }
-            result.text.into_owned()
-        };
-        let cwd_processed = {
-            let result = sinex_primitives::privacy::engine()
-                .map_err(|e| ParserError::Parse(format!("privacy engine unavailable: {e}")))?
-                .process(&cwd_raw, ProcessingContext::Metadata);
-            result.text.into_owned()
-        };
-
-        let cwd = cwd_processed.into();
+        let cwd = cwd_raw.into();
         let payload_result = AtuinCommandExecutedPayload::from_raw_history(
-            command_processed,
+            command_string,
             cwd,
             exit_code,
             duration_ns,
@@ -224,7 +210,10 @@ impl MaterialParser for AtuinHistoryParser {
                     confidence: TimingConfidence::Intrinsic,
                 })
                 .anchor(record.anchor)
-                .privacy_context(ProcessingContext::Command)
+                .privacy_hints(vec![
+                    sinex_primitives::parser::FieldSensitivityHint::FreeText,
+                    sinex_primitives::parser::FieldSensitivityHint::CredentialBearing,
+                ])
                 .build(),
         ])
     }

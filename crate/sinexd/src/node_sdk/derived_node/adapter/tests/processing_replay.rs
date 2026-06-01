@@ -184,11 +184,6 @@ async fn scope_invalidation_outputs_apply_privacy_filtering() -> TestResult<()> 
         fn output_event_type(&self) -> &'static str {
             "test.output"
         }
-
-        fn output_privacy_context(&self) -> ProcessingContext {
-            ProcessingContext::Command
-        }
-
         async fn process(
             &mut self,
             _state: &mut Self::State,

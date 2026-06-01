@@ -31,7 +31,7 @@
 //! prevents a track played twice (once URI-null, later URI-populated)
 //! from producing two different keys and silently double-publishing.
 //!
-//! ## Privacy
+//! ## Sensitivity
 //!
 //! `ip_addr` and `user_agent_decrypted` are intentionally dropped — they
 //! are leak-prone fields with no replay-required role. `platform` and
@@ -48,7 +48,6 @@ use sinex_primitives::parser::{
     InputShapeKind, MaterialAnchor, OccurrenceKey, ParsedEventIntent, ParserContext, ParserId,
     ParserManifest, SourceRecord, SourceUnitId, TimingConfidence, TimingEvidence,
 };
-use sinex_primitives::privacy::ProcessingContext;
 use sinex_primitives::proof::{
     CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, RetentionPolicy, RuntimeShape,
     SourceUnitBinding, SourceUnitBuildImpact, SourceUnitDescriptor, SubjectRef,
@@ -124,7 +123,7 @@ impl MaterialParser for SpotifyHistoryParser {
                 EventSource::from_static("spotify"),
                 EventType::from_static("track.played"),
             )],
-            privacy_contexts: vec![ProcessingContext::Metadata],
+            field_hints: vec![sinex_primitives::parser::FieldSensitivityHint::SystemMetadata],
             proof_obligations: vec![
                 "timestamp_intrinsic".into(),
                 "skipped_provider_preserved".into(),
@@ -220,7 +219,9 @@ fn parse_row(
                 len: 1,
             })
             .occurrence_key(occurrence_key)
-            .privacy_context(ProcessingContext::Metadata)
+            .privacy_hints(vec![
+                sinex_primitives::parser::FieldSensitivityHint::SystemMetadata,
+            ])
             .build(),
     ))
 }
@@ -298,7 +299,7 @@ register_source_unit_binding! {
     .implementation("sinex-source-worker")
     .adapter("StaticFileAdapter")
     .output_event_type("track.played")
-    .privacy_context("Metadata")
+    .sensitivity_profile("Metadata")
     .material_policy("static_export_file")
     .checkpoint_policy("static_file_cursor")
     .resource_shape("file_reader")

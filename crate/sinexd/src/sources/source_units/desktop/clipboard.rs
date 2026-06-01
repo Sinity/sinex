@@ -5,7 +5,7 @@
 //!
 //! Adapter: `ClipboardPollingAdapter`
 //! Anchor: `StreamFrame` (monotonic change counter; no durable cursor)
-//! Privacy tier: `Secret` — content passes through `ProcessingContext::Clipboard`
+//! Sensitivity tier: `Secret` — content carries field hints for admission policy.
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -15,7 +15,6 @@ use sinex_primitives::parser::{
     InputShapeKind, ParsedEventIntent, ParserContext, ParserId, ParserManifest, SourceUnitId,
     TimingEvidence,
 };
-use sinex_primitives::privacy::{self, ProcessingContext};
 use sinex_primitives::proof::{
     CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, RetentionPolicy, RuntimeShape,
     SourceUnitBinding, SourceUnitBuildImpact, SourceUnitDescriptor, SubjectRef,
@@ -44,7 +43,7 @@ register_source_unit! {
         retention: RetentionPolicy::Forever,
         proof_obligations: &[
             "anchor_stream_frame",
-            "clipboard_content_redacted",
+            "clipboard_content_sensitive_hint",
         ],
         occurrence_identity: OccurrenceIdentity::Anchor,
         access_policy: "target_runtime_bridge:clipboard",
@@ -64,7 +63,7 @@ register_source_unit_binding! {
     .implementation("sinex-source-worker")
     .adapter("ClipboardPollingAdapter")
     .output_event_type("clipboard.copied")
-    .privacy_context("clipboard")
+    .sensitivity_profile("clipboard")
     .material_policy("clipboard_stream")
     .checkpoint_policy("live_stream")
     .resource_shape("polling_watcher")
@@ -109,10 +108,9 @@ impl Default for ClipboardParserConfig {
 /// Parses clipboard change records from a `ClipboardPollingAdapter`.
 ///
 /// Each record contains the raw clipboard text bytes. The parser:
-/// 1. Runs content through `ProcessingContext::Clipboard` redaction.
-/// 2. Computes a BLAKE3 content hash (included in payload for dedup).
-/// 3. Builds a preview (first `max_preview_length` chars of redacted content).
-/// 4. Emits a `clipboard.copied` intent (primary clipboard).
+/// 1. Computes a BLAKE3 content hash (included in payload for dedup).
+/// 2. Builds a preview (first `max_preview_length` chars of raw content).
+/// 3. Emits a `clipboard.copied` intent (primary clipboard).
 ///
 /// Selection (primary clipboard) vs copy (clipboard) distinction: the
 /// `ClipboardPollingAdapter` currently provides a single stream; the parser
@@ -141,10 +139,14 @@ impl MaterialParser for ClipboardParser {
                     EventType::from_static("clipboard.selected"),
                 ),
             ],
-            privacy_contexts: vec![ProcessingContext::Clipboard],
+            field_hints: vec![
+                sinex_primitives::parser::FieldSensitivityHint::FreeText,
+                sinex_primitives::parser::FieldSensitivityHint::PotentiallySensitive,
+                sinex_primitives::parser::FieldSensitivityHint::CredentialBearing,
+            ],
             proof_obligations: vec![
                 "anchor_stream_frame".into(),
-                "clipboard_content_redacted".into(),
+                "clipboard_content_sensitive_hint".into(),
             ],
             description: "Parses clipboard polling records into clipboard change events.".into(),
         }
@@ -163,21 +165,9 @@ impl MaterialParser for ClipboardParser {
             ParserError::Parse(format!("clipboard content is not valid UTF-8: {e}"))
         })?;
 
-        // Apply clipboard-tier privacy redaction.
-        let redacted_text = match privacy::engine() {
-            Ok(eng) => eng
-                .process(raw_text, ProcessingContext::Clipboard)
-                .text
-                .into_owned(),
-            Err(e) => {
-                return Err(ParserError::Privacy(format!(
-                    "privacy engine init failed: {e}"
-                )));
-            }
-        };
-
-        // Preview: first N characters of the redacted text.
-        let preview: String = redacted_text.chars().take(100).collect();
+        // Preview: first N characters of the raw text. Admission policy owns
+        // any masking/redaction before persistence.
+        let preview: String = raw_text.chars().take(100).collect();
 
         let ts_now = Timestamp::now();
 
@@ -196,7 +186,11 @@ impl MaterialParser for ClipboardParser {
             .ts_orig(ts_now)
             .timing(TimingEvidence::StagedAtFallback)
             .anchor(record.anchor.clone())
-            .privacy_context(ProcessingContext::Clipboard)
+            .privacy_hints(vec![
+                sinex_primitives::parser::FieldSensitivityHint::FreeText,
+                sinex_primitives::parser::FieldSensitivityHint::PotentiallySensitive,
+                sinex_primitives::parser::FieldSensitivityHint::CredentialBearing,
+            ])
             .build();
 
         Ok(vec![intent])

@@ -18,7 +18,6 @@ use sinex_primitives::events::{
         HealthComponentSnapshot,
     },
 };
-use sinex_primitives::privacy::ProcessingContext;
 use sinex_primitives::temporal::{Duration, Timestamp};
 use sinex_primitives::{JsonValue, Uuid};
 use std::collections::HashMap;
@@ -221,11 +220,6 @@ impl ScopeReconciler for HealthAggregator {
     fn input_provenance_filter(&self) -> InputProvenanceFilter {
         InputProvenanceFilter::MaterialOnly
     }
-
-    fn output_privacy_context(&self) -> ProcessingContext {
-        ProcessingContext::Metadata
-    }
-
     fn scope_keys(&self, input: &Self::Input, context: &AutomatonContext) -> Vec<String> {
         // Keep malformed payloads isolated on the live path so they do not all collide into a
         // shared "unknown" scope before reconcile rejects them into DLQ.
@@ -607,7 +601,7 @@ register_source_unit_binding! {
     .implementation("sinex-process")
     .adapter("AutomatonRuntime")
     .output_event_type("health.aggregated_report")
-    .privacy_context("inherits_from_parents")
+    .sensitivity_profile("inherits_from_parents")
     .material_policy("derived_parents")
     .checkpoint_policy("append_stream")
     .resource_shape("event_stream_consumer")

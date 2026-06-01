@@ -105,9 +105,9 @@
     "telemetry_publish_failures",
     "confirmation_durability_gaps"
   ],
-  "title": "IngestdBatchStatsPayload",
+  "title": "EventEngineBatchStatsPayload",
   "type": "object",
   "x-sinex-event-type": "batch.stats",
-  "x-sinex-source": "sinex.ingestd",
+  "x-sinex-source": "sinexd.event_engine",
   "x-sinex-version": "2.2.0"
 }

@@ -102,7 +102,7 @@ register_source_unit_binding! {
     .implementation("sinex-terminal-ingestor::atuin")
     .adapter("sqlite_row_stream")
     .output_event_type("command.executed")
-    .privacy_context("command")
+    .sensitivity_profile("command")
     .material_policy("canonical_json_lines")
     .checkpoint_policy("sqlite_row_id")
     .resource_shape("linear_rows_bounded_memory")

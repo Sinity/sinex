@@ -244,6 +244,38 @@ pub fn build() -> HashMap<&'static str, FormatCapability> {
         FormatCapability::single_shot(TABLE_JSON_YAML),
     );
     m.insert(
+        "privacy policy list",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
+    m.insert(
+        "privacy policy create-backend",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
+    m.insert(
+        "privacy policy create-dictionary",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
+    m.insert(
+        "privacy policy create-key",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
+    m.insert(
+        "privacy policy add-dictionary-term",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
+    m.insert(
+        "privacy policy create-rule",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
+    m.insert(
+        "privacy policy bind-rule",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
+    m.insert(
+        "privacy policy seed-catalog",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
+    m.insert(
         "privacy audit",
         FormatCapability::single_shot(TABLE_JSON_YAML),
     );
@@ -787,6 +819,13 @@ fn effect_for_path(path: &str, capability: &FormatCapability) -> CommandEffect {
         "node set-horizon",
         "ops cancel",
         "ops start",
+        "privacy policy add-dictionary-term",
+        "privacy policy bind-rule",
+        "privacy policy create-backend",
+        "privacy policy create-dictionary",
+        "privacy policy create-key",
+        "privacy policy create-rule",
+        "privacy policy seed-catalog",
         "privacy private-mode disable",
         "privacy private-mode enable",
         "replay approve",
@@ -857,6 +896,13 @@ fn mutation_guards_for_path(path: &str) -> &'static [CommandMutationGuard] {
         | "node set-horizon"
         | "ops cancel"
         | "ops start"
+        | "privacy policy add-dictionary-term"
+        | "privacy policy bind-rule"
+        | "privacy policy create-backend"
+        | "privacy policy create-dictionary"
+        | "privacy policy create-key"
+        | "privacy policy create-rule"
+        | "privacy policy seed-catalog"
         | "privacy private-mode disable"
         | "privacy private-mode enable"
         | "replay approve"
@@ -943,6 +989,14 @@ fn backing_rpc_methods_for_path(path: &str) -> &'static [&'static str] {
         "privacy private-mode status" => &[methods::PRIVACY_PRIVATE_MODE_STATUS],
         "privacy private-mode enable" => &[methods::PRIVACY_PRIVATE_MODE_ENABLE],
         "privacy private-mode disable" => &[methods::PRIVACY_PRIVATE_MODE_DISABLE],
+        "privacy policy list" => &[methods::PRIVACY_POLICY_LIST],
+        "privacy policy create-backend" => &[methods::PRIVACY_POLICY_CREATE_BACKEND],
+        "privacy policy create-dictionary" => &[methods::PRIVACY_POLICY_CREATE_DICTIONARY],
+        "privacy policy create-key" => &[methods::PRIVACY_POLICY_CREATE_KEY],
+        "privacy policy add-dictionary-term" => &[methods::PRIVACY_POLICY_ADD_DICTIONARY_TERM],
+        "privacy policy create-rule" => &[methods::PRIVACY_POLICY_CREATE_RULE],
+        "privacy policy bind-rule" => &[methods::PRIVACY_POLICY_BIND_RULE],
+        "privacy policy seed-catalog" => &[methods::PRIVACY_POLICY_SEED_CATALOG],
         "privacy audit" => &[
             methods::PRIVACY_PRIVATE_MODE_STATUS,
             methods::DLQ_LIST,
@@ -1300,6 +1354,14 @@ mod tests {
         assert_eq!(effect_for("dlq requeue"), Some(CommandEffect::Mutating));
         assert_eq!(
             effect_for("privacy private-mode enable"),
+            Some(CommandEffect::Mutating)
+        );
+        assert_eq!(
+            effect_for("privacy policy create-rule"),
+            Some(CommandEffect::Mutating)
+        );
+        assert_eq!(
+            effect_for("privacy policy create-key"),
             Some(CommandEffect::Mutating)
         );
         assert_eq!(effect_for("privacy audit"), Some(CommandEffect::ReadOnly));

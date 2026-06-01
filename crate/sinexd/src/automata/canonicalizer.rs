@@ -19,7 +19,6 @@ use sinex_primitives::events::payloads::{
     AtuinCommandExecutedPayload, BashCommandExecutedPayload, CanonicalCommandPayload,
     FishCommandExecutedPayload, KittyCommandExecutedPayload, ZshCommandExecutedPayload,
 };
-use sinex_primitives::privacy::ProcessingContext;
 use tracing::info;
 
 #[derive(Default)]
@@ -56,11 +55,6 @@ impl Transducer for TerminalCommandCanonicalizer {
     fn input_provenance_filter(&self) -> InputProvenanceFilter {
         InputProvenanceFilter::MaterialOnly
     }
-
-    fn output_privacy_context(&self) -> ProcessingContext {
-        ProcessingContext::Command
-    }
-
     async fn process(
         &mut self,
         _state: &mut Self::State,
@@ -304,7 +298,7 @@ register_source_unit_binding! {
     .implementation("sinex-process")
     .adapter("AutomatonRuntime")
     .output_event_type("command.canonical")
-    .privacy_context("inherits_from_parents")
+    .sensitivity_profile("inherits_from_parents")
     .material_policy("derived_parents")
     .checkpoint_policy("append_stream")
     .resource_shape("event_stream_consumer")

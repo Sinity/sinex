@@ -6,7 +6,6 @@ fn all_contexts() -> Vec<ProcessingContext> {
     vec![
         ProcessingContext::Command,
         ProcessingContext::Clipboard,
-        ProcessingContext::WindowTitle,
         ProcessingContext::Journal,
         ProcessingContext::Dbus,
         ProcessingContext::Notification,
@@ -24,7 +23,6 @@ fn arb_context() -> impl Strategy<Value = ProcessingContext> {
     prop_oneof![
         Just(ProcessingContext::Command),
         Just(ProcessingContext::Clipboard),
-        Just(ProcessingContext::WindowTitle),
         Just(ProcessingContext::Journal),
         Just(ProcessingContext::Dbus),
         Just(ProcessingContext::Notification),

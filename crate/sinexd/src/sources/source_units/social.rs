@@ -53,7 +53,6 @@ use sinex_primitives::parser::{
     InputShapeKind, MaterialAnchor, OccurrenceKey, ParsedEventIntent, ParserContext, ParserId,
     ParserManifest, SourceRecord, SourceUnitId, TimingConfidence, TimingEvidence,
 };
-use sinex_primitives::privacy::ProcessingContext;
 use sinex_primitives::proof::{
     CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, RetentionPolicy, RuntimeShape,
     SourceUnitBinding, SourceUnitBuildImpact, SourceUnitDescriptor, SubjectRef,
@@ -117,7 +116,11 @@ impl MaterialParser for RedditCommentParser {
                 EventSource::from_static("reddit"),
                 EventType::from_static("social.comment.posted"),
             )],
-            privacy_contexts: vec![ProcessingContext::Document],
+            field_hints: vec![
+                sinex_primitives::parser::FieldSensitivityHint::FreeText,
+                sinex_primitives::parser::FieldSensitivityHint::MessageBody,
+                sinex_primitives::parser::FieldSensitivityHint::PotentiallySensitive,
+            ],
             proof_obligations: vec![
                 "timestamp_intrinsic".into(),
                 "anchor_csv_row".into(),
@@ -203,7 +206,11 @@ fn parse_reddit_comment_row(
             line,
         })
         .occurrence_key(occurrence_key)
-        .privacy_context(ProcessingContext::Document)
+        .privacy_hints(vec![
+            sinex_primitives::parser::FieldSensitivityHint::FreeText,
+            sinex_primitives::parser::FieldSensitivityHint::MessageBody,
+            sinex_primitives::parser::FieldSensitivityHint::PotentiallySensitive,
+        ])
         .build())
 }
 
@@ -239,7 +246,7 @@ register_source_unit_binding! {
     .implementation("sinex-source-worker")
     .adapter("StaticFileAdapter")
     .output_event_type("social.comment.posted")
-    .privacy_context("Document")
+    .sensitivity_profile("Document")
     .material_policy("static_export_file")
     .checkpoint_policy("static_file_cursor")
     .resource_shape("file_reader")
@@ -313,7 +320,11 @@ impl MaterialParser for RedditPostParser {
                 EventSource::from_static("reddit"),
                 EventType::from_static("social.post.created"),
             )],
-            privacy_contexts: vec![ProcessingContext::Document],
+            field_hints: vec![
+                sinex_primitives::parser::FieldSensitivityHint::FreeText,
+                sinex_primitives::parser::FieldSensitivityHint::MessageBody,
+                sinex_primitives::parser::FieldSensitivityHint::PotentiallySensitive,
+            ],
             proof_obligations: vec![
                 "timestamp_intrinsic".into(),
                 "anchor_csv_row".into(),
@@ -398,7 +409,11 @@ fn parse_reddit_post_row(
             line,
         })
         .occurrence_key(occurrence_key)
-        .privacy_context(ProcessingContext::Document)
+        .privacy_hints(vec![
+            sinex_primitives::parser::FieldSensitivityHint::FreeText,
+            sinex_primitives::parser::FieldSensitivityHint::MessageBody,
+            sinex_primitives::parser::FieldSensitivityHint::PotentiallySensitive,
+        ])
         .build())
 }
 
@@ -434,7 +449,7 @@ register_source_unit_binding! {
     .implementation("sinex-source-worker")
     .adapter("StaticFileAdapter")
     .output_event_type("social.post.created")
-    .privacy_context("Document")
+    .sensitivity_profile("Document")
     .material_policy("static_export_file")
     .checkpoint_policy("static_file_cursor")
     .resource_shape("file_reader")
@@ -502,7 +517,11 @@ impl MaterialParser for WykopEntryParser {
                 EventSource::from_static("wykop"),
                 EventType::from_static("social.entry.created"),
             )],
-            privacy_contexts: vec![ProcessingContext::Document],
+            field_hints: vec![
+                sinex_primitives::parser::FieldSensitivityHint::FreeText,
+                sinex_primitives::parser::FieldSensitivityHint::MessageBody,
+                sinex_primitives::parser::FieldSensitivityHint::PotentiallySensitive,
+            ],
             proof_obligations: vec![
                 "timestamp_intrinsic".into(),
                 "anchor_jsonl_line".into(),
@@ -585,7 +604,11 @@ fn parse_wykop_entry_row(
             line,
         })
         .occurrence_key(occurrence_key)
-        .privacy_context(ProcessingContext::Document)
+        .privacy_hints(vec![
+            sinex_primitives::parser::FieldSensitivityHint::FreeText,
+            sinex_primitives::parser::FieldSensitivityHint::MessageBody,
+            sinex_primitives::parser::FieldSensitivityHint::PotentiallySensitive,
+        ])
         .build())
 }
 
@@ -620,7 +643,7 @@ register_source_unit_binding! {
     .implementation("sinex-source-worker")
     .adapter("StaticFileAdapter")
     .output_event_type("social.entry.created")
-    .privacy_context("Document")
+    .sensitivity_profile("Document")
     .material_policy("static_export_file")
     .checkpoint_policy("static_file_cursor")
     .resource_shape("file_reader")
@@ -688,7 +711,11 @@ impl MaterialParser for WykopEntryCommentParser {
                 EventSource::from_static("wykop"),
                 EventType::from_static("social.entry_comment.posted"),
             )],
-            privacy_contexts: vec![ProcessingContext::Document],
+            field_hints: vec![
+                sinex_primitives::parser::FieldSensitivityHint::FreeText,
+                sinex_primitives::parser::FieldSensitivityHint::MessageBody,
+                sinex_primitives::parser::FieldSensitivityHint::PotentiallySensitive,
+            ],
             proof_obligations: vec![
                 "timestamp_intrinsic".into(),
                 "anchor_jsonl_line".into(),
@@ -775,7 +802,11 @@ fn parse_wykop_entry_comment_row(
             line,
         })
         .occurrence_key(occurrence_key)
-        .privacy_context(ProcessingContext::Document)
+        .privacy_hints(vec![
+            sinex_primitives::parser::FieldSensitivityHint::FreeText,
+            sinex_primitives::parser::FieldSensitivityHint::MessageBody,
+            sinex_primitives::parser::FieldSensitivityHint::PotentiallySensitive,
+        ])
         .build())
 }
 
@@ -810,7 +841,7 @@ register_source_unit_binding! {
     .implementation("sinex-source-worker")
     .adapter("StaticFileAdapter")
     .output_event_type("social.entry_comment.posted")
-    .privacy_context("Document")
+    .sensitivity_profile("Document")
     .material_policy("static_export_file")
     .checkpoint_policy("static_file_cursor")
     .resource_shape("file_reader")

@@ -90,9 +90,12 @@ pub use health::{handle_health_effect_record, handle_health_intake_record};
 pub use node_registry::{handle_nodes_health, handle_nodes_list_active};
 pub use pkm::{handle_create_entities, handle_create_note, handle_link_entities};
 pub use privacy::{
-    handle_private_mode_disable, handle_private_mode_disable_service, handle_private_mode_enable,
-    handle_private_mode_enable_service, handle_private_mode_status,
-    handle_private_mode_status_service,
+    handle_privacy_policy_add_dictionary_term, handle_privacy_policy_bind_rule,
+    handle_privacy_policy_create_backend, handle_privacy_policy_create_dictionary,
+    handle_privacy_policy_create_key, handle_privacy_policy_create_rule, handle_privacy_policy_list,
+    handle_privacy_policy_seed_catalog, handle_private_mode_disable,
+    handle_private_mode_disable_service, handle_private_mode_enable,
+    handle_private_mode_enable_service, handle_private_mode_status, handle_private_mode_status_service,
 };
 pub use sources::{
     handle_sources_annotate, handle_sources_archive, handle_sources_bindings_create,

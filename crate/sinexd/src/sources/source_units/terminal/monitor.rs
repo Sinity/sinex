@@ -55,7 +55,7 @@ register_source_unit_binding! {
     .implementation("sinex-source-worker")
     .adapter("MonitorDriverNode")
     .output_event_type("shell.terminal_monitoring_started")
-    .privacy_context("Metadata")
+    .sensitivity_profile("Metadata")
     .material_policy("synthetic_oneshot")
     .checkpoint_policy("stateless")
     .resource_shape("oneshot_bounded_memory")

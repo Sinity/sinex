@@ -23,7 +23,6 @@ use sinex_primitives::Uuid;
 use sinex_primitives::domain::{RelationType, SyntheticTemporalPolicy};
 use sinex_primitives::events::EventPayload;
 use sinex_primitives::events::payloads::{EntityRelatedPayload, EntityResolvedPayload};
-use sinex_primitives::privacy::ProcessingContext;
 use sinex_primitives::temporal::{Duration, Timestamp};
 
 /// Co-occurrence window configuration constants.
@@ -113,11 +112,6 @@ impl ScopeReconciler for RelationExtractor {
     fn input_provenance_filter(&self) -> InputProvenanceFilter {
         InputProvenanceFilter::SynthesizedOnly
     }
-
-    fn output_privacy_context(&self) -> ProcessingContext {
-        ProcessingContext::Metadata
-    }
-
     fn scope_keys(&self, _input: &Self::Input, _context: &AutomatonContext) -> Vec<String> {
         vec![CO_OCCURRENCE_SCOPE.to_string()]
     }
@@ -259,7 +253,7 @@ register_source_unit_binding! {
     .implementation("sinex-process")
     .adapter("AutomatonRuntime")
     .output_event_type("entity.related")
-    .privacy_context("inherits_from_parents")
+    .sensitivity_profile("inherits_from_parents")
     .material_policy("derived_parents")
     .checkpoint_policy("append_stream")
     .resource_shape("event_stream_consumer")

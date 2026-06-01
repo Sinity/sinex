@@ -26,12 +26,15 @@ use super::{PatternRule, RuleCategory, RuleOverride, Strategy};
 pub struct PrivacyConfig {
     /// Master switch. When false, engine is a passthrough.
     pub enabled: bool,
-    /// Which built-in categories to activate.
+    /// Which catalog seed categories to activate in this local engine.
+    ///
+    /// Runtime admission policy is DB/user driven; the default is `None` so
+    /// catalog seed data never executes unless a caller opts in explicitly.
     pub builtin_categories: CategorySet,
-    /// Additional user-defined rules (merged with, not replacing, builtins).
+    /// Additional caller-supplied rules.
     #[serde(default)]
     pub extra_rules: Vec<PatternRule>,
-    /// Overrides for built-in rules by name.
+    /// Overrides for explicitly enabled catalog seed rules by name.
     #[serde(default)]
     pub overrides: HashMap<String, RuleOverride>,
     /// Default strategy for rules that don't specify one.
@@ -49,7 +52,7 @@ impl Default for PrivacyConfig {
     fn default() -> Self {
         Self {
             enabled: true,
-            builtin_categories: CategorySet::All,
+            builtin_categories: CategorySet::None,
             extra_rules: Vec::new(),
             overrides: HashMap::new(),
             default_strategy: Strategy::Redact { label: None },
@@ -60,16 +63,16 @@ impl Default for PrivacyConfig {
     }
 }
 
-/// Which built-in rule categories to include.
+/// Which catalog seed rule categories to include.
 ///
 /// Serializes as: `"all"`, `"none"`, or `["secret", "pii", ...]`.
 #[derive(Debug, Clone)]
 pub enum CategorySet {
-    /// All built-in categories.
+    /// All catalog seed categories.
     All,
-    /// Only these categories.
+    /// Only these catalog seed categories.
     Only(Vec<RuleCategory>),
-    /// No built-in rules.
+    /// No catalog seed rules.
     None,
 }
 
@@ -290,7 +293,7 @@ impl PrivacyConfig {
     ///
     /// ```toml
     /// enabled = true
-    /// builtin_categories = "all"       # or "none" or ["secret", "pii"]
+    /// builtin_categories = "none"      # or "all" or ["secret", "pii"]
     /// default_strategy = { action = "redact" }
     /// track_stats = false
     ///
@@ -488,7 +491,7 @@ mod tests {
         let parsed: PrivacyConfig = toml::from_str(&toml_str).expect("deserialize");
 
         assert!(parsed.enabled);
-        assert!(matches!(parsed.builtin_categories, CategorySet::All));
+        assert!(matches!(parsed.builtin_categories, CategorySet::None));
         assert!(parsed.extra_rules.is_empty());
         assert!(parsed.overrides.is_empty());
         assert!(!parsed.track_stats);
@@ -598,7 +601,7 @@ contexts = ["command"]
 
         let config = PrivacyConfig::from_file(&path).unwrap();
         assert!(config.enabled); // default
-        assert!(matches!(config.builtin_categories, CategorySet::All)); // default
+        assert!(matches!(config.builtin_categories, CategorySet::None)); // default
         assert!(config.track_stats); // overridden
         Ok(())
     }

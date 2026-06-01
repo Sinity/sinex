@@ -6,7 +6,7 @@
 //!
 //! Adapter: `UnixSocketStreamAdapter`
 //! Anchor: `StreamFrame` (live stream, no durable cursor)
-//! Privacy tier: `Sensitive` — window titles pass through `ProcessingContext::WindowTitle`
+//! Sensitivity tier: `Sensitive` — window titles carry sensitivity hints for DB policy.
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -17,7 +17,6 @@ use sinex_primitives::parser::{
     InputShapeKind, ParsedEventIntent, ParserContext, ParserId, ParserManifest, SourceUnitId,
     TimingEvidence,
 };
-use sinex_primitives::privacy::{self, ProcessingContext};
 use sinex_primitives::proof::{
     CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, RetentionPolicy, RuntimeShape,
     SourceUnitBinding, SourceUnitBuildImpact, SourceUnitDescriptor, SubjectRef,
@@ -53,7 +52,7 @@ register_source_unit! {
         retention: RetentionPolicy::Forever,
         proof_obligations: &[
             "anchor_stream_frame",
-            "window_title_redacted",
+            "field_sensitivity_hints",
         ],
         occurrence_identity: OccurrenceIdentity::Anchor,
         access_policy: "target_runtime_bridge:window_manager",
@@ -73,7 +72,7 @@ register_source_unit_binding! {
     .implementation("sinex-source-worker")
     .adapter("UnixSocketStreamAdapter")
     .output_event_type("window.opened")
-    .privacy_context("window_title")
+    .sensitivity_profile("sensitive")
     .material_policy("wm_socket_stream")
     .checkpoint_policy("live_stream")
     .resource_shape("unix_socket_watcher")
@@ -164,8 +163,15 @@ impl MaterialParser for HyprlandParser {
                     EventType::from_static("wm.unhandled"),
                 ),
             ],
-            privacy_contexts: vec![ProcessingContext::WindowTitle],
-            proof_obligations: vec!["anchor_stream_frame".into(), "window_title_redacted".into()],
+            field_hints: vec![
+                sinex_primitives::parser::FieldSensitivityHint::Title,
+                sinex_primitives::parser::FieldSensitivityHint::FreeText,
+                sinex_primitives::parser::FieldSensitivityHint::PotentiallySensitive,
+            ],
+            proof_obligations: vec![
+                "anchor_stream_frame".into(),
+                "field_sensitivity_hints".into(),
+            ],
             description: "Parses Hyprland IPC socket events into typed window-manager events."
                 .into(),
         }
@@ -214,7 +220,11 @@ impl MaterialParser for HyprlandParser {
             .ts_orig(ts_now)
             .timing(TimingEvidence::StagedAtFallback)
             .anchor(record.anchor.clone())
-            .privacy_context(ProcessingContext::WindowTitle)
+            .privacy_hints(vec![
+                sinex_primitives::parser::FieldSensitivityHint::Title,
+                sinex_primitives::parser::FieldSensitivityHint::FreeText,
+                sinex_primitives::parser::FieldSensitivityHint::PotentiallySensitive,
+            ])
             .build();
 
         Ok(vec![intent])
@@ -264,19 +274,6 @@ fn dispatch_hyprland_event(
     typ: &str,
     data: &str,
 ) -> ParserResult<Option<(&'static str, serde_json::Value)>> {
-    // Redact any window title through the privacy engine before including in
-    // payload. Fail closed: if the engine cannot initialize, propagate the
-    // error so the event is dropped rather than emitting the raw title.
-    let redact_title = |title: &str| -> ParserResult<String> {
-        match privacy::engine() {
-            Ok(eng) => Ok(eng
-                .process(title, ProcessingContext::WindowTitle)
-                .text
-                .into_owned()),
-            Err(e) => Err(ParserError::Privacy(format!("privacy engine: {e}"))),
-        }
-    };
-
     let (event_type, payload) = match typ {
         "openwindow" => {
             // openwindow>>address,workspaceid,workspacename,class,title
@@ -288,7 +285,7 @@ fn dispatch_hyprland_event(
                     "workspace_id": parts.get(1).unwrap_or(&""),
                     "workspace_name": parts.get(2).unwrap_or(&""),
                     "window_class": parts.get(3).unwrap_or(&""),
-                    "window_title": redact_title(parts.get(4).unwrap_or(&""))?,
+                    "window_title": parts.get(4).unwrap_or(&""),
                 }),
             )
         }
@@ -303,7 +300,7 @@ fn dispatch_hyprland_event(
                 "window.focused",
                 serde_json::json!({
                     "window_class": class,
-                    "window_title": redact_title(title)?,
+                    "window_title": title,
                 }),
             )
         }
@@ -330,7 +327,7 @@ fn dispatch_hyprland_event(
                 "window.title_changed",
                 serde_json::json!({
                     "window_id": addr,
-                    "window_title": redact_title(title)?,
+                    "window_title": title,
                 }),
             )
         }

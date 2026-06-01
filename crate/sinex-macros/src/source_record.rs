@@ -178,12 +178,7 @@ fn derive_source_record_inner(input: &DeriveInput) -> syn::Result<TokenStream> {
             .to_string()
     });
     let version_lit = attrs.version.clone().unwrap_or_else(|| "1.0.0".to_string());
-    let default_privacy_context_token = privacy_context_token(
-        attrs
-            .default_privacy_context
-            .as_deref()
-            .unwrap_or("Metadata"),
-    )?;
+    let default_privacy_hint_tokens = privacy_hint_tokens(&attrs.default_privacy_hints)?;
     let input_format_token = input_format_token(&attrs.input_shape)?;
 
     // Determine whether any field uses carry — if so, use StatefulDeclarativeParser.
@@ -269,7 +264,6 @@ fn derive_source_record_inner(input: &DeriveInput) -> syn::Result<TokenStream> {
             use ::sinex_primitives::parser as _sdk_parser;
             use ::sinex_primitives as _sdk_primitives;
             use ::sinex_primitives::domain as _sdk_domain;
-            use ::sinex_primitives::privacy as _sdk_privacy;
             use std::sync::LazyLock;
 
             #[allow(non_upper_case_globals)]
@@ -280,7 +274,7 @@ fn derive_source_record_inner(input: &DeriveInput) -> syn::Result<TokenStream> {
                     source_unit_id: _sdk_parser::SourceUnitId::from_static(#source_unit_id_lit),
                     event_source: _sdk_domain::EventSource::from_static(#event_source_lit),
                     event_type: _sdk_domain::EventType::from_static(#event_type_lit),
-                    default_privacy_context: _sdk_privacy::ProcessingContext::#default_privacy_context_token,
+                    default_privacy_hints: vec![ #(#default_privacy_hint_tokens),* ],
                     input_format: _sdk_parser::InputFormat::#input_format_token,
                     fields: vec![ #(#field_specs),* ],
                     discriminator: #discriminator_token,
@@ -311,7 +305,7 @@ fn derive_source_record_inner(input: &DeriveInput) -> syn::Result<TokenStream> {
                         accepted_input_shapes: vec![input_format_to_kind(spec.input_format)],
                         source_unit_id: spec.source_unit_id.clone(),
                         declared_event_types: vec![ #(#all_event_type_pairs),* ],
-                        privacy_contexts: collect_privacy_contexts(spec),
+                        field_hints: collect_field_hints(spec),
                         proof_obligations: Vec::new(),
                         description: format!("Declarative parser for {}", stringify!(#struct_name)),
                     }
@@ -338,15 +332,19 @@ fn derive_source_record_inner(input: &DeriveInput) -> syn::Result<TokenStream> {
                 }
             }
 
-            fn collect_privacy_contexts(
+            fn collect_field_hints(
                 spec: &_sdk_parser::DeclarativeParserSpec,
-            ) -> Vec<_sdk_privacy::ProcessingContext> {
-                let mut seen: Vec<_sdk_privacy::ProcessingContext> = Vec::new();
-                seen.push(spec.default_privacy_context);
+            ) -> Vec<_sdk_parser::FieldSensitivityHint> {
+                let mut seen: Vec<_sdk_parser::FieldSensitivityHint> = Vec::new();
+                for hint in &spec.default_privacy_hints {
+                    if !seen.contains(hint) {
+                        seen.push(hint.clone());
+                    }
+                }
                 for field in &spec.fields {
-                    if let Some(c) = field.privacy_context {
-                        if !seen.contains(&c) {
-                            seen.push(c);
+                    for hint in &field.privacy_hints {
+                        if !seen.contains(hint) {
+                            seen.push(hint.clone());
                         }
                     }
                 }
@@ -369,7 +367,7 @@ struct SourceRecordAttrs {
     input_shape: String,
     event_type: String,
     event_source: Option<String>,
-    default_privacy_context: Option<String>,
+    default_privacy_hints: Vec<String>,
     version: Option<String>,
     // Extension A: discriminator support
     discriminator_field: Option<String>,
@@ -382,7 +380,7 @@ fn parse_source_record_attrs(attrs: &[syn::Attribute]) -> syn::Result<SourceReco
     let mut input_shape = None;
     let mut event_type = None;
     let mut event_source = None;
-    let mut default_privacy_context = None;
+    let mut default_privacy_hints = Vec::new();
     let mut version = None;
     let mut discriminator_field = None;
     let mut on_unknown = None;
@@ -407,7 +405,7 @@ fn parse_source_record_attrs(attrs: &[syn::Attribute]) -> syn::Result<SourceReco
                 "input_shape" => input_shape = Some(s.value()),
                 "event_type" => event_type = Some(s.value()),
                 "event_source" => event_source = Some(s.value()),
-                "default_privacy_context" => default_privacy_context = Some(s.value()),
+                "default_privacy_hints" => default_privacy_hints = split_hint_list(&s.value()),
                 "version" => version = Some(s.value()),
                 "discriminator" => discriminator_field = Some(s.value()),
                 "on_unknown" => on_unknown = Some(s.value()),
@@ -415,7 +413,7 @@ fn parse_source_record_attrs(attrs: &[syn::Attribute]) -> syn::Result<SourceReco
                     return Err(meta.error(format!(
                         "unknown source_record attribute '{other}'; expected one of: id, \
                          source_unit_id, input_shape, event_type, event_source, \
-                         default_privacy_context, version, discriminator, on_unknown"
+                         default_privacy_hints, version, discriminator, on_unknown"
                     )));
                 }
             }
@@ -445,7 +443,7 @@ fn parse_source_record_attrs(attrs: &[syn::Attribute]) -> syn::Result<SourceReco
         input_shape,
         event_type,
         event_source,
-        default_privacy_context,
+        default_privacy_hints,
         version,
         discriminator_field,
         on_unknown,
@@ -464,7 +462,7 @@ struct FieldDecl {
     required: bool,
     default: Option<String>, // String literal, parsed as JSON value at evaluator time
     skip_payload: bool,
-    privacy_context: Option<String>,
+    privacy_hints: Vec<String>,
     occurrence_key: bool,
     timestamp: Option<TimestampDecl>,
     suppress_if: Option<SuppressDecl>,
@@ -524,7 +522,7 @@ fn parse_field_decl(field: &Field) -> syn::Result<FieldDecl> {
     let mut required = false;
     let mut default: Option<String> = None;
     let mut skip_payload = false;
-    let mut privacy_context: Option<String> = None;
+    let mut privacy_hints = Vec::new();
     let mut occurrence_key = false;
     let mut timestamp: Option<TimestampDecl> = None;
     let mut suppress_if: Option<SuppressDecl> = None;
@@ -602,12 +600,16 @@ fn parse_field_decl(field: &Field) -> syn::Result<FieldDecl> {
             }
             "privacy" => {
                 attr.parse_nested_meta(|meta| {
-                    if meta.path.is_ident("context") {
+                    if meta.path.is_ident("hint") {
                         let v: syn::LitStr = meta.value()?.parse()?;
-                        privacy_context = Some(v.value());
+                        privacy_hints.push(v.value());
+                        Ok(())
+                    } else if meta.path.is_ident("hints") {
+                        let v: syn::LitStr = meta.value()?.parse()?;
+                        privacy_hints.extend(split_hint_list(&v.value()));
                         Ok(())
                     } else {
-                        Err(meta.error("expected #[privacy(context = \"...\")]"))
+                        Err(meta.error("expected #[privacy(hint = \"...\")] or #[privacy(hints = \"a,b\")]"))
                     }
                 })?;
             }
@@ -703,7 +705,7 @@ fn parse_field_decl(field: &Field) -> syn::Result<FieldDecl> {
         required,
         default,
         skip_payload,
-        privacy_context,
+        privacy_hints,
         occurrence_key,
         timestamp,
         suppress_if,
@@ -911,28 +913,47 @@ fn input_format_token(input_shape: &str) -> syn::Result<TokenStream> {
     })
 }
 
-fn privacy_context_token(name: &str) -> syn::Result<TokenStream> {
+fn split_hint_list(value: &str) -> Vec<String> {
+    value
+        .split(',')
+        .map(str::trim)
+        .filter(|part| !part.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
+fn privacy_hint_token(name: &str) -> syn::Result<TokenStream> {
     Ok(match name {
-        "Command" => quote!(Command),
-        "Clipboard" => quote!(Clipboard),
-        "WindowTitle" => quote!(WindowTitle),
-        "Journal" => quote!(Journal),
-        "Dbus" => quote!(Dbus),
-        "Notification" => quote!(Notification),
-        "Document" => quote!(Document),
-        "Metadata" => quote!(Metadata),
-        "SourceCapture" => quote!(SourceCapture),
+        "potentially_sensitive" => quote!(_sdk_parser::FieldSensitivityHint::PotentiallySensitive),
+        "free_text" => quote!(_sdk_parser::FieldSensitivityHint::FreeText),
+        "credential_bearing" => quote!(_sdk_parser::FieldSensitivityHint::CredentialBearing),
+        "person_name_candidate" => quote!(_sdk_parser::FieldSensitivityHint::PersonNameCandidate),
+        "source_path" => quote!(_sdk_parser::FieldSensitivityHint::SourcePath),
+        "url" => quote!(_sdk_parser::FieldSensitivityHint::Url),
+        "title" => quote!(_sdk_parser::FieldSensitivityHint::Title),
+        "message_body" => quote!(_sdk_parser::FieldSensitivityHint::MessageBody),
+        "system_metadata" => quote!(_sdk_parser::FieldSensitivityHint::SystemMetadata),
+        "financial" => quote!(_sdk_parser::FieldSensitivityHint::Financial),
+        "health" => quote!(_sdk_parser::FieldSensitivityHint::Health),
         other => {
             return Err(Error::new_spanned(
                 proc_macro2::Literal::string(other),
                 format!(
-                    "unknown privacy context '{other}'; expected one of: \
-                     Command, Clipboard, WindowTitle, Journal, Dbus, \
-                     Notification, Document, Metadata, SourceCapture"
+                    "unknown privacy hint '{other}'; expected one of: \
+                     potentially_sensitive, free_text, credential_bearing, \
+                     person_name_candidate, source_path, url, title, \
+                     message_body, system_metadata, financial, health"
                 ),
             ));
         }
     })
+}
+
+fn privacy_hint_tokens(names: &[String]) -> syn::Result<Vec<TokenStream>> {
+    names
+        .iter()
+        .map(|name| privacy_hint_token(name))
+        .collect()
 }
 
 fn field_decl_to_token(d: &FieldDecl) -> syn::Result<TokenStream> {
@@ -970,12 +991,7 @@ fn field_decl_to_token(d: &FieldDecl) -> syn::Result<TokenStream> {
         quote!(None)
     };
 
-    let privacy_token = if let Some(name) = &d.privacy_context {
-        let tok = privacy_context_token(name)?;
-        quote!(Some(_sdk_privacy::ProcessingContext::#tok))
-    } else {
-        quote!(None)
-    };
+    let privacy_hint_tokens = privacy_hint_tokens(&d.privacy_hints)?;
 
     let timestamp_token = if let Some(ts) = &d.timestamp {
         let format_tok = timestamp_format_token(&ts.format)?;
@@ -1037,7 +1053,7 @@ fn field_decl_to_token(d: &FieldDecl) -> syn::Result<TokenStream> {
         required: #required,
         default: #default_token,
         skip_payload: #skip_payload,
-        privacy_context: #privacy_token,
+        privacy_hints: vec![ #(#privacy_hint_tokens),* ],
         occurrence_key: #occurrence_key,
         timestamp: #timestamp_token,
         suppress_if: #suppress_token,

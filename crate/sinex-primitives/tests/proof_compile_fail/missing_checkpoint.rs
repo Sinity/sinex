@@ -11,7 +11,7 @@ fn main() {
     )
     .adapter("sqlite_row_stream")
     .output_event_type("test.output")
-    .privacy_context("command")
+    .sensitivity_profile("command")
     .material_policy("canonical_json_lines")
     .checkpoint_family(CheckpointFamily::AppendStream)
     .runtime_shape(RuntimeShape::Continuous)

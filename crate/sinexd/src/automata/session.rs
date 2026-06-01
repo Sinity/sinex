@@ -16,7 +16,6 @@ use sinex_primitives::events::{
         ActivitySessionBoundaryPayload, ActivityWindowCloseReason, ActivityWindowSummaryPayload,
     },
 };
-use sinex_primitives::privacy::ProcessingContext;
 use sinex_primitives::temporal::Timestamp;
 use std::collections::{BTreeMap, BTreeSet};
 use tracing::warn;
@@ -103,11 +102,6 @@ impl Windowed for SessionDetector {
     fn input_provenance_filter(&self) -> InputProvenanceFilter {
         InputProvenanceFilter::SynthesizedOnly
     }
-
-    fn output_privacy_context(&self) -> ProcessingContext {
-        ProcessingContext::Metadata
-    }
-
     async fn accumulate(
         &mut self,
         state: &mut Self::State,
@@ -249,7 +243,7 @@ register_source_unit_binding! {
     .implementation("sinex-process")
     .adapter("AutomatonRuntime")
     .output_event_type("activity.session.boundary")
-    .privacy_context("inherits_from_parents")
+    .sensitivity_profile("inherits_from_parents")
     .material_policy("derived_parents")
     .checkpoint_policy("append_stream")
     .resource_shape("event_stream_consumer")
