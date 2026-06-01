@@ -183,12 +183,19 @@ struct StatusDisplay<'a> {
 
 /// Print the human-readable workspace status to stdout.
 fn print_status_tick(d: &StatusDisplay<'_>) {
-    println!("{}", style("━━━━━━━━━━━━━━━━ WORKSPACE STATUS ━━━━━━━━━━━━━━━━").bold());
+    println!(
+        "{}",
+        style("━━━━━━━━━━━━━━━━ WORKSPACE STATUS ━━━━━━━━━━━━━━━━").bold()
+    );
 
     println!("\n{}", style("Runtime Target:").bold());
     let target_summary = RuntimeTargetSummary::from(d.runtime_target);
     println!("  {:<12} {}", "Name", target_summary.name);
-    println!("  {:<12} {}", "Kind", runtime_target_kind_label(&target_summary.kind));
+    println!(
+        "  {:<12} {}",
+        "Kind",
+        runtime_target_kind_label(&target_summary.kind)
+    );
     if let Some(source) = &target_summary.source {
         println!("  {:<12} {}", "Source", source);
     }
@@ -196,7 +203,11 @@ fn print_status_tick(d: &StatusDisplay<'_>) {
         println!("  {:<12} {}", "Source path", source_path.display());
     }
     if let Some(database_url) = &target_summary.database_url {
-        println!("  {:<12} {}", "Database", redact_runtime_target_url(database_url));
+        println!(
+            "  {:<12} {}",
+            "Database",
+            redact_runtime_target_url(database_url)
+        );
     }
     if let Some(gateway_url) = &target_summary.gateway_url {
         println!("  {:<12} {}", "Gateway", gateway_url);
@@ -206,7 +217,11 @@ fn print_status_tick(d: &StatusDisplay<'_>) {
     println!(
         "  {:<12} {} ({}ms)",
         "Postgres",
-        if d.pg_probe.ready() { style("online").green() } else { style("offline").red() },
+        if d.pg_probe.ready() {
+            style("online").green()
+        } else {
+            style("offline").red()
+        },
         d.pg_probe.latency_ms
     );
     if let Some(message) = &d.pg_probe.message {
@@ -215,7 +230,11 @@ fn print_status_tick(d: &StatusDisplay<'_>) {
     println!(
         "  {:<12} {} ({}ms, port {})",
         "NATS",
-        if d.nats_probe.ready() { style("online").green() } else { style("offline").red() },
+        if d.nats_probe.ready() {
+            style("online").green()
+        } else {
+            style("offline").red()
+        },
         d.nats_probe.latency_ms,
         d.nats_probe.port
     );
@@ -337,22 +356,44 @@ fn print_runtime_section(runtime_metrics: Option<&RuntimeMetrics>, runtime_confi
             style(heartbeat).dim()
         );
         if let Some(lag) = metrics.fresh_consumer_lag_pending() {
-            println!("  {} Consumer lag:       {:.0} pending", style("-").dim(), lag);
+            println!(
+                "  {} Consumer lag:       {:.0} pending",
+                style("-").dim(),
+                lag
+            );
         } else if let Some(note) = metrics.consumer_lag_stale_note() {
-            println!("  {} Consumer lag:       stale telemetry ({})", style("⚠").yellow(), note);
+            println!(
+                "  {} Consumer lag:       stale telemetry ({})",
+                style("⚠").yellow(),
+                note
+            );
         }
         if let Some(latency) = metrics.fresh_batch_latency_ms() {
-            println!("  {} Batch latency:      {:.0}ms", style("-").dim(), latency);
+            println!(
+                "  {} Batch latency:      {:.0}ms",
+                style("-").dim(),
+                latency
+            );
         } else if let Some(note) = metrics.batch_latency_stale_note() {
-            println!("  {} Batch latency:      stale telemetry ({})", style("⚠").yellow(), note);
+            println!(
+                "  {} Batch latency:      stale telemetry ({})",
+                style("⚠").yellow(),
+                note
+            );
         }
         if let Some(message) = runtime_query_error_message(metrics) {
             println!("  {} {}", style("✗").red(), message);
         }
     } else if runtime_configured {
-        println!("  {} Runtime metrics unavailable despite DATABASE_URL being set", style("⚠").yellow());
+        println!(
+            "  {} Runtime metrics unavailable despite DATABASE_URL being set",
+            style("⚠").yellow()
+        );
     } else {
-        println!("  {} Runtime metrics unavailable (DATABASE_URL not set)", style("·").dim());
+        println!(
+            "  {} Runtime metrics unavailable (DATABASE_URL not set)",
+            style("·").dim()
+        );
     }
 }
 

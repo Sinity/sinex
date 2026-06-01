@@ -1311,8 +1311,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn privacy_gate_passes_with_manifest_field_hints() -> ::xtask::sandbox::TestResult<()>
-    {
+    async fn privacy_gate_passes_with_manifest_field_hints() -> ::xtask::sandbox::TestResult<()> {
         let fixture = r#"
             register_source_unit! {
                 SourceUnitDescriptor {
@@ -1329,10 +1328,7 @@ mod tests {
         "#;
 
         let violations = run_privacy_gate_on_fixture(fixture);
-        assert!(
-            violations.is_empty(),
-            "field_hints: satisfies the gate"
-        );
+        assert!(violations.is_empty(), "field_hints: satisfies the gate");
         Ok(())
     }
 

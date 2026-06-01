@@ -63,8 +63,8 @@
 use crate::Timestamp;
 use crate::domain::{EventSource, EventType};
 use crate::parser::{
-    BindingConfig, FieldSensitivityHint, OccurrenceKey, ParsedEventIntent, ParserContext,
-    ParserId, SourceRecord, SourceUnitId, TimingConfidence, TimingEvidence,
+    BindingConfig, FieldSensitivityHint, OccurrenceKey, ParsedEventIntent, ParserContext, ParserId,
+    SourceRecord, SourceUnitId, TimingConfidence, TimingEvidence,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -1145,7 +1145,10 @@ mod tests {
             required: true,
             default: None,
             skip_payload: false,
-            privacy_hints: vec![FieldSensitivityHint::FreeText, FieldSensitivityHint::CredentialBearing],
+            privacy_hints: vec![
+                FieldSensitivityHint::FreeText,
+                FieldSensitivityHint::CredentialBearing,
+            ],
             occurrence_key: false,
             timestamp: None,
             suppress_if: Some(SuppressPredicate {
@@ -1185,7 +1188,10 @@ mod tests {
             required: true,
             default: None,
             skip_payload: false,
-            privacy_hints: vec![FieldSensitivityHint::FreeText, FieldSensitivityHint::CredentialBearing],
+            privacy_hints: vec![
+                FieldSensitivityHint::FreeText,
+                FieldSensitivityHint::CredentialBearing,
+            ],
             occurrence_key: false,
             timestamp: None,
             suppress_if: Some(SuppressPredicate {
@@ -1218,7 +1224,10 @@ mod tests {
             required: true,
             default: None,
             skip_payload: false,
-            privacy_hints: vec![FieldSensitivityHint::FreeText, FieldSensitivityHint::CredentialBearing],
+            privacy_hints: vec![
+                FieldSensitivityHint::FreeText,
+                FieldSensitivityHint::CredentialBearing,
+            ],
             occurrence_key: false,
             timestamp: None,
             suppress_if: Some(SuppressPredicate {

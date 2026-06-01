@@ -13,11 +13,10 @@ use sinex_primitives::privacy::{
 use sinex_primitives::rpc::privacy::{
     PrivacyDictionary, PrivacyDictionaryTerm, PrivacyFieldRule, PrivacyKeyNamespace,
     PrivacyPolicyAddDictionaryTermRequest, PrivacyPolicyBindRuleRequest,
-    PrivacyPolicyCreateBackendRequest,
-    PrivacyPolicyCreateDictionaryRequest, PrivacyPolicyCreateKeyRequest,
-    PrivacyPolicyCreateRuleRequest, PrivacyPolicyIdResponse, PrivacyPolicyListRequest,
-    PrivacyPolicyListResponse, PrivacyPolicySeedCatalogRequest, PrivacyPolicySeedCatalogResponse,
-    PrivacyRecognizerBackend, PrivacyRule,
+    PrivacyPolicyCreateBackendRequest, PrivacyPolicyCreateDictionaryRequest,
+    PrivacyPolicyCreateKeyRequest, PrivacyPolicyCreateRuleRequest, PrivacyPolicyIdResponse,
+    PrivacyPolicyListRequest, PrivacyPolicyListResponse, PrivacyPolicySeedCatalogRequest,
+    PrivacyPolicySeedCatalogResponse, PrivacyRecognizerBackend, PrivacyRule,
     PrivateModeDisableRequest, PrivateModeEnableRequest, PrivateModeStateResponse,
     PrivateModeStatusRequest,
 };
@@ -820,7 +819,12 @@ mod tests {
         assert!(first.seeded_rules > 0);
         assert_eq!(first.seeded_rules, second.seeded_rules);
         assert_eq!(seeded_count, first.seeded_rules);
-        assert!(response.rules.iter().any(|rule| rule.name == "github_token"));
+        assert!(
+            response
+                .rules
+                .iter()
+                .any(|rule| rule.name == "github_token")
+        );
         Ok(())
     }
 

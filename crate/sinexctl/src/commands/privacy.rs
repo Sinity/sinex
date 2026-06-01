@@ -471,7 +471,10 @@ fn format_privacy_policy_list(policy: &PrivacyPolicyListResponse) -> String {
         lines.push("Recognizer backend detail:".to_string());
         for backend in &policy.recognizer_backends {
             let endpoint = backend.endpoint_url.as_deref().unwrap_or("local");
-            lines.push(format!("  {} [{}] {}", backend.name, backend.kind, endpoint));
+            lines.push(format!(
+                "  {} [{}] {}",
+                backend.name, backend.kind, endpoint
+            ));
         }
     }
 

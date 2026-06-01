@@ -213,7 +213,11 @@ fn component_latency_message(latency_ms: Option<f64>, detail: Option<&str>) -> O
     if let Some(d) = detail {
         parts.push(d.to_string());
     }
-    if parts.is_empty() { None } else { Some(parts.join(", ")) }
+    if parts.is_empty() {
+        None
+    } else {
+        Some(parts.join(", "))
+    }
 }
 
 async fn collect_node_and_dlq_signals(
@@ -311,7 +315,10 @@ async fn collect_source_and_stall_signals(
     client: &GatewayClient,
     signals: &mut Vec<RuntimeStatusSignal>,
     warnings: &mut Vec<RuntimeStatusWarning>,
-) -> Vec<(sinex_primitives::rpc::ingestors::IngestorStatus, sinex_primitives::rpc::ingestors::EmitStallVerdict)> {
+) -> Vec<(
+    sinex_primitives::rpc::ingestors::IngestorStatus,
+    sinex_primitives::rpc::ingestors::EmitStallVerdict,
+)> {
     match client
         .sources_readiness_list(SourcesReadinessListRequest::default())
         .await
@@ -382,7 +389,10 @@ async fn collect_source_and_stall_signals(
 
 fn render_status_table(
     snapshot: &sinex_primitives::RuntimeStatusSnapshot,
-    stalled_units: &[(sinex_primitives::rpc::ingestors::IngestorStatus, sinex_primitives::rpc::ingestors::EmitStallVerdict)],
+    stalled_units: &[(
+        sinex_primitives::rpc::ingestors::IngestorStatus,
+        sinex_primitives::rpc::ingestors::EmitStallVerdict,
+    )],
 ) {
     println!("{}", style("System Status").bold().cyan());
     println!("{}", style("═".repeat(50)).dim());
@@ -553,7 +563,7 @@ impl SourceReadinessSummary {
     }
 }
 
-#[must_use] 
+#[must_use]
 pub fn summarize_source_readiness(sources: &[SourceReadiness]) -> SourceReadinessSummary {
     let mut summary = SourceReadinessSummary {
         total: sources.len(),

@@ -325,7 +325,10 @@ async fn test_process_window_title_context_is_not_policy_surface() -> Result<()>
     let ctx = CommandContext::new(OutputWriter::new(OutputFormat::Json), false, None, "test");
     let result = cmd.execute(&ctx).await;
 
-    assert!(result.is_err(), "window_title is no longer a privacy context");
+    assert!(
+        result.is_err(),
+        "window_title is no longer a privacy context"
+    );
     Ok(())
 }
 
@@ -508,7 +511,10 @@ async fn test_config_status_reports_state() -> Result<()> {
 
         // Default config does not execute seed catalog rules.
         let rule_count = data["active_rules"].as_u64().unwrap_or(0);
-        assert_eq!(rule_count, 0, "default config should have no active seed rules");
+        assert_eq!(
+            rule_count, 0,
+            "default config should have no active seed rules"
+        );
     }
     Ok(())
 }

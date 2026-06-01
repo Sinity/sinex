@@ -1319,8 +1319,8 @@ mod tests {
     async fn runtime_binary_inputs_exclude_test_only_source_modules() -> TestResult<()> {
         let workspace = find_workspace_root()?;
         let inputs = collect_runtime_binary_input_paths(&workspace, "sinexd")?;
-        let test_module = workspace
-            .join("crate/sinexd/src/node_sdk/derived_node/adapter/tests/mod.rs");
+        let test_module =
+            workspace.join("crate/sinexd/src/node_sdk/derived_node/adapter/tests/mod.rs");
 
         assert!(
             !inputs.iter().any(|path| path == &test_module),

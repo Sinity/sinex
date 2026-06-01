@@ -241,13 +241,13 @@ async fn test_event_payload_enum_derives_schema_contract() -> TestResult<()> {
 
 #[sinex_test]
 async fn test_source_record_derive_uses_primitives_parser_contract() -> TestResult<()> {
+    use sinex_primitives::Uuid;
     use sinex_primitives::events::SourceMaterial;
     use sinex_primitives::ids::Id;
     use sinex_primitives::parser::{
         MaterialAnchor, MaterialParser, ParserContext, SourceRecord, SourceUnitId,
     };
     use sinex_primitives::temporal::Timestamp;
-    use sinex_primitives::Uuid;
 
     #[derive(Default, sinex_macros::SourceRecord)]
     #[source_record(

@@ -609,7 +609,9 @@ fn parse_field_decl(field: &Field) -> syn::Result<FieldDecl> {
                         privacy_hints.extend(split_hint_list(&v.value()));
                         Ok(())
                     } else {
-                        Err(meta.error("expected #[privacy(hint = \"...\")] or #[privacy(hints = \"a,b\")]"))
+                        Err(meta.error(
+                            "expected #[privacy(hint = \"...\")] or #[privacy(hints = \"a,b\")]",
+                        ))
                     }
                 })?;
             }
@@ -950,10 +952,7 @@ fn privacy_hint_token(name: &str) -> syn::Result<TokenStream> {
 }
 
 fn privacy_hint_tokens(names: &[String]) -> syn::Result<Vec<TokenStream>> {
-    names
-        .iter()
-        .map(|name| privacy_hint_token(name))
-        .collect()
+    names.iter().map(|name| privacy_hint_token(name)).collect()
 }
 
 fn field_decl_to_token(d: &FieldDecl) -> syn::Result<TokenStream> {

@@ -344,10 +344,8 @@ mod tests {
     async fn test_checkout_state_uses_matching_dev_state_dir() -> TestResult<()> {
         let checkout = tempfile::tempdir()?;
         let dev_state = tempfile::tempdir()?;
-        let mut env = xtask::sandbox::EnvGuard::with_keys(&[
-            "SINEX_DEV_ROOT",
-            "SINEX_DEV_STATE_DIR",
-        ]);
+        let mut env =
+            xtask::sandbox::EnvGuard::with_keys(&["SINEX_DEV_ROOT", "SINEX_DEV_STATE_DIR"]);
         env.set("SINEX_DEV_ROOT", checkout.path());
         env.set("SINEX_DEV_STATE_DIR", dev_state.path());
 
@@ -363,10 +361,8 @@ mod tests {
         let checkout = tempfile::tempdir()?;
         let other_checkout = tempfile::tempdir()?;
         let dev_state = tempfile::tempdir()?;
-        let mut env = xtask::sandbox::EnvGuard::with_keys(&[
-            "SINEX_DEV_ROOT",
-            "SINEX_DEV_STATE_DIR",
-        ]);
+        let mut env =
+            xtask::sandbox::EnvGuard::with_keys(&["SINEX_DEV_ROOT", "SINEX_DEV_STATE_DIR"]);
         env.set("SINEX_DEV_ROOT", other_checkout.path());
         env.set("SINEX_DEV_STATE_DIR", dev_state.path());
 

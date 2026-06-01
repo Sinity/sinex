@@ -425,7 +425,16 @@ async fn migrate_single_blob(
         }));
     }
 
-    migrate_blob_to_cas(blob_id, annex_key, size_bytes, &blake3_hash, &path, content_store, pool).await
+    migrate_blob_to_cas(
+        blob_id,
+        annex_key,
+        size_bytes,
+        &blake3_hash,
+        &path,
+        content_store,
+        pool,
+    )
+    .await
 }
 
 /// Store the blob in CAS and update the DB row. Called only in apply mode.
@@ -529,7 +538,16 @@ impl BlobMigrateCommand {
             let size_bytes = legacy_blob.size_bytes;
             let annex_key = format!("{backend}-s{size_bytes}--{content_hash}");
 
-            match migrate_single_blob(blob_id, &annex_key, size_bytes, &content_store, &pool, self.apply).await? {
+            match migrate_single_blob(
+                blob_id,
+                &annex_key,
+                size_bytes,
+                &content_store,
+                &pool,
+                self.apply,
+            )
+            .await?
+            {
                 BlobMigrateOutcome::AlreadyMigrated => already_migrated += 1,
                 BlobMigrateOutcome::Migrated(key) => {
                     migrated_count += 1;

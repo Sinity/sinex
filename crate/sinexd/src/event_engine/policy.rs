@@ -40,8 +40,8 @@ use sinex_primitives::JsonValue;
 use sinex_primitives::events::Event;
 use sinex_primitives::prelude::*;
 use sinex_primitives::privacy::{
-    CategorySet, KeyConfig, Matcher, PatternRule, PrivacyConfig, PrivacyEngine,
-    ProcessingContext, RuleCategory, Strategy, StructuralDetector, encrypt_token, hash_token,
+    CategorySet, KeyConfig, Matcher, PatternRule, PrivacyConfig, PrivacyEngine, ProcessingContext,
+    RuleCategory, Strategy, StructuralDetector, encrypt_token, hash_token,
 };
 use tokio::sync::RwLock;
 use tracing::{debug, warn};
@@ -793,8 +793,10 @@ async fn analyze_presidio_text(
 
     let status = response.status();
     if !status.is_success() {
-        return Err(SinexError::processing("Presidio analyzer returned non-success status")
-            .with_context("status", status.as_u16().to_string()));
+        return Err(
+            SinexError::processing("Presidio analyzer returned non-success status")
+                .with_context("status", status.as_u16().to_string()),
+        );
     }
 
     let mut spans = response
@@ -829,10 +831,7 @@ fn apply_presidio_spans(text: &str, spans: &[PresidioSpan], rule: &PresidioRule)
             continue;
         }
         result.push_str(&text[cursor..span.start]);
-        result.push_str(&replacement_for_strategy(
-            &text[span.start..span.end],
-            rule,
-        ));
+        result.push_str(&replacement_for_strategy(&text[span.start..span.end], rule));
         cursor = span.end;
     }
     result.push_str(&text[cursor..]);
@@ -841,9 +840,7 @@ fn apply_presidio_spans(text: &str, spans: &[PresidioSpan], rule: &PresidioRule)
 
 fn replacement_for_strategy(text: &str, rule: &PresidioRule) -> String {
     match &rule.strategy {
-        Strategy::Redact { label } => label
-            .clone()
-            .unwrap_or_else(|| "<REDACTED>".to_string()),
+        Strategy::Redact { label } => label.clone().unwrap_or_else(|| "<REDACTED>".to_string()),
         Strategy::Suppress => String::new(),
         Strategy::Mask {
             char,
@@ -1215,9 +1212,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn privacy_field_scoped_rules_do_not_cross_apply(
-        ctx: TestContext,
-    ) -> TestResult<()> {
+    async fn privacy_field_scoped_rules_do_not_cross_apply(ctx: TestContext) -> TestResult<()> {
         let pool = ctx.pool();
         let repo = pool.privacy_policy();
 

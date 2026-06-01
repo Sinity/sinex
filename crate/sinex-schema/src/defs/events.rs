@@ -1210,7 +1210,8 @@ mod tests {
         assert!(!trigger_sql.contains("sinex.superseded_by_id"));
         assert!(!trigger_sql.contains("sup_id"));
         assert!(
-            trigger_sql.contains("INSERT INTO audit.archived_events SELECT OLD.*, now(), who, why;")
+            trigger_sql
+                .contains("INSERT INTO audit.archived_events SELECT OLD.*, now(), who, why;")
         );
 
         Ok(())

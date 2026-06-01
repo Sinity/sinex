@@ -262,10 +262,8 @@ fn reset_history_db(path: &std::path::Path, seed: bool, verbose: bool) -> Result
         for ext in ["db-wal", "db-shm", "db.integrity.json", "cleanup.lock"] {
             let aux = path.with_extension(ext);
             if aux.exists() {
-                let _ = std::fs::rename(
-                    &aux,
-                    aux.with_extension(format!("{ext}.reset.bak.{stamp}")),
-                );
+                let _ =
+                    std::fs::rename(&aux, aux.with_extension(format!("{ext}.reset.bak.{stamp}")));
             }
         }
     }

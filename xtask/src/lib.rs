@@ -343,8 +343,8 @@ fn try_get_matches_or_exit() -> Result<clap::ArgMatches> {
     match clap_cmd.try_get_matches() {
         Ok(m) => Ok(m),
         Err(e) => {
-            let want_json = std::env::args()
-                .any(|a| a == "--json" || a == "--format=json" || a == "-f=json");
+            let want_json =
+                std::env::args().any(|a| a == "--json" || a == "--format=json" || a == "-f=json");
             if want_json {
                 let json = serde_json::json!({
                     "command": "xtask",
@@ -624,7 +624,9 @@ pub async fn run_cli() -> Result<()> {
     }
 
     // Handle coordinator completion: clear state, spawn queued work (FIFO).
-    if let Some(true) = claimed_bg_job.map(|_| matches!(command_name, "check" | "test" | "build" | "fix" | "vm")) {
+    if let Some(true) =
+        claimed_bg_job.map(|_| matches!(command_name, "check" | "test" | "build" | "fix" | "vm"))
+    {
         handle_coordinator_completion(command_name);
     }
 
@@ -664,7 +666,10 @@ fn finish_invocation_history(
     history_db_open_error: Option<&str>,
 ) {
     let status = match result {
-        Ok(res) if res.status == crate::output::Status::Failed || res.status == crate::output::Status::Partial => {
+        Ok(res)
+            if res.status == crate::output::Status::Failed
+                || res.status == crate::output::Status::Partial =>
+        {
             crate::history::InvocationStatus::Failed
         }
         Ok(_) => crate::history::InvocationStatus::Success,
@@ -709,11 +714,16 @@ fn start_or_claim_invocation(
     let db_err = || history_db_open_error.unwrap_or("unknown history DB open failure");
     if let Some(bg_id) = claimed_bg_invocation {
         if let Some(db) = history_db {
-            if let Err(error) = db.claim_background_invocation(bg_id, command_name, subcommand, profile, None) {
+            if let Err(error) =
+                db.claim_background_invocation(bg_id, command_name, subcommand, profile, None)
+            {
                 eprintln!("⚠️  Failed to claim background invocation {bg_id}: {error}");
             }
         } else {
-            eprintln!("⚠️  Failed to open history DB for background invocation {bg_id}: {}", db_err());
+            eprintln!(
+                "⚠️  Failed to open history DB for background invocation {bg_id}: {}",
+                db_err()
+            );
         }
         return Some(bg_id);
     }
@@ -726,19 +736,28 @@ fn start_or_claim_invocation(
             }
         }
     }
-    eprintln!("⚠️  Failed to open history DB to start invocation: {}", db_err());
+    eprintln!(
+        "⚠️  Failed to open history DB to start invocation: {}",
+        db_err()
+    );
     None
 }
 
 /// Attempt to pop and spawn the next queued work item after a coordinated job completes.
 fn handle_coordinator_completion(command_name: &str) {
-    let Ok(coord) = coordinator::JobCoordinator::new() else { return; };
-    let Ok(Some(queued)) = coord.handle_completion(command_name) else { return; };
+    let Ok(coord) = coordinator::JobCoordinator::new() else {
+        return;
+    };
+    let Ok(Some(queued)) = coord.handle_completion(command_name) else {
+        return;
+    };
     let cfg = config();
     let manager = match jobs::JobManager::new(cfg.jobs_dir()) {
         Ok(m) => m,
         Err(error) => {
-            eprintln!("Warning: failed to open jobs directory for queued {command_name} work: {error}");
+            eprintln!(
+                "Warning: failed to open jobs directory for queued {command_name} work: {error}"
+            );
             return;
         }
     };
@@ -750,12 +769,19 @@ fn handle_coordinator_completion(command_name: &str) {
     match manager.spawn_xtask(&queued_command, &queued.args, queued.output_format) {
         Ok(job) => {
             if let Some(pid) = job.pid {
-                let start_ticks = crate::process::read_proc_sample(pid).map_or(0, |s| s.start_ticks);
+                let start_ticks =
+                    crate::process::read_proc_sample(pid).map_or(0, |s| s.start_ticks);
                 if let Err(error) = coord.update_state(&queued_command, job.id, pid, start_ticks) {
-                    eprintln!("⚠️  Failed to update queued {queued_command} coordinator state for job {}: {error}", job.id);
+                    eprintln!(
+                        "⚠️  Failed to update queued {queued_command} coordinator state for job {}: {error}",
+                        job.id
+                    );
                 }
             } else {
-                eprintln!("⚠️  Failed to update queued {queued_command} coordinator state for job {}: spawned job did not expose a PID", job.id);
+                eprintln!(
+                    "⚠️  Failed to update queued {queued_command} coordinator state for job {}: spawned job did not expose a PID",
+                    job.id
+                );
             }
         }
         Err(error) => {
@@ -776,7 +802,10 @@ fn record_bg_job_completion(
 ) {
     let exit_code_path = std::path::Path::new(job_dir).join("exit_code");
     if let Err(error) = std::fs::write(&exit_code_path, format!("{invocation_exit_code}\n")) {
-        eprintln!("⚠️  Failed to write background exit code file {}: {error}", exit_code_path.display());
+        eprintln!(
+            "⚠️  Failed to write background exit code file {}: {error}",
+            exit_code_path.display()
+        );
     }
 
     if let Some(job_id) = claimed_bg_job {
@@ -805,13 +834,19 @@ fn record_bg_job_completion(
             }
             None => {
                 let error = history_db_open_error.unwrap_or("history DB unavailable");
-                eprintln!("⚠️  Failed to open history DB to record background job completion for {job_id}: {error}");
+                eprintln!(
+                    "⚠️  Failed to open history DB to record background job completion for {job_id}: {error}"
+                );
             }
         }
     }
 
     if config().prefs.notify_on_completion {
-        let status_str = if invocation_exit_code == 0 { "success" } else { "failed" };
+        let status_str = if invocation_exit_code == 0 {
+            "success"
+        } else {
+            "failed"
+        };
         let duration = ctx.elapsed().as_secs_f64();
         let summary = format!("xtask {command_name}");
         let body = format!("{command_name}: {status_str} ({duration:.1}s)");
@@ -843,23 +878,33 @@ where
     *timed_out = true;
     match process::terminate_registered_process_groups("command timeout") {
         Ok(terminated) if terminated > 0 => {
-            eprintln!("⚠️  Terminated {terminated} lingering child process group(s) after {command_name} timed out");
+            eprintln!(
+                "⚠️  Terminated {terminated} lingering child process group(s) after {command_name} timed out"
+            );
         }
         Ok(_) => {}
         Err(error) => {
-            eprintln!("⚠️  Failed to terminate child process groups after {command_name} timed out: {error:#}");
+            eprintln!(
+                "⚠️  Failed to terminate child process groups after {command_name} timed out: {error:#}"
+            );
         }
     }
     match process::terminate_current_process_descendants("command timeout") {
         Ok(terminated) if terminated > 0 => {
-            eprintln!("⚠️  Terminated {terminated} remaining descendant process(es) after {command_name} timed out");
+            eprintln!(
+                "⚠️  Terminated {terminated} remaining descendant process(es) after {command_name} timed out"
+            );
         }
         Ok(_) => {}
         Err(error) => {
-            eprintln!("⚠️  Failed to terminate descendant processes after {command_name} timed out: {error:#}");
+            eprintln!(
+                "⚠️  Failed to terminate descendant processes after {command_name} timed out: {error:#}"
+            );
         }
     }
-    Err(eyre!("Command '{command_name}' timed out after {timeout:?}"))
+    Err(eyre!(
+        "Command '{command_name}' timed out after {timeout:?}"
+    ))
 }
 
 fn open_history_db(history_access: HistoryAccessMode) -> Result<HistoryDb> {

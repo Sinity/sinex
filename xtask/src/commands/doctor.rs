@@ -565,7 +565,10 @@ fn execute_reclaim(ctx: &CommandContext, result: &mut CommandResult) {
         std::path::PathBuf::from,
     );
     if ctx.is_human() {
-        println!("Reclaiming stale artifacts from {}...", target_dir.display());
+        println!(
+            "Reclaiming stale artifacts from {}...",
+            target_dir.display()
+        );
     }
     match crate::cache_hygiene::reclaim(&target_dir) {
         Ok(report) => {

@@ -53,7 +53,7 @@ async fn test_schema_tables(runner: &mut TestRunner, pool: &PgPool) {
         "SELECT string_agg(schemaname || '.' || tablename, ',' ORDER BY 1) \
          FROM pg_tables \
          WHERE (schemaname = 'core'  AND tablename = 'events') \
-            OR (schemaname = 'raw'   AND tablename = 'source_material_registry')"
+            OR (schemaname = 'raw'   AND tablename = 'source_material_registry')",
     )
     .fetch_one(pool)
     .await;
@@ -73,10 +73,11 @@ async fn test_schema_tables(runner: &mut TestRunner, pool: &PgPool) {
 async fn test_timescaledb_extension(runner: &mut TestRunner, pool: &PgPool) {
     let name = "timescaledb extension installed";
 
-    let result =
-        sqlx::query_scalar::<_, String>("SELECT extname FROM pg_extension WHERE extname = 'timescaledb'")
-            .fetch_optional(pool)
-            .await;
+    let result = sqlx::query_scalar::<_, String>(
+        "SELECT extname FROM pg_extension WHERE extname = 'timescaledb'",
+    )
+    .fetch_optional(pool)
+    .await;
 
     match result {
         Ok(Some(_)) => runner.pass(name),
@@ -92,7 +93,7 @@ async fn test_events_hypertable(runner: &mut TestRunner, pool: &PgPool) {
         "SELECT EXISTS(\
            SELECT 1 FROM timescaledb_information.hypertables \
            WHERE hypertable_schema = 'core' AND hypertable_name = 'events'\
-         )"
+         )",
     )
     .fetch_one(pool)
     .await;
@@ -244,17 +245,15 @@ async fn test_service_restart(runner: &mut TestRunner, pool: &PgPool) {
 async fn test_db_queryable(runner: &mut TestRunner, pool: &PgPool) {
     let name = "database queryable: no NULL id/payload rows";
 
-    let result =
-        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM core.events WHERE id IS NULL OR payload IS NULL")
+    let result = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM core.events WHERE id IS NULL OR payload IS NULL",
+    )
     .fetch_one(pool)
     .await;
 
     match result {
         Ok(0) => runner.pass(name),
-        Ok(n) => runner.fail(
-            name,
-            &format!("{n} rows have NULL id or payload"),
-        ),
+        Ok(n) => runner.fail(name, &format!("{n} rows have NULL id or payload")),
         Err(e) => runner.fail(name, &format!("query error: {e}")),
     }
 }
