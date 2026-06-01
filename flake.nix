@@ -385,11 +385,27 @@
                   fi
                 }
 
+                _sinex_xtask_is_intrinsic_read_only_request() {
+                  while [ "$#" -gt 0 ]; do
+                    case "$1" in
+                      -h|--help|--version|--list-commands|help)
+                        return 0
+                        ;;
+                    esac
+                    shift
+                  done
+                  return 1
+                }
+
                 _sinex_xtask_is_observability_command() {
+                  if _sinex_xtask_is_intrinsic_read_only_request "$@"; then
+                    return 0
+                  fi
+
                   local command_name
                   command_name="$(_sinex_xtask_command_name "$@")"
                   case "$command_name" in
-                    ""|-h|--help|--version|--list-commands|status|history|analytics|jobs|snapshot)
+                    ""|status|history|analytics|jobs|snapshot)
                       return 0
                       ;;
                     *)
@@ -423,10 +439,14 @@
                 }
 
                 _sinex_xtask_can_use_existing_binary() {
+                  if _sinex_xtask_is_intrinsic_read_only_request "$@"; then
+                    return 0
+                  fi
+
                   local command_name
                   command_name="$(_sinex_xtask_command_name "$@")"
                   case "$command_name" in
-                    ""|-h|--help|--version|--list-commands|status|history|analytics|jobs|snapshot|check|test|build|deps|doctor|infra|docs)
+                    ""|status|history|analytics|jobs|snapshot|check|test|build|deps|doctor|infra|docs)
                       return 0
                       ;;
                     *)
