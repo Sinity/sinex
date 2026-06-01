@@ -15,6 +15,7 @@ use sinex_primitives::proof::{
     self, CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, ProofObligation,
     RetentionPolicy, RuntimeShape, SourceUnitBinding,
 };
+#[cfg(any(feature = "runtime-introspection", test))]
 use sinexd::node_sdk::parser::all_adapter_schemas;
 use std::collections::HashMap;
 use std::collections::HashSet;
@@ -211,6 +212,8 @@ fn execute_render(
     to_stdout: bool,
     ctx: &CommandContext,
 ) -> Result<CommandResult> {
+    ensure_runtime_introspection_available()?;
+
     let workspace = workspace_root();
     let manifest = build_source_unit_manifest();
     let content = render_source_unit_manifest_json(&manifest)?;
@@ -242,6 +245,8 @@ fn execute_render(
 }
 
 fn execute_check(output: Option<&Path>, ctx: &CommandContext) -> Result<CommandResult> {
+    ensure_runtime_introspection_available()?;
+
     let workspace = workspace_root();
     let dest = output.map_or_else(|| default_manifest_path(&workspace), Path::to_path_buf);
     let manifest = build_source_unit_manifest();
@@ -282,6 +287,18 @@ fn execute_check(output: Option<&Path>, ctx: &CommandContext) -> Result<CommandR
         .with_duration(ctx.elapsed()))
 }
 
+#[cfg(any(feature = "runtime-introspection", test))]
+fn ensure_runtime_introspection_available() -> Result<()> {
+    Ok(())
+}
+
+#[cfg(not(any(feature = "runtime-introspection", test)))]
+fn ensure_runtime_introspection_available() -> Result<()> {
+    color_eyre::eyre::bail!(
+        "source-unit manifest rendering requires xtask built with the runtime-introspection feature"
+    )
+}
+
 fn build_source_unit_manifest() -> SourceUnitManifest {
     crate::source_unit_inventory::link_source_unit_inventories();
 
@@ -310,16 +327,7 @@ fn build_source_unit_manifest() -> SourceUnitManifest {
         .collect::<Vec<_>>();
     proposed_bindings.sort_by(|left, right| left.subject.cmp(&right.subject));
 
-    let adapters = all_adapter_schemas()
-        .into_iter()
-        .map(|(name, adapter_schema)| {
-            let manifest = AdapterManifest {
-                schema: adapter_schema.schema,
-                required: adapter_schema.required,
-            };
-            (name, manifest)
-        })
-        .collect::<BTreeMap<_, _>>();
+    let adapters = adapter_manifests();
 
     SourceUnitManifest {
         schema_version: proof::PROOF_CATALOG_SCHEMA_VERSION,
@@ -345,6 +353,25 @@ fn build_source_unit_manifest() -> SourceUnitManifest {
         source_units,
         adapters,
     }
+}
+
+#[cfg(any(feature = "runtime-introspection", test))]
+fn adapter_manifests() -> BTreeMap<String, AdapterManifest> {
+    all_adapter_schemas()
+        .into_iter()
+        .map(|(name, adapter_schema)| {
+            let manifest = AdapterManifest {
+                schema: adapter_schema.schema,
+                required: adapter_schema.required,
+            };
+            (name, manifest)
+        })
+        .collect()
+}
+
+#[cfg(not(any(feature = "runtime-introspection", test)))]
+fn adapter_manifests() -> BTreeMap<String, AdapterManifest> {
+    unreachable!("source-unit adapter manifests require runtime-introspection")
 }
 
 /// Build a `source_unit_id -> &SourceUnitBinding` lookup used to resolve the

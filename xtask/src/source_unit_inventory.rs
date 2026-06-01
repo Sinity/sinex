@@ -1,11 +1,11 @@
 //! Link shipped node crates so their inventory source-unit descriptors are
 //! visible to xtask.
 //!
-//! After the Wave-B fold (#1081) every per-domain ingestor crate has been
-//! collapsed into `sinex-source-worker`, so a single `extern crate` line on
-//! that crate is enough to pull every source-unit descriptor into xtask's
-//! inventory view.
+//! Source-unit descriptors now live behind the unified daemon.  The `sinexd`
+//! link is gated so the ordinary xtask developer loop can build without
+//! dragging runtime introspection into every command.
 
+#[cfg(any(feature = "runtime-introspection", test))]
 extern crate sinexd as _;
 
 // `sinex_primitives` carries the infra source-unit descriptors registered

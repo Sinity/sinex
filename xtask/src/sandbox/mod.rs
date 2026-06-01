@@ -26,6 +26,7 @@ pub mod evidence;
 pub mod fs;
 pub mod hooks;
 pub mod nats;
+#[cfg(any(feature = "runtime-introspection", test))]
 pub mod node_runtime;
 pub mod orchestrator;
 pub mod postgres;
@@ -60,6 +61,7 @@ pub use events::EventPublisher;
 pub use fs::{EnvGuard, TestTempEnv, prepare_test_temp_env};
 pub use hooks::TestHooks;
 pub use nats::EventOverrides;
+#[cfg(any(feature = "runtime-introspection", test))]
 pub use node_runtime::{TestRuntime, TestRuntimeBuilder};
 pub use orchestrator::{
     CapturedOutput, TestGatewayConfig, TestGatewayHandle, TestIngestdConfig, TestIngestdHandle,
