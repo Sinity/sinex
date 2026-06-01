@@ -1,8 +1,8 @@
 # `#[derive(SinexConfig)]`
 
-Generates `pub fn from_env(&self) -> Self` (a `Self`-returning associated
-function, no receiver) that reads each non-`skip` field from an environment
-variable using `sinex_primitives::env::*` helpers.
+Generates `pub fn from_env() -> Self` (or `pub fn from_env() -> Result<Self,
+SinexError>` in `fallible` mode) that reads each non-`skip` field from an
+environment variable using `sinex_primitives::env::*` helpers.
 
 ## Required struct attributes
 
@@ -40,7 +40,7 @@ pub struct PoolConfig { /* ... */ }
 | `Option<PathBuf>` | `env::path_optional(key, context)` |
 | `Option<T>` (other) | `env::parse_optional(key, context)` |
 | `PathBuf` | `env::path_optional(...).unwrap_or_else(|| default)` — requires default |
-| `std::time::Duration` + `duration_secs` | `env::parse_optional::<u64>(...).map(Duration::from_secs).unwrap_or(default)`; zero/invalid values use default |
+| `std::time::Duration` + `duration_secs` | In infallible mode, `env::parse_optional::<u64>(...).map(Duration::from_secs).unwrap_or(default)` with zero/invalid values falling back to default; in `fallible` mode, strict parsing with zero rejected as configuration error |
 | Other `T: FromStr` | `env::parse_or(key, default, context)` — requires default |
 
 ## Examples
