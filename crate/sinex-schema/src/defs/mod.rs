@@ -357,14 +357,21 @@ const ALL_TABLES: &[TableMeta] = &[
         cleanup_protected: false,
     },
     // Privacy policy (#1042): user-controlled DB-backed redaction policy.
-    // cleanup_protected — user-authored policy must survive dev-state resets.
+    // NOT cleanup_protected: `cleanup_protected` is consumed only by the test
+    // slot-cleanup config (`xtask::sandbox::db::cleanup_config`), where it marks
+    // shared reference data to skip (e.g. the schema registry above). These
+    // tables hold per-test mutable policy state, so they MUST be truncated
+    // between slot reuse or rules leak across tests (privacy_rule_loading_roundtrip
+    // would then observe "rules initially" non-empty). Production `xtask reset
+    // --db` drops and recreates the database wholesale, so this flag never
+    // preserves user policy there regardless.
     TableMeta {
         schema: "privacy",
         name: "encryption_keys",
         qualified_name: "privacy.encryption_keys",
         is_hypertable: false,
         has_triggers: false,
-        cleanup_protected: true,
+        cleanup_protected: false,
     },
     TableMeta {
         schema: "privacy",
@@ -372,7 +379,7 @@ const ALL_TABLES: &[TableMeta] = &[
         qualified_name: "privacy.rules",
         is_hypertable: false,
         has_triggers: true,
-        cleanup_protected: true,
+        cleanup_protected: false,
     },
     TableMeta {
         schema: "privacy",
@@ -380,7 +387,7 @@ const ALL_TABLES: &[TableMeta] = &[
         qualified_name: "privacy.recognizer_backends",
         is_hypertable: false,
         has_triggers: true,
-        cleanup_protected: true,
+        cleanup_protected: false,
     },
     TableMeta {
         schema: "privacy",
@@ -388,7 +395,7 @@ const ALL_TABLES: &[TableMeta] = &[
         qualified_name: "privacy.dictionaries",
         is_hypertable: false,
         has_triggers: true,
-        cleanup_protected: true,
+        cleanup_protected: false,
     },
     TableMeta {
         schema: "privacy",
@@ -396,7 +403,7 @@ const ALL_TABLES: &[TableMeta] = &[
         qualified_name: "privacy.dictionary_terms",
         is_hypertable: false,
         has_triggers: false,
-        cleanup_protected: true,
+        cleanup_protected: false,
     },
     TableMeta {
         schema: "privacy",
@@ -404,7 +411,7 @@ const ALL_TABLES: &[TableMeta] = &[
         qualified_name: "privacy.field_rules",
         is_hypertable: false,
         has_triggers: false,
-        cleanup_protected: true,
+        cleanup_protected: false,
     },
 ];
 
