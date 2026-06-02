@@ -11,18 +11,15 @@
 //! Rules are compiled into a `PrivacyEngine` using the existing public
 //! `PatternRule` / `PrivacyEngine::new(config)` API. No private `CompiledMatcher`
 //! exposure is needed: the policy engine simply constructs a fresh `PrivacyEngine`
-//! from DB rules via `PrivacyConfig::extra_rules`, then applies `process_json`
-//! per event or `process` per targeted field.
+//! from DB rules via `PrivacyConfig::extra_rules`, then applies the compiled
+//! engine per event or targeted field.
 //!
-//! # Field-path scoping — v1 limitation
+//! # Field-path scoping
 //!
-//! `field_path` in `privacy.field_rules` is interpreted as a **top-level JSON
-//! object key only**. A `field_path` of `/text` matches the key `"text"` at the
-//! root of the payload JSON object. Nested paths (e.g. `/results/0/text`) are
-//! NOT supported in v1 — the engine applies the rule to all top-level string
-//! values if the key is absent, or skips nested content silently. This limitation
-//! is documented here and in the `field_rules` table comment. A follow-up (tracked
-//! in #1042) will extend to full JSON-pointer traversal.
+//! `field_path` in `privacy.field_rules` is interpreted as a JSON Pointer.
+//! A `field_path` of `/text` matches the key `"text"` at the root of the
+//! payload JSON object; `/results/0/text` matches nested array/object payloads.
+//! Bare field names are treated as root keys for operator ergonomics.
 //!
 //! # Cache refresh
 //!
@@ -33,10 +30,11 @@
 //! NOTIFY/LISTEN is a potential future improvement.
 
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use sinex_db::{DbPool, DbPoolExt};
 use sinex_primitives::JsonValue;
+use sinex_primitives::constants::env_vars;
 use sinex_primitives::events::Event;
 use sinex_primitives::prelude::*;
 use sinex_primitives::privacy::{
@@ -52,6 +50,7 @@ use crate::event_engine::admission::AdmittedEvent;
 
 /// Default policy refresh interval in seconds.
 const DEFAULT_REFRESH_SECS: u64 = 30;
+const DEFAULT_RECOGNIZER_TIMEOUT_SECS: u64 = 3;
 
 fn refresh_interval() -> std::time::Duration {
     let secs = std::env::var("SINEX_PRIVACY_POLICY_REFRESH_SECS")
@@ -99,12 +98,30 @@ impl std::fmt::Debug for ScopedEngine {
 /// `PrivacyPolicyRepository::load_enabled_rules`.
 struct CompiledPolicyRuleSet {
     scopes: Vec<ScopedEngine>,
+    external_rules: Vec<ExternalRecognizerRule>,
 }
 
 impl CompiledPolicyRuleSet {
     fn empty() -> Self {
-        Self { scopes: Vec::new() }
+        Self {
+            scopes: Vec::new(),
+            external_rules: Vec::new(),
+        }
     }
+}
+
+/// A DB policy rule backed by an external recognizer such as Presidio Analyzer.
+#[derive(Debug, Clone)]
+struct ExternalRecognizerRule {
+    name: String,
+    event_source: Option<String>,
+    event_type: Option<String>,
+    field_path: Option<String>,
+    endpoint_url: String,
+    language: String,
+    entities: Vec<String>,
+    score_threshold: Option<f64>,
+    strategy: Strategy,
 }
 
 // ─── Rule compilation ────────────────────────────────────────────────────────
@@ -119,6 +136,7 @@ fn db_row_to_matcher(
     rule_name: &str,
     matcher_type: &str,
     matcher_value: &str,
+    matcher_config: &JsonValue,
     case_sensitive: bool,
 ) -> Option<Matcher> {
     match matcher_type {
@@ -142,6 +160,21 @@ fn db_row_to_matcher(
             text: matcher_value.to_string(),
             case_sensitive,
         }),
+        "dictionary" => dictionary_terms(matcher_value, matcher_config).map(|terms| {
+            Matcher::Any(
+                terms
+                    .into_iter()
+                    .map(|text| Matcher::Literal {
+                        text,
+                        case_sensitive,
+                    })
+                    .collect(),
+            )
+        }),
+        "structural" => structural_detector(rule_name, matcher_value)
+            .map(|detector| Matcher::Structural { detector }),
+        "secret_scanner" => secret_scanner_regex(rule_name, matcher_value, matcher_config)
+            .map(|pattern| Matcher::Regex { pattern }),
         other => {
             warn!(
                 rule = rule_name,
@@ -153,6 +186,174 @@ fn db_row_to_matcher(
     }
 }
 
+fn dictionary_terms(matcher_value: &str, matcher_config: &JsonValue) -> Option<Vec<String>> {
+    let from_config = matcher_config
+        .get("terms")
+        .and_then(serde_json::Value::as_array)
+        .map(|values| {
+            values
+                .iter()
+                .filter_map(serde_json::Value::as_str)
+                .map(str::trim)
+                .filter(|term| !term.is_empty())
+                .map(ToOwned::to_owned)
+                .collect::<Vec<_>>()
+        });
+
+    let terms = from_config.unwrap_or_else(|| {
+        serde_json::from_str::<Vec<String>>(matcher_value).unwrap_or_else(|_| {
+            matcher_value
+                .lines()
+                .map(str::trim)
+                .filter(|term| !term.is_empty())
+                .map(ToOwned::to_owned)
+                .collect()
+        })
+    });
+
+    if terms.is_empty() { None } else { Some(terms) }
+}
+
+fn structural_detector(rule_name: &str, matcher_value: &str) -> Option<sinex_primitives::privacy::StructuralDetector> {
+    serde_json::from_value(serde_json::Value::String(matcher_value.to_string()))
+        .map_err(|error| {
+            warn!(
+                rule = rule_name,
+                detector = matcher_value,
+                error = %error,
+                "DB privacy rule has unknown structural detector — skipping"
+            );
+            error
+        })
+        .ok()
+}
+
+fn secret_scanner_regex(
+    rule_name: &str,
+    matcher_value: &str,
+    matcher_config: &JsonValue,
+) -> Option<String> {
+    let pattern = matcher_config
+        .get("regex")
+        .and_then(serde_json::Value::as_str)
+        .or_else(|| matcher_config.get("pattern").and_then(serde_json::Value::as_str))
+        .unwrap_or(matcher_value);
+
+    if let Err(error) = regex::Regex::new(pattern) {
+        warn!(
+            rule = rule_name,
+            pattern,
+            error = %error,
+            "DB privacy secret-scanner rule has invalid regex — skipping"
+        );
+        None
+    } else {
+        Some(pattern.to_string())
+    }
+}
+
+fn external_recognizer_rule(
+    loaded_rule: &sinex_db::repositories::privacy_policy::LoadedRule,
+    scope: Option<&sinex_db::repositories::privacy_policy::FieldRuleRecord>,
+) -> Option<ExternalRecognizerRule> {
+    let rule = &loaded_rule.rule;
+    if !matches!(
+        rule.matcher_type.as_str(),
+        "presidio_entity" | "presidio_analyzer" | "external"
+    ) {
+        return None;
+    }
+
+    let Some(backend) = &loaded_rule.backend else {
+        warn!(
+            rule = %rule.name,
+            "external privacy recognizer rule has no enabled backend"
+        );
+        return None;
+    };
+
+    if !matches!(backend.kind.as_str(), "presidio" | "external_http") {
+        warn!(
+            rule = %rule.name,
+            backend = %backend.name,
+            kind = %backend.kind,
+            "external privacy recognizer rule references a non-HTTP recognizer backend"
+        );
+        return None;
+    }
+
+    let endpoint_url = backend
+        .endpoint_url
+        .as_deref()
+        .or_else(|| backend.config.get("endpoint_url").and_then(JsonValue::as_str))
+        .or_else(|| backend.config.get("analyze_url").and_then(JsonValue::as_str));
+    let Some(endpoint_url) = endpoint_url else {
+        warn!(
+            rule = %rule.name,
+            backend = %backend.name,
+            "external privacy recognizer backend has no endpoint_url"
+        );
+        return None;
+    };
+
+    let language = rule
+        .matcher_config
+        .get("language")
+        .or_else(|| backend.config.get("language"))
+        .and_then(JsonValue::as_str)
+        .unwrap_or("en")
+        .to_string();
+    let entities = external_rule_entities(&rule.matcher_value, &rule.matcher_config);
+    let score_threshold = rule
+        .matcher_config
+        .get("score_threshold")
+        .or_else(|| backend.config.get("score_threshold"))
+        .and_then(JsonValue::as_f64);
+
+    Some(ExternalRecognizerRule {
+        name: rule.name.clone(),
+        event_source: scope.and_then(|scope| scope.event_source.clone()),
+        event_type: scope.and_then(|scope| scope.event_type.clone()),
+        field_path: scope.and_then(|scope| scope.field_path.clone()),
+        endpoint_url: endpoint_url.to_string(),
+        language,
+        entities,
+        score_threshold,
+        strategy: db_row_to_strategy(&rule.action, rule.action_label.as_deref()),
+    })
+}
+
+fn external_rule_entities(matcher_value: &str, matcher_config: &JsonValue) -> Vec<String> {
+    let from_entities = matcher_config
+        .get("entities")
+        .and_then(JsonValue::as_array)
+        .map(|values| {
+            values
+                .iter()
+                .filter_map(JsonValue::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(ToOwned::to_owned)
+                .collect::<Vec<_>>()
+        });
+
+    if let Some(entities) = from_entities
+        && !entities.is_empty()
+    {
+        return entities;
+    }
+
+    matcher_config
+        .get("entity_type")
+        .and_then(JsonValue::as_str)
+        .or_else(|| {
+            let trimmed = matcher_value.trim();
+            (!trimmed.is_empty()).then_some(trimmed)
+        })
+        .map(|value| vec![value.to_string()])
+        .unwrap_or_default()
+}
+
 /// Convert a DB `action` string + optional `action_label` into a `Strategy`.
 fn db_row_to_strategy(action: &str, action_label: Option<&str>) -> Strategy {
     match action {
@@ -162,6 +363,11 @@ fn db_row_to_strategy(action: &str, action_label: Option<&str>) -> Strategy {
         "hash" => Strategy::Hash,
         "encrypt" => Strategy::Encrypt,
         "suppress" => Strategy::Suppress,
+        "mask" => Strategy::Mask {
+            char: Some('*'),
+            keep_prefix: Some(4),
+            keep_suffix: Some(4),
+        },
         other => {
             warn!(
                 action = other,
@@ -191,13 +397,33 @@ fn compile_rules(
     type ScopeKey = (Option<String>, Option<String>);
     type ScopeRules = Vec<(PatternRule, Option<String>)>;
     let mut scope_map: HashMap<ScopeKey, ScopeRules> = HashMap::new();
+    let mut external_rules = Vec::new();
 
     for loaded_rule in loaded {
         let rule = &loaded_rule.rule;
+        if matches!(
+            rule.matcher_type.as_str(),
+            "presidio_entity" | "presidio_analyzer" | "external"
+        ) {
+            if loaded_rule.scopes.is_empty() {
+                if let Some(external) = external_recognizer_rule(loaded_rule, None) {
+                    external_rules.push(external);
+                }
+            } else {
+                for scope in &loaded_rule.scopes {
+                    if let Some(external) = external_recognizer_rule(loaded_rule, Some(scope)) {
+                        external_rules.push(external);
+                    }
+                }
+            }
+            continue;
+        }
+
         let Some(matcher) = db_row_to_matcher(
             &rule.name,
             &rule.matcher_type,
             &rule.matcher_value,
+            &rule.matcher_config,
             rule.case_sensitive,
         ) else {
             continue;
@@ -257,7 +483,10 @@ fn compile_rules(
         });
     }
 
-    Ok(CompiledPolicyRuleSet { scopes })
+    Ok(CompiledPolicyRuleSet {
+        scopes,
+        external_rules,
+    })
 }
 
 // ─── PolicyEngine ────────────────────────────────────────────────────────────
@@ -271,6 +500,7 @@ pub struct PolicyEngine {
     rules: Arc<RwLock<CompiledPolicyRuleSet>>,
     last_refresh: Arc<tokio::sync::Mutex<Instant>>,
     refresh_interval: std::time::Duration,
+    http_client: reqwest::Client,
 }
 
 impl PolicyEngine {
@@ -294,6 +524,7 @@ impl PolicyEngine {
             rules: Arc::new(RwLock::new(compiled)),
             last_refresh: Arc::new(tokio::sync::Mutex::new(Instant::now())),
             refresh_interval: refresh_interval(),
+            http_client: recognizer_http_client()?,
         })
     }
 
@@ -305,6 +536,7 @@ impl PolicyEngine {
             rules: Arc::new(RwLock::new(CompiledPolicyRuleSet::empty())),
             last_refresh: Arc::new(tokio::sync::Mutex::new(Instant::now())),
             refresh_interval: std::time::Duration::from_secs(u64::MAX),
+            http_client: recognizer_http_client().unwrap_or_else(|_| reqwest::Client::new()),
         }
     }
 
@@ -347,16 +579,18 @@ impl PolicyEngine {
     /// through unchanged. Source events and derived events both flow through
     /// this path.
     ///
-    /// Failures in the policy engine are logged and treated as no-ops for the
-    /// affected event (fail-open at the rule level, not at the batch level).
+    /// Local rule compile failures are skipped at load time; configured
+    /// external-recognizer failures suppress the affected value so analyzer
+    /// outages do not persist unclassified sensitive text.
     pub async fn redact_batch(&self, mut batch: Vec<AdmittedEvent>) -> Vec<AdmittedEvent> {
         let rules = self.rules.read().await;
-        if rules.scopes.is_empty() {
+        if rules.scopes.is_empty() && rules.external_rules.is_empty() {
             return batch;
         }
 
         for admitted in &mut batch {
             apply_policy_to_event(&mut admitted.event, &rules);
+            apply_external_policy_to_event(&self.http_client, &mut admitted.event, &rules).await;
         }
         batch
     }
@@ -367,7 +601,7 @@ impl PolicyEngine {
     /// mutated value. On policy engine error, returns a metadata-only stub.
     pub async fn redact_json_value(&self, value: JsonValue) -> JsonValue {
         let rules = self.rules.read().await;
-        if rules.scopes.is_empty() {
+        if rules.scopes.is_empty() && rules.external_rules.is_empty() {
             return value;
         }
 
@@ -378,8 +612,23 @@ impl PolicyEngine {
                 result = apply_scoped_engine_to_json(result, scope);
             }
         }
+        for rule in &rules.external_rules {
+            if rule.event_source.is_none() && rule.event_type.is_none() {
+                result = apply_external_rule_to_json(&self.http_client, result, rule).await;
+            }
+        }
         result
     }
+}
+
+fn recognizer_http_client() -> Result<reqwest::Client> {
+    reqwest::Client::builder()
+        .timeout(Duration::from_secs(DEFAULT_RECOGNIZER_TIMEOUT_SECS))
+        .build()
+        .map_err(|e| {
+            SinexError::configuration("failed to build privacy recognizer HTTP client")
+                .with_std_error(&e)
+        })
 }
 
 // ─── Application logic ───────────────────────────────────────────────────────
@@ -408,18 +657,297 @@ fn apply_policy_to_event(event: &mut Event<JsonValue>, rules: &CompiledPolicyRul
     }
 }
 
+async fn apply_external_policy_to_event(
+    client: &reqwest::Client,
+    event: &mut Event<JsonValue>,
+    rules: &CompiledPolicyRuleSet,
+) {
+    let source = event.source.as_str();
+    let event_type = event.event_type.as_str();
+
+    for rule in &rules.external_rules {
+        let source_match = rule.event_source.as_deref().is_none_or(|s| s == source);
+        let type_match = rule.event_type.as_deref().is_none_or(|t| t == event_type);
+        if !source_match || !type_match {
+            continue;
+        }
+
+        event.payload = apply_external_rule_to_json(
+            client,
+            std::mem::replace(&mut event.payload, JsonValue::Null),
+            rule,
+        )
+        .await;
+    }
+}
+
+async fn apply_external_rule_to_json(
+    client: &reqwest::Client,
+    mut value: JsonValue,
+    rule: &ExternalRecognizerRule,
+) -> JsonValue {
+    if let Some(path) = &rule.field_path {
+        let pointer = field_path_pointer(path);
+        if let Some(original) = value
+            .pointer_mut(&pointer)
+            .map(|field_value| std::mem::replace(field_value, JsonValue::Null))
+        {
+            if let JsonValue::String(text) = original {
+                let replacement = apply_external_rule_to_string(client, &text, rule).await;
+                if let Some(field_value) = value.pointer_mut(&pointer) {
+                    *field_value = replacement;
+                }
+            } else if let Some(field_value) = value.pointer_mut(&pointer) {
+                *field_value = original;
+            }
+        }
+        return value;
+    }
+
+    let mut pointers = Vec::new();
+    collect_string_pointers(&value, String::new(), &mut pointers);
+
+    for pointer in pointers {
+        let Some(text) = value
+            .pointer(&pointer)
+            .and_then(JsonValue::as_str)
+            .map(ToOwned::to_owned)
+        else {
+            continue;
+        };
+        let replacement = apply_external_rule_to_string(client, &text, rule).await;
+        if let Some(field_value) = value.pointer_mut(&pointer) {
+            *field_value = replacement;
+        }
+    }
+
+    value
+}
+
+fn collect_string_pointers(value: &JsonValue, pointer: String, output: &mut Vec<String>) {
+    match value {
+        JsonValue::String(_) => output.push(pointer),
+        JsonValue::Array(values) => {
+            for (idx, child) in values.iter().enumerate() {
+                collect_string_pointers(child, format!("{pointer}/{idx}"), output);
+            }
+        }
+        JsonValue::Object(object) => {
+            for (key, child) in object {
+                collect_string_pointers(
+                    child,
+                    format!("{pointer}/{}", json_pointer_escape(key)),
+                    output,
+                );
+            }
+        }
+        _ => {}
+    }
+}
+
+async fn apply_external_rule_to_string(
+    client: &reqwest::Client,
+    text: &str,
+    rule: &ExternalRecognizerRule,
+) -> JsonValue {
+    if text.is_empty() {
+        return JsonValue::String(text.to_string());
+    }
+
+    let matches = match query_presidio(client, rule, text).await {
+        Ok(matches) => matches,
+        Err(error) => {
+            warn!(
+                rule = %rule.name,
+                endpoint = %rule.endpoint_url,
+                error = %error,
+                "external privacy recognizer failed; suppressing value"
+            );
+            return JsonValue::Null;
+        }
+    };
+
+    if matches.is_empty() {
+        return JsonValue::String(text.to_string());
+    }
+    if matches.iter().any(|m| m.start < m.end) && matches!(&rule.strategy, Strategy::Suppress) {
+        return JsonValue::Null;
+    }
+
+    JsonValue::String(replace_external_spans(text, &matches, rule))
+}
+
+#[derive(Debug, serde::Serialize)]
+struct PresidioAnalyzeRequest<'a> {
+    text: &'a str,
+    language: &'a str,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    entities: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    score_threshold: Option<f64>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct PresidioAnalyzeResponse {
+    start: usize,
+    end: usize,
+    #[allow(dead_code)]
+    entity_type: Option<String>,
+    #[allow(dead_code)]
+    score: Option<f64>,
+}
+
+async fn query_presidio(
+    client: &reqwest::Client,
+    rule: &ExternalRecognizerRule,
+    text: &str,
+) -> Result<Vec<PresidioAnalyzeResponse>> {
+    let request = PresidioAnalyzeRequest {
+        text,
+        language: &rule.language,
+        entities: rule.entities.clone(),
+        score_threshold: rule.score_threshold,
+    };
+    client
+        .post(&rule.endpoint_url)
+        .json(&request)
+        .send()
+        .await
+        .map_err(|e| {
+            SinexError::processing("external privacy recognizer request failed")
+                .with_context("rule", &rule.name)
+                .with_context("endpoint", &rule.endpoint_url)
+                .with_std_error(&e)
+        })?
+        .error_for_status()
+        .map_err(|e| {
+            SinexError::processing("external privacy recognizer returned an error status")
+                .with_context("rule", &rule.name)
+                .with_context("endpoint", &rule.endpoint_url)
+                .with_std_error(&e)
+        })?
+        .json::<Vec<PresidioAnalyzeResponse>>()
+        .await
+        .map_err(|e| {
+            SinexError::parse("external privacy recognizer response was not Presidio-compatible")
+                .with_context("rule", &rule.name)
+                .with_context("endpoint", &rule.endpoint_url)
+                .with_std_error(&e)
+        })
+}
+
+fn replace_external_spans(
+    text: &str,
+    matches: &[PresidioAnalyzeResponse],
+    rule: &ExternalRecognizerRule,
+) -> String {
+    let mut spans = matches
+        .iter()
+        .filter_map(|matched| {
+            let start = char_offset_to_byte_index(text, matched.start)?;
+            let end = char_offset_to_byte_index(text, matched.end)?;
+            (start < end && end <= text.len()).then_some((start, end))
+        })
+        .collect::<Vec<_>>();
+    spans.sort_unstable_by_key(|(start, end)| (*start, std::cmp::Reverse(*end)));
+
+    let mut output = String::with_capacity(text.len());
+    let mut cursor = 0;
+    let mut last_end = 0;
+    for (start, end) in spans {
+        if start < last_end {
+            continue;
+        }
+        output.push_str(&text[cursor..start]);
+        output.push_str(&external_replacement(&text[start..end], rule));
+        cursor = end;
+        last_end = end;
+    }
+    output.push_str(&text[cursor..]);
+    output
+}
+
+fn external_replacement(matched: &str, rule: &ExternalRecognizerRule) -> String {
+    match &rule.strategy {
+        Strategy::Redact { label } => label
+            .clone()
+            .unwrap_or_else(|| format!("<{}>", rule.name.to_uppercase())),
+        Strategy::Mask {
+            char,
+            keep_prefix,
+            keep_suffix,
+        } => mask_text(matched, *char, *keep_prefix, *keep_suffix),
+        Strategy::Hash | Strategy::Encrypt => cryptographic_external_replacement(matched, rule),
+        Strategy::Suppress => String::new(),
+    }
+}
+
+fn cryptographic_external_replacement(matched: &str, rule: &ExternalRecognizerRule) -> String {
+    let mut config = PrivacyConfig::default();
+    config.builtin_categories = CategorySet::None;
+    config.key.key_file = std::env::var(env_vars::PRIVACY_KEY_FILE).ok();
+    config.key.key_hex = std::env::var(env_vars::PRIVACY_KEY).ok();
+    config.extra_rules = vec![PatternRule {
+        name: rule.name.clone(),
+        description: "external recognizer span replacement".to_string(),
+        category: RuleCategory::Custom,
+        matcher: Matcher::Literal {
+            text: matched.to_string(),
+            case_sensitive: true,
+        },
+        strategy: rule.strategy.clone(),
+        contexts: Vec::new(),
+        enabled: true,
+    }];
+
+    PrivacyEngine::new(config)
+        .map(|engine| engine.process(matched, ProcessingContext::Document).text.into_owned())
+        .unwrap_or_else(|error| {
+            warn!(
+                rule = %rule.name,
+                %error,
+                "external privacy recognizer could not apply cryptographic strategy; redacting span"
+            );
+            format!("<{}>", rule.name.to_uppercase())
+        })
+}
+
+fn mask_text(
+    text: &str,
+    mask_char: Option<char>,
+    keep_prefix: Option<usize>,
+    keep_suffix: Option<usize>,
+) -> String {
+    let mask_char = mask_char.unwrap_or('*');
+    let keep_prefix = keep_prefix.unwrap_or(0);
+    let keep_suffix = keep_suffix.unwrap_or(0);
+    let chars = text.chars().collect::<Vec<_>>();
+    if chars.len() <= keep_prefix + keep_suffix {
+        return mask_char.to_string().repeat(chars.len());
+    }
+    let prefix = chars.iter().take(keep_prefix).collect::<String>();
+    let suffix = chars
+        .iter()
+        .skip(chars.len() - keep_suffix)
+        .collect::<String>();
+    let mask = mask_char
+        .to_string()
+        .repeat(chars.len() - keep_prefix - keep_suffix);
+    format!("{prefix}{mask}{suffix}")
+}
+
+fn char_offset_to_byte_index(text: &str, offset: usize) -> Option<usize> {
+    if offset == text.chars().count() {
+        return Some(text.len());
+    }
+    text.char_indices().nth(offset).map(|(index, _)| index)
+}
+
 /// Apply a scoped engine's rules to a JSON value.
 ///
-/// # Field-path scoping (v1 limitation)
-///
-/// When `field_paths` contains `Some(path)` entries, only the top-level keys
-/// matching `/key` (e.g. `field_path="/text"` → key `"text"`) are processed.
-/// All other fields are passed through unchanged. Nested JSON paths are NOT
-/// supported in v1 — they would require recursive pointer traversal which is
-/// deferred to a follow-up.
-///
-/// When `field_paths` contains `None` entries (global rule, no field scope),
-/// the engine walks the entire JSON tree via `process_json`.
+/// When `field_paths` contains `Some(path)` entries, paths are interpreted as
+/// JSON Pointers. Bare field names are treated as root keys. When
+/// `field_paths` contains `None` entries, the engine walks the entire JSON tree.
 fn apply_scoped_engine_to_json(value: JsonValue, scope: &ScopedEngine) -> JsonValue {
     // Determine if any rules in this scope apply to all fields (no field_path).
     let has_global_field_rule = scope.field_paths.iter().any(Option::is_none);
@@ -431,19 +959,12 @@ fn apply_scoped_engine_to_json(value: JsonValue, scope: &ScopedEngine) -> JsonVa
             .process_json(&value, ProcessingContext::Document);
     }
 
-    // Field-scoped rules: apply only to named top-level keys.
-    // v1 limitation: only top-level string fields are supported.
-    let mut obj = match value {
-        JsonValue::Object(obj) => obj,
-        other => return other,
-    };
+    let mut value = value;
 
-    for (idx, field_path) in scope.field_paths.iter().enumerate() {
-        let _ = idx; // suppress unused warning
+    for field_path in &scope.field_paths {
         if let Some(path) = field_path {
-            // Strip leading "/" to get the top-level key name.
-            let key = path.strip_prefix('/').unwrap_or(path.as_str());
-            if let Some(field_value) = obj.get_mut(key) {
+            let pointer = field_path_pointer(path);
+            if let Some(field_value) = value.pointer_mut(&pointer) {
                 let original = std::mem::replace(field_value, JsonValue::Null);
                 *field_value = scope
                     .engine
@@ -452,7 +973,21 @@ fn apply_scoped_engine_to_json(value: JsonValue, scope: &ScopedEngine) -> JsonVa
         }
     }
 
-    JsonValue::Object(obj)
+    value
+}
+
+fn field_path_pointer(path: &str) -> String {
+    if path.is_empty() {
+        return String::new();
+    }
+    if path.starts_with('/') {
+        return path.to_string();
+    }
+    format!("/{}", json_pointer_escape(path))
+}
+
+fn json_pointer_escape(segment: &str) -> String {
+    segment.replace('~', "~0").replace('/', "~1")
 }
 
 // ─── Tests ───────────────────────────────────────────────────────────────────
@@ -464,7 +999,7 @@ mod tests {
     //! Covers:
     //! - Rule loading from DB (`PrivacyPolicyRepository::load_enabled_rules`)
     //! - Action application: Redact (regex) / Suppress (literal) matchers
-    //! - Field-path scoping: rule scoped to top-level key
+    //! - Field-path scoping: rule scoped by JSON Pointer
     //! - Source-type scoping: rule applies only to matching `event_source`
     //! - Chokepoint: derived events also go through `redact_batch`
     //! - DLQ stub: `_raw_bytes_base64` absent from stub produced by `route_to_dlq`
@@ -645,7 +1180,7 @@ mod tests {
 
     // ─── Field-path scoping ───────────────────────────────────────────────────
 
-    /// v1 limitation: only top-level JSON keys are supported.
+    /// Field scopes use JSON Pointer semantics.
     #[sinex_test]
     async fn privacy_field_scoped_rule(ctx: TestContext) -> TestResult<()> {
         let pool = ctx.pool();

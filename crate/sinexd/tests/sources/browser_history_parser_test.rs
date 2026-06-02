@@ -12,7 +12,7 @@ use sinex_primitives::{
     rpc::sources::{CaveatSeverity, caveat_codes},
     temporal::Timestamp,
 };
-use sinexd::sources::sources::browser::history::BrowserHistoryParser;
+use sinexd::sources::source_units::browser::history::BrowserHistoryParser;
 
 fn test_ctx() -> ParserContext {
     ParserContext {
@@ -54,6 +54,24 @@ async fn qutebrowser_sqlite_payload_includes_source_file() {
     assert_eq!(
         intents[0].payload["source_file"],
         "primary/var/tmp/qutebrowser/history.sqlite"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn qutebrowser_sqlite_title_is_not_parser_redacted() {
+    let mut parser = BrowserHistoryParser;
+    let record = record_for(
+        br#"{"rowid":101,"url":"https://example.com","title":"KeePass - Database.kdbx","atime":1700000000,"redirect":0}"#,
+        "primary/var/tmp/qutebrowser/history.sqlite",
+    );
+
+    let intents = parser.parse_record(record, &test_ctx()).await.unwrap();
+
+    assert_eq!(intents.len(), 1);
+    assert_eq!(
+        intents[0].payload["title"],
+        "KeePass - Database.kdbx",
+        "browser title policy belongs to DB admission rules, not parser-local redaction"
     );
 }
 

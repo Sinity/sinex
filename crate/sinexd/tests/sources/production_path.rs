@@ -67,7 +67,7 @@ pub async fn _run_case(
     let mut initial_ingestion_verified = false;
     for &obligation in obligation_names {
         let result = if obligation == "privacy" && initial_ingestion_verified {
-            obligations::privacy::run_redaction_only(source_unit_id).await
+            obligations::privacy::run_metadata_only(source_unit_id).await
         } else {
             _run_obligation(
                 obligation,
@@ -174,7 +174,7 @@ async fn _run_case_with_record_fixture(
     let mut initial_ingestion_verified = false;
     for &obligation in obligation_names {
         let result = if obligation == "privacy" && initial_ingestion_verified {
-            run_record_fixture_privacy_redaction_only(source_unit_id, fixture.clone()).await
+            obligations::privacy::run_metadata_only(source_unit_id).await
         } else {
             _run_record_fixture_obligation(
                 obligation,
@@ -378,55 +378,7 @@ async fn run_record_fixture_privacy(
         .await
         .map_err(|e| format!("privacy/clean-path: {e}"))?;
 
-    run_record_fixture_privacy_redaction_only(source_unit_id, fixture).await
-}
-
-async fn run_record_fixture_privacy_redaction_only(
-    source_unit_id: &str,
-    fixture: RecordFixtureSpec<'_>,
-) -> Result<(), String> {
-    use sinex_primitives::privacy::{self, ProcessingContext};
-
-    let secret_text = "export TOKEN=ghp_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
-    let engine_result = privacy::engine()
-        .map_err(|e| format!("privacy engine init failed: {e}"))?
-        .process(secret_text, ProcessingContext::Command);
-
-    if !engine_result.any_matched() {
-        return Err(format!(
-            "privacy for '{source_unit_id}': privacy engine did not match decoy token"
-        ));
-    }
-
-    let redacted = engine_result.text.as_ref();
-    if redacted.contains("ghp_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA") {
-        return Err(format!(
-            "privacy for '{source_unit_id}': redacted text still contains decoy token"
-        ));
-    }
-
-    let material_id = sinex_primitives::Uuid::now_v7();
-    if let Ok(outcome) = dispatch_record_fixture_with_anchor(
-        source_unit_id,
-        redacted.as_bytes(),
-        fixture.anchor,
-        fixture.logical_path,
-        material_id,
-    )
-    .await
-    {
-        for event in &outcome.events {
-            let payload_str = event.payload.to_string();
-            if payload_str.contains("ghp_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA") {
-                return Err(format!(
-                    "privacy for '{source_unit_id}': event payload contains raw decoy token \
-                     after redaction. Payload: {payload_str}"
-                ));
-            }
-        }
-    }
-
-    Ok(())
+    obligations::privacy::run_metadata_only(source_unit_id).await
 }
 
 async fn dispatch_record_fixture_with_anchor(

@@ -150,9 +150,9 @@ them requires a new design document, not a "while we're here" PR.
   HTML, or any "rendered" view.
 - **LLM-based extraction.** No model calls anywhere in the parser.
 - **Bidirectional vault sync.** Read-only.
-- **Privacy policy beyond inheriting source-unit privacy tier.** The
-  parser runs the chunker output through `privacy::engine()` exactly once
-  (see **Privacy boundary**). It does not introduce new policy primitives.
+- **Privacy policy beyond inheriting source-unit privacy metadata.** The
+  parser emits document events with privacy context metadata. DB/user policy
+  owns admission and redaction at the event-engine chokepoint.
 - **Version diffing.** Re-extraction archives and replaces. No
   per-chunk diff is computed or stored.
 - **A `documents` query in the gateway.** v1 ships a single SQL helper for
@@ -290,33 +290,25 @@ during v1 operation.
 
 ## Privacy boundary
 
-Privacy redaction happens **once**, in the parser, **before chunking**.
-
-Both corpora go through `privacy::engine().process(text, context)` with the
-appropriate `ProcessingContext`:
-
-- Dendron markdown → `ProcessingContext::Document`
-- Terminal output → `ProcessingContext::Command`
+The parser does not run privacy policy. It emits `document.parsed` and
+`document.chunked` payloads with the source-unit/event metadata required by
+the event-engine policy layer. DB/user policy decides whether a field is
+redacted, encrypted, hashed, suppressed, or admitted unchanged.
 
 Implications:
 
-1. The chunk text stored in `core.document_chunks.text` is post-redaction.
-   This is the canonical text downstream consumers see.
-2. The byte offsets in `document.chunked.byte_offset_*` are into the
-   **post-redaction** text, not the raw source material. This matters for
-   replay (see below).
-3. Source bytes in `raw.source_material_registry` remain unredacted by
-   construction — the privacy policy applies at the derived boundary, not
-   at the material boundary, consistent with the model in the existing
-   document ingestor (`crate/nodes/sinex-document-ingestor/src/lib.rs:592-605`).
-4. The parser does not introduce new privacy strategies. It uses the
-   existing engine surface. v1 explicitly inherits source-unit privacy
-   tier; the AC item *"inheriting source-unit privacy tier"* maps directly
-   to "we run the engine with the source's normal context."
-5. If `privacy::engine()` errors, the parser fails the derived emit (no
-   document or chunks land). A redaction-broken document is not honest
-   output. This matches `redact_metadata` in
-   `crate/nodes/sinex-document-ingestor/src/lib.rs:665-674`.
+1. The chunk text produced by the parser is parsed text, not a parser-local
+   privacy view. Downstream consumers see the event-engine admitted payload.
+2. The byte offsets in `document.chunked.byte_offset_*` are into the parsed
+   text emitted by the parser. Policy-time redaction may change rendered text
+   length, so audit consumers must use source anchors and policy evidence
+   rather than treating post-policy strings as source offsets.
+3. Source bytes in `raw.source_material_registry` remain source material by
+   construction. Parser output is interpretation; policy admission is a
+   separate event-engine responsibility.
+4. The parser does not introduce privacy strategies or call a built-in engine.
+   v1 inherits source-unit privacy metadata so policy scopes can target the
+   emitted document events and fields.
 
 The Dendron source-anchor offsets (`source_anchor_start/end`) are
 pre-redaction byte offsets into the source file. They are stored so a v2

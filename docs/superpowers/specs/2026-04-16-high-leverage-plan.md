@@ -15,7 +15,7 @@
 | 4 (Lynchpin P1) | 5 | 2 | Calendar report, git capture hook |
 | 5 (Operational) | 6 | 2 | sinexctl verify, sinexctl explain |
 
-**Skipped (already existed):** replay e2e (30+ tests), concurrent ingestor+automaton (pipeline_end_to_end.rs), privacy middleware (already in AutomatonRuntime)
+**Skipped (already existed):** replay e2e (30+ tests), concurrent ingestor+automaton (pipeline_end_to_end.rs). The earlier "privacy middleware in AutomatonRuntime" note is superseded: derived outputs now flow through the DB/user policy admission chokepoint, not runtime-local filtering.
 
 **Remaining high-leverage:** embedding automaton, entity extractor, AI session ingestor, browser ingestor, self-observation persistence, DLQ consolidation, circuit breaker, Grafana
 
@@ -76,7 +76,7 @@
 | # | Item | Crate | Complexity | Unlocks |
 |---|------|-------|------------|---------|
 | 3.1 | Deploy session detector on live data: NixOS service, verify `activity.session.boundary` events | sinex-session-detector + nixos | 2h | Context restoration, day summaries |
-| 3.2 | Privacy middleware in AutomatonRuntime: run privacy engine on derived outputs | sinex-node-sdk | 3h | Safe derived events (currently inherits ingestor leaks) |
+| 3.2 | DB/user policy admission for derived outputs | sinexd event engine | 3h | Safe derived events through the same policy chokepoint as source events |
 | 3.3 | EmbeddingRepository: implement the repository trait for `core.event_embeddings` | sinex-db | 4h | Hybrid search, semantic queries |
 | 3.4 | Embedding automaton: process events → generate embeddings via local model | new crate: sinex-embedding-automaton | 8h | Semantic search across all events |
 | 3.5 | Hybrid search stored function: FTS + vector cosine similarity fusion | sinex-db + schema | 4h | `sinexctl query --semantic` |

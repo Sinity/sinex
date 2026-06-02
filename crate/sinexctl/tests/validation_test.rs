@@ -289,7 +289,7 @@ async fn mcp_search_events_call_uses_gateway_fixture() -> TestResult<()> {
     );
     assert_eq!(response["redaction"]["raw_samples"], false);
     assert!(
-        !response.to_string().contains("ghp_fixture_secret"),
+        !response.to_string().contains("secret_fixture_value"),
         "MCP event search leaked raw payload or snippet text"
     );
     Ok(())
@@ -321,7 +321,7 @@ async fn mcp_trace_lineage_call_uses_gateway_fixture() -> TestResult<()> {
     );
     assert_eq!(response["provenance_refs"], json!([]));
     assert!(
-        !response.to_string().contains("ghp_fixture_secret"),
+        !response.to_string().contains("secret_fixture_value"),
         "MCP lineage leaked raw payload or material metadata text"
     );
     Ok(())
@@ -354,7 +354,7 @@ async fn mcp_source_readiness_call_uses_gateway_fixture() -> TestResult<()> {
     assert_eq!(sources[0]["evidence"]["sample"], "[REDACTED]");
     assert_eq!(response["items"]["caveats"], "suppressed_by_request");
     assert!(
-        !response.to_string().contains("ghp_fixture_secret"),
+        !response.to_string().contains("secret_fixture_value"),
         "MCP fixture response leaked raw sensitive sample text"
     );
     Ok(())
@@ -516,7 +516,7 @@ async fn mcp_privacy_status_call_uses_gateway_fixture() -> TestResult<()> {
     );
     assert_eq!(response["redaction"]["raw_samples"], false);
     assert!(
-        !response.to_string().contains("ghp_fixture_secret"),
+        !response.to_string().contains("secret_fixture_value"),
         "MCP privacy status leaked raw sensitive sample text"
     );
     Ok(())
@@ -685,7 +685,7 @@ async fn mcp_documents_search_call_uses_gateway_fixture() -> TestResult<()> {
         "mcp_document_side_data_disabled"
     );
     assert!(
-        !response.to_string().contains("ghp_fixture_secret"),
+        !response.to_string().contains("secret_fixture_value"),
         "MCP document search leaked raw document text, headline, or side data"
     );
     Ok(())
@@ -711,7 +711,7 @@ async fn mcp_documents_get_call_uses_gateway_fixture() -> TestResult<()> {
         "mcp_document_side_data_disabled"
     );
     assert!(
-        !response.to_string().contains("ghp_fixture_secret"),
+        !response.to_string().contains("secret_fixture_value"),
         "MCP document get leaked raw document side data"
     );
     Ok(())
@@ -745,7 +745,7 @@ async fn mcp_documents_chunks_call_uses_redacted_gateway_fixture() -> TestResult
     );
     assert!(response["items"]["result"]["chunks"][0]["text"].is_null());
     assert!(
-        !response.to_string().contains("ghp_fixture_secret"),
+        !response.to_string().contains("secret_fixture_value"),
         "MCP document chunks leaked raw document chunk text"
     );
     Ok(())
@@ -1760,7 +1760,7 @@ async fn mount_mcp_gateway_fixture() -> MockServer {
                                 "to_material_id": fixture_material_id(),
                                 "relation_type": "fixture",
                                 "metadata": {
-                                    "raw_sample": "lineage ghp_fixture_secret should not leak"
+                                    "raw_sample": "lineage secret_fixture_value should not leak"
                                 },
                                 "created_at": "2026-05-18T12:00:00Z"
                             }
@@ -1947,14 +1947,14 @@ async fn mount_mcp_gateway_fixture() -> MockServer {
                             "kind": "markdown",
                             "natural_key": "notes/fixture.md",
                             "chunk_index": 0,
-                            "headline": "<mark>secret</mark> ghp_fixture_secret",
-                            "text": "full document ghp_fixture_secret should not leak",
+                            "headline": "<mark>secret</mark> secret_fixture_value",
+                            "text": "full document secret_fixture_value should not leak",
                             "score": 0.875,
                             "byte_offset_start": 0,
                             "byte_offset_end": 48,
                             "extraction_version": 1,
                             "side_data": {
-                                "sample": "side ghp_fixture_secret should not leak"
+                                "sample": "side secret_fixture_value should not leak"
                             },
                             "updated_at": "2026-05-19T11:45:00Z"
                         }
@@ -1969,7 +1969,7 @@ async fn mount_mcp_gateway_fixture() -> MockServer {
                     "chunk_count": 2,
                     "text_byte_len": 128,
                     "side_data": {
-                        "sample": "document side ghp_fixture_secret should not leak"
+                        "sample": "document side secret_fixture_value should not leak"
                     },
                     "created_at": "2026-05-19T11:00:00Z",
                     "updated_at": "2026-05-19T11:45:00Z"
@@ -2366,7 +2366,7 @@ async fn mount_mcp_gateway_fixture() -> MockServer {
                             "payload": {
                                 "prompt_id": "extract-entities",
                                 "version": "2026-05-19",
-                                "body_storage_ref": "prompt body ghp_fixture_secret should not leak"
+                                "body_storage_ref": "prompt body secret_fixture_value should not leak"
                             },
                             "ts_orig": "2026-05-19T12:00:00Z",
                             "host": "test-host",
@@ -2433,7 +2433,7 @@ async fn mount_mcp_gateway_fixture() -> MockServer {
                             "payload": {
                                 "proposal_kind": "entity_relation",
                                 "status": "pending",
-                                "candidate": "fixture relation ghp_fixture_secret should not leak"
+                                "candidate": "fixture relation secret_fixture_value should not leak"
                             },
                             "ts_orig": "2026-05-19T12:00:00Z",
                             "host": "test-host",
@@ -2493,7 +2493,7 @@ async fn mount_mcp_gateway_fixture() -> MockServer {
                         "status": "completed",
                         "timing_info_type": "point",
                         "metadata": {
-                            "secret_note": "ghp_fixture_secret should not leak"
+                            "secret_note": "secret_fixture_value should not leak"
                         },
                         "contract": null,
                         "temporal_evidence": {
@@ -2819,7 +2819,7 @@ fn fixture_event(event_id: &str) -> Value {
         "id": event_id,
         "source": "fixture",
         "event_type": "fixture.event",
-        "payload": { "summary": "raw lineage ghp_fixture_secret should not leak" },
+        "payload": { "summary": "raw lineage secret_fixture_value should not leak" },
         "ts_orig": "2026-05-18T12:00:00Z",
         "host": "test-host",
         "payload_schema_id": null,
@@ -2862,7 +2862,7 @@ fn fixture_sensitive_query_event() -> Value {
     };
     fields.insert(
         "snippet".to_string(),
-        json!("search snippet ghp_fixture_secret should not leak"),
+        json!("search snippet secret_fixture_value should not leak"),
     );
     event
 }

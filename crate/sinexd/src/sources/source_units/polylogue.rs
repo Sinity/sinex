@@ -8,7 +8,8 @@
 //! `{env}.sinex.events.raw.>` stream just like any other source.
 //!
 //! This module provides:
-//! - A typed [`PolylogueConversationIndexedPayload`] struct that matches the
+//! - A source-unit descriptor for the canonical
+//!   [`sinex_primitives::events::payloads::PolylogueConversationIndexedPayload`]
 //!   schema Polylogue publishes.
 //! - [`register_source_unit!`] and [`register_source_unit_binding!`] entries
 //!   so the source unit appears in the catalog and in `sinexctl sources list`.
@@ -50,39 +51,11 @@
 //! `(content_hash, conversation_id)` — the content hash detects changed
 //! conversations; the `conversation_id` provides the stable external key.
 
-use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
-use sinex_macros::EventPayload;
 use sinex_primitives::proof::{
     CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, RetentionPolicy, RuntimeShape,
     SourceUnitBinding, SourceUnitBuildImpact, SourceUnitDescriptor, SubjectRef,
 };
-use sinex_primitives::{Timestamp, register_source_unit, register_source_unit_binding};
-
-/// Payload published by the Polylogue daemon when a conversation is indexed.
-///
-/// Metadata-only: no raw chat text is included. Tags and titles may reflect
-/// personal context so the payload is classified as Sensitive.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
-#[event_payload(
-    source = "integration.polylogue",
-    event_type = "integration.polylogue.conversation_indexed"
-)]
-pub struct PolylogueConversationIndexedPayload {
-    pub conversation_id: String,
-    pub provider: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub title: Option<String>,
-    pub tags: Vec<String>,
-    pub content_hash: String,
-    pub created_at: Timestamp,
-    pub updated_at: Timestamp,
-    pub message_count: u64,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub cost_usd: Option<f64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub model_slug: Option<String>,
-}
+use sinex_primitives::{register_source_unit, register_source_unit_binding};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Source unit descriptor + binding
@@ -116,7 +89,7 @@ register_source_unit_binding! {
     .implementation("polylogue-daemon")
     .adapter("ExternalProducer")
     .output_event_type("integration.polylogue.conversation_indexed")
-    .privacy_context("Sensitive")
+    .privacy_context("Document")
     .material_policy("external_producer_virtual_material")
     .checkpoint_policy("external_producer")
     .resource_shape("nats_publisher")

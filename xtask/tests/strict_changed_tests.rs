@@ -134,6 +134,43 @@ async fn test_owning_package_ignores_workspace_only_manifest() -> ::xtask::sandb
 }
 
 // ============================================================================
+// owning_package — nested independent workspace (cargo-fuzz) is disowned
+// ============================================================================
+
+#[sinex_test]
+async fn test_owning_package_disowns_nested_workspace_crate() -> ::xtask::sandbox::TestResult<()> {
+    let tmp = scaffold_workspace()?;
+    let root = tmp.path();
+
+    // A `cargo-fuzz`-style crate nested under a member: it has BOTH a [package]
+    // section AND its own [workspace] table, marking it an independent workspace
+    // root excluded from the outer one. `cargo check -p <name>` would fail with
+    // "cannot specify features for packages outside of workspace", so the drift
+    // guard must not attribute its files to any outer package.
+    let fuzz = root.join("crate/alpha/fuzz");
+    fs::create_dir_all(fuzz.join("fuzz_targets"))?;
+    fs::write(
+        fuzz.join("Cargo.toml"),
+        "[package]\nname = \"alpha-fuzz\"\nversion = \"0.0.0\"\nedition = \"2024\"\n\n\
+         [package.metadata]\ncargo-fuzz = true\n\n[workspace]\n",
+    )?;
+    fs::write(
+        fuzz.join("fuzz_targets").join("fuzz_alpha.rs"),
+        "// fuzz target\n",
+    )?;
+
+    let pkg = owning_package(
+        Path::new("crate/alpha/fuzz/fuzz_targets/fuzz_alpha.rs"),
+        root,
+    );
+    assert!(
+        pkg.is_none(),
+        "files inside a nested independent workspace must be disowned, got {pkg:?}"
+    );
+    Ok(())
+}
+
+// ============================================================================
 // changed-file → package mapping: single file, no duplicates
 // ============================================================================
 

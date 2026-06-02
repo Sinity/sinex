@@ -11,10 +11,16 @@ use console::style;
 use serde::Serialize;
 use sinex_primitives::{DeploymentReadinessDescriptor, privacy::load_private_mode_state};
 use std::path::{Path, PathBuf};
+// Only the gated `deployment` submodule needs `Duration` (for DEPLOYMENT_READY_TIMEOUT).
+#[cfg(any(feature = "runtime-introspection", test))]
 use std::time::Duration;
 use walkdir::WalkDir;
 
+// Consumed only by the real `deployment` submodule, which is gated behind the
+// same cfg; without the gate these are dead code in the default (non-introspection) build.
+#[cfg(any(feature = "runtime-introspection", test))]
 const DEPLOYMENT_READY_TIMEOUT: Duration = Duration::from_secs(5);
+#[cfg(any(feature = "runtime-introspection", test))]
 const RECOMMENDED_INOTIFY_MAX_USER_WATCHES: u64 = 524_288;
 
 /// Probe developer-environment health and deployment readiness.

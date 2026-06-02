@@ -487,8 +487,8 @@ pub enum ParserError {
 
     Io(std::io::Error),
 
-    /// `SinexError` raised by code the parser calls (privacy engine, validators,
-    /// inner SDK helpers). Converted via `?` so parsers don't have to
+    /// `SinexError` raised by code the parser calls (validators, inner SDK
+    /// helpers). Converted via `?` so parsers don't have to
     /// `.map_err(|e| ParserError::Parse(e.to_string()))` everywhere.
     Sinex(crate::SinexError),
 
@@ -502,7 +502,6 @@ pub enum ParserError {
 
     Decode(String),
 
-    Privacy(String),
 }
 
 impl fmt::Display for ParserError {
@@ -518,7 +517,6 @@ impl fmt::Display for ParserError {
             Self::MaterialNotFound(message) => write!(f, "material not found: {message}"),
             Self::Field(message) => write!(f, "field error: {message}"),
             Self::Decode(message) => write!(f, "decode error: {message}"),
-            Self::Privacy(message) => write!(f, "privacy engine error: {message}"),
         }
     }
 }
@@ -767,21 +765,6 @@ pub struct ParsedEventIntent {
     /// Privacy processing context for this event.
     pub privacy_context: crate::privacy::ProcessingContext,
 
-    /// Per-field privacy decisions made during parsing.
-    ///
-    /// `None` for imperative parsers that don't populate it (the engine ran
-    /// at call sites the same way it always has). `Some(vec)` for parsers
-    /// authored via `#[derive(SourceRecord)]` or the YAML loader — the macro
-    /// emits one entry per privacy-relevant field. Consumed by #1072 audit
-    /// /export/redact CLI.
-    ///
-    /// Backward-compat: existing imperative parsers compile and behave
-    /// identically; the field is `Option`, default `None`,
-    /// `serde(skip_serializing_if = "Option::is_none")` so wire format is
-    /// unchanged when absent.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub field_privacy_log: Option<Vec<crate::privacy::FieldPrivacyDecision>>,
-
     /// Parent event IDs for derived provenance.
     ///
     /// `None` means this intent carries **material provenance** — it was
@@ -811,7 +794,7 @@ impl ParsedEventIntent {
     /// - Has `derived_parents = Some(vec![self.id])` pointing to `self`.
     /// - Has `event_source` and `event_type` taken from `P::SOURCE` /
     ///   `P::EVENT_TYPE` (the *new* payload, **not** the parent's types).
-    /// - Has `occurrence_key = None` and `field_privacy_log = None`.
+    /// - Has `occurrence_key = None`.
     ///
     /// # Errors
     ///
@@ -872,7 +855,6 @@ impl ParsedEventIntent {
             anchor: self.anchor.clone(),
             occurrence_key: None,
             privacy_context: self.privacy_context,
-            field_privacy_log: None,
             derived_parents: Some(vec![self.id]),
         })
     }
@@ -1023,7 +1005,6 @@ mod tests {
             anchor: MaterialAnchor::ByteRange { start: 0, len: 0 },
             occurrence_key: None,
             privacy_context: crate::privacy::ProcessingContext::Metadata,
-            field_privacy_log: None,
             derived_parents: None,
         }
     }

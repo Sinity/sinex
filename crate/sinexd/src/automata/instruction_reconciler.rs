@@ -15,7 +15,6 @@ use sinex_primitives::events::payloads::{
     InstructionExpectationStatus, InstructionExpectationStatusPayload,
     evaluate_hyprland_workspace_expectation,
 };
-use sinex_primitives::privacy::ProcessingContext;
 use sinex_primitives::proof::{
     CheckpointFamily as SuCheckpointFamily, Horizon as SuHorizon,
     OccurrenceIdentity as SuOccurrenceIdentity, PrivacyTier as SuPrivacyTier,
@@ -63,11 +62,6 @@ impl ScopeReconciler for InstructionExpectationReconciler {
     fn output_event_source(&self) -> &'static str {
         InstructionExpectationStatusPayload::SOURCE.as_static_str()
     }
-
-    fn output_privacy_context(&self) -> ProcessingContext {
-        ProcessingContext::Metadata
-    }
-
     fn input_provenance_filter(&self) -> InputProvenanceFilter {
         InputProvenanceFilter::Any
     }

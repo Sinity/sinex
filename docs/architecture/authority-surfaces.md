@@ -24,7 +24,7 @@ ad hoc SQL is authority duplication.
 | Runtime operation | gateway/`sinexctl` authenticated runtime commands | `sinexctl status`, `sinexctl replay`, `sinexctl lifecycle` | `xtask` as production control plane. |
 | Developer verification | `xtask` local/CI workflows | GitHub Actions, generated proof/catalog reports | Raw cargo invocations and one-off shell gates that bypass history. |
 | Source-unit declaration | `SourceUnitDescriptor` registrations | `docs/source-units.json`, proof catalog, Nix generated bindings | Parallel source lists maintained by hand. |
-| Privacy/admission policy | admission/privacy policy code at source and ingest boundaries | audit/export/delete CLI surfaces | Parsers that emit sensitive fields without declared privacy context. |
+| Privacy/admission policy | DB/user policy applied by the event-engine admission chokepoint | audit/export/delete CLI surfaces, source-record field metadata | Parser/source-unit/automaton code that redacts, suppresses, or classifies fields through its own policy. |
 | External integrations | integration authority records and adapter contracts | Polylogue/Lynchpin/hledger/task bridge docs | Treating external formats as ontology by convenience. |
 
 ## Rules

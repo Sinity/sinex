@@ -30,7 +30,6 @@ use sinex_primitives::domain::{
     EventSource, EventType, ProcessingMode, SanitizedPath, TriggerKind,
 };
 use sinex_primitives::events::{DynamicPayload, Event};
-use sinex_primitives::privacy::ProcessingContext;
 use sinex_primitives::temporal::Timestamp;
 use sinex_primitives::{HostName, Id, JsonValue, Uuid};
 use std::collections::HashMap;
@@ -70,11 +69,6 @@ impl Transducer for TestDerivedNode {
     fn output_event_type(&self) -> &'static str {
         "test.output"
     }
-
-    fn output_privacy_context(&self) -> ProcessingContext {
-        ProcessingContext::Metadata
-    }
-
     async fn process(
         &mut self,
         _state: &mut Self::State,
@@ -107,11 +101,6 @@ impl Transducer for WildcardMaterialOnlyNode {
     fn output_event_type(&self) -> &'static str {
         "ignored.output"
     }
-
-    fn output_privacy_context(&self) -> ProcessingContext {
-        ProcessingContext::Metadata
-    }
-
     async fn process(
         &mut self,
         state: &mut Self::State,
@@ -143,11 +132,6 @@ impl Transducer for RetryDerivedNode {
     fn output_event_type(&self) -> &'static str {
         "test.output"
     }
-
-    fn output_privacy_context(&self) -> ProcessingContext {
-        ProcessingContext::Metadata
-    }
-
     async fn process(
         &mut self,
         _state: &mut Self::State,
@@ -177,11 +161,6 @@ impl Transducer for EmittingDerivedNode {
     fn output_event_type(&self) -> &'static str {
         "test.output"
     }
-
-    fn output_privacy_context(&self) -> ProcessingContext {
-        ProcessingContext::Metadata
-    }
-
     async fn process(
         &mut self,
         _state: &mut Self::State,
@@ -226,11 +205,6 @@ impl Transducer for UnserializableDerivedNode {
     fn output_event_type(&self) -> &'static str {
         "test.output"
     }
-
-    fn output_privacy_context(&self) -> ProcessingContext {
-        ProcessingContext::Metadata
-    }
-
     async fn process(
         &mut self,
         _state: &mut Self::State,
@@ -273,11 +247,6 @@ impl ScopeReconciler for TestScopeReconcilerNode {
     fn output_event_type(&self) -> &'static str {
         "measurement.aggregate"
     }
-
-    fn output_privacy_context(&self) -> ProcessingContext {
-        ProcessingContext::Metadata
-    }
-
     fn scope_keys(&self, _input: &Self::Input, _context: &AutomatonContext) -> Vec<String> {
         vec!["default".into()]
     }
@@ -346,11 +315,6 @@ impl ScopeReconciler for StatefulInvalidationNode {
     fn output_event_type(&self) -> &'static str {
         "measurement.aggregate"
     }
-
-    fn output_privacy_context(&self) -> ProcessingContext {
-        ProcessingContext::Metadata
-    }
-
     fn scope_keys(&self, _input: &Self::Input, _context: &AutomatonContext) -> Vec<String> {
         vec!["default".into()]
     }
@@ -395,11 +359,6 @@ impl Transducer for DlqRetryDerivedNode {
     fn output_event_type(&self) -> &'static str {
         "test.output"
     }
-
-    fn output_privacy_context(&self) -> ProcessingContext {
-        ProcessingContext::Metadata
-    }
-
     async fn process(
         &mut self,
         _state: &mut Self::State,

@@ -660,8 +660,17 @@ fn validate_source_units(
     let payload_pairs = get_all_payloads()
         .map(|payload| (payload.source, payload.event_type))
         .collect::<BTreeSet<_>>();
+    let (live_binding_source_unit_ids, proposed_binding_source_unit_ids) =
+        binding_source_unit_id_sets();
     let invalid_output_event_pairs = source_units
         .iter()
+        .filter(|unit| {
+            !is_proposed_only_unit(
+                unit,
+                &live_binding_source_unit_ids,
+                &proposed_binding_source_unit_ids,
+            )
+        })
         .flat_map(|unit| {
             unit.output_event_types.iter().filter_map(|event_pair| {
                 let pair = (event_pair.source.as_str(), event_pair.event_type.as_str());
@@ -678,6 +687,11 @@ fn validate_source_units(
     let mut missing_output_event_pair_backing = Vec::new();
     let mut exempted_output_event_pair_backing = Vec::new();
     for unit in source_units {
+        let proposed_only = is_proposed_only_unit(
+            unit,
+            &live_binding_source_unit_ids,
+            &proposed_binding_source_unit_ids,
+        );
         let backed_pairs = static_emitter_event_pairs(&unit.id);
         let exemption = emitter_backing_exemption_reason(&unit.id);
         for event_pair in &unit.output_event_types {
@@ -686,15 +700,19 @@ fn validate_source_units(
                 unit.subject, event_pair.source, event_pair.event_type
             );
             let pair = (event_pair.source.as_str(), event_pair.event_type.as_str());
-            match (&backed_pairs, exemption) {
-                (Some(backed_pairs), _) if !backed_pairs.contains(&pair) => {
+            match (&backed_pairs, exemption, proposed_only) {
+                (Some(backed_pairs), _, _) if !backed_pairs.contains(&pair) => {
                     unbacked_output_event_pairs.push(formatted_pair);
                 }
-                (Some(_), _) => {}
-                (None, Some(reason)) => {
+                (Some(_), _, _) => {}
+                (None, Some(reason), _) => {
                     exempted_output_event_pair_backing.push(format!("{formatted_pair}: {reason}"));
                 }
-                (None, None) => {
+                (None, None, true) => {
+                    exempted_output_event_pair_backing
+                        .push(format!("{formatted_pair}: proposed binding has no runtime emitter yet"));
+                }
+                (None, None, false) => {
                     missing_output_event_pair_backing.push(formatted_pair);
                 }
             }
@@ -740,6 +758,33 @@ fn validate_source_units(
         unresolved_binding_source_unit_ids,
         stale_manifest,
     }
+}
+
+fn binding_source_unit_id_sets() -> (BTreeSet<&'static str>, BTreeSet<&'static str>) {
+    let mut live = BTreeSet::new();
+    let mut proposed = BTreeSet::new();
+
+    for binding in proof::source_unit_bindings() {
+        if binding.source_unit_id.is_empty() {
+            continue;
+        }
+        if binding.proposed {
+            proposed.insert(binding.source_unit_id);
+        } else {
+            live.insert(binding.source_unit_id);
+        }
+    }
+
+    (live, proposed)
+}
+
+fn is_proposed_only_unit(
+    unit: &SourceUnitDescriptor,
+    live_binding_source_unit_ids: &BTreeSet<&'static str>,
+    proposed_binding_source_unit_ids: &BTreeSet<&'static str>,
+) -> bool {
+    proposed_binding_source_unit_ids.contains(unit.id.as_str())
+        && !live_binding_source_unit_ids.contains(unit.id.as_str())
 }
 
 fn duplicates<'a>(values: impl Iterator<Item = &'a str>) -> Vec<String> {
@@ -804,6 +849,7 @@ fn runner_pack_binary(runner_pack: &str) -> Option<&'static str> {
         "fs" => Some("sinex-fs-ingestor"),
         "system" => Some("sinex-system-ingestor"),
         "terminal" => Some("sinex-terminal-ingestor"),
+        "live" | "staged" => Some("sinexd"),
         // Infra source units are embedded in every long-running sinex binary
         // (ingestd, gateway, node SDK) — there is no dedicated `sinex-infra`
         // binary. The descriptor exists so the (source, event_type) payload
@@ -841,6 +887,7 @@ fn static_emitter_event_pairs(
             ("clipboard", "clipboard.copied"),
             ("clipboard", "clipboard.selected"),
         ][..],
+        "desktop.notification" => &[("dbus", "notification.sent")][..],
         "desktop.window-manager" => &[
             ("wm.hyprland", "window.opened"),
             ("wm.hyprland", "window.closed"),

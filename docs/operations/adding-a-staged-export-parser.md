@@ -204,7 +204,6 @@ impl MaterialParser for <Provider>Parser {
 | `anchor` | See "Anchoring" below |
 | `occurrence_key` | `Some(OccurrenceKey { ... })` — see "Occurrence identity" |
 | `privacy_context` | `ProcessingContext::Document` for chat-like, `Metadata` for structured records |
-| `field_privacy_log` | `None` (defaults are fine) |
 | `derived_parents` | `None` (material provenance) |
 
 ### 4. Anchoring
@@ -376,7 +375,6 @@ FixtureSpec {
                 expected_fields: vec![("<field>".to_string(), "<value>".to_string())],
             },
             FixtureAssertion::PrivacyContext { expected: ProcessingContext::Document },
-            FixtureAssertion::FieldPrivacyLogPresent,
             FixtureAssertion::ParserMetadata {
                 parser_id: "<parser-id>".to_string(),
                 parser_version: "1.0.0".to_string(),
@@ -396,7 +394,6 @@ FixtureSpec {
         require_occurrence_identity: true,
         require_privacy_context: true,
         require_parser_metadata: true,
-        require_privacy_log_for_non_public: true,
     }),
     expect_no_intents: false,
     expect_error: false,

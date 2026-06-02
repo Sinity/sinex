@@ -915,7 +915,6 @@ fn privacy_context_token(name: &str) -> syn::Result<TokenStream> {
     Ok(match name {
         "Command" => quote!(Command),
         "Clipboard" => quote!(Clipboard),
-        "WindowTitle" => quote!(WindowTitle),
         "Journal" => quote!(Journal),
         "Dbus" => quote!(Dbus),
         "Notification" => quote!(Notification),
@@ -927,7 +926,7 @@ fn privacy_context_token(name: &str) -> syn::Result<TokenStream> {
                 proc_macro2::Literal::string(other),
                 format!(
                     "unknown privacy context '{other}'; expected one of: \
-                     Command, Clipboard, WindowTitle, Journal, Dbus, \
+                     Command, Clipboard, Journal, Dbus, \
                      Notification, Document, Metadata, SourceCapture"
                 ),
             ));

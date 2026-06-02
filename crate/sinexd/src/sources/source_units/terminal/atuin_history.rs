@@ -168,26 +168,9 @@ impl MaterialParser for AtuinHistoryParser {
             .and_then(sinex_primitives::JsonValue::as_i64)
             .unwrap_or(0);
 
-        // Apply privacy processing.
-        let command_processed = {
-            let result = sinex_primitives::privacy::engine()
-                .map_err(|e| ParserError::Parse(format!("privacy engine unavailable: {e}")))?
-                .process(&command_string, ProcessingContext::Command);
-            if result.suppressed {
-                return Ok(vec![]);
-            }
-            result.text.into_owned()
-        };
-        let cwd_processed = {
-            let result = sinex_primitives::privacy::engine()
-                .map_err(|e| ParserError::Parse(format!("privacy engine unavailable: {e}")))?
-                .process(&cwd_raw, ProcessingContext::Metadata);
-            result.text.into_owned()
-        };
-
-        let cwd = cwd_processed.into();
+        let cwd = cwd_raw.into();
         let payload_result = AtuinCommandExecutedPayload::from_raw_history(
-            command_processed,
+            command_string,
             cwd,
             exit_code,
             duration_ns,

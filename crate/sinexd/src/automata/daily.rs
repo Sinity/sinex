@@ -14,7 +14,6 @@ use sinex_primitives::events::{
     EventPayload,
     payloads::{ActivityDailySummaryPayload, ActivityHourlySummaryPayload},
 };
-use sinex_primitives::privacy::ProcessingContext;
 use sinex_primitives::temporal::{Duration, Timestamp};
 use std::collections::{BTreeMap, BTreeSet};
 use tracing::debug;
@@ -140,11 +139,6 @@ impl Windowed for DailySummarizer {
     fn input_provenance_filter(&self) -> InputProvenanceFilter {
         InputProvenanceFilter::SynthesizedOnly
     }
-
-    fn output_privacy_context(&self) -> ProcessingContext {
-        ProcessingContext::Metadata
-    }
-
     async fn accumulate(
         &mut self,
         state: &mut Self::State,

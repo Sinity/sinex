@@ -15,7 +15,7 @@
 //! - JSON / tab-separated / SQLite-row / CSV-row / raw-line input formats
 //! - Field extraction via JSON Pointer, column index, column name, raw line
 //! - Type coercion for string, integer, number, boolean, JSON
-//! - Per-field privacy via `privacy::process()` (records `FieldPrivacyDecision`)
+//! - Field-level privacy context hints for the event-engine policy layer
 //! - `#[suppress_if]` predicate (per-field or whole-event)
 //! - `#[required]` / `#[default]` / `#[skip]` semantics
 //! - `#[occurrence_key]` composite key construction
@@ -66,9 +66,8 @@ use crate::parser::{
     BindingConfig, OccurrenceKey, ParsedEventIntent, ParserContext, ParserId, SourceRecord,
     SourceUnitId, TimingConfidence, TimingEvidence,
 };
-use crate::privacy::{self, FieldPrivacyDecision, ProcessingContext};
+use crate::privacy::ProcessingContext;
 use serde::{Deserialize, Serialize};
-use std::borrow::Cow;
 use std::collections::BTreeMap;
 
 use crate::parser::ParserError;
@@ -214,8 +213,7 @@ pub struct FieldSpec {
     #[serde(default)]
     pub skip_payload: bool,
 
-    /// Privacy processing context. If set, the field's value runs through
-    /// `privacy::process()` before being placed in the payload.
+    /// Privacy context hint for downstream DB/user policy.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub privacy_context: Option<ProcessingContext>,
 
@@ -462,7 +460,6 @@ fn evaluate_inner(
     let decoded = decode_record(spec.input_format, record)?;
 
     let mut payload = serde_json::Map::new();
-    let mut field_privacy_log = Vec::new();
     let mut occurrence_fields: Vec<(String, String)> = Vec::new();
     let mut ts_override: Option<(Timestamp, String)> = None;
     let mut whole_event_suppressed = false;
@@ -526,36 +523,9 @@ fn evaluate_inner(
             None => false,
         };
 
-        // Privacy processing for fields with a declared context.
-        let final_value = if let Some(ctx_priv) = field.privacy_context {
-            if suppressed_by_predicate {
-                let mut decision =
-                    FieldPrivacyDecision::suppressed_by_predicate(&field.name, ctx_priv);
-                if let Some(pred) = &field.suppress_if
-                    && pred.whole_event
-                {
-                    decision = decision.into_whole_event_suppressor();
-                    whole_event_suppressed = true;
-                }
-                field_privacy_log.push(decision);
-                None
-            } else {
-                let value_str = value_as_string(&coerced);
-                let processed = privacy::process(&value_str, ctx_priv)
-                    .map_err(|e| ParserError::Privacy(e.to_string()))?;
-                let decision =
-                    FieldPrivacyDecision::from_processed(&field.name, ctx_priv, &processed);
-                field_privacy_log.push(decision);
-                if processed.suppressed {
-                    None
-                } else {
-                    Some(serde_json::Value::String(match processed.text {
-                        Cow::Borrowed(s) => s.to_string(),
-                        Cow::Owned(s) => s,
-                    }))
-                }
-            }
-        } else if suppressed_by_predicate {
+        // Privacy context is declarative metadata only. DB/user policy is
+        // applied later at the event-engine chokepoint.
+        let final_value = if suppressed_by_predicate {
             if let Some(pred) = &field.suppress_if
                 && pred.whole_event
             {
@@ -666,7 +636,6 @@ fn evaluate_inner(
             .anchor(record.anchor.clone())
             .maybe_occurrence_key(occurrence_key)
             .privacy_context(spec.default_privacy_context)
-            .field_privacy_log(field_privacy_log)
             .build(),
     ])
 }
@@ -957,7 +926,6 @@ mod tests {
         .unwrap();
         assert_eq!(intents.len(), 1);
         assert_eq!(intents[0].payload, serde_json::json!({}));
-        assert_eq!(intents[0].field_privacy_log, Some(vec![]));
         Ok(())
     }
 
@@ -1187,10 +1155,6 @@ mod tests {
         )
         .unwrap();
         assert!(intents[0].payload.get("command").is_none());
-        let log = intents[0].field_privacy_log.as_ref().unwrap();
-        assert_eq!(log.len(), 1);
-        assert!(log[0].suppressed);
-        assert!(!log[0].whole_event_suppressed);
         Ok(())
     }
 

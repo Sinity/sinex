@@ -42,7 +42,8 @@ pub use knowledge_graph::{
     EntityRelationRecord, EntityType, KnowledgeGraphRepository,
 };
 pub use privacy_policy::{
-    EncryptionKeyRecord, FieldRuleRecord, LoadedRule, PrivacyPolicyRepository, PrivacyRuleRecord,
+    DictionaryRecord, DictionaryTermRecord, EncryptionKeyRecord, FieldRuleRecord, LoadedRule,
+    PrivacyPolicyRepository, PrivacyRuleRecord, RecognizerBackendRecord,
 };
 pub use replay::ReplayRepository;
 pub use schema_cache::{CachedSchema, SchemaCacheRepository};

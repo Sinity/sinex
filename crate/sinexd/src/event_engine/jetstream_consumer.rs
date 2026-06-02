@@ -489,9 +489,9 @@ impl JetStreamConsumer {
         let js = jetstream::new(nats_client);
         let admission = AdmissionService::new(pool.clone(), Arc::clone(&validator));
 
-        // Initialize the policy engine with a noop (no DB rules loaded yet).
-        // Call `.with_policy_engine()` after construction to load from DB, or
-        // leave as noop for tests that don't need DB-backed policy.
+        // Initialize with an explicit noop for construction/tests. Production
+        // startup must call `.with_policy_engine()` and fail if DB policy cannot
+        // be loaded.
         let pool_clone = pool.clone();
         Self {
             js,
@@ -530,22 +530,16 @@ impl JetStreamConsumer {
     }
 
     /// Load DB-backed privacy policy and attach it to this consumer.
-    ///
-    /// Called by `IngestService` after construction. If loading fails, the
-    /// consumer falls back to the noop engine (no DB policy applied).
-    pub async fn with_policy_engine(mut self) -> Self {
-        match crate::event_engine::policy::PolicyEngine::load(self.pool.clone()).await {
-            Ok(engine) => {
-                self.policy_engine = Arc::new(engine);
-            }
-            Err(e) => {
-                warn!(
-                    error = %e,
-                    "Failed to load DB privacy policy; continuing without policy enforcement"
-                );
-            }
-        }
-        self
+    pub async fn with_policy_engine(mut self) -> IngestdResult<Self> {
+        let engine =
+            crate::event_engine::policy::PolicyEngine::load(self.pool.clone()).await.map_err(
+                |e| {
+                    SinexError::configuration("failed to load DB privacy policy at admission")
+                        .with_std_error(&e)
+                },
+            )?;
+        self.policy_engine = Arc::new(engine);
+        Ok(self)
     }
 
     /// Set the maximum duration `ts_orig` may exceed wall-clock time before DLQ routing.

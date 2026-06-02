@@ -5,7 +5,7 @@
 //!
 //! Adapter: `ClipboardPollingAdapter`
 //! Anchor: `StreamFrame` (monotonic change counter; no durable cursor)
-//! Privacy tier: `Secret` — content passes through `ProcessingContext::Clipboard`
+//! Privacy tier: `Secret` — content is emitted with `ProcessingContext::Clipboard`.
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -15,7 +15,7 @@ use sinex_primitives::parser::{
     InputShapeKind, ParsedEventIntent, ParserContext, ParserId, ParserManifest, SourceUnitId,
     TimingEvidence,
 };
-use sinex_primitives::privacy::{self, ProcessingContext};
+use sinex_primitives::privacy::ProcessingContext;
 use sinex_primitives::proof::{
     CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, RetentionPolicy, RuntimeShape,
     SourceUnitBinding, SourceUnitBuildImpact, SourceUnitDescriptor, SubjectRef,
@@ -44,7 +44,7 @@ register_source_unit! {
         retention: RetentionPolicy::Forever,
         proof_obligations: &[
             "anchor_stream_frame",
-            "clipboard_content_redacted",
+            "privacy_context_declared",
         ],
         occurrence_identity: OccurrenceIdentity::Anchor,
         access_policy: "target_runtime_bridge:clipboard",
@@ -109,10 +109,10 @@ impl Default for ClipboardParserConfig {
 /// Parses clipboard change records from a `ClipboardPollingAdapter`.
 ///
 /// Each record contains the raw clipboard text bytes. The parser:
-/// 1. Runs content through `ProcessingContext::Clipboard` redaction.
-/// 2. Computes a BLAKE3 content hash (included in payload for dedup).
-/// 3. Builds a preview (first `max_preview_length` chars of redacted content).
-/// 4. Emits a `clipboard.copied` intent (primary clipboard).
+/// 1. Decodes clipboard text bytes.
+/// 2. Builds a preview (first `max_preview_length` chars of raw content).
+/// 3. Emits a `clipboard.copied` intent (primary clipboard) with clipboard
+///    privacy context metadata.
 ///
 /// Selection (primary clipboard) vs copy (clipboard) distinction: the
 /// `ClipboardPollingAdapter` currently provides a single stream; the parser
@@ -144,7 +144,7 @@ impl MaterialParser for ClipboardParser {
             privacy_contexts: vec![ProcessingContext::Clipboard],
             proof_obligations: vec![
                 "anchor_stream_frame".into(),
-                "clipboard_content_redacted".into(),
+                "privacy_context_declared".into(),
             ],
             description: "Parses clipboard polling records into clipboard change events.".into(),
         }
@@ -163,21 +163,9 @@ impl MaterialParser for ClipboardParser {
             ParserError::Parse(format!("clipboard content is not valid UTF-8: {e}"))
         })?;
 
-        // Apply clipboard-tier privacy redaction.
-        let redacted_text = match privacy::engine() {
-            Ok(eng) => eng
-                .process(raw_text, ProcessingContext::Clipboard)
-                .text
-                .into_owned(),
-            Err(e) => {
-                return Err(ParserError::Privacy(format!(
-                    "privacy engine init failed: {e}"
-                )));
-            }
-        };
-
-        // Preview: first N characters of the redacted text.
-        let preview: String = redacted_text.chars().take(100).collect();
+        // Preview: first N characters of the raw text. Admission policy owns
+        // redaction/suppression for the stored payload.
+        let preview: String = raw_text.chars().take(100).collect();
 
         let ts_now = Timestamp::now();
 

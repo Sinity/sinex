@@ -233,7 +233,9 @@ pub(super) fn prepare_runtime_binaries_for_plan(
             requirement.package,
             requirement.binary,
         )?;
-        after.ensure_fresh()?;
+        if !runtime_binary_manifest_only_stale_after_build(&after) {
+            after.ensure_fresh()?;
+        }
         reports.push(serde_json::json!({
             "binary": after.binary_name,
             "package": after.package,
@@ -245,10 +247,61 @@ pub(super) fn prepare_runtime_binaries_for_plan(
     Ok(reports)
 }
 
+fn runtime_binary_manifest_only_stale_after_build(
+    report: &crate::sandbox::orchestrator::RuntimeBinaryFreshnessReport,
+) -> bool {
+    if report.status != crate::sandbox::orchestrator::RuntimeBinaryFreshnessStatus::Stale {
+        return false;
+    }
+
+    report
+        .newest_input_path
+        .as_deref()
+        .and_then(std::path::Path::file_name)
+        .is_some_and(|file_name| file_name == "Cargo.toml")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::sandbox::sinex_test;
+    use crate::sandbox::orchestrator::{
+        RuntimeBinaryFreshnessReport, RuntimeBinaryFreshnessStatus,
+    };
+    use std::path::PathBuf;
+    use std::time::SystemTime;
+
+    fn stale_runtime_report(newest_input_path: impl Into<PathBuf>) -> RuntimeBinaryFreshnessReport {
+        RuntimeBinaryFreshnessReport {
+            package: "sinexd".into(),
+            binary_name: "sinexd".into(),
+            binary_path: PathBuf::from("target/debug/sinexd"),
+            status: RuntimeBinaryFreshnessStatus::Stale,
+            binary_modified_at: Some(SystemTime::UNIX_EPOCH),
+            newest_input_path: Some(newest_input_path.into()),
+            newest_input_modified_at: Some(SystemTime::UNIX_EPOCH),
+            input_count: 1,
+            build_command: "xtask build -p sinexd".into(),
+        }
+    }
+
+    #[sinex_test]
+    async fn runtime_binary_manifest_stale_after_build_is_cargo_authoritative()
+    -> ::xtask::sandbox::TestResult<()> {
+        let report = stale_runtime_report("crate/sinexd/Cargo.toml");
+
+        assert!(runtime_binary_manifest_only_stale_after_build(&report));
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn runtime_binary_source_stale_after_build_still_blocks()
+    -> ::xtask::sandbox::TestResult<()> {
+        let report = stale_runtime_report("crate/sinexd/src/main.rs");
+
+        assert!(!runtime_binary_manifest_only_stale_after_build(&report));
+        Ok(())
+    }
 
     #[sinex_test]
     async fn test_resolve_nextest_execution_plan_prefers_explicit_packages()
