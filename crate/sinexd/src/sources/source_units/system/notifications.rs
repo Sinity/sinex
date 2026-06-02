@@ -55,8 +55,12 @@ impl MaterialParser for NotificationParser {
         let app_name = payload["app_name"].as_str().unwrap_or("");
         let summary = payload["summary"].as_str().unwrap_or("");
         let body = payload["body"].as_str().unwrap_or("");
-        let urgency = payload["urgency"].as_u64().unwrap_or_default();
-        let timeout = payload["timeout"].as_i64().unwrap_or_default();
+        // Match DbusNotificationSentPayload's concrete types (urgency: u8,
+        // timeout: i32) so out-of-range D-Bus values can't fail admission-time
+        // schema validation. D-Bus urgency is 0..=2; timeout is i32 ms (-1 = never).
+        let urgency = u8::try_from(payload["urgency"].as_u64().unwrap_or_default()).unwrap_or(u8::MAX);
+        let timeout =
+            i32::try_from(payload["timeout"].as_i64().unwrap_or_default()).unwrap_or(i32::MAX);
         let actions = payload["actions"]
             .as_array()
             .map(|actions| {

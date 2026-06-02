@@ -185,7 +185,20 @@ impl<'a> PrivacyPolicyRepository<'a> {
             }
 
             let backend = match rule.recognizer_backend_id {
-                Some(id) => Some(self.get_recognizer_backend(id).await?),
+                Some(id) => match self.get_recognizer_backend(id).await? {
+                    Some(backend) => Some(backend),
+                    // The backend was disabled or removed. The rule cannot run
+                    // without it, so skip just this rule rather than aborting
+                    // the entire policy load.
+                    None => {
+                        tracing::warn!(
+                            rule = %rule.name,
+                            backend_id = %id,
+                            "privacy rule references a disabled or missing recognizer backend; skipping rule"
+                        );
+                        continue;
+                    }
+                },
                 None => None,
             };
 
@@ -589,7 +602,14 @@ impl<'a> PrivacyPolicyRepository<'a> {
         })
     }
 
-    async fn get_recognizer_backend(&self, id: Uuid) -> DbResult<RecognizerBackendRecord> {
+    /// Look up an *enabled* recognizer backend by id. Returns `Ok(None)` when
+    /// the backend is disabled or absent — a disabled backend must not abort
+    /// policy loading; the referencing rule is skipped instead (see
+    /// `load_enabled_rules`). `Err` is reserved for real DB failures.
+    async fn get_recognizer_backend(
+        &self,
+        id: Uuid,
+    ) -> DbResult<Option<RecognizerBackendRecord>> {
         sqlx::query_as!(
             RecognizerBackendRecord,
             r#"
@@ -603,8 +623,7 @@ impl<'a> PrivacyPolicyRepository<'a> {
         .await
         .map_err(|e| {
             SinexError::database(format!("failed to load privacy recognizer backend: {e}"))
-        })?
-        .ok_or_else(|| SinexError::not_found(format!("privacy recognizer backend not found: {id}")))
+        })
     }
 
     /// Register a recognizer backend. The config is backend-specific JSON.

@@ -497,7 +497,10 @@ fn compile_rules(
 /// and shared (via `Arc`) if needed across concurrent tasks.
 pub struct PolicyEngine {
     pool: DbPool,
-    rules: Arc<RwLock<CompiledPolicyRuleSet>>,
+    // Inner `Arc` so readers snapshot the rule set and release the lock before
+    // awaiting external recognizers (a slow/hung HTTP analyzer must not block
+    // policy refresh or other readers).
+    rules: Arc<RwLock<Arc<CompiledPolicyRuleSet>>>,
     last_refresh: Arc<tokio::sync::Mutex<Instant>>,
     refresh_interval: std::time::Duration,
     http_client: reqwest::Client,
@@ -521,7 +524,7 @@ impl PolicyEngine {
         debug!(rule_count = loaded.len(), "Privacy policy loaded from DB");
         Ok(Self {
             pool,
-            rules: Arc::new(RwLock::new(compiled)),
+            rules: Arc::new(RwLock::new(Arc::new(compiled))),
             last_refresh: Arc::new(tokio::sync::Mutex::new(Instant::now())),
             refresh_interval: refresh_interval(),
             http_client: recognizer_http_client()?,
@@ -533,7 +536,7 @@ impl PolicyEngine {
     pub fn noop(pool: DbPool) -> Self {
         Self {
             pool,
-            rules: Arc::new(RwLock::new(CompiledPolicyRuleSet::empty())),
+            rules: Arc::new(RwLock::new(Arc::new(CompiledPolicyRuleSet::empty()))),
             last_refresh: Arc::new(tokio::sync::Mutex::new(Instant::now())),
             refresh_interval: std::time::Duration::from_secs(u64::MAX),
             http_client: recognizer_http_client().unwrap_or_else(|_| reqwest::Client::new()),
@@ -557,7 +560,7 @@ impl PolicyEngine {
                 match compile_rules(&loaded) {
                     Ok(compiled) => {
                         let mut rules = self.rules.write().await;
-                        *rules = compiled;
+                        *rules = Arc::new(compiled);
                         *last = Instant::now();
                         debug!(rule_count = count, "Privacy policy refreshed from DB");
                     }
@@ -583,7 +586,10 @@ impl PolicyEngine {
     /// external-recognizer failures suppress the affected value so analyzer
     /// outages do not persist unclassified sensitive text.
     pub async fn redact_batch(&self, mut batch: Vec<AdmittedEvent>) -> Vec<AdmittedEvent> {
-        let rules = self.rules.read().await;
+        // Snapshot the rule set (cheap Arc clone) and drop the read guard before
+        // the external-recognizer await below, so a slow analyzer never blocks
+        // policy refresh or other readers.
+        let rules = self.rules.read().await.clone();
         if rules.scopes.is_empty() && rules.external_rules.is_empty() {
             return batch;
         }
@@ -600,7 +606,8 @@ impl PolicyEngine {
     /// Applies all global rules (NULL source/type scope). Returns the possibly
     /// mutated value. On policy engine error, returns a metadata-only stub.
     pub async fn redact_json_value(&self, value: JsonValue) -> JsonValue {
-        let rules = self.rules.read().await;
+        // Snapshot (Arc clone) and release the lock before any external-recognizer await.
+        let rules = self.rules.read().await.clone();
         if rules.scopes.is_empty() && rules.external_rules.is_empty() {
             return value;
         }

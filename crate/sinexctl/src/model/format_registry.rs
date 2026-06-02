@@ -260,6 +260,10 @@ pub fn build() -> HashMap<&'static str, FormatCapability> {
         FormatCapability::single_shot(TABLE_JSON_YAML),
     );
     m.insert(
+        "privacy policy seed builtin",
+        FormatCapability::single_shot(TABLE_JSON_YAML),
+    );
+    m.insert(
         "privacy policy scope bind",
         FormatCapability::single_shot(TABLE_JSON_YAML),
     );

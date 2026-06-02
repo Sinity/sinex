@@ -55,3 +55,69 @@ async fn privacy_policy_seed_rules_are_idempotent_db_rows(ctx: TestContext) -> T
     assert_eq!(loaded[0].rule.matcher_config["seed_source"], "test_catalog");
     Ok(())
 }
+
+/// A rule that references a *disabled* recognizer backend must be skipped
+/// during load, not abort the whole policy. Regression for the case where one
+/// disabled backend would otherwise take down all DB-backed privacy policy.
+#[sinex_test]
+async fn disabled_backend_skips_rule_without_aborting_load(ctx: TestContext) -> TestResult<()> {
+    let pool = ctx.pool();
+    let repo = pool.privacy_policy();
+
+    // A disabled recognizer backend.
+    let backend_id = repo
+        .add_recognizer_backend(
+            "disabled-presidio",
+            "presidio",
+            Some("http://127.0.0.1:9/analyze"),
+            json!({}),
+            false,
+        )
+        .await?;
+
+    // An enabled rule that depends on the disabled backend (defaults to enabled).
+    repo.add_recognizer_rule(
+        "rule-needs-disabled-backend",
+        "depends on a disabled backend",
+        "presidio_entity",
+        "PERSON",
+        json!({ "entities": ["PERSON"] }),
+        Some(backend_id),
+        "presidio_entity",
+        false,
+        "redact",
+        Some("<X>"),
+        "default",
+    )
+    .await?;
+
+    // An independent enabled global regex rule that must survive the load.
+    repo.add_rule(
+        "rule-survivor",
+        "independent rule",
+        "regex",
+        r"SURVIVE_\w+",
+        false,
+        "redact",
+        Some("<S>"),
+        "default",
+    )
+    .await?;
+    repo.bind_field_rule("rule-survivor", None, None, None, 0)
+        .await?;
+
+    // Before the fix this returned a `not_found` error on the disabled backend
+    // and aborted the entire load. It must now succeed.
+    let loaded = repo.load_enabled_rules().await?;
+    assert!(
+        loaded.iter().any(|r| r.rule.name == "rule-survivor"),
+        "independent rule must still load when an unrelated rule's backend is disabled"
+    );
+    assert!(
+        loaded
+            .iter()
+            .all(|r| r.rule.name != "rule-needs-disabled-backend"),
+        "rule referencing a disabled backend must be skipped, not abort the load"
+    );
+    Ok(())
+}
