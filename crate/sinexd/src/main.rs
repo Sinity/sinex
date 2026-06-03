@@ -15,8 +15,10 @@ static GLOBAL: MiMalloc = MiMalloc;
 
 use clap::{Parser, Subcommand};
 use sinexd::api::config::GatewayConfig;
+use sinexd::api::rpc_server;
+use sinexd::api::service_container::ServiceContainer;
 use sinexd::event_engine::IngestdConfig;
-use sinexd::node_sdk::service_runtime::{TracingFormat, install_tracing};
+use sinexd::node_sdk::service_runtime::{TracingFormat, install_tracing, spawn_shutdown_task};
 use sinexd::sources::bindings::{self as source_bindings, SourceBinding};
 use sinexd::supervisor::Supervisor;
 use std::collections::HashMap;
@@ -63,6 +65,23 @@ struct Cli {
 enum Command {
     /// Run the long-lived supervisor (default).
     Serve,
+
+    /// Run only the operator API / RPC gateway (no event engine, automata, or
+    /// source bindings).
+    ///
+    /// The post-fold equivalent of the deleted `sinex-gateway rpc-server`.
+    /// Used by the sandbox `TestCoreStack` fixture to run the gateway as a
+    /// standalone TLS subprocess on a known port.
+    RpcServer {
+        /// TCP listen address in `host:port` form (overrides config / env).
+        #[arg(long)]
+        tcp_listen: Option<String>,
+
+        /// Allowed CORS origins (comma-separated). If unset, only localhost
+        /// origins are permitted.
+        #[arg(long)]
+        cors_origins: Option<String>,
+    },
 
     /// Run a single source unit to completion against the given subcommand.
     ///
@@ -124,9 +143,19 @@ async fn main() -> color_eyre::Result<()> {
     };
     install_tracing(tracing_format, &cli.log_level)?;
 
+    // Install the process-global rustls crypto provider before any subsystem
+    // builds a reqwest/rustls client (gateway clients, the event-engine privacy
+    // recognizer HTTP client, etc.). reqwest is compiled with
+    // `rustls-no-provider`, so the first client built without this panics.
+    rpc_server::ensure_rustls_crypto_provider()?;
+
     let command = cli.command.take().unwrap_or(Command::Serve);
     match command {
         Command::Serve => serve(&cli).await,
+        Command::RpcServer {
+            tcp_listen,
+            cors_origins,
+        } => rpc_server_serve(&cli, tcp_listen, cors_origins).await,
         Command::ScanSourceUnit {
             source_unit,
             service_name,
@@ -169,9 +198,42 @@ async fn serve(cli: &Cli) -> color_eyre::Result<()> {
         None => GatewayConfig::load(),
     }?;
 
-    Supervisor::new()
-        .run(event_engine_config, api_config)
-        .await?;
+    // The API is enabled by default. Engine-only deployments (e.g. the sandbox
+    // ingestd fixture, which runs the gateway as a separate TLS subprocess)
+    // opt out via `SINEX_API_ENABLED=false` so the supervisor does not try to
+    // bind the TLS-required gateway and tear the daemon down.
+    let supervisor = Supervisor {
+        event_engine_enabled: true,
+        api_enabled: api_enabled_from_env(),
+    };
+    supervisor.run(event_engine_config, api_config).await?;
+
+    Ok(())
+}
+
+/// Read the `SINEX_API_ENABLED` toggle (default `true`).
+fn api_enabled_from_env() -> bool {
+    match std::env::var("SINEX_API_ENABLED") {
+        Ok(value) => !matches!(value.trim(), "0" | "false" | "no" | "off"),
+        Err(_) => true,
+    }
+}
+
+/// Run only the operator API / RPC gateway as a standalone process.
+async fn rpc_server_serve(
+    cli: &Cli,
+    tcp_listen: Option<String>,
+    cors_origins: Option<String>,
+) -> color_eyre::Result<()> {
+    let config = match cli.database_url.as_ref() {
+        Some(url) => GatewayConfig::load_with_database_url(url.clone()),
+        None => GatewayConfig::load(),
+    }?
+    .with_cli_overrides(None, tcp_listen, cors_origins);
+
+    let services = ServiceContainer::new(&config).await?;
+    let shutdown_rx = spawn_shutdown_task("sinexd-rpc-server");
+    rpc_server::run(&config, services, shutdown_rx).await?;
 
     Ok(())
 }
