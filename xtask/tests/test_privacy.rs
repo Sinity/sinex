@@ -186,9 +186,13 @@ async fn test_process_clean_input() -> Result<()> {
 async fn test_process_sensitive_input_github_token() -> Result<()> {
     let cmd = PrivacyCommand {
         subcommand: PrivacySubcommand::Test {
-            input: ["export TOKEN=", "ghp_", "ABCDEFghijklmnopqrstuvwxyz1234567890"]
-                .concat()
-                .into(),
+            input: [
+                "export TOKEN=",
+                "ghp_",
+                "ABCDEFghijklmnopqrstuvwxyz1234567890",
+            ]
+            .concat()
+            .into(),
             context: "command".into(),
         },
     };
@@ -206,8 +210,7 @@ async fn test_process_sensitive_input_github_token() -> Result<()> {
             processed.contains("<GITHUB_TOKEN>") || processed.contains("<REDACTED>"),
             "Expected redaction marker in: {processed}"
         );
-        let token_fixture =
-            ["ghp_", "ABCDEFghijklmnopqrstuvwxyz1234567890"].concat();
+        let token_fixture = ["ghp_", "ABCDEFghijklmnopqrstuvwxyz1234567890"].concat();
         assert!(
             !processed.contains(&token_fixture),
             "Token should not appear in processed output"

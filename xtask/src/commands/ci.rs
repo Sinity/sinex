@@ -813,7 +813,9 @@ fn check_schema_contract_guard(old_json_str: &str, new_json_str: &str) -> Result
         // 2. Type change.
         let old_type = old_prop.get("type");
         let new_type = new_prop.get("type");
-        if let (Some(old_type), Some(new_type)) = (old_type, new_type) && old_type != new_type {
+        if let (Some(old_type), Some(new_type)) = (old_type, new_type)
+            && old_type != new_type
+        {
             eprintln!("  Breaking: field '{field}' type changed from {old_type} to {new_type}");
             ok = false;
         }

@@ -1257,10 +1257,8 @@ fn observe_restored_target(
     let manifest_private_mode_state_present = expected_private_mode_state_present(manifest)
         .unwrap_or_else(|| archive_path_contains(archive_entries, "state/private-mode/state.json"));
     let source_unit_ids_match = source_unit_ids == manifest.source_unit_ids;
-    let postgres_row_counts_match = expected_postgres_row_counts.map(|expected| {
-        postgres_row_counts
-            .is_some_and(|observed| observed == &expected)
-    });
+    let postgres_row_counts_match = expected_postgres_row_counts
+        .map(|expected| postgres_row_counts.is_some_and(|observed| observed == &expected));
     let nats_member_paths_match = expected_nats_member_paths.map(|expected| {
         nats_member_paths
             .as_ref()

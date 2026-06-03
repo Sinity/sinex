@@ -664,8 +664,8 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn builtin_seed_projection_is_explicit_db_policy_data()
-    -> ::xtask::sandbox::TestResult<()> {
+    async fn builtin_seed_projection_is_explicit_db_policy_data() -> ::xtask::sandbox::TestResult<()>
+    {
         let rules = builtin_policy_seed_rules(false);
         let aws = rules
             .iter()

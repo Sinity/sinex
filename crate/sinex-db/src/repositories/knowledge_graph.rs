@@ -617,8 +617,7 @@ impl KnowledgeGraphRepository<'_> {
             ));
         }
 
-        let merge_result =
-            apply_entity_merge(&mut tx, &source, &target).await?;
+        let merge_result = apply_entity_merge(&mut tx, &source, &target).await?;
 
         rewire_entity_relations(&mut tx, source.id.as_uuid(), target.id.as_uuid()).await?;
 
@@ -630,7 +629,6 @@ impl KnowledgeGraphRepository<'_> {
 
         Ok(())
     }
-
 
     /// Create a new entity relation
     pub async fn create_relation(
@@ -995,8 +993,7 @@ async fn apply_entity_merge(
     let (merged_aliases, aliases_added) = merge_aliases(target, source);
     let (merged_properties, conflicts) =
         merge_json_values(target.properties.clone(), &source.properties);
-    let (merged_source_event_ids, source_event_ids_added) =
-        merge_source_event_ids(target, source);
+    let (merged_source_event_ids, source_event_ids_added) = merge_source_event_ids(target, source);
     let merged_confidence = target.confidence_score.max(source.confidence_score);
     let merged_created_at = if source.created_at < target.created_at {
         source.created_at
@@ -1083,7 +1080,12 @@ async fn rewire_entity_relations(
     )
     .execute(&mut **tx)
     .await
-    .map_err(|e| db_error(e, "merge outgoing relation source_event_ids before deduplication"))?;
+    .map_err(|e| {
+        db_error(
+            e,
+            "merge outgoing relation source_event_ids before deduplication",
+        )
+    })?;
 
     // 1b. Delete the now-redundant outgoing duplicates from source.
     sqlx::query!(
@@ -1137,7 +1139,12 @@ async fn rewire_entity_relations(
     )
     .execute(&mut **tx)
     .await
-    .map_err(|e| db_error(e, "merge incoming relation source_event_ids before deduplication"))?;
+    .map_err(|e| {
+        db_error(
+            e,
+            "merge incoming relation source_event_ids before deduplication",
+        )
+    })?;
 
     // 2b. Delete the now-redundant incoming duplicates pointing at source.
     sqlx::query!(

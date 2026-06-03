@@ -6,6 +6,7 @@ use clap::{Args, Subcommand};
 use color_eyre::Result;
 use color_eyre::eyre::eyre;
 use serde::Serialize;
+use sinex_primitives::Uuid;
 use sinex_primitives::domain::{EventSource, EventType};
 use sinex_primitives::events::Provenance;
 use sinex_primitives::privacy::{PrivateModeReasonClass, RuntimePrivateModeState};
@@ -16,14 +17,14 @@ use sinex_primitives::rpc::dlq::DlqListResponse;
 use sinex_primitives::rpc::privacy::{
     PrivacyPolicyBackendAddRequest, PrivacyPolicyDictionaryAddRequest, PrivacyPolicyListResponse,
     PrivacyPolicyMutationResponse, PrivacyPolicyRule, PrivacyPolicyRuleAddRequest,
-    PrivacyPolicyScopeBindRequest, PrivacyPolicySeedBuiltinRequest, PrivacyPolicySeedBuiltinResponse,
+    PrivacyPolicyScopeBindRequest, PrivacyPolicySeedBuiltinRequest,
+    PrivacyPolicySeedBuiltinResponse,
 };
 use sinex_primitives::rpc::sources::{
     CaveatSeverity, SourceCaveat, SourceReadiness, SourceReadinessStatus,
     SourcesReadinessListRequest, SourcesReadinessListResponse,
 };
 use sinex_primitives::temporal::Timestamp;
-use sinex_primitives::Uuid;
 use std::path::PathBuf;
 
 use crate::validation::parse_time_input;
@@ -476,7 +477,9 @@ impl PolicyListArgs {
 
 impl PolicyBackendAddArgs {
     async fn execute(&self, client: &GatewayClient, format: OutputFormat) -> Result<()> {
-        let response = client.privacy_policy_backend_add(self.to_request()?).await?;
+        let response = client
+            .privacy_policy_backend_add(self.to_request()?)
+            .await?;
         CommandOutput::single(response, format_privacy_policy_mutation).display(&format)?;
         Ok(())
     }
@@ -496,7 +499,9 @@ impl PolicyBackendAddArgs {
 
 impl PolicyDictionaryAddArgs {
     async fn execute(&self, client: &GatewayClient, format: OutputFormat) -> Result<()> {
-        let response = client.privacy_policy_dictionary_add(self.to_request()).await?;
+        let response = client
+            .privacy_policy_dictionary_add(self.to_request())
+            .await?;
         CommandOutput::single(response, format_privacy_policy_mutation).display(&format)?;
         Ok(())
     }
@@ -1464,14 +1469,20 @@ mod tests {
         assert_eq!(request.description, "project deny-list");
         assert_eq!(request.language.as_deref(), Some("en"));
         assert_eq!(request.source_kind, "user");
-        assert_eq!(request.tags, vec!["project".to_string(), "local".to_string()]);
-        assert_eq!(request.terms, vec!["sinex".to_string(), "sinity".to_string()]);
+        assert_eq!(
+            request.tags,
+            vec!["project".to_string(), "local".to_string()]
+        );
+        assert_eq!(
+            request.terms,
+            vec!["sinex".to_string(), "sinity".to_string()]
+        );
         Ok(())
     }
 
     #[sinex_test]
-    async fn privacy_policy_scope_bind_preserves_field_hint_scope()
-    -> xtask::sandbox::TestResult<()> {
+    async fn privacy_policy_scope_bind_preserves_field_hint_scope() -> xtask::sandbox::TestResult<()>
+    {
         let args = PolicyScopeBindArgs {
             rule_name: "window-title-sensitive".to_string(),
             event_source: Some("desktop".to_string()),

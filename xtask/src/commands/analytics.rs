@@ -107,7 +107,9 @@ impl XtaskCommand for AnalyticsCommand {
             limit,
         } = sub
         {
-            return Ok(execute_pressure(*observe, *top_io, *sample_ms, since, duration, *limit, ctx));
+            return Ok(execute_pressure(
+                *observe, *top_io, *sample_ms, since, duration, *limit, ctx,
+            ));
         }
         ctx.try_with_history_db_query(|db| {
             let analysis = HistoryAnalysis::new(db);

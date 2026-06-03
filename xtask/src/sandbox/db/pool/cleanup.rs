@@ -40,17 +40,38 @@ async fn release_advisory_lock(
         .await
         {
             Ok(Ok(_)) => {
-                slog!(Level::Debug, "lock_released", slot = slot_name, lock_id = lock_id);
+                slog!(
+                    Level::Debug,
+                    "lock_released",
+                    slot = slot_name,
+                    lock_id = lock_id
+                );
             }
             Ok(Err(e)) => {
-                slog!(Level::Warn, "lock_release_failed", slot = slot_name, lock_id = lock_id, error = e);
+                slog!(
+                    Level::Warn,
+                    "lock_release_failed",
+                    slot = slot_name,
+                    lock_id = lock_id,
+                    error = e
+                );
             }
             Err(_) => {
-                slog!(Level::Warn, "lock_release_timeout", slot = slot_name, lock_id = lock_id);
+                slog!(
+                    Level::Warn,
+                    "lock_release_timeout",
+                    slot = slot_name,
+                    lock_id = lock_id
+                );
             }
         }
     } else {
-        slog!(Level::Warn, "lock_conn_missing", slot = slot_name, lock_id = lock_id);
+        slog!(
+            Level::Warn,
+            "lock_conn_missing",
+            slot = slot_name,
+            lock_id = lock_id
+        );
     }
 }
 
