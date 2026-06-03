@@ -2,11 +2,11 @@
 
 use crate::JsonValue;
 use crate::events::{
-    Event,
+    Event, SourceMaterial,
     payloads::{CurationFinalizedPayload, CurationJudgmentPayload},
 };
 use crate::query::EventQueryResult;
-use crate::{Timestamp, Uuid};
+use crate::{Id, Timestamp, Uuid};
 
 use serde::{Deserialize, Serialize};
 
@@ -147,8 +147,8 @@ pub struct CurationDuplicateCandidateCluster {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CurationDuplicateCandidateEvent {
-    pub event_id: Uuid,
-    pub source_material_id: Uuid,
+    pub event_id: Id<Event>,
+    pub source_material_id: Id<SourceMaterial>,
     pub ts_orig: Timestamp,
 }
 
