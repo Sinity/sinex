@@ -11,19 +11,22 @@ rule:
     - pattern: "sinex_primitives::Provenance::Material { $$$ }"
     - pattern: "sinex_primitives::Provenance::Derived { $$$ }"
 ignores:
+  # Paths are post-fold (#1559): sinex-primitives/db flattened out of
+  # crate/lib; node-sdk folded into crate/sinexd/src/node_sdk; the CLI crate is
+  # crate/sinexctl. ast-grep flags only construction expressions, not match-arm
+  # destructuring, so the live set below is the actual construction-site list.
+  #
   # The defining crate owns the constructors; the literals here implement them.
-  - "crate/lib/sinex-primitives/**"
+  - "crate/sinex-primitives/**"
   # Reconstruction of an already-validated XOR shape from a wire/DB row.
   # The DB CHECK constraint and JetStream schema enforce XOR upstream;
   # these sites preserve `offset_kind` and `operation_id` from a trusted
   # frame, which the safe constructors don't accept (yet — see issue #559
   # follow-up for an explicit `material_from_wire` / `derived_from_wire`
   # constructor surface).
-  - "crate/lib/sinex-db/src/repositories/events/conversions.rs"
-  - "crate/lib/sinex-node-sdk/src/runtime/stream/mod.rs"
-  - "crate/lib/sinex-node-sdk/src/runtime/stream/runner/provisional.rs"
-  - "crate/lib/sinex-node-sdk/src/derived_node/adapter/output.rs"
-  - "crate/lib/sinex-node-sdk/src/derived_node/adapter.rs"
+  - "crate/sinex-db/src/repositories/events/conversions.rs"
+  - "crate/sinexd/src/node_sdk/runtime/stream/runner/provisional.rs"
+  - "crate/sinexd/src/node_sdk/derived_node/adapter/output.rs"
   # Tests and test infrastructure legitimately construct events with arbitrary
   # provenance shapes for failure injection and fixture builders. Production
   # paths must go through the typed builder methods.
@@ -36,13 +39,8 @@ ignores:
   # we ignore the file. New production code in these files must still use
   # `Provenance::from_material()` / `from_derived()` — reviewers are the
   # backstop here.
-  - "crate/nodes/sinex-system-ingestor/src/unified_node.rs"
-  - "crate/nodes/sinex-system-ingestor/src/udev_watcher.rs"
-  - "crate/nodes/sinex-system-ingestor/src/dbus_watcher.rs"
-  - "crate/nodes/sinex-system-ingestor/src/unified_journal_watcher.rs"
-  - "crate/lib/sinex-node-sdk/src/runtime/stream/handles.rs"
-  - "crate/cli/src/commands/report.rs"
-  - "crate/nodes/sinex-system-ingestor/src/material_context.rs"
+  - "crate/sinexd/src/node_sdk/runtime/stream/handles.rs"
+  - "crate/sinexctl/src/commands/report.rs"
 note: |
   See issue #559. The XOR-provenance invariant is encoded in:
     - EventBuilder typestate (NoProvenance has no .build())
