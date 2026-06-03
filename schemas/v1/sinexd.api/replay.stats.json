@@ -44,6 +44,6 @@
   "title": "ReplayStatsPayload",
   "type": "object",
   "x-sinex-event-type": "replay.stats",
-  "x-sinex-source": "sinex.gateway",
+  "x-sinex-source": "sinexd.api",
   "x-sinex-version": "1.0.0"
 }

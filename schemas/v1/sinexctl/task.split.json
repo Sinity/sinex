@@ -1,0 +1,47 @@
+{
+  "$defs": {
+    "DateTime": {
+      "description": "RFC 3339 formatted date-time string",
+      "format": "date-time",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "A task was split into two or more child tasks.",
+  "properties": {
+    "actor": {
+      "type": "string"
+    },
+    "child_task_ids": {
+      "items": {
+        "format": "uuid",
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "reason": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "split_at": {
+      "$ref": "#/$defs/DateTime"
+    },
+    "task_id": {
+      "format": "uuid",
+      "type": "string"
+    }
+  },
+  "required": [
+    "task_id",
+    "split_at",
+    "actor",
+    "child_task_ids"
+  ],
+  "title": "TaskSplitPayload",
+  "type": "object",
+  "x-sinex-event-type": "task.split",
+  "x-sinex-source": "sinexctl",
+  "x-sinex-version": "1.0.0"
+}

@@ -72,6 +72,6 @@
   "title": "AssemblyStatsPayload",
   "type": "object",
   "x-sinex-event-type": "assembly.stats",
-  "x-sinex-source": "sinex.ingestd",
+  "x-sinex-source": "sinexd.event_engine",
   "x-sinex-version": "1.0.0"
 }
