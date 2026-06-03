@@ -145,6 +145,7 @@ impl MaterialParser for GitCommitHistoryParser {
                 EventType::from_static("commit.created"),
             )],
             privacy_contexts: vec![ProcessingContext::Document],
+            sensitivity_hints: Vec::new(),
             proof_obligations: vec![
                 "timestamp_intrinsic".into(),
                 "anchor_commit_index".into(),

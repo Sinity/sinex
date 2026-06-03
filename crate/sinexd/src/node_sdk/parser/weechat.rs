@@ -165,6 +165,7 @@ impl MaterialParser for WeeChatLogParser {
                 ),
             ],
             privacy_contexts: vec![ProcessingContext::Command],
+            sensitivity_hints: Vec::new(),
             proof_obligations: vec![
                 "timestamp_intrinsic".into(),
                 "event_type_from_prefix".into(),

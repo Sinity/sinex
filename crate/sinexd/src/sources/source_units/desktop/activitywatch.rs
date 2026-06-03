@@ -19,7 +19,7 @@ use sinex_primitives::parser::{
     InputShapeKind, ParsedEventIntent, ParserContext, ParserId, ParserManifest, SourceUnitId,
     TimingConfidence, TimingEvidence,
 };
-use sinex_primitives::privacy::ProcessingContext;
+use sinex_primitives::privacy::{ProcessingContext, SensitivityHint};
 use sinex_primitives::proof::{
     CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, RetentionPolicy, RuntimeShape,
     SourceUnitBinding, SourceUnitBuildImpact, SourceUnitDescriptor, SubjectRef,
@@ -173,6 +173,12 @@ impl MaterialParser for ActivityWatchParser {
                 ),
             ],
             privacy_contexts: vec![ProcessingContext::Document],
+            // Window/browser titles and URLs are free-form user text that may
+            // embed anything; exported for policy tooling, never auto-acted (#1611).
+            sensitivity_hints: vec![
+                SensitivityHint::FreeText,
+                SensitivityHint::PotentiallySensitive,
+            ],
             proof_obligations: vec![
                 "anchor_sqlite_row".into(),
                 "timestamp_intrinsic".into(),

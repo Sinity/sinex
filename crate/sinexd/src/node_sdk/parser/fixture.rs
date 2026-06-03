@@ -1105,6 +1105,7 @@ mod tests {
                 EventType::from_static("shell.command"),
             )],
             privacy_contexts: vec![ProcessingContext::Command],
+            sensitivity_hints: Vec::new(),
             proof_obligations: PROOF_OBLIGATIONS
                 .iter()
                 .map(std::string::ToString::to_string)

@@ -144,6 +144,7 @@ impl MaterialParser for ZshHistoryParser {
                 EventType::from_static("command.imported"),
             )],
             privacy_contexts: vec![ProcessingContext::Command],
+            sensitivity_hints: Vec::new(),
             proof_obligations: vec![
                 "obligation:source_unit.material_provenance".into(),
                 "obligation:source_unit.package_impact_rationale".into(),
