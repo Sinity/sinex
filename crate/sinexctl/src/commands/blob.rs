@@ -4,6 +4,8 @@ use color_eyre::eyre::{WrapErr, eyre};
 use serde::Serialize;
 use sinex_db::create_pool;
 use sinex_primitives::Uuid;
+use sinex_primitives::Id;
+use sinex_primitives::events::{Event, SourceMaterial};
 use sinexd::node_sdk::content_store::{
     CasFsckReport, ContentStoreConfig, MaterialContentStore, UnusedContentEntry,
     cas_fsck::check_cas,
@@ -601,7 +603,7 @@ pub struct BlobVerifyIntegrityCommand {
 
     /// Verify only events tied to this `raw.source_material_registry.id`.
     #[arg(long)]
-    pub material_id: Option<Uuid>,
+    pub material_id: Option<Id<SourceMaterial>>,
 
     /// Cap the number of events checked (0 = unbounded).
     #[arg(long, default_value_t = 0)]
@@ -635,8 +637,8 @@ pub struct BlobVerifyIntegrityReport {
 
 #[derive(Debug, Serialize)]
 pub struct BlobVerifyIntegrityMismatch {
-    pub event_id: Uuid,
-    pub material_id: Uuid,
+    pub event_id: Id<Event>,
+    pub material_id: Id<SourceMaterial>,
     pub anchor_byte: i64,
     pub offset_start: Option<i64>,
     pub offset_end: Option<i64>,
@@ -680,7 +682,7 @@ async fn archive_mismatches(
     mismatches: &[BlobVerifyIntegrityMismatch],
 ) -> Result<usize> {
     use sinex_db::DbPoolExt;
-    let ids: Vec<Uuid> = mismatches.iter().map(|m| m.event_id).collect();
+    let ids: Vec<Uuid> = mismatches.iter().map(|m| *m.event_id.as_uuid()).collect();
     let operation_id = Uuid::now_v7();
 
     // Log the operation so the cascade has an audit trail. Match the
@@ -749,7 +751,7 @@ async fn archive_mismatches(
 async fn verify_event_anchor_hashes(
     pool: &sqlx::PgPool,
     content_store: &MaterialContentStore,
-    material_id: Option<Uuid>,
+    material_id: Option<Id<SourceMaterial>>,
     limit: u64,
 ) -> Result<BlobVerifyIntegrityReport> {
     let mut report = BlobVerifyIntegrityReport::default();
@@ -772,7 +774,7 @@ async fn verify_event_anchor_hashes(
         ORDER BY e.id
         LIMIT CASE WHEN $2::bigint = 0 THEN NULL ELSE $2 END
         "#,
-        material_id,
+        material_id.map(Uuid::from),
         i64::try_from(limit).unwrap_or(i64::MAX),
     )
     .fetch_all(pool)
@@ -847,8 +849,8 @@ async fn verify_event_anchor_hashes(
         } else {
             report.mismatched += 1;
             report.mismatches.push(BlobVerifyIntegrityMismatch {
-                event_id: row.id,
-                material_id: row.source_material_id,
+                event_id: row.id.into(),
+                material_id: row.source_material_id.into(),
                 anchor_byte: row.anchor_byte.unwrap_or(0),
                 offset_start: row.offset_start,
                 offset_end: row.offset_end,
