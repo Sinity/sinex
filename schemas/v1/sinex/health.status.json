@@ -1,4 +1,31 @@
 {
+  "$defs": {
+    "HealthStatus": {
+      "description": "Canonical health status of a component or the overall system.\n\nThis is the single source of truth for health vocabulary across all sinex\nsubsystems. Former parallel enums (`HealthAggregatedStatus`, `ProcessStatus`,\n`ComponentHealthStatus`, `GatewayHealthStatus`) have been collapsed into this\none type (#1576 item 2).\n\nVariant naming: `Unhealthy` is the terminal failure state (matches the prior\n`HealthStatus::Unhealthy` DB spelling). `Unknown` is preserved for the health\naggregator's initial/unobserved-component state.\n\nThe schema-apply engine reconciles a CHECK constraint on the\n`status` column of a future `core.health_reports` table. See issue\n#1236; the spec is forward-declared and skipped at apply time when the\ntable/column does not yet exist.",
+      "oneOf": [
+        {
+          "const": "unknown",
+          "description": "Status not yet observed (aggregator initial state)",
+          "type": "string"
+        },
+        {
+          "const": "healthy",
+          "description": "All subsystems operating normally",
+          "type": "string"
+        },
+        {
+          "const": "degraded",
+          "description": "Operational but with degraded performance or partial failures",
+          "type": "string"
+        },
+        {
+          "const": "unhealthy",
+          "description": "One or more critical subsystems are unavailable",
+          "type": "string"
+        }
+      ]
+    }
+  },
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "description": "Component health status change\n\nEmitted when a component's health status changes (healthy -> degraded, etc.)",
   "properties": {
@@ -10,12 +37,12 @@
       "description": "Additional context"
     },
     "current_status": {
-      "description": "Current status",
-      "type": "string"
+      "$ref": "#/$defs/HealthStatus",
+      "description": "Current status (typed; serializes as `snake_case` string)"
     },
     "previous_status": {
-      "description": "Previous status",
-      "type": "string"
+      "$ref": "#/$defs/HealthStatus",
+      "description": "Previous status (typed; serializes as `snake_case` string)"
     },
     "reason": {
       "description": "Reason for status change",

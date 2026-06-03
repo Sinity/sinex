@@ -1,0 +1,47 @@
+{
+  "$defs": {
+    "DateTime": {
+      "description": "RFC 3339 formatted date-time string",
+      "format": "date-time",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Two or more tasks were merged into this one.",
+  "properties": {
+    "actor": {
+      "type": "string"
+    },
+    "merged_at": {
+      "$ref": "#/$defs/DateTime"
+    },
+    "reason": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "source_task_ids": {
+      "items": {
+        "format": "uuid",
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "task_id": {
+      "format": "uuid",
+      "type": "string"
+    }
+  },
+  "required": [
+    "task_id",
+    "merged_at",
+    "actor",
+    "source_task_ids"
+  ],
+  "title": "TaskMergedPayload",
+  "type": "object",
+  "x-sinex-event-type": "task.merged",
+  "x-sinex-source": "sinexctl",
+  "x-sinex-version": "1.0.0"
+}

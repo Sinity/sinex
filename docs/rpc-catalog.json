@@ -504,6 +504,51 @@
     "response_type": "sinex_primitives::rpc::pkm::LinkEntitiesResponse"
   },
   {
+    "name": "privacy.policy.backend.add",
+    "role": "write",
+    "domain": "privacy",
+    "stability": "experimental",
+    "mutability": "mutating",
+    "request_type": "sinex_primitives::rpc::privacy::PrivacyPolicyBackendAddRequest",
+    "response_type": "sinex_primitives::rpc::privacy::PrivacyPolicyMutationResponse"
+  },
+  {
+    "name": "privacy.policy.dictionary.add",
+    "role": "write",
+    "domain": "privacy",
+    "stability": "experimental",
+    "mutability": "mutating",
+    "request_type": "sinex_primitives::rpc::privacy::PrivacyPolicyDictionaryAddRequest",
+    "response_type": "sinex_primitives::rpc::privacy::PrivacyPolicyMutationResponse"
+  },
+  {
+    "name": "privacy.policy.list",
+    "role": "read_only",
+    "domain": "privacy",
+    "stability": "experimental",
+    "mutability": "read_only",
+    "request_type": "sinex_primitives::rpc::privacy::PrivacyPolicyListRequest",
+    "response_type": "sinex_primitives::rpc::privacy::PrivacyPolicyListResponse"
+  },
+  {
+    "name": "privacy.policy.rule.add",
+    "role": "write",
+    "domain": "privacy",
+    "stability": "experimental",
+    "mutability": "mutating",
+    "request_type": "sinex_primitives::rpc::privacy::PrivacyPolicyRuleAddRequest",
+    "response_type": "sinex_primitives::rpc::privacy::PrivacyPolicyMutationResponse"
+  },
+  {
+    "name": "privacy.policy.scope.bind",
+    "role": "write",
+    "domain": "privacy",
+    "stability": "experimental",
+    "mutability": "mutating",
+    "request_type": "sinex_primitives::rpc::privacy::PrivacyPolicyScopeBindRequest",
+    "response_type": "sinex_primitives::rpc::privacy::PrivacyPolicyMutationResponse"
+  },
+  {
     "name": "privacy.private_mode.disable",
     "role": "write",
     "domain": "privacy",

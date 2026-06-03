@@ -21,7 +21,7 @@
           "$ref": "#/$defs/HealthAlertSeverity"
         },
         "status": {
-          "$ref": "#/$defs/HealthAggregatedStatus"
+          "$ref": "#/$defs/HealthStatus"
         },
         "timestamp": {
           "$ref": "#/$defs/DateTime"
@@ -44,7 +44,7 @@
           "type": "string"
         },
         "current_status": {
-          "$ref": "#/$defs/HealthAggregatedStatus"
+          "$ref": "#/$defs/HealthStatus"
         },
         "events_in_window": {
           "format": "uint",
@@ -101,16 +101,6 @@
       ],
       "type": "string"
     },
-    "HealthAggregatedStatus": {
-      "description": "Health status vocabulary emitted by the health aggregator.",
-      "enum": [
-        "unknown",
-        "healthy",
-        "degraded",
-        "failed"
-      ],
-      "type": "string"
-    },
     "HealthAggregatedSystemStatusPayload": {
       "description": "System-wide health summary report.",
       "properties": {
@@ -136,7 +126,7 @@
           "type": "integer"
         },
         "overall_status": {
-          "$ref": "#/$defs/HealthAggregatedStatus"
+          "$ref": "#/$defs/HealthStatus"
         },
         "report_type": {
           "$ref": "#/$defs/HealthAggregatedReportType"
@@ -193,7 +183,7 @@
           "type": "string"
         },
         "status": {
-          "$ref": "#/$defs/HealthAggregatedStatus"
+          "$ref": "#/$defs/HealthStatus"
         },
         "status_since": {
           "$ref": "#/$defs/DateTime"
@@ -206,6 +196,31 @@
         "last_seen"
       ],
       "type": "object"
+    },
+    "HealthStatus": {
+      "description": "Canonical health status of a component or the overall system.\n\nThis is the single source of truth for health vocabulary across all sinex\nsubsystems. Former parallel enums (`HealthAggregatedStatus`, `ProcessStatus`,\n`ComponentHealthStatus`, `GatewayHealthStatus`) have been collapsed into this\none type (#1576 item 2).\n\nVariant naming: `Unhealthy` is the terminal failure state (matches the prior\n`HealthStatus::Unhealthy` DB spelling). `Unknown` is preserved for the health\naggregator's initial/unobserved-component state.\n\nThe schema-apply engine reconciles a CHECK constraint on the\n`status` column of a future `core.health_reports` table. See issue\n#1236; the spec is forward-declared and skipped at apply time when the\ntable/column does not yet exist.",
+      "oneOf": [
+        {
+          "const": "unknown",
+          "description": "Status not yet observed (aggregator initial state)",
+          "type": "string"
+        },
+        {
+          "const": "healthy",
+          "description": "All subsystems operating normally",
+          "type": "string"
+        },
+        {
+          "const": "degraded",
+          "description": "Operational but with degraded performance or partial failures",
+          "type": "string"
+        },
+        {
+          "const": "unhealthy",
+          "description": "One or more critical subsystems are unavailable",
+          "type": "string"
+        }
+      ]
     }
   },
   "$schema": "https://json-schema.org/draft/2020-12/schema",

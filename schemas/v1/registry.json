@@ -300,7 +300,7 @@
       "event_type": "health.aggregated_report",
       "version": "1.0.0",
       "path": "health-aggregator/health.aggregated_report.json",
-      "content_hash": "7a98f4a12b24fa3c41221f2f544a3a4a40219ad3448e0645586b6d0d756e3dfd"
+      "content_hash": "c5c7317c7bf32a3824c3c7efdbfebbdf0be5d870023da35956023e2d606285da"
     },
     {
       "source": "integration.polylogue",
@@ -573,7 +573,7 @@
       "event_type": "health.status",
       "version": "1.0.0",
       "path": "sinex/health.status.json",
-      "content_hash": "4b88c59d1a3a64785f15e48431300212d1c03e7ec26e96c02721f5b14bde2e2a"
+      "content_hash": "15e7d19ae32cb38bb6a5986444014a00df5c765d6c327f09bd9f92adfc00882e"
     },
     {
       "source": "sinex",
@@ -625,74 +625,11 @@
       "content_hash": "08cfcbac816b184af91a25348cb7796c8cd7172876cfaffc4128af24bff73742"
     },
     {
-      "source": "sinex.gateway",
-      "event_type": "gateway.rpc.call",
-      "version": "1.0.0",
-      "path": "sinex.gateway/gateway.rpc.call.json",
-      "content_hash": "b7d3b700911b275cb042194162eb37c492af2aed15939e85af23ddc4f51c550d"
-    },
-    {
-      "source": "sinex.gateway",
-      "event_type": "pool.stats",
-      "version": "1.0.0",
-      "path": "sinex.gateway/pool.stats.json",
-      "content_hash": "9070c839c0b2b1acd75ed82f28a73ee52b93b1b79a60b5b97df511d1ce087e34"
-    },
-    {
-      "source": "sinex.gateway",
-      "event_type": "rate_limit.exceeded",
-      "version": "1.0.0",
-      "path": "sinex.gateway/rate_limit.exceeded.json",
-      "content_hash": "1278e95739758e217eccdb4e2f34c96db6442a79deaa5d1b09e5af6a805cb7df"
-    },
-    {
-      "source": "sinex.gateway",
-      "event_type": "replay.stats",
-      "version": "1.0.0",
-      "path": "sinex.gateway/replay.stats.json",
-      "content_hash": "2dbdf340ab80a16f1567ca58ee710a410c4342b77504c3cdec5f0b6667122d9b"
-    },
-    {
-      "source": "sinex.gateway",
-      "event_type": "request.stats",
-      "version": "1.0.0",
-      "path": "sinex.gateway/request.stats.json",
-      "content_hash": "4c4fc70c3f40321870311aa2d2933b9c67222c8320b61e591295b39ecefbbf59"
-    },
-    {
-      "source": "sinex.ingestd",
-      "event_type": "assembly.stats",
-      "version": "1.0.0",
-      "path": "sinex.ingestd/assembly.stats.json",
-      "content_hash": "105f2da9a9b89a6f780eb5cd03788a918ce1b01a2a399e2421906264b937c614"
-    },
-    {
-      "source": "sinex.ingestd",
-      "event_type": "consumer.startup_replay_risk",
-      "version": "1.0.0",
-      "path": "sinex.ingestd/consumer.startup_replay_risk.json",
-      "content_hash": "99c6f9c69ba9532a21e3e44ca06d56ef7e126c65af911d6e96035e152ff6b263"
-    },
-    {
-      "source": "sinex.ingestd",
-      "event_type": "consumer.startup_snapshot",
-      "version": "1.0.0",
-      "path": "sinex.ingestd/consumer.startup_snapshot.json",
-      "content_hash": "3f4e846975fb7d550901dc3999c432db8e3e59ddc56f37525f889d2c30442f75"
-    },
-    {
-      "source": "sinex.ingestd",
-      "event_type": "stream.stats",
-      "version": "1.0.0",
-      "path": "sinex.ingestd/stream.stats.json",
-      "content_hash": "107ca7b706d4d3b1f71b14bffdf38dd8180bce4cb18f03e157c3e37172771926"
-    },
-    {
       "source": "sinex.node",
       "event_type": "derived.latency_snapshot",
       "version": "1.0.0",
       "path": "sinex.node/derived.latency_snapshot.json",
-      "content_hash": "0bf45b601cabb921e37be75bfdcb486869a78d186412aad5378346d8a14c9081"
+      "content_hash": "ca5780b146e663bd6cead2349a73a019842bfc22d481b94d4a1a47b3eb7898ce"
     },
     {
       "source": "sinex.node",
@@ -700,6 +637,90 @@
       "version": "1.0.0",
       "path": "sinex.node/processing.stats.json",
       "content_hash": "e85825ea99b556d896bfb56949879808b7c1fd4d70a68f8ab224d4094c058479"
+    },
+    {
+      "source": "sinexctl",
+      "event_type": "task.linked",
+      "version": "1.0.0",
+      "path": "sinexctl/task.linked.json",
+      "content_hash": "3db4815ce6f42227ca04799ac807361bc411513ac7b73b3909a83e90a08b0598"
+    },
+    {
+      "source": "sinexctl",
+      "event_type": "task.merged",
+      "version": "1.0.0",
+      "path": "sinexctl/task.merged.json",
+      "content_hash": "6f8cc0a62f41038378fea4d10ff6019e57075cf005833abcfc5fd587e208aaf1"
+    },
+    {
+      "source": "sinexctl",
+      "event_type": "task.split",
+      "version": "1.0.0",
+      "path": "sinexctl/task.split.json",
+      "content_hash": "94d6f7b4e3f233fb2299dc8a2bf6f59e9a4eab51b5b0b24d88a44ab196fb6c21"
+    },
+    {
+      "source": "sinexd.api",
+      "event_type": "gateway.rpc.call",
+      "version": "1.0.0",
+      "path": "sinexd.api/gateway.rpc.call.json",
+      "content_hash": "a08a9010a1522cd456bdd8a42bb3a203a1e660f302e4bb018e33f9323ff044f7"
+    },
+    {
+      "source": "sinexd.api",
+      "event_type": "pool.stats",
+      "version": "1.0.0",
+      "path": "sinexd.api/pool.stats.json",
+      "content_hash": "7c7d59017b35dff6be61ab0c34623288168e2c63db1f7ef54548be03c760369a"
+    },
+    {
+      "source": "sinexd.api",
+      "event_type": "rate_limit.exceeded",
+      "version": "1.0.0",
+      "path": "sinexd.api/rate_limit.exceeded.json",
+      "content_hash": "243e34fcf4ee025a5ebdc51ef63c7a18b79507f2780b6de2e3c452e90731cf00"
+    },
+    {
+      "source": "sinexd.api",
+      "event_type": "replay.stats",
+      "version": "1.0.0",
+      "path": "sinexd.api/replay.stats.json",
+      "content_hash": "c049c1255b525da7c2412055e5ef41305632f1db9a19257d9c58b9572b45324c"
+    },
+    {
+      "source": "sinexd.api",
+      "event_type": "request.stats",
+      "version": "1.0.0",
+      "path": "sinexd.api/request.stats.json",
+      "content_hash": "f5a86f07dac8a7a1dbc51a55bc6dea9301e48ed3b99da67b5660bda774344fb6"
+    },
+    {
+      "source": "sinexd.event_engine",
+      "event_type": "assembly.stats",
+      "version": "1.0.0",
+      "path": "sinexd.event_engine/assembly.stats.json",
+      "content_hash": "7c98ddc5850df13e34a791cffea4c1c5514756606493eabf1e24d383acd1900a"
+    },
+    {
+      "source": "sinexd.event_engine",
+      "event_type": "consumer.startup_replay_risk",
+      "version": "1.0.0",
+      "path": "sinexd.event_engine/consumer.startup_replay_risk.json",
+      "content_hash": "099dc39d79ae861336680b47e71eb57ecc3c007a3d24d84b34cebc5a36e43f3e"
+    },
+    {
+      "source": "sinexd.event_engine",
+      "event_type": "consumer.startup_snapshot",
+      "version": "1.0.0",
+      "path": "sinexd.event_engine/consumer.startup_snapshot.json",
+      "content_hash": "bcad461f5915464e1e50386e4e4923f3c14ccc472f33b8ad5181468a05966db5"
+    },
+    {
+      "source": "sinexd.event_engine",
+      "event_type": "stream.stats",
+      "version": "1.0.0",
+      "path": "sinexd.event_engine/stream.stats.json",
+      "content_hash": "5da9a3f2ed816407750144699822ef835e553e45f177cd97443f18eb98bcc0a7"
     },
     {
       "source": "spotify",
