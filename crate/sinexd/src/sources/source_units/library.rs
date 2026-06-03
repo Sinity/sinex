@@ -261,6 +261,7 @@ impl MaterialParser for DocsLibraryParser {
                 EventType::from_static("document.indexed"),
             )],
             privacy_contexts: vec![ProcessingContext::Metadata],
+            sensitivity_hints: Vec::new(),
             proof_obligations: vec![
                 "anchor_directory_entry".into(),
                 "timestamp_inferred_mtime".into(),

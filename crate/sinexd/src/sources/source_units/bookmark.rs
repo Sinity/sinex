@@ -97,6 +97,7 @@ impl MaterialParser for RaindropBookmarkParser {
                 EventType::from_static("bookmark.created"),
             )],
             privacy_contexts: vec![ProcessingContext::Metadata],
+            sensitivity_hints: Vec::new(),
             proof_obligations: vec![
                 "timestamp_intrinsic".into(),
                 "anchor_csv_row".into(),

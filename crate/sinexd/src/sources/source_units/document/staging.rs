@@ -33,7 +33,7 @@ use sinex_primitives::{
         InputShapeKind, ParsedEventIntent, ParserContext, ParserId, ParserManifest, SourceRecord,
         SourceUnitId, TimingEvidence,
     },
-    privacy::ProcessingContext,
+    privacy::{ProcessingContext, SensitivityHint},
     proof::{
         CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, RetentionPolicy, RuntimeShape,
         SourceUnitBinding, SourceUnitBuildImpact, SourceUnitDescriptor, SubjectRef,
@@ -129,6 +129,13 @@ impl MaterialParser for DocumentStagingParser {
                 ),
             ],
             privacy_contexts: vec![ProcessingContext::Metadata],
+            // Document titles/bodies are free-form text and the source path may
+            // leak home structure; exported for policy tooling, never auto-acted (#1611).
+            sensitivity_hints: vec![
+                SensitivityHint::FreeText,
+                SensitivityHint::PotentiallySensitive,
+                SensitivityHint::SourcePath,
+            ],
             proof_obligations: vec![],
             description:
                 "Stages document files and emits document.ingested + auto-tag derived events".into(),

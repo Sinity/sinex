@@ -235,6 +235,7 @@ impl MaterialParser for KnowledgebaseVaultParser {
                 EventType::from_static(EVENT_TYPE),
             )],
             privacy_contexts: vec![ProcessingContext::Document],
+            sensitivity_hints: Vec::new(),
             proof_obligations: vec![
                 "timestamp_from_mtime_or_now".into(),
                 "anchor_directory_entry_content_hash".into(),

@@ -125,6 +125,7 @@ impl MaterialParser for SpotifyHistoryParser {
                 EventType::from_static("track.played"),
             )],
             privacy_contexts: vec![ProcessingContext::Metadata],
+            sensitivity_hints: Vec::new(),
             proof_obligations: vec![
                 "timestamp_intrinsic".into(),
                 "skipped_provider_preserved".into(),

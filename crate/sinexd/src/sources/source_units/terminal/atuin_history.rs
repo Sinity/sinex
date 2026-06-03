@@ -108,6 +108,7 @@ impl MaterialParser for AtuinHistoryParser {
                 EventType::from_static("command.executed"),
             )],
             privacy_contexts: vec![ProcessingContext::Command, ProcessingContext::Metadata],
+            sensitivity_hints: Vec::new(),
             proof_obligations: vec![
                 "obligation:source_unit.material_provenance".into(),
                 "obligation:source_unit.package_impact_rationale".into(),

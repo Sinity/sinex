@@ -104,6 +104,7 @@ impl MaterialParser for MessengerThreadParser {
                 EventType::from_static("message.sent"),
             )],
             privacy_contexts: vec![ProcessingContext::Document],
+            sensitivity_hints: Vec::new(),
             proof_obligations: vec![
                 "timestamp_intrinsic".into(),
                 "media_and_reactions_summarized_to_count".into(),

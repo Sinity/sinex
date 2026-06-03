@@ -101,6 +101,7 @@ impl MaterialParser for JournaldParser {
                 ),
             ],
             privacy_contexts: vec![ProcessingContext::Journal, ProcessingContext::Command],
+            sensitivity_hints: Vec::new(),
             proof_obligations: vec![
                 "timestamp_intrinsic".into(),
                 "cursor_anchor".into(),

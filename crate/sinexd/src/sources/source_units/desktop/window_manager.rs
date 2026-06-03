@@ -17,7 +17,7 @@ use sinex_primitives::parser::{
     InputShapeKind, ParsedEventIntent, ParserContext, ParserId, ParserManifest, SourceUnitId,
     TimingEvidence,
 };
-use sinex_primitives::privacy::ProcessingContext;
+use sinex_primitives::privacy::{ProcessingContext, SensitivityHint};
 use sinex_primitives::proof::{
     CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, RetentionPolicy, RuntimeShape,
     SourceUnitBinding, SourceUnitBuildImpact, SourceUnitDescriptor, SubjectRef,
@@ -165,6 +165,12 @@ impl MaterialParser for HyprlandParser {
                 ),
             ],
             privacy_contexts: vec![ProcessingContext::Document],
+            // Window titles are free-form user text that may embed anything;
+            // exported for policy tooling, never auto-acted (#1611).
+            sensitivity_hints: vec![
+                SensitivityHint::FreeText,
+                SensitivityHint::PotentiallySensitive,
+            ],
             proof_obligations: vec![
                 "anchor_stream_frame".into(),
                 "window_title_policy_scoped".into(),
