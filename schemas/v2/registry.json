@@ -9,11 +9,11 @@
       "content_hash": "84492d6367d8023940381b46a02febe956e56cd7c50653793788ccf7c4108858"
     },
     {
-      "source": "sinex.ingestd",
+      "source": "sinexd.event_engine",
       "event_type": "batch.stats",
       "version": "2.2.0",
-      "path": "sinex.ingestd/batch.stats.json",
-      "content_hash": "ef7bb14ffcd8f61dec4288fbb12316eee168929b6907e4fcc6ae7ff2ba5dbfd4"
+      "path": "sinexd.event_engine/batch.stats.json",
+      "content_hash": "3d349735570ed70cd0c1c4cd34cc125d889be51adc345f165a42863d43a9fc12"
     }
   ]
 }
