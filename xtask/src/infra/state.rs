@@ -61,13 +61,44 @@ impl CheckoutState {
     /// Lock file name within state directory
     const LOCK_FILE_NAME: &'static str = ".lock";
 
-    /// Create a `CheckoutState` for the current working directory's checkout
+    /// Create a `CheckoutState` for the current working directory's checkout.
+    ///
+    /// Honors `SINEX_DEV_STATE_DIR` exported by the sinex dev shell, which
+    /// relocates the infra state directory (postgres data, run socket, nats)
+    /// onto NVMe. When unset — CI, a bare `nix develop`, or any non-direnv
+    /// invocation — this falls back to the in-checkout `.sinex/`, so behavior
+    /// is unchanged outside the relocating dev shell.
+    ///
+    /// This is what makes xtask's computed `DATABASE_URL` socket path agree
+    /// with the `DATABASE_URL`/`PGHOST` the dev shell exports
+    /// (`$SINEX_DEV_STATE_DIR/run`). Without it, xtask starts postgres under
+    /// `.sinex/run` while the environment advertises the relocated socket, so
+    /// rust-analyzer / sqlx / psql hammer a dead socket.
     pub fn for_current_checkout() -> Result<Self> {
         let checkout_root = Self::find_checkout_root()?;
-        Self::new(checkout_root)
+        let state_dir = Self::resolve_state_dir(&checkout_root);
+        Ok(Self {
+            checkout_root,
+            state_dir,
+        })
     }
 
-    /// Create a `CheckoutState` for a specific checkout path
+    /// Resolve the infra state directory for a checkout, honoring the dev
+    /// shell's `SINEX_DEV_STATE_DIR` relocation while ignoring values that
+    /// belong to a different checkout (worktree isolation). Falls back to the
+    /// in-checkout `.sinex/`.
+    fn resolve_state_dir(checkout_root: &Path) -> PathBuf {
+        crate::config::workspace_pinned_env_path("SINEX_DEV_STATE_DIR", checkout_root, || {
+            checkout_root.join(Self::STATE_DIR_NAME)
+        })
+    }
+
+    /// Create a `CheckoutState` rooted at a specific checkout path.
+    ///
+    /// Always uses the in-checkout `.sinex/` for that path. Unlike
+    /// [`Self::for_current_checkout`], this does not consult
+    /// `SINEX_DEV_STATE_DIR`: the current shell's relocation env belongs to the
+    /// *current* checkout, not an arbitrary one passed in here.
     pub fn new(checkout_root: PathBuf) -> Result<Self> {
         let state_dir = checkout_root.join(Self::STATE_DIR_NAME);
         Ok(Self {
@@ -276,7 +307,36 @@ impl Drop for LockGuard {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sandbox::EnvGuard;
     use xtask::sandbox::sinex_test;
+
+    #[sinex_test]
+    async fn resolve_state_dir_honors_dev_state_relocation() -> TestResult<()> {
+        // The dev shell relocates infra state onto NVMe via SINEX_DEV_STATE_DIR.
+        // A relocated path outside any checkout must be honored verbatim so the
+        // postgres socket lands where DATABASE_URL/PGHOST advertise it.
+        let relocated = tempfile::tempdir()?;
+        let checkout = tempfile::tempdir()?;
+        let mut env = EnvGuard::with_keys(&["SINEX_DEV_STATE_DIR"]);
+        env.set("SINEX_DEV_STATE_DIR", relocated.path());
+
+        let resolved = CheckoutState::resolve_state_dir(checkout.path());
+        assert_eq!(resolved, relocated.path());
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn resolve_state_dir_falls_back_to_in_checkout() -> TestResult<()> {
+        // Unset env (CI, bare `nix develop`) → in-checkout `.sinex/`, preserving
+        // pre-relocation behavior.
+        let checkout = tempfile::tempdir()?;
+        let mut env = EnvGuard::with_keys(&["SINEX_DEV_STATE_DIR"]);
+        env.clear("SINEX_DEV_STATE_DIR");
+
+        let resolved = CheckoutState::resolve_state_dir(checkout.path());
+        assert_eq!(resolved, checkout.path().join(".sinex"));
+        Ok(())
+    }
 
     #[sinex_test]
     async fn test_lock_info_current() -> TestResult<()> {

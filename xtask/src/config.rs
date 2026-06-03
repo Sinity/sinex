@@ -412,7 +412,7 @@ fn path_belongs_to_other_checkout(path: &Path, workspace_root: &Path) -> bool {
 /// Read a path-valued env var, ignoring values that point inside a different
 /// sinex checkout. Falls back to `fallback()` when the env var is unset or
 /// belongs to another checkout.
-fn workspace_pinned_env_path<F>(var: &str, workspace_root: &Path, fallback: F) -> PathBuf
+pub(crate) fn workspace_pinned_env_path<F>(var: &str, workspace_root: &Path, fallback: F) -> PathBuf
 where
     F: FnOnce() -> PathBuf,
 {
