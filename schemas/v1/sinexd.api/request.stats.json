@@ -72,9 +72,9 @@
     "rate_limited_requests",
     "active_connections"
   ],
-  "title": "GatewayRequestStatsPayload",
+  "title": "ApiRequestStatsPayload",
   "type": "object",
   "x-sinex-event-type": "request.stats",
-  "x-sinex-source": "sinex.gateway",
+  "x-sinex-source": "sinexd.api",
   "x-sinex-version": "1.0.0"
 }

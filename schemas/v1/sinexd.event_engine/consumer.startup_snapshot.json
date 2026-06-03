@@ -115,6 +115,6 @@
   "title": "ConsumerStartupSnapshotPayload",
   "type": "object",
   "x-sinex-event-type": "consumer.startup_snapshot",
-  "x-sinex-source": "sinex.ingestd",
+  "x-sinex-source": "sinexd.event_engine",
   "x-sinex-version": "1.0.0"
 }

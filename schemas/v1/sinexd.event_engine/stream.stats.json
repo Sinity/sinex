@@ -68,6 +68,6 @@
   "title": "StreamStatsPayload",
   "type": "object",
   "x-sinex-event-type": "stream.stats",
-  "x-sinex-source": "sinex.ingestd",
+  "x-sinex-source": "sinexd.event_engine",
   "x-sinex-version": "1.0.0"
 }

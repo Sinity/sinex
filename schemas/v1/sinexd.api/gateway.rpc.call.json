@@ -72,6 +72,6 @@
   "title": "GatewayRpcCallPayload",
   "type": "object",
   "x-sinex-event-type": "gateway.rpc.call",
-  "x-sinex-source": "sinex.gateway",
+  "x-sinex-source": "sinexd.api",
   "x-sinex-version": "1.0.0"
 }
