@@ -214,7 +214,10 @@ fn dictionary_terms(matcher_value: &str, matcher_config: &JsonValue) -> Option<V
     if terms.is_empty() { None } else { Some(terms) }
 }
 
-fn structural_detector(rule_name: &str, matcher_value: &str) -> Option<sinex_primitives::privacy::StructuralDetector> {
+fn structural_detector(
+    rule_name: &str,
+    matcher_value: &str,
+) -> Option<sinex_primitives::privacy::StructuralDetector> {
     serde_json::from_value(serde_json::Value::String(matcher_value.to_string()))
         .map_err(|error| {
             warn!(
@@ -236,7 +239,11 @@ fn secret_scanner_regex(
     let pattern = matcher_config
         .get("regex")
         .and_then(serde_json::Value::as_str)
-        .or_else(|| matcher_config.get("pattern").and_then(serde_json::Value::as_str))
+        .or_else(|| {
+            matcher_config
+                .get("pattern")
+                .and_then(serde_json::Value::as_str)
+        })
         .unwrap_or(matcher_value);
 
     if let Err(error) = regex::Regex::new(pattern) {
@@ -285,8 +292,18 @@ fn external_recognizer_rule(
     let endpoint_url = backend
         .endpoint_url
         .as_deref()
-        .or_else(|| backend.config.get("endpoint_url").and_then(JsonValue::as_str))
-        .or_else(|| backend.config.get("analyze_url").and_then(JsonValue::as_str));
+        .or_else(|| {
+            backend
+                .config
+                .get("endpoint_url")
+                .and_then(JsonValue::as_str)
+        })
+        .or_else(|| {
+            backend
+                .config
+                .get("analyze_url")
+                .and_then(JsonValue::as_str)
+        });
     let Some(endpoint_url) = endpoint_url else {
         warn!(
             rule = %rule.name,
@@ -648,10 +665,7 @@ fn apply_policy_to_event(event: &mut Event<JsonValue>, rules: &CompiledPolicyRul
     for scope in &rules.scopes {
         // Check if this scope matches the event's (source, event_type).
         let source_match = scope.event_source.as_deref().is_none_or(|s| s == source);
-        let type_match = scope
-            .event_type
-            .as_deref()
-            .is_none_or(|t| t == event_type);
+        let type_match = scope.event_type.as_deref().is_none_or(|t| t == event_type);
 
         if !source_match || !type_match {
             continue;
@@ -908,7 +922,12 @@ fn cryptographic_external_replacement(matched: &str, rule: &ExternalRecognizerRu
     }];
 
     PrivacyEngine::new(config)
-        .map(|engine| engine.process(matched, ProcessingContext::Document).text.into_owned())
+        .map(|engine| {
+            engine
+                .process(matched, ProcessingContext::Document)
+                .text
+                .into_owned()
+        })
         .unwrap_or_else(|error| {
             warn!(
                 rule = %rule.name,

@@ -122,7 +122,11 @@ impl CheckCommand {
         push_flag(&mut args, self.lint_breakdown, "--lint-breakdown");
         push_flag(&mut args, self.by_file, "--by-file");
         push_flag(&mut args, self.nix, "--nix");
-        push_flag(&mut args, self.allow_contended_host, "--allow-contended-host");
+        push_flag(
+            &mut args,
+            self.allow_contended_host,
+            "--allow-contended-host",
+        );
         if let Some(base_ref) = &self.changed_strict {
             args.push("--changed-strict".to_string());
             if let Some(base_ref) = base_ref {
@@ -345,22 +349,42 @@ impl CheckCommand {
             println!("Running clippy (includes compilation check)...");
         }
         if pkg_total > 0 {
-            ctx.report_progress_full("clippy", Some(0.0), Some(0), Some(pkg_total as i64),
-                "determinate", Some("packages"), None, "rough",
-                Some(&format!("0/{pkg_total} packages (0%)")));
+            ctx.report_progress_full(
+                "clippy",
+                Some(0.0),
+                Some(0),
+                Some(pkg_total as i64),
+                "determinate",
+                Some("packages"),
+                None,
+                "rough",
+                Some(&format!("0/{pkg_total} packages (0%)")),
+            );
         }
-        let clippy_summary = ctx.cargo_runner().run_clippy_streaming(package_arg_refs, &mut |n| {
-            if pkg_total > 0 {
-                let pct = (n as f64 / pkg_total as f64 * 100.0).min(100.0);
-                ctx.report_progress_full("clippy", Some(pct), Some(n as i64), Some(pkg_total as i64),
-                    "determinate", Some("packages"), None, "rough",
-                    Some(&format!("{n}/{pkg_total} packages ({pct:.0}%)")));
-            }
-        })?;
+        let clippy_summary =
+            ctx.cargo_runner()
+                .run_clippy_streaming(package_arg_refs, &mut |n| {
+                    if pkg_total > 0 {
+                        let pct = (n as f64 / pkg_total as f64 * 100.0).min(100.0);
+                        ctx.report_progress_full(
+                            "clippy",
+                            Some(pct),
+                            Some(n as i64),
+                            Some(pkg_total as i64),
+                            "determinate",
+                            Some("packages"),
+                            None,
+                            "rough",
+                            Some(&format!("{n}/{pkg_total} packages ({pct:.0}%)")),
+                        );
+                    }
+                })?;
         let success = clippy_summary.success;
         if ctx.is_human() {
             for diag in &clippy_summary.diagnostics {
-                if let Some(rendered) = &diag.rendered { eprint!("{rendered}"); }
+                if let Some(rendered) = &diag.rendered {
+                    eprint!("{rendered}");
+                }
             }
         }
         self.process_diagnostics(ctx, &clippy_summary, result, "clippy");
@@ -370,7 +394,9 @@ impl CheckCommand {
             if !top_lints.is_empty() {
                 if ctx.is_human() {
                     println!("\n📊 Top clippy warnings by lint:");
-                    for lint in &top_lints { println!("  {:>4}  {}", lint.count, lint.code); }
+                    for lint in &top_lints {
+                        println!("  {:>4}  {}", lint.count, lint.code);
+                    }
                     println!();
                 }
                 result.data = Some(serde_json::json!({"lint_breakdown": top_lints}));
@@ -381,7 +407,9 @@ impl CheckCommand {
             if !top_files.is_empty() {
                 if ctx.is_human() {
                     println!("📁 Top files by warning count:");
-                    for file in &top_files { println!("  {:>4}  {}", file.count, file.path); }
+                    for file in &top_files {
+                        println!("  {:>4}  {}", file.count, file.path);
+                    }
                     println!();
                 }
                 result.data = Some(serde_json::json!({"file_breakdown": top_files}));
@@ -393,7 +421,8 @@ impl CheckCommand {
                 message: "clippy failed".to_string(),
                 location: Some("check".to_string()),
                 suggestion: Some("Run `xtask check --lint` and inspect diagnostics".to_string()),
-            }).with_detail("clippy failed");
+            })
+            .with_detail("clippy failed");
             failure.warnings = result.warnings.drain(..).collect();
             failure.data = result.data.take();
             return Ok(Some(failure));
@@ -410,24 +439,46 @@ impl CheckCommand {
         result: &mut CommandResult,
     ) -> Result<Option<CommandResult>> {
         let stage = ctx.start_stage("compile");
-        if ctx.is_human() { println!("Checking compilation..."); }
-        if pkg_total > 0 {
-            ctx.report_progress_full("compile", Some(0.0), Some(0), Some(pkg_total as i64),
-                "determinate", Some("packages"), None, "rough",
-                Some(&format!("0/{pkg_total} packages (0%)")));
+        if ctx.is_human() {
+            println!("Checking compilation...");
         }
-        let check_summary = ctx.cargo_runner().run_check_streaming(package_arg_refs, &mut |n| {
-            if pkg_total > 0 {
-                let pct = (n as f64 / pkg_total as f64 * 100.0).min(100.0);
-                ctx.report_progress_full("compile", Some(pct), Some(n as i64), Some(pkg_total as i64),
-                    "determinate", Some("packages"), None, "rough",
-                    Some(&format!("{n}/{pkg_total} packages ({pct:.0}%)")));
-            }
-        })?;
+        if pkg_total > 0 {
+            ctx.report_progress_full(
+                "compile",
+                Some(0.0),
+                Some(0),
+                Some(pkg_total as i64),
+                "determinate",
+                Some("packages"),
+                None,
+                "rough",
+                Some(&format!("0/{pkg_total} packages (0%)")),
+            );
+        }
+        let check_summary = ctx
+            .cargo_runner()
+            .run_check_streaming(package_arg_refs, &mut |n| {
+                if pkg_total > 0 {
+                    let pct = (n as f64 / pkg_total as f64 * 100.0).min(100.0);
+                    ctx.report_progress_full(
+                        "compile",
+                        Some(pct),
+                        Some(n as i64),
+                        Some(pkg_total as i64),
+                        "determinate",
+                        Some("packages"),
+                        None,
+                        "rough",
+                        Some(&format!("{n}/{pkg_total} packages ({pct:.0}%)")),
+                    );
+                }
+            })?;
         let success = check_summary.success;
         if ctx.is_human() {
             for diag in &check_summary.diagnostics {
-                if let Some(rendered) = &diag.rendered { eprint!("{rendered}"); }
+                if let Some(rendered) = &diag.rendered {
+                    eprint!("{rendered}");
+                }
             }
         }
         self.process_diagnostics(ctx, &check_summary, result, "cargo check");
@@ -438,7 +489,8 @@ impl CheckCommand {
                 message: "cargo check failed".to_string(),
                 location: Some("check".to_string()),
                 suggestion: Some("Run `xtask check` and inspect diagnostics".to_string()),
-            }).with_detail("cargo check failed");
+            })
+            .with_detail("cargo check failed");
             failure.warnings = result.warnings.drain(..).collect();
             return Ok(Some(failure));
         }
@@ -535,7 +587,9 @@ impl XtaskCommand for CheckCommand {
         let pkg_total = estimate_package_count(&package_arg_refs);
 
         // 2b. Run compile or lint stage; returns early if there are failures.
-        if let Some(failure) = this.run_compile_stage(ctx, &package_arg_refs, pkg_total, &mut result)? {
+        if let Some(failure) =
+            this.run_compile_stage(ctx, &package_arg_refs, pkg_total, &mut result)?
+        {
             return Ok(failure);
         }
 
@@ -650,7 +704,9 @@ fn capture_resource_warning(ctx: &CommandContext) -> Option<String> {
     match resources::ResourceStatus::capture() {
         Ok(status) => {
             let warning = status.warning(resources::thresholds::CARGO_CHECK_GB);
-            if let Some(ref msg) = warning && ctx.is_human() {
+            if let Some(ref msg) = warning
+                && ctx.is_human()
+            {
                 eprintln!("  ⚠ {msg}");
             }
             warning

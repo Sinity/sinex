@@ -1153,9 +1153,9 @@ mod tests {
     #[sinex_test]
     async fn jobs_output_rejects_conflicting_stream_selectors() -> ::xtask::sandbox::TestResult<()>
     {
-        let Err(error) = crate::Cli::try_parse_from([
-            "xtask", "jobs", "output", "42", "--stdout", "--stderr",
-        ]) else {
+        let Err(error) =
+            crate::Cli::try_parse_from(["xtask", "jobs", "output", "42", "--stdout", "--stderr"])
+        else {
             panic!("stdout and stderr selectors should conflict")
         };
 

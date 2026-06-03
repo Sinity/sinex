@@ -436,7 +436,12 @@ impl XtaskCommand for ExerciseCommand {
 
         // --ci-check: diff against committed baseline, fail on regressions.
         let (ci_regressions, _) = if self.ci_check {
-            check_ci_baseline(&manifest, &self.baseline_path(), self.update_baseline, ctx.is_human())?
+            check_ci_baseline(
+                &manifest,
+                &self.baseline_path(),
+                self.update_baseline,
+                ctx.is_human(),
+            )?
         } else {
             (vec![], vec![])
         };
@@ -524,8 +529,19 @@ impl XtaskCommand for ExerciseCommand {
 /// Writes the baseline if `update_baseline` is true or no baseline exists.
 /// Print the human-readable outcome line for one exercise.
 fn print_exercise_outcome(idx: usize, total: usize, id: &str, outcome: &ExerciseOutcome) {
-    let symbol = if outcome.passed { "\x1b[32m✓\x1b[0m" } else { "\x1b[31m✗\x1b[0m" };
-    println!("\r  [{}/{}] {} {} ({:.1}s)", idx + 1, total, symbol, id, outcome.duration.as_secs_f64());
+    let symbol = if outcome.passed {
+        "\x1b[32m✓\x1b[0m"
+    } else {
+        "\x1b[31m✗\x1b[0m"
+    };
+    println!(
+        "\r  [{}/{}] {} {} ({:.1}s)",
+        idx + 1,
+        total,
+        symbol,
+        id,
+        outcome.duration.as_secs_f64()
+    );
     if !outcome.passed {
         for s in &outcome.steps {
             for err in &s.validation_errors {
@@ -563,7 +579,10 @@ fn check_ci_baseline(
         }
         fs::write(baseline_path, &json)?;
         if is_human {
-            println!("  Baseline created: {} (no prior baseline found)", baseline_path.display());
+            println!(
+                "  Baseline created: {} (no prior baseline found)",
+                baseline_path.display()
+            );
         }
         return Ok((vec![], vec![]));
     }
@@ -589,7 +608,10 @@ fn check_ci_baseline(
             }
         }
         if regressions.is_empty() {
-            println!("  ✓ No regressions vs baseline ({})", baseline_path.display());
+            println!(
+                "  ✓ No regressions vs baseline ({})",
+                baseline_path.display()
+            );
         }
     }
     Ok((regressions, new_passes))

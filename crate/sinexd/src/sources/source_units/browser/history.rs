@@ -225,10 +225,7 @@ impl MaterialParser for BrowserHistoryParser {
                 EventSource::from_static("webhistory"),
                 EventType::from_static("page.visited"),
             )],
-            privacy_contexts: vec![
-                ProcessingContext::Clipboard,
-                ProcessingContext::Metadata,
-            ],
+            privacy_contexts: vec![ProcessingContext::Clipboard, ProcessingContext::Metadata],
             sensitivity_hints: Vec::new(),
             proof_obligations: vec![
                 "privacy_context_declared".into(),

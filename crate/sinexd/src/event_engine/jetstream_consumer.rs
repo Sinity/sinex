@@ -531,13 +531,12 @@ impl JetStreamConsumer {
 
     /// Load DB-backed privacy policy and attach it to this consumer.
     pub async fn with_policy_engine(mut self) -> IngestdResult<Self> {
-        let engine =
-            crate::event_engine::policy::PolicyEngine::load(self.pool.clone()).await.map_err(
-                |e| {
-                    SinexError::configuration("failed to load DB privacy policy at admission")
-                        .with_std_error(&e)
-                },
-            )?;
+        let engine = crate::event_engine::policy::PolicyEngine::load(self.pool.clone())
+            .await
+            .map_err(|e| {
+                SinexError::configuration("failed to load DB privacy policy at admission")
+                    .with_std_error(&e)
+            })?;
         self.policy_engine = Arc::new(engine);
         Ok(self)
     }

@@ -57,7 +57,7 @@ async fn test_event_provenance(runner: &mut TestRunner, pool: &PgPool) {
     let result = sqlx::query_scalar::<_, i64>(
         "SELECT COUNT(*) FROM core.events \
          WHERE source_material_id IS NULL \
-           AND source_event_ids IS NULL"
+           AND source_event_ids IS NULL",
     )
     .fetch_one(pool)
     .await;
@@ -79,7 +79,7 @@ async fn test_non_fs_events(runner: &mut TestRunner, pool: &PgPool) {
         "SELECT COUNT(DISTINCT event_type) \
          FROM core.events \
          WHERE event_type IS NOT NULL \
-           AND event_type NOT LIKE 'file.%'"
+           AND event_type NOT LIKE 'file.%'",
     )
     .fetch_one(pool)
     .await;

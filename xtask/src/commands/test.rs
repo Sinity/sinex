@@ -623,12 +623,12 @@ impl TestCommand {
             );
         }
         // Build coverage array for JSON output
-        let proof_coverage: Vec<PackageProofCoverage> =
-            if execution_plan.runner_packages.is_empty() {
-                Vec::new()
-            } else {
-                self.classify_package_proof_coverage(ctx, &execution_plan.runner_packages)
-            };
+        let proof_coverage: Vec<PackageProofCoverage> = if execution_plan.runner_packages.is_empty()
+        {
+            Vec::new()
+        } else {
+            self.classify_package_proof_coverage(ctx, &execution_plan.runner_packages)
+        };
         Ok(CommandResult::success()
             .with_message("test dry-run passed")
             .with_detail(format!("scope={}", workload_scope.encode_marker()))
@@ -1070,13 +1070,25 @@ impl TestCommand {
         push_flag(&mut args, self.heavy, "--heavy");
         push_flag(&mut args, self.include_ignored, "--include-ignored");
         push_flag(&mut args, self.list, "--list");
-        push_flag(&mut args, self.skip_preflight || force_skip_preflight, "--skip-preflight");
+        push_flag(
+            &mut args,
+            self.skip_preflight || force_skip_preflight,
+            "--skip-preflight",
+        );
         push_flag(&mut args, self.ephemeral_postgres, "--ephemeral-postgres");
-        push_flag(&mut args, self.no_ephemeral_postgres, "--no-ephemeral-postgres");
+        push_flag(
+            &mut args,
+            self.no_ephemeral_postgres,
+            "--no-ephemeral-postgres",
+        );
         push_flag(&mut args, self.prime, "--prime");
         push_flag(&mut args, self.dry_run, "--dry-run");
         push_flag(&mut args, self.update_snapshots, "--update-snapshots");
-        push_flag(&mut args, self.allow_contended_host, "--allow-contended-host");
+        push_flag(
+            &mut args,
+            self.allow_contended_host,
+            "--allow-contended-host",
+        );
         push_flag(&mut args, self.no_reuse, "--no-reuse");
         push_flag(&mut args, self.lib, "--lib");
         if !matches!(self.impact_mode, crate::impact::ImpactMode::Balanced) {
@@ -1512,7 +1524,10 @@ fn print_dry_run_plan(
         println!("  packages: {}", execution_plan.runner_packages.join(", "));
     }
     if !execution_plan.excluded_packages.is_empty() {
-        println!("  excluded: {}", execution_plan.excluded_packages.join(", "));
+        println!(
+            "  excluded: {}",
+            execution_plan.excluded_packages.join(", ")
+        );
     }
     if !effective_test_binaries.is_empty() {
         println!("  test binaries: {}", effective_test_binaries.join(", "));
@@ -1558,12 +1573,25 @@ fn print_dry_run_plan(
 
 /// Print the proof coverage classification summary.
 fn print_proof_coverage(coverage: &[PackageProofCoverage]) {
-    let covered: Vec<_> = coverage.iter().filter(|c| c.state == ProofCoverageState::Covered).collect();
-    let missing: Vec<_> = coverage.iter().filter(|c| c.state == ProofCoverageState::Missing).collect();
-    let ineligible: Vec<_> = coverage.iter().filter(|c| c.state == ProofCoverageState::Ineligible).collect();
-    let stale: Vec<_> = coverage.iter().filter(|c| c.state == ProofCoverageState::Stale).collect();
+    let covered: Vec<_> = coverage
+        .iter()
+        .filter(|c| c.state == ProofCoverageState::Covered)
+        .collect();
+    let missing: Vec<_> = coverage
+        .iter()
+        .filter(|c| c.state == ProofCoverageState::Missing)
+        .collect();
+    let ineligible: Vec<_> = coverage
+        .iter()
+        .filter(|c| c.state == ProofCoverageState::Ineligible)
+        .collect();
+    let stale: Vec<_> = coverage
+        .iter()
+        .filter(|c| c.state == ProofCoverageState::Stale)
+        .collect();
     let fmt_with_id = |items: &[&PackageProofCoverage]| {
-        items.iter()
+        items
+            .iter()
             .map(|c| format!("{}@{}", c.package, c.proof_invocation_id.unwrap_or(0)))
             .collect::<Vec<_>>()
             .join(", ")
@@ -1575,10 +1603,24 @@ fn print_proof_coverage(coverage: &[PackageProofCoverage]) {
         println!("  proof stale: {}", fmt_with_id(&stale));
     }
     if !missing.is_empty() {
-        println!("  proof missing: {}", missing.iter().map(|c| c.package.as_str()).collect::<Vec<_>>().join(", "));
+        println!(
+            "  proof missing: {}",
+            missing
+                .iter()
+                .map(|c| c.package.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
     }
     if !ineligible.is_empty() {
-        println!("  proof ineligible: {}", ineligible.iter().map(|c| c.package.as_str()).collect::<Vec<_>>().join(", "));
+        println!(
+            "  proof ineligible: {}",
+            ineligible
+                .iter()
+                .map(|c| c.package.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
     }
 }
 
@@ -1604,7 +1646,11 @@ fn bench_background_args(bench: &BenchArgs) -> Vec<String> {
         args.push(format!("--db-pool-sizes={pool_sizes}"));
     }
     push_flag(&mut args, bench.system_impact, "--system-impact");
-    push_flag(&mut args, bench.system_impact_extended, "--system-impact-extended");
+    push_flag(
+        &mut args,
+        bench.system_impact_extended,
+        "--system-impact-extended",
+    );
     args.push(format!("--target={}", bench.target));
     push_flag(&mut args, bench.contracts, "--contracts");
     if let Some(ref f) = bench.contracts_file {
@@ -1625,7 +1671,11 @@ fn bench_background_args(bench: &BenchArgs) -> Vec<String> {
     }
     push_flag(&mut args, bench.dry_run, "--dry-run");
     push_flag(&mut args, bench.continue_on_fail, "--continue-on-fail");
-    push_flag(&mut args, bench.allow_contended_host, "--allow-contended-host");
+    push_flag(
+        &mut args,
+        bench.allow_contended_host,
+        "--allow-contended-host",
+    );
     push_flag(&mut args, bench.verbose, "--verbose");
     args
 }
@@ -1646,10 +1696,7 @@ fn fuzz_background_args(fuzz: &FuzzArgs) -> Vec<String> {
 
 /// Build serialized background CLI args for a coverage subcommand.
 fn coverage_background_args(cov: &CoverageArgs) -> Vec<String> {
-    let mut args = vec![
-        "coverage".to_string(),
-        format!("--output={}", cov.output),
-    ];
+    let mut args = vec!["coverage".to_string(), format!("--output={}", cov.output)];
     push_flag(&mut args, cov.open, "--open");
     if let Some(ref p) = cov.package {
         args.push(format!("--package={p}"));
@@ -2109,15 +2156,16 @@ impl XtaskCommand for TestCommand {
                                     );
                                     // Store test filter for per-test-name evidence (#1393 Phase 3).
                                     if r.is_ok()
-                                        && let Some(ref filter) = filter_for_proof {
-                                            let _ = db.set_test_proof_filter(
-                                                invocation_id,
-                                                &proof_kind,
-                                                &scope_key,
-                                                &input_fingerprint,
-                                                filter,
-                                            );
-                                        }
+                                        && let Some(ref filter) = filter_for_proof
+                                    {
+                                        let _ = db.set_test_proof_filter(
+                                            invocation_id,
+                                            &proof_kind,
+                                            &scope_key,
+                                            &input_fingerprint,
+                                            filter,
+                                        );
+                                    }
                                     r
                                 }) {
                                     result?;

@@ -4,7 +4,6 @@
 //! include the required `source_file` field for `SQLite` and JSONL material.
 
 use camino::Utf8PathBuf;
-use sinexd::node_sdk::parser::{MaterialParser, SourceRecordFingerprint};
 use sinex_primitives::{
     Uuid,
     ids::Id,
@@ -12,6 +11,7 @@ use sinex_primitives::{
     rpc::sources::{CaveatSeverity, caveat_codes},
     temporal::Timestamp,
 };
+use sinexd::node_sdk::parser::{MaterialParser, SourceRecordFingerprint};
 use sinexd::sources::source_units::browser::history::BrowserHistoryParser;
 
 fn test_ctx() -> ParserContext {
@@ -69,8 +69,7 @@ async fn qutebrowser_sqlite_title_is_not_parser_redacted() {
 
     assert_eq!(intents.len(), 1);
     assert_eq!(
-        intents[0].payload["title"],
-        "KeePass - Database.kdbx",
+        intents[0].payload["title"], "KeePass - Database.kdbx",
         "browser title policy belongs to DB admission rules, not parser-local redaction"
     );
 }

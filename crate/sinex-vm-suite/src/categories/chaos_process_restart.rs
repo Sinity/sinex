@@ -140,7 +140,7 @@ async fn test_no_duplicate_events_after_restart(runner: &mut TestRunner, pool: &
     let result = sqlx::query_scalar::<_, i64>(
         "SELECT COUNT(*) FROM (\
            SELECT id, COUNT(*) as cnt FROM core.events GROUP BY id HAVING COUNT(*) > 1\
-         ) t"
+         ) t",
     )
     .fetch_one(pool)
     .await;

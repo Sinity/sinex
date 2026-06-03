@@ -110,7 +110,7 @@ pub async fn handle_sources_stage(
 
     let material_class =
         sinex_primitives::privacy::MaterialCaptureClass::from_canonical_str(&capture_class)
-        .unwrap_or(sinex_primitives::privacy::MaterialCaptureClass::AllowedPlaintext);
+            .unwrap_or(sinex_primitives::privacy::MaterialCaptureClass::AllowedPlaintext);
 
     if material_class.is_rejected() {
         return Err(

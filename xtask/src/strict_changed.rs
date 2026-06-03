@@ -110,9 +110,7 @@ fn manifest_declares_workspace(cargo_toml: &Path) -> bool {
     let Ok(content) = std::fs::read_to_string(cargo_toml) else {
         return false;
     };
-    content
-        .lines()
-        .any(|line| line.trim() == "[workspace]")
+    content.lines().any(|line| line.trim() == "[workspace]")
 }
 
 /// Parse `[package] name = "..."` from a `Cargo.toml` file.

@@ -201,7 +201,6 @@ pub struct FixtureAcceptanceContract {
     /// Require every positive expectation to assert parser id/version.
     #[serde(default = "default_true")]
     pub require_parser_metadata: bool,
-
 }
 
 fn default_true() -> bool {
@@ -1209,8 +1208,7 @@ mod tests {
         assertions.retain(|assertion| {
             !matches!(
                 assertion,
-                FixtureAssertion::PrivacyContext { .. }
-                    | FixtureAssertion::OccurrenceKey { .. }
+                FixtureAssertion::PrivacyContext { .. } | FixtureAssertion::OccurrenceKey { .. }
             )
         });
         let spec = acceptance_spec(assertions);

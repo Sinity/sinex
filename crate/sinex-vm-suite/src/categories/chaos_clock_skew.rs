@@ -47,7 +47,7 @@ async fn test_baseline_monotonic(runner: &mut TestRunner, pool: &PgPool) {
            SELECT ts_coided, LAG(ts_coided) OVER (ORDER BY id) AS prev_ts \
            FROM core.events\
          ) t \
-         WHERE prev_ts IS NOT NULL AND ts_coided < prev_ts"
+         WHERE prev_ts IS NOT NULL AND ts_coided < prev_ts",
     )
     .fetch_one(pool)
     .await
@@ -182,7 +182,7 @@ async fn test_no_catastrophic_timestamp_corruption(runner: &mut TestRunner, pool
            SELECT ts_coided, LAG(ts_coided) OVER (ORDER BY id) AS prev_ts \
            FROM core.events\
          ) t \
-         WHERE prev_ts IS NOT NULL AND ts_coided < prev_ts"
+         WHERE prev_ts IS NOT NULL AND ts_coided < prev_ts",
     )
     .fetch_one(pool)
     .await
@@ -211,7 +211,7 @@ async fn test_hypertable_chunk_structure_intact(runner: &mut TestRunner, pool: &
     let name = "chaos-clock-skew: hypertable chunk structure intact";
 
     let result = sqlx::query_scalar::<_, i64>(
-        "SELECT COUNT(*) FROM timescaledb_information.chunks WHERE hypertable_name = 'events'"
+        "SELECT COUNT(*) FROM timescaledb_information.chunks WHERE hypertable_name = 'events'",
     )
     .fetch_one(pool)
     .await;

@@ -246,7 +246,14 @@ impl<'a> SchemaManagementRepository<'a> {
             return self.reactivate_schema(existing).await;
         }
 
-        self.register_new_schema_version(source, event_type, schema_version, schema_content, content_hash).await
+        self.register_new_schema_version(
+            source,
+            event_type,
+            schema_version,
+            schema_content,
+            content_hash,
+        )
+        .await
     }
 
     async fn reactivate_schema(

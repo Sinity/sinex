@@ -91,7 +91,9 @@ impl ParserId {
         match &self.0 {
             Cow::Borrowed(s) => s,
             Cow::Owned(_) => {
-                unreachable!("ParserId::as_static_str is only valid on const-constructed (borrowed) ids")
+                unreachable!(
+                    "ParserId::as_static_str is only valid on const-constructed (borrowed) ids"
+                )
             }
         }
     }
@@ -180,7 +182,9 @@ impl SourceUnitId {
         match &self.0 {
             Cow::Borrowed(s) => s,
             Cow::Owned(_) => {
-                unreachable!("SourceUnitId::as_static_str is only valid on const-constructed (borrowed) ids")
+                unreachable!(
+                    "SourceUnitId::as_static_str is only valid on const-constructed (borrowed) ids"
+                )
             }
         }
     }
@@ -501,7 +505,6 @@ pub enum ParserError {
     Field(String),
 
     Decode(String),
-
 }
 
 impl fmt::Display for ParserError {
