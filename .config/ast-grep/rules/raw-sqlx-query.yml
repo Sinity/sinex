@@ -15,8 +15,8 @@ ignores:
   - "crate/sinex-db/src/query_helpers.rs"
   - "crate/sinex-db/src/repositories/**"
   - "crate/sinex-db/src/replay/**"
-  # Preflight/migration infrastructure
-  - "crate/lib/sinex-node-sdk/src/preflight/**"
+  # Preflight/migration infrastructure (node-sdk folded into sinexd, #1559)
+  - "crate/sinexd/src/node_sdk/preflight/**"
   # Test infrastructure
   - "xtask/**"
   - "**/tests/**"

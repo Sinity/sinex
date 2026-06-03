@@ -14,8 +14,8 @@ ignores:
   - "xtask/**"
   # Binary entry points may use anyhow for top-level error handling
   - "**/main.rs"
-  # CLI tooling
-  - "crate/cli/**"
+  # CLI tooling (post-fold #1559: the CLI crate is crate/sinexctl)
+  - "crate/sinexctl/**"
   # Tests
   - "**/tests/**"
   - "**/*_test.rs"
