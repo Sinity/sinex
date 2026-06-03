@@ -51,66 +51,71 @@ impl XtaskCommand for LintForbiddenCommand {
         // auto-skip those categories.
         // ═══════════════════════════════════════════════════════════════════════
 
-        // #[tokio::test] allowlist — only for code that GENERATES or REFERENCES
-        // #[tokio::test] as string literals (not actual test attributes).
+        // #[tokio::test] allowlist — for code that GENERATES/REFERENCES
+        // #[tokio::test] as string literals, or tests that need a specific
+        // tokio runtime flavor (#[sinex_test] rejects flavor/worker_threads args).
         let tokio_test_allow = [
             // Proc macro: generates #[tokio::test] in expanded sinex_test output
             "xtask/macros/src/lib.rs",
             // This file: contains pattern strings and doc comments referencing it
             "xtask/src/commands/lint_forbidden.rs",
+            // BINDING_ENV_LOCK concurrency tests need a real multi_thread runtime
+            // (flavor = "multi_thread", worker_threads = 4) to exercise the env
+            // race; #[sinex_test] cannot express the flavor.
+            "crate/sinexd/src/sources/bindings.rs",
         ];
-        // #[test] allowlist — empty. Only dedicated test directories and xtask/
-        // are auto-skipped. All inline mod tests must use #[sinex_test].
-        // Add individual file paths here only for genuine proc-macro or
-        // trybuild fixtures that cannot use #[sinex_test].
-        let rust_test_allow: [&str; 0] = [];
+        // #[test] allowlist — only for tests that genuinely cannot use
+        // #[sinex_test]: proc-macro / trybuild fixtures, or tests requiring
+        // controlled process-global env mutation under a specific thread model.
+        let rust_test_allow = [
+            // EnvGuard tests mutate process-global env vars under documented
+            // SAFETY/threading invariants, paired with the multi_thread race
+            // tests above in the same module.
+            "crate/sinexd/src/sources/bindings.rs",
+        ];
         // Runtime sqlx::query() is allowed for:
         // - Session control (SET, ROLLBACK, RESET)
         // - Advisory locks
         // - Dynamic queries (analytics, cascade analysis)
         // - Test infrastructure
+        // Paths are post-fold (#1559): sinex-gateway/ingestd folded into
+        // crate/sinexd/{api,event_engine}; node_sdk under crate/sinexd/src/node_sdk;
+        // sinex-db/schema flattened out of crate/lib. xtask/ and tests/ auto-skip
+        // via is_tests_path, so they are not listed here.
         let sqlx_query_allow = [
-            "crate/core/sinex-gateway/src/cascade_analyzer.rs",
-            "crate/core/sinex-gateway/src/rpc_server.rs",
-            "crate/core/sinex-gateway/src/service_container.rs",
-            "crate/core/sinex-gateway/src/handlers/rpc_handlers.rs",
-            "crate/core/sinex-ingestd/src/config.rs",
-            // sinex-db paths (after crate reorganization - no /db/ subdir)
-            "crate/lib/sinex-db/src/lib.rs",
-            "crate/lib/sinex-db/src/pool.rs",
-            "crate/lib/sinex-db/src/query_helpers.rs",
-            "crate/lib/sinex-db/src/repositories/events/mod.rs",
-            "crate/lib/sinex-db/src/repositories/events/persistence.rs",
-            "crate/lib/sinex-db/src/repositories/events/queries.rs",
-            "crate/lib/sinex-db/src/repositories/common.rs",
-            "crate/lib/sinex-db/src/repositories/schema_management.rs",
-            "crate/lib/sinex-db/src/repositories/knowledge_graph.rs",
-            "crate/lib/sinex-db/src/repositories/state.rs",
-            // Dynamic ranking/filter SQL where predicates and bind positions
-            // are assembled from optional search parameters.
-            "crate/lib/sinex-db/src/repositories/document_search.rs",
-            "crate/lib/sinex-db/src/replay/state_machine.rs",
-            // Dynamic session GUC setup over a small fixed option table.
-            "node_sdk/src/preflight/mod.rs",
-            "node_sdk/src/preflight/database.rs",
-            "node_sdk/src/preflight/verification.rs",
-            "crate/lib/sinex-test-utils/src/database_pool.rs",
-            "crate/lib/sinex-test-utils/src/db_common.rs",
-            "crate/lib/sinex-test-utils/src/fixture_generator.rs",
-            "crate/lib/sinex-test-utils/src/fixtures.rs",
-            "crate/lib/sinex-test-utils/src/session_guards.rs",
-            "crate/lib/sinex-test-utils/src/permissions.rs",
-            "xtask/src/main.rs",
+            // sinex-db repository layer — runtime queries over tables not in the
+            // compile-time schema, dynamic predicates, and session control.
+            "crate/sinex-db/src/pool.rs",
+            "crate/sinex-db/src/query_helpers.rs",
+            "crate/sinex-db/src/repositories/common.rs",
+            "crate/sinex-db/src/repositories/document_search.rs",
+            "crate/sinex-db/src/repositories/events/persistence.rs",
+            "crate/sinex-db/src/repositories/knowledge_graph.rs",
+            "crate/sinex-db/src/repositories/model_effects.rs",
+            "crate/sinex-db/src/repositories/schema_management.rs",
+            // Gateway/api dynamic + analytical SQL (cascade analysis, curation CTEs).
+            "crate/sinexd/src/api/cascade_analyzer.rs",
+            "crate/sinexd/src/api/handlers/curation.rs",
+            "crate/sinexd/src/api/service_container.rs",
+            // SDK preflight: dynamic session GUC setup over a small fixed option table.
+            "crate/sinexd/src/node_sdk/preflight/mod.rs",
+            "crate/sinexd/src/node_sdk/preflight/database.rs",
+            "crate/sinexd/src/node_sdk/preflight/verification.rs",
+            // CLI direct operations-log writes (audit trail for cascade ops).
+            // Tracked for repository routing / macro promotion: #1619.
+            "crate/sinexctl/src/commands/blob.rs",
         ];
         let sqlx_query_as_allow = [
-            "crate/lib/sinex-db/src/repositories/common.rs",
-            "crate/core/sinex-gateway/src/handlers/audit.rs",
-            "crate/lib/sinex-db/src/repositories/events/composable_query.rs",
-            "crate/lib/sinex-db/src/repositories/events/persistence.rs",
-            "node_sdk/src/preflight/database.rs",
+            // Dynamic ranking/filter SQL where the query string is assembled at runtime.
+            "crate/sinex-db/src/occurrence_filter.rs",
+            "crate/sinex-db/src/repositories/common.rs",
+            "crate/sinex-db/src/repositories/events/composable_query.rs",
+            "crate/sinex-db/src/repositories/events/persistence.rs",
+            "crate/sinex-db/src/repositories/model_effects.rs",
+            "crate/sinexd/src/api/handlers/audit.rs",
+            "crate/sinexd/src/node_sdk/preflight/database.rs",
             // Timescale catalog tables may not exist in compile-time check DBs.
-            "crate/lib/sinex-schema/src/strict_diff.rs",
-            "xtask/src/main.rs",
+            "crate/sinex-schema/src/strict_diff.rs",
         ];
 
         let mut violations: Vec<String> = Vec::new();
@@ -135,13 +140,10 @@ impl XtaskCommand for LintForbiddenCommand {
             &sqlx_query_as_allow,
         )?);
         let raw_event_subject_allow = [
-            "xtask/src/sandbox/events.rs",
-            "crate/lib/sinex-primitives/src/domain.rs",
-            "node_sdk/src/nats_publisher.rs",
-            "crate/lib/sinex-primitives/src/environment.rs",
-            "node_sdk/src/event_node.rs",
-            "node_sdk/src/runtime/stream/mod.rs",
-            "xtask/src/commands/lint_forbidden.rs",
+            "crate/sinex-primitives/src/domain.rs",
+            "crate/sinex-primitives/src/environment.rs",
+            "crate/sinexd/src/node_sdk/nats_publisher.rs",
+            "crate/sinexd/src/node_sdk/event_node.rs",
         ];
         violations.extend(check_pattern(
             "nats_raw_event_subject_with_namespace(",
@@ -160,8 +162,9 @@ impl XtaskCommand for LintForbiddenCommand {
         // `color_eyre::` in library code is disallowed; libraries use the project error stack.
         // This is separate from anyhow because color_eyre is only permitted in xtask and binaries.
         let color_eyre_lib_allow = [
-            // xtask is a build tool, not a library — color_eyre is its error stack.
-            "xtask/src/commands/lint_forbidden.rs",
+            // Inline #[cfg(test)] module: builds a TestResult (color_eyre) failure
+            // via eyre!. is_tests_path can't see inline test modules in src/ files.
+            "crate/sinexd/src/node_sdk/parser/adapters/unix_socket_stream.rs",
         ];
         violations.extend(check_color_eyre_in_lib(
             "color_eyre::",
@@ -171,14 +174,14 @@ impl XtaskCommand for LintForbiddenCommand {
 
         // println! in library code (use tracing for structured logging)
         let println_lib_allow = [
-            "node_sdk/src/node_cli.rs",
-            // Intentional stdout output for CLI-facing functions
-            "node_sdk/src/version.rs",
-            "node_sdk/src/heartbeat.rs",
-            "node_sdk/src/diagnostics/regression.rs",
+            // Intentional stdout output for CLI-facing SDK functions.
+            "crate/sinexd/src/node_sdk/node_cli.rs",
+            "crate/sinexd/src/node_sdk/version.rs",
+            "crate/sinexd/src/node_sdk/heartbeat.rs",
+            "crate/sinexd/src/node_sdk/diagnostics/regression.rs",
             // Doc comment code examples (scanner can't distinguish from real code)
-            "node_sdk/src/watcher_handle.rs",
-            "crate/lib/sinex-schema/src/strict_diff.rs",
+            "crate/sinexd/src/node_sdk/watcher_handle.rs",
+            "crate/sinex-schema/src/strict_diff.rs",
         ];
         violations.extend(check_println_in_lib(
             "println!",
@@ -189,19 +192,14 @@ impl XtaskCommand for LintForbiddenCommand {
         // Raw `INSERT INTO core.events` in non-test code should use the repository layer.
         // Tests that bypass the repository for cascade / schema testing are allowed.
         let insert_core_events_allow = [
-            // Gateway tests that test cascade infrastructure at the DB level.
-            "crate/core/sinex-gateway/src/cascade_analyzer.rs",
-            "crate/core/sinex-gateway/tests/cascade_analyzer_cycle_test.rs",
-            "crate/core/sinex-gateway/tests/cascade_depth_truncation_test.rs",
-            "crate/core/sinex-gateway/tests/sse_stream_test.rs",
-            // Schema bootstrap and test fixture modules.
-            "crate/lib/sinex-db/src/repositories/events/persistence.rs",
+            // Cascade infrastructure constructs events at the DB level.
+            "crate/sinexd/src/api/cascade_analyzer.rs",
+            // Repository persistence layer (the canonical INSERT site).
+            "crate/sinex-db/src/repositories/events/persistence.rs",
             // Declarative restore/archive SQL intentionally rehydrates events
             // inside a checked schema function rather than through Rust
             // repositories.
-            "crate/lib/sinex-schema/src/apply.rs",
-            "xtask/src/sandbox/events.rs",
-            "xtask/src/commands/lint_forbidden.rs",
+            "crate/sinex-schema/src/apply.rs",
         ];
         violations.extend(check_pattern(
             "raw INSERT INTO core.events",
@@ -224,22 +222,23 @@ impl XtaskCommand for LintForbiddenCommand {
         let bare_uuid_id_field_allow = [
             // DB row mirrors (typed via sqlx Type<Postgres>), tracked for
             // later promotion to Id<T> repository surfaces.
-            "crate/lib/sinex-db/src/repositories/embeddings.rs",
-            "crate/lib/sinex-db/src/repositories/occurrences.rs",
-            "crate/lib/sinex-schema/src/schema/annotations.rs",
-            "crate/lib/sinex-schema/src/schema/occurrences.rs",
-            // Ingestd material assembler state mirrors NATS frame UUIDs.
-            "crate/core/sinex-ingestd/src/admission.rs",
-            "crate/core/sinex-ingestd/src/material_assembler/restore_plan.rs",
-            "crate/core/sinex-ingestd/src/material_assembler/state.rs",
+            "crate/sinex-db/src/repositories/embeddings.rs",
+            "crate/sinex-schema/src/defs/annotations.rs",
+            // Ingestd material assembler state mirrors NATS frame UUIDs
+            // (folded into crate/sinexd/src/event_engine).
+            "crate/sinexd/src/event_engine/admission.rs",
+            "crate/sinexd/src/event_engine/material_assembler/restore_plan.rs",
+            "crate/sinexd/src/event_engine/material_assembler/state.rs",
             // SDK material/anchor surface kept on bare Uuid until the
             // SourceRecordAnchor / SourceMaterialHandle pair is promoted.
-            "node_sdk/src/acquisition_manager.rs",
-            "node_sdk/src/ingestion_helpers.rs",
-            // Process automata analytics row.
-            "crate/core/sinex-process/src/automata/analytics.rs",
-            // Test fixture publisher.
-            "xtask/src/sandbox/events.rs",
+            "crate/sinexd/src/node_sdk/acquisition_manager.rs",
+            "crate/sinexd/src/node_sdk/ingestion_helpers.rs",
+            // Process automata analytics row (folded into crate/sinexd/src/automata).
+            "crate/sinexd/src/automata/analytics.rs",
+            // Surfaced while the forbidden lint was down post-fold; tracked for
+            // Id<T> promotion or documented wire-Uuid justification: #1619.
+            "crate/sinexctl/src/commands/blob.rs",
+            "crate/sinex-primitives/src/rpc/curation.rs",
         ];
         violations.extend(check_pattern_allow_tests(
             "bare Uuid event_id / material_id field",
@@ -324,38 +323,34 @@ fn check_transport_publish_family_inventory() -> Result<Vec<String>> {
     // endorsement of every call inside it; it is the visible ownership list
     // that prevents new raw publish sites from appearing silently.
     let allow = [
-        // Test/sandbox producer used by xtask harnesses.
-        "xtask/src/sandbox/events.rs",
         // Canonical event, telemetry, raw-ingest DLQ, and processing-failure publisher.
-        "node_sdk/src/nats_publisher.rs",
+        "crate/sinexd/src/node_sdk/nats_publisher.rs",
         // Source-material lifecycle frame publisher.
-        "node_sdk/src/acquisition_manager.rs",
+        "crate/sinexd/src/node_sdk/acquisition_manager.rs",
         // Raw-ingest DLQ retry re-publishes into the original raw-event subject.
-        "node_sdk/src/dlq_retry.rs",
+        "crate/sinexd/src/node_sdk/dlq_retry.rs",
         // Node coordination control messages.
-        "node_sdk/src/coordination.rs",
+        "crate/sinexd/src/node_sdk/coordination.rs",
         // Runtime scan/drain control messages.
-        "node_sdk/src/runtime/stream/runner/control_messages.rs",
-        // Ingestd confirmation and raw-ingest DLQ publishers.
-        "crate/core/sinex-ingestd/src/jetstream_consumer.rs",
-        // Source-material assembler DLQ routing.
-        "crate/core/sinex-ingestd/src/material_assembler/finalize.rs",
-        // Active-schema broadcast control notification.
-        "crate/core/sinex-ingestd/src/service.rs",
-        // Gateway node control command publishers.
-        "crate/core/sinex-gateway/src/handlers/nodes.rs",
-        // Private-mode control broadcasts.
-        "crate/core/sinex-gateway/src/handlers/privacy.rs",
-        // Replay control request/reply and invalidation publishers.
-        "crate/core/sinex-gateway/src/replay_control/server.rs",
-        "crate/core/sinex-gateway/src/replay_control/execution/collect.rs",
+        "crate/sinexd/src/node_sdk/runtime/stream/runner/control_messages.rs",
         // Inline private-mode listener regression publishes a synthetic
         // control message; the production listener only subscribes.
-        "node_sdk/src/parser/adapter_node.rs",
-        // Source-worker parse command request/reply acknowledgements.
-        "crate/core/sinex-source-worker/src/parse_listener.rs",
-        // This lint's regex fixtures and inventory strings.
-        "xtask/src/commands/lint_forbidden.rs",
+        "crate/sinexd/src/node_sdk/parser/adapter_node.rs",
+        // Event-engine confirmation and raw-ingest DLQ publishers (folded ingestd).
+        "crate/sinexd/src/event_engine/jetstream_consumer.rs",
+        // Source-material assembler DLQ routing.
+        "crate/sinexd/src/event_engine/material_assembler/finalize.rs",
+        // Active-schema broadcast control notification.
+        "crate/sinexd/src/event_engine/service.rs",
+        // Gateway/api node control command publishers (folded gateway).
+        "crate/sinexd/src/api/handlers/nodes.rs",
+        // Private-mode control broadcasts.
+        "crate/sinexd/src/api/handlers/privacy.rs",
+        // Replay control request/reply and invalidation publishers.
+        "crate/sinexd/src/api/replay_control/server.rs",
+        "crate/sinexd/src/api/replay_control/execution/collect.rs",
+        // Source parse command request/reply acknowledgements (folded source-worker).
+        "crate/sinexd/src/sources/parse_listener.rs",
     ];
 
     check_pattern(
@@ -364,10 +359,9 @@ fn check_transport_publish_family_inventory() -> Result<Vec<String>> {
         &allow,
         |path| {
             is_tests_path(path)
-                || path == "crate/lib/sinex-primitives/src/testing.rs"
-                || path == "node_sdk/src/event_node.rs"
-                || path == "node_sdk/src/self_observation.rs"
-                || path.starts_with("crate/lib/sinex-test-utils/")
+                || path == "crate/sinex-primitives/src/testing.rs"
+                || path == "crate/sinexd/src/node_sdk/event_node.rs"
+                || path == "crate/sinexd/src/node_sdk/self_observation.rs"
         },
     )
 }
@@ -691,65 +685,47 @@ fn is_tests_path(path: &str) -> bool {
 /// Check for anyhow usage in library code (not xtask, not tests, not binaries)
 fn check_anyhow_in_lib(label: &str, pattern: &str, allow: &[&str]) -> Result<Vec<String>> {
     run_rg(pattern)
-        .and_then(|matches| {
-            filter_allowlist(matches, allow, |path| {
-                // Allow in xtask, tests, binaries, build scripts, CLI, examples
-                path.starts_with("xtask/")
-                    || is_tests_path(path)
-                    || path.ends_with("/main.rs")
-                    || path.ends_with("build.rs")
-                    || path.contains("/bin/")
-                    || path.contains("/examples/")
-                    || path.starts_with("crate/cli/")
-            })
-        })
+        .and_then(|matches| filter_allowlist(matches, allow, is_lib_check_skip))
         .with_context(|| format!("failed to scan for {label}"))
+}
+
+/// Shared skip predicate for the "no X in library code" checks
+/// (`anyhow::`, `color_eyre::`, `println!`). Exempts build tooling, tests,
+/// binaries, CLI, and examples. Paths are post-fold (#1559): the CLI crate
+/// is `crate/sinexctl/` and the VM test-suite binary is `crate/sinex-vm-suite/`.
+fn is_lib_check_skip(path: &str) -> bool {
+    path.starts_with("xtask/")
+        || is_tests_path(path)
+        || path.ends_with("/main.rs")
+        || path.ends_with("build.rs")
+        || path.contains("/bin/")
+        || path.contains("/examples/")
+        || path.starts_with("crate/sinexctl/")
+        || path.starts_with("crate/sinex-vm-suite/")
 }
 
 /// Check for `color_eyre::` usage in library code (use SinexError error stack).
 /// color_eyre is only permitted in xtask (build tooling) and binaries.
 fn check_color_eyre_in_lib(label: &str, pattern: &str, allow: &[&str]) -> Result<Vec<String>> {
     run_rg(pattern)
-        .and_then(|matches| {
-            filter_allowlist(matches, allow, |path| {
-                // Allow in xtask, tests, binaries, build scripts, CLI, examples
-                path.starts_with("xtask/")
-                    || is_tests_path(path)
-                    || path.ends_with("/main.rs")
-                    || path.ends_with("build.rs")
-                    || path.contains("/bin/")
-                    || path.contains("/examples/")
-                    || path.starts_with("crate/cli/")
-            })
-        })
+        .and_then(|matches| filter_allowlist(matches, allow, is_lib_check_skip))
         .with_context(|| format!("failed to scan for {label}"))
 }
 
 /// Check for println! in library code (use tracing instead)
 fn check_println_in_lib(label: &str, pattern: &str, allow: &[&str]) -> Result<Vec<String>> {
     run_rg(pattern)
-        .and_then(|matches| {
-            filter_allowlist(matches, allow, |path| {
-                // Allow in xtask, tests, binaries, CLI, examples, build scripts
-                path.starts_with("xtask/")
-                    || is_tests_path(path)
-                    || path.ends_with("/main.rs")
-                    || path.starts_with("crate/cli/")
-                    || path.contains("/bin/")
-                    || path.contains("/examples/")
-                    || path.ends_with("build.rs")
-            })
-        })
+        .and_then(|matches| filter_allowlist(matches, allow, is_lib_check_skip))
         .with_context(|| format!("failed to scan for {label}"))
 }
 
 /// Check for `sinex_test_utils` usage outside expected locations.
 /// Reports usage for awareness but doesn't block (inline #[cfg(test)] modules are OK).
 fn check_test_utils_layering(_violations: &mut Vec<String>) -> Result<()> {
-    // Allow test-utils imports in expected locations
+    // Allow test-utils imports in expected locations. Post-fold (#1559) the
+    // standalone sinex-test-utils crate was dissolved into xtask/src/sandbox.
     let allow_prefixes = [
-        "xtask/src/",                  // Build tooling
-        "crate/lib/sinex-test-utils/", // Test utils itself
+        "xtask/src/", // Build tooling + sandbox test infrastructure
     ];
 
     let matches = run_rg(r"use sinex_test_utils")?;
