@@ -235,10 +235,6 @@ impl XtaskCommand for LintForbiddenCommand {
             "crate/sinexd/src/node_sdk/ingestion_helpers.rs",
             // Process automata analytics row (folded into crate/sinexd/src/automata).
             "crate/sinexd/src/automata/analytics.rs",
-            // Surfaced while the forbidden lint was down post-fold; tracked for
-            // Id<T> promotion or documented wire-Uuid justification: #1619.
-            "crate/sinexctl/src/commands/blob.rs",
-            "crate/sinex-primitives/src/rpc/curation.rs",
         ];
         violations.extend(check_pattern_allow_tests(
             "bare Uuid event_id / material_id field",
