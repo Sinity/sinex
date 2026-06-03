@@ -35,7 +35,7 @@ use sinex_primitives::parser::{
     TimingEvidence,
 };
 use sinex_primitives::privacy::ProcessingContext;
-use sinex_primitives::proof::{PrivacyTier, SourceUnitDescriptor};
+use sinex_primitives::proof::SourceUnitDescriptor;
 use sinex_primitives::temporal::Timestamp;
 
 use super::{InputShapeAdapter, MaterialParser};
@@ -202,9 +202,6 @@ pub struct FixtureAcceptanceContract {
     #[serde(default = "default_true")]
     pub require_parser_metadata: bool,
 
-    /// Require non-public source units to assert field-level privacy logging.
-    #[serde(default = "default_true")]
-    pub require_privacy_log_for_non_public: bool,
 }
 
 fn default_true() -> bool {
@@ -271,12 +268,6 @@ pub enum FixtureAssertion {
 
     /// Assert that the intent privacy context matches.
     PrivacyContext { expected: ProcessingContext },
-
-    /// Assert that field-level privacy decisions were recorded.
-    FieldPrivacyLogPresent,
-
-    /// Assert that field-level privacy decisions were not recorded.
-    FieldPrivacyLogAbsent,
 
     /// Assert that an occurrence key is present with specific fields.
     OccurrenceKey {
@@ -676,28 +667,6 @@ impl ParserFixtureHarness {
                                 });
                             }
                         }
-                        FixtureAssertion::FieldPrivacyLogPresent => {
-                            if intent.field_privacy_log.as_ref().is_none_or(Vec::is_empty) {
-                                failures.push(FixtureFailure {
-                                    intent_index: Some(expectation.index),
-                                    expected: "field_privacy_log present".into(),
-                                    found: "field_privacy_log absent or empty".into(),
-                                });
-                            }
-                        }
-                        FixtureAssertion::FieldPrivacyLogAbsent => {
-                            if intent
-                                .field_privacy_log
-                                .as_ref()
-                                .is_some_and(|log| !log.is_empty())
-                            {
-                                failures.push(FixtureFailure {
-                                    intent_index: Some(expectation.index),
-                                    expected: "field_privacy_log absent".into(),
-                                    found: "field_privacy_log present".into(),
-                                });
-                            }
-                        }
                         FixtureAssertion::OccurrenceKey { expected_fields } => {
                             match &intent.occurrence_key {
                                 Some(key) => {
@@ -947,7 +916,6 @@ impl FixtureSpec {
             return failures;
         }
 
-        let descriptor_privacy_tier = descriptor.map(|descriptor| descriptor.privacy_tier);
         for expectation in &self.expectations {
             let assertions = &expectation.assertions;
 
@@ -1008,23 +976,6 @@ impl FixtureSpec {
                     .any(|a| matches!(a, FixtureAssertion::ParserMetadata { .. })),
                 "parser metadata",
             );
-
-            if contract.require_privacy_log_for_non_public
-                && matches!(
-                    descriptor_privacy_tier,
-                    Some(PrivacyTier::Sensitive | PrivacyTier::Secret)
-                )
-            {
-                require_assertion(
-                    &mut failures,
-                    expectation.index,
-                    true,
-                    assertions
-                        .iter()
-                        .any(|a| matches!(a, FixtureAssertion::FieldPrivacyLogPresent)),
-                    "field privacy log",
-                );
-            }
 
             let event_source = assertions.iter().find_map(|assertion| match assertion {
                 FixtureAssertion::EventSource { expected } => Some(expected.as_str()),
@@ -1136,7 +1087,7 @@ mod tests {
     use super::*;
     use sinex_primitives::domain::{EventSource, EventType};
     use sinex_primitives::parser::{ParserId, SourceUnitId, TimingConfidence};
-    use sinex_primitives::proof::{Horizon, OccurrenceIdentity, RetentionPolicy};
+    use sinex_primitives::proof::{Horizon, OccurrenceIdentity, PrivacyTier, RetentionPolicy};
     use xtask::sandbox::prelude::sinex_test;
 
     static EVENT_TYPES: &[(&str, &str)] = &[("terminal", "shell.command")];
@@ -1204,7 +1155,6 @@ mod tests {
                 require_occurrence_identity: true,
                 require_privacy_context: true,
                 require_parser_metadata: true,
-                require_privacy_log_for_non_public: true,
             }),
         }
     }
@@ -1235,7 +1185,6 @@ mod tests {
             FixtureAssertion::PrivacyContext {
                 expected: ProcessingContext::Command,
             },
-            FixtureAssertion::FieldPrivacyLogPresent,
             FixtureAssertion::ParserMetadata {
                 parser_id: "fixture-parser".to_string(),
                 parser_version: "1.0.0".to_string(),
@@ -1260,7 +1209,6 @@ mod tests {
             !matches!(
                 assertion,
                 FixtureAssertion::PrivacyContext { .. }
-                    | FixtureAssertion::FieldPrivacyLogPresent
                     | FixtureAssertion::OccurrenceKey { .. }
             )
         });
@@ -1269,7 +1217,6 @@ mod tests {
         let rendered = format!("{failures:?}");
 
         assert!(rendered.contains("privacy context assertion"));
-        assert!(rendered.contains("field privacy log assertion"));
         assert!(rendered.contains("occurrence identity assertion"));
         Ok(())
     }

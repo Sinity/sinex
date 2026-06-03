@@ -165,16 +165,16 @@ async fn emitted_derived_outputs_stamp_payload_schema_id_from_runtime_validator(
 }
 
 #[sinex_test]
-async fn scope_invalidation_outputs_apply_privacy_filtering() -> TestResult<()> {
-    struct PrivacyInvalidationNode;
+async fn scope_invalidation_outputs_preserve_payload_for_policy_admission() -> TestResult<()> {
+    struct PolicyAdmissionInvalidationNode;
 
-    impl Transducer for PrivacyInvalidationNode {
+    impl Transducer for PolicyAdmissionInvalidationNode {
         type State = TestDerivedState;
         type Input = JsonValue;
         type Output = JsonValue;
 
         fn name(&self) -> &'static str {
-            "derived-adapter-invalidation-privacy-test"
+            "derived-adapter-invalidation-policy-admission-test"
         }
 
         fn input_event_type(&self) -> &'static str {
@@ -184,11 +184,6 @@ async fn scope_invalidation_outputs_apply_privacy_filtering() -> TestResult<()> 
         fn output_event_type(&self) -> &'static str {
             "test.output"
         }
-
-        fn output_privacy_context(&self) -> ProcessingContext {
-            ProcessingContext::Command
-        }
-
         async fn process(
             &mut self,
             _state: &mut Self::State,
@@ -199,9 +194,10 @@ async fn scope_invalidation_outputs_apply_privacy_filtering() -> TestResult<()> 
         }
     }
 
-    let adapter = AutomatonRuntime::new(TransducerWrapper(PrivacyInvalidationNode));
+    let adapter = AutomatonRuntime::new(TransducerWrapper(PolicyAdmissionInvalidationNode));
+    let token = ["ghp_", "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghij"].concat();
     let output = DerivedOutput::reconciled(
-        json!({ "value": "ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghij" }),
+        json!({ "value": token }),
         Timestamp::now(),
         vec![Uuid::now_v7()],
         "scope-a".to_string(),
@@ -219,7 +215,7 @@ async fn scope_invalidation_outputs_apply_privacy_filtering() -> TestResult<()> 
 
     let event = adapter.build_output_event(output, 0, None, &context)?;
 
-    assert_eq!(event.payload["value"].as_str(), Some("<GITHUB_TOKEN>"));
+    assert_eq!(event.payload["value"].as_str(), Some(token.as_str()));
     Ok(())
 }
 

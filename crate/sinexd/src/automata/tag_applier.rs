@@ -28,7 +28,6 @@ use crate::node_sdk::tags;
 use crate::node_sdk::{InputProvenanceFilter, NodeLogicError, Transducer};
 use sinex_primitives::events::EventPayload;
 use sinex_primitives::events::payloads::KnowledgeTagAppliedPayload;
-use sinex_primitives::privacy::ProcessingContext;
 
 #[derive(Debug, Clone, Default)]
 pub struct TagApplier;
@@ -53,11 +52,6 @@ impl Transducer for TagApplier {
     fn output_event_source(&self) -> &'static str {
         KnowledgeTagAppliedPayload::SOURCE.as_static_str()
     }
-
-    fn output_privacy_context(&self) -> ProcessingContext {
-        ProcessingContext::Document
-    }
-
     fn input_provenance_filter(&self) -> InputProvenanceFilter {
         InputProvenanceFilter::Any
     }

@@ -193,7 +193,7 @@
       "package_impact": "browser_history_source_unit",
       "implementation_mode": "rust_in_pack:source-worker",
       "proof_obligations": [
-        "url_privacy_redaction",
+        "privacy_context_declared",
         "sqlite_row_anchor",
         "dump_line_anchor"
       ],
@@ -275,7 +275,7 @@
       "proof_obligations": [
         "anchor_sqlite_row",
         "timestamp_intrinsic",
-        "window_title_redacted"
+        "title_url_policy_scoped"
       ],
       "crate_impact": "0",
       "binary_impact": "0",
@@ -316,7 +316,43 @@
       "implementation_mode": "rust_in_pack:source-worker",
       "proof_obligations": [
         "anchor_stream_frame",
-        "clipboard_content_redacted"
+        "privacy_context_declared"
+      ],
+      "crate_impact": "0",
+      "binary_impact": "0",
+      "nix_output_impact": "0",
+      "derivation_impact": "0",
+      "sqlx_validation_impact": "0",
+      "dedicated_build_rationale": null
+    },
+    {
+      "subject": "source_unit:desktop.notification",
+      "id": "desktop.notification",
+      "domain": "desktop",
+      "role": "source_adapter",
+      "modes": [
+        "continuous"
+      ],
+      "acquisition_shape": "live_observation",
+      "material_policy": "source_material_provenance",
+      "checkpoint_policy": "live_observation_state",
+      "occurrence_policy": "uuid5:(app_name, summary, body, ts)",
+      "output_event_types": [
+        {
+          "source": "dbus",
+          "event_type": "notification.sent"
+        }
+      ],
+      "privacy_context": "sensitive",
+      "retention_policy": "forever",
+      "resource_profile": "continuous",
+      "access_policy": "desktop_notifications",
+      "service_policy": "dedicated_instance:on-failure",
+      "runner_pack": "live",
+      "package_impact": "desktop_notification_source_unit",
+      "implementation_mode": "live:dbus-notification",
+      "proof_obligations": [
+        "dbus_notification_monitor"
       ],
       "crate_impact": "0",
       "binary_impact": "0",
@@ -385,7 +421,7 @@
       "implementation_mode": "rust_in_pack:source-worker",
       "proof_obligations": [
         "anchor_stream_frame",
-        "window_title_redacted"
+        "window_title_policy_scoped"
       ],
       "crate_impact": "0",
       "binary_impact": "0",
@@ -425,7 +461,7 @@
         "timestamp_inferred_mtime",
         "occurrence_key_path_hash",
         "filename_heuristics_best_effort",
-        "metadata_privacy_applied"
+        "privacy_context_declared"
       ],
       "crate_impact": "0",
       "binary_impact": "0",
@@ -500,6 +536,49 @@
       "package_impact": "no_new_output",
       "implementation_mode": "rust_in_pack:source-worker",
       "proof_obligations": [],
+      "crate_impact": "0",
+      "binary_impact": "0",
+      "nix_output_impact": "0",
+      "derivation_impact": "0",
+      "sqlx_validation_impact": "0",
+      "dedicated_build_rationale": null
+    },
+    {
+      "subject": "source_unit:email.mailbox",
+      "id": "email.mailbox",
+      "domain": "email",
+      "role": "source_adapter",
+      "modes": [
+        "historical",
+        "continuous"
+      ],
+      "acquisition_shape": "append_stream",
+      "material_policy": "source_material_provenance",
+      "checkpoint_policy": "append_stream_cursor",
+      "occurrence_policy": "uuid5:(message_id, folder)",
+      "output_event_types": [
+        {
+          "source": "email",
+          "event_type": "email.message.received"
+        },
+        {
+          "source": "email",
+          "event_type": "email.message.sent"
+        }
+      ],
+      "privacy_context": "sensitive",
+      "retention_policy": "forever",
+      "resource_profile": "scheduled",
+      "access_policy": "personal_email",
+      "service_policy": "scheduled_runner",
+      "runner_pack": "staged",
+      "package_impact": "email_mailbox_source_unit",
+      "implementation_mode": "parser:staged",
+      "proof_obligations": [
+        "staged_mbox_eml_parser",
+        "body_encryption_at_rest",
+        "attachment_document_dispatch"
+      ],
       "crate_impact": "0",
       "binary_impact": "0",
       "nix_output_impact": "0",
@@ -956,6 +1035,80 @@
       "dedicated_build_rationale": null
     },
     {
+      "subject": "source_unit:media.audio",
+      "id": "media.audio",
+      "domain": "media",
+      "role": "source_adapter",
+      "modes": [
+        "continuous"
+      ],
+      "acquisition_shape": "append_stream",
+      "material_policy": "source_material_provenance",
+      "checkpoint_policy": "append_stream_cursor",
+      "occurrence_policy": "uuid5:(device_id, audio_chunk_hash)",
+      "output_event_types": [
+        {
+          "source": "media.audio",
+          "event_type": "media.audio.transcription"
+        }
+      ],
+      "privacy_context": "sensitive",
+      "retention_policy": "forever",
+      "resource_profile": "continuous",
+      "access_policy": "personal_audio",
+      "service_policy": "dedicated_instance:on-failure",
+      "runner_pack": "staged",
+      "package_impact": "media_audio_source_unit",
+      "implementation_mode": "parser:staged",
+      "proof_obligations": [
+        "local_whisper_only",
+        "continuous_capture"
+      ],
+      "crate_impact": "0",
+      "binary_impact": "0",
+      "nix_output_impact": "0",
+      "derivation_impact": "0",
+      "sqlx_validation_impact": "0",
+      "dedicated_build_rationale": null
+    },
+    {
+      "subject": "source_unit:media.screen",
+      "id": "media.screen",
+      "domain": "media",
+      "role": "source_adapter",
+      "modes": [
+        "continuous"
+      ],
+      "acquisition_shape": "append_stream",
+      "material_policy": "source_material_provenance",
+      "checkpoint_policy": "append_stream_cursor",
+      "occurrence_policy": "uuid5:(display_id, capture_hash)",
+      "output_event_types": [
+        {
+          "source": "media.screen",
+          "event_type": "media.screen.ocr"
+        }
+      ],
+      "privacy_context": "sensitive",
+      "retention_policy": "forever",
+      "resource_profile": "continuous",
+      "access_policy": "personal_screen",
+      "service_policy": "dedicated_instance:on-failure",
+      "runner_pack": "staged",
+      "package_impact": "media_screen_source_unit",
+      "implementation_mode": "parser:staged",
+      "proof_obligations": [
+        "periodic_full_screen_capture",
+        "local_ocr_processing"
+      ],
+      "crate_impact": "0",
+      "binary_impact": "0",
+      "nix_output_impact": "0",
+      "derivation_impact": "0",
+      "sqlx_validation_impact": "0",
+      "dedicated_build_rationale": null
+    },
+    {
       "subject": "source_unit:noop",
       "id": "noop",
       "domain": "sinex",
@@ -1217,23 +1370,23 @@
       "occurrence_policy": "natural_key",
       "output_event_types": [
         {
-          "source": "sinex.gateway",
+          "source": "sinexd.api",
           "event_type": "request.stats"
         },
         {
-          "source": "sinex.gateway",
+          "source": "sinexd.api",
           "event_type": "rate_limit.exceeded"
         },
         {
-          "source": "sinex.gateway",
+          "source": "sinexd.api",
           "event_type": "pool.stats"
         },
         {
-          "source": "sinex.gateway",
+          "source": "sinexd.api",
           "event_type": "replay.stats"
         },
         {
-          "source": "sinex.gateway",
+          "source": "sinexd.api",
           "event_type": "gateway.rpc.call"
         }
       ],
@@ -1267,23 +1420,23 @@
       "occurrence_policy": "natural_key",
       "output_event_types": [
         {
-          "source": "sinex.ingestd",
+          "source": "sinexd.event_engine",
           "event_type": "batch.stats"
         },
         {
-          "source": "sinex.ingestd",
+          "source": "sinexd.event_engine",
           "event_type": "stream.stats"
         },
         {
-          "source": "sinex.ingestd",
+          "source": "sinexd.event_engine",
           "event_type": "assembly.stats"
         },
         {
-          "source": "sinex.ingestd",
+          "source": "sinexd.event_engine",
           "event_type": "consumer.startup_snapshot"
         },
         {
-          "source": "sinex.ingestd",
+          "source": "sinexd.event_engine",
           "event_type": "consumer.startup_replay_risk"
         }
       ],
@@ -1479,7 +1632,7 @@
       "acquisition_shape": "append_stream",
       "material_policy": "source_material_provenance",
       "checkpoint_policy": "append_stream_cursor",
-      "occurrence_policy": "uuid5:(spotify_track_uri | track_name+artist, started_at, played_ms)",
+      "occurrence_policy": "uuid5:(track_uri, track_name, artist_name, started_at, played_ms)",
       "output_event_types": [
         {
           "source": "spotify",
@@ -1568,7 +1721,7 @@
       "implementation_mode": "rust_in_pack:source-worker",
       "proof_obligations": [
         "dbus_interface_dispatch",
-        "privacy_notification_body"
+        "privacy_context_declared"
       ],
       "crate_impact": "0",
       "binary_impact": "0",
@@ -1611,7 +1764,7 @@
       "proof_obligations": [
         "timestamp_intrinsic",
         "cursor_anchor",
-        "privacy_journal_message"
+        "privacy_context_declared"
       ],
       "crate_impact": "0",
       "binary_impact": "0",
@@ -1753,7 +1906,7 @@
       "implementation_mode": "rust_in_pack:source-worker",
       "proof_obligations": [
         "udev_action_dispatch",
-        "privacy_device_path"
+        "privacy_context_declared"
       ],
       "crate_impact": "0",
       "binary_impact": "0",
@@ -2244,6 +2397,14 @@
       "source_unit_count": 7
     },
     {
+      "id": "live",
+      "source_unit_ids": [
+        "desktop.notification"
+      ],
+      "shared_binary": "sinexd",
+      "source_unit_count": 1
+    },
+    {
       "id": "process",
       "source_unit_ids": [
         "analytics",
@@ -2303,6 +2464,16 @@
       ],
       "shared_binary": "sinex-source-worker",
       "source_unit_count": 34
+    },
+    {
+      "id": "staged",
+      "source_unit_ids": [
+        "email.mailbox",
+        "media.audio",
+        "media.screen"
+      ],
+      "shared_binary": "sinexd",
+      "source_unit_count": 3
     }
   ],
   "services": [
@@ -2379,6 +2550,15 @@
       "host_identity": "runtime_hostname"
     },
     {
+      "source_unit_id": "desktop.notification",
+      "service_name": "sinex-source@desktop.notification",
+      "runner_pack": "live",
+      "binary": "sinexd",
+      "checkpoint_identity": "desktop.notification",
+      "control_identity": "desktop.notification",
+      "host_identity": "runtime_hostname"
+    },
+    {
       "source_unit_id": "desktop.window-manager",
       "service_name": "sinex-source@desktop.window-manager",
       "runner_pack": "source-worker",
@@ -2412,6 +2592,15 @@
       "binary": "sinex-source-worker",
       "checkpoint_identity": "document.staging",
       "control_identity": "document.staging",
+      "host_identity": "runtime_hostname"
+    },
+    {
+      "source_unit_id": "email.mailbox",
+      "service_name": "sinex-source@email.mailbox",
+      "runner_pack": "staged",
+      "binary": "sinexd",
+      "checkpoint_identity": "email.mailbox",
+      "control_identity": "email.mailbox",
       "host_identity": "runtime_hostname"
     },
     {
@@ -2520,6 +2709,24 @@
       "binary": "sinex-source-worker",
       "checkpoint_identity": "knowledgebase-vault",
       "control_identity": "knowledgebase-vault",
+      "host_identity": "runtime_hostname"
+    },
+    {
+      "source_unit_id": "media.audio",
+      "service_name": "sinex-source@media.audio",
+      "runner_pack": "staged",
+      "binary": "sinexd",
+      "checkpoint_identity": "media.audio",
+      "control_identity": "media.audio",
+      "host_identity": "runtime_hostname"
+    },
+    {
+      "source_unit_id": "media.screen",
+      "service_name": "sinex-source@media.screen",
+      "runner_pack": "staged",
+      "binary": "sinexd",
+      "checkpoint_identity": "media.screen",
+      "control_identity": "media.screen",
       "host_identity": "runtime_hostname"
     },
     {
@@ -2803,12 +3010,12 @@
     }
   ],
   "package_impact": {
-    "total_source_units": 55,
-    "zero_crate_impact": 55,
-    "zero_binary_impact": 55,
-    "zero_nix_output_impact": 55,
-    "zero_derivation_impact": 55,
-    "zero_sqlx_validation_impact": 55,
+    "total_source_units": 59,
+    "zero_crate_impact": 59,
+    "zero_binary_impact": 59,
+    "zero_nix_output_impact": 59,
+    "zero_derivation_impact": 59,
+    "zero_sqlx_validation_impact": 59,
     "dedicated_build_rationales": []
   },
   "proof_obligations": [
@@ -2850,6 +3057,38 @@
       "domain": "infra",
       "adapter": "EmbeddedEmitter",
       "output_event_type": "blob.retrieved"
+    },
+    {
+      "subject": "source_unit:email.mailbox",
+      "id": "email.mailbox",
+      "source_unit_id": "email.mailbox",
+      "domain": "email",
+      "adapter": "AppendOnlyFileAdapter",
+      "output_event_type": "email.message.received"
+    },
+    {
+      "subject": "source_unit:email.mailbox.sent",
+      "id": "email.mailbox",
+      "source_unit_id": "email.mailbox",
+      "domain": "email",
+      "adapter": "AppendOnlyFileAdapter",
+      "output_event_type": "email.message.sent"
+    },
+    {
+      "subject": "source_unit:media.audio",
+      "id": "media.audio",
+      "source_unit_id": "media.audio",
+      "domain": "media",
+      "adapter": "AppendOnlyFileAdapter",
+      "output_event_type": "media.audio.transcription"
+    },
+    {
+      "subject": "source_unit:media.screen",
+      "id": "media.screen",
+      "source_unit_id": "media.screen",
+      "domain": "media",
+      "adapter": "AppendOnlyFileAdapter",
+      "output_event_type": "media.screen.ocr"
     },
     {
       "subject": "source_unit:sinex-automaton-error",
@@ -2969,7 +3208,7 @@
                   "dedup_by_content_hash": true,
                   "interval_seconds": 0
                 },
-                "description": "Optional parallel **file-snapshot lane**: periodically capture the\n`SQLite` DB file itself as a single source material, separately from\nthe per-row stream.  Disabled by default (`interval_seconds: 0`).\n\nSee [`SqliteSnapshotConfig`] for tunables. When enabled, the hosting\n[`AdapterBackedIngestor`] spawns a tokio task that captures the file\nat the configured cadence; per-row events continue to flow through\nthe normal drain loop unaffected.\n\nOnly present when the `messaging` feature is enabled — the snapshot\nlane publishes source materials via the acquisition manager, which is\nitself behind `messaging`.\n\n[`AdapterBackedIngestor`]: crate::parser::adapter_node::AdapterBackedIngestor"
+                "description": "Optional parallel **file-snapshot lane**: periodically capture the\n`SQLite` DB file itself as a single source material, separately from\nthe per-row stream.  Disabled by default (`interval_seconds: 0`).\n\nSee [`SqliteSnapshotConfig`] for tunables. When enabled, the hosting\n[`AdapterBackedIngestor`] spawns a tokio task that captures the file\nat the configured cadence; per-row events continue to flow through\nthe normal drain loop unaffected.\n\nOnly present when the `messaging` feature is enabled — the snapshot\nlane publishes source materials via the acquisition manager, which is\nitself behind `messaging`.\n\n[`AdapterBackedIngestor`]: crate::node_sdk::parser::adapter_node::AdapterBackedIngestor"
               },
               "table": {
                 "description": "Table name for anchor purposes.",
@@ -3180,6 +3419,14 @@
             },
             "type": "array"
           },
+          "ignored_file_suffixes": {
+            "default": [],
+            "description": "File-name suffix patterns to suppress before records leave the adapter.\n\nMatched as a case-sensitive suffix on the file's basename. Use this to\ndrop transient/volatile files (`SQLite` `-wal` / `-shm`, pytest's\n`.testmondata-wal`, editor swap files) that would otherwise stage\nhundreds of materials per minute and bloat the CAS without producing\nmeaningful user signal. Surfaced by issue #1543 — the live\n`sinex_prod` deployment accumulated 449 GB of duckdb.wal and\ntestmondata-wal captures before the fs source-worker was stopped.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
           "max_capture_bytes": {
             "default": 10485760,
             "description": "Maximum regular-file payload to stage for created/modified records.",
@@ -3255,6 +3502,14 @@
           "ignored_directory_names": {
             "default": [],
             "description": "Directory names to suppress before records leave the adapter.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "ignored_file_suffixes": {
+            "default": [],
+            "description": "File-name suffix patterns to suppress before records leave the adapter.\n\nMatched as a case-sensitive suffix on the file's basename. Use this to\ndrop transient/volatile files (`SQLite` `-wal` / `-shm`, pytest's\n`.testmondata-wal`, editor swap files) that would otherwise stage\nhundreds of materials per minute and bloat the CAS without producing\nmeaningful user signal. Surfaced by issue #1543 — the live\n`sinex_prod` deployment accumulated 449 GB of duckdb.wal and\ntestmondata-wal captures before the fs source-worker was stopped.",
             "items": {
               "type": "string"
             },
@@ -3400,7 +3655,7 @@
               "dedup_by_content_hash": true,
               "interval_seconds": 0
             },
-            "description": "Optional parallel **file-snapshot lane**: periodically capture the\n`SQLite` DB file itself as a single source material, separately from\nthe per-row stream.  Disabled by default (`interval_seconds: 0`).\n\nSee [`SqliteSnapshotConfig`] for tunables. When enabled, the hosting\n[`AdapterBackedIngestor`] spawns a tokio task that captures the file\nat the configured cadence; per-row events continue to flow through\nthe normal drain loop unaffected.\n\nOnly present when the `messaging` feature is enabled — the snapshot\nlane publishes source materials via the acquisition manager, which is\nitself behind `messaging`.\n\n[`AdapterBackedIngestor`]: crate::parser::adapter_node::AdapterBackedIngestor"
+            "description": "Optional parallel **file-snapshot lane**: periodically capture the\n`SQLite` DB file itself as a single source material, separately from\nthe per-row stream.  Disabled by default (`interval_seconds: 0`).\n\nSee [`SqliteSnapshotConfig`] for tunables. When enabled, the hosting\n[`AdapterBackedIngestor`] spawns a tokio task that captures the file\nat the configured cadence; per-row events continue to flow through\nthe normal drain loop unaffected.\n\nOnly present when the `messaging` feature is enabled — the snapshot\nlane publishes source materials via the acquisition manager, which is\nitself behind `messaging`.\n\n[`AdapterBackedIngestor`]: crate::node_sdk::parser::adapter_node::AdapterBackedIngestor"
           },
           "table": {
             "description": "Table name for anchor purposes.",

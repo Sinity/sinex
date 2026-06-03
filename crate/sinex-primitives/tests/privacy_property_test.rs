@@ -1,12 +1,12 @@
 use proptest::prelude::*;
-use sinex_primitives::privacy::{self, ProcessingContext};
+use sinex_primitives::privacy::{CategorySet, PrivacyConfig, PrivacyEngine, ProcessingContext};
+use std::sync::LazyLock;
 use xtask::sandbox::prelude::*;
 
 fn all_contexts() -> Vec<ProcessingContext> {
     vec![
         ProcessingContext::Command,
         ProcessingContext::Clipboard,
-        ProcessingContext::WindowTitle,
         ProcessingContext::Journal,
         ProcessingContext::Dbus,
         ProcessingContext::Notification,
@@ -17,14 +17,18 @@ fn all_contexts() -> Vec<ProcessingContext> {
 
 #[allow(clippy::expect_used)]
 fn engine() -> &'static sinex_primitives::privacy::PrivacyEngine {
-    privacy::engine().expect("privacy engine must initialize")
+    static ENGINE: LazyLock<PrivacyEngine> = LazyLock::new(|| {
+        let mut config = PrivacyConfig::default();
+        config.builtin_categories = CategorySet::All;
+        PrivacyEngine::new(config).expect("privacy engine must initialize")
+    });
+    &ENGINE
 }
 
 fn arb_context() -> impl Strategy<Value = ProcessingContext> {
     prop_oneof![
         Just(ProcessingContext::Command),
         Just(ProcessingContext::Clipboard),
-        Just(ProcessingContext::WindowTitle),
         Just(ProcessingContext::Journal),
         Just(ProcessingContext::Dbus),
         Just(ProcessingContext::Notification),

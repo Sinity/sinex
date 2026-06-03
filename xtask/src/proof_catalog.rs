@@ -98,6 +98,7 @@ impl ProofCatalogValidation {
 }
 
 pub fn build_proof_catalog(_workspace_root: &Path) -> Result<ProofCatalog> {
+    ensure_runtime_introspection_available()?;
     crate::source_unit_inventory::link_source_unit_inventories();
 
     let mut runtime_units_by_subject: BTreeMap<&'static str, SourceUnitBinding> = BTreeMap::new();
@@ -158,6 +159,18 @@ pub fn build_proof_catalog(_workspace_root: &Path) -> Result<ProofCatalog> {
         event_payloads: collect_event_payload_subjects(),
         xtask_commands: collect_xtask_command_subjects(),
     })
+}
+
+#[cfg(any(feature = "runtime-introspection", test))]
+fn ensure_runtime_introspection_available() -> Result<()> {
+    Ok(())
+}
+
+#[cfg(not(any(feature = "runtime-introspection", test)))]
+fn ensure_runtime_introspection_available() -> Result<()> {
+    color_eyre::eyre::bail!(
+        "proof catalog generation requires xtask built with the runtime-introspection feature"
+    )
 }
 
 pub fn render_proof_catalog_json(catalog: &ProofCatalog) -> Result<String> {

@@ -11,7 +11,7 @@ use sinex_primitives::parser::{
     InputShapeKind, ParsedEventIntent, ParserContext, ParserId, ParserManifest, SourceRecord,
     SourceUnitId, TimingConfidence, TimingEvidence,
 };
-use sinex_primitives::privacy::{self, ProcessingContext};
+use sinex_primitives::privacy::ProcessingContext;
 use sinex_primitives::proof::{
     CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, RetentionPolicy, RuntimeShape,
     SourceUnitBinding, SourceUnitBuildImpact, SourceUnitDescriptor, SubjectRef,
@@ -40,7 +40,7 @@ register_source_unit! {
         proof_obligations: &[
             "timestamp_intrinsic",
             "cursor_anchor",
-            "privacy_journal_message",
+            "privacy_context_declared",
         ],
         occurrence_identity: OccurrenceIdentity::Uuid5From("(source_unit, journal_cursor)"),
         access_policy: "systemd_journal_read",
@@ -104,7 +104,7 @@ impl MaterialParser for JournaldParser {
             proof_obligations: vec![
                 "timestamp_intrinsic".into(),
                 "cursor_anchor".into(),
-                "privacy_journal_message".into(),
+                "privacy_context_declared".into(),
             ],
             description: "Parses journald JSON lines into entry.written and sync.completed events."
                 .into(),
@@ -178,31 +178,16 @@ impl MaterialParser for JournaldParser {
             Timestamp::now()
         };
 
-        let raw_message = json
+        let message = json
             .get("MESSAGE")
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string();
 
-        let message = match privacy::engine() {
-            Ok(eng) => eng
-                .process(&raw_message, ProcessingContext::Journal)
-                .text
-                .into_owned(),
-            Err(e) => return Err(ParserError::Privacy(format!("privacy engine: {e}"))),
-        };
-
-        // Fail closed: the command line can carry secrets (Sensitive tier).
-        // If the privacy engine cannot initialize, propagate the error so the
-        // event is dropped rather than emitting the raw command line.
         let cmdline = json
             .get("_CMDLINE")
             .and_then(|v| v.as_str())
-            .map(|s| match privacy::engine() {
-                Ok(eng) => Ok(eng.process(s, ProcessingContext::Command).text.into_owned()),
-                Err(e) => Err(ParserError::Privacy(format!("privacy engine: {e}"))),
-            })
-            .transpose()?;
+            .map(std::string::ToString::to_string);
 
         let exe = json
             .get("_EXE")
@@ -334,8 +319,11 @@ mod tests {
     #[sinex_test]
     async fn test_journald_parser_entry_written() -> TestResult<()> {
         let mid = Id::<SourceMaterial>::new();
-        let line = r#"{"__CURSOR":"s=abc;i=1","__REALTIME_TIMESTAMP":"1700000000000000","MESSAGE":"hello world","_HOSTNAME":"host1","PRIORITY":"6"}"#;
-        let records = records_from_journal_lines(mid, &[line]);
+        let tok = ["ghp_", "0123456789abcdef0123456789abcdef0123"].concat();
+        let line = format!(
+            r#"{{"__CURSOR":"s=abc;i=1","__REALTIME_TIMESTAMP":"1700000000000000","MESSAGE":"export GITHUB_TOKEN={tok}","_CMDLINE":"curl -H token={tok}","_HOSTNAME":"host1","PRIORITY":"6"}}"#
+        );
+        let records = records_from_journal_lines(mid, &[line.as_str()]);
         let record = records[0].as_ref().unwrap().clone();
 
         let mut parser = JournaldParser;
@@ -345,6 +333,14 @@ mod tests {
         assert_eq!(intents.len(), 1);
         assert_eq!(intents[0].event_type.as_str(), "entry.written");
         assert_eq!(intents[0].event_source.as_str(), "journald");
+        assert_eq!(
+            intents[0].payload["message"],
+            format!("export GITHUB_TOKEN={tok}")
+        );
+        assert_eq!(
+            intents[0].payload["cmdline"],
+            format!("curl -H token={tok}")
+        );
         Ok(())
     }
 

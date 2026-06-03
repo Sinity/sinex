@@ -124,9 +124,11 @@ ingestors. Can be replayed by re-reading the source material.
 ## P
 
 ### privacy engine
-A synchronous, per-event processor that runs in the ingestor process before
-NATS publish. Applies redaction, encryption, hashing, and suppression rules
-based on `ProcessingContext` (Command, Clipboard, WindowTitle, Metadata, etc.).
+The DB/user policy admission engine owned by the event engine. It applies
+redaction, encryption, hashing, and suppression rules from `privacy.*` policy
+tables to source and derived event payloads before persistence. The primitive
+rule compiler/catalog is implementation and seed material, not a parallel
+source-unit, parser, or automaton policy authority.
 
 ### provenance
 The origin of an event. Two mutually exclusive types: **material** (from source

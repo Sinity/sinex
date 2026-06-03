@@ -132,17 +132,6 @@ impl MaterialParser for FishHistoryParser {
             .get("when")
             .and_then(sinex_primitives::JsonValue::as_i64);
 
-        // Privacy processing.
-        let processed = {
-            let result = sinex_primitives::privacy::engine()
-                .map_err(|e| ParserError::Parse(format!("privacy engine unavailable: {e}")))?
-                .process(&command_raw, ProcessingContext::Command);
-            if result.suppressed {
-                return Ok(vec![]);
-            }
-            result.text.into_owned()
-        };
-
         let (ts_orig, timing, timestamp) = match when_unix {
             Some(unix_secs) => match Timestamp::from_unix_timestamp(unix_secs) {
                 Some(t) => (
@@ -165,7 +154,7 @@ impl MaterialParser for FishHistoryParser {
             .unwrap_or_default();
 
         let payload = HistoryCommandImportedPayload {
-            command: processed,
+            command: command_raw,
             timestamp,
             shell_type: "fish".into(),
             source_file,

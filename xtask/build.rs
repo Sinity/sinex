@@ -9,10 +9,10 @@ use std::path::Path;
 
 fn main() -> shadow_rs::SdResult<()> {
     println!("cargo:rerun-if-changed=build.rs");
-    println!("cargo:rerun-if-changed=../crate/lib/sinex-primitives/src/events/payloads");
+    println!("cargo:rerun-if-changed=../crate/sinex-primitives/src/events/payloads");
 
     let contracts_hash = hash_contracts_dir(Path::new(
-        "../crate/lib/sinex-primitives/src/events/payloads",
+        "../crate/sinex-primitives/src/events/payloads",
     ))?;
     println!("cargo:rustc-env=SINEX_XTASK_BUILD_CONTRACTS_HASH={contracts_hash}");
 

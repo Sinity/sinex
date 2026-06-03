@@ -16,7 +16,6 @@ use serde::{Serialize, de::DeserializeOwned};
 use sinex_primitives::JsonValue;
 use sinex_primitives::domain::DerivedNodeModel;
 use sinex_primitives::events::Event;
-use sinex_primitives::privacy::ProcessingContext;
 use sinex_primitives::temporal::Timestamp;
 use std::collections::HashMap;
 
@@ -137,7 +136,6 @@ pub trait Transducer: Send + Sync + 'static {
     fn output_event_source(&self) -> &'static str {
         self.name()
     }
-    fn output_privacy_context(&self) -> ProcessingContext;
     fn input_provenance_filter(&self) -> InputProvenanceFilter {
         InputProvenanceFilter::Any
     }
@@ -210,7 +208,6 @@ pub trait Windowed: Send + Sync + 'static {
     fn output_event_source(&self) -> &'static str {
         self.name()
     }
-    fn output_privacy_context(&self) -> ProcessingContext;
     fn input_provenance_filter(&self) -> InputProvenanceFilter {
         InputProvenanceFilter::Any
     }
@@ -324,7 +321,6 @@ pub trait ScopeReconciler: Send + Sync + 'static {
     fn output_event_source(&self) -> &'static str {
         self.name()
     }
-    fn output_privacy_context(&self) -> ProcessingContext;
     fn input_provenance_filter(&self) -> InputProvenanceFilter {
         InputProvenanceFilter::Any
     }
@@ -424,7 +420,6 @@ pub trait MultiOutputTransducerNode: Send + Sync + 'static {
     fn output_event_source(&self) -> &'static str {
         self.name()
     }
-    fn output_privacy_context(&self) -> ProcessingContext;
     fn input_provenance_filter(&self) -> InputProvenanceFilter {
         InputProvenanceFilter::Any
     }
@@ -471,7 +466,6 @@ pub trait Automaton: Send + Sync + 'static {
     fn input_provenance_filter(&self) -> InputProvenanceFilter;
     fn output_event_type(&self) -> &'static str;
     fn output_event_source(&self) -> &'static str;
-    fn output_privacy_context(&self) -> ProcessingContext;
     fn node_model(&self) -> DerivedNodeModel;
 
     /// Process a single event through the node's model-specific logic.
@@ -554,9 +548,6 @@ impl<N: Transducer> Automaton for TransducerWrapper<N> {
     fn output_event_source(&self) -> &'static str {
         self.0.output_event_source()
     }
-    fn output_privacy_context(&self) -> ProcessingContext {
-        self.0.output_privacy_context()
-    }
     fn node_model(&self) -> DerivedNodeModel {
         self.0.node_model()
     }
@@ -622,9 +613,6 @@ impl<N: Windowed> Automaton for WindowedWrapper<N> {
     }
     fn output_event_source(&self) -> &'static str {
         self.0.output_event_source()
-    }
-    fn output_privacy_context(&self) -> ProcessingContext {
-        self.0.output_privacy_context()
     }
     fn node_model(&self) -> DerivedNodeModel {
         self.0.node_model()
@@ -752,9 +740,6 @@ where
     fn output_event_source(&self) -> &'static str {
         self.0.output_event_source()
     }
-    fn output_privacy_context(&self) -> ProcessingContext {
-        self.0.output_privacy_context()
-    }
     fn node_model(&self) -> DerivedNodeModel {
         self.0.node_model()
     }
@@ -864,9 +849,6 @@ impl<N: MultiOutputTransducerNode> Automaton for MultiOutputTransducerWrapper<N>
     }
     fn output_event_source(&self) -> &'static str {
         self.0.output_event_source()
-    }
-    fn output_privacy_context(&self) -> ProcessingContext {
-        self.0.output_privacy_context()
     }
     fn node_model(&self) -> DerivedNodeModel {
         self.0.node_model()

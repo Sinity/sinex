@@ -160,9 +160,9 @@ override.
 ## Privacy
 
 Embedding runs locally; no text leaves the workstation. Embedded text still
-passes through the privacy engine in the layer that selects it (see
-`document-layer-v1.md`). The runtime does not re-filter — text arriving at
-the runtime is already admission-checked.
+enters through the DB/user policy admission layer before it is eligible for
+embedding (see `document-layer-v1.md`). The embedding runtime does not run its
+own redaction pass; text arriving at the runtime is already admission-checked.
 
 ## Open Questions
 

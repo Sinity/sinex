@@ -1,7 +1,8 @@
 //! `system.dbus` — stream D-Bus signals via `DbusStreamAdapter`.
 //!
 //! Dispatches 9 payload types based on interface + signal name patterns.
-//! Notification body and D-Bus args are passed through the privacy engine.
+//! Notification body and D-Bus args are emitted with privacy metadata; DB
+//! admission policy owns redaction and suppression.
 
 use crate::node_sdk::parser::{DbusStreamAdapter, MaterialParser, ParserError};
 use crate::register_parser;
@@ -19,7 +20,7 @@ use sinex_primitives::parser::{
     InputShapeKind, ParsedEventIntent, ParserContext, ParserId, ParserManifest, SourceRecord,
     SourceUnitId, TimingEvidence,
 };
-use sinex_primitives::privacy::{self, ProcessingContext};
+use sinex_primitives::privacy::ProcessingContext;
 use sinex_primitives::proof::{
     CheckpointFamily, Horizon, OccurrenceIdentity, PrivacyTier, RetentionPolicy, RuntimeShape,
     SourceUnitBinding, SourceUnitBuildImpact, SourceUnitDescriptor, SubjectRef,
@@ -53,7 +54,7 @@ register_source_unit! {
         retention: RetentionPolicy::Forever,
         proof_obligations: &[
             "dbus_interface_dispatch",
-            "privacy_notification_body",
+            "privacy_context_declared",
         ],
         occurrence_identity: OccurrenceIdentity::Anchor,
         access_policy: "system_bus_session_bus_read",
@@ -167,7 +168,7 @@ impl MaterialParser for DbusParser {
             privacy_contexts: vec![ProcessingContext::Dbus, ProcessingContext::Notification],
             proof_obligations: vec![
                 "dbus_interface_dispatch".into(),
-                "privacy_notification_body".into(),
+                "privacy_context_declared".into(),
             ],
             description: "Dispatches D-Bus signals to 9 typed payload types.".into(),
         }
@@ -215,44 +216,20 @@ impl MaterialParser for DbusParser {
         let timestamp = Timestamp::now();
         let event_type_str = classify_dbus_event(&interface, &member);
 
-        // Apply privacy to args for generic signals.
-        let args_raw = body_json.to_string();
-        let args_redacted = match privacy::engine() {
-            Ok(eng) => eng
-                .process(&args_raw, ProcessingContext::Dbus)
-                .text
-                .into_owned(),
-            Err(e) => return Err(ParserError::Privacy(format!("privacy engine: {e}"))),
-        };
-        let args_value: serde_json::Value =
-            serde_json::from_str(&args_redacted).unwrap_or(body_json.clone());
+        let args_value = body_json.clone();
 
         let payload_value = match event_type_str {
             "notification.sent" => {
-                let raw_summary = body_json
+                let summary = body_json
                     .get(2)
                     .and_then(|v| v.as_str())
                     .unwrap_or("")
                     .to_string();
-                let raw_body = body_json
+                let body = body_json
                     .get(3)
                     .and_then(|v| v.as_str())
                     .unwrap_or("")
                     .to_string();
-                let summary = match privacy::engine() {
-                    Ok(eng) => eng
-                        .process(&raw_summary, ProcessingContext::Notification)
-                        .text
-                        .into_owned(),
-                    Err(e) => return Err(ParserError::Privacy(format!("privacy engine: {e}"))),
-                };
-                let body = match privacy::engine() {
-                    Ok(eng) => eng
-                        .process(&raw_body, ProcessingContext::Notification)
-                        .text
-                        .into_owned(),
-                    Err(e) => return Err(ParserError::Privacy(format!("privacy engine: {e}"))),
-                };
                 let app_name = body_json
                     .get(0)
                     .and_then(|v| v.as_str())
@@ -398,6 +375,12 @@ impl MaterialParser for DbusParser {
             _ => EventType::from_static("signal.received"),
         };
 
+        let privacy_context = if event_type_str == "notification.sent" {
+            ProcessingContext::Notification
+        } else {
+            ProcessingContext::Dbus
+        };
+
         let intent = ParsedEventIntent::builder()
             .source_unit_id(ctx.source_unit_id.clone())
             .parser_id(ParserId::from_static("system.dbus"))
@@ -408,7 +391,7 @@ impl MaterialParser for DbusParser {
             .ts_orig(timestamp)
             .timing(TimingEvidence::Atemporal)
             .anchor(record.anchor.clone())
-            .privacy_context(ProcessingContext::Dbus)
+            .privacy_context(privacy_context)
             .build();
 
         Ok(vec![intent])
@@ -525,6 +508,9 @@ mod tests {
 
         assert_eq!(intents.len(), 1);
         assert_eq!(intents[0].event_type.as_str(), "notification.sent");
+        assert_eq!(intents[0].payload["summary"], "Summary");
+        assert_eq!(intents[0].payload["body"], "Body");
+        assert_eq!(intents[0].privacy_context, ProcessingContext::Notification);
         Ok(())
     }
 
