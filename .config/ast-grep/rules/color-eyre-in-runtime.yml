@@ -13,7 +13,9 @@ rule:
 ignores:
   # xtask and CLI binaries are presentation/dev tooling boundaries.
   - "xtask/**"
-  - "crate/cli/**"
+  # post-fold #1559: the CLI crate is crate/sinexctl; vm test-suite binary.
+  - "crate/sinexctl/**"
+  - "crate/sinex-vm-suite/**"
   # Binary entry points may install color-eyre and render final reports.
   - "**/main.rs"
   # Tests may use eyre for assertion ergonomics.
