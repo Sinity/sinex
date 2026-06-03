@@ -6,10 +6,10 @@
 //! The `data` bytes are interpreted as newline-delimited JSON journal lines
 //! (the same format `journalctl --output=json` produces).
 
-use sinexd::node_sdk::parser::{ParserResult, records_from_journal_lines};
 use sinex_primitives::events::SourceMaterial;
 use sinex_primitives::ids::Id;
 use sinex_primitives::parser::SourceRecord;
+use sinexd::node_sdk::parser::{ParserResult, records_from_journal_lines};
 
 use super::{FixtureBinding, FixtureHandle};
 

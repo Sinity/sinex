@@ -88,13 +88,13 @@ use sinex_primitives::rpc::{
         PRIVACY_POLICY_BACKEND_ADD_METHOD, PRIVACY_POLICY_DICTIONARY_ADD_METHOD,
         PRIVACY_POLICY_LIST_METHOD, PRIVACY_POLICY_RULE_ADD_METHOD,
         PRIVACY_POLICY_SCOPE_BIND_METHOD, PRIVACY_POLICY_SEED_BUILTIN_METHOD,
-        PRIVACY_PRIVATE_MODE_DISABLE_METHOD,
-        PRIVACY_PRIVATE_MODE_ENABLE_METHOD, PRIVACY_PRIVATE_MODE_STATUS_METHOD,
-        PrivateModeDisableRequest, PrivateModeEnableRequest, PrivateModeStateResponse,
-        PrivateModeStatusRequest, PrivacyPolicyBackendAddRequest,
+        PRIVACY_PRIVATE_MODE_DISABLE_METHOD, PRIVACY_PRIVATE_MODE_ENABLE_METHOD,
+        PRIVACY_PRIVATE_MODE_STATUS_METHOD, PrivacyPolicyBackendAddRequest,
         PrivacyPolicyDictionaryAddRequest, PrivacyPolicyListRequest, PrivacyPolicyListResponse,
         PrivacyPolicyMutationResponse, PrivacyPolicyRuleAddRequest, PrivacyPolicyScopeBindRequest,
         PrivacyPolicySeedBuiltinRequest, PrivacyPolicySeedBuiltinResponse,
+        PrivateModeDisableRequest, PrivateModeEnableRequest, PrivateModeStateResponse,
+        PrivateModeStatusRequest,
     },
     replay::{
         REPLAY_APPROVE_OPERATION_METHOD, REPLAY_CANCEL_OPERATION_METHOD,
@@ -1561,8 +1561,7 @@ impl GatewayClient {
         &self,
         req: PrivacyPolicyRuleAddRequest,
     ) -> Result<PrivacyPolicyMutationResponse> {
-        self.call_typed(PRIVACY_POLICY_RULE_ADD_METHOD, &req)
-            .await
+        self.call_typed(PRIVACY_POLICY_RULE_ADD_METHOD, &req).await
     }
 
     pub async fn privacy_policy_backend_add(

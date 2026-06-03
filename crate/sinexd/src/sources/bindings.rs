@@ -201,9 +201,7 @@ pub async fn run_binding(binding: SourceBinding) -> Result<()> {
     if let Some(config) = &binding.node_config {
         // Skip if explicitly null or an empty object — clap rejects empty
         // values and an empty {} is operationally identical to "use defaults".
-        let is_empty_object = config
-            .as_object()
-            .is_some_and(serde_json::Map::is_empty);
+        let is_empty_object = config.as_object().is_some_and(serde_json::Map::is_empty);
         if !config.is_null() && !is_empty_object {
             let encoded = serde_json::to_string(config).map_err(|error| {
                 SinexError::configuration(format!(

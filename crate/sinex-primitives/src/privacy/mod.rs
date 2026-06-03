@@ -666,8 +666,8 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn explicit_env_config_load_propagates_config_errors()
-    -> ::xtask::sandbox::TestResult<()> {
+    async fn explicit_env_config_load_propagates_config_errors() -> ::xtask::sandbox::TestResult<()>
+    {
         let _guard = ENV_LOCK.lock().await;
         let old_extra_rules = std::env::var_os("SINEX_PRIVACY_EXTRA_RULES");
         unsafe { std::env::set_var("SINEX_PRIVACY_EXTRA_RULES", "{not-json") };
@@ -751,8 +751,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn privacy_engine_extra_rules_merge_correctly()
-    -> ::xtask::sandbox::TestResult<()> {
+    async fn privacy_engine_extra_rules_merge_correctly() -> ::xtask::sandbox::TestResult<()> {
         // DB/user policy compiles rows into extra rules. Verify that a caller
         // can explicitly combine seed catalog rules with caller-supplied rules.
         let scoped_rule = PatternRule {
@@ -777,10 +776,7 @@ mod tests {
         // Global rule fires.
         let token = ["ghp_", "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghij"].concat();
         let token_input = format!("export TOKEN={token}");
-        let result = engine.process(
-            &token_input,
-            ProcessingContext::Command,
-        );
+        let result = engine.process(&token_input, ProcessingContext::Command);
         assert!(
             result.any_matched(),
             "global rule should fire in merged engine"

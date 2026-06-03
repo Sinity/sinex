@@ -51,7 +51,7 @@ impl TableDef for ModelEffects {
 }
 
 impl ModelEffects {
-    #[must_use] 
+    #[must_use]
     pub fn create_table_statement() -> TableCreateStatement {
         Table::create()
             .table(Self::Table)
@@ -83,7 +83,7 @@ impl ModelEffects {
             .to_owned()
     }
 
-    #[must_use] 
+    #[must_use]
     pub fn composite_key_index() -> IndexCreateStatement {
         Index::create()
             .name("idx_model_effects_composite_key")

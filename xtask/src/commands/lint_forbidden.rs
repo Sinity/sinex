@@ -1191,7 +1191,8 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn privacy_gate_ignores_privacy_engine_call_without_metadata() -> ::xtask::sandbox::TestResult<()> {
+    async fn privacy_gate_ignores_privacy_engine_call_without_metadata()
+    -> ::xtask::sandbox::TestResult<()> {
         let fixture = r#"
             register_source_unit! {
                 SourceUnitDescriptor {
@@ -1216,8 +1217,8 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn privacy_gate_passes_with_processing_context_metadata() -> ::xtask::sandbox::TestResult<()>
-    {
+    async fn privacy_gate_passes_with_processing_context_metadata()
+    -> ::xtask::sandbox::TestResult<()> {
         let fixture = r#"
             register_source_unit! {
                 SourceUnitDescriptor {

@@ -334,7 +334,8 @@ fn format_source_material_detail(response: &SourcesShowResponse) -> String {
     }
 
     // Add metadata if present
-    if !m.metadata.is_null() && m.metadata != serde_json::Value::Object(serde_json::Map::default()) {
+    if !m.metadata.is_null() && m.metadata != serde_json::Value::Object(serde_json::Map::default())
+    {
         lines.push(format!(
             "  Metadata:     {}",
             serde_json::to_string_pretty(&m.metadata).unwrap_or_else(|_| "-".to_string())

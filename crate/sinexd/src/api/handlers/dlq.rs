@@ -10,9 +10,9 @@
 use crate::api::service_container::ServiceContainer;
 use crate::event_engine::policy::PolicyEngine;
 use crate::node_sdk::dlq_retry::{DlqRetryConfig, DlqRetryHandler};
+use serde_json::Value as JsonValue;
 use sinex_primitives::validation::normalize_unicode;
 use sinex_primitives::{Result, SinexError};
-use serde_json::Value as JsonValue;
 use tracing::warn;
 
 // Re-export RPC types for consistency
@@ -385,7 +385,9 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn payload_preview_truncates_without_breaking_unicode(ctx: TestContext) -> TestResult<()> {
+    async fn payload_preview_truncates_without_breaking_unicode(
+        ctx: TestContext,
+    ) -> TestResult<()> {
         let payload = "żółw".repeat(80);
         let policy = PolicyEngine::noop(ctx.pool().clone());
         let preview = payload_preview(&payload, 200, &policy).await;

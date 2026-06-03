@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{JsonValue, Uuid};
 use crate::privacy::{PrivateModeReasonClass, RuntimePrivateModeState};
+use crate::{JsonValue, Uuid};
 
 use super::{RpcDomain, RpcMethod, RpcMutability, RpcRole, RpcStability, methods};
 
@@ -38,14 +38,16 @@ pub const PRIVACY_PRIVATE_MODE_DISABLE_METHOD: RpcMethod<
     RpcMutability::Mutating,
 );
 
-pub const PRIVACY_POLICY_LIST_METHOD: RpcMethod<PrivacyPolicyListRequest, PrivacyPolicyListResponse> =
-    RpcMethod::new(
-        methods::PRIVACY_POLICY_LIST,
-        RpcRole::ReadOnly,
-        RpcDomain::Privacy,
-        RpcStability::Experimental,
-        RpcMutability::ReadOnly,
-    );
+pub const PRIVACY_POLICY_LIST_METHOD: RpcMethod<
+    PrivacyPolicyListRequest,
+    PrivacyPolicyListResponse,
+> = RpcMethod::new(
+    methods::PRIVACY_POLICY_LIST,
+    RpcRole::ReadOnly,
+    RpcDomain::Privacy,
+    RpcStability::Experimental,
+    RpcMutability::ReadOnly,
+);
 
 pub const PRIVACY_POLICY_RULE_ADD_METHOD: RpcMethod<
     PrivacyPolicyRuleAddRequest,
