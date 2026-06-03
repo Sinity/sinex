@@ -38,6 +38,7 @@ impl MaterialParser for NotificationParser {
                 EventType::from_static("notification.sent"),
             )],
             privacy_contexts: vec![ProcessingContext::Notification],
+            sensitivity_hints: Vec::new(),
             proof_obligations: vec!["timestamp_material_time".into()],
             description: "Captures desktop notifications via D-Bus".into(),
         }

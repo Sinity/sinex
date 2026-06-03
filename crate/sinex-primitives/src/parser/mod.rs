@@ -916,6 +916,12 @@ pub struct ParserManifest {
     #[schemars(skip)]
     pub privacy_contexts: Vec<crate::privacy::ProcessingContext>,
 
+    /// Union of semantic sensitivity-class hints declared across the parser's
+    /// fields, exported for policy tooling (#1611).
+    #[schemars(skip)]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sensitivity_hints: Vec<crate::privacy::SensitivityHint>,
+
     /// Catalog obligation IDs or descriptor-local verification tags.
     ///
     /// Strings prefixed with `obligation:` are validated against the proof

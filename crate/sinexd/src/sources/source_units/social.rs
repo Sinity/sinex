@@ -118,6 +118,7 @@ impl MaterialParser for RedditCommentParser {
                 EventType::from_static("social.comment.posted"),
             )],
             privacy_contexts: vec![ProcessingContext::Document],
+            sensitivity_hints: Vec::new(),
             proof_obligations: vec![
                 "timestamp_intrinsic".into(),
                 "anchor_csv_row".into(),
@@ -314,6 +315,7 @@ impl MaterialParser for RedditPostParser {
                 EventType::from_static("social.post.created"),
             )],
             privacy_contexts: vec![ProcessingContext::Document],
+            sensitivity_hints: Vec::new(),
             proof_obligations: vec![
                 "timestamp_intrinsic".into(),
                 "anchor_csv_row".into(),
@@ -503,6 +505,7 @@ impl MaterialParser for WykopEntryParser {
                 EventType::from_static("social.entry.created"),
             )],
             privacy_contexts: vec![ProcessingContext::Document],
+            sensitivity_hints: Vec::new(),
             proof_obligations: vec![
                 "timestamp_intrinsic".into(),
                 "anchor_jsonl_line".into(),
@@ -689,6 +692,7 @@ impl MaterialParser for WykopEntryCommentParser {
                 EventType::from_static("social.entry_comment.posted"),
             )],
             privacy_contexts: vec![ProcessingContext::Document],
+            sensitivity_hints: Vec::new(),
             proof_obligations: vec![
                 "timestamp_intrinsic".into(),
                 "anchor_jsonl_line".into(),

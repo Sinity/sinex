@@ -66,7 +66,7 @@ use crate::parser::{
     BindingConfig, OccurrenceKey, ParsedEventIntent, ParserContext, ParserId, SourceRecord,
     SourceUnitId, TimingConfidence, TimingEvidence,
 };
-use crate::privacy::ProcessingContext;
+use crate::privacy::{ProcessingContext, SensitivityHint};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -216,6 +216,11 @@ pub struct FieldSpec {
     /// Privacy context hint for downstream DB/user policy.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub privacy_context: Option<ProcessingContext>,
+
+    /// Semantic sensitivity-class hints exported for DB/user policy tooling.
+    /// Never auto-acts (#1611).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sensitivity: Vec<SensitivityHint>,
 
     /// Include this field as part of the parser's `OccurrenceKey`.
     #[serde(default)]
@@ -853,6 +858,7 @@ mod tests {
                 default: None,
                 skip_payload: false,
                 privacy_context: None,
+                sensitivity: Vec::new(),
                 occurrence_key: false,
                 timestamp: None,
                 suppress_if: None,
@@ -868,6 +874,7 @@ mod tests {
                 default: None,
                 skip_payload: false,
                 privacy_context: None,
+                sensitivity: Vec::new(),
                 occurrence_key: false,
                 timestamp: None,
                 suppress_if: None,
@@ -881,6 +888,7 @@ mod tests {
                 default: None,
                 skip_payload: false,
                 privacy_context: None,
+                sensitivity: Vec::new(),
                 occurrence_key: false,
                 timestamp: None,
                 suppress_if: None,
@@ -905,6 +913,7 @@ mod tests {
             default: None,
             skip_payload: false,
             privacy_context: None,
+            sensitivity: Vec::new(),
             occurrence_key: false,
             timestamp: None,
             suppress_if: None,
@@ -942,6 +951,7 @@ mod tests {
             default: None,
             skip_payload: false,
             privacy_context: None,
+            sensitivity: Vec::new(),
             occurrence_key: false,
             timestamp: None,
             suppress_if: None,
@@ -971,6 +981,7 @@ mod tests {
             default: None,
             skip_payload: false,
             privacy_context: None,
+            sensitivity: Vec::new(),
             occurrence_key: false,
             timestamp: None,
             suppress_if: None,
@@ -999,6 +1010,7 @@ mod tests {
             default: Some(serde_json::json!(0)),
             skip_payload: false,
             privacy_context: None,
+            sensitivity: Vec::new(),
             occurrence_key: false,
             timestamp: None,
             suppress_if: None,
@@ -1028,6 +1040,7 @@ mod tests {
             default: None,
             skip_payload: false,
             privacy_context: None,
+            sensitivity: Vec::new(),
             occurrence_key: false,
             timestamp: None,
             suppress_if: None,
@@ -1057,6 +1070,7 @@ mod tests {
             default: None,
             skip_payload: true,
             privacy_context: None,
+            sensitivity: Vec::new(),
             occurrence_key: false,
             timestamp: None,
             suppress_if: None,
@@ -1087,6 +1101,7 @@ mod tests {
             default: None,
             skip_payload: false,
             privacy_context: None,
+            sensitivity: Vec::new(),
             occurrence_key: true,
             timestamp: None,
             suppress_if: None,
@@ -1102,6 +1117,7 @@ mod tests {
             default: None,
             skip_payload: false,
             privacy_context: None,
+            sensitivity: Vec::new(),
             occurrence_key: true,
             timestamp: None,
             suppress_if: None,
@@ -1138,6 +1154,7 @@ mod tests {
             default: None,
             skip_payload: false,
             privacy_context: Some(ProcessingContext::Command),
+            sensitivity: Vec::new(),
             occurrence_key: false,
             timestamp: None,
             suppress_if: Some(SuppressPredicate {
@@ -1171,6 +1188,7 @@ mod tests {
             default: None,
             skip_payload: false,
             privacy_context: Some(ProcessingContext::Command),
+            sensitivity: Vec::new(),
             occurrence_key: false,
             timestamp: None,
             suppress_if: Some(SuppressPredicate {
@@ -1204,6 +1222,7 @@ mod tests {
             default: None,
             skip_payload: false,
             privacy_context: Some(ProcessingContext::Command),
+            sensitivity: Vec::new(),
             occurrence_key: false,
             timestamp: None,
             suppress_if: Some(SuppressPredicate {
@@ -1237,6 +1256,7 @@ mod tests {
             default: None,
             skip_payload: false,
             privacy_context: None,
+            sensitivity: Vec::new(),
             occurrence_key: false,
             timestamp: None,
             suppress_if: None,
@@ -1267,6 +1287,7 @@ mod tests {
                 default: None,
                 skip_payload: false,
                 privacy_context: None,
+                sensitivity: Vec::new(),
                 occurrence_key: false,
                 timestamp: None,
                 suppress_if: None,
@@ -1298,6 +1319,7 @@ mod tests {
             default: None,
             skip_payload: false,
             privacy_context: None,
+            sensitivity: Vec::new(),
             occurrence_key: false,
             timestamp: Some(TimestampSpec {
                 format: TimestampFormat::Rfc3339,
@@ -1333,6 +1355,7 @@ mod tests {
             default: None,
             skip_payload: false,
             privacy_context: None,
+            sensitivity: Vec::new(),
             occurrence_key: false,
             timestamp: Some(TimestampSpec {
                 format: TimestampFormat::UnixSeconds,
@@ -1368,6 +1391,7 @@ mod tests {
             default: None,
             skip_payload: false,
             privacy_context: None,
+            sensitivity: Vec::new(),
             occurrence_key: false,
             timestamp: Some(TimestampSpec {
                 format: TimestampFormat::Rfc3339,
@@ -1419,6 +1443,7 @@ mod tests {
             default: None,
             skip_payload: false,
             privacy_context: None,
+            sensitivity: Vec::new(),
             occurrence_key: false,
             timestamp: None,
             suppress_if: None,
@@ -1432,6 +1457,7 @@ mod tests {
             default: None,
             skip_payload: false,
             privacy_context: None,
+            sensitivity: Vec::new(),
             occurrence_key: false,
             timestamp: None,
             suppress_if: None,
@@ -1513,6 +1539,7 @@ mod tests {
             default: None,
             skip_payload: false,
             privacy_context: None,
+            sensitivity: Vec::new(),
             occurrence_key: false,
             timestamp: Some(TimestampSpec {
                 format: TimestampFormat::Rfc3339,
@@ -1546,6 +1573,7 @@ mod tests {
             default: None,
             skip_payload: false,
             privacy_context: None,
+            sensitivity: Vec::new(),
             occurrence_key: false,
             timestamp: Some(TimestampSpec {
                 format: TimestampFormat::UnixMillis,
@@ -1584,6 +1612,7 @@ mod tests {
             default: None,
             skip_payload: false,
             privacy_context: None,
+            sensitivity: Vec::new(),
             occurrence_key: false,
             timestamp: Some(TimestampSpec {
                 format: TimestampFormat::UnixMicros,
@@ -1619,6 +1648,7 @@ mod tests {
             default: None,
             skip_payload: false,
             privacy_context: None,
+            sensitivity: Vec::new(),
             occurrence_key: false,
             timestamp: None,
             suppress_if: None,
@@ -1647,6 +1677,7 @@ mod tests {
             default: None,
             skip_payload: false,
             privacy_context: None,
+            sensitivity: Vec::new(),
             occurrence_key: false,
             timestamp: None,
             suppress_if: None,
@@ -1705,6 +1736,7 @@ mod tests {
             default: None,
             skip_payload: false,
             privacy_context: None,
+            sensitivity: Vec::new(),
             occurrence_key: false,
             timestamp: None,
             suppress_if: Some(SuppressPredicate {
@@ -1744,6 +1776,7 @@ mod tests {
             default: None,
             skip_payload: false,
             privacy_context: None,
+            sensitivity: Vec::new(),
             occurrence_key: false,
             timestamp: None,
             suppress_if: None,
@@ -1780,6 +1813,7 @@ mod tests {
             default: None,
             skip_payload: true,
             privacy_context: None,
+            sensitivity: Vec::new(),
             occurrence_key: true,
             timestamp: None,
             suppress_if: None,
@@ -1813,6 +1847,7 @@ mod tests {
             default: Some(serde_json::json!(42)),
             skip_payload: false,
             privacy_context: None,
+            sensitivity: Vec::new(),
             occurrence_key: false,
             timestamp: None,
             suppress_if: None,
@@ -1842,6 +1877,7 @@ mod tests {
             default: None,
             skip_payload: false,
             privacy_context: None,
+            sensitivity: Vec::new(),
             occurrence_key: false,
             timestamp: None,
             suppress_if: None,

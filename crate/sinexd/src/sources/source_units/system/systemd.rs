@@ -135,6 +135,7 @@ impl MaterialParser for SystemdParser {
                 ),
             ],
             privacy_contexts: vec![ProcessingContext::Journal],
+            sensitivity_hints: Vec::new(),
             proof_obligations: vec![
                 "unit_name_present".into(),
                 "event_type_from_unit_result".into(),

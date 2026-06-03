@@ -70,6 +70,64 @@ pub enum ProcessingContext {
     SourceCapture,
 }
 
+// ─── Sensitivity hint ────────────────────────────────────────
+
+/// Semantic sensitivity-class hint for a parser field. Distinct from
+/// [`ProcessingContext`] (a processing-context hint). These never choose an
+/// action or run redaction by themselves — they are exported so DB/user
+/// policy tooling can propose or bind rules (#1042 AC3, #1611).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SensitivityHint {
+    /// May carry sensitive content of an unspecified class.
+    PotentiallySensitive,
+    /// Free-form user text (titles, messages, notes) that may embed anything.
+    FreeText,
+    /// May carry credentials, tokens, keys, or secrets.
+    CredentialBearing,
+    /// May carry a person's name.
+    PersonNameCandidate,
+    /// A filesystem path, which may leak user/home structure.
+    SourcePath,
+}
+
+/// Error returned when parsing a [`SensitivityHint`] from a string fails.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SensitivityHintParseError {
+    /// The unrecognized input.
+    pub input: String,
+}
+
+impl fmt::Display for SensitivityHintParseError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "unknown sensitivity hint '{}'; expected one of: potentially_sensitive, \
+             free_text, credential_bearing, person_name_candidate, source_path",
+            self.input
+        )
+    }
+}
+
+impl StdError for SensitivityHintParseError {}
+
+impl std::str::FromStr for SensitivityHint {
+    type Err = SensitivityHintParseError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.trim() {
+            "potentially_sensitive" => Ok(Self::PotentiallySensitive),
+            "free_text" => Ok(Self::FreeText),
+            "credential_bearing" => Ok(Self::CredentialBearing),
+            "person_name_candidate" => Ok(Self::PersonNameCandidate),
+            "source_path" => Ok(Self::SourcePath),
+            other => Err(SensitivityHintParseError {
+                input: other.to_string(),
+            }),
+        }
+    }
+}
+
 // ─── Strategy ────────────────────────────────────────────────
 
 /// What to do when a rule matches.
@@ -653,6 +711,41 @@ mod tests {
         assert!(
             !processed.any_matched(),
             "default-from-env engine must not auto-redact; built-in rules are opt-in"
+        );
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn sensitivity_hint_does_not_auto_act() -> ::xtask::sandbox::TestResult<()> {
+        // AC4 (#1611): a `SensitivityHint` is an exported annotation for policy
+        // tooling. It is *not* wired to the privacy engine and must never cause
+        // redaction on its own. The default engine (no DB/user rules) sees a
+        // field value classified as `FreeText` / `PotentiallySensitive` and
+        // leaves it untouched, because there is no seeded/user rule for it.
+        let _guard = ENV_LOCK.lock().await;
+        let old_extra_rules = std::env::var_os("SINEX_PRIVACY_EXTRA_RULES");
+        let old_builtin = std::env::var_os("SINEX_PRIVACY_BUILTIN_CATEGORIES");
+        unsafe { std::env::remove_var("SINEX_PRIVACY_EXTRA_RULES") };
+        unsafe { std::env::remove_var("SINEX_PRIVACY_BUILTIN_CATEGORIES") };
+
+        let engine = PrivacyEngine::new(PrivacyConfig::from_env().map_err(PrivacyError::Config)?)?;
+
+        // A window title is annotated `FreeText` + `PotentiallySensitive` at the
+        // parser layer. The hint is documentation, not a trigger.
+        let hinted_value = "vim ~/Documents/quarterly-review.md - Neovim";
+        let processed = engine.process(hinted_value, ProcessingContext::Document);
+
+        restore_var("SINEX_PRIVACY_EXTRA_RULES", old_extra_rules);
+        restore_var("SINEX_PRIVACY_BUILTIN_CATEGORIES", old_builtin);
+
+        assert!(
+            !processed.any_matched(),
+            "sensitivity hints must not auto-redact without a seeded/user rule"
+        );
+        assert_eq!(
+            processed.text.as_ref(),
+            hinted_value,
+            "hinted field value must pass through unchanged when no rule binds"
         );
         Ok(())
     }

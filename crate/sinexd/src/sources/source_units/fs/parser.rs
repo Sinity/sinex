@@ -46,6 +46,7 @@ impl MaterialParser for FilesystemParser {
                 (FileMovedPayload::SOURCE, FileMovedPayload::EVENT_TYPE),
             ],
             privacy_contexts: vec![ProcessingContext::Metadata],
+            sensitivity_hints: Vec::new(),
             proof_obligations: vec![
                 "filesystem_event_kind_dispatch".into(),
                 "privacy_context_declared".into(),

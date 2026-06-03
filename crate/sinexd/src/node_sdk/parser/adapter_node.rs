@@ -1480,6 +1480,7 @@ mod tests {
                     EventType::from_static("test.event"),
                 )],
                 privacy_contexts: vec![ProcessingContext::Metadata],
+                sensitivity_hints: Vec::new(),
                 proof_obligations: Vec::new(),
                 description: String::new(),
             }
@@ -1606,6 +1607,7 @@ mod tests {
                     EventType::from_static("test.event"),
                 )],
                 privacy_contexts: vec![ProcessingContext::Metadata],
+                sensitivity_hints: Vec::new(),
                 proof_obligations: Vec::new(),
                 description: String::new(),
             }

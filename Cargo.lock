@@ -5069,6 +5069,7 @@ dependencies = [
 name = "sinex-macros"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "camino",
  "color-eyre",
  "inventory",

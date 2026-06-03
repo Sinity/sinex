@@ -83,6 +83,7 @@ impl MaterialParser for SleepMergedSummaryParser {
                 EventType::from_static("sleep.session"),
             )],
             privacy_contexts: vec![ProcessingContext::Metadata],
+            sensitivity_hints: Vec::new(),
             proof_obligations: vec![
                 "timestamp_intrinsic".into(),
                 "anchor_csv_row".into(),

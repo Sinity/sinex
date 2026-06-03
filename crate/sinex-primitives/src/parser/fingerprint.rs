@@ -1448,6 +1448,7 @@ mod tests {
                 default: None,
                 skip_payload: false,
                 privacy_context: None,
+                sensitivity: Vec::new(),
                 occurrence_key: false,
                 timestamp: None,
                 suppress_if: None,

@@ -166,6 +166,7 @@ impl MaterialParser for DbusParser {
                 ),
             ],
             privacy_contexts: vec![ProcessingContext::Dbus, ProcessingContext::Notification],
+            sensitivity_hints: Vec::new(),
             proof_obligations: vec![
                 "dbus_interface_dispatch".into(),
                 "privacy_context_declared".into(),

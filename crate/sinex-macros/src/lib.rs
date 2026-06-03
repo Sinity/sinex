@@ -67,6 +67,11 @@ pub fn derive_event_payload(input: TokenStream) -> TokenStream {
 /// `#[skip]` — exclude this field from the emitted payload
 /// `#[occurrence_key]` — include in composite `OccurrenceKey`
 /// `#[privacy(context = "Command")]` — emit a field privacy-context hint
+/// `#[privacy(sensitivity = "free_text, potentially_sensitive")]` — emit one or
+///   more comma-separated semantic sensitivity-class hints. Vocabulary:
+///   `potentially_sensitive | free_text | credential_bearing |
+///   person_name_candidate | source_path`. These are exported through the parser
+///   manifest for DB/user policy tooling and never auto-act (#1611).
 /// `#[timestamp(format = "rfc3339", fallback = "material_timing")]` — derive `ts_orig`
 /// `#[suppress_if(binding_field = "private_mode_active", whole_event = false)]`
 ///
