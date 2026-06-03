@@ -131,6 +131,7 @@ impl MaterialParser for UdevParser {
                 ),
             ],
             privacy_contexts: vec![ProcessingContext::Metadata],
+            sensitivity_hints: Vec::new(),
             proof_obligations: vec!["udev_action_dispatch".into(), "privacy_context_declared".into()],
             description: "Maps FileDropAdapter inotify records to udev device events.".into(),
         }

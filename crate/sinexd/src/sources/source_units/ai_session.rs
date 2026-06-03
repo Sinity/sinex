@@ -148,6 +148,7 @@ impl MaterialParser for ClaudeSessionParser {
                 EventType::from_static("ai.message"),
             )],
             privacy_contexts: vec![ProcessingContext::Document],
+            sensitivity_hints: Vec::new(),
             proof_obligations: vec![
                 "timestamp_intrinsic".into(),
                 "anchor_conv_msg_index".into(),
@@ -406,6 +407,7 @@ impl MaterialParser for ChatGptSessionParser {
                 EventType::from_static("ai.message"),
             )],
             privacy_contexts: vec![ProcessingContext::Document],
+            sensitivity_hints: Vec::new(),
             proof_obligations: vec![
                 "timestamp_intrinsic".into(),
                 "anchor_conv_msg_index".into(),

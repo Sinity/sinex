@@ -75,6 +75,7 @@ impl MaterialParser for HledgerJournalParser {
                 EventType::from_static("transaction.posted"),
             )],
             privacy_contexts: vec![ProcessingContext::Document],
+            sensitivity_hints: Vec::new(),
             proof_obligations: vec![
                 "timestamp_intrinsic".into(),
                 "anchor_tx_index".into(),

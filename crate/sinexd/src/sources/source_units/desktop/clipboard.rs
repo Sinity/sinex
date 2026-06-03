@@ -142,6 +142,7 @@ impl MaterialParser for ClipboardParser {
                 ),
             ],
             privacy_contexts: vec![ProcessingContext::Clipboard],
+            sensitivity_hints: Vec::new(),
             proof_obligations: vec![
                 "anchor_stream_frame".into(),
                 "privacy_context_declared".into(),

@@ -312,6 +312,7 @@ fn derive_source_record_inner(input: &DeriveInput) -> syn::Result<TokenStream> {
                         source_unit_id: spec.source_unit_id.clone(),
                         declared_event_types: vec![ #(#all_event_type_pairs),* ],
                         privacy_contexts: collect_privacy_contexts(spec),
+                        sensitivity_hints: collect_sensitivity_hints(spec),
                         proof_obligations: Vec::new(),
                         description: format!("Declarative parser for {}", stringify!(#struct_name)),
                     }
@@ -347,6 +348,20 @@ fn derive_source_record_inner(input: &DeriveInput) -> syn::Result<TokenStream> {
                     if let Some(c) = field.privacy_context {
                         if !seen.contains(&c) {
                             seen.push(c);
+                        }
+                    }
+                }
+                seen
+            }
+
+            fn collect_sensitivity_hints(
+                spec: &_sdk_parser::DeclarativeParserSpec,
+            ) -> Vec<_sdk_privacy::SensitivityHint> {
+                let mut seen: Vec<_sdk_privacy::SensitivityHint> = Vec::new();
+                for field in &spec.fields {
+                    for hint in &field.sensitivity {
+                        if !seen.contains(hint) {
+                            seen.push(*hint);
                         }
                     }
                 }
@@ -465,6 +480,8 @@ struct FieldDecl {
     default: Option<String>, // String literal, parsed as JSON value at evaluator time
     skip_payload: bool,
     privacy_context: Option<String>,
+    /// Parsed `#[privacy(sensitivity = "...")]` semantic sensitivity-class hints.
+    sensitivity: Vec<String>,
     occurrence_key: bool,
     timestamp: Option<TimestampDecl>,
     suppress_if: Option<SuppressDecl>,
@@ -525,6 +542,7 @@ fn parse_field_decl(field: &Field) -> syn::Result<FieldDecl> {
     let mut default: Option<String> = None;
     let mut skip_payload = false;
     let mut privacy_context: Option<String> = None;
+    let mut sensitivity: Vec<String> = Vec::new();
     let mut occurrence_key = false;
     let mut timestamp: Option<TimestampDecl> = None;
     let mut suppress_if: Option<SuppressDecl> = None;
@@ -606,8 +624,21 @@ fn parse_field_decl(field: &Field) -> syn::Result<FieldDecl> {
                         let v: syn::LitStr = meta.value()?.parse()?;
                         privacy_context = Some(v.value());
                         Ok(())
+                    } else if meta.path.is_ident("sensitivity") {
+                        // Comma-separated semantic sensitivity-class hints, e.g.
+                        // #[privacy(sensitivity = "free_text, potentially_sensitive")].
+                        let v: syn::LitStr = meta.value()?.parse()?;
+                        for hint in v.value().split(',') {
+                            let hint = hint.trim();
+                            if !hint.is_empty() {
+                                sensitivity.push(hint.to_string());
+                            }
+                        }
+                        Ok(())
                     } else {
-                        Err(meta.error("expected #[privacy(context = \"...\")]"))
+                        Err(meta.error(
+                            "expected #[privacy(context = \"...\")] or #[privacy(sensitivity = \"...\")]",
+                        ))
                     }
                 })?;
             }
@@ -704,6 +735,7 @@ fn parse_field_decl(field: &Field) -> syn::Result<FieldDecl> {
         default,
         skip_payload,
         privacy_context,
+        sensitivity,
         occurrence_key,
         timestamp,
         suppress_if,
@@ -934,6 +966,26 @@ fn privacy_context_token(name: &str) -> syn::Result<TokenStream> {
     })
 }
 
+fn sensitivity_hint_token(name: &str) -> syn::Result<TokenStream> {
+    Ok(match name {
+        "potentially_sensitive" => quote!(PotentiallySensitive),
+        "free_text" => quote!(FreeText),
+        "credential_bearing" => quote!(CredentialBearing),
+        "person_name_candidate" => quote!(PersonNameCandidate),
+        "source_path" => quote!(SourcePath),
+        other => {
+            return Err(Error::new_spanned(
+                proc_macro2::Literal::string(other),
+                format!(
+                    "unknown sensitivity hint '{other}'; expected one of: \
+                     potentially_sensitive, free_text, credential_bearing, \
+                     person_name_candidate, source_path"
+                ),
+            ));
+        }
+    })
+}
+
 fn field_decl_to_token(d: &FieldDecl) -> syn::Result<TokenStream> {
     let name = &d.name;
     let source_token = match &d.source {
@@ -974,6 +1026,20 @@ fn field_decl_to_token(d: &FieldDecl) -> syn::Result<TokenStream> {
         quote!(Some(_sdk_privacy::ProcessingContext::#tok))
     } else {
         quote!(None)
+    };
+
+    let sensitivity_token = if d.sensitivity.is_empty() {
+        quote!(Vec::new())
+    } else {
+        let hint_toks = d
+            .sensitivity
+            .iter()
+            .map(|name| {
+                let tok = sensitivity_hint_token(name)?;
+                Ok(quote!(_sdk_privacy::SensitivityHint::#tok))
+            })
+            .collect::<syn::Result<Vec<_>>>()?;
+        quote!(vec![ #(#hint_toks),* ])
     };
 
     let timestamp_token = if let Some(ts) = &d.timestamp {
@@ -1037,6 +1103,7 @@ fn field_decl_to_token(d: &FieldDecl) -> syn::Result<TokenStream> {
         default: #default_token,
         skip_payload: #skip_payload,
         privacy_context: #privacy_token,
+        sensitivity: #sensitivity_token,
         occurrence_key: #occurrence_key,
         timestamp: #timestamp_token,
         suppress_if: #suppress_token,
