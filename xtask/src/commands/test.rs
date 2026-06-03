@@ -2484,7 +2484,7 @@ mod tests {
         );
 
         assert!(
-            args.contains(&"--runtime-binary=sinex-ingestd:sinex-ingestd".to_string()),
+            args.contains(&"--runtime-binary=sinexd:sinexd".to_string()),
             "runtime binary requirements must be part of proof identity: {args:?}"
         );
         Ok(())

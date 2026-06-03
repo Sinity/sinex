@@ -254,6 +254,34 @@ fn notify_socket_path(prefix: &str) -> Result<PathBuf> {
     )))
 }
 
+/// Drain a (typically already-exited) child's piped stdout/stderr into a
+/// human-readable suffix for error messages. Best-effort: returns an empty
+/// string if the handles were not piped or reading fails.
+async fn drain_child_output(child: &mut tokio::process::Child) -> String {
+    use tokio::io::AsyncReadExt;
+
+    async fn read_pipe<R: tokio::io::AsyncRead + Unpin>(pipe: Option<R>) -> String {
+        let Some(mut pipe) = pipe else {
+            return String::new();
+        };
+        let mut buf = String::new();
+        let _ = pipe.read_to_string(&mut buf).await;
+        buf
+    }
+
+    let stdout = read_pipe(child.stdout.take()).await;
+    let stderr = read_pipe(child.stderr.take()).await;
+
+    let mut out = String::new();
+    if !stdout.trim().is_empty() {
+        out.push_str(&format!("\n--- child stdout ---\n{}", stdout.trim_end()));
+    }
+    if !stderr.trim().is_empty() {
+        out.push_str(&format!("\n--- child stderr ---\n{}", stderr.trim_end()));
+    }
+    out
+}
+
 async fn wait_for_ready_notify(
     process_name: &str,
     listener: &UnixDatagram,
@@ -426,7 +454,9 @@ async fn start_test_gateway_inner(
     wait_ready: bool,
 ) -> Result<TestGatewayHandle> {
     let workspace = find_workspace_root()?;
-    let freshness = check_runtime_binary_freshness(&workspace, "sinex-gateway", "sinex-gateway")?;
+    // Post-fold, the gateway lives inside the `sinexd` binary, reached via the
+    // `rpc-server` subcommand (see `crate/sinexd/src/main.rs`).
+    let freshness = check_runtime_binary_freshness(&workspace, "sinexd", "sinexd")?;
     freshness.ensure_fresh()?;
     let binary_path = freshness.binary_path;
 
@@ -481,7 +511,7 @@ async fn start_test_gateway_inner(
 
     if wait_ready
         && let Err(e) = wait_for_ready_notify(
-            "sinex-gateway",
+            "sinexd-gateway",
             &notify_listener,
             &mut handle.child,
             Duration::from_secs(Timeouts::STANDARD),
@@ -489,12 +519,16 @@ async fn start_test_gateway_inner(
         .await
     {
         let _ = std::fs::remove_file(&notify_socket_path);
+        // Surface the child's captured stdout/stderr — otherwise a startup
+        // panic or config error in the gateway subprocess is invisible and the
+        // failure reads only as "exited before READY=1".
+        let captured = drain_child_output(&mut handle.child).await;
         if let Err(stop_error) = handle.stop().await {
             return Err(e).wrap_err(format!(
-                "Gateway failed to become ready and cleanup failed: {stop_error:#}"
+                "Gateway failed to become ready and cleanup failed: {stop_error:#}{captured}"
             ));
         }
-        return Err(e).wrap_err("Gateway failed to become ready");
+        return Err(e).wrap_err(format!("Gateway failed to become ready{captured}"));
     }
     let _ = std::fs::remove_file(&notify_socket_path);
 
@@ -1069,6 +1103,11 @@ pub async fn start_test_ingestd_with_config(
     ));
     cmd.env("DATABASE_URL", &config.database_url);
     cmd.env("SINEX_NATS_URL", &config.nats.url);
+    // Engine-only fixture: the gateway runs as a separate TLS subprocess (see
+    // `start_test_gateway` / `TestCoreStack`). Disable the supervisor's
+    // in-process API so it does not try to bind the TLS-required gateway —
+    // which has no certs here — and tear the whole daemon down on startup.
+    cmd.env("SINEX_API_ENABLED", "false");
     if config.nats.require_tls {
         cmd.env("SINEX_NATS_REQUIRE_TLS", "true");
     }
